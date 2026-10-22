@@ -33,6 +33,7 @@ import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
+import { loadQuotePeriodContext } from "@/lib/quotes/line-period-context";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -89,7 +90,7 @@ export const POST = withRoute({
           id, tenant_id, customer_id, customer_name, line_items, subtotal,
           discount_pct, tax_rate, amount, notes, expires_date, is_renewal, is_add_seats, is_one_off,
           is_extension, extension_months, billing_cycle, currency, exchange_rate,
-          payment_status, invoice_id
+          payment_status, invoice_id, created_date, domain, renewal_term_date, renewal_subscription_id
         `)
         .eq("id", attach_quote_id)
         .single();
@@ -166,6 +167,8 @@ export const POST = withRoute({
           isExtension: quote.is_extension, extensionMonths: quote.extension_months,
         }),
         extensionTitle: extensionTitle({ isExtension: quote.is_extension, extensionMonths: quote.extension_months }),
+        /* R-1764: "Domain:" / "Subscription period:" under each subscription line. */
+        periodContext: await loadQuotePeriodContext(admin, quote),
       });
       const buffer = Buffer.from(await blob.arrayBuffer());
 

@@ -35,6 +35,7 @@ import { useCreditNotesByInvoice } from "@/lib/queries/credit-notes";
 import { useDebitNotesByInvoice } from "@/lib/queries/debit-notes";
 import { isCreditNoteLate, creditNoteDeadline } from "@/lib/gst/credit-note-deadline";
 import { TaxInvoiceDialog } from "@/components/features/quotes/tax-invoice-dialog";
+import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
 import { supplierIdentity, supplierIdentityMessage } from "@/lib/invoices/supplier-identity";
@@ -67,6 +68,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const [showPayments, setShowPayments] = React.useState(true);
 
   const { data: quote, isLoading: quoteLoading } = useQuoteByInvoiceId(invoice.id);
+  /* R-1764: the printed invoice says each subscription line's domain and period in the
+     quote's own words (the lines below are the quote's whenever a quote exists). */
+  const periodContext = useQuotePeriodContext(quote ?? null);
   const { data: payments } = usePaymentsByQuote(quote?.id);
   /* R-1564: a subscription instalment has no quote of its own — Record payment goes through
      its subscription's quote (record_instalment_payment), so the button shows for it too. */
@@ -442,6 +446,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           onOpenChange={setPdfDialogOpen}
           invoice={invoice}
           lineItems={lineItems}
+          periodContext={periodContext}
           subtotal={subtotal}
           discountPct={quote?.discount_pct ?? 0}
           discount={discount}

@@ -70,6 +70,9 @@ export type PublicLine = {
   seats_adjustable?: boolean;
   min_seats?: number;
   max_seats?: number;
+  /** R-1764: "Domain: x" / "Subscription period: 1 Year (…)" — worked out on the server with
+   *  the same helper as the PDF and the invoice. Absent → nothing printed. */
+  detail_notes?: string[];
 };
 
 function scheduleLabel(commitment: LineCommitment | undefined, cycle: BillingCycle): string {
@@ -767,6 +770,9 @@ export function QuoteAcceptView({
                           {r.line.name}
                           {r.line.optional && <span className="ml-1.5 text-3xs uppercase tracking-wider text-ink-3">optional</span>}
                         </p>
+                        {(r.line.detail_notes ?? []).map((n) => (
+                          <p key={n} className="text-2xs text-ink-3 mt-0.5 tabular-nums" data-testid="line-period">{n}</p>
+                        ))}
                         {r.line.commitment && !oneTime && (
                           <p className="text-2xs text-ink-3 mt-0.5">{scheduleLabel(r.line.commitment, effectiveCycle)}</p>
                         )}
@@ -825,6 +831,9 @@ export function QuoteAcceptView({
                             {line.name}
                             {line.optional && <span className="ml-1.5 text-3xs uppercase tracking-wider text-ink-3">optional</span>}
                           </p>
+                          {(line.detail_notes ?? []).map((n) => (
+                            <p key={n} className="text-2xs text-ink-3 mt-0.5 tabular-nums" data-testid="line-period">{n}</p>
+                          ))}
                           {line.commitment && !oneTime && (
                             <p className="text-2xs text-ink-3 mt-0.5">
                               {scheduleLabel(line.commitment, effectiveCycle)}

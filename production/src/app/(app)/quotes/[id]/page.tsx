@@ -94,7 +94,10 @@ import { canRecordMoney } from "@/lib/auth/roles";
 import { rupee, formatDate, daysBetween, toWhatsAppDigits } from "@/lib/utils";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { quoteIsPaid } from "@/lib/pdf/quote-document-kind";
-import { extensionTitle, isMonthExtension, isOneTimeQuote, oneTimeLineNote } from "@/lib/quotes/service-period";
+import {
+  extensionTitle, isMonthExtension, isOneTimeQuote, oneTimeLineNote,
+  quoteLinePeriodContext, renewedSubscriptionDomain,
+} from "@/lib/quotes/service-period";
 import { cn } from "@/lib/utils";
 import type { Quote, QuoteLineItem, Payment, BillingCycle } from "@/lib/supabase/database.types";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
@@ -169,6 +172,11 @@ export default function QuoteDetailPage() {
   const [approvalOpen, setApprovalOpen] = React.useState(false);
   const requestApproval = useRequestApproval();
   const { data: allSubs } = useSubscriptions();
+  /* R-1764: each subscription line's "Domain:" and "Subscription period:" in the preview. */
+  const periodCtx = React.useMemo(
+    () => (quote ? quoteLinePeriodContext(quote, renewedSubscriptionDomain(quote, allSubs)) : null),
+    [quote, allSubs],
+  );
   const recreateSub = useRecreateSubscription();
   // In-app confirm dialog — native window.confirm() is suppressed in some
   // embeds/webviews and silently returns false, which made destructive actions
@@ -821,6 +829,8 @@ export default function QuoteDetailPage() {
       /* R-809: add-seats / one-off → "One-time charge", not "billed yearly". */
       oneTime:       oneTimeQuote,
       extensionTitle: extTitle,
+      /* R-1764: "Domain:" / "Subscription period:" — the same words as the preview. */
+      periodContext: periodCtx,
     });
   };
 
@@ -2015,6 +2025,7 @@ export default function QuoteDetailPage() {
         /* R-809: add-seats / one-off → "One-time charge", not "Annual commit · billed yearly". */
         oneTime={oneTimeQuote}
         extensionTitle={extTitle}
+        periodContext={periodCtx}
         validityDays={
           quote.expires_date
             ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))

@@ -48,13 +48,16 @@ describe("wired into the documents", () => {
   const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
   it("the invoice PDF prints the domain note and the paid line", () => {
     const src = read("src/lib/pdf/InvoicePDF.tsx");
-    expect(src).toContain("lineDomainNote(li)");
+    /* R-1764: through lineDetailNotes, which prints "For x" or the subscription line's
+       "Domain: x" + "Subscription period:" (asserted on behaviour in line-period-surfaces.test). */
+    expect(src).toContain("lineDetailNotes(li, periodContext)");
+    expect(read("src/lib/pdf/invoice-display.ts")).toMatch(/function lineDetailNotes[\s\S]*lineDomainNote\(li\)/);
     expect(src).toContain("invoicePaidInFull(");
     expect(src).toMatch(/Paid on/);
     expect(src).toMatch(/Paid in full/);
   });
   it("the quote PDF prints the domain note too", () => {
-    expect(read("src/lib/pdf/QuotePDF.tsx")).toContain("lineDomainNote(");
+    expect(read("src/lib/pdf/QuotePDF.tsx")).toContain("lineDetailNotes(line, periodContext)");
   });
   /* The on-screen tax-invoice preview (components/features/quotes/tax-invoice-dialog.tsx) is in
      the Billing & Subscriptions section reserved for a colleague (AGENTS.md §13), so it is left

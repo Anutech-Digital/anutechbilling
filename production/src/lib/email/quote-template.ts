@@ -14,9 +14,14 @@ export interface QuoteEmailData {
   totalAmount: number;
   expiresDate?: string | null;
   acceptUrl: string;
-  lineItems?: Array<{ name: string; qty: number; rate: number }>;
+  /** `notes` (R-1764): "Domain: x" / "Subscription period: 1 Year (…)" under the name. */
+  lineItems?: Array<{ name: string; qty: number; rate: number; notes?: string[] }>;
   /** R-1523: "Proforma Invoice" when the quote is sent as one. Omitted → the Quotation wording. */
   documentLabel?: string;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 export function buildCustomerQuoteHtml(data: QuoteEmailData): string {
@@ -24,7 +29,7 @@ export function buildCustomerQuoteHtml(data: QuoteEmailData): string {
     .map(
       (item) => `
       <tr>
-        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; color: #111827;">${item.name}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; color: #111827;">${item.name}${(item.notes ?? []).map((n) => `<div style="font-size: 12px; color: #6b7280; margin-top: 2px;">${escapeHtml(n)}</div>`).join("")}</td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; color: #111827; text-align: center;">${item.qty}</td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; color: #111827; text-align: right;">${rupee(item.rate)}</td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; font-weight: bold; color: #111827; text-align: right;">${rupee(item.qty * item.rate)}</td>

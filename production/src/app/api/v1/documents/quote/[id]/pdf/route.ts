@@ -18,6 +18,7 @@ import { parseQuoteTemplate, proformaBank, quoteTemplateFileName } from "@/lib/p
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { trustedOrigin } from "@/lib/app-url";
 import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
+import { loadRenewedSubscriptionDomain } from "@/lib/quotes/line-period-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,6 +63,8 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
 
   const props = buildQuotePdfProps({
     logoDataUri: logo,
+    /* R-1764: a renewal quote's "Domain:" comes from the subscription it renews. */
+    subscriptionDomain: await loadRenewedSubscriptionDomain(admin, q),
     quote:    q,
     customer: (customer as Customer) ?? null,
     lead,

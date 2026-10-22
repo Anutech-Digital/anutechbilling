@@ -38,6 +38,7 @@ import { computeMargin } from "@/components/features/margin-pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button, IconButton } from "@/components/ui/button";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
+import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
 import { quoteContact } from "@/lib/quotes/quote-contact";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { Badge } from "@/components/ui/badge";
@@ -1263,6 +1264,8 @@ export default function QuotesPage() {
  */
 function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () => void }) {
   const { data: currentUser } = useCurrentUser();
+  /* R-1764: each subscription line's "Domain:" and "Subscription period:". */
+  const periodContext = useQuotePeriodContext(quote);
   const { data: customer }    = useCustomer(quote.customer_id ?? undefined);
 
   const items: QuoteLineItem[] = Array.isArray(quote.line_items) ? (quote.line_items as QuoteLineItem[]) : [];
@@ -1323,6 +1326,7 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
         isExtension: quote.is_extension, extensionMonths: quote.extension_months,
       })}
       extensionTitle={extensionTitle({ isExtension: quote.is_extension, extensionMonths: quote.extension_months })}
+      periodContext={periodContext}
       notes={quote.notes ?? ""}
       isProspect={!!quote.lead_id}
     />

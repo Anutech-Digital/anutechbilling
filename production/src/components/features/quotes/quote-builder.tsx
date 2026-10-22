@@ -15,6 +15,7 @@ import { istToday, addDaysISO } from "@/lib/dates/ist";
 import * as React from "react";
 import { convertRateForCommitment, isAnnualTier } from "@/lib/quotes/commitment-rate";
 import { quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
+import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
 import { isMixedTerm, ONE_TERM_MESSAGE } from "@/lib/quotes/single-term";
 import { storedLineRate, quoteTotalsDivisor, lineAmountSuffix, lineRateUnitSuffix } from "@/lib/quotes/line-rate-unit";
 import { perInvoiceDivisor } from "@/lib/pdf/invoice-divisor";
@@ -247,6 +248,14 @@ function QuoteBuilderBody() {
     if (isInvoiceMode) document.title = "New Invoice · ResellerOS";
   }, [isInvoiceMode]);
   const { data: sourceQuote } = useQuote(prefillFrom ?? undefined);
+  /* R-1764: the preview's "Domain:" / "Subscription period:" under each subscription line.
+     Editing a saved quote reads its own flags (a renewal's next term); a new quote or a copy
+     starts on the line's start date, else today. */
+  const editedQuotePeriod = useQuotePeriodContext(editOf ? sourceQuote : null);
+  const previewPeriodContext = React.useMemo(
+    () => editedQuotePeriod ?? { startFallback: istToday() },
+    [editedQuotePeriod],
+  );
 
   // Look up the lead by id (useQuoteLead) so the operator can
   // navigate to /quotes/new?lead=L-XXX with JUST the ID — we fill in the
@@ -3222,6 +3231,7 @@ function QuoteBuilderBody() {
         validityDays={validityDays}
         notes={notes}
         isProspect={isLeadMode}
+        periodContext={previewPeriodContext}
       />
     </div>
   );

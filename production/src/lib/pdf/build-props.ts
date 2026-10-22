@@ -20,7 +20,7 @@ import { quoteIsPaid } from "./quote-document-kind";
 import { payMethods } from "./pay-methods";
 import { includedSupportLine } from "./quote-support-line";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
-import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
+import { extensionTitle, isOneTimeQuote, quoteLinePeriodContext } from "@/lib/quotes/service-period";
 
 /**
  * R-045 slice 3: the currency + rate an INVOICE prints. An invoice issued since migration
@@ -136,6 +136,8 @@ export function buildInvoicePdfProps(args: {
    * seller may not have, so the safe default is to say nothing (AGENTS.md §2).
    */
   razorpayConfigured?: boolean;
+  /** R-1764: the renewed subscription's domain, for a renewal quote that stores none. */
+  subscriptionDomain?: string | null;
 }): InvoicePDFProps {
   const { invoice, quote, customer, tenant } = args;
   // Quote-backed invoice → derive from the quote; quote-less (project-milestone)
@@ -179,6 +181,9 @@ export function buildInvoicePdfProps(args: {
     lineItems:   useQuote
       ? (quote?.line_items ?? invoice.line_items ?? [])
       : (invoice.line_items ?? quote?.line_items ?? []),
+    /* R-1764: the quote's own "Domain:" / "Subscription period:" — only while the lines ARE the
+       quote's. An instalment or quote-less invoice covers a part, so it says no period. */
+    periodContext: useQuote && quote ? quoteLinePeriodContext(quote, args.subscriptionDomain) : null,
     subtotal,
     discountPct: a.discountPct,
     discount:    a.discount,
@@ -248,6 +253,8 @@ export function buildQuotePdfProps(args: {
   logoDataUri?: string | null;
   /** R-376 (f): the lead a customer-less quote was raised on — its state is the place of supply. */
   lead?: { state_code?: string | null; gstin?: string | null; country?: string | null } | null;
+  /** R-1764: the renewed subscription's domain, for a renewal quote that stores none. */
+  subscriptionDomain?: string | null;
 }): QuotePDFProps {
   const { quote, customer, tenant } = args;
   const a = quoteAmounts(quote);
@@ -317,5 +324,7 @@ export function buildQuotePdfProps(args: {
     }),
     /* R-811: "3-month extension" / "1-year extension" instead of a bare RENEWAL stamp. */
     extensionTitle: extensionTitle({ isExtension: quote.is_extension, extensionMonths: quote.extension_months }),
+    /* R-1764: "Domain:" / "Subscription period:" under each subscription line. */
+    periodContext: quoteLinePeriodContext(quote, args.subscriptionDomain),
   };
 }

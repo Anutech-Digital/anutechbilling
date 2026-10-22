@@ -30,7 +30,8 @@ import {
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-divisor";
 import { quoteInstalmentPlan } from "@/lib/billing/instalments";
-import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
+import { ONE_TIME_SCHEDULE, type LinePeriodContext } from "@/lib/quotes/service-period";
+import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
 import { UPI_SETTINGS_HREF } from "@/lib/pdf/quote-template";
 
@@ -110,6 +111,9 @@ interface Props {
   upiVpa?:       string | null;
   /** R-1694: the SAVED quote's id, for its PDF QR. Null → not saved yet (builder), no QR to fetch. */
   payQrQuoteId?: string | null;
+  /** R-1764: what each subscription line's "Domain:" and "Subscription period:" lines read
+   *  (quoteLinePeriodContext). Omitted → neither line. */
+  periodContext?: LinePeriodContext | null;
 }
 
 export function QuotePreviewDialog({
@@ -147,6 +151,7 @@ export function QuotePreviewDialog({
   extensionTitle = null,
   upiVpa,
   payQrQuoteId = null,
+  periodContext = null,
 }: Props) {
   /* R-813: this previews what the CUSTOMER sees — never the staff-only audit part. */
   const notes = customerQuoteNotes(rawNotes, lineItems);
@@ -379,6 +384,10 @@ export function QuotePreviewDialog({
                     <tr key={line.id} className="border-b border-hairline">
                       <td className="py-3 text-sm">
                         <p className="font-medium text-ink">{line.name}</p>
+                        {/* R-1764: "Domain:" / "Subscription period:" — the PDF's words. */}
+                        {lineDetailNotes(line, periodContext).map((t) => (
+                          <p key={t} className="text-2xs text-ink-3 mt-0.5 tabular-nums" data-testid="line-period">{t}</p>
+                        ))}
                         <p className="text-2xs text-ink-3 mt-0.5">
                           {lineUnitLabel(line, showPer || oneTime)} · HSN 998313
                           {line.commitment && !oneTime && (

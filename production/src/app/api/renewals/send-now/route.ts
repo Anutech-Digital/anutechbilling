@@ -37,6 +37,7 @@ import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { isEmailConfigured } from "@/lib/email/send";
 import { sendCustomerEmail } from "@/lib/messaging";
 import { renderQuotePDF } from "@/lib/pdf";
+import { loadQuotePeriodContextById } from "@/lib/quotes/line-period-context";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
@@ -294,6 +295,8 @@ export async function POST(req: Request) {
         validityDays:  30,
         notes:         "Renewal quote. Reply or call us with any questions.",
         isRenewal:     true,
+        /* R-1764: "Domain:" / "Subscription period:" — the next term this quote buys. */
+        periodContext: await loadQuotePeriodContextById(supabase, sub.tenant_id, renewalQuoteId),
       });
       const arrBuf = await blob.arrayBuffer();
       attachments = [{

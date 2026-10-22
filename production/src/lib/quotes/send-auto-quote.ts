@@ -32,6 +32,7 @@
 import { sendCustomerEmail } from "@/lib/messaging";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { renderQuotePDF } from "@/lib/pdf";
+import { quoteLinePeriodContext } from "@/lib/quotes/service-period";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { rupee } from "@/lib/utils";
 import { quoteEmailBody } from "@/lib/email/quote-body";
@@ -209,6 +210,8 @@ export async function sendAutoQuote(
          line's commitment — "annual, billed monthly" printed as one yearly total while the
          covering letter (quote-body.ts) printed per month. Both now read the same cycle. */
       billingCycle:  (quote.billing_cycle ?? undefined) as BillingCycle | undefined,
+      /* R-1764: "Subscription period:" under each subscription line (a new lead quote). */
+      periodContext: quoteLinePeriodContext(quote),
     });
     attachments = [{
       filename:    `Quote-${quote.id}.pdf`,
