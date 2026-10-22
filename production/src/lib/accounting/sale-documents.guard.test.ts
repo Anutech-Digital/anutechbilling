@@ -29,6 +29,8 @@ const SQL_SALE = new Set([
   "get_partner_metrics",   // invoiced this month (reseller children)
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
+  zoho_books_import_apply: "R-1753: open Zoho invoices go in through import_opening_invoices (opening, never a sale)",
+  zoho_books_import_undo: "R-1753: refuses while a created customer has other invoices; removes its own opening invoices",
   accept_project_quote: "creates a project invoice of ours",
   activate_quote_on_credit: "quote → our invoice",
   bill_late_charges: "late fee on an overdue balance (a new debit note of ours)",
@@ -130,6 +132,7 @@ const TS_SALE = new Set([
   "src/lib/queries/month-close.ts",                               // month's output GST
 ]);
 const TS_NOT_SALE: Record<string, string> = {
+  "src/lib/integrations/zoho-books/import-store.ts": "R-1753: Zoho numbers already imported as opening invoices (so a second import skips them)",
   "src/app/(app)/accounting/aging/read.ts": "aging of open balances — includes opening invoices on purpose",
   "src/app/(app)/invoices/[id]/page.tsx": "one invoice; an opening invoice gets its own view",
   "src/app/api/cron/billing/route.ts": "raises our subscription invoices",
