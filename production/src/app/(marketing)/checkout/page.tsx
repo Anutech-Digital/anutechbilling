@@ -40,6 +40,8 @@ import { COMPANY } from "@/site/lib/config";
 import { AfterYouPay } from "@/site/components/checkout/AfterYouPay";
 import { TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { Field, TermsCheckbox, TERMS_NUDGE_ID } from "./fields";
+import { usePaymentMode } from "./payment-mode";
+import { payButtonLabel } from "@/lib/checkout/checkout-payment-mode";
 
 /* 30 Sep 2026: the choice was never sent anywhere, so every option opened the same Razorpay
    window, and "Bank transfer — NEFT/RTGS, activated on credit" was not a path this checkout
@@ -82,6 +84,9 @@ function loadRazorpay(): Promise<RzpCtor> {
 export default function CheckoutPage() {
   const cart = useCart();
   const router = useRouter();
+  /* R-1502: live (Razorpay), simulation (a laptop with no keys) or disabled (no keys on a
+     deployment) — read on the server by layout.tsx. */
+  const paymentMode = usePaymentMode();
 
   const [step, setStep] = useState<"details" | "payment">("details");
   const [name, setName] = useState("");
@@ -197,6 +202,18 @@ export default function CheckoutPage() {
     } catch { /* ignore */ }
   }, [name, company, email, gstin, phone, domain, planDomain, addrLine1, addrCity, stateCode, addrPin]);
 
+  /* R-1502: before the saved cart is read, say so — not "The cart is empty". */
+  if (!cart.loaded) {
+    return (
+      <section className="section rise">
+        <div className="wrap" style={{ maxWidth: 640 }}>
+          <h1 className="h1-narrow" style={{ marginBottom: 16 }}>Checkout</h1>
+          <p className="body-lg" role="status" style={{ color: "var(--text-muted)" }}>Loading your cart…</p>
+        </div>
+      </section>
+    );
+  }
+
   if (cart.lines.length === 0) {
     return (
       <section className="section rise">
@@ -296,6 +313,9 @@ export default function CheckoutPage() {
           address: hasDomain
             ? { line1: addrLine1.trim(), city: addrCity.trim(), state: GST_STATE_BY_CODE[stateCode] ?? "", zipcode: addrPin.trim(), country: "IN" }
             : undefined,
+          /* R-1502: with no Razorpay keys on a laptop the server takes only a simulated
+             payment — without this every hosting/domain order stopped at "not set up yet". */
+          simulate: paymentMode === "simulation",
         }),
       });
       const json = (await res.json().catch(() => ({}))) as {
@@ -693,6 +713,22 @@ export default function CheckoutPage() {
                 title="Confirming your payment"
                 steps={["Checking the payment with Razorpay", "Recording your order", "Issuing your GST invoice"]}
               />
+              {paymentMode === "simulation" && (
+                <div role="note" style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1E3A8A", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
+                  <strong>Test mode</strong> — Razorpay is not set up on this computer. No money is taken: the order,
+                  the GST invoice and the setup request are recorded as a test, and you go to the order page.
+                </div>
+              )}
+              {paymentMode === "disabled" ? (
+                <div role="alert" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
+                  Online payment is not switched on for this site yet, so this order cannot be paid here.
+                  Ask for a quote and we will send a GST invoice with a payment link.
+                  <div style={{ marginTop: 10 }}>
+                    <a href="/quote" className="btn btn-primary btn-sm">Get a quote</a>
+                  </div>
+                </div>
+              ) : (
+              <>
               {/* Not disabled until the box is ticked: a press says why (29 Sep 2026). */}
               <button
                 className="btn"
@@ -705,8 +741,10 @@ export default function CheckoutPage() {
                 disabled={paying}
                 onClick={() => { if (!agreed) { setAgreeNudge(true); return; } void placeOrder(); }}
               >
-                {paying ? "Starting secure payment…" : `Pay ${rupee(t.payable)}`}
+                {paying ? "Starting secure payment…" : payButtonLabel(paymentMode, rupee(t.payable))}
               </button>
+              </>
+              )}
               <button
                 onClick={() => setStep("details")}
                 style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 14, cursor: "pointer", marginTop: 12 }}

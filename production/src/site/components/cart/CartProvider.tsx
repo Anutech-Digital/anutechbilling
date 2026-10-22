@@ -31,6 +31,12 @@ export type CouponStatus = "empty" | "checking" | "valid" | "invalid" | "error";
 
 interface CartApi {
   lines: CartLine[];
+  /**
+   * R-1502: false until the saved cart has been read from this browser (it can only be read
+   * after the page starts). Until then `lines` is empty for every visitor, so a page must
+   * not say "the cart is empty" — the cart page showed "Nothing in it yet" with hosting in it.
+   */
+  loaded: boolean;
   totals: CartTotals;
   coupon: string;
   setCoupon: (code: string) => void;
@@ -126,6 +132,7 @@ function save(lines: CartLine[]): void {
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [lines, setLines] = useState<CartLine[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [coupon, setCoupon] = useState("");
   /* The last server answer, for the code it was about. A reply for an older code never
      applies to the code now in the box. */
@@ -137,6 +144,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setLines(load());
+    setLoaded(true);
   }, []);
 
   const add = useCallback<CartApi["add"]>(
@@ -241,6 +249,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const api = useMemo<CartApi>(
     () => ({
       lines,
+      loaded,
       totals,
       coupon,
       setCoupon,
@@ -255,7 +264,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       closeDrawer: () => setDrawerOpen(false),
       justAdded,
     }),
-    [lines, totals, coupon, couponStatus, couponRate, add, setQty, setYears, remove, clear, drawerOpen, justAdded],
+    [lines, loaded, totals, coupon, couponStatus, couponRate, add, setQty, setYears, remove, clear, drawerOpen, justAdded],
   );
 
   return (
