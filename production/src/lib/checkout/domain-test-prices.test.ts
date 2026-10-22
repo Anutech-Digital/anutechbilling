@@ -202,6 +202,7 @@ describe("every screen that shows a test-list price says TEST price", () => {
   const code = (f: string) => readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   const landing = code("src/site/components/domains/DomainLanding.tsx");
   const hero = code("src/site/components/home/DomainSearch.tsx");
+  const offer = code("src/site/components/domains/domain-offer.ts");
   it("the label is one shared constant", async () => {
     const { TEST_PRICE_LABEL } = await import("@/site/lib/domain-search");
     expect(TEST_PRICE_LABEL).toBe("TEST price");
@@ -211,7 +212,9 @@ describe("every screen that shows a test-list price says TEST price", () => {
     expect(landing).toMatch(/function TestPriceNote[\s\S]*\{TEST_PRICE_LABEL\}/);
   });
   it("/domains and the home search put TEST price on the cart line, so cart and checkout show it", () => {
-    expect(landing).toMatch(/detail: primary\.testPrice \? `\$\{TEST_PRICE_LABEL\} · /);
+    // R-1772: /domains builds its cart lines in one helper (also the shown total).
+    expect(landing).toMatch(/domainOffer\(\{[\s\S]*testPrice: primary\?\.testPrice/);
+    expect(offer).toMatch(/detail: p\.testPrice \? `\$\{TEST_PRICE_LABEL\} · /);
     expect(hero).toMatch(/detail: r\.testPrice \? `\$\{TEST_PRICE_LABEL\} · /);
   });
   it("the home search shows TEST price next to the price", () => {

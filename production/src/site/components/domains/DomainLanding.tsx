@@ -44,6 +44,7 @@ import { PRICE_AT_SEARCH, tldCell } from "@/site/lib/rate-card";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { SLA } from "@/site/lib/config";
 import { freeDomainEligible, FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
+import { domainOffer } from "./domain-offer";
 import {
   MAILBOX_YR,
   ANCHOR_TIER,
@@ -158,62 +159,31 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
   const domainRenew = tldByExt.get(tld)?.renew ?? null;
 
   // ── single source of truth for every displayed number ─────────────────────
+  // R-1772: every figure comes from the very lines the button adds, priced by the cart's own
+  // cartTotals (domainOffer) — the page's own sum once showed ₹1,884 for a ₹766 cart.
   const yearly = term === "yearly";
-  const planFree = hostingOn && yearly; // a yearly plan: one mailbox free
-  const tldFree = freeDomainEligible(tld); // R-1595: only .com / .in / .net / .org / .co.in
-  const bundleFree = planFree && tldFree; // the only state where the domain is ₹0
-  const domainCost = bundleFree ? 0 : domainReg;
-  // Whole rupees, as the checkout API charges it (Math.round of the same tier figure).
-  const hostingCost = hostingOn ? Math.round(yearly ? tier.yearlyTotal : tier.monthly) : 0;
-  const mailboxCost = mailOn ? (planFree ? 0 : MAILBOX_YR) : 0;
-  const subtotal = domainCost == null ? null : domainCost + hostingCost + mailboxCost;
-  const total = subtotal == null ? null : Math.round(subtotal * 1.18);
-  const saved = (bundleFree ? domainReg ?? 0 : 0) + (planFree && mailOn ? MAILBOX_YR : 0);
+  /* The Domain + hosting card describes ITS option (yearly → the name ₹0) whichever card is
+     picked; the total next to the button is the picked one. Choosing "Domain only" never
+     touches the Yearly/Monthly choice. */
+  const bundle = useMemo(() => domainOffer({
+    domain: primary?.domain ?? "", tld, domainReg, domainRenew, yearPrices: primary?.prices,
+    testPrice: primary?.testPrice, tier, yearly, mailOn, hostingOn: true,
+  }), [primary, tld, domainReg, domainRenew, tier, yearly, mailOn]);
+  const domainOnly = useMemo(() => domainOffer({
+    domain: primary?.domain ?? "", tld, domainReg, domainRenew, yearPrices: primary?.prices,
+    testPrice: primary?.testPrice, tier, yearly, mailOn, hostingOn: false,
+  }), [primary, tld, domainReg, domainRenew, tier, yearly, mailOn]);
+  const chosen = hostingOn ? bundle : domainOnly;
+  const planFree = yearly; // a yearly plan: one mailbox free
+  const bundleFree = bundle.domainFree; // the only state where the domain is ₹0
   const available = primary?.available ?? false;
 
   function addToCart() {
     /* Only a name that is available at a live, known price can be paid for: the
        checkout re-checks both and refuses otherwise, so adding it would only fail later. */
     if (!primary || !primary.available || !primary.priceKnown || domainReg == null) return;
-    const planId = tier.name.toLowerCase();
-    /* Domain line — sku lets the server re-price + apply the bundle rule. At its FULL price
-       (R-1601): the cart works out on every render whether yearly hosting makes it free, so
-       removing the plan later puts the price back instead of leaving a stale ₹0. */
-    const regDetail = domainRenew != null ? `Registration, 1 year · renews ${inr(domainRenew)}` : "Registration, 1 year";
-    cart.add({
-      label: primary.domain,
-      // R-1769: a test-list price says so in the cart and at checkout too.
-      detail: primary.testPrice ? `${TEST_PRICE_LABEL} · ${regDetail}` : regDetail,
-      unitPrice: domainReg,
-      unit: "year",
-      cycle: "yearly",
-      sku: `domain:${tld.replace(/^\./, "")}`,
-      domain: primary.domain,
-      years: 1,
-      yearPrices: primary.prices, // R-156: 2/3/5-year terms, when the registry prices them
-    });
-    if (hostingOn) {
-      cart.add({
-        label: `${tier.name} hosting`,
-        detail: yearly
-          ? `Billed yearly · renews at the same price · pointed at ${primary.domain}`
-          : `Billed monthly · pointed at ${primary.domain}`,
-        unitPrice: hostingCost,
-        unit: yearly ? "year" : "month",
-        cycle: yearly ? "yearly" : "monthly",
-        sku: `hosting:${planId}`,
-      });
-      if (mailOn) {
-        cart.add({
-          label: `Mailbox on ${primary.domain}`,
-          detail: "Anutech Mail · billed yearly",
-          unitPrice: MAILBOX_YR, // full price; the cart frees one per yearly plan (R-1601)
-          unit: "year",
-          cycle: "yearly",
-          sku: `mailbox:anutech`,
-        });
-      }
-    }
+    // The lines domainOffer built — each carries its sku, the domain line its name.
+    for (const line of chosen.lines) cart.add(line);
   }
 
   /* Rate-card row: pick the extension and search for it. It used to add a
@@ -307,8 +277,8 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
                   hostingOn={hostingOn} setHostingOn={setHostingOn}
                   planName={planName} setPlanName={setPlanName}
                   term={term} setTerm={setTerm} mailOn={mailOn} setMailOn={setMailOn}
-                  tier={tier} domainCost={domainCost} mailboxCost={mailboxCost}
-                  bundleFree={bundleFree} planFree={planFree} total={total} saved={saved}
+                  tier={tier}
+                  bundleFree={bundleFree} planFree={planFree} total={chosen.total} saved={chosen.saved}
                   onAdd={addToCart}
                   alternates={alternates} onAddAlt={(d) => { const ext = tlds.find((t) => d.domain.endsWith(t.tld))?.tld; if (ext) setTld(ext); }}
                 />
@@ -594,7 +564,7 @@ function ResultBlock(p: {
   hostingOn: boolean; setHostingOn: (v: boolean) => void;
   planName: string; setPlanName: (v: string) => void;
   term: Term; setTerm: (v: Term) => void; mailOn: boolean; setMailOn: (v: boolean) => void;
-  tier: (typeof HOSTING_TIERS)[number]; domainCost: number | null; mailboxCost: number;
+  tier: (typeof HOSTING_TIERS)[number];
   bundleFree: boolean; planFree: boolean; total: number | null; saved: number; onAdd: () => void;
   alternates: DomainResult[]; onAddAlt: (d: DomainResult) => void;
 }) {
@@ -652,7 +622,7 @@ function ResultBlock(p: {
             + {tier.name} hosting at {inr(yearly ? tier.yearlyMo : tier.monthly)}/mo · {planFree ? "mailbox included free, DNS wired for you" : "renews at the same price"}
           </p>
           {!planFree && <p style={{ fontSize: 12.5, fontWeight: 600, color: C.accent, margin: "8px 0 0" }}>You&apos;re on monthly billing — the free domain and free mailbox need a yearly plan.</p>}
-          {planFree && !bundleFree && <p style={{ fontSize: 12.5, fontWeight: 600, color: C.accent, margin: "8px 0 0" }}>The free domain is a {FREE_DOMAIN_TLDS_LABEL} — this extension is charged in full.</p>}
+          {planFree && !freeDomainEligible(p.tld) && <p style={{ fontSize: 12.5, fontWeight: 600, color: C.accent, margin: "8px 0 0" }}>The free domain is a {FREE_DOMAIN_TLDS_LABEL} — this extension is charged in full.</p>}
         </button>
 
         {/* solo */}
