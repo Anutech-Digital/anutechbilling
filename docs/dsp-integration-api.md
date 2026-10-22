@@ -86,7 +86,9 @@ customer via 3.2–3.5. Iterate `page` from 1..`pages` to sync everyone.
     "start_date": "2026-07-14",
     "renewal_date": "2027-07-14",
     "amount": 132000,                    // annualised, integer INR (rupees)
-    "currency": "INR"
+    "currency": "INR",
+    "domain": "acme.in",                 // the domain the plan is for, or null (R-1770)
+    "vendor": "google"                   // google | microsoft | hosting | … (R-1770)
   }
 ]
 ```
@@ -125,7 +127,9 @@ document). Returns `application/pdf`; bad/missing token → 403, unknown id → 
     "currency": "INR",
     "status": "accepted",                // pending | accepted | expired
     "pdf_url": "https://.../api/v1/documents/quote/Q-ET-2026-27-0015/pdf?token=…",
-    "payment_url": "https://.../quote/Q-ET-2026-27-0015/accept"
+    "payment_url": "https://.../quote/Q-ET-2026-27-0015/accept",
+    "valid_until": "2026-08-13",         // the quote's expiry date, or null (R-1770)
+    "title": "Google Workspace Business Starter"  // the quote's plan name, or null (R-1770)
   }
 ]
 ```

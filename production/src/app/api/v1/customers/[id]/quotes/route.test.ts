@@ -36,7 +36,7 @@ import { GET } from "./route";
 
 const call = () =>
   GET(new NextRequest("https://ros.invalid/api/v1/customers/C-1/quotes"), { params: Promise.resolve({ id: "C-1" }) });
-const quote = (id: string) => ({ id, amount: 708, status: "sent", pdf_url: null, public_token: "t" });
+const quote = (id: string) => ({ id, amount: 708, status: "sent", pdf_url: null, public_token: "t", expires_date: "2026-11-05", plan: "Hosting Starter" });
 
 beforeEach(() => {
   db.quotes = [quote("Q-RENEW"), quote("Q-NEW")];
@@ -61,5 +61,12 @@ describe("renews", () => {
   it("a failed lookup fails the answer (500) instead of saying renews nothing", async () => {
     db.subsError = { message: "timeout" };
     expect((await call()).status).toBe(500);
+  });
+});
+
+describe("R-1770: valid till + name", () => {
+  it("each quote in the answer carries valid_until and title", async () => {
+    const body = (await (await call()).json()) as { id: string; valid_until: unknown; title: unknown }[];
+    expect(body.find((q) => q.id === "Q-NEW")).toMatchObject({ valid_until: "2026-11-05", title: "Hosting Starter" });
   });
 });

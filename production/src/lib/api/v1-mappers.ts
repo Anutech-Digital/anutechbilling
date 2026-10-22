@@ -80,7 +80,16 @@ export function mapSubscription(s: SubscriptionRow) {
     renewal_date: s.renewal_date,
     amount:       (s.mrr ?? 0) * 12, // annualised (mrr is ₹/month)
     currency:     CURRENCY,
+    // R-1770 (additive): which domain the plan is for, and whose (google/microsoft/hosting…).
+    domain:       s.domain ?? null,
+    vendor:       s.vendor ?? null,
   };
+}
+
+/** Blank text → null, so a consumer never shows an empty name. */
+function textOrNull(v: string | null | undefined): string | null {
+  const t = (v ?? "").trim();
+  return t ? t : null;
 }
 
 const INVOICE_STATUS: Record<InvoiceRow["status"], string> = {
@@ -129,6 +138,10 @@ export function mapQuote(q: QuoteRow, appUrl: string, pdfUrl: string | null = nu
     status:      quoteStatus(q),
     pdf_url:     pdfUrl ?? q.pdf_url,
     payment_url: quoteAcceptUrl(appUrl, q.id, q.public_token),
+    // R-1770 (additive): the quote's expiry date ("valid till") and its name — ResellerOS
+    // names a quote by its plan (Quotes list / Combine dialog show `plan`); there is no title column.
+    valid_until: q.expires_date ?? null,
+    title:       textOrNull(q.plan),
     ...(renews ? { renews } : {}),
   };
 }
