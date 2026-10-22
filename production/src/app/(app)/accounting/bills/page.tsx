@@ -114,7 +114,7 @@ export default function VendorBillsPage() {
     if (await confirm({
       title: `Delete bill ${b.bill_no || b.id}?`,
       /* R-1577: say what changes; a paid / bank-matched bill or one in a payment run is refused with the next step. */
-      body: "Ye bill aur uska payable books se hat jaayega. Agar iski payment kisi bank line se match hai ya ye kisi payment run me hai to delete nahi hoga — app batayega pehle kya karna hai.",
+      body: "This bill and its payable are removed from the books. If its payment is matched to a bank line or it is in a payment run, it cannot be deleted — the app tells you what to do first.",
       danger: true,
       confirmLabel: "Delete",
     })) del.mutate(b.id);
@@ -490,7 +490,7 @@ function PayBillDialog({ bill, onClose }: { bill: VendorBill; onClose: () => voi
               <Input id="bills-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </FormField>
           </div>
-          {tooMuch && <p className="text-xs text-rose">Outstanding {rupee(outstanding)} se zyada nahi.</p>}
+          {tooMuch && <p className="text-xs text-rose">Cannot be more than the outstanding {rupee(outstanding)}.</p>}
           <FormField htmlFor="bills-pay-from" label="Pay from">
             <select id="bills-pay-from" value={accountId} onChange={(e) => setAccountId(e.target.value)} className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber">
               {accounts.length === 0 && <option value="">No accounts — add one in Banking</option>}

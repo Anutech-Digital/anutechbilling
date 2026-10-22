@@ -51,7 +51,7 @@ const GROUP_BY_CHOICES: readonly GroupBy[] = ["none", "vendor", "category"];
 /** R-1577: what a delete changes — and that a linked expense is refused with where to undo it. */
 const DELETE_EXPENSE_CONFIRM = {
   title: "Delete this expense?",
-  body: "Ye kharcha P&L aur GST se hat jaayega. Agar ye kisi salary, EMI, loan, tax challan, asset, payment run ya bank line se juda hai to delete nahi hoga — app batayega kahan se hatana hai.",
+  body: "This expense is removed from P&L and GST. If it is linked to a salary, EMI, loan, tax challan, asset, payment run or bank line, it cannot be deleted — the app tells you where to remove it from.",
   danger: true,
   confirmLabel: "Delete",
 } as const;
@@ -289,11 +289,11 @@ export default function ExpensesPage() {
        1000-row cap (./tds-26q.ts). */
     let read: Awaited<ReturnType<typeof read26Q>>;
     try { read = await read26Q(supabase, range); }
-    catch (e) { toast.error(`26Q data load nahi hua: ${errorMessage(e)}`); return; }
+    catch (e) { toast.error(`Could not load 26Q data: ${errorMessage(e)}`); return; }
     /* R-1580: expenses + partner commissions (194H); PAN = deductee's own, else from GSTIN. */
     const { rows, totalTds, missingPan } = build26QRows(read);
     if (rows.length === 0) {
-      toast.error("Is range me koi TDS-deducted expense ya partner commission nahi. Pehle Add Expense me kisi vendor payment pe TDS record karo.");
+      toast.error("No TDS-deducted expense or partner commission in this range. Record TDS on a vendor payment in Add Expense first.");
       return;
     }
     const esc = (v: string | number) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
@@ -305,7 +305,7 @@ export default function ExpensesPage() {
     URL.revokeObjectURL(url);
     void logExport({ what: "26q-working", rowCount: rows.length, format: "csv" });
     let msg = `26Q working — ${rows.length} rows, TDS ${rupee(totalTds)}. Import into your TDS software / RPU (app can't make the FVU).`;
-    if (missingPan) msg += ` ⚠ ${missingPan} row(s) missing PAN — add it on the Vendors / Referral partners page (bina PAN ke 20% u/s 206AA).`;
+    if (missingPan) msg += ` ⚠ ${missingPan} row(s) missing PAN — add it on the Vendors / Referral partners page (20% u/s 206AA without PAN).`;
     toast.success(msg);
   }
 
@@ -676,8 +676,8 @@ export default function ExpensesPage() {
         <Card className="py-2">
           <EmptyState
             icon="alert"
-            title="Expenses load nahi ho paye"
-            body="Ye data load karne me dikkat aayi — aapke expenses safe hain, bas dikh nahi rahe. Dobara try karo."
+            title="Could not load expenses"
+            body="There was a problem loading this data — your expenses are safe, they just cannot be shown right now. Try again."
             action={<Button variant="primary" icon="refresh" onClick={() => q.refetch()}>Try again</Button>}
           />
         </Card>

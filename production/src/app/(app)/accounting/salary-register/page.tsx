@@ -217,7 +217,7 @@ function MonthRegister() {
        24Q Annexure I wants the challan the deduction went in. */
     let read: Awaited<ReturnType<typeof read24Q>>;
     try { read = await read24Q(supabase, periods); }
-    catch (e) { toast.error(`24Q data load nahi hua: ${errorMessage(e)}`); return; }
+    catch (e) { toast.error(`Could not load 24Q data: ${errorMessage(e)}`); return; }
     const { pays, emps, challans } = read;
     if (pays.length === 0) { toast.error(`No salary runs in ${label}.`); return; }
     const emap = new Map(emps.map((e) => [e.id, e]));
@@ -245,7 +245,7 @@ function MonthRegister() {
     const totalTds = pays.reduce((s, p) => s + (p.tds ?? 0), 0);
     let msg = `24Q working for ${label} — ${outRows.length} rows, TDS ${rupee(totalTds)}. Import into your TDS software / RPU (the app can't make the FVU).`;
     if (missingPan) msg += ` ⚠ ${missingPan} row(s) missing PAN — add it on the employee.`;
-    if (monthsNoChallan.length) msg += ` ⚠ Challan nahi mila: ${monthsNoChallan.map(monthLabel).join(", ")} — Payroll → Record statutory payment mein mahina + challan no. bharo.`;
+    if (monthsNoChallan.length) msg += ` ⚠ No challan found: ${monthsNoChallan.map(monthLabel).join(", ")} — enter the month + challan no. in Payroll → Record statutory payment.`;
     toast.success(msg);
   };
 
@@ -308,7 +308,7 @@ function MonthRegister() {
                     <td className="px-3 py-2.5">
                       <div className="font-bold text-ink">{toTitleCase(e.name)}</div>
                       <div className="text-xs text-ink-3">{e.designation || "Staff"}</div>
-                      {ctc.basicAssumed && <div className="text-xs text-amber-ink">Basic set nahi — PF/gratuity poore gross par</div>}
+                      {ctc.basicAssumed && <div className="text-xs text-amber-ink">Basic not set — PF / gratuity on the full gross</div>}
                     </td>
                     <td className="px-3 py-2.5 text-right font-mono font-bold text-ink">{rupee(ctc.annualCtc)}</td>
                     <td className="px-3 py-2.5 text-right font-mono font-semibold text-ink-2">{rupee(ctc.monthlyCtc)}</td>
@@ -489,11 +489,11 @@ function EmployeeRegister({ employeeId }: { employeeId: string }) {
                 ₹12.75L of salary. Showing "taxable ₹37,445" for a ₹1.1L salary reads like a tax
                 bill — so the tile shows the tax-free limit and what, if anything, is above it. */}
             <div>
-              <div className="text-xs text-ink-3">Tax-free tak (₹{taxYearFor(f16.fyStart).rebateLimit.toLocaleString("en-IN")} s.87A + ₹{taxYearFor(f16.fyStart).standardDeduction.toLocaleString("en-IN")} std. ded.)</div>
+              <div className="text-xs text-ink-3">Tax-free up to (₹{taxYearFor(f16.fyStart).rebateLimit.toLocaleString("en-IN")} s.87A + ₹{taxYearFor(f16.fyStart).standardDeduction.toLocaleString("en-IN")} std. ded.)</div>
               <div className="font-mono text-ink">{rupee(taxYearFor(f16.fyStart).rebateLimit + taxYearFor(f16.fyStart).standardDeduction)}</div>
             </div>
             <div>
-              <div className="text-xs text-ink-3">Limit se upar</div>
+              <div className="text-xs text-ink-3">Above the limit</div>
               <div className={`font-mono ${f16.tax.taxableIncome > taxYearFor(f16.fyStart).rebateLimit ? "text-rose" : "text-emerald"}`}>{rupee(Math.max(0, f16.tax.taxableIncome - taxYearFor(f16.fyStart).rebateLimit))}</div>
             </div>
             <div><div className="text-xs text-ink-3">Tax for the year (incl. cess)</div><div className="font-mono text-ink">{rupee(f16.tax.totalTax)}</div></div>
@@ -503,7 +503,7 @@ function EmployeeRegister({ employeeId }: { employeeId: string }) {
               <div className={`font-mono ${f16.balance > 0 ? "text-rose" : f16.balance < 0 ? "text-amber-ink" : "text-emerald"}`}>{rupee(Math.abs(f16.balance))}</div>
             </div>
           </div>
-          {f16.tax.rebate87A > 0 && f16.tax.totalTax === 0 && <p className="text-xs text-ink-3 mt-2">Taxable income ₹12 lakh tak — s.87A rebate se tax shunya; agar saal mein incentive se upar gaya to TDS lagega.</p>}
+          {f16.tax.rebate87A > 0 && f16.tax.totalTax === 0 && <p className="text-xs text-ink-3 mt-2">Taxable income up to ₹12 lakh — tax is nil after the s.87A rebate; if incentives take it higher during the year, TDS applies.</p>}
         </Card>
       )}
 

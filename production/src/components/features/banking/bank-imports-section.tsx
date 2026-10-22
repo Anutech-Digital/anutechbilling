@@ -73,7 +73,7 @@ function writeOpen(open: boolean) {
 }
 
 function fileLabel(r: BankImportRow): string {
-  return r.file_name ?? (r.kind === "legacy" || r.source === "legacy" ? "Purana import" : "file ka naam nahi");
+  return r.file_name ?? (r.kind === "legacy" || r.source === "legacy" ? "Old import" : "no file name");
 }
 
 const newestFirst = (a: BankImportRow, b: BankImportRow) => b.imported_at.localeCompare(a.imported_at);
@@ -126,16 +126,16 @@ export function BankImportsSection({ accountId, transactions, openingBalance, ro
           <span className="text-sm font-semibold text-ink">Imports</span>
           {historyQ.isError ? null : (
             <>
-              {" · "}{active.length} chalu{" · "}{gone.length} hataye
+              {" · "}{active.length} active{" · "}{gone.length} removed
               {latest && (
                 <>
-                  {" · "}aakhri: {formatDate(latest.imported_at)}{" · "}
+                  {" · "}last: {formatDate(latest.imported_at)}{" · "}
                   <span className="text-ink-2 break-all" title={fileLabel(latest)}>{fileLabel(latest)}</span>
                 </>
               )}
               {warned > 0 && (
                 <span className="text-amber-ink">
-                  {" · "}{warned} import ki balance chain mel nahi khaati
+                  {" · "}{warned} import{warned === 1 ? "" : "s"} with a balance chain mismatch
                 </span>
               )}
             </>
@@ -143,21 +143,21 @@ export function BankImportsSection({ accountId, transactions, openingBalance, ro
         </p>
         {!historyQ.isError && (
           <Button size="sm" variant="ghost" aria-expanded={open} aria-controls={bodyId} onClick={toggle}>
-            {open ? "Chhupao" : "Dikhao"}
+            {open ? "Hide" : "Show"}
           </Button>
         )}
       </div>
 
       {historyQ.isError ? (
         <p className="text-sm text-rose mt-2" role="alert">
-          Imports ki list nahi aayi.{" "}
-          <button type="button" className="underline" onClick={() => void historyQ.refetch()}>Dobara try karo</button>
+          Could not load the imports list.{" "}
+          <button type="button" className="underline" onClick={() => void historyQ.refetch()}>Try again</button>
         </p>
       ) : open ? (
         <div id={bodyId} className="mt-2">
           <p className="text-xs text-ink-3">
-            Galat file chadh gayi ho to us import par &quot;Ye import hatao&quot;.
-            {!canRemove && <> Import hatana sirf owner ya accountant kar sakte hain.</>}
+            Imported the wrong file? Use &quot;Remove import&quot; on that import.
+            {!canRemove && <> Only the owner or an accountant can remove an import.</>}
           </p>
 
           {active.length > 0 && (
@@ -165,7 +165,7 @@ export function BankImportsSection({ accountId, transactions, openingBalance, ro
               {shown.map((r) => {
                 const fx = effects.get(importKey(r));
                 const name = fileLabel(r);
-                const tip = [name, r.imported_by ? `Kisne: ${r.imported_by}` : null,
+                const tip = [name, r.imported_by ? `Imported by: ${r.imported_by}` : null,
                   r.first_balance !== null && r.last_balance !== null ? `Balance ${rupee(r.first_balance)} → ${rupee(r.last_balance)}` : null]
                   .filter(Boolean).join(" · ");
                 return (
@@ -184,14 +184,14 @@ export function BankImportsSection({ accountId, transactions, openingBalance, ro
                       </div>
                       {canRemove && (
                         <Button size="sm" variant="default" icon="trash" className="shrink-0" onClick={() => setRemoving(r)}>
-                          Ye import hatao
+                          Remove import
                         </Button>
                       )}
                     </div>
                     {fx && (
                       <p className="text-xs text-amber-ink mt-1">
-                        Is import ki balance chain baaki lines se mel nahi khaati — ise hatane se &quot;Lines missing&quot;{" "}
-                        {rupee(fx.before)} se {rupee(fx.after)} ho jaata hai.
+                        This import's balance chain does not match the other lines — removing it changes &quot;Lines missing&quot;{" "}
+                        from {rupee(fx.before)} to {rupee(fx.after)}.
                       </p>
                     )}
                   </li>
@@ -202,14 +202,14 @@ export function BankImportsSection({ accountId, transactions, openingBalance, ro
 
           {active.length > FIRST_ROWS && (
             <Button size="sm" variant="ghost" className="mt-1" onClick={() => setShowAll((v) => !v)}>
-              {showAll ? "Kam dikhao" : `Aur ${active.length - FIRST_ROWS} dikhao`}
+              {showAll ? "Show fewer" : `Show ${active.length - FIRST_ROWS} more`}
             </Button>
           )}
 
           {gone.length > 0 && (
             <div className="mt-1">
               <Button size="sm" variant="ghost" aria-expanded={showGone} aria-controls={goneId} onClick={() => setShowGone((v) => !v)}>
-                Hataye gaye ({gone.length})
+                Removed ({gone.length})
               </Button>
               {showGone && (
                 <ul id={goneId} className="divide-y divide-hairline">
@@ -217,8 +217,8 @@ export function BankImportsSection({ accountId, transactions, openingBalance, ro
                     <li key={importKey(r) + (r.removed_at ?? "")} className="py-1.5 text-xs text-ink-3 min-w-0">
                       <span className="whitespace-nowrap">{formatDate(r.imported_at)}</span>
                       {" · "}<span className="break-all" title={fileLabel(r)}>{fileLabel(r)}</span>
-                      {" · "}{r.removed_lines ?? r.line_count} lines thi
-                      {" · "}Hataya {formatDate(r.removed_at)}{r.removed_by ? ` · ${r.removed_by}` : ""}
+                      {" · "}{r.removed_lines ?? r.line_count} lines
+                      {" · "}Removed {formatDate(r.removed_at)}{r.removed_by ? ` · ${r.removed_by}` : ""}
                       {r.remove_reason ? <> · &ldquo;{r.remove_reason}&rdquo;</> : null}
                     </li>
                   ))}
@@ -259,7 +259,7 @@ function RemoveImportDialog({ accountId, imp, transactions, onClose, onUnreconci
   async function confirm() {
     if (!imp) return;
     if (reason.trim().length < 3) {
-      setProblem("Import kyun hata rahe ho, wajah likho (kam se kam 3 akshar) — ye activity log mein jaati hai.");
+      setProblem("Enter a reason for removing this import (at least 3 characters) — it is saved in the activity log.");
       return;
     }
     setProblem(null);
@@ -267,9 +267,9 @@ function RemoveImportDialog({ accountId, imp, transactions, onClose, onUnreconci
       await remove.mutateAsync(removeImportArgs(imp, accountId, reason));
       onClose();
     } catch (err) {
-      const msg = (err as { message?: string } | null)?.message ?? "Import nahi hata.";
+      const msg = (err as { message?: string } | null)?.message ?? "Could not remove the import.";
       setProblem(msg);
-      toastError(err, { fallback: "Import nahi hata.", description: "Kuch nahi hata — dialog mein wajah aur agla kadam likha hai." });
+      toastError(err, { fallback: "Could not remove the import.", description: "Nothing was removed — the dialog shows the reason and the next step." });
     }
   }
 
@@ -279,14 +279,14 @@ function RemoveImportDialog({ accountId, imp, transactions, onClose, onUnreconci
         {reconciled.length > 0 ? (
           <>
             <DialogHeader>
-              <DialogTitle>Ye import abhi nahi hat sakta</DialogTitle>
+              <DialogTitle>This import cannot be removed yet</DialogTitle>
               <DialogDescription>
-                Ye {reconciled.length} lines reconcile hain — pehle Un-reconcile karo.
+                {reconciled.length} of its lines are reconciled — un-reconcile them first.
               </DialogDescription>
             </DialogHeader>
             <p className="text-sm text-ink-2">
-              Inse payment / expense / booking judi hai. Import hatane se wo bina bank line ke reh jaate, isliye pehle har line
-              ko Un-reconcile karo, phir &quot;Ye import hatao&quot; dobara dabao.
+              A payment, expense or booking is linked to these lines. Removing the import would leave them without a bank line, so
+              un-reconcile each line first, then click &quot;Remove import&quot; again.
             </p>
             <ul className="mt-2 max-h-72 overflow-auto divide-y divide-hairline rounded-md border border-hairline">
               {reconciled.slice(0, 100).map((t) => (
@@ -302,41 +302,41 @@ function RemoveImportDialog({ accountId, imp, transactions, onClose, onUnreconci
             </ul>
             {reconciled.length > 100 && (
               <p className="text-xs text-ink-3 mt-1">
-                Pehli 100 dikhayi hain — baaki account page ke &quot;Reconciled&quot; tab mein milengi.
+                Showing the first 100 — the rest are in the account's &quot;Reconciled&quot; tab.
               </p>
             )}
             <DialogFooter>
-              <Button type="button" variant="default" onClick={onClose}>Theek hai</Button>
+              <Button type="button" variant="default" onClick={onClose}>OK</Button>
             </DialogFooter>
           </>
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>Ye import hatao?</DialogTitle>
+              <DialogTitle>Remove this import?</DialogTitle>
               <DialogDescription>
                 {imp ? `${imp.file_name ?? sourceLabel(imp.source)} · ${formatDate(imp.imported_at, "long")}` : ""}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 text-sm text-ink-2">
               <p>
-                Is import ki <b>{count} lines</b> ({imp ? dateRange(imp.txn_from, imp.txn_to) : ""}) is account se hat jaayengi.
-                Baaki imports aur haath se daali lines waise hi rahengi. Sahi statement baad mein dobara import kar sakte ho.
+                This import's <b>{count} lines</b> ({imp ? dateRange(imp.txn_from, imp.txn_to) : ""}) will be removed from this account.
+                Other imports and manually added lines stay as they are. You can import the correct statement later.
               </p>
               <div>
-                <label htmlFor="r1623-reason" className="block text-xs font-semibold text-ink-2 mb-1">Kyun hata rahe ho?</label>
+                <label htmlFor="r1623-reason" className="block text-xs font-semibold text-ink-2 mb-1">Reason for removing</label>
                 <Textarea
                   id="r1623-reason"
                   rows={2}
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  placeholder="Jaise: galat file chadh gayi, dobara sahi PDF import karenge"
+                  placeholder="e.g. Wrong file imported — will import the correct PDF"
                 />
               </div>
               {problem && (
                 <div role="alert" className="rounded-md border border-rose/40 bg-rose-soft/30 p-3 text-[13px] text-rose-ink">
                   {problem}
                   {/Month-end close/.test(problem) && (
-                    <> {" "}<Link href={"/accounting/close" as never} className="underline">Month-end close kholo</Link></>
+                    <> {" "}<Link href={"/accounting/close" as never} className="underline">Open Month-end close</Link></>
                   )}
                 </div>
               )}
@@ -344,7 +344,7 @@ function RemoveImportDialog({ accountId, imp, transactions, onClose, onUnreconci
             <DialogFooter>
               <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
               <Button type="button" variant="danger" loading={remove.isPending} onClick={confirm}>
-                {count} lines hatao
+                Remove {count} lines
               </Button>
             </DialogFooter>
           </>

@@ -448,7 +448,7 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
     const vendorState = stateCodeFromGstin(e.vendorGstin);
     const heads = expenseHeadsByState(h, vendorState, ownStateCode);
     const byState = !h.measured && heads.igst > h.igst;
-    return { ...heads, measured: h.measured, assumption: byState ? `Bill par batwara nahi tha — vendor GSTIN doosre rajya (${vendorState}) ka hai, isliye IGST maana gaya` : h.assumption };
+    return { ...heads, measured: h.measured, assumption: byState ? `The bill had no GST split — the vendor GSTIN is from another state (${vendorState}), so IGST is assumed` : h.assumption };
   };
   /* s.17(5) blocked rows keep their heads: 3B wants them in 4(A)(5) and again in 4(B)(1). */
   const blocked17Heads: Heads[] = withGstin

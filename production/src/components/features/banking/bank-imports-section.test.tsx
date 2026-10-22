@@ -76,33 +76,33 @@ function renderSection(role = "owner", ls = lines, onUnreconcileLine = vi.fn()) 
 }
 
 /** The "Dikhao / Chhupao" toggle of the whole card. */
-const mainToggle = () => screen.getByRole("button", { name: /^(Dikhao|Chhupao)$/ });
-function expand() { fireEvent.click(screen.getByRole("button", { name: /^Dikhao$/ })); }
+const mainToggle = () => screen.getByRole("button", { name: /^(Show|Hide)$/ });
+function expand() { fireEvent.click(screen.getByRole("button", { name: /^Show$/ })); }
 
 describe("R-1695 — compact Imports card", () => {
-  it("starts collapsed: one summary line with chalu / hataye counts and the latest import; no rows", () => {
+  it("starts collapsed: one summary line with active / removed counts and the latest import; no rows", () => {
     history = [pdf, removed, old];
     renderSection();
     const summary = screen.getByTestId("imports-summary");
-    expect(summary.textContent).toContain("2 chalu");
-    expect(summary.textContent).toContain("1 hataye");
-    expect(summary.textContent).toContain("aakhri: 19 Oct 2026");
+    expect(summary.textContent).toContain("2 active");
+    expect(summary.textContent).toContain("1 removed");
+    expect(summary.textContent).toContain("last: 19 Oct 2026");
     expect(summary.textContent).toContain("HDFC Aug.pdf");
     expect(mainToggle().getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryAllByRole("listitem")).toHaveLength(0);
-    expect(screen.queryByRole("button", { name: /Ye import hatao/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Remove import/ })).toBeNull();
   });
 
   it("R-1720: a ' · ' separates the latest import's date from its file label", () => {
     history = [row({ batch_id: "b9", file_name: null, source: "csv", line_count: 1, imported_at: "2026-10-20T06:00:00+00:00" })];
     renderSection();
-    expect(screen.getByTestId("imports-summary").textContent).toContain("aakhri: 20 Oct 2026 · file ka naam nahi");
+    expect(screen.getByTestId("imports-summary").textContent).toContain("last: 20 Oct 2026 · no file name");
   });
 
-  it("the latest import with no file name shows as 'Purana import'", () => {
+  it("the latest import with no file name shows as 'Old import'", () => {
     history = [old];
     renderSection();
-    expect(screen.getByTestId("imports-summary").textContent).toContain("Purana import");
+    expect(screen.getByTestId("imports-summary").textContent).toContain("Old import");
   });
 
   it("aria-expanded follows the toggle, and the choice is remembered for the next visit", () => {
@@ -110,7 +110,7 @@ describe("R-1695 — compact Imports card", () => {
     renderSection();
     expand();
     expect(mainToggle().getAttribute("aria-expanded")).toBe("true");
-    expect(mainToggle().textContent).toBe("Chhupao");
+    expect(mainToggle().textContent).toBe("Hide");
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
     cleanup();
     renderSection();
@@ -125,8 +125,8 @@ describe("R-1695 — compact Imports card", () => {
     forcedFx = { before: 5000, after: 0 };
     renderSection();
     expect(mainToggle().getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByTestId("imports-summary").textContent).toMatch(/chain mel nahi/);
-    expect(screen.getAllByText(/balance chain baaki lines se mel nahi khaati/).length).toBeGreaterThan(0);
+    expect(screen.getByTestId("imports-summary").textContent).toMatch(/balance chain mismatch/);
+    expect(screen.getAllByText(/balance chain does not match the other lines/).length).toBeGreaterThan(0);
   });
 
   it("expanded shows ACTIVE imports only, newest first, one row each with date, source, file, lines, range and its remove button", () => {
@@ -140,28 +140,28 @@ describe("R-1695 — compact Imports card", () => {
     expect(items[0].textContent).toContain("2 lines");
     expect(items[0].textContent).toContain("1 Aug 2026 – 31 Aug 2026");
     expect(within(items[0]).getByText("HDFC Aug.pdf").getAttribute("title")).toContain("Pardeep");
-    expect(within(items[0]).getByRole("button", { name: /Ye import hatao/ })).toBeTruthy();
-    expect(items[1].textContent).toContain("Purana import");
+    expect(within(items[0]).getByRole("button", { name: /Remove import/ })).toBeTruthy();
+    expect(items[1].textContent).toContain("Old import");
     expect(items[1].textContent).toContain("17 Oct 2026");
     expect(screen.queryByText(/galat\.csv/)).toBeNull();
   });
 
-  it("shows 5 active imports, then 'Aur N dikhao' for the rest", () => {
+  it("shows 5 active imports, then 'Show N more' for the rest", () => {
     history = Array.from({ length: 7 }, (_, i) => row({ batch_id: `b${i}`, file_name: `f${i}.pdf`, line_count: 1,
       imported_at: `2026-10-${String(10 + i).padStart(2, "0")}T06:00:00+00:00` }));
     renderSection();
     expand();
     expect(screen.getAllByRole("listitem")).toHaveLength(5);
     expect(screen.getAllByRole("listitem")[0].textContent).toContain("f6.pdf");
-    fireEvent.click(screen.getByRole("button", { name: "Aur 2 dikhao" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show 2 more" }));
     expect(screen.getAllByRole("listitem")).toHaveLength(7);
   });
 
-  it("removed imports sit behind their own 'Hataye gaye (M)' toggle — grey, one line with when / who / why, no remove button", () => {
+  it("removed imports sit behind their own 'Removed (M)' toggle — grey, one line with when / who / why, no remove button", () => {
     history = [pdf, removed];
     renderSection();
     expand();
-    const t = screen.getByRole("button", { name: "Hataye gaye (1)" });
+    const t = screen.getByRole("button", { name: "Removed (1)" });
     expect(t.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText(/dobara chadh gaya/)).toBeNull();
     fireEvent.click(t);
@@ -170,11 +170,11 @@ describe("R-1695 — compact Imports card", () => {
     expect(items).toHaveLength(2);
     const gone = items[1];
     expect(gone.textContent).toContain("galat.csv");
-    expect(gone.textContent).toContain("5 lines thi");
-    expect(gone.textContent).toContain("Hataya 18 Oct 2026");
+    expect(gone.textContent).toContain("5 lines");
+    expect(gone.textContent).toContain("Removed 18 Oct 2026");
     expect(gone.textContent).toContain("Pardeep");
     expect(gone.textContent).toContain("dobara chadh gaya");
-    expect(within(gone).queryByRole("button", { name: /Ye import hatao/ })).toBeNull();
+    expect(within(gone).queryByRole("button", { name: /Remove import/ })).toBeNull();
   });
 
   it("renders fine when localStorage throws", () => {
@@ -191,24 +191,24 @@ describe("Imports list", () => {
     history = [pdf];
     renderSection("sales");
     expand();
-    expect(screen.queryByRole("button", { name: /Ye import hatao/ })).toBeNull();
-    expect(screen.getByText(/sirf owner ya accountant/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Remove import/ })).toBeNull();
+    expect(screen.getByText(/Only the owner or an accountant/)).toBeTruthy();
   });
 });
 
-describe("Ye import hatao", () => {
+describe("Remove import", () => {
   it("asks for a reason, then sends exactly that old import's insert-time range", async () => {
     history = [old];
     renderSection("accountant");
     expand();
-    fireEvent.click(screen.getByRole("button", { name: /Ye import hatao/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Remove import/ }));
     const dialog = screen.getByRole("dialog");
     expect(dialog.textContent).toContain("2 lines");
-    fireEvent.click(within(dialog).getByRole("button", { name: /2 lines hatao/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /Remove 2 lines/ }));
     expect(mutateAsync).not.toHaveBeenCalled();
-    expect(within(dialog).getByRole("alert").textContent).toMatch(/wajah likho/);
-    fireEvent.change(within(dialog).getByLabelText(/Kyun hata rahe ho/), { target: { value: "17 Oct ka galat import" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: /2 lines hatao/ }));
+    expect(within(dialog).getByRole("alert").textContent).toMatch(/Enter a reason/);
+    fireEvent.change(within(dialog).getByLabelText(/Reason for removing/), { target: { value: "17 Oct ka galat import" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /Remove 2 lines/ }));
     expect(mutateAsync).toHaveBeenCalledWith({
       p_account_id: "acc1", p_batch_id: null,
       p_legacy_from: "2026-10-17T11:29:06.123456Z", p_legacy_to: "2026-10-17T11:29:06.123456Z",
@@ -221,11 +221,11 @@ describe("Ye import hatao", () => {
     const ls = [txn("p1", { import_batch_id: "b1", matched_to_type: "expense", debit: 4500 }), txn("p2", { import_batch_id: "b1" })];
     const { onUnreconcileLine } = renderSection("owner", ls);
     expand();
-    fireEvent.click(screen.getByRole("button", { name: /Ye import hatao/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Remove import/ }));
     const dialog = screen.getByRole("dialog");
-    expect(dialog.textContent).toContain("Ye 1 lines reconcile hain — pehle Un-reconcile karo");
+    expect(dialog.textContent).toContain("1 of its lines are reconciled — un-reconcile them first");
     expect(dialog.textContent).toContain("LINE p1");
-    expect(within(dialog).queryByRole("button", { name: /lines hatao/ })).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: /Remove d+ lines/ })).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: /Un-reconcile/ }));
     expect(onUnreconcileLine).toHaveBeenCalledWith(expect.objectContaining({ id: "p1" }));
   });
@@ -235,10 +235,10 @@ describe("Ye import hatao", () => {
     mutateAsync.mockRejectedValueOnce({ message: "Is import ki 2 lines (pehli 02 Aug 2026 ki) band books me hain — books 31 Aug 2026 tak lock hain. Owner Accounting → Month-end close par lock kholein, phir import hatao." });
     renderSection();
     expand();
-    fireEvent.click(screen.getByRole("button", { name: /Ye import hatao/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Remove import/ }));
     const dialog = screen.getByRole("dialog");
-    fireEvent.change(within(dialog).getByLabelText(/Kyun hata rahe ho/), { target: { value: "galat file" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: /2 lines hatao/ }));
+    fireEvent.change(within(dialog).getByLabelText(/Reason for removing/), { target: { value: "galat file" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /Remove 2 lines/ }));
     expect((await within(dialog).findByRole("alert")).textContent).toContain("Month-end close");
   });
 });

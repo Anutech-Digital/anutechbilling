@@ -158,7 +158,7 @@ export default function BankAccountDetailPage() {
     }
     setTab("unmatched");
     if (target) setReconcileTxn(target);
-    else toast("Us amount ki koi unmatched bank line nahi mili — neeche se manually reconcile karo.");
+    else toast("No unmatched bank line for that amount — reconcile it manually below.");
     window.history.replaceState(null, "", window.location.pathname);
   }, [transactions]);
 

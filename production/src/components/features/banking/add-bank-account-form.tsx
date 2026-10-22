@@ -264,10 +264,10 @@ export function AddBankAccountForm({ open, onOpenChange, account }: Props) {
 
             {isCard && (
               <div className="rounded-md bg-indigo-soft/50 border border-indigo/30 px-3 py-2 text-xs text-indigo-ink leading-relaxed">
-                <b>Company credit card.</b> Ye ek <b>owe / udhari</b> hai — jo paisa aapko chukana hai.
-                Card ke kharche is card par transaction ke roop me add karke expense categorise
-                karo; jab card ka bill pay karo to <b>Transfer</b> (bank → ye card) use karo —
-                bill ko dobara fresh expense mat banao, warna kharcha do baar count hoga.
+                <b>Company credit card.</b> This is a <b>liability</b> — money you have to pay back.
+                Add card spends as transactions on this card and categorise them as expenses;
+                when you pay the card bill, use <b>Transfer</b> (bank → this card) —
+                do not record the bill again as a new expense, or the spend is counted twice.
               </div>
             )}
 
@@ -290,7 +290,7 @@ export function AddBankAccountForm({ open, onOpenChange, account }: Props) {
             </FormField>
 
             <div className="grid grid-cols-2 gap-3">
-              <FormField label={isCard ? "Abhi kitna owe / udhari (₹)" : "Opening balance (₹)"} htmlFor="opening_balance">
+              <FormField label={isCard ? "Outstanding on the card (₹)" : "Opening balance (₹)"} htmlFor="opening_balance">
                 <Input
                   id="opening_balance"
                   type="text"
@@ -313,7 +313,7 @@ export function AddBankAccountForm({ open, onOpenChange, account }: Props) {
             </div>
             <p className="text-xs text-ink-3 -mt-2 leading-relaxed">
               {isCard
-                ? "Upar wali date tak is card par jo owe / udhari hai wo daalo (positive number). Naye card kharche isme jud jaate hain; bill pay karne se ghat jaati hai."
+                ? "Enter the amount outstanding on this card as of the date above (a positive number). New card spends add to it; paying the bill reduces it."
                 : "Opening balance = money in this account on the “as of” date, BEFORE any transaction you import. Set it to the closing balance on your bank statement just before your first imported line — the running balance builds on top of it."}
             </p>
 

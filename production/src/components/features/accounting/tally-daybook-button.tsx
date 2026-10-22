@@ -81,8 +81,8 @@ export default function TallyDaybookButton({ period, companyName }: TallyDaybook
           + "Import: Gateway of Tally → Import Data → Vouchers. Ledgers Sales, Output CGST/SGST/IGST, Round Off, Bank and every party must already exist in Tally.",
       });
     } catch (e) {
-      toast.error("Tally day book nahi ban payi", {
-        description: `${e instanceof Error ? e.message : "Unknown error"} — page refresh karke dobara try karo; phir bhi ho to period chhota karke dekho.`,
+      toast.error("Could not create the Tally day book", {
+        description: `${e instanceof Error ? e.message : "Unknown error"} — refresh the page and try again; if it still fails, try a shorter period.`,
       });
     } finally {
       setBusy(false);
@@ -91,7 +91,7 @@ export default function TallyDaybookButton({ period, companyName }: TallyDaybook
 
   return (
     <Button size="sm" variant="outline" icon="upload" onClick={onClick} disabled={busy}>
-      {busy ? "Banaa rahe…" : "Tally day book"}
+      {busy ? "Creating…" : "Tally day book"}
     </Button>
   );
 }

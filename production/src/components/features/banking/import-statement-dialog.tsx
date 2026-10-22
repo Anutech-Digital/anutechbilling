@@ -134,7 +134,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   const [origin, setOrigin] = React.useState<{ name: string | null; source: ImportOrigin } | null>(null);
 
   // Rotating status while the AI reads — so a multi-second read never looks stuck.
-  const READ_MSGS = ["File khol rahe hai…", "Transactions dhoondh rahe hai…", "Rows nikaal rahe hai…", "Amounts check kar rahe hai…", "Almost done…"];
+  const READ_MSGS = ["Opening the file…", "Finding transactions…", "Extracting rows…", "Checking amounts…", "Almost done…"];
   React.useEffect(() => {
     if (!reading) { setReadMsgIdx(0); return; }
     const t = setInterval(() => setReadMsgIdx((i) => Math.min(i + 1, READ_MSGS.length - 1)), 1600);
@@ -298,8 +298,8 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           },
         });
         if (checked.failed.length > 0) {
-          toast.warning(`Page ${checked.failed.map(pagesLabel).join(", ")} nahi padh paaye — baaki rows preview mein hain.`, {
-            description: "Import se pehle preview ki warning padho: un pages ki entries alag se (CSV / chhota PDF) import karni hongi.",
+          toast.warning(`Page ${checked.failed.map(pagesLabel).join(", ")} could not be read — the other rows are in the preview.`, {
+            description: "Read the preview warning before importing: entries from those pages must be imported separately (CSV / a smaller PDF).",
             duration: 12000,
           });
         }
@@ -399,7 +399,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       return;
     }
     if (blocked) {
-      toast.error("Statement ki kuch lines preview mein nahi hain.", { description: "Preview ka laal block padho — CSV / Excel import karo, ya jaante hue adhoore import ke liye tick lagao." });
+      toast.error("Some statement lines are missing from the preview.", { description: "Read the red box in the preview — import a CSV / Excel file instead, or tick the box to import the incomplete statement knowingly." });
       return;
     }
     try {
@@ -450,9 +450,9 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           <SheetTitle>Import bank statement</SheetTitle>
           <SheetDescription>
             Upload a <b>PDF</b> statement, an <b>Excel</b> (.xls / .xlsx) or a <b>.csv</b> file (or paste
-            the text below). PDF ko AI padh ke rows nikaal deta hai; Excel aur CSV auto-detect hoti
-            hai (Date / Description / Debit / Credit). Aap import se pehle preview
-            check karo.
+            the text below). AI reads the PDF and extracts the rows; Excel and CSV columns are
+            detected automatically (Date / Description / Debit / Credit). Check the preview
+            before importing.
           </SheetDescription>
         </SheetHeader>
 
@@ -469,11 +469,11 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                   <>
                     <span className="text-sm font-medium text-ink" role="status" aria-live="polite">
                       {rereadProgress.reading.length > 0
-                        ? `Balance chain toot rahi thi — page ${rereadProgress.reading.join(", ")} dobara padh rahe hain…`
-                        : "Balance chain jaanch rahe hain…"}
+                        ? `Balance chain broke — re-reading page ${rereadProgress.reading.join(", ")}…`
+                        : "Checking the balance chain…"}
                     </span>
                     <span className="text-xs text-ink-3 tabular-nums">
-                      {rereadProgress.done} / {rereadProgress.total} page dobara padhe — chhooti lines dhoondh rahe hain
+                      {rereadProgress.done} / {rereadProgress.total} pages re-read — looking for missing lines
                     </span>
                   </>
                 ) : chunkProgress ? (
@@ -481,8 +481,8 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                   <>
                     <span className="text-sm font-medium text-ink" role="status" aria-live="polite">
                       {chunkProgress.reading.length > 0
-                        ? `Page ${chunkProgress.reading[0].from}–${chunkProgress.reading[chunkProgress.reading.length - 1].to} of ${chunkProgress.pageCount} padh rahe hain…`
-                        : `${chunkProgress.pageCount} page ka statement padh rahe hain…`}
+                        ? `Page ${chunkProgress.reading[0].from}–${chunkProgress.reading[chunkProgress.reading.length - 1].to} of ${chunkProgress.pageCount}…`
+                        : `Reading a ${chunkProgress.pageCount}-page statement…`}
                     </span>
                     <div
                       className="w-44 h-1.5 rounded-full bg-hairline overflow-hidden"
@@ -498,7 +498,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                       />
                     </div>
                     <span className="text-xs text-ink-3 tabular-nums">
-                      {chunkProgress.pagesDone} / {chunkProgress.pageCount} page ho gaye — lamba statement hisson mein padha ja raha hai
+                      {chunkProgress.pagesDone} / {chunkProgress.pageCount} pages done — a long statement is read in parts
                     </span>
                   </>
                 ) : (
@@ -507,7 +507,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                     <div className="w-44 h-1.5 rounded-full bg-hairline overflow-hidden">
                       <div className="h-full w-1/3 rounded-full bg-amber" style={{ animation: "ros-loadbar 1.1s ease-in-out infinite" }} />
                     </div>
-                    <span className="text-xs text-ink-3">Bade statement mein thoda zyada waqt lag sakta hai — ruko mat 😊</span>
+                    <span className="text-xs text-ink-3">A large statement can take a little longer — please wait.</span>
                   </>
                 )}
               </div>
@@ -515,7 +515,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
               <label className="cursor-pointer flex flex-col items-center text-center gap-2">
                 <Icon name="upload" size={20} className="text-ink-3" />
                 <span className="text-sm font-medium">Choose file — PDF / Excel / CSV</span>
-                <span className="text-xs text-ink-3">Bank statement PDF (AI reads it) · Excel .xls / .xlsx · ya .csv / .txt (HDFC &quot;Delimited&quot;) · up to 8 MB</span>
+                <span className="text-xs text-ink-3">Bank statement PDF (AI reads it) · Excel .xls / .xlsx · or .csv / .txt (HDFC &quot;Delimited&quot;) · up to 8 MB</span>
                 <input
                   type="file"
                   accept=".csv,.txt,.xls,.xlsx,text/csv,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf,image/*"
@@ -573,7 +573,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
               {dupCount > 0 && (
                 <p className="text-xs text-amber-ink mb-2 flex items-start gap-1.5">
                   <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
-                  {dupCount} line{dupCount === 1 ? "" : "s"} pehle se books me hain — ye <b>skip</b> ho jaayengi{freshCount > 0 ? ` (sirf ${freshCount} nayi import hongi)` : " (kuch naya nahi)"}.
+                  {dupCount} line{dupCount === 1 ? "" : "s"} already in the books — they will be <b>skipped</b>{freshCount > 0 ? ` (only ${freshCount} new will be imported)` : " (nothing new)"}.
                 </p>
               )}
               {parsed.rows.length > 0 && (
@@ -765,9 +765,9 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           )}
 
           <div className="rounded-md bg-indigo-50 border border-indigo/20 px-3 py-2 text-xs text-indigo-ink">
-            <b>Tip:</b> Net banking se statement <b>PDF</b>, <b>Excel</b> ya <b>CSV</b> — sab chalti hai.
-            PDF ko AI padh leta hai, Excel aur CSV auto-detect hoti hai (HDFC, ICICI, SBI, Axis,
-            Kotak, IndusInd, Yes Bank). Import se pehle preview zaroor check karo.
+            <b>Tip:</b> Download the statement from net banking as <b>PDF</b>, <b>Excel</b> or <b>CSV</b> — all work.
+            AI reads the PDF; Excel and CSV are detected automatically (HDFC, ICICI, SBI, Axis,
+            Kotak, IndusInd, Yes Bank). Always check the preview before importing.
           </div>
         </div>
 
@@ -779,14 +779,14 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
             variant="primary"
             icon="upload"
             disabled={(freshCount === 0 && !openingOn) || blocked}
-            title={blocked ? "Statement ki kuch lines nahi hain — preview ka laal block dekho" : undefined}
+            title={blocked ? "Some statement lines are missing — see the red box in the preview" : undefined}
             loading={importMut.isPending || updateAccount.isPending}
             onClick={handleImport}
           >
             {freshCount === 0 && openingOn
               ? "Set opening balance"
               : dupCount > 0 && freshCount === 0
-                ? "Sab pehle se hain"
+                ? "All already imported"
                 : `Import ${freshCount} row${freshCount === 1 ? "" : "s"}${openingOn ? " + opening balance" : ""}`}
           </Button>
         </SheetFooter>

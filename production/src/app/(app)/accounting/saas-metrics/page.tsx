@@ -673,8 +673,8 @@ export default function SaasMetricsPage() {
                   )
                 )}
                 <li>
-                  At current ARPC + churn, average customer ka lifetime value <b>{rupee(data.ltvEstimate)}</b> hai.
-                  Yani har new customer acquire karne pe ₹{(data.ltvEstimate / 4).toFixed(0)} tak spend karna ROI positive hai (4× LTV/CAC ratio).
+                  At current ARPC + churn, the average customer's lifetime value is <b>{rupee(data.ltvEstimate)}</b>.
+                  So spending up to ₹{(data.ltvEstimate / 4).toFixed(0)} to acquire each new customer is ROI-positive (4× LTV/CAC ratio).
                 </li>
               </ul>
             </Card>

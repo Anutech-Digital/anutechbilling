@@ -67,7 +67,7 @@ export function FixedAssetRegister() {
         <Skeleton className="h-16 w-full" />
       ) : rows.length === 0 ? (
         <Card className="py-2">
-          <EmptyState icon="layout" title="Koi asset register mein nahi" body="Laptop, phone, furniture, AC — jo bhi ₹ 10,000+ ka saalon chalega, yahan jodo (Equipment kharche se bhi utha sakte ho). Depreciation apne aap." />
+          <EmptyState icon="layout" title="No assets in the register" body="Add laptops, phones, furniture, ACs — anything over ₹ 10,000 that lasts for years (you can also pick it from an Equipment expense). Depreciation is automatic." />
         </Card>
       ) : (
         <>
@@ -99,13 +99,13 @@ export function FixedAssetRegister() {
                         <td className="px-3 py-2 text-ink">{a.name}{holder.get(a.id) && <span className="ml-2 text-xs text-indigo">with {holder.get(a.id)}</span>}{sold && <span className="ml-2 text-xs text-ink-3">sold {formatDate(a.disposed_on!)} for {rupee(a.disposal_value)}</span>}</td>
                         <td className="px-3 py-2 text-ink-2 text-xs">{BLOCKS[a.block].label} · {BLOCKS[a.block].ratePct}%</td>
                         <td className="px-3 py-2 text-right font-mono">{rupee(a.cost)}</td>
-                        <td className="px-3 py-2 text-ink-2 text-xs">{formatDate(a.put_to_use)}{fyStartOf(a.put_to_use) === fy && depreciationSchedule(a, fy)[0]?.halfRate ? <span className="ml-1 text-amber-ink">(½ rate — &lt;180 din)</span> : null}</td>
+                        <td className="px-3 py-2 text-ink-2 text-xs">{formatDate(a.put_to_use)}{fyStartOf(a.put_to_use) === fy && depreciationSchedule(a, fy)[0]?.halfRate ? <span className="ml-1 text-amber-ink">(½ rate — &lt;180 days)</span> : null}</td>
                         <td className="px-3 py-2 text-right font-mono text-amber-ink">{rupee(depreciationInFy(a, fy))}</td>
                         <td className="px-3 py-2 text-right font-mono font-semibold text-ink">{rupee(bookValueAt(a, today))}</td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">
                           {!sold && <Button variant="ghost" size="sm" onClick={() => setDisposeFor(a)}>Sold / scrap</Button>}
                           <button type="button" aria-label="Delete asset" className="rounded p-1.5 text-ink-3 hover:bg-paper-2 hover:text-rose"
-                            onClick={async () => { if (await confirm({ title: "Asset register se hatayein?", body: `${a.name} — sirf register se hatega; jis kharche/EMI se aaya tha wo waisa hi rahega.`, confirmLabel: "Hatao", danger: true })) del.mutate(a.id); }}>
+                            onClick={async () => { if (await confirm({ title: "Remove from the asset register?", body: `${a.name} — removed from the register only; the expense / EMI it came from stays as it is.`, confirmLabel: "Remove", danger: true })) del.mutate(a.id); }}>
                             <Icon name="trash" size={14} />
                           </button>
                         </td>
@@ -172,14 +172,14 @@ function AddAssetDialog({ onClose }: { onClose: () => void }) {
       <DialogContent className="md:!max-w-lg">
         <DialogHeader>
           <DialogTitle>Add fixed asset</DialogTitle>
-          <DialogDescription>Cost GST ke bina (ITC liya ho to). Put-to-use date se depreciation shuru — 180 din se kam chala to us saal aadha rate.</DialogDescription>
+          <DialogDescription>Cost without GST (if ITC was claimed). Depreciation starts from the put-to-use date — used under 180 days in the year means half the rate that year.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <FormField label="Kahan se aaya" htmlFor="fa_src">
+          <FormField label="Source" htmlFor="fa_src">
             <select id="fa_src" value={source} onChange={(e) => pickSource(e.target.value)} className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink">
-              <option value="">Naya — haath se bharo</option>
+              <option value="">New — enter manually</option>
               {(emis ?? []).filter((p) => !usedEmi.has(p.id)).map((p) => <option key={p.id} value={`emi:${p.id}`}>EMI purchase · {p.name} · {rupee(p.total_cost)} · {formatDate(p.purchased_on)}</option>)}
-              {(candidates ?? []).filter((c) => !usedExp.has(c.id)).map((c) => <option key={c.id} value={`exp:${c.id}`}>Equipment kharcha · {c.vendor_name ?? c.description ?? c.id} · {rupee((c.amount ?? 0) - (c.gst_paid ?? 0))} · {formatDate(c.expense_date)}</option>)}
+              {(candidates ?? []).filter((c) => !usedExp.has(c.id)).map((c) => <option key={c.id} value={`exp:${c.id}`}>Equipment expense · {c.vendor_name ?? c.description ?? c.id} · {rupee((c.amount ?? 0) - (c.gst_paid ?? 0))} · {formatDate(c.expense_date)}</option>)}
             </select>
           </FormField>
           <FormField label="Asset" required htmlFor="fa_name"><Input id="fa_name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. MacBook Air M3 — Pardeep" /></FormField>
@@ -194,7 +194,7 @@ function AddAssetDialog({ onClose }: { onClose: () => void }) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Put to use" required htmlFor="fa_date"><Input id="fa_date" type="date" value={putToUse} max={todayIso()} onChange={(e) => setPutToUse(e.target.value)} /></FormField>
-            <FormField label="Note" htmlFor="fa_notes"><Input id="fa_notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="serial no., kiske paas" /></FormField>
+            <FormField label="Note" htmlFor="fa_notes"><Input id="fa_notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="serial no., who has it" /></FormField>
           </div>
         </div>
         <DialogFooter>
@@ -214,7 +214,7 @@ function DisposeDialog({ asset, onClose, onSave, pending }: { asset: FixedAsset;
       <DialogContent className="md:!max-w-md">
         <DialogHeader>
           <DialogTitle>Sold / scrapped — {asset.name}</DialogTitle>
-          <DialogDescription>Us saal depreciation nahi lagegi; WDV aur mili raqam ka farq block par gain/loss hai (CA ke liye schedule mein likha aata hai).</DialogDescription>
+          <DialogDescription>No depreciation in that year; the difference between WDV and the amount received is a gain / loss on the block (shown in the schedule for your CA).</DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-3">
           <FormField label="Date" required htmlFor="fd_date"><Input id="fd_date" type="date" value={date} min={asset.put_to_use} max={todayIso()} onChange={(e) => setDate(e.target.value)} /></FormField>

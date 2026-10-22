@@ -121,7 +121,7 @@ export function TdsDetailDialog({ open, onOpenChange, tds }: Props) {
       case "pending_cert":
         return `Hi ${tds.customer_name}, you deducted ${rupee(tds.tds_amount)} TDS (${tds.section} @ ${Number(tds.rate_pct).toFixed(2)}%) on our invoice. ${tds.fiscal_year} is closing — kindly share Form 16A certificate so I can claim it in my ITR. Thanks — Pardeep`;
       case "disputed":
-        return `Hi ${tds.customer_name}, the ${rupee(tds.tds_amount)} TDS you deducted doesn't appear in my Form 26AS for ${tds.fiscal_year}. Could you confirm it was deposited with govt? BSR code / Challan number share kar do please — bohut zaruri hai. — Pardeep`;
+        return `Hi ${tds.customer_name}, the ${rupee(tds.tds_amount)} TDS you deducted doesn't appear in my Form 26AS for ${tds.fiscal_year}. Could you confirm it was deposited with govt? Could you please share the BSR code / challan number? It is important. — Pardeep`;
       default:
         return `Hi ${tds.customer_name}, regarding TDS ${rupee(tds.tds_amount)} on ${tds.section}/${tds.fiscal_year} — quick check-in. — Pardeep`;
     }

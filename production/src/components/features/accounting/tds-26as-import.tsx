@@ -83,8 +83,8 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
         <DialogHeader>
           <DialogTitle>Import Form 26AS / AIS</DialogTitle>
           <DialogDescription>
-            TRACES se 26AS &quot;Text&quot; file (.txt) ya AIS JSON daalein. File isi browser me padhi jaati hai —
-            upload nahi hoti. Match hone wali entries aap confirm karenge, tabhi status badlega.
+            Add the 26AS &quot;Text&quot; file (.txt) from TRACES or the AIS JSON. The file is read in this browser only —
+            it is not uploaded. Statuses change only after you confirm the matched entries.
           </DialogDescription>
         </DialogHeader>
 
@@ -100,7 +100,7 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
           <p role="alert" className="text-sm text-rose rounded-md border border-rose/40 bg-rose-soft/30 p-3">{fileError}</p>
         )}
         {allQ.error && (
-          <p role="alert" className="text-sm text-rose">TDS entries load nahi hui: {(allQ.error as Error).message}. Page reload karein.</p>
+          <p role="alert" className="text-sm text-rose">Could not load TDS entries: {(allQ.error as Error).message}. Reload the page.</p>
         )}
 
         {parsed && (
@@ -109,7 +109,7 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
             {parsed.pan ? <> · PAN <span className="font-mono">{parsed.pan}</span></> : null}
             {parsed.financialYear ? <> · FY {parsed.financialYear}</> : null}
             {parsed.asOn ? <> · as on {formatDate(parsed.asOn)}</> : null}
-            {" "}— PAN aapki company ka hi hai, ye ek baar dekh lein.
+            {" "}— check once that the PAN is your company's.
           </p>
         )}
 
@@ -117,7 +117,7 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
           <div className="space-y-4">
             <Bucket
               tone="success" title={`Matched — ready to verify (${result.matched.length})`}
-              help="Deductor TAN, raqam (₹1 tak) aur FY milte hain. Tick hataayein jo aap nahi maante."
+              help="Deductor TAN, amount (to ₹1) and FY match. Untick any you do not accept."
             >
               {result.matched.map((m) => (
                 <label key={m.receivable.id} className="flex items-center gap-3 py-1.5 text-sm">
@@ -134,10 +134,10 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
             </Bucket>
 
             <EntryBucket tone="warning" title="In 26AS but not Final" entries={result.notFinal}
-              help="Booking status F nahi (U = unmatched, P = provisional, O = overbooked) — deductor ka challan abhi 26AS se juda nahi. Customer se challan theek karwayein; tab tak claim safe nahi." />
+              help="Booking status is not F (U = unmatched, P = provisional, O = overbooked) — the deductor's challan is not yet linked in 26AS. Ask the customer to correct the challan; until then the claim is not safe." />
 
             <Bucket tone="danger" title={`Amount differs (${result.amountMismatch.length})`}
-              help="Wahi customer (TAN) aur FY, par raqam alag. Customer se Form 16A milaayein — kam jama kiya ho to baaki ka claim nahi banta.">
+              help="Same customer (TAN) and FY, but a different amount. Compare with the customer's Form 16A — if less was deposited, the rest cannot be claimed.">
               {result.amountMismatch.map((x, i) => (
                 <div key={`${x.receivable.id}-${i}`} className="flex gap-3 py-1 text-sm">
                   <span className="flex-1 truncate">{x.receivable.customer_name}</span>
@@ -147,7 +147,7 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
             </Bucket>
 
             <Bucket tone="danger" title={`Open in your records, not in this file (${result.missing.length})`}
-              help="Customer ne TDS kaata par 26AS me nahi dikha — ya to jama nahi kiya, ya galat TAN/PAN se. Customer ko Form 16A aur challan ke liye likhein.">
+              help="The customer deducted TDS but it is not in 26AS — either not deposited, or deposited under a wrong TAN / PAN. Ask the customer for Form 16A and the challan.">
               {result.missing.map((r) => (
                 <div key={r.id} className="flex gap-3 py-1 text-sm">
                   <span className="flex-1 truncate">{r.customer_name}</span>
@@ -158,10 +158,10 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
             </Bucket>
 
             <EntryBucket tone="muted" title="In 26AS, no record in the app" entries={result.unknown}
-              help="Is TAN ki koi TDS entry app me nahi. Payment record karte waqt TDS daalna reh gaya hoga — us payment par TDS entry banayein." />
+              help="No TDS entry for this TAN in the app. TDS was probably missed when the payment was recorded — add a TDS entry on that payment." />
 
             <Bucket tone="muted" title={`Open entries with no customer TAN (${result.noTan.length})`}
-              help="Bina TAN ke file se milaan nahi ho sakta. Entry kholkar customer ka TAN bharein, phir dobara import karein.">
+              help="Cannot match with the file without a TAN. Open the entry, add the customer's TAN, then import again.">
               {result.noTan.map((r) => (
                 <div key={r.id} className="flex gap-3 py-1 text-sm">
                   <span className="flex-1 truncate">{r.customer_name}</span>

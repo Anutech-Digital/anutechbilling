@@ -1,0 +1,94 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+
+/* R-1731 (decision R-1728, 22 Oct 2026): the whole app UI is English. Hinglish is allowed only
+   in AI help (components/shared/ai-help.tsx) and in AI prompts / AI-generated replies. This
+   scanner reads every .ts/.tsx file under src/app and src/components and reports the quoted
+   strings and JSX text that contain common Hinglish words. Comments, imports and console lines
+   are not screen text and are skipped. Used by the R-246 ui-copy-english guard test. */
+
+/** Common Hinglish words that never appear in English UI copy. Whole words only: a word inside an
+    id or class name ("payroll-kis-mahine-ka") is not screen text. Longer words match in any case;
+    the short ones (ka, ki, ke…) only in lower case, so "KA" (Karnataka) is not a hit. */
+const LONG_WORDS =
+  /(?<![-\w])(nahi|nahin|karo|karein|kariye|kijiye|kiya|kiye|daalo|daaliye|kholo|kholiye|chalu|hataye|hatao|hataya|hata|wapas|kisko|kisne|jaaye|jayega|jaayega|jaayegi|jaayenge|paisa|kharch|kharche|kharcha|liye|hain|ho gaya|ho gayi|abhi|baaki|yahan|wahan|kahan|dekho|dekhiye|dekhein|dikhao|banao|bharo|chuniye|chuno|aapka|aapke|aapki|apna|chahiye|lekin|warna|pehle|jodo|raha|rahi|rahe|rahegi|wala|wale|wali|sabhi|kuch|tarikh|tareekh|mahina|mahine|samajh|wajah|andaza|dabaiye|hisaab|hisab|bataye|batao|gaya|gayi|kaise|kyun|kyon|bina|mein|hoga|hogi|iski|uski|isliye|naam|kaam|aaya|sakte|sakta|lagega|maana|hatega|haath|sirf|likho|bhejein|bhejo|khaali|chhodo|byaaj|chukaya|liya|udhari|jodein|ghatega|layak|chhoote|bharein|chuniye)(?![-\w])/i;
+const SHORT_WORDS = /(?<![-\w])(hai|ka|ki|ke|ko|ya|aur|kis|thi|tha|hua|hui|hue|bhi|ye|wo|tak)(?![-\w])/;
+
+export const HINGLISH_UI = { test: (t: string): boolean => LONG_WORDS.test(t) || SHORT_WORDS.test(t) };
+
+/** Files where Hinglish is the intended language (AI help, AI prompts and AI replies). */
+export const HINGLISH_ALLOWED_BY_DESIGN: RegExp[] = [
+  /^src\/components\/shared\/ai-help\.tsx$/,
+  /^src\/app\/api\/ai\//,
+  /(^|\/)[^/]*prompts?[^/]*\.tsx?$/i,
+];
+
+/** Source without block/line comments, imports and console lines — what can reach the screen. */
+export function uiLines(src: string): string[] {
+  return src
+    .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1")
+    .split(/\r?\n/)
+    .filter((l) => !/^\s*(import|export \* from)\b/.test(l) && !/console\.(log|warn|error|info|debug)/.test(l));
+}
+
+/** Only the quoted strings and JSX text on a line — never identifiers in code. */
+export function textOf(line: string): string {
+  const parts: string[] = [];
+  for (const m of line.matchAll(/"([^"\\]*(?:\\.[^"\\]*)*)"|`([^`]*)`|'([^'\\]*(?:\\.[^'\\]*)*)'|>([^<>{}]+)</g)) {
+    parts.push(m[1] ?? m[2] ?? m[3] ?? m[4] ?? "");
+  }
+  /* JSX text next to an {expression}: ">Text {x}" and "{x} more text<". */
+  for (const m of line.matchAll(/(?<!=)>([^<>{}"'`]+)\{|\}([^<>{}"'`]+)</g)) {
+    const t = m[1] ?? m[2] ?? "";
+    if (/[A-Za-z]{2}/.test(t) && !/[;=]|=>|&&|\|\|/.test(t)) parts.push(t);
+  }
+  /* JSX text that runs past the end of the line ("<p>Some text") or starts a line ("text</p>"). */
+  const tail = line.match(/(?<!=)>([^<>{}"'`]+)$/);
+  if (tail && /[A-Za-z]{2}/.test(tail[1])) parts.push(tail[1]);
+  const head = line.match(/^\s*([A-Za-z][^<>{}=;()"'`]*)<\//);
+  if (head) parts.push(head[1]);
+  /* A JSX text line on its own (no quotes, no code), with any {expressions} taken out. */
+  let bare = line;
+  for (let i = 0; i < 3; i++) bare = bare.replace(/\{[^{}]*\}/g, " ");
+  const prose = !/[()]/.test(bare) || bare.trim().split(/\s+/).length >= 4;
+  if (prose && /^\s*[A-Za-z&·—(][^=;{}<>]*$/.test(bare) && !/^\s*(return|const|let|var|if|else|case|default|type|interface|export|function|async|await|throw)\b/.test(bare)) parts.push(bare);
+  return parts.join(" | ");
+}
+
+/** Screen-text pieces in one file's source that contain Hinglish. */
+export function hinglishHits(src: string): string[] {
+  return uiLines(src)
+    .map((l) => textOf(l))
+    .filter((t) => HINGLISH_UI.test(t))
+    .map((t) => t.trim());
+}
+
+function walk(dir: string, out: string[]): void {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) walk(p, out);
+    else if (/\.tsx?$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name) && !/\.d\.ts$/.test(name)) out.push(p);
+  }
+}
+
+/** Every UI source file under src/app and src/components, as "src/..." paths. */
+export function uiSourceFiles(root: string): string[] {
+  const out: string[] = [];
+  for (const d of ["src/app", "src/components"]) walk(join(root, d), out);
+  return out
+    .map((p) => relative(root, p).replace(/\\/g, "/"))
+    .filter((f) => !HINGLISH_ALLOWED_BY_DESIGN.some((re) => re.test(f)))
+    .sort();
+}
+
+/** file -> Hinglish hits, only for files that have any. */
+export function scanHinglish(root: string): Map<string, string[]> {
+  const res = new Map<string, string[]>();
+  for (const f of uiSourceFiles(root)) {
+    const hits = hinglishHits(readFileSync(join(root, f), "utf8"));
+    if (hits.length) res.set(f, hits);
+  }
+  return res;
+}

@@ -378,8 +378,8 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
   const submit = async () => {
     if (!name.trim()) return;
     if (udyamBad) {
-      toast.error("Udyam number sahi nahi hai", {
-        description: "Format UDYAM-SS-00-0000000 hota hai (jaise UDYAM-DL-01-0012345). Vendor ke Udyam certificate se dekh kar bharein, ya khaali chhod dein.",
+      toast.error("Invalid Udyam number", {
+        description: "The format is UDYAM-SS-00-0000000 (e.g. UDYAM-DL-01-0012345). Copy it from the vendor's Udyam certificate, or leave it empty.",
       });
       return;
     }
@@ -427,16 +427,16 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
           </div>
           {/* PAN decides the TDS rate (194C 1% for an individual, 2% for a company) and, when
               missing, forces 20% u/s 206AA — so it is asked for here, not guessed at 26Q time. */}
-          <FormField htmlFor="vendors-pan-for-tds-26q" label="PAN (for TDS / 26Q)" hint={pan && !isPan(pan) ? "10 characters, e.g. ABCDE1234F" : deducteeTypeFromPan(pan) ? `${DEDUCTEE_LABEL[deducteeTypeFromPan(pan)!]} — TDS rate isi se tay hota hai` : "Bina PAN ke TDS 20% kaatna padta hai (s.206AA)"}>
+          <FormField htmlFor="vendors-pan-for-tds-26q" label="PAN (for TDS / 26Q)" hint={pan && !isPan(pan) ? "10 characters, e.g. ABCDE1234F" : deducteeTypeFromPan(pan) ? `${DEDUCTEE_LABEL[deducteeTypeFromPan(pan)!]} — this sets the TDS rate` : "Without a PAN, TDS must be deducted at 20% (s.206AA)"}>
             <Input id="vendors-pan-for-tds-26q" value={pan} onChange={(e) => setPan(e.target.value.toUpperCase())} placeholder="ABCDE1234F" maxLength={10} className="font-mono uppercase" />
           </FormField>
           {/* MSME: micro/small vendor ka bill 45 din (likhit agreement na ho to 15) me na chuke
               to s.43B(h) us saal deduction rok deta hai. Udyam bharne se Aging page flag karta hai. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <FormField htmlFor="vendors-udyam" label="Udyam no. (MSME, optional)" hint={udyamBad ? "Format: UDYAM-SS-00-0000000" : "MSME vendor ho to — 45-din payment rule track hota hai"}>
+            <FormField htmlFor="vendors-udyam" label="Udyam no. (MSME, optional)" hint={udyamBad ? "Format: UDYAM-SS-00-0000000" : "For MSME vendors — the 45-day payment rule is tracked"}>
               <Input id="vendors-udyam" value={udyam} onChange={(e) => setUdyam(e.target.value.toUpperCase())} placeholder="UDYAM-DL-01-0012345" maxLength={19} className="font-mono uppercase" />
             </FormField>
-            <FormField htmlFor="vendors-msme-category" label="MSME category" hint={msmeCategory === "medium" ? "Medium par 43B(h) nahi lagta" : "Udyam certificate par likha hota hai"}>
+            <FormField htmlFor="vendors-msme-category" label="MSME category" hint={msmeCategory === "medium" ? "43B(h) does not apply to medium enterprises" : "As printed on the Udyam certificate"}>
               <Select value={msmeCategory || "none"} onValueChange={(v) => setMsmeCategory(v === "none" ? "" : (v as "micro" | "small" | "medium"))} disabled={!udyam.trim()}>
                 <SelectTrigger id="vendors-msme-category"><SelectValue placeholder="—" /></SelectTrigger>
                 <SelectContent>
