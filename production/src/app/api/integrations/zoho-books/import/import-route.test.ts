@@ -146,6 +146,13 @@ describe("import route", () => {
     expect(h.rpc[0]).toEqual({ fn: "zoho_books_import_undo", args: { p_run_id: "c1753000-0000-4000-8000-0000000f0001", p_reason: "T-wrong org" } });
   });
 
+  it("R-1766: undo cut off by the statement timeout says plainly how to go on", async () => {
+    h.rpcError = { message: "canceling statement due to statement timeout", code: "57014" } as { message: string };
+    const res = await post({ action: "undo", run_id: "c1753000-0000-4000-8000-0000000f0001", reason: "T-wrong org" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("Undo stopped part way — press Undo import to continue.");
+  });
+
   it("R-1757: Zoho busy while getting access → a pause (rate_limited), cursor kept, no 'access has ended'", async () => {
     h.runs = { open: { id: "run-1", org_id: "60000001", since: "2024-10-22", phase: "details" }, lastImport: null };
     h.tokenError = new ZohoApiError(ZOHO_BUSY_MESSAGE, "busy", 429);

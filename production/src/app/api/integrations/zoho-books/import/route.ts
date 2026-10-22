@@ -28,7 +28,7 @@ import { buildImportPlan, summarisePlan } from "@/lib/integrations/zoho-books/im
 import {
   ALLOWED_MONTHS, DEFAULT_MONTHS, loadPlanInputs, readRuns, sinceFor, startRun, supabaseScanStore, type RunRow,
 } from "@/lib/integrations/zoho-books/import-store";
-import { IMPORT_PART_ROWS, type ImportProgress } from "@/lib/integrations/zoho-books/import-parts";
+import { IMPORT_PART_ROWS, UNDO_STOPPED_TEXT, type ImportProgress } from "@/lib/integrations/zoho-books/import-parts";
 import { createClient } from "@/lib/supabase/server";
 import { istToday } from "@/lib/dates/ist";
 
@@ -102,7 +102,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const supabase = createClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase as any).rpc("zoho_books_import_undo", { p_run_id: runId, p_reason: String(body.reason ?? "") });
-    if (error) return fail(error.message || "Could not undo the import.", 409);
+    if (error) {
+      // R-1766: a call cut off by the 8 s statement timeout rolled back only its own part.
+      const timedOut = error.code === "57014" || /statement timeout/i.test(String(error.message ?? ""));
+      return fail(timedOut ? UNDO_STOPPED_TEXT : error.message || "Could not undo the import.", 409);
+    }
     return NextResponse.json({ ok: true, result: data });
   }
 

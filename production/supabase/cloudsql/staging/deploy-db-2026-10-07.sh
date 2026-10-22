@@ -186,6 +186,7 @@ MIGS=(
   "r1762wonundo|20261022120019_r1762_won_deal_undo.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.lead_has_money(text)')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.reopen_quote(text)') and prosrc like '%R-1762%')"
   "r1762reaccept|20261022125840_r1762_reaccept_wins_deal.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.accept_quote(text)') and prosrc like '%R-1762%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_r1762_won_lost_rejects_quote()') and prosrc like '%R-1762b%')"
   "r1763zohobilledinzoho|20261022130550_r1763_zoho_import_billed_in_zoho.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscriptions' and column_name = 'billed_externally_until') and exists(select 1 from pg_proc where oid = to_regprocedure('public.zoho_books_import_step(uuid,integer)') and prosrc like '%R-1763%') and to_regprocedure('public.subscription_billings_not_billed_elsewhere()') is not null"
+  "r1766zohoundosmallparts|20261022143646_r1766_zoho_undo_small_parts.sql|resellersos_migration|exists(select 1 from pg_proc where proname = 'zoho_books_import_undo' and prosrc like '%R-1766%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

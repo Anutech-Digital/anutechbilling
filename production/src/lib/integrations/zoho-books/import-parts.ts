@@ -51,3 +51,22 @@ export function importPercent(p: Pick<ImportProgress, "stage" | "offset" | "tota
   const before = IMPORT_STAGES.slice(0, Math.max(0, idx)).reduce((s, k) => s + (p.totals[k] ?? 0), 0);
   return Math.min(100, Math.round(((before + p.offset) / all) * 100));
 }
+
+/** R-1766: said when an undo call was cut off (statement timeout) — what was removed stays removed. */
+export const UNDO_STOPPED_TEXT = "Undo stopped part way — press Undo import to continue.";
+
+/** R-1766: what zoho_books_import_undo answers (totals from R-1766 on). */
+export interface UndoProgress {
+  subscriptions_removed?: number; subscriptions_total?: number;
+  customers_removed?: number; customers_total?: number;
+}
+
+/** "Undoing… 300 of 1,371 subscriptions removed" — subscriptions go first, then customers. */
+export function undoProgressText(r: UndoProgress): string {
+  const subsTotal = r.subscriptions_total ?? 0;
+  const subs = r.subscriptions_removed ?? 0;
+  if (subsTotal > 0 && subs < subsTotal) return `Undoing… ${fmt(subs)} of ${fmt(subsTotal)} subscriptions removed`;
+  const custTotal = r.customers_total ?? 0;
+  if (custTotal > 0) return `Undoing… ${fmt(Math.min(r.customers_removed ?? 0, custTotal))} of ${fmt(custTotal)} customers removed`;
+  return "Undoing…";
+}

@@ -19,7 +19,7 @@ const run = (o: Partial<RunView>): RunView => ({
   imported_at: null, undone_at: null, result: null, ...o,
 });
 
-let state: { open: RunView | null; last: RunView | null; steps: number; importCalls: number; result?: Record<string, unknown>; importScript: Array<"fail" | Record<string, unknown>> };
+let state: { open: RunView | null; last: RunView | null; steps: number; importCalls: number; result?: Record<string, unknown>; importScript: Array<"fail" | Record<string, unknown>>; undoScript?: Array<"fail" | Record<string, unknown>> };
 let posts: Array<Record<string, unknown>>;
 
 beforeEach(() => {
@@ -63,7 +63,17 @@ beforeEach(() => {
       state.open = null;
       return j({ ok: true, progress: { run_id: state.last.id, stage: "done", offset: 0, totals: {}, done: true, result }, done: true, result });
     }
-    if (body.action === "undo") { state.last = { ...state.last!, undone_at: "2026-10-22T08:05:00Z" }; return j({ ok: true, result: { done: true } }); }
+    if (body.action === "undo") {
+      /* R-1766: scripted parts of the undo; the end removes the import. */
+      const step = state.undoScript?.shift();
+      if (step === "fail") {
+        state.last = { ...state.last!, undo_started_at: "2026-10-22T08:04:00Z" };
+        return j({ ok: false, error: "Undo stopped part way — press Undo import to continue." }, 409);
+      }
+      if (step) return j({ ok: true, result: { done: false, ...step } });
+      state.last = { ...state.last!, undone_at: "2026-10-22T08:05:00Z" };
+      return j({ ok: true, result: { done: true } });
+    }
     return j({ ok: false, error: "?" }, 400);
   }));
 });
@@ -136,5 +146,35 @@ describe("Import from Zoho dialog", () => {
     expect(screen.getByRole("button", { name: "Undo import" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Read again" })).toBeNull();
     expect(posts.filter((p) => p.action === "dry_run")).toHaveLength(0);
+  });
+
+  it("R-1766: an undo cut off part way says so in the dialog; pressing Undo import again finishes it", async () => {
+    state.last = run({ phase: "ready", imported_at: "2026-10-22T08:00:00Z",
+      result: { customers_created: 1245, customers_existing: 0, subscriptions_created: 1371, invoices_imported: 246 } });
+    state.undoScript = [
+      { subscriptions_removed: 300, subscriptions_total: 1371, customers_removed: 0, customers_total: 1245 },
+      "fail",
+    ];
+    render(<ZohoBooksImportDialog open onOpenChange={() => undefined} orgName="T-Acme Org" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Undo import" }));
+
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe("Undo stopped part way — press Undo import to continue.");
+    expect(screen.getAllByText("Undo stopped part way — press Undo import to continue.")).toHaveLength(1);
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(screen.getByTestId("zoho-last-import")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo import" }));
+    await waitFor(() => expect(toastMock.success).toHaveBeenCalledWith("Import undone"));
+    await waitFor(() => expect(screen.queryByTestId("zoho-last-import")).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(posts.filter((p) => p.action === "undo")).toHaveLength(3);
+  });
+
+  it("R-1766: a finished import whose undo stopped earlier says so on opening", async () => {
+    state.last = run({ phase: "ready", imported_at: "2026-10-22T08:00:00Z", undo_started_at: "2026-10-22T08:04:00Z",
+      result: { customers_created: 1245, customers_existing: 0, subscriptions_created: 1371, invoices_imported: 246 } });
+    render(<ZohoBooksImportDialog open onOpenChange={() => undefined} orgName="T-Acme Org" />);
+    expect(await screen.findByText("Undo stopped part way — press Undo import to continue.")).toBeTruthy();
   });
 });
