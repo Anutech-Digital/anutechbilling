@@ -7,8 +7,10 @@
  *
  * Provider abstraction:
  *   1. If process.env.SANDBOX_API_KEY is set → call Sandbox.co.in
- *   2. Otherwise → return a deterministic mock so the UI is testable
- *      without an upstream account.
+ *   2. Otherwise, on a laptop / in tests → a deterministic mock so the UI is
+ *      testable without an upstream account.
+ *   3. Otherwise, on staging/live (R-1734) → { ok:false, code:"provider_not_configured" }:
+ *      no mock company, nothing saved, nothing for the form to fill.
  *
  * Caching:
  *   On success we persist the normalised payload + a verified_at timestamp
@@ -25,6 +27,7 @@ import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { isValidGstin }      from "@/lib/utils";
 import { mockGstinVerification } from "@/lib/gst/mock-gstin";
+import { gstinMockAllowed, GSTIN_NOT_SET_UP_ERROR, GSTIN_NOT_SET_UP_CODE } from "./mock-allowed";
 import type { GstinVerification } from "@/lib/supabase/database.types";
 
 export const dynamic = "force-dynamic";
@@ -304,6 +307,13 @@ export async function POST(req: NextRequest) {
     };
   }
   const providerConfigured = creds !== null;
+
+  /* R-1734: the mock's invented legal name and address filled real customers' forms on a
+     deployed server. There, no provider = say so; never mock, never persist. 200 so the
+     client shows it as a normal message (it reads json.ok), not a server error. */
+  if (!providerConfigured && !gstinMockAllowed()) {
+    return NextResponse.json({ ok: false, code: GSTIN_NOT_SET_UP_CODE, error: GSTIN_NOT_SET_UP_ERROR });
+  }
 
   let verification: GstinVerification;
   try {

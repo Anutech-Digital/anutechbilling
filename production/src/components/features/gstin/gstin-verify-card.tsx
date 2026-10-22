@@ -54,6 +54,8 @@ export default function GstinVerifyCard({
   const qc = useQueryClient();
   const [verifying, setVerifying] = React.useState(false);
   const [result,    setResult]    = React.useState<GstinVerification | null>(cached ?? null);
+  /** R-1734: set when the server has no GSTN provider — shown next to the button. */
+  const [notSetUp,  setNotSetUp]  = React.useState<string | null>(null);
 
   // When the underlying cache prop changes (e.g. useCurrentUser refetches),
   // keep the displayed verification in sync.
@@ -101,6 +103,13 @@ export default function GstinVerifyCard({
         body:    JSON.stringify({ gstin: cleanGstin, save: !noPersist }),
       });
       const json = await res.json();
+      /* R-1734: no GSTN provider on this server — say so next to the button and fill nothing. */
+      if (json?.code === "provider_not_configured") {
+        setNotSetUp(json.error ?? "GSTN verification is not set up — enter the details from the GST certificate.");
+        toast.error(json.error ?? "GSTN verification is not set up.");
+        return;
+      }
+      setNotSetUp(null);
       if (!res.ok || !json.ok) {
         toast.error(json.error ?? "Verification failed.", { description: "Check the GSTIN and try again. You can still save it and verify later." });
         return;
@@ -160,6 +169,13 @@ export default function GstinVerifyCard({
           </span>
         )}
       </div>
+
+      {notSetUp && canVerify && (
+        <p role="status" className="text-2xs leading-snug text-amber-ink inline-flex items-start gap-1.5">
+          <Icon name="info" size={11} className="mt-px shrink-0" />
+          {notSetUp}
+        </p>
+      )}
 
       {result && (
         <div className="rounded-lg border border-hairline bg-paper p-3 space-y-2">
