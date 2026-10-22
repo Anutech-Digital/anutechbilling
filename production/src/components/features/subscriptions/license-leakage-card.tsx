@@ -23,7 +23,29 @@ import type { Item, Subscription } from "@/lib/supabase/database.types";
 import { assessLeakage, leakageTotals, leakageSortKey, type LeakageResult } from "@/lib/vendor/leakage";
 import { subscriptionCogs } from "@/lib/vendor/cogs";
 
-export function LicenseLeakageCard({ subscriptions, catalog, onReconcile, onBillGap }: {
+/** Active subscriptions with their leakage verdict, worst first. Shared by this card and
+ *  the closed Insights strip on /subscriptions (R-1727), so both count the same rows. */
+export function leakageRows(subscriptions: Subscription[], catalog: Item[]): { sub: Subscription; result: LeakageResult }[] {
+  return subscriptions
+    .filter((s) => s.status === "active")
+    .map((s) => {
+      const cogs = subscriptionCogs(s, catalog);
+      const result = assessLeakage({
+        vendorSeats: s.vendor_seats,
+        billedSeats: s.seats,
+        assignedSeats: s.used,
+        costPerSeatMonth: cogs.perSeatMonth,
+        /* What the customer pays per seat, derived from MRR rather than the
+           catalogue: a negotiated subscription is not on list price, and a refund
+           is owed at what was actually charged. */
+        pricePerSeatMonth: s.seats > 0 ? Math.round(s.mrr / s.seats) : null,
+      });
+      return { sub: s, result };
+    })
+    .sort((a, b) => leakageSortKey(a.result) - leakageSortKey(b.result));
+}
+
+export function LicenseLeakageCard({ subscriptions, catalog, onReconcile, onBillGap, defaultOpen = false }: {
   subscriptions: Subscription[];
   catalog: Item[];
   onReconcile?: () => void;
@@ -36,29 +58,13 @@ export function LicenseLeakageCard({ subscriptions, catalog, onReconcile, onBill
    * something they meant to do.
    */
   onBillGap?: (sub: Subscription, seats: number) => void;
+  /** R-1727: open when shown inside the Insights strip, which is itself the collapse. */
+  defaultOpen?: boolean;
 }) {
-  const rows = React.useMemo(() => {
-    return subscriptions
-      .filter((s) => s.status === "active")
-      .map((s) => {
-        const cogs = subscriptionCogs(s, catalog);
-        const result = assessLeakage({
-          vendorSeats: s.vendor_seats,
-          billedSeats: s.seats,
-          assignedSeats: s.used,
-          costPerSeatMonth: cogs.perSeatMonth,
-          /* What the customer pays per seat, derived from MRR rather than the
-             catalogue: a negotiated subscription is not on list price, and a refund
-             is owed at what was actually charged. */
-          pricePerSeatMonth: s.seats > 0 ? Math.round(s.mrr / s.seats) : null,
-        });
-        return { sub: s, result };
-      })
-      .sort((a, b) => leakageSortKey(a.result) - leakageSortKey(b.result));
-  }, [subscriptions, catalog]);
+  const rows = React.useMemo(() => leakageRows(subscriptions, catalog), [subscriptions, catalog]);
 
   const totals = React.useMemo(() => leakageTotals(rows.map((r) => r.result)), [rows]);
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = React.useState(defaultOpen);
   /* Stable id so aria-controls points at something real — useId, not a hand-rolled
      counter, because the card can appear more than once on a page. */
   const bodyId = React.useId();

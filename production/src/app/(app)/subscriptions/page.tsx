@@ -20,7 +20,7 @@ import { initialSubscriptionSearch, SUBSCRIPTION_SEARCH_EVENT } from "./palette-
 import { newestFirst } from "@/lib/sort/newest-first";
 import { subscriptionFacts } from "@/lib/subscriptions/facts";
 import { sortSubscriptions, defaultDirFor, type SubSort, type SubSortKey } from "@/lib/subscriptions/sort";
-import { assessLeakage } from "@/lib/vendor/leakage";
+import { assessLeakage, leakageTotals } from "@/lib/vendor/leakage";
 import { useActiveTrials } from "@/lib/queries/trials";
 import ExtendSubscriptionDialog from "@/components/features/subscriptions/extend-subscription-dialog";
 import AddSeatsDialog            from "@/components/features/subscriptions/add-seats-dialog";
@@ -53,7 +53,10 @@ import { BillingScheduleCard } from "@/components/features/subscriptions/billing
 import { CancelSubscriptionDialog, cancelNote } from "@/components/features/subscriptions/cancel-subscription-dialog";
 import { useItems } from "@/lib/queries/items";
 import { subscriptionCogs, cogsBadge, cogsTotals } from "@/lib/vendor/cogs";
-import { LicenseLeakageCard } from "@/components/features/subscriptions/license-leakage-card";
+import { LicenseLeakageCard, leakageRows } from "@/components/features/subscriptions/license-leakage-card";
+import { SubsInsightsStrip } from "@/components/features/subscriptions/subs-insights-strip";
+import { seatsPhrase, manageSeatsIdFromSearch } from "@/components/features/subscriptions/seat-words";
+import { useMarginAlerts } from "@/lib/queries/margin-alerts";
 import { SeatRequestsCard } from "@/components/features/subscriptions/seat-requests-card";
 import { useSeatRequests, useAmendments } from "@/lib/queries/seat-requests";
 import { AmendmentHistory } from "@/components/features/subscriptions/amendment-history";
@@ -64,7 +67,8 @@ import { localDateISO } from "@/lib/leads/outcomes";
 import { ImportSubscriptionsDialog } from "@/components/features/subscriptions/import-subscriptions-dialog";
 import { ReconcileGoogleDialog } from "@/components/features/subscriptions/reconcile-google-dialog";
 import { ImportGoogleSubsDialog } from "@/components/features/subscriptions/import-google-subs-dialog";
-import { MarginAlertsCard } from "@/components/features/subscriptions/margin-alerts-card";
+import { MarginAlertsCard, marginAlertCounts } from "@/components/features/subscriptions/margin-alerts-card";
+import { SubDrawerActions, SubDrawerDangerZone } from "@/components/features/subscriptions/sub-drawer-actions";
 import Link from "next/link";
 import { toast } from "sonner";
 import { toastError, describeError } from "@/lib/errors/toast-error";
@@ -204,6 +208,8 @@ export default function SubscriptionsPage() {
   const { data: catalogItems } = useItems();
   const catalog = React.useMemo(() => catalogItems ?? [], [catalogItems]);
   const { data: seatRequestRows, refetch: refetchRequests } = useSeatRequests({ pendingOnly: true });
+  /* R-1727: Margin-at-risk counts for the closed Insights strip (same query MarginAlertsCard uses — one fetch). */
+  const { data: marginAlerts } = useMarginAlerts();
   const seatRequests = React.useMemo(() => seatRequestRows ?? [], [seatRequestRows]);
   const { data: trials } = useActiveTrials();
   /* ─── THE CONTRACTED ANNUAL, SO THE SCREEN STOPS INVENTING RUPEES ──────────
@@ -283,6 +289,25 @@ export default function SubscriptionsPage() {
     setAddSeatsPrefill(prefill);
     setAddSeatsSub(sub);
   };
+  /* R-1727: ?seats=<subscription id> — "Manage seats" on the company page lands here and
+     opens the same Manage seats dialog for that subscription. Read once after mount (no
+     useSearchParams: build rule), then dropped from the URL so a refresh does not reopen it. */
+  const [seatsFromLink, setSeatsFromLink] = React.useState("");
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const id = manageSeatsIdFromSearch(window.location.search);
+    if (!id) return;
+    setSeatsFromLink(id);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("seats");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search);
+  }, []);
+  React.useEffect(() => {
+    if (!seatsFromLink || !subs) return;
+    const sub = subs.find((x) => x.id === seatsFromLink);
+    setSeatsFromLink("");
+    if (sub) { setAddSeatsPrefill(undefined); setAddSeatsSub(sub); }
+  }, [seatsFromLink, subs]);
   const [editSub,     setEditSub]     = React.useState<Subscription | null>(null);
   /* R-455: END a real subscription (customer left) — separate from Delete (wrong entry). */
   const [cancelSub,   setCancelSub]   = React.useState<Subscription | null>(null);
@@ -418,11 +443,6 @@ export default function SubscriptionsPage() {
   const [reconcileOpen,  setReconcileOpen]  = React.useState(false);
   const [helpOpen,       setHelpOpen]       = React.useState(false);
   const [addGoogleOpen,  setAddGoogleOpen]  = React.useState(false);
-  /* Both analytics cards start CLOSED (Abhishek, 12 Sep 2026). They are reference, not
-     the day's work: this page is opened to act on a subscription, and two tall panels
-     above the list pushed the table itself below the fold. Each collapsed header still
-     carries its own headline numbers, so nothing is hidden — only unstacked. */
-  const [kpiOpen, setKpiOpen] = React.useState(false);
   const [visible, setVisible] = React.useState(60);  // render cap — paginates large lists
   const today = new Date();
   /* One "today" for every folder decision on this page, in IST — a date derived per call
@@ -717,8 +737,9 @@ export default function SubscriptionsPage() {
   const activeSubs = subsByWorkspace.filter((s) => subInFocus(s, "active"));
   const activeMRR = activeSubs.reduce((s, x) => s + x.mrr, 0);
   const activeARR = activeMRR * 12;
-  const totalSeats = activeSubs.reduce((s, x) => s + x.seats, 0);
-  const usedSeats = activeSubs.reduce((s, x) => s + x.used, 0);
+  /* R-1727: the closed Insights strip's counts — the same rows its two boxes count. */
+  const leakTotals = leakageTotals(leakageRows(subsByWorkspace, catalog).map((r) => r.result));
+  const marginCounts = marginAlerts ? marginAlertCounts(marginAlerts) : null;
   /* Margin from real cost. Subscriptions whose cost is unknown are EXCLUDED from the
      total rather than counted as free — including them would inflate the margin by
      exactly the amount nobody has measured. `marginUnknownCount` puts that on screen
@@ -796,95 +817,94 @@ export default function SubscriptionsPage() {
         </div>
       </div>
 
-      {/* Collapsible Subscriptions Analytics Banner */}
+      {/* ── R-1727: ONE closed strip above the list, not three boxes ─────────
+          Owner journey audit, 21 Oct 2026: the analytics banner, "Margin at risk" and
+          "License leakage" stacked above the table pushed it below the first screen at
+          1280px — on a page opened to act on a subscription. They live inside one strip
+          now, closed by default (remembered per viewer), and its closed line still
+          carries the counts, so closing hides the detail, never the warning. */}
       {!isLoading && subs && subs.length > 0 && (
-        <div className="mb-4 bg-paper border border-hairline rounded-lg overflow-hidden transition-all shadow-xs">
-          <button
-            type="button"
-            onClick={() => setKpiOpen((o) => !o)}
-            className="w-full flex items-center justify-between px-3.5 py-2.5 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer"
-          >
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              <Icon name="bar_chart" size={15} className="text-amber-ink" />
-              <span className="font-semibold text-ink">Subscriptions Revenue Analytics</span>
-              <span className="text-ink-3">·</span>
-              <span className="text-ink-2 font-mono font-medium">MRR: <b className="text-amber-ink">{rupee(activeMRR, { compact: true })}</b></span>
-              <span className="text-ink-3 font-mono">·</span>
-              <span className="text-ink-2 font-mono font-medium">ARR: <b className="text-emerald">{rupee(activeARR, { compact: true })}</b></span>
-              <span className="text-ink-3 font-mono">·</span>
-              <span className="text-ink-2 font-mono font-medium">Seats: <b className="text-ink">{usedSeats}/{totalSeats}</b></span>
-            </div>
-            <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
-              <span>{kpiOpen ? "Collapse" : "Expand"}</span>
-              <Icon name={kpiOpen ? "chevron_up" : "chevron_down"} size={14} />
-            </div>
-          </button>
-
-          {kpiOpen && (
-            <div className="p-3 border-t border-hairline space-y-3 bg-paper">
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-                <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                  <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Active MRR</p>
-                  <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{rupee(activeMRR, { compact: true })}</p>
-                </button>
-                <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                  <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Active ARR</p>
-                  <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(activeARR, { compact: true })}</p>
-                </button>
-                <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                  <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Margin (ARR)</p>
-                  <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(annualMargin, { compact: true })} <span className="text-xs text-ink-3 font-normal">({avgMarginPct}%)</span></p>
-                  {/* A total that silently drops the unmeasured rows reads as covering
-                      everything. Both counts are stated so it cannot. */}
-                  {marginUnknownCount > 0 && (
-                    <p className="mt-0.5 text-3xs leading-snug text-amber-ink">
-                      {marginUnknownCount} excluded — no cost
-                    </p>
-                  )}
-                  {marginEstimatedCount > 0 && (
-                    <p className="mt-0.5 text-3xs leading-snug text-ink-3">
-                      {marginEstimatedCount} from catalogue, not vendor bills
-                    </p>
-                  )}
-                </button>
-                <button type="button" onClick={() => tabOn("all")} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                  <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Total Subscriptions</p>
-                  <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{subsByWorkspace.length} <span className="text-xs text-emerald font-normal">({folderCount.active + folderCount.expiring} live)</span></p>
-                </button>
-                <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                  <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Seats In Use</p>
-                  <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{usedSeats} <span className="text-xs text-ink-3 font-normal">/ {totalSeats}</span></p>
-                </button>
-                <button type="button" onClick={() => tabOn("trials")} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                  <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Active Trials</p>
-                  <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{trials?.length ?? 0}</p>
-                </button>
-              </div>
-
-              {/* Renewal intelligence */}
-              {atRiskCount > 0 && (
-                <GeminiCard
-                  title="Renewal intelligence"
-                  actions={
-                    <Button size="sm" variant="primary" icon="mail" onClick={() => router.push("/renewals" as never)}>Bulk renewal email</Button>
-                  }
-                  compact
-                >
-                  <b>{atRiskCount} subscription{atRiskCount === 1 ? "" : "s"} expiring in next 30 days.</b>{" "}
-                  Worth {rupee(atRiskMRR, { compact: true })} MRR — start renewal conversations now.
-                </GeminiCard>
+        <SubsInsightsStrip
+          mrr={activeMRR}
+          arr={activeARR}
+          seats={seatsPhrase(activeSubs)}
+          marginAtRisk={marginCounts ? marginCounts.atRisk : null}
+          marginUnchecked={marginCounts ? marginCounts.unchecked : null}
+          leakingMonthly={leakTotals.underBilledMonthly}
+          leakingCount={leakTotals.underBilledCount}
+          neverReconciled={leakTotals.unknownCount}
+        >
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+            <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+              <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Active MRR</p>
+              <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{rupee(activeMRR, { compact: true })}</p>
+            </button>
+            <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+              <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Active ARR</p>
+              <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(activeARR, { compact: true })}</p>
+            </button>
+            <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+              <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Margin (ARR)</p>
+              <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(annualMargin, { compact: true })} <span className="text-xs text-ink-3 font-normal">({avgMarginPct}%)</span></p>
+              {/* A total that silently drops the unmeasured rows reads as covering
+                  everything. Both counts are stated so it cannot. */}
+              {marginUnknownCount > 0 && (
+                <p className="mt-0.5 text-3xs leading-snug text-amber-ink">
+                  {marginUnknownCount} excluded — no cost
+                </p>
               )}
-            </div>
+              {marginEstimatedCount > 0 && (
+                <p className="mt-0.5 text-3xs leading-snug text-ink-3">
+                  {marginEstimatedCount} from catalogue, not vendor bills
+                </p>
+              )}
+            </button>
+            <button type="button" onClick={() => tabOn("all")} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+              <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Total Subscriptions</p>
+              <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{subsByWorkspace.length} <span className="text-xs text-emerald font-normal">({folderCount.active + folderCount.expiring} live)</span></p>
+            </button>
+            <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+              {/* R-1727: "0 / 10" read as "nobody uses them" — the 0 is assigned users, never synced. */}
+              <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Seats</p>
+              <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{seatsPhrase(activeSubs) || "—"}</p>
+            </button>
+            <button type="button" onClick={() => tabOn("trials")} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+              <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Active Trials</p>
+              <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{trials?.length ?? 0}</p>
+            </button>
+          </div>
+
+          {/* Renewal intelligence */}
+          {atRiskCount > 0 && (
+            <GeminiCard
+              title="Renewal intelligence"
+              actions={
+                <Button size="sm" variant="primary" icon="mail" onClick={() => router.push("/renewals" as never)}>Bulk renewal email</Button>
+              }
+              compact
+            >
+              <b>{atRiskCount} subscription{atRiskCount === 1 ? "" : "s"} expiring in next 30 days.</b>{" "}
+              Worth {rupee(atRiskMRR, { compact: true })} MRR — start renewal conversations now.
+            </GeminiCard>
           )}
-        </div>
+
+          {/* Margin at risk — losses / thin margins at today's vendor cost, plus the
+              subscriptions whose cost we cannot look up at all. Self-hiding when clean. */}
+          <MarginAlertsCard />
+
+          {/* Seats the vendor bills us for vs seats we bill the customer. */}
+          <LicenseLeakageCard
+            subscriptions={subsByWorkspace}
+            catalog={catalog}
+            onReconcile={() => setReconcileOpen(true)}
+            onBillGap={(sub, seats) => openAddSeats(sub, seats)}
+            defaultOpen
+          />
+        </SubsInsightsStrip>
       )}
 
-      {/* Margin at risk — losses / thin margins at today's vendor cost, plus the
-          subscriptions whose cost we cannot look up at all. Self-hiding when there
-          is nothing to say, so it costs no vertical space on a good day. */}
-      {!isLoading && <MarginAlertsCard />}
-
-      {/* Customers asking for seats. Approving applies them and raises the quote. */}
+      {/* Customers asking for seats. Approving applies them and raises the quote.
+          Kept OUT of the strip: a customer waiting on us is today's work, not analytics. */}
       {!isLoading && (
         <SeatRequestsCard
           requests={seatRequests}
@@ -898,16 +918,6 @@ export default function SubscriptionsPage() {
           print "Not tracked" for Expansion and Contraction; this card supplies both, so the
           two belong together. Subscriptions is an operating list — a period-over-period
           revenue comparison is not something anybody acts on here. */}
-
-      {/* Seats the vendor bills us for vs seats we bill the customer. */}
-      {!isLoading && subsByWorkspace.length > 0 && (
-        <LicenseLeakageCard
-          subscriptions={subsByWorkspace}
-          catalog={catalog}
-          onReconcile={() => setReconcileOpen(true)}
-          onBillGap={(sub, seats) => openAddSeats(sub, seats)}
-        />
-      )}
 
       {/* Trials in progress — virtual subs */}
       {!isLoading && trials && trials.length > 0 && tab !== "trials" && (
@@ -1735,7 +1745,37 @@ export default function SubscriptionsPage() {
                 Padded here rather than on the shared primitive: other sheets lay out
                 their own edge-to-edge content and would gain an indent nobody asked
                 for. */}
+            {(() => {
+            const drawerLeak = assessLeakage({
+              vendorSeats: scheduleSub.vendor_seats,
+              billedSeats: scheduleSub.seats,
+              assignedSeats: scheduleSub.used,
+              costPerSeatMonth: subscriptionCogs(scheduleSub, catalog).perSeatMonth,
+              pricePerSeatMonth: scheduleSub.seats > 0 ? Math.round(scheduleSub.mrr / scheduleSub.seats) : null,
+            });
+            const leakFixShown = drawerLeak.kind === "under_billed" && drawerLeak.seatGap != null;
+            return (
             <div className="px-6 pb-6">
+              {/* ── R-1727: the actions, right under the header ──────────────────
+                  They used to sit at the very bottom, after the schedule, amendments and
+                  late fees — and the only filled button there was a red "Cancel
+                  subscription". Owner journey audit, 21 Oct 2026: the everyday job comes
+                  first, Manage seats is the primary, Cancel / Delete wait at the bottom
+                  as red outlines (SubDrawerDangerZone).
+
+                  "Billing schedule" is not among them: this drawer IS the schedule.
+                  Each one CLOSES the drawer first. Every action either navigates away or
+                  opens its own dialog, and a dialog stacked on an open sheet leaves two
+                  dismissable layers over the page. */}
+              <SubDrawerActions
+                hasCustomer={!!scheduleSub.customer_id}
+                primary={!leakFixShown}
+                onManageSeats={() => { const sub = scheduleSub; setScheduleSub(null); openAddSeats(sub); }}
+                onExtend={() => { const sub = scheduleSub; setScheduleSub(null); setExtendSub(sub); }}
+                onOpenCustomer={() => { const id = scheduleSub.customer_id; setScheduleSub(null); router.push(`/customers/${id}` as never); }}
+                onStatement={() => { const id = scheduleSub.customer_id; setScheduleSub(null); router.push(`/accounting/ledger?customer=${id}` as never); }}
+                onCorrect={() => { const sub = scheduleSub; setScheduleSub(null); setEditSub(sub); }}
+              />
               {/* ── WHAT TO DO ABOUT THE LEAK, NOT JUST THAT THERE IS ONE ────────
                   The row and the card both learned to SHOW leakage on 21 Sep 2026, and
                   Abhishek's next words were the right ones: "user dont know what action
@@ -1751,13 +1791,7 @@ export default function SubscriptionsPage() {
                   so a button offering to "correct" it would be pushing the operator
                   toward undoing something they meant to do. */}
               {(() => {
-                const leak = assessLeakage({
-                  vendorSeats: scheduleSub.vendor_seats,
-                  billedSeats: scheduleSub.seats,
-                  assignedSeats: scheduleSub.used,
-                  costPerSeatMonth: subscriptionCogs(scheduleSub, catalog).perSeatMonth,
-                  pricePerSeatMonth: scheduleSub.seats > 0 ? Math.round(scheduleSub.mrr / scheduleSub.seats) : null,
-                });
+                const leak = drawerLeak;
                 if (leak.kind !== "under_billed" || leak.seatGap == null) return null;
                 const gap = leak.seatGap;
                 const sub = scheduleSub;
@@ -1815,101 +1849,20 @@ export default function SubscriptionsPage() {
               {/* R-530: late fee On/Off for this subscription + charges on its invoices. */}
               <LateChargesPreview level="subscription" id={scheduleSub.id} />
 
-              {/* ── The actions, where the subscription is ────────────────────
-                  Moved off the row's ⋯ menu on 19 Sep 2026. They act on this
-                  subscription, so they belong beside it rather than behind a menu on a
-                  list — and a seven-item menu on every row was most of that row's
-                  clutter for something few people opened.
-
-                  "Billing schedule" is not among them: this drawer IS the billing
-                  schedule, so the item would have reopened the thing it was clicked in.
-
-                  Each one CLOSES the drawer first. Every action below either navigates
-                  away or opens its own dialog, and a dialog stacked on an open sheet
-                  leaves two dismissable layers over the page — close the wrong one and
-                  the form is still there, behind. */}
-              <div className="mt-6 pt-4 border-t border-hairline">
-                <p className="text-2xs uppercase tracking-wider text-ink-3 mb-2">Actions</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    icon="plus"
-                    onClick={() => { const sub = scheduleSub; setScheduleSub(null); openAddSeats(sub); }}
-                  >
-                    Manage seats
-                  </Button>
-                  <Button
-                    icon="clock"
-                    onClick={() => { const sub = scheduleSub; setScheduleSub(null); setExtendSub(sub); }}
-                  >
-                    Extend term
-                  </Button>
-                  {scheduleSub.customer_id && (
-                    <Button
-                      icon="users"
-                      onClick={() => { const id = scheduleSub.customer_id; setScheduleSub(null); router.push(`/customers/${id}` as never); }}
-                    >
-                      Open customer
-                    </Button>
-                  )}
-                  {/* The statement, one click from here. A renewal conversation is
-                      exactly when somebody asks "and what do they actually owe us?", and
-                      the answer used to be four clicks away through Accounting with the
-                      customer picked by hand. ?customer= seeds the picker; the Tally XML
-                      and CSV exports on that page are the ones a CA imports. */}
-                  {scheduleSub.customer_id && (
-                    <Button
-                      icon="book"
-                      onClick={() => { const id = scheduleSub.customer_id; setScheduleSub(null); router.push(`/accounting/ledger?customer=${id}` as never); }}
-                    >
-                      Statement
-                    </Button>
-                  )}
-                  <Button
-                    icon="edit"
-                    className="col-span-2"
-                    onClick={() => { const sub = scheduleSub; setScheduleSub(null); setEditSub(sub); }}
-                  >
-                    Correct details
-                  </Button>
-                </div>
-
-                {/* ── Kept at arm's length, on purpose ──────────────────────────
-                    The other half of the 19 Sep proposal was to promote this to a trash
-                    icon on every row. It was declined: a subscription carries invoices
-                    and payments, and the design that makes the most destructive action
-                    the easiest one to reach is the wrong way round. It sits last, below
-                    a rule, visually apart from the five above, and still asks for
-                    confirmation naming the customer and the plan. */}
-                <div className="mt-4 pt-3 border-t border-hairline space-y-2">
-                  {/* R-455: two different things, two buttons. Cancel = the customer is
-                      leaving (keeps the record, leaves MRR/renewals). Delete = this entry
-                      should never have existed. The old single "Cancel / delete" button only
-                      deleted, and was blocked for every paid sale. */}
-                  {scheduleSub.status === "cancelled" ? (
-                    <p className="text-2xs text-ink-3">{cancelNote(scheduleSub)}</p>
-                  ) : (
-                    <Button
-                      variant="danger"
-                      icon="x"
-                      className="w-full"
-                      onClick={() => { const sub = scheduleSub; setScheduleSub(null); setCancelSub(sub); }}
-                    >
-                      Cancel subscription
-                    </Button>
-                  )}
-                  {canDeleteSub && (
-                    <Button
-                      variant="ghost"
-                      icon="trash"
-                      className="w-full text-rose"
-                      onClick={() => { const sub = scheduleSub; setScheduleSub(null); handleDeleteSub(sub); }}
-                    >
-                      Delete (wrong entry)
-                    </Button>
-                  )}
-                </div>
-              </div>
+              {/* ── Kept at arm's length, on purpose ──────────────────────────────
+                  A subscription carries invoices and payments, so the destructive acts
+                  sit last, below a rule, apart from the everyday ones above — and since
+                  R-1727 as red OUTLINE buttons, never the filled primary. Both still ask
+                  for confirmation naming the customer and the plan. */}
+              <SubDrawerDangerZone
+                cancelledNote={scheduleSub.status === "cancelled" ? cancelNote(scheduleSub) : null}
+                canDelete={canDeleteSub}
+                onCancel={() => { const sub = scheduleSub; setScheduleSub(null); setCancelSub(sub); }}
+                onDelete={() => { const sub = scheduleSub; setScheduleSub(null); handleDeleteSub(sub); }}
+              />
             </div>
+            );
+            })()}
           </SheetContent>
         </Sheet>
       )}
