@@ -86,7 +86,8 @@ export function useColdCampaigns() {
   return useQuery({
     queryKey: [...KEY, "campaigns"],
     queryFn: async () => (await api<{ campaigns: ColdCampaign[] }>("/api/cold-calling/campaigns")).campaigns,
-    refetchInterval: 30_000,
+    /* Faster while any call is on the line, so the numbers and boxes follow the call. */
+    refetchInterval: (q) => ((q.state.data ?? []).some((c) => (c.counts.calling ?? 0) > 0) ? 5_000 : 20_000),
   });
 }
 
@@ -97,7 +98,7 @@ export function useColdContacts(campaignId: string | null, status: string | null
     queryFn: async () => (await api<{ contacts: ColdContact[] }>(
       `/api/cold-calling/campaigns/${campaignId}/contacts${status ? `?status=${status}` : ""}`,
     )).contacts,
-    refetchInterval: 30_000,
+    refetchInterval: (q) => ((q.state.data ?? []).some((c) => c.status === "calling") ? 5_000 : 20_000),
   });
 }
 

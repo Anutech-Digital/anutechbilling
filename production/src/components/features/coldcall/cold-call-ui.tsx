@@ -312,8 +312,12 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
   const [lastCheck, setLastCheck] = React.useState<{ at: Date; note: string | null; placed: number } | null>(null);
   const tickRef = React.useRef(tick.mutateAsync);
   tickRef.current = tick.mutateAsync;
+  /* Real time (Abhishek, 22 Oct): while a call is on the line — a running campaign's or one
+     started with "Call now" on any campaign — check every 10 s so its result shows up within
+     seconds of the call ending; otherwise every minute while the campaign runs. */
+  const onLine = countOf(campaign, ["calling"]) > 0;
   React.useEffect(() => {
-    if (campaign.status !== "running") return;
+    if (campaign.status !== "running" && !onLine) return;
     let stop = false;
     const go = async () => {
       try {
@@ -322,9 +326,9 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
       } catch { /* the Live box keeps the last good check; Refresh results shows the error */ }
     };
     void go();
-    const t = window.setInterval(go, 60_000);
+    const t = window.setInterval(go, onLine ? 10_000 : 60_000);
     return () => { stop = true; window.clearInterval(t); };
-  }, [campaign.id, campaign.status]);
+  }, [campaign.id, campaign.status, onLine]);
 
   const numbers = total(campaign);
   const toMove = countOf(campaign, ["interested", "callback"]);
