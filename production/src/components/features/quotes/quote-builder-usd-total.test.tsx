@@ -24,6 +24,8 @@ vi.mock("@/lib/supabase/client", () => {
   return { createClient: () => chain };
 });
 
+/* R-1755: the line ⋯ menu asks through the app-wide confirm (ConfirmProvider sits at the app root). */
+vi.mock("@/components/providers/confirm-provider", () => ({ useConfirm: () => async () => true }));
 vi.mock("@/components/providers/workspace-tabs-provider", () => ({
   useWorkspaceTabs: () => ({ activeId: null, setDraft: () => {} }),
 }));

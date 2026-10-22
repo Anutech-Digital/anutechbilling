@@ -12,7 +12,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const toastMock = vi.hoisted(() => Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast: toastMock }));
-vi.mock("@/components/providers/confirm-provider", () => ({ useConfirm: () => async () => true }));
+vi.mock("@/components/providers/confirm-provider", () => ({ useConfirm: () => async () => true, useAskText: () => async () => "T-reason" }));
 
 import ZohoBooksCard from "./zoho-books-card";
 
@@ -80,6 +80,8 @@ describe("Zoho Books card", () => {
     expect(screen.getByText("912")).toBeTruthy();
     expect(screen.getByText(/Nothing has been imported/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
+    // R-1753: the next step is the import
+    expect(screen.getByRole("button", { name: "Import from Zoho" })).toBeTruthy();
   });
 
   it("a billing user is told who can connect, with no buttons", async () => {

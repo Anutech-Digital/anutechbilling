@@ -10,8 +10,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { ROLE_MESSAGE, ZOHO_BOOKS_MANAGE_ROLES, zohoBooksCreds, NOT_CONFIGURED_MESSAGE } from "@/lib/integrations/zoho-books/config";
-import { readConnection, resolveZohoCaller, saveOrganization, type ZohoCaller } from "@/lib/integrations/zoho-books/store";
-import { accessToken, listOrganizations, ZohoApiError, type ZohoOrg } from "@/lib/integrations/zoho-books/api";
+import { readConnection, resolveZohoCaller, saveOrganization, zohoAccessToken, type ZohoCaller } from "@/lib/integrations/zoho-books/store";
+import { listOrganizations, ZohoApiError, type ZohoOrg } from "@/lib/integrations/zoho-books/api";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,7 +29,7 @@ async function loadOrgs(): Promise<Gate> {
     if (!conn.refreshToken) {
       return { res: NextResponse.json({ ok: false, error: "Zoho Books is not connected. Press Connect Zoho Books first." }, { status: 409 }) };
     }
-    const token = await accessToken(conn.refreshToken, creds);
+    const token = await zohoAccessToken(caller, conn.refreshToken, creds);
     return { caller, orgs: await listOrganizations(token) };
   } catch (e) {
     const msg = e instanceof ZohoApiError ? e.message : "Could not read your Zoho Books organizations. Try again.";

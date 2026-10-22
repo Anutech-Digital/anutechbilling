@@ -44,7 +44,8 @@ export function BillingScheduleCard({ subscription, todayISO }: {
     startDate: subscription.start_date,
     saleInvoice: inv?.sale ?? null,
     instalments: inv?.instalments ?? [],
-  }), [current, subscription.start_date, inv]);
+    source: subscription,
+  }), [current, subscription, inv]);
 
   if (current.length === 0) {
     return (
@@ -149,6 +150,10 @@ function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true
 export function InvoicedChip({ inv }: { inv: ScheduleInvoice }) {
   const { data: me } = useCurrentUser();
   const [open, setOpen] = React.useState(false);
+  /* R-1763: billed in Zoho — that invoice is not in this app, so the tag is plain text. */
+  if (inv.externalLabel) {
+    return <span className="ml-2"><Badge kind="muted" size="sm">{inv.externalLabel}</Badge></span>;
+  }
   const label = `Invoiced · ${inv.invoiceId}${inv.status === "paid" ? " · paid" : ""}`;
   const badge = <Badge kind={inv.status === "paid" ? "success" : "muted"} size="sm">{label}</Badge>;
   if (!canOpenRoute(me?.role, "/invoices/x")) return <span className="ml-2">{badge}</span>;

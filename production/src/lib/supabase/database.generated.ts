@@ -11335,7 +11335,10 @@ export type Database = {
           customer_id: string | null
           customer_name: string
           domain: string | null
+          billed_externally_until: string | null
           external_ref: string | null
+          external_ref_date: string | null
+          external_source: string | null
           id: string
           is_urgent: boolean | null
           item_id: string | null
@@ -11380,7 +11383,10 @@ export type Database = {
           customer_id?: string | null
           customer_name: string
           domain?: string | null
+          billed_externally_until?: string | null
           external_ref?: string | null
+          external_ref_date?: string | null
+          external_source?: string | null
           id?: string
           is_urgent?: boolean | null
           item_id?: string | null
@@ -11425,7 +11431,10 @@ export type Database = {
           customer_id?: string | null
           customer_name?: string
           domain?: string | null
+          billed_externally_until?: string | null
           external_ref?: string | null
+          external_ref_date?: string | null
+          external_source?: string | null
           id?: string
           is_urgent?: boolean | null
           item_id?: string | null
@@ -12719,6 +12728,8 @@ export type Database = {
           whatsapp_phone_number_id: string | null
           whatsapp_provider: string | null
           whatsapp_verify_token: string | null
+          zoho_books_access_expires_at: string | null
+          zoho_books_access_token: string | null
           zoho_books_connected_at: string | null
           zoho_books_connected_by: string | null
           zoho_books_org_id: string | null
@@ -12746,6 +12757,8 @@ export type Database = {
           whatsapp_phone_number_id?: string | null
           whatsapp_provider?: string | null
           whatsapp_verify_token?: string | null
+          zoho_books_access_expires_at?: string | null
+          zoho_books_access_token?: string | null
           zoho_books_connected_at?: string | null
           zoho_books_connected_by?: string | null
           zoho_books_org_id?: string | null
@@ -12773,6 +12786,8 @@ export type Database = {
           whatsapp_phone_number_id?: string | null
           whatsapp_provider?: string | null
           whatsapp_verify_token?: string | null
+          zoho_books_access_expires_at?: string | null
+          zoho_books_access_token?: string | null
           zoho_books_connected_at?: string | null
           zoho_books_connected_by?: string | null
           zoho_books_org_id?: string | null
@@ -15070,6 +15085,7 @@ export type Database = {
       ist_today: { Args: never; Returns: string }
       late_fee_effective: { Args: { p_invoice_id: string }; Returns: Json }
       lead_counts: { Args: { p_filters?: Json }; Returns: Json }
+      lead_has_money: { Args: { p_lead_id: string }; Returns: boolean }
       lead_looks_like_junk: {
         Args: {
           p_company: string

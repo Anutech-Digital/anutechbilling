@@ -2,7 +2,8 @@
  * R-1749 — the few Zoho calls this app makes. All READ, all server-side.
  *
  *   exchangeCode       authorization code → refresh token (once, at connect)
- *   accessToken        refresh token → short-lived access token (every use; never stored)
+ *   mintAccessToken    refresh token → short-lived access token + expiry (R-1757: cached per tenant
+ *                      by token-cache.ts — Zoho allows ~10 mints per 10 minutes)
  *   revokeToken        refresh token → revoked at Zoho (disconnect)
  *   listOrganizations  the Zoho Books organizations this login can see
  *   previewCounts      counts only: contacts, invoices (total / open), invoices carrying the
@@ -77,26 +78,62 @@ export async function exchangeCode(
   return { refreshToken, accessToken };
 }
 
-export async function accessToken(refreshToken: string, creds: ZohoCreds, f: Fetch = fetch): Promise<string> {
+/** Zoho's token endpoint saying "too many token requests" — NOT a sign that access ended (R-1757). */
+export function isTokenRateLimit(status: number | undefined, body: Record<string, unknown>): boolean {
+  if (status === 429) return true;
+  const text = `${String(body.error ?? "")} ${String(body.error_description ?? "")}`.toLowerCase();
+  return /access denied|too many|rate limit|try again after/.test(text);
+}
+
+export const ZOHO_BUSY_MESSAGE = "Zoho is busy — wait a minute, then press Continue.";
+export const ZOHO_ACCESS_ENDED_MESSAGE =
+  "Zoho Books access has ended (it was removed in Zoho, or expired). Disconnect and connect Zoho Books again.";
+
+/**
+ * Refresh token → a new access token and how long it lives. Mint sparingly: Zoho allows only
+ * about ten per refresh token in ten minutes (R-1757). Callers go through token-cache.ts.
+ *
+ * Errors: "busy" (rate limit — wait and retry), "reconnect" (the refresh token is invalid or
+ * revoked — the ONLY case that says access has ended), "network", or "token_error" (anything
+ * else — try again, no disconnect advice).
+ */
+export async function mintAccessToken(refreshToken: string, creds: ZohoCreds, f: Fetch = fetch): Promise<{ token: string; expiresInSec: number }> {
+  let res: Response;
   try {
-    const body = await postToken({
-      grant_type: "refresh_token",
-      client_id: creds.clientId,
-      client_secret: creds.clientSecret,
-      refresh_token: refreshToken,
-    }, f);
-    const t = typeof body.access_token === "string" ? body.access_token : "";
-    if (!t) throw new ZohoApiError("Zoho did not return access.", "no_access_token");
-    return t;
-  } catch (e) {
-    if (e instanceof ZohoApiError && e.code !== "network") {
-      throw new ZohoApiError(
-        "Zoho Books access has ended (it was removed in Zoho, or expired). Disconnect and connect Zoho Books again.",
-        "reconnect", e.status,
-      );
-    }
-    throw e;
+    res = await f(ZOHO_TOKEN_URL, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: creds.clientId,
+        client_secret: creds.clientSecret,
+        refresh_token: refreshToken,
+      }).toString(),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch {
+    throw new ZohoApiError("Could not reach Zoho. Check the internet connection and try again.", "network");
   }
+  const body = await readJson(res);
+  const token = typeof body.access_token === "string" ? body.access_token : "";
+  if (res.ok && !body.error && token) {
+    const exp = Number(body.expires_in ?? body.expires_in_sec ?? 3600);
+    return { token, expiresInSec: Number.isFinite(exp) && exp > 0 ? exp : 3600 };
+  }
+  if (isTokenRateLimit(res.status, body)) throw new ZohoApiError(ZOHO_BUSY_MESSAGE, "busy", 429);
+  const err = typeof body.error === "string" ? body.error : "";
+  if (err === "invalid_code" || err === "invalid_token" || err === "invalid_grant") {
+    throw new ZohoApiError(ZOHO_ACCESS_ENDED_MESSAGE, "reconnect", res.status);
+  }
+  if (err === "invalid_client" || err === "invalid_client_secret") {
+    throw new ZohoApiError("Zoho did not accept this server's Zoho Books app settings. The ResellerOS admin needs to check them.", "invalid_client", res.status);
+  }
+  throw new ZohoApiError("Zoho did not give access just now. Wait a minute, then press Continue.", "token_error", res.status);
+}
+
+/** Just the token (kept for callers that do not cache). Prefer token-cache.ts getAccessToken. */
+export async function accessToken(refreshToken: string, creds: ZohoCreds, f: Fetch = fetch): Promise<string> {
+  return (await mintAccessToken(refreshToken, creds, f)).token;
 }
 
 /** Revoke at Zoho. Returns false instead of throwing — the local copy is removed either way. */
@@ -221,3 +258,53 @@ export async function previewCounts(orgId: string, token: string, f: Fetch = fet
   });
   return { contacts, invoices, openInvoices, withSubsPeriod, withServiceExpiry, capped: c.capped || i.capped };
 }
+
+// ── R-1753: the import reads (still read-only) ────────────────────────────────────────────
+
+export interface ZohoPage { rows: Array<Record<string, unknown>>; more: boolean }
+
+async function listPage(path: string, listKey: string, orgId: string, token: string, page: number, f: Fetch,
+  extra: Record<string, string> = {}): Promise<ZohoPage> {
+  const q = new URLSearchParams({ organization_id: orgId, page: String(page), per_page: String(PAGE_SIZE), ...extra });
+  const body = await booksGet(`${path}?${q}`, token, f);
+  const rows = Array.isArray(body[listKey]) ? (body[listKey] as Array<Record<string, unknown>>) : [];
+  const more = Boolean((body.page_context as { has_more_page?: boolean } | undefined)?.has_more_page);
+  return { rows, more };
+}
+
+/** One page (200) of the organization's contacts (vendors are dropped by the caller: contact_type). */
+export function listContactsPage(orgId: string, token: string, page: number, f: Fetch = fetch): Promise<ZohoPage> {
+  return listPage("/contacts", "contacts", orgId, token, page, f);
+}
+
+/** One page (200) of the organization's invoices, newest first. */
+export function listInvoicesPage(orgId: string, token: string, page: number, f: Fetch = fetch): Promise<ZohoPage> {
+  return listPage("/invoices", "invoices", orgId, token, page, f, { sort_column: "date", sort_order: "D" });
+}
+
+/** One invoice with its line items. */
+export async function getInvoiceDetail(orgId: string, token: string, invoiceId: string, f: Fetch = fetch): Promise<Record<string, unknown>> {
+  const q = new URLSearchParams({ organization_id: orgId });
+  const body = await booksGet(`/invoices/${encodeURIComponent(invoiceId)}?${q}`, token, f);
+  return (body.invoice as Record<string, unknown> | undefined) ?? {};
+}
+
+/** The value of a custom field whose name is one of `names` (both Zoho shapes), or null. */
+export function invoiceFieldValue(inv: Record<string, unknown>, names: Set<string>): string | null {
+  const arr = Array.isArray(inv.custom_fields) ? (inv.custom_fields as Array<Record<string, unknown>>) : [];
+  for (const cf of arr) {
+    const n1 = squash(String(cf.label ?? ""));
+    const n2 = squash(String(cf.api_name ?? ""));
+    const v = cf.value_formatted ?? cf.value;
+    if ((names.has(n1) || names.has(n2)) && hasValue(v)) return String(v).trim();
+  }
+  for (const [k, v] of Object.entries(inv)) {
+    if (!k.startsWith("cf_") || k.endsWith("_unformatted")) continue;
+    if (names.has(squash(k)) && hasValue(v)) return String(v).trim();
+  }
+  return null;
+}
+
+export const CF_SUBS_PERIOD = SUBS_PERIOD;
+export const CF_SERVICE_EXPIRY = SERVICE_EXPIRY;
+export const CF_NEW_BUSINESS = new Set(["newbusiness"]);

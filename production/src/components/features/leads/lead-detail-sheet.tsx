@@ -276,7 +276,7 @@ export function LeadDetailSheet({
     if (block) {
       toast.error("This can't be deleted", {
         description: block,
-        action: lead.stage !== "lost" && lead.stage !== "won" ? { label: "Mark lost", onClick: () => { void handleArchive(); } } : undefined,
+        action: lead.stage !== "lost" ? { label: "Mark lost", onClick: () => { void handleArchive(); } } : undefined,
       });
       return;
     }

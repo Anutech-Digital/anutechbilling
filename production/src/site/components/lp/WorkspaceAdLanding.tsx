@@ -21,12 +21,10 @@
  * The plan is a prop (lib/lp-plans.ts): one page per Workspace plan, the Starter offer only
  * on Starter. Hero copy is an optional prop so ad variants can bring their own.
  *
- * LANGUAGE (R-396, 7 Oct 2026): every visible word comes from lp-copy.ts in English or
- * Hinglish. English by default; the page (server) reads `?lang=hi` and passes `lang`, so an
- * ad linking to the Hinglish page renders Hinglish with no flash. The "English | Hinglish"
- * toggle in the header switches it and remembers the choice (localStorage, try/catch).
+ * LANGUAGE: every visible word comes from lp-copy.ts, in English only (R-1752, 22 Oct 2026 —
+ * the R-396 Hinglish dictionary, header toggle and `?lang=hi` were removed).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { buyWorkspaceHref } from "@/lib/checkout/buy-link";
 import { WHATSAPP_NUMBER, WHATSAPP_READY, COMPANY } from "@/site/lib/config";
 import { useTurnstile } from "@/components/shared/turnstile";
@@ -35,12 +33,9 @@ import { reportLeadConversion } from "@/site/lib/google-ads";
 import { FIRST_YEAR_PER_USER, OFFER_MIN_USERS } from "@/site/lib/workspace-offer";
 import { LP_PLANS, type LpPlan } from "@/site/lib/lp-plans";
 import { CONTACT_FOR_PRICING } from "@/lib/catalog/public-price-policy";
-import {
-  LP_DEFAULT_LANG, LP_LANG_STORE, LP_TEXT, parseLpLang,
-  type LpDict, type LpLang, type Rich, type WorkspaceAdCopy,
-} from "./lp-copy";
+import { LP_TEXT, type LpDict, type Rich, type WorkspaceAdCopy } from "./lp-copy";
 
-export type { WorkspaceAdCopy, LpLang } from "./lp-copy";
+export type { WorkspaceAdCopy } from "./lp-copy";
 
 /** One row of the category page's plan grid: the plan and its live yearly ₹/user/month. */
 export interface LpPlanPrice { plan: LpPlan; annual: number | null }
@@ -64,7 +59,7 @@ const APPS: { name: string; icon?: string; tile?: { bg: string; label: string } 
 ];
 
 export function WorkspaceAdLanding({
-  annualPerSeatMo, plan = LP_PLANS.starter, copy, allPlans, lang: initialLang = LP_DEFAULT_LANG,
+  annualPerSeatMo, plan = LP_PLANS.starter, copy, allPlans,
 }: {
   /** The plan's ₹ per user per month on the yearly plan (live catalogue); null = talk to us. */
   annualPerSeatMo: number | null;
@@ -72,11 +67,8 @@ export function WorkspaceAdLanding({
   copy?: WorkspaceAdCopy;
   /** Category page only: every plan, shown as a grid under the price card. */
   allPlans?: readonly LpPlanPrice[];
-  /** From the page's `?lang=` (server side) so the first paint is already in that language. */
-  lang?: LpLang;
 }) {
-  const [lang, setLang] = useState<LpLang>(initialLang);
-  const t = LP_TEXT[lang];
+  const t = LP_TEXT;
   const planText = t.plans[plan.key];
   const text = copy ?? (plan.category ? t.categoryHero : planText.hero);
   const priced = annualPerSeatMo != null && annualPerSeatMo > 0;
@@ -88,28 +80,6 @@ export function WorkspaceAdLanding({
   const [modalPlan, setModalPlan] = useState<LpPlan | null>(null);
   const [users, setUsers] = useState(1);
   const [exitOffer, setExitOffer] = useState(false);
-
-  /* Language: the URL's ?lang= wins (the server already rendered it); otherwise the visitor's
-     last choice on this device. Storage can throw (private mode, blocked site data). */
-  useEffect(() => {
-    const fromUrl = parseLpLang(new URLSearchParams(window.location.search).get("lang"));
-    if (fromUrl) { setLang(fromUrl); return; }
-    let saved: LpLang | null = null;
-    try { saved = parseLpLang(window.localStorage.getItem(LP_LANG_STORE)); } catch { saved = null; }
-    if (saved) setLang(saved);
-  }, []);
-  const chooseLang = useCallback((next: LpLang) => {
-    setLang(next);
-    try { window.localStorage.setItem(LP_LANG_STORE, next); } catch { /* private mode */ }
-    /* A ?lang= in the address would undo the choice on reload — keep it in step. */
-    try {
-      const u = new URL(window.location.href);
-      if (u.searchParams.has("lang")) {
-        u.searchParams.set("lang", next === "hinglish" ? "hi" : "en");
-        window.history.replaceState(window.history.state, "", u.toString());
-      }
-    } catch { /* ignore */ }
-  }, []);
 
   /* Desktop only: the pointer leaving through the top of the window is the classic "about to
      close the tab" signal. Shown once per visit, never on phones, never over an open form. */
@@ -164,7 +134,7 @@ export function WorkspaceAdLanding({
   const faqs = t.faq.items({ plan: plan.name, usersLimit: planText.usersLimit, offer: plan.offer, offerPrice: inr(FIRST_YEAR_PER_USER) });
 
   return (
-    <div className="gw" lang={t.htmlLang} data-lang={lang}>
+    <div className="gw" lang={t.htmlLang}>
       <style>{CSS}</style>
 
       <header className="gw-top">
@@ -175,10 +145,6 @@ export function WorkspaceAdLanding({
             <a href="#features">{t.nav.features}</a>{allPlans && <a href="#plans">{t.nav.plans}</a>}<a href="#offer">{t.nav.price}</a><a href="#compare">{t.nav.compare}</a><a href="#faq">{t.nav.faq}</a>
           </nav>
           <div className="gw-nav-actions">
-            <div className="gw-lang" role="group" aria-label={t.langToggleLabel}>
-              <button type="button" lang="en" aria-pressed={lang === "en"} onClick={() => chooseLang("en")}>English</button>
-              <button type="button" lang="hi-Latn" aria-pressed={lang === "hinglish"} onClick={() => chooseLang("hinglish")}>Hinglish</button>
-            </div>
             {WHATSAPP_READY && <a className="gw-mini gw-mini-wa" href={wa} target="_blank" rel="noopener">{t.btn.whatsapp}</a>}
             <a className="gw-mini gw-mini-primary" href="#offer">{hasOffer ? t.nav.viewOffer : t.nav.seePrice}</a>
           </div>
@@ -625,10 +591,6 @@ const CSS = `
 .gw-nav{min-height:72px;display:flex;align-items:center;justify-content:space-between;gap:16px}
 .gw-logo{width:190px;height:auto;display:block}
 .gw-nav-actions{display:flex;gap:8px;align-items:center}
-.gw-lang{display:inline-flex;border:1px solid #c9d3e3;border-radius:999px;padding:2px;background:#fff}
-.gw .gw-lang button{border:0;background:transparent;border-radius:999px;padding:0 10px;min-height:36px;font:inherit;font-size:13px;font-weight:700;color:#475467;cursor:pointer}
-.gw .gw-lang button[aria-pressed="true"]{background:#e8f0fe;color:#0b57d0}
-.gw .gw-lang button:focus-visible{outline:3px solid #0b57d0;outline-offset:1px}
 .gw-links{display:flex;gap:22px;font-size:14px;font-weight:700;color:#475467;margin-left:auto;margin-right:12px}
 .gw-links a{color:inherit;text-decoration:none}.gw-links a:hover{color:var(--blue)}
 .gw-links a:focus-visible{outline:3px solid #0b57d0;outline-offset:3px;border-radius:4px}
@@ -800,7 +762,6 @@ const CSS = `
   .gw-logo{width:140px}
   .gw .gw-mini{padding:8px 11px;font-size:12px}
   .gw .gw-mini-wa{display:none}
-  .gw .gw-lang button{padding:0 8px;font-size:12px}
   .gw-hero{padding:28px 0 14px}
   .gw-buttons,.gw-cta-actions{display:grid;width:100%}
   .gw .gw-btn{width:100%}
@@ -829,6 +790,6 @@ const CSS = `
   .gw-foot{padding-bottom:84px}
   .gw-cta{padding:26px;border-radius:24px}
 }
-@media(max-width:420px){.gw-logo{width:108px}.gw .gw-lang button{padding:0 6px}.gw-nav{gap:8px}}
+@media(max-width:420px){.gw-logo{width:108px}.gw-nav{gap:8px}}
 @media(prefers-reduced-motion:reduce){.gw .gw-btn{transition:none}.gw .gw-btn:hover{transform:none}}
 `;

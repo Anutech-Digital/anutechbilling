@@ -297,12 +297,14 @@ export function LeadDetailsTab({
                   {visibleStages.map((s) => (
                     <button
                       key={s.id}
-                      onClick={() => {
-                        if (s.id !== lead.stage) {
-                          void changeStage(lead, s.id);
-                          toast.success(`${lead.company} → ${s.label}`);
-                          onClose();
-                        }
+                      onClick={async () => {
+                        if (s.id === lead.stage) return;
+                        /* R-1762: say "moved" only once it moved — a dismissed lost reason or a
+                           Won deal with money behind it leaves the deal where it is. */
+                        const moved = await changeStage(lead, s.id).catch(() => false);
+                        if (!moved) return;
+                        toast.success(`${lead.company} → ${s.label}`);
+                        onClose();
                       }}
                       disabled={s.id === lead.stage}
                       aria-current={s.id === lead.stage ? "true" : undefined}

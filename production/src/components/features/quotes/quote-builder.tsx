@@ -88,7 +88,8 @@ import { rupee, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { parseLineQty, parseLineRate, firstLineInputProblem, builderIsDirty } from "@/lib/quotes/line-input";
 import type { QuoteLineItem, LineCommitment, BillingCycle, Item } from "@/lib/supabase/database.types";
-import { LineAdjustControls, dropSeatsAdjustable } from "./line-adjust-controls";
+import { LineMoreMenu, OptionalTag, dropSeatsAdjustable } from "./line-adjust-controls";
+import { optionalNeedsConfirm } from "@/lib/quotes/optional-line";
 import {
   BILLING_CYCLE_OPTIONS, cycleInvoicesPerYear, cycleUnitLabel,
 } from "@/lib/quotes/billing";
@@ -190,6 +191,10 @@ function QuoteBuilderBody() {
     () => (allCatalog ?? []).filter((c) => c.item_type !== "one_time").map((c) => floorWorkspaceRow(c)),
     [allCatalog],
   );
+  /* R-1755: Main / Add-on of a line's catalogue item — a plan / seat line asks before it is
+     made optional (lib/quotes/optional-line.ts); unknown (custom, not loaded) asks too. */
+  const catalogKindOf = (itemId: string | undefined) =>
+    itemId ? (allCatalog ?? []).find((c) => c.id === itemId)?.kind : undefined;
   const { data: currentUser } = useCurrentUser();
   const createQuote     = useCreateQuote();
   const generateInvoice = useGenerateInvoice();
@@ -1119,7 +1124,7 @@ function QuoteBuilderBody() {
   const updateYears = (id: string, years: number) => {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, years: years > 1 ? years : undefined } : l)));
   };
-  /** What the customer may change on the public page. See LineAdjustControls. */
+  /** What the customer may change on the public page. See line-adjust-controls.tsx (LineMoreMenu). */
   const updateAdjustable = (id: string, patch: Partial<QuoteLineItem>) => {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   };
@@ -2264,7 +2269,7 @@ function QuoteBuilderBody() {
                 <div key={line.id} className="p-3 space-y-2.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="font-medium text-sm text-ink">{line.name}</div>
+                      <div className="font-medium text-sm text-ink">{line.name}<OptionalTag line={line} /></div>
                       {line.bulk && line.domains && line.domains.length > 0 && (
                         <button
                           type="button"
@@ -2275,7 +2280,10 @@ function QuoteBuilderBody() {
                         </button>
                       )}
                     </div>
-                    <IconButton icon="trash" aria-label="Remove line" size="sm" onClick={() => removeLine(line.id)} />
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <LineMoreMenu line={line} confirmOptional={optionalNeedsConfirm(line, catalogKindOf(line.item_id))} onChange={(p) => updateAdjustable(line.id, p)} />
+                      <IconButton icon="trash" aria-label="Remove line" size="sm" onClick={() => removeLine(line.id)} />
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <label className="block">
@@ -2388,7 +2396,6 @@ function QuoteBuilderBody() {
                         : <>Margin {lineMargin.marginPct}%</>}
                     </span>
                   </div>
-                  <LineAdjustControls line={line} onChange={(p) => updateAdjustable(line.id, p)} />
                     </div>
                   </details>
                   <div className="flex items-center justify-between border-t border-hairline pt-2">
@@ -2411,7 +2418,7 @@ function QuoteBuilderBody() {
                 <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider w-28">Qty</th>
                 <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider w-36">Rate</th>
                 <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider w-36">Amount</th>
-                <th className="w-12"></th>
+                <th className="w-20"><span className="sr-only">Line actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -2444,7 +2451,7 @@ function QuoteBuilderBody() {
                 return (
                   <tr key={line.id} className="border-b border-hairline last:border-0">
                     <td className="p-3">
-                      <div className="font-medium text-sm text-ink">{line.name}</div>
+                      <div className="font-medium text-sm text-ink">{line.name}<OptionalTag line={line} /></div>
                       {line.bulk && line.domains && line.domains.length > 0 && (
                         <button
                           type="button"
@@ -2477,7 +2484,6 @@ function QuoteBuilderBody() {
                       </div>
                       <LineBandNote line={line} catalog={catalog} />
                       <LineSupportToggle line={line} catalog={catalog} lineItems={lineItems} onAdd={addLine} />
-                  <LineAdjustControls line={line} onChange={(p) => updateAdjustable(line.id, p)} />
                       {/* Discounting is quote-level only (see totals sidebar). Any
                           per-line discount stored on legacy/imported quotes is still
                           honoured in the totals below, but there is no per-line editor. */}
@@ -2613,12 +2619,16 @@ function QuoteBuilderBody() {
                       )}
                     </td>
                     <td className="p-2 text-right">
-                      <IconButton
-                        icon="trash"
-                        aria-label="Remove line"
-                        size="sm"
-                        onClick={() => removeLine(line.id)}
-                      />
+                      <div className="flex items-center justify-end gap-0.5">
+                        {/* R-1754: "Make optional for customer" lives here, not on every line. */}
+                        <LineMoreMenu line={line} confirmOptional={optionalNeedsConfirm(line, catalogKindOf(line.item_id))} onChange={(p) => updateAdjustable(line.id, p)} />
+                        <IconButton
+                          icon="trash"
+                          aria-label="Remove line"
+                          size="sm"
+                          onClick={() => removeLine(line.id)}
+                        />
+                      </div>
                     </td>
                   </tr>
                 );

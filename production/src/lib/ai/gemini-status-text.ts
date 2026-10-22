@@ -34,3 +34,19 @@ export function geminiStatusText(s: { configured: boolean; envFallback: boolean 
     detail: "No key on this workspace or server, so AI features run on plain templates. Add a Gemini key below to turn on AI drafts.",
   };
 }
+
+/**
+ * R-1759 — the one line on the AI card that says which AI actually runs. Never shows a key.
+ * Claude has only a server key (ANTHROPIC_API_KEY); Gemini can be the workspace's own key
+ * (Settings) or the server's.
+ */
+export function aiUsingLine(s: { provider: "claude" | "gemini" | null; tenantGeminiKey: boolean }): string {
+  if (s.provider === "claude") return "AI is using: Claude (server key)";
+  if (s.provider === "gemini") return s.tenantGeminiKey ? "AI is using: Gemini (your key)" : "AI is using: Gemini (server key)";
+  return "AI is using: templates only (no AI key)";
+}
+
+/** R-1759 — the fuller line when Claude runs (hover on the card, and the dialog). */
+export const CLAUDE_STATUS_DETAIL =
+  "AI runs on Claude with the server's key, chosen on the server (AI_PROVIDER). If Claude fails, the server Gemini key (if there is one) is tried once. "
+  + "A Gemini key saved here is used only when the server is set to Gemini.";

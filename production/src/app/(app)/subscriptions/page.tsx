@@ -50,6 +50,7 @@ interface PendingPaymentHandoff {
 }
 import { EditSubscriptionDialog } from "@/components/features/subscriptions/edit-subscription-dialog";
 import { BillingScheduleCard } from "@/components/features/subscriptions/billing-schedule-card";
+import { externalSourceText } from "@/lib/subscriptions/billed-elsewhere";
 import { CancelSubscriptionDialog, cancelNote } from "@/components/features/subscriptions/cancel-subscription-dialog";
 import { useItems } from "@/lib/queries/items";
 import { subscriptionCogs, cogsBadge, cogsTotals } from "@/lib/vendor/cogs";
@@ -1735,6 +1736,10 @@ export default function SubscriptionsPage() {
                   </span>
                 )}
                 <SubQuoteLink sub={scheduleSub} canQuotes={canQuotesHere} className="text-xs" />
+                {/* R-1763: an imported subscription says which Zoho invoice it came from. */}
+                {externalSourceText(scheduleSub) && (
+                  <span className="text-xs text-ink-3" data-testid="sub-drawer-source">{externalSourceText(scheduleSub)}</span>
+                )}
               </div>
             </SheetHeader>
             {/* ── The body carries its own padding ──────────────────────────────

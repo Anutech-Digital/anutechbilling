@@ -6,8 +6,8 @@
  *   not set up on this server → "Connect Zoho Books" only says so (nothing starts)
  *   not connected             → Connect Zoho Books (full-page redirect to Zoho's consent screen)
  *   connected, no organization → choose one organization → Use this organization
- *   connected                 → "Connected: <org>" · Preview from Zoho · Disconnect
- * Preview shows COUNTS only; importing is a separate step (follow-up card).
+ *   connected                 → "Connected: <org>" · Import from Zoho (R-1753) · Preview from Zoho · Disconnect
+ * Preview shows COUNTS only; Import from Zoho opens the dry run → Import → Undo dialog.
  * The token never reaches this page — the server keeps it.
  */
 import * as React from "react";
@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { ZohoBooksImportDialog } from "./zoho-books-import-dialog";
 
 const STATUS_URL = "/api/integrations/zoho-books";
 const CONNECT_URL = "/api/integrations/zoho-books/connect";
@@ -58,6 +59,7 @@ export default function ZohoBooksCard() {
   const [busy, setBusy] = React.useState<null | "org" | "preview" | "disconnect">(null);
   const [orgId, setOrgId] = React.useState("");
   const [preview, setPreview] = React.useState<Preview | null>(null);
+  const [importOpen, setImportOpen] = React.useState(false);
 
   const { data: status, isLoading } = useQuery({
     queryKey: ["integrations", "zoho-books"],
@@ -187,9 +189,14 @@ export default function ZohoBooksCard() {
             ) : (
               <>
                 {status?.org_name && (
-                  <Button variant="primary" size="sm" onClick={runPreview} loading={busy === "preview"}>
-                    {busy === "preview" ? "Reading Zoho…" : "Preview from Zoho"}
-                  </Button>
+                  <>
+                    <Button variant="primary" size="sm" onClick={() => setImportOpen(true)} disabled={busy !== null}>
+                      Import from Zoho
+                    </Button>
+                    <Button variant="default" size="sm" onClick={runPreview} loading={busy === "preview"}>
+                      {busy === "preview" ? "Reading Zoho…" : "Preview from Zoho"}
+                    </Button>
+                  </>
                 )}
                 <Button variant="ghost" size="sm" onClick={disconnect} disabled={busy !== null}>Disconnect</Button>
               </>
@@ -241,6 +248,9 @@ export default function ZohoBooksCard() {
             Counts only, read from Zoho Books just now. Nothing has been imported and nothing in Zoho was changed.
           </p>
         </div>
+      )}
+      {status?.org_name && (
+        <ZohoBooksImportDialog open={importOpen} onOpenChange={setImportOpen} orgName={status.org_name} />
       )}
     </Card>
   );

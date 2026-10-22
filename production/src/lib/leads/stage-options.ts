@@ -29,10 +29,12 @@
  * would produce deals at `trial` with no quotation behind them — nothing to invoice
  * against and nothing the customer ever agreed to.
  *
- * ─── WON IS NOT AN INLINE EDIT ──────────────────────────────────────────────
- * `won` returns itself alone, so the caller renders a static badge instead of a control.
- * Un-winning a deal means money already recorded against it; that belongs in a deliberate
- * action with a confirmation, not in a table cell one row away from the scrollbar.
+ * ─── WON GOES ONLY TO LOST ──────────────────────────────────────────────────
+ * `won` offers itself and `lost` (R-1762, 22 Oct 2026: the customer backed out after
+ * accepting). Lost always asks for a reason, and a Won deal with a payment, invoice or
+ * subscription is refused — by useChangeLeadStage before the prompt and by the database
+ * (trg_r1762_won_exit_guard). A mistaken accept goes back to Quote from the quote's Reopen,
+ * never from here.
  *
  * ─── LOST CAN COME BACK ─────────────────────────────────────────────────────
  * `lost` offers new and contact. Deals are marked lost by mistake, and customers return
@@ -55,7 +57,7 @@ const REVIVE: readonly Stage[] = ["lost", "new", "contact"];
 export function rowStageOptions(stage: Stage): readonly Stage[] {
   switch (stage) {
     case "won":
-      return ["won"];
+      return ["won", "lost"];
     case "lost":
       return REVIVE;
     case "new":

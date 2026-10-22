@@ -43,7 +43,7 @@ import {
   CONNECT_GOOGLE_RESELLER_PATH, RESELLER_OAUTH_MESSAGES, RESELLER_STATUS_PARAM, resellerCardState,
 } from "@/lib/google/reseller-connect";
 import { mayDo } from "@/lib/auth/action-roles";
-import { geminiStatusText } from "@/lib/ai/gemini-status-text";
+import { geminiStatusText, CLAUDE_STATUS_DETAIL } from "@/lib/ai/gemini-status-text";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import SandboxConfigureDialog  from "@/components/features/integrations/sandbox-configure-dialog";
 import WhatsAppConfigureDialog from "@/components/features/integrations/whatsapp-configure-dialog";
@@ -840,6 +840,8 @@ function GeminiIntegrationCard() {
   const configured = Boolean(status?.configured);
   const envFallback = Boolean(status?.env_fallback);
   const geminiText = geminiStatusText({ configured, envFallback });
+  /* R-1759: Claude runs on the server key — then the card is Live, never "Stub". */
+  const onClaude = status?.ai_provider === "claude";
   return (
     <>
       <div className="flex items-center justify-between rounded-lg border border-hairline p-3">
@@ -850,15 +852,16 @@ function GeminiIntegrationCard() {
           <div className="min-w-0">
             <p className="text-sm font-medium text-ink inline-flex items-center gap-1.5">
               AI assistant
-              {configured
+              {configured || onClaude
                 ? <Badge size="sm" kind="success">Live</Badge>
                 : envFallback
                   ? <Badge size="sm" kind="info">Shared</Badge>
                   : <Badge size="sm" kind="muted">Stub</Badge>}
             </p>
-            {/* R-1425: what "shared" means lives in lib/ai/gemini-status-text.ts (full line on hover). */}
-            <p className="text-xs text-ink-3 truncate" title={geminiText.detail}>
-              {geminiText.card}
+            {/* R-1425: what "shared" means lives in lib/ai/gemini-status-text.ts (full line on hover).
+                R-1759: the line says which AI runs ("AI is using: Claude (server key)"). */}
+            <p className="text-xs text-ink-3 truncate" title={onClaude ? CLAUDE_STATUS_DETAIL : geminiText.detail}>
+              {status?.ai_using ?? geminiText.card}
             </p>
           </div>
         </div>

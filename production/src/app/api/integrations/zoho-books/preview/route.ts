@@ -9,8 +9,8 @@
  */
 import { NextResponse } from "next/server";
 import { NOT_CONFIGURED_MESSAGE, ROLE_MESSAGE, ZOHO_BOOKS_MANAGE_ROLES, zohoBooksCreds } from "@/lib/integrations/zoho-books/config";
-import { readConnection, resolveZohoCaller } from "@/lib/integrations/zoho-books/store";
-import { accessToken, previewCounts, ZohoApiError } from "@/lib/integrations/zoho-books/api";
+import { readConnection, resolveZohoCaller, zohoAccessToken } from "@/lib/integrations/zoho-books/store";
+import { previewCounts, ZohoApiError } from "@/lib/integrations/zoho-books/api";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -31,7 +31,7 @@ export async function POST() {
     if (!conn.orgId) {
       return NextResponse.json({ ok: false, error: "Choose your Zoho Books organization first." }, { status: 409 });
     }
-    const token = await accessToken(conn.refreshToken, creds);
+    const token = await zohoAccessToken(caller, conn.refreshToken, creds);
     const preview = await previewCounts(conn.orgId, token);
     return NextResponse.json({ ok: true, org_name: conn.orgName, preview });
   } catch (e) {

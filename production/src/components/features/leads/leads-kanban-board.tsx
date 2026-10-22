@@ -5,7 +5,6 @@
  * WHICH leads it holds (`boardCut` in lib/leads/list-selectors.ts).
  */
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { LeadCard } from "@/components/features/leads/lead-card";
 import { Icon } from "@/components/ui/icon";
@@ -37,7 +36,6 @@ export interface LeadsKanbanBoardProps {
 }
 
 export function LeadsKanbanBoard({ boardLeads, columnTotals, serverColumnTotals, changeStage, setSelected, setAddOpen, stages = DEAL_STAGES, noun = "deal" }: LeadsKanbanBoardProps) {
-  const router = useRouter();
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [overStage, setOverStage] = React.useState<Lead["stage"] | null>(null);
 
@@ -45,18 +43,15 @@ export function LeadsKanbanBoard({ boardLeads, columnTotals, serverColumnTotals,
   const handleDrop = async (toStage: Lead["stage"]) => {
     if (dragId) {
       const lead = boardLeads.find((l) => l.id === dragId);
-      /* A won deal cannot be dragged back out.
-         The inline stage dropdown already refuses this (lib/leads/stage-options.ts) because
-         un-winning means money already recorded — a payment, an invoice, a subscription.
-         Leaving the board as a second, unguarded route to the same write would make the
-         lock decorative: the rep would simply drag instead.
+      /* A won deal is not dragged back into the pipeline — a mistaken accept is undone on the
+         quote (Reopen), which also moves the deal back to Quote. R-1762: a drop on Lost goes
+         through — changeStage checks the deal has no payment, invoice or subscription, then
+         asks the lost reason; the database enforces the same rule.
          §24 — say what happened, why, and what to do instead, never a bare "not allowed". */
-      if (lead && lead.stage === "won" && toStage !== "won") {
+      if (lead && lead.stage === "won" && toStage !== "won" && toStage !== "lost") {
         toast.error(`${leadTitle(lead).label} is already won`, {
-          description:
-            "Money is recorded against it — a payment, an invoice and a subscription. " +
-            "Reopening it here would leave those behind. Raise a credit note on the invoice instead.",
-          action: { label: "Open invoices", onClick: () => router.push("/invoices") },
+          description: "Accepted by mistake? Open the quote → Reopen. Customer backed out? Use Mark lost.",
+          action: { label: "Open lead", onClick: () => setSelected(lead) },
         });
         setDragId(null);
         setOverStage(null);

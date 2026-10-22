@@ -12,7 +12,8 @@
  */
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { decryptTenantSecrets, sealTenantSecrets } from "@/lib/crypto/tenant-secrets";
-import { canManageZohoBooks } from "./config";
+import { canManageZohoBooks, type ZohoCreds } from "./config";
+import { forgetAccessToken, getAccessToken, invalidateAccessToken, type TokenStore } from "./token-cache";
 
 type Db = ReturnType<typeof createAdminClientFor>;
 
@@ -81,9 +82,13 @@ export async function saveConnection(admin: Db, tenantId: string, userId: string
     zoho_books_org_name: null,
     zoho_books_connected_at: new Date().toISOString(),
     zoho_books_connected_by: userId,
+    // R-1757: a new connection never reuses the old one's cached access token.
+    zoho_books_access_token: null,
+    zoho_books_access_expires_at: null,
   });
   const { error } = await admin.from("tenant_secrets").upsert(row, { onConflict: "tenant_id" });
   if (error) throw new Error("Could not save the Zoho Books connection.");
+  forgetAccessToken(tenantId);
 }
 
 export async function saveOrganization(admin: Db, tenantId: string, org: { id: string; name: string }): Promise<void> {
@@ -103,7 +108,51 @@ export async function clearConnection(admin: Db, tenantId: string): Promise<void
       zoho_books_org_name: null,
       zoho_books_connected_at: null,
       zoho_books_connected_by: null,
+      zoho_books_access_token: null,
+      zoho_books_access_expires_at: null,
     })
     .eq("tenant_id", tenantId);
   if (error) throw new Error("Could not remove the Zoho Books connection.");
+  forgetAccessToken(tenantId);
+}
+
+/**
+ * R-1757 — the cached access token on this tenant's own tenant_secrets row (sealed, with its
+ * expiry), shared by every app instance. Filtered by the caller's tenant like everything here.
+ */
+export function tenantTokenStore(admin: Db, tenantId: string): TokenStore {
+  return {
+    async read() {
+      const { data, error } = await admin.from("tenant_secrets")
+        .select("tenant_id, zoho_books_access_token, zoho_books_access_expires_at").eq("tenant_id", tenantId).maybeSingle();
+      const raw = data as Record<string, unknown> | null;
+      if (error || !raw || raw.tenant_id !== tenantId) return null;
+      const row = decryptTenantSecrets(raw) as Record<string, unknown>;
+      const token = row.zoho_books_access_token as string | null;
+      const exp = row.zoho_books_access_expires_at ? Date.parse(String(row.zoho_books_access_expires_at)) : NaN;
+      return token && Number.isFinite(exp) ? { token, expiresAt: exp } : null;
+    },
+    async write(t) {
+      const { row } = sealTenantSecrets({
+        zoho_books_access_token: t.token,
+        zoho_books_access_expires_at: new Date(t.expiresAt).toISOString(),
+      });
+      const { error } = await admin.from("tenant_secrets").update(row).eq("tenant_id", tenantId);
+      if (error) throw new Error("Could not save the Zoho access.");
+    },
+    async clear() {
+      await admin.from("tenant_secrets")
+        .update({ zoho_books_access_token: null, zoho_books_access_expires_at: null }).eq("tenant_id", tenantId);
+    },
+  };
+}
+
+/** The access token for this caller's connection — cached, minted at most once at a time. */
+export function zohoAccessToken(caller: Pick<ZohoCaller, "admin" | "tenantId">, refreshToken: string, creds: ZohoCreds): Promise<string> {
+  return getAccessToken(caller.tenantId, refreshToken, creds, tenantTokenStore(caller.admin, caller.tenantId));
+}
+
+/** Zoho said 401 to a cached token: forget it so the next call mints a fresh one. */
+export function dropZohoAccessToken(caller: Pick<ZohoCaller, "admin" | "tenantId">): Promise<void> {
+  return invalidateAccessToken(caller.tenantId, tenantTokenStore(caller.admin, caller.tenantId));
 }
