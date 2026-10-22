@@ -469,11 +469,12 @@ export default function ExpensesPage() {
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
-      {/* Header — eyebrow + title left, primary action pinned top-right.
+      {/* Header — eyebrow + title left, primary action pinned top-right. R-1729: the eyebrow
+          is the breadcrumb head (Billing — the sidebar app; nav.test.ts R-177/R-821), not "Purchases".
           The descriptive text lives in the collapsible below, not here. */}
       <div className="flex items-start justify-between gap-4 mb-3">
         <div>
-          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Purchases</p>
+          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Billing</p>
           <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Expenses</h1>
         </div>
         <div className="hidden md:flex items-center gap-2 shrink-0">
