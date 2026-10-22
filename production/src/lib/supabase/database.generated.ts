@@ -14717,6 +14717,7 @@ export type Database = {
           country: string
           customer_number: string
           display_name: string
+          gst_treatment: string
           has_gstin: boolean
           id: string
           is_active: boolean

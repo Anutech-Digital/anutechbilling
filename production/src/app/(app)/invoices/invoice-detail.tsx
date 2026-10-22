@@ -175,7 +175,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const interState = isInterStateSupply(
     customer?.state_code,
     supplier?.stateCode,
-    { customerGstin: customer?.gstin, sellerGstin: supplier?.gstin },
+    /* R-1742: an SEZ buyer is IGST even in our own state — the treatment frozen at issue
+       first, the customer's for an invoice issued before R-1736. */
+    { customerGstin: customer?.gstin, sellerGstin: supplier?.gstin, treatment: invoice.gst_treatment ?? customer?.gst_treatment },
   );
   const receivedPayments = (payments ?? []).filter((p) => p.status === "received");
 
@@ -611,7 +613,7 @@ export function InvoicePaymentsAccordion({
   const [receiptPayment, setReceiptPayment] = React.useState<Payment | null>(null);
 
   const received = (payments ?? []).filter((p) => p.status === "received");
-  const interState = isInterStateSupply(customer?.state_code, me?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: me?.tenantGstin });
+  const interState = isInterStateSupply(customer?.state_code, me?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: me?.tenantGstin, treatment: inv.gst_treatment ?? customer?.gst_treatment });
 
   if (isLoading || projLoading) return <div className="text-xs text-ink-3 italic">Loading receipts…</div>;
 

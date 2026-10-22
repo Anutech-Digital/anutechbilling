@@ -4,14 +4,16 @@
  * Since migration 20261012023458 the `customers` table gives sales / sales_senior only the
  * customers their team manages, and support / delivery only the customers linked to their
  * tickets, calls, tasks or projects. Every other customer comes from the SECURITY DEFINER
- * RPC `customers_name_only()`: id, name, number, state code, country, "has a GSTIN" — never
- * phone, email, GSTIN or address. For owner / manager / accountant / billing it is empty.
+ * RPC `customers_name_only()`: id, name, number, state code, country, "has a GSTIN" and (R-1742)
+ * the GST treatment — never phone, email, GSTIN or address. For owner / manager / accountant /
+ * billing it is empty.
  *
  * `fetchAllCustomers` merges these rows into the list so pickers (quote builder, tasks,
  * projects) still find every company. A merged row has every contact / tax field null and
  * `isNameOnlyCustomer(row)` is true; the quote builder offers "Claim customer" for it.
  */
 import type { Customer } from "@/lib/supabase/database.types";
+import { isCustomerGstTreatment } from "@/lib/gst/customer-gst-treatment";
 
 export interface NameOnlyCustomerRow {
   id: string;
@@ -23,6 +25,9 @@ export interface NameOnlyCustomerRow {
   has_gstin: boolean | null;
   account_manager_id: string | null;
   is_active: boolean | null;
+  /** R-1742: customers.gst_treatment — the quote builder needs it (an SEZ buyer is IGST).
+   *  Optional: absent on a database without the R-1742 migration. */
+  gst_treatment?: string | null;
 }
 
 /** True for a row that came from customers_name_only() — its contact / tax fields are hidden. */
@@ -60,9 +65,10 @@ export function nameOnlyToCustomer(r: NameOnlyCustomerRow, tenantId: string | nu
     domain: null,
     group_id: null,
     gstin: null,
-    /* R-1736: not returned by customers_name_only(); the invoice trigger still applies an SEZ
-       treatment from the real row, so a hidden treatment never changes the issued tax head. */
-    gst_treatment: null,
+    /* R-1742: returned by customers_name_only() so a sales user's quote for an SEZ customer
+       shows IGST like the invoice will (the invoice trigger reads the real row either way).
+       Anything that is not a known treatment stays null — never guessed. */
+    gst_treatment: isCustomerGstTreatment(r.gst_treatment) ? r.gst_treatment : null,
     pan: null,
     gstin_verification: null,
     gstin_verified_at: null,

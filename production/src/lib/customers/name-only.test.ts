@@ -34,3 +34,31 @@ describe("R-1004 name-only customers", () => {
     expect(isNameOnlyCustomer({ ...c })).toBe(true);
   });
 });
+
+describe("R-1742: a sales user's name-only SEZ customer keeps its GST treatment", async () => {
+  const { nameOnlyToCustomer: toCustomer } = await import("./name-only");
+  const { isInterStateSupply } = await import("@/lib/gst/place-of-supply");
+  /* Owner's path: a sales user opens the quote builder and picks an SEZ unit in Delhi that
+     nobody manages yet (so it comes from customers_name_only()). Seller is in Delhi too. */
+  const sez = toCustomer({
+    id: "c-sez", name: "SEZ Unit Pvt Ltd", display_name: null, customer_number: "CUST-0042",
+    state_code: "07", country: "India", has_gstin: true, account_manager_id: null, is_active: true,
+    gst_treatment: "sez_with_payment",
+  }, "t1");
+
+  it("carries gst_treatment from the RPC row", () => {
+    expect(sez.gst_treatment).toBe("sez_with_payment");
+  });
+
+  it("so the quote builder's rule makes it IGST, not CGST + SGST", () => {
+    expect(isInterStateSupply(sez.state_code, "07", { customerGstin: sez.gstin, sellerGstin: "07ABDCA0298H1ZP", treatment: sez.gst_treatment })).toBe(true);
+  });
+
+  it("an unknown value from an older database becomes null, never a guess", () => {
+    const old = toCustomer({
+      id: "c2", name: "Old", display_name: null, customer_number: null, state_code: "07", country: "India",
+      has_gstin: false, account_manager_id: null, is_active: true,
+    }, "t1");
+    expect(old.gst_treatment).toBeNull();
+  });
+});

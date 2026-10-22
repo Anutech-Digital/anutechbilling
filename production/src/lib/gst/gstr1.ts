@@ -32,7 +32,7 @@
  */
 import { SAAS_HSN, SAAS_HSN_LABEL, sacLabel } from "./hsn";
 import { splitTaxHeads } from "./tax-split";
-import { isExportSupply } from "./place-of-supply";
+import { isExportSupply, treatmentIsAlwaysInterState } from "./place-of-supply";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 
 /** Inter-state B2C invoice above this value gets its own B2CL line (₹1L since 1 Aug 2024). */
@@ -60,6 +60,9 @@ export interface Gstr1Doc {
   customerCountry?: string | null;
   /** Per-line HSN/SAC share of the taxable value. Missing → whole document under SAAS_HSN. */
   lines?: { hsn: string; description?: string; taxable: number }[];
+  /** R-1742: invoices.gst_treatment frozen at issue (a note takes its invoice's). Null =
+   *  issued before R-1736 → a regular supply. Decides the B2B / CDNR invoice type. */
+  gstTreatment?: string | null;
 }
 
 export interface Seller { stateCode: string | null; state: string | null; gstin?: string | null }
@@ -99,11 +102,41 @@ export function isExportDoc(d: Pick<Gstr1Doc, "customerGstin" | "customerCountry
   return !d.customerGstin && isExportSupply(d.customerCountry);
 }
 
-/** Tax heads of a document as REPORTED: an export with payment is always IGST (IGST Act
- *  s.16), whatever the row's inter_state flag says. */
-export function docHeads(d: Pick<Gstr1Doc, "gst" | "interState" | "customerGstin" | "customerCountry">): TaxHeads {
-  return gstSplit({ gst: d.gst, interState: d.interState || isExportDoc(d) });
+/** R-1742: a supply to an SEZ unit / developer (gst_treatment sez_with_payment / sez_without_payment). */
+export function isSezDoc(d: Pick<Gstr1Doc, "gstTreatment">): boolean {
+  return treatmentIsAlwaysInterState(d.gstTreatment);
 }
+
+/** Tax heads of a document as REPORTED: an export with payment is always IGST (IGST Act
+ *  s.16), and so is a supply to an SEZ (s.7(5)(b), R-1742), whatever the row's inter_state
+ *  flag says. */
+export function docHeads(d: Pick<Gstr1Doc, "gst" | "interState" | "customerGstin" | "customerCountry" | "gstTreatment">): TaxHeads {
+  return gstSplit({ gst: d.gst, interState: d.interState || isExportDoc(d) || isSezDoc(d) });
+}
+
+/**
+ * R-1742 — B2B / CDNR invoice type, portal JSON code. R = regular, SEWP / SEWOP = SEZ supply
+ * with / without payment of IGST, DE = deemed export.
+ *
+ * SEZ with or without payment follows the tax ACTUALLY charged on the document, the same way
+ * an export picks WPAY / WOPAY: until Hitesh decides the LUT rule (LUT_ZERO_RATING_PENDING),
+ * an "SEZ without payment" customer is billed IGST, and the return must not say "without
+ * payment" next to IGST the invoice carries.
+ */
+export type B2bInvType = "R" | "SEWP" | "SEWOP" | "DE";
+export function b2bInvType(d: Pick<Gstr1Doc, "gst" | "gstTreatment">): B2bInvType {
+  if (isSezDoc(d)) return d.gst !== 0 ? "SEWP" : "SEWOP";
+  if (d.gstTreatment === "deemed_export") return "DE";
+  return "R";
+}
+
+/** The same type as the Offline Tool writes it ("Invoice Type" / "Note Supply Type"). */
+export const B2B_INV_TYPE_CSV: Record<B2bInvType, string> = {
+  R: "Regular B2B",
+  SEWP: "SEZ supplies with payment",
+  SEWOP: "SEZ supplies without payment",
+  DE: "Deemed Exp",
+};
 
 /** Offline Tool date: DD-MMM-YYYY. */
 export function gstDate(iso: string): string {
@@ -140,10 +173,10 @@ export function posFor(
 
 // ─── Section row shapes ─────────────────────────────────────────────────────
 
-export interface B2bRow { gstin: string; name: string; id: string; date: string; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads }
+export interface B2bRow { gstin: string; name: string; id: string; date: string; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads; invType: B2bInvType }
 export interface B2clRow { id: string; date: string; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads }
 export interface B2csRow { pos: string; interState: boolean; rate: number; taxable: number; heads: TaxHeads }
-export interface CdnrRow { gstin: string; name: string; id: string; date: string; noteType: "C" | "D"; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads }
+export interface CdnrRow { gstin: string; name: string; id: string; date: string; noteType: "C" | "D"; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads; invType: B2bInvType }
 /** UR Type: B2CL (large inter-state unregistered) or EXPWP / EXPWOP (export note, with / without IGST). */
 export type CdnurType = "B2CL" | "EXPWP" | "EXPWOP";
 export interface CdnurRow { urType: CdnurType; id: string; date: string; noteType: "C" | "D"; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads }
@@ -251,15 +284,16 @@ export function buildGstr1(docs: Gstr1Doc[], seller: Seller): Gstr1Sections {
       const tax = lines.length === 1 ? d.gst : lineTax(ln.taxable);
       cur.taxable += ln.taxable;
       cur.value += ln.taxable + tax;
-      cur.heads = addHeads(cur.heads, gstSplit({ gst: tax, interState: d.interState || isExport }));
+      cur.heads = addHeads(cur.heads, gstSplit({ gst: tax, interState: d.interState || isExport || isSezDoc(d) }));
       if (!cur.description && ln.description) cur.description = ln.description;
       hsnMap.set(key, cur);
     }
 
     if (d.customerGstin) {
       const p = pos ? posStr(pos) : "";
-      if (isNote) cdnr.push({ gstin: d.customerGstin, name: d.customerName, id: d.id, date: d.date, noteType, value: Math.abs(d.amount), pos: p, rate: d.taxRate, taxable: Math.abs(d.taxableValue), heads: abs(heads) });
-      else b2b.push({ gstin: d.customerGstin, name: d.customerName, id: d.id, date: d.date, value: d.amount, pos: p, rate: d.taxRate, taxable: d.taxableValue, heads });
+      const invType = b2bInvType(d);
+      if (isNote) cdnr.push({ gstin: d.customerGstin, name: d.customerName, id: d.id, date: d.date, noteType, value: Math.abs(d.amount), pos: p, rate: d.taxRate, taxable: Math.abs(d.taxableValue), heads: abs(heads), invType });
+      else b2b.push({ gstin: d.customerGstin, name: d.customerName, id: d.id, date: d.date, value: d.amount, pos: p, rate: d.taxRate, taxable: d.taxableValue, heads, invType });
       continue;
     }
     if (isExport) {
@@ -311,10 +345,10 @@ export type CsvRow = (string | number)[];
 
 export function gstr1Csv(s: Gstr1Sections, adv?: AdvanceTables): Record<keyof typeof GSTR1_HEADERS, CsvRow[]> {
   return {
-    b2b:   s.b2b.map((r) => [r.gstin, r.name, r.id, gstDate(r.date), r.value, r.pos, "N", "", "Regular B2B", "", r.rate, r.taxable, 0]),
+    b2b:   s.b2b.map((r) => [r.gstin, r.name, r.id, gstDate(r.date), r.value, r.pos, "N", "", B2B_INV_TYPE_CSV[r.invType], "", r.rate, r.taxable, 0]),
     b2cl:  s.b2cl.map((r) => [r.id, gstDate(r.date), r.value, r.pos, "", r.rate, r.taxable, 0, ""]),
     b2cs:  s.b2cs.map((r) => ["OE", r.pos, "", r.rate, r.taxable, 0, ""]),
-    cdnr:  s.cdnr.map((r) => [r.gstin, r.name, r.id, gstDate(r.date), r.noteType, r.pos, "N", "Regular B2B", r.value, "", r.rate, r.taxable, 0]),
+    cdnr:  s.cdnr.map((r) => [r.gstin, r.name, r.id, gstDate(r.date), r.noteType, r.pos, "N", B2B_INV_TYPE_CSV[r.invType], r.value, "", r.rate, r.taxable, 0]),
     cdnur: s.cdnur.map((r) => [r.urType, r.id, gstDate(r.date), r.noteType, r.pos, r.urType, r.value, "", r.rate, r.taxable, 0]),
     /* Services: no port code / shipping bill — the columns stay, empty. */
     exp:   s.exp.map((r) => [r.exportType, r.id, gstDate(r.date), r.value, "", "", "", r.rate, r.taxable, 0]),
@@ -348,7 +382,7 @@ export function gstr1Json(s: Gstr1Sections, gstin: string, fp: string, adv?: Adv
     gstin, fp, version: "GSTR1_v3.0.4",
     b2b: byCtin(s.b2b).map(([ctin, rows]) => ({
       ctin,
-      inv: rows.map((r) => ({ inum: r.id, idt: jsonDate(r.date), val: r.value, pos: posCode(r.pos), rchrg: "N", inv_typ: "R", itms: [itm(1, r)] })),
+      inv: rows.map((r) => ({ inum: r.id, idt: jsonDate(r.date), val: r.value, pos: posCode(r.pos), rchrg: "N", inv_typ: r.invType, itms: [itm(1, r)] })),
     })),
     b2cl: byPos(s.b2cl).map(([pos, rows]) => ({
       pos, inv: rows.map((r) => ({ inum: r.id, idt: jsonDate(r.date), val: r.value, itms: [itm(1, r)] })),
@@ -359,7 +393,7 @@ export function gstr1Json(s: Gstr1Sections, gstin: string, fp: string, adv?: Adv
     })),
     cdnr: byCtin(s.cdnr).map(([ctin, rows]) => ({
       ctin,
-      nt: rows.map((r) => ({ ntty: r.noteType, nt_num: r.id, nt_dt: jsonDate(r.date), pos: posCode(r.pos), rchrg: "N", inv_typ: "R", val: r.value, itms: [itm(1, r)] })),
+      nt: rows.map((r) => ({ ntty: r.noteType, nt_num: r.id, nt_dt: jsonDate(r.date), pos: posCode(r.pos), rchrg: "N", inv_typ: r.invType, val: r.value, itms: [itm(1, r)] })),
     })),
     cdnur: s.cdnur.map((r) => ({
       typ: r.urType, ntty: r.noteType, nt_num: r.id, nt_dt: jsonDate(r.date),
@@ -485,7 +519,9 @@ function advJson(rows: AdvanceRow[]) {
 /** How a document lands in 3B: zero-rated (3.1(b)) or not, and, for an inter-state supply
  *  to an unregistered person, its place of supply for Table 3.2. */
 export function gstr3bClass(d: Gstr1Doc, seller: Seller): { zeroRated: boolean; unregInterPos: string | null } {
-  if (isExportDoc(d)) return { zeroRated: true, unregInterPos: null };
+  /* R-1742: a supply to an SEZ is zero-rated (IGST Act s.16(1)(b)) — 3.1(b), with or without
+     IGST; its IGST still counts as output tax (computeGstr3b adds zero-rated IGST back). */
+  if (isExportDoc(d) || isSezDoc(d)) return { zeroRated: true, unregInterPos: null };
   if (d.customerGstin || !d.interState) return { zeroRated: false, unregInterPos: null };
   const pos = posFor(d, seller);
   return { zeroRated: false, unregInterPos: pos ? posStr(pos) : null };
