@@ -11335,7 +11335,10 @@ export type Database = {
           customer_id: string | null
           customer_name: string
           domain: string | null
+          billed_externally_until: string | null
           external_ref: string | null
+          external_ref_date: string | null
+          external_source: string | null
           id: string
           is_urgent: boolean | null
           item_id: string | null
@@ -11380,7 +11383,10 @@ export type Database = {
           customer_id?: string | null
           customer_name: string
           domain?: string | null
+          billed_externally_until?: string | null
           external_ref?: string | null
+          external_ref_date?: string | null
+          external_source?: string | null
           id?: string
           is_urgent?: boolean | null
           item_id?: string | null
@@ -11425,7 +11431,10 @@ export type Database = {
           customer_id?: string | null
           customer_name?: string
           domain?: string | null
+          billed_externally_until?: string | null
           external_ref?: string | null
+          external_ref_date?: string | null
+          external_source?: string | null
           id?: string
           is_urgent?: boolean | null
           item_id?: string | null

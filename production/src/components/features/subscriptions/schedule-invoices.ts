@@ -16,11 +16,14 @@
  */
 import type { BillingPeriod } from "@/lib/billing/schedule";
 import { addDaysISO } from "@/lib/dates/ist";
+import { billedElsewhere, billedElsewhereLabel, type ExternalSourceFields } from "@/lib/subscriptions/billed-elsewhere";
 
 export interface ScheduleInvoice {
   invoiceId: string;
-  /** invoices.status — "paid", "pending", "overdue", … */
+  /** invoices.status — "paid", "pending", "overdue", … ("external" for a period billed elsewhere) */
   status: string;
+  /** R-1763: billed in another system (Zoho Books) — the tag text, e.g. "Billed in Zoho · INV-000871". */
+  externalLabel?: string;
 }
 
 export interface InstalmentRow {
@@ -36,6 +39,8 @@ export function scheduleInvoices(args: {
   /** The sale quote's whole-term invoice, when there is one (and it is not void). */
   saleInvoice: ScheduleInvoice | null;
   instalments: InstalmentRow[];
+  /** R-1763: an imported subscription — its periods up to billed_externally_until were billed in Zoho. */
+  source?: ExternalSourceFields | null;
 }): Map<number, ScheduleInvoice> {
   const out = new Map<number, ScheduleInvoice>();
   const first = args.periods[0];
@@ -52,6 +57,13 @@ export function scheduleInvoices(args: {
   const isSaleTerm = args.startDate != null && args.startDate.slice(0, 10) === termStart;
   if (args.saleInvoice && isSaleTerm && args.periods.length === 1 && !out.has(first.index)) {
     out.set(first.index, args.saleInvoice);
+  }
+  /* R-1763: a period Zoho already billed is not "scheduled" and never "next" — it is billed. */
+  if (args.source) {
+    for (const p of args.periods) {
+      if (out.has(p.index) || !billedElsewhere(args.source, p.periodStart)) continue;
+      out.set(p.index, { invoiceId: (args.source.external_ref ?? "").trim(), status: "external", externalLabel: billedElsewhereLabel(args.source) });
+    }
   }
   return out;
 }

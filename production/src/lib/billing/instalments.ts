@@ -95,7 +95,7 @@ export function plannedInstalments(sub: ScheduleFields): PlannedInstalment[] {
  * top of that would be a second tax invoice for the same supply.
  */
 export interface InstalmentSkip {
-  code:   "not_split_billed" | "term_already_invoiced" | "no_schedule";
+  code:   "not_split_billed" | "term_already_invoiced" | "no_schedule" | "billed_elsewhere";
   reason: string;
 }
 

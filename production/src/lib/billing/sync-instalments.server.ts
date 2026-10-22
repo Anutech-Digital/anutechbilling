@@ -18,6 +18,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { plannedInstalments, instalmentSkip, instalmentsDue, type InstalmentSkip } from "./instalments";
 import { billingTermStart } from "./subscription-schedule";
 import { addDaysISO } from "@/lib/dates/ist";
+import { billedElsewhere, billedElsewhereLabel } from "@/lib/subscriptions/billed-elsewhere";
 
 type Admin = SupabaseClient<Database>;
 
@@ -30,10 +31,14 @@ export interface InstalmentSub {
   term_months: Database["public"]["Tables"]["subscriptions"]["Row"]["term_months"];
   start_date: string | null;
   renewal_date: string | null;
+  /** R-1763: imported from Zoho Books — periods starting on/before this day were billed there. */
+  external_source?: string | null;
+  external_ref?: string | null;
+  billed_externally_until?: string | null;
 }
 
 export const INSTALMENT_SUB_SELECT =
-  "id, tenant_id, quote_id, mrr, billing_cycle, term_months, start_date, renewal_date" as const;
+  "id, tenant_id, quote_id, mrr, billing_cycle, term_months, start_date, renewal_date, external_source, external_ref, billed_externally_until" as const;
 
 export interface QuotePaymentFacts {
   amount: number | null;
@@ -63,7 +68,15 @@ export async function syncSubscriptionInstalments(args: {
   const dryRun = args.dryRun ?? false;
   const out: InstalmentSyncResult = { skip: null, created: 0, resynced: 0, raised: [], alreadyRaised: 0, wouldRaise: 0 };
 
-  const planned = plannedInstalments(sub);
+  /* R-1763: a period Zoho already billed is never laid or invoiced here (the database refuses
+     it too — trigger subscription_billings_not_billed_elsewhere). The term key stays the
+     whole term's first day, so the periods still to bill here keep their usual key. */
+  const wholeTerm = plannedInstalments(sub);
+  const planned = wholeTerm.filter((p) => !billedElsewhere(sub, p.periodStart));
+  if (wholeTerm.length > 0 && planned.length === 0) {
+    out.skip = { code: "billed_elsewhere", reason: `${billedElsewhereLabel(sub)} — this term is not invoiced again here; the next term is.` };
+    return out;
+  }
   const skip = instalmentSkip({
     cycle:         sub.billing_cycle,
     quotePaid:     quote?.payment_amount,

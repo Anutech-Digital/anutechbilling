@@ -25,6 +25,7 @@ import { GST_STATE_BY_CODE, isValidGstin } from "@/lib/utils";
 import { monthlyRateFrom, periodMonths } from "@/lib/export/subscription-portable";
 import { buildImportDedupeIndex, duplicateReason, type TrackedSubscription } from "@/lib/subscriptions/import-dedupe";
 import { planKey } from "@/lib/subscriptions/plan-match";
+import { productKey } from "@/lib/subscriptions/product-key";
 import { vendorFromPlanName } from "@/lib/provisioning/plan";
 import { parsePlaceOfSupply, parseZohoDate } from "@/lib/import/zoho-opening-invoices";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
@@ -204,13 +205,14 @@ export type CustomerMatch =
 export type ProblemCode =
   | "unknown_plan" | "missing_gstin" | "invalid_gstin" | "no_period" | "no_domain"
   | "customer_not_found" | "ambiguous_customer" | "prorata_without_base" | "bad_seats" | "no_price"
-  | "invoice_problem";
+  | "invoice_problem" | "merged_item_names";
 
 /** Not imported vs imported with a warning. */
 export const PROBLEM_BLOCKS: Record<ProblemCode, boolean> = {
   unknown_plan: false, missing_gstin: false, invalid_gstin: false,
   no_period: true, no_domain: true, customer_not_found: true, ambiguous_customer: true,
   prorata_without_base: true, bad_seats: true, no_price: true, invoice_problem: true,
+  merged_item_names: false,
 };
 
 export const PROBLEM_LABEL: Record<ProblemCode, string> = {
@@ -225,6 +227,7 @@ export const PROBLEM_LABEL: Record<ProblemCode, string> = {
   bad_seats: "No seat quantity (not imported)",
   no_price: "No price on the line (not imported)",
   invoice_problem: "Open invoice that cannot be imported",
+  merged_item_names: "Same plan under another item name in Zoho (merged into one subscription)",
 };
 
 export interface Problem { code: ProblemCode; ref: string; message: string }
@@ -243,8 +246,10 @@ export interface SubscriptionPayload {
   domain: string;
   billing_cycle: Cycle;
   term_months: number;
-  /** The Zoho invoice the current period came from. */
+  /** The Zoho invoice the current period came from (R-1763: stored on the subscription). */
   source_invoice: string;
+  /** That invoice's date (YYYY-MM-DD). */
+  source_invoice_date: string;
   prorata_seats: number;
   from_service_expiry: boolean;
 }
@@ -293,6 +298,8 @@ export interface ImportPlan {
     subscriptionsToImport: number;
     subscriptionsAlready: number;
     subscriptionsEnded: number;
+    /** R-1763: subscriptions whose Zoho lines carry more than one item name for the product. */
+    subscriptionsMerged: number;
     oneTimeInvoices: number;
     invoicesToImport: number;
     invoicesAlready: number;
@@ -301,6 +308,7 @@ export interface ImportPlan {
 }
 
 const rupees = (n: number) => Math.round(n);
+const fmtSeats = (n: number) => `${n} seat${n === 1 ? "" : "s"}`;
 
 /** Match each Zoho contact to an existing customer: GSTIN first, then the exact name. */
 function matchCustomers(contacts: readonly ZohoContactRec[], existing: readonly ExistingCustomer[]) {
@@ -397,6 +405,23 @@ interface Candidate {
   fromServiceExpiry: boolean;
 }
 
+const latestFirst = (a: Candidate, b: Candidate) =>
+  b.start.localeCompare(a.start) || b.invoiceDate.localeCompare(a.invoiceDate) || b.invoiceNumber.localeCompare(a.invoiceNumber);
+
+/**
+ * R-1763: the line that sets the CURRENT term of one domain + product. The latest-starting
+ * renewal line marks the term; of the lines running on that day the longest one is the term
+ * (a 1-seat top-up dated later inside a yearly term is not), latest start on a tie. Pro-rata
+ * lines never set a term. Null when there are only pro-rata lines.
+ */
+function currentTermLine(group: readonly Candidate[]): Candidate | null {
+  const bases = group.filter((c) => !c.prorata).sort(latestFirst);
+  const latest = bases[0];
+  if (!latest) return null;
+  const running = bases.filter((c) => c.start <= latest.start && c.end >= latest.start);
+  return running.sort((x, y) => y.months - x.months || latestFirst(x, y))[0];
+}
+
 export function buildImportPlan(input: PlanInput): ImportPlan {
   const { matches, customers, contactRows, problems } = matchCustomers(input.contacts, input.existingCustomers);
   const contactIds = new Set(input.contacts.map((c) => c.zohoId));
@@ -450,7 +475,7 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
       const qty = Math.round(Number(line.quantity) || 0);
       const total = line.itemTotal != null && Number.isFinite(line.itemTotal) ? line.itemTotal : null;
       const perSeatPeriod = qty > 0 ? (total != null ? total / qty : line.rate) : null;
-      const key = `${domain}|${planKey(line.plan)}`;
+      const key = `${domain}|${productKey(line.plan)}`;
       const c: Candidate = {
         key, domain, plan: line.plan.trim(), seats: qty, perSeatPeriod, start, end, months,
         invoiceNumber: inv.number, invoiceDate: inv.date, zohoCustomerId: inv.zohoCustomerId,
@@ -461,21 +486,24 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
   }
 
   const catalogByKey = new Map<string, CatalogItem[]>();
+  const catalogByProduct = new Map<string, CatalogItem[]>();
   for (const it of input.items) {
     const k = planKey(it.name);
     if (k) catalogByKey.set(k, [...(catalogByKey.get(k) ?? []), it]);
+    /* R-1763: Zoho's renamed item ("… Starter - User License (Resale)") still finds the
+       catalogue row of its product — only for a known vendor + edition, never by loose words. */
+    const pk = productKey(it.name);
+    if (pk && !pk.startsWith("?|")) catalogByProduct.set(pk, [...(catalogByProduct.get(pk) ?? []), it]);
   }
   const dedupe = buildImportDedupeIndex(input.existingSubscriptions);
 
   const subscriptions: SubscriptionPayload[] = [];
   let subscriptionsAlready = 0, subscriptionsEnded = 0;
-  const latestFirst = (a: Candidate, b: Candidate) =>
-    b.start.localeCompare(a.start) || b.invoiceDate.localeCompare(a.invoiceDate) || b.invoiceNumber.localeCompare(a.invoiceNumber);
 
+  let subscriptionsMerged = 0;
   for (const group of candidates.values()) {
-    const bases = group.filter((c) => !c.prorata).sort(latestFirst);
-    const base = bases[0];
     const ref = `${group[0].domain} · ${group[0].plan}`;
+    const base = currentTermLine(group);
     if (!base) {
       const pr = [...group].sort(latestFirst)[0];
       if (pr.end >= input.today) {
@@ -485,9 +513,14 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
     }
     if (base.end < input.today) { subscriptionsEnded++; continue; }
 
-    const prorata = group.filter((c) => c.prorata && c.start >= base.start && c.start <= base.end && c.end >= input.today);
-    const prorataSeats = prorata.reduce((s, c) => s + c.seats, 0);
+    /* Seats added inside the current term — a pro-rata invoice, or a top-up under another
+       item name (R-1763). An older term (it starts before this one) is not added. */
+    const extra = group.filter((c) => c !== base && c.start >= base.start && c.start <= base.end && c.end >= input.today);
+    const prorataSeats = extra.reduce((sum, c) => sum + c.seats, 0);
     const seats = base.seats + prorataSeats;
+    /* The plan name = the newest line's item name (Zoho's current name for the product). */
+    const newest = [base, ...extra].sort((x, y) => y.invoiceDate.localeCompare(x.invoiceDate) || y.start.localeCompare(x.start))[0];
+    const planName = newest.plan;
     if (base.seats <= 0) {
       problems.push({ code: "bad_seats", ref, message: `${ref}: ${base.invoiceNumber} has no quantity.` });
       continue;
@@ -505,21 +538,27 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
       continue;
     }
     const already = cust.key.startsWith("zoho:") ? null
-      : duplicateReason({ domain: base.domain, customer_id: cust.key, plan: base.plan }, dedupe);
+      : duplicateReason({ domain: base.domain, customer_id: cust.key, plan: planName }, dedupe);
     if (already) { subscriptionsAlready++; continue; }
 
-    const items = catalogByKey.get(planKey(base.plan)) ?? [];
+    const items = catalogByKey.get(planKey(planName)) ?? catalogByProduct.get(productKey(planName)) ?? [];
     if (items.length === 0) {
-      problems.push({ code: "unknown_plan", ref, message: `${ref}: "${base.plan}" is not in your Items — imported with Zoho's name, not linked to an item.` });
+      problems.push({ code: "unknown_plan", ref, message: `${ref}: "${planName}" is not in your Items — imported with Zoho's name, not linked to an item.` });
+    }
+    const allNames = [...new Set(group.map((c) => c.plan.trim()))];
+    if (new Set(group.map((c) => planKey(c.plan))).size > 1) {
+      subscriptionsMerged++;
+      problems.push({ code: "merged_item_names", ref: `${base.domain} · ${planName}`,
+        message: `${base.domain}: ${allNames.map((n) => `"${n}"`).join(" and ")} are one product — imported as one subscription of ${fmtSeats(seats)}.` });
     }
     const itemVendor = items.length === 1 ? items[0].vendor : null;
     const vendor = (itemVendor && ["google", "microsoft", "zoho"].includes(itemVendor) ? itemVendor : null)
-      ?? vendorFromPlanName(base.plan) ?? "other";
+      ?? vendorFromPlanName(planName) ?? "other";
 
     subscriptions.push({
       zoho_customer_id: base.zohoCustomerId,
       customer_name: base.customerName,
-      plan: base.plan,
+      plan: planName,
       vendor: vendor as SubscriptionPayload["vendor"],
       seats,
       mrr: rate.mrr,
@@ -529,6 +568,7 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
       billing_cycle: cycleOf(base.months),
       term_months: base.months,
       source_invoice: base.invoiceNumber,
+      source_invoice_date: base.invoiceDate,
       prorata_seats: prorataSeats,
       from_service_expiry: base.fromServiceExpiry,
     });
@@ -597,6 +637,7 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
       subscriptionsToImport: subscriptions.length,
       subscriptionsAlready,
       subscriptionsEnded,
+      subscriptionsMerged,
       oneTimeInvoices,
       invoicesToImport: invoices.length,
       invoicesAlready,
