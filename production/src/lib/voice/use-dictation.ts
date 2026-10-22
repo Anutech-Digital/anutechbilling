@@ -151,7 +151,7 @@ export function useDictation(onText: (next: string) => void, currentText: () => 
        deta. */
     void perms.query({ name: "microphone" as PermissionName })
       .then((s) => setPermState(s.state))
-      .catch(() => setPermState("poochha nahi ja saka"));
+      .catch(() => setPermState("could not check"));
   }, []);
 
   /* ── Permission badle to APNE AAP theek ho jao (26 Aug 2026) ─────────────────
@@ -207,7 +207,7 @@ export function useDictation(onText: (next: string) => void, currentText: () => 
 
   const start = React.useCallback(() => {
     const C = recognitionCtor();
-    if (!C) { setError("Ye browser bolkar likhne ki suvidha nahi deta. Chrome me chalega."); return; }
+    if (!C) { setError("This browser does not support voice typing. It works in Chrome."); return; }
 
     setError("");
     const rec = new C();
@@ -288,7 +288,7 @@ export function useDictation(onText: (next: string) => void, currentText: () => 
   const requestMic = React.useCallback(() => {
     const md = typeof navigator === "undefined" ? undefined : navigator.mediaDevices;
     if (!md?.getUserMedia) {
-      setError("Ye browser mic ki ijazat maangne ka tarika nahi deta. Chrome me kholiye.");
+      setError("This browser cannot ask for microphone permission. Open it in Chrome.");
       return;
     }
     setError("");
@@ -304,16 +304,16 @@ export function useDictation(onText: (next: string) => void, currentText: () => 
         const name = e instanceof Error ? e.name : "";
         if (name === "NotAllowedError") {
           setError(
-            "Chrome ne mic ki ijazat mana kar di. Address bar ke baayen 🔒/ⓘ icon par " +
-            "click karke Microphone ko Allow kariye, phir Ctrl+Shift+R dabaiye. (blocked)",
+            "Chrome blocked the microphone. Click the 🔒/ⓘ icon at the left of the address bar, " +
+            "set Microphone to Allow, then press Ctrl+Shift+R. (blocked)",
           );
         } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
           /* Ye wo shakha hai jise permission ki settings kabhi theek nahi kar sakti —
              aur jise permission ki galti samajh kar log ghanton settings me dhoondhte
              hain. Isliye ise alag se, saaf shabdon me. */
-          setError("Is computer par koi microphone nahi mila. Mic/headphone juda hai? (no-device)");
+          setError("No microphone found on this computer. Is a mic or headset connected? (no-device)");
         } else {
-          setError(`Mic chalu nahi ho paya. (${name || "unknown"})`);
+          setError(`Could not start the microphone. (${name || "unknown"})`);
         }
       });
   }, [start]);

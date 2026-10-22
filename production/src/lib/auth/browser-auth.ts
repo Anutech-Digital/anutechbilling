@@ -55,7 +55,7 @@ async function postJson(url: string, body: unknown): Promise<{ ok: boolean; stat
 
 /** R-1548: Auth.js refused the try before checking the password (10 tries / 15 min per email). */
 export const TOO_MANY_ATTEMPTS_CODE = "too_many_attempts";
-export const TOO_MANY_ATTEMPTS_MESSAGE = "Bahut baar galat password — 15 minute baad koshish karo. Password yaad nahi? Forgot password se naya banao.";
+export const TOO_MANY_ATTEMPTS_MESSAGE = "Too many wrong passwords — try again after 15 minutes. Forgot your password? Use Forgot password to set a new one.";
 
 const LOGIN_MESSAGES: Record<string, string> = {
   invalid_credentials: "Invalid login credentials",

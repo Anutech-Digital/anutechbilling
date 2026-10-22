@@ -26,7 +26,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 
 export const DUES_PAY_LABEL = "Record payment";
-export const DUES_PAY_HINT = "Customer ne paisa diya — yahan darj karo";
+export const DUES_PAY_HINT = "Record the money the customer paid for this subscription";
 
 /** The subscription's own quote links, read straight from the subscription row. */
 export interface DuesQuoteLinks {

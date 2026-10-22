@@ -29,11 +29,11 @@ export async function POST(req: NextRequest) {
   try { body = await req.json(); } catch { body = {}; }
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Ye link adhoora hai — mail wala link poora kholo." }, { status: 400 });
+    return NextResponse.json({ error: "This link is incomplete — open the full link from the email." }, { status: 400 });
   }
   const { t, e, s, c } = parsed.data;
   if (!verifyUnsubscribe(t, e, s)) {
-    return NextResponse.json({ error: "Ye link sahi nahi hai ya badla gaya hai." }, { status: 403 });
+    return NextResponse.json({ error: "This link is not valid or has been changed." }, { status: 403 });
   }
 
   /* Untyped: the table is newer than the generated types (database.types.ts is shared). */
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
   );
   if (error) {
     console.error("[/api/public/unsubscribe] insert failed:", error);
-    return NextResponse.json({ error: "Abhi save nahi hua — thodi der baad dobara try karo." }, { status: 500 });
+    return NextResponse.json({ error: "Could not save right now — try again in a little while." }, { status: 500 });
   }
   return NextResponse.json({ ok: true });
 }

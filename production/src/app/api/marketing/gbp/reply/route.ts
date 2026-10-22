@@ -12,10 +12,10 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const schema = z.object({
-  reviewId: z.string({ message: "Reply text chahiye." }).min(1, "Reply text chahiye."),
-  comment: z.string({ message: "Reply text chahiye." }).trim()
-    .min(1, "Reply text chahiye.")
-    .max(4096, "Reply 4096 characters se chhota rakho (Google ki limit)."),
+  reviewId: z.string({ message: "Reply text is required." }).min(1, "Reply text is required."),
+  comment: z.string({ message: "Reply text is required." }).trim()
+    .min(1, "Reply text is required.")
+    .max(4096, "Keep the reply under 4096 characters (Google's limit)."),
 });
 
 export const POST = withRoute(
@@ -25,7 +25,7 @@ export const POST = withRoute(
     const { data: review } = await admin.from("gbp_reviews")
       .select("id, review_name, location_id, gbp_locations!gbp_reviews_location_id_fkey(connected_user_id)")
       .eq("id", input.reviewId).eq("tenant_id", tenantId).maybeSingle();
-    if (!review) throw new RouteError(404, "Review nahi mila.");
+    if (!review) throw new RouteError(404, "Review not found.");
     const syncUser = (review as unknown as { gbp_locations?: { connected_user_id: string } | null }).gbp_locations?.connected_user_id ?? user.id;
 
     try {

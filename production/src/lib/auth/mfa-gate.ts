@@ -39,9 +39,9 @@ export function apiNeedsMfaCode(pathname: string): boolean {
  * another workspace, or your role doesn't allow it" — the wrong reason and the wrong fix.
  * lib/errors/toast-error.ts recognises it by MFA_PENDING_MARKER.
  */
-export const MFA_PENDING_MARKER = "Doosra sign-in step baaki";
+export const MFA_PENDING_MARKER = "Second sign-in step pending";
 export const MFA_PENDING_DATA_REFUSAL =
-  `${MFA_PENDING_MARKER} — sign out karke dobara login karo aur authenticator app ka code daalo.`;
+  `${MFA_PENDING_MARKER} — sign out, sign in again and enter the code from your authenticator app.`;
 
 export const MFA_API_REFUSAL =
   "Enter the code from your authenticator app first. Open /mfa, type the 6-digit code, then try again.";

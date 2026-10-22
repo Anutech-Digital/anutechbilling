@@ -42,7 +42,7 @@ export const POST = withRoute({
   route: "api/settings/reset-data",
   input: schema,
   roles: ["owner"],
-  roleHint: "Data reset sirf workspace owner kar sakta hai.",
+  roleHint: "Only the workspace owner can reset data.",
 }, async ({ supabase, user, input }) => {
   if (!user.email) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });

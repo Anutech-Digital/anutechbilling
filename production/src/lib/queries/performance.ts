@@ -78,10 +78,10 @@ export interface PerfNote { title: string; detail: string }
 export function roleFocus(role: string): { label: string; hint: string } {
   switch (role) {
     case "sales":
-    case "sales_senior": return { label: "Deals won + revenue", hint: "Leads close karna + paisa laana" };
-    case "accountant":   return { label: "Payments collected", hint: "Receivables collect karna" };
-    case "support":      return { label: "Tasks on-time", hint: "Tickets/tasks time pe" };
-    default:             return { label: "Overall results", hint: "Revenue, deals, tasks — sab" };
+    case "sales_senior": return { label: "Deals won + revenue", hint: "Closing leads + bringing in revenue" };
+    case "accountant":   return { label: "Payments collected", hint: "Collecting receivables" };
+    case "support":      return { label: "Tasks on-time", hint: "Tickets/tasks on time" };
+    default:             return { label: "Overall results", hint: "Revenue, deals, tasks — all of it" };
   }
 }
 

@@ -661,7 +661,7 @@ export function useDeleteExpense() {
       qc.invalidateQueries({ queryKey: ["project_sales"] });
       toast.success("Expense deleted");
     },
-    onError: (err) => toastDeleteBlocked(err, "Ye kharcha yahan se nahi hata — neeche ke button se us page par jao jahan ise hataya jaata hai."),
+    onError: (err) => toastDeleteBlocked(err, "This expense cannot be removed here — use the button below to go to the page where it is removed."),
   });
 }
 

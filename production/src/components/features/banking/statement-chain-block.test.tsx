@@ -24,9 +24,9 @@ describe("StatementChainBlock", () => {
     const onAck = vi.fn();
     const { container } = render(<StatementChainBlock check={gapCheck} source="ai" ack={false} onAck={onAck} />);
     const text = container.textContent ?? "";
-    expect(text).toContain("Page 7: ₹12,000 ki lines chhoot rahi hain — 6 Apr 2026 se 9 Apr 2026");
+    expect(text).toContain("Page 7: lines worth ₹12,000 are missing — 6 Apr 2026 to 9 Apr 2026");
     expect(text).toMatch(/CSV\s*\/\s*Excel/);
-    const box = screen.getByRole("checkbox", { name: /Main jaanta hoon, adhoora import karna hai/ });
+    const box = screen.getByRole("checkbox", { name: /I understand — import the incomplete statement anyway/ });
     fireEvent.click(box);
     expect(onAck).toHaveBeenCalledWith(true);
     expect(screen.getByRole("alert")).toBeTruthy();
@@ -44,7 +44,7 @@ describe("StatementChainBlock", () => {
       <StatementChainBlock check={{ ran: false, gaps: [], rowCountIssues: [], blocking: false }} source="csv" ack={false} onAck={() => {}} />,
     );
     const text = container.textContent ?? "";
-    expect(text).toMatch(/Balance check nahi chal paaya/);
+    expect(text).toMatch(/Balance check could not run/);
     expect(text).not.toMatch(/poori hai|sab theek|matches/i);
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
@@ -53,7 +53,7 @@ describe("StatementChainBlock", () => {
     const { container } = render(
       <StatementChainBlock check={{ ran: true, gaps: [], rowCountIssues: [], blocking: false }} source="ai" ack={false} onAck={() => {}} />,
     );
-    expect(container.textContent).toMatch(/Balance chain poori/);
+    expect(container.textContent).toMatch(/Balance chain complete/);
   });
 
   it("CSV with a missing line: the same red block, called a bad file, no re-read promised", () => {
@@ -66,9 +66,9 @@ describe("StatementChainBlock", () => {
     const check = checkPreview(parseStatement(csv).rows);
     const { container } = render(<StatementChainBlock check={check} source="csv" ack={false} onAck={() => {}} />);
     const text = container.textContent ?? "";
-    expect(text).toContain("₹25,000 ki lines chhoot rahi hain — 2 Apr 2026 se 4 Apr 2026");
-    expect(text).toMatch(/file adhoori/i);
-    expect(text).not.toMatch(/dobara padh/);
-    expect(screen.getByRole("checkbox", { name: /Main jaanta hoon/ })).toBeTruthy();
+    expect(text).toContain("lines worth ₹25,000 are missing — 2 Apr 2026 to 4 Apr 2026");
+    expect(text).toMatch(/file is incomplete/i);
+    expect(text).not.toMatch(/re-read/i);
+    expect(screen.getByRole("checkbox", { name: /I understand/ })).toBeTruthy();
   });
 });

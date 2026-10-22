@@ -75,6 +75,15 @@ function AlertRow({ a }: { a: MarginAlert }) {
   );
 }
 
+/** R-1727: the two counts the closed Insights strip on /subscriptions shows — the same
+ *  split this card makes (repricing queue vs no vendor cost). */
+export function marginAlertCounts(alerts: MarginAlert[]): { atRisk: number; unchecked: number } {
+  return {
+    atRisk: alerts.filter((a) => a.needsRepricing).length,
+    unchecked: alerts.filter((a) => a.unmatched).length,
+  };
+}
+
 /**
  * The card itself, taking data as a prop so what the operator READS can be tested
  * without a Supabase mock. `MarginAlertsCard` below is the hook wrapper.

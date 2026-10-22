@@ -34,7 +34,7 @@ import { AiHelp, AiHelpButton } from "./ai-help";
 import { GlobalBugReporter } from "./global-bug-reporter";
 import { reportTextWithContext, draftToText } from "./help-report-tab";
 
-const NO_KEY_REPLY = { reply: "Is company ke liye AI (Gemini) key nahi lagi hai", bugDraft: null, checklist: [], followUps: [], ai: false, reason: "no_key" };
+const NO_KEY_REPLY = { reply: "No AI (Gemini) key is set for this company", bugDraft: null, checklist: [], followUps: [], ai: false, reason: "no_key" };
 const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
 
 beforeEach(() => {

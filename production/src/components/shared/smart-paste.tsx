@@ -167,7 +167,7 @@ export function SmartPaste({ catalogue, onFill, contactOnly = false, lead = fals
         onChange={(e) => setText(e.target.value)}
         rows={4}
         autoFocus
-        placeholder="Paste a WhatsApp message or an email here — for example: “Hi, mujhe 20 email google workspace standard chahiye. Rahul, 98765 43210”"
+        placeholder="Paste a WhatsApp message or an email here — for example: “Hi, I need 20 Google Workspace Standard emails. Rahul, 98765 43210”"
         className="text-[13px]"
       />
 

@@ -32,7 +32,7 @@ import { LANDING_PLANS } from "@/site/lib/data/hosting-landing";
 export const POST = withRoute({
   route: "api/catalog/sync-hosting",
   roles: ["owner", "manager"],
-  roleHint: "Catalogue sync sirf owner / manager kar sakte hain.",
+  roleHint: "Only an owner or manager can sync the catalogue.",
 }, async ({ supabase }) => {
 
   if (!daConfigured()) {

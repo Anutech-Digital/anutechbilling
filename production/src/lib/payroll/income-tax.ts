@@ -122,8 +122,8 @@ export function estimateMonthlyTds(i: TdsEstimateInput): TdsEstimate {
   const thisMonth = Math.max(0, Math.round(balanceTax / (monthsAhead + 1)));
   const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
   const note = tax.totalTax === 0
-    ? `FY ${fyLabelOf(fyStart)}: saal ka andaaza ${inr(projectedAnnual)} — taxable ${inr(tax.taxableIncome)} ≤ ${inr(taxYearFor(fyStart).rebateLimit)}, s.87A se tax shunya. TDS nahi.`
-    : `FY ${fyLabelOf(fyStart)}: saal ka andaaza ${inr(projectedAnnual)} → tax ${inr(tax.totalTax)} (cess samet) − ab tak kata ${inr(tdsSoFar)} = ${inr(Math.max(0, balanceTax))}, ${monthsAhead + 1} mahine mein → ${inr(thisMonth)}/mahina.`;
+    ? `FY ${fyLabelOf(fyStart)}: projected annual income ${inr(projectedAnnual)} — taxable ${inr(tax.taxableIncome)} ≤ ${inr(taxYearFor(fyStart).rebateLimit)}, tax is nil under s.87A. No TDS.`
+    : `FY ${fyLabelOf(fyStart)}: projected annual income ${inr(projectedAnnual)} → tax ${inr(tax.totalTax)} (incl. cess) − deducted so far ${inr(tdsSoFar)} = ${inr(Math.max(0, balanceTax))}, over ${monthsAhead + 1} month(s) → ${inr(thisMonth)}/month.`;
   return { fyStart, monthsAhead, projectedAnnual, tax, tdsSoFar, balanceTax, thisMonth, note };
 }
 

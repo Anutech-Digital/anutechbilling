@@ -44,7 +44,7 @@ describe("billItcEligibility", () => {
   it("another state's vendor charging CGST+SGST — that state's tax, no credit here", () => {
     const v = billItcEligibility({ ...base, vendor_gstin: GSTIN_MH, document_type: "tax_invoice" });
     expect(v.eligible).toBe(false);
-    expect(v.reason).toMatch(/doosre rajya \(27\)/);
+    expect(v.reason).toMatch(/another state \(27\)/);
   });
 
   it("another state's vendor charging IGST — credit", () => {

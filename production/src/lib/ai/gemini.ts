@@ -425,9 +425,9 @@ export async function geminiJson<T>(args: {
        read identically" — aur ye path abhi tak theek wahi kar raha tha. */
     args.onFailure?.(
       isTimeout
-        ? `Gemini ne ${Math.round((args.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000)} second me jawab nahi diya, ` +
-          "dobara koshish ke baad bhi. Thodi der baad phir se try kariye."
-        : `Gemini se baat nahi ho payi — ${why || "wajah nahi mili"}.`,
+        ? `Gemini timed out after ${Math.round((args.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000)} seconds, ` +
+          "even after a retry. Please try again in a little while."
+        : `Could not reach Gemini — ${why || "no reason given"}.`,
     );
     return null;
   }
@@ -442,7 +442,7 @@ export async function geminiJson<T>(args: {
  */
 export async function geminiGroundedText(args: { apiKey: string; model: string; system: string; user: string; temperature?: number; timeoutMs?: number; label: string }): Promise<string | null> {
   const now = Date.now();
-  if (breakerOpen(now)) throw new Error("Gemini abhi baar-baar fail ho raha hai, ek minute ke liye calls ruki hain — thodi der baad try karo.");
+  if (breakerOpen(now)) throw new Error("Gemini is failing repeatedly, so calls are paused for a minute. Please try again shortly.");
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(args.model)}:generateContent?key=${args.apiKey}`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -456,8 +456,8 @@ export async function geminiGroundedText(args: { apiKey: string; model: string; 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     recordFailure(now);
-    if (res.status === 429) throw new Error("Gemini ka quota khatam hai (free tier) — Settings → Integrations → AI mein billing wali Gemini key daalo; Google Search grounding paid key par hi chalta hai.");
-    if (res.status === 400 && /google_search|tool/i.test(body)) throw new Error(`Is Gemini model (${args.model}) par Google Search grounding nahi chalta — env GEMINI_MODEL mein gemini-flash-latest rakho.`);
+    if (res.status === 429) throw new Error("Gemini quota is used up (free tier). Add a billing-enabled Gemini key in Settings → Integrations → AI; Google Search grounding works only with a paid key.");
+    if (res.status === 400 && /google_search|tool/i.test(body)) throw new Error(`Google Search grounding does not work on this Gemini model (${args.model}). Set GEMINI_MODEL to gemini-flash-latest in env.`);
     throw new Error(failureReason(res.status, body));
   }
   const data = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };

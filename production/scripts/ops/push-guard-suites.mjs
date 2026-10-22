@@ -36,6 +36,7 @@ export const PUSH_GUARD_SUITES = [
   "src/app/(app)/quotes/invoice-link.test.ts",
   "src/app/(app)/accounting/cash-flow/cash-flow-copy-english.test.ts",
   "src/app/(app)/assessments/ui-copy-english.test.ts",
+  "src/app/(app)/today/ui-copy-english.test.ts", // R-1731: whole-app Hinglish scan + allow-list that only shrinks
   "src/app/(app)/leads/card-list-scroll.test.ts",
   "src/app/(app)/marketing/marketing-copy-english.test.ts",
   "src/app/api/public/_lib/db-error.test.ts",

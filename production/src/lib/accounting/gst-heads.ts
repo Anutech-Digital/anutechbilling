@@ -58,7 +58,7 @@ const n = (v: number | null | undefined): number =>
   typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
 
 const ASSUMED =
-  "Bill par IGST/CGST ka batwara nahi tha — intra-state maan kar aadha-aadha baanta gaya";
+  "The bill had no IGST / CGST split — treated as intra-state and split half-and-half";
 
 /**
  * Batwara nikalo.
@@ -97,7 +97,7 @@ export function expenseGstHeads(e: GstHeadsInput | null | undefined): GstHeads {
     measured: false,
     assumption:
       split > 0
-        ? `Bill ka batwara (₹${split}) kul GST (₹${total}) se mel nahi khata — intra-state maan kar baanta gaya`
+        ? `The bill's split (₹${split}) does not match the total GST (₹${total}) — treated as intra-state and split`
         : ASSUMED,
   };
 }

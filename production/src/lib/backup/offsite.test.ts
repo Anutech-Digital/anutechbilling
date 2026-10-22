@@ -122,7 +122,7 @@ describe("offsiteRefusal — khaali backup bhejne se behtar hai kuch na bhejna",
     /* Khaali object bucket me sabse bura nateeja hai: tareekh sahi, naam sahi, andar kuch
        nahi. Pata us din chalega jis din restore karna pade. */
     const why = offsiteRefusal(offsiteEnvelope(now, "x", []), 3);
-    expect(why).toContain("koi snapshot nahi");
+    expect(why).toContain("no snapshot found");
   });
 
   it("aadhe tenant par mana karta hai — ASLI FAISLA", () => {
@@ -153,7 +153,7 @@ describe("offsiteRefusal — khaali backup bhejne se behtar hai kuch na bhejna",
     /* tenants ki ginti na mil paye (query fail) to us wajah se backup rokna galat hoga —
        par khaali payload phir bhi khaali hai. */
     expect(offsiteRefusal(offsiteEnvelope(now, "x", [snap("t1", "A")]), 0)).toBeNull();
-    expect(offsiteRefusal(offsiteEnvelope(now, "x", []), 0)).toContain("koi snapshot nahi");
+    expect(offsiteRefusal(offsiteEnvelope(now, "x", []), 0)).toContain("no snapshot found");
   });
 });
 

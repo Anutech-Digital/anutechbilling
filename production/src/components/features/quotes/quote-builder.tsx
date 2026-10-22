@@ -27,7 +27,7 @@ import { toastError } from "@/lib/errors/toast-error";
 import { canSend, requiredApproval } from "@/lib/quotes/approval";
 import { lineEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-economics";
 import {
-  sendQuoteEmail, quoteRecipient, saveAndSendPlan, saveAndSendLabel,
+  sendQuoteEmail, quoteRecipient, saveAndSendPlan,
   quoteEmailOutcome, quoteEmailErrorOutcome, markedSentOutcome, needsApprovalOutcome,
 } from "@/lib/quotes/send-quote-email";
 import { NUMBERING_FIX, COMPANY_STATE_FIX, companyStateFixFor } from "@/lib/onboarding/setup-links";
@@ -1253,7 +1253,6 @@ function QuoteBuilderBody() {
   ).allowed, [editOf, sourceQuote, lineItems]);
   const sendPlan = saveAndSendPlan({ recipient: sendRecipient, sendAllowed });
   const [emailing, setEmailing] = React.useState(false);
-  const sendLabel = saveAndSendLabel(sendPlan);
 
   /** Email an already-saved quote; on failure keep a "Try again" on the toast. */
   const emailSavedQuote = async (id: string, to: string): Promise<boolean> => {
@@ -1288,7 +1287,8 @@ function QuoteBuilderBody() {
   // (open the email or WhatsApp dialog as soon as we land). The detail
   // page reads `?send=whatsapp` / `?send=email` from the URL.
   // "send-now" = the main "Save & send" button (R-408): save, then email right here.
-  const handleSubmit = async (status: "draft" | "sent", afterAction?: "email" | "whatsapp" | "send-now") => {
+  // "mark-sent" = Send ▾ → Save & mark sent (R-1726): saved as sent, no email, even when there is an address.
+  const handleSubmit = async (status: "draft" | "sent", afterAction?: "email" | "whatsapp" | "send-now" | "mark-sent") => {
     // In lead mode, customer is NOT required (lead = potential customer).
     // A real customer record gets created only after payment.
     // In customer mode, accept EITHER an existing customer pick OR a typed
@@ -1358,7 +1358,9 @@ function QuoteBuilderBody() {
     /* R-408: when emailing (or held for approval) the row is saved as a DRAFT and the send
        route flips it to 'sent' only after the mail went — so a failed email never shows
        as sent. With no address it is saved as 'sent' and the toast says no email went. */
-    const plan = afterAction === "send-now" ? sendPlan : null;
+    const plan = afterAction === "send-now" ? sendPlan
+      : afterAction === "mark-sent" ? (sendPlan === "needs-approval" ? "needs-approval" : "mark-sent")
+      : null;
     const saveStatus: "draft" | "sent" = plan === "email" || plan === "needs-approval" ? "draft" : status;
 
     try {
@@ -1565,7 +1567,10 @@ function QuoteBuilderBody() {
 
       // Email failed: stay here — the toast's "Try again" and this button both retry.
       if (emailFailed) return;
-      if (plan === "mark-sent") {
+      if (plan === "mark-sent" && afterAction === "mark-sent" && sendRecipient) {
+        /* The owner chose not to email (sent it by hand) — say what happened, no warning. */
+        toast.success(`${quote.id} marked sent — nothing was emailed`);
+      } else if (plan === "mark-sent") {
         const out = markedSentOutcome(quote.id);
         toast.warning(out.title, { description: out.description, duration: 10000 });
       } else if (plan === "needs-approval") {
@@ -1573,7 +1578,7 @@ function QuoteBuilderBody() {
         toast.warning(out.title, { description: out.description, duration: 10000 });
       }
 
-      const suffix = afterAction && afterAction !== "send-now" ? `?send=${afterAction}` : "";
+      const suffix = afterAction === "email" || afterAction === "whatsapp" ? `?send=${afterAction}` : "";
       router.push(`/quotes/${quote.id}${suffix}` as any);
     } catch {
       // toast in hook
@@ -1700,8 +1705,8 @@ function QuoteBuilderBody() {
                   <path d="M12 16v-4M12 8h.01" />
                 </svg>
                 <div>
-                  <b>Potential customer</b> — full customer record will be created
-                  automatically once payment is received.
+                  <b>Potential customer</b> — the customer record is created when they accept
+                  (or when their first payment is recorded).
                 </div>
               </div>
 
@@ -1910,7 +1915,7 @@ function QuoteBuilderBody() {
                   onChange={(e) => setProspectName(e.target.value)}
                 />
                 <p className="text-3xs text-ink-3 mt-1">
-                  A new prospect who hasn&apos;t paid yet — we&apos;ll auto-create the customer record when they pay.
+                  A new prospect — the customer record is created when they accept (or when their first payment is recorded).
                 </p>
               </FormField>
               )}
@@ -3019,25 +3024,7 @@ function QuoteBuilderBody() {
           <Button icon="file" className="hidden md:inline-flex" onClick={openPreview}>
             Preview
           </Button>
-          <Button
-            icon="mail"
-            className="hidden md:inline-flex"
-            onClick={() => handleSubmit("sent", "email")}
-            loading={createQuote.isPending}
-            disabled={sendDisabled}
-          >
-            Send via email
-          </Button>
-          <Button
-            icon="whatsapp"
-            className="hidden md:inline-flex !text-[#25D366] !border-[#25D366] hover:!bg-[#25D366]/5"
-            onClick={() => handleSubmit("sent", "whatsapp")}
-            loading={createQuote.isPending}
-            disabled={sendDisabled}
-          >
-            Send via WhatsApp
-          </Button>
-          {/* Phone only: everything except the main button lives here. */}
+          {/* Phone only: Save draft and Preview live here; Send ▾ stays on the row. */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <IconButton
@@ -3054,12 +3041,37 @@ function QuoteBuilderBody() {
               <DropdownMenuItem className="gap-2.5 py-2" onSelect={openPreview}>
                 <Icon name="file" size={15} /> Preview
               </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* R-1726: ONE send button — the three ways to send (email / WhatsApp / mark sent) are
+              its menu. Ctrl+Enter still runs the usual send (email when there is an address,
+              else mark sent) — the item it runs carries the shortcut hint. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="primary"
+                icon="send"
+                data-send-menu
+                loading={createQuote.isPending || emailing}
+                disabled={sendDisabled}
+                title={sendPlan === "email" && sendRecipient ? `Ctrl+Enter emails the quote to ${sendRecipient}` : sendPlan === "mark-sent" ? "No customer email — Ctrl+Enter marks it sent without emailing" : undefined}
+              >
+                Send
+                <Icon name="chevron_down" size={14} className="ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="top" className="min-w-[15rem]">
               <DropdownMenuItem
                 className="gap-2.5 py-2"
                 disabled={sendDisabled}
-                onSelect={() => handleSubmit("sent", "email")}
+                onSelect={() => handleSubmit("sent", sendPlan === "mark-sent" ? "email" : "send-now")}
               >
-                <Icon name="mail" size={15} /> Send via email
+                <Icon name="mail" size={15} />
+                <span className="min-w-0 flex-1">
+                  Send via email
+                  {sendRecipient && <span className="block text-2xs text-ink-3 truncate">to {sendRecipient}</span>}
+                </span>
+                {sendPlan !== "mark-sent" && <Kbd keys={["Ctrl", "Enter"]} className="hidden sm:inline-flex" />}
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="gap-2.5 py-2"
@@ -3068,20 +3080,17 @@ function QuoteBuilderBody() {
               >
                 <Icon name="whatsapp" size={15} className="text-[#25D366]" /> Send via WhatsApp
               </DropdownMenuItem>
+              <DropdownMenuItem
+                className="gap-2.5 py-2"
+                disabled={sendDisabled}
+                onSelect={() => handleSubmit("sent", sendPlan === "mark-sent" ? "send-now" : "mark-sent")}
+              >
+                <Icon name="check_circle" size={15} />
+                <span className="min-w-0 flex-1">Save &amp; mark sent</span>
+                {sendPlan === "mark-sent" && <Kbd keys={["Ctrl", "Enter"]} className="hidden sm:inline-flex" />}
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button
-            variant="primary"
-            icon="send"
-            onClick={() => handleSubmit("sent", "send-now")}
-            loading={createQuote.isPending || emailing}
-            disabled={sendDisabled}
-            title={sendPlan === "email" && sendRecipient ? `Saves and emails the quote to ${sendRecipient}` : sendPlan === "mark-sent" ? "No customer email — marks it sent without emailing" : undefined}
-          >
-            <span className="md:hidden">{sendLabel.short}</span>
-            <span className="hidden md:inline">{sendLabel.full}</span>
-            <Kbd keys={["Ctrl", "Enter"]} className="ml-1.5 hidden sm:inline-flex" />
-          </Button>
           </div>
           )}
         </div>

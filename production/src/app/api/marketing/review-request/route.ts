@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const schema = z.object({
-  customerId: z.string({ message: "Customer chuno." }).uuid("Customer chuno."),
+  customerId: z.string({ message: "Select a customer." }).uuid("Select a customer."),
   force: z.boolean().optional(),
 });
 
@@ -33,20 +33,20 @@ export const POST = withRoute(
     const { data: customer } = await supabase.from("customers")
       .select("id, name, display_name, contact_name, contact_first_name, contact_email")
       .eq("id", customerId).single();
-    if (!customer) throw new RouteError(404, "Customer nahi mila.");
+    if (!customer) throw new RouteError(404, "Customer not found.");
     const to = (customer.contact_email ?? "").trim();
-    if (!to) throw new RouteError(400, "Is customer ki email nahi hai — WhatsApp se bhejo ya email jodo.");
+    if (!to) throw new RouteError(400, "This customer has no email — send it on WhatsApp or add an email.");
 
     const { data: tool } = await supabase.from("marketing_tools").select("review_link").eq("tool_key", "google-business").maybeSingle();
     const link = (tool?.review_link ?? "").trim();
-    if (!isValidReviewLink(link)) throw new RouteError(400, "Pehle Google review link save karo (upar wala box).");
+    if (!isValidReviewLink(link)) throw new RouteError(400, "Save the Google review link first (the box above).");
 
     if (!force) {
       const { data: last } = await supabase.from("review_requests").select("created_at")
         .eq("customer_id", customerId).order("created_at", { ascending: false }).limit(1).maybeSingle();
       if (tooSoon(last?.created_at)) {
         return NextResponse.json(
-          { ok: false, error: `Is customer ko pichhle ${REVIEW_COOLDOWN_DAYS} din mein poocha ja chuka hai.`, code: "too_soon" },
+          { ok: false, error: `This customer was already asked in the last ${REVIEW_COOLDOWN_DAYS} days.`, code: "too_soon" },
           { status: 409 },
         );
       }
@@ -76,7 +76,7 @@ export const POST = withRoute(
       status, error: result.status === "failed" ? (result.errorMessage ?? "failed") : null, created_by: user.id,
     });
 
-    if (status === "failed") throw new RouteError(502, result.errorMessage ?? "Mail nahi gaya.");
+    if (status === "failed") throw new RouteError(502, result.errorMessage ?? "Email was not sent.");
     return { status, to };
   },
 );

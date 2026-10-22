@@ -58,6 +58,26 @@ import { useConfirm } from "@/components/providers/confirm-provider";
 import { expenseCategoryError } from "@/lib/accounting/expense-category";
 import { istToday } from "@/lib/dates/ist";
 import { useEmployeeAdvances, EMPLOYEE_ADVANCE_METHOD } from "@/lib/queries/advances";
+import { lastUsedCategory, moreNeeded } from "@/app/(app)/accounting/expenses/expense-form";
+import { buildExpenseNote, lineCategoryFromBill, paidFromBill, rcmSuggested } from "@/app/(app)/accounting/expenses/bill-autofill";
+
+/* R-1744: a small "AI" tag beside a field the bill reader filled. It goes away as soon as the
+   operator changes that field — then the value is theirs, not the AI's. */
+function AiMark({ field, on }: { field: string; on: boolean }) {
+  if (!on) return null;
+  return (
+    <span
+      data-ai-mark={field}
+      title="Filled by AI from the bill — change it if it is wrong"
+      className="inline-flex items-center rounded bg-amber-soft px-1 py-px text-3xs font-semibold leading-none text-amber-ink"
+    >
+      AI<span className="sr-only"> filled this from the bill</span>
+    </span>
+  );
+}
+
+/** R-1744: what the bill reader can read — the same types /api/ai/extract-bill accepts. */
+const BILL_FILE = /^(image\/(png|jpe?g|webp|heic|heif)|application\/pdf)$/i;
 
 const CURRENCY_OPTIONS = ["INR", "USD", "EUR", "GBP", "AED", "SGD", "AUD", "CAD"] as const;
 
@@ -191,7 +211,9 @@ export function AddExpenseDialog({
   // books use the converted `amount`. Same shape + behaviour as COGS bills.
   // Each line carries its OWN category so a mixed invoice auto-splits into one
   // expense per category on save. Blank category = falls back to the header one.
-  type Line = { description: string; qty: string; unit_price: string; amount: string; category: string };
+  /* `aiCat` (R-1744): the line's category came from the bill reader — shows the "AI" tag
+     until the operator picks one themselves. */
+  type Line = { description: string; qty: string; unit_price: string; amount: string; category: string; aiCat?: boolean };
   const [lines, setLines] = React.useState<Line[]>(
     (expense?.line_items ?? []).map((li) => ({
       description: li.name ?? "",
@@ -223,6 +245,21 @@ export function AddExpenseDialog({
   const [reading, setReading] = React.useState(false);
   const [aiNote, setAiNote]   = React.useState<string | null>(null);
   const [aiError, setAiError] = React.useState<string | null>(null);
+  /* R-1744: the fields the AI filled after "Yes, fill it in" — each shows a small "AI" tag
+     until the operator edits it. Keyed by field name (lines carry their own `aiCat`). */
+  const [aiFilled, setAiFilled] = React.useState<Record<string, boolean>>({});
+  const clearAi = React.useCallback((field: string) => {
+    setAiFilled((m) => (m[field] ? { ...m, [field]: false } : m));
+  }, []);
+  /* R-1744: a foreign bill with no GST → SUGGEST reverse charge (a chip). Never ticked for
+     the operator: an OIDAR vendor (Anthropic, Google LLC) that already charged GST must not
+     be taxed twice, and only the operator knows the service was imported. */
+  const [rcmHint, setRcmHint] = React.useState(false);
+  /* R-1744: the whole dialog is a drop zone for the bill. A counter, because dragenter/leave
+     fire for every child the pointer crosses. */
+  const [dragging, setDragging] = React.useState(false);
+  const dragDepth = React.useRef(0);
+  const cameraRef = React.useRef<HTMLInputElement>(null);
   // The uploaded bill file — kept and attached to the expense on save (proof),
   // whether or not the AI read is confirmed.
   const [attachFile, setAttachFile] = React.useState<File | null>(null);
@@ -260,7 +297,13 @@ export function AddExpenseDialog({
     /** AI ki chuni hui category — list se milayi hui, warna undefined. */
     aiCategory?: string;
     billType:    "gst" | "kaccha";
-    items:       { description: string; qty: string; unit_price: string; amount: string }[];
+    /* R-1744: each line's own AI category (undefined → the bill's category). */
+    items:       { description: string; qty: string; unit_price: string; amount: string; category?: string }[];
+    /** R-1744: short name of the main item ("Workspace") — for the "What for?" note. */
+    itemShort?:  string;
+    /** R-1744: "paid" only when the bill clearly says so; the method as one of PAYMENT_METHODS. */
+    paidStatus?: string;
+    paymentMode?: string;
   };
   const [pending, setPending] = React.useState<PendingExtract | null>(null);
   // Vendor GSTIN read from the invoice — saved to the Vendors master on save so
@@ -305,6 +348,7 @@ export function AddExpenseDialog({
 
   async function handleBillFile(file: File) {
     setAiError(null); setAiNote(null); setPending(null);
+    if (!BILL_FILE.test(file.type)) { setAiError("Drop a PDF or a photo (JPG/PNG) of the bill."); return; }
     if (file.size > 8 * 1024 * 1024) { setAiError("File is too big (max 8 MB) — try a smaller photo."); return; }
     setAttachFile(file);   // keep it — attaches to the expense on save (proof)
     setReading(true);
@@ -321,7 +365,13 @@ export function AddExpenseDialog({
         body: JSON.stringify({ fileBase64: base64, mimeType: file.type }),
       });
       const json = await res.json();
-      if (!res.ok) { setAiError(json.error ?? "Couldn't read the bill — fields haath se bhar do. 📎 bill attach ho jayega."); return; }
+      if (!res.ok) {
+        /* R-1744: no Gemini key for this company → say so plainly; the form stays manual. */
+        setAiError(json.code === "ai_not_configured"
+          ? "AI bill reading is not set up for your company (Settings → Integrations → AI). Fill the form by hand — the bill will still be attached."
+          : (json.error ?? "Couldn't read the bill — fill the fields yourself. 📎 The bill will still be attached."));
+        return;
+      }
       const f = json.fields as Record<string, unknown>;
       const cur = String(f.currency ?? "INR").toUpperCase();
       /* Teeno ALAG bhi rakhe jate hain, sirf jod kar nahi. `gst` kul hai (form aur
@@ -350,10 +400,14 @@ export function AddExpenseDialog({
           qty:         it.qty        != null ? String(it.qty)        : "",
           unit_price:  it.unit_price != null ? String(it.unit_price) : "",
           amount:      it.amount     != null ? String(it.amount)     : "",
+          category:    typeof it.category === "string" && it.category ? it.category : undefined,
         })),
+        itemShort:   typeof f.item_short === "string" && f.item_short ? f.item_short : undefined,
+        paidStatus:  typeof f.paid_status === "string" ? f.paid_status : undefined,
+        paymentMode: typeof f.payment_mode === "string" ? f.payment_mode : undefined,
       });
     } catch {
-      setAiError("Upload failed — try again, ya fields haath se bhar do.");
+      setAiError("Upload failed — try again, or fill the fields yourself.");
     } finally {
       setReading(false);
     }
@@ -413,13 +467,49 @@ export function AddExpenseDialog({
     setCurrency(pending.currency);
     if (pending.total != null) setValue("amount", pending.total);
     setValue("gst_paid", pending.gst);
-    setLines(pending.items.map((it) => ({ ...it, category: "" })));   // category set per line by operator
+    /* R-1744: each line gets its category too — the line's own AI category, else the bill's.
+       Blank only when the AI had no idea; then the operator picks (save stops until they do). */
+    setLines(pending.items.map((it) => {
+      const category = lineCategoryFromBill(it.category, pending.aiCategory);
+      return { description: it.description, qty: it.qty, unit_price: it.unit_price, amount: it.amount, category, aiCat: Boolean(category) };
+    }));
     if (pending.items.length) setShowItems(true);   // AI found line items → show them
+
+    /* R-1744: the short "What for?" note — vendor — main item — month. The name the form now
+       shows (the existing vendor's, when the GSTIN matched) is the one in the note. */
+    const note = buildExpenseNote({ vendorName: match?.name ?? nm, itemShort: pending.itemShort, items: pending.items, billDate: pending.billDate });
+    if (note) setValue("description", note);
+
+    /* R-1744: "Paid already" + method ONLY when the bill itself says paid. Otherwise nothing
+       changes — the form keeps what it had. */
+    const paidOnBill = paidFromBill(pending.paidStatus, pending.paymentMode, PAYMENT_METHODS);
+    if (paidOnBill) {
+      setPaid(true); setReimburse(false);
+      if (paidOnBill.method) setValue("payment_method", paidOnBill.method);
+    }
+
+    /* R-1744: reverse charge is a SUGGESTION after a bill read, never a tick — the auto-tick on
+       a foreign currency (above) is switched off for this entry; the chip below offers it. */
+    setRcm(false); setRcmEdited(true);
+    setRcmHint(rcmSuggested(pending.currency, pending.gst));
+
+    setAiFilled({
+      amount:         pending.total != null,
+      expense_date:   Boolean(pending.billDate),
+      vendor_name:    Boolean(match || nm),
+      category:       Boolean(pending.aiCategory),
+      currency:       true,
+      gst_paid:       pending.gst > 0,
+      bill_no:        Boolean(pending.billNo),
+      description:    Boolean(note),
+      paid:           Boolean(paidOnBill),
+      payment_method: Boolean(paidOnBill?.method),
+    });
     if (pending.currency !== "INR") {
       setFxRate("");   // force today's rate before it hits the ₹ books
-      setAiNote(`Bhar diya · bill ${pending.currency} me hai — neeche exchange rate (₹/${pending.currency}) daalo, phir Save. 📎 bill attach ho jayega.`);
+      setAiNote(`Filled in · the bill is in ${pending.currency} — enter the exchange rate (₹/${pending.currency}) under More, then save. 📎 The bill will be attached.`);
     } else {
-      setAiNote("Bhar diya — amounts bill se milaa ke Save karo. 📎 bill attach ho jayega.");
+      setAiNote("Filled in — check the amounts against the bill, then save. 📎 The bill will be attached.");
     }
     setPending(null);
   }
@@ -428,7 +518,8 @@ export function AddExpenseDialog({
   // extraction (NO items, NO amounts auto-added), but keep the bill attached.
   function discardExtract() {
     setPending(null);
-    setAiNote(`Theek — fields aur items khud bhar do. 📎 "${attachFile?.name ?? "bill"}" expense ke saath attach ho jayega.`);
+    setAiFilled({}); setRcmHint(false);
+    setAiNote(`OK — fill in the fields and items yourself. 📎 "${attachFile?.name ?? "bill"}" will be attached to the expense.`);
   }
 
   const {
@@ -452,7 +543,10 @@ export function AddExpenseDialog({
         }
       : {
           expense_date: today,
-          category: defaultCategory ?? (presetAdvanceId ? "Staff Welfare" : "Hosting"),
+          /* R-1729: empty, never a guess. It was "Hosting" (and "Staff Welfare" from an
+             advance), so an entry that skipped the field landed in the wrong account. A
+             caller that KNOWS the category (Marketing → Spend) still passes it. */
+          category: defaultCategory ?? "",
           payment_method: presetAdvanceId ? EMPLOYEE_ADVANCE_METHOD : "bank_transfer",
           amount: 0,
           gst_paid: 0,
@@ -555,6 +649,21 @@ export function AddExpenseDialog({
     }
     return Array.from(m.entries()).map(([category, amount]) => ({ category, amount }));
   }, [lines, headerCategory]);
+  /* R-1729: Amount is the first field, so its label carries every case the old two
+     places did (GST invoice → incl GST / foreign currency; itemised → sum of items). */
+  const cur = isForeign ? currency : "₹";
+  const amountLabel = itemiseActive
+    ? (isGstBill ? `Subtotal (${cur}) — sum of items` : "Amount (₹) — sum of items")
+    : (isGstBill ? `Amount (${cur}) incl GST` : "Amount (₹)");
+  /* Category is suggested, never pre-picked: the payee's last category, else the latest one. */
+  const suggestedCategory = !isEdit && !headerCategory
+    ? lastUsedCategory(dupList, EXPENSE_CATEGORIES, vendorNameWatch)
+    : null;
+  /* "More" (GST · TDS · reverse charge) opens by itself when the entry needs it. */
+  const [moreOpen, setMoreOpen] = React.useState(false);
+  const moreAuto = moreNeeded({ billType, rcm, tdsSection: watch("tds_section"), foreign: isForeign });
+  const showMore = moreOpen || moreAuto;
+
   // When itemising, the total Amount is the items' sum — keep the field in sync.
   React.useEffect(() => {
     if (itemiseActive) setValue("amount", lineSubtotalNum || 0);
@@ -580,7 +689,7 @@ export function AddExpenseDialog({
     if (reimburse) {
       const person = reimbursePerson.trim();
       if (!person) {
-        toast.error("Who paid for this?", { description: "Type that person's name in \"Kisne diya?\" — we owe them this money back. Nothing was saved." });
+        toast.error("Who paid for this?", { description: "Type that person's name in \"Who paid?\" — we owe them this money back. Nothing was saved." });
         return;
       }
       const amt = Math.round((values.amount || 0) * rate);
@@ -610,7 +719,7 @@ export function AddExpenseDialog({
     /* A commission with no payee cannot be totalled per person, so s.194H cannot be checked —
        and the question "who did we pay commission to?" has no answer. */
     if (values.category === COMMISSION_CATEGORY && !payee) {
-      toast.error("Who was the commission paid to?", { description: "Type their name in \"Kisko diya\" — TDS under s.194H is checked per person. Nothing was saved." });
+      toast.error("Who was the commission paid to?", { description: "Type their name in \"Paid to\" — TDS under s.194H is checked per person. Nothing was saved." });
       return;
     }
     // Only GST-invoice suppliers belong in the Vendors master. So: an already-
@@ -703,9 +812,9 @@ export function AddExpenseDialog({
         .map((g) => g.category);
       if (dupCats.length) {
         const ok = await confirm({
-          title: "Kuch entries pehle se lagti hain",
-          body: `Is bill (${shared.bill_no ? `#${shared.bill_no}` : payee}) mein in category ki entry already hai: ${dupCats.join(", ")}. Phir bhi banayein?`,
-          danger: true, confirmLabel: "Haan, banao", cancelLabel: "Nahi",
+          title: "Some entries look already recorded",
+          body: `This bill (${shared.bill_no ? `#${shared.bill_no}` : payee}) already has an entry in these categories: ${dupCats.join(", ")}. Create anyway?`,
+          danger: true, confirmLabel: "Yes, create", cancelLabel: "No",
         });
         if (!ok) return;
       }
@@ -747,7 +856,9 @@ export function AddExpenseDialog({
     /* Upar wali jaanch (`expenseCategoryError`) guarantee kar chuki hai ki in dono me se
        ek to hai — warna hum yahan pahunchte hi nahi. */
     const category = (showItems && catLines.length > 0 ? (catLines[0].category || values.category) : values.category) ?? "";
-    const derivedDescription = line_items.map((l) => l.name).filter(Boolean).join(", ") || values.description?.trim() || null;
+    /* R-1744: the "What for?" note is on screen in both modes now, so what the operator (or the
+       bill read) wrote there wins; the item names are the fallback, as before. */
+    const derivedDescription = values.description?.trim() || line_items.map((l) => l.name).filter(Boolean).join(", ") || null;
 
     // Duplicate guard — same vendor + bill no. + category (or vendor+date+amount).
     const dup = findDuplicateExpense(
@@ -757,9 +868,9 @@ export function AddExpenseDialog({
     );
     if (dup) {
       const ok = await confirm({
-        title: "Ye bill pehle se entered lagta hai",
-        body: `${payee || "Is vendor"} ka ${shared.bill_no ? `bill #${shared.bill_no}` : `${formatDate(dup.expense_date)} · ${rupee(dup.amount)}`} — isi category (${category}) mein already record hai. Duplicate entry P&L + input GST dono double kar degi. (Alag category ka hissa ho to category badal ke save karo.) Phir bhi ek aur banayein?`,
-        danger: true, confirmLabel: "Haan, phir bhi save", cancelLabel: "Nahi, rehne do",
+        title: "This bill looks already entered",
+        body: `${payee || "This vendor"}'s ${shared.bill_no ? `bill #${shared.bill_no}` : `${formatDate(dup.expense_date)} · ${rupee(dup.amount)}`} is already recorded in this category (${category}). A duplicate doubles both the P&L and the input GST. (If it is the part for a different category, change the category and save.) Create another anyway?`,
+        danger: true, confirmLabel: "Yes, save anyway", cancelLabel: "No, leave it",
       });
       if (!ok) return;
     }
@@ -783,7 +894,34 @@ export function AddExpenseDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="md:!max-w-xl">
+      {/* R-1744: the whole dialog is a drop zone for the bill (PDF or photo). */}
+      <DialogContent
+        className={cn("md:!max-w-xl", dragging && "ring-2 ring-amber ring-offset-2 ring-offset-paper")}
+        data-bill-dropzone=""
+        data-dragging={dragging ? "true" : "false"}
+        onDragEnter={(e) => {
+          if (isPayroll || !Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragging(true);
+        }}
+        onDragOver={(e) => {
+          if (isPayroll || !Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+          e.preventDefault();
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragging(false);
+        }}
+        onDrop={(e) => {
+          dragDepth.current = 0;
+          setDragging(false);
+          const file = e.dataTransfer?.files?.[0];
+          if (isPayroll || !file) return;
+          e.preventDefault();
+          handleBillFile(file);
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{projectId ? (isEdit ? "Edit project cost" : "Add project cost") : (isEdit ? "Edit expense" : "Add expense")}</DialogTitle>
           <DialogDescription>
@@ -800,14 +938,364 @@ export function AddExpenseDialog({
           </div>
         )}
 
+        {/* ── R-1744 (Pardeep, 22 Oct 2026): the bill comes FIRST. Upload or drop it here and the
+            AI fills the form after you confirm — before anyone starts typing Amount by hand. ── */}
+        {!isPayroll && (
+          <div className={cn(
+            "rounded-md border border-dashed p-2.5 transition-colors",
+            dragging ? "border-amber bg-amber-soft/40" : "border-amber/50 bg-amber-soft/15",
+          )}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 min-w-0">
+                <Icon name="sparkles" size={16} className="text-amber-ink shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-[12px] font-medium text-ink">
+                    {dragging ? "Drop it — AI reads the bill" : "Have a bill? Drop the PDF or photo here — AI fills everything"}
+                  </p>
+                  <p className="text-xs text-ink-3">AI reads the bill; you check it and confirm before anything is filled</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {/* Phones: open the camera straight away. */}
+                <Button type="button" variant="default" size="sm" icon="camera" className="sm:hidden" disabled={reading} onClick={() => cameraRef.current?.click()}>
+                  Take a photo
+                </Button>
+                <Button type="button" variant="primary" size="sm" icon="upload" loading={reading} onClick={() => fileRef.current?.click()}>
+                  {reading ? "Reading…" : "Upload bill"}
+                </Button>
+              </div>
+              <input
+                ref={fileRef}
+                id="bill-file"
+                type="file"
+                accept="image/*,application/pdf"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBillFile(f); e.target.value = ""; }}
+              />
+              <input
+                ref={cameraRef}
+                id="bill-camera"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBillFile(f); e.target.value = ""; }}
+              />
+            </div>
+            {aiNote && <p className="mt-2 flex items-start gap-1.5 text-xs text-emerald"><Icon name="check_circle" size={12} className="mt-0.5 shrink-0" /> {aiNote}</p>}
+            {aiError && <p className="mt-2 flex items-start gap-1.5 text-xs text-rose"><Icon name="alert" size={12} className="mt-0.5 shrink-0" /> {aiError}</p>}
+
+            {/* Confirmation gate — AI read something; confirm before it fills. */}
+            {pending && (() => {
+              const fmt = (n: number) => pending.currency !== "INR" ? (formatForeignAmount(pending.currency, n) ?? `${pending.currency} ${n}`) : rupee(n);
+              const pg = pending.gstin?.trim().toUpperCase();
+              const pv = pending.vendorName?.trim().toLowerCase();
+              const existing = (vendors ?? []).find(
+                (v) => (pg && (v.gstin ?? "").trim().toUpperCase() === pg) || (pv && v.name.trim().toLowerCase() === pv),
+              );
+              const shownGstin = pending.gstin || existing?.gstin || null;
+              const dupInReview = findDuplicateExpense(
+                { vendorId: existing?.id ?? vendorId, vendorName: pending.vendorName, billNo: pending.billNo, billDate: pending.billDate, amountInr: pending.currency === "INR" ? (pending.total ?? null) : null },
+                (dupList ?? []) as never,
+                expense?.id,
+              );
+              return (
+                <div className="mt-2.5 rounded-md border border-amber/40 bg-paper p-3">
+                  <p className="text-[12px] font-medium text-ink mb-2">AI read this — is it right? The form fills only after you confirm.</p>
+                  {dupInReview && (
+                    <div className="mb-2 flex items-start gap-1.5 rounded-md bg-amber-soft/60 px-2.5 py-2 text-xs text-amber-ink">
+                      <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
+                      <span>This bill{` (${pending.billNo ? `#${pending.billNo}` : `${formatDate(dupInReview.expense_date)} · ${rupee(dupInReview.amount)}`})`} already has an entry. Fine if this is the <b>part for a different category</b> — otherwise it will be a duplicate.</span>
+                    </div>
+                  )}
+                  {/* ── Label ke SAATH value, dono kinaron par nahi (29 Aug 2026) ──────
+                      Har row `flex justify-between` thi. Chaudi screen par wo label ko
+                      bilkul baayen aur value ko bilkul daayen phenk deti thi. Pardeep ne
+                      pakda; naapa to haal ye tha:
+
+                          Vendor    1,089px khaali    Coca Industries
+                          GSTIN     1,143px           23EZFPS9892N2Z7
+                          Bill no.  1,185px           TLTK-4450
+
+                      Poore ek hazaar pixel se zyada khaali jagah — aankh label aur uski
+                      value ko jod hi nahi paati. Aur ye panel ka poora kaam hi yahi hai:
+                      aadmi ise PADHKAR confirm karta hai, aur uske baad ye aankde seedha
+                      uski books me jaate hain. Jo jodi padhi na ja sake, wo jaanchi bhi
+                      nahi ja sakti.
+
+                      Ab do-column grid: label utni hi chaudi jitna uska text, value
+                      uske theek baad. `max-w-xl` isliye ki dialog chahe kitna bhi chauda
+                      ho, padhne ki chaudai ek hi rehti hai.
+
+                      `<dl>/<dt>/<dd>` isliye ki ye sach me ek definition list hai —
+                      screen reader ko bhi wahi jodi milti hai jo aankh ko. */}
+                  <dl className="grid max-w-xl grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-[12px] text-ink-2">
+                    <dt className="text-ink-3">Vendor</dt>
+                    <dd className="min-w-0 text-ink flex items-center gap-1.5 flex-wrap">
+                      <span className="break-words">{pending.vendorName || "—"}</span>
+                      {existing
+                        ? <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald/10 text-emerald px-1.5 py-0.5 text-3xs font-medium"><Icon name="check_circle" size={10} /> Existing</span>
+                        : (pending.vendorName && <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-soft text-amber-ink px-1.5 py-0.5 text-3xs font-medium"><Icon name="plus" size={10} /> New</span>)}
+                    </dd>
+                    {shownGstin && <><dt className="text-ink-3">GSTIN</dt><dd className="min-w-0 font-mono text-ink break-all">{shownGstin}</dd></>}
+                    {pending.billNo && <><dt className="text-ink-3">Bill no.</dt><dd className="min-w-0 font-mono text-ink break-all">{pending.billNo}</dd></>}
+                    <dt className="text-ink-3">Bill date</dt>
+                    <dd className="min-w-0">{pending.billDate || "—"}</dd>
+                    <dt className="text-ink-3">Total{pending.currency !== "INR" ? ` (${pending.currency})` : ""}</dt>
+                    <dd className="min-w-0 font-mono text-ink">{pending.total != null ? fmt(pending.total) : "—"}{pending.gst > 0 ? ` · GST ${fmt(pending.gst)}` : ""}</dd>
+                  </dl>
+                  {pending.items.length > 0 && (
+                    <div className="mt-2 border-t border-hairline pt-2">
+                      <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">{pending.items.length} item{pending.items.length > 1 ? "s" : ""}</p>
+                      {/* `min-w-0` ke bina `truncate` kuch nahi karta: flex ka bachcha apne
+                          content se chhota hota hi nahi, aur wo lamba naam poore panel ko
+                          bahar dhakel deta hai — yahi 56px ka overflow tha (Amazon ka
+                          product naam 180+ akshar ka hota hai).
+
+                          `title` isliye ki jo kata wo hover par poora mile — a11y §4. */}
+                      <ul className="space-y-0.5 max-h-28 overflow-y-auto">
+                        {pending.items.map((it, i) => (
+                          <li key={i} className="flex justify-between gap-2 text-xs">
+                            <span className="min-w-0 truncate text-ink-2" title={it.description || undefined}>
+                              {it.description || "—"}{it.qty ? ` × ${it.qty}` : ""}
+                            </span>
+                            <span className="font-mono text-ink-3 shrink-0">{it.amount ? fmt(Number(it.amount)) : "—"}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button type="button" variant="primary" size="sm" icon="check" onClick={applyExtract}>Yes, fill it in</Button>
+                    <Button type="button" variant="default" size="sm" onClick={discardExtract}>Wrong — I&apos;ll fill it myself</Button>
+                  </div>
+                  <p className="mt-2 text-xs text-ink-3">Either way, 📎 <button type="button" onClick={openLocalFile} className="text-amber-ink underline hover:no-underline">{attachFile?.name}</button> will be attached. (Click to view.)</p>
+                  {previewUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={previewUrl} alt="Invoice preview" onClick={openLocalFile}
+                      className="mt-2 max-h-40 w-auto rounded-md border border-hairline cursor-zoom-in" />
+                  )}
+                </div>
+              );
+            })()}
+
+            {attachFile && !pending && (
+              <div className="mt-2">
+                <p className="flex items-center gap-1.5 text-xs text-ink-2">
+                  <Icon name="file" size={12} />
+                  <button type="button" onClick={openLocalFile} className="text-amber-ink underline hover:no-underline">{attachFile.name}</button>
+                  — will be attached to the expense
+                </p>
+                {previewUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={previewUrl} alt="Invoice preview" onClick={openLocalFile}
+                    className="mt-2 max-h-40 w-auto rounded-md border border-hairline cursor-zoom-in" />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* The mutation already shows the reason (e.g. "Only ₹4800 is left …"); catching here
             stops the same refusal also landing in the console as an uncaught promise. */}
         <form onSubmit={handleSubmit(async (v) => { try { await onSubmit(v); } catch { /* toast shown by the mutation */ } })} className="space-y-4">
-          {/* ── STEP 1: What kind of bill? This shapes the whole form. ── */}
+          {/* ── R-1729 (owner journey audit, 21 Oct 2026): Amount first, then Date, then who was
+              paid, then Category — the order a bill is read in. Amount used to be the 6th field. ── */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <FormField label={amountLabel} required htmlFor="amount" hint={<AiMark field="amount" on={!!aiFilled.amount} />}>
+              <Input id="amount" type="number" min={1} step="any" readOnly={itemiseActive} error={errors.amount?.message} {...register("amount", { onChange: () => clearAi("amount") })} />
+              {/* R-1744: itemised GST bill — the field holds the items' subtotal, so the bill's
+                  total (what was actually paid) is said once, right under it. */}
+              {itemiseActive && isGstBill && Number(watch("gst_paid")) > 0 && (
+                <p className="mt-1 text-xs text-ink-3">
+                  {`Total ${isForeign ? (formatForeignAmount(currency, lineSubtotalNum + Number(watch("gst_paid"))) ?? `${currency} ${lineSubtotalNum + Number(watch("gst_paid"))}`) : rupee(lineSubtotalNum + Number(watch("gst_paid")))} incl GST`}
+                </p>
+              )}
+            </FormField>
+            <FormField label="Date" required htmlFor="expense_date" hint={<AiMark field="expense_date" on={!!aiFilled.expense_date} />}>
+              <Input id="expense_date" type="date" error={errors.expense_date?.message} {...register("expense_date", { onChange: () => clearAi("expense_date") })} />
+            </FormField>
+          </div>
+
+          {/* ── Who was paid — vendor / payee. GSTIN for GST bills. ── */}
+          <FormField
+            label={isCommission ? "Paid to (commission agent)" : isGstBill ? "Vendor (GST invoice)" : "Paid to (optional)"}
+            required={isCommission}
+            htmlFor="vendor_name"
+            hint={<AiMark field="vendor_name" on={!!aiFilled.vendor_name} />}
+          >
+            <div className="relative">
+              <Input
+                id="vendor_name"
+                autoComplete="off"
+                placeholder={isCommission ? "e.g. Ramesh Kumar" : "e.g. Anthropic / Airtel / Office Landlord"}
+                {...register("vendor_name", { onChange: () => { setVendorId(null); setVendorMatch(null); setVendorOpen(true); clearAi("vendor_name"); } })}
+                onFocus={() => setVendorOpen(true)}
+                onBlur={() => setTimeout(() => setVendorOpen(false), 130)}
+              />
+              {vendorOpen && ((vendors ?? []).length > 0 || (isCommission && (employeeList ?? []).length > 0)) && (() => {
+                const query = (watch("vendor_name") || "").trim().toLowerCase();
+                const matches = (vendors ?? []).filter((v) => !query || v.name.toLowerCase().includes(query)).slice(0, 8);
+                /* For a commission, our own employees are offered too — tagged, so "abhish" already
+                   shows "Abhishek · Employee" and the warning below is one click away, not a
+                   fully-typed name away. */
+                const empMatches = isCommission
+                  ? (employeeList ?? []).filter((e) => e.is_active !== false && (!query || e.name.toLowerCase().includes(query))).slice(0, 6)
+                  : [];
+                if (matches.length === 0 && empMatches.length === 0) return null;
+                return (
+                  <div className="absolute z-20 mt-1 w-full max-h-52 overflow-y-auto rounded-md border border-hairline bg-paper shadow-lg">
+                    {empMatches.map((e) => (
+                      <button key={`emp-${e.id}`} type="button"
+                        onMouseDown={(ev) => { ev.preventDefault(); setValue("vendor_name", e.name); setVendorId(null); setVendorMatch(null); setVendorOpen(false); }}
+                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-paper-2">
+                        <span className="text-ink truncate">{e.name}</span>
+                        <span className="shrink-0 rounded bg-rose/10 px-1.5 py-0.5 text-3xs font-semibold text-rose">Employee · Payroll</span>
+                      </button>
+                    ))}
+                    {matches.map((v) => (
+                      <button key={v.id} type="button"
+                        onMouseDown={(e) => { e.preventDefault(); setValue("vendor_name", v.name); setVendorId(v.id); setVendorMatch({ kind: "existing", name: v.name }); setVendorOpen(false); }}
+                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-paper-2">
+                        <span className="text-ink truncate">{v.name}</span>
+                        {v.gstin && <span className="text-xs text-ink-3 font-mono shrink-0">{v.gstin}</span>}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+            {vendorMatch && (
+              vendorMatch.kind === "existing" ? (
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-emerald">
+                  <Icon name="check_circle" size={12} /> Existing vendor found{aiGstin ? " (by GSTIN)" : ""} — the expense links to it.
+                </p>
+              ) : isGstBill ? (
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-amber-ink">
+                  <Icon name="plus" size={12} /> New vendor &ldquo;{vendorMatch.name}&rdquo;{aiGstin ? ` (GSTIN ${aiGstin})` : ""} — added to the Vendors master on save.
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-ink-3">New payee — not added to the Vendors master (no GST invoice).</p>
+              )
+            )}
+            {/* The payee is one of OUR employees: their commission is salary (incentive, TDS 192),
+                not an agent's commission (194H) — a ₹5L "commission to abhishek" was booked here
+                on 26 Sep 2026 and had to be moved to Payroll. */}
+            {isCommission && payeeEmployee && (
+              <div className="mt-1.5 rounded-md border border-rose/40 bg-rose/5 px-2.5 py-2 text-xs text-ink-2 space-y-1">
+                <p>
+                  <b>{payeeEmployee.name}</b> is your employee. An employee&apos;s commission / incentive is part of <b>salary</b> —
+                  add it as &quot;Incentive&quot; with their salary in Payroll (TDS 192, shows in Form 16). Booking it here like an
+                  agent (194H) makes both the TDS and Form 16 wrong.
+                </p>
+                <button type="button" onClick={() => { onClose(); router.push("/accounting/payroll" as never); }}
+                  className="font-semibold text-rose underline underline-offset-2">
+                  Add the incentive in Payroll →
+                </button>
+              </div>
+            )}
+            {/* One person's commission for the year, and s.194H — lib/accounting/commission-tds.ts. */}
+            {isCommission && commissionView && !payeeEmployee && (
+              <div className="mt-1.5 rounded-md border border-hairline bg-paper-2/40 px-2.5 py-2 text-xs text-ink-2 space-y-1">
+                <p>
+                  This FY <b>{vendorNameWatch.trim()}</b> has had <b>{rupee(commissionView.earlier)}</b> commission so far ·
+                  <b>{rupee(commissionView.yearTotal)}</b> with this entry
+                  {" "}({commissionView.crosses ? "over the ₹20,000 limit" : `${rupee(Math.max(0, TDS_194H_THRESHOLD - commissionView.yearTotal))} left to the ₹20,000 limit`}).
+                </p>
+                {commissionView.crosses && (watch("tds_section") || "") !== "194H" && (
+                  <div className="flex flex-wrap items-center gap-2 text-amber-ink">
+                    <span>194H TDS (2%) should be deducted{commissionView.earlierUntaxed > 0 ? ` — on the earlier ${rupee(commissionView.earlierUntaxed)} too` : ""}.</span>
+                    <button
+                      type="button"
+                      onClick={() => { setValue("tds_section", "194H"); setValue("tds_amount", commissionView.tdsOnThis); }}
+                      className="font-semibold underline underline-offset-2"
+                    >
+                      Apply 194H · {rupee(commissionView.tdsOnThis)}
+                    </button>
+                  </div>
+                )}
+                <p className="text-xs text-ink-3">The limit is on one person&apos;s commission for the whole year. Confirm with your CA before paying.</p>
+              </div>
+            )}
+          </FormField>
+
+          {/* ── Category — starts empty and is required (R-1729); the last-used one is offered. ── */}
+          {!showItems && (
+            <FormField label="Category" required htmlFor="category" hint={<AiMark field="category" on={!!aiFilled.category} />}>
+              <Select value={watch("category")} onValueChange={(v) => { setValue("category", v); setCategoryTouched(true); setCategoryAuto(false); clearAi("category"); }}>
+                <SelectTrigger id="category"><SelectValue placeholder="Select…" /></SelectTrigger>
+                <SelectContent>
+                  {EXPENSE_CATEGORIES
+                    .filter((c) => c !== "Salaries" || expense?.category === "Salaries")
+                    .map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {categoryAuto && !categoryTouched && !aiFilled.category && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-amber-ink">
+                  <Icon name="sparkles" size={10} /> Picked automatically — change it if wrong.
+                </p>
+              )}
+              {suggestedCategory && (
+                <button
+                  type="button"
+                  onClick={() => { setValue("category", suggestedCategory); setCategoryTouched(true); setCategoryAuto(false); }}
+                  className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-hairline px-2 py-0.5 text-xs text-ink-2 hover:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+                >
+                  <Icon name="refresh" size={10} /> Use last: {suggestedCategory}
+                </button>
+              )}
+              {isMarketing && (
+                <div className="mt-2">
+                  <label htmlFor="ad-channel" className="text-xs font-medium text-ink-2">Channel (which marketing)</label>
+                  <Select value={channel || "none"} onValueChange={(v) => { setChannel(v === "none" ? "" : v); setChannelTouched(true); }}>
+                    <SelectTrigger id="ad-channel" className="mt-1"><SelectValue placeholder="Select" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Not sure / general</SelectItem>
+                      {AD_CHANNELS.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-1 text-xs text-ink-3 leading-snug">
+                    Marketing → ROAS &amp; CAC matches this ad spend with the leads from that channel. Without a channel, this spend is not counted there.
+                  </p>
+                  {(campaignOptions.data ?? []).length > 0 && (
+                    <div className="mt-2">
+                      <label htmlFor="ad-campaign" className="text-xs font-medium text-ink-2">Campaign (optional)</label>
+                      <Select value={campaignId || "none"} onValueChange={(v) => setCampaignId(v === "none" ? "" : v)}>
+                        <SelectTrigger id="ad-campaign" className="mt-1"><SelectValue placeholder="Select" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No campaign</SelectItem>
+                          {(campaignOptions.data ?? []).filter((c) => !c.cancelled || c.id === campaignId).map((c) => (
+                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+              )}
+              {isCommission && (
+                <p className="mt-1 text-xs text-ink-3 leading-snug">
+                  Commission to an outside agent / broker. Fill in their name under <b>&quot;Paid to&quot;</b> above — that person&apos;s
+                  yearly total and 194H TDS depend on it. Your own employee&apos;s incentive goes in Payroll.
+                </p>
+              )}
+            </FormField>
+          )}
+
+          {!isEdit && (
+            <p className="text-xs text-ink-3 leading-relaxed">
+              Paying a salary?{" "}
+              <button type="button" onClick={() => { onClose(); router.push("/accounting/payroll" as never); }}
+                className="text-amber-ink font-medium underline hover:no-underline">Book it in Payroll &amp; Leave →</button>{" "}
+              so the payslip and statutory dues stay right.
+            </p>
+          )}
+
+          {/* ── What kind of bill? It decides GST and the upload below. ── */}
           <div>
-            <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1.5">Is kharche ka bill?</p>
+            <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1.5">Bill type</p>
             <div className="grid grid-cols-3 gap-1.5">
-              {([["none", "No bill / cash"], ["kaccha", "Kaccha bill"], ["gst", "GST invoice"]] as const).map(([val, label]) => (
+              {([["none", "No bill / cash"], ["kaccha", "Non-GST bill"], ["gst", "GST invoice"]] as const).map(([val, label]) => (
                 <button
                   key={val}
                   type="button"
@@ -833,235 +1321,19 @@ export function AddExpenseDialog({
             </p>
           </div>
 
-          {!isEdit && (
-            <p className="text-xs text-ink-3 leading-relaxed">
-              Salary de rahe ho?{" "}
-              <button type="button" onClick={() => { onClose(); router.push("/accounting/payroll" as never); }}
-                className="text-amber-ink font-medium underline hover:no-underline">Payroll &amp; Leave me book karo →</button>{" "}
-              taaki payslip + statutory sahi rahe.
-            </p>
-          )}
-
-          {/* ── STEP 2: Upload the bill (only when there IS one). AI fills → confirm. ── */}
-          {billType !== "none" && (
-            <div className="rounded-md border border-dashed border-amber/50 bg-amber-soft/15 p-2.5">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Icon name="sparkles" size={16} className="text-amber-ink shrink-0" />
-                  <div className="min-w-0">
-                    <p className="text-[12px] font-medium text-ink">Bill upload karo — AI khud bhar dega</p>
-                    <p className="text-xs text-ink-3">Photo/PDF — AI fields + items nikaal dega, aap confirm karke Save karo</p>
-                  </div>
-                </div>
-                <Button type="button" variant="primary" size="sm" icon="upload" loading={reading} onClick={() => fileRef.current?.click()}>
-                  {reading ? "Reading…" : "Upload bill"}
-                </Button>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="image/*,application/pdf"
-                  className="hidden"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBillFile(f); e.target.value = ""; }}
-                />
-              </div>
-              {aiNote && <p className="mt-2 flex items-start gap-1.5 text-xs text-emerald"><Icon name="check_circle" size={12} className="mt-0.5 shrink-0" /> {aiNote}</p>}
-              {aiError && <p className="mt-2 flex items-start gap-1.5 text-xs text-rose"><Icon name="alert" size={12} className="mt-0.5 shrink-0" /> {aiError}</p>}
-
-              {/* Confirmation gate — AI read something; confirm before it fills. */}
-              {pending && (() => {
-                const fmt = (n: number) => pending.currency !== "INR" ? (formatForeignAmount(pending.currency, n) ?? `${pending.currency} ${n}`) : rupee(n);
-                const pg = pending.gstin?.trim().toUpperCase();
-                const pv = pending.vendorName?.trim().toLowerCase();
-                const existing = (vendors ?? []).find(
-                  (v) => (pg && (v.gstin ?? "").trim().toUpperCase() === pg) || (pv && v.name.trim().toLowerCase() === pv),
-                );
-                const shownGstin = pending.gstin || existing?.gstin || null;
-                const dupInReview = findDuplicateExpense(
-                  { vendorId: existing?.id ?? vendorId, vendorName: pending.vendorName, billNo: pending.billNo, billDate: pending.billDate, amountInr: pending.currency === "INR" ? (pending.total ?? null) : null },
-                  (dupList ?? []) as never,
-                  expense?.id,
-                );
-                return (
-                  <div className="mt-2.5 rounded-md border border-amber/40 bg-paper p-3">
-                    <p className="text-[12px] font-medium text-ink mb-2">AI ne ye padha — sahi hai? Confirm karo tabhi bharega.</p>
-                    {dupInReview && (
-                      <div className="mb-2 flex items-start gap-1.5 rounded-md bg-amber-soft/60 px-2.5 py-2 text-xs text-amber-ink">
-                        <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
-                        <span>Isi bill{` (${pending.billNo ? `#${pending.billNo}` : `${formatDate(dupInReview.expense_date)} · ${rupee(dupInReview.amount)}`})`} ki ek entry pehle se hai. Agar ye <b>alag category ka hissa</b> hai to theek — warna duplicate ho jayega.</span>
-                      </div>
-                    )}
-                    {/* ── Label ke SAATH value, dono kinaron par nahi (29 Aug 2026) ──────
-                        Har row `flex justify-between` thi. Chaudi screen par wo label ko
-                        bilkul baayen aur value ko bilkul daayen phenk deti thi. Pardeep ne
-                        pakda; naapa to haal ye tha:
-
-                            Vendor    1,089px khaali    Coca Industries
-                            GSTIN     1,143px           23EZFPS9892N2Z7
-                            Bill no.  1,185px           TLTK-4450
-
-                        Poore ek hazaar pixel se zyada khaali jagah — aankh label aur uski
-                        value ko jod hi nahi paati. Aur ye panel ka poora kaam hi yahi hai:
-                        aadmi ise PADHKAR confirm karta hai, aur uske baad ye aankde seedha
-                        uski books me jaate hain. Jo jodi padhi na ja sake, wo jaanchi bhi
-                        nahi ja sakti.
-
-                        Ab do-column grid: label utni hi chaudi jitna uska text, value
-                        uske theek baad. `max-w-xl` isliye ki dialog chahe kitna bhi chauda
-                        ho, padhne ki chaudai ek hi rehti hai.
-
-                        `<dl>/<dt>/<dd>` isliye ki ye sach me ek definition list hai —
-                        screen reader ko bhi wahi jodi milti hai jo aankh ko. */}
-                    <dl className="grid max-w-xl grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-[12px] text-ink-2">
-                      <dt className="text-ink-3">Vendor</dt>
-                      <dd className="min-w-0 text-ink flex items-center gap-1.5 flex-wrap">
-                        <span className="break-words">{pending.vendorName || "—"}</span>
-                        {existing
-                          ? <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald/10 text-emerald px-1.5 py-0.5 text-3xs font-medium"><Icon name="check_circle" size={10} /> Existing</span>
-                          : (pending.vendorName && <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-soft text-amber-ink px-1.5 py-0.5 text-3xs font-medium"><Icon name="plus" size={10} /> New</span>)}
-                      </dd>
-                      {shownGstin && <><dt className="text-ink-3">GSTIN</dt><dd className="min-w-0 font-mono text-ink break-all">{shownGstin}</dd></>}
-                      {pending.billNo && <><dt className="text-ink-3">Bill no.</dt><dd className="min-w-0 font-mono text-ink break-all">{pending.billNo}</dd></>}
-                      <dt className="text-ink-3">Bill date</dt>
-                      <dd className="min-w-0">{pending.billDate || "—"}</dd>
-                      <dt className="text-ink-3">Total{pending.currency !== "INR" ? ` (${pending.currency})` : ""}</dt>
-                      <dd className="min-w-0 font-mono text-ink">{pending.total != null ? fmt(pending.total) : "—"}{pending.gst > 0 ? ` · GST ${fmt(pending.gst)}` : ""}</dd>
-                    </dl>
-                    {pending.items.length > 0 && (
-                      <div className="mt-2 border-t border-hairline pt-2">
-                        <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">{pending.items.length} item{pending.items.length > 1 ? "s" : ""}</p>
-                        {/* `min-w-0` ke bina `truncate` kuch nahi karta: flex ka bachcha apne
-                            content se chhota hota hi nahi, aur wo lamba naam poore panel ko
-                            bahar dhakel deta hai — yahi 56px ka overflow tha (Amazon ka
-                            product naam 180+ akshar ka hota hai).
-
-                            `title` isliye ki jo kata wo hover par poora mile — a11y §4. */}
-                        <ul className="space-y-0.5 max-h-28 overflow-y-auto">
-                          {pending.items.map((it, i) => (
-                            <li key={i} className="flex justify-between gap-2 text-xs">
-                              <span className="min-w-0 truncate text-ink-2" title={it.description || undefined}>
-                                {it.description || "—"}{it.qty ? ` × ${it.qty}` : ""}
-                              </span>
-                              <span className="font-mono text-ink-3 shrink-0">{it.amount ? fmt(Number(it.amount)) : "—"}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button type="button" variant="primary" size="sm" icon="check" onClick={applyExtract}>Haan, sahi hai — bhar do</Button>
-                      <Button type="button" variant="default" size="sm" onClick={discardExtract}>Galat — main khud bharunga</Button>
-                    </div>
-                    <p className="mt-2 text-xs text-ink-3">Kaise bhi karo, 📎 <button type="button" onClick={openLocalFile} className="text-amber-ink underline hover:no-underline">{attachFile?.name}</button> bill attach ho jayega. (click karke dekho)</p>
-                    {previewUrl && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={previewUrl} alt="Invoice preview" onClick={openLocalFile}
-                        className="mt-2 max-h-40 w-auto rounded-md border border-hairline cursor-zoom-in" />
-                    )}
-                  </div>
-                );
-              })()}
-
-              {attachFile && !pending && (
-                <div className="mt-2">
-                  <p className="flex items-center gap-1.5 text-xs text-ink-2">
-                    <Icon name="file" size={12} />
-                    <button type="button" onClick={openLocalFile} className="text-amber-ink underline hover:no-underline">{attachFile.name}</button>
-                    — expense ke saath attach hoga
-                  </p>
-                  {previewUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={previewUrl} alt="Invoice preview" onClick={openLocalFile}
-                      className="mt-2 max-h-40 w-auto rounded-md border border-hairline cursor-zoom-in" />
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── STEP 4: What & how much ── */}
+          {/* ── What for ── */}
           <section className="rounded-lg border border-hairline bg-paper-2/30 p-3 space-y-3">
-            <div className={cn("grid gap-3", showItems ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2")}>
-              {/* Single category only in simple mode — in itemise mode each line
-                  carries its own category, so a top-level one is redundant. */}
-              {!showItems && (
-                <FormField label="Category" required htmlFor="category">
-                  <Select value={watch("category")} onValueChange={(v) => { setValue("category", v); setCategoryTouched(true); setCategoryAuto(false); }}>
-                    <SelectTrigger id="category"><SelectValue placeholder="Select" /></SelectTrigger>
-                    <SelectContent>
-                      {EXPENSE_CATEGORIES
-                        .filter((c) => c !== "Salaries" || expense?.category === "Salaries")
-                        .map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  {categoryAuto && !categoryTouched && (
-                    <p className="mt-1 flex items-center gap-1 text-xs text-amber-ink">
-                      <Icon name="sparkles" size={10} /> Auto-chuni — galat ho to badal do.
-                    </p>
-                  )}
-                  {isMarketing && (
-                    <div className="mt-2">
-                      <label htmlFor="ad-channel" className="text-xs font-medium text-ink-2">Channel (kis marketing ke liye)</label>
-                      <Select value={channel || "none"} onValueChange={(v) => { setChannel(v === "none" ? "" : v); setChannelTouched(true); }}>
-                        <SelectTrigger id="ad-channel" className="mt-1"><SelectValue placeholder="Select" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">Pata nahi / general</SelectItem>
-                          {AD_CHANNELS.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <p className="mt-1 text-xs text-ink-3 leading-snug">
-                        Marketing → ROAS &amp; CAC isi se ad kharch ko us channel ki leads ke saath milata hai. Bina channel ke ye kharch wahan nahi gina jaata.
-                      </p>
-                      {(campaignOptions.data ?? []).length > 0 && (
-                        <div className="mt-2">
-                          <label htmlFor="ad-campaign" className="text-xs font-medium text-ink-2">Campaign (optional)</label>
-                          <Select value={campaignId || "none"} onValueChange={(v) => setCampaignId(v === "none" ? "" : v)}>
-                            <SelectTrigger id="ad-campaign" className="mt-1"><SelectValue placeholder="Select" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">Kisi campaign ka nahi</SelectItem>
-                              {(campaignOptions.data ?? []).filter((c) => !c.cancelled || c.id === campaignId).map((c) => (
-                                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {isCommission && (
-                    <p className="mt-1 text-xs text-ink-3 leading-snug">
-                      Bahar ke agent / broker ka commission. Neeche <b>&quot;Kisko diya&quot;</b> mein naam zaroor bharo — us vyakti ka
-                      saal ka jod aur 194H TDS isi se tay hota hai. Apne employee ka incentive Payroll mein jaata hai.
-                    </p>
-                  )}
-                </FormField>
-              )}
-              <FormField label="Date" required htmlFor="expense_date">
-                <Input id="expense_date" type="date" error={errors.expense_date?.message} {...register("expense_date")} />
-              </FormField>
-            </div>
-
-            {/* COGS vs OPEX guardrail — if the vendor/category/note looks like a
-                product you RESELL (Workspace / M365 / Zoho / cloud), nudge toward
-                COGS Bills so the P&L stays right. Gentle + non-blocking. */}
-            {resaleHint && (
-              <div className="flex items-start gap-2 rounded-md border border-amber/40 bg-amber-soft/40 p-2.5 text-[12px] text-amber-ink">
-                <Icon name="info" size={14} className="mt-0.5 shrink-0" />
-                <span>
-                  Ye customer ko <b>resell</b> kar rahe ho? To ise <b>COGS Bills</b> me daalo (COGS), Expenses me nahi — tabhi P&amp;L sahi banega. Apne use ke liye hai to ignore karo.
-                </span>
-              </div>
-            )}
-
             {/* What for — a simple note by default; switch to line items for a
                 multi-line bill. Both feed the category + the saved description. */}
-            {!showItems ? (
-              <FormField label="Kis liye? (short note)" htmlFor="description">
-                <Input id="description" placeholder="e.g. Team lunch · cab to client · courier · office snacks" {...register("description")} />
-              </FormField>
-            ) : !isPayroll ? (
+            {/* R-1744: the note stays on screen with line items too — a bill read fills it
+                ("Google Cloud India — Workspace — Oct 2026") and it is saved as the description. */}
+            <FormField label="What for? (short note)" htmlFor="description" hint={<AiMark field="description" on={!!aiFilled.description} />}>
+              <Input id="description" placeholder="e.g. Team lunch · cab to client · courier · office snacks" {...register("description", { onChange: () => clearAi("description") })} />
+            </FormField>
+            {!showItems ? null : !isPayroll ? (
               <div className="rounded-md border border-hairline bg-paper/60 p-2.5">
                 <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1.5">
-                  Items — har item ki category{isForeign ? ` · amount ${currency} me` : ""}
+                  Items — category per item{isForeign ? ` · amounts in ${currency}` : ""}
                 </p>
                 <div className="space-y-2">
                   {lines.map((l, i) => (
@@ -1085,15 +1357,21 @@ export function AddExpenseDialog({
                         {/* Amount = qty×price (auto), editable; negatives allowed for credit lines */}
                         <Input aria-label="Amount" wrapperClassName="col-span-4 sm:col-span-3" className="text-right font-medium" type="number" step="any" placeholder={`Amount ${isForeign ? currency : "₹"}`}
                           value={l.amount} onChange={(e) => setLine(i, { amount: e.target.value })} />
+                        <div className="col-span-12 sm:col-span-4 flex items-center gap-1 min-w-0">
                         <select aria-label="Category"
-                          className="col-span-12 sm:col-span-4 h-9 rounded-md border border-hairline bg-paper px-2 text-[13px] text-ink"
+                          className="h-9 w-full min-w-0 rounded-md border border-hairline bg-paper px-2 text-[13px] text-ink"
                           value={l.category || headerCategory}
-                          onChange={(e) => setLine(i, { category: e.target.value })}
+                          onChange={(e) => setLine(i, { category: e.target.value, aiCat: false })}
                         >
+                          {/* R-1729: the header category can be empty now — say so instead of
+                              showing the first category as if it were chosen. */}
+                          <option value="">Select…</option>
                           {EXPENSE_CATEGORIES
                             .filter((c) => c !== "Salaries")
                             .map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
+                        <AiMark field={`line-${i}-category`} on={!!l.aiCat} />
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1103,7 +1381,7 @@ export function AddExpenseDialog({
                 {/* Split preview — >1 category ⇒ auto-split into that many entries. */}
                 {splitGroups.length > 1 && (
                   <div className="mt-2 rounded-md bg-amber-soft/40 px-2.5 py-2 text-xs text-amber-ink leading-snug">
-                    <b>{splitGroups.length} categories</b> → Save par {splitGroups.length} alag entries banengi (ek hi bill se judi):
+                    <b>{splitGroups.length} categories</b> → saving creates {splitGroups.length} separate entries (linked to the same bill):
                     <span className="block mt-0.5 text-ink-2">
                       {splitGroups.map((g) => `${g.category} ${isForeign ? "" : "₹"}${g.amount.toLocaleString("en-IN")}`).join("  ·  ")}
                     </span>
@@ -1116,143 +1394,192 @@ export function AddExpenseDialog({
             {!isPayroll && (
               <button type="button" onClick={() => setShowItems((v) => !v)}
                 className="text-xs text-amber-ink hover:underline">
-                {showItems ? "− Simple note pe wapas" : "+ Itemise (bill ke line items daalo)"}
+                {showItems ? "− Back to a simple note" : "+ Itemise (enter the bill's line items)"}
               </button>
             )}
 
-            {/* Amount + GST (+ currency/FX only for a GST/OIDAR invoice). */}
-            {isGstBill ? (
-              <>
-                <div className="grid grid-cols-12 gap-3">
-                  <FormField label="Currency" htmlFor="currency" className="col-span-4 sm:col-span-3">
-                    <Select value={currency} onValueChange={(v) => { setCurrency(v); if (v === "INR") setFxError(null); }}>
-                      <SelectTrigger id="currency"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {CURRENCY_OPTIONS.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </FormField>
-                  <FormField label={itemiseActive ? `Subtotal (${isForeign ? currency : "₹"}) — items ka jod` : `Amount (${isForeign ? currency : "₹"}) incl GST`} required htmlFor="amount" className="col-span-8 sm:col-span-5">
-                    <Input id="amount" type="number" min={1} step="any" readOnly={itemiseActive} error={errors.amount?.message} {...register("amount")} />
-                  </FormField>
-                  <FormField label={`${itemiseActive ? "GST" : "of which GST"} (${isForeign ? currency : "₹"})`} htmlFor="gst_paid" className="col-span-12 sm:col-span-4">
-                    <Input id="gst_paid" type="number" min={0} step="any" {...register("gst_paid")} />
-                  </FormField>
-                </div>
-                {isForeign && (
-                  <div className="grid grid-cols-2 gap-3 items-end">
-                    <FormField label={`Exchange rate (₹ per 1 ${currency})`} required htmlFor="fx_rate">
-                      <Input id="fx_rate" type="number" min={0} step="any" placeholder="e.g. 83.50"
-                        value={fxRate} error={fxError ?? undefined}
-                        onChange={(e) => { setFxRate(e.target.value); if (fxError) setFxError(null); }} />
+            {/* COGS vs OPEX guardrail — if the vendor/category/note looks like a
+                product you RESELL (Workspace / M365 / Zoho / cloud), nudge toward
+                COGS Bills so the P&L stays right. Gentle + non-blocking. */}
+            {resaleHint && (
+              <div className="flex items-start gap-2 rounded-md border border-amber/40 bg-amber-soft/40 p-2.5 text-[12px] text-amber-ink">
+                <Icon name="info" size={14} className="mt-0.5 shrink-0" />
+                <span>
+                  Reselling this to a customer? Then add it in <b>COGS Bills</b>, not Expenses — so the P&amp;L stays right. If it is for your own use, ignore this.
+                </span>
+              </div>
+            )}
+
+            {/* R-1744: a foreign bill with no GST — offer reverse charge; one click ticks it. */}
+            {rcmHint && isForeign && !rcm && (
+              <button
+                type="button"
+                onClick={() => { setRcm(true); setRcmEdited(true); setRcmHint(false); }}
+                className="inline-flex items-center gap-1 rounded-full border border-amber/50 bg-amber-soft/40 px-2.5 py-1 text-xs font-medium text-amber-ink hover:bg-amber-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+              >
+                <Icon name="sparkles" size={11} /> Foreign vendor, no GST — reverse charge?
+              </button>
+            )}
+
+            {/* ── More: GST, TDS, reverse charge (R-1729). Opens by itself when the entry needs
+                one of them — a GST invoice, a foreign bill, reverse charge or a recorded TDS — so
+                no tax rule is ever hidden; otherwise one click away. ── */}
+            <div className="rounded-md border border-hairline">
+              <button
+                type="button"
+                aria-expanded={showMore}
+                aria-controls="expense-more"
+                disabled={moreAuto}
+                onClick={() => setMoreOpen((o) => !o)}
+                className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-xs font-medium text-ink-2 hover:bg-paper-2 disabled:cursor-default disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+              >
+                <span>More — GST, TDS, reverse charge</span>
+                <span className="flex items-center gap-1 text-ink-3">
+                  {moreAuto && <span>Needed for this entry</span>}
+                  <Icon name={showMore ? "chevron_up" : "chevron_down"} size={14} />
+                </span>
+              </button>
+              {showMore && (
+                <div id="expense-more" className="space-y-3 border-t border-hairline p-2.5">
+                  {/* R-1744: a foreign bill shows its currency and rate even without GST (an AWS bill
+                      read by the AI is "Non-GST bill" + USD — the rate is needed to save). */}
+                  {(isGstBill || isForeign) && (
+                    <>
+                      <div className="grid grid-cols-12 gap-3">
+                        <FormField label="Currency" htmlFor="currency" className="col-span-4 sm:col-span-3" hint={<AiMark field="currency" on={!!aiFilled.currency} />}>
+                          <Select value={currency} onValueChange={(v) => { setCurrency(v); clearAi("currency"); if (v === "INR") setFxError(null); }}>
+                            <SelectTrigger id="currency"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {CURRENCY_OPTIONS.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </FormField>
+                        {isGstBill && (
+                        <FormField label={`${itemiseActive ? "GST" : "of which GST"} (${cur})`} htmlFor="gst_paid" className="col-span-8 sm:col-span-4" hint={<AiMark field="gst_paid" on={!!aiFilled.gst_paid} />}>
+                          <Input id="gst_paid" type="number" min={0} step="any" {...register("gst_paid", { onChange: () => clearAi("gst_paid") })} />
+                        </FormField>
+                        )}
+                      </div>
+                      {isForeign && (
+                        <div className="grid grid-cols-2 gap-3 items-end">
+                          <FormField label={`Exchange rate (₹ per 1 ${currency})`} required htmlFor="fx_rate">
+                            <Input id="fx_rate" type="number" min={0} step="any" placeholder="e.g. 83.50"
+                              value={fxRate} error={fxError ?? undefined}
+                              onChange={(e) => { setFxRate(e.target.value); if (fxError) setFxError(null); }} />
+                          </FormField>
+                          {rate > 0 && Number(watch("amount")) > 0 && (
+                            <p className="text-[12px] text-emerald pb-2">= {rupee(Math.round(Number(watch("amount")) * rate))} in books{Number(watch("gst_paid")) > 0 ? ` · ${rupee(Math.round(Number(watch("gst_paid")) * rate))} GST` : ""}</p>
+                          )}
+                        </div>
+                      )}
+                      {!isForeign && isGstBill && (
+                        <p className="text-xs text-ink-3">GST is the input tax credit portion of the amount above — claimable in your GST return.</p>
+                      )}
+                      {/* Bill no — a GST or foreign invoice has a number worth tracking (dedup). */}
+                      <FormField label="Bill / invoice no. (optional)" htmlFor="bill_no" hint={<AiMark field="bill_no" on={!!aiFilled.bill_no} />}>
+                        <Input id="bill_no" placeholder="e.g. INV-2026-0042" value={billNo} onChange={(e) => { setBillNo(e.target.value); clearAi("bill_no"); }} />
+                        <p className="text-xs text-ink-3 mt-1">
+                          Items of different categories on one invoice? Make a <b>separate entry</b> for each category with the <b>same bill no.</b> — they count as parts of one invoice (no duplicate warning).
+                        </p>
+                      </FormField>
+                    </>
+                  )}
+
+                  {/* Reverse charge — imported services. */}
+                  <label className="flex items-start gap-2 rounded-md border border-hairline p-2.5 cursor-pointer">
+                    <input type="checkbox" checked={rcm} onChange={(e) => { setRcm(e.target.checked); setRcmEdited(true); }} className="mt-0.5 rounded border-hairline" />
+                    <span className="text-xs text-ink-2">
+                      <b className="text-ink">Reverse charge (RCM)</b> — a foreign vendor&apos;s bill (Google Ireland, Meta, AWS, OpenAI): they charged no GST; we pay the IGST ourselves in cash in 3B and take the credit in the same month.
+                      {rcm && (
+                        <span className="mt-1.5 flex items-center gap-2">
+                          <span>IGST @18% ₹</span>
+                          <Input type="number" min={0} value={rcmTax} onChange={(e) => setRcmTax(e.target.value)} placeholder={String(Math.round(inrPreview(Number(watch("amount")) || 0) * 0.18))} className="w-32" />
+                          <span className="text-xs text-ink-3">blank = 18% automatically</span>
+                        </span>
+                      )}
+                    </span>
+                  </label>
+
+                  {/* TDS deducted (26Q) — optional; for rent / professional / contractor payments. */}
+                  <div className="grid grid-cols-12 gap-3">
+                    <FormField label="TDS deducted?" htmlFor="tds_section" className="col-span-5 sm:col-span-5">
+                      <Select value={watch("tds_section") || "none"} onValueChange={(v) => { setValue("tds_section", v === "none" ? "" : v); setTdsEdited(false); }}>
+                        <SelectTrigger id="tds_section"><SelectValue placeholder="No TDS" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No TDS</SelectItem>
+                          <SelectItem value="194C">194C · Contractor</SelectItem>
+                          <SelectItem value="194J">194J · Professional / technical</SelectItem>
+                          <SelectItem value="194I">194I · Rent</SelectItem>
+                          <SelectItem value="194H">194H · Commission / brokerage</SelectItem>
+                          <SelectItem value="194A">194A · Interest</SelectItem>
+                          <SelectItem value="194Q">194Q · Purchase of goods</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </FormField>
-                    {rate > 0 && Number(watch("amount")) > 0 && (
-                      <p className="text-[12px] text-emerald pb-2">= {rupee(Math.round(Number(watch("amount")) * rate))} in books{Number(watch("gst_paid")) > 0 ? ` · ${rupee(Math.round(Number(watch("gst_paid")) * rate))} GST` : ""}</p>
+                    {(watch("tds_section") || "") !== "" && (
+                      <FormField label="TDS amount (₹)" htmlFor="tds_amount" className="col-span-7 sm:col-span-4">
+                        <Input id="tds_amount" type="number" min={0} step="any" {...register("tds_amount", { onChange: () => setTdsEdited(true) })} />
+                      </FormField>
                     )}
                   </div>
-                )}
-                {!isForeign && (
-                  <p className="text-xs text-ink-3">GST is the input tax credit portion of the amount above — claimable in your GST return.</p>
-                )}
-              </>
-            ) : (
-              <FormField label={itemiseActive ? "Amount (₹) — items ka jod" : "Amount (₹)"} required htmlFor="amount">
-                <Input id="amount" type="number" min={1} step="any" readOnly={itemiseActive} error={errors.amount?.message} {...register("amount")} />
-              </FormField>
-            )}
-
-            {/* Reverse charge — imported services. */}
-            <label className="flex items-start gap-2 rounded-md border border-hairline p-2.5 cursor-pointer">
-              <input type="checkbox" checked={rcm} onChange={(e) => { setRcm(e.target.checked); setRcmEdited(true); }} className="mt-0.5 rounded border-hairline" />
-              <span className="text-xs text-ink-2">
-                <b className="text-ink">Reverse charge (RCM)</b> — videshi vendor ka bill (Google Ireland, Meta, AWS, OpenAI): GST unhone nahi lagaya, IGST hum khud 3B mein cash se bharte hain aur usi mahine credit lete hain.
-                {rcm && (
-                  <span className="mt-1.5 flex items-center gap-2">
-                    <span>IGST @18% ₹</span>
-                    <Input type="number" min={0} value={rcmTax} onChange={(e) => setRcmTax(e.target.value)} placeholder={String(Math.round(inrPreview(Number(watch("amount")) || 0) * 0.18))} className="w-32" />
-                    <span className="text-xs text-ink-3">khaali = 18% apne-aap</span>
-                  </span>
-                )}
-              </span>
-            </label>
-
-            {/* TDS deducted (26Q) — optional; for rent / professional / contractor payments. */}
-            <div className="grid grid-cols-12 gap-3">
-              <FormField label="TDS deducted?" htmlFor="tds_section" className="col-span-5 sm:col-span-5">
-                <Select value={watch("tds_section") || "none"} onValueChange={(v) => { setValue("tds_section", v === "none" ? "" : v); setTdsEdited(false); }}>
-                  <SelectTrigger id="tds_section"><SelectValue placeholder="No TDS" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No TDS</SelectItem>
-                    <SelectItem value="194C">194C · Contractor</SelectItem>
-                    <SelectItem value="194J">194J · Professional / technical</SelectItem>
-                    <SelectItem value="194I">194I · Rent</SelectItem>
-                    <SelectItem value="194H">194H · Commission / brokerage</SelectItem>
-                    <SelectItem value="194A">194A · Interest</SelectItem>
-                    <SelectItem value="194Q">194Q · Purchase of goods</SelectItem>
-                  </SelectContent>
-                </Select>
-              </FormField>
-              {(watch("tds_section") || "") !== "" && (
-                <FormField label="TDS amount (₹)" htmlFor="tds_amount" className="col-span-7 sm:col-span-4">
-                  <Input id="tds_amount" type="number" min={0} step="any" {...register("tds_amount", { onChange: () => setTdsEdited(true) })} />
-                </FormField>
+                  {(watch("tds_section") || "") !== "" && (
+                    <p className="text-xs text-ink-3">
+                      {tdsView ? (
+                        <>
+                          <span className={tdsView.noPan && tdsView.applies ? "text-rose" : tdsView.applies ? "text-ink-2" : "text-emerald"}>{tdsView.reason}</span>
+                          {tdsView.applies && !tdsEdited ? ` ${tdsView.ratePct}% of ${rupee(tdsBaseNow)}${isGstBill && (Number(watch("gst_paid")) || 0) > 0 ? " (excluding GST)" : ""} = ${rupee(tdsView.tds)} filled in automatically — you can change it.` : ""}
+                          {tdsView.applies && tdsRate?.note ? ` ${tdsRate.note}` : ""}{" "}
+                        </>
+                      ) : tdsRate && !tdsEdited
+                        ? <>{tdsRate.ratePct}% of {rupee(tdsBaseNow)} — filled in automatically, you can change it. </>
+                        : null}
+                      Record the TDS you deducted while paying this vendor — it feeds your quarterly 26Q return.
+                    </p>
+                  )}
+                </div>
               )}
             </div>
-            {(watch("tds_section") || "") !== "" && (
-              <p className="text-xs text-ink-3">
-                {tdsView ? (
-                  <>
-                    <span className={tdsView.noPan && tdsView.applies ? "text-rose" : tdsView.applies ? "text-ink-2" : "text-emerald"}>{tdsView.reason}</span>
-                    {tdsView.applies && !tdsEdited ? ` ${tdsView.ratePct}% of ${rupee(tdsBaseNow)}${isGstBill && (Number(watch("gst_paid")) || 0) > 0 ? " (GST ke bina)" : ""} = ${rupee(tdsView.tds)} apne-aap bhara, badal sakte ho.` : ""}
-                    {tdsView.applies && tdsRate?.note ? ` ${tdsRate.note}` : ""}{" "}
-                  </>
-                ) : tdsRate && !tdsEdited
-                  ? <>{tdsRate.ratePct}% of {rupee(tdsBaseNow)} — apne-aap bhara, badal sakte ho. </>
-                  : null}
-                Record the TDS you deducted while paying this vendor — it feeds your quarterly 26Q return.
-              </p>
-            )}
           </section>
 
-          {/* ── STEP 5: Paid already, or still to pay? ── */}
+          {/* ── Paid already, or still to pay? ── */}
           <div>
-            <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1.5">Paisa de diya?</p>
+            <p className="flex items-center gap-1.5 text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1.5">Paid already? <AiMark field="paid" on={!!aiFilled.paid} /></p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
-              <button type="button" onClick={() => { setPaid(true); setReimburse(false); }}
+              <button type="button" onClick={() => { setPaid(true); setReimburse(false); clearAi("paid"); }}
                 className={cn("rounded-md border px-3 py-2 text-sm text-left transition-colors",
                   paid && !reimburse ? "border-amber bg-amber-soft/60 text-amber-ink" : "border-hairline text-ink-2 hover:bg-paper-2")}>
-                <span className="font-medium">Haan, de diya</span>
-                <span className="block text-xs text-ink-3">Company ne pay kiya (cash/UPI/bank)</span>
+                <span className="font-medium">Yes, paid</span>
+                <span className="block text-xs text-ink-3">The company paid (cash/UPI/bank)</span>
               </button>
               {!isEdit && (
-                <button type="button" onClick={() => { setReimburse(true); }}
+                <button type="button" onClick={() => { setReimburse(true); clearAi("paid"); }}
                   className={cn("rounded-md border px-3 py-2 text-sm text-left transition-colors",
                     reimburse ? "border-amber bg-amber-soft/60 text-amber-ink" : "border-hairline text-ink-2 hover:bg-paper-2")}>
-                  <span className="font-medium">Kisi aur ne diya</span>
-                  <span className="block text-xs text-ink-3">Reimbursement — company use wapas degi</span>
+                  <span className="font-medium">Someone else paid</span>
+                  <span className="block text-xs text-ink-3">Reimbursement — the company pays them back</span>
                 </button>
               )}
-              <button type="button" onClick={() => { setPaid(false); setReimburse(false); }}
+              <button type="button" onClick={() => { setPaid(false); setReimburse(false); clearAi("paid"); }}
                 className={cn("rounded-md border px-3 py-2 text-sm text-left transition-colors",
                   !paid && !reimburse ? "border-amber bg-amber-soft/60 text-amber-ink" : "border-hairline text-ink-2 hover:bg-paper-2")}>
-                <span className="font-medium">Nahi, baad me</span>
-                <span className="block text-xs text-ink-3">Udhaar — vendor ko dena baaki</span>
+                <span className="font-medium">Not yet</span>
+                <span className="block text-xs text-ink-3">On credit — still to pay the vendor</span>
               </button>
             </div>
           </div>
 
           {reimburse ? (
-            <FormField label="Kisne diya? (person)" htmlFor="reimburse_person">
+            <FormField label="Who paid? (person)" htmlFor="reimburse_person">
               <Input id="reimburse_person" placeholder="e.g. Prateek / Darshan / self"
                 value={reimbursePerson} onChange={(e) => setReimbursePerson(e.target.value)} />
               <p className="text-xs text-ink-3 mt-1">
-                Kharcha company ka hai (P&amp;L me jayega), par paisa <b>{reimbursePerson.trim() || "is vyakti"}</b> ne apne pocket se diya —
-                company ab unhe wapas degi (Reimbursements me &quot;payable&quot; ban jayega, baad me Settle karo).
+                The expense is the company&apos;s (it goes to the P&amp;L), but <b>{reimbursePerson.trim() || "this person"}</b> paid from their own pocket —
+                the company now owes them (a &quot;payable&quot; is created in Reimbursements; settle it later).
               </p>
             </FormField>
           ) : paid ? (
-            <FormField label="Paid by" htmlFor="payment_method">
-              <Select value={watch("payment_method")} onValueChange={(v) => setValue("payment_method", v)}>
+            <FormField label="Paid by" htmlFor="payment_method" hint={<AiMark field="payment_method" on={!!aiFilled.payment_method} />}>
+              <Select value={watch("payment_method")} onValueChange={(v) => { setValue("payment_method", v); clearAi("payment_method"); }}>
                 <SelectTrigger id="payment_method"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {PAYMENT_METHODS.map((m) => (
@@ -1265,9 +1592,9 @@ export function AddExpenseDialog({
               </Select>
             </FormField>
           ) : (
-            <FormField label="Kab tak dena hai? (due date — optional)" htmlFor="due_date">
+            <FormField label="Due date (optional)" htmlFor="due_date">
               <Input id="due_date" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-              <p className="text-xs text-ink-3 mt-1">P&amp;L mein aaj hi count hoga; bank/cash tab minus hoga jab &quot;Mark paid&quot; karoge.</p>
+              <p className="text-xs text-ink-3 mt-1">Counts in the P&amp;L today; bank / cash goes down when you click &quot;Mark paid&quot;.</p>
             </FormField>
           )}
 
@@ -1309,7 +1636,7 @@ export function AddExpenseDialog({
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-ink-3 mt-1">Kis bank se paisa gaya. Banking me isi account ki statement line se reconcile ho jayega.</p>
+              <p className="text-xs text-ink-3 mt-1">The account the money left from. It is reconciled against this account&apos;s statement line in Banking.</p>
             </FormField>
           )}
 
@@ -1324,119 +1651,7 @@ export function AddExpenseDialog({
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-ink-3 mt-1">Cash-in-hand se ye amount minus ho jayega.</p>
-            </FormField>
-          )}
-
-          {/* ── Who — vendor / payee (optional; lives at the end since it's the
-              last thing you fill after the money details). GSTIN for GST bills. ── */}
-          <FormField
-            label={isCommission ? "Kisko diya (commission paane wala)" : isGstBill ? "Vendor (GST invoice)" : "Paid to (optional)"}
-            required={isCommission}
-            htmlFor="vendor_name"
-          >
-            <div className="relative">
-              <Input
-                id="vendor_name"
-                autoComplete="off"
-                placeholder={isCommission ? "e.g. Ramesh Kumar" : "e.g. Anthropic / Airtel / Office Landlord"}
-                {...register("vendor_name", { onChange: () => { setVendorId(null); setVendorMatch(null); setVendorOpen(true); } })}
-                onFocus={() => setVendorOpen(true)}
-                onBlur={() => setTimeout(() => setVendorOpen(false), 130)}
-              />
-              {vendorOpen && ((vendors ?? []).length > 0 || (isCommission && (employeeList ?? []).length > 0)) && (() => {
-                const query = (watch("vendor_name") || "").trim().toLowerCase();
-                const matches = (vendors ?? []).filter((v) => !query || v.name.toLowerCase().includes(query)).slice(0, 8);
-                /* For a commission, our own employees are offered too — tagged, so "abhish" already
-                   shows "Abhishek · Employee" and the warning below is one click away, not a
-                   fully-typed name away. */
-                const empMatches = isCommission
-                  ? (employeeList ?? []).filter((e) => e.is_active !== false && (!query || e.name.toLowerCase().includes(query))).slice(0, 6)
-                  : [];
-                if (matches.length === 0 && empMatches.length === 0) return null;
-                return (
-                  <div className="absolute z-20 mt-1 w-full max-h-52 overflow-y-auto rounded-md border border-hairline bg-paper shadow-lg">
-                    {empMatches.map((e) => (
-                      <button key={`emp-${e.id}`} type="button"
-                        onMouseDown={(ev) => { ev.preventDefault(); setValue("vendor_name", e.name); setVendorId(null); setVendorMatch(null); setVendorOpen(false); }}
-                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-paper-2">
-                        <span className="text-ink truncate">{e.name}</span>
-                        <span className="shrink-0 rounded bg-rose/10 px-1.5 py-0.5 text-3xs font-semibold text-rose">Employee · Payroll</span>
-                      </button>
-                    ))}
-                    {matches.map((v) => (
-                      <button key={v.id} type="button"
-                        onMouseDown={(e) => { e.preventDefault(); setValue("vendor_name", v.name); setVendorId(v.id); setVendorMatch({ kind: "existing", name: v.name }); setVendorOpen(false); }}
-                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-paper-2">
-                        <span className="text-ink truncate">{v.name}</span>
-                        {v.gstin && <span className="text-xs text-ink-3 font-mono shrink-0">{v.gstin}</span>}
-                      </button>
-                    ))}
-                  </div>
-                );
-              })()}
-            </div>
-            {vendorMatch && (
-              vendorMatch.kind === "existing" ? (
-                <p className="mt-1 flex items-center gap-1.5 text-xs text-emerald">
-                  <Icon name="check_circle" size={12} /> Existing vendor mil gaya{aiGstin ? " (GSTIN se)" : ""} — isi se link hoga.
-                </p>
-              ) : isGstBill ? (
-                <p className="mt-1 flex items-center gap-1.5 text-xs text-amber-ink">
-                  <Icon name="plus" size={12} /> Naya vendor &ldquo;{vendorMatch.name}&rdquo;{aiGstin ? ` (GSTIN ${aiGstin})` : ""} — Save par Vendors master me add hoga.
-                </p>
-              ) : (
-                <p className="mt-1 text-xs text-ink-3">Naya payee — kaccha/no-bill hone se Vendors master me add nahi hoga.</p>
-              )
-            )}
-            {/* The payee is one of OUR employees: their commission is salary (incentive, TDS 192),
-                not an agent's commission (194H) — a ₹5L "commission to abhishek" was booked here
-                on 26 Sep 2026 and had to be moved to Payroll. */}
-            {isCommission && payeeEmployee && (
-              <div className="mt-1.5 rounded-md border border-rose/40 bg-rose/5 px-2.5 py-2 text-xs text-ink-2 space-y-1">
-                <p>
-                  <b>{payeeEmployee.name}</b> aapka employee hai. Employee ka commission / incentive <b>salary</b> ka hissa hai —
-                  Payroll mein uski salary ke saath &quot;Incentive&quot; mein daalo (TDS 192, Form 16 mein aayega). Yahan agent ki tarah
-                  (194H) book karne se TDS aur Form 16 dono galat honge.
-                </p>
-                <button type="button" onClick={() => { onClose(); router.push("/accounting/payroll" as never); }}
-                  className="font-semibold text-rose underline underline-offset-2">
-                  Payroll mein incentive daalo →
-                </button>
-              </div>
-            )}
-            {/* One person's commission for the year, and s.194H — lib/accounting/commission-tds.ts. */}
-            {isCommission && commissionView && !payeeEmployee && (
-              <div className="mt-1.5 rounded-md border border-hairline bg-paper-2/40 px-2.5 py-2 text-xs text-ink-2 space-y-1">
-                <p>
-                  Is FY mein <b>{vendorNameWatch.trim()}</b> ko ab tak <b>{rupee(commissionView.earlier)}</b> commission ·
-                  is entry ke saath <b>{rupee(commissionView.yearTotal)}</b>
-                  {" "}({commissionView.crosses ? "₹20,000 ki seema paar" : `₹20,000 ki seema tak ${rupee(Math.max(0, TDS_194H_THRESHOLD - commissionView.yearTotal))} baaki`}).
-                </p>
-                {commissionView.crosses && (watch("tds_section") || "") !== "194H" && (
-                  <div className="flex flex-wrap items-center gap-2 text-amber-ink">
-                    <span>194H TDS (2%) katna chahiye{commissionView.earlierUntaxed > 0 ? ` — pehle ke ${rupee(commissionView.earlierUntaxed)} par bhi` : ""}.</span>
-                    <button
-                      type="button"
-                      onClick={() => { setValue("tds_section", "194H"); setValue("tds_amount", commissionView.tdsOnThis); }}
-                      className="font-semibold underline underline-offset-2"
-                    >
-                      194H · {rupee(commissionView.tdsOnThis)} lagao
-                    </button>
-                  </div>
-                )}
-                <p className="text-xs text-ink-3">Seema ek vyakti ko poore saal ke commission par lagti hai. Bhugtaan se pehle CA se confirm kar lena.</p>
-              </div>
-            )}
-          </FormField>
-
-          {/* Bill no — only a GST invoice has a number worth tracking (dedup). */}
-          {isGstBill && (
-            <FormField label="Bill / invoice no. (optional)" htmlFor="bill_no">
-              <Input id="bill_no" placeholder="e.g. INV-2026-0042" value={billNo} onChange={(e) => setBillNo(e.target.value)} />
-              <p className="text-xs text-ink-3 mt-1">
-                Ek hi invoice mein alag-alag category ka saaman? Har category ki <b>alag entry</b> banao — <b>same bill no.</b> daalo. Wo ek hi invoice ke hisse maane jayenge (duplicate warning nahi aayegi).
-              </p>
+              <p className="text-xs text-ink-3 mt-1">This amount is taken off cash in hand.</p>
             </FormField>
           )}
 
@@ -1445,12 +1660,11 @@ export function AddExpenseDialog({
             <Textarea
               id="notes"
               rows={2}
-              placeholder="e.g. Ranjeet ka birthday gift — company ne Prateek ke a/c me bheja, Prateek ne cash Ranjeet ko diya"
+              placeholder="e.g. Birthday gift for a team member — sent to a colleague's account, who paid it in cash"
               {...register("notes")}
             />
-            <p className="text-xs text-ink-3 mt-1">Koi bhi extra detail — kis liye, kiske through, koi note. Report/detail me dikhega.</p>
+            <p className="text-xs text-ink-3 mt-1">Any extra detail — what for, through whom, any note. Shown in the report and the expense detail.</p>
           </FormField>
-
           <DialogFooter>
             <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
             <Button type="submit" variant="primary" loading={isSubmitting}>{isEdit ? "Save changes" : "Save expense"}</Button>

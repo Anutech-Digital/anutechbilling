@@ -256,7 +256,7 @@ function BankAccountCard({
 
         <div className="border-t border-hairline pt-3">
           <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">
-            {isCard ? "Owe / Udhari" : "Balance"}
+            {isCard ? "Outstanding" : "Balance"}
           </p>
           {isCard ? (
             <>

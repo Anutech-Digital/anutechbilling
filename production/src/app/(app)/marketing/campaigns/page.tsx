@@ -140,7 +140,7 @@ function CampaignCard({ r, today, onEdit }: { r: CampaignRow; today: string; onE
 
       <div className="space-y-1">
         <div className="flex justify-between text-xs">
-          <span className="text-ink-2">Kharcha</span>
+          <span className="text-ink-2">Spend</span>
           <span className={cn("tabular-nums", m.overBudget ? "text-red-600 font-medium" : "text-ink-2")}>
             {rupee(r.actuals.spend)}{r.budget > 0 && <> / {rupee(r.budget)} ({m.budgetUsedPct}%)</>}
           </span>
@@ -181,7 +181,7 @@ function CampaignCard({ r, today, onEdit }: { r: CampaignRow; today: string; onE
       {open && (
         <div className="space-y-3 text-xs">
           <div>
-            <p className="font-semibold text-ink-2 mb-1">Kharche</p>
+            <p className="font-semibold text-ink-2 mb-1">Expenses</p>
             {r.expenses.length === 0 ? <p className="text-ink-3">None. Tag a marketing expense (or use the Spend page) with this campaign.</p> : (
               <ul className="divide-y divide-hairline">
                 {r.expenses.map((e) => (

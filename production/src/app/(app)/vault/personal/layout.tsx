@@ -68,13 +68,13 @@ export default function PersonalVaultLayout({ children }: { children: React.Reac
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-rose-soft">
             <Icon name="lock" size={26} className="text-rose" />
           </div>
-          <h1 className="text-xl font-serif text-ink">Ye area sirf owner ke liye hai</h1>
+          <h1 className="text-xl font-serif text-ink">This area is for the owner only</h1>
           <p className="mt-2 text-sm text-ink-3">
-            Isme business ka koi data nahi hai — ye owner ke apne bank account, kharche aur
-            investments hain. Isliye ye team ke kisi bhi aur member ko nahi dikhta.
+            It holds no business data — these are the owner's own bank accounts, expenses and
+            investments. That is why no other team member can see it.
           </p>
           <p className="mt-4 text-xs text-ink-4">
-            Company ke customer passwords <Link href="/vault" className="text-primary hover:underline">Password Vault</Link> me hain.
+            Company customer passwords are in the <Link href="/vault" className="text-primary hover:underline">Password Vault</Link>.
           </p>
         </Card>
       </div>
@@ -91,7 +91,7 @@ export default function PersonalVaultLayout({ children }: { children: React.Reac
               Private Vault
             </h1>
             <p className="text-sm text-ink-3 mt-1">
-              Aapke apne paise — company ke books se poori tarah alag. Team me kisi ko bhi ye nahi dikhta.
+              Your own money — fully separate from the company books. No one in your team can see this.
             </p>
           </div>
         </div>

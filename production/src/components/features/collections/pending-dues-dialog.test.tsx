@@ -37,7 +37,7 @@ beforeEach(() => {
       { kind: "invoice", id: "INV-1", label: "INV-1", quoteId: null, date: "2026-08-01", dueDate: "2026-08-15", daysOverdue: 63, amountDue: 59000 },
       { kind: "invoice", id: "INV-2", label: "INV-2", quoteId: null, date: "2026-10-01", dueDate: "2026-10-10", daysOverdue: 7, amountDue: 13300 },
     ],
-    qrNotice: { reason: "no-upi", text: "Pay QR ke liye Settings me UPI ID daalo — tab statement me poori rakam ka scan-karke-pay QR aayega.", action: { label: "Settings kholo", href: "/settings?tab=company#payment-details" } },
+    qrNotice: { reason: "no-upi", text: "Add your UPI ID in Settings to show a Pay QR — the statement will then carry a scan-to-pay QR for the full amount.", action: { label: "Open Settings", href: "/settings?tab=company#payment-details" } },
     hasBank: true,
     subject: "Statement of pending dues: ₹72,300", emailText: "Hi Rahul, please find attached the statement: ₹72,300.", whatsappText: WA,
     whatsapp: "919876543210", whatsappBlocked: null, email: "accounts@acme.in", emailBlocked: null,
@@ -65,8 +65,8 @@ describe("Send pending dues dialog", () => {
     renderDialog();
     expect(await screen.findByText("INV-1")).toBeTruthy();
     expect(screen.getAllByText("₹72,300").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Settings me UPI ID daalo/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Settings kholo" }).getAttribute("href")).toMatch(/^\/settings/);
+    expect(screen.getByText(/Add your UPI ID in Settings/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open Settings" }).getAttribute("href")).toMatch(/^\/settings/);
     expect(screen.getByRole("link", { name: /Open statement PDF/ }).getAttribute("href")).toBe(`/api/customers/${CUST}/pending-dues/pdf`);
     expect(st.calls.map((c) => c.method)).toEqual(["GET"]);
     expect(st.mutate).not.toHaveBeenCalled();

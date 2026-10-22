@@ -21,7 +21,7 @@ export const ASSET_KINDS: Record<AssetKind, { label: string; group: "device" | "
 };
 
 export type ReturnCondition = "ok" | "damaged" | "lost" | "revoked";
-export const RETURN_LABEL: Record<ReturnCondition, string> = { ok: "Wapas, theek", damaged: "Wapas, damaged", lost: "Kho gaya", revoked: "Access hataya" };
+export const RETURN_LABEL: Record<ReturnCondition, string> = { ok: "Returned, fine", damaged: "Returned, damaged", lost: "Lost", revoked: "Access revoked" };
 
 export interface EmployeeAssetLike {
   id: string;
@@ -50,7 +50,7 @@ export function holdings(rows: EmployeeAssetLike[]): Holdings {
   const counts = { devices: 0, access: 0, physical: 0 };
   for (const a of open) counts[ASSET_KINDS[a.kind].group === "device" ? "devices" : ASSET_KINDS[a.kind].group === "access" ? "access" : "physical"] += 1;
   const bits = [counts.devices ? `${counts.devices} device${counts.devices > 1 ? "s" : ""}` : null, counts.access ? `${counts.access} login/SIM` : null, counts.physical ? `${counts.physical} item${counts.physical > 1 ? "s" : ""}` : null].filter(Boolean);
-  return { open, returned, counts, summary: bits.length ? bits.join(" · ") : "kuch nahi" };
+  return { open, returned, counts, summary: bits.length ? bits.join(" · ") : "none" };
 }
 
 export interface OffboardingInput {
@@ -77,19 +77,19 @@ export function offboardingChecklist(i: OffboardingInput): { items: ChecklistIte
   const devices = h.open.filter((a) => ASSET_KINDS[a.kind].group === "device");
   const access = h.open.filter((a) => ASSET_KINDS[a.kind].group === "access");
   const physical = h.open.filter((a) => ASSET_KINDS[a.kind].group === "physical");
-  items.push({ key: "devices", title: "Devices wapas", status: devices.length ? "todo" : "done",
-    detail: devices.length ? devices.map((a) => `${a.name}${a.identifier ? ` (${a.identifier})` : ""}`).join(", ") + " — wapas lo, condition likho." : "Koi device unke paas nahi." });
-  items.push({ key: "access", title: "Logins / SIM band", status: access.length ? "todo" : "done",
-    detail: access.length ? access.map((a) => a.name).join(", ") + " — password reset / account suspend, SIM company ke naam wapas." : "Koi access khula nahi." });
-  items.push({ key: "physical", title: "Keys / ID / documents wapas", status: physical.length ? "todo" : "done",
-    detail: physical.length ? physical.map((a) => a.name).join(", ") : "Kuch baaki nahi." });
+  items.push({ key: "devices", title: "Devices returned", status: devices.length ? "todo" : "done",
+    detail: devices.length ? devices.map((a) => `${a.name}${a.identifier ? ` (${a.identifier})` : ""}`).join(", ") + " — collect them and note the condition." : "No devices with them." });
+  items.push({ key: "access", title: "Logins / SIM closed", status: access.length ? "todo" : "done",
+    detail: access.length ? access.map((a) => a.name).join(", ") + " — reset passwords / suspend accounts, transfer the SIM back to the company." : "No open access." });
+  items.push({ key: "physical", title: "Keys / ID / documents returned", status: physical.length ? "todo" : "done",
+    detail: physical.length ? physical.map((a) => a.name).join(", ") : "Nothing pending." });
   items.push({ key: "loan", title: "Advance / loan settle", status: i.loanOutstanding > 0 ? "todo" : "done",
-    detail: i.loanOutstanding > 0 ? `${inr(i.loanOutstanding)} baaki — full & final se kaato ya wapas lo.` : "Koi advance baaki nahi." });
+    detail: i.loanOutstanding > 0 ? `${inr(i.loanOutstanding)} outstanding — deduct it in full & final or collect it back.` : "No advance outstanding." });
   items.push({ key: "salary", title: "Full & final salary", status: i.unpaidSalaries.count > 0 ? "warn" : "done",
-    detail: i.unpaidSalaries.count > 0 ? `${i.unpaidSalaries.count} payslip (${inr(i.unpaidSalaries.net)}) abhi paid nahi.` : i.lastPeriod ? `Aakhri salary ${i.lastPeriod} — chhodne ke mahine ki payslip LOP ke saath bana lo.` : "Koi payslip nahi." });
+    detail: i.unpaidSalaries.count > 0 ? `${i.unpaidSalaries.count} payslip(s) (${inr(i.unpaidSalaries.net)}) not paid yet.` : i.lastPeriod ? `Last salary ${i.lastPeriod} — create the exit month's payslip with LOP.` : "No payslips." });
   const hasRelieving = i.docTypes.includes("relieving_letter");
   items.push({ key: "relieving", title: "Relieving / experience letter", status: hasRelieving ? "done" : i.isActive ? "warn" : "todo",
-    detail: hasRelieving ? "Documents mein hai." : "Documents mein 'Relieving letter' upload karo — Form 16 saal ke end par alag se." });
+    detail: hasRelieving ? "In Documents." : "Upload the 'Relieving letter' in Documents — Form 16 comes separately at year end." });
   const ready = items.every((x) => x.status !== "todo");
   return { items, ready };
 }

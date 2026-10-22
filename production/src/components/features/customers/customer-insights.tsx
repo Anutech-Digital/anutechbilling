@@ -33,6 +33,7 @@ import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { gstTreatmentOption } from "@/lib/gst/customer-gst-treatment";
 import type { PrimaryContact } from "@/components/features/customers/customer-links";
 import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
+import { seatsPhrase, manageSeatsHref } from "@/components/features/subscriptions/seat-words";
 
 // ════════════════════════════════════════════════════════════════════════
 // Pure logic
@@ -274,7 +275,7 @@ export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0 }: {
    *  TDS ₹B = ₹C" so the bank money can be matched. */
   lifetimeTds?: number;
 }) {
-  const { outstanding, projectReceivable, overdueCount, lifetimePaid, totalMRR, activeSubs, seatsUsed, seatsTotal, nearestRenewal, renewalDays } = insights;
+  const { outstanding, projectReceivable, overdueCount, lifetimePaid, totalMRR, activeSubs, nearestRenewal, renewalDays } = insights;
   // Exact figures (not compact lakh) for the money KPIs so they match the
   // Next-Best-Action + Transactions to the rupee — "₹15.2L" vs "₹15,16,000"
   // for the same number read as two different amounts.
@@ -307,7 +308,11 @@ export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0 }: {
       <MetricCard
         label="MRR"
         value={totalMRR > 0 ? rupee(totalMRR) : "—"}
-        hint={activeSubs.length > 0 ? `${activeSubs.length} sub${activeSubs.length > 1 ? "s" : ""} · ${seatsUsed}/${seatsTotal} seats` : undefined}
+        /* R-1727: "1 sub · 0/10 seats" — the 0 was `used` (assigned users, never synced),
+           so it read as "nobody uses them". Said in words now, same rule as the drawer. */
+        hint={activeSubs.length > 0
+          ? [`${activeSubs.length} subscription${activeSubs.length > 1 ? "s" : ""}`, seatsPhrase(activeSubs)].filter(Boolean).join(" · ")
+          : undefined}
       />
       <MetricCard
         label="Next renewal"
@@ -515,7 +520,7 @@ export function SubscriptionList({ subs }: { subs: Subscription[] }) {
                     <Icon name="globe" size={11} /> {s.domain}
                   </span>
                 )}
-                <span>{s.used ?? 0}/{s.seats} seats</span>
+                {seatsPhrase([s]) && <span>{seatsPhrase([s])}</span>}
                 {s.start_date && s.renewal_date ? (
                   <span>{formatDate(s.start_date)} → {formatDate(s.renewal_date)}</span>
                 ) : s.renewal_date ? (
@@ -533,6 +538,16 @@ export function SubscriptionList({ subs }: { subs: Subscription[] }) {
                 <div className="text-2xs text-rose mt-0.5">{rupee(owed)} due</div>
               ) : (
                 <div className="text-2xs text-emerald mt-0.5">Paid</div>
+              )}
+              {/* R-1727: the everyday change (add / remove seats) one click from the company
+                  page — opens the same Manage seats dialog /subscriptions uses. */}
+              {active && (
+                <Link
+                  href={manageSeatsHref(s.id) as never}
+                  className="mt-1 inline-block text-2xs font-medium text-amber-ink hover:underline rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+                >
+                  Manage seats
+                </Link>
               )}
             </div>
           </div>
@@ -650,8 +665,8 @@ export function CustomerIdentityRail({ c, contact, onAddContact }: {
         <div className="flex items-start gap-3" data-testid="no-contact-person">
           <Avatar initials="?" color="muted" size="md" />
           <div className="min-w-0 flex-1">
-            <div className="font-medium text-ink">Koi contact person nahi</div>
-            <div className="text-2xs text-ink-3 mt-0.5">Invoice aur reminder kisko jaaye — ek contact person jodiye.</div>
+            <div className="font-medium text-ink">No contact person yet</div>
+            <div className="text-2xs text-ink-3 mt-0.5">Add a contact person so invoices and reminders reach the right person.</div>
             {onAddContact && (
               <Button size="sm" variant="outline" icon="plus" className="mt-2" onClick={onAddContact}>
                 Add contact

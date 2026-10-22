@@ -95,7 +95,8 @@ describe("record-payment-dialog replay wiring (R-374)", () => {
 
   it("every post-save write comes AFTER the replay return", () => {
     for (const marker of [
-      '.from("subscriptions")\n            .update({ domain',
+      /* R-1730: the domain write moved into stampPaymentDomain (after-payment-fill.ts). */
+      "await stampPaymentDomain(supabase,",
       "/api/payments/${r.payment_id}/receipt",
     ]) {
       const at = src.indexOf(marker, fnStart);

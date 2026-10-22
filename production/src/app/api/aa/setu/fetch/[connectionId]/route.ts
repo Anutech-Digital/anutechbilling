@@ -19,7 +19,7 @@ export const runtime = "nodejs";
 export const POST = withRoute({
   route: "api/aa/setu/fetch/[connectionId]",
   roles: MONEY_RECORD_ROLES,
-  roleHint: "Bank fetch sirf owner / manager / accountant / billing kar sakte hain.",
+  roleHint: "Only owner / manager / accountant / billing can fetch bank data.",
 }, async ({ supabase, params, tenantId }) => {
   /* R-879: bank statements need the second sign-in step too (lib/aa/require-mfa.ts). */
   const mfa = await refuseWithoutMfa(supabase);
@@ -36,7 +36,7 @@ export const POST = withRoute({
     .maybeSingle();
   if (connErr || !conn) {
     return NextResponse.json(
-      { ok: false, error: "Ye bank connection is workspace mein nahi mila — Banking page refresh karke dobara 'Fetch' dabaiye." },
+      { ok: false, error: "This bank connection was not found in this workspace — refresh the Banking page and click 'Fetch' again." },
       { status: 404 },
     );
   }

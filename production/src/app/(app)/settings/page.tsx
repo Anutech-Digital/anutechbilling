@@ -53,6 +53,7 @@ import ChangePasswordCard from "@/components/features/settings/change-password-c
 import { TwoFactorCard } from "@/components/features/settings/two-factor-card";
 import GeminiConfigureDialog from "@/components/features/integrations/gemini-configure-dialog";
 import ApiKeysCard from "@/components/features/integrations/api-keys-card";
+import ZohoBooksCard from "@/components/features/integrations/zoho-books-card";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
@@ -1081,6 +1082,8 @@ function IntegrationsTab() {
     <div id="email-sending" className="mb-4 scroll-mt-20">
       <EmailSendingCard />
     </div>
+    {/* R-1749: each company connects its own Zoho Books (read-only). */}
+    <ZohoBooksCard />
     <Card className="p-5">
       <p className="mb-4 text-sm font-semibold text-ink">Connected services</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">

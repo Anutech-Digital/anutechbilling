@@ -37,6 +37,7 @@ import { SAAS_HSN, SAAS_HSN_LABEL } from "@/lib/gst/hsn";
 import type { PayMethods } from "./pay-methods";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { exportEndorsement } from "@/lib/gst/export-lut";
+import { sezEndorsement } from "@/lib/gst/sez-endorsement";
 import { udyamPdfLine } from "@/lib/compliance/udyam";
 import { billOfSupplyDeclarations, billOfSupplyPlace, documentTitle, isBillOfSupply } from "@/lib/invoices/document-kind";
 import { isForeignCurrency, formatForeign } from "@/lib/currency";
@@ -482,7 +483,11 @@ export function InvoicePDF(props: InvoicePDFProps) {
   const isExport = isExportSupply(customerCountry);
   /* R-334: CGST Rule 46 — a zero-rated export (no IGST) carries the LUT endorsement + ARN.
      Words only: the tax figures above are untouched. */
-  const endorsement = exportEndorsement({ isExport, tax, lutNumber });
+  /* R-1742: a supply to an SEZ unit / developer carries the Rule 46 SEZ endorsement instead —
+     from the treatment frozen on the invoice at issue (R-1736). An SEZ customer has an Indian
+     GSTIN and country India, so the two never both apply. */
+  const endorsement = sezEndorsement({ treatment: invoice.gst_treatment, tax, lutNumber })
+    ?? exportEndorsement({ isExport, tax, lutNumber });
   const isForeign = isForeignCurrency(currency);
   const rate = exchangeRate ?? 1;
   // Foreign-currency (export) invoices are shown in the CLIENT's currency (USD…)

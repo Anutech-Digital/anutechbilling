@@ -43,39 +43,39 @@ export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | 
         </DialogHeader>
 
         {isLoading ? (
-          <p className="py-4 text-sm text-ink-3">Dekh rahe hain ye line kis cheez se judi hai…</p>
+          <p className="py-4 text-sm text-ink-3">Checking what this line is linked to…</p>
         ) : impact?.kind === "bank-sale" ? (
           <div className="space-y-3 text-sm text-ink-2">
             <p>
-              Ye line reconcile karte waqt hi {impact.invoiceId ? <>invoice <b className="font-mono">{impact.invoiceId}</b> aur </> : null}
-              ek {rupee(impact.amount)} ki receipt banayi gayi thi.
+              When this line was reconciled, {impact.invoiceId ? <>invoice <b className="font-mono">{impact.invoiceId}</b> and </> : null}
+              a receipt of {rupee(impact.amount)} were created.
             </p>
             <label className="flex items-start gap-2 rounded-md border border-amber/50 bg-amber-soft/25 p-3">
               <input type="checkbox" checked={undoSale} onChange={(e) => setUndoSale(e.target.checked)} className="mt-1" />
               <span className="text-[13px] leading-snug">
-                <b>Wo sale bhi palat do</b> — issued invoice par poora credit note banega (invoice rahegi, kuch due nahi; draft ho to void), aur receipt hat jayegi.
+                <b>Also reverse that sale</b> — an issued invoice gets a full credit note (the invoice stays with nothing due; a draft is voided), and the receipt is removed.
                 <span className="block text-xs text-ink-3 mt-0.5">
-                  Agar ye line ab kisi aur cheez (jaise project payment) mein book karni hai to ise ticked rehne do — warna wahi paisa do baar revenue mein ginega.
+                  If this line is now to be booked as something else (e.g. a project payment), keep this ticked — otherwise the same money is counted twice in revenue.
                 </span>
               </span>
             </label>
           </div>
         ) : impact?.kind === "receipt" ? (
           <p className="text-sm text-ink-2">
-            Ye line {rupee(impact.amount)} ki receipt se judi hai{impact.invoiceId ? <> (invoice <span className="font-mono">{impact.invoiceId}</span>)</> : null}.
-            Receipt alag se record hui thi, isliye wo rahegi — sirf bank line free hogi.
+            This line is linked to a receipt of {rupee(impact.amount)}{impact.invoiceId ? <> (invoice <span className="font-mono">{impact.invoiceId}</span>)</> : null}.
+            The receipt was recorded separately, so it stays — only the bank line is freed.
           </p>
         ) : impact?.kind === "project" ? (
           <p className="text-sm text-ink-2">
-            Ye line <b>{impact.projectTitle}</b> ke &quot;{impact.milestoneLabel}&quot; ke {rupee(impact.amount)} payment se judi hai
+            This line is linked to the {rupee(impact.amount)} payment for &quot;{impact.milestoneLabel}&quot; of <b>{impact.projectTitle}</b>
             {impact.invoiceId ? <> (invoice <span className="font-mono">{impact.invoiceId}</span>)</> : null}.
-            Sirf bank line free hogi — project payment rahega. Agar wo payment galat tha to{" "}
-            <Link href={`/projects/${impact.projectId}`} className="text-amber-ink underline">project page</Link> se hatao.
+            Only the bank line is freed — the project payment stays. If that payment was wrong, remove it from the{" "}
+            <Link href={`/projects/${impact.projectId}`} className="text-amber-ink underline">project page</Link>.
           </p>
         ) : (
           <p className="text-sm text-ink-2">
-            Line wapas &quot;Unmatched&quot; ho jayegi. Capital / loan, tax challan aur prepaid advance jo is line se bane the wo bhi hat jayenge;
-            expense ya salary entry rahegi, bas bank se link hatega.
+            The line goes back to &quot;Unmatched&quot;. Any capital / loan, tax challan or prepaid advance created from this line is removed too;
+            an expense or salary entry stays, only its bank link is removed.
           </p>
         )}
 

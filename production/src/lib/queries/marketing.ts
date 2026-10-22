@@ -211,7 +211,7 @@ export async function fetchMarketingReport(supabase: SupabaseClient<Database>, r
           const booked = spend.filter((x) => x.channel === p).reduce((a, x) => a + x.rupees, 0);
           const label = p === "google-ads" ? "Google Ads" : "Meta Ads";
           if (plat > 0 && (booked === 0 || Math.abs(booked - plat) / plat > 0.25)) {
-            gaps.push(`${label} ne is range mein ₹${Math.round(plat).toLocaleString("en-IN")} kharcha report kiya, books mein ₹${Math.round(booked).toLocaleString("en-IN")} tagged hai — CAC books se hai; farq Ad accounts (live) page par mahine-wise dekho.`);
+            gaps.push(`${label} reported ₹${Math.round(plat).toLocaleString("en-IN")} spend in this range, books have ₹${Math.round(booked).toLocaleString("en-IN")} tagged — CAC uses the books; see the difference month by month on the Ad accounts (live) page.`);
           }
         }
       }

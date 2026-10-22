@@ -143,13 +143,13 @@ describe("payQrNotice (§24)", () => {
   it("UPI ID nahi → 'Settings me UPI ID daalo' + Settings button", () => {
     const n = payQrNotice({ upiVpa: null, currency: "INR" });
     expect(n?.reason).toBe("no-upi");
-    expect(n?.text).toContain("Pay QR ke liye Settings me UPI ID daalo");
+    expect(n?.text).toContain("Add your UPI ID in Settings to show a Pay QR");
     expect(n?.action?.href).toBe(UPI_SETTINGS_HREF);
   });
-  it("non-INR → 'UPI sirf INR quotes par', Settings button nahi", () => {
+  it("non-INR → 'UPI works only for INR quotes', Settings button nahi", () => {
     const n = payQrNotice({ upiVpa: "demo@okhdfcbank", currency: "USD" });
     expect(n?.reason).toBe("non-inr");
-    expect(n?.text).toContain("UPI sirf INR quotes par");
+    expect(n?.text).toContain("UPI works only for INR quotes");
     expect(n?.action).toBeUndefined();
   });
   it("UPI set + INR → koi message nahi", () => {

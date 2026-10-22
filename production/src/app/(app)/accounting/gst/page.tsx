@@ -655,15 +655,15 @@ function GstReportInner() {
         <Card className="p-4 mb-4 border border-indigo/30 bg-indigo/5">
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-ink">GSTR-2B milaan — {range.label}</p>
+              <p className="text-sm font-semibold text-ink">GSTR-2B reconciliation — {range.label}</p>
               <p className="text-xs text-ink-2 mt-0.5 leading-relaxed max-w-2xl">
-                Portal → Returns → GSTR-2B → <b>Download JSON</b>, phir yahan chuno. Jo supplier ne file kiya sirf wahi credit hai; baaki hold.
-                File browser mein hi padhti hai — kahin upload/save nahi hoti.
+                Portal → Returns → GSTR-2B → <b>Download JSON</b>, then choose it here. Only what suppliers have filed is credit; the rest is on hold.
+                The file is read in this browser only — it is not uploaded or saved.
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => onPick2b(e.target.files?.[0] ?? null)} />
-              <Button variant="default" size="sm" onClick={() => fileRef.current?.click()}><Icon name="file" size={14} className="mr-1.5" />2B JSON chuno</Button>
+              <Button variant="default" size="sm" onClick={() => fileRef.current?.click()}><Icon name="file" size={14} className="mr-1.5" />Choose 2B JSON</Button>
               {twoB && <Button variant="ghost" size="sm" icon="download" onClick={export2b}>CSV</Button>}
             </div>
           </div>
@@ -673,30 +673,30 @@ function GstReportInner() {
             return (
               <div className="mt-3 space-y-3">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
-                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Claim karo (2B ✓)</div><div className="font-mono text-emerald font-semibold">{rupee(r.claimable.total)}</div><div className="text-xs text-ink-3">{r.matched.length} matched · {r.amountDiffers.length} farq</div></div>
-                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Hold (2B mein nahi)</div><div className="font-mono text-amber-ink font-semibold">{rupee(r.held)}</div><div className="text-xs text-ink-3">{r.onlyInBooks.length} books row</div></div>
-                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Bill chhoota (sirf 2B mein)</div><div className="font-mono text-rose font-semibold">{rupee(r.unbooked)}</div><div className="text-xs text-ink-3">{r.onlyIn2b.length} invoice</div></div>
+                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Claimable (2B ✓)</div><div className="font-mono text-emerald font-semibold">{rupee(r.claimable.total)}</div><div className="text-xs text-ink-3">{r.matched.length} matched · {r.amountDiffers.length} differ</div></div>
+                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">On hold (not in 2B)</div><div className="font-mono text-amber-ink font-semibold">{rupee(r.held)}</div><div className="text-xs text-ink-3">{r.onlyInBooks.length} books row</div></div>
+                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Bill missing (only in 2B)</div><div className="font-mono text-rose font-semibold">{rupee(r.unbooked)}</div><div className="text-xs text-ink-3">{r.onlyIn2b.length} invoice</div></div>
                   <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">2B file</div><div className="font-mono text-ink">{twoB.count} inv · {twoB.period ?? "?"}</div><div className="text-xs text-ink-3">books ITC {rupee(data.inputGST)}</div></div>
                 </div>
                 {r.onlyInBooks.length > 0 && (
                   <div>
-                    <p className="text-xs font-semibold text-amber-ink mb-1">Books mein hai, 2B mein nahi — is mahine claim mat karo, agle 2B mein dekho (ya supplier se filing poochho)</p>
-                    <ul className="text-xs text-ink-2 space-y-0.5">{r.onlyInBooks.slice(0, 20).map((b) => <li key={b.id} className="flex justify-between gap-3"><span className="truncate">{b.vendor} · {b.billNo ?? "bill no. nahi"} · {formatDate(b.date)}{!b.vendorGstin ? " · GSTIN nahi" : ""}</span><span className="font-mono">{rupee(t(b))}</span></li>)}</ul>
+                    <p className="text-xs font-semibold text-amber-ink mb-1">In books, not in 2B — do not claim this month; check the next 2B (or ask the supplier to file)</p>
+                    <ul className="text-xs text-ink-2 space-y-0.5">{r.onlyInBooks.slice(0, 20).map((b) => <li key={b.id} className="flex justify-between gap-3"><span className="truncate">{b.vendor} · {b.billNo ?? "no bill no."} · {formatDate(b.date)}{!b.vendorGstin ? " · no GSTIN" : ""}</span><span className="font-mono">{rupee(t(b))}</span></li>)}</ul>
                   </div>
                 )}
                 {r.onlyIn2b.length > 0 && (
                   <div>
-                    <p className="text-xs font-semibold text-rose mb-1">2B mein hai, books mein nahi — bill dhoondh kar Expenses / Bills mein daalo, credit tabhi milega</p>
+                    <p className="text-xs font-semibold text-rose mb-1">In 2B, not in books — find the bill and add it under Expenses / Bills to get the credit</p>
                     <ul className="text-xs text-ink-2 space-y-0.5">{r.onlyIn2b.slice(0, 20).map((x, i) => <li key={x.gstin + x.invoiceNo + i} className="flex justify-between gap-3"><span className="truncate">{x.supplierName ?? x.gstin} · {x.invoiceNo} · {x.date ? formatDate(x.date) : "—"}</span><span className="font-mono">{rupee(t(x))}</span></li>)}</ul>
                   </div>
                 )}
                 {r.amountDiffers.length > 0 && (
                   <div>
-                    <p className="text-xs font-semibold text-ink mb-1">Tax alag hai — 2B ka figure claim karo, books theek karo</p>
+                    <p className="text-xs font-semibold text-ink mb-1">Tax differs — claim the 2B figure and correct the books</p>
                     <ul className="text-xs text-ink-2 space-y-0.5">{r.amountDiffers.slice(0, 20).map((m) => <li key={m.book.id} className="flex justify-between gap-3"><span className="truncate">{m.book.vendor} · {m.b2b.invoiceNo}</span><span className="font-mono">books {rupee(t(m.book))} → 2B {rupee(t(m.b2b))}</span></li>)}</ul>
                   </div>
                 )}
-                {r.onlyInBooks.length === 0 && r.onlyIn2b.length === 0 && r.amountDiffers.length === 0 && <p className="text-xs text-emerald">Sab match — poora {rupee(r.claimable.total)} claim karo.</p>}
+                {r.onlyInBooks.length === 0 && r.onlyIn2b.length === 0 && r.amountDiffers.length === 0 && <p className="text-xs text-emerald">All matched — claim the full {rupee(r.claimable.total)}.</p>}
               </div>
             );
           })()}
@@ -705,8 +705,8 @@ function GstReportInner() {
 
       {data && data.blockedItc.blocked > 0 && (
         <Card className="p-4 mb-4 border-amber/40 bg-amber-soft/20">
-          <p className="text-sm font-semibold text-ink">GST jo credit nahi bana — {rupee(data.blockedItc.blocked)}</p>
-          <p className="text-xs text-ink-2 mt-0.5 mb-2">Ye kharche / bill ki cost mein hi gina hai, ITC mein nahi (kharche aur vendor bills dono). Wajah theek ho (vendor se tax invoice lo, vendor ka GSTIN bharo) to agli baar credit milega.</p>
+          <p className="text-sm font-semibold text-ink">GST not available as credit — {rupee(data.blockedItc.blocked)}</p>
+          <p className="text-xs text-ink-2 mt-0.5 mb-2">This is counted in the cost of the expense / bill, not in ITC (both expenses and vendor bills). Fix the reason (get a tax invoice from the vendor, add the vendor's GSTIN) to get the credit next time.</p>
           <ul className="text-xs text-ink-2 space-y-0.5">
             {data.blockedItc.blockedByReason.map((r) => (
               <li key={r.reason} className="flex justify-between gap-3"><span>{r.reason} · {r.count}</span><span className="font-mono tabular-nums">{rupee(r.amount)}</span></li>
@@ -745,14 +745,14 @@ function GstReportInner() {
               <Icon name="alert" size={15} className="text-amber-ink shrink-0 mt-0.5" />
               <div className="min-w-0 space-y-1">
                 <p className="text-xs font-semibold text-ink">
-                  {rows.length} {rows.length === 1 ? "row ka" : "rows ka"} GST batwara MAANA hua hai — {rupee(amount)}
+                  {rows.length} {rows.length === 1 ? "row has" : "rows have"} an ASSUMED GST split — {rupee(amount)}
                 </p>
                 <p className="text-xs text-ink-2">
-                  In par bill ka IGST/CGST batwara nahi mila, isliye intra-state maan kar aadha-aadha
-                  baanta gaya hai (vendor ka GSTIN doosre rajya ka ho to poora IGST maana gaya). <strong>GSTR-3B me IGST aur CGST/SGST alag column hain</strong> —
-                  agar inme koi doosre rajya ka bill hai (jaise Amazon), to uska credit galat khaane
-                  me chala jayega aur GSTR-2B se mel nahi khayega. Neeche table me aisi row par{" "}
-                  <span className="font-semibold">maana hua</span> likha hai.
+                  The bill had no IGST / CGST split, so it was treated as intra-state and split half-and-half
+                  (or as full IGST when the vendor's GSTIN is from another state). <strong>GSTR-3B has separate IGST and CGST / SGST columns</strong> —
+                  if any of these is an out-of-state bill (e.g. Amazon), its credit goes to the wrong column
+                  and will not match GSTR-2B. Such rows are marked{" "}
+                  <span className="font-semibold">assumed</span> in the table below.
                 </p>
               </div>
             </div>
@@ -801,7 +801,7 @@ function GstReportInner() {
                           title={r.assumption ?? undefined}
                           className="ml-1.5 inline-block cursor-help rounded-full border border-amber/30 bg-amber-soft/70 px-1.5 py-0.5 text-3xs font-semibold text-amber-ink"
                         >
-                          maana hua
+                          assumed
                         </span>
                       ) : null}
                     </td>

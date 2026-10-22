@@ -164,8 +164,8 @@ export function parse26asText(text: string): ParsedCredits {
 
   if (entries.length === 0) {
     throw new Error(
-      "Is file me Form 26AS PART-I ki koi TDS entry nahi mili. TRACES se 26AS 'Text' format me " +
-      "download karke (zip khol kar .txt) dobara daalein — PDF ya HTML yahan nahi chalta.",
+      "No Form 26AS PART-I TDS entry was found in this file. Download 26AS from TRACES in 'Text' format " +
+      "(unzip it to get the .txt) and upload it again — PDF or HTML does not work here.",
     );
   }
   return { source: "26as", pan, financialYear, asOn, entries };
@@ -187,7 +187,7 @@ export function parseAisJson(input: string | unknown): ParsedCredits {
     try {
       root = JSON.parse(input.replace(/^\uFEFF/, ""));
     } catch {
-      throw new Error("Ye AIS JSON file nahi lagti — JSON padh nahi paaye. Compliance portal se AIS 'JSON' download karke dobara daalein.");
+      throw new Error("This does not look like an AIS JSON file — the JSON could not be read. Download the AIS 'JSON' from the Compliance portal and upload it again.");
     }
   } else {
     root = input;
@@ -238,8 +238,8 @@ export function parseAisJson(input: string | unknown): ParsedCredits {
 
   if (entries.length === 0) {
     throw new Error(
-      "Is AIS JSON me koi TDS entry nahi mili (TAN + tax deducted + date wali). Ho sakta hai file encrypted ho " +
-      "ya TIS ho — AIS utility se decrypt ki hui JSON, ya TRACES se 26AS text file daalein.",
+      "No TDS entry (with TAN + tax deducted + date) was found in this AIS JSON. The file may be encrypted " +
+      "or a TIS — upload the JSON decrypted with the AIS utility, or the 26AS text file from TRACES.",
     );
   }
   return { source: "ais", pan, financialYear, asOn: null, entries };

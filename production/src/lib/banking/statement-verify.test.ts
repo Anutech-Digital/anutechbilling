@@ -149,7 +149,7 @@ describe("rereadBrokenPages — broken pages are read again one page at a time",
     expect(out.check.blocking).toBe(true);
     expect(out.check.gaps).toHaveLength(1);
     expect(out.check.gaps[0].pages).toEqual(range(3, 4));
-    expect(out.note).toMatch(/phir bhi/);
+    expect(out.note).toMatch(/still missing/);
   });
 
   it("a border break is repaired by re-reading both chunks' pages", async () => {
@@ -200,7 +200,7 @@ describe("rereadBrokenPages — broken pages are read again one page at a time",
     expect(out.retried).toEqual([1, 2, 3, 4]);
     expect(out.notRetried).toEqual([5, 6, 7, 8, 9, 10, 11, 12]);
     expect(out.check.blocking).toBe(true);
-    expect(out.note).toMatch(/dobara nahi padhe/);
+    expect(out.note).toMatch(/not re-read/);
   });
 
   it("Gemini paused (breaker open) → stops asking at once", async () => {
@@ -212,7 +212,7 @@ describe("rereadBrokenPages — broken pages are read again one page at a time",
       readPage: async () => { calls++; return { ok: false, error: "AI ke kai call abhi lagatar fail hue", kind: "paused" }; },
     });
     expect(calls).toBe(1);
-    expect(out.stopped).toMatch(/ruk/);
+    expect(out.stopped).toMatch(/paused/);
     expect(out.check.blocking).toBe(true);
   });
 
@@ -226,6 +226,6 @@ describe("rereadBrokenPages — broken pages are read again one page at a time",
       readPage: async (p) => { calls++; t += 60; return ok(pages[p - 1]); },
     });
     expect(calls).toBe(2);   // started at 0 and 60; at 120 the budget is spent
-    expect(out.stopped).toMatch(/samay/);
+    expect(out.stopped).toMatch(/time limit/);
   });
 });

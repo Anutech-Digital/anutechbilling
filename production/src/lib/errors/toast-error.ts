@@ -74,7 +74,7 @@ const PLUMBING: ReadonlyArray<{
     // Checked first — it is a 42501 too, but "another workspace" would be the wrong fix.
     test: new RegExp(MFA_PENDING_MARKER, "i"),
     message: `${MFA_PENDING_MARKER}.`,
-    description: "Sign out karke dobara login karo aur authenticator app ka 6-digit code daalo — phir dobara save karo. Abhi kuch save nahi hua.",
+    description: "Sign out, sign in again and enter the 6-digit code from your authenticator app — then save again. Nothing was saved yet.",
   },
   {
     test: /duplicate key value|already exists.*constraint|violates unique constraint/i,

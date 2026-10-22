@@ -112,7 +112,7 @@ export function useSetPrepaidAdvanceChannel() {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["marketing-report"] });
-      toast.success("Channel updated — is advance ke invoices bhi.");
+      toast.success("Channel updated — for this advance's invoices too.");
     },
     onError: (err) => toastError(err),
   });
@@ -229,7 +229,7 @@ export function useConsumePrepaidFifo() {
       qc.invalidateQueries({ queryKey: ["advance_expenses"] });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
-      toast.success(`Invoice booked to P&L. ${input.vendorName.trim()} advance left: ₹${left}.${input.tdsAmount ? ` TDS ₹${input.tdsAmount} recorded — challan mein jodo; vendor ko TDS certificate se credit milega.` : ""}`);
+      toast.success(`Invoice booked to P&L. ${input.vendorName.trim()} advance left: ₹${left}.${input.tdsAmount ? ` TDS ₹${input.tdsAmount} recorded — add it to the challan; the vendor gets credit through the TDS certificate.` : ""}`);
     },
     onError: (err) => toastError(err),
   });

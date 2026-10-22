@@ -63,16 +63,16 @@ export default function BalanceSheetPage() {
     if (unexplained === null || unexplained === 0) return;
     const capital = unexplained > 0;
     const ok = await confirm({
-      title: capital ? `Owner's capital ${rupee(unexplained)} jodein?` : `Drawings ${rupee(-unexplained)} jodein?`,
+      title: capital ? `Add Owner's capital of ${rupee(unexplained)}?` : `Add Drawings of ${rupee(-unexplained)}?`,
       body: capital
-        ? "Assets books se zyada hain — matlab itna paisa business mein daala gaya jiski entry nahi thi (opening bank balance, khud ka paisa). Equity mein Owner's capital line banegi."
-        : "Liabilities books se zyada hain — matlab itna paisa business se nikala gaya jiski entry nahi thi. Equity mein Drawings (negative) line banegi. Agar ye koi kharcha ya loss hai jo books mein nahi, to pehle wo entry karo.",
-      confirmLabel: "Haan, line banao", cancelLabel: "Nahi",
+        ? "Assets are more than the books explain — this much money was put into the business without an entry (opening bank balance, your own money). An Owner's capital line is added under Equity."
+        : "Liabilities are more than the books explain — this much money was taken out of the business without an entry. A Drawings (negative) line is added under Equity. If it is an expense or loss missing from the books, record that entry first.",
+      confirmLabel: "Add line", cancelLabel: "Cancel",
     });
     if (!ok) return;
     await createItem.mutateAsync({
       section: "equity", label: capital ? "Owner's capital" : "Drawings", amount: unexplained,
-      notes: `Balance Sheet ke unexplained difference se ${today} ko banaya — cumulative P&L se bacha hua farq.`,
+      notes: `Created on ${today} from the Balance Sheet's unexplained difference — the gap left after cumulative P&L.`,
     });
   }
   const [addOpen, setAddOpen] = React.useState(false);
@@ -336,7 +336,7 @@ export default function BalanceSheetPage() {
                   <BSLine label="Commission payable (partners)" hint="partner commission earned, not yet paid (after TDS)" amount={auto?.commissionsPayable ?? 0} kind="auto" source="Referrals" />
                 )}
                 {(auto?.creditCardPayable ?? 0) > 0 && (
-                  <BSLine label="Credit card payable" hint="company credit cards ka owe / udhari" amount={auto?.creditCardPayable ?? 0} kind="auto" source="Banking" href="/accounting/banking" />
+                  <BSLine label="Credit card payable" hint="amount owed on company credit cards" amount={auto?.creditCardPayable ?? 0} kind="auto" source="Banking" href="/accounting/banking" />
                 )}
                 {(auto?.emiLoansPayable ?? 0) > 0 && (
                   <BSLine label="EMI / asset loans" hint="outstanding financing on purchases" amount={auto?.emiLoansPayable ?? 0} kind="auto" source="Assets & EMIs" href="/accounting/assets" />
@@ -420,9 +420,9 @@ export default function BalanceSheetPage() {
                       {unexplained !== null && unexplained !== 0 && (
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           <Button size="sm" variant="primary" loading={createItem.isPending} onClick={bookUnexplained}>
-                            {unexplained > 0 ? `Owner's capital ${rupee(unexplained)} jodo` : `Drawings ${rupee(-unexplained)} jodo`}
+                            {unexplained > 0 ? `Add Owner's capital ${rupee(unexplained)}` : `Add Drawings ${rupee(-unexplained)}`}
                           </Button>
-                          <span className="text-xs text-ink-3">Ek click — equity line ban jaayegi, farq zero. Baad mein Edit/Delete kar sakte ho.</span>
+                          <span className="text-xs text-ink-3">One click adds the equity line and the difference becomes zero. You can edit or delete it later.</span>
                         </div>
                       )}
                     </div>

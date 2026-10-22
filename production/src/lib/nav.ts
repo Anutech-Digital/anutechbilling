@@ -502,9 +502,9 @@ export const APP_NAV: NavSection[] = [
           { id: "marketing-roas",  href: "/marketing/reports", label: "ROAS & CAC",     icon: "chart",  roles: OM, group: "Plan & spend" },
           { id: "campaigns",       href: "/campaigns",         label: "Email campaigns", icon: "mail",    roles: OM, group: "Campaigns" },
           { id: "email-templates", href: "/marketing/templates", label: "Email templates", icon: "file", roles: OM, group: "Campaigns" },
-          { id: "wa-broadcast",    href: "/marketing/whatsapp",  label: "WhatsApp broadcast", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Approved template se leads ko ek saath message" },
+          { id: "wa-broadcast",    href: "/marketing/whatsapp",  label: "WhatsApp broadcast", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Message many leads at once with an approved template" },
           /* S28: renewal / invoice reminders on WhatsApp — switch, template per kind, send log. */
-          { id: "wa-reminders",    href: "/marketing/whatsapp/reminders", label: "WhatsApp reminders", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Renewal aur invoice reminder WhatsApp par — ON/OFF, template, log" },
+          { id: "wa-reminders",    href: "/marketing/whatsapp/reminders", label: "WhatsApp reminders", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Renewal and invoice reminders on WhatsApp — ON/OFF, template, log" },
           { id: "ad-platforms",    href: "/marketing/ads",      label: "Ad accounts (live)", icon: "trending_up", roles: OM, group: "Ads & tracking", hint: "Google Ads + Facebook spend by campaign, daily from Google/Meta" },
           { id: "ad-landing-pages", href: "/marketing/landing-pages", label: "Ads landing pages", icon: "layout", roles: OM, group: "Ads & tracking", hint: "Ad final URL, phone preview, leads received" },
           { id: "marketing-links", href: "/marketing/links",   label: "Tracking links", icon: "globe",  roles: OM, group: "Ads & tracking", hint: "A link per ad or post — the lead source is set automatically" },
@@ -695,7 +695,7 @@ export const APP_NAV: NavSection[] = [
           { id: "assessments",     href: "/assessments",                label: "Assessments",            icon: "check", roles: OM },
           /* Apprentice Academy (R-149). Owner / manager in phase 1 (they are the mentors); the
              sidebar is at its row cap, so it sits here rather than as a new top-level row. */
-          { id: "academy",         href: "/academy",                    label: "Apprentice Academy",     icon: "award", roles: OM, hint: "Apprentices, training, tasks aur review" },
+          { id: "academy",         href: "/academy",                    label: "Apprentice Academy",     icon: "award", roles: OM, hint: "Apprentices, training, tasks and review" },
         ],
       },
       {
@@ -743,7 +743,7 @@ export const APP_NAV: NavSection[] = [
              UX / UI Insights since 5 Oct 2026 (R-158): it sat under "Help & Tutorial" at the
              bottom of the menu and Pardeep could not find it; the sidebar is at its row cap.
              Owner/manager: reports quote whatever the reporter typed, often a customer's name. */
-          { id: "feedback",  href: "/admin/feedback",   label: "Bug Reports & AI Fixes", icon: "bug", roles: OM, hint: "Har report — Report Bug aur AI Help se; sab tenants ek saath" },
+          { id: "feedback",  href: "/admin/feedback",   label: "Bug Reports & AI Fixes", icon: "bug", roles: OM, hint: "Every report — from Report Bug and AI Help; all tenants together" },
           /* R-263: the real numbers against the targets (first invoice, bug fix time, open bugs,
              money bugs). Next to Bug Reports — the reports are where its numbers come from. */
           { id: "quality",   href: "/quality",          label: "Quality Score",    icon: "target", roles: OM, hint: "Real numbers against our targets — first invoice, bug fixes, open bugs" },

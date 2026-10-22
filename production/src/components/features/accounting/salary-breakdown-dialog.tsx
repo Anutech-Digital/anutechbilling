@@ -40,7 +40,7 @@ export function SalaryBreakdownDialog({ name, record, onClose }: {
       <DialogContent className="md:!max-w-md">
         <DialogHeader>
           <DialogTitle>{name} · {monthLabel(record.period)}</DialogTitle>
-          <DialogDescription>Net {rupee(record.net)} kaise bana</DialogDescription>
+          <DialogDescription>How the net {rupee(record.net)} is worked out</DialogDescription>
         </DialogHeader>
 
         <table className="w-full text-sm tabular-nums">
@@ -59,19 +59,19 @@ export function SalaryBreakdownDialog({ name, record, onClose }: {
 
         {!b.addsUp && (
           <p className="text-xs text-rose">
-            In lines ka jod net se nahi milta — record haath se badla gaya ho sakta hai. Payroll mein ⋯ → Edit salary se dekh lo.
+            These lines do not add up to the net — the record may have been edited by hand. Check it in Payroll → ⋯ → Edit salary.
           </p>
         )}
         {b.employerCost > 0 && (
-          <p className="text-xs text-ink-3">+ Employer PF / ESI {rupee(b.employerCost)} — company ka kharcha, salary se nahi kata.</p>
+          <p className="text-xs text-ink-3">+ Employer PF / ESI {rupee(b.employerCost)} — the company's cost, not deducted from salary.</p>
         )}
 
         <div className="rounded-md border border-hairline bg-paper-2/40 px-3 py-2 text-xs text-ink-2 space-y-0.5">
-          <div className="flex justify-between"><span>Diya ja chuka</span><span className="tabular-nums">{rupee(paid)}</span></div>
-          <div className="flex justify-between"><span>Baaki</span><span className={`tabular-nums ${due > 0 ? "text-rose" : ""}`}>{rupee(due)}</span></div>
+          <div className="flex justify-between"><span>Paid</span><span className="tabular-nums">{rupee(paid)}</span></div>
+          <div className="flex justify-between"><span>Balance due</span><span className={`tabular-nums ${due > 0 ? "text-rose" : ""}`}>{rupee(due)}</span></div>
           <div className="text-ink-3">
-            {record.paid_status === "paid" ? "Poora diya gaya" : record.paid_status === "partial" ? "Aadha diya gaya" : "Abhi diya nahi — bank se jaane par reconcile hoga"}
-            {record.reconciled_txn_id ? " · bank line se reconciled" : ""}
+            {record.paid_status === "paid" ? "Fully paid" : record.paid_status === "partial" ? "Partly paid" : "Not paid yet — reconciled when it leaves the bank"}
+            {record.reconciled_txn_id ? " · reconciled to a bank line" : ""}
             {record.pay_date ? ` · ${formatDate(record.pay_date)}` : ""}
           </div>
         </div>

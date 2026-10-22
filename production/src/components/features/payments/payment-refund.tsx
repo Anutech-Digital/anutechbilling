@@ -11,6 +11,12 @@
  * credit-note credit is less than the payment, the flow offers to refund that credit (all or
  * part, never more): refund_credit_note_credit splits the payment and books an RFV for the
  * refunded part (migration 20261019132853).
+ *
+ * R-1747: a payment on an invoice imported from Zoho Books (payments.quote_id NULL, invoice_id
+ * set — R-1739) cannot go through the credit-note route: such an invoice takes no credit note
+ * here (its GST was filed in Zoho Books). Its refund is a plain one — refund_payment books the
+ * RFV and the invoice's balance opens again by the payment (server rule, fail-closed). The
+ * screen says that before booking, and never sends the owner to issue a credit note.
  */
 import * as React from "react";
 import { useRouter } from "next/navigation";
@@ -75,6 +81,26 @@ export function useRefundCreditNoteCredit() {
     },
     onError: (err) => toastError(err, { fallback: "Refund not booked — nothing was changed. Try again." }),
   });
+}
+
+/**
+ * R-1747: the refund of a payment on an imported Zoho invoice — null for every other payment.
+ * The payment's own invoice_id decides (not the caller), so the credit-note route is never
+ * offered for it.
+ */
+export function openingInvoiceRefund(
+  p: Pick<Payment, "amount" | "quote_id"> & { invoice_id?: string | null },
+  invoiceNumber?: string | null,
+): { number: string; body: string } | null {
+  if (p.quote_id || !p.invoice_id) return null;
+  const number = invoiceNumber?.trim() || p.invoice_id;
+  return {
+    number,
+    body:
+      `${number} is an opening-balance invoice imported from Zoho Books. No credit note is made here — its GST was filed in Zoho Books.\n\n` +
+      `In the books: the payment is marked refunded, an RFV voucher is created, and ${rupee(p.amount)} becomes due again on ${number}. ` +
+      "If the customer should no longer owe it, issue the credit note in Zoho Books and ask your accountant to adjust the opening balance.",
+  };
 }
 
 /** What the screen offers for a refund on an invoiced quote. */
@@ -168,9 +194,12 @@ export function PartialRefundDialog({ open, onOpenChange, payment, invoiceId, ma
  * refunds in full, offers the partial credit refund, or says which credit note is missing.
  * Returns the click handler and the dialogs to render next to the button.
  */
-export function usePaymentRefundFlow({ payment: p, invoiceId, onBlocked }: {
+export function usePaymentRefundFlow({ payment: p, invoiceId, invoiceNumber, onBlocked }: {
   payment: Payment;
+  /** The payment's invoice — lib/payments/payment-customer.ts paymentInvoiceLookup. */
   invoiceId: string | null;
+  /** That invoice's number as printed (an imported Zoho invoice's own number). */
+  invoiceNumber?: string | null;
   onBlocked?: (message: string) => void;
 }): { start: () => Promise<void>; element: React.ReactNode; label: string } {
   const router = useRouter();
@@ -202,9 +231,13 @@ export function usePaymentRefundFlow({ payment: p, invoiceId, onBlocked }: {
     })) setCancelAfterRefund({ sub, reason });
   };
 
+  /* R-1747: no quote + an invoice = an imported Zoho invoice (the database allows nothing else). */
+  const opening = openingInvoiceRefund(p, invoiceNumber);
+  const title = `Refund ${rupee(p.amount)} on ${opening ? `invoice ${opening.number}` : p.quote_id}?`;
+
   const start = async () => {
     let creditNoteCover: number | null = null;
-    if (invoiceId) {
+    if (invoiceId && !opening) {
       let have: Awaited<ReturnType<typeof fetchRefundCredit>>;
       try {
         have = await fetchRefundCredit(p.id, invoiceId);
@@ -232,7 +265,7 @@ export function usePaymentRefundFlow({ payment: p, invoiceId, onBlocked }: {
     }
     /* In-app box, not window.prompt — that returned null in the desktop app (R-052). */
     const reason = await askText({
-      title: `Refund ${rupee(p.amount)} on ${p.quote_id}?`,
+      title,
       body: "The reason is printed on the RFV voucher.",
       label: "Reason (at least 5 characters)",
       confirmLabel: "Next",
@@ -243,9 +276,11 @@ export function usePaymentRefundFlow({ payment: p, invoiceId, onBlocked }: {
       return;
     }
     if (await confirm({
-      title: `Refund ${rupee(p.amount)} on ${p.quote_id}?`,
+      title,
       body:
-        (creditNoteCover !== null
+        (opening
+          ? opening.body
+          : creditNoteCover !== null
           ? `In the books: the payment is marked refunded, an RFV voucher is created, and ${rupee(creditNoteCover)} of the ` +
             `credit made by the credit note on ${invoiceId} is paid out (it can no longer be used on another quote). The invoice stays settled.`
           : "In the books: the payment is marked refunded, an RFV voucher is created, the quote/subscription balance reopens " +
@@ -281,16 +316,17 @@ export function usePaymentRefundFlow({ payment: p, invoiceId, onBlocked }: {
     </>
   );
 
-  return { start, element, label: invoiceId ? "Refund (credit note)" : "Refund payment" };
+  return { start, element, label: invoiceId && !opening ? "Refund (credit note)" : "Refund payment" };
 }
 
 /** The card list's Refund button (below the table breakpoint) — same flow as the table menu. */
-export function PaymentRefundButton({ payment, invoiceId, className }: {
+export function PaymentRefundButton({ payment, invoiceId, invoiceNumber, className }: {
   payment: Payment;
   invoiceId: string | null;
+  invoiceNumber?: string | null;
   className?: string;
 }) {
-  const flow = usePaymentRefundFlow({ payment, invoiceId });
+  const flow = usePaymentRefundFlow({ payment, invoiceId, invoiceNumber });
   return (
     <>
       <button type="button" onClick={() => { void flow.start(); }} className={className}>

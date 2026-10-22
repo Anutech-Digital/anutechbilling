@@ -131,7 +131,7 @@ describe("duplicate and failures", () => {
   it("'already exists' on Meta is ok — pehle se submit hai, nothing written", async () => {
     fetchMock.mockImplementation(async () => reply(400, { error: { message: "Message template already exists", code: 100, error_subcode: 2388024 } }));
     const j = await (await POST(req({ kinds: ["invoice_due"] }))).json();
-    expect(j.results).toEqual([{ kind: "invoice_due", name: "invoice_due_v1", ok: true, status: null, error: expect.stringMatching(/pehle se submit hai/i) }]);
+    expect(j.results).toEqual([{ kind: "invoice_due", name: "invoice_due_v1", ok: true, status: null, error: expect.stringMatching(/already submitted/i) }]);
     expect(ops("whatsapp_templates", "insert")).toHaveLength(0);
   });
 
@@ -161,7 +161,7 @@ describe("not connected", () => {
     const res = await POST(req());
     const text = await res.text();
     expect(res.status).toBe(409);
-    expect(JSON.parse(text).error).toMatch(/Pehle Settings → Integrations mein WhatsApp Business connect karo/);
+    expect(JSON.parse(text).error).toMatch(/First connect WhatsApp Business in Settings → Integrations/);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(state.calls).toEqual([]);
     tokenNowhere(text);
@@ -173,7 +173,7 @@ describe("roles and tenant isolation", () => {
     state.role = role;
     const res = await POST(req());
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toMatch(/owner \/ manager/);
+    expect((await res.json()).error).toMatch(/owner or a manager/);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(state.calls).toEqual([]);
   });

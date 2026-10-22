@@ -42,7 +42,8 @@ export const BILL_PROMPT =
   '  "igst": number|null,               // IGST or a single GST/tax amount (0 if not shown)\n' +
   '  "total": number|null,              // grand total INCLUDING tax, in the bill\'s currency\n' +
   '  "line_items": [                    // every product/service row on the bill (empty array if none)\n' +
-  '    { "description": string, "qty": number|null, "unit_price": number|null, "amount": number }\n' +
+  '    { "description": string, "qty": number|null, "unit_price": number|null, "amount": number, "category": string|null }\n' +
+  "      // category: this row's expense category, from the same list as expense_category below (null when unsure)\n" +
   "  ],\n" +
   '  "category_guess": string|null      // "COGS-Workspace" Google, "COGS-M365" Microsoft, "COGS-Zoho" Zoho, else "COGS-Other" or null\n' +
   /* ── Expense ki category BHI yahin se (30 Aug 2026) ─────────────────────────
@@ -68,6 +69,11 @@ export const BILL_PROMPT =
   '     Judge by WHAT THE THING IS, not by words in its marketing name: a "Travel Backpack" bought\n' +
   '     for the office is Office Supplies, not Travel. Travel means a journey actually taken.\n' +
   '     Use null when unsure. NEVER "Salaries".\n' +
+  /* R-1744 (22 Oct 2026, Pardeep: "GST bill do to AI sab bhare") — the short note, and
+     "Paid already" only when the bill itself says so. */
+  '  "item_short": string|null,         // 1-3 word name of the main thing bought, e.g. "Workspace", "EC2", "Office chair"\n' +
+  '  "paid_status": string|null,        // "paid" ONLY if the bill clearly says it is paid (PAID stamp, "Amount paid", receipt, balance 0); "unpaid" if it shows an amount due; else null\n' +
+  '  "payment_mode": string|null        // how it was paid as printed ("UPI", "Credit card", "Net banking", "Cash") — only when paid, else null\n' +
   "}\n" +
   "RULES: Keep amounts in the bill's OWN currency (do NOT convert). Keep decimals (e.g. 265.50). " +
   "Never invent a value — use null (or [] for line_items) if the bill does not clearly show it. " +

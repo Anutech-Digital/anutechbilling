@@ -28,7 +28,7 @@ describe("itrCsvRows", () => {
 
   it("dono regime, TDS (minus me), net payable aur advance-tax schedule maujood hain", () => {
     expect(flat).toContain("115BAA");
-    expect(flat).toContain("Saadha raasta");
+    expect(flat).toContain("Normal regime");
     expect(flat).toContain("-50000"); // TDS credit ghatane wali cheez hai
     expect(flat).toContain("Net payable");
     expect(flat).toContain("15 September");
@@ -50,7 +50,7 @@ describe("itrCsvRows", () => {
       ...SOURCES, revenueExGst: 100_000, tdsCredit: 0, tdsCount: 0,
     });
     const lossFlat = itrCsvRows(lossPack).map((r) => r.join("|")).join("\n");
-    expect(lossFlat).toContain("GHATA");
+    expect(lossFlat).toContain("LOSS");
     expect(lossFlat).toContain("Section 208");
   });
 });

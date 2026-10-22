@@ -266,12 +266,12 @@ export function useSendReviewEmail() {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(v),
       });
       const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw Object.assign(new Error(j.error ?? "Mail nahi gaya"), { code: j.code });
+      if (!res.ok) throw Object.assign(new Error(j.error ?? "Email was not sent"), { code: j.code });
       return j as { status: string; to: string };
     },
     onSuccess: (j) => {
       qc.invalidateQueries({ queryKey: REVIEW_KEY });
-      toast.success(j.status === "stubbed" ? `Test mode — mail ${j.to} ko log hua, bheja nahi` : `Review request ${j.to} ko bheja`);
+      toast.success(j.status === "stubbed" ? `Test mode — email to ${j.to} was logged, not sent` : `Review request sent to ${j.to}`);
     },
   });
 }

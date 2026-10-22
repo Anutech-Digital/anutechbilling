@@ -91,11 +91,11 @@ export function BooksLockCard() {
 
   async function save(next: string | null) {
     const ok = await confirm({
-      title: next ? `Books ${formatDate(next)} tak lock karein?` : "Lock hatayein?",
+      title: next ? `Lock books up to ${formatDate(next)}?` : "Remove the lock?",
       body: next
-        ? "Us tareekh tak ki koi bhi entry (kharcha, bank line, salary, tax, invoice, payment) app se badal ya mit nahi sakegi. Return file karne ke baad yahi karna chahiye."
-        : "Purani entries phir se badali ja sakengi. File ho chuke mahine ki entry badli to return aur books alag ho jaayenge.",
-      confirmLabel: next ? "Haan, lock karo" : "Haan, kholo", cancelLabel: "Nahi",
+        ? "No entry up to that date (expense, bank line, salary, tax, invoice, payment) can be changed or deleted in the app. Do this after your returns are filed."
+        : "Older entries can be changed again. If an entry in an already-filed month changes, the return and the books will no longer match.",
+      confirmLabel: next ? "Lock books" : "Remove lock", cancelLabel: "Cancel",
     });
     if (!ok) return;
     update.mutate(next);
@@ -111,19 +111,19 @@ export function BooksLockCard() {
           </p>
           <p className="text-xs text-ink-2 mt-0.5">
             {lock.isLoading ? "…" : current
-              ? <>Books <b>{formatDate(current)}</b> tak lock hain — us tareekh tak ki entry app se nahi badal sakti.</>
-              : <>Abhi koi lock nahi. GSTR-3B / TDS return file karne ke baad us mahine ki aakhri tareekh tak lock karo, taaki books aur return ek jaise rahein.</>}
+              ? <>Books are locked up to <b>{formatDate(current)}</b> — entries up to that date cannot be changed in the app.</>
+              : <>No lock yet. After filing GSTR-3B / TDS returns, lock up to the last day of that month so the books and the return stay the same.</>}
           </p>
         </div>
         {rights.canLock ? (
           <div className="flex items-center gap-2 flex-wrap">
             <Input type="date" value={draft} min={rights.minDate ?? undefined} max={today} onChange={(e) => setDraft(e.target.value)} className="w-[170px]" aria-label="Lock till" />
-            <Button size="sm" disabled={!draft || draft === (current ?? "") || (movesBack && !rights.canUnlock) || update.isPending} onClick={() => save(draft)}>Lock karo</Button>
-            {current && rights.canUnlock && <Button size="sm" variant="ghost" disabled={update.isPending} onClick={() => save(null)}>Lock hatao</Button>}
-            {current && !rights.canUnlock && <span className="text-xs text-ink-3">Lock hatana sirf owner kar sakta hai</span>}
+            <Button size="sm" disabled={!draft || draft === (current ?? "") || (movesBack && !rights.canUnlock) || update.isPending} onClick={() => save(draft)}>Lock books</Button>
+            {current && rights.canUnlock && <Button size="sm" variant="ghost" disabled={update.isPending} onClick={() => save(null)}>Remove lock</Button>}
+            {current && !rights.canUnlock && <span className="text-xs text-ink-3">Only the owner can remove the lock</span>}
           </div>
         ) : (
-          <span className="text-xs text-ink-3">Sirf owner ya accountant badal sakta hai</span>
+          <span className="text-xs text-ink-3">Only the owner or an accountant can change this</span>
         )}
       </div>
     </Card>

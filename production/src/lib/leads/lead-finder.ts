@@ -4,7 +4,7 @@
  * pin down without a network lives here.
  */
 
-import { ASK_FOR_OWNER } from "./lead-contacts";
+import { ASK_FOR_OWNER, WHO_TO_ASK } from "./lead-contacts";
 
 export interface FinderProfile {
   name: string;
@@ -160,26 +160,26 @@ export function baselineScore(i: ScoreInput): ScoreOutput {
   const wantsWorkspace = i.products.includes("workspace");
   const wantsWeb = i.products.includes("website") || i.products.includes("hosting");
   if (wantsWorkspace) {
-    if (i.mx === "none") { score += 25; reasons.push("domain par email hi nahi hai"); product = "workspace"; }
-    else if (["zoho", "rediff", "godaddy", "cpanel", "other"].includes(i.mx)) { score += 20; reasons.push(`email ${MX_LABEL[i.mx]} par hai, Workspace par nahi`); product = "workspace"; }
-    else if (i.mx === "google") { score -= 15; reasons.push("pehle se Google Workspace par hai"); }
-    else if (i.mx === "microsoft") { score -= 5; reasons.push("Microsoft 365 par hai (switch mushkil)"); }
+    if (i.mx === "none") { score += 25; reasons.push("no email on the domain"); product = "workspace"; }
+    else if (["zoho", "rediff", "godaddy", "cpanel", "other"].includes(i.mx)) { score += 20; reasons.push(`email is on ${MX_LABEL[i.mx]}, not on Workspace`); product = "workspace"; }
+    else if (i.mx === "google") { score -= 15; reasons.push("already on Google Workspace"); }
+    else if (i.mx === "microsoft") { score -= 5; reasons.push("on Microsoft 365 (hard to switch)"); }
   }
   if (wantsWeb) {
-    if (i.site.https === false && i.site.status === null) { score += 20; reasons.push("website nahi khulti"); if (product !== "workspace" || i.mx === "google") product = "website"; }
-    else if (i.site.https === false) { score += 15; reasons.push("SSL nahi hai"); if (i.mx === "google") product = "hosting"; }
+    if (i.site.https === false && i.site.status === null) { score += 20; reasons.push("website does not open"); if (product !== "workspace" || i.mx === "google") product = "website"; }
+    else if (i.site.https === false) { score += 15; reasons.push("no SSL"); if (i.mx === "google") product = "hosting"; }
     else if (/^old |builder/i.test(i.site.note)) { score += 10; reasons.push(i.site.note); if (i.mx === "google") product = "website"; }
   }
-  if (i.description && /hiring|expand|new office|launch|funded|growing/i.test(i.description)) { score += 5; reasons.push("badh rahi hai"); }
+  if (i.description && /hiring|expand|new office|launch|funded|growing/i.test(i.description)) { score += 5; reasons.push("growing"); }
   score = Math.max(0, Math.min(100, score));
-  const fit_reason = reasons.length ? reasons.join("; ") : "Profile se milti hai; koi khaas signal nahi";
+  const fit_reason = reasons.length ? reasons.join("; ") : "Matches the profile; no strong signal";
   const pitch = product === "workspace"
-    ? `${i.company} ke liye ${i.domain} par Google Workspace — professional email, 30GB+ storage, Meet/Drive, Gmail security. Migration hum karte hain.`
+    ? `Google Workspace on ${i.domain} for ${i.company} — professional email, 30GB+ storage, Meet/Drive, Gmail security. We handle the migration.`
     : product === "website"
-      ? `${i.company} ki website ${i.site.note.toLowerCase()} — nayi fast, mobile-first site with SSL, 2 hafte mein live.`
+      ? `${i.company}'s website: ${i.site.note.toLowerCase()} — a new fast, mobile-first site with SSL, live in 2 weeks.`
       : product === "hosting"
-        ? `${i.domain} ke liye SSL + managed hosting — 'Not secure' hatao, speed badhao.`
-        : `${i.company} ke liye ${PRODUCT_LABEL[product] ?? product}.`;
+        ? `SSL + managed hosting for ${i.domain} — remove 'Not secure', improve speed.`
+        : `${PRODUCT_LABEL[product] ?? product} for ${i.company}.`;
   return { score, product, fit_reason, pitch };
 }
 
@@ -251,15 +251,15 @@ export function firstTouchTask(
   now: Date = new Date(),
 ): { kind: "call" | "email"; title: string; notes: string; dueAt: Date } {
   const kind = contact?.phone ? "call" : "email";
-  const title = kind === "call" ? `Call karo: ${c.company}` : `Email bhejo: ${c.company}`;
+  const title = kind === "call" ? `Call: ${c.company}` : `Email: ${c.company}`;
   const who = contact?.person;
   const notes = [
-    who ? `Kisse baat karni hai: ${who.name}${who.role ? ` (${who.role})` : ""}${who.from === "email" ? " — naam email se andaza hai" : who.from === "search" ? " — public record se, call par confirm karo" : ""}` : kind === "call" ? ASK_FOR_OWNER : "",
+    who ? `${WHO_TO_ASK}: ${who.name}${who.role ? ` (${who.role})` : ""}${who.from === "email" ? " — name guessed from the email" : who.from === "search" ? " — from public records, confirm on the call" : ""}` : kind === "call" ? ASK_FOR_OWNER : "",
     contact?.phone ? `Phone: ${contact.phone}` : "",
     contact?.email ? `Email: ${contact.email}` : "",
     `Website: https://${c.domain}`,
-    c.fit_reason ? `Kyun: ${c.fit_reason}` : "",
-    cleanPitch(c.pitch) ? `Kya bolna hai: ${cleanPitch(c.pitch)}` : "",
+    c.fit_reason ? `Why: ${c.fit_reason}` : "",
+    cleanPitch(c.pitch) ? `What to say: ${cleanPitch(c.pitch)}` : "",
   ].filter(Boolean).join("\n");
   return { kind, title, notes, dueAt: firstTouchDue(now) };
 }

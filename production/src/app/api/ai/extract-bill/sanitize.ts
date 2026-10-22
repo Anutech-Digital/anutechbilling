@@ -21,6 +21,8 @@ export interface ExtractedLine {
   qty?:         number | string | null;
   unit_price?:  number | string | null;   // per-unit, in the bill's own currency
   amount?:      number | string | null;   // line total, in the bill's own currency
+  /** R-1744: this line's expense category — one of EXPENSE_CATEGORIES, else dropped. */
+  category?:    string | null;
 }
 
 // The shape we ask Gemini to return (all optional — a bill may hide some fields).
@@ -41,6 +43,12 @@ export interface ExtractedBill {
   expense_category?: string | null;
   /** R-1510: "tax_invoice" | "proforma" | "other" as printed on the document. */
   document_type?: string | null;
+  /** R-1744: 1–3 word name of the main thing bought ("Workspace") — for the short note. */
+  item_short?: string | null;
+  /** R-1744: "paid" only when the bill clearly says so (PAID stamp, "amount paid", receipt). */
+  paid_status?: string | null;
+  /** R-1744: how it was paid, as printed ("UPI", "Credit card", "Net banking") — only with paid. */
+  payment_mode?: string | null;
 }
 
 /**
@@ -166,6 +174,27 @@ export function matchExpenseCategory(v: unknown): string | null {
   return EXPENSE_CATEGORIES.find((c) => c.toLowerCase() === t) ?? null;
 }
 
+/** R-1744: "paid" / "unpaid" / null. Only a clear word counts — anything else is null. */
+export function normalisePaidStatus(v: unknown): "paid" | "unpaid" | null {
+  const t = (typeof v === "string" ? v : "").trim().toLowerCase();
+  if (!t) return null;
+  if (/^(unpaid|due|not paid|pending|outstanding|balance due)$/.test(t)) return "unpaid";
+  if (/^(paid|paid in full|fully paid|payment received|received)$/.test(t)) return "paid";
+  return null;
+}
+
+/** R-1744: a printed payment mode → one of the expense form's methods, or null. */
+export function normalisePaymentMode(v: unknown): "upi" | "card" | "bank_transfer" | "cheque" | "cash" | null {
+  const t = (typeof v === "string" ? v : "").trim().toLowerCase();
+  if (!t) return null;
+  if (/\bupi\b|gpay|google pay|phonepe|paytm|bhim/.test(t)) return "upi";
+  if (/card|visa|master|amex|rupay/.test(t)) return "card";
+  if (/neft|rtgs|imps|net\s*banking|bank|transfer|wire/.test(t)) return "bank_transfer";
+  if (/cheque|check/.test(t)) return "cheque";
+  if (/^cash$/.test(t)) return "cash";
+  return null;
+}
+
 export function sanitizeExtractedBill(ai: ExtractedBill) {
   const lines = Array.isArray(ai.line_items) ? ai.line_items : [];
   const line_items = lines
@@ -174,6 +203,9 @@ export function sanitizeExtractedBill(ai: ExtractedBill) {
       qty:         toNum(l?.qty),
       unit_price:  toSignedNum(l?.unit_price),
       amount:      toSignedNum(l?.amount) ?? 0,
+      /* R-1744: left out (undefined) when the model gave none or one not on our list, so
+         a line without it looks exactly as it did before this field existed. */
+      category:    matchExpenseCategory(l?.category) ?? undefined,
     }))
     .filter((l) => l.description || l.amount !== 0);
   const aiCategory = (ai.category_guess ?? "").toString().trim();
@@ -197,5 +229,9 @@ export function sanitizeExtractedBill(ai: ExtractedBill) {
        manzoor nahi kiya. "Salaries" yahan se kabhi nahi — wo Payroll ka kaam hai. */
     expense_category: matchExpenseCategory(ai.expense_category),
     document_type: normaliseDocumentType(ai.document_type),
+    /* R-1744 — all new, all optional; an older model answer simply gives nulls. */
+    item_short:   (ai.item_short ?? "").toString().trim().slice(0, 40) || null,
+    paid_status:  normalisePaidStatus(ai.paid_status),
+    payment_mode: normalisePaidStatus(ai.paid_status) === "paid" ? normalisePaymentMode(ai.payment_mode) : null,
   };
 }

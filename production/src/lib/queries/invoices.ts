@@ -225,12 +225,12 @@ export function useGenerateInvoice() {
         const taxable = taxableAfterDiscount(subtotal ?? 0, discount_pct ?? 0);
         const should = grossAmount(taxable, tax_rate ?? 0);
         throw new Error(
-          `Is quote ka total apne hi GST se mel nahi khata — invoice nahi ban sakti. `
-          + `Subtotal ₹${(subtotal ?? 0).toLocaleString("en-IN")}${discount_pct ? ` − ${discount_pct}% discount = ₹${taxable.toLocaleString("en-IN")}` : ""} par ${tax_rate ?? 0}% GST = `
-          + `₹${should.toLocaleString("en-IN")}, par quote me ₹${(amount ?? 0).toLocaleString("en-IN")} likha hai `
-          + `(₹${Math.abs(should - (amount ?? 0)).toLocaleString("en-IN")} ka farak). `
-          + `Invoice banne ke baad ye number badla nahi ja sakta. Pehle quote edit karke total theek karo — `
-          + `ya agar daam GST-sahit tay hua tha to tax rate theek karo — phir invoice banao.`,
+          `This quote's total does not match its own GST — the invoice cannot be created. `
+          + `Subtotal ₹${(subtotal ?? 0).toLocaleString("en-IN")}${discount_pct ? ` − ${discount_pct}% discount = ₹${taxable.toLocaleString("en-IN")}` : ""} at ${tax_rate ?? 0}% GST = `
+          + `₹${should.toLocaleString("en-IN")}, but the quote says ₹${(amount ?? 0).toLocaleString("en-IN")} `
+          + `(a difference of ₹${Math.abs(should - (amount ?? 0)).toLocaleString("en-IN")}). `
+          + `Once the invoice is created this number cannot be changed. First edit the quote and correct the total — `
+          + `or, if the price was agreed including GST, correct the tax rate — then create the invoice.`,
         );
       }
 

@@ -26,25 +26,19 @@ import { Icon } from "@/components/ui/icon";
 import { useCreateContact, useUpdateContact, type Contact, type ContactFormValues } from "@/lib/queries/contacts";
 import { useCustomers } from "@/lib/queries/customers";
 import { CustomerCombobox } from "@/components/features/customers/customer-combobox";
+import { RelationshipFields } from "@/components/features/contacts/relationship-chip";
+import { CLOSENESS, RELATIONSHIP_TYPES, asCloseness, asRelationshipType } from "@/lib/contacts/relationship";
 
 const EMAIL_LABELS = ["work", "home", "other"] as const;
 const PHONE_LABELS = ["mobile", "work", "home", "other"] as const;
-// Relationship classification for standalone contacts. Lead/Customer are NOT
-// options here — those records are created in their own flows; this form only
-// makes standalone contacts.
-const RELATIONSHIP_OPTIONS = [
-  { value: "",         label: "— Not set —" },
-  { value: "partner",  label: "Partner" },
-  { value: "vendor",   label: "Vendor / Supplier" },
-  { value: "personal", label: "Personal / Relation" },
-  { value: "other",    label: "Other" },
-] as const;
-
 const schema = z.object({
   full_name: z.string().min(1, "Name is required"),
   company:   z.string().optional(),
   customer_id: z.string().optional(),
-  relationship: z.string().optional(),
+  /* R-1740: my relationship with this person + how close. Lead / Customer are not chosen
+     here — they come from the person's links. */
+  relationship_type: z.enum(RELATIONSHIP_TYPES),
+  closeness: z.enum(CLOSENESS).nullable(),
   birthday:    z.string().optional(),
   anniversary: z.string().optional(),
   nickname:    z.string().optional(),
@@ -96,6 +90,8 @@ export function ContactForm({
   });
   const { data: customers = [] } = useCustomers();
   const customerId = watch("customer_id") ?? "";
+  const relType = watch("relationship_type");
+  const relCloseness = watch("closeness");
   const emailFields = useFieldArray({ control, name: "emails" });
   const phoneFields = useFieldArray({ control, name: "phones" });
 
@@ -110,7 +106,8 @@ export function ContactForm({
       full_name: data.full_name.trim(),
       company:   clean(data.company),
       customer_id: clean(data.customer_id),
-      relationship: clean(data.relationship),
+      relationship_type: data.relationship_type,
+      closeness:   data.relationship_type === "unknown" ? null : data.closeness,
       birthday:    clean(data.birthday),
       anniversary: clean(data.anniversary),
       nickname:    clean(data.nickname),
@@ -191,19 +188,17 @@ export function ContactForm({
                 <p className="text-2xs text-ink-3">Connect this person to a customer to manage their company&apos;s records here.</p>
               </FormField>
 
-              {/* Relationship type — lets a person who is neither a lead nor a
-                  customer (partner, vendor, personal/relation) be kept + filtered
-                  in the contact book. */}
-              <FormField label="Relationship" htmlFor="relationship">
-                <select
-                  id="relationship"
-                  {...register("relationship")}
-                  className="h-9 w-full rounded-md border border-hairline bg-paper px-2.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
-                >
-                  {RELATIONSHIP_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-                <p className="text-2xs text-ink-3">How you know this person — used to group them in Contacts.</p>
-              </FormField>
+              {/* R-1740: my relationship with this person — the same two controls as the
+                  chip on a lead or customer, so it is set one way everywhere. */}
+              <RelationshipFields
+                idPrefix="contact-rel"
+                type={relType}
+                closeness={relCloseness}
+                onChange={(n) => {
+                  setValue("relationship_type", n.type, { shouldDirty: true });
+                  setValue("closeness", n.closeness, { shouldDirty: true });
+                }}
+              />
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FormField label="Company" htmlFor="contact-company">
@@ -352,7 +347,8 @@ function toDefaults(c?: Contact | null): FormData {
     full_name: c?.full_name ?? "",
     company:   c?.company ?? "",
     customer_id: c?.customer_id ?? "",
-    relationship: c?.relationship ?? "",
+    relationship_type: asRelationshipType(c?.relationship_type),
+    closeness:   asCloseness(c?.closeness),
     birthday:    c?.birthday ?? "",
     anniversary: c?.anniversary ?? "",
     nickname:    c?.nickname ?? "",

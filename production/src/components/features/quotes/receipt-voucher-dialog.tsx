@@ -26,6 +26,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import { useTdsForPayment } from "@/lib/queries/tds-receivable";
 import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
 import { cashReceived } from "@/lib/payments/cash-received";
+import { receiptLine } from "@/lib/payments/receipt-line";
 import type { Payment } from "@/lib/supabase/database.types";
 
 interface Props {
@@ -50,6 +51,9 @@ interface Props {
   quoteId?:    string;
   /** GST rate (default 18% for SaaS) */
   gstRate?:    number;
+  /** R-1747: the payment is on an invoice imported from Zoho Books (its number) — a plain
+   *  payment receipt against that opening balance: no advance wording, no GST split. */
+  openingInvoiceNumber?: string | null;
 }
 
 export function ReceiptVoucherDialog({
@@ -69,6 +73,7 @@ export function ReceiptVoucherDialog({
   interState = false,
   quoteId,
   gstRate = 18,
+  openingInvoiceNumber,
 }: Props) {
   /* Parent se nahi — teen alag page ye dialog render karte hain. Wajah tax-invoice-dialog
      me likhi hai. */
@@ -90,6 +95,8 @@ export function ReceiptVoucherDialog({
   const cgst = Math.round(totalTax / 2);
   const sgst = totalTax - cgst;
   const igst = totalTax;
+  /* R-1747: one description for the screen and the PDF (lib/payments/receipt-line.ts). */
+  const line = receiptLine({ quoteId, openingInvoiceNumber });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -102,7 +109,7 @@ export function ReceiptVoucherDialog({
           <div className="flex items-center gap-2 min-w-0">
             <Icon name="file" size={16} className="text-ink-3" />
             <span className="text-sm font-semibold text-ink whitespace-nowrap">
-              Receipt Voucher<span className="hidden sm:inline"> · GST-compliant</span>
+              Receipt Voucher{line.advance && <span className="hidden sm:inline"> · GST-compliant</span>}
             </span>
           </div>
           <div className="flex flex-wrap gap-2" data-toolbar-actions>
@@ -111,7 +118,14 @@ export function ReceiptVoucherDialog({
               variant="primary"
               icon="whatsapp"
               onClick={() => {
-                const q = encodeURIComponent(`Namaste ${customerName},\n\nAapka Advance Receipt Voucher ${payment.receipt_voucher_no || ""} (${splitLine ?? `₹${received.toLocaleString("en-IN")}`}) received ho gaya hai.\n\nDhanyavaad,\n${tenantName}`);
+                const q = encodeURIComponent(!line.advance
+                  ? `Dear ${customerName},
+
+We have received ${splitLine ?? `₹${received.toLocaleString("en-IN")}`} against invoice ${openingInvoiceNumber} — receipt voucher ${payment.receipt_voucher_no || ""}.
+
+Thank you,
+${tenantName}`
+                  : `Dear ${customerName},\n\nWe have received your advance payment of ${splitLine ?? `₹${received.toLocaleString("en-IN")}`} — advance receipt voucher ${payment.receipt_voucher_no || ""}.\n\nThank you,\n${tenantName}`);
                 window.open(`https://web.whatsapp.com/send?text=${q}`, "_blank");
               }}
             >
@@ -132,7 +146,7 @@ export function ReceiptVoucherDialog({
                     tenantAddress, tenantState,
                     tenantLogo: await logoDataUri(me?.tenantLogoUrl),
                     interState, gstRate, quoteId,
-                    splitLine,
+                    splitLine, openingInvoiceNumber,
                   });
                 } catch (err) {
                   console.error("Receipt voucher PDF failed:", err);
@@ -156,7 +170,7 @@ export function ReceiptVoucherDialog({
           {/* Header */}
           <div className="text-center mb-4">
             <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold">
-              GST-compliant advance receipt
+              {line.advance ? "GST-compliant advance receipt" : "Payment receipt"}
             </p>
             <h1 className="font-serif text-3xl mt-1">Receipt Voucher</h1>
             <p className="font-mono text-sm text-ink-2 mt-1">{payment.receipt_voucher_no ?? "(not numbered)"}</p>
@@ -213,12 +227,18 @@ export function ReceiptVoucherDialog({
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-0.5">Transaction ref.</p>
               <p className="font-mono text-xs">{payment.reference ?? "—"}</p>
             </div>
-            {quoteId && (
+            {openingInvoiceNumber ? (
+              <div>
+                <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-0.5">Against invoice</p>
+                <p className="font-mono text-xs">{openingInvoiceNumber}</p>
+              </div>
+            ) : quoteId && (
               <div>
                 <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-0.5">Against quote</p>
                 <p className="font-mono text-xs">{quoteId}</p>
               </div>
             )}
+            {line.advance && (
             <div>
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-0.5">Place of supply</p>
               <p>
@@ -229,6 +249,7 @@ export function ReceiptVoucherDialog({
                     : "Intra-state (CGST + SGST)"}
               </p>
             </div>
+            )}
           </div>
 
           {/* Description + breakdown */}
@@ -243,12 +264,12 @@ export function ReceiptVoucherDialog({
               <tbody>
                 <tr className="border-b border-hairline">
                   <td className="p-3 text-sm">
-                    <p className="font-medium">Advance received against {quoteId ? `quote ${quoteId}` : "service"}</p>
-                    <p className="text-2xs text-ink-3 mt-0.5">HSN/SAC: 998313 · Reseller services</p>
+                    <p className="font-medium">{line.description}</p>
+                    {line.advance && <p className="text-2xs text-ink-3 mt-0.5">HSN/SAC: 998313 · Reseller services</p>}
                   </td>
-                  <td className="p-3 text-right tabular-nums text-sm font-medium">{rupee(taxable)}</td>
+                  <td className="p-3 text-right tabular-nums text-sm font-medium">{rupee(line.advance ? taxable : received)}</td>
                 </tr>
-                {interState ? (
+                {!line.advance ? null : interState ? (
                   <tr className="border-b border-hairline">
                     <td className="p-3 text-sm text-ink-2">IGST @ {gstRate}%</td>
                     <td className="p-3 text-right tabular-nums text-sm">{rupee(igst)}</td>
@@ -297,6 +318,14 @@ export function ReceiptVoucherDialog({
           </p>
 
           {/* GST compliance notice */}
+          {!line.advance ? (
+          <div className="rounded-md bg-paper-2 border border-hairline p-3 text-2xs text-ink-2 mb-6">
+            <p>
+              No GST on this receipt: invoice {openingInvoiceNumber} was issued earlier and its GST was charged and
+              reported on that invoice. This receipt records the payment against its open balance.
+            </p>
+          </div>
+          ) : (
           <div className="rounded-md bg-amber-soft border border-amber/30 p-3 text-2xs text-amber-ink mb-6">
             <p className="font-semibold mb-1">📋 GST treatment of this advance</p>
             <p>
@@ -306,6 +335,7 @@ export function ReceiptVoucherDialog({
               and this receipt voucher will be adjusted against that invoice.
             </p>
           </div>
+          )}
 
           {/* Notes */}
           {payment.notes && (

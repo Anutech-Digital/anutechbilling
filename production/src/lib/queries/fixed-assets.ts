@@ -70,15 +70,15 @@ export function useCreateFixedAsset() {
       const supabase = createClient();
       const { data: auth } = await supabase.auth.getUser();
       const { data: me } = await supabase.from("users").select("tenant_id").eq("id", auth.user?.id ?? "").maybeSingle();
-      if (!me?.tenant_id) throw new Error("Company pata nahi chali — dobara login karo.");
+      if (!me?.tenant_id) throw new Error("Could not find your company — please sign in again.");
       const { error } = await supabase.from("fixed_assets").insert({
         tenant_id: me.tenant_id, name: input.name.trim(), block: input.block, cost: Math.round(input.cost), put_to_use: input.putToUse,
         emi_purchase_id: input.emiPurchaseId ?? null, expense_id: input.expenseId ?? null, notes: input.notes?.trim() || null,
       });
       if (error) throw error;
     },
-    onSuccess: () => { invalidate(qc); toast.success("Asset register mein jud gaya"); },
-    onError: (err) => toastError(err, { fallback: "Asset save nahi hua" }),
+    onSuccess: () => { invalidate(qc); toast.success("Added to the asset register"); },
+    onError: (err) => toastError(err, { fallback: "Could not save the asset" }),
   });
 }
 
@@ -92,8 +92,8 @@ export function useDisposeFixedAsset() {
         .eq("id", input.id);
       if (error) throw error;
     },
-    onSuccess: (_d, i) => { invalidate(qc); toast.success(i.disposedOn ? "Asset sold / scrapped mark ho gaya" : "Disposal hata diya"); },
-    onError: (err) => toastError(err, { fallback: "Update nahi hua" }),
+    onSuccess: (_d, i) => { invalidate(qc); toast.success(i.disposedOn ? "Asset marked sold / scrapped" : "Disposal removed"); },
+    onError: (err) => toastError(err, { fallback: "Could not update" }),
   });
 }
 
@@ -105,7 +105,7 @@ export function useDeleteFixedAsset() {
       const { error } = await supabase.from("fixed_assets").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { invalidate(qc); toast.success("Asset hata diya"); },
-    onError: (err) => toastError(err, { fallback: "Delete nahi hua" }),
+    onSuccess: () => { invalidate(qc); toast.success("Asset removed"); },
+    onError: (err) => toastError(err, { fallback: "Could not delete" }),
   });
 }

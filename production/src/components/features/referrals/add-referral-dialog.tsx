@@ -116,8 +116,8 @@ export function AddReferralDialog({ open, onOpenChange, customerId, customerName
         <SheetHeader className="!p-5 border-b border-hairline">
           <SheetTitle>Add referral partner</SheetTitle>
           <SheetDescription>
-            Kisi ne ye deal refer / close karayi? Partner ko tag karo{customerName ? <> — <b>{customerName}</b></> : null}.
-            Jab payment aayega, commission apne aap ban jayegi.
+            Did someone refer or help close this deal? Tag the partner{customerName ? <> — <b>{customerName}</b></> : null}.
+            When the payment comes in, the commission will be created automatically.
           </SheetDescription>
         </SheetHeader>
 
@@ -162,23 +162,23 @@ export function AddReferralDialog({ open, onOpenChange, customerId, customerName
             </div>
             <p className="mt-1 text-xs text-ink-3">
               {basis === "percent"
-                ? "Deal ke ex-GST value ka % (GST par commission nahi)."
-                : "Har qualifying payment par tay amount."}
+                ? "% of the deal's ex-GST value (no commission on GST)."
+                : "A fixed amount on each qualifying payment."}
             </p>
           </FormField>
 
           {/* Scope */}
-          <FormField label="Kab tak milegi?" htmlFor="ref_scope">
+          <FormField label="How long is it paid?" htmlFor="ref_scope">
             <select id="ref_scope" value={scope} onChange={(e) => setScope(e.target.value as "one_time" | "recurring")} className={selectCls}>
-              <option value="one_time">One-time — sirf pehli sale par</option>
-              <option value="recurring">Recurring — har renewal par bhi</option>
+              <option value="one_time">One-time — on the first sale only</option>
+              <option value="recurring">Recurring — on every renewal too</option>
             </select>
           </FormField>
 
           {/* TDS */}
           <label className="flex items-center gap-2 text-sm text-ink cursor-pointer">
             <input type="checkbox" checked={deductTds} onChange={(e) => setDeductTds(e.target.checked)} className="h-4 w-4 rounded border-hairline text-amber focus:ring-amber/40" />
-            2% TDS (194H) deduct karo — ek vyakti ko saal mein ₹20,000 se zyada commission ho to zaroori
+            Deduct 2% TDS (194H) — required if one person's commission exceeds ₹20,000 in a year
           </label>
 
           <FormField label="Note (optional)" htmlFor="ref_label">
@@ -187,8 +187,8 @@ export function AddReferralDialog({ open, onOpenChange, customerId, customerName
 
           <div className="rounded-md bg-amber-soft/40 border border-amber/30 px-3 py-2 text-xs text-amber-ink leading-relaxed">
             {basis === "percent"
-              ? <>Har {scope === "recurring" ? "payment" : "pehli payment"} par <b>{percent.trim() ? `${pctNum}%` : "…%"}</b> commission banegi{deductTds ? " (− 2% TDS)" : ""}. Manually approve karke pay karoge.</>
-              : <>Har {scope === "recurring" ? "payment" : "pehli payment"} par <b>{rupee(fixedNum)}</b> commission banegi{deductTds ? " (− 2% TDS)" : ""}.</>}
+              ? <>Commission of <b>{percent.trim() ? `${pctNum}%` : "…%"}</b> on {scope === "recurring" ? "every payment" : "the first payment"}{deductTds ? " (− 2% TDS)" : ""}. You will approve and pay it manually.</>
+              : <>Commission of <b>{rupee(fixedNum)}</b> on {scope === "recurring" ? "every payment" : "the first payment"}{deductTds ? " (− 2% TDS)" : ""}.</>}
           </div>
         </div>
 

@@ -277,6 +277,10 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
 
           {/* ── Primary contact person (salutation + first + last, Zoho-style) ── */}
           <p className="text-xs font-semibold uppercase tracking-wider text-ink-3">Primary contact</p>
+          {/* R-1738: optional — a blank person means the company is the contact. */}
+          {!isEdit && (
+            <p className="text-xs text-ink-3 -mt-2">Optional. Leave blank and the company is the contact. An email or a phone is needed to send the invoice.</p>
+          )}
           <div className="grid grid-cols-[80px_1fr_1fr] gap-3">
             <FormField label="Title" htmlFor="contact_salutation">
               <select
@@ -291,13 +295,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
                 <option value="Dr.">Dr.</option>
               </select>
             </FormField>
-            {/* Required on CREATE only. A customer needs one named human with an email
-                and a phone — they are who the invoice and the payment reminder go to
-                (Abhishek, 18 Sep 2026: "without contact customer not created"). Customers
-                already on the books predate the rule, so editing one is not blocked;
-                marking the field required there would be a promise the form does not
-                keep. */}
-            <FormField label="First name" htmlFor="contact_first_name" required={!isEdit}>
+            <FormField label="First name" htmlFor="contact_first_name">
               <Input
                 id="contact_first_name" placeholder="e.g. Rajesh"
                 error={errors.contact_first_name?.message}
@@ -313,7 +311,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
             <FormField label="Designation" htmlFor="contact_title">
               <Input id="contact_title" placeholder="e.g. CTO" {...register("contact_title")} />
             </FormField>
-            <FormField label="Email" htmlFor="contact_email" required={!isEdit}>
+            <FormField label="Email" htmlFor="contact_email">
               <Input
                 id="contact_email" type="email" placeholder="e.g. rajesh@acme.com"
                 error={errors.contact_email?.message}
@@ -325,7 +323,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <FormField label="Work phone" htmlFor="contact_phone" required={!isEdit}>
+            <FormField label="Work phone" htmlFor="contact_phone">
               <Input
                 id="contact_phone" inputMode="numeric" placeholder="e.g. +91 98765 43210"
                 error={errors.contact_phone?.message}

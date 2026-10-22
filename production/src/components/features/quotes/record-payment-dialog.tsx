@@ -14,21 +14,25 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queries/keys";
 import { toast } from "sonner";
 import { isSubscriptionLine, type QuoteLine } from "@/lib/subscriptions/orphan-quote";
-import { useBankAccounts } from "@/lib/queries/bank";
 import {
+  DEFAULT_PAYMENT_METHOD,
   PAYMENT_METHODS,
-  defaultDepositAccountId,
-  depositAccountLabel,
-  depositAccounts,
   type PaymentMethod,
 } from "@/lib/payments/deposit-accounts";
-import { fillCustomerStateFromQuote, saveDomainAfterPayment } from "@/lib/payments/after-payment-fill";
+import {
+  PAYMENT_FIELD_LABELS,
+  ReceivedInField,
+  referenceHint,
+  referenceLabel,
+  referencePlaceholder,
+  useReceivedInDefault,
+} from "@/components/features/payments/payment-entry-fields";
+import { domainSetupLine, fillCustomerStateFromQuote, stampPaymentDomain } from "@/lib/payments/after-payment-fill";
 import { FeedbackDialog } from "@/components/shared/feedback-dialog";
 import { ConsequenceList } from "@/components/shared/consequence-list";
 import { recordPaymentConsequences } from "@/lib/payments/record-consequences";
 import { useDocumentSeries, useGenerateInvoice } from "@/lib/queries/invoices";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { paymentToast, cashReference, subscriptionNoteFor, type PaymentToastAction, type SubscriptionNote } from "@/lib/payments/record-payment-toast";
 import {
@@ -68,7 +72,7 @@ import { checkTdsRate, tdsDefaultRatePct } from "@/lib/accounting/tds-rates";
 import { paymentOutcome, tdsBase } from "@/lib/accounting/tds-receipt";
 import { matchTdsShortfall, tdsShortfallLine, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { istToday } from "@/lib/dates/ist";
-import { pickDomainStampTarget, domainConflictMessage } from "@/lib/quotes/payment-domain";
+import { domainConflictMessage } from "@/lib/quotes/payment-domain";
 import { deskPaymentTagArgs, isReplayResult, replayToast } from "@/lib/payments/record-payment-replay";
 import { instalmentPaymentLines, type InstalmentPaymentResult } from "@/lib/payments/instalment-payment";
 import { splitExpectation, splitPaymentToast, splitOutcomeSentence, type SplitExpectation, type InstalmentRaiseResult } from "@/lib/payments/split-expected";
@@ -159,7 +163,7 @@ export function applyTdsSuggestion(
   form.setValue("tdsRatePct", m.ratePct, { shouldDirty: true, shouldValidate: true });
 }
 
-/** R-1520: "Baaki ₹25,500 shayad TDS hai (194J 10%) — TDS deducted tick karein?" + one button.
+/** R-1520: "The remaining ₹25,500 may be TDS (194J 10%) — was TDS deducted?" + one button.
  *  Renders nothing without a match; never ticks anything by itself. */
 export function TdsShortfallHint({ match, onApply }: { match: TdsShortfallMatch | null; onApply: () => void }) {
   if (!match) return null;
@@ -171,10 +175,10 @@ export function TdsShortfallHint({ match, onApply }: { match: TdsShortfallMatch 
     >
       <span className="flex items-start gap-1.5 min-w-0">
         <Icon name="info" size={14} className="shrink-0 mt-0.5" />
-        <span>{tdsShortfallLine(match)} — TDS deducted tick karein?</span>
+        <span>{tdsShortfallLine(match)} — was TDS deducted?</span>
       </span>
       <Button type="button" size="sm" variant="outline" onClick={onApply}>
-        Haan, TDS deducted tick karein
+        Yes, TDS was deducted
       </Button>
     </div>
   );
@@ -269,19 +273,20 @@ export function RecordPaymentDialog({
   const qc = useQueryClient();
   /* The receipt-voucher counter, so the sheet can name the number it will consume. */
   const { data: series } = useDocumentSeries();
-  const [method, setMethod] = React.useState<PaymentMethod>("upi");
+  const [method, setMethod] = React.useState<PaymentMethod>(DEFAULT_PAYMENT_METHOD);
   const [bankAccountId, setBankAccountId] = React.useState<string>("");
   /* R-404: "Received in" lists THIS company's own bank / cash accounts (RLS-scoped), never a
      hard-coded row carrying our own company name. One matching account is pre-picked; several → the
      operator picks; none → a link to add one. Rules: lib/payments/deposit-accounts.ts. */
-  const { data: allBankAccounts, isLoading: bankAccountsLoading } = useBankAccounts();
-  const receiveAccounts = React.useMemo(() => depositAccounts(allBankAccounts), [allBankAccounts]);
+  /* R-1730: the only account, else the one this company usually receives into, else Not sure
+     yet — the same rule and field as every other Record payment sheet (payment-entry-fields). */
+  const { accounts: receiveAccounts, loading: bankAccountsLoading, defaultId: usualAccountId } = useReceivedInDefault(open, method);
   const [accountTouched, setAccountTouched] = React.useState(false);
   React.useEffect(() => {
     if (!open || accountTouched) return;
     /* R-1520: a TDS-only receipt brought no money to any account — pre-pick none. */
-    setBankAccountId(tdsOnly ? "" : defaultDepositAccountId(receiveAccounts, method));
-  }, [open, accountTouched, receiveAccounts, method, tdsOnly]);
+    setBankAccountId(tdsOnly ? "" : usualAccountId);
+  }, [open, accountTouched, usualAccountId, tdsOnly]);
 
   /* R-407: does this quote make a subscription? true / false from its lines (the same rule
      record_payment uses); null when the caller did not pass the lines. The domain field and
@@ -400,7 +405,7 @@ export function RecordPaymentDialog({
     resolver: zodResolver(schema),
     defaultValues: {
       amount:       remaining,
-      method:       "upi",
+      method:       DEFAULT_PAYMENT_METHOD,
       reference:    "",
       // R-025: `toISOString()` is UTC, so between 00:00 and 05:30 IST this defaulted the
       // payment to YESTERDAY — and reps here work early (AGENTS.md §6).
@@ -514,7 +519,7 @@ export function RecordPaymentDialog({
   React.useEffect(() => {
     if (!open) {
       reset();
-      setMethod("upi");
+      setMethod(DEFAULT_PAYMENT_METHOD);
       setBankAccountId("");
       setAccountTouched(false);
       setAmountEdited(false);
@@ -525,7 +530,7 @@ export function RecordPaymentDialog({
          The amount effect below then sets the bank amount to remaining − TDS (₹0). */
       reset({
         amount:       remaining,
-        method:       tdsOnly ? "other" : "upi",
+        method:       tdsOnly ? "other" : DEFAULT_PAYMENT_METHOD,
         /* R-407: named, so a re-opened sheet never carries the last payment's UTR. */
         reference:    tdsOnly ? `TDS ${tdsOnly.section}` : "",
         notes:        "",
@@ -719,29 +724,15 @@ export function RecordPaymentDialog({
          subscription of the quote gave two rows the same domain, the unique index
          (tenant, quote, lower(domain)) refused it, and NOTHING was stamped — a Workspace +
          Support quote (Q-FBB9-27-0013) kept domain NULL through two payments. */
-      /* R-407: only when the field was shown — a hidden field's pre-filled default is not
-         something the operator entered. */
-      const domainVal = showDomain ? data.domain?.trim() : "";
-      if (domainVal) {
-        const { data: quoteSubs, error: subsErr } = await supabase
-          .from("subscriptions")
-          .select("id, vendor, domain")
-          .eq("quote_id", quoteId)
-          .order("created_at", { ascending: true });
-        if (subsErr) console.error("[record-payment] could not read the quote's subscriptions for the domain:", subsErr);
-        const targetId = subsErr ? null : pickDomainStampTarget(quoteSubs ?? [], domainVal);
-        if (targetId) {
-          const { error: domErr } = await supabase
-            .from("subscriptions")
-            .update({ domain: domainVal })
-            .eq("id", targetId)
-            .is("domain", null);
-          if (domErr) console.error("[record-payment] domain stamp failed (payment still recorded):", domErr);
-        }
-        /* R-407: also onto the customer and the quote's provisioning task (blank ones only),
-           so a typed domain is never lost when the quote made no subscription. */
-        await saveDomainAfterPayment(supabase, { quoteId, domain: domainVal });
-      }
+      /* R-407: only for a quote that makes a subscription (showDomain). */
+      /* R-1730: the domain is no longer typed here (setup, not money — UI rule 7). The domain
+         the page already knows (quote → its subscriptions → customer → lead, the value the
+         field used to open with) is still saved exactly as before; with none known the
+         result toast points to the quote's "Setting up" card, where it is entered. */
+      const domainVal = showDomain ? (data.domain ?? "").trim() : "";
+      /* R-407: also onto the customer and the quote's provisioning task (blank ones only),
+         so a known domain is never lost when the quote made no subscription. */
+      if (domainVal) await stampPaymentDomain(supabase, { quoteId, domain: domainVal });
 
       // ── 3. TDS receivable — now committed ATOMICALLY inside
       // record_payment_with_tds above (audit #22): either the payment AND its
@@ -804,6 +795,7 @@ export function RecordPaymentDialog({
         // R-248 — for the one result toast's buttons + lines.
         receiptVoucherNo:       r.receipt_voucher_no ?? null,
         receiptUploadFailed,
+        domainToSetUp:          showDomain && !domainVal,
       };
     },
     onSuccess: async (res) => {
@@ -963,7 +955,10 @@ export function RecordPaymentDialog({
         : splitToastBase;
       /* R-1564: where this instalment payment went (this invoice, any other open instalment,
          and what waits for the next one). */
-      const t = res.instalmentLines.length ? { ...tBase, lines: [...res.instalmentLines, ...tBase.lines] } : tBase;
+      const tLines = res.instalmentLines.length ? { ...tBase, lines: [...res.instalmentLines, ...tBase.lines] } : tBase;
+      /* R-1730: the domain is set up after the payment, not in this sheet. */
+      const setupLine = domainSetupLine({ domainToSetUp: res.domainToSetUp, isFullyPaid: res.isFullyPaid });
+      const t = setupLine ? { ...tLines, lines: [...tLines.lines, setupLine] } : tLines;
       const run = (action: PaymentToastAction) => () => runToastAction(action, res.newPaymentId ?? null);
       (t.tone === "warning" ? toast.warning : toast.success)(t.title, {
         description: t.lines.length ? t.lines.join("\n") : undefined,
@@ -1224,7 +1219,7 @@ export function RecordPaymentDialog({
               This app stores money as integers (CLAUDE.md §13); a typed 1500.50 was
               previously rejected by the zod .int() with a generic message and no clue
               which field or why. */}
-          <FormField label={tdsDeducted ? "Amount received in bank (₹ — whole rupees)" : "Amount received (₹ — whole rupees)"} required htmlFor="amount">
+          <FormField label={tdsDeducted ? "Amount received in bank (₹ — whole rupees)" : PAYMENT_FIELD_LABELS.amount} required htmlFor="amount">
             <Input
               id="amount"
               type="number"
@@ -1247,32 +1242,15 @@ export function RecordPaymentDialog({
               : checkMoney(Number.isFinite(watchedAmount) ? String(watchedAmount) : "")} />
           </FormField>
 
-          {/* R-1701: below the amount — the money is what this sheet is for; the domain was the
-              FIRST field even on a subscription that already had one.
-              Customer domain — R-407 / R-444 (1): shown only when the quote makes a subscription,
-              and optional (no "*"): Confirm never blocked on it, so the star was a false promise.
-              Saved to the subscription, the customer and the provisioning task (blanks only). */}
-          {showDomain && (
-            <div className="rounded-xl border border-primary/30 bg-primary-soft/30 p-3 space-y-1.5 shadow-xs">
-              <FormField label="Customer domain (optional)" htmlFor="domain">
-                <Input
-                  id="domain"
-                  placeholder="e.g. acme.com"
-                  className="font-mono text-sm font-semibold bg-paper"
-                  {...register("domain")}
-                />
-              </FormField>
-              <p className="text-2xs text-ink-3">
-                Needed to set up Google Workspace / Microsoft 365. You can add it later on Subscriptions.
-              </p>
-            </div>
-          )}
+          {/* R-1730: no "Customer domain" here any more — a setup field, not money (UI rule 7). It
+              is entered after the payment on the quote's "Setting up" card (provisioning-card);
+              a domain the page already knows is still saved after the payment (see 2d). */}
 
           {/* ── How it was paid, and which of YOUR accounts received it (R-404) ──
               Was one list of hard-coded rows with our own company name shown to every company,
               tagging payments with made-up ids the uuid column refused. Now: a plain method
               list, and this company's own bank / cash accounts. */}
-          <FormField label="Payment method" required htmlFor="paymentMethod">
+          <FormField label={PAYMENT_FIELD_LABELS.method} required htmlFor="paymentMethod">
             <Select
               value={method}
               onValueChange={(val) => {
@@ -1294,45 +1272,18 @@ export function RecordPaymentDialog({
             <input type="hidden" {...register("method")} value={method} />
           </FormField>
 
-          <FormField label="Received in" htmlFor="depositAccount">
-            {receiveAccounts.length > 0 ? (
-              <>
-                <Select
-                  value={bankAccountId || "none"}
-                  onValueChange={(val) => {
-                    setAccountTouched(true);
-                    setBankAccountId(val === "none" ? "" : val);
-                  }}
-                >
-                  <SelectTrigger id="depositAccount">
-                    <SelectValue placeholder="Choose the account" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Not sure yet</SelectItem>
-                    {receiveAccounts.map((a) => (
-                      <SelectItem key={a.id} value={a.id}>{depositAccountLabel(a)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-2xs text-ink-3 mt-1">
-                  Your account that got this money. Helps match it with the bank statement.
-                </p>
-              </>
-            ) : (
-              <p id="depositAccount" className="text-xs text-ink-3">
-                {bankAccountsLoading ? "Loading your accounts…" : (
-                  <>
-                    No bank account added yet.{" "}
-                    <Link href="/accounting/banking" className="underline text-ink">Add a bank account</Link>{" "}
-                    to tag where money lands. The payment saves without it.
-                  </>
-                )}
-              </p>
-            )}
+          <FormField label={PAYMENT_FIELD_LABELS.receivedIn} htmlFor="depositAccount">
+            <ReceivedInField
+              id="depositAccount"
+              accounts={receiveAccounts}
+              loading={bankAccountsLoading}
+              value={bankAccountId}
+              onChange={(id) => { setAccountTouched(true); setBankAccountId(id); }}
+            />
           </FormField>
 
-          {/* Payment Received Date */}
-          <FormField label="Payment Received Date" required htmlFor="receivedDate">
+          {/* Received on */}
+          <FormField label={PAYMENT_FIELD_LABELS.receivedOn} required htmlFor="receivedDate">
             <Input
               id="receivedDate"
               type="date"
@@ -1343,37 +1294,18 @@ export function RecordPaymentDialog({
 
           {/* Transaction Reference Number — Dynamic prompts per payment mode */}
           <FormField
-            label={
-              method === "upi" ? "UPI Transaction Ref ID (12 digits)" :
-              method === "razorpay" ? "Razorpay Payment ID" :
-              method === "bank_transfer" ? "Bank UTR / Transaction Ref No." :
-              method === "cheque" ? "Cheque No. & Issuing Bank" :
-              method === "cash" ? "Cash Voucher / Receipt Ref (Optional)" :
-              "Transaction Reference"
-            }
+            label={referenceLabel(method)}
             required={method !== "cash"}
             htmlFor="reference"
           >
             <Input
               id="reference"
-              placeholder={
-                method === "upi" ? "e.g. 402312345678 (12-digit UTR)" :
-                method === "razorpay" ? "e.g. pay_P1a2B3c4D5e6F7" :
-                method === "bank_transfer" ? "e.g. N281241234567890" :
-                method === "cheque" ? "e.g. Cheque #004521 - SBI Bank" :
-                "e.g. Cash Receipt #CR-102"
-              }
+              placeholder={referencePlaceholder(method)}
               error={errors.reference?.message}
               {...register("reference")}
             />
             <p className="text-2xs text-ink-3 mt-1">
-              {
-                method === "upi" ? "12-digit UTR/UPI reference from GPay, PhonePe, Paytm or your bank QR." :
-                method === "razorpay" ? "Unique Razorpay payment ID starting with pay_." :
-                method === "bank_transfer" ? "Bank UTR or NEFT/RTGS reference number from bank statement." :
-                method === "cheque" ? "Enter 6-digit cheque number and customer's bank name for clearing." :
-                method === "cash" ? "Optional. Leave blank and it is saved as Cash + date and time." : "Optional internal cash voucher or receipt reference."
-              }
+              {referenceHint(method)}
             </p>
           </FormField>
 
@@ -1384,8 +1316,8 @@ export function RecordPaymentDialog({
           <TdsShortfallHint match={tdsShortfall} onApply={() => tdsShortfall && applyTdsSuggestion({ setValue }, tdsShortfall)} />
           {tdsOnly && tdsDeducted && (
             <div data-testid="tds-only-note" className="rounded-md border border-hairline bg-paper-2/60 px-3 py-2 text-xs text-ink-2">
-              Sirf TDS darj ho raha hai — bank me ₹0. Ye {rupee(tdsAmount)} TDS Receivable me jayega aur
-              invoice ka baaki band karega. Reference me 26AS / challan number daal sakte hain.
+              Recording TDS only — ₹0 to the bank. This {rupee(tdsAmount)} goes to TDS Receivable and
+              clears the invoice balance. You can enter the 26AS / challan number in Reference.
             </div>
           )}
           <div className="rounded-md border border-hairline px-3 py-2.5 bg-paper-2/30">
@@ -1507,7 +1439,7 @@ export function RecordPaymentDialog({
             )}
           </div>
 
-          <FormField label="Notes (optional)" htmlFor="notes">
+          <FormField label={PAYMENT_FIELD_LABELS.notes} htmlFor="notes">
             <Textarea
               id="notes"
               placeholder="Any additional details about this payment…"
@@ -1665,7 +1597,7 @@ export function RecordPaymentDialog({
               loading={isSubmitting || recordPayment.isPending}
               icon="check"
             >
-              Confirm payment
+              {PAYMENT_FIELD_LABELS.submit}
             </Button>
           </SheetFooter>
         </form>

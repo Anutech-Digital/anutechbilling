@@ -17,9 +17,9 @@ import type { ProposalWithMatches } from "@/app/api/ai/data-entry/route";
 import type { AiLawNote } from "@/lib/ai/data-entry";
 
 const EXAMPLES = [
-  "Sharma Traders se Ramesh ji ka call aaya, 15 seat Google Workspace chahiye, number 98765 43210. Kal 11 baje call karna.",
+  "Ramesh from Sharma Traders called, needs 15 seats of Google Workspace, number 98765 43210. Call him back tomorrow at 11 am.",
   "Paid ₹12,500 cash to Gupta Electricals for office AC repair today",
-  "Thetaco Dentals ne ₹31,053 UPI se bheja, UTR 4271839XXXX",
+  "Received ₹31,053 from Thetaco Dentals by UPI, UTR 4271839XXXX",
 ];
 
 const MAX_FILE = 6 * 1024 * 1024;
@@ -86,7 +86,7 @@ export default function AiEntryPage() {
           rows={5}
           value={text}
           onChange={(e) => { setText(e.target.value); setEmptyHint(false); }}
-          placeholder="e.g. Sharma ji ka call aaya, 15 seat chahiye, kal call karna — 98765 43210"
+          placeholder="e.g. Mr Sharma called, needs 15 seats, call back tomorrow — 98765 43210"
           onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") read(); }}
         />
         {emptyHint && (

@@ -33,6 +33,7 @@ import {
   useMarkReminderSent,
   useResumeSubscription,
   useWriteOffSubscription,
+  usePaymentInvoiceCustomers,
   type Payment,
   type OutstandingRow,
 } from "@/lib/queries/payments";
@@ -42,6 +43,7 @@ import { seatQuotePendingText } from "@/lib/subscriptions/seat-quotes-pending";
 import { useAllProjectPayments } from "@/lib/queries/projects";
 import { collectedInMonth } from "@/lib/company/summary";
 import { paymentDocHref, paymentDocId } from "@/lib/payments/payment-source";
+import { paymentCustomerLookup, paymentInvoiceLookup, quotelessInvoiceIds, type PaymentCustomer, type PaymentInvoice } from "@/lib/payments/payment-customer";
 import { OpeningInvoiceDuesCard } from "@/components/features/invoices/opening-invoice-dues-card";
 import { useCustomers } from "@/lib/queries/customers";
 import { useBankAccounts } from "@/lib/queries/bank";
@@ -64,6 +66,7 @@ import { canOpenQuotes } from "@/lib/quotes/access";
 import { RecordQuotePaymentDialog } from "./record-quote-payment";
 import { DuesPayButton, duesPaymentRoute, useDuesQuoteLinks } from "./dues-pay";
 import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
+import { paymentsKpiPlan } from "./kpi-plan";
 import { PaymentRefundButton, usePaymentRefundFlow } from "@/components/features/payments/payment-refund";
 import {
   DropdownMenu,
@@ -178,15 +181,13 @@ function PaymentsPageInner() {
   const resumeSub         = useResumeSubscription();
   const writeOffSub       = useWriteOffSubscription();
 
-  // Build a lookup: quoteId → quote (for customer name + status context)
+  // Build a lookup: quoteId → quote (status context + its GST invoice)
   const quoteById = React.useMemo(() => {
-    const m = new Map<string, { customerName: string; paymentStatus: string; invoiceId: string | null; customerId: string | null }>();
+    const m = new Map<string, { paymentStatus: string; invoiceId: string | null }>();
     for (const q of quotes ?? []) {
       m.set(q.id, {
-        customerName:  q.customer_name,
         paymentStatus: q.payment_status,
         invoiceId:     q.invoice_id,
-        customerId:    q.customer_id,
       });
     }
     return m;
@@ -198,6 +199,24 @@ function PaymentsPageInner() {
     for (const c of customers ?? []) m.set(c.id, c);
     return m;
   }, [customers]);
+
+  /* R-1745: whose payment is it — the quote's customer, else (a payment on an imported Zoho
+     invoice, R-1739: no quote) the invoice's, else the payment's own customer_id. One lookup for
+     the rows, phone cards, search, sort, Export CSV and the receipt voucher / its PDF. */
+  const { data: invoiceCustomers } = usePaymentInvoiceCustomers(
+    React.useMemo(() => quotelessInvoiceIds(payments ?? []), [payments]),
+  );
+  const customerOf = React.useMemo(
+    () => paymentCustomerLookup({ quotes: quotes ?? [], invoices: invoiceCustomers ?? [], customers: customers ?? [] }),
+    [quotes, invoiceCustomers, customers],
+  );
+  /* R-1747: which invoice a payment is on — the quote's GST invoice, else (imported Zoho invoice)
+     payments.invoice_id. The refund flow and the receipt voucher read it from here, so such a
+     payment never goes down the credit-note route or prints "Advance received against service". */
+  const invoiceOf = React.useMemo(
+    () => paymentInvoiceLookup({ quotes: quotes ?? [], invoices: invoiceCustomers ?? [] }),
+    [quotes, invoiceCustomers],
+  );
 
   /* R-533: with ?customer= every number on the page is that customer's — the list, the tab
      counts, the summary line, the analytics strip, the dues card and the view counts. One
@@ -223,21 +242,20 @@ function PaymentsPageInner() {
     if (focus && !paymentInFocus(p, focus)) return false;   // the tile's own predicate
     if (!search.trim()) return true;
     const s = search.toLowerCase();
-    const quoteCtx = quoteById.get(p.quote_id ?? "");
     return (
       paymentDocId(p).toLowerCase().includes(s) ||
       (p.reference?.toLowerCase().includes(s) ?? false) ||
       p.method.toLowerCase().includes(s) ||
-      (quoteCtx?.customerName.toLowerCase().includes(s) ?? false)
+      (customerOf(p).customerName?.toLowerCase().includes(s) ?? false)
     );
-  }), [scopedPayments, tab, focus, quoteById, search]);
+  }), [scopedPayments, tab, focus, customerOf, search]);
 
   /* R-215: the list is on the shared DataTable — header sort, and R-104's "paint 50 at a
      time" now comes from its pageSize. Tab counts, KPIs, "collected" and the CSV export
      still use every payment in `filtered` / `payments`; only the painting is paged. */
   const paySort = React.useMemo(
-    () => paymentSortValues<Payment>((p) => quoteById.get(p.quote_id ?? "")?.customerName),
-    [quoteById],
+    () => paymentSortValues<Payment>((p) => customerOf(p).customerName),
+    [customerOf],
   );
   const payColumns: DataTableColumn<Payment>[] = [
     { id: "date", header: "Date", width: PAY_COL_WIDTHS.date, sortValue: paySort.date },
@@ -287,6 +305,10 @@ function PaymentsPageInner() {
 
   // Partial payments (quotes with status=partial)
   const partialQuotes = scoped.quotes.filter((q) => q.payment_status === "partial");
+  /* R-1730: one figure, one place — the strip shows figures only while collapsed, and the two
+     quote counts live in "Action needed" whenever it is shown (kpi-plan.ts). */
+  const actionCardShown = canWrite && !isLoading && (partialQuotes.length > 0 || awaitingInvoiceQuotes.length > 0);
+  const kpi = paymentsKpiPlan({ expanded: kpiOpen, actionCardShown });
 
   /* Collected this IST month — one helper (lib/company/summary.ts), shared with the dashboard
      Company section (R-062: it used to start at "the 1st at this time of day", browser clock).
@@ -316,10 +338,9 @@ function PaymentsPageInner() {
     /* R-045: gateway fee + net received, blank when not known (never a guessed zero). */
     const header = ["Date", "Customer", "Quote", "Amount", "Gateway fee", "Net received", "Method", "Reference", "Status", "Receipt Voucher"];
     const lines = filtered.map((p) => {
-      const ctx = quoteById.get(p.quote_id ?? "");
       const fee = paymentFeeView(p);
       return [
-        formatDate(p.received_at), ctx?.customerName ?? "", paymentDocId(p), String(p.amount),
+        formatDate(p.received_at), customerOf(p).customerName ?? "", paymentDocId(p), String(p.amount),
         fee ? String(fee.fee) : "", fee ? String(fee.net) : "",
         p.method ? paymentMethodLabel(p.method) : "", p.reference ?? "", p.status, p.receipt_voucher_no ?? "",
       ].map(esc).join(",");
@@ -404,17 +425,25 @@ function PaymentsPageInner() {
           <button
             type="button"
             onClick={() => setKpiOpen((o) => !o)}
+            aria-expanded={kpiOpen}
             className="w-full flex items-center justify-between px-3.5 py-2.5 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer"
           >
             <div className="flex items-center gap-2 flex-wrap text-xs">
               <Icon name="bar_chart" size={15} className="text-amber-ink" />
               <span className="font-semibold text-ink">Payments &amp; Collections Analytics</span>
-              <span className="text-ink-3">·</span>
-              <span className="text-ink-2 font-mono font-medium">Collected MTD: <b className="text-emerald">{rupee(mtdCollected, { compact: true })}</b></span>
-              <span className="text-ink-3 font-mono">·</span>
-              <span className="text-ink-2 font-mono font-medium">Partial Quotes: <b className="text-amber-ink">{partialQuotes.length}</b></span>
-              <span className="text-ink-3 font-mono">·</span>
-              <span className="text-ink-2 font-mono font-medium">Awaiting Invoice: <b className="text-amber-ink">{rupee(awaitingInvoiceTotal, { compact: true })}</b> ({awaitingInvoiceQuotes.length})</span>
+              {/* R-1730: figures here only while collapsed — expanded, the boxes below carry them. */}
+              {kpi.strip.includes("collected") && (<>
+                <span className="text-ink-3">·</span>
+                <span className="text-ink-2 font-mono font-medium">Collected MTD: <b className="text-emerald">{rupee(mtdCollected, { compact: true })}</b></span>
+              </>)}
+              {kpi.strip.includes("partial") && (<>
+                <span className="text-ink-3 font-mono">·</span>
+                <span className="text-ink-2 font-mono font-medium">Partial Quotes: <b className="text-amber-ink">{partialQuotes.length}</b></span>
+              </>)}
+              {kpi.strip.includes("awaiting") && (<>
+                <span className="text-ink-3 font-mono">·</span>
+                <span className="text-ink-2 font-mono font-medium">Awaiting GST Invoice: <b className="text-amber-ink">{rupee(awaitingInvoiceTotal, { compact: true })}</b> ({awaitingInvoiceQuotes.length})</span>
+              </>)}
             </div>
             <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
               <span>{kpiOpen ? "Collapse" : "Expand"}</span>
@@ -424,7 +453,7 @@ function PaymentsPageInner() {
 
           {kpiOpen && (
             <div className="p-3 border-t border-hairline bg-paper">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <div className={kpi.tiles.length > 2 ? "grid grid-cols-2 sm:grid-cols-4 gap-2.5" : "grid grid-cols-2 gap-2.5"}>
                 <button type="button" onClick={() => { setTab("all"); setFocus("received-month"); }} aria-pressed={focus === "received-month"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
                   <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Collected MTD</p>
                   <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(mtdCollected, { compact: true })}</p>
@@ -433,14 +462,19 @@ function PaymentsPageInner() {
                 </button>
                 {/* These two count QUOTES — they open the quotes they counted (lib/quotes/focus.ts). */}
                 {/* R-237: billing cannot open /quotes — the tile stays a number, not a dead link. */}
+                {/* R-1730: shown here only when "Action needed" (below) is not carrying them. */}
+                {kpi.tiles.includes("partial") && (
                 <button type="button" disabled={!canQuotes} onClick={() => router.push("/quotes?focus=partial" as never)} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left enabled:hover:border-amber/60 transition-all enabled:cursor-pointer">
                   <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Partial Quotes</p>
                   <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{partialQuotes.length}</p>
                 </button>
+                )}
+                {kpi.tiles.includes("awaiting") && (
                 <button type="button" onClick={() => router.push((canQuotes ? "/quotes?focus=to-invoice" : "/invoices") as never)} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
                   <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Awaiting GST Invoice</p>
                   <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{rupee(awaitingInvoiceTotal, { compact: true })} <span className="text-xs text-ink-3 font-normal">({awaitingInvoiceQuotes.length})</span></p>
                 </button>
+                )}
                 <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
                   <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Top Payment Method</p>
                   <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{topMethod ? paymentMethodLabel(topMethod[0]) : "—"}</p>
@@ -627,7 +661,7 @@ function PaymentsPageInner() {
       {/* Action needed — the two "close the loop" worklists (collect balance +
           generate the paid-but-uninvoiced GST invoices) merged into ONE compact
           card so they don't push the payment table down as two stacked bands. */}
-      {canWrite && !isLoading && (partialQuotes.length > 0 || awaitingInvoiceQuotes.length > 0) && (
+      {actionCardShown && (
         <GeminiCard title="Action needed to close the loop" compact>
           <ul className="space-y-2">
             {partialQuotes.length > 0 && (
@@ -637,7 +671,8 @@ function PaymentsPageInner() {
                 </span>
                 {canQuotes ? (
                   <Button asChild size="sm" variant="default" icon="external" className="shrink-0">
-                    <Link href={`/quotes/${partialQuotes[0].id}` as any}>Open</Link>
+                    {/* R-1730: the analytics no longer repeat this count — so with several, open them all. */}
+                    <Link href={(partialQuotes.length > 1 ? "/quotes?focus=partial" : `/quotes/${partialQuotes[0].id}`) as any}>Open</Link>
                   </Button>
                 ) : (
                   <Button size="sm" variant="default" icon="rupee" className="shrink-0" onClick={() => setPayQuoteId(partialQuotes[0].id)}>
@@ -653,7 +688,7 @@ function PaymentsPageInner() {
                 </span>
                 {/* Billing generates GST invoices on /invoices (the quote page is closed to it). */}
                 <Button asChild size="sm" variant="default" icon="receipt" className="shrink-0">
-                  <Link href={(canQuotes ? `/quotes/${awaitingInvoiceQuotes[0].id}` : "/invoices") as any}>Generate</Link>
+                  <Link href={(!canQuotes ? "/invoices" : awaitingInvoiceQuotes.length > 1 ? "/quotes?focus=to-invoice" : `/quotes/${awaitingInvoiceQuotes[0].id}`) as any}>Generate</Link>
                 </Button>
               </li>
             )}
@@ -763,8 +798,7 @@ function PaymentsPageInner() {
             cardsBelow="xl"
             pageSize={PAYMENTS_PAGE_SIZE}
             mobileCard={(p) => {
-            const ctx = quoteById.get(p.quote_id ?? "");
-            const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
+            const who = customerOf(p);
             return (
               <div className="bg-paper border border-hairline rounded-lg overflow-hidden">
                 <MaybeQuoteLink
@@ -775,7 +809,7 @@ function PaymentsPageInner() {
                   <div className="flex items-start justify-between gap-3 mb-1.5">
                     <div className="min-w-0 flex-1">
                       <p className="font-medium text-ink truncate">
-                        {cleanDisplayName(customer?.name ?? ctx?.customerName ?? "—")}
+                        {cleanDisplayName(who.customerName ?? "—")}
                       </p>
                       <p className="font-mono text-2xs text-ink-3 mt-0.5">{paymentDocId(p)}</p>
                     </div>
@@ -826,7 +860,8 @@ function PaymentsPageInner() {
                   {p.status === "received" && canWrite && (
                     <PaymentRefundButton
                       payment={p}
-                      invoiceId={ctx?.invoiceId ?? null}
+                      invoiceId={invoiceOf(p).invoiceId}
+                      invoiceNumber={invoiceOf(p).invoiceNumber}
                       className="flex flex-1 items-center justify-center gap-1.5 py-2 text-xs font-medium text-rose active:bg-paper-2 border-l border-hairline/60"
                     />
                   )}
@@ -837,13 +872,15 @@ function PaymentsPageInner() {
             }}
             renderRow={(p) => {
                 const ctx = quoteById.get(p.quote_id ?? "");
-                const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
+                const who = customerOf(p);
                 return (
                   <PaymentRowView
                     key={p.id}
                     p={p}
                     ctx={ctx}
-                    customer={customer}
+                    who={who}
+                    inv={invoiceOf(p)}
+                    customer={who.customerId ? customerById.get(who.customerId) : undefined}
                     me={me}
                     bankLabel={p.bank_account_id ? bankNameById.get(p.bank_account_id) : undefined}
                     onEdit={() => setEditPayment(p)}
@@ -955,7 +992,7 @@ function PaymentsPageInner() {
         onOpenChange={(o) => { if (!o) setEditPayment(null); }}
         payment={editPayment}
         customerName={
-          (editPayment && quoteById.get(editPayment.quote_id ?? "")?.customerName) || "Customer"
+          (editPayment && customerOf(editPayment).customerName) || "Customer"
         }
       />
 
@@ -1083,6 +1120,8 @@ function MaybeQuoteLink({
 function PaymentRowView({
   p,
   ctx,
+  who,
+  inv,
   customer,
   me,
   bankLabel,
@@ -1091,7 +1130,11 @@ function PaymentRowView({
   rowRef,
 }: {
   p: Payment;
-  ctx?: { customerName: string; paymentStatus: string; invoiceId: string | null; customerId: string | null };
+  ctx?: { paymentStatus: string; invoiceId: string | null };
+  /** R-1745: whose payment it is (lib/payments/payment-customer.ts). */
+  who: PaymentCustomer;
+  /** R-1747: which invoice it is on (lib/payments/payment-customer.ts paymentInvoiceLookup). */
+  inv: PaymentInvoice;
   customer?: {
     name:           string;
     gstin:          string | null;
@@ -1134,7 +1177,8 @@ function PaymentRowView({
      it too, and it offers the partial refund of credit-note credit. */
   const refundFlow = usePaymentRefundFlow({
     payment: p,
-    invoiceId: ctx?.invoiceId ?? null,
+    invoiceId: inv.invoiceId,
+    invoiceNumber: inv.invoiceNumber,
     onBlocked: (msg) =>
       toast.error(msg, {
         description: canQuotes ? "This block is cleared on the quote or in Banking — the next step is there." : noQuoteHint,
@@ -1163,7 +1207,7 @@ function PaymentRowView({
     customer.state_code !== me.tenantStateCode,
   );
 
-  const customerName = cleanDisplayName(ctx?.customerName ?? "—");
+  const customerName = cleanDisplayName(who.customerName ?? "—");
   return (
     <tr
       ref={rowRef}
@@ -1186,8 +1230,8 @@ function PaymentRowView({
     >
       <td className="px-3 py-2.5 text-xs text-ink-2 whitespace-nowrap align-top">{formatDate(p.received_at)}</td>
       <td className="px-3 py-2.5 text-sm font-medium align-top" onClick={(e) => e.stopPropagation()}>
-        {ctx?.customerId ? (
-          <Link href={`/customers/${ctx.customerId}` as never} className="text-ink hover:text-amber-ink hover:underline break-words leading-snug">{customerName}</Link>
+        {who.customerId ? (
+          <Link href={`/customers/${who.customerId}` as never} className="text-ink hover:text-amber-ink hover:underline break-words leading-snug">{customerName}</Link>
         ) : (
           <span className="text-ink break-words leading-snug">{customerName}</span>
         )}
@@ -1258,7 +1302,7 @@ function PaymentRowView({
               {canQuotes && (
                 <DropdownMenuItem asChild className="gap-2.5 py-2 cursor-pointer">
                   <Link href={paymentDocHref(p) as any}>
-                    <Icon name="external" size={16} /> Open quote
+                    <Icon name="external" size={16} /> {p.quote_id ? "Open quote" : "Open invoice"}
                   </Link>
                 </DropdownMenuItem>
               )}
@@ -1298,7 +1342,7 @@ function PaymentRowView({
             open={receiptOpen}
             onOpenChange={setReceiptOpen}
             payment={p}
-            customerName={customer?.name ?? ctx?.customerName ?? "Customer"}
+            customerName={who.customerName ?? "Customer"}
             customerGstin={customer?.gstin}
             customerEmail={customer?.contact_email}
             tenantName={me.tenantName}
@@ -1309,6 +1353,7 @@ function PaymentRowView({
             tenantState={me.tenantState}
             interState={interState}
             quoteId={p.quote_id ?? undefined}
+            openingInvoiceNumber={inv.openingBalance ? inv.invoiceNumber : undefined}
           />
         )}
         {refundFlow.element}

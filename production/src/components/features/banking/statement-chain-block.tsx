@@ -27,7 +27,7 @@ interface Props {
 }
 
 export function gapText(g: PreviewGap): string {
-  return `${g.pages ? `Page ${pagesLabel(g.pages)}: ` : ""}${rupee(Math.abs(g.amount))} ki lines chhoot rahi hain — ${formatDate(g.after)} se ${formatDate(g.by)}`;
+  return `${g.pages ? `Page ${pagesLabel(g.pages)}: ` : ""}lines worth ${rupee(Math.abs(g.amount))} are missing — ${formatDate(g.after)} to ${formatDate(g.by)}`;
 }
 
 export function StatementChainBlock({ check, source, ack, onAck, note }: Props) {
@@ -37,14 +37,14 @@ export function StatementChainBlock({ check, source, ack, onAck, note }: Props) 
         {check.ran ? (
           <p className="text-xs text-emerald flex items-start gap-1.5">
             <Icon name="check_circle" size={13} className="mt-0.5 shrink-0" />
-            <span>Balance chain poori — har line ka balance pichhli line se milta hai, koi line chhooti nahi.</span>
+            <span>Balance chain complete — every line's balance follows from the previous line; no line is missing.</span>
           </p>
         ) : (
           <p className="text-xs text-amber-ink flex items-start gap-1.5">
             <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
             <span>
-              <b>Balance check nahi chal paaya</b> — is statement mein running balance (Balance column) nahi hai, isliye
-              ye pakka nahi keh sakte ki saari lines aayi hain. Import ke baad bank ke closing balance se zaroor milao.
+              <b>Balance check could not run</b> — this statement has no running balance (Balance column), so
+              we cannot confirm that every line came through. After importing, match it with the bank's closing balance.
             </span>
           </p>
         )}
@@ -59,14 +59,14 @@ export function StatementChainBlock({ check, source, ack, onAck, note }: Props) 
         <Icon name="alert" size={14} className="mt-0.5 shrink-0" />
         <span>
           {source === "ai"
-            ? "Statement ki kuch lines is preview mein nahi hain — AI ne chhod di."
-            : "Ye file adhoori hai — statement ki kuch lines isme nahi hain."}
+            ? "Some statement lines are missing from this preview — the AI skipped them."
+            : "This file is incomplete — some statement lines are not in it."}
         </span>
       </p>
       <p className="text-xs text-ink-3 mt-0.5 pl-5">
         {check.gaps.length > 0
-          ? "Har line ka running balance pichhli line se milaya: in jagah balance ka hisaab nahi baithta."
-          : "AI ne in pages par jitni lines gini, utni likhi nahi — aur balance column nahi hai jo poora hona saabit kare."}
+          ? "Each line's running balance was checked against the previous line: the balance does not add up at these points."
+          : "The AI counted more lines on these pages than it returned — and there is no balance column to prove the statement is complete."}
       </p>
 
       <ul className="mt-2 space-y-1 pl-5 text-xs text-ink-2">
@@ -75,14 +75,14 @@ export function StatementChainBlock({ check, source, ack, onAck, note }: Props) 
             • <b>{gapText(g)}</b>
             <span className="text-ink-3">
               {g.amount > 0
-                ? " (itna paisa bank se gaya, uski line yahan nahi)"
-                : " (itna paisa bank mein aaya, uski line yahan nahi — ya koi line do baar aa gayi)"}
+                ? " (this much left the bank, but its line is not here)"
+                : " (this much came into the bank, but its line is not here — or a line appears twice)"}
             </span>
           </li>
         ))}
         {check.rowCountIssues.map((i) => (
           <li key={`rc-${i.pages.from}-${i.pages.to}`}>
-            • <b>Page {pagesLabel(i.pages)}: AI ne {i.counted} lines gini, par {i.returned} hi likhi</b>
+            • <b>Page {pagesLabel(i.pages)}: the AI counted {i.counted} lines but returned only {i.returned}</b>
           </li>
         ))}
       </ul>
@@ -90,10 +90,10 @@ export function StatementChainBlock({ check, source, ack, onAck, note }: Props) 
       {note && <p className="mt-2 pl-5 text-xs text-ink-3">{note}</p>}
 
       <p className="mt-2 pl-5 text-xs text-ink-2 leading-relaxed">
-        <b>Sabse pakka:</b>{" "}
+        <b>Safest:</b>{" "}
         {source === "ai"
-          ? "net banking se isi period ka statement CSV / Excel (\"Delimited\") download karke import karo — usme AI nahi lagta, koi line nahi chhoot-ti."
-          : "bank se poori period ka statement dobara CSV / Excel download karo (\"Recent transactions\" nahi — woh sirf aakhri 20 dikhata hai) aur wahi import karo."}
+          ? "download this period's statement as CSV / Excel (\"Delimited\") from net banking and import that — no AI is involved, so no line is missed."
+          : "download the full period's statement again as CSV / Excel from the bank (not \"Recent transactions\" — it shows only the last 20) and import that."}
       </p>
 
       <label className="mt-2 pl-5 flex items-start gap-2 cursor-pointer text-xs text-ink">
@@ -104,8 +104,8 @@ export function StatementChainBlock({ check, source, ack, onAck, note }: Props) 
           onChange={(e) => onAck(e.target.checked)}
         />
         <span>
-          <b>Main jaanta hoon, adhoora import karna hai</b>
-          <span className="block text-ink-3">Chhooti hui lines baad mein alag se import karni hongi, warna bank balance galat dikhega.</span>
+          <b>I understand — import the incomplete statement anyway</b>
+          <span className="block text-ink-3">The missing lines must be imported separately later, or the bank balance will be wrong.</span>
         </span>
       </label>
     </div>

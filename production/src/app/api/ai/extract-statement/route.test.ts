@@ -95,7 +95,7 @@ describe("chunked PDF — 12 pages read a few at a time", () => {
     ai.json.mockImplementation(async (a: GeminiArgs) => {
       const p = askedPages(a.user)!;
       if (p[0] === 7) {
-        a.onFailure?.("Gemini ne 60 second me jawab nahi diya, dobara koshish ke baad bhi. Thodi der baad phir se try kariye.");
+        a.onFailure?.("Gemini timed out after 60 seconds, even after a retry. Please try again in a little while.");
         return null;
       }
       return { rows: [aiRow(p[0]), aiRow(p[1])] };
@@ -172,13 +172,13 @@ describe("R-1693 — every line, and the model's own count of them", () => {
 describe("honest failure messages", () => {
   it("a timeout says the statement is big and offers CSV / Excel — never 'busy'", async () => {
     ai.json.mockImplementation(async (a: GeminiArgs) => {
-      a.onFailure?.("Gemini ne 60 second me jawab nahi diya, dobara koshish ke baad bhi. Thodi der baad phir se try kariye.");
+      a.onFailure?.("Gemini timed out after 60 seconds, even after a retry. Please try again in a little while.");
       return null;
     });
     const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
     expect(r.status).toBe(504);
     expect(r.json.kind).toBe("timeout");
-    expect(r.json.error).toMatch(/Statement bada hai/);
+    expect(r.json.error).toMatch(/statement is too big/);
     expect(r.json.error).toMatch(/CSV\/Excel/);
     expect(r.json.error).not.toMatch(/busy/i);
   });

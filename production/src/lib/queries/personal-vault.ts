@@ -33,7 +33,7 @@ export type PersonalHoldingInsert = Database["public"]["Tables"]["personal_holdi
 async function requireIdentity(): Promise<{ userId: string; tenantId: string }> {
   const supabase = createClient();
   const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) throw new Error("Aap logged in nahi ho — dobara login karo.");
+  if (!auth.user) throw new Error("You are not signed in — please sign in again.");
 
   const { data: me, error } = await supabase
     .from("users")
@@ -41,7 +41,7 @@ async function requireIdentity(): Promise<{ userId: string; tenantId: string }> 
     .eq("id", auth.user.id)
     .maybeSingle();
   if (error) throw error;
-  if (!me?.tenant_id) throw new Error("Aapka workspace abhi load ho raha hai — ek pal ruk kar dobara try karo.");
+  if (!me?.tenant_id) throw new Error("Your workspace is still loading — wait a moment and try again.");
 
   return { userId: auth.user.id, tenantId: me.tenant_id };
 }
@@ -246,7 +246,7 @@ export function usePinStatus() {
     queryKey: ["personal-vault", "pin-status"],
     queryFn: async (): Promise<PinStatus> => {
       const res = await fetch("/api/vault/personal/pin");
-      if (!res.ok) throw new Error("PIN status load nahi hua");
+      if (!res.ok) throw new Error("Could not load PIN status");
       return (await res.json()) as PinStatus;
     },
     staleTime: 10_000,
@@ -263,7 +263,7 @@ export function useSetPin() {
         body: JSON.stringify({ action: "set", ...args }),
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(body.error || "PIN set nahi hua");
+      if (!res.ok) throw new Error(body.error || "Could not set the PIN");
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["personal-vault", "pin-status"] }),
   });
@@ -279,7 +279,7 @@ export function useRemovePin() {
         body: JSON.stringify({ action: "remove", currentPin }),
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(body.error || "PIN hataya nahi ja saka");
+      if (!res.ok) throw new Error(body.error || "Could not remove the PIN");
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["personal-vault", "pin-status"] }),
   });
@@ -295,7 +295,7 @@ export function useVerifyPin() {
         body: JSON.stringify({ action: "verify", pin }),
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(body.error || "PIN galat hai");
+      if (!res.ok) throw new Error(body.error || "Wrong PIN");
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["personal-vault", "pin-status"] }),
   });

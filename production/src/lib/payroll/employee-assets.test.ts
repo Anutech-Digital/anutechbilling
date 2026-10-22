@@ -16,7 +16,7 @@ describe("holdings", () => {
     expect(h.returned).toHaveLength(1);
     expect(h.counts).toEqual({ devices: 1, access: 2, physical: 1 });
     expect(h.summary).toBe("1 device · 2 login/SIM · 1 item");
-    expect(holdings([]).summary).toBe("kuch nahi");
+    expect(holdings([]).summary).toBe("none");
   });
 });
 

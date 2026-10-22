@@ -48,7 +48,7 @@ describe("POST /api/auth/mfa/enroll (R-1547)", () => {
     me = { ...me!, mfaEnrolled: true };
     const r = await call("enroll", {});
     expect(r.status).toBe(403);
-    expect((await r.json()).error).toMatch(/maujooda authenticator ka code/);
+    expect((await r.json()).error).toMatch(/code from your current authenticator/);
     expect(enroll).not.toHaveBeenCalled();
   });
 

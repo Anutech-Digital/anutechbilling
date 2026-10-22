@@ -21,7 +21,8 @@ import {
   type ContactLinkRow,
 } from "@/lib/contacts/search-index";
 import type { ContactRow, ContactChannel } from "@/lib/supabase/database.types";
-import { buildContactBook, type BookCustomerLinkRow } from "@/lib/contacts/book";
+import { buildContactBook, type BookCustomerLinkRow, type BookRelationshipRow } from "@/lib/contacts/book";
+import type { BizFacet, Closeness, RelationshipType } from "@/lib/contacts/relationship";
 
 export type Contact = ContactRow;
 export type { ContactChannel } from "@/lib/supabase/database.types";
@@ -41,10 +42,13 @@ export interface UnifiedContact {
   status:    string | null;
   /** Sub-source for imported contacts: 'google_csv' | 'manual' | etc. */
   importedFrom?: string;
-  /** Relationship classification for standalone contacts: 'partner' | 'vendor'
-   *  | 'personal' | 'other'. null/undefined for lead/customer contacts (their
-   *  kind comes from the source). */
-  relationship?: string | null;
+  /** R-1740 Business side, from links (lead / customer / vendor-partner / none). */
+  business?: BizFacet;
+  /** R-1740 my relationship with this person — from their contacts row; 'unknown' when none. */
+  relationshipType?: RelationshipType;
+  closeness?: Closeness | null;
+  /** The contacts.id whose relationship this row shows (where an edit is saved). */
+  relContactId?: string | null;
   createdAt: string;
   /** ALL emails/phones this identity is reachable at, merged across every source
    *  row that shares an email OR phone with it (dedup, primary first). One real
@@ -72,22 +76,10 @@ export interface UnifiedContact {
   domain?: string | null;
 }
 
-/** A contact's unified "kind" for filtering + badges. Leads/customers derive it
- *  from their source; standalone contacts from their `relationship` column. */
-export type ContactKind = "lead" | "customer" | "partner" | "vendor" | "employee" | "personal" | "other";
-
-export function contactKind(c: UnifiedContact): ContactKind {
-  // Hard business relations, derived from real data (no AI, no guessing):
-  if (c.source === "customer") return "customer";  // we sold to them
-  if (c.source === "vendor")   return "vendor";    // we buy from them
-  if (c.source === "partner")  return "partner";   // referral / commission
-  if (c.source === "employee") return "employee";  // works for us
-  if (c.source === "lead")     return "lead";      // they enquired
-  // Standalone contact — its manually-set relationship, else "not decided".
-  const rel = (c.relationship ?? "").toLowerCase();
-  if (rel === "partner" || rel === "vendor" || rel === "personal") return rel;
-  return "other";
-}
+/* R-1740: the old contactKind (Lead / Company / Partner / Vendor / Employee / Personal /
+   Not decided, half of it read from the hand-set `contacts.relationship`) is gone. The
+   Business side now comes from links (UnifiedContact.business, built in lib/contacts/book.ts)
+   and the personal side from relationship_type + closeness. */
 
 export function useAllContacts() {
   return useQuery({
@@ -99,7 +91,7 @@ export function useAllContacts() {
          ending on the unique id). A failed source still reads as empty, as before — a role
          that cannot see employees must not lose the whole contact book. */
       const lenient = <T,>(p: Promise<T[]>): Promise<T[]> => p.catch(() => []);
-      const [leadsData, customersData, vendorsData, partnersData, importedData, employeesData, customerLinksData] = await Promise.all([
+      const [leadsData, customersData, vendorsData, partnersData, importedData, employeesData, customerLinksData, relationshipsData] = await Promise.all([
         lenient(fetchAllRows((from, to) => supabase
           .from("leads")
           .select("id, company, contact_name, contact_email, contact_phone, stage, created_at, is_junk, contact_id")
@@ -125,7 +117,7 @@ export function useAllContacts() {
           .range(from, to))),
         lenient(fetchAllRows((from, to) => supabase
           .from("contacts")
-          .select("id, full_name, email, phone, company, title, source, status, relationship, promoted_to_lead_id, created_at")
+          .select("id, full_name, email, phone, company, title, source, status, customer_id, promoted_to_lead_id, created_at")
           // 'enquiry' contacts are durable identity anchors auto-created for leads
           // (migration 0197). They're never shown directly — the lead they belong
           // to already represents the person in the book (and if that lead is junk,
@@ -149,7 +141,15 @@ export function useAllContacts() {
            Without it a company row had a blank email/phone (see lib/contacts/book.ts). */
         lenient(fetchAllRows((from, to) => supabase
           .from("customer_contacts")
-          .select("id, customer_id, is_primary, contacts(full_name, email, phone)")
+          .select("id, customer_id, contact_id, is_primary, contacts(full_name, email, phone)")
+          .order("id", { ascending: true })
+          .range(from, to))),
+        /* R-1740: my relationship with every person, lead anchors ('enquiry') included —
+           a lead's person keeps it on the lead's contact_id. Its own read, so a database
+           without the columns yet loses only the chips, not the contact book. */
+        lenient(fetchAllRows((from, to) => supabase
+          .from("contacts")
+          .select("id, relationship_type, closeness")
           .order("id", { ascending: true })
           .range(from, to))),
       ]);
@@ -161,6 +161,7 @@ export function useAllContacts() {
         imported:  importedData,
         employees: employeesData,
         customerLinks: customerLinksData as unknown as BookCustomerLinkRow[],
+        relationships: relationshipsData as unknown as BookRelationshipRow[],
       });
     },
   });
@@ -261,8 +262,10 @@ export type ContactFormValues = {
   /** Optional link to a customer company — surfaces that company's records on
    *  the contact detail page. null = free-text `company` only. */
   customer_id?: string | null;
-  /** Relationship classification: 'partner' | 'vendor' | 'personal' | 'other'. */
-  relationship?: string | null;
+  /** R-1740 my relationship with this person (never null in the DB; 'unknown' = not chosen). */
+  relationship_type?: RelationshipType;
+  /** close | known | weak; null = not set. */
+  closeness?: Closeness | null;
   /** Personal-profile fields (migration 0198). birthday/anniversary = YYYY-MM-DD. */
   birthday?:    string | null;
   anniversary?: string | null;
@@ -369,6 +372,28 @@ export function useUpdateContact() {
       qc.invalidateQueries({ queryKey: ["contact", id] });
     },
     onError: (err) => toastError(err),
+  });
+}
+
+/**
+ * R-1740: save my relationship with one person (their contacts row). The same call from the
+ * contact page, a lead and a customer, so the chip everywhere reads one fact.
+ */
+export function useSetContactRelationship() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, relationship_type, closeness }: { id: string; relationship_type: RelationshipType; closeness: Closeness | null }) => {
+      const supabase = createClient();
+      const { error } = await supabase.from("contacts").update({ relationship_type, closeness }).eq("id", id);
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: (id) => {
+      qc.invalidateQueries({ queryKey: ["contacts"] });
+      qc.invalidateQueries({ queryKey: ["contact", id] });
+      toast.success("Relationship saved");
+    },
+    onError: (err) => toastError(err, { fallback: "Could not save the relationship.", description: "Refresh the page and try again." }),
   });
 }
 

@@ -74,7 +74,7 @@ export function useSyncWaTemplates() {
     mutationFn: async () => {
       const res = await fetch("/api/marketing/whatsapp/templates/sync", { method: "POST" });
       const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j.error ?? "Sync nahi hua");
+      if (!res.ok) throw new Error(j.error ?? "Sync failed");
       return j as { found: number; updated: number; added: number };
     },
     onSuccess: (j) => { qc.invalidateQueries({ queryKey: TPL }); toast.success(`Meta se ${j.found} templates — ${j.updated} update, ${j.added} naye`); },
@@ -104,7 +104,7 @@ export function useAddWaOptOut() {
         { tenant_id: tenantId, phone, reason: "manual" }, { onConflict: "tenant_id,phone", ignoreDuplicates: true });
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: OPT }); toast.success("Number opt-out list mein daala"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: OPT }); toast.success("Number added to the opt-out list"); },
     onError: (err) => toastError(err),
   });
 }
@@ -116,7 +116,7 @@ export function useRemoveWaOptOut() {
       const { error } = await db().from("whatsapp_opt_outs").delete().eq("phone", phone);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: OPT }); toast.success("Opt-out hataya"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: OPT }); toast.success("Opt-out removed"); },
     onError: (err) => toastError(err),
   });
 }
@@ -147,7 +147,7 @@ async function post<T>(body: unknown): Promise<T> {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
   const j = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(j.error ?? "Broadcast nahi hua");
+  if (!res.ok) throw new Error(j.error ?? "Broadcast failed");
   return j as T;
 }
 
@@ -164,7 +164,7 @@ export function useSendBroadcast() {
     mutationFn: (v: BroadcastInput) => post<{ sent: number; failed: number; skippedOptOut: number; recipients: number }>(v),
     onSuccess: (j) => {
       qc.invalidateQueries({ queryKey: BC });
-      toast.success(`${j.sent}/${j.recipients} bheje${j.failed ? ` · ${j.failed} fail` : ""}${j.skippedOptOut ? ` · ${j.skippedOptOut} opt-out chhode` : ""}`);
+      toast.success(`${j.sent}/${j.recipients} sent${j.failed ? ` · ${j.failed} failed` : ""}${j.skippedOptOut ? ` · ${j.skippedOptOut} opted-out skipped` : ""}`);
     },
     onError: (err) => toastError(err),
   });

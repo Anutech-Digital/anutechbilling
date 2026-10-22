@@ -45,12 +45,12 @@ import { fyStartISO } from "@/lib/dates/ist";
 type TxKind = PersonalTransaction["kind"];
 
 const KIND_LABEL: Record<TxKind, string> = {
-  drawing: "Drawing (company se)",
+  drawing: "Drawing (from company)",
   dividend: "Dividend",
   salary: "Salary",
   interest: "Interest",
-  other_income: "Aur koi income",
-  expense: "Kharcha",
+  other_income: "Other income",
+  expense: "Expense",
 };
 
 const INCOME_KINDS: TxKind[] = ["drawing", "dividend", "salary", "interest", "other_income"];
@@ -143,21 +143,21 @@ export default function PersonalExpensesPage() {
         account_id: form.account_id || null,
         note: form.note.trim() || null,
       });
-      toast.success(form.id ? "Entry update ho gayi." : "Entry add ho gayi.");
+      toast.success(form.id ? "Entry updated." : "Entry added.");
       setOpen(false);
     } catch { /* the hook surfaced it */ }
   };
 
   const handleDelete = async (t: PersonalTransaction) => {
     const ok = await confirm({
-      title: "Ye entry hata dein?",
+      title: "Remove this entry?",
       body: `${KIND_LABEL[t.kind]} · ₹${t.amount.toLocaleString("en-IN")} · ${formatDate(t.occurred_on)}`,
-      confirmLabel: "Hata do",
+      confirmLabel: "Remove",
       danger: true,
     });
     if (!ok) return;
     await del.mutateAsync(t.id);
-    toast.success("Entry hata di.");
+    toast.success("Entry removed.");
   };
 
   const isIncome = INCOME_KINDS.includes(form.kind);
@@ -166,7 +166,7 @@ export default function PersonalExpensesPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-ink-3">
-          Company se nikala hua paisa aur ghar ke kharche — aapka apna record.
+          Money taken from the company and household expenses — your own record.
         </p>
         <div className="flex gap-2 flex-shrink-0">
           <Button variant="outline" onClick={() => openNew("drawing")}>
@@ -175,7 +175,7 @@ export default function PersonalExpensesPage() {
           </Button>
           <Button onClick={() => openNew("expense")} className="bg-primary text-white">
             <Icon name="plus" size={14} className="mr-1.5" />
-            Kharcha
+            Expense
           </Button>
         </div>
       </div>
@@ -184,9 +184,9 @@ export default function PersonalExpensesPage() {
       <div className="rounded-lg border border-hairline bg-paper-2 p-3 flex gap-2.5">
         <Icon name="info" size={15} className="text-ink-3 flex-shrink-0 mt-0.5" />
         <p className="text-xs text-ink-2 leading-relaxed">
-          Yahan drawing likhne se company ki books me <b>kuch nahi</b> hota. Ye sirf aapka apna
-          hisaab hai. Asli drawing company ke books me alag se aani chahiye — warna balance sheet
-          aur bank reconcile nahi milenge.
+          Recording a drawing here changes <b>nothing</b> in the company books. This is only your own
+          record. The actual drawing must be entered separately in the company books — otherwise the balance sheet
+          and bank reconciliation will not match.
         </p>
       </div>
 
@@ -198,26 +198,26 @@ export default function PersonalExpensesPage() {
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Company se (is FY)</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-4">From company (this FY)</p>
               <div className="mt-0.5"><Money amount={flow.drawnFromCompany} size="display" /></div>
             </Card>
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Kul aaya</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-4">Total in</p>
               <div className="mt-0.5"><Money amount={flow.moneyIn} size="display" /></div>
             </Card>
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Kharch hua</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-4">Total spent</p>
               <div className="mt-0.5"><Money amount={flow.moneyOut} size="display" /></div>
             </Card>
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Bacha</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-4">Left over</p>
               <div className="mt-0.5"><Money amount={flow.net} size="display" /></div>
             </Card>
           </div>
 
           {flow.byCategory.length > 0 && (
             <Card className="p-5">
-              <h2 className="text-sm font-medium text-ink">Kharche kis cheez par (is FY)</h2>
+              <h2 className="text-sm font-medium text-ink">Spending by category (this FY)</h2>
               <ul className="mt-3 space-y-1.5">
                 {flow.byCategory.slice(0, 8).map((c) => (
                   <li key={c.category} className="flex items-baseline justify-between text-sm">
@@ -233,9 +233,9 @@ export default function PersonalExpensesPage() {
             <Card className="p-6">
               <EmptyState
                 icon="receipt"
-                title="Abhi koi entry nahi"
-                body="Company se nikala paisa ya ghar ka kharcha add karo."
-                action={<Button onClick={() => openNew("drawing")}>Pehli entry</Button>}
+                title="No entries yet"
+                body="Add money taken from the company or a household expense."
+                action={<Button onClick={() => openNew("drawing")}>Add first entry</Button>}
               />
             </Card>
           ) : (
@@ -281,7 +281,7 @@ export default function PersonalExpensesPage() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
-            <DialogTitle>{form.id ? "Entry edit karo" : "Nayi entry"}</DialogTitle>
+            <DialogTitle>{form.id ? "Edit entry" : "New entry"}</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-3">
@@ -325,7 +325,7 @@ export default function PersonalExpensesPage() {
                 >
                   <SelectTrigger id="ve-account"><SelectValue placeholder="Cash" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Cash / koi nahi</SelectItem>
+                    <SelectItem value="none">Cash / none</SelectItem>
                     {accounts.map((a) => <SelectItem key={a.id} value={a.id}>{a.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -334,14 +334,14 @@ export default function PersonalExpensesPage() {
 
             {!isIncome && (
               <div>
-                <label htmlFor="ve-category" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Kis cheez par</label>
+                <label htmlFor="ve-category" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Category</label>
                 <Select
                   value={form.category || "none"}
                   onValueChange={(v) => setForm((f) => ({ ...f, category: v === "none" ? "" : v }))}
                 >
-                  <SelectTrigger id="ve-category"><SelectValue placeholder="Chuno" /></SelectTrigger>
+                  <SelectTrigger id="ve-category"><SelectValue placeholder="Select" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Nahi bataya</SelectItem>
+                    <SelectItem value="none">Not specified</SelectItem>
                     {PERSONAL_EXPENSE_CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>

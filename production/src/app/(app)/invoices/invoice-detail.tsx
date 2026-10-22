@@ -175,7 +175,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const interState = isInterStateSupply(
     customer?.state_code,
     supplier?.stateCode,
-    { customerGstin: customer?.gstin, sellerGstin: supplier?.gstin },
+    /* R-1742: an SEZ buyer is IGST even in our own state — the treatment frozen at issue
+       first, the customer's for an invoice issued before R-1736. */
+    { customerGstin: customer?.gstin, sellerGstin: supplier?.gstin, treatment: invoice.gst_treatment ?? customer?.gst_treatment },
   );
   const receivedPayments = (payments ?? []).filter((p) => p.status === "received");
 
@@ -533,9 +535,9 @@ export function InvoiceTdsBanner({
       <span className="flex items-start gap-2 min-w-0">
         <Icon name="info" size={14} className="shrink-0 mt-0.5" />
         <span>
-          <b>Baaki {rupee(match.shortfall)} = {match.ratePct}% TDS lagta hai</b>{" "}
-          ({match.section}, {rupee(match.base)} ka {match.ratePct}%). Customer ne TDS kaata ho to
-          ise TDS ki tarah darj karein — invoice Paid ho jayega aur rakam TDS Receivable me jayegi.
+          <b>Balance {rupee(match.shortfall)} — looks like {match.ratePct}% TDS</b>{" "}
+          ({match.section}, {match.ratePct}% of {rupee(match.base)}). If the customer deducted TDS,
+          record it as TDS — the invoice becomes Paid and the amount goes to TDS Receivable.
         </span>
       </span>
       <Button size="sm" variant="outline" icon="rupee" onClick={() => onRecordTds(match)}>
@@ -611,7 +613,7 @@ export function InvoicePaymentsAccordion({
   const [receiptPayment, setReceiptPayment] = React.useState<Payment | null>(null);
 
   const received = (payments ?? []).filter((p) => p.status === "received");
-  const interState = isInterStateSupply(customer?.state_code, me?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: me?.tenantGstin });
+  const interState = isInterStateSupply(customer?.state_code, me?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: me?.tenantGstin, treatment: inv.gst_treatment ?? customer?.gst_treatment });
 
   if (isLoading || projLoading) return <div className="text-xs text-ink-3 italic">Loading receipts…</div>;
 

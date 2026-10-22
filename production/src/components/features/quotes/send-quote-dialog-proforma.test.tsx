@@ -33,16 +33,16 @@ function show(props: Partial<React.ComponentProps<typeof SendQuoteDialog>> = {})
 }
 
 describe("SendQuoteDialog — R-1523", () => {
-  it("no UPI ID → 'Pay QR ke liye Settings me UPI ID daalo' + Settings button", () => {
+  it("no UPI ID → 'Add your UPI ID in Settings to show a Pay QR' + Settings button", () => {
     show({ upiVpa: null, currency: "INR" });
-    expect(screen.getByText(/Pay QR ke liye Settings me UPI ID daalo/)).toBeTruthy();
+    expect(screen.getByText(/Add your UPI ID in Settings to show a Pay QR/)).toBeTruthy();
     const link = screen.getByRole("link", { name: /Settings/ });
     expect(link.getAttribute("href")).toBe("/settings?tab=company#payment-details");
   });
 
-  it("non-INR quote → 'UPI sirf INR quotes par'", () => {
+  it("non-INR quote → 'UPI works only for INR quotes'", () => {
     show({ upiVpa: "demo@okhdfcbank", currency: "USD" });
-    expect(screen.getByText(/UPI sirf INR quotes par/)).toBeTruthy();
+    expect(screen.getByText(/UPI works only for INR quotes/)).toBeTruthy();
   });
 
   it("UPI set on an INR quote → no message", () => {

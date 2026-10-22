@@ -406,8 +406,8 @@ describe("timeout — 28 Aug ka prod maamla", () => {
     let reason = "";
     await geminiJson({ ...ARGS, timeoutMs: 15_000, onFailure: (r) => { reason = r; } });
     expect(reason).not.toBe("");
-    expect(reason).toMatch(/15 second|jawab nahi/i);
-    expect(reason).toMatch(/dobara koshish|phir se/i);   // §24: ab kya karein
+    expect(reason).toMatch(/15 seconds|timed out/i);
+    expect(reason).toMatch(/try again/i);   // §24: ab kya karein
   });
 
   it("network error par bhi wajah deta hai", async () => {

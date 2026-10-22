@@ -52,17 +52,17 @@ function firstName(full: string | null): string {
   return n.split(/\s+/)[0] || "there";
 }
 
-/** Hinglish greeting copy. Customer-facing → stays Hinglish (app UI is English). */
+/** Greeting copy sent to employees — plain English (R-1728: the whole app is English). */
 function greetingCopy(kind: Kind, name: string, tenantName: string): { subject: string; text: string } {
   const first = firstName(name);
   if (kind === "birthday") {
     return {
       subject: `Happy Birthday, ${first}! 🎂`,
       text:
-`Namaste ${first},
+`Dear ${first},
 
-Aapko janamdin ki dher saari shubhkaamnaayein! 🎂🎉
-Aapka aane wala saal khushiyon, sehat aur safalta se bhara ho.
+Wishing you a very happy birthday! 🎂🎉
+May the year ahead bring you happiness, good health and success.
 
 Warm wishes,
 ${tenantName}`,
@@ -71,10 +71,10 @@ ${tenantName}`,
   return {
     subject: `Happy Anniversary, ${first}! 💐`,
     text:
-`Namaste ${first},
+`Dear ${first},
 
-Aapko anniversary ki dil se dher saari shubhkaamnaayein! 💐🎉
-Yeh khaas din aur aane wale saal aapke liye yaadgaar rahein.
+Heartfelt congratulations on your anniversary! 💐🎉
+May this special day and the years ahead be memorable for you.
 
 Warm wishes,
 ${tenantName}`,

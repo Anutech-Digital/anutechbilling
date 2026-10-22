@@ -23,6 +23,77 @@ import { cn } from "@/lib/utils";
 import type { ProvisioningTask, QuoteLineItem } from "@/lib/supabase/database.types";
 import { planProvisioning, provisionTaskTitle, vendorLabel, type ProvisionVendor } from "@/lib/provisioning/plan";
 import { useExpandProvisioning, useUpdateProvisioning } from "@/lib/queries/provisioning";
+import { useQueryClient } from "@tanstack/react-query";
+import { createClient } from "@/lib/supabase/client";
+import { stampPaymentDomain } from "@/lib/payments/after-payment-fill";
+import { Input } from "@/components/ui/input";
+import { FormField } from "@/components/ui/label";
+
+/**
+ * R-1730 — should the "Setting up" card ask for the customer's domain? Record payment no longer
+ * does (setup, not money — UI rule 7), so this is where a domain nobody knew yet is entered:
+ * only when something is to be set up and no domain is known anywhere the set-up list reads
+ * (the quote, a line, a task).
+ */
+export function needsDomainSetup(args: {
+  tasks: ReadonlyArray<{ status: string | null; vendor: string | null; domain: string | null }>;
+  quoteDomain: string | null;
+  planItems: ReadonlyArray<{ domain: string | null }>;
+}): boolean {
+  const { tasks, quoteDomain, planItems } = args;
+  if (tasks.length === 0 || tasks.every((t) => t.status === "not_required")) return false;
+  if (planItems.length === 0 && !tasks.some((t) => t.vendor)) return false;
+  if (quoteDomain?.trim()) return false;
+  if (tasks.some((t) => t.domain?.trim())) return false;
+  return !planItems.some((i) => i.domain?.trim());
+}
+
+/** R-1730: the domain field on the card — saves to the quote's subscription, customer and task. */
+function DomainSetupField({ quoteId }: { quoteId: string }) {
+  const qc = useQueryClient();
+  const [value, setValue] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+  const save = async () => {
+    const domain = value.trim().toLowerCase();
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(domain)) {
+      toast.error("Domain not saved — enter it like acme.com");
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = await stampPaymentDomain(createClient(), { quoteId, domain });
+      if (r.subscription || r.customer || r.task) {
+        toast.success(`Domain ${domain} saved`);
+        qc.invalidateQueries({ queryKey: ["provisioning"] });
+        qc.invalidateQueries({ queryKey: ["subscriptions"] });
+        qc.invalidateQueries({ queryKey: ["customers"] });
+        qc.invalidateQueries({ queryKey: ["quotes", quoteId] });
+      } else {
+        toast.error("Domain not saved", { description: "The subscription, customer and set-up task already have a domain, or could not be updated. Check Subscriptions." });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="mb-3 rounded-lg border border-hairline bg-paper p-3 space-y-2">
+      <FormField label="Customer domain" htmlFor="setup-domain">
+        <Input
+          id="setup-domain"
+          placeholder="e.g. acme.com"
+          className="font-mono text-sm"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void save(); } }}
+        />
+      </FormField>
+      <p className="text-2xs text-ink-3">Needed to set up Google Workspace / Microsoft 365. Saved on the subscription and the customer.</p>
+      <Button size="sm" variant="default" loading={saving} disabled={!value.trim()} onClick={() => void save()}>
+        Save domain
+      </Button>
+    </div>
+  );
+}
 
 export function ProvisioningCard({ tasks, quoteId, tenantId, lines, quoteDomain, userId }: {
   tasks: ProvisioningTask[];
@@ -39,10 +110,13 @@ export function ProvisioningCard({ tasks, quoteId, tenantId, lines, quoteDomain,
      work. Recognised by having no vendor. */
   const placeholder = tasks.find((t) => !t.vendor && t.status === "pending");
   const real = tasks.filter((t) => t.vendor);
+  /* R-1730: a domain saved on this card lands on the placeholder task — the set-up list uses it. */
+  const taskDomain = tasks.find((t) => t.domain?.trim())?.domain ?? null;
   const plan = React.useMemo(
-    () => planProvisioning({ lines, fallbackDomain: quoteDomain }),
-    [lines, quoteDomain],
+    () => planProvisioning({ lines, fallbackDomain: quoteDomain?.trim() ? quoteDomain : taskDomain }),
+    [lines, quoteDomain, taskDomain],
   );
+  const askDomain = needsDomainSetup({ tasks, quoteDomain, planItems: plan.items });
 
   if (tasks.length === 0) return null;
 
@@ -58,6 +132,8 @@ export function ProvisioningCard({ tasks, quoteId, tenantId, lines, quoteDomain,
           Nothing below happens automatically.
         </span>
       </p>
+
+      {askDomain && <DomainSetupField quoteId={quoteId} />}
 
       {notRequired && (
         <p className="text-sm text-ink-3">Nothing on this quote needs setting up.</p>

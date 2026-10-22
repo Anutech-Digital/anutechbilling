@@ -24,14 +24,14 @@ export const runtime = "nodejs";
 
 /** §24: what happened + what to do. */
 const AA_STATE_REFUSAL =
-  "Ye bank-approval link sahi nahi hai ya purana ho gaya — connection nahi badla. Banking page par jaakar 'Connect bank' dobara dabaiye aur naya link kholiye.";
+  "This bank-approval link is invalid or has expired — the connection was not changed. Go to the Banking page, click 'Connect bank' again and open the new link.";
 
 const refuse = (status: number, error: string) => NextResponse.json({ ok: false, error }, { status });
 
 export const GET = withRoute({
   route: "api/aa/setu/callback",
   roles: MONEY_RECORD_ROLES,
-  roleHint: "Bank connect sirf owner / manager / accountant / billing kar sakte hain — unse approve karwaiye.",
+  roleHint: "Only owner / manager / accountant / billing can connect a bank — ask one of them to approve it.",
 }, async ({ req, supabase, tenantId }) => {
   const mfa = await refuseWithoutMfa(supabase);
   if (mfa) return mfa;
@@ -61,7 +61,7 @@ export const GET = withRoute({
   if (conn.status !== "pending_approval") {
     return refuse(
       409,
-      `Ye bank connection pehle hi '${conn.status}' hai — dobara approve karne ki zaroorat nahi. Banking page kholiye.`,
+      `This bank connection is already '${conn.status}' — no need to approve it again. Open the Banking page.`,
     );
   }
 
@@ -71,7 +71,7 @@ export const GET = withRoute({
       .update({ status: "rejected", status_reason: "User declined consent" })
       .eq("id", conn.id)
       .eq("tenant_id", tenantId);
-    if (error) return refuse(500, "Connection update nahi hua — kuch nahi badla. Banking page se dobara try kariye.");
+    if (error) return refuse(500, "Could not update the connection — nothing was changed. Please try again from the Banking page.");
     return NextResponse.redirect(new URL(`/accounting/banking/${conn.bank_account_id}?aa=rejected`, req.url));
   }
 
@@ -82,7 +82,7 @@ export const GET = withRoute({
   if (status.status !== "ACTIVE") {
     return refuse(
       409,
-      `Bank ne abhi consent '${status.status}' bataya hai — connection nahi badla. Phone par approval poora kariye, phir Banking page se 'Connect bank' dobara dabaiye.`,
+      `The bank reports the consent as '${status.status}' — the connection was not changed. Complete the approval on your phone, then click 'Connect bank' again from the Banking page.`,
     );
   }
 
@@ -96,7 +96,7 @@ export const GET = withRoute({
     })
     .eq("id", conn.id)
     .eq("tenant_id", tenantId);
-  if (updErr) return refuse(500, "Connection update nahi hua — kuch nahi badla. Banking page se dobara try kariye.");
+  if (updErr) return refuse(500, "Could not update the connection — nothing was changed. Please try again from the Banking page.");
 
   return NextResponse.redirect(new URL(`/accounting/banking/${conn.bank_account_id}?aa=connected`, req.url));
 });

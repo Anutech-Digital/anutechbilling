@@ -186,13 +186,13 @@ export interface StatementQrNotice {
 export function statementQrNotice(args: { upiVpa: string | null | undefined; allInr: boolean; total: number }): StatementQrNotice | null {
   if (!(args.total > 0)) return { reason: "nothing-due", text: "Nothing is owed — the statement has no pay QR." };
   if (!args.allInr) {
-    return { reason: "non-inr", text: "UPI sirf INR par — is customer ke kuch invoices doosri currency me hain, isliye statement me pay QR nahi aayega." };
+    return { reason: "non-inr", text: "UPI works only for INR — some of this customer's invoices are in another currency, so the statement will not show a Pay QR." };
   }
   if (!args.upiVpa || !args.upiVpa.trim()) {
     return {
       reason: "no-upi",
-      text: "Pay QR ke liye Settings me UPI ID daalo — tab statement me poori rakam ka scan-karke-pay QR aayega.",
-      action: { label: "Settings kholo", href: UPI_SETTINGS_HREF },
+      text: "Add your UPI ID in Settings to show a Pay QR — the statement will then carry a scan-to-pay QR for the full amount.",
+      action: { label: "Open Settings", href: UPI_SETTINGS_HREF },
     };
   }
   return null;

@@ -17,7 +17,9 @@ import {
 import {
   CONTACT_PATHS, contactBonus, extractContacts, nameFromEmail, pageText, parsePersonSearch, personIsGrounded, personPrompt, personSearchPrompt, pickEmail, pickPhone,
   reachable, readContact, roleSnippets, sourceVerdict, teamLinks, type ContactResult, type ContactPerson,
+  WHO_TO_ASK, NAME_UNKNOWN,
 } from "@/lib/leads/lead-contacts";
+import { OLD_WHO_TO_ASK, OLD_NAME_UNKNOWN } from "@/lib/leads/legacy-task-labels";
 
 type Admin = SupabaseClient<Database>;
 
@@ -197,10 +199,10 @@ async function fillLead(admin: Admin, tenantId: string, leadId: string, contact:
   if (!contact.person) return;
   const { data: open } = await admin.from("tasks").select("id, notes").eq("tenant_id", tenantId).eq("lead_id", leadId).eq("status", "pending");
   for (const t of open ?? []) {
-    if ((t.notes ?? "").includes("Kisse baat karni hai")) continue;
+    if ([WHO_TO_ASK, OLD_WHO_TO_ASK].some((s) => (t.notes ?? "").includes(s))) continue;
     const p = contact.person;
-    const who = `Kisse baat karni hai: ${p.name}${p.role ? ` (${p.role})` : ""}${p.from === "email" ? " — naam email se andaza hai" : p.from === "search" ? ` — public record se, call par confirm karo (${p.source_url ?? ""})` : ""}`;
-    const rest = (t.notes ?? "").split("\n").filter((l) => !l.startsWith("Naam nahi pata")).join("\n");
+    const who = `${WHO_TO_ASK}: ${p.name}${p.role ? ` (${p.role})` : ""}${p.from === "email" ? " — name guessed from the email" : p.from === "search" ? ` — from public records, confirm on the call (${p.source_url ?? ""})` : ""}`;
+    const rest = (t.notes ?? "").split("\n").filter((l) => !l.startsWith(NAME_UNKNOWN) && !l.startsWith(OLD_NAME_UNKNOWN)).join("\n");
     await admin.from("tasks").update({ notes: rest ? `${who}\n${rest}` : who }).eq("id", t.id).eq("tenant_id", tenantId);
   }
 }

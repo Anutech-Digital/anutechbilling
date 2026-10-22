@@ -588,7 +588,7 @@ function EditAdvanceDialog({ advance, open, onOpenChange }: { advance: EmployeeA
             </FormField>
           </div>
           <FormField label="Purpose" htmlFor="edit-adv-purpose">
-            <Input id="edit-adv-purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="Office petty kharche" />
+            <Input id="edit-adv-purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="Office petty expenses" />
           </FormField>
           {!moneyLocked && advance.payment_method === "cash" && (
             <p className="text-xs text-ink-3">The petty-cash entry for this advance changes with it.</p>

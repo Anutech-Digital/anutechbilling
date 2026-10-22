@@ -57,7 +57,7 @@ function downloadEcr(period: string, rows: PfRegisterRow[]) {
     period, employee: r.employee, uan: r.uan, gross: r.gross, lopAmount: r.lopAmount, lopDays: r.lopDays,
     pfWage: r.pfWage, employeePf: r.employeeShare, employerPf: r.employerShare,
   })));
-  if (!f.lines.length) { toast.error(`Koi member upload layak nahi — ${f.skipped.map((s) => `${s.employee}: ${s.reason}`).join("; ")}`); return; }
+  if (!f.lines.length) { toast.error(`No member can be uploaded — ${f.skipped.map((s) => `${s.employee}: ${s.reason}`).join("; ")}`); return; }
   const blob = new Blob([f.text], { type: "text/plain;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -66,8 +66,8 @@ function downloadEcr(period: string, rows: PfRegisterRow[]) {
   void logExport({ what: "epf-ecr", rowCount: f.lines.length, format: "txt" });
   const assumed = f.lines.filter((l) => l.wageAssumed).length;
   let msg = `ECR ${period}: ${f.lines.length} member, EPF wages ${rupee(f.totals.epfWages)}, EE ${rupee(f.totals.ee)}, EPS ${rupee(f.totals.eps)}, ER diff ${rupee(f.totals.erDiff)}.`;
-  if (f.skipped.length) msg += ` ⚠ ${f.skipped.length} chhoote: ${f.skipped.map((s) => s.employee).join(", ")} (UAN bharo).`;
-  if (assumed) msg += ` ⚠ ${assumed} payslip par PF wage nahi tha — gross liya.`;
+  if (f.skipped.length) msg += ` ⚠ ${f.skipped.length} skipped: ${f.skipped.map((s) => s.employee).join(", ")} (add their UAN).`;
+  if (assumed) msg += ` ⚠ ${assumed} payslip(s) had no PF wage — gross used.`;
   toast[f.skipped.length || assumed ? "warning" : "success"](msg);
 }
 
@@ -118,7 +118,7 @@ function PfSection() {
                   employee {rupee(ee)} · employer {rupee(er)} · <b className="text-ink">{rupee(ee + er)}</b>
                 </span>
                 <Button size="sm" variant="outline" icon="download" onClick={() => downloadEcr(period, rows)}>
-                  EPFO ECR{missingUan ? ` (${missingUan} bina UAN)` : ""}
+                  EPFO ECR{missingUan ? ` (${missingUan} without UAN)` : ""}
                 </Button>
               </div>
             </div>
@@ -140,9 +140,9 @@ function PfSection() {
                   {rows.map((r, i) => (
                     <tr key={i} className="border-t border-hairline">
                       <td className="px-4 py-2.5 text-ink">{r.employee}</td>
-                      <td className={`px-4 py-2.5 font-mono text-xs ${r.uan ? "text-ink-2" : "text-rose"}`}>{r.uan ?? "UAN nahi"}</td>
+                      <td className={`px-4 py-2.5 font-mono text-xs ${r.uan ? "text-ink-2" : "text-rose"}`}>{r.uan ?? "No UAN"}</td>
                       <td className="px-4 py-2.5 text-right font-mono">{rupee(r.gross)}</td>
-                      <td className={`px-4 py-2.5 text-right font-mono ${r.pfWage === null ? "text-amber-ink" : ""}`} title={r.pfWage === null ? "Payslip par PF wage nahi — ECR mein gross jayega" : undefined}>{r.pfWage === null ? `~${rupee(Math.max(0, r.gross - r.lopAmount))}` : rupee(r.pfWage)}</td>
+                      <td className={`px-4 py-2.5 text-right font-mono ${r.pfWage === null ? "text-amber-ink" : ""}`} title={r.pfWage === null ? "No PF wage on the payslip — gross goes to the ECR" : undefined}>{r.pfWage === null ? `~${rupee(Math.max(0, r.gross - r.lopAmount))}` : rupee(r.pfWage)}</td>
                       <td className="px-4 py-2.5 text-right font-mono">{r.lopDays}</td>
                       <td className="px-4 py-2.5 text-right font-mono">{rupee(r.employeeShare)}</td>
                       <td className="px-4 py-2.5 text-right font-mono">{rupee(r.employerShare)}</td>

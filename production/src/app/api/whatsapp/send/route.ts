@@ -74,7 +74,7 @@ export const POST = withRoute({
   route: "api/whatsapp/send",
   input: schema,
   permission: "can_contact_customers",
-  roleHint: "Aapka role customers ko message nahi bhej sakta — workspace owner se kahiye.",
+  roleHint: "Your role cannot message customers — ask the workspace owner.",
 }, async ({ input, tenantId }) => {
   const { to, text, template, attach_quote_id, related } = input;
 

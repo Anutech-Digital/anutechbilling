@@ -131,7 +131,7 @@ export function useUpdatePurchaseOrder() {
       qc.invalidateQueries({ queryKey: queryKeys.purchaseOrders() });
       toast.success("Purchase order updated");
     },
-    onError: (e) => toastError(e, { fallback: "Purchase order update nahi hua" }),
+    onError: (e) => toastError(e, { fallback: "Could not update the purchase order" }),
   });
 }
 
@@ -259,7 +259,7 @@ export function useAllocateBillToPO() {
       qc.invalidateQueries({ queryKey: queryKeys.purchaseOrders() });
       toast.success("Bill allocated to PO");
     },
-    onError: (e) => toastError(e, { fallback: "Bill allocate nahi hua" }),
+    onError: (e) => toastError(e, { fallback: "Could not allocate the bill" }),
   });
 }
 
@@ -280,7 +280,7 @@ export function useDeallocate() {
       qc.invalidateQueries({ queryKey: queryKeys.purchaseOrders() });
       toast.success("Bill unlinked from PO");
     },
-    onError: (e) => toastError(e, { fallback: "Unlink nahi hua" }),
+    onError: (e) => toastError(e, { fallback: "Could not unlink" }),
   });
 }
 
@@ -305,6 +305,6 @@ export function useUpdatePurchaseOrderCost() {
       qc.invalidateQueries({ queryKey: queryKeys.purchaseOrders() });
       toast.success("PO cost updated");
     },
-    onError: (e) => toastError(e, { fallback: "Cost update nahi hua" }),
+    onError: (e) => toastError(e, { fallback: "Could not update the cost" }),
   });
 }

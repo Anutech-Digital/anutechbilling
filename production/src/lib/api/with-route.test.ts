@@ -45,7 +45,7 @@ describe("withRoute", () => {
     state.me = null;
     const res = await withRoute({ route: "api/t" }, async () => ({}))(req("GET"));
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toMatch(/owner se invite/);
+    expect((await res.json()).error).toMatch(/owner for an invite/);
   });
 
   it("403 when the role is not allowed; passes the tenant and role through when it is", async () => {

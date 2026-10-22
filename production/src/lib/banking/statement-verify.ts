@@ -195,7 +195,7 @@ export async function rereadBrokenPages<R extends StatementRowLike>(opts: {
   await mapLimited(pages, opts.concurrency ?? REREAD_CONCURRENCY, async (p) => {
     if (halt.reason) return;
     if (now() - start >= budgetMs) {
-      halt.reason = `samay seema (${Math.round(budgetMs / 1000)} sec) poori ho gayi`;
+      halt.reason = `time limit (${Math.round(budgetMs / 1000)} sec) reached`;
       return;
     }
     reading.add(p);
@@ -212,8 +212,8 @@ export async function rereadBrokenPages<R extends StatementRowLike>(opts: {
     report();
     if (!res.ok && (res.kind === "paused" || res.kind === "busy")) {
       halt.reason ??= res.kind === "paused"
-        ? "AI ke calls abhi ruke hue hain — lagatar fail hue"
-        : "Google ka AI abhi busy hai";
+        ? "AI calls are paused right now — they failed repeatedly"
+        : "Google's AI is busy right now";
     }
   });
 
@@ -246,19 +246,19 @@ export async function rereadBrokenPages<R extends StatementRowLike>(opts: {
   const parts: string[] = [];
   if (retried.length > 0) {
     parts.push(
-      `Balance chain jaanch: page ${retried.join(", ")} dobara 1-1 page karke padhe — ` +
+      `Balance chain check: re-read page ${retried.join(", ")} one page at a time — ` +
       (best.check.blocking
-        ? (repaired.length > 0 ? `page ${repaired.join(", ")} theek hue, par phir bhi kuch lines nahi mili (neeche dekho).` : "phir bhi kuch lines nahi mili (neeche dekho).")
-        : "ab chain poori hai."),
+        ? (repaired.length > 0 ? `page ${repaired.join(", ")} fixed, but some lines are still missing (see below).` : "some lines are still missing (see below).")
+        : "the chain is now complete."),
     );
   }
   if (notRetried.length > 0) {
     parts.push(
-      `Page ${notRetried.join(", ")} dobara nahi padhe — ` +
-      (halt.reason ?? `ek baar mein ${maxPages} page tak hi dobara padhte hain`) + ".",
+      `Page ${notRetried.join(", ")} not re-read — ` +
+      (halt.reason ?? `only up to ${maxPages} pages are re-read at a time`) + ".",
     );
   } else if (halt.reason) {
-    parts.push(`Dobara padhna roka — ${halt.reason}.`);
+    parts.push(`Re-reading stopped — ${halt.reason}.`);
   }
 
   return {

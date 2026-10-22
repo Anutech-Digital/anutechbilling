@@ -371,7 +371,7 @@ function OwedLine({ item, canOpen }: { item: OwedItem; canOpen: CanOpen }) {
         <p className="text-xs text-amber-ink mt-0.5">
           <Icon name="info" size={12} className="inline mr-1 align-text-bottom" />
           {tdsShortfallLine(item.tdsHint)} —{" "}
-          <MaybeLink href={item.href} canOpen={canOpen} className="underline">Record payment me TDS darj karo</MaybeLink>
+          <MaybeLink href={item.href} canOpen={canOpen} className="underline">record it as TDS in Record payment</MaybeLink>
         </p>
       )}
     </div>

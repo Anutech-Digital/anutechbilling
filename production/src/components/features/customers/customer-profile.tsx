@@ -70,6 +70,8 @@ import { canOpenQuotes } from "@/lib/quotes/access";
 import { COPY } from "@/lib/copy";
 import { useCustomerContacts } from "@/lib/queries/contacts";
 import { PrimaryContactLine } from "@/components/features/customers/primary-contact-line";
+/* R-1740: my relationship with this company's best-known person — saves to that contact. */
+import { CustomerRelationshipChip } from "@/components/features/contacts/relationship-chip";
 import { txnHref, primaryContactOf } from "@/components/features/customers/customer-links";
 import { buildCustomerStatement, useCustomerNotes } from "@/components/features/customers/customer-statement";
 import { RecordTable, RowLink } from "@/components/features/customers/customer-record-table";
@@ -408,6 +410,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
                 the company name — name · designation · phone · email, tap to call / mail.
                 Never the company name again as if it were a person. */}
             <PrimaryContactLine contact={primaryContact} onAddContact={canWrite ? startAddContact : undefined} />
+            <CustomerRelationshipChip people={contactRows} canEdit={canWrite} />
             {c.domain && (
               <p className="mt-0.5 text-sm text-ink-3">
                 <span className="font-mono text-xs">{c.domain}</span>

@@ -103,7 +103,7 @@ describe("pay QR — only INR, only with a UPI ID, only when something is owed",
   it("no UPI ID → no QR, and the §24 'add UPI ID in Settings' note with a Settings link", () => {
     const n = statementQrNotice({ upiVpa: null, allInr: true, total: st.total });
     expect(n?.reason).toBe("no-upi");
-    expect(n?.text).toMatch(/Settings me UPI ID daalo/);
+    expect(n?.text).toMatch(/Add your UPI ID in Settings/);
     expect(n?.action?.href).toMatch(/^\/settings/);
     expect(statementUpiUri({ vpa: "  ", payeeName: "Demo", customerName: "Acme", total: st.total, allInr: true })).toBeNull();
   });

@@ -31,7 +31,7 @@ export function useGbpStatus() {
     queryKey: [...GBP_KEY, "status"],
     queryFn: async (): Promise<GbpStatus> => {
       const res = await fetch("/api/integrations/google-business");
-      if (!res.ok) throw new Error("Status load nahi hua");
+      if (!res.ok) throw new Error("Could not load status");
       return res.json();
     },
   });
@@ -125,7 +125,7 @@ export function useGbpSync() {
     },
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: GBP_KEY });
-      if (r.errors?.length) toast.warning(`Sync hua, par: ${r.errors[0]}`);
+      if (r.errors?.length) toast.warning(`Synced, but: ${r.errors[0]}`);
       else toast.success(`Synced — ${r.locations} listing, ${r.reviews} reviews, ${r.metricRows} metric rows`);
     },
     onError: (e) => { qc.invalidateQueries({ queryKey: GBP_KEY }); toastError(e); },
@@ -141,7 +141,7 @@ export function useGbpReply() {
       if (!res.ok) throw new Error(body?.error ?? "Reply failed");
       return body;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: [...GBP_KEY, "reviews"] }); toast.success("Reply Google par chala gaya"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: [...GBP_KEY, "reviews"] }); toast.success("Reply posted on Google"); },
     onError: (e) => toastError(e),
   });
 }

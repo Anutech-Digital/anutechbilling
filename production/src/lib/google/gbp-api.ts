@@ -31,18 +31,18 @@ const V4_URL = "https://mybusiness.googleapis.com/v4";
 const PERF_URL = "https://businessprofileperformance.googleapis.com/v1";
 
 export const GBP_SCOPE_MISSING_MESSAGE =
-  "Google ne Business Profile padhne ki permission nahi di, isliye listing sync nahi ho sakti. " +
-  "Reconnect kariye aur Google ki screen par \"Manage your business listings\" tick rehne dijiye.";
+  "Google did not grant permission to read the Business Profile, so the listing cannot sync. " +
+  "Click Reconnect and keep \"Manage your business listings\" ticked on Google's screen.";
 
 /** §24: what happened, why, what to do — for the two Google-side setup failures. */
 export function explainGoogleError(status: number, body: string): string {
   if (status === 403 && /not been used in project|is disabled|SERVICE_DISABLED|accessNotConfigured/i.test(body)) {
-    return "Google Cloud project par Business Profile APIs enable nahi hain (Account Management, Business Information, My Business v4, Performance). Console mein enable karke dobara sync karo.";
+    return "Business Profile APIs are not enabled on the Google Cloud project (Account Management, Business Information, My Business v4, Performance). Enable them in the Console and sync again.";
   }
   if (status === 429 || (status === 403 && /quota/i.test(body))) {
-    return "Google ne Business Profile API ka quota 0 rakha hai — ek baar \"Business Profile API access\" form bharna hota hai (Google approve karta hai, 1–2 hafte). Tab tak sync nahi chalega.";
+    return "Google has set the Business Profile API quota to 0 — the \"Business Profile API access\" form must be filled once (Google approves it in 1–2 weeks). Sync will not run until then.";
   }
-  if (status === 401) return "Google token expire/revoke ho gaya — Reconnect karo.";
+  if (status === 401) return "Google token expired or was revoked — click Reconnect.";
   return `Google ne ${status} diya: ${body.slice(0, 200)}`;
 }
 
@@ -188,7 +188,7 @@ export async function syncTenantGbp(admin: Admin, userId: string, tenantId: stri
   try {
     const token = await getFreshGbpAccessToken(admin, userId);
     const accounts = await listAccounts(token);
-    if (accounts.length === 0) throw new Error("Is Google account ke paas koi Business Profile nahi hai. business.google.com par jis email se listing manage hoti hai, usi se connect karo.");
+    if (accounts.length === 0) throw new Error("This Google account has no Business Profile. Connect with the email that manages the listing on business.google.com.");
 
     for (const acc of accounts) {
       const locations = await listLocations(token, acc.name);

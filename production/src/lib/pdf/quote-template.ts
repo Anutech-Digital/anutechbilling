@@ -83,13 +83,13 @@ export function payQrNotice(args: {
 }): PayQrNotice | null {
   const cur = (args.currency ?? "INR").trim().toUpperCase() || "INR";
   if (cur !== "INR") {
-    return { reason: "non-inr", text: "UPI sirf INR quotes par — is quote ke PDF me pay QR nahi aayega." };
+    return { reason: "non-inr", text: "UPI works only for INR quotes — this quote PDF will not show a Pay QR." };
   }
   if (!args.upiVpa || !args.upiVpa.trim()) {
     return {
       reason: "no-upi",
-      text:   "Pay QR ke liye Settings me UPI ID daalo — tab har quote PDF me scan-karke-pay QR aayega.",
-      action: { label: "Settings kholo", href: UPI_SETTINGS_HREF },
+      text:   "Add your UPI ID in Settings to show a Pay QR — every quote PDF will then carry a scan-to-pay QR.",
+      action: { label: "Open Settings", href: UPI_SETTINGS_HREF },
     };
   }
   return null;

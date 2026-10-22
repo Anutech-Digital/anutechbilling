@@ -409,14 +409,10 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
           <Row
             label={isIndividual ? "Name" : "Primary contact"}
             htmlFor="contact_first_name"
-            /* Required on CREATE for everyone, not just individuals. A business customer
-               needs a named human too — they are who receives its invoices and payment
-               reminders (Abhishek, 18 Sep 2026: "without contact customer not created").
-               Editing an existing customer is NOT blocked: customers already on the books
-               predate the rule, and locking the operator out of the page would lock them
-               out of the very field that fixes it. */
-            required={isIndividual || !isEdit}
-            hint={isIndividual ? "This person is the customer." : "The person you deal with."}
+            /* R-1738: required only for an individual (the person IS the customer). For a
+               business it is optional — blank means the company is the contact. */
+            required={isIndividual}
+            hint={isIndividual ? "This person is the customer." : "Optional. Blank = the company is the contact."}
           >
             <div className="grid grid-cols-[84px_1fr_1fr] gap-2">
               <select className={selectClass} aria-label="Salutation" {...register("contact_salutation")}>
@@ -458,7 +454,8 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
             )}
           </Row>
 
-          <Row label="Email" htmlFor="contact_email" required={!isEdit}>
+          {/* R-1738: email OR phone — one way to send the invoice is enough. */}
+          <Row label="Email" htmlFor="contact_email" hint={isEdit ? undefined : "Email or phone — one is needed."}>
             <Input
               id="contact_email" type="email" placeholder="e.g. rajesh@acme.com"
               error={errors.contact_email?.message}
@@ -468,7 +465,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
             <FieldPill check={checkEmail(watch("contact_email") ?? "")} />
           </Row>
 
-          <Row label="Phone" htmlFor="contact_phone" required={!isEdit}>
+          <Row label="Phone" htmlFor="contact_phone">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <Input
                 id="contact_phone" inputMode="numeric" placeholder="Work phone"
@@ -691,7 +688,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
               />
               <ReviewLine label="GST treatment" value={gstTreatmentOption(gstTreatment)?.label} />
               <ReviewLine label="PAN" mono value={isForeign ? "" : watch("pan")} />
-              <ReviewLine label="Contact"  value={[watch("contact_first_name"), watch("contact_last_name")].filter(Boolean).join(" ")} />
+              <ReviewLine label="Contact"  value={[watch("contact_first_name"), watch("contact_last_name")].filter(Boolean).join(" ") || (isIndividual ? "" : companyName?.trim())} />
               <ReviewLine label="Email"    value={watch("contact_email")} />
               <ReviewLine label="Phone"    value={watch("contact_phone")} />
               <ReviewLine label="Website"  value={watch("domain")} />

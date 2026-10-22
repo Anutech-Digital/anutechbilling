@@ -256,9 +256,9 @@ export default function PurchasesReportPage() {
       {!isLoading && !error && lines && lines.length > 0 && (
         <div className="space-y-6">
           {/* By vendor */}
-          <BreakdownTable title="By vendor" subtitle="Kisi vendor pe click karo — uski saari bills/expenses khulengi" rows={byVendor} totals={totals} firstColHeader="Vendor" groupLines={linesByVendor} />
+          <BreakdownTable title="By vendor" subtitle="Click a vendor to open all its bills and expenses" rows={byVendor} totals={totals} firstColHeader="Vendor" groupLines={linesByVendor} />
           {/* By category */}
-          <BreakdownTable title="By category" subtitle="Kisi category pe click karo — uske saare records khulenge" rows={byCategory} totals={totals} firstColHeader="Category" groupLines={linesByCategory} />
+          <BreakdownTable title="By category" subtitle="Click a category to open all its records" rows={byCategory} totals={totals} firstColHeader="Category" groupLines={linesByCategory} />
 
           {/* By month */}
           <Card flush>

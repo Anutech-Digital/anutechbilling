@@ -63,10 +63,10 @@ const bodySchema = z.object({
   images: z.array(imageSchema).max(HELP_MAX_IMAGES).optional(),
 });
 
-const UNAVAILABLE = "AI Help abhi jawab nahi de pa raha. Bug ho to isi Help panel ke 'Report a problem' tab (Ctrl+Shift+B) se seedha bhej dijiye.";
+const UNAVAILABLE = "AI Help cannot answer right now. To report a bug, use the 'Report a problem' tab in this Help panel (Ctrl+Shift+B).";
 /** R-190 (6 Oct 2026): another company had no AI key and was told only "not available".
     Say what is missing and where to add it. */
-const NO_KEY = "Is company ke liye AI (Gemini) key nahi lagi hai, isliye AI Help jawab nahi de sakta. Owner Settings → Integrations → Gemini me key daal de (/settings?tab=integrations). Tab tak bug ho to Help panel ke 'Report a problem' tab (Ctrl+Shift+B) se bhej dijiye.";
+const NO_KEY = "No AI (Gemini) key is set for this company, so AI Help cannot answer. The owner can add the key in Settings → Integrations → Gemini (/settings?tab=integrations). Until then, report bugs from the 'Report a problem' tab in the Help panel (Ctrl+Shift+B).";
 
 /** What the person "said" when they pressed a button instead of typing. */
 const MODE_PROMPT = { scan: "Is page ko jaancho.", error: "Abhi jo error aaya, uski report banao." } as const;
@@ -77,11 +77,11 @@ export async function POST(request: NextRequest) {
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
   if (!rateLimit(`ai-help:${user.id}`, { limit: 30, windowMs: 10 * 60_000 }).ok) {
-    return NextResponse.json({ error: "Thoda ruk kar poochhiye — 10 minute mein 30 sawaal ki seema hai." }, { status: 429 });
+    return NextResponse.json({ error: "Please wait a little before asking again — the limit is 30 questions in 10 minutes." }, { status: 429 });
   }
 
   const parsed = bodySchema.safeParse(await request.json().catch(() => ({})));
-  if (!parsed.success) return NextResponse.json({ error: "Message samajh nahi aaya — dobara likhiye." }, { status: 400 });
+  if (!parsed.success) return NextResponse.json({ error: "Could not read the message — please type it again." }, { status: 400 });
   const { pagePath, mode, outline } = parsed.data;
   const messages = [...parsed.data.messages];
   if (mode === "check_failed") {

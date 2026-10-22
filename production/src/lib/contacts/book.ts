@@ -16,6 +16,7 @@
  * all is never emitted.
  */
 import type { ContactSource, UnifiedContact } from "@/lib/queries/contacts";
+import { asCloseness, asRelationshipType, type BizFacet } from "@/lib/contacts/relationship";
 
 export interface BookLeadRow {
   id: string; company: string; contact_name: string | null; contact_email: string | null;
@@ -38,7 +39,8 @@ export interface BookPartnerRow {
 export interface BookImportedRow {
   id: string; full_name: string | null; email: string | null; phone: string | null;
   company: string | null; title: string | null; source: string | null; status: string | null;
-  relationship: string | null; created_at: string;
+  /** Legacy single-company link (contacts.customer_id) — still a real link (R-1740 Business). */
+  customer_id?: string | null; created_at: string;
 }
 export interface BookEmployeeRow {
   id: string; name: string | null; email: string | null; phone: string | null;
@@ -47,6 +49,8 @@ export interface BookEmployeeRow {
 /** One customer_contacts link with its person embedded. */
 export interface BookCustomerLinkRow {
   customer_id: string;
+  /** The person's contacts.id — whose relationship a company row shows (R-1740). */
+  contact_id?: string | null;
   is_primary: boolean | null;
   contacts: { full_name: string | null; email: string | null; phone: string | null } | null;
 }
@@ -59,6 +63,14 @@ export interface BookSources {
   imported: BookImportedRow[];
   employees: BookEmployeeRow[];
   customerLinks: BookCustomerLinkRow[];
+  /** R-1740: every contacts row's relationship (lead anchors included). Optional: a failed
+   *  read only loses the chips, never the book. */
+  relationships?: BookRelationshipRow[];
+}
+
+/** contacts.id → my relationship with that person (R-1740). */
+export interface BookRelationshipRow {
+  id: string; relationship_type: string | null; closeness: string | null;
 }
 
 const blank = (s?: string | null) => (s ?? "").trim() === "";
@@ -72,7 +84,7 @@ export function isBlankRow(c: Pick<UnifiedContact, "name" | "email" | "phone">):
  *  else the first link, else the legacy columns. Same order as primaryContactsFor. */
 function companyPerson(
   c: BookCustomerRow, links: BookCustomerLinkRow[],
-): { name: string | null; email: string | null; phone: string | null } {
+): { name: string | null; email: string | null; phone: string | null; contactId: string | null } {
   const people = links.filter((l) => l.contacts);
   const chosen =
     people.find((l) => l.is_primary)
@@ -83,6 +95,7 @@ function companyPerson(
     name:  (p?.full_name?.trim() || null) ?? (c.contact_name?.trim() || null),
     email: (p?.email?.trim() || null) ?? (c.contact_email?.trim() || null),
     phone: (p?.phone?.trim() || null) ?? (c.contact_phone?.trim() || null),
+    contactId: chosen?.contact_id ?? null,
   };
 }
 
@@ -109,6 +122,7 @@ export function buildContactBook(src: BookSources): UnifiedContact[] {
       status:    l.stage,
       createdAt: l.created_at,
       linkId:    l.contact_id ?? null,
+      relContactId: l.contact_id ?? null,
     }));
 
   const fromCustomers: UnifiedContact[] = src.customers
@@ -131,6 +145,7 @@ export function buildContactBook(src: BookSources): UnifiedContact[] {
         title:     person.name && person.name !== companyName ? person.name : null,
         status:    c.health != null ? String(c.health) : null,
         createdAt: c.created_at,
+        relContactId: person.contactId,
       };
     });
 
@@ -190,10 +205,22 @@ export function buildContactBook(src: BookSources): UnifiedContact[] {
     title:        c.title,
     status:       c.status,
     importedFrom: c.source ?? undefined,
-    relationship: c.relationship,
     createdAt:    c.created_at,
     linkId:       c.id,
+    relContactId: c.id,
   }));
+
+  // R-1740 Business side, per source row — from links only, never chosen by hand.
+  const linkedToCustomer = new Set(src.customerLinks.map((l) => l.contact_id).filter(Boolean) as string[]);
+  const importedCustomer = new Set(src.imported.filter((c) => c.customer_id || linkedToCustomer.has(c.id)).map((c) => c.id));
+  const businessOfRow = (c: UnifiedContact): BizFacet =>
+    c.source === "customer" ? "customer"
+    : c.source === "vendor" || c.source === "partner" ? "vendor_partner"
+    : c.source === "lead" ? "lead"
+    : c.source === "imported" && importedCustomer.has(c.refId) ? "customer"
+    : "none";
+  const BIZ_RANK: Record<BizFacet, number> = { customer: 0, vendor_partner: 1, lead: 2, none: 3 };
+  const relById = new Map((src.relationships ?? []).map((r) => [r.id, r]));
 
   // ── Identity grouping ────────────────────────────────────────────────
   // One real person can appear across several sources AND under several
@@ -296,8 +323,20 @@ export function buildContactBook(src: BookSources): UnifiedContact[] {
       ? idxs.map((i) => all[i]).find((c) => !c.isCompany && c.name && c.name !== rep.name)?.name ?? null
       : null;
 
+    // R-1740: the strongest business link across the identity's rows; the relationship the
+    // owner actually set (face first), else Unknown.
+    const business = ordered.map(businessOfRow).sort((a, b) => BIZ_RANK[a] - BIZ_RANK[b])[0];
+    const relMember =
+      ordered.find((c) => c.relContactId && asRelationshipType(relById.get(c.relContactId)?.relationship_type) !== "unknown")
+      ?? ordered.find((c) => c.relContactId);
+    const rel = relMember?.relContactId ? relById.get(relMember.relContactId) : undefined;
+
     const row: UnifiedContact = {
       ...rep,
+      business,
+      relationshipType: asRelationshipType(rel?.relationship_type),
+      closeness:        asCloseness(rel?.closeness),
+      relContactId:     relMember?.relContactId ?? null,
       name:        rep.name ?? idxs.map((i) => all[i]).find((c) => c.name)?.name ?? null,
       company,
       email:       emails[0] ?? rep.email,

@@ -238,20 +238,20 @@ export function QuotePreviewDialog({
           <div className="space-y-1 border-b border-hairline bg-amber-soft px-5 py-2 text-xs text-amber-ink print:hidden" data-testid="preview-staff-notes">
             {isProspect && (
               <p data-testid="preview-staff-hint-prospect">
-                Sirf aapke liye: ye quote ek lead ka hai — customer record payment ke baad banega.
+                Only you see this: this quote is for a lead — the customer record is created after the payment is recorded.
               </p>
             )}
             {upiHint && (
               <p data-testid="preview-staff-hint-upi">
-                QR ke liye Settings me UPI ID daalo —{" "}
+                Add your UPI ID in Settings to show a Pay QR —{" "}
                 <Link href={UPI_SETTINGS_HREF as Route} className="font-semibold underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
-                  Settings kholo
+                  Open Settings
                 </Link>
               </p>
             )}
             {unsavedHint && (
               <p data-testid="preview-staff-hint-unsaved">
-                Scan-to-pay QR quote save hone ke baad dikhega (PDF me bhi tabhi aata hai).
+                The scan-to-pay QR shows once the quote is saved (the PDF gets it then too).
               </p>
             )}
           </div>

@@ -63,11 +63,11 @@ export default function ItrPage() {
     <div className="mx-auto max-w-[1240px] space-y-4 p-4 md:p-6 lg:p-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="font-serif text-2xl text-ink">Income Tax (ITR) — taiyari</h1>
+          <h1 className="font-serif text-2xl text-ink">Income Tax (ITR) — preparation</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-3">
-            Ye computation ANDAZA hai, assessment nahi — depreciation asset register se (IT Act
-            WDV) aata hai; disallowance aur audit CA jodega. Return khud incometax.gov.in par, DSC se, file hota hai; ye pack us
-            kaam ko ghanton se minto me laata hai.
+            This computation is an ESTIMATE, not an assessment — depreciation comes from the asset register (IT Act
+            WDV); your CA adds disallowances and the audit. The return itself is filed on incometax.gov.in with a DSC; this pack cuts that
+            work from hours to minutes.
           </p>
         </div>
         <div className="flex gap-2" role="group" aria-label="Financial year">
@@ -84,7 +84,7 @@ export default function ItrPage() {
               }
             >
               FY {fyLabelOfYear(y)}
-              {y === nowFy.startYear ? " (chal raha)" : ""}
+              {y === nowFy.startYear ? " (current)" : ""}
             </button>
           ))}
         </div>
@@ -131,19 +131,19 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
           <Icon name="calendar" className="h-5 w-5 text-ink-3" />
           <div>
             <div className="text-sm font-medium text-ink">
-              {pack.fy.label} ka return ({pack.fy.assessmentYear}) — due {formatDate(pack.fy.itrDue)}
+              Return for {pack.fy.label} ({pack.fy.assessmentYear}) — due {formatDate(pack.fy.itrDue)}
             </div>
             <div className="text-xs text-ink-3">
-              Audit wali company ki tareekh (Section 139(1)) · der par ₹5,000 tak fee (234F) aur ghate ka carry-forward chala jata hai
+              Due date for a company under audit (Section 139(1)) · filing late means a fee of up to ₹5,000 (234F) and losing the loss carry-forward
             </div>
           </div>
         </div>
         {filedOn ? (
           <Badge kind="success">Filed — {formatDate(filedOn)}</Badge>
         ) : dueIn < 0 ? (
-          <Badge kind="danger">{Math.abs(dueIn)} din LATE</Badge>
+          <Badge kind="danger">{Math.abs(dueIn)} days LATE</Badge>
         ) : (
-          <Badge kind={dueIn <= 30 ? "warning" : "muted"}>{dueIn} din bache</Badge>
+          <Badge kind={dueIn <= 30 ? "warning" : "muted"}>{dueIn} days left</Badge>
         )}
       </Card>
 
@@ -152,7 +152,7 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
         <Card className="border-amber bg-amber-soft/40 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-amber-ink">
             <Icon name="alert" className="h-4 w-4" />
-            Jo app ke paas NAHI hai — neeche ke aankde inke bina adhoore hain
+            What the app does NOT have — the figures below are incomplete without it
           </div>
           <ul className="list-disc space-y-1 pl-5 text-sm text-ink-2">
             {pack.gaps.map((g) => (
@@ -165,7 +165,7 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* ── P&L (jaisa darj hai) ─────────────────────────────────── */}
         <Card className="p-4">
-          <h2 className="mb-3 text-sm font-medium text-ink">P&amp;L — jaisa app me darj hai</h2>
+          <h2 className="mb-3 text-sm font-medium text-ink">P&amp;L — as recorded in the app</h2>
           <table className="w-full text-sm">
             <tbody>
               {incomeLines.map((l) => (
@@ -181,7 +181,7 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
                 </td>
               </tr>
               <tr>
-                <td className="py-1 text-xs text-ink-3">Taxable income (Section 288A round; ghate me ₹0)</td>
+                <td className="py-1 text-xs text-ink-3">Taxable income (rounded per Section 288A; ₹0 for a loss)</td>
                 <td className="py-1 text-right text-xs text-ink-2">{rupee(pack.taxableIncome)}</td>
               </tr>
             </tbody>
@@ -190,12 +190,12 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
 
         {/* ── Tax estimate — dono regime ───────────────────────────── */}
         <Card className="p-4">
-          <h2 className="mb-3 text-sm font-medium text-ink">Tax ka andaza — dono regime, chunav CA ka</h2>
+          <h2 className="mb-3 text-sm font-medium text-ink">Tax estimate — both regimes, your CA chooses</h2>
           {pack.estimates.length === 0 ? (
             <p className="text-sm text-ink-3">
               {pack.bookProfit < 0
-                ? "Ghata hai — tax nahi banta. Par ghate ka carry-forward TABHI milta hai jab return time par bhara jaye."
-                : "Taxable income shunya hai."}
+                ? "Loss — no tax is due. But the loss can be carried forward ONLY if the return is filed on time."
+                : "Taxable income is zero."}
             </p>
           ) : (
             <div className="grid grid-cols-2 gap-3">
@@ -208,7 +208,7 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
                   >
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <span className="text-xs font-medium text-ink">{e.regimeLabel}</span>
-                      {cheaper && <Badge kind="success" size="sm">kam</Badge>}
+                      {cheaper && <Badge kind="success" size="sm">lower</Badge>}
                     </div>
                     <dl className="space-y-1 text-xs text-ink-2">
                       <Row k={`Tax @ ${e.ratePct}%`} v={rupee(e.baseTax)} />
@@ -225,13 +225,13 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
           )}
           <div className="mt-3 space-y-1 text-xs text-ink-3">
             <div className="flex justify-between">
-              <span>TDS receivable ({pack.sources.tdsCount} entry) —{" "}
-                <Link href="/accounting/tds-receivable/year-end" className="underline">milaan yahan</Link>
+              <span>TDS receivable ({pack.sources.tdsCount} {pack.sources.tdsCount === 1 ? "entry" : "entries"}) —{" "}
+                <Link href="/accounting/tds-receivable/year-end" className="underline">reconcile here</Link>
               </span>
               <span className="text-ink-2">− {rupee(pack.sources.tdsCredit)}</span>
             </div>
             <div className="flex justify-between font-medium text-ink">
-              <span>Net payable (kam wale regime par)</span>
+              <span>Net payable (on the lower regime)</span>
               <span>{rupee(pack.netPayableAfterTds)}</span>
             </div>
           </div>
@@ -240,15 +240,15 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
 
       {/* ── Advance tax ──────────────────────────────────────────────── */}
       <Card className="p-4">
-        <h2 className="mb-1 text-sm font-medium text-ink">Advance tax — Section 211 ki chaar kishtein</h2>
+        <h2 className="mb-1 text-sm font-medium text-ink">Advance tax — four instalments (Section 211)</h2>
         {!pack.advanceTaxRequired ? (
           <p className="text-sm text-ink-3">
-            Zaroori nahi — TDS ke baad net payable ₹10,000 se kam hai (Section 208).
+            Not required — net payable after TDS is under ₹10,000 (Section 208).
           </p>
         ) : (
           <>
             <p className="mb-3 text-xs text-ink-3">
-              Kam wale regime ke andaze par · der ya kami par Section 234B/C ka byaaj lagta hai
+              Based on the lower-regime estimate · paying late or short attracts interest under Section 234B/C
             </p>
             <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
               {pack.advanceTaxSchedule.map((i) => {
@@ -260,11 +260,11 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
                     className={`rounded-lg border p-3 ${next ? "border-amber bg-amber-soft/40" : "border-hairline"} ${past ? "opacity-60" : ""}`}
                   >
                     <div className="text-xs text-ink-3">
-                      {i.label} · {i.cumulativePct}% tak
-                      {next && <Badge kind="warning" size="sm" className="ml-1.5">agli</Badge>}
+                      {i.label} · up to {i.cumulativePct}%
+                      {next && <Badge kind="warning" size="sm" className="ml-1.5">next</Badge>}
                     </div>
                     <div className="mt-1 font-serif text-lg text-ink">{rupee(i.cumulativeDue)}</div>
-                    <div className="text-xs text-ink-3">{formatDate(i.dueDate)}{past ? " · beet gayi" : ""}</div>
+                    <div className="text-xs text-ink-3">{formatDate(i.dueDate)}{past ? " · passed" : ""}</div>
                   </div>
                 );
               })}
@@ -277,10 +277,10 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
       <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={exportCsv} icon="download">
-            CA pack (CSV) download
+            Download CA pack (CSV)
           </Button>
           <Link href="/compliance/income-tax" className="text-xs text-ink-3 underline">
-            Compliance calendar me dekhein
+            View in Compliance calendar
           </Link>
         </div>
         <FiledControl fy={pack.fy.fiscalKey} fyLabel={pack.fy.label} due={pack.fy.itrDue} filedOn={filedOn} today={today} />
@@ -335,7 +335,7 @@ function FiledControl({ fy, fyLabel, due, filedOn, today }: {
           onClick={() => unmark.mutate({ obligation_key: ITR_OBLIGATION_KEY, period_key: fy })}
           disabled={unmark.isPending}
         >
-          Galti se laga? Hatao
+          Marked by mistake? Undo
         </Button>
       </div>
     );
@@ -357,17 +357,17 @@ function FiledControl({ fy, fyLabel, due, filedOn, today }: {
       }}
     >
       <label htmlFor="itr-ack" className="text-xs text-ink-3">
-        File ho gaya? Acknowledgment no.
+        Filed? Acknowledgment no.
       </label>
       <Input
         id="itr-ack"
         value={ack}
         onChange={(e) => setAck(e.target.value)}
-        placeholder="portal ka 15-ank ka number"
+        placeholder="15-digit number from the portal"
         className="h-8 w-56 text-xs"
       />
       <Button type="submit" variant="outline" size="sm" disabled={mark.isPending}>
-        Filed mark karo
+        Mark as filed
       </Button>
     </form>
   );

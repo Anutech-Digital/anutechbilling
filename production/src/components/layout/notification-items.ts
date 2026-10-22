@@ -142,8 +142,8 @@ export function buildNotifications(input: {
     const whenLabel = c.inDays === 0 ? "Today" : c.inDays === 1 ? "Tomorrow" : `in ${c.inDays} days`;
     const wa = toWhatsAppDigits(c.phone);
     const wishText = isBday
-      ? `Happy Birthday ${first}! 🎂🎉 Aapka din shubh aur mangalmay ho.`
-      : `Happy Anniversary ${first}! 💐🎉 Dher saari shubhkaamnaayein.`;
+      ? `Happy Birthday ${first}! 🎂🎉 Wishing you a wonderful day.`
+      : `Happy Anniversary ${first}! 💐🎉 Warmest wishes to you.`;
     out.push({
       id: `celebration-${c.id}`,
       title: `${isBday ? "🎂" : "💍"} ${c.name}'s ${c.kind}`,

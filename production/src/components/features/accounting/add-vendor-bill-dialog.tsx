@@ -201,15 +201,15 @@ export function AddVendorBillDialog({
       /* R-1510: a Proforma is a request for payment, not a GST tax invoice — no input
          credit can be claimed on it. Say so; the bill is still saved as typed. */
       const proformaWarn = (f as Record<string, unknown>).document_type === "proforma"
-        ? " ⚠ Ye PROFORMA hai, tax invoice nahi — iska GST input credit nahi milta; vendor se asli tax invoice maango."
+        ? " ⚠ This is a PROFORMA, not a tax invoice — no GST input credit can be claimed on it; ask the vendor for the tax invoice."
         : "";
       setAiNote(
         (cur !== "INR"
-          ? `AI ne bhar diya · bill ${cur} me hai — neeche exchange rate (₹/${cur}) daalo taaki books ₹ me sahi rahein. 📎 "${file.name}" attach ho jayega.`
-          : `AI ne bhar diya · 📎 "${file.name}" bill ke saath attach ho jayega — amounts bill se milaa ke Save karo.`) + proformaWarn,
+          ? `Filled by AI · the bill is in ${cur} — enter the exchange rate (₹/${cur}) below so the books are right in ₹. 📎 "${file.name}" will be attached.`
+          : `Filled by AI · 📎 "${file.name}" will be attached to the bill — check the amounts against the bill, then Save.`) + proformaWarn,
       );
     } catch {
-      setAiError("Upload failed — try again, ya fields haath se bhar do.");
+      setAiError("Upload failed — try again, or fill in the fields by hand.");
     } finally {
       setReading(false);
     }
@@ -404,8 +404,8 @@ export function AddVendorBillDialog({
               <div className="flex items-center gap-2 min-w-0">
                 <Icon name="sparkles" size={18} className="text-amber-ink shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-ink">Bill upload karo — AI khud bhar dega</p>
-                  <p className="text-xs text-ink-3">Photo (JPG/PNG) ya PDF · fields nikaal ke form bhar dega, aap check karke Save karo</p>
+                  <p className="text-sm font-medium text-ink">Upload the bill — AI fills in the form</p>
+                  <p className="text-xs text-ink-3">Photo (JPG/PNG) or PDF · AI reads the fields and fills the form; check it, then Save</p>
                 </div>
               </div>
               <Button type="button" variant="primary" size="sm" icon="upload" loading={reading} onClick={() => fileRef.current?.click()}>
@@ -544,7 +544,7 @@ export function AddVendorBillDialog({
               </SelectContent>
             </Select>
             <p className="text-xs text-ink-3 mt-1">
-              Bill ke upar likha naam dekho — sirf <b>Tax Invoice</b> par GST input credit milta hai.
+              Check the title printed on the bill — GST input credit is available only on a <b>Tax Invoice</b>.
             </p>
           </FormField>
 
@@ -646,8 +646,8 @@ export function AddVendorBillDialog({
                 <Icon name={itc.eligible ? "check_circle" : "alert"} size={12} className="mt-0.5 shrink-0" />
                 <span>
                   {itc.eligible
-                    ? "ITC milega — ye GST input credit me jayega (GST Report, GSTR-3B 4(A))."
-                    : <>ITC nahi milega — {itc.reason}. Ye GST cost me jayega (P&amp;L), Input GST me nahi.</>}
+                    ? "ITC available — this goes to GST input credit (GST Report, GSTR-3B 4(A))."
+                    : <>ITC not available — {itc.reason}. This GST is added to cost (P&amp;L), not to Input GST.</>}
                 </span>
               </p>
             )}
@@ -675,15 +675,15 @@ export function AddVendorBillDialog({
 
           {noCredit && noCreditOk && (
             <p role="alert" className="rounded-md bg-rose-soft/40 p-2.5 text-xs text-rose">
-              Is bill ke GST ({isForeign ? `${currency} ` : "₹"}{gstOnBill.toLocaleString("en-IN")}) ka credit nahi milega — {itc.reason}.
-              Ye cost me jayega. Phir bhi save karna hai to &quot;Save — GST cost me&quot; dabao; warna vendor se tax invoice maango.
+              No credit is available for this bill's GST ({isForeign ? `${currency} ` : "₹"}{gstOnBill.toLocaleString("en-IN")}) — {itc.reason}.
+              It is added to cost. To save anyway, click &quot;Save — GST as cost&quot;; otherwise ask the vendor for a tax invoice.
             </p>
           )}
 
           <DialogFooter>
             <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
             <Button type="submit" variant="primary" loading={isSubmitting}>
-              {noCredit && noCreditOk ? "Save — GST cost me" : "Save bill"}
+              {noCredit && noCreditOk ? "Save — GST as cost" : "Save bill"}
             </Button>
           </DialogFooter>
         </form>

@@ -65,13 +65,13 @@ export function pfWage(i: { gross: number; lopAmount?: number | null; basic?: nu
   const lop = Math.min(gross, Math.max(0, Math.round(i.lopAmount ?? 0)));
   const earnedRatio = gross > 0 ? (gross - lop) / gross : 0;
   if (i.basic === null || i.basic === undefined) {
-    return { base: gross - lop, assumed: true, note: "Basic set nahi — PF poore gross par lag raha hai. Employee → Statutory mein Basic bharo." };
+    return { base: gross - lop, assumed: true, note: "Basic not set — PF is being calculated on full gross. Enter Basic in Employee → Statutory." };
   }
   const structural = Math.max(0, Math.round(i.basic)) + Math.max(0, Math.round(i.da ?? 0));
   const base = Math.round(structural * earnedRatio);
   return {
     base, assumed: false,
-    note: lop > 0 ? `Basic + DA ₹${structural.toLocaleString("en-IN")}, LOP ke baad ₹${base.toLocaleString("en-IN")}.` : `Basic + DA ₹${structural.toLocaleString("en-IN")}.`,
+    note: lop > 0 ? `Basic + DA ₹${structural.toLocaleString("en-IN")}, after LOP ₹${base.toLocaleString("en-IN")}.` : `Basic + DA ₹${structural.toLocaleString("en-IN")}.`,
   };
 }
 

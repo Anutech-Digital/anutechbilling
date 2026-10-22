@@ -79,8 +79,8 @@ describe("list order and labels", () => {
   it("names each source in plain words", () => {
     expect(sourceLabel("pdf")).toBe("PDF");
     expect(sourceLabel("xlsx")).toBe("XLS / XLSX");
-    expect(sourceLabel("paste")).toBe("Paste kiya");
-    expect(sourceLabel("legacy")).toBe("Purana import");
+    expect(sourceLabel("paste")).toBe("Pasted");
+    expect(sourceLabel("legacy")).toBe("Old import");
   });
 });
 

@@ -63,11 +63,11 @@ describe("R-1579 — ITR book profit = P&L net profit (same FY)", () => {
 
   it("ITR ka book profit rupaye tak wahi — aur koi 'P&L se alag' gap nahi", () => {
     expect(pack.bookProfit).toBe(pnl.netProfit);
-    expect(pack.gaps.some((g) => g.includes("P&L ke net profit"))).toBe(false);
+    expect(pack.gaps.some((g) => g.includes("differs from the P&L net profit"))).toBe(false);
   });
 
   it("COGS vendor bills se (blocked GST samet), PO se nahi", () => {
-    const cogs = pack.pnl.find((l) => l.label.startsWith("Licence ki khareed"))!;
+    const cogs = pack.pnl.find((l) => l.label.startsWith("Licence purchases"))!;
     expect(cogs.amount).toBe(318_000);
     expect(cogs.count).toBe(2);
     expect(pack.gaps.some((g) => g.includes("placed purchase order"))).toBe(false);
@@ -100,13 +100,13 @@ describe("R-1579 — ITR book profit = P&L net profit (same FY)", () => {
     const r = { ...ROW, cogs: 0, cogs_count: 0, bills_gst: 0, bill_itc_groups: [] };
     const p = assemblePnl({ from: fy.start, to: fy.end }, r, { ...MASTERS, assets: [laptop] });
     const pk = computeItrPack(fy, { ...itrBooksFromPnl(p, r), ...EXTRA });
-    expect(pk.pnl.find((l) => l.label.startsWith("Licence ki khareed"))!.amount).toBe(0);
-    expect(pk.gaps.some((g) => g.includes("2 placed purchase order (₹4,00,000)"))).toBe(true);
+    expect(pk.pnl.find((l) => l.label.startsWith("Licence purchases"))!.amount).toBe(0);
+    expect(pk.gaps.some((g) => g.includes("2 placed purchase orders (₹4,00,000)"))).toBe(true);
   });
 
   it("book profit P&L se alag ho to gap chup nahi rehta", () => {
     const pk = computeItrPack(fy, { ...itrBooksFromPnl(pnl, ROW), ...EXTRA, pnlNetProfit: 1 });
-    expect(pk.gaps.some((g) => g.includes("P&L ke net profit"))).toBe(true);
+    expect(pk.gaps.some((g) => g.includes("differs from the P&L net profit"))).toBe(true);
   });
 });
 

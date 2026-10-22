@@ -14,6 +14,7 @@ import { fetchAllRows, fetchAllRowsIn, type PageQuery } from "@/lib/ops/fetch-al
 import { toOpenBalanceMap, type QuoteOpenBalanceRow } from "@/lib/quotes/open-balances";
 import { todayIST } from "@/lib/subscriptions/payment-due";
 import { queryKeys } from "@/lib/queries/keys";
+import { rupee } from "@/lib/utils";
 import { PAYMENT_COLUMNS } from "@/lib/queries/columns";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 import type { Payment, PaymentMethod } from "@/lib/supabase/database.types";
@@ -56,6 +57,27 @@ export function usePaymentsByQuote(quoteId: string | null | undefined) {
         .order("received_at", { ascending: true });
       if (error) throw error;
       return (data ?? []) as Payment[];
+    },
+  });
+}
+
+// ============================================================
+// R-1745 — the customer on the invoices that quote-less payments were recorded on
+// ============================================================
+/* R-1747: + external_number — the Zoho number the refund flow and the receipt print. */
+type InvoiceCustomerRow = { id: string; customer_id: string | null; customer_name: string | null; external_number: string | null };
+/** A payment on an imported Zoho invoice (R-1739) has no quote; its customer is the invoice's.
+ *  Only those invoice ids are read (lib/payments/payment-customer.ts quotelessInvoiceIds). */
+export function usePaymentInvoiceCustomers(invoiceIds: readonly string[]) {
+  const ids = [...invoiceIds].sort();
+  return useQuery({
+    queryKey: ["payments", "invoice-customers", ids],
+    enabled: ids.length > 0,
+    queryFn: async (): Promise<InvoiceCustomerRow[]> => {
+      const supabase = createClient();
+      return await fetchAllRowsIn<InvoiceCustomerRow, string>(ids, (run, from, to) =>
+        supabase.from("invoices").select("id, customer_id, customer_name, external_number").in("id", run).order("id").range(from, to) as never,
+      );
     },
   });
 }
@@ -185,7 +207,7 @@ export function useRefundPayment(opts?: { onBlocked?: (message: string) => void 
         p_reason: reason,
       });
       if (error) throw new Error(error.message);
-      return data as { refund_voucher_no: string; amount: number };
+      return data as { refund_voucher_no: string; amount: number; opening_invoice?: boolean; invoice_number?: string | null; invoice_due_after?: number };
     },
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["payments"] });
@@ -199,7 +221,10 @@ export function useRefundPayment(opts?: { onBlocked?: (message: string) => void 
       // R-1563: a refund on an invoiced quote pays out credit-note credit and moves the invoice.
       qc.invalidateQueries({ queryKey: ["invoices"] });
       toast.success(`Refund booked — voucher ${r.refund_voucher_no}`, {
-        description: "Kitab me darj hua. Asli paisa Razorpay/bank se aapko khud bhejna hai.",
+        /* R-1747: a refund on an imported Zoho invoice reopens that invoice — say by how much. */
+        description: (r.opening_invoice && r.invoice_number
+          ? `${r.invoice_number} has ${rupee(r.invoice_due_after ?? 0)} due again. `
+          : "Booked in the accounts. ") + "Send the actual money yourself from Razorpay or the bank.",
       });
     },
     onError: (err) => {
@@ -515,7 +540,7 @@ export function useMarkReminderSent() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
     },
-    onError: (e) => toastError(e, { fallback: "Reminder mark nahi hua — dobara try karo" }),
+    onError: (e) => toastError(e, { fallback: "Could not mark the reminder — please try again" }),
   });
 }
 

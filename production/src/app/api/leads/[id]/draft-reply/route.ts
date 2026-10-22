@@ -62,7 +62,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ id: str
     .eq("id", leadId)
     .maybeSingle();
   // Raw DB text client ko nahi (S21) — server log me [route] prefix ke saath.
-  if (leadErr) return errorResponse("[api/leads/draft-reply]", "POST", new RouteError(500, "Lead load nahi hua — dobara try kariye.", leadErr.message));
+  if (leadErr) return errorResponse("[api/leads/draft-reply]", "POST", new RouteError(500, "Could not load the lead — please try again.", leadErr.message));
   if (!lead) return NextResponse.json({ error: "Lead not found." }, { status: 404 });
 
   const { data: rows } = await supabase

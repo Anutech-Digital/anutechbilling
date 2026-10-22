@@ -102,7 +102,7 @@ export function useSetManualCheck() {
       if (input.done) {
         const { data: auth } = await supabase.auth.getUser();
         const { data: me } = await supabase.from("users").select("tenant_id").eq("id", auth.user?.id ?? "").maybeSingle();
-        if (!me?.tenant_id) throw new Error("Company pata nahi chali — dobara login karo.");
+        if (!me?.tenant_id) throw new Error("Could not find your company — please sign in again.");
         const { error } = await supabase.from("month_close_checks").insert({ tenant_id: me.tenant_id, period: input.period, key: input.key, done_by: auth.user?.id ?? null });
         if (error) throw error;
       } else {
@@ -111,6 +111,6 @@ export function useSetManualCheck() {
       }
     },
     onSuccess: (_d, input) => { qc.invalidateQueries({ queryKey: ["month-close", input.period] }); },
-    onError: (err) => toastError(err, { fallback: "Tick save nahi hua" }),
+    onError: (err) => toastError(err, { fallback: "Could not save the tick" }),
   });
 }

@@ -129,7 +129,7 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
   /* R-1739: onlySaleInvoices — an invoice imported from Zoho Books was filed from Zoho. */
   const issued = await fetchAllRows((from, to) => onlySaleInvoices(supabase
     .from("invoices")
-    .select("id, amount, invoice_date, customer_name, customer_id, status, taxable_value, tax_amount, tax_rate, inter_state, line_items, adjusted_advances, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code, document_kind"))
+    .select("id, amount, invoice_date, customer_name, customer_id, status, taxable_value, tax_amount, tax_rate, inter_state, line_items, adjusted_advances, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code, document_kind, gst_treatment"))
     .gte("invoice_date", range.from)
     .lte("invoice_date", range.to)
     .in("status", ["pending", "paid", "overdue"])
@@ -195,15 +195,17 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
     ...(debitNotes ?? []).map((n) => n.customer_id),
     ...(pays ?? []).map((p) => p.customer_id ?? (p.quote_id ? quoteById.get(p.quote_id)?.customerId : null)),
   ].filter((x): x is string => !!x)));
-  const custById = new Map<string, { gstin: string | null; stateCode: string | null; state: string | null; country: string | null }>();
+  /* R-1742: gst_treatment for ADVANCES only (not frozen anywhere yet) — an SEZ customer's
+     advance is IGST. Invoices and notes use the treatment frozen on the invoice. */
+  const custById = new Map<string, { gstin: string | null; stateCode: string | null; state: string | null; country: string | null; treatment: string | null }>();
   if (customerIds.length > 0) {
     const customers = await fetchAllRowsIn(customerIds, (run, from, to) => supabase
       .from("customers")
-      .select("id, gstin, state_code, state, country")
+      .select("id, gstin, state_code, state, country, gst_treatment")
       .in("id", run)
       .order("id", { ascending: true })
       .range(from, to));
-    for (const c of customers) custById.set(c.id, { gstin: c.gstin ?? null, stateCode: c.state_code ?? null, state: c.state ?? null, country: c.country ?? null });
+    for (const c of customers) custById.set(c.id, { gstin: c.gstin ?? null, stateCode: c.state_code ?? null, state: c.state ?? null, country: c.country ?? null, treatment: c.gst_treatment ?? null });
   }
   const custOf = (id: string | null | undefined) => (id ? custById.get(id) : undefined);
   /* R-043: an invoice's buyer as frozen at issue; a credit/debit note takes the
@@ -232,6 +234,11 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
   const linesOf = (raw: unknown): HsnSourceLine[] => (Array.isArray(raw) ? raw as HsnSourceLine[] : []);
   const linesByInvoice = new Map<string, HsnSourceLine[]>();
   for (const i of invoices ?? []) linesByInvoice.set(i.id, linesOf(i.line_items));
+  /* R-1742: GST treatment frozen at issue (R-1736) — decides SEZ / deemed export in GSTR-1.
+     A note takes its invoice's, like its buyer (R-043). */
+  const treatmentByInvoice = new Map<string, string | null>();
+  for (const i of invoices ?? []) treatmentByInvoice.set(i.id, i.gst_treatment ?? null);
+  const noteTreatment = (invoiceId: string | null | undefined) => (invoiceId ? treatmentByInvoice.get(invoiceId) ?? null : null);
   // R-335: parent invoice dates, for the s.34 credit-note time limit.
   const invoiceDateById = new Map<string, string | null>();
   for (const i of invoices ?? []) invoiceDateById.set(i.id, i.invoice_date);
@@ -239,11 +246,11 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
     .map((n) => n.invoice_id).filter((x): x is string => !!x && !linesByInvoice.has(x))));
   if (noteParentIds.length) {
     const parents = await fetchAllRowsIn(noteParentIds, (run, from, to) => supabase.from("invoices")
-      .select("id, invoice_date, line_items, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code")
+      .select("id, invoice_date, line_items, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code, gst_treatment")
       .in("id", run)
       .order("id", { ascending: true })
       .range(from, to));
-    for (const iv of parents) { linesByInvoice.set(iv.id, linesOf(iv.line_items)); snapByInvoice.set(iv.id, iv); invoiceDateById.set(iv.id, iv.invoice_date); }
+    for (const iv of parents) { linesByInvoice.set(iv.id, linesOf(iv.line_items)); snapByInvoice.set(iv.id, iv); invoiceDateById.set(iv.id, iv.invoice_date); treatmentByInvoice.set(iv.id, iv.gst_treatment ?? null); }
   }
   const itemIds = Array.from(new Set(Array.from(linesByInvoice.values()).flatMap((ls) => ls.map((l) => l.item_id)).filter((x): x is string => !!x)));
   const hsnByItem = new Map<string, string | null>();
@@ -286,6 +293,7 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
       interState:    i.inter_state ?? false,
       docType:       "invoice",
       lines:         docHsnLines(taxableValue, linesByInvoice.get(i.id), hsnByItem),
+      gstTreatment:  i.gst_treatment ?? null,
     };
   });
 
@@ -306,6 +314,7 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
       ...noteRate(n), interState: n.inter_state ?? false, docType: "credit_note",
       lateCreditNote: isCreditNoteLate(n.invoice_id ? invoiceDateById.get(n.invoice_id) : null, n.credit_date),
       lines: noteLines(-(n.taxable_value ?? 0), n.invoice_id),
+      gstTreatment: noteTreatment(n.invoice_id),
     });
   }
   for (const n of debitNotes ?? []) {
@@ -316,6 +325,7 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
       amount: n.amount ?? 0, taxableValue: n.taxable_value ?? 0, gst: n.tax_amount ?? 0,
       ...noteRate(n), interState: n.inter_state ?? false, docType: "debit_note",
       lines: noteLines(n.taxable_value ?? 0, n.invoice_id),
+      gstTreatment: noteTreatment(n.invoice_id),
     });
   }
   outputRows.sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate));
@@ -332,7 +342,7 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
       adjustedOn: q?.invoiceId ? invDateById.get(q.invoiceId) ?? null : null,
       /* R-1131: the quote's own rate; a quote with none is flagged, not taxed at 18%. */
       rate: q?.rate ?? 0, rateMissing: q?.rate == null,
-      interState: isInterStateSupply(c?.stateCode ?? null, sellerStateCode, { customerGstin: c?.gstin ?? null, sellerGstin }),
+      interState: isInterStateSupply(c?.stateCode ?? null, sellerStateCode, { customerGstin: c?.gstin ?? null, sellerGstin, treatment: c?.treatment ?? null }),
       customerGstin: c?.gstin ?? null, customerStateCode: c?.stateCode ?? null, customerState: c?.state ?? null, customerCountry: c?.country ?? null,
     };
   }, (p) => inst.portions.get(p.id));
@@ -448,7 +458,7 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
     const vendorState = stateCodeFromGstin(e.vendorGstin);
     const heads = expenseHeadsByState(h, vendorState, ownStateCode);
     const byState = !h.measured && heads.igst > h.igst;
-    return { ...heads, measured: h.measured, assumption: byState ? `Bill par batwara nahi tha — vendor GSTIN doosre rajya (${vendorState}) ka hai, isliye IGST maana gaya` : h.assumption };
+    return { ...heads, measured: h.measured, assumption: byState ? `The bill had no GST split — the vendor GSTIN is from another state (${vendorState}), so IGST is assumed` : h.assumption };
   };
   /* s.17(5) blocked rows keep their heads: 3B wants them in 4(A)(5) and again in 4(B)(1). */
   const blocked17Heads: Heads[] = withGstin
