@@ -61,6 +61,26 @@ export function usePaymentsByQuote(quoteId: string | null | undefined) {
 }
 
 // ============================================================
+// R-1745 — the customer on the invoices that quote-less payments were recorded on
+// ============================================================
+type InvoiceCustomerRow = { id: string; customer_id: string | null; customer_name: string | null };
+/** A payment on an imported Zoho invoice (R-1739) has no quote; its customer is the invoice's.
+ *  Only those invoice ids are read (lib/payments/payment-customer.ts quotelessInvoiceIds). */
+export function usePaymentInvoiceCustomers(invoiceIds: readonly string[]) {
+  const ids = [...invoiceIds].sort();
+  return useQuery({
+    queryKey: ["payments", "invoice-customers", ids],
+    enabled: ids.length > 0,
+    queryFn: async (): Promise<InvoiceCustomerRow[]> => {
+      const supabase = createClient();
+      return await fetchAllRowsIn<InvoiceCustomerRow, string>(ids, (run, from, to) =>
+        supabase.from("invoices").select("id, customer_id, customer_name").in("id", run).order("id").range(from, to) as never,
+      );
+    },
+  });
+}
+
+// ============================================================
 // R-1564 — an instalment invoice's subscription + the quote it was sold on
 // ============================================================
 /**

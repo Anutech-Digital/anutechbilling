@@ -33,6 +33,7 @@ import {
   useMarkReminderSent,
   useResumeSubscription,
   useWriteOffSubscription,
+  usePaymentInvoiceCustomers,
   type Payment,
   type OutstandingRow,
 } from "@/lib/queries/payments";
@@ -42,6 +43,7 @@ import { seatQuotePendingText } from "@/lib/subscriptions/seat-quotes-pending";
 import { useAllProjectPayments } from "@/lib/queries/projects";
 import { collectedInMonth } from "@/lib/company/summary";
 import { paymentDocHref, paymentDocId } from "@/lib/payments/payment-source";
+import { paymentCustomerLookup, quotelessInvoiceIds, type PaymentCustomer } from "@/lib/payments/payment-customer";
 import { OpeningInvoiceDuesCard } from "@/components/features/invoices/opening-invoice-dues-card";
 import { useCustomers } from "@/lib/queries/customers";
 import { useBankAccounts } from "@/lib/queries/bank";
@@ -179,15 +181,13 @@ function PaymentsPageInner() {
   const resumeSub         = useResumeSubscription();
   const writeOffSub       = useWriteOffSubscription();
 
-  // Build a lookup: quoteId → quote (for customer name + status context)
+  // Build a lookup: quoteId → quote (status context + its GST invoice)
   const quoteById = React.useMemo(() => {
-    const m = new Map<string, { customerName: string; paymentStatus: string; invoiceId: string | null; customerId: string | null }>();
+    const m = new Map<string, { paymentStatus: string; invoiceId: string | null }>();
     for (const q of quotes ?? []) {
       m.set(q.id, {
-        customerName:  q.customer_name,
         paymentStatus: q.payment_status,
         invoiceId:     q.invoice_id,
-        customerId:    q.customer_id,
       });
     }
     return m;
@@ -199,6 +199,17 @@ function PaymentsPageInner() {
     for (const c of customers ?? []) m.set(c.id, c);
     return m;
   }, [customers]);
+
+  /* R-1745: whose payment is it — the quote's customer, else (a payment on an imported Zoho
+     invoice, R-1739: no quote) the invoice's, else the payment's own customer_id. One lookup for
+     the rows, phone cards, search, sort, Export CSV and the receipt voucher / its PDF. */
+  const { data: invoiceCustomers } = usePaymentInvoiceCustomers(
+    React.useMemo(() => quotelessInvoiceIds(payments ?? []), [payments]),
+  );
+  const customerOf = React.useMemo(
+    () => paymentCustomerLookup({ quotes: quotes ?? [], invoices: invoiceCustomers ?? [], customers: customers ?? [] }),
+    [quotes, invoiceCustomers, customers],
+  );
 
   /* R-533: with ?customer= every number on the page is that customer's — the list, the tab
      counts, the summary line, the analytics strip, the dues card and the view counts. One
@@ -224,21 +235,20 @@ function PaymentsPageInner() {
     if (focus && !paymentInFocus(p, focus)) return false;   // the tile's own predicate
     if (!search.trim()) return true;
     const s = search.toLowerCase();
-    const quoteCtx = quoteById.get(p.quote_id ?? "");
     return (
       paymentDocId(p).toLowerCase().includes(s) ||
       (p.reference?.toLowerCase().includes(s) ?? false) ||
       p.method.toLowerCase().includes(s) ||
-      (quoteCtx?.customerName.toLowerCase().includes(s) ?? false)
+      (customerOf(p).customerName?.toLowerCase().includes(s) ?? false)
     );
-  }), [scopedPayments, tab, focus, quoteById, search]);
+  }), [scopedPayments, tab, focus, customerOf, search]);
 
   /* R-215: the list is on the shared DataTable — header sort, and R-104's "paint 50 at a
      time" now comes from its pageSize. Tab counts, KPIs, "collected" and the CSV export
      still use every payment in `filtered` / `payments`; only the painting is paged. */
   const paySort = React.useMemo(
-    () => paymentSortValues<Payment>((p) => quoteById.get(p.quote_id ?? "")?.customerName),
-    [quoteById],
+    () => paymentSortValues<Payment>((p) => customerOf(p).customerName),
+    [customerOf],
   );
   const payColumns: DataTableColumn<Payment>[] = [
     { id: "date", header: "Date", width: PAY_COL_WIDTHS.date, sortValue: paySort.date },
@@ -321,10 +331,9 @@ function PaymentsPageInner() {
     /* R-045: gateway fee + net received, blank when not known (never a guessed zero). */
     const header = ["Date", "Customer", "Quote", "Amount", "Gateway fee", "Net received", "Method", "Reference", "Status", "Receipt Voucher"];
     const lines = filtered.map((p) => {
-      const ctx = quoteById.get(p.quote_id ?? "");
       const fee = paymentFeeView(p);
       return [
-        formatDate(p.received_at), ctx?.customerName ?? "", paymentDocId(p), String(p.amount),
+        formatDate(p.received_at), customerOf(p).customerName ?? "", paymentDocId(p), String(p.amount),
         fee ? String(fee.fee) : "", fee ? String(fee.net) : "",
         p.method ? paymentMethodLabel(p.method) : "", p.reference ?? "", p.status, p.receipt_voucher_no ?? "",
       ].map(esc).join(",");
@@ -783,7 +792,7 @@ function PaymentsPageInner() {
             pageSize={PAYMENTS_PAGE_SIZE}
             mobileCard={(p) => {
             const ctx = quoteById.get(p.quote_id ?? "");
-            const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
+            const who = customerOf(p);
             return (
               <div className="bg-paper border border-hairline rounded-lg overflow-hidden">
                 <MaybeQuoteLink
@@ -794,7 +803,7 @@ function PaymentsPageInner() {
                   <div className="flex items-start justify-between gap-3 mb-1.5">
                     <div className="min-w-0 flex-1">
                       <p className="font-medium text-ink truncate">
-                        {cleanDisplayName(customer?.name ?? ctx?.customerName ?? "—")}
+                        {cleanDisplayName(who.customerName ?? "—")}
                       </p>
                       <p className="font-mono text-2xs text-ink-3 mt-0.5">{paymentDocId(p)}</p>
                     </div>
@@ -856,13 +865,14 @@ function PaymentsPageInner() {
             }}
             renderRow={(p) => {
                 const ctx = quoteById.get(p.quote_id ?? "");
-                const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
+                const who = customerOf(p);
                 return (
                   <PaymentRowView
                     key={p.id}
                     p={p}
                     ctx={ctx}
-                    customer={customer}
+                    who={who}
+                    customer={who.customerId ? customerById.get(who.customerId) : undefined}
                     me={me}
                     bankLabel={p.bank_account_id ? bankNameById.get(p.bank_account_id) : undefined}
                     onEdit={() => setEditPayment(p)}
@@ -974,7 +984,7 @@ function PaymentsPageInner() {
         onOpenChange={(o) => { if (!o) setEditPayment(null); }}
         payment={editPayment}
         customerName={
-          (editPayment && quoteById.get(editPayment.quote_id ?? "")?.customerName) || "Customer"
+          (editPayment && customerOf(editPayment).customerName) || "Customer"
         }
       />
 
@@ -1102,6 +1112,7 @@ function MaybeQuoteLink({
 function PaymentRowView({
   p,
   ctx,
+  who,
   customer,
   me,
   bankLabel,
@@ -1110,7 +1121,9 @@ function PaymentRowView({
   rowRef,
 }: {
   p: Payment;
-  ctx?: { customerName: string; paymentStatus: string; invoiceId: string | null; customerId: string | null };
+  ctx?: { paymentStatus: string; invoiceId: string | null };
+  /** R-1745: whose payment it is (lib/payments/payment-customer.ts). */
+  who: PaymentCustomer;
   customer?: {
     name:           string;
     gstin:          string | null;
@@ -1182,7 +1195,7 @@ function PaymentRowView({
     customer.state_code !== me.tenantStateCode,
   );
 
-  const customerName = cleanDisplayName(ctx?.customerName ?? "—");
+  const customerName = cleanDisplayName(who.customerName ?? "—");
   return (
     <tr
       ref={rowRef}
@@ -1205,8 +1218,8 @@ function PaymentRowView({
     >
       <td className="px-3 py-2.5 text-xs text-ink-2 whitespace-nowrap align-top">{formatDate(p.received_at)}</td>
       <td className="px-3 py-2.5 text-sm font-medium align-top" onClick={(e) => e.stopPropagation()}>
-        {ctx?.customerId ? (
-          <Link href={`/customers/${ctx.customerId}` as never} className="text-ink hover:text-amber-ink hover:underline break-words leading-snug">{customerName}</Link>
+        {who.customerId ? (
+          <Link href={`/customers/${who.customerId}` as never} className="text-ink hover:text-amber-ink hover:underline break-words leading-snug">{customerName}</Link>
         ) : (
           <span className="text-ink break-words leading-snug">{customerName}</span>
         )}
@@ -1317,7 +1330,7 @@ function PaymentRowView({
             open={receiptOpen}
             onOpenChange={setReceiptOpen}
             payment={p}
-            customerName={customer?.name ?? ctx?.customerName ?? "Customer"}
+            customerName={who.customerName ?? "Customer"}
             customerGstin={customer?.gstin}
             customerEmail={customer?.contact_email}
             tenantName={me.tenantName}
