@@ -68,7 +68,6 @@ export const HINGLISH_ALLOWLIST: Readonly<Record<string, "R-1732" | "R-1733">> =
   "src/components/features/attendance/biometric-setup-card.tsx": "R-1733",
   "src/components/features/campaigns/campaign-composer-dialog.tsx": "R-1733",
   "src/components/features/customers/customer-insights.tsx": "R-1733",
-  "src/components/features/customers/import-customers-dialog.tsx": "R-1733",
   "src/components/features/customers/primary-contact-line.tsx": "R-1733",
   "src/components/features/items/item-form.tsx": "R-1733",
   "src/components/features/leads/add-lead-form.tsx": "R-1732",

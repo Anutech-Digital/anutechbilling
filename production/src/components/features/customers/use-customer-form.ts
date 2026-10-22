@@ -31,6 +31,7 @@ import {
   gstTreatmentOption, panFromGstin, isValidPan, type CustomerGstTreatment,
 } from "@/lib/gst/customer-gst-treatment";
 import type { GstinVerification, Customer } from "@/lib/supabase/database.types";
+import { newCustomerReachProblem, defaultContactName, contactIsTheCompany } from "./new-customer-contact";
 
 // Schema — GSTIN optional but checksum-validated when present. State code stays
 // in the schema (needed for GST math) but has no visible input; we auto-derive
@@ -185,7 +186,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       // customer's contact isn't shown blank in the new split fields.
       let firstName = customer.contact_first_name ?? "";
       let lastName  = customer.contact_last_name ?? "";
-      if (!firstName && !lastName && customer.contact_name?.trim()) {
+      /* R-1738: a contact that is just the company's own name stays out of First/Last. */
+      if (!firstName && !lastName && customer.contact_name?.trim() && !contactIsTheCompany(customer)) {
         const parts = customer.contact_name.trim().split(/\s+/);
         firstName = parts[0] ?? "";
         lastName  = parts.slice(1).join(" ");
@@ -288,32 +290,23 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     const combinedName = [data.contact_first_name?.trim(), data.contact_last_name?.trim()]
       .filter(Boolean).join(" ") || (data.contact_name?.trim() || null);
 
-    /* ── A NEW CUSTOMER MUST HAVE A PERSON ON IT ────────────────────────────
-       Abhishek's rule, 18 Sep 2026: "without contact customer not created". The customer
-       is the company; the contact is the human who receives its invoices and payment
-       reminders, and a customer without one is a bill addressed to nobody.
+    /* ── A NEW CUSTOMER NEEDS A WAY TO REACH IT (R-1738, 22 Oct 2026) ─────────
+       Was: name + contact person + email + phone, all four required (Abhishek, 18 Sep:
+       "without contact customer not created"). Zoho asks only the name. Now a new
+       customer needs its name (the schema) and ONE way to send the invoice — an email
+       or a phone. The contact is still never blank: when no person is typed, the
+       company itself is the contact (defaultContactName below), so useCreateCustomer's
+       contact rule, the customer_contacts link, the invoice / dunning recipient and the
+       subscription file's "Contact Name" all still get one.
 
-       CREATE ONLY, on purpose. Customers already on the books predate the rule — some
-       were imported, some came from the old flat columns — and refusing to save an edit
-       to one would lock the operator out of the very page where the missing contact is
-       fixed. New ones cannot get in without it; old ones get fixed, not frozen.
-
-       Enforced here rather than in the zod schema because the schema is shared by both
-       modes and cannot tell them apart. Reported through setError so it lands on the
-       field, the way every other validation message on this form does. */
+       CREATE ONLY, on purpose — editing an old customer is never blocked. Reported
+       through setError so it lands on the field like every other message here. */
     if (!isEdit) {
-      const missing: Array<[keyof CustomerFormData, string]> = [];
-      if (!combinedName) missing.push(["contact_first_name", "A contact person's name is required"]);
-      if (!data.contact_email?.trim()) missing.push(["contact_email", "The contact's email is required — invoices and reminders go here"]);
-      if (!data.contact_phone?.trim() && !data.contact_mobile?.trim()) {
-        missing.push(["contact_phone", "A phone number is required for the contact"]);
-      }
-      if (missing.length > 0) {
-        for (const [field, message] of missing) {
-          form.setError(field, { type: "manual", message });
-        }
-        toast.error("Add a contact person before saving this customer", {
-          description: "A customer needs one named human with an email and a phone number — they are who the invoice and the payment reminder go to. Fill in the Contact Person section, then save again.",
+      const problem = newCustomerReachProblem(data);
+      if (problem) {
+        form.setError("contact_email", { type: "manual", message: problem });
+        toast.error("Add an email or a phone number", {
+          description: "The invoice and the payment reminder need somewhere to go. One of the two is enough.",
         });
         return;
       }
@@ -365,7 +358,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       address:       data.address?.trim()       || null,
       city:          data.city?.trim()          || null,
       pin_code:      data.pin_code?.trim()      || null,
-      contact_name:  combinedName,
+      /* R-1738: no contact person typed → the company (or the individual) is the contact. */
+      contact_name:  defaultContactName({ personName: combinedName, customerName: canonicalName }),
       contact_title: data.contact_title?.trim() || null,
       contact_email: data.contact_email?.trim() || null,
       contact_phone: data.contact_phone?.trim() || null,
