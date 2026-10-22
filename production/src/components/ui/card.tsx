@@ -30,8 +30,12 @@ interface CardProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "title"> 
   actions?: React.ReactNode;
   /** Less padding (tight layouts) */
   tight?: boolean;
-  /** No padding on body (for full-bleed tables) */
-  flush?: boolean;
+  /**
+   * No padding on body (for full-bleed tables). `true` wraps the body in a horizontal
+   * scroller. `"clip"` (R-1741, DataTable) clips instead: overflow-x:clip is NOT a scroll
+   * container, so a `position: sticky` table header inside still sticks to the window.
+   */
+  flush?: boolean | "clip";
 }
 
 const Card = React.forwardRef<HTMLDivElement, CardProps>(
@@ -48,7 +52,7 @@ const Card = React.forwardRef<HTMLDivElement, CardProps>(
         {...props}
       >
         {useShortcut && (
-          <CardHeader tight={tight} flush={flush}>
+          <CardHeader tight={tight} flush={!!flush}>
             <div className="flex-1 min-w-0">
               {title && <CardTitle>{title}</CardTitle>}
               {sub && <CardDescription>{sub}</CardDescription>}
@@ -66,7 +70,10 @@ const Card = React.forwardRef<HTMLDivElement, CardProps>(
           // instead of escaping to their static x-position past the viewport
           // and forcing a phantom page-level horizontal scrollbar. Radix
           // dialogs/menus render in portals, so this does not clip row popovers.
-          <div className="overflow-x-auto relative">{children}</div>
+          // flush="clip" (R-1741): same clipping and containing block, but not a scroll
+          // container — overflow-x:auto would capture a sticky header (it would stick to
+          // this box, which never scrolls vertically). For tables that already fit (DataTable).
+          <div className={cn(flush === "clip" ? "overflow-x-clip" : "overflow-x-auto", "relative")}>{children}</div>
         ) : (
           <div className={cn(tight ? "p-3" : "p-4")}>{children}</div>
         )}

@@ -92,3 +92,35 @@ describe("DataTable sort in the URL (R-297)", () => {
     expect(firstId()).toBe("INV-001");
   });
 });
+
+// R-1741 — on /invoices (and Payments, Bills, Expenses) the column header must stay stuck just
+// below the app's sticky top bar (sticky top-0 z-30 h-14) while the window scrolls. Two things
+// broke it: the header cells were not sticky, and the table sat inside Card flush's
+// overflow-x-auto wrapper — an overflow:auto ancestor becomes the scroll container, so
+// position:sticky sticks to THAT box (which never scrolls vertically) instead of the window.
+// jsdom cannot measure stickiness; these pin the classes, a real browser checks the look.
+describe("DataTable header stays under the top bar on scroll (R-1741)", () => {
+  const SCROLL_BOX = /(^|\s)overflow(-[xy])?-(auto|scroll|hidden)(\s|$)/;
+
+  it("every header cell is sticky at top-14, above rows (z-20, under the top bar's z-30), opaque", () => {
+    table({ selected: new Set<string>(), onSelectedChange: () => {} });
+    const ths = within(screen.getByRole("table")).getAllByRole("columnheader");
+    expect(ths).toHaveLength(3); // checkbox + Invoice + Amount
+    for (const th of ths) {
+      const cls = th.className.split(/\s+/);
+      expect(cls).toEqual(expect.arrayContaining(["sticky", "top-14", "z-20", "bg-paper-2"]));
+    }
+  });
+
+  it("no ancestor of the table inside DataTable is a scroll box (would kill sticky)", () => {
+    const { container } = table();
+    let el: HTMLElement | null = screen.getByRole("table").parentElement;
+    const seen: string[] = [];
+    while (el && el !== container) {
+      seen.push(el.className);
+      expect(el.className).not.toMatch(SCROLL_BOX);
+      el = el.parentElement;
+    }
+    expect(seen.length).toBeGreaterThan(1); // walked through the Card's wrapper and the Card
+  });
+});
