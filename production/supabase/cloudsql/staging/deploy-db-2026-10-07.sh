@@ -179,6 +179,7 @@ MIGS=(
   "r1740contact|20261022025200_r1740_contact_relationship.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'contacts' and column_name = 'relationship_type') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'contacts' and column_name = 'closeness')"
   "r1742nameonlytreatment|20261022043947_r1742_customers_name_only_treatment.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.customers_name_only()') and prosrc like '%R-1742%')"
   "r1747openingrefund|20261022044013_r1747_opening_invoice_refund.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.refund_payment(uuid,text)') and prosrc like '%R-1747%')"
+  "r1749zohobooks|20261022065809_r1749_zoho_books_connection.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'zoho_books_refresh_token')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

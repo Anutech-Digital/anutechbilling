@@ -12719,6 +12719,11 @@ export type Database = {
           whatsapp_phone_number_id: string | null
           whatsapp_provider: string | null
           whatsapp_verify_token: string | null
+          zoho_books_connected_at: string | null
+          zoho_books_connected_by: string | null
+          zoho_books_org_id: string | null
+          zoho_books_org_name: string | null
+          zoho_books_refresh_token: string | null
         }
         Insert: {
           created_at?: string
@@ -12741,6 +12746,11 @@ export type Database = {
           whatsapp_phone_number_id?: string | null
           whatsapp_provider?: string | null
           whatsapp_verify_token?: string | null
+          zoho_books_connected_at?: string | null
+          zoho_books_connected_by?: string | null
+          zoho_books_org_id?: string | null
+          zoho_books_org_name?: string | null
+          zoho_books_refresh_token?: string | null
         }
         Update: {
           created_at?: string
@@ -12763,6 +12773,11 @@ export type Database = {
           whatsapp_phone_number_id?: string | null
           whatsapp_provider?: string | null
           whatsapp_verify_token?: string | null
+          zoho_books_connected_at?: string | null
+          zoho_books_connected_by?: string | null
+          zoho_books_org_id?: string | null
+          zoho_books_org_name?: string | null
+          zoho_books_refresh_token?: string | null
         }
         Relationships: [
           {
