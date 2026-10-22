@@ -19,11 +19,11 @@ import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 const STAR_LABEL: Record<number, string> = {
-  1: "Bahut kharab",
-  2: "Kharab",
-  3: "Theek-thaak",
-  4: "Achha",
-  5: "Behtareen",
+  1: "Very poor",
+  2: "Poor",
+  3: "Okay",
+  4: "Good",
+  5: "Excellent",
 };
 
 export function RatingStars({ score, size = 16 }: { score: number; size?: number }) {
@@ -63,7 +63,7 @@ export function RateTicket({ ticketId, tenantId, ratedByEmail, existing }: RateT
   if (given) {
     return (
       <div className="mt-3 pt-3 border-t border-hairline flex items-center gap-2 flex-wrap text-xs text-ink-2">
-        <span className="font-semibold text-ink">Aapki rating:</span>
+        <span className="font-semibold text-ink">Your rating:</span>
         <RatingStars score={given.score} />
         {given.comment && <span className="text-ink-3">“{given.comment}”</span>}
       </div>
@@ -89,7 +89,7 @@ export function RateTicket({ ticketId, tenantId, ratedByEmail, existing }: RateT
         return;
       }
       setError(
-        "Rating save nahi hui — network ya session ka masla ho sakta hai. Page refresh karke dobara try karein, ya neeche Retry dabayein.",
+        "Your rating was not saved — it may be a network or session problem. Refresh the page and try again, or press Retry below.",
       );
       return;
     }
@@ -99,7 +99,7 @@ export function RateTicket({ ticketId, tenantId, ratedByEmail, existing }: RateT
   return (
     <div className="mt-3 pt-3 border-t border-hairline">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-semibold text-ink">Kaisa raha support?</span>
+        <span className="text-xs font-semibold text-ink">How was our support?</span>
         <div role="radiogroup" aria-label="Rate this ticket from 1 to 5 stars" className="inline-flex">
           {[1, 2, 3, 4, 5].map((i) => (
             <button
@@ -130,7 +130,7 @@ export function RateTicket({ ticketId, tenantId, ratedByEmail, existing }: RateT
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             maxLength={2000}
-            placeholder="Kuch kehna chahein? (optional)"
+            placeholder="Anything you'd like to add? (optional)"
             aria-label="Optional comment with your rating"
             className="flex-1 min-w-[180px] rounded-md border border-hairline bg-paper px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-3 focus:outline-none focus:ring-1 focus:ring-primary"
           />
@@ -140,7 +140,7 @@ export function RateTicket({ ticketId, tenantId, ratedByEmail, existing }: RateT
             disabled={saving}
             className="text-xs font-semibold px-3 py-1.5 rounded-md bg-ink text-paper hover:opacity-90 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink"
           >
-            {saving ? "Bhej rahe…" : "Submit rating"}
+            {saving ? "Sending…" : "Submit rating"}
           </button>
         </div>
       )}

@@ -254,6 +254,6 @@ export function useDeleteVendorBill() {
       qc.invalidateQueries({ queryKey: ["vendor_bills"] });
       toast.success("Bill deleted");
     },
-    onError: (err) => toastDeleteBlocked(err, "Ye bill yahan se nahi hata — neeche ke button se us page par jao jahan ise theek kiya jaata hai."),
+    onError: (err) => toastDeleteBlocked(err, "This bill cannot be removed here — use the button below to go to the page where it is corrected."),
   });
 }

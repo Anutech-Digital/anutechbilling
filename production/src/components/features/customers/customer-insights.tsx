@@ -665,8 +665,8 @@ export function CustomerIdentityRail({ c, contact, onAddContact }: {
         <div className="flex items-start gap-3" data-testid="no-contact-person">
           <Avatar initials="?" color="muted" size="md" />
           <div className="min-w-0 flex-1">
-            <div className="font-medium text-ink">Koi contact person nahi</div>
-            <div className="text-2xs text-ink-3 mt-0.5">Invoice aur reminder kisko jaaye — ek contact person jodiye.</div>
+            <div className="font-medium text-ink">No contact person yet</div>
+            <div className="text-2xs text-ink-3 mt-0.5">Add a contact person so invoices and reminders reach the right person.</div>
             {onAddContact && (
               <Button size="sm" variant="outline" icon="plus" className="mt-2" onClick={onAddContact}>
                 Add contact

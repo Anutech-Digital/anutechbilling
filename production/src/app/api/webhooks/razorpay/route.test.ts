@@ -508,7 +508,7 @@ describe("R-045 — refund.processed leaves an instruction, once, and books noth
    asked for the money. Now: never dropped, never on a closed quote, owner told — once. */
 describe("R-1569 — a payment that arrives after the quote is settled or replaced is never lost", () => {
   const DESK = { tenant_id: TENANT, quote_id: QUOTE, reference: "NEFT-DESK-1", status: "received", amount: 1180 };
-  const ALERT: Record<string, RegExp> = { "payment.duplicate": /dobara|Zyada paisa/i, "payment.replaced_quote": /^Purane quote/, "payment.unapplied": /record nahi hua/ };
+  const ALERT: Record<string, RegExp> = { "payment.duplicate": /paid again|Extra payment/i, "payment.replaced_quote": /received on old quote/, "payment.unapplied": /not recorded/ };
   const alerts = (type: string) => vi.mocked(notifyTenantOwners).mock.calls.map((c) => c[0])
     .filter((n) => n.kind === "payment.received" && n.entityId === "pay_AITEST1" && ALERT[type].test(n.title));
   beforeEach(() => {
@@ -532,7 +532,7 @@ describe("R-1569 — a payment that arrives after the quote is settled or replac
     expect(db.tables.payments).toHaveLength(2);
     const a = alerts("payment.duplicate");
     expect(a).toHaveLength(1);
-    expect(a[0].title).toMatch(/dobara/i);
+    expect(a[0].title).toMatch(/paid again/i);
     expect(`${a[0].title} ${a[0].body}`).toMatch(/refund|credit/i);
     expect(queueProvisioning).not.toHaveBeenCalled(); // already provisioned off the first payment
     const customerMails = sendEmail.mock.calls.filter((c) => (c[0] as { kind: string }).kind === "razorpay_payment_customer");
@@ -662,7 +662,7 @@ describe("R-1569 — a payment that arrives after the quote is settled or replac
    replayed event (same event id, same payment id) records nothing twice. */
 describe("R-747 — captured amount vs what was due; refuse what cannot be matched; replay-safe", () => {
   const flags = () => vi.mocked(notifyTenantOwners).mock.calls.map((c) => c[0])
-    .filter((n) => n.entityId === "pay_AITEST1" && /jaanch|kam/i.test(n.title));
+    .filter((n) => n.entityId === "pay_AITEST1" && /needs a check|Short payment/i.test(n.title));
   const mails = (kind: string) => sendEmail.mock.calls.filter((c) => (c[0] as { kind: string }).kind === kind);
   const withPayment = (patch: Row, event = "payment.captured") => {
     const e = captured(event);

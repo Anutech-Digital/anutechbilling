@@ -336,8 +336,8 @@ export async function settleCapturedPayment(
     if (payment.id && hint && (await mayActOn(hint))) {
       return flagPaymentForReview(admin, {
         tenantId: hint, quoteId: null, leadId: null, payment: reviewPayment, orderId, event,
-        why: `iska quote/order "${receipt}" app me nahi mila`,
-        nextStep: `Razorpay dashboard me payment ${payment.id} kholo: sahi quote mile to us par Record payment karo (reference ${payment.id}), warna customer ko refund karo.`,
+        why: `its quote/order "${receipt}" was not found in the app`,
+        nextStep: `Open payment ${payment.id} in the Razorpay dashboard: if you find the right quote, use Record payment on it (reference ${payment.id}); otherwise refund the customer.`,
       });
     }
     console.error("[webhooks/razorpay] quote not found — nothing recorded:", receipt, {
@@ -390,7 +390,7 @@ export async function settleCapturedPayment(
     return flagPaymentForReview(admin, {
       tenantId: quote.tenant_id, quoteId: quote.id, leadId: quote.lead_id, payment: reviewPayment, orderId, event,
       why: mismatch,
-      nextStep: `Razorpay dashboard me payment ${payment.id} dekho; sahi ho to quote ${quote.id} par Record payment me rupee raqam haath se daalo (reference ${payment.id}), warna refund karo.`,
+      nextStep: `Check payment ${payment.id} in the Razorpay dashboard; if it is correct, enter the rupee amount by hand in Record payment on quote ${quote.id} (reference ${payment.id}); otherwise refund it.`,
     });
   }
 
@@ -534,8 +534,8 @@ export async function settleCapturedPayment(
     await notifyTenantOwners({
       tenantId: quote.tenant_id,
       kind: "payment.received", // R-1569 alert — entityId is the Razorpay payment id
-      title: `Zyada paisa aaya — ${rupee(overpaidCredit)} credit on ${quote.id}`,
-      body: `${quote.customer_name ?? "Customer"} ne Razorpay se ${rupee(paymentAmount)} pay kiya (${paymentRef}); quote par pehle se paisa tha, ${rupee(overpaidCredit)} customer credit bana. Refund karo ya agle bill me lagao.`,
+      title: `Extra payment received — ${rupee(overpaidCredit)} credit on ${quote.id}`,
+      body: `${quote.customer_name ?? "Customer"} paid ${rupee(paymentAmount)} through Razorpay (${paymentRef}); the quote already had money on it, so ${rupee(overpaidCredit)} became customer credit. Refund it or apply it to the next bill.`,
       href: `/quotes/${quote.id}`,
       entityId: paymentRef,
     });

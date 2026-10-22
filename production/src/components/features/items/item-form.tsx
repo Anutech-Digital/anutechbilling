@@ -497,9 +497,9 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
                 🌍 USD price <Badge kind="info" size="sm">Export · optional</Badge>
               </div>
               <div className="text-2xs text-ink-3">
-                Product ka <b>asli USD price</b> (jaise Google ka published $ rate) — ₹ se convert NAHI.
-                International customer ko USD me quote/invoice tab ye use hoga. Khaali chhodo to ₹ price
-                convert ho jayega.
+                The product's <b>real USD price</b> (e.g. Google's published $ rate) — NOT converted from ₹.
+                Used when you quote or invoice an international customer in USD. Leave it empty and the ₹ price
+                gets converted.
               </div>
             </div>
             <div className="px-4 py-3 grid grid-cols-2 gap-3">
@@ -544,7 +544,7 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
                     <Badge kind="warning" size="sm">Distributor only</Badge>
                   </div>
                   <div className="text-2xs text-ink-3">
-                    Sub-reseller children dekhenge ye SKU + price apne "From your distributor" tab me.
+                    Your sub-resellers will see this SKU and price in their "From your distributor" tab.
                   </div>
                 </div>
                 <Icon name="link" size={13} className="text-ink-3 flex-shrink-0" />
@@ -573,7 +573,7 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
                       className="text-right tabular-nums max-w-xs"
                     />
                     <div className="mt-1 text-3xs text-ink-3">
-                      Ye rate sub-reseller ka wholesale cost banega. Annual yearly bill ke liye × 12 hoga ({rupee(partnerPrice * 12)}/seat/yr).
+                      This rate becomes the sub-reseller's wholesale cost. For an annual bill it is × 12 ({rupee(partnerPrice * 12)}/seat/yr).
                     </div>
                   </FormField>
                 </div>

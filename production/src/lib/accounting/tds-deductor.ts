@@ -103,7 +103,7 @@ export function tdsDecision(i: TdsDecisionInput): TdsDecision {
   const deducteeType = deducteeTypeFromPan(pan);
   const none = (reason: string, headroom: number | null = null): TdsDecision =>
     ({ applies: false, ratePct: 0, tds: 0, catchUpBase: 0, catchUpTds: 0, noPan, deducteeType, reason, headroom });
-  if (!rate || !th) return none(`${sec}: is section ka rate app ko nahi pata — CA se poochh kar amount khud bharo.`);
+  if (!rate || !th) return none(`${sec}: the app does not know this section's rate — ask your CA and enter the amount yourself.`);
 
   // Rate: the section's default, the deductee's variant, then s.206AA.
   let ratePct = rate.ratePct;
@@ -116,8 +116,8 @@ export function tdsDecision(i: TdsDecisionInput): TdsDecision {
   if (!crossedSingle && !crossedYear) {
     const room = th.aggregate - yearTotal;
     return none(
-      `${sec}: is saal ab tak ${inr(i.fyBaseSoFar)} + ye ${inr(base)} = ${inr(yearTotal)} — limit ${inr(th.aggregate)}` +
-      (th.single ? ` (ek payment ${inr(th.single)})` : "") + ` ke andar, TDS zaroori nahi. ${inr(room)} aur bacha.`,
+      `${sec}: this year so far ${inr(i.fyBaseSoFar)} + this ${inr(base)} = ${inr(yearTotal)} — within the limit of ${inr(th.aggregate)}` +
+      (th.single ? ` (single payment ${inr(th.single)})` : "") + `, TDS not required. ${inr(room)} left.`,
       room,
     );
   }
@@ -128,15 +128,15 @@ export function tdsDecision(i: TdsDecisionInput): TdsDecision {
   const catchUpBase = th.onlyAbove || !crossedYear ? 0 : Math.max(0, Math.round(i.fyBaseWithoutTds));
   const catchUpTds = Math.round((catchUpBase * ratePct) / 100);
 
-  const who = noPan ? "PAN nahi → s.206AA 20%" : `PAN ${pan}${deducteeType ? ` · ${DEDUCTEE_LABEL[deducteeType]}` : ""}`;
+  const who = noPan ? "No PAN → s.206AA 20%" : `PAN ${pan}${deducteeType ? ` · ${DEDUCTEE_LABEL[deducteeType]}` : ""}`;
   let reason: string;
   if (th.onlyAbove) {
-    reason = `${sec}: saal ki kharid ${inr(yearTotal)} — ${inr(th.aggregate)} se upar ke ${inr(taxableNow)} par ${ratePct}% (${who}).`;
+    reason = `${sec}: purchases this year ${inr(yearTotal)} — ${ratePct}% on the ${inr(taxableNow)} above ${inr(th.aggregate)} (${who}).`;
   } else if (crossedSingle && !crossedYear) {
-    reason = `${sec}: ek payment ${inr(base)} > ${inr(th.single ?? 0)} → ${ratePct}% (${who}).`;
+    reason = `${sec}: single payment ${inr(base)} > ${inr(th.single ?? 0)} → ${ratePct}% (${who}).`;
   } else {
-    reason = `${sec}: is saal ${inr(i.fyBaseSoFar)} + ye ${inr(base)} = ${inr(yearTotal)} > ${inr(th.aggregate)} → ${ratePct}% (${who}).`;
-    if (catchUpBase > 0) reason += ` Pehle ke ${inr(catchUpBase)} par TDS nahi kata tha — ${inr(catchUpTds)} aur kaatna hai (is ya agli payment se).`;
+    reason = `${sec}: this year ${inr(i.fyBaseSoFar)} + this ${inr(base)} = ${inr(yearTotal)} > ${inr(th.aggregate)} → ${ratePct}% (${who}).`;
+    if (catchUpBase > 0) reason += ` TDS was not deducted on the earlier ${inr(catchUpBase)} — ${inr(catchUpTds)} more must be deducted (from this or the next payment).`;
   }
   return { applies: true, ratePct, tds, catchUpBase, catchUpTds, noPan, deducteeType, reason, headroom: null };
 }

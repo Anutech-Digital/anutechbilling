@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { hinglishHits, scanHinglish } from "@/lib/ui-copy/hinglish-scan";
+import { HINGLISH_ALLOWED_BY_DESIGN, hinglishHits, scanHinglish, uiSourceFiles } from "@/lib/ui-copy/hinglish-scan";
 import { HINGLISH_ALLOWLIST } from "@/lib/ui-copy/hinglish-allowlist";
 
 /* R-246 (after R-216): screens that still showed Hinglish labels, toasts and hints
@@ -81,5 +81,54 @@ describe("R-1731 UI copy is English across the whole app", () => {
     expect(hinglishHits(`<option value="KA">Karnataka (29)</option>`)).toEqual([]);
     expect(hinglishHits(`<label htmlFor="payroll-kis-mahine-ka">Period</label>`)).toEqual([]);
     expect(hinglishHits(`<span>Imports · 1 active · 1 removed · last: 20 Oct 2026 · no file name</span>`)).toEqual([]);
+  });
+});
+
+/* R-1733: the allow-list is empty — the guard covers the whole app (src/app, src/components and
+   now src/lib) with no exceptions except the AI / keyword files named in HINGLISH_ALLOWED_BY_DESIGN.
+   The scanner also learnt three things the R-1732 worker found it missing. */
+describe("R-1733 Hinglish guard has no gaps", () => {
+  it("the allow-list is empty", () => {
+    expect(Object.keys(HINGLISH_ALLOWLIST)).toEqual([]);
+  });
+
+  it("scans src/lib too (query/API/PDF/tax helpers put text on screen)", () => {
+    expect(uiSourceFiles(process.cwd())).toContain("src/lib/tax/itr.ts");
+    expect(uiSourceFiles(process.cwd())).toContain("src/lib/queries/bank.ts");
+  });
+
+  it("a doc comment before a JSX comment no longer hides the text between them (call-log-dialog)", () => {
+    /* The old JSX-comment strip started at "({" + a doc comment and ran to the next "*\/}". */
+    const src = [
+      "export function CallLogDialog({",
+      "  /** Kis lead ka call. */",
+      "  companyName,",
+      "}: Props) {",
+      "  return (",
+      "    <DialogDescription>",
+      "      Kya baat hui? Bolkar ya likhkar darj kariye.",
+      "    </DialogDescription>",
+      "    {/* mic note */}",
+      "  );",
+      "}",
+    ].join("\n");
+    expect(hinglishHits(src).join(" ")).toMatch(/darj kariye/);
+  });
+
+  it("reads text inside ${…} strings of a template but not code, and skips regex keyword lists", () => {
+    expect(hinglishHits("const c = `hsl(${row.hue}, 50%, 55%)`;")).toEqual([]);
+    expect(hinglishHits("const t = `Saved ${ok ? \"\" : \"nahi\"}`;")).not.toEqual([]);
+    expect(hinglishHits(`const re = [/\b(team ke liye|b'?day)\b/i, "Staff Welfare"];`)).toEqual([]);
+    expect(hinglishHits(`  sender: "Rohit Kumar", initials: "RK", hue: 220,`)).toEqual([]);
+    expect(hinglishHits(`  error: "Pehle apna employee link karo",`)).not.toEqual([]);
+  });
+
+  it("JSX text that starts with a digit is read", () => {
+    expect(hinglishHits("<p>\n  20 se zyada fields nahi ho sakte.\n</p>")).not.toEqual([]);
+  });
+
+  it("files allowed by design are AI help / prompts / keyword matchers only", () => {
+    for (const f of ["src/lib/tax/itr.ts", "src/lib/queries/bank.ts", "src/lib/api/with-route.ts", "src/lib/leads/lead-contacts.ts"])
+      expect(HINGLISH_ALLOWED_BY_DESIGN.some((re) => re.test(f)), f).toBe(false);
   });
 });

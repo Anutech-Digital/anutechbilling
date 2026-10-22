@@ -313,13 +313,13 @@ export function useSyncHostingCatalog() {
       qc.invalidateQueries({ queryKey: ["items"] });
       toast.success(
         n > 0
-          ? `${n} hosting plan${n === 1 ? "" : "s"} catalogue me sync ho gaye (specs DirectAdmin se)`
-          : "Koi DirectAdmin package priced plan se match nahi hua",
+          ? `${n} hosting plan${n === 1 ? "" : "s"} synced to the catalogue (specs from DirectAdmin)`
+          : "No DirectAdmin package matched a priced plan",
       );
     },
     onError: (err) =>
       toastError(err, {
-        description: "DirectAdmin connection zaroori hai. Setup > Integrations me creds check karo.",
+        description: "A DirectAdmin connection is needed. Check the credentials in Setup > Integrations.",
       }),
   });
 }
@@ -343,13 +343,13 @@ export function useSyncDomainCatalog() {
       qc.invalidateQueries({ queryKey: ["items"] });
       toast.success(
         n > 0
-          ? `${n} domain (TLD) catalogue me sync ho gaye`
-          : "Engine par abhi koi domain price nahi hai",
+          ? `${n} domain${n === 1 ? "" : "s"} (TLD) synced to the catalogue`
+          : "The engine has no domain prices yet",
       );
     },
     onError: (err) =>
       toastError(err, {
-        description: "app.anutech.in deploy hone ke baad hi ye chalega. Tab tak catalogue waise hi rahega.",
+        description: "This works only after app.anutech.in is deployed. Until then the catalogue stays as it is.",
       }),
   });
 }

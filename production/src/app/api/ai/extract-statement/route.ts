@@ -236,11 +236,11 @@ export async function POST(request: NextRequest) {
     const csv = `The CSV / "Delimited" download from net banking always works and needs no AI.`;
     const error =
       kind === "timeout"
-        ? "Statement bada hai — AI ko zyada samay laga. Chhota date-range ka PDF try karo, ya net banking ka CSV/Excel upload karo (usme AI nahi lagta)."
+        ? "The statement is too big — the AI took too long. Try a PDF with a shorter date range, or upload the CSV/Excel from net banking (that needs no AI)."
         : kind === "busy"
           ? `Google's AI is busy right now (overloaded). Try again in a minute. ${csv}`
           : kind === "paused"
-            ? `AI ke kai call abhi lagatar fail hue, isliye ek minute ke liye ruke hain — ek minute baad dobara try karo. ${csv}`
+            ? `Several AI calls failed in a row just now, so calls are paused for a minute — try again in a minute. ${csv}`
             : kind === "unreadable"
               ? `The AI couldn't open this file (a password-protected or damaged PDF does this). ${csv}`
               : `${reason ? `The AI reader failed — ${reason.replace(/\.$/, "")}` : "The AI reader failed"}. ${csv}`;

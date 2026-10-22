@@ -44,16 +44,16 @@ const fail = (status: number, error: string) => NextResponse.json({ success: fal
 export async function DELETE(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const tenantId = params.id;
-  if (!tenantId) return fail(400, "Workspace id nahi mila — Platform page refresh karke dobara Delete dabaiye.");
+  if (!tenantId) return fail(400, "Workspace id is missing — refresh the Platform page and press Delete again.");
 
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return fail(401, "Aap signed in nahi hain — dobara login karke try kariye.");
+  if (!user) return fail(401, "You are not signed in — sign in again and try again.");
   if (!isPlatformAdmin(user.email)) {
-    return fail(403, "Workspace delete sirf platform admin kar sakte hain — Pardeep se kahiye.");
+    return fail(403, "Only a platform admin can delete a workspace — ask Pardeep.");
   }
   if (!user.email_confirmed_at) {
-    return fail(403, "Aapka email abhi verify nahi hua — inbox mein verification link kholiye, phir dobara try kariye.");
+    return fail(403, "Your email is not verified yet — open the verification link in your inbox, then try again.");
   }
 
   const body = (await request.json().catch(() => null)) as { confirm?: unknown } | null;
@@ -64,7 +64,7 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
   const { data: me } = await admin.from("users").select("tenant_id").eq("id", user.id).maybeSingle();
   const myTenantId = (me as { tenant_id?: string | null } | null)?.tenant_id ?? null;
   if (!myTenantId) {
-    return fail(403, "Aapka account kisi workspace se juda nahi hai, isliye audit nahi likha ja sakta — delete nahi hua.");
+    return fail(403, "Your account is not linked to any workspace, so the audit log cannot be written — nothing was deleted.");
   }
 
   const { data: targetTenant, error: fetchErr } = await admin
@@ -73,15 +73,15 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
     .eq("id", tenantId)
     .maybeSingle();
   if (fetchErr || !targetTenant) {
-    return fail(404, "Ye workspace nahi mila — shayad pehle hi hat chuka hai. Platform page refresh kariye.");
+    return fail(404, "This workspace was not found — it may already be deleted. Refresh the Platform page.");
   }
 
   if (!confirm || confirm !== targetTenant.name.trim()) {
-    return fail(400, `Delete pakka karne ke liye workspace ka naam "${targetTenant.name}" bilkul waisa hi type kariye.`);
+    return fail(400, `To confirm the delete, type the workspace name "${targetTenant.name}" exactly as shown.`);
   }
 
   if (targetTenant.id === myTenantId || targetTenant.name.toLowerCase().includes("anutech digital")) {
-    return fail(400, "Apna (platform) workspace delete nahi ho sakta.");
+    return fail(400, "The platform's own workspace cannot be deleted.");
   }
 
   const withData: string[] = [];
@@ -92,14 +92,14 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
       .eq("tenant_id", tenantId);
     if (error || count === null || count === undefined) {
       console.error(`[api/platform/signups/[id]] DELETE: could not count ${table}:`, error?.message);
-      return fail(503, "Workspace ka data gin nahi paaye, isliye delete roka — kuch nahi hata. Thodi der baad dobara try kariye.");
+      return fail(503, "Could not count this workspace's data, so the delete was stopped — nothing was removed. Try again in a little while.");
     }
     if (count > 0) withData.push(`${table} ${count}`);
   }
   if (withData.length > 0) {
     return fail(
       409,
-      `Is workspace mein data hai (${withData.join(", ")}) — data wala workspace delete nahi hota. Edit kholkar "Activated" band kariye.`,
+      `This workspace has data (${withData.join(", ")}) — a workspace with data cannot be deleted. Open Edit and turn off "Activated" instead.`,
     );
   }
 
@@ -117,16 +117,16 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
   const { error: auditErr } = await audit(`Platform: workspace '${targetTenant.name}' (${tenantId}) delete shuru`);
   if (auditErr) {
     console.error("[api/platform/signups/[id]] DELETE: audit write failed:", auditErr.message);
-    return fail(503, "Audit log nahi likh paaye, isliye delete roka — kuch nahi hata. Thodi der baad dobara try kariye.");
+    return fail(503, "Could not write the audit log, so the delete was stopped — nothing was removed. Try again in a little while.");
   }
 
   const { error: deleteErr } = await admin.from("tenants").delete().eq("id", tenantId);
   if (deleteErr) {
     console.error("[api/platform/signups/[id]] DELETE failed:", deleteErr.message);
-    await audit(`Platform: workspace '${targetTenant.name}' (${tenantId}) delete FAIL — kuch nahi hata`);
-    return fail(500, "Workspace delete nahi hua — kuch nahi hata. Platform page refresh karke dobara try kariye.");
+    await audit(`Platform: workspace '${targetTenant.name}' (${tenantId}) delete FAILED — nothing was removed`);
+    return fail(500, "Workspace was not deleted — nothing was removed. Refresh the Platform page and try again.");
   }
-  await audit(`Platform: workspace '${targetTenant.name}' (${tenantId}) delete ho gaya`);
+  await audit(`Platform: workspace '${targetTenant.name}' (${tenantId}) deleted`);
 
   return NextResponse.json({ success: true, message: `Workspace '${targetTenant.name}' permanently deleted.` });
 }

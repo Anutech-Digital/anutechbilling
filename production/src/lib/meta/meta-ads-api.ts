@@ -29,8 +29,8 @@ export function buildMetaAuthUrl(appId: string, redirectUri: string, state: stri
 }
 
 export function explainMetaError(status: number, body: string): string {
-  if (/\(#200\)|permission|ads_read/i.test(body)) return "Meta ne ads_read permission nahi di — app review mein \"ads_read\" approve hona chahiye, ya connect karte waqt permission untick reh gayi.";
-  if (/\(#190\)|OAuthException.*expired|Session has expired/i.test(body)) return "Meta token expire ho gaya (60 din) — Reconnect karo.";
+  if (/\(#200\)|permission|ads_read/i.test(body)) return "Meta did not grant the ads_read permission — \"ads_read\" must be approved in app review, or the permission was left unticked while connecting.";
+  if (/\(#190\)|OAuthException.*expired|Session has expired/i.test(body)) return "Meta token expired (60 days) — click Reconnect.";
   if (/\(#17\)|\(#4\)|rate limit|User request limit reached/i.test(body)) return "Meta ne rate limit lagayi — agla sync apne aap chalega.";
   return `Meta ne ${status} diya: ${body.slice(0, 200)}`;
 }

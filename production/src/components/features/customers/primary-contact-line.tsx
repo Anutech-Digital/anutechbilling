@@ -24,7 +24,7 @@ export function PrimaryContactLine({ contact, onAddContact }: {
       <div className="mt-1 flex items-center gap-2 flex-wrap text-sm text-ink-3" data-testid="header-no-contact">
         <span className="inline-flex items-center gap-1.5">
           <Icon name="user" size={13} className="flex-shrink-0" />
-          Koi contact person nahi
+          No contact person yet
         </span>
         {onAddContact && (
           <Button size="sm" variant="outline" icon="plus" onClick={onAddContact}>

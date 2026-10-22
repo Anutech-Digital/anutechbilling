@@ -204,7 +204,7 @@ describe("digestText — email me kya jata hai", () => {
     const only5xx = buildDigest(24, { http: [{ timestamp: t(3), status: 500, url: "/a" }], stderr: [] });
     const txt = digestText(only5xx, "https://app");
     expect(txt).toContain("Server error");
-    expect(txt).not.toContain("App ne khud kya likha");
+    expect(txt).not.toContain("What the app logged itself");
   });
 
   it("kachre ki ginti likhta hai jab ho", () => {
@@ -212,6 +212,6 @@ describe("digestText — email me kya jata hai", () => {
       http: [{ timestamp: t(3), status: 500, url: "/a" }],
       stderr: [{ timestamp: t(1), text: "}" }],
     });
-    expect(digestText(noisy, "https://app")).toContain("1 aur line");
+    expect(digestText(noisy, "https://app")).toContain("1 more line —");
   });
 });

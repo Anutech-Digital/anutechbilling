@@ -92,7 +92,7 @@ describe("parseAisJson", () => {
     expect(p.entries[0].section).toBe("194J");
   });
   it("says so when the JSON has no TDS rows, or is not JSON", () => {
-    expect(() => parseAisJson(JSON.stringify({ sft: [] }))).toThrow(/koi TDS entry nahi/);
+    expect(() => parseAisJson(JSON.stringify({ sft: [] }))).toThrow(/No TDS entry/);
     expect(() => parseAisJson("not json")).toThrow(/JSON/);
   });
   it("routes by file name / first character", () => {

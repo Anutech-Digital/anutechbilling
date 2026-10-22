@@ -1316,8 +1316,8 @@ export function RecordPaymentDialog({
           <TdsShortfallHint match={tdsShortfall} onApply={() => tdsShortfall && applyTdsSuggestion({ setValue }, tdsShortfall)} />
           {tdsOnly && tdsDeducted && (
             <div data-testid="tds-only-note" className="rounded-md border border-hairline bg-paper-2/60 px-3 py-2 text-xs text-ink-2">
-              Sirf TDS darj ho raha hai — bank me ₹0. Ye {rupee(tdsAmount)} TDS Receivable me jayega aur
-              invoice ka baaki band karega. Reference me 26AS / challan number daal sakte hain.
+              Recording TDS only — ₹0 to the bank. This {rupee(tdsAmount)} goes to TDS Receivable and
+              clears the invoice balance. You can enter the 26AS / challan number in Reference.
             </div>
           )}
           <div className="rounded-md border border-hairline px-3 py-2.5 bg-paper-2/30">

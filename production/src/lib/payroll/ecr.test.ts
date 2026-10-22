@@ -17,8 +17,8 @@ describe("EPFO ECR line", () => {
     expect(l).toMatchObject({ epfWages: 36000, ncpDays: 3, wageAssumed: true });
   });
   it("a member without a 12-digit UAN is skipped with the reason", () => {
-    expect(ecrLine({ ...base, uan: null })).toEqual({ skipped: expect.stringMatching(/UAN nahi/) });
-    expect(ecrLine({ ...base, uan: "12345" })).toEqual({ skipped: expect.stringMatching(/12 ank/) });
+    expect(ecrLine({ ...base, uan: null })).toEqual({ skipped: expect.stringMatching(/No UAN/) });
+    expect(ecrLine({ ...base, uan: "12345" })).toEqual({ skipped: expect.stringMatching(/not 12 digits/) });
   });
 });
 

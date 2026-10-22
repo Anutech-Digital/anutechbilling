@@ -76,17 +76,17 @@ export function agentQuoteBlocker(
     (prices?.annual?.wholesale ?? 0) > 0 || (prices?.monthly?.wholesale ?? 0) > 0;
 
   const why = onlyUsd
-    ? "Aapne sirf USD price bhara hai. USD ek alag number hota hai (export deals ke liye), " +
-      "aur AI usse INR quote nahi banata."
+    ? "You entered only a USD price. USD is a separate number (for export deals), " +
+      "and the AI does not build an INR quote from it."
     : onlyWholesale
-      ? "Aapne sirf wholesale (khareed) bhara hai. Customer price khaali hai, to AI ke paas " +
-        "bechne ka daam nahi hai."
-      : "Annual aur Monthly, dono me customer price khaali hai.";
+      ? "You entered only the wholesale (purchase) price. The customer price is empty, so the AI " +
+        "has no selling price."
+      : "The customer price is empty in both Annual and Monthly.";
 
   return (
-    "Ye Main plan bina customer price ke kaam nahi karega.\n\n" +
+    "This Main plan will not work without a customer price.\n\n" +
     `${why}\n\n` +
-    "Kya karein: Annual (ya Monthly) tier me CUSTOMER price bhariye.\n" +
-    "Ya Type ko 'Add-on' kar dijiye, agar ye apne aap bikne wala plan nahi hai."
+    "What to do: enter the CUSTOMER price in the Annual (or Monthly) tier.\n" +
+    "Or set Type to 'Add-on' if this plan is not sold on its own."
   );
 }

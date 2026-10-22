@@ -535,9 +535,9 @@ export function InvoiceTdsBanner({
       <span className="flex items-start gap-2 min-w-0">
         <Icon name="info" size={14} className="shrink-0 mt-0.5" />
         <span>
-          <b>Baaki {rupee(match.shortfall)} = {match.ratePct}% TDS lagta hai</b>{" "}
-          ({match.section}, {rupee(match.base)} ka {match.ratePct}%). Customer ne TDS kaata ho to
-          ise TDS ki tarah darj karein — invoice Paid ho jayega aur rakam TDS Receivable me jayegi.
+          <b>Balance {rupee(match.shortfall)} — looks like {match.ratePct}% TDS</b>{" "}
+          ({match.section}, {match.ratePct}% of {rupee(match.base)}). If the customer deducted TDS,
+          record it as TDS — the invoice becomes Paid and the amount goes to TDS Receivable.
         </span>
       </span>
       <Button size="sm" variant="outline" icon="rupee" onClick={() => onRecordTds(match)}>

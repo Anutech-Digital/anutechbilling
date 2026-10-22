@@ -71,11 +71,11 @@ function makeUploader(): (name: string, body: string) => Promise<string | null> 
           "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
           { headers: { "Metadata-Flavor": "Google" }, signal: AbortSignal.timeout(5_000) },
         );
-        if (!r.ok) return { error: `metadata token nahi mila: ${r.status}` };
+        if (!r.ok) return { error: `metadata token not received: ${r.status}` };
         const t = ((await r.json()) as { access_token?: string }).access_token;
-        return t ? { token: t } : { error: "metadata token khaali aaya" };
+        return t ? { token: t } : { error: "metadata token came back empty" };
       } catch {
-        return { error: "metadata server tak nahi pahunch paye — ye route sirf Cloud Run par chalta hai" };
+        return { error: "could not reach the metadata server — this route only runs on Cloud Run" };
       }
     })());
 
@@ -96,7 +96,7 @@ function makeUploader(): (name: string, body: string) => Promise<string | null> 
       /* §24: kya hua, kyun, ab kya. 403 ka matlab lagbhag hamesha ek hi cheez hai. */
       const text = (await up.text()).slice(0, 200);
       const hint = up.status === 403
-        ? ` — bucket par grant chahiye: gcloud storage buckets add-iam-policy-binding gs://${OFFSITE_BUCKET}` +
+        ? ` — the bucket needs a grant: gcloud storage buckets add-iam-policy-binding gs://${OFFSITE_BUCKET}` +
           ` --member="serviceAccount:1005662057478-compute@developer.gserviceaccount.com" --role="roles/storage.objectAdmin"`
         : "";
       return `upload ${name} ${up.status}: ${text}${hint}`;
@@ -124,7 +124,7 @@ async function putOffsiteCombined(admin: Admin, upload: ReturnType<typeof makeUp
   const { data, error } = await admin.rpc("export_snapshots_for_offsite", {
     p_since: offsiteWindowStart(now).toISOString(),
   });
-  if (error) return `snapshot padhe nahi ja sake: ${error.message}`;
+  if (error) return `could not read snapshots: ${error.message}`;
 
   /* Ginti DB se, taaki "kitne tenant hone chahiye" ek hardcoded number na ho jo naye tenant
      par chup-chaap galat ho jaye. Ginti na mile to us wajah se backup rokna galat hoga —
@@ -256,7 +256,7 @@ async function runCron(req: NextRequest) {
   }
 
   if (report.missingFunction) {
-    console.warn("[cron/backup] backup_tenant() nahi mila — migration 20260928141000 lagao; aaj purana sweep");
+    console.warn("[cron/backup] backup_tenant() not found — apply migration 20260928141000; using the old sweep today");
     return legacySweep(admin, upload);
   }
 

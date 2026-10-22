@@ -59,7 +59,7 @@ export function VaultPinSettings() {
     if (!check.ok) { toast.error(check.error as string, { description: "Choose a different PIN and save again." }); return; }
     try {
       await setPin.mutateAsync({ pin: next, currentPin: configured ? current : undefined });
-      toast.success(configured ? "PIN badal gaya." : "PIN set ho gaya.");
+      toast.success(configured ? "PIN changed." : "PIN set.");
       reset();
     } catch (e) {
       toastError(e, { fallback: "Could not set the PIN.", description: "Nothing was changed. Check the current PIN and try again." });
@@ -69,7 +69,7 @@ export function VaultPinSettings() {
   const handleRemove = async () => {
     try {
       await removePin.mutateAsync(current);
-      toast.success("PIN hata diya. Vault ab bina PIN ke khulega.");
+      toast.success("PIN removed. The vault will now open without a PIN.");
       reset();
     } catch (e) {
       toastError(e, { fallback: "Could not remove the PIN.", description: "The vault is still PIN-locked. Check the current PIN and try again." });
@@ -88,18 +88,18 @@ export function VaultPinSettings() {
           </h2>
           <p className="mt-1 text-xs text-ink-3">
             {configured
-              ? `${PIN_LENGTH}-digit PIN laga hua hai. Vault kholne par poochha jayega.`
-              : "Koi PIN nahi laga. Chaho to laga sakte ho — zaroori nahi hai."}
+              ? `A ${PIN_LENGTH}-digit PIN is set. It will be asked when you open the vault.`
+              : "No PIN set. You can add one if you like — it is optional."}
           </p>
           <p className="mt-2 text-2xs text-ink-4 leading-relaxed">
-            Ye PIN <b>sirf screen ka lock</b> hai, data ko encrypt nahi karta. Ye tab kaam aata hai
-            jab laptop khula chhoot jaye. Aapke rows ki asli suraksha database ka niyam hai, jo
-            inhe sirf aapke login ko deta hai — PIN ho ya na ho.
+            This PIN is <b>only a screen lock</b>; it does not encrypt data. It helps when
+            your laptop is left open. The real protection for your rows is the database rule, which
+            gives them only to your login — with or without a PIN.
           </p>
         </div>
         {!open && (
           <Button size="sm" variant="outline" onClick={() => setOpen(true)} className="flex-shrink-0">
-            {configured ? "Badlo" : "PIN lagao"}
+            {configured ? "Change PIN" : "Set PIN"}
           </Button>
         )}
       </div>
@@ -108,13 +108,13 @@ export function VaultPinSettings() {
         <div className="mt-4 pt-4 border-t border-hairline space-y-3">
           <div className="flex gap-4 flex-wrap">
             {configured && (
-              <PinInput id="vault-pin-current" label="Abhi ka PIN" value={current} onChange={setCurrent} disabled={busy} />
+              <PinInput id="vault-pin-current" label="Current PIN" value={current} onChange={setCurrent} disabled={busy} />
             )}
-            <PinInput id="vault-pin-new" label={configured ? "Naya PIN" : "PIN"} value={next} onChange={setNext} disabled={busy} />
+            <PinInput id="vault-pin-new" label={configured ? "New PIN" : "PIN"} value={next} onChange={setNext} disabled={busy} />
           </div>
 
           <p className="text-2xs text-ink-4">
-            1234, 0000, 1212 jaise PIN allowed nahi hain — inhe koi bhi pehli koshish me guess kar leta hai.
+            PINs like 1234, 0000 or 1212 are not allowed — anyone can guess them on the first try.
           </p>
 
           <div className="flex gap-2 flex-wrap">
@@ -124,7 +124,7 @@ export function VaultPinSettings() {
               onClick={handleSave}
               disabled={busy || next.length !== PIN_LENGTH || (configured && current.length !== PIN_LENGTH)}
             >
-              {configured ? "PIN badlo" : "PIN set karo"}
+              {configured ? "Change PIN" : "Set PIN"}
             </Button>
             <Button size="sm" variant="ghost" onClick={reset} disabled={busy}>Cancel</Button>
             {configured && (
@@ -135,7 +135,7 @@ export function VaultPinSettings() {
                 disabled={busy || current.length !== PIN_LENGTH}
                 className="text-rose ml-auto"
               >
-                PIN hata do
+                Remove PIN
               </Button>
             )}
           </div>

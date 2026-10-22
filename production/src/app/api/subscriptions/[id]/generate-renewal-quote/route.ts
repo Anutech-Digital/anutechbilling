@@ -39,7 +39,7 @@ export const runtime = "nodejs";
 export const POST = withRoute({
   route: "api/subscriptions/[id]/generate-renewal-quote",
   roles: MONEY_RECORD_ROLES,
-  roleHint: "Renewal quote sirf owner / manager / accountant / billing bana sakte hain.",
+  roleHint: "Only an owner, manager, accountant or billing user can create a renewal quote.",
 }, async ({ user, tenantId, params }) => {
   // ── 2. Load subscription + verify tenant scope ──────────────────
   const supabase = createAdminClientFor(user.id);

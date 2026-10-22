@@ -107,11 +107,11 @@ export async function settleLatePayment(
   await notifyTenantOwners({
     tenantId: quote.tenant_id,
     kind: "payment.received", // R-1569 alert — entityId is the Razorpay payment id
-    title: `Customer ne dobara pay kiya — ${rupee(amount)} on ${quote.id}`,
+    title: `Customer paid again — ${rupee(amount)} on ${quote.id}`,
     body:
-      `${quote.customer_name ?? "Customer"} ne Razorpay se ${rupee(amount)} pay kiya (${payment.id}), par quote pehle se paid tha. ` +
-      (rec.overpaidCredit > 0 ? `${rupee(rec.overpaidCredit)} customer credit ban gaya. ` : "") +
-      `Refund karo (Razorpay dashboard) ya credit agle bill me lagao.`,
+      `${quote.customer_name ?? "Customer"} paid ${rupee(amount)} through Razorpay (${payment.id}), but the quote was already paid. ` +
+      (rec.overpaidCredit > 0 ? `${rupee(rec.overpaidCredit)} is now customer credit. ` : "") +
+      `Refund it (Razorpay dashboard) or apply the credit to the next bill.`,
     href: `/quotes/${quote.id}`,
     entityId: payment.id,
   });
@@ -159,12 +159,12 @@ export async function settleOnReplacedQuote(
     await notifyTenantOwners({
       tenantId: quote.tenant_id,
       kind: "payment.received", // R-1575 alert — entityId is the Razorpay payment id
-      title: `Purane quote ${quote.id} par ${rupee(amount)} aaya — ${target.id} par record kiya`,
+      title: `${rupee(amount)} received on old quote ${quote.id} — recorded on ${target.id}`,
       body:
-        `${quote.customer_name ?? "Customer"} ne replaced quote ${quote.id} ka purana Razorpay link pay kiya (${payment.id}). ` +
-        `Paisa naye quote ${target.id} par laga diya` +
-        (rec.overpaidCredit > 0 ? `; ${rupee(rec.overpaidCredit)} extra customer credit bana` : "") +
-        `. ${target.id} kholo — baaki ho to mangwao, zyada ho to refund ya credit tay karo. Invoice/activation khud nahi hua.`,
+        `${quote.customer_name ?? "Customer"} paid the old Razorpay link of replaced quote ${quote.id} (${payment.id}). ` +
+        `The money was applied to the new quote ${target.id}` +
+        (rec.overpaidCredit > 0 ? `; ${rupee(rec.overpaidCredit)} extra became customer credit` : "") +
+        `. Open ${target.id} — collect any balance due; if paid in excess, decide refund or credit. No invoice or activation was done automatically.`,
       href: `/quotes/${target.id}`,
       entityId: payment.id,
     });
@@ -172,9 +172,9 @@ export async function settleOnReplacedQuote(
     return NextResponse.json({ received: true, appliedTo: target.id, replacedQuote: quote.id });
   }
 
-  const why = quote.status === "rejected" ? "rejected hai" : `replaced hai (${quote.superseded_by}) aur naya quote live nahi`;
+  const why = quote.status === "rejected" ? "is rejected" : `was replaced (${quote.superseded_by}) and no new quote is live`;
   return reportUnapplied(admin, { quote, payment, event, orderId, recordFee }, why,
-    `Customer ko refund karo (Razorpay dashboard), ya naya quote banao aur us par ye payment record karo (reference ${payment.id}).`);
+    `Refund the customer (Razorpay dashboard), or create a new quote and record this payment on it (reference ${payment.id}).`);
 }
 
 /** R-1574's refusal: "Renewal quote … that term was already renewed (or its date was changed) …". */
@@ -230,12 +230,12 @@ export async function settleStaleRenewal(
     await notifyTenantOwners({
       tenantId: quote.tenant_id,
       kind: "payment.received", // R-1569 alert — entityId is the Razorpay payment id
-      title: `Purane quote ${quote.id} par ${rupee(amount)} aaya — ${current.id} par record kiya`,
+      title: `${rupee(amount)} received on old quote ${quote.id} — recorded on ${current.id}`,
       body:
-        `${quote.customer_name ?? "Customer"} ne purane term ka renewal quote ${quote.id} pay kiya (${payment.id}); wo term pehle hi renew ho chuka tha. ` +
-        `Paisa subscription ke abhi wale renewal quote ${current.id} par laga diya` +
-        (rec.overpaidCredit > 0 ? `; ${rupee(rec.overpaidCredit)} extra customer credit bana` : "") +
-        `. ${current.id} kholo — refund ya credit tay karo. Invoice/activation khud nahi hua.`,
+        `${quote.customer_name ?? "Customer"} paid old-term renewal quote ${quote.id} (${payment.id}); that term was already renewed. ` +
+        `The money was applied to the subscription's current renewal quote ${current.id}` +
+        (rec.overpaidCredit > 0 ? `; ${rupee(rec.overpaidCredit)} extra became customer credit` : "") +
+        `. Open ${current.id} — decide refund or credit. No invoice or activation was done automatically.`,
       href: `/quotes/${current.id}`,
       entityId: payment.id,
     });
@@ -243,8 +243,8 @@ export async function settleStaleRenewal(
     return NextResponse.json({ received: true, appliedTo: current.id, staleRenewal: quote.id });
   }
 
-  return reportUnapplied(admin, args, "purane term ka renewal quote hai (wo term pehle hi renew ho chuka) aur abhi koi renewal quote nahi",
-    `Customer ko refund karo (Razorpay dashboard), ya subscription par naya renewal quote banao aur us par ye payment record karo (reference ${payment.id}) — wahan zyada paisa customer credit ban jaata hai.`);
+  return reportUnapplied(admin, args, "is an old-term renewal quote (that term was already renewed) and there is no current renewal quote",
+    `Refund the customer (Razorpay dashboard), or create a new renewal quote on the subscription and record this payment on it (reference ${payment.id}) — any excess there becomes customer credit.`);
 }
 
 /**
@@ -269,12 +269,12 @@ async function reportUnapplied(
   if (told && told.length) return NextResponse.json({ received: true, alreadyProcessed: true });
 
   const detail =
-    `Razorpay payment ${payment.id} (${rupee(amount)}, order ${orderId}) quote ${quote.id} par aaya, par ye quote ${why} — app me record NAHI hua. ` +
+    `Razorpay payment ${payment.id} (${rupee(amount)}, order ${orderId}) came in on quote ${quote.id}, but this quote ${why} — it was NOT recorded in the app. ` +
     nextStep;
   await notifyTenantOwners({
     tenantId: quote.tenant_id,
     kind: "payment.received", // R-1575 alert — entityId is the Razorpay payment id
-    title: `${rupee(amount)} aaya par record nahi hua — quote ${quote.id}`,
+    title: `${rupee(amount)} received but not recorded — quote ${quote.id}`,
     body: detail,
     href: `/quotes/${quote.id}`,
     entityId: payment.id,

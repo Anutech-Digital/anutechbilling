@@ -19,7 +19,7 @@ describe("Invoice detail — TDS banner (R-1520)", () => {
   it("Partial invoice with a matching due → banner + Record TDS hands over section, rate and amount", () => {
     const onRecordTds = vi.fn();
     render(<InvoiceTdsBanner total={300_900} received={275_400} gstRatePct={18} onRecordTds={onRecordTds} />);
-    expect(screen.getByText(/Baaki ₹25,500 = 10% TDS lagta hai/)).toBeTruthy();
+    expect(screen.getByText(/Balance ₹25,500 — looks like 10% TDS/)).toBeTruthy();
     expect(screen.getByText(/194J/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Record TDS/ }));
     expect(onRecordTds).toHaveBeenCalledWith(expect.objectContaining({ section: "194J", ratePct: 10, tds: 25_500 }));

@@ -65,7 +65,7 @@ export default function BackupPage() {
       // Immediately hand the owner a downloaded copy of the fresh snapshot.
       setDownloadingId(res.id);
       await downloadBackup(res.id, res.created_at);
-      toast.success(`Backup ban gaya — ${res.table_count} tables, ${humanSize(res.bytes)}. Copy download ho gayi.`);
+      toast.success(`Backup created — ${res.table_count} tables, ${humanSize(res.bytes)}. A copy has been downloaded.`);
     } catch {
       /* create surfaces its own error toast */
     } finally {
@@ -99,9 +99,9 @@ export default function BackupPage() {
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Settings</p>
           <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Backup &amp; Restore</h1>
           <p className="text-sm text-ink-2 mt-1 max-w-2xl">
-            Har restore point tumhare poore data ka ek copy hai — customers, leads, quotes, invoices,
-            payments, expenses, sab kuch. Galat direction me chale gaye to kisi bhi purane point par
-            <b> wapas jaa sakte ho</b>. Restore points <b>apne aap roz</b> bhi bante hain (last {SNAPSHOT_RETENTION} rakhe jaate hain).
+            Each restore point is a copy of all your data — customers, leads, quotes, invoices,
+            payments, expenses, everything. If something goes wrong, you can
+            <b> go back to any earlier point</b>. Restore points are also made <b>automatically every day</b> (the last {SNAPSHOT_RETENTION} are kept).
           </p>
         </div>
         <Button variant="primary" icon="download" loading={create.isPending || downloadingId != null} onClick={takeBackup} className="shrink-0 self-start h-11 md:h-9">
@@ -114,8 +114,8 @@ export default function BackupPage() {
         <div className="flex items-start gap-2 text-[12px] text-ink-2">
           <Icon name="info" size={14} className="text-indigo mt-0.5 shrink-0" />
           <div className="space-y-1">
-            <p><b>Backup lene par:</b> tumhare tenant ka saara data ek JSON file me download ho jaata hai (tumhare computer par). App ke andar bhi last {SNAPSHOT_RETENTION} backups save rehte hain — jab chaaho dobara download kar lo.</p>
-            <p className="text-ink-3">Note: ye tumhare apne data ka copy hai (kisi aur tenant ka nahi). Restore ke liye ye file surakshit rakho — zarurat padne par isi se data wapas laaya ja sakta hai.</p>
+            <p><b>When you take a backup:</b> all of your workspace's data downloads as one JSON file (to your computer). The last {SNAPSHOT_RETENTION} backups are also kept inside the app — download them again any time.</p>
+            <p className="text-ink-3">Note: this is a copy of your own data only (no other workspace's). Keep this file safe — if needed, your data can be brought back from it.</p>
           </div>
         </div>
       </Card>
@@ -147,7 +147,7 @@ export default function BackupPage() {
                     onClick={async () => {
                       if (await confirm({
                         title: "Restore to this point?",
-                        body: `Tumhara data is point (${whenLabel(b.created_at)}) par wapas aa jayega — iske baad ke saare changes hat jayenge. Ghabrao mat: abhi ka data pehle ek "Before restore" point me apne aap save ho jayega, to ye undo ho sakta hai.`,
+                        body: `Your data will go back to this point (${whenLabel(b.created_at)}) — all changes made after it will be removed. Don't worry: your current data is first saved automatically as a "Before restore" point, so this can be undone.`,
                         danger: true, confirmLabel: "Restore now",
                       })) restore.mutate(b.id);
                     }}>
@@ -158,7 +158,7 @@ export default function BackupPage() {
                     Download
                   </Button>
                   <Button variant="ghost" className={BACKUP_ROW_BUTTON}
-                    onClick={async () => { if (await confirm({ title: "Delete this backup?", body: "Sirf ye stored copy hategi. Pehle download ki hui file tumhare paas rahegi.", danger: true, confirmLabel: "Delete" })) del.mutate(b.id); }}>
+                    onClick={async () => { if (await confirm({ title: "Delete this backup?", body: "Only this stored copy is removed. Any file you downloaded earlier stays with you.", danger: true, confirmLabel: "Delete" })) del.mutate(b.id); }}>
                     Delete
                   </Button>
                 </>} />

@@ -30,7 +30,7 @@ interface ReqBody {
 export const POST = withRoute({
   route: "api/aa/setu/consent/init",
   roles: MONEY_RECORD_ROLES,
-  roleHint: "Bank connect sirf owner / manager / accountant / billing kar sakte hain.",
+  roleHint: "Only owner / manager / accountant / billing can connect a bank.",
 }, async ({ req, supabase, tenantId }) => {
   /* R-879: connecting a bank needs the second sign-in step too (lib/aa/require-mfa.ts). */
   const mfa = await refuseWithoutMfa(supabase);
@@ -94,7 +94,7 @@ export const POST = withRoute({
   if (connErr || !conn) {
     console.error("[api/aa/setu/consent/init] connection insert failed:", connErr?.message);
     return NextResponse.json(
-      { ok: false, error: "Bank connection save nahi hua — kuch nahi bana. Thodi der baad 'Connect' dobara dabaiye." },
+      { ok: false, error: "Could not save the bank connection — nothing was created. Click 'Connect' again after a while." },
       { status: 500 },
     );
   }

@@ -49,7 +49,7 @@ export function parseGstr2b(json: unknown): { period: string | null; invoices: G
   const root = (json as { data?: unknown })?.data ?? json;
   const d = root as { rtnprd?: string; docdata?: { b2b?: unknown[] }; b2b?: unknown[] };
   const b2b = (d?.docdata?.b2b ?? d?.b2b ?? []) as { ctin?: string; trdnm?: string; inv?: unknown[] }[];
-  if (!Array.isArray(b2b)) return { period: null, invoices: [], errors: ["JSON mein docdata.b2b nahi mila — ye GSTR-2B ka JSON nahi lagta."] };
+  if (!Array.isArray(b2b)) return { period: null, invoices: [], errors: ["docdata.b2b was not found in the JSON — this does not look like a GSTR-2B JSON."] };
   const invoices: Gstr2bInvoice[] = [];
   for (const sup of b2b) {
     const gstin = String(sup.ctin ?? "").toUpperCase();

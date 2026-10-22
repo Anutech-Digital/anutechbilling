@@ -18,7 +18,7 @@ describe("R-1548 — too many wrong passwords on the login page", () => {
     expect(error?.code).toBe(TOO_MANY_ATTEMPTS_CODE);
     expect(error?.status).toBe(429);
     expect(error?.message).toBe(TOO_MANY_ATTEMPTS_MESSAGE);
-    expect(TOO_MANY_ATTEMPTS_MESSAGE).toContain("Bahut baar galat password — 15 minute baad koshish karo");
+    expect(TOO_MANY_ATTEMPTS_MESSAGE).toContain("Too many wrong passwords — try again after 15 minutes");
   });
 
   it("the login page shows that message with a Forgot password link", () => {

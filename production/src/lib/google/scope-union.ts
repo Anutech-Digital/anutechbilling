@@ -93,10 +93,10 @@ export function scopeLossMessage(lost: readonly string[]): string | null {
     s === CONTACTS_SCOPE ? "Google Contacts sync" : s === RESELLER_SCOPE ? "Google Reseller sync" : s === GBP_SCOPE ? "Google Business Profile sync" : s === GOOGLE_ADS_SCOPE ? "Google Ads spend sync" : "Gmail se bhejna",
   );
   return (
-    `Ye connection ne ${names.join(" aur ")} ki permission hata di. ` +
-    `Google ke consent screen par wo permission untick reh gayi thi. ` +
-    `Dobara connect kariye aur SAARE checkbox tick rehne dijiye — warna ye feature ` +
-    `403 deta rahega aur screen par kuch nahi dikhega.`
+    `This connection removed the ${names.join(" and ")} permission. ` +
+    `That permission was left unticked on Google's consent screen. ` +
+    `Connect again and keep ALL the checkboxes ticked — otherwise this feature ` +
+    `will keep returning 403 and nothing will show on screen.`
   );
 }
 
@@ -141,6 +141,6 @@ export function hasGmailSendScope(scopes: string | null | undefined): boolean {
  * Pardeep ko `ACCESS_TOKEN_SCOPE_INSUFFICIENT` padhwana koi jawab nahi hai.
  */
 export const CONTACTS_SCOPE_MISSING_MESSAGE =
-  "Google ne Contacts padhne ki permission nahi di, isliye sync nahi ho sakta. " +
-  "Consent screen par contacts wala checkbox tick nahi hua tha. " +
-  "Reconnect kariye aur Google ki screen par SAARE checkbox tick rehne dijiye.";
+  "Google did not grant permission to read Contacts, so sync cannot run. " +
+  "The contacts checkbox was not ticked on the consent screen. " +
+  "Click Reconnect and keep ALL the checkboxes ticked on Google's screen.";

@@ -109,8 +109,8 @@ describe("readStatementInChunks", () => {
     expect(out.allFailed).toBe(false);
     expect(out.warnings).toHaveLength(1);
     expect(out.warnings[0]).toMatch(/Page 5–6/);
-    expect(out.warnings[0]).toMatch(/12 me se/);
-    expect(out.warnings[0]).toMatch(/NAHI/);
+    expect(out.warnings[0]).toMatch(/of 12/);
+    expect(out.warnings[0]).toMatch(/NOT in this preview/);
   });
 
   it("a thrown read (network drop) counts as a failed chunk, not a crash", async () => {
@@ -146,7 +146,7 @@ describe("readStatementInChunks", () => {
       }),
     });
     expect(out.rows.length).toBeGreaterThan(6);      // kept, not guessed away …
-    expect(out.warnings.join(" ")).toMatch(/ek se zyada hisson/);   // … and flagged
+    expect(out.warnings.join(" ")).toMatch(/more than one part/);   // … and flagged
   });
 });
 

@@ -116,7 +116,7 @@ export function HelpReportTab({ pathname, getTrail, caughtError, onCaughtErrorUs
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: words ? [{ role: "user", text: `Is problem ki bug report banao: ${words}`.slice(0, 1500) }] : [],
+          messages: words ? [{ role: "user", text: `Make a bug report for this problem: ${words}`.slice(0, 1500) }] : [],
           pagePath: pathname,
           mode: words ? "chat" : "error",
           trail: getTrail(),

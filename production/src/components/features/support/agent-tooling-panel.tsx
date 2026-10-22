@@ -157,8 +157,8 @@ export function AgentToolingPanel({ ticketId, onInsertText }: AgentToolingPanelP
       queryClient.invalidateQueries({ queryKey: ["support-ticket-notes", ticketId] });
     },
     onError: () =>
-      toast.error("Note save nahi hua", {
-        description: "Network ya permission ka masla ho sakta hai — text abhi box me hi hai.",
+      toast.error("Could not save the note", {
+        description: "It may be a network or permission problem — your text is still in the box.",
         action: { label: "Retry", onClick: () => addNote.mutate(noteDraft.trim()) },
       }),
   });
@@ -183,8 +183,8 @@ export function AgentToolingPanel({ ticketId, onInsertText }: AgentToolingPanelP
       queryClient.invalidateQueries({ queryKey: ["support-ticket-time", ticketId] });
     },
     onError: () =>
-      toast.error("Time log save nahi hua", {
-        description: "1 se 1440 minute ke beech hona chahiye; network bhi jaanch lein.",
+      toast.error("Could not save the time log", {
+        description: "It must be between 1 and 1440 minutes; also check your network.",
         action: {
           label: "Retry",
           onClick: () => {
@@ -214,11 +214,11 @@ export function AgentToolingPanel({ ticketId, onInsertText }: AgentToolingPanelP
       queryClient.invalidateQueries({ queryKey: ["support-canned-responses"] });
     },
     onError: (err: { code?: string }) =>
-      toast.error("Canned reply bana nahi", {
+      toast.error("Could not create the canned reply", {
         description:
           err?.code === "23505"
-            ? "Is naam ki canned reply pehle se hai — naya title chunein."
-            : "Network ya permission ka masla — dobara koshish karein.",
+            ? "A canned reply with this name already exists — choose a different title."
+            : "Network or permission problem — please try again.",
         action: { label: "Retry", onClick: () => addCanned.mutate({ title: newCannedTitle.trim(), body: newCannedBody.trim() }) },
       }),
   });
@@ -274,15 +274,15 @@ export function AgentToolingPanel({ ticketId, onInsertText }: AgentToolingPanelP
 
         {canned.length === 0 && !showNewCanned && (
           <p className="text-xs text-ink-3">
-            Koi canned reply nahi hai abhi —{" "}
+            No canned replies yet —{" "}
             <button
               type="button"
               onClick={() => setShowNewCanned(true)}
               className="text-amber font-semibold hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink rounded"
             >
-              pehli banayein
+              create the first one
             </button>
-            . Baar-baar likhe jaane wale jawab yahan ek click ban jaate hain.
+            . Replies you write again and again become one click here.
           </p>
         )}
 
@@ -311,7 +311,7 @@ export function AgentToolingPanel({ ticketId, onInsertText }: AgentToolingPanelP
               value={newCannedTitle}
               onChange={(e) => setNewCannedTitle(e.target.value)}
               maxLength={120}
-              placeholder="Title — e.g. MX records kaise set karein"
+              placeholder="Title — e.g. How to set MX records"
               className="w-full rounded-md border border-hairline bg-paper px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-3 focus:outline-none focus:ring-1 focus:ring-primary"
             />
             <label htmlFor="cannedBody" className="sr-only">Canned reply body</label>
@@ -321,7 +321,7 @@ export function AgentToolingPanel({ ticketId, onInsertText }: AgentToolingPanelP
               value={newCannedBody}
               onChange={(e) => setNewCannedBody(e.target.value)}
               maxLength={8000}
-              placeholder="Jawab ka text — pick karne par reply box me aa jayega"
+              placeholder="Reply text — it goes into the reply box when you pick it"
               className="w-full rounded-md border border-hairline bg-paper px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-3 focus:outline-none focus:ring-1 focus:ring-primary"
             />
             <Button
@@ -342,7 +342,7 @@ export function AgentToolingPanel({ ticketId, onInsertText }: AgentToolingPanelP
         <label htmlFor="internalNote" className="block text-xs font-bold text-ink-3 uppercase tracking-wider">
           Internal notes
           <span className="ml-2 normal-case tracking-normal font-semibold text-amber-ink bg-amber-soft rounded px-1.5 py-0.5">
-            sirf team ko dikhta hai
+            visible to team only
           </span>
         </label>
 
@@ -360,7 +360,7 @@ export function AgentToolingPanel({ ticketId, onInsertText }: AgentToolingPanelP
             ))}
           </ul>
         ) : (
-          <p className="text-xs text-ink-3">Abhi koi note nahi. Jo customer ko nahi dikhna chahiye, wo yahan likhein.</p>
+          <p className="text-xs text-ink-3">No notes yet. Write here anything the customer should not see.</p>
         )}
 
         <div className="flex gap-2">
@@ -370,7 +370,7 @@ export function AgentToolingPanel({ ticketId, onInsertText }: AgentToolingPanelP
             value={noteDraft}
             onChange={(e) => setNoteDraft(e.target.value)}
             maxLength={8000}
-            placeholder="Note likhein — append-only hai, edit/delete nahi hota (audit trail)"
+            placeholder="Write a note — append-only, cannot be edited or deleted (audit trail)"
             className="flex-1 rounded-md border border-hairline bg-paper px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-3 focus:outline-none focus:ring-1 focus:ring-primary"
           />
           <Button
@@ -392,7 +392,7 @@ export function AgentToolingPanel({ ticketId, onInsertText }: AgentToolingPanelP
             Time log
           </label>
           {totalMinutes > 0 && (
-            <span className="text-xs font-semibold text-ink font-mono" title="Is ticket par ab tak ka kul samay">
+            <span className="text-xs font-semibold text-ink font-mono" title="Total time spent on this ticket so far">
               Total: {minutesLabel(totalMinutes)}
             </span>
           )}
@@ -429,7 +429,7 @@ export function AgentToolingPanel({ ticketId, onInsertText }: AgentToolingPanelP
             value={minutesNote}
             onChange={(e) => setMinutesNote(e.target.value)}
             maxLength={500}
-            placeholder="kya kiya (optional)"
+            placeholder="what was done (optional)"
             aria-label="What was done in this time"
             className="flex-1 min-w-[140px] rounded-md border border-hairline bg-paper px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-3 focus:outline-none focus:ring-1 focus:ring-primary"
           />

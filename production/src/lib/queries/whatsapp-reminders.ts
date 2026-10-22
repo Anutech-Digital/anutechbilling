@@ -50,7 +50,7 @@ async function call<T>(method: string, body?: unknown): Promise<T> {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const j = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(j.error ?? "WhatsApp reminders ka kaam nahi hua — page refresh karke dobara try kariye.");
+  if (!res.ok) throw new Error(j.error ?? "WhatsApp reminders action failed — refresh the page and try again.");
   return j as T;
 }
 
@@ -64,7 +64,7 @@ export function useSetWaRemindersEnabled() {
     mutationFn: (enabled: boolean) => call<{ enabled: boolean }>("PATCH", { enabled }),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: KEY });
-      toast.success(r.enabled ? "WhatsApp reminders ON" : "WhatsApp reminders OFF — ab koi reminder WhatsApp par nahi jayega");
+      toast.success(r.enabled ? "WhatsApp reminders ON" : "WhatsApp reminders OFF — no reminder will go on WhatsApp now");
     },
     onError: (err) => toastError(err),
   });
@@ -78,7 +78,7 @@ export function useSaveReminderMapping() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (m: ReminderMappingInput) => call<{ kind: string }>("PUT", m),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: KEY }); toast.success("Template set ho gaya"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: KEY }); toast.success("Template set"); },
     onError: (err) => toastError(err),
   });
 }
@@ -87,7 +87,7 @@ export function useDeleteReminderMapping() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (kind: ReminderKind) => call<{ kind: string }>("DELETE", { kind }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: KEY }); toast.success("Template hataya — is kind ka WhatsApp nahi jayega"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: KEY }); toast.success("Template removed — no WhatsApp will go for this kind"); },
     onError: (err) => toastError(err),
   });
 }

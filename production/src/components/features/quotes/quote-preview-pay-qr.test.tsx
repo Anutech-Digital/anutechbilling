@@ -41,13 +41,13 @@ describe("quote preview — scan-to-pay UPI QR (R-1694)", () => {
     expect(screen.getByText("anutech@okhdfcbank")).toBeTruthy();
     expect(screen.getByText("Scan to pay this advance")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith("/api/quotes/Q-ADPL-2026-27-0017/pay-qr", expect.anything());
-    expect(screen.queryByText(/QR ke liye Settings me UPI ID daalo/)).toBeNull();
+    expect(screen.queryByText(/Add your UPI ID in Settings to show a Pay QR/)).toBeNull();
   });
 
   it("no UPI ID → owner hint with a Settings link in the chrome, no QR, no fetch", async () => {
     preview({ upiVpa: null, payQrQuoteId: "Q-ADPL-2026-27-0017" });
     const hint = screen.getByTestId("preview-staff-hint-upi");
-    expect(hint.textContent).toContain("QR ke liye Settings me UPI ID daalo");
+    expect(hint.textContent).toContain("Add your UPI ID in Settings to show a Pay QR");
     expect(hint.querySelector("a")?.getAttribute("href")).toMatch(/^\/settings/);
     expect(hint.closest("[data-testid='preview-document']")).toBeNull();
     expect(screen.queryByTestId("preview-upi-qr")).toBeNull();
@@ -60,7 +60,7 @@ describe("quote preview — scan-to-pay UPI QR (R-1694)", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.queryByTestId("preview-upi-qr")).toBeNull();
-    expect(screen.queryByText(/QR ke liye Settings me UPI ID daalo/)).toBeNull();
+    expect(screen.queryByText(/Add your UPI ID in Settings to show a Pay QR/)).toBeNull();
   });
 
   it("USD quote with no UPI ID → no 'add UPI' hint (UPI can't collect dollars anyway)", () => {

@@ -52,7 +52,7 @@ export function VaultPinGate({ children }: { children: React.ReactNode }) {
       setPin("");
     } catch (err) {
       setPin("");
-      setError(err instanceof Error ? err.message : "PIN galat hai");
+      setError(err instanceof Error ? err.message : "Wrong PIN");
     }
   };
 
@@ -78,9 +78,9 @@ export function VaultPinGate({ children }: { children: React.ReactNode }) {
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-paper-2 border border-hairline">
             <Icon name="lock" size={26} className="text-ink-2" />
           </div>
-          <h2 className="text-xl font-serif text-ink">Private Vault locked hai</h2>
+          <h2 className="text-xl font-serif text-ink">Private Vault is locked</h2>
           <p className="mt-1.5 text-sm text-ink-3">
-            {unlockExpired ? "Kaafi der ho gayi — PIN dobara daalo." : `Apna ${PIN_LENGTH}-digit PIN daalo.`}
+            {unlockExpired ? "It has been a while — enter your PIN again." : `Enter your ${PIN_LENGTH}-digit PIN.`}
           </p>
         </div>
 
@@ -100,12 +100,12 @@ export function VaultPinGate({ children }: { children: React.ReactNode }) {
 
           {locked ? (
             <p className="text-xs text-rose text-center">
-              Bahut galat koshishein. {Math.ceil(status.retryAfterSec / 60)} minute baad dobara try karo.
+              Too many wrong attempts. Try again in {Math.ceil(status.retryAfterSec / 60)} minute(s).
             </p>
           ) : error ? (
             <p className="text-xs text-rose text-center">{error}</p>
           ) : (
-            <p className="text-xs text-ink-4 text-center">{status.attemptsLeft} koshish baaki</p>
+            <p className="text-xs text-ink-4 text-center">{status.attemptsLeft} attempt(s) left</p>
           )}
 
           <Button
@@ -114,15 +114,15 @@ export function VaultPinGate({ children }: { children: React.ReactNode }) {
             disabled={locked || pin.length !== PIN_LENGTH || verify.isPending}
             className="w-full font-bold"
           >
-            {verify.isPending ? "Check kar rahe hain…" : "Unlock"}
+            {verify.isPending ? "Checking…" : "Unlock"}
           </Button>
         </form>
 
         {/* The sentence that matters. */}
         <p className="mt-5 pt-4 border-t border-hairline text-2xs leading-relaxed text-ink-4">
-          Ye PIN <b>screen ka lock</b> hai — data encrypt nahi karta. Ye us sthiti ke liye hai jab
-          aapka laptop khula chhoot jaye. Aapka data alag cheez se surakshit hai: database ka apna
-          niyam, jo in rows ko sirf aapke login ko deta hai — PIN ho ya na ho.
+          This PIN is a <b>screen lock</b> — it does not encrypt data. It is for when
+          your laptop is left open. Your data is protected by something else: the database's own
+          rule, which gives these rows only to your login — with or without a PIN.
         </p>
       </Card>
     </div>

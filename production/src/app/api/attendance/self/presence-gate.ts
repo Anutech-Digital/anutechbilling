@@ -15,7 +15,7 @@ export type PresenceRpcResult = {
 export type PresenceGateReply = { status: number; body: { error: string; code: string } };
 
 export const WRONG_CODE_MESSAGE =
-  "Office code galat ya expire ho gaya — office tablet pe abhi jo code hai wahi daalo.";
+  "Office code is wrong or has expired — enter the code currently shown on the office tablet.";
 
 /** null = the code is right, carry on with the check-in. */
 export function presenceGateReply(result: PresenceRpcResult): PresenceGateReply | null {
@@ -28,7 +28,7 @@ export function presenceGateReply(result: PresenceRpcResult): PresenceGateReply 
     return {
       status: 429,
       body: {
-        error: result.error.hint || "Bahut baar galat office code daala — 15 minute baad dobara try karo.",
+        error: result.error.hint || "Wrong office code entered too many times — try again in 15 minutes.",
         code: "PRESENCE_CODE_LOCKED",
       },
     };

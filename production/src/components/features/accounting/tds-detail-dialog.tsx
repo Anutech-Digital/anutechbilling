@@ -29,6 +29,7 @@ import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useConfirm, useAskText } from "@/components/providers/confirm-provider";
 import {
   type TdsReceivable,
@@ -51,6 +52,7 @@ interface Props {
 }
 
 export function TdsDetailDialog({ open, onOpenChange, tds }: Props) {
+  const { data: me } = useCurrentUser();
   const [uploading, setUploading]   = React.useState(false);
   const [customerPhone, setCustomerPhone] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -116,16 +118,7 @@ export function TdsDetailDialog({ open, onOpenChange, tds }: Props) {
     return `https://wa.me/${clean}?text=${encodeURIComponent(message)}`;
   }
 
-  const chaseMessage = (() => {
-    switch (tds.status) {
-      case "pending_cert":
-        return `Hi ${tds.customer_name}, you deducted ${rupee(tds.tds_amount)} TDS (${tds.section} @ ${Number(tds.rate_pct).toFixed(2)}%) on our invoice. ${tds.fiscal_year} is closing — kindly share Form 16A certificate so I can claim it in my ITR. Thanks — Pardeep`;
-      case "disputed":
-        return `Hi ${tds.customer_name}, the ${rupee(tds.tds_amount)} TDS you deducted doesn't appear in my Form 26AS for ${tds.fiscal_year}. Could you confirm it was deposited with govt? Could you please share the BSR code / challan number? It is important. — Pardeep`;
-      default:
-        return `Hi ${tds.customer_name}, regarding TDS ${rupee(tds.tds_amount)} on ${tds.section}/${tds.fiscal_year} — quick check-in. — Pardeep`;
-    }
-  })();
+  const chaseMessage = tdsChaseMessage(tds, chaseSignature(me));
 
   // Status-aware actions
   const actions = renderActions(tds.status);
@@ -391,4 +384,28 @@ function Field({
       <div className={`text-ink ${mono ? "font-mono" : ""}`}>{value}</div>
     </div>
   );
+}
+
+/** R-1733: the WhatsApp chase is signed by the signed-in person and their company — never a
+    hard-coded name (one fixed name went out from every user's account). */
+export function chaseSignature(me: { fullName?: string | null; tenantName?: string | null } | null | undefined): string {
+  const person  = me?.fullName?.trim() ?? "";
+  const company = me?.tenantName && me.tenantName !== "Workspace" ? me.tenantName.trim() : "";
+  if (person && company) return `${person}, ${company}`;
+  return person || company;
+}
+
+type ChaseTds = { status: string; customer_name: string | null; tds_amount: number | string; section: string | null; rate_pct: number | string | null; fiscal_year: string | null };
+
+/** The WhatsApp text asking the customer for their Form 16A / challan details. */
+export function tdsChaseMessage(tds: ChaseTds, signature: string): string {
+  const sign = signature ? ` — ${signature}` : "";
+  switch (tds.status) {
+    case "pending_cert":
+      return `Hi ${tds.customer_name}, you deducted ${rupee(Number(tds.tds_amount))} TDS (${tds.section} @ ${Number(tds.rate_pct).toFixed(2)}%) on our invoice. ${tds.fiscal_year} is closing — kindly share Form 16A certificate so we can claim it in our ITR. Thanks${sign}`;
+    case "disputed":
+      return `Hi ${tds.customer_name}, the ${rupee(Number(tds.tds_amount))} TDS you deducted doesn't appear in our Form 26AS for ${tds.fiscal_year}. Could you confirm it was deposited with the government and share the BSR code / challan number? Thank you${sign}`;
+    default:
+      return `Hi ${tds.customer_name}, regarding TDS ${rupee(Number(tds.tds_amount))} on ${tds.section}/${tds.fiscal_year} — quick check-in. Thank you${sign}`;
+  }
 }

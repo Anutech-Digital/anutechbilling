@@ -84,7 +84,7 @@ export function useSuspendSubscription() {
       const t = suspendToast(r);
       toast.success(t.title, { description: t.description });
     },
-    onError: (e) => toastError(e, { fallback: "Pause nahi hua — subscription abhi bhi active hai. Try again." }),
+    onError: (e) => toastError(e, { fallback: "Could not pause — the subscription is still active. Try again." }),
   });
 }
 

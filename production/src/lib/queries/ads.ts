@@ -27,7 +27,7 @@ export function useAdsStatus() {
     queryKey: [...ADS_KEY, "status"],
     queryFn: async (): Promise<AdsStatus> => {
       const res = await fetch("/api/marketing/ads");
-      if (!res.ok) throw new Error("Status load nahi hua");
+      if (!res.ok) throw new Error("Could not load status");
       return res.json();
     },
   });
@@ -126,7 +126,7 @@ export function useAdsSync() {
     },
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ADS_KEY });
-      if (r.errors?.length) toast.warning(`Sync hua, par: ${r.errors[0]}`);
+      if (r.errors?.length) toast.warning(`Synced, but: ${r.errors[0]}`);
       else toast.success(`Synced — ${r.accounts} account, ${r.rowsWritten} rows`);
     },
     onError: (e) => { qc.invalidateQueries({ queryKey: ADS_KEY }); toastError(e); },

@@ -108,9 +108,9 @@ export function sourceLabel(source: string): string {
     case "pdf": return "PDF";
     case "csv": return "CSV";
     case "xlsx": return "XLS / XLSX";
-    case "paste": return "Paste kiya";
+    case "paste": return "Pasted";
     case "image": return "Photo";
-    case "legacy": return "Purana import";
+    case "legacy": return "Old import";
     default: return source;
   }
 }

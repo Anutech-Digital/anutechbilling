@@ -688,7 +688,7 @@ export function QuoteAcceptView({
                     </p>
                   )}
                   {isFlex && !oneTime && (
-                <p className="text-2xs text-ink-3">Pay-as-you-go — har mahine apni invoice, jab tak chalu rakhein</p>
+                <p className="text-2xs text-ink-3">Pay-as-you-go — a separate invoice every month, for as long as you keep it running</p>
               )}
               {billingN > 1 && !isFlex && !oneTime && (
                     <p className="text-2xs text-ink-3">{billingN} invoices per year</p>
@@ -932,7 +932,7 @@ export function QuoteAcceptView({
                 </div>
                 {isFlex && (
                   <div className="mt-1.5 text-2xs text-ink-3">
-                    Pay-as-you-go — koi saal ka bandhan nahi; seats ya plan kisi bhi mahine badal/band kar sakte hain.
+                    Pay-as-you-go — no yearly lock-in; you can change or stop seats or the plan in any month.
                   </div>
                 )}
                 {perInvoice && !isFlex && (

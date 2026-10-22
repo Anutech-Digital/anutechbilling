@@ -25,7 +25,7 @@ export function rpcRowOrThrow<T>(
   const d = rpcValueOrThrow<unknown>(res, fn);
   const row = Array.isArray(d) ? d[0] : d;
   if (row == null) {
-    throw new Error(`Report nahi ban saka: \`${fn}\` ne koi row nahi lautayi. Page reload karein; phir bhi ho to support ko batayein.`);
+    throw new Error(`Could not build the report: \`${fn}\` returned no row. Reload the page; if it still happens, tell support.`);
   }
   return row as T;
 }
@@ -38,11 +38,11 @@ export function rpcValueOrThrow<T>(
   if (res.error) {
     const missing = res.error.code === "PGRST202" || res.error.code === "42883";
     throw new Error(missing
-      ? `Report nahi ban saka: database me \`${fn}\` function nahi mila. Migration abhi lagi nahi hai — admin se lagwayein, phir page reload karein.`
+      ? `Could not build the report: the \`${fn}\` function was not found in the database. The migration is not applied yet — ask the admin to apply it, then reload the page.`
       : res.error.message);
   }
   if (res.data == null) {
-    throw new Error(`Report nahi ban saka: \`${fn}\` ne kuch nahi lautaya. Page reload karein; phir bhi ho to support ko batayein.`);
+    throw new Error(`Could not build the report: \`${fn}\` returned nothing. Reload the page; if it still happens, tell support.`);
   }
   return res.data as T;
 }

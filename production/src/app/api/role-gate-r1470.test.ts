@@ -166,7 +166,7 @@ async function call(c: Case, role: string | null): Promise<{ status: number; err
 
 /** The refusals the gates answer with (withRoute's / mayOpenPage's, and mayDo's forbiddenMessage). */
 const isGateRefusal = (r: { status: number; error: string | null }) =>
-  r.status === 403 && !!r.error && (/role ko allowed nahi/.test(r.error) || /^Only .+ can /.test(r.error));
+  r.status === 403 && !!r.error && (/role is not allowed/.test(r.error) || /^Only .+ can /.test(r.error));
 
 describe("R-1470: mutating routes refuse roles that do not do that job", () => {
   /* R-1591 (18 Oct 2026): the 26 route modules (AI / messaging / Prisma graphs) used to be imported

@@ -119,7 +119,7 @@ describe("R-1522: the contact person, never the company name", () => {
   it("header line with no contact: says so and offers Add contact", () => {
     const add = vi.fn();
     render(<PrimaryContactLine contact={null} onAddContact={add} />);
-    expect(screen.getByTestId("header-no-contact").textContent).toContain("Koi contact person nahi");
+    expect(screen.getByTestId("header-no-contact").textContent).toContain("No contact person yet");
     fireEvent.click(screen.getByRole("button", { name: /Add contact/ }));
     expect(add).toHaveBeenCalledOnce();
   });
@@ -129,7 +129,7 @@ describe("R-1522: the contact person, never the company name", () => {
     const c = { ...company, id: "c-1", contact_name: "GREENTIN SOLUTIONS PRIVATE LIMITED", country: "India" } as unknown as Customer;
     render(<CustomerIdentityRail c={c} contact={primaryContactOf(c, [])} onAddContact={add} />);
     const card = screen.getByTestId("no-contact-person");
-    expect(card.textContent).toContain("Koi contact person nahi");
+    expect(card.textContent).toContain("No contact person yet");
     expect(card.textContent).not.toContain("GREENTIN");
     fireEvent.click(within(card).getByRole("button", { name: /Add contact/ }));
     expect(add).toHaveBeenCalledOnce();

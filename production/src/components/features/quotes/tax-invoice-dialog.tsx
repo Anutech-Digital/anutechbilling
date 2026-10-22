@@ -278,11 +278,11 @@ export function TaxInvoiceDialog({
     const dueLine = invoice.due_date ? `\nDue date: ${formatDate(invoice.due_date)}` : "";
     const amountLabel = advancesAdjusted > 0 ? "Net payable" : "Amount";
     const message =
-      `Namaste ${invoice.customer_name},\n\n` +
-      `Aapka ${docTitle} ${invoice.id} taiyaar hai.\n` +
+      `Hello ${invoice.customer_name},\n\n` +
+      `Your ${docTitle} ${invoice.id} is ready.\n` +
       `${amountLabel}: ${money(netPayable)}${dueLine}\n\n` +
-      `PDF attach kar raha hoon. Koi sawaal ho to bataiyega.\n\n` +
-      `Dhanyavaad,\n${tenantName}`;
+      `I am attaching the PDF. Please let me know if you have any questions.\n\n` +
+      `Thank you,\n${tenantName}`;
     const digits = toWhatsAppDigits(customerPhone);
     if (!digits) {
       toast.error("No phone number for this customer", {
@@ -367,7 +367,7 @@ export function TaxInvoiceDialog({
               icon="whatsapp"
               loading={sharing}
               onClick={shareOnWhatsApp}
-              title="WhatsApp par bhejein — PDF download hoga, chat me attach kar dein"
+              title="Send on WhatsApp — the PDF downloads so you can attach it in the chat"
             >
               Send on WhatsApp
             </Button>

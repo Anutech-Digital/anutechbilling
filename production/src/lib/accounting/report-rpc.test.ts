@@ -14,7 +14,7 @@ const e = (date: string, amount: number, up = true, reference = `R-${date}`): Le
 describe("rpcRowOrThrow / rpcValueOrThrow", () => {
   it("names the missing migration instead of rendering an empty report", () => {
     expect(() => rpcRowOrThrow({ data: null, error: { code: "PGRST202", message: "not found" } }, "report_pnl"))
-      .toThrow(/report_pnl.*Migration/);
+      .toThrow(/report_pnl.*migration/);
     expect(() => rpcValueOrThrow({ data: null, error: { code: "42883", message: "x" } }, "report_ledger_vendors"))
       .toThrow(/report_ledger_vendors/);
   });
@@ -25,8 +25,8 @@ describe("rpcRowOrThrow / rpcValueOrThrow", () => {
   });
 
   it("an empty answer is an error, not a row of zeros", () => {
-    expect(() => rpcRowOrThrow({ data: [], error: null }, "report_pnl")).toThrow(/koi row nahi/);
-    expect(() => rpcValueOrThrow({ data: null, error: null }, "report_party_ledger")).toThrow(/kuch nahi/);
+    expect(() => rpcRowOrThrow({ data: [], error: null }, "report_pnl")).toThrow(/returned no row/);
+    expect(() => rpcValueOrThrow({ data: null, error: null }, "report_party_ledger")).toThrow(/returned nothing/);
   });
 
   it("takes the first row of a RETURNS TABLE, and a jsonb array whole", () => {

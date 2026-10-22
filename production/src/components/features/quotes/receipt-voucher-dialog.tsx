@@ -125,7 +125,7 @@ We have received ${splitLine ?? `₹${received.toLocaleString("en-IN")}`} agains
 
 Thank you,
 ${tenantName}`
-                  : `Namaste ${customerName},\n\nAapka Advance Receipt Voucher ${payment.receipt_voucher_no || ""} (${splitLine ?? `₹${received.toLocaleString("en-IN")}`}) received ho gaya hai.\n\nDhanyavaad,\n${tenantName}`);
+                  : `Dear ${customerName},\n\nWe have received your advance payment of ${splitLine ?? `₹${received.toLocaleString("en-IN")}`} — advance receipt voucher ${payment.receipt_voucher_no || ""}.\n\nThank you,\n${tenantName}`);
                 window.open(`https://web.whatsapp.com/send?text=${q}`, "_blank");
               }}
             >

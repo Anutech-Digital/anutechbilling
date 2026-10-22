@@ -685,8 +685,8 @@ export function useImportBankTransactions() {
       qc.invalidateQueries({ queryKey: ["bank_transactions", vars.accountId] });
       qc.invalidateQueries({ queryKey: ["bank_accounts"] });   // current_balance changed
       qc.invalidateQueries({ queryKey: ["bank_imports", vars.accountId] });
-      const dupMsg = duplicates > 0 ? ` · ${duplicates} duplicate skip` : "";
-      if (inserted === 0 && duplicates > 0) toast.success(`Sab ${duplicates} lines pehle se hain — kuch naya nahi mila`);
+      const dupMsg = duplicates > 0 ? ` · ${duplicates} duplicates skipped` : "";
+      if (inserted === 0 && duplicates > 0) toast.success(`All ${duplicates} lines are already there — nothing new found`);
       else toast.success(`${inserted} transaction${inserted === 1 ? "" : "s"} imported${dupMsg}`);
     },
     // toastError() already digs the message out of non-Error PostgREST objects,
@@ -737,7 +737,7 @@ export function useRemoveBankImport() {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["bank_accounts"] });
       qc.invalidateQueries({ queryKey: ["bank_imports", args.p_account_id] });
-      toast.success(`Import hata diya — ${removed} line${removed === 1 ? "" : "s"} account se nikal gayi`);
+      toast.success(`Import removed — ${removed} line${removed === 1 ? "" : "s"} taken out of the account`);
     },
   });
 }
@@ -802,7 +802,7 @@ export function useBookCreditAsInvoice() {
       });
       if (e2) throw e2;
       const pay = (Array.isArray(payData) ? payData[0] : payData) as { payment_id?: string };
-      if (!pay?.payment_id) throw new Error("Payment record nahi bana.");
+      if (!pay?.payment_id) throw new Error("Could not record the payment.");
 
       // 3. Tag the receiving account + reconcile THIS bank line to the payment.
       await supabase.from("payments").update({ bank_account_id: input.bankAccountId }).eq("id", pay.payment_id);
@@ -824,7 +824,7 @@ export function useBookCreditAsInvoice() {
       qc.invalidateQueries({ queryKey: ["payments"] });
       qc.invalidateQueries({ queryKey: ["customers"] });
       qc.invalidateQueries({ queryKey: queryKeys.aging() });
-      toast.success(`Invoice ${inv.invoice_id} bana & reconcile ho gaya`);
+      toast.success(`Invoice ${inv.invoice_id} created & reconciled`);
     },
     onError: (err) => toastError(err),
   });
@@ -952,8 +952,8 @@ export function useAutoReconcile() {
       qc.invalidateQueries({ queryKey: ["salary-payments"] });
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
-      if (reconciled === 0) toast.info(review > 0 ? `Koi pakka (exact) match nahi mila — ${review} manual review ke liye` : "Sab pehle se reconciled");
-      else toast.success(`${reconciled} auto-reconcile ho gaye${review > 0 ? ` · ${review} manual review ke liye` : ""}`);
+      if (reconciled === 0) toast.info(review > 0 ? `No exact match found — ${review} for manual review` : "All already reconciled");
+      else toast.success(`${reconciled} auto-reconciled${review > 0 ? ` · ${review} for manual review` : ""}`);
     },
     onError: (err) => toastError(err),
   });
@@ -1115,7 +1115,7 @@ export function useBookBankTxnAsVendorBill() {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["vendor_bills"] });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
-      toast.success(res?.replaced_synthetic ? "Bill payment reconciled — Bills page ki manual line hata di, ye asli line rahi" : "Bill payment booked & reconciled");
+      toast.success(res?.replaced_synthetic ? "Bill payment reconciled — removed the manual line from the Bills page, kept this real line" : "Bill payment booked & reconciled");
     },
     onError: (err) => toastError(err, { fallback: "Couldn't book bill payment" }),
   });
@@ -1138,7 +1138,7 @@ export function useBookBankTxnAsCommission() {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["referral-commissions"] });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
-      toast.success(res?.replaced_synthetic ? "Commission reconciled — manual line hata di, ye asli line rahi" : "Commission paid & reconciled");
+      toast.success(res?.replaced_synthetic ? "Commission reconciled — removed the manual line, kept this real line" : "Commission paid & reconciled");
     },
     onError: (err) => toastError(err, { fallback: "Couldn't book commission payment" }),
   });
@@ -1312,7 +1312,7 @@ export function useMatchCreditToInvoice() {
       });
       if (e1) throw e1;
       const pay = (Array.isArray(payData) ? payData[0] : payData) as { payment_id?: string } | null;
-      if (!pay?.payment_id) throw new Error("Payment record nahi bana.");
+      if (!pay?.payment_id) throw new Error("Could not record the payment.");
 
       await supabase.from("payments").update({ bank_account_id: input.bankAccountId }).eq("id", pay.payment_id);
       const { error: e2 } = await supabase.rpc("reconcile_bank_txn", {

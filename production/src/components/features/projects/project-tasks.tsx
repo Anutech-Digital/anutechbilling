@@ -74,7 +74,7 @@ export function ProjectTasks({ projectId, team, project }: { projectId: string; 
           <Button variant="default" icon="sparkles" onClick={() => setAiOpen(true)}>
             Plan with AI
           </Button>
-          <span className="text-2xs text-ink-3 ml-2">Project ki detail do → explanation + tasks ban jaayenge</span>
+          <span className="text-2xs text-ink-3 ml-2">Describe the project → get an explanation + ready tasks</span>
         </div>
       )}
 
@@ -89,7 +89,7 @@ export function ProjectTasks({ projectId, team, project }: { projectId: string; 
       {q.isLoading ? (
         <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
       ) : tasks.length === 0 ? (
-        <p className="text-sm text-ink-3 py-2">Abhi koi task nahi. Neeche pehla task add karo aur team member ko assign karo.</p>
+        <p className="text-sm text-ink-3 py-2">No tasks yet. Add the first task below and assign it to a team member.</p>
       ) : (
         <ul className="divide-y divide-hairline">
           {tasks.map((t) => {
@@ -160,7 +160,7 @@ export function ProjectTasks({ projectId, team, project }: { projectId: string; 
 
       {team.length === 0 && (
         <p className="text-2xs text-ink-3 mt-2">
-          Tip: is project ki <b>Team</b> me employees add karo (upar Labour section), phir unhe tasks assign kar paoge.
+          Tip: add employees to this project's <b>Team</b> (Labour section above), then you can assign tasks to them.
         </p>
       )}
 
@@ -409,9 +409,7 @@ function AiPlanDialog({ projectId, team, project, startSeq, onClose }: {
                   <div>
                     <span className="font-bold">Project Clarification Questions</span>
                     <p className="text-2xs text-ink-2 mt-0.5">
-                      {lang === "hi"
-                        ? "AI proposal aur delivery roadmap ke liye in sawalon ka jawab dein:"
-                        : "Answer these key questions to refine your client proposal & phase roadmap:"}
+                      Answer these key questions to refine your client proposal &amp; phase roadmap:
                     </p>
                   </div>
                 </div>
@@ -477,7 +475,7 @@ function AiPlanDialog({ projectId, team, project, startSeq, onClose }: {
 
                       <Input
                         id={`ptq-answer-${idx}`}
-                        placeholder={lang === "hi" ? "Ya custom jawab yahan type karein..." : "Or type custom answer/notes here..."}
+                        placeholder="Or type custom answer/notes here..."
                         value={answers[idx] || ""}
                         onChange={(e) => setAnswers({ ...answers, [idx]: e.target.value })}
                         className="bg-paper text-xs"

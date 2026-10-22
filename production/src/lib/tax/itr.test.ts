@@ -180,17 +180,17 @@ describe("computeItrPack — gaps (jo nahi hai wo bolna)", () => {
     const pack = computeItrPack(fy, {
       ...EMPTY, tdsCredit: 413_520, tdsCount: 32,
     });
-    expect(pack.gaps.some((g) => g.includes("EK BHI invoice"))).toBe(true);
-    expect(pack.gaps.some((g) => g.includes("TDS ki 32 entry"))).toBe(true);
+    expect(pack.gaps.some((g) => g.includes("Not a single invoice"))).toBe(true);
+    expect(pack.gaps.some((g) => g.includes("32 TDS entries"))).toBe(true);
   });
 
   it("R-1579: COGS bill na ho to khareed ka gap (PO ho to uska note); bill ho to nahi", () => {
     const without = computeItrPack(fy, EMPTY);
-    expect(without.gaps.some((g) => g.includes("koi COGS vendor bill darj nahi"))).toBe(true);
+    expect(without.gaps.some((g) => g.includes("no COGS vendor bill is recorded"))).toBe(true);
 
     const poOnly = computeItrPack(fy, { ...EMPTY, placedPoCost: 100_000, placedPoCount: 2 });
-    expect(poOnly.gaps.some((g) => g.includes("2 placed purchase order"))).toBe(true);
-    expect(poOnly.pnl.find((l) => l.label.startsWith("Licence ki khareed"))!.amount).toBe(0);
+    expect(poOnly.gaps.some((g) => g.includes("2 placed purchase orders"))).toBe(true);
+    expect(poOnly.pnl.find((l) => l.label.startsWith("Licence purchases"))!.amount).toBe(0);
 
     const withBill = computeItrPack(fy, { ...EMPTY, cogs: 100_000, cogsCount: 2, placedPoCost: 100_000, placedPoCount: 2 });
     expect(withBill.gaps.some((g) => g.includes("COGS vendor bill"))).toBe(false);
@@ -198,13 +198,13 @@ describe("computeItrPack — gaps (jo nahi hai wo bolna)", () => {
 
   it("salary book na ho to gap; book ho to nahi", () => {
     const without = computeItrPack(fy, EMPTY);
-    expect(without.gaps.some((g) => g.includes("Salary ka koi kharcha"))).toBe(true);
+    expect(without.gaps.some((g) => g.includes("No salary expense is booked"))).toBe(true);
 
     const withSalary = computeItrPack(fy, {
       ...EMPTY,
       expenses: [{ category: "Salaries", amount: 50_000, itc: 0, count: 1 }],
     });
-    expect(withSalary.gaps.some((g) => g.includes("Salary ka koi kharcha"))).toBe(false);
+    expect(withSalary.gaps.some((g) => g.includes("No salary expense is booked"))).toBe(false);
   });
 
   it("bank-byaaj ka gap HAMESHA; asset register khaali ho to uska gap", () => {
@@ -213,8 +213,8 @@ describe("computeItrPack — gaps (jo nahi hai wo bolna)", () => {
       revenueExGst: 1_000_000, invoiceCount: 5,
       expenses: [{ category: "Salaries", amount: 100_000, itc: 0, count: 1 }],
     });
-    expect(pack.gaps.some((g) => g.includes("Asset register me koi asset nahi"))).toBe(true);
-    expect(pack.gaps.some((g) => g.includes("Bank ka byaaj"))).toBe(true);
+    expect(pack.gaps.some((g) => g.includes("Asset register is empty"))).toBe(true);
+    expect(pack.gaps.some((g) => g.includes("Bank interest"))).toBe(true);
     expect(pack.pnl.some((l) => l.label.startsWith("Depreciation"))).toBe(false);
   });
 

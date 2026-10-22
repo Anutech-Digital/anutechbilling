@@ -16,12 +16,12 @@
 export interface TdsSectionRate { section: string; ratePct: number; note: string | null }
 
 export const TDS_SECTION_RATES: Readonly<Record<string, TdsSectionRate>> = {
-  "194C": { section: "194C", ratePct: 2,   note: "Individual / HUF contractor ho to 1%." },
-  "194J": { section: "194J", ratePct: 10,  note: "Technical services (professional nahi) ho to 2%." },
-  "194I": { section: "194I", ratePct: 10,  note: "Plant / machinery ka kiraya ho to 2%." },
+  "194C": { section: "194C", ratePct: 2,   note: "1% if the contractor is an individual / HUF." },
+  "194J": { section: "194J", ratePct: 10,  note: "2% for technical services (not professional)." },
+  "194I": { section: "194I", ratePct: 10,  note: "2% for rent of plant / machinery." },
   "194H": { section: "194H", ratePct: 2,   note: null },
   "194A": { section: "194A", ratePct: 10,  note: null },
-  "194Q": { section: "194Q", ratePct: 0.1, note: "Sirf ₹50 lakh se upar ki saal ki kharid par lagta hai." },
+  "194Q": { section: "194Q", ratePct: 0.1, note: "Applies only to yearly purchases above ₹50 lakh." },
 };
 
 /** TDS base: the amount less the GST shown on the bill (never below 0). */

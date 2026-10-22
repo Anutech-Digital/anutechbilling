@@ -67,11 +67,11 @@ const EMPTY: FormState = {
 
 /** How stale is one holding's figure? Returns null when it is fresh enough to say nothing. */
 function stalenessNote(valuedOn: string | null, now: Date): string | null {
-  if (!valuedOn) return "value kabhi update nahi hua";
+  if (!valuedOn) return "value never updated";
   const d = new Date(valuedOn);
-  if (Number.isNaN(d.getTime())) return "value ki date samajh nahi aayi";
+  if (Number.isNaN(d.getTime())) return "value date not readable";
   const days = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
-  if (days > STALE_AFTER_DAYS) return `${days} din purana`;
+  if (days > STALE_AFTER_DAYS) return `${days} days old`;
   return null;
 }
 
@@ -148,25 +148,25 @@ export default function PersonalWealthPage() {
 
   const handleDelete = async (h: PersonalHolding) => {
     const ok = await confirm({
-      title: `"${h.name}" hata dein?`,
-      body: `Aaj ki value ${rupee(h.current_value)}.`,
-      confirmLabel: "Hata do",
+      title: `Remove "${h.name}"?`,
+      body: `Current value ${rupee(h.current_value)}.`,
+      confirmLabel: "Remove",
       danger: true,
     });
     if (!ok) return;
     await del.mutateAsync(h.id);
-    toast.success("Holding hata di.");
+    toast.success("Holding removed.");
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-ink-3">
-          Mutual fund, share, property, gold/SGB, LIC, PPF — sab ek jagah.
+          Mutual funds, shares, property, gold/SGB, LIC, PPF — all in one place.
         </p>
         <Button variant="primary" onClick={openNew} className="flex-shrink-0">
           <Icon name="plus" size={14} className="mr-1.5" />
-          Investment add karo
+          Add investment
         </Button>
       </div>
 
@@ -178,9 +178,9 @@ export default function PersonalWealthPage() {
         <Card className="p-6">
           <EmptyState
             icon="trending_up"
-            title="Abhi koi investment nahi"
-            body="Apne mutual fund, share, property ya PPF add karo. Values aapko khud update karni hongi — koi market feed nahi juda hua."
-            action={<Button onClick={openNew}>Pehli investment</Button>}
+            title="No investments yet"
+            body="Add your mutual funds, shares, property or PPF. You will need to update values yourself — no market feed is connected."
+            action={<Button onClick={openNew}>Add first investment</Button>}
           />
         </Card>
       )}
@@ -189,15 +189,15 @@ export default function PersonalWealthPage() {
         <>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Aaj ki value</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-4">Current value</p>
               <div className="mt-0.5"><Money amount={nw.investments} size="display" /></div>
             </Card>
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Lagaya tha</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-4">Amount invested</p>
               <div className="mt-0.5"><Money amount={nw.investedTotal} size="display" /></div>
             </Card>
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Faayda / nuksaan</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-4">Gain / loss</p>
               <div className="mt-0.5">
                 <Money amount={nw.portfolioGain} size="display" />
               </div>
@@ -213,8 +213,8 @@ export default function PersonalWealthPage() {
             <div className="rounded-lg border border-amber/30 bg-amber-soft p-3 flex gap-2.5">
               <Icon name="alert" size={15} className="text-amber-ink flex-shrink-0 mt-0.5" />
               <p className="text-xs text-amber-ink leading-relaxed">
-                Upar ka total poora bharosemand nahi hai: <b>{rupee(nw.staleValue)}</b> ka figure purana ya
-                bina date ka hai. Neeche jin par nishaan laga hai, unki value update kar do.
+                The total above is not fully reliable: <b>{rupee(nw.staleValue)}</b> of it is out of date or
+                has no date. Update the value of the holdings marked below.
               </p>
             </div>
           )}
@@ -233,9 +233,9 @@ export default function PersonalWealthPage() {
                         {stale && <Badge kind="warning" size="sm">{stale}</Badge>}
                       </div>
                       <p className="text-xs text-ink-3 mt-0.5">
-                        lagaya {rupee(h.invested)}
+                        invested {rupee(h.invested)}
                         {h.units !== null && <> · {h.units} units</>}
-                        {h.valued_on && <> · value {formatDate(h.valued_on)} ki</>}
+                        {h.valued_on && <> · value as of {formatDate(h.valued_on)}</>}
                         {h.notes && <> · {h.notes}</>}
                       </p>
                     </div>
@@ -264,16 +264,16 @@ export default function PersonalWealthPage() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle>{form.id ? "Investment edit karo" : "Nayi investment"}</DialogTitle>
+            <DialogTitle>{form.id ? "Edit investment" : "New investment"}</DialogTitle>
             <DialogDescription className="text-xs">
-              Value aapko khud update karni hogi — koi market feed juda hua nahi hai.
+              You will need to update the value yourself — no market feed is connected.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="vw-kind" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Kis tarah ka</label>
+                <label htmlFor="vw-kind" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Type</label>
                 <Select value={form.asset_class} onValueChange={(v) => setForm((f) => ({ ...f, asset_class: v as AssetClass }))}>
                   <SelectTrigger id="vw-kind"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -293,7 +293,7 @@ export default function PersonalWealthPage() {
             </div>
 
             <div>
-              <label htmlFor="vw-name" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Naam</label>
+              <label htmlFor="vw-name" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Name</label>
               <Input id="vw-name"
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
@@ -303,7 +303,7 @@ export default function PersonalWealthPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="vw-invested" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Lagaya tha (₹)</label>
+                <label htmlFor="vw-invested" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Amount invested (₹)</label>
                 <Input id="vw-invested"
                   value={form.invested}
                   onChange={(e) => setForm((f) => ({ ...f, invested: e.target.value }))}
@@ -312,7 +312,7 @@ export default function PersonalWealthPage() {
                 />
               </div>
               <div>
-                <label htmlFor="vw-current-value" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Aaj ki value (₹)</label>
+                <label htmlFor="vw-current-value" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Current value (₹)</label>
                 <Input id="vw-current-value"
                   value={form.current_value}
                   onChange={(e) => setForm((f) => ({ ...f, current_value: e.target.value }))}
@@ -323,14 +323,14 @@ export default function PersonalWealthPage() {
             </div>
 
             <div>
-              <label htmlFor="vw-value-date" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Value kis din ki hai</label>
+              <label htmlFor="vw-value-date" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Value as of</label>
               <Input id="vw-value-date"
                 type="date"
                 value={form.valued_on}
                 onChange={(e) => setForm((f) => ({ ...f, valued_on: e.target.value }))}
               />
               <p className="text-2xs text-ink-4 mt-1">
-                Khali chhod doge to &quot;kabhi update nahi hua&quot; likha aayega — total ke saath.
+                If you leave this blank, it will show &quot;value never updated&quot; next to the total.
               </p>
             </div>
 

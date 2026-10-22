@@ -126,26 +126,26 @@ describe("Overview — net worth", () => {
   it("warns, on the same card as the total, when a valuation is stale", () => {
     state.holdings = q([GOLD]); // valued_on: null
     render(<Overview />);
-    expect(screen.getByText(/figure purana hai/)).toBeDefined();
+    expect(screen.getByText(/of this figure is out of date/)).toBeDefined();
   });
 
   it("says nothing about staleness when every valuation is fresh", () => {
     state.holdings = q([MF, PROPERTY]);
     render(<Overview />);
-    expect(screen.queryByText(/figure purana hai/)).toBeNull();
+    expect(screen.queryByText(/of this figure is out of date/)).toBeNull();
   });
 
   it("reports what was taken out of the company separately from other income", () => {
     state.accounts = q([SAVINGS]);
     state.transactions = q([DRAWING, DIVIDEND, GROCERIES]);
     render(<Overview />);
-    expect(screen.getByText(/Company se nikala/)).toBeDefined();
+    expect(screen.getByText(/Taken from company/)).toBeDefined();
     expect(screenHasRupees(4_00_000)).toBe(true);   // drawing + dividend
   });
 
   it("offers a first step instead of a blank page", () => {
     render(<Overview />);
-    expect(screen.getByText(/Vault abhi khali hai/)).toBeDefined();
+    expect(screen.getByText(/Your vault is empty/)).toBeDefined();
   });
 });
 
@@ -153,8 +153,8 @@ describe("Banking", () => {
   it("splits what is held from what is owed", () => {
     state.accounts = q([SAVINGS, FD, CARD]);
     render(<Banking />);
-    expect(screen.getByText(/Kul jama/)).toBeDefined();
-    expect(screen.getByText(/Card par bakaya/)).toBeDefined();
+    expect(screen.getByText(/Total balance/)).toBeDefined();
+    expect(screen.getByText(/Owed on cards/)).toBeDefined();
     expect(screenHasRupees(13_50_000)).toBe(true);  // savings + FD, card excluded
     expect(screenHasRupees(80_000)).toBe(true);     // the card, on its own
   });
@@ -174,7 +174,7 @@ describe("Banking", () => {
 
   it("prompts for a first account when there are none", () => {
     render(<Banking />);
-    expect(screen.getByText(/Abhi koi account nahi/)).toBeDefined();
+    expect(screen.getByText(/No accounts yet/)).toBeDefined();
   });
 });
 
@@ -210,7 +210,7 @@ describe("Expenses & drawings", () => {
   it("prompts for a first entry when empty", () => {
     state.transactions = q([]);
     render(<Expenses />);
-    expect(screen.getByText(/Abhi koi entry nahi/)).toBeDefined();
+    expect(screen.getByText(/No entries yet/)).toBeDefined();
   });
 });
 
@@ -240,6 +240,6 @@ describe("Wealth", () => {
   it("prompts for a first investment when empty", () => {
     state.holdings = q([]);
     render(<Wealth />);
-    expect(screen.getByText(/Abhi koi investment nahi/)).toBeDefined();
+    expect(screen.getByText(/No investments yet/)).toBeDefined();
   });
 });

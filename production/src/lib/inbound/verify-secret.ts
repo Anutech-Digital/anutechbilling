@@ -141,6 +141,6 @@ export function querySecretAllowed(
 export function querySecretWarning(label: string): string {
   /* "INBOUND_REQUIRE_HEADER" shabd rehna chahiye — lib/ops/health-digest.ts aur
      scripts/health-prod.mjs isi se is chetavni ko log me dhoondhte hain. */
-  return `[${label}] shared secret URL me aaya (INBOUND_ALLOW_QUERY_SECRET=1 ki wajah se maana), isliye wo is request ke log me cleartext hai. ` +
-    `Bhejne wale ko \`x-inbound-secret\` header par le jaao, phir INBOUND_ALLOW_QUERY_SECRET hatao (default = INBOUND_REQUIRE_HEADER jaisa, sirf header).`;
+  return `[${label}] shared secret came in the URL (accepted because INBOUND_ALLOW_QUERY_SECRET=1), so it is in cleartext in this request's log. ` +
+    `Move the sender to the \`x-inbound-secret\` header, then remove INBOUND_ALLOW_QUERY_SECRET (default = same as INBOUND_REQUIRE_HEADER, header only).`;
 }

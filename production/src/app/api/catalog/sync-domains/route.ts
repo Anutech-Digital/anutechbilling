@@ -31,7 +31,7 @@ interface TldRow {
 export const POST = withRoute({
   route: "api/catalog/sync-domains",
   roles: ["owner", "manager"],
-  roleHint: "Catalogue sync sirf owner / manager kar sakte hain.",
+  roleHint: "Only an owner or manager can sync the catalogue.",
 }, async ({ supabase }) => {
 
   // 1. Fetch the rate card — direct from ResellerClub when the credentials are

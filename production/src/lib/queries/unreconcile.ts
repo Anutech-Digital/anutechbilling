@@ -87,8 +87,8 @@ export function useUnreconcileBankTxn() {
         qc.invalidateQueries({ queryKey: [k] });
       }
       toast.success(
-        res?.invoice_credited ? `Un-reconciled · invoice ${res.invoice_credited} par credit note ${res.credit_note_id ?? ""} ban gaya, receipt hata di`
-        : res?.invoice_voided ? `Un-reconciled · draft invoice ${res.invoice_voided} void, receipt hata di`
+        res?.invoice_credited ? `Un-reconciled · credit note ${res.credit_note_id ?? ""} raised on invoice ${res.invoice_credited}, receipt removed`
+        : res?.invoice_voided ? `Un-reconciled · draft invoice ${res.invoice_voided} voided, receipt removed`
         : "Un-reconciled",
       );
     },

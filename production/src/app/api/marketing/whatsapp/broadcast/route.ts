@@ -31,7 +31,7 @@ export const maxDuration = 300;
 const MAX_PER_RUN = 250;
 
 const schema = z.object({
-  templateId: z.string({ message: "Template aur audience chuno." }).uuid("Template aur audience chuno."),
+  templateId: z.string({ message: "Select a template and an audience." }).uuid("Select a template and an audience."),
   audience: z.object({ stages: z.array(z.string()).optional(), sources: z.array(z.string()).optional() }).default({}),
   dryRun: z.boolean().optional(),
 });
@@ -55,11 +55,11 @@ export const POST = withRoute({
 
   const { data: tpl } = await admin.from("whatsapp_templates")
     .select("id, name, language, body, param_map, status").eq("id", templateId).eq("tenant_id", tenantId).maybeSingle();
-  if (!tpl) throw new RouteError(404, "Template nahi mila.");
-  if (tpl.status !== "approved") throw new RouteError(400, "Sirf Meta se approved template bheja ja sakta hai.");
+  if (!tpl) throw new RouteError(404, "Template not found.");
+  if (tpl.status !== "approved") throw new RouteError(400, "Only a template approved by Meta can be sent.");
   const paramMap = (Array.isArray(tpl.param_map) ? tpl.param_map : []) as string[];
   const problem = templateProblem(tpl.body, paramMap);
-  if (problem) throw new RouteError(400, `Template theek karo: ${problem}`);
+  if (problem) throw new RouteError(400, `Fix the template: ${problem}`);
 
   // ── Audience ──────────────────────────────────────────────────────────────
   let q = admin.from("leads").select("id, contact_name, company, contact_phone").eq("tenant_id", tenantId)
@@ -67,7 +67,7 @@ export const POST = withRoute({
   if (audience.stages?.length) q = q.in("stage", audience.stages as Stage[]);
   if (audience.sources?.length) q = q.in("source", audience.sources);
   const { data: leads, error: lErr } = await q;
-  dbFail(lErr, "Audience ke leads load nahi hue — dobara try kariye.");
+  dbFail(lErr, "Could not load the audience's leads — try again.");
 
   const { data: outs } = await admin.from("whatsapp_opt_outs").select("phone").eq("tenant_id", tenantId);
   const optedOut = new Set(((outs ?? []) as { phone: string }[]).map((o) => o.phone));
@@ -98,17 +98,17 @@ export const POST = withRoute({
     };
   }
 
-  if (capped.length === 0) throw new RouteError(400, "Is audience mein WhatsApp number wala koi lead nahi.");
+  if (capped.length === 0) throw new RouteError(400, "No lead in this audience has a WhatsApp number.");
   if (!(await resolveWhatsAppCreds(tenantId))) {
-    return NextResponse.json({ ok: false, error: "WhatsApp abhi connect nahi hai — Settings mein WhatsApp Business API jodo.", code: "not_configured" }, { status: 409 });
+    return NextResponse.json({ ok: false, error: "WhatsApp is not connected yet — connect the WhatsApp Business API in Settings.", code: "not_configured" }, { status: 409 });
   }
 
   const { data: bc, error: bErr } = await admin.from("whatsapp_broadcasts").insert({
     tenant_id: tenantId, template_id: tpl.id, template_name: tpl.name, audience,
     recipients_count: capped.length, skipped_count: skippedOptOut, created_by: user.id,
   }).select("id").single();
-  dbFail(bErr, "Broadcast shuru nahi hua — kuch bheja nahi gaya. Dobara try kariye.");
-  if (!bc) throw new RouteError(500, "Broadcast shuru nahi hua — kuch bheja nahi gaya. Dobara try kariye.");
+  dbFail(bErr, "Broadcast did not start — nothing was sent. Try again.");
+  if (!bc) throw new RouteError(500, "Broadcast did not start — nothing was sent. Try again.");
 
   let sent = 0, failed = 0;
   for (const r of capped) {

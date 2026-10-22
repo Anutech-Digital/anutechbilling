@@ -61,9 +61,9 @@ export function effectiveBillDocType(documentType: string | null | undefined, ve
 }
 
 const DOC_REASON: Readonly<Record<Exclude<BillDocumentType, "tax_invoice">, string>> = {
-  proforma:       "Proforma hai, tax invoice nahi — credit nahi; vendor se asli tax invoice maango",
-  bill_of_supply: "Bill of supply — vendor GST nahi le sakta, credit nahi",
-  other:          "GST tax invoice nahi — credit nahi",
+  proforma:       "Proforma, not a tax invoice — no credit; ask the vendor for the actual tax invoice",
+  bill_of_supply: "Bill of supply — the vendor cannot charge GST, no credit",
+  other:          "Not a GST tax invoice — no credit",
 };
 
 const gstOf = (b: Pick<BillItcInput, "cgst" | "sgst" | "igst">) =>
@@ -74,7 +74,7 @@ export function billItcEligibility(b: BillItcInput): ItcVerdict {
   if (gst <= 0) return { eligible: false, reason: null };
   const doc = effectiveBillDocType(b.document_type, b.vendor_gstin);
   if (doc !== "tax_invoice") return { eligible: false, reason: DOC_REASON[doc] };
-  if (!isGstin(b.vendor_gstin)) return { eligible: false, reason: "Vendor ka GSTIN nahi — GSTR-2B mein match nahi hoga" };
+  if (!isGstin(b.vendor_gstin)) return { eligible: false, reason: "Vendor has no GSTIN — it will not match in GSTR-2B" };
 
   const own = (b.ownStateCode ?? "").trim();
   if (/^\d{2}$/.test(own)) {
@@ -82,10 +82,10 @@ export function billItcEligibility(b: BillItcInput): ItcVerdict {
     const local = Math.max(0, b.cgst ?? 0) + Math.max(0, b.sgst ?? 0);
     const inter = Math.max(0, b.igst ?? 0);
     if (vendorState !== own && local > 0) {
-      return { eligible: false, reason: `Vendor doosre rajya (${vendorState}) ka hai aur CGST+SGST lagaya — wo us rajya ka tax hai, yahan credit nahi` };
+      return { eligible: false, reason: `Vendor is in another state (${vendorState}) but charged CGST+SGST — that is that state's tax, no credit here` };
     }
     if (vendorState === own && inter > 0 && local === 0) {
-      return { eligible: false, reason: "Vendor aur hum ek hi rajya mein, phir bhi IGST lagaya — galat head; vendor se sahi invoice maango (SEZ vendor ho to CA se poochho)" };
+      return { eligible: false, reason: "Vendor and we are in the same state, but IGST was charged — wrong head; ask the vendor for a corrected invoice (if the vendor is in an SEZ, ask your CA)" };
     }
   }
 

@@ -77,7 +77,7 @@ export default function GlobalError({
               marginBottom: 24,
             }}
           >
-            Hum ne is error ko track kar liya hai. Try reloading the page — if
+            We have logged this error. Try reloading the page — if
             it keeps happening, contact <strong>support@resellersos.in</strong>.
           </p>
           <button

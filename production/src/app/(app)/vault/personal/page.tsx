@@ -96,11 +96,11 @@ export default function PersonalVaultOverview() {
           <div className="mt-4 flex gap-2.5 rounded-lg border border-amber/30 bg-amber-soft p-3">
             <Icon name="alert" size={15} className="text-amber-ink flex-shrink-0 mt-0.5" />
             <p className="text-xs text-amber-ink leading-relaxed">
-              <b>{rupee(nw.staleValue)}</b> ka figure purana hai — is total ka{" "}
-              {Math.round((nw.staleValue / nw.investments) * 100)}%.{" "}
-              {nw.neverValuedCount > 0 && <>{nw.neverValuedCount} holding ka value kabhi update nahi hua. </>}
-              {nw.staleCount > 0 && <>{nw.staleCount} ka {STALE_AFTER_DAYS} din se zyada purana hai. </>}
-              Ye aankda utna hi sahi hai jitna aakhri baar aapne likha tha.
+              <b>{rupee(nw.staleValue)}</b> of this figure is out of date — {Math.round((nw.staleValue / nw.investments) * 100)}% of
+              the total.{" "}
+              {nw.neverValuedCount > 0 && <>{nw.neverValuedCount} holding(s) never had their value updated. </>}
+              {nw.staleCount > 0 && <>{nw.staleCount} are more than {STALE_AFTER_DAYS} days old. </>}
+              This figure is only as accurate as the values you last entered.
             </p>
           </div>
         )}
@@ -110,9 +110,9 @@ export default function PersonalVaultOverview() {
         <Card className="p-6">
           <EmptyState
             icon="wallet"
-            title="Vault abhi khali hai"
-            body="Apne personal bank account, drawings aur investments yahan add karo. Ye sab sirf aapko dikhta hai — team me kisi ko nahi."
-            action={<Button onClick={() => { window.location.href = "/vault/personal/banking"; }}>Banking se shuru karo</Button>}
+            title="Your vault is empty"
+            body="Add your personal bank accounts, drawings and investments here. Only you can see them — no one in your team."
+            action={<Button onClick={() => { window.location.href = "/vault/personal/banking"; }}>Start with Banking</Button>}
           />
         </Card>
       ) : (
@@ -120,25 +120,25 @@ export default function PersonalVaultOverview() {
           {/* ── This FY's personal cash flow ────────────────────────────────── */}
           <Card className="p-5">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-medium text-ink">Is financial year me</h2>
-              <span className="text-2xs text-ink-4 font-mono">{fyStart} se aaj tak</span>
+              <h2 className="text-sm font-medium text-ink">This financial year</h2>
+              <span className="text-2xs text-ink-4 font-mono">{fyStart} to today</span>
             </div>
             <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
-                <p className="text-2xs uppercase tracking-wide text-ink-4">Company se nikala</p>
+                <p className="text-2xs uppercase tracking-wide text-ink-4">Taken from company</p>
                 <div className="mt-0.5"><Money amount={flow.drawnFromCompany} size="display" /></div>
                 <p className="text-3xs text-ink-4 mt-0.5">drawings + dividend</p>
               </div>
               <div>
-                <p className="text-2xs uppercase tracking-wide text-ink-4">Kul aaya</p>
+                <p className="text-2xs uppercase tracking-wide text-ink-4">Total in</p>
                 <div className="mt-0.5"><Money amount={flow.moneyIn} size="display" /></div>
               </div>
               <div>
-                <p className="text-2xs uppercase tracking-wide text-ink-4">Kharch hua</p>
+                <p className="text-2xs uppercase tracking-wide text-ink-4">Total spent</p>
                 <div className="mt-0.5"><Money amount={flow.moneyOut} size="display" /></div>
               </div>
               <div>
-                <p className="text-2xs uppercase tracking-wide text-ink-4">Bacha</p>
+                <p className="text-2xs uppercase tracking-wide text-ink-4">Left over</p>
                 <div className="mt-0.5"><Money amount={flow.net} size="display" /></div>
               </div>
             </div>
@@ -147,7 +147,7 @@ export default function PersonalVaultOverview() {
           {/* ── Allocation ──────────────────────────────────────────────────── */}
           {nw.byClass.length > 0 && (
             <Card className="p-5">
-              <h2 className="text-sm font-medium text-ink">Paisa kahan laga hai</h2>
+              <h2 className="text-sm font-medium text-ink">Where your money is</h2>
               <ul className="mt-3 space-y-2.5">
                 {nw.byClass.map((c) => (
                   <li key={c.assetClass}>
@@ -170,7 +170,7 @@ export default function PersonalVaultOverview() {
                 ))}
               </ul>
               <div className="mt-4 pt-3 border-t border-hairline flex items-baseline justify-between text-sm">
-                <span className="text-ink-3">Lagaya tha</span>
+                <span className="text-ink-3">Amount invested</span>
                 <span className="flex items-baseline gap-3">
                   <Money amount={nw.investedTotal} size="cell" />
                   <span className={nw.portfolioGain >= 0 ? "text-emerald text-xs" : "text-rose text-xs"}>

@@ -540,7 +540,7 @@ export function useMarkReminderSent() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
     },
-    onError: (e) => toastError(e, { fallback: "Reminder mark nahi hua — dobara try karo" }),
+    onError: (e) => toastError(e, { fallback: "Could not mark the reminder — please try again" }),
   });
 }
 

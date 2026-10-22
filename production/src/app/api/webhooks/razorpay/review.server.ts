@@ -40,10 +40,10 @@ export function captureMismatch(
 ): string | null {
   const paid = String(payment.currency ?? "").trim().toUpperCase();
   if (paid !== "INR") {
-    return `payment ${paid || "(no currency)"} me hai, INR me nahi — Razorpay order hamesha INR ka banta hai`;
+    return `the payment is in ${paid || "(no currency)"}, not INR — Razorpay orders are always created in INR`;
   }
   if (isForeignCurrency(quote.currency)) {
-    return `quote ${String(quote.currency).toUpperCase()} me hai, par payment INR me aaya — rupee ko us currency ka maan kar record nahi kar sakte`;
+    return `the quote is in ${String(quote.currency).toUpperCase()} but the payment came in INR — rupees cannot be recorded as that currency`;
   }
   return null;
 }
@@ -66,7 +66,7 @@ export interface ReviewArgs {
   why: string;
   /** What the owner does next — Hinglish, click-level. */
   nextStep: string;
-  /** Title prefix — "Razorpay payment jaanch chahiye" by default. */
+  /** Title prefix — "Razorpay payment needs a check" by default. */
   title?: string;
   /** True when the money WAS recorded (as a part-payment) and only the rest of the sale was held. */
   recorded?: boolean;
@@ -88,17 +88,17 @@ export async function flagPaymentForReview(admin: Admin, a: ReviewArgs): Promise
   if (told && told.length) return NextResponse.json({ received: true, alreadyProcessed: true, needsReview: true });
 
   const amount = shown(a.payment.amount, a.payment.currency);
-  const where = a.quoteId ? `quote ${a.quoteId}` : "kisi quote";
+  const where = a.quoteId ? `on quote ${a.quoteId}` : "without a matching quote";
   const detail =
-    `Razorpay payment ${a.payment.id} (${amount}, order ${a.orderId ?? "—"}, ${a.event}) ${where} par aaya, par ${a.why}. ` +
+    `Razorpay payment ${a.payment.id} (${amount}, order ${a.orderId ?? "—"}, ${a.event}) came in ${where}, but ${a.why}. ` +
     (a.recorded
-      ? "App ne ise part-payment ki tarah record kiya hai — quote/invoice poora paid NAHI maana, activation aur 'order confirmed' mail roke gaye. "
-      : "App ne ise record NAHI kiya. ") +
+      ? "The app recorded it as a part-payment — the quote/invoice is NOT treated as fully paid; activation and the 'order confirmed' mail are on hold. "
+      : "The app did NOT record it. ") +
     a.nextStep;
   await notifyTenantOwners({
     tenantId: a.tenantId,
     kind: "payment.received", // R-747 review — entityId is the Razorpay payment id
-    title: `${a.title ?? "Razorpay payment jaanch chahiye"} — ${amount}${a.quoteId ? ` · ${a.quoteId}` : ""}`,
+    title: `${a.title ?? "Razorpay payment needs a check"} — ${amount}${a.quoteId ? ` · ${a.quoteId}` : ""}`,
     body: detail,
     href: a.quoteId ? `/quotes/${a.quoteId}` : "/payments",
     entityId: a.payment.id,
@@ -132,12 +132,12 @@ export async function flagUnderpaid(
   const short = shown(expectedRupees * 100 - paidPaise, "INR");
   await flagPaymentForReview(admin, {
     ...base,
-    title: "Kam paisa aaya",
+    title: "Short payment received",
     recorded: true,
-    why: `due tha ${shown(expectedRupees * 100, "INR")}, aaya sirf ${shown(paidPaise, "INR")} (${short} kam)`,
+    why: `${shown(expectedRupees * 100, "INR")} was due, only ${shown(paidPaise, "INR")} came in (${short} short)`,
     nextStep:
-      `Customer se baaki ${short} mangwao (quote ${base.quoteId ?? ""} ka pay link wahi raqam maangega), ya refund karo. ` +
-      "Poora paisa aane par hi invoice aur activation hoga.",
+      `Collect the balance ${short} from the customer (the pay link of quote ${base.quoteId ?? ""} will ask for that amount), or refund it. ` +
+      "The invoice and activation happen only after the full amount is received.",
   });
   return NextResponse.json({ received: true, quoteId: base.quoteId, underpaid: true, paid, expected: expectedRupees });
 }

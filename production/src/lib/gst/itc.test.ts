@@ -13,9 +13,9 @@ describe("input tax credit on expenses", () => {
   });
 
   it("kaccha / no bill, no GSTIN, blocked category → cost, with the reason", () => {
-    expect(itcEligibility({ gst_paid: 100, bill_type: "kaccha", category: "Software", vendorGstin: G }).reason).toMatch(/tax invoice nahi/);
-    expect(itcEligibility({ gst_paid: 100, bill_type: "gst", category: "Software", vendorGstin: null }).reason).toMatch(/GSTIN nahi/);
-    expect(itcEligibility({ gst_paid: 100, bill_type: "gst", category: "Software", vendorGstin: "ABC" }).reason).toMatch(/GSTIN nahi/);
+    expect(itcEligibility({ gst_paid: 100, bill_type: "kaccha", category: "Software", vendorGstin: G }).reason).toMatch(/Not a GST tax invoice/);
+    expect(itcEligibility({ gst_paid: 100, bill_type: "gst", category: "Software", vendorGstin: null }).reason).toMatch(/no GSTIN/);
+    expect(itcEligibility({ gst_paid: 100, bill_type: "gst", category: "Software", vendorGstin: "ABC" }).reason).toMatch(/no GSTIN/);
     expect(itcEligibility({ gst_paid: 100, bill_type: "gst", category: "Staff Welfare", vendorGstin: G }).reason).toMatch(/17\(5\)\(b\)/);
     expect(itcEligibility({ gst_paid: 100, bill_type: "gst", category: "Business Promotion", vendorGstin: G }).reason).toMatch(/17\(5\)\(h\)/);
   });
@@ -35,7 +35,7 @@ describe("input tax credit on expenses", () => {
     ]);
     expect(s.eligible).toBe(2700);
     expect(s.blocked).toBe(315);
-    expect(s.blockedByReason[0]).toEqual({ reason: expect.stringMatching(/tax invoice nahi/), amount: 180, count: 1 });
+    expect(s.blockedByReason[0]).toEqual({ reason: expect.stringMatching(/Not a GST tax invoice/), amount: 180, count: 1 });
     expect(s.blockedByReason[1]).toEqual({ reason: expect.stringMatching(/17\(5\)\(b\)/), amount: 135, count: 2 });
   });
 

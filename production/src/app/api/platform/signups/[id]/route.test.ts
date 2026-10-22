@@ -80,7 +80,7 @@ describe("R-881 platform workspace DELETE fails closed", () => {
     st.user = { id: "u2", email: "pardeep@anutech.in", email_confirmed_at: null };
     const res = await del({ confirm: "Empty Signup Co" });
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toMatch(/verify/);
+    expect((await res.json()).error).toMatch(/not verified/);
     expect(deletes()).toEqual([]);
   });
 

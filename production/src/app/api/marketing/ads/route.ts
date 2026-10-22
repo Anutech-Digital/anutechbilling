@@ -37,8 +37,8 @@ export const GET = withRoute({ route: "api/marketing/ads" }, async ({ tenantId, 
 });
 
 const patchSchema = z.object({
-  accountId: z.string({ message: "accountId + enabled chahiye." }).min(1, "accountId + enabled chahiye."),
-  enabled: z.boolean({ message: "accountId + enabled chahiye." }),
+  accountId: z.string({ message: "accountId and enabled are required." }).min(1, "accountId and enabled are required."),
+  enabled: z.boolean({ message: "accountId and enabled are required." }),
 });
 
 export const PATCH = withRoute(
@@ -47,7 +47,7 @@ export const PATCH = withRoute(
     const { error } = await createAdminClientFor(user.id).from("ad_accounts")
       .update({ enabled: input.enabled, updated_at: new Date().toISOString() })
       .eq("id", input.accountId).eq("tenant_id", tenantId);
-    dbFail(error, "Ad account update nahi hua — page refresh karke dobara try kariye.");
+    dbFail(error, "Ad account could not be updated — refresh the page and try again.");
     return {};
   },
 );

@@ -228,14 +228,14 @@ export function chunkWarnings(
   if (failed.length > 0 && failed.length < chunkCount) {
     const which = failed.map(pagesLabel).join(", ");
     warnings.push(
-      `Page ${which} (${pageCount} me se) nahi padh paaye — ${failed[0].error.replace(/\.$/, "")}. ` +
-      `In pages ki entries is preview mein NAHI hain: baaki import karke, un dates ka chhota PDF ya CSV/Excel alag se import karo.`,
+      `Page ${which} (of ${pageCount}) could not be read — ${failed[0].error.replace(/\.$/, "")}. ` +
+      `Entries from these pages are NOT in this preview: import the rest, then import a short PDF or CSV/Excel for those dates separately.`,
     );
   }
   if (repeatsAcrossChunks > 0) {
     warnings.push(
-      `${repeatsAcrossChunks} entr${repeatsAcrossChunks === 1 ? "y" : "ies"} ek se zyada hisson (pages) mein bilkul same aayi — ` +
-      `ho sakta hai AI ne ek page do baar padha. Import se pehle preview mein dobara wali lines check karo.`,
+      `${repeatsAcrossChunks} entr${repeatsAcrossChunks === 1 ? "y" : "ies"} appeared exactly the same in more than one part (pages) — ` +
+      `the AI may have read a page twice. Check the repeated lines in the preview before importing.`,
     );
   }
   return warnings;

@@ -175,7 +175,7 @@ describe("runIndiamartPull", () => {
     const db = fakeDb({ keys: [{ tenant_id: "t1", indiamart_crm_key: "SECRET-KEY-DO-NOT-LOG" }] });
     const r = await runIndiamartPull({ admin: db.admin, now, fetchImpl: okFetch({ CODE: 401, MESSAGE: "Invalid Key" }) });
     expect(r.failed).toBe(1);
-    expect(r.errors[0].message).toMatch(/dobara save karo/);
+    expect(r.errors[0].message).toMatch(/save the key again/);
     expect(JSON.stringify(r)).not.toContain("SECRET-KEY-DO-NOT-LOG");
   });
 

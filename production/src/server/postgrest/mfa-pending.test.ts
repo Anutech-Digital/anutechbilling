@@ -19,7 +19,7 @@ describe("explainMfaPending", () => {
     expect(e.code).toBe("42501");
     expect(e.message).toBe(MFA_PENDING_DATA_REFUSAL);
     const d = describeError({ message: e.message });
-    expect(d.message).toMatch(/Doosra sign-in step baaki/);
+    expect(d.message).toMatch(/Second sign-in step pending/);
     expect(`${d.message} ${d.description ?? ""}`).not.toMatch(/another workspace/);
   });
 

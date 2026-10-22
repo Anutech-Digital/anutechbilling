@@ -27,7 +27,7 @@ function ChangeLine({ changes, action }: { changes: Record<string, unknown> | nu
     const old = changes.old as Record<string, unknown> | undefined;
     if (!old) return null;
     const bits = SHOWN_FIELDS.filter((k) => old[k] !== undefined && old[k] !== null).slice(0, 4).map((k) => `${k} ${fmtVal(old[k])}`);
-    return bits.length ? <span className="block text-2xs text-ink-3 mt-0.5 font-mono">tha: {bits.join(" · ")}</span> : null;
+    return bits.length ? <span className="block text-2xs text-ink-3 mt-0.5 font-mono">was: {bits.join(" · ")}</span> : null;
   }
   const keys = Object.keys(changes);
   const shown = keys.filter((k) => SHOWN_FIELDS.includes(k));
@@ -36,7 +36,7 @@ function ChangeLine({ changes, action }: { changes: Record<string, unknown> | nu
   return (
     <span className="block text-2xs text-ink-3 mt-0.5 font-mono">
       {shown.map((k) => { const c = changes[k] as { old?: unknown; new?: unknown }; return `${k}: ${fmtVal(c?.old)} → ${fmtVal(c?.new)}`; }).join(" · ")}
-      {rest > 0 ? `${shown.length ? " · " : ""}+${rest} aur field` : ""}
+      {rest > 0 ? `${shown.length ? " · " : ""}+${rest} more field${rest === 1 ? "" : "s"}` : ""}
     </span>
   );
 }
@@ -48,14 +48,21 @@ const ENTITY_LABEL: Record<string, string> = {
   project_sales: "project", bank_transactions: "bank entry", session: "",
 };
 const ACTION_VERB: Record<string, string> = {
-  insert: "banaya", update: "badla", delete: "delete kiya", login: "login kiya",
+  insert: "created", update: "updated", delete: "deleted", login: "logged in",
   // AI decisions (lib/ai/audit.ts). Phrased so it's obvious these are the app's
   // own safety checks, not something a person did — the raw slug would otherwise
-  // render as "ai_blocked" in the middle of a Hinglish sentence.
-  ai_blocked:        "— AI ka draft roka gaya",
-  ai_fallback:       "— AI nahi chali, standard draft bheja",
-  ai_low_confidence: "— AI ka bharosa kam tha, review chahiye",
+  // render as "ai_blocked" in the middle of a sentence.
+  ai_blocked:        "— AI draft was blocked",
+  ai_fallback:       "— AI did not run, standard draft sent",
+  ai_low_confidence: "— AI was not confident, needs review",
 };
+/** English word order: "created lead", but "lead — AI draft was blocked" for the AI checks. */
+function activityPhrase(action: string, entity: string): string {
+  const noun = entity !== "session" ? (ENTITY_LABEL[entity] ?? entity) : "";
+  const verb = ACTION_VERB[action] ?? action;
+  if (!noun) return verb;
+  return action.startsWith("ai_") ? `${noun} ${verb}` : `${verb} ${noun}`;
+}
 const ACTION_TONE: Record<string, string> = {
   insert: "text-emerald", update: "text-amber-ink", delete: "text-rose", login: "text-indigo",
   // Rose for a block: it means the AI tried to state a wrong amount, which is
@@ -97,7 +104,7 @@ export default function ActivityLogPage() {
       <div className="mb-5">
         <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Team</p>
         <h1 className="font-serif text-3xl md:text-4xl leading-tight">Activity Log</h1>
-        <p className="text-sm text-ink-3 mt-1">App me kisne kya kiya — bana, badla, delete, login. (Sirf app ke andar ke actions; computer nigraani nahi.)</p>
+        <p className="text-sm text-ink-3 mt-1">Who did what in the app — created, updated, deleted, logged in. (Only actions inside the app; no computer monitoring.)</p>
       </div>
 
       {actors.length > 1 && (
@@ -118,9 +125,9 @@ export default function ActivityLogPage() {
       {isLoading ? (
         <Card className="p-4 space-y-3">{[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-8 w-full" />)}</Card>
       ) : error ? (
-        <EmptyState icon="alert" title="Load nahi ho paya" body={(error as Error).message} />
+        <EmptyState icon="alert" title="Could not load activity" body={(error as Error).message} />
       ) : filtered.length === 0 ? (
-        <EmptyState icon="clock" title="Abhi koi activity nahi" body="App me koi record banega/badlega to yahan dikhega." />
+        <EmptyState icon="clock" title="No activity yet" body="When someone creates or changes a record in the app, it shows here." />
       ) : (
         <div className="space-y-6">
           {groups.map(([day, items]) => (
@@ -138,9 +145,9 @@ export default function ActivityLogPage() {
                       </span>
                       <div className="min-w-0 flex-1 text-sm">
                         <span className="font-medium text-ink">{activityActorName(r)}</span>
-                        {" ne "}
+                        {" "}
                         <span className={cn("font-medium", ACTION_TONE[r.action] ?? "text-ink-2")}>
-                          {r.entity !== "session" ? `${ENTITY_LABEL[r.entity] ?? r.entity} ` : ""}{ACTION_VERB[r.action] ?? r.action}
+                          {activityPhrase(r.action, r.entity)}
                         </span>
                         {r.label ? <span className="text-ink-2"> — {r.label}</span> : null}
                         <ChangeLine changes={r.changes} action={r.action} />

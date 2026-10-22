@@ -121,9 +121,9 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             error:
-              "Is email par ek workspace ka invite hai. Join karne ke do raaste: " +
-              "(1) invite email me aaya link kholiye, ya (2) isi email se Google ke saath sign in kariye. " +
-              "Password se naya account is invite ko bypass nahi kar sakta.",
+              "This email has a workspace invite. Two ways to join: " +
+              "(1) open the link in the invite email, or (2) sign in with Google using this same email. " +
+              "A new password account cannot skip the invite.",
           },
           { status: 409 },
         );

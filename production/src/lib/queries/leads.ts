@@ -1056,7 +1056,7 @@ export function useCreateProjectQuoteFromLead() {
       qc.invalidateQueries({ queryKey: ["leads"] });
       qc.invalidateQueries({ queryKey: ["project_sales"] });
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
-      toast.success("Project quotation bana — Project Sales mein customer link se bhejo");
+      toast.success("Project quotation created — send it with the customer link from Project Sales");
     },
     onError: (err) => toastError(err, { fallback: "Could not create the project quotation" }),
   });

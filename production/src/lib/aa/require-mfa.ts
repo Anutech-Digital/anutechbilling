@@ -12,7 +12,7 @@ import { NextResponse } from "next/server";
 
 /** §24: what happened + what to do. */
 export const AA_MFA_REFUSAL =
-  "Bank data ke liye do-step sign-in zaroori hai. Settings → Security (/settings?tab=security) mein authenticator app jodiye, phir sign out karke dobara login kariye, code daaliye aur yahi kaam dobara kariye.";
+  "Two-step sign-in is required for bank data. Add an authenticator app in Settings → Security (/settings?tab=security), then sign out, sign in again, enter the code and repeat this action.";
 
 type MfaAuth = {
   auth: {

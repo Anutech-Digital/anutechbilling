@@ -41,7 +41,7 @@ export function mayOpenPage(role: string | null | undefined, pages: readonly str
 }
 
 /** The 403 text for a failed role gate (§24: what happened + whom to ask). */
-export const ROLE_GATE_ERROR = "Ye kaam aapke role ko allowed nahi hai — workspace owner se kahiye.";
+export const ROLE_GATE_ERROR = "Your role is not allowed to do this — ask the workspace owner.";
 
 /** Author ka chuna hua status + wo message jo user ko dikhana safe hai. */
 export class RouteError extends Error {
@@ -136,15 +136,15 @@ export function withRoute<S extends z.ZodTypeAny | undefined = undefined>(opts: 
     try {
       const supabase = createClient();
       const { data: auth } = await supabase.auth.getUser();
-      if (!auth?.user) return fail(401, "Aap signed in nahi hain — dobara login karke try kariye.");
+      if (!auth?.user) return fail(401, "You are not signed in — sign in again and try again.");
 
       const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", auth.user.id).maybeSingle();
       if (!me?.tenant_id) {
-        return fail(403, "Aapka account kisi workspace se juda nahi hai — workspace owner se invite maangiye.");
+        return fail(403, "Your account is not linked to any workspace — ask the workspace owner for an invite.");
       }
       const role: UserRole = me.role;
       if (opts.roles && !opts.roles.includes(role)) {
-        return fail(403, opts.roleHint ?? `Ye kaam sirf ${opts.roles.join(" / ")} kar sakte hain — unse kahiye.`);
+        return fail(403, opts.roleHint ?? `Only ${opts.roles.join(" / ")} can do this — ask them.`);
       }
       if (opts.permission && !can(role, opts.permission)) {
         return fail(403, opts.roleHint ?? ROLE_GATE_ERROR);
@@ -156,10 +156,10 @@ export function withRoute<S extends z.ZodTypeAny | undefined = undefined>(opts: 
       let input: unknown = undefined;
       if (opts.input) {
         const raw = await readInput(req);
-        if (!raw.ok) return fail(400, "Request ka data padha nahi gaya (JSON galat hai) — page refresh karke dobara try kariye.");
+        if (!raw.ok) return fail(400, "Could not read the request data (invalid JSON) — refresh the page and try again.");
         const parsed = opts.input.safeParse(raw.value);
         if (!parsed.success) {
-          return fail(400, parsed.error.issues.map((i) => i.message).join(", ") || "Kuch fields galat hain — form check kariye.");
+          return fail(400, parsed.error.issues.map((i) => i.message).join(", ") || "Some fields are not valid — check the form.");
         }
         input = parsed.data;
       }
@@ -197,5 +197,5 @@ export function errorResponse(tag: string, method: string, e: unknown): Response
   const msg = e instanceof Error ? e.message : String(e);
   console.error(`${tag} ${method} failed (${ref}): ${msg}`);
   Sentry.captureException(e, { tags: { route: tag, ref } });
-  return fail(500, `Server par kuch galat ho gaya — thodi der baad dobara try kariye. Baar-baar ho to support ko ye ref bataiye: ${ref}`, ref);
+  return fail(500, `Something went wrong on the server — try again in a little while. If it keeps happening, give support this ref: ${ref}`, ref);
 }

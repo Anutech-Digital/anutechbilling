@@ -71,10 +71,10 @@ export async function POST(request: NextRequest) {
     const on = active?.renewal_date
       ? new Date(active.renewal_date).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
       : "soon";
-    script = `Namaste ${firstName} ji. ${brand} ki taraf se reminder. Aapka ${plan} ${on} ko renew hone wala hai. Service bina rukawat chalti rahe iske liye kripya renew karein. Dhanyavaad.`;
+    script = `Hello ${firstName}. This is a reminder from ${brand}. Your ${plan} is due for renewal on ${on}. Please renew so your service continues without interruption. Thank you.`;
   } else {
     if (outstanding <= 0) return NextResponse.json({ error: "No outstanding balance to remind about." }, { status: 400 });
-    script = `Namaste ${firstName} ji. ${brand} ki taraf se ek payment reminder. Aapke account par ${rupee(outstanding)} baaki hai. Kripya jaldi payment karein. Dhanyavaad.`;
+    script = `Hello ${firstName}. This is a payment reminder from ${brand}. Your account has ${rupee(outstanding)} outstanding. Please make the payment soon. Thank you.`;
   }
 
   // TTS — stub returns null when SARVAM_API_KEY isn't set.

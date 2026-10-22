@@ -128,7 +128,7 @@ export function EmployeeDetailDrawer({
                         <div>Basic: <b className="font-mono">{rupee(ctc.basicMonthly)}</b></div>
                         {ctc.daMonthly > 0 && <div>DA: <b className="font-mono">{rupee(ctc.daMonthly)}</b></div>}
                         <div className="col-span-2">Other allowances: <b className="font-mono">{rupee(ctc.specialAllowanceMonthly)}</b></div>
-                        {ctc.basicAssumed && <div className="col-span-2 text-amber-ink">Basic set nahi — PF/gratuity poore gross par.</div>}
+                        {ctc.basicAssumed && <div className="col-span-2 text-amber-ink">Basic not set — PF/gratuity calculated on full gross.</div>}
                       </div>
                     </div>
 

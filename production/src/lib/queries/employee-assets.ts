@@ -88,15 +88,15 @@ export function useIssueEmployeeAsset() {
       const supabase = createClient();
       const { data: auth } = await supabase.auth.getUser();
       const { data: me } = await supabase.from("users").select("tenant_id").eq("id", auth.user?.id ?? "").maybeSingle();
-      if (!me?.tenant_id) throw new Error("Company pata nahi chali — dobara login karo.");
+      if (!me?.tenant_id) throw new Error("Could not find your company — please sign in again.");
       const { error } = await supabase.from("employee_assets").insert({
         tenant_id: me.tenant_id, employee_id: input.employeeId, kind: input.kind, name: input.name.trim(),
         identifier: input.identifier?.trim() || null, fixed_asset_id: input.fixedAssetId ?? null, issued_on: input.issuedOn, notes: input.notes?.trim() || null,
       });
-      if (error) throw new Error(error.message.includes("employee_assets_fixed_asset_open_uq") ? "Ye asset pehle se kisi aur ke paas hai — pehle wahan Return karo." : error.message);
+      if (error) throw new Error(error.message.includes("employee_assets_fixed_asset_open_uq") ? "This asset is already with someone else — mark it Returned there first." : error.message);
     },
-    onSuccess: () => { invalidate(qc); toast.success("Issue ho gaya"); },
-    onError: (err) => toastError(err, { fallback: "Issue nahi hua" }),
+    onSuccess: () => { invalidate(qc); toast.success("Issued"); },
+    onError: (err) => toastError(err, { fallback: "Could not issue" }),
   });
 }
 
@@ -110,8 +110,8 @@ export function useReturnEmployeeAsset() {
         .eq("id", input.id);
       if (error) throw error;
     },
-    onSuccess: (_d, i) => { invalidate(qc); toast.success(i.returnedOn ? "Wapas mark ho gaya" : "Wapas hataya — phir se unke paas"); },
-    onError: (err) => toastError(err, { fallback: "Update nahi hua" }),
+    onSuccess: (_d, i) => { invalidate(qc); toast.success(i.returnedOn ? "Marked as returned" : "Return undone — back with them"); },
+    onError: (err) => toastError(err, { fallback: "Could not update" }),
   });
 }
 
@@ -123,7 +123,7 @@ export function useDeleteEmployeeAsset() {
       const { error } = await supabase.from("employee_assets").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { invalidate(qc); toast.success("Entry hata di"); },
-    onError: (err) => toastError(err, { fallback: "Delete nahi hua" }),
+    onSuccess: () => { invalidate(qc); toast.success("Entry removed"); },
+    onError: (err) => toastError(err, { fallback: "Could not delete" }),
   });
 }

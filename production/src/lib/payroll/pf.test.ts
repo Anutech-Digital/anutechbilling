@@ -13,7 +13,7 @@ describe("PF wage = Basic + DA", () => {
   it("no Basic on the master → whole earned gross, flagged as assumed", () => {
     const w = pfWage({ gross: 30_000, lopAmount: 1_000, basic: null });
     expect(w).toMatchObject({ base: 29_000, assumed: true });
-    expect(w.note).toMatch(/Basic set nahi/);
+    expect(w.note).toMatch(/Basic not set/);
   });
   it("a zero Basic is a real value, not a missing one", () => {
     expect(pfWage({ gross: 30_000, basic: 0 })).toMatchObject({ base: 0, assumed: false });

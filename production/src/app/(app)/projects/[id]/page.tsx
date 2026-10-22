@@ -444,7 +444,7 @@ export default function ProjectDetailPage() {
                     <div className="text-3xs">
                       <span className="text-emerald">{rupee(paidSoFar)} received</span>
                       <span className="text-ink-3"> · </span>
-                      <span className="text-amber-ink">{rupee(balance)} baaki</span>
+                      <span className="text-amber-ink">{rupee(balance)} due</span>
                     </div>
                   )}
                 </div>
@@ -771,8 +771,8 @@ function milestoneImpact(
     return {
       tone: "warn",
       text: m.invoice_id
-        ? `Invoice raised (revenue & GST booked). ${rupee(paidSoFar)} aa gaya, ${rupee(balance)} abhi baaki (outstanding).`
-        : `${rupee(paidSoFar)} received, ${rupee(balance)} baaki. No GST invoice yet — raise it to book revenue & GST.`,
+        ? `Invoice raised (revenue & GST booked). ${rupee(paidSoFar)} received, ${rupee(balance)} still outstanding.`
+        : `${rupee(paidSoFar)} received, ${rupee(balance)} outstanding. No GST invoice yet — raise it to book revenue & GST.`,
     };
   }
   if (m.status === "paid") {

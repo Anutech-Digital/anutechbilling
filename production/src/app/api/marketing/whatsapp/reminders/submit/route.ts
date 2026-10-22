@@ -31,7 +31,7 @@ const ROUTE = "api/marketing/whatsapp/reminders/submit";
 
 const inputSchema = z.object({
   kinds: z.array(
-    z.string().refine((k): k is ReminderKind => isReminderKind(k), "Ye reminder kind nahi hai — page refresh kariye."),
+    z.string().refine((k): k is ReminderKind => isReminderKind(k), "This is not a reminder kind — refresh the page."),
   ).max(20).optional(),
 });
 
@@ -40,21 +40,21 @@ interface SubmitResult { kind: ReminderKind; name: string; ok: boolean; status: 
 export const POST = withRoute(
   {
     route: ROUTE, input: inputSchema, roles: ["owner", "manager"],
-    roleHint: "Meta par template sirf owner / manager bhej sakte hain — unse kahiye.",
+    roleHint: "Only the owner or a manager can submit templates to Meta — ask them.",
   },
   async ({ input, tenantId, user }) => {
     const creds = await resolveWhatsAppCreds(tenantId).catch(() => null);
     if (!creds?.businessAccountId) {
       return NextResponse.json({
         ok: false, code: "not_configured",
-        error: "WhatsApp Business connect nahi hai (ya Business Account ID nahi bhara). Pehle Settings → Integrations mein WhatsApp Business connect karo.",
+        error: "WhatsApp Business is not connected (or the Business Account ID is missing). First connect WhatsApp Business in Settings → Integrations.",
       }, { status: 409 });
     }
 
     const db = createAdminClientFor(user.id);
     const { data: existing, error } = await db.from("whatsapp_templates")
       .select("id, name, language, status").eq("tenant_id", tenantId);
-    dbFail(error, "Templates load nahi hue — page refresh karke dobara try kariye.");
+    dbFail(error, "Could not load templates — refresh the page and try again.");
     const rows = (existing ?? []) as { id: string; name: string; language: string; status: string }[];
 
     const todo = startersToSubmit(rows, input.kinds as ReminderKind[] | undefined);
@@ -75,7 +75,7 @@ export const POST = withRoute(
         j = await res.json().catch(() => ({}));
       } catch {
         console.warn(`[${ROUTE}] ${s.name}: Meta tak request nahi pahunchi`);
-        results.push({ kind: s.kind, name: s.name, ok: false, status: null, error: "Meta tak pahunch nahi paaye (network) — thodi der baad dobara bhejo." });
+        results.push({ kind: s.kind, name: s.name, ok: false, status: null, error: "Could not reach Meta (network) — submit again in a little while." });
         continue;
       }
 
@@ -84,9 +84,9 @@ export const POST = withRoute(
         if (isDuplicateTemplateError(j)) {
           results.push(prev?.status === "rejected"
             ? { kind: s.kind, name: s.name, ok: false, status: "rejected",
-                error: "Meta par ye naam pehle se hai aur rejected hai — WhatsApp Manager mein edit karke dobara bhejo." }
+                error: "This name already exists on Meta and was rejected — edit it in WhatsApp Manager and submit again." }
             : { kind: s.kind, name: s.name, ok: true, status: prev?.status ?? null,
-                error: "Pehle se submit hai — status ke liye \"Sync from Meta\" dabao." });
+                error: "Already submitted — click \"Sync from Meta\" for the status." });
           continue;
         }
         const e = (j as { error?: { code?: number; error_subcode?: number } })?.error;
@@ -107,13 +107,13 @@ export const POST = withRoute(
         : await db.from("whatsapp_templates").insert({
             tenant_id: tenantId, name: s.name, language: STARTER_LANGUAGE, category, body: s.body, status,
             meta_id: created.id ?? null, param_map: s.param_map,
-            notes: "Reminder starter (S28) — app se Meta ko bheja; broadcast ke liye nahi.",
+            notes: "Reminder starter (S28) — submitted to Meta from the app; not for broadcasts.",
             created_by: user.id,
           });
       if (write.error) {
         console.warn(`[${ROUTE}] ${s.name}: Meta ne liya par row save nahi hui: ${write.error.message}`);
         results.push({ kind: s.kind, name: s.name, ok: true, status,
-          error: "Meta ne le liya, par app mein status save nahi hua — \"Sync from Meta\" dabao." });
+          error: "Meta accepted it, but the status was not saved in the app — click \"Sync from Meta\"." });
         continue;
       }
       results.push({ kind: s.kind, name: s.name, ok: true, status });

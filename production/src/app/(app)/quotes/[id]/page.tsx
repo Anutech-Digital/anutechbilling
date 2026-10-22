@@ -842,12 +842,12 @@ export default function QuoteDetailPage() {
    *  No Cloud API / keys needed, so it works day one. */
   const shareQuoteOnWhatsApp = async (): Promise<void> => {
     const message =
-      `Namaste ${quote.customer_name},\n\n` +
-      `Aapka quotation ${quote.id} taiyaar hai.\n` +
+      `Hello ${quote.customer_name},\n\n` +
+      `Your quotation ${quote.id} is ready.\n` +
       `Total: ${rupee(total)} (GST included)\n\n` +
-      `Online review + accept yahan kar sakte hain:\n${acceptUrl}\n\n` +
-      `PDF bhi attach kar raha hoon. Koi sawaal ho to bataiyega.\n\n` +
-      `Dhanyavaad,\n${me?.tenantName ?? ""}`;
+      `You can review and accept it online here:\n${acceptUrl}\n\n` +
+      `I am also attaching the PDF. Please let me know if you have any questions.\n\n` +
+      `Thank you,\n${me?.tenantName ?? ""}`;
     const digits = toWhatsAppDigits(recipientPhone);
     if (!digits) {
       // §24: had the reason + the why, but no way to act on it. Send them to the
@@ -1011,7 +1011,7 @@ export default function QuoteDetailPage() {
             loading={sharingWa}
             disabled={!!customerBlock}
             onClick={shareQuoteOnWhatsApp}
-            title={customerBlock ? CUSTOMER_COPY_BLOCKED_TITLE : "WhatsApp par bhejein — PDF download hoga, chat me attach kar dein"}
+            title={customerBlock ? CUSTOMER_COPY_BLOCKED_TITLE : "Send on WhatsApp — the PDF downloads so you can attach it in the chat"}
           >
             Send on WhatsApp
           </Button>

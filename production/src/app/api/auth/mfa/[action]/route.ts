@@ -21,8 +21,8 @@ type Ctx = { params: Promise<{ action: string }> };
 
 /** §24: what happened, why, what to do next. */
 const NEED_AAL2 =
-  "Naya authenticator abhi nahi jud sakta — aapke account par two-step sign-in pehle se on hai. " +
-  "Pehle apne maujooda authenticator ka code daalo, phir naya jodo.";
+  "A new authenticator cannot be added yet — two-step sign-in is already on for your account. " +
+  "Enter the code from your current authenticator first, then add the new one.";
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
   const off = authjsOff();
