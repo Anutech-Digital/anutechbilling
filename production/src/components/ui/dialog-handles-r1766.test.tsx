@@ -11,11 +11,20 @@
  * Fix: measure again when the open animation ends (and whenever the dialog moves/resizes).
  */
 import * as React from "react";
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, cleanup, screen, fireEvent, act } from "@testing-library/react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "./dialog";
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+/* R-1777: Radix Presence's animationend handler calls CSS.escape(event.animationName).
+   Every browser has CSS.escape; jsdom has no CSS global at all, so firing animationEnd
+   threw inside Radix — an unhandled error that turned CI red although the test passed.
+   Give jsdom the browser API (identifier escaping is all Radix needs here). */
+beforeEach(() => {
+  if (typeof globalThis.CSS?.escape !== "function") {
+    vi.stubGlobal("CSS", { ...globalThis.CSS, escape: (s: string) => String(s).replace(/[^\w-]/g, (c) => `\\${c}`) });
+  }
+});
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 /** The dialog box as the browser reports it: first mid-animation (scaled), then final. */
 let rect = { left: 336, top: 303, width: 608, height: 202 };
