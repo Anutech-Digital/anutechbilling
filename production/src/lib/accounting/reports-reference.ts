@@ -19,7 +19,7 @@ import { incomeTaxPaidForFy, type TaxPaymentLike } from "@/lib/accounting/tax-pa
 import { splitItc } from "@/lib/gst/itc";
 import { statutoryDues } from "@/lib/accounting/tds-deductor";
 import { netBlockAt, registerDepreciationForRange, type AssetLike } from "@/lib/accounting/depreciation";
-import { buildPnl } from "@/lib/accounting/pnl";
+import { buildPnl, vendorOfCogsCategory } from "@/lib/accounting/pnl";
 import { buildExpenseReport } from "@/lib/accounting/expense-report";
 import { projectCostForPeriod } from "@/lib/accounting/project-cost";
 import type { PnLNumbers, PnlMasters } from "@/lib/accounting/pnl-assemble";
@@ -265,6 +265,12 @@ export function referencePnl(range: { from: string; to: string }, r: PnlRawRows,
     revenue,
     expenses: expensesTotal + commissions + depreciation,
     billedCogs: cogs > 0 ? cogs : null,
+    /* R-1645: bills per subscription vendor, per row — what report_pnl.cogs_by_category groups. */
+    billedByVendor: bills.reduce<Record<string, number>>((acc, b) => {
+      const v = vendorOfCogsCategory(b.category);
+      if (v) acc[v] = (acc[v] ?? 0) + (b.subtotal ?? 0);
+      return acc;
+    }, {}),
     vendors: m.vendors,
     projectCost: projectCost.total,
     projectRevenue,

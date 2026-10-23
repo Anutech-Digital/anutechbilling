@@ -86,7 +86,11 @@ export function PnlHeadline({ model, revenueCount, expensesCount, outputGst, onO
             ? (model.projectCost > 0 ? "project salary · licence cost not recorded" : "enter vendor bills to see margin")
             : [
                 model.projectCost > 0 ? `${rupee(model.projectCost)} project salary` : null,
-                model.licenceCogs > 0 ? (model.cogsBasis === "estimated" ? "licences estimated" : "licences from vendor bills") : null,
+                model.licenceCogs > 0
+                  ? (model.cogsBasis === "estimated" ? "licences estimated"
+                    : model.cogsBasis === "mixed" ? "licences partly estimated"
+                    : "licences from vendor bills")
+                  : null,
                 model.grossMarginPct !== null ? `gross margin ${model.grossMarginPct}%` : null,
               ].filter(Boolean).join(" · ")}
           onClick={() => onOpen("cogs")}

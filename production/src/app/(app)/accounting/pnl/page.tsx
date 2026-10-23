@@ -33,7 +33,7 @@ import { rpcValueOrThrow } from "@/lib/accounting/report-rpc";
 import { PnLDrilldownDialog, type PnLDrillKind } from "@/components/features/accounting/pnl-drilldown-dialog";
 import { PnlWaterfall, HundredRupeeBar } from "@/components/features/accounting/pnl-waterfall";
 import { MoneyFlow } from "@/components/features/accounting/money-flow";
-import { compareFigures, isPartialPeriod } from "@/lib/accounting/pnl";
+import { compareFigures, isPartialPeriod, isEstimatedBasis, licenceCostHint } from "@/lib/accounting/pnl";
 import { pnlWaterfall, hundredRupeeSplit } from "@/lib/accounting/waterfall";
 import { ProfitDonut, MonthlyTrend } from "@/components/features/accounting/pnl-charts";
 import {
@@ -345,9 +345,7 @@ export default function PnLPage() {
               ) : data.model.licenceCogs === 0 && data.model.projectCost > 0 ? null : (
                 <Row label={<>− <Term k="cogs">Cost of goods</Term> (licence cost)</>}
                      amount={-data.model.licenceCogs}
-                     hint={data.model.cogsBasis === "estimated"
-                       ? "estimated from your wholesale rates"
-                       : `${data.cogsCount} vendor bill${data.cogsCount === 1 ? "" : "s"}`}
+                     hint={licenceCostHint(data.model, data.cogsCount)}
                      onHint={() => setDrill("cogs")}
                      tone="rose" />
               )}
@@ -509,10 +507,11 @@ export default function PnLPage() {
                 (neither on the allocation nor on the project), so they are not counted in any period. Add a start date on the project page.
               </li>
             )}
-            {data.model.cogsBasis === "estimated" && (
+            {isEstimatedBasis(data.model.cogsBasis) && (
               <li className="text-amber-ink">
-                The licence cost above is estimated from your own wholesale rates — no vendor bills
-                are recorded. Enter the Google CSP / Microsoft / Zoho invoices to make this exact.
+                {data.model.cogsBasis === "mixed"
+                  ? <>{rupee(data.model.estimatedLicenceCogs)} of the licence cost above is estimated from your own wholesale rates — the vendors with no bill in this period. Enter their invoices to make this exact.</>
+                  : <>The licence cost above is estimated from your own wholesale rates — no vendor bills are recorded. Enter the Google CSP / Microsoft / Zoho invoices to make this exact.</>}
               </li>
             )}
           </ul>
@@ -555,8 +554,8 @@ export default function PnLPage() {
                 Where the money went
               </h2>
               <div className="flex items-center gap-2">
-                {m.cogsBasis === "estimated" && (
-                  <Badge kind="warning" size="sm">Licence cost estimated</Badge>
+                {isEstimatedBasis(m.cogsBasis) && (
+                  <Badge kind="warning" size="sm">{m.cogsBasis === "mixed" ? "Licence cost partly estimated" : "Licence cost estimated"}</Badge>
                 )}
                 <button
                   type="button"
@@ -615,11 +614,11 @@ export default function PnLPage() {
                       hint: [
                         m.projectCost > 0 ? `${rupee(m.projectCost)} project delivery` : null,
                         m.licenceCogs > 0
-                          ? (m.cogsBasis === "estimated" ? "licences from your wholesale rates" : `${data.cogsCount} vendor bill${data.cogsCount === 1 ? "" : "s"}`)
+                          ? licenceCostHint(m, data.cogsCount)
                           : null,
                       ].filter(Boolean).join(" · ") || "nothing bought to resell",
                       ofSalesPct: m.revenue > 0 ? Math.round((m.cogs / m.revenue) * 100) : null,
-                      estimated: m.cogsBasis === "estimated",
+                      estimated: isEstimatedBasis(m.cogsBasis),
                       onOpen: () => setDrill("cogs"),
                     },
                     {

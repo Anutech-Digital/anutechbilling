@@ -15849,6 +15849,7 @@ export type Database = {
           cn_tax: number
           cn_taxable: number
           cogs: number
+          cogs_by_category: Json
           cogs_count: number
           commissions: number
           commissions_count: number
