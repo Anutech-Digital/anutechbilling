@@ -1659,7 +1659,8 @@ export default function QuoteDetailPage() {
                   </>
                 )}
               </div>
-              <div className="flex gap-2">
+              {/* R-1805: wraps on a phone — three nowrap buttons in a row made the page 459px wide at 375px. */}
+              <div className="flex flex-wrap gap-2 min-w-0 max-w-full">
                 {hasBalance && mayRecordMoney && (
                   <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={() => setPaymentOpen(true)}>
                     {nothingPaid ? "Record payment" : "Record balance payment"}
@@ -1682,7 +1683,12 @@ export default function QuoteDetailPage() {
                     Send receipt
                   </Button>
                 )}
-                <Button asChild variant={variantFor(primary, "view_invoice", hasBalance ? "ghost" : "default")} icon="receipt">
+                <Button
+                  asChild
+                  variant={variantFor(primary, "view_invoice", hasBalance ? "ghost" : "default")}
+                  icon="receipt"
+                  className="h-auto min-h-9 py-1.5 max-w-full whitespace-normal [overflow-wrap:anywhere] text-left"
+                >
                   <Link
                     href={
                       quote.invoice_id
