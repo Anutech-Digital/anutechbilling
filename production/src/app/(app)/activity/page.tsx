@@ -22,7 +22,8 @@ function fmtVal(v: unknown): string {
   return String(v);
 }
 function ChangeLine({ changes, action }: { changes: Record<string, unknown> | null; action: string }) {
-  if (!changes) return null;
+  // R-1010: a sign-in's device / IP are already in its label; its `changes` is not a field diff.
+  if (!changes || action === "login") return null;
   if (action === "delete") {
     const old = changes.old as Record<string, unknown> | undefined;
     if (!old) return null;
