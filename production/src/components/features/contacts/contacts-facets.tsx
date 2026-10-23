@@ -110,7 +110,7 @@ export function RelationshipBusinessGrid({
                         "min-w-[2.25rem] h-6 rounded px-1.5 tabular-nums transition-colors",
                         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber",
                         on ? "bg-amber text-white font-semibold"
-                          : n === 0 ? "text-ink-4 cursor-default"
+                          : n === 0 ? "cursor-default disabled:text-ink-4"
                           : "text-ink hover:bg-amber-soft",
                       )}
                     >

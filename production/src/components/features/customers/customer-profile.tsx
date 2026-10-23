@@ -684,7 +684,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
                               <Icon name={isCollapsed ? "chevron_right" : "chevron_down"} size={13} />
                             </button>
                           ) : t.indent > 0 ? (
-                            <span className="text-ink-4 mr-1">└</span>
+                            <span aria-hidden className="text-ink-3 mr-1">└</span>
                           ) : null}
                           <RowLink href={t.href}>{t.ref}</RowLink>
                         </span>,

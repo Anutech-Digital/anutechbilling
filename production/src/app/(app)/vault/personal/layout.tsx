@@ -73,7 +73,7 @@ export default function PersonalVaultLayout({ children }: { children: React.Reac
             It holds no business data — these are the owner's own bank accounts, expenses and
             investments. That is why no other team member can see it.
           </p>
-          <p className="mt-4 text-xs text-ink-4">
+          <p className="mt-4 text-xs text-ink-3">
             Company customer passwords are in the <Link href="/vault" className="text-primary hover:underline">Password Vault</Link>.
           </p>
         </Card>

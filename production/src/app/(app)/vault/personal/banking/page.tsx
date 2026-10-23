@@ -201,11 +201,11 @@ export default function PersonalBankingPage() {
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Total balance</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-3">Total balance</p>
               <div className="mt-0.5"><Money amount={assetTotal} size="display" /></div>
             </Card>
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Owed on cards</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-3">Owed on cards</p>
               <div className="mt-0.5">
                 <Money amount={debtTotal} size="display" tone={debtTotal > 0 ? "negative" : "default"} autoNegative={false} />
               </div>
@@ -245,7 +245,7 @@ export default function PersonalBankingPage() {
                         autoNegative={false}
                       />
                       {a.credit_limit !== null && a.credit_limit > 0 && (
-                        <p className="text-3xs text-ink-4 mt-0.5">limit ₹{a.credit_limit.toLocaleString("en-IN")}</p>
+                        <p className="text-3xs text-ink-3 mt-0.5">limit ₹{a.credit_limit.toLocaleString("en-IN")}</p>
                       )}
                     </div>
                     <div className="flex gap-1 flex-shrink-0">
@@ -276,7 +276,7 @@ export default function PersonalBankingPage() {
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="vb-type" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Type</label>
+                <label htmlFor="vb-type" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Type</label>
                 <Select value={form.kind} onValueChange={(v) => setForm((f) => ({ ...f, kind: v as AccountKind }))}>
                   <SelectTrigger id="vb-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -287,7 +287,7 @@ export default function PersonalBankingPage() {
                 </Select>
               </div>
               <div>
-                <label htmlFor="vb-balance" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">
+                <label htmlFor="vb-balance" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">
                   {isCard ? "Owed (₹)" : "Balance (₹)"}
                 </label>
                 <Input id="vb-balance"
@@ -300,7 +300,7 @@ export default function PersonalBankingPage() {
             </div>
 
             <div>
-              <label htmlFor="vb-name" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Name</label>
+              <label htmlFor="vb-name" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Name</label>
               <Input id="vb-name"
                 value={form.label}
                 onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
@@ -310,7 +310,7 @@ export default function PersonalBankingPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="vb-bank" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Bank</label>
+                <label htmlFor="vb-bank" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Bank</label>
                 <Input id="vb-bank"
                   value={form.institution}
                   onChange={(e) => setForm((f) => ({ ...f, institution: e.target.value }))}
@@ -318,7 +318,7 @@ export default function PersonalBankingPage() {
                 />
               </div>
               <div>
-                <label htmlFor="vb-last4" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Last 4 digits</label>
+                <label htmlFor="vb-last4" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Last 4 digits</label>
                 <Input id="vb-last4"
                   value={form.account_last4}
                   onChange={(e) => setForm((f) => ({ ...f, account_last4: e.target.value.replace(/\D/g, "").slice(0, 4) }))}
@@ -331,7 +331,7 @@ export default function PersonalBankingPage() {
 
             {isCard && (
               <div>
-                <label htmlFor="vb-credit-limit" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Credit limit (₹)</label>
+                <label htmlFor="vb-credit-limit" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Credit limit (₹)</label>
                 <Input id="vb-credit-limit"
                   value={form.credit_limit}
                   onChange={(e) => setForm((f) => ({ ...f, credit_limit: e.target.value }))}
@@ -344,7 +344,7 @@ export default function PersonalBankingPage() {
             {isDeposit && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label htmlFor="vb-interest" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Interest %</label>
+                  <label htmlFor="vb-interest" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Interest %</label>
                   <Input id="vb-interest"
                     value={form.interest_rate}
                     onChange={(e) => setForm((f) => ({ ...f, interest_rate: e.target.value }))}
@@ -353,7 +353,7 @@ export default function PersonalBankingPage() {
                   />
                 </div>
                 <div>
-                  <label htmlFor="vb-maturity" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Maturity</label>
+                  <label htmlFor="vb-maturity" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Maturity</label>
                   <Input id="vb-maturity"
                     type="date"
                     value={form.maturity_date}
@@ -364,7 +364,7 @@ export default function PersonalBankingPage() {
             )}
 
             <div>
-              <label htmlFor="vb-note" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Note</label>
+              <label htmlFor="vb-note" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Note</label>
               <Input id="vb-note"
                 value={form.notes}
                 onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}

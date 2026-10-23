@@ -383,7 +383,7 @@ export function FeedbackDialog({ open, onOpenChange }: FeedbackDialogProps) {
                   <Icon name="upload" size={15} />
                   <span>Attach</span>
                 </button>
-                <span className="ml-auto text-2xs font-mono text-ink-4">
+                <span className="ml-auto text-2xs font-mono text-ink-3">
                   {screenshots.length > 0 && `${screenshots.length} image${screenshots.length > 1 ? "s" : ""} · `}{promptText.length} chars
                 </span>
               </div>
@@ -393,7 +393,7 @@ export function FeedbackDialog({ open, onOpenChange }: FeedbackDialogProps) {
           {/* Auto captured Page URL */}
           <div className="p-2.5 bg-paper-2 border border-hairline rounded-md flex items-center justify-between text-xs text-ink-3">
             <div className="flex items-center gap-1.5 min-w-0">
-              <Icon name="link" size={13} className="text-ink-4 flex-shrink-0" />
+              <Icon name="link" size={13} className="text-ink-3 flex-shrink-0" />
               <span>Current Page:</span>
               <span className="font-mono text-ink font-medium truncate">{pathname}</span>
             </div>

@@ -76,7 +76,7 @@ export function TopBarBreadcrumb({ pathname, crumb, role }: TopBarBreadcrumbProp
         return (
           /* Keyed by position + label: /settings is "Settings › Settings" (R-1409). */
           <React.Fragment key={`${i}:${c.label}`}>
-            {i > 0 && <Icon name="chevron-right" size={12} className="text-ink-4 flex-shrink-0" />}
+            {i > 0 && <Icon name="chevron-right" size={12} className="text-ink-3 flex-shrink-0" />}
             {last ? (
               <span aria-current="page" className="font-semibold text-ink truncate">{c.label}</span>
             ) : c.href ? (

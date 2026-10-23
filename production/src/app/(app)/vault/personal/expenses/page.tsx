@@ -198,19 +198,19 @@ export default function PersonalExpensesPage() {
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">From company (this FY)</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-3">From company (this FY)</p>
               <div className="mt-0.5"><Money amount={flow.drawnFromCompany} size="display" /></div>
             </Card>
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Total in</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-3">Total in</p>
               <div className="mt-0.5"><Money amount={flow.moneyIn} size="display" /></div>
             </Card>
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Total spent</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-3">Total spent</p>
               <div className="mt-0.5"><Money amount={flow.moneyOut} size="display" /></div>
             </Card>
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Left over</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-3">Left over</p>
               <div className="mt-0.5"><Money amount={flow.net} size="display" /></div>
             </Card>
           </div>
@@ -221,7 +221,7 @@ export default function PersonalExpensesPage() {
               <ul className="mt-3 space-y-1.5">
                 {flow.byCategory.slice(0, 8).map((c) => (
                   <li key={c.category} className="flex items-baseline justify-between text-sm">
-                    <span className="text-ink-2">{c.category} <span className="text-ink-4 text-xs">· {c.count}</span></span>
+                    <span className="text-ink-2">{c.category} <span className="text-ink-3 text-xs">· {c.count}</span></span>
                     <Money amount={c.total} size="cell" />
                   </li>
                 ))}
@@ -287,7 +287,7 @@ export default function PersonalExpensesPage() {
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="ve-type" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Type</label>
+                <label htmlFor="ve-type" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Type</label>
                 <Select value={form.kind} onValueChange={(v) => setForm((f) => ({ ...f, kind: v as TxKind }))}>
                   <SelectTrigger id="ve-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -298,7 +298,7 @@ export default function PersonalExpensesPage() {
                 </Select>
               </div>
               <div>
-                <label htmlFor="ve-amount" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Amount (₹)</label>
+                <label htmlFor="ve-amount" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Amount (₹)</label>
                 <Input id="ve-amount"
                   value={form.amount}
                   onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
@@ -310,7 +310,7 @@ export default function PersonalExpensesPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="ve-date" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Date</label>
+                <label htmlFor="ve-date" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Date</label>
                 <Input id="ve-date"
                   type="date"
                   value={form.occurred_on}
@@ -318,7 +318,7 @@ export default function PersonalExpensesPage() {
                 />
               </div>
               <div>
-                <label htmlFor="ve-account" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Account</label>
+                <label htmlFor="ve-account" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Account</label>
                 <Select
                   value={form.account_id || "none"}
                   onValueChange={(v) => setForm((f) => ({ ...f, account_id: v === "none" ? "" : v }))}
@@ -334,7 +334,7 @@ export default function PersonalExpensesPage() {
 
             {!isIncome && (
               <div>
-                <label htmlFor="ve-category" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Category</label>
+                <label htmlFor="ve-category" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Category</label>
                 <Select
                   value={form.category || "none"}
                   onValueChange={(v) => setForm((f) => ({ ...f, category: v === "none" ? "" : v }))}
@@ -349,7 +349,7 @@ export default function PersonalExpensesPage() {
             )}
 
             <div>
-              <label htmlFor="ve-note" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Note</label>
+              <label htmlFor="ve-note" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Note</label>
               <Input id="ve-note"
                 value={form.note}
                 onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}

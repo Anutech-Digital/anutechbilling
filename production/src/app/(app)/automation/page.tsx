@@ -416,7 +416,7 @@ function FactList({ facts }: { facts: Record<string, unknown> }) {
     <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
       {entries.map(([k, v]) => (
         <span key={k} className="font-mono text-3xs text-ink-3">
-          <span className="text-ink-4">{k}</span> {String(v)}
+          <span className="text-ink-3">{k}</span> {String(v)}
         </span>
       ))}
     </div>

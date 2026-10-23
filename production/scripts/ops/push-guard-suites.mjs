@@ -19,6 +19,7 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/a11y/a11y-r303.test.ts",
   "src/lib/a11y/a11y-r309.test.ts",
   "src/lib/a11y/billing-screens-a11y.test.ts",
+  "src/lib/a11y/ink4-contrast-ratchet.test.ts", // R-1135: no real text in ink-4 (2.4:1)
   "src/lib/errors/toast-error-ratchet.test.ts",
   "src/app/(app)/accounting/load-error-ratchet.test.ts",
   "src/components/features/accounting/rupee-ratchet.test.ts",

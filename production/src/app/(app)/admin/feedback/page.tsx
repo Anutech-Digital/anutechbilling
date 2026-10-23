@@ -137,7 +137,7 @@ function ScreenshotThumb({ path, name }: { path: string; name: string | null }) 
   if (failed) {
     // Says what is wrong rather than showing a broken image frame.
     return (
-      <div className="w-24 h-16 rounded border border-hairline bg-paper-2 flex items-center justify-center text-3xs text-ink-4 text-center px-1">
+      <div className="w-24 h-16 rounded border border-hairline bg-paper-2 flex items-center justify-center text-3xs text-ink-3 text-center px-1">
         Could not load
       </div>
     );
@@ -166,11 +166,11 @@ function AiFixedStrip({ note, resolvedAt, pagePath }: { note: string; resolvedAt
   return (
     <div data-testid="ai-fixed-strip" className="mt-1 text-xs text-ink-2 bg-emerald-soft/40 border border-emerald/30 rounded-md px-2 py-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
       <span className="font-semibold text-emerald-ink">🤖 Fixed by AI</span>
-      {n.card && <><span className="text-ink-4">·</span><span className="font-mono font-semibold text-ink">{n.card}</span></>}
-      {n.commit && <><span className="text-ink-4">·</span><span className="font-mono text-ink-3">{n.commit}</span></>}
-      <span className="text-ink-4">·</span>
+      {n.card && <><span aria-hidden className="text-ink-3">·</span><span className="font-mono font-semibold text-ink">{n.card}</span></>}
+      {n.commit && <><span aria-hidden className="text-ink-3">·</span><span className="font-mono text-ink-3">{n.commit}</span></>}
+      <span aria-hidden className="text-ink-3">·</span>
       <span className="min-w-0 break-words">{n.text}</span>
-      {resolvedAt && <><span className="text-ink-4">·</span><span className="text-ink-3" title={formatDate(resolvedAt, "long")}>{formatDate(resolvedAt, "relative")}</span></>}
+      {resolvedAt && <><span aria-hidden className="text-ink-3">·</span><span className="text-ink-3" title={formatDate(resolvedAt, "long")}>{formatDate(resolvedAt, "relative")}</span></>}
       {href && (
         <a href={href} target="_blank" rel="noopener noreferrer" className="ml-auto font-medium text-primary hover:underline inline-flex items-center gap-1">
           Open the page <Icon name="external" size={12} />
@@ -324,7 +324,7 @@ function FeedbackCard({ row, userId, meName, justFixed = false, canUrgent = fals
           title={row.severity_score === null ? "Not triaged yet" : `Severity ${row.severity_score} of 100`}
         >
           <span className="text-sm font-bold leading-none text-ink">{row.severity_score ?? "—"}</span>
-          <span className="text-3xs uppercase tracking-wide text-ink-4 mt-0.5">sev</span>
+          <span className="text-3xs uppercase tracking-wide text-ink-3 mt-0.5">sev</span>
         </div>
 
         <div className="flex-1 min-w-0">
@@ -372,20 +372,20 @@ function FeedbackCard({ row, userId, meName, justFixed = false, canUrgent = fals
 
           <p className="mt-1 text-xs text-ink-3 flex items-center gap-2 flex-wrap">
             <span className="font-mono">{row.route_pattern ?? row.page_path ?? "screen unknown"}</span>
-            <span className="text-ink-4">·</span>
+            <span aria-hidden className="text-ink-3">·</span>
             <span>{row.reporter_name ?? "Unknown reporter"}</span>
             {row.filed_via === "ai-chat" && <Badge kind="info" size="sm">🤖 AI-drafted after chat</Badge>}
-            <span className="text-ink-4">·</span>
+            <span aria-hidden className="text-ink-3">·</span>
             <span>{formatDate(row.created_at)}</span>
             {row.status === "fixed" && row.resolved_at && (
               <>
-                <span className="text-ink-4">·</span>
+                <span aria-hidden className="text-ink-3">·</span>
                 <span className="text-emerald">fixed {formatDate(row.resolved_at)}</span>
               </>
             )}
             {row.screenshots.length > 0 && (
               <>
-                <span className="text-ink-4">·</span>
+                <span aria-hidden className="text-ink-3">·</span>
                 <span className="inline-flex items-center gap-1"><Icon name="camera" size={12} />{row.screenshots.length}</span>
               </>
             )}
@@ -499,7 +499,7 @@ function FeedbackCard({ row, userId, meName, justFixed = false, canUrgent = fals
               <ul className="space-y-1">
                 {row.triage_notes.map((n, i) => (
                   <li key={i} className="text-xs text-ink-2 flex gap-2">
-                    <span className="text-ink-4 flex-shrink-0">•</span>
+                    <span aria-hidden className="text-ink-3 flex-shrink-0">•</span>
                     <span>{n}</span>
                   </li>
                 ))}

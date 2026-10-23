@@ -23,7 +23,7 @@ function PinInput({
 }: { value: string; onChange: (v: string) => void; label: string; disabled?: boolean; id: string }) {
   return (
     <div>
-      <label htmlFor={id} className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">{label}</label>
+      <label htmlFor={id} className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">{label}</label>
       <input
         id={id}
         type="password"
@@ -91,7 +91,7 @@ export function VaultPinSettings() {
               ? `A ${PIN_LENGTH}-digit PIN is set. It will be asked when you open the vault.`
               : "No PIN set. You can add one if you like — it is optional."}
           </p>
-          <p className="mt-2 text-2xs text-ink-4 leading-relaxed">
+          <p className="mt-2 text-2xs text-ink-3 leading-relaxed">
             This PIN is <b>only a screen lock</b>; it does not encrypt data. It helps when
             your laptop is left open. The real protection for your rows is the database rule, which
             gives them only to your login — with or without a PIN.
@@ -113,7 +113,7 @@ export function VaultPinSettings() {
             <PinInput id="vault-pin-new" label={configured ? "New PIN" : "PIN"} value={next} onChange={setNext} disabled={busy} />
           </div>
 
-          <p className="text-2xs text-ink-4">
+          <p className="text-2xs text-ink-3">
             PINs like 1234, 0000 or 1212 are not allowed — anyone can guess them on the first try.
           </p>
 
