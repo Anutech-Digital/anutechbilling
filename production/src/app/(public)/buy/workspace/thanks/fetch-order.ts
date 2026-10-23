@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { quoteTokenMatches } from "@/lib/quotes/accept-token";
 import type { ThanksOrder } from "./thanks-client";
 import { websiteTenantId } from "@/lib/website-tenant";
+import { orderPaymentState } from "@/lib/checkout/order-payment-state";
 
 /* R-1499: tenant read per call (websiteTenantId) — outside production an unset BUY_PAGE_TENANT_ID
    shows nothing (and logs why), never the live tenant's data. */
@@ -45,6 +46,19 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
                 ?? data.plan
                 ?? "Google Workspace";
 
+  /* R-1624: what came in against this quote. 'invoiced' (set the moment the GST invoice is
+     issued) does not by itself say whether the order is paid in full, so the page's state comes
+     from orderPaymentState with the received sum — payments.amount, what each payment settles. */
+  const { data: payRows, error: payError } = await admin
+    .from("payments")
+    .select("amount")
+    .eq("tenant_id", BUY_PAGE_TENANT_ID)
+    .eq("quote_id", data.id)
+    .eq("status", "received");
+  const amountReceived = payError
+    ? null
+    : ((payRows ?? []) as { amount: number | null }[]).reduce((s, p) => s + Number(p.amount ?? 0), 0);
+
   return {
     quoteId:        data.id,
     customerName:   data.customer_name ?? "",
@@ -52,6 +66,8 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
     seats:          data.seats ?? 0,
     amount:         data.amount ?? 0,
     paymentStatus:  data.payment_status ?? "awaiting",
+    paymentState:   orderPaymentState({ paymentStatus: data.payment_status, amount: data.amount, received: amountReceived }),
+    amountReceived,
     paymentDate:    data.payment_received_at ?? data.created_date ?? null,
   };
 }

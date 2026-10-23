@@ -38,6 +38,8 @@ import { buyNowSchema,buyerCompany, BUY_ANNUAL_NOTE, type BuyNowForm } from "./b
 import { normalizeGstinInput } from "@/site/lib/checkout-details";
 import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database.types";
 import { thanksUrl } from "./thanks/thanks-url";
+import { saveWorkspacePayment } from "./thanks/payment-handoff";
+import { fromRazorpayHandler } from "@/lib/checkout/confirm-payment";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
 import {
@@ -2896,10 +2898,11 @@ function BuyNowDialog({
       /* R-1116: the storefront blue — the same value as site.css --primary and the /checkout
          Razorpay window (Razorpay takes a hex, not a CSS variable). Was orange #C2410C. */
       theme: { color: "#1668E3" },
-      handler: () => {
-        // Razorpay captured the payment client-side. The webhook will do the
-        // real database work; we just take the visitor to the confirmation
-        // page so they see a clear next-steps timeline + support link.
+      handler: (resp) => {
+        // R-1625: Razorpay hands the browser {order, payment, signature}. Keep them for THIS
+        // order; the thanks page asks our server to confirm the payment (the R-1596 verify path,
+        // idempotent with the webhook) instead of waiting on the webhook and saying "not found".
+        saveWorkspacePayment(json.quoteId, fromRazorpayHandler(resp));
         window.location.href = thanksUrl(json.quoteId, json.publicToken, false);
       },
       modal: {
