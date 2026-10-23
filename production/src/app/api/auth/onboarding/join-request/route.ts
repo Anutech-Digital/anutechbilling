@@ -26,6 +26,7 @@ import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { normalizeEmail } from "@/lib/auth/membership";
 import { emailDomain, isPublicEmailDomain } from "@/lib/auth/domain";
 import { openJoinRequest, notifyOwnerOfJoinRequest } from "@/lib/auth/tenant-match";
+import { pickJoinClaim } from "./pick-claim";
 
 const schema = z.object({
   company: z.string().trim().min(3).max(200),
@@ -80,11 +81,13 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const { data: claim } = await admin
+  // R-858: a domain can hold several unverified claims now — pick, don't maybeSingle().
+  const { data: claims } = await admin
     .from("tenant_domains")
-    .select("tenant_id, tenants(name)")
+    .select("tenant_id, verified_at, tenants(name)")
     .eq("domain", domain)
-    .maybeSingle();
+    .limit(50);
+  const claim = pickJoinClaim(claims);
 
   if (!claim?.tenant_id) {
     return NextResponse.json({ ok: true, message: GENERIC, matched: false });
