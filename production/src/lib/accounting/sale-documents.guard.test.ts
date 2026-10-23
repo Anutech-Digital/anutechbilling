@@ -166,6 +166,7 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/lib/queries/collections.ts": "open balances",
   "src/lib/queries/deal-history.ts": "invoices of a quote",
   "src/lib/queries/invoices.ts": "invoice list (badge shows imported ones)",
+  "src/lib/queries/palette-search.ts": "Ctrl+K lookup by number or name (R-1121) — imported ones are findable too",
   "src/lib/queries/payments.ts": "open invoices to pay",
   "src/lib/queries/subscriptions.ts": "a subscription's invoice status",
   "src/lib/import/zoho-opening-invoices.queries.ts": "Zoho numbers already imported",
