@@ -30,6 +30,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { Icon } from "@/components/ui/icon";
 import { reconstructWaterfall, type MrrWaterfall } from "@/lib/accounting/mrr-waterfall";
 import {
@@ -397,7 +398,8 @@ function useSaasMetrics() {
 // ────────────────────────────────────────────────────────────────
 
 export default function SaasMetricsPage() {
-  const { data, isLoading } = useSaasMetrics();
+  const metricsQ = useSaasMetrics();
+  const { data, isLoading } = metricsQ;
   /* The monthly snapshots the retention card compares. Written by the mrr-snapshot cron;
      the card renders its own "not enough history yet" state when there are fewer than
      two, which is the honest answer until that job has run twice. */
@@ -454,7 +456,15 @@ export default function SaasMetricsPage() {
     );
   }
 
-  if (!data) return null;
+  /* R-1807: a failed read used to fall through to `return null` — a blank page. */
+  if (metricsQ.isError || !data) {
+    return (
+      <div className="p-4 md:p-6 lg:p-8 max-w-[1240px] mx-auto">
+        <h1 className="font-serif text-3xl md:text-4xl tracking-tight mb-6">SaaS Metrics</h1>
+        <LoadError what="SaaS metrics" error={metricsQ.error} onRetry={() => void metricsQ.refetch()} />
+      </div>
+    );
+  }
 
   const noData = data.mrr === 0 && data.activeCustomers === 0;
 

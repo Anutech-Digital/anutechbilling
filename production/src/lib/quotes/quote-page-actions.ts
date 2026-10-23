@@ -57,12 +57,17 @@ export interface RejectLeadOffer {
 export function rejectLeadOffer(input: {
   quoteId: string;
   lead: { stage: string | null } | null | undefined;
-  leadQuotes: readonly { id: string; status: string; superseded_by?: string | null }[];
+  /** null = the lead's quotes failed to load or have not answered yet (R-1807). */
+  leadQuotes: readonly { id: string; status: string; superseded_by?: string | null }[] | null;
 }): RejectLeadOffer {
   if (!input.lead) return { offer: false, note: null };
   const stage = (input.lead.stage ?? "").toLowerCase();
   if (stage === "lost") return { offer: false, note: "The lead is already Lost." };
   if (stage === "won") return { offer: false, note: "The lead is Won, so it stays as it is." };
+  /* R-1807: with the list unknown, another open quote may exist — never guess "last one". */
+  if (input.leadQuotes === null) {
+    return { offer: false, note: "The lead's other quotes didn't load, so the lead stays as it is. Mark it Lost on the lead if needed." };
+  }
   const otherOpen = input.leadQuotes.filter(
     (q) => q.id !== input.quoteId && !q.superseded_by
       && (q.status === "draft" || q.status === "sent" || q.status === "viewed"),

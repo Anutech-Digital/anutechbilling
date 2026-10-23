@@ -19,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { FAB } from "@/components/ui/fab";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -79,7 +80,8 @@ function vendorRegion(gstin: string | null | undefined): string | null {
 }
 
 export default function VendorsPage() {
-  const { data: vendors, isLoading } = useVendors();
+  const vendorsQ = useVendors();
+  const { data: vendors, isLoading } = vendorsQ;
   /* R-287: search in the URL, so Back / reload keeps the filtered vendor list. */
   const [search, setSearch] = useUrlState("q");
   const [addOpen, setAddOpen] = React.useState(false);
@@ -140,6 +142,9 @@ export default function VendorsPage() {
 
       {isLoading ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
+      ) : vendorsQ.isError ? (
+        /* R-1807: a failed read is not "No vendors yet" (§24). */
+        <LoadError what="Vendors" error={vendorsQ.error} onRetry={() => void vendorsQ.refetch()} />
       ) : (vendors ?? []).length === 0 ? (
         <Card className="py-2">
           <EmptyState

@@ -266,8 +266,12 @@ export function buildCustomerActivity(subs: Subscription[], invoices: Invoice[],
 // ════════════════════════════════════════════════════════════════════════
 
 /** 4-KPI answer-bar — health / owed / value in one glance (real numbers). */
-export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0 }: {
+export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0, failed = false }: {
   insights: CustomerInsights;
+  /** R-1807: one of the reads the insights are built from (subscriptions, invoices, projects,
+   *  payments) failed. Its rows were never seen, so "All clear" / ₹0 would be a guess — every
+   *  tile reads "—" and says so. The screen shows the error + Try again beside it. */
+  failed?: boolean;
   /** When given, the money tiles link to the records behind them. Optional so the
    *  contacts panel — which derives insights for a company that may have no customer
    *  row — keeps working rather than linking to a filter that would match nothing. */
@@ -287,6 +291,15 @@ export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0 }: {
   // auto-fit → columns follow the CONTAINER width (not the viewport), so this
   // strip fits whether it's in the narrow split-view panel, the full-width panel,
   // or the /customers/[id] page — 4-across when wide, wraps otherwise, never cut.
+  if (failed) {
+    return (
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
+        {["Outstanding", "Lifetime paid", "MRR", "Next renewal"].map((label) => (
+          <MetricCard key={label} label={label} value="—" hint="Didn't load" />
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
       <MetricCard

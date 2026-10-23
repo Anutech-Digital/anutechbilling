@@ -273,6 +273,9 @@ export function LeadDetailSheet({
 
   if (!lead) return null;
   const hasQuotes = quotesForLead.length > 0;
+  /* R-1807: failed or not answered yet — "no quote" is not known, so nothing offers to send
+     the first one (next action + footer). */
+  const quotesUnknown = !quotesQ.isSuccess;
   const openTasks = tasksForLead.filter((t) => t.status === "pending" || t.status === "snoozed");
   const doneTasks = tasksForLead.filter((t) => t.status === "done");
 
@@ -384,7 +387,7 @@ export function LeadDetailSheet({
      is and WHERE it goes; this maps the destination onto the drawer's own handlers, so
      "send quote" is still exactly handleSendQuote and nothing else. */
   const nextAction: NextAction | null = nextActionFor({
-    lead, leadProject, latestQuoteForAction, quoteAgeDays, threadSummary, activities,
+    lead, leadProject, latestQuoteForAction, quoteAgeDays, threadSummary, activities, quotesUnknown,
   });
   const runNextAction = (a: NextAction) => {
     const t = a.target;
@@ -722,6 +725,7 @@ export function LeadDetailSheet({
           onCall={() => void callLead()}
           latestQuote={latestQuote}
           hasQuotes={hasQuotes}
+          quotesUnknown={quotesUnknown}
           nextAction={nextAction}
           handleSendQuote={handleSendQuote}
           handleReviseQuote={handleReviseQuote}

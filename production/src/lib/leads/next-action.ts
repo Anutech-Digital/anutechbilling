@@ -50,9 +50,18 @@ export interface NextActionInput {
   quoteAgeDays: number | null;
   threadSummary: Pick<ThreadSummary, "total" | "latest">;
   activities: readonly unknown[];
+  /** R-1807: the lead's quotes failed to load (or have not answered yet). "No quote" is then
+   *  not known, so no "Send quote" is suggested — the Quotes section shows the error. */
+  quotesUnknown?: boolean;
 }
 
 export function nextActionFor(input: NextActionInput): NextAction | null {
+  const a = nextActionRules(input);
+  if (input.quotesUnknown && a?.target.kind === "send_quote") return null;
+  return a;
+}
+
+function nextActionRules(input: NextActionInput): NextAction | null {
   const { lead, leadProject, latestQuoteForAction, quoteAgeDays, threadSummary, activities } = input;
   // 0. Project lead: its quotation lives in Project Sales. Accepted there = Won here.
   if (lead.enquiry_type === "project" && lead.project_id) {

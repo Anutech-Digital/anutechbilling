@@ -68,9 +68,7 @@ const KNOWN_GAPS = [
   "prepaid/page.tsx",
   "reimbursements/page.tsx",
   "salary-register/page.tsx",
-  "saas-metrics/page.tsx",
   "tds-receivable/year-end/page.tsx",
-  "vendors/page.tsx",
 ];
 
 describe("accounting pages show an error state, not ₹0 (R-270)", () => {

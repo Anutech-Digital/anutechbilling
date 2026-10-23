@@ -13,6 +13,7 @@ import * as React from "react";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { rupee, cn } from "@/lib/utils";
@@ -25,7 +26,8 @@ function thisMonth(): string {
 
 export default function ScorecardPage() {
   const [period, setPeriod] = React.useState(thisMonth());
-  const { data: rows, isLoading } = usePerformance(period);
+  const perf = usePerformance(period);
+  const { data: rows, isLoading } = perf;
 
   return (
     <div className="mx-auto max-w-[1000px] p-4 md:p-6 lg:p-8 space-y-5">
@@ -45,6 +47,10 @@ export default function ScorecardPage() {
 
       {isLoading ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-40 w-full" />)}</div>
+      ) : perf.isError ? (
+        /* R-1807: a failed read is an error + Try again — not "No team members yet", and
+           never a Revenue of ₹0 for everyone. */
+        <LoadError what="Scorecards" error={perf.error} onRetry={perf.refetch} />
       ) : (rows?.length ?? 0) === 0 ? (
         <Card className="py-2"><EmptyState icon="users" title="No team members yet" body="Invite teammates at /team — their scorecards will show here." /></Card>
       ) : (

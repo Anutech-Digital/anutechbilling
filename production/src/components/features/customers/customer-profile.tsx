@@ -46,6 +46,7 @@ import { Button, IconButton } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { TabBar } from "@/components/ui/tabs";
 import { LeadHistoryCard } from "@/components/features/contacts/lead-history-card";
 import { Icon } from "@/components/ui/icon";
@@ -103,16 +104,28 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
 
   const { data: customer, isLoading, error } = useCustomer(params.id);
   const { data: allGroups } = useCustomerGroups();
-  const { data: subs }     = useCustomerSubscriptions(params.id);
-  const { data: invoices } = useCustomerInvoices(params.id);
-  const { data: quotes, isPending: quotesPending } = useCustomerQuotes(params.id);
-  const { data: projects } = useCustomerProjects(params.id);
-  const { data: projPay } = useCustomerProjectPayments(params.id);
+  const subsQ = useCustomerSubscriptions(params.id);
+  const invoicesQ = useCustomerInvoices(params.id);
+  const quotesQ = useCustomerQuotes(params.id);
+  const projectsQ = useCustomerProjects(params.id);
+  const projPayQ = useCustomerProjectPayments(params.id);
+  const { data: subs } = subsQ;
+  const { data: invoices } = invoicesQ;
+  const { data: quotes, isPending: quotesPending } = quotesQ;
+  const { data: projects } = projectsQ;
+  const { data: projPay } = projPayQ;
   const { data: openCredit } = useCustomerOpenCredit(params.id);
   /* R-1682: credit / debit notes belong on the Statement. */
   const { data: customerNotes } = useCustomerNotes(params.id);
   /* R-1121: this customer's payments only (theirs, or on their quotes) — not every payment. */
-  const { data: allPayments } = useCustomerPayments(params.id, quotesPending ? undefined : (quotes ?? []).map((q) => q.id as string));
+  const paymentsQ = useCustomerPayments(params.id, quotesPending ? undefined : (quotes ?? []).map((q) => q.id as string));
+  const { data: allPayments } = paymentsQ;
+  /* R-1807: Outstanding / Lifetime paid / MRR are built from these five reads. When one
+     fails its rows were never seen, so "Outstanding: All clear" would be a guess — the
+     metric bar shows "—" and the error + Try again sits under it. */
+  const moneyReads = [subsQ, invoicesQ, quotesQ, projectsQ, projPayQ, paymentsQ];
+  const moneyFailed = moneyReads.some((q) => q.isError);
+  const retryMoney = () => { for (const q of moneyReads) if (q.isError) void q.refetch(); };
   /* R-523: TDS this customer deducted — the statement and Lifetime paid show the bank
      money and the TDS apart, else the bank reconciliation can never match. */
   const { data: customerTds } = useTdsReceivables({ customerId: params.id });
@@ -492,7 +505,14 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
       <>
       {/* Answer-bar */}
       <div className="mb-4">
-        <CustomerMetricBar insights={insights} customerId={customer.id} lifetimeTds={lifetimeTds} />
+        <CustomerMetricBar insights={insights} customerId={customer.id} lifetimeTds={lifetimeTds} failed={moneyFailed} />
+        {moneyFailed && (
+          <LoadErrorInline
+            what="Some of this customer's records"
+            error={moneyReads.find((q) => q.isError)?.error}
+            onRetry={retryMoney}
+          />
+        )}
       </div>
 
       {/* Advance credit held (from an earlier overpayment) — adjustable against the next bill */}
@@ -505,10 +525,12 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
         </div>
       )}
 
-      {/* Next-best-action */}
-      <div className="mb-6">
-        <NextBestActionCard nba={insights.nba} customer={c} />
-      </div>
+      {/* Next-best-action — not while the records it reads are unknown (R-1807). */}
+      {!moneyFailed && (
+        <div className="mb-6">
+          <NextBestActionCard nba={insights.nba} customer={c} />
+        </div>
+      )}
 
       {/* Body — identity rail (Zoho-style) on the left, money + activity on the right */}
       {/* Side by side on the page; stacked in the pane, which is about half as wide as

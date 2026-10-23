@@ -49,7 +49,7 @@ export function useAdSpend(fromDay: string) {
  * makes the order total.
  */
 export async function fetchAdSpend(supabase: SupabaseClient<Database>, fromDay: string): Promise<AdSpendRow[]> {
-  const [{ data: accounts }, data] = await Promise.all([
+  const [{ data: accounts, error: accountsError }, data] = await Promise.all([
     supabase.from("ad_accounts").select("id, platform"),
     fetchAllRows((from, to) => supabase.from("ad_spend_daily")
       .select("ad_account_id, day, campaign_id, campaign_name, spend, impressions, clicks, conversions, conversion_value")
@@ -57,6 +57,9 @@ export async function fetchAdSpend(supabase: SupabaseClient<Database>, fromDay: 
       .order("day", { ascending: true }).order("ad_account_id", { ascending: true }).order("campaign_id", { ascending: true })
       .range(from, to)),
   ]);
+  /* R-1807: a failed accounts read used to leave every row without a platform, so they were
+     all dropped and Spend read ₹0 with no error. It is an error now (§24). */
+  if (accountsError) throw accountsError;
   const platform = new Map((accounts ?? []).map((a) => [a.id, a.platform as AdPlatform]));
   return data.flatMap((r) => {
     const p = platform.get(r.ad_account_id); if (!p) return [];

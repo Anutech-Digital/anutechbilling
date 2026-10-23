@@ -109,6 +109,9 @@ export interface LeadDetailFooterProps {
   onCall?: () => void;
   latestQuote: Quote | undefined;
   hasQuotes: boolean;
+  /** R-1807: the lead's quotes failed to load (or have not answered yet). Neither "Send
+   *  quote" (no quote) nor "New quote / Revise" (has one) is known to be right — none shows. */
+  quotesUnknown?: boolean;
   nextAction: NextAction | null;
   handleSendQuote: () => void;
   handleReviseQuote: () => void;
@@ -116,7 +119,7 @@ export interface LeadDetailFooterProps {
 
 export function LeadDetailFooter({
   lead, onEdit, handleArchive, handleDelete, deletePending, handleEmail, setWhatsOpen, onCall,
-  latestQuote, hasQuotes, nextAction, handleSendQuote, handleReviseQuote,
+  latestQuote, hasQuotes, quotesUnknown = false, nextAction, handleSendQuote, handleReviseQuote,
 }: LeadDetailFooterProps) {
   const router = useRouter();
   const hasSub = useCustomerHasSubscription(lead.customer_id, lead.stage === "won");
@@ -245,13 +248,13 @@ export function LeadDetailFooter({
                 is not what causes the collision — being told to call is. When nextAction IS
                 already send-quote this renders nothing, so the two-primaries mistake cannot
                 come back through the very fix for its side effect. */}
-            {lead.stage !== "won" && lead.stage !== "lost" && !hasQuotes &&
+            {lead.stage !== "won" && lead.stage !== "lost" && !hasQuotes && !quotesUnknown &&
              nextAction?.target.kind !== "send_quote" && (
               <Button icon="send" onClick={handleSendQuote}>
                 Send quote
               </Button>
             )}
-            {lead.stage !== "won" && lead.stage !== "lost" && hasQuotes && latestQuote?.status !== "draft" && (
+            {lead.stage !== "won" && lead.stage !== "lost" && hasQuotes && !quotesUnknown && latestQuote?.status !== "draft" && (
               <>
                 <Button icon="send" onClick={handleSendQuote}>
                   New quote

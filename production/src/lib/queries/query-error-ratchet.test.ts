@@ -104,12 +104,10 @@ const ALLOWED_DEFAULTED: Record<string, number> = {
   "components/features/banking/salary-lines-dialog.tsx": 1,
 };
 
-/** Screens that call useQuotesByLead() without looking at its error, and why. */
-const ALLOWED_BYLEAD_NO_ERROR: Record<string, string> = {
-  /* Only feeds the reject dialog's "this was the lead's last open quote — mark it Lost too?"
-     offer; listed on R-1806 as a follow-up. */
-  "app/(app)/quotes/[id]/page.tsx": "reject dialog offer only",
-};
+/** Screens that call useQuotesByLead() without looking at its error, and why.
+ *  R-1807: the quote page's reject dialog (its "last open quote — mark the lead Lost?" offer)
+ *  now waits for the lead's quotes, so the list is empty. Only ever add with a reason. */
+const ALLOWED_BYLEAD_NO_ERROR: Record<string, string> = {};
 
 describe("screens do not read a failed money read as [] (R-1806 ratchet)", () => {
   const files = [...walk(join(SRC, "app")), ...walk(join(SRC, "components"))];
@@ -132,11 +130,37 @@ describe("screens do not read a failed money read as [] (R-1806 ratchet)", () =>
     ["app/(app)/marketing/page.tsx", "spend", "Spend this month"],
     ["app/(app)/accounting/cash-flow/page.tsx", "bsQ", "Cash in bank now"],
     ["app/(app)/customers/page.tsx", "moneyFailed", "To collect / Received"],
+    /* R-1807 — R-1806's follow-ups. */
+    ["app/(app)/marketing/ads/page.tsx", "spend", "Spend / ROAS"],
+    ["app/(app)/scorecard/page.tsx", "perf", "everyone's Revenue"],
+    ["app/(app)/performance/page.tsx", "perf", "the leaderboard"],
+    ["app/(app)/accounting/vendors/page.tsx", "vendorsQ", "Vendors / Outstanding"],
+    ["app/(app)/accounting/saas-metrics/page.tsx", "metricsQ", "MRR / ARR"],
+    ["components/features/customers/customer-profile.tsx", "moneyFailed", "Outstanding (not 'All clear')"],
+    ["components/features/contacts/contact-company-panel.tsx", "moneyFailed", "Outstanding (not 'All clear')"],
   ])("C. %s checks %s before showing %s", (file, name) => {
     const src = readFileSync(join(SRC, file), "utf8");
     expect(src).toMatch(new RegExp(String.raw`\b${name}(\.isError|\b)`));
     expect(src).toMatch(/LoadErrorBanner|LoadError\b|LoadErrorInline/);
     if (name !== "moneyFailed") expect(src).toContain(`${name}.isError`);
+  });
+
+  /* D. R-1807: the shared Outstanding tile must be told when its reads failed — both screens
+     that render it pass `failed`, so "All clear" is never a guess. */
+  it("D. every <CustomerMetricBar> is told whether its reads failed", () => {
+    const missing = files
+      .filter((f) => /<CustomerMetricBar\b/.test(readFileSync(f, "utf8")))
+      .filter((f) => !/<CustomerMetricBar\b[^>]*\bfailed=/.test(readFileSync(f, "utf8")))
+      .map(rel);
+    expect(missing).toEqual([]);
+  });
+
+  /* E. R-1807: the lead drawer must tell nextActionFor() and the footer whether its quotes are
+     known, or "Send quote" comes back on a failed read. */
+  it("E. the lead drawer passes quotesUnknown to nextActionFor and the footer", () => {
+    const src = readFileSync(join(SRC, "components/features/leads/lead-detail-sheet.tsx"), "utf8");
+    expect(src).toMatch(/nextActionFor\(\{[^}]*quotesUnknown/);
+    expect(src).toMatch(/<LeadDetailFooter[\s\S]*?quotesUnknown=/);
   });
 
   it("B. every screen calling useQuotesByLead() handles its error", () => {

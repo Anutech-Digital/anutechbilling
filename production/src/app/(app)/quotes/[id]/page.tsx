@@ -559,8 +559,14 @@ export default function QuoteDetailPage() {
      lead's last open quote, offers to mark the lead Lost in the same step — before, the
      lead sat in Quote Sent and its value stayed in the pipeline. */
   const [rejectOpen, setRejectOpen] = React.useState(false);
-  const { data: leadQuotes } = useQuotesByLead(quote?.lead_id ?? undefined);
-  const leadOffer = rejectLeadOffer({ quoteId: params.id, lead: quote?.lead_id ? (lead ?? null) : null, leadQuotes: leadQuotes ?? [] });
+  /* R-1807: a failed (or unanswered) read is not "no other open quote" — the Lost offer waits
+     for the list; on isError the dialog says the lead stays as it is. */
+  const leadQuotesQ = useQuotesByLead(quote?.lead_id ?? undefined);
+  const leadOffer = rejectLeadOffer({
+    quoteId: params.id,
+    lead: quote?.lead_id ? (lead ?? null) : null,
+    leadQuotes: leadQuotesQ.isSuccess && !leadQuotesQ.isError ? leadQuotesQ.data : null,
+  });
   const markRejected = useMutation({
     mutationFn: async (input: { reason: LossReasonCode; note: string | null; markLeadLost: boolean }) => {
       const supabase = createClient();
