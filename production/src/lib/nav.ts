@@ -496,6 +496,12 @@ export const APP_NAV: NavSection[] = [
            other fourteen are the Hub's directory, in five groups (S30); S34 added a
            fifteenth, the IndiaMART key screen (owner-only, like its API). */
         id: "marketing-hub",   href: "/marketing",         label: "Marketing Hub",  icon: "layout", roles: OM, hint: "Tools needed, who owns them, budget vs spend",
+        /* R-1663 (19 Oct 2026, Abhishek): Cold Calling is a sidebar row under the Hub, and the
+           sales team uses it too — so it is a CHILD, not a directory row: a sales user sees the
+           Hub as a heading with only this child (R-497 pattern), never the Hub's spend pages. */
+        children: [
+          { id: "cold-calling", href: "/marketing/cold-calling", label: "Cold Calling", icon: "phone", roles: ["owner", "manager", "sales_senior", "sales"], hint: "AI agent calls an imported list; interested ones go to Sales & Pipeline" },
+        ],
         directory: [
           { id: "marketing-campaigns", href: "/marketing/campaigns", label: "Campaign budgets", icon: "target", roles: OM, group: "Plan & spend", hint: "Each campaign's budget, dates and target, with spend and leads" },
           { id: "marketing-spend", href: "/marketing/spend",   label: "Spend",          icon: "wallet", roles: OM, group: "Plan & spend" },

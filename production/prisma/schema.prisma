@@ -5008,3 +5008,61 @@ enum vendor {
 
   @@schema("public")
 }
+
+/// R-1661 (19 Oct 2026): Marketing Hub → Cold Calling. RLS: owner/manager/sales_senior/sales + app_jobs.
+/// No relation fields on purpose — the foreign keys live in the migration, and adding back-relations
+/// to `tenants` would touch a model every other change also touches.
+model cold_call_campaigns {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id    String   @db.Uuid
+  name         String
+  agent_id     String
+  agent_name   String?
+  product_item_id String?
+  product_name String?
+  status       String   @default("draft")
+  daily_limit  Int      @default(50)
+  window_start Int      @default(10) @db.SmallInt
+  window_end   Int      @default(18) @db.SmallInt
+  created_by   String?  @db.Uuid
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id, created_at(sort: Desc)], map: "cold_call_campaigns_tenant_idx")
+  @@schema("public")
+}
+
+/// R-1661: one number on a cold-calling list; the call's outcome lands on the same row.
+model cold_call_contacts {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id        String    @db.Uuid
+  campaign_id      String    @db.Uuid
+  name             String?
+  company          String?
+  city             String?
+  phone            String
+  dnd              Boolean   @default(false)
+  status           String    @default("pending")
+  attempts         Int       @default(0)
+  last_called_at   DateTime? @db.Timestamptz(6)
+  next_attempt_at  DateTime? @db.Timestamptz(6)
+  provider_call_id String?
+  call_status      String?
+  hangup_reason    String?
+  hangup_by        String?
+  duration_sec     Int?
+  transcript       String?
+  summary          String?
+  seats_heard      Int?
+  extracted        Json      @default("{}")
+  error            String?
+  lead_id          String?
+  moved_at         DateTime? @db.Timestamptz(6)
+  moved_by         String?   @db.Uuid
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([campaign_id, phone])
+  @@index([tenant_id, campaign_id, status], map: "cold_call_contacts_campaign_status_idx")
+  @@schema("public")
+}

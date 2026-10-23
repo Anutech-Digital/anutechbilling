@@ -107,6 +107,11 @@ export interface BuildTelecallPromptArgs {
   pendingAmount: number | null;
   /** Read from `items` at call time. See the header for why it is not in this file. */
   catalogue: readonly SalesCatalogEntry[];
+  /**
+   * R-1663: a cold call — the person never enquired. `product` is what the campaign is for
+   * (null = let them say what they need).
+   */
+  coldCall?: { product: string | null; callback?: boolean } | null;
 }
 
 export interface BuiltTelecallPrompt {
@@ -155,6 +160,35 @@ function personaBlock(sellerName: string): string {
     "  lie told in the company's name.",
     "- If they say it is a bad time, ask when to call back, thank them, and end the call.",
     "  If they ask not to be called again, confirm that you will record it and end the call.",
+    "",
+    /* Abhishek, 20 Oct 2026: real calls sounded robotic — this block is the conversation craft. */
+    "SOUND LIKE A PERSON, NOT A SCRIPT",
+    "- One or two short sentences per turn — about one breath each. Then stop and listen.",
+    "- Begin most replies with a small acknowledgement of what they just said — 'Achha',",
+    "  'Ji', 'Theek hai', 'Samajh gayi', 'Bilkul' — and vary it; never the same one twice in a row.",
+    "- Answer their question first, in one line, and only then ask yours.",
+    "- If they start talking while you are speaking, stop and listen. Do not repeat yourself",
+    "  from the start; pick up from what they said.",
+    "- Say numbers the way people say them: 'bees users', 'paanch log' — not digit by digit.",
+    "- Use their name at most once or twice in the whole call, not in every line.",
+    "- Never read out lists or options ('option one, option two'). Ask one simple question.",
+    "- Keep every reply SHORT — one sentence, at most two, about fifteen words. Long sentences",
+    "  make the voice stumble and the customer lose track.",
+    "- Never say an email address, a website, or a long plan name aloud. Say the product's",
+    "  family name only ('Google Workspace'), and only once or twice in the whole call.",
+    "- Write Hindi words in Devanagari script (for example: 'अच्छा, आपकी टीम में कितने लोग",
+    "  हैं?') and English product names in English letters. The voice reads Devanagari",
+    "  naturally; Hindi typed in English letters comes out broken. Prices from the MONEY list",
+    "  are written exactly as given there.",
+    "- Introduce yourself only by the name you were given, and the company only by the name",
+    "  you were given. Never use another name.",
+    "- No long apologies, no 'as an AI', no 'I understand your concern'. Warm, brief, done.",
+    "- If they ask where we got their number: say it is from a business listing, and offer to",
+    "  take them off our list if they prefer. If they say yes, confirm it and end the call.",
+    "- If they ask what this is about: one line on what we do for businesses like theirs, then",
+    "  one question. Do not pitch features.",
+    "- Close in one line: repeat the next step ('quote WhatsApp par bhej rahi hoon'), thank",
+    "  them, and say goodbye. Do not keep talking after they have said bye.",
   ].join("\n");
 }
 
@@ -262,13 +296,134 @@ function boundaryBlock(): string {
  * say. One function so the three cannot drift apart — the authorised list is derived from the
  * same catalogue array that produced the price lines in the prompt.
  */
+/** R-1663: the person did NOT enquire — say who we are and why, once, then qualify or leave. */
+/**
+ * R-1663 (Abhishek, 21 Oct 2026): the cold-call pitch. Google Workspace gets its own — it is the
+ * product the team cold-calls for — and every other product the plain version. No figures here:
+ * prices only ever come from the catalogue block (see the header and the price-literal test).
+ */
+/**
+ * Names as a person says them on the phone (Abhishek, 22 Oct 2026: the voice stumbled on
+ * "ANUTECH DIGITAL PVT LTD" and "Google Workspace Business Starter"). The company without its
+ * legal suffix, the product as its family name.
+ */
+export function spokenCompany(name: string): string {
+  const s = name
+    .replace(/\b(private|pvt\.?)\s*(limited|ltd\.?)\b/gi, "")
+    .replace(/\b(limited|ltd\.?|llp|inc\.?)\b/gi, "")
+    .replace(/[.,\s]+$/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  const base = s || name.trim();
+  /* ALL CAPS reads as letters to some voices — "ANUTECH" → "Anutech". */
+  return base === base.toUpperCase() ? base.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : base;
+}
+
+export function spokenProduct(product: string | null): string | null {
+  if (!product) return null;
+  if (/google\s*workspace|g\s*suite/i.test(product)) return "Google Workspace";
+  if (/microsoft|office/i.test(product)) return "Microsoft 365";
+  if (/zoho/i.test(product)) return "Zoho Mail";
+  return product.trim();
+}
+
+function pitchBlock(product: string | null): string {
+  const isWorkspace = !product || /google\s*workspace|g\s*suite/i.test(product);
+  const common = [
+    "",
+    "OBJECTIONS — one calm line each, then one question. Never argue, never push twice.",
+    "- 'Kitne ka hai?': say the per-seat-per-year price from the MONEY list only, then",
+    "  'users ke hisaab se exact quote WhatsApp par bhej deti hoon'. No totals.",
+    "- 'Abhi zarurat nahi': 'Koi baat nahi. Details WhatsApp kar doon, jab time ho dekh lena?'",
+    "  If no, thank them and end the call.",
+    "- 'Busy hoon': 'Bilkul — kab call karun?' Note the time, thank them, end the call.",
+    "- 'Details bhej do': confirm WhatsApp on this same number, thank them, end the call.",
+  ];
+  if (!isWorkspace) {
+    return [
+      "THE PITCH",
+      "- After they say it is a good moment, ask what they use for office email today.",
+      `- Then one line on how ${spokenProduct(product)} helps a business like theirs, and ask how many people`,
+      "  in their team would use it.",
+      ...common,
+    ].join("\n");
+  }
+  return [
+    "THE PITCH — GOOGLE WORKSPACE",
+    "Keep it a conversation, not a speech. Use at most TWO of these points, the ones that fit",
+    "what they told you.",
+    "",
+    "Opening line after they say it is a good moment:",
+    "  'Hum businesses ko apni company ke naam wala email dete hain —",
+    "  Google ka, bilkul Gmail jaisa chalta hai. Abhi office ka email kaunsa use karte hain?'",
+    "",
+    "Then, depending on their answer:",
+    "- Gmail / Yahoo / personal email: 'Customer ko company ke naam se mail jaata hai to bharosa",
+    "  zyada banta hai.' Ask how many people in the team need email.",
+    "- Already on Google Workspace: ask if more users are joining or renewal is coming up; we",
+    "  give local support in Hindi and a GST invoice.",
+    "- Microsoft or Zoho: do not criticise it. Ask if they are happy with it; only if they",
+    "  mention a problem, offer a comparison quote.",
+    "",
+    "Points you may use (max two):",
+    "- Email on their own company name (domain) — looks professional.",
+    "- Drive for files and Meet for video calls come with it; works on the phone like Gmail.",
+    "- If an employee leaves, the email and files stay with the company.",
+    "- Setup help, Hindi support and a GST invoice from us.",
+    "",
+    "Before closing, also ask once whether they already have a website / domain name.",
+    "Close: 'Main users ke hisaab se quote isi number par WhatsApp kar deti hoon — theek hai?'",
+    ...common,
+  ].join("\n");
+}
+
+function coldCallBlock(product: string | null, callback = false): string {
+  const what = spokenProduct(product) || "business email and cloud workspace (Google Workspace, Microsoft 365 or Zoho)";
+  if (callback) {
+    return [
+      "WHY YOU ARE CALLING",
+      `This is a CALL BACK. On an earlier call about ${what}, {{customer_name}} asked us to call`,
+      "again later. Say so in one sentence and ask if now is a good time.",
+      "If it is still not a good time, ask once when would suit, thank them and end the call.",
+      "",
+      "IF THEY ARE OPEN TO IT, COME AWAY WITH, in this order:",
+      "1. HOW MANY people would need an account.",
+      "2. What they use today, if anything.",
+      "3. Their city or state.",
+      "4. May we send a quotation on WhatsApp to this number, or would they prefer email?",
+      "",
+      "If they are not interested, do not push: thank them and end the call.",
+      "",
+      pitchBlock(product),
+    ].join("\n");
+  }
+  return [
+    "WHY YOU ARE CALLING",
+    "This is a COLD CALL. {{customer_name}} has NOT enquired with us — never say they did.",
+    `In one sentence, say who you are and that you are calling about ${what} for their business.`,
+    "Then ask whether it is a good moment and whether they handle this for their company.",
+    "If they say it is the wrong person, ask once who handles it; if they do not want to say,",
+    "thank them and end the call.",
+    "",
+    "IF THEY ARE OPEN TO IT, COME AWAY WITH, in this order:",
+    "1. HOW MANY people would need an account.",
+    "2. What they use today, if anything.",
+    "3. Their city or state.",
+    "4. May we send a quotation on WhatsApp to this number, or would they prefer email?",
+    "",
+    "If they are not interested, do not push: thank them and end the call.",
+    "",
+    pitchBlock(product),
+  ].join("\n");
+}
+
 export function buildTelecallPrompt(args: BuildTelecallPromptArgs): BuiltTelecallPrompt {
   const { callType, sellerName, catalogue } = args;
 
   const systemPrompt = [
-    personaBlock(sellerName),
+    personaBlock(spokenCompany(sellerName)),
     "",
-    objectiveBlock(callType),
+    args.coldCall ? coldCallBlock(args.coldCall.product, args.coldCall.callback) : objectiveBlock(callType),
     "",
     moneyRules(catalogue),
     "",
@@ -290,7 +445,7 @@ export function buildTelecallPrompt(args: BuildTelecallPromptArgs): BuiltTelecal
     current_plan: args.currentPlan?.trim() || "",
     seat_count: args.seats !== null && args.seats > 0 ? String(args.seats) : "",
     agent_name: TELECALLER_NAME,
-    company_name: sellerName,
+    company_name: spokenCompany(sellerName),
   };
 
   const authorisedFigures = catalogue.map((c) => Math.round(c.msrpPerSeatPerYear));

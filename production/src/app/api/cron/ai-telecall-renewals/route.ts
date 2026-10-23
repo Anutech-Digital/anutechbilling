@@ -194,7 +194,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
       pendingAmount: subject.pendingAmount,
       catalogue,
       sellerName: tenant.name?.trim() || process.env.SELLER_LEGAL_NAME?.trim() || "our team",
-      ourNumbers: [tenant.phone, process.env.RETELL_FROM_NUMBER, process.env.VAPI_FROM_NUMBER]
+      ourNumbers: [tenant.phone, process.env.RETELL_FROM_NUMBER, process.env.VAPI_FROM_NUMBER, process.env.BOLNA_FROM_NUMBER]
         .filter((n): n is string => typeof n === "string" && n.trim().length > 0),
       doNotCall: false,
       subjectIsOpen: subject.isOpen,

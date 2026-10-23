@@ -58,6 +58,17 @@ export interface TelecallDispatchArgs {
   /** Our own numbers, so nothing dials back to us. */
   ourNumbers: readonly string[];
   doNotCall: boolean;
+  /**
+   * R-1437: a person pressed "AI call" on this lead. Their press IS the approval a `hold` dial
+   * waits for, so `hold` becomes `auto` for this one call. The workspace kill switch (`off`) is
+   * still obeyed — a person cannot dial past "automation is switched off".
+   */
+  humanApproved?: { userName: string } | null;
+  /**
+   * R-1664: the vendor agent a person picked for this call (Bolna). Checked against the account's
+   * agent list by the route before it reaches here; absent = the configured default agent.
+   */
+  agentId?: string | null;
   subjectIsOpen: boolean;
   subjectClosedReason: string | null;
   /** Passed in so the decision is testable at 21:01 on a Saturday. */
@@ -106,7 +117,11 @@ export async function dispatchTelecall(
        Resolved first so the kill switch outranks every other consideration, and so a switched-
        off workspace never has its catalogue read or its vendor contacted. */
     const policy = await loadAutonomyPolicy(args.tenantId);
-    const verdict = resolveAutonomy("telecall.place", policy);
+    const policyVerdict = resolveAutonomy("telecall.place", policy);
+    const verdict =
+      args.humanApproved && policyVerdict.mode === "hold"
+        ? { mode: "auto" as const, reason: `${args.humanApproved.userName} pressed AI call on this lead` }
+        : policyVerdict;
 
     /* ── 2. May we ring this person at all? ──────────────────────────────────
        Run once with an EMPTY history, purely to normalise the number and to catch the
@@ -233,7 +248,9 @@ export async function dispatchTelecall(
     }
 
     /* ── 5. Auto. Only now is a vendor contacted. ────────────────────────── */
-    const provider = resolveTelecallProvider();
+    const resolved = resolveTelecallProvider();
+    /* R-1664: the person may pick which agent rings; the rest of the vendor config stays. */
+    const provider = resolved && args.agentId ? { ...resolved, agentId: args.agentId } : resolved;
     if (!provider) {
       const missing = missingTelecallEnv().join(", ");
       const detail =

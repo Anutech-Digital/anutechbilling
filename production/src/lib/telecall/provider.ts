@@ -23,12 +23,12 @@
  * rather than filling the logs with exceptions on every cron run.
  */
 
-export type TelecallProviderName = "retell" | "vapi";
+export type TelecallProviderName = "retell" | "vapi" | "bolna";
 
 export interface TelecallProviderConfig {
   name: TelecallProviderName;
   apiKey: string;
-  /** Retell: the E.164 number we call from. Vapi: the phoneNumberId. */
+  /** Retell / Bolna: the E.164 number we call from. Vapi: the phoneNumberId. */
   fromNumber: string;
   /** The configured voice agent / assistant on the vendor's side. */
   agentId: string;
@@ -54,6 +54,19 @@ export function resolveTelecallProvider(
     return { name: "vapi", apiKey, fromNumber, agentId };
   }
 
+  /* R-1437: Bolna (bolna.ai) — Indian numbers and Hinglish voices on one account. */
+  if (requested === "bolna") {
+    const apiKey = env.BOLNA_API_KEY?.trim();
+    const agentId = env.BOLNA_AGENT_ID?.trim();
+    if (!apiKey || !agentId) return null;
+    /* Optional for Bolna: with no number of our own (trial plan), Bolna dials from the
+       account's default number. Anything that is not a full E.164 number — "+91...", a
+       placeholder — counts as not set rather than being sent to Bolna. */
+    const rawFrom = env.BOLNA_FROM_NUMBER?.trim() ?? "";
+    const fromNumber = /^\+[1-9][0-9]{7,14}$/.test(rawFrom) ? rawFrom : "";
+    return { name: "bolna", apiKey, fromNumber, agentId };
+  }
+
   /* Retell is the default when TELECALL_PROVIDER is unset, matching the migration's column
      default. An unrecognised value falls here too — and then fails the key check below, which
      is the intended outcome: a typo in the provider name must not silently dial through the
@@ -73,7 +86,9 @@ export function missingTelecallEnv(env: NodeJS.ProcessEnv = process.env): string
   const needed =
     requested === "vapi"
       ? ["VAPI_API_KEY", "VAPI_PHONE_NUMBER_ID", "VAPI_ASSISTANT_ID"]
-      : ["RETELL_API_KEY", "RETELL_FROM_NUMBER", "RETELL_AGENT_ID"];
+      : requested === "bolna"
+        ? ["BOLNA_API_KEY", "BOLNA_AGENT_ID"]
+        : ["RETELL_API_KEY", "RETELL_FROM_NUMBER", "RETELL_AGENT_ID"];
   return needed.filter((k) => !env[k]?.trim());
 }
 
@@ -177,6 +192,22 @@ function buildRequest(config: TelecallProviderConfig, req: PlaceCallRequest): Ve
     };
   }
 
+  if (config.name === "bolna") {
+    /* Bolna has no per-call system-prompt override and echoes no metadata. Everything goes in
+       `user_data`, which the agent's prompt on Bolna interpolates as {{variable}} — so the agent
+       there must be set up with a prompt of `{{system_prompt}}` (docs/telecall-bolna.md). The
+       call row is still found by execution_id, never by anything echoed back. */
+    return {
+      url: `${BOLNA_API_BASE}/call`,
+      body: {
+        agent_id: config.agentId,
+        recipient_phone_number: req.toNumber,
+        ...(config.fromNumber ? { from_phone_number: config.fromNumber } : {}),
+        user_data: { ...req.dynamicVariables, ...req.metadata, system_prompt: req.systemPrompt },
+      },
+    };
+  }
+
   return {
     url: "https://api.retellai.com/v2/create-phone-call",
     body: {
@@ -201,9 +232,108 @@ function extractCallId(raw: string): string | null {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return null;
     const obj = parsed as Record<string, unknown>;
-    const candidate = obj.call_id ?? obj.id;
+    /* Bolna answers `{ status: "queued", execution_id }`; Retell `call_id`; Vapi `id`. */
+    const candidate = obj.execution_id ?? obj.call_id ?? obj.id;
     return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
   } catch {
     return null;
+  }
+}
+
+export const BOLNA_API_BASE = "https://api.bolna.ai";
+
+/** Bolna execution ids are UUIDs; anything else is refused before it reaches a URL. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type FetchExecutionResult =
+  | { ok: true; execution: Record<string, unknown> }
+  | { ok: false; error: string };
+
+/**
+ * R-1437: read one Bolna call back from Bolna itself (`GET /executions/{id}`).
+ *
+ * Bolna documents no webhook signature, so the post-call webhook body is never trusted for
+ * what was SAID: the route takes only the execution id from it and asks Bolna, with our own
+ * API key, what happened. A forged webhook can at most make us re-read a real call of ours.
+ * Never throws.
+ */
+export async function fetchBolnaExecution(
+  config: TelecallProviderConfig,
+  executionId: string,
+): Promise<FetchExecutionResult> {
+  if (config.name !== "bolna") return { ok: false, error: "not a Bolna configuration" };
+  if (!UUID_RE.test(executionId)) return { ok: false, error: "not a Bolna execution id" };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BOLNA_API_BASE}/executions/${encodeURIComponent(executionId)}`, {
+      method: "GET",
+      headers: { authorization: `Bearer ${config.apiKey}` },
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    const text = await res.text();
+    if (!res.ok) return { ok: false, error: `bolna refused the lookup (${res.status}): ${text.slice(0, 300)}` };
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null) return { ok: false, error: "bolna returned no execution" };
+    return { ok: true, execution: parsed as Record<string, unknown> };
+  } catch (err) {
+    const aborted = err instanceof Error && err.name === "AbortError";
+    return {
+      ok: false,
+      error: aborted ? `bolna did not respond within ${REQUEST_TIMEOUT_MS / 1000}s`
+        : err instanceof Error ? err.message : "unknown error",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export interface BolnaAgent {
+  id: string;
+  name: string;
+}
+
+export type ListAgentsResult = { ok: true; agents: BolnaAgent[] } | { ok: false; error: string };
+
+/**
+ * R-1661: the agents on this Bolna account (`GET /v2/agent/all`, a bare JSON array) — the
+ * dropdown on Cold Calling and on a lead's "AI call". Read live rather than stored, so an agent
+ * added or renamed on Bolna shows up without a deploy. Never throws.
+ */
+export async function listBolnaAgents(config: TelecallProviderConfig): Promise<ListAgentsResult> {
+  if (config.name !== "bolna") return { ok: false, error: "not a Bolna configuration" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BOLNA_API_BASE}/v2/agent/all`, {
+      method: "GET",
+      headers: { authorization: `Bearer ${config.apiKey}` },
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    const text = await res.text();
+    if (!res.ok) return { ok: false, error: `bolna refused the agent list (${res.status}): ${text.slice(0, 200)}` };
+    const parsed: unknown = JSON.parse(text);
+    const list = Array.isArray(parsed) ? parsed : [];
+    const agents = list.flatMap((a): BolnaAgent[] => {
+      if (typeof a !== "object" || a === null) return [];
+      const o = a as Record<string, unknown>;
+      const id = typeof o.id === "string" ? o.id.trim() : "";
+      if (!UUID_RE.test(id)) return [];
+      const name = typeof o.agent_name === "string" && o.agent_name.trim() ? o.agent_name.trim() : "Unnamed agent";
+      return [{ id, name }];
+    });
+    return { ok: true, agents };
+  } catch (err) {
+    const aborted = err instanceof Error && err.name === "AbortError";
+    return {
+      ok: false,
+      error: aborted ? `bolna did not respond within ${REQUEST_TIMEOUT_MS / 1000}s`
+        : err instanceof Error ? err.message : "unknown error",
+    };
+  } finally {
+    clearTimeout(timer);
   }
 }

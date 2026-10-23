@@ -5,7 +5,9 @@ import {
   AUTHORISED_SELLING_POINTS,
   TELECALLER_NAME,
   buildTelecallPrompt,
+  spokenCompany,
   spokenDate,
+  spokenProduct,
 } from "./telecaller-prompt";
 import { perSeatPerYear, type SalesCatalogEntry } from "./sales-agent";
 
@@ -114,7 +116,8 @@ describe("the persona", () => {
   it("introduces itself by name and company", () => {
     const { systemPrompt } = buildTelecallPrompt(BASE);
     expect(systemPrompt).toContain(`You are ${TELECALLER_NAME}`);
-    expect(systemPrompt).toContain("ANUTECH DIGITAL PVT LTD");
+    /* Spoken without the legal suffix since 22 Oct — "PVT LTD" made the voice stumble. */
+    expect(systemPrompt).toContain("Anutech Digital");
   });
 
   it("must admit it is an AI when asked", () => {
@@ -217,5 +220,45 @@ describe("spokenDate", () => {
   it("returns an empty string rather than 'Invalid Date'", () => {
     expect(spokenDate(null)).toBe("");
     expect(spokenDate("not-a-date")).toBe("");
+  });
+});
+
+describe("cold-call pitch (R-1663)", () => {
+  it("Google Workspace campaigns get the Workspace pitch and objection lines", () => {
+    const p = buildTelecallPrompt({ ...BASE, coldCall: { product: "Google Workspace Business Starter" } }).systemPrompt;
+    expect(p).toContain("THE PITCH — GOOGLE WORKSPACE");
+    expect(p).toContain("OBJECTIONS");
+    expect(p).toContain("has NOT enquired");
+  });
+  it("another product gets the plain pitch, never the Workspace one", () => {
+    const p = buildTelecallPrompt({ ...BASE, coldCall: { product: "Zoho Mail Lite" } }).systemPrompt;
+    expect(p).toContain("THE PITCH");
+    expect(p).not.toContain("GOOGLE WORKSPACE");
+  });
+  it("a call back carries the pitch too", () => {
+    const p = buildTelecallPrompt({ ...BASE, coldCall: { product: null, callback: true } }).systemPrompt;
+    expect(p).toContain("CALL BACK");
+    expect(p).toContain("OBJECTIONS");
+  });
+  it("lead and renewal calls are unchanged — no pitch", () => {
+    expect(buildTelecallPrompt(BASE).systemPrompt).not.toContain("THE PITCH");
+  });
+});
+
+describe("names as they are spoken (Abhishek, 22 Oct)", () => {
+  it("drops the legal suffix and the shouting", () => {
+    expect(spokenCompany("ANUTECH DIGITAL PVT LTD")).toBe("Anutech Digital");
+    expect(spokenCompany("Gupta & Co Private Limited")).toBe("Gupta & Co");
+    expect(spokenCompany("Demo Cloud Reseller")).toBe("Demo Cloud Reseller");
+  });
+  it("says the product family, not the plan", () => {
+    expect(spokenProduct("Google Workspace Business Starter")).toBe("Google Workspace");
+    expect(spokenProduct(null)).toBeNull();
+  });
+  it("the cold-call script speaks the short names and never an email address", () => {
+    const p = buildTelecallPrompt({ ...BASE, sellerName: "ANUTECH DIGITAL PVT LTD", coldCall: { product: "Google Workspace Business Starter" } });
+    expect(p.dynamicVariables.company_name).toBe("Anutech Digital");
+    expect(p.systemPrompt).not.toContain("aapkanaam@");
+    expect(p.systemPrompt).toContain("calling about Google Workspace for their business");
   });
 });

@@ -39,7 +39,7 @@ export interface TelecallRowInput {
   callType: TelecallType;
   phoneNumber: string;
   status: TelecallStatus;
-  provider: "retell" | "vapi" | "none";
+  provider: "retell" | "vapi" | "bolna" | "none";
   providerCallId: string | null;
   callPlan: Record<string, unknown>;
   autonomyMode: "off" | "hold" | "auto" | null;
