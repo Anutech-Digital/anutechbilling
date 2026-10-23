@@ -33,6 +33,7 @@ import { ctcFromEmployee } from "@/lib/payroll/ctc";
 import { fyPayslipActuals } from "@/lib/payroll/ctc-register";
 import { form16Working, fyStartOfPeriod, fyLabelOf, taxYearFor, type Form16Working } from "@/lib/payroll/income-tax";
 import { logExport } from "@/lib/export-log";
+import { csvEscape } from "@/lib/csv";
 import { printReport } from "@/lib/reports/print";
 
 /** Previous month (YYYY-MM) — the register shows the month that was just paid. */
@@ -76,11 +77,7 @@ const COLS: { key: keyof SalaryPayment; label: string }[] = [
 
 /** Trigger a client-side CSV download. */
 function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]) {
-  const esc = (v: string | number) => {
-    const s = String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const body = [headers, ...rows].map((r) => r.map(esc).join(",")).join("\n");
+  const body = [headers, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n");
   const url = URL.createObjectURL(new Blob([body], { type: "text/csv;charset=utf-8;" }));
   const a = document.createElement("a");
   a.href = url; a.download = filename; a.click();

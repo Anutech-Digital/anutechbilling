@@ -1,14 +1,9 @@
 import { logExport } from "@/lib/export-log";
+import { csvEscape } from "@/lib/csv";
 /**
  * The GST page's CSV download (moved out of page.tsx unchanged by R-1530, so the
  * composition card uses the same one).
  */
-function csvEscape(s: unknown): string {
-  const v = String(s ?? "");
-  if (/[",\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
-  return v;
-}
-
 export function downloadCSV(filename: string, headers: string[], rows: (string | number)[][]) {
   const lines = [
     headers.map(csvEscape).join(","),

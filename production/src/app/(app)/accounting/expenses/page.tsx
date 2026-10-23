@@ -44,6 +44,7 @@ import { istToday, fyStartYear } from "@/lib/dates/ist";
 import { reconcileTag, ReconcileTag, PayBadge, BillChip, isPayrollExpense } from "./expense-badges";
 import { filterExpenses, EXPENSE_SORT, expenseViewState, readExpenseView } from "./expense-table";
 import { logExport } from "@/lib/export-log";
+import { csvEscape } from "@/lib/csv";
 
 type DateRange = { from: string; to: string };
 const GROUP_BY_CHOICES: readonly GroupBy[] = ["none", "vendor", "category"];
@@ -296,9 +297,8 @@ export default function ExpensesPage() {
       toast.error("No TDS-deducted expense or partner commission in this range. Record TDS on a vendor payment in Add Expense first.");
       return;
     }
-    const esc = (v: string | number) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     const csv = [["Deductee (vendor / partner)", "PAN", "Section", "Date", "Amount paid / credited (ex-GST)", "TDS deducted"], ...rows]
-      .map((r) => r.map(esc).join(",")).join("\n");
+      .map((r) => r.map(csvEscape).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
     a.href = url; a.download = `26Q-working-${range.from}-to-${range.to}.csv`; a.click();

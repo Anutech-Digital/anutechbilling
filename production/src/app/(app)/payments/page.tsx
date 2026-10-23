@@ -12,6 +12,7 @@ import { PAYMENT_TABS } from "@/lib/navigation/drilldown";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
+import { csvEscape } from "@/lib/csv";
 import { useListKeys } from "@/lib/hooks/useKeyboard";
 import { KeyHintBar, ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { getDocumentSignedUrl } from "@/lib/queries/documents";
@@ -334,7 +335,7 @@ function PaymentsPageInner() {
   // no fake "coming soon".
   const handleExportCsv = () => {
     if (filtered.length === 0) { toast.info("No payments to export"); return; }
-    const esc = (v: string) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const esc = (v: string) => csvEscape(v); // R-734: formula-safe (a customer named "=…" stays text)
     /* R-045: gateway fee + net received, blank when not known (never a guessed zero). */
     const header = ["Date", "Customer", "Quote", "Amount", "Gateway fee", "Net received", "Method", "Reference", "Status", "Receipt Voucher"];
     const lines = filtered.map((p) => {

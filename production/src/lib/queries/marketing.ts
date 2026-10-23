@@ -25,6 +25,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { csvEscape } from "@/lib/csv";
 import {
   channelReport, type ChannelReport, type ChannelLeadInput, type ChannelSpendInput,
 } from "@/lib/marketing/channel-economics";
@@ -337,10 +338,7 @@ export async function fetchMarketingReport(supabase: SupabaseClient<Database>, r
 
 /** CSV for the channel leaderboard. Kept here so the page stays presentational. */
 export function channelsToCsv(report: ChannelReport, range: DateRange): string {
-  const esc = (v: unknown) => {
-    const s = v === null || v === undefined ? "" : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
+  const esc = (v: string | null | undefined) => csvEscape(v); // R-734: formula-safe
   const pct = (v: number | null) => (v === null ? "" : (v * 100).toFixed(1));
 
   const lines: string[] = [];

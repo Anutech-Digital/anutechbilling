@@ -41,7 +41,7 @@ import { customerMatchesContact } from "@/lib/contacts/search-index";
 import { newestFirst } from "@/lib/sort/newest-first";
 import { bulkOutcomeMessage, type BulkFailure } from "@/lib/customers/bulk-outcome";
 import { CUSTOMERS_CSV_HEADERS, customersCsvRows } from "@/lib/export/crm-csv";
-import { downloadCSV } from "@/lib/csv";
+import { downloadCSV, csvEscape } from "@/lib/csv";
 import { InvoiceChooserDialog } from "@/components/features/invoices/invoice-chooser-dialog";
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 import { toast } from "sonner";
@@ -574,12 +574,8 @@ export default function CustomersPage() {
     }
     if (rows.length === 0) { toast.error("No companies to export yet."); return; }
     const cols = ["name", "contact_name", "contact_email", "contact_phone", "gstin", "state", "domain", "since"] as const;
-    const esc = (v: unknown) => {
-      const s = v == null ? "" : String(v);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
     const lines = [cols.join(",")];
-    for (const c of rows) lines.push(cols.map((k) => esc((c as Record<string, unknown>)[k])).join(","));
+    for (const c of rows) lines.push(cols.map((k) => csvEscape(String((c as Record<string, unknown>)[k] ?? ""))).join(","));
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

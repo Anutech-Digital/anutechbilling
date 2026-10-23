@@ -26,6 +26,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { formatMonthLabel, utcDateISO, fyStartYear } from "@/lib/dates/ist";
 import { logExport } from "@/lib/export-log";
+import { csvEscape } from "@/lib/csv";
 import { printReport } from "@/lib/reports/print";
 
 type RangeKey = "month" | "fy" | "12m" | "all";
@@ -182,7 +183,7 @@ export default function PurchasesReportPage() {
       [],
       ["Total", totals.count, totals.net, totals.gst, totals.gross],
     ];
-    const csv = rows.map((r) => r.map((c) => (typeof c === "string" && /[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(",")).join("\n");
+    const csv = rows.map((r) => r.map((c) => csvEscape(c)).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     const a = document.createElement("a");
     a.href = url; a.download = `purchases-${range}.csv`; a.click();
