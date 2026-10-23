@@ -13,8 +13,10 @@
  */
 import { tdsBase } from "./tds-receipt";
 import { TDS_SECTIONS } from "./tds-split";
+import { rupee } from "@/lib/utils";
 
-const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
+/* R-1138: the shared formatter (lakh grouping, sign, rounding) — not a local copy. */
+const inr = (n: number) => rupee(n);
 
 export interface TdsShortfallMatch {
   section: string;

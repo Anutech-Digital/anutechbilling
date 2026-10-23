@@ -13,7 +13,7 @@
  */
 
 import { utcDateISO, fyStartYear } from "@/lib/dates/ist";
-import { formatDate } from "@/lib/utils";
+import { formatDate, rupee } from "@/lib/utils";
 import { tdsDepositDueDate } from "@/lib/compliance/tds-due";
 
 export type StepKind = "auto" | "manual";
@@ -69,7 +69,8 @@ export function compliancePeriodKey(stepKey: string, period: string): string {
   return `${fy}-q${q}`;
 }
 
-const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
+/* R-1138: the shared formatter (lakh grouping, sign, rounding) — not a local copy. */
+const inr = (n: number) => rupee(n);
 
 /** Last month of a TDS quarter (Jun, Sep, Dec, Mar). */
 export function isQuarterEnd(period: string): boolean {

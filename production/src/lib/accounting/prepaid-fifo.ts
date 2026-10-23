@@ -7,6 +7,8 @@
  * advances, so a preview that went stale is refused there, never booked wrongly.
  */
 
+import { rupee } from "@/lib/utils";
+
 export type OpenAdvance = {
   id: string;
   vendor_name: string;
@@ -35,7 +37,7 @@ export function planFifo(advances: OpenAdvance[], vendor: string, amount: number
   if (available < amount) {
     return {
       ok: false, available,
-      reason: `Only ₹${available.toLocaleString("en-IN")} is left in ${vendor.trim()} advances — record the missing top-up first (reconcile its bank line as an advance).`,
+      reason: `Only ${rupee(available)} is left in ${vendor.trim()} advances — record the missing top-up first (reconcile its bank line as an advance).`,
     };
   }
 

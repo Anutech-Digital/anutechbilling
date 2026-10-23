@@ -17,6 +17,7 @@
  */
 
 import { utcDateISO, fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
+import { rupee } from "@/lib/utils";
 
 export type AssetBlock ="computers" | "plant" | "furniture" | "vehicles" | "building" | "intangible";
 
@@ -64,7 +65,7 @@ export function depreciationSchedule(a: AssetLike, uptoFy: number): DepRow[] {
   for (let fy = firstFy; fy <= uptoFy; fy++) {
     if (disposalFy !== null && fy >= disposalFy) {
       rows.push({ fy, fyLabel: fyLabel(fy), opening: wdv, ratePct: 0, halfRate: false, depreciation: 0, closing: 0,
-        note: `Sold / scrapped ${a.disposed_on} for ₹${Math.round(a.disposal_value ?? 0).toLocaleString("en-IN")} — ${wdv - Math.round(a.disposal_value ?? 0) >= 0 ? "short-term loss" : "gain"} ₹${Math.abs(wdv - Math.round(a.disposal_value ?? 0)).toLocaleString("en-IN")} on the block` });
+        note: `Sold / scrapped ${a.disposed_on} for ${rupee(Math.round(a.disposal_value ?? 0))} — ${wdv - Math.round(a.disposal_value ?? 0) >= 0 ? "short-term loss" : "gain"} ${rupee(Math.abs(wdv - Math.round(a.disposal_value ?? 0)))} on the block` });
       wdv = 0;
       break;
     }

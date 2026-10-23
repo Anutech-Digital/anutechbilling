@@ -20,6 +20,7 @@
  * deduct them from this payment or a later one.
  */
 import { TDS_SECTION_RATES } from "./tds-rates";
+import { rupee } from "@/lib/utils";
 
 export type DeducteeType = "individual" | "huf" | "company" | "firm" | "aop" | "trust" | "other";
 
@@ -91,7 +92,8 @@ export interface TdsDecision {
   headroom: number | null;
 }
 
-const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
+/* R-1138: the shared formatter (lakh grouping, sign, rounding) — not a local copy. */
+const inr = (n: number) => rupee(n);
 
 export function tdsDecision(i: TdsDecisionInput): TdsDecision {
   const sec = i.section.trim().toUpperCase();

@@ -22,6 +22,7 @@
  */
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { fyStartYear } from "@/lib/dates/ist";
+import { rupee } from "@/lib/utils";
 
 export type Severity = "stop" | "check";
 export interface LawWarning { code: string; severity: Severity; law: string; message: string }
@@ -42,7 +43,8 @@ export const LAW = {
   SET_ON: "2026-10-02",
 } as const;
 
-const inr = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
+/* R-1138: the shared formatter (lakh grouping, sign, rounding) — not a local copy. */
+const inr = (n: number) => rupee(n);
 
 export interface Party { stateCode: string | null; gstin: string | null }
 

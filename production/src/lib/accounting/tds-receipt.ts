@@ -13,8 +13,10 @@
  * past TDS entries whose rate does not fit their section.
  */
 import { checkTdsRate } from "./tds-rates";
+import { rupee } from "@/lib/utils";
 
-const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
+/* R-1138: the shared formatter (lakh grouping, sign, rounding) — not a local copy. */
+const inr = (n: number) => rupee(n);
 
 export interface ReceiptSplit {
   /** Money that reached the bank. */

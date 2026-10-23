@@ -1048,7 +1048,7 @@ export default function QuotesPage() {
                                 icon="whatsapp"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ${rupee(q.amount ?? 0)}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
                                   window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
                                 }}
                               >
@@ -1134,7 +1134,7 @@ export default function QuotesPage() {
                               <DropdownMenuItem
                                 className="gap-2.5 py-2 cursor-pointer text-emerald font-medium"
                                 onClick={() => {
-                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ${rupee(q.amount ?? 0)}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
                                   window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
                                 }}
                               >

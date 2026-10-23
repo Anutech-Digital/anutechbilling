@@ -49,6 +49,8 @@
  * zero. Both paths are tested.
  */
 
+import { rupee } from "@/lib/utils";
+
 /** A subscription as this module needs it — deliberately narrow. */
 export interface MrrSubscription {
   id: string;
@@ -185,7 +187,7 @@ export function reconstructWaterfall(
   );
   if (unexplained !== 0) {
     notes.push(
-      `₹${Math.abs(unexplained).toLocaleString("en-IN")} of movement is unexplained. `
+      `${rupee(Math.abs(unexplained))} of movement is unexplained. `
       + "That is the net of upgrades and downgrades nobody recorded, and it is an "
       + "under-estimate — mid-window increases are absorbed into the starting balance.",
     );
