@@ -110,6 +110,7 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
   "attendance/device/register/verify": "WebAuthn for the caller's own device",
   "attendance/mark": "the caller's own attendance",
   "attendance/self": "the caller's own attendance",
+  "auth/login-event": "records the caller's OWN sign-in (R-1010) — user, time, IP and device all read on the server; the body is ignored",
   "push/subscribe": "the caller's own push endpoint",
   "push/unsubscribe": "the caller's own push endpoint",
   "push/test": "a test push to the caller's own device",
