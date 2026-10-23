@@ -2,7 +2,7 @@
  * R-1007 — POST /api/exports/<customers|leads|invoices>  →  the CSV file.
  *
  * The only way the customers list, the leads list and the invoice register leave the app.
- * Body: { ids?: string[] } — the ticked rows (invoices' bulk bar); no ids = every row the
+ * Body: { ids?: string[] } — the ticked rows (Companies / Invoices bulk bars, any kind — R-1801); no ids = every row the
  * caller can see. Order of work:
  *   1. withRoute: signed in, linked to a company, role in EXPORT_ROLES (else 403);
  *   2. mayExport(kind, role) — customers / leads need can_export_data (owner, manager);

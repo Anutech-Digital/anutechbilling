@@ -26,18 +26,31 @@ const INVOICE_EXPORT_COLUMNS =
 
 export interface ExportTable { headers: readonly string[]; rows: Cell[][] }
 
-/** `ids` narrows to the rows the user ticked (invoices' bulk bar); absent = every row they can see. */
+/**
+ * `ids` narrows to the rows the user ticked (the Companies and Invoices bulk bars); absent =
+ * every row they can see. R-1801: it narrows EVERY kind — before, customers / leads ignored it,
+ * so "Export selected" on 3 companies would have handed over the whole contact book.
+ */
 export async function readExportRows(supabase: Client, tenantId: string, kind: ExportKind, ids?: readonly string[]): Promise<ExportTable> {
+  const picked = ids && ids.length > 0 ? ids : null;
   if (kind === "customers") {
-    const rows = await fetchAllRows((from, to) => supabase
-      .from("customers").select(CUSTOMER_EXPORT_COLUMNS).eq("tenant_id", tenantId)
-      .order("name", { ascending: true }).order("id", { ascending: true }).range(from, to));
+    const rows = picked
+      ? await fetchAllRowsIn(picked, (chunk, from, to) => supabase
+        .from("customers").select(CUSTOMER_EXPORT_COLUMNS).eq("tenant_id", tenantId).in("id", chunk)
+        .order("name", { ascending: true }).order("id", { ascending: true }).range(from, to))
+      : await fetchAllRows((from, to) => supabase
+        .from("customers").select(CUSTOMER_EXPORT_COLUMNS).eq("tenant_id", tenantId)
+        .order("name", { ascending: true }).order("id", { ascending: true }).range(from, to));
     return { headers: CUSTOMERS_CSV_HEADERS, rows: customersCsvRows(rows as unknown as Customer[]) };
   }
   if (kind === "leads") {
-    const rows = await fetchAllRows((from, to) => supabase
-      .from("leads").select(LEAD_EXPORT_COLUMNS).eq("tenant_id", tenantId)
-      .order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to));
+    const rows = picked
+      ? await fetchAllRowsIn(picked, (chunk, from, to) => supabase
+        .from("leads").select(LEAD_EXPORT_COLUMNS).eq("tenant_id", tenantId).in("id", chunk)
+        .order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to))
+      : await fetchAllRows((from, to) => supabase
+        .from("leads").select(LEAD_EXPORT_COLUMNS).eq("tenant_id", tenantId)
+        .order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to));
     return { headers: LEADS_CSV_HEADERS, rows: leadsCsvRows(rows as unknown as Parameters<typeof leadsCsvRows>[0]) };
   }
   const rows = ids && ids.length > 0

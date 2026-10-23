@@ -14,7 +14,7 @@ import * as React from "react";
 
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), success: vi.fn() } }));
 vi.mock("@/lib/queries/team", () => ({ useTeamMembers: () => ({ data: [] }) }));
-vi.mock("@/lib/queries/leads", () => ({ fetchLeadsForExport: vi.fn() }));
+vi.mock("@/lib/exports/download-server-export", () => ({ downloadServerExport: vi.fn() }));
 vi.mock("@/components/shared/team-view-toggle", () => ({ TeamViewToggle: () => null }));
 vi.mock("@/components/features/leads/leads-smart-views", () => ({ LeadsSmartViews: () => null }));
 

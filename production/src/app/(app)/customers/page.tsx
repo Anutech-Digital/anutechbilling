@@ -29,10 +29,9 @@ import { CustomerProfile } from "@/components/features/customers/customer-profil
 import { CustomersBulkBar } from "@/components/features/customers/customers-bulk-bar";
 import { useCustomerGroups, useSetCustomerGroup } from "@/lib/queries/customer-groups";
 import {
-  useCustomers, useCustomersPaged, useCustomerListCounts, fetchAllCustomers, CUSTOMERS_PAGE_SIZE,
+  useCustomers, useCustomersPaged, useCustomerListCounts, CUSTOMERS_PAGE_SIZE,
   useOpenCreditsByCustomer, useDeleteCustomer, useSetCustomerActive,
 } from "@/lib/queries/customers";
-import { createClient } from "@/lib/supabase/client";
 import {
   customerViewCounts, customerMoneyTotals, contactMatchedCustomerIds, customerListMode, customerSearchFromUrl, type ViewCtx,
 } from "./server-list";
@@ -40,8 +39,8 @@ import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
 import { newestFirst } from "@/lib/sort/newest-first";
 import { bulkOutcomeMessage, type BulkFailure } from "@/lib/customers/bulk-outcome";
-import { CUSTOMERS_CSV_HEADERS, customersCsvRows } from "@/lib/export/crm-csv";
-import { downloadCSV } from "@/lib/csv";
+import { downloadServerExport } from "@/lib/exports/download-server-export";
+import { mayExport } from "@/lib/exports/server-export";
 import { InvoiceChooserDialog } from "@/components/features/invoices/invoice-chooser-dialog";
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 import { toast } from "sonner";
@@ -170,6 +169,9 @@ export default function CustomersPage() {
   const canDeleteCustomer = canDeleteMoney(myRole);
   /* R-885: issuing an invoice (generate_invoice / create_direct_invoice) is a money role. */
   const canInvoice = canRecordMoney(myRole);
+  /* R-1801: the contact book leaves the app only for can_export_data (owner, manager) — the
+     same rule POST /api/exports/customers enforces, so no one sees a button that will 403. */
+  const canExport = mayExport("customers", myRole);
   /* `?q=` (R-1720, like /invoices?q=) and `?contact=` (the "Serves N customers" chip on a
      contact) seed the search box rather than living as a filter of its own, so the
      operator lands on an ordinary search they can widen, narrow or clear — and so there is one filter to
@@ -415,14 +417,15 @@ export default function CustomersPage() {
        for the app having done half a job. */
   };
 
-  const bulkExport = () => {
+  /* R-1801: the ticked companies' file comes from POST /api/exports/customers with their ids —
+     the server checks the role, masks contacts, logs the export and signs the footer. */
+  const bulkExport = async () => {
     if (pickedCustomers.length === 0) return;
-    downloadCSV(
-      `customers-${new Date().toISOString().slice(0, 10)}.csv`,
-      [...CUSTOMERS_CSV_HEADERS],
-      customersCsvRows(pickedCustomers),
-    );
-    toast.success(`Exported ${pickedCustomers.length} compan${pickedCustomers.length === 1 ? "y" : "ies"} to CSV`);
+    setBulkBusy(true);
+    const r = await downloadServerExport("customers", { ids: pickedCustomers.map((c) => c.id) });
+    setBulkBusy(false);
+    if (r.ok) toast.success(`Exported ${r.rows} compan${r.rows === 1 ? "y" : "ies"} to CSV`);
+    else toast.error("Could not export the companies", { description: r.error });
   };
 
   /** Archive or reactivate. One code path — the flag is the only difference. */
@@ -564,24 +567,16 @@ export default function CustomersPage() {
     });
   }
 
-  /* R-210: the export is every customer, not the 50 on screen — read in full on click. */
+  /* R-210: the export is every customer, not the 50 on screen. R-1801: the server reads them
+     all (POST /api/exports/customers — role check, contact mask, export_log, "Exported by …"
+     footer); the page no longer builds the file. */
+  const [exporting, setExporting] = React.useState(false);
   async function handleExport() {
-    let rows: NonNullable<typeof full.data>;
-    try {
-      rows = mode === "full" && full.data ? full.data : await fetchAllCustomers(createClient());
-    } catch (e) {
-      toast.error("Could not export companies", { description: (e as Error).message });
-      return;
-    }
-    if (rows.length === 0) { toast.error("No companies to export yet."); return; }
-    const cols = ["name", "contact_name", "contact_email", "contact_phone", "gstin", "state", "domain", "since"] as const;
-    /* R-1795: the shared downloadCSV — csvEscape on every cell (R-734) and an export_log row (R-1006). */
-    downloadCSV(
-      `customers-${new Date().toISOString().slice(0, 10)}.csv`,
-      [...cols],
-      rows.map((c) => cols.map((k) => String((c as Record<string, unknown>)[k] ?? ""))),
-    );
-    toast.success(`Exported ${rows.length} compan${rows.length === 1 ? "y" : "ies"} to CSV`);
+    setExporting(true);
+    const r = await downloadServerExport("customers");
+    setExporting(false);
+    if (r.ok) toast.success(`Exported ${r.rows} compan${r.rows === 1 ? "y" : "ies"} to CSV`);
+    else toast.error("Could not export the companies", { description: r.error });
   }
 
   return (
@@ -599,9 +594,11 @@ export default function CustomersPage() {
               <Button icon="more_h" size="sm">More</Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[12rem]">
-              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={handleExport}>
-                <Icon name="download" size={15} /> Export CSV
+              {canExport && (
+              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" disabled={exporting} onClick={handleExport}>
+                <Icon name="download" size={15} /> {exporting ? "Exporting…" : "Export CSV"}
               </DropdownMenuItem>
+              )}
               {canWrite && (<>
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setImportOpen(true)}>
                 <Icon name="upload" size={15} /> Import companies
@@ -1180,7 +1177,7 @@ export default function CustomersPage() {
         count={pickedIds.size}
         groups={groups ?? []}
         busy={bulkBusy}
-        onExport={bulkExport}
+        onExport={canExport ? bulkExport : undefined}
         onArchive={() => void bulkSetActive(false)}
         onReactivate={() => void bulkSetActive(true)}
         onSetGroup={(g) => void bulkSetGroup(g)}

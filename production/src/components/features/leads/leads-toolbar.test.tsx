@@ -11,10 +11,17 @@ import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 const toastInfo = vi.fn();
-vi.mock("sonner", () => ({ toast: { info: (...a: unknown[]) => toastInfo(...a), success: vi.fn() } }));
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+vi.mock("sonner", () => ({ toast: {
+  info: (...a: unknown[]) => toastInfo(...a),
+  success: (...a: unknown[]) => toastSuccess(...a),
+  error: (...a: unknown[]) => toastError(...a),
+} }));
 const members = vi.fn((): Array<{ id: string; full_name: string; email: string }> => []);
 vi.mock("@/lib/queries/team", () => ({ useTeamMembers: () => ({ data: members() }) }));
-vi.mock("@/lib/queries/leads", () => ({ fetchLeadsForExport: vi.fn() }));
+const serverExport = vi.fn();
+vi.mock("@/lib/exports/download-server-export", () => ({ downloadServerExport: (...a: unknown[]) => serverExport(...a) }));
 vi.mock("@/components/shared/team-view-toggle", () => ({ TeamViewToggle: () => null }));
 vi.mock("@/components/features/leads/leads-smart-views", () => ({ LeadsSmartViews: () => null }));
 /* Every menu rendered open — R-392's tests read the Filter menu's contents. */
@@ -245,5 +252,42 @@ describe("R-816: the Filter menu fits the window and scrolls", () => {
     fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /Facebook \/ Instagram Ads/ }));
     const update = setSourceFilter.mock.calls[0][0] as (prev: string[]) => string[];
     expect(update(["google-ads"])).toEqual(["google-ads", "meta-ads"]);
+  });
+});
+
+/* R-1801: the leads file is built on the server (role check, contact mask, export_log,
+   "Exported by …" footer). The menu item shows only for a role the route serves
+   (can_export_data: owner, manager) and asks the route — never builds a CSV in the browser. */
+describe("R-1801: More → Export CSV goes through the server", () => {
+  const asRole = (role: string) => ({ currentUser: { role } as unknown as LeadsToolbarProps["currentUser"] });
+
+  it("owner and manager see Export CSV; sales, billing and accountant do not", () => {
+    for (const role of ["owner", "manager"]) {
+      render(<LeadsToolbar {...props(asRole(role))} />);
+      expect(screen.queryByRole("menuitem", { name: /Export CSV/ }), role).not.toBeNull();
+      cleanup();
+    }
+    for (const role of ["sales", "sales_senior", "billing", "accountant", "support"]) {
+      render(<LeadsToolbar {...props(asRole(role))} />);
+      expect(screen.queryByRole("menuitem", { name: /Export CSV/ }), role).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("pressing it asks POST /api/exports/leads and says how many came back", async () => {
+    serverExport.mockResolvedValueOnce({ ok: true, rows: 12, filename: "leads-2026-10-24.csv" });
+    render(<LeadsToolbar {...props(asRole("owner"))} />);
+    fireEvent.click(screen.getByRole("menuitem", { name: /Export CSV/ }));
+    await vi.waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Exported 12 leads to CSV"));
+    expect(serverExport).toHaveBeenCalledWith("leads");
+  });
+
+  it("a refusal shows the server's own sentence", async () => {
+    serverExport.mockResolvedValueOnce({ ok: false, error: "Your role cannot export leads — ask the workspace owner or a manager for the file." });
+    render(<LeadsToolbar {...props(asRole("manager"))} />);
+    fireEvent.click(screen.getByRole("menuitem", { name: /Export CSV/ }));
+    await vi.waitFor(() => expect(toastError).toHaveBeenCalledWith("Could not export the leads", {
+      description: "Your role cannot export leads — ask the workspace owner or a manager for the file.",
+    }));
   });
 });

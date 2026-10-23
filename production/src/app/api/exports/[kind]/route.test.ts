@@ -98,6 +98,30 @@ describe("POST /api/exports/[kind] (R-1007)", () => {
     expect(db.rpcs).toEqual([["log_export", { p_what: "invoices-selected", p_row_count: 1, p_format: "csv" }]]);
   });
 
+  /* R-1801: the Companies bulk bar exports only the ticked companies. Before, the route read
+     `ids` for invoices only — a customers call with ids got the WHOLE contact book. */
+  it("customers with ids: only the ticked rows, logged as customers-selected", async () => {
+    const ID = "44444444-4444-4444-8444-444444444444";
+    const res = await call("customers", { ids: [ID] });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toMatch(/selected-customers-/);
+    expect(db.ins).toEqual([["id", [ID]]]);
+    expect(db.eqs).toContainEqual(["customers", "tenant_id", TENANT]);
+    expect(db.rpcs).toEqual([["log_export", { p_what: "customers-selected", p_row_count: 1, p_format: "csv" }]]);
+  });
+
+  it("leads with ids are narrowed the same way (never the whole list by accident)", async () => {
+    const ID = "55555555-5555-4555-8555-555555555555";
+    expect((await call("leads", { ids: [ID] })).status).toBe(200);
+    expect(db.ins).toEqual([["id", [ID]]]);
+  });
+
+  it("a sales login gets 403 on customers even with ids — nothing read", async () => {
+    db.me = { ...db.me, role: "sales" };
+    expect((await call("customers", { ids: ["44444444-4444-4444-8444-444444444444"] })).status).toBe(403);
+    expect(db.reads).toEqual([]);
+  });
+
   it("billing and support cannot export leads", async () => {
     for (const role of ["billing", "support", "sales_senior", "delivery", "partner_agent"]) {
       db.me = { ...db.me, role };
