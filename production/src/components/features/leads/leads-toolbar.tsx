@@ -377,7 +377,11 @@ export function LeadsToolbar({
         </DropdownMenu>
 
         {!isSales && (
-          <DropdownMenu>
+          /* R-1427: modal={false}, like R-457's bulk bar. Every item here opens a dialog. The menu
+             (react-menu) and the dialog (react-dialog) each carry their OWN copy of Radix's
+             dismissable layer, so a modal menu's body `pointer-events: none` was saved by the
+             dialog as the page's normal value and put back on Close — /leads froze until a reload. */
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button variant="default" size="sm" icon="more_h">More</Button>
             </DropdownMenuTrigger>
