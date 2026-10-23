@@ -421,7 +421,9 @@ export function TaxInvoiceDialog({
         </div>
 
         {/* PDF body */}
-        <div className="bg-paper p-10 print:p-0 font-sans text-ink">
+        {/* R-1654: p-4 on a phone (p-10 left ~295px for a 384px table, so Amount was cut off);
+            sm: and print keep the A4 look unchanged. The PDF is a separate react-pdf template. */}
+        <div className="bg-paper p-4 sm:p-10 print:p-0 font-sans text-ink">
 
           {/* Header */}
           <div className="text-center mb-4">
@@ -439,8 +441,8 @@ export function TaxInvoiceDialog({
           </div>
 
           {/* Supplier + Recipient */}
-          <div className="grid grid-cols-2 gap-6 mb-6 border-y-2 border-ink py-4">
-            <div>
+          <div className="grid grid-cols-2 gap-3 sm:gap-6 mb-6 border-y-2 border-ink py-4 [overflow-wrap:anywhere]">
+            <div className="min-w-0">
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-1.5">From (Supplier)</p>
               <p className="font-serif text-lg leading-tight">{tenantName}</p>
               {tenantGstin && (
@@ -455,7 +457,7 @@ export function TaxInvoiceDialog({
               {tenantEmail && <p className="text-xs text-ink-3 font-mono">{tenantEmail}</p>}
               {tenantPhone && <p className="text-xs text-ink-3 font-mono">{tenantPhone}</p>}
             </div>
-            <div className="text-right">
+            <div className="min-w-0 text-right">
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-1.5">Bill To (Recipient)</p>
               <p className="font-serif text-lg leading-tight">{invoice.customer_name}</p>
               {customerGstin && (
@@ -468,7 +470,7 @@ export function TaxInvoiceDialog({
           </div>
 
           {/* Invoice meta */}
-          <div className="grid grid-cols-4 gap-4 mb-6 text-sm">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6 text-sm [overflow-wrap:anywhere]">
             <div>
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-0.5">Invoice No.</p>
               <p className="font-mono">{invoice.id}</p>
@@ -489,16 +491,16 @@ export function TaxInvoiceDialog({
           </div>
 
           {/* Line items */}
-          <div className="border-2 border-ink rounded-md overflow-hidden mb-4">
+          <div className="border-2 border-ink rounded-md overflow-x-auto mb-4">
             <table className="w-full">
               <thead className="bg-paper-2 border-b border-ink">
                 <tr>
-                  <th className="text-left  p-2.5 text-3xs uppercase tracking-wider font-semibold w-8">#</th>
-                  <th className="text-left  p-2.5 text-3xs uppercase tracking-wider font-semibold">Description</th>
-                  <th className="text-left  p-2.5 text-3xs uppercase tracking-wider font-semibold w-20">HSN/SAC</th>
-                  <th className="text-right p-2.5 text-3xs uppercase tracking-wider font-semibold w-16">Qty</th>
-                  <th className="text-right p-2.5 text-3xs uppercase tracking-wider font-semibold w-24">Rate</th>
-                  <th className="text-right p-2.5 text-3xs uppercase tracking-wider font-semibold w-28">Amount (₹)</th>
+                  <th className="text-left  px-1 py-1.5 sm:p-2.5 text-3xs uppercase tracking-normal sm:tracking-wider font-semibold sm:w-8">#</th>
+                  <th className="text-left  px-1 py-1.5 sm:p-2.5 text-3xs uppercase tracking-normal sm:tracking-wider font-semibold">Description</th>
+                  <th className="text-left  px-1 py-1.5 sm:p-2.5 text-3xs uppercase tracking-normal sm:tracking-wider font-semibold sm:w-20">HSN/SAC</th>
+                  <th className="text-right px-1 py-1.5 sm:p-2.5 text-3xs uppercase tracking-normal sm:tracking-wider font-semibold sm:w-16">Qty</th>
+                  <th className="text-right px-1 py-1.5 sm:p-2.5 text-3xs uppercase tracking-normal sm:tracking-wider font-semibold sm:w-24">Rate</th>
+                  <th className="text-right px-1 py-1.5 sm:p-2.5 text-3xs uppercase tracking-normal sm:tracking-wider font-semibold sm:w-28">Amount (₹)</th>
                 </tr>
               </thead>
               <tbody>
@@ -518,8 +520,8 @@ export function TaxInvoiceDialog({
                 ) : (
                   lineItems.map((li, i) => (
                     <tr key={li.id} className="border-b border-hairline last:border-0">
-                      <td className="p-2.5 text-xs text-ink-3">{i + 1}</td>
-                      <td className="p-2.5 text-sm">
+                      <td className="px-1 py-1.5 sm:p-2.5 text-xs text-ink-3">{i + 1}</td>
+                      <td className="px-1 py-1.5 sm:p-2.5 text-sm [overflow-wrap:anywhere]">
                         <p className="font-medium">{li.name}</p>
                         {lineDetailNotes(li, periodContext).map((n) => (
                           <p key={n} className="text-2xs text-ink-3 mt-0.5 tabular-nums" data-testid="line-period">{n}</p>
@@ -532,10 +534,10 @@ export function TaxInvoiceDialog({
                           the third copy of a value lib/gst/hsn.ts exists to hold one copy
                           of. A project line carries its own SAC (998314, IT design and
                           development); a SaaS line carries none and falls back here. */}
-                      <td className="p-2.5 font-mono text-2xs text-ink-2">{li.hsn ?? SAAS_HSN}</td>
-                      <td className="p-2.5 text-right tabular-nums text-sm">{li.qty}</td>
-                      <td className="p-2.5 text-right tabular-nums text-sm">{money(li.rate)}</td>
-                      <td className="p-2.5 text-right tabular-nums text-sm font-medium">
+                      <td className="px-1 py-1.5 sm:p-2.5 font-mono text-2xs text-ink-2">{li.hsn ?? SAAS_HSN}</td>
+                      <td className="px-1 py-1.5 sm:p-2.5 text-right tabular-nums text-sm">{li.qty}</td>
+                      <td className="px-1 py-1.5 sm:p-2.5 text-right tabular-nums text-sm">{money(li.rate)}</td>
+                      <td className="px-1 py-1.5 sm:p-2.5 text-right tabular-nums text-sm font-medium">
                         {money(li.qty * li.rate)}
                       </td>
                     </tr>
@@ -547,7 +549,7 @@ export function TaxInvoiceDialog({
 
           {/* Totals block — right-aligned */}
           <div className="flex justify-end mb-6">
-            <table className="w-80 text-sm">
+            <table className="w-full sm:w-80 text-sm">
               <tbody>
                 <tr>
                   <td className="py-1 text-ink-3">Subtotal</td>
@@ -613,10 +615,10 @@ export function TaxInvoiceDialog({
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-emerald/20">
-                    <th className="text-left  py-1.5 font-semibold text-ink-3 w-32">Voucher No.</th>
+                    <th className="text-left  py-1.5 font-semibold text-ink-3 sm:w-32">Voucher No.</th>
                     <th className="text-left  py-1.5 font-semibold text-ink-3">Received on</th>
-                    <th className="text-left  py-1.5 font-semibold text-ink-3 w-32">Method</th>
-                    <th className="text-right py-1.5 font-semibold text-ink-3 w-32">Amount</th>
+                    <th className="text-left  py-1.5 font-semibold text-ink-3 sm:w-32">Method</th>
+                    <th className="text-right py-1.5 font-semibold text-ink-3 sm:w-32">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -643,12 +645,12 @@ export function TaxInvoiceDialog({
 
           {/* Net payable */}
           <div className="flex justify-end mb-6">
-            <div className="w-80 border-2 border-ink rounded-md p-4 bg-paper-2">
+            <div className="w-full sm:w-80 border-2 border-ink rounded-md p-4 bg-paper-2">
               <div className="flex justify-between items-baseline">
                 <span className="text-2xs uppercase tracking-widest font-semibold text-ink-3">
                   {advancesAdjusted > 0 ? "Net payable" : "Amount due"}
                 </span>
-                <span className="font-serif text-3xl tabular-nums">{money(netPayable)}</span>
+                <span className="font-serif text-2xl sm:text-3xl tabular-nums">{money(netPayable)}</span>
               </div>
               {advancesAdjusted > 0 && netPayable === 0 && (
                 <p className="text-2xs text-emerald-ink mt-1.5 flex items-center gap-1">
