@@ -210,16 +210,21 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
 
   /* How many parsed rows are already in the books (will be skipped on import) — the same
      function the import itself runs (planBankImport, R-1691), so the count shown here is
-     the count skipped. It also counts a line repeated within this upload. */
+     the count skipped. R-1644: it counts — each stored line accounts for one line here, and
+     lines of this upload are never matched to each other. The skipped lines are listed and
+     the owner can take them anyway — never dropped silently. */
   const plan = React.useMemo(() => {
     if (!parsed) return null;
     const rows = parsed.rows.filter((r) => !isExcluded(r));
-    if (!existingKeys) return { duplicates: 0, freshCount: rows.length };
+    if (!existingKeys) return { duplicates: 0, freshCount: rows.length, skipped: [] as ParsedRow[] };
     const p = planBankImport(rows, existingKeys);
-    return { duplicates: p.duplicates, freshCount: p.fresh.length };
+    return { duplicates: p.duplicates, freshCount: p.fresh.length, skipped: p.skipped };
   }, [parsed, existingKeys, isExcluded]);
-  const dupCount = plan?.duplicates ?? 0;
-  const freshCount = plan?.freshCount ?? 0;
+  const [importSkipped, setImportSkipped] = React.useState(false);
+  React.useEffect(() => { setImportSkipped(false); }, [parsed]);
+  const dupCount = importSkipped ? 0 : (plan?.duplicates ?? 0);
+  const skippedLines = plan?.skipped ?? [];
+  const freshCount = (plan?.freshCount ?? 0) + (importSkipped ? skippedLines.length : 0);
 
   React.useEffect(() => {
     if (!open) { setCsvText(""); setParsed(null); setMode("csv"); setReading(false); setOrigin(null); }
@@ -412,6 +417,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           accountId,
           fileName: origin?.name ?? null,
           source: origin?.source ?? "paste",
+          importSkipped,
           rows: parsed.rows.flatMap((r, i) => {
             if (isExcluded(r)) return [];
             const category = categoryFor(i);
@@ -570,11 +576,30 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                   Skipped {parsed.skipped} row{parsed.skipped === 1 ? "" : "s"} (missing date or both amounts zero — usually opening-balance / sub-total lines)
                 </p>
               )}
-              {dupCount > 0 && (
-                <p className="text-xs text-amber-ink mb-2 flex items-start gap-1.5">
-                  <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
-                  {dupCount} line{dupCount === 1 ? "" : "s"} already in the books — they will be <b>skipped</b>{freshCount > 0 ? ` (only ${freshCount} new will be imported)` : " (nothing new)"}.
-                </p>
+              {skippedLines.length > 0 && (
+                <div className="text-xs text-amber-ink mb-2 rounded-md border border-amber/40 bg-amber-soft/20 p-2">
+                  <p className="flex items-start gap-1.5">
+                    <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
+                    <span>
+                      {importSkipped
+                        ? <>{skippedLines.length} line{skippedLines.length === 1 ? "" : "s"} that look already imported will be imported <b>again</b>.</>
+                        : <>{skippedLines.length} line{skippedLines.length === 1 ? "" : "s"} skipped as already imported{freshCount > 0 ? ` (only ${freshCount} new will be imported)` : " (nothing new)"}:</>}
+                    </span>
+                  </p>
+                  {/* R-1644: say WHICH lines — two equal ₹500 payments on one day are two payments. */}
+                  <ul className="mt-1 ml-5 space-y-0.5 text-ink-2 max-h-24 overflow-y-auto">
+                    {skippedLines.map((r, i) => (
+                      <li key={i} className="truncate">
+                        {formatDate(r.txn_date)} · {r.debit ? `${rupee(r.debit)} out` : `${rupee(r.credit ?? 0)} in`} · {r.description ?? "—"}
+                      </li>
+                    ))}
+                  </ul>
+                  <label className="mt-1.5 ml-5 flex items-center gap-2 cursor-pointer text-ink-2">
+                    <input type="checkbox" className="accent-amber" checked={importSkipped}
+                      onChange={(e) => setImportSkipped(e.target.checked)} />
+                    Import these anyway — they are real, separate transactions
+                  </label>
+                </div>
               )}
               {parsed.rows.length > 0 && (
                 <div className="overflow-x-auto">

@@ -494,29 +494,37 @@ export function bankTxnBalanceKey(r: KeyedLine): string | null {
 }
 
 /**
- * What an account already holds, indexed for the duplicate check (R-1691).
+ * What an account already holds, indexed for the duplicate check (R-1691) — every key with a
+ * COUNT of stored lines (R-1644), because each stored line accounts for one line of an upload:
  *  - `bal`: balance keys of stored lines that carry a running balance;
  *  - `prefix`: narration-prefix keys of EVERY stored line (for new lines with no balance);
- *  - `prefixNoBal`: narration-prefix keys of stored lines WITHOUT a balance, with a count —
- *    each such stored line can stand for one balance-carrying line of a re-upload.
+ *  - `prefixNoBal`: narration-prefix keys of stored lines WITHOUT a balance — each can stand
+ *    for one balance-carrying line of a re-upload.
  */
 export type BankLineIndex = {
-  bal: Set<string>;
-  prefix: Set<string>;
+  bal: Map<string, number>;
+  prefix: Map<string, number>;
   prefixNoBal: Map<string, number>;
 };
 
-function addToIndex(ix: BankLineIndex, r: KeyedLine): void {
-  const bal = bankTxnBalanceKey(r);
-  const pre = bankTxnKey(r);
-  ix.prefix.add(pre);
-  if (bal) ix.bal.add(bal);
-  else ix.prefixNoBal.set(pre, (ix.prefixNoBal.get(pre) ?? 0) + 1);
+const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
+/** Use up one stored line under this key; false when none is left. */
+function take(m: Map<string, number>, k: string): boolean {
+  const left = m.get(k) ?? 0;
+  if (left <= 0) return false;
+  m.set(k, left - 1);
+  return true;
 }
 
 export function indexBankLines(rows: KeyedLine[]): BankLineIndex {
-  const ix: BankLineIndex = { bal: new Set(), prefix: new Set(), prefixNoBal: new Map() };
-  for (const r of rows) addToIndex(ix, r);
+  const ix: BankLineIndex = { bal: new Map(), prefix: new Map(), prefixNoBal: new Map() };
+  for (const r of rows) {
+    const bal = bankTxnBalanceKey(r);
+    const pre = bankTxnKey(r);
+    bump(ix.prefix, pre);
+    if (bal) bump(ix.bal, bal);
+    else bump(ix.prefixNoBal, pre);
+  }
   return ix;
 }
 
@@ -529,46 +537,41 @@ export function indexBankLines(rows: KeyedLine[]): BankLineIndex {
  * one line to it, so the second never reached the books — and the Statement check then
  * showed "Lines missing" for exactly that money. The running balance tells them apart.
  *
- *  1. A line WITH a running balance is a duplicate when a stored (or earlier in this upload)
- *     line has the same date + debit + credit + balance. The narration is not looked at: the
- *     balance changes after every line, and the same line read twice (CSV once, the AI from
- *     a PDF once) keeps it however its narration came out.
- *  2. …or when a stored line WITHOUT a balance has its narration-prefix key — an earlier
- *     import from a file with no balance column. Each such stored line absorbs ONE new line
- *     (a count, not a set), so a re-upload never doubles the line, and the second of two
- *     same-prefix lines (the one the old rule dropped) still comes in.
- *  3. A line WITHOUT a balance keeps the R-1509 narration-prefix rule against every stored
- *     line and the rest of the upload (spacing / masking variants of one line still match).
+ * R-1644: the rule COUNTS. Two ₹500 UPI payments on one day with the same narration, in a file
+ * with no running balance, were one key — the second was dropped silently, inside the same file
+ * and against the books. Now each stored line accounts for ONE line of the upload (file has 2,
+ * books have 1 → 1 comes in), and lines of one upload are never matched to each other: a bank
+ * statement prints each transaction once, so two equal lines in it are two transactions.
  *
+ *  1. A line WITH a running balance is a duplicate when a stored line, not yet used up, has the
+ *     same date + debit + credit + balance. The narration is not looked at: the balance changes
+ *     after every line, and the same line read twice (CSV once, the AI from a PDF once) keeps
+ *     it however its narration came out.
+ *  2. …or when a stored line WITHOUT a balance, not yet used up, has its narration-prefix key —
+ *     an earlier import from a file with no balance column.
+ *  3. A line WITHOUT a balance is a duplicate when a stored line, not yet used up, has its
+ *     narration-prefix key (R-1509: spacing / masking variants of one line still match).
+ *
+ * The skipped lines are returned too, so the dialog can list them and offer "Import anyway".
  * The index passed in is not changed — the dialog keeps it in its query cache.
  */
-export function splitNewBankLines<R extends KeyedLine>(rows: R[], existing: BankLineIndex): { fresh: R[]; duplicates: number } {
+export function splitNewBankLines<R extends KeyedLine>(rows: R[], existing: BankLineIndex): { fresh: R[]; skipped: R[]; duplicates: number } {
   const ix: BankLineIndex = {
-    bal: new Set(existing.bal),
-    prefix: new Set(existing.prefix),
+    bal: new Map(existing.bal),
+    prefix: new Map(existing.prefix),
     prefixNoBal: new Map(existing.prefixNoBal),
   };
   const fresh: R[] = [];
-  let duplicates = 0;
+  const skipped: R[] = [];
   for (const r of rows) {
     const bal = bankTxnBalanceKey(r);
     const pre = bankTxnKey(r);
-    let dup: boolean;
-    if (bal) {
-      if (ix.bal.has(bal)) dup = true;
-      else {
-        const left = ix.prefixNoBal.get(pre) ?? 0;
-        dup = left > 0;
-        if (dup) ix.prefixNoBal.set(pre, left - 1);
-      }
-    } else {
-      dup = ix.prefix.has(pre);
-    }
-    if (dup) { duplicates++; continue; }
-    addToIndex(ix, r);   // also dedup within the same upload
-    fresh.push(r);
+    const dup = bal
+      ? take(ix.bal, bal) || take(ix.prefixNoBal, pre)
+      : take(ix.prefix, pre);
+    (dup ? skipped : fresh).push(r);
   }
-  return { fresh, duplicates };
+  return { fresh, skipped, duplicates: skipped.length };
 }
 
 /**
@@ -576,7 +579,11 @@ export function splitNewBankLines<R extends KeyedLine>(rows: R[], existing: Bank
  * importBankTransactions runs exactly this, and the import dialog's preview count runs it too
  * (R-1691), so the number the owner is shown is the number that happens.
  */
-export function planBankImport<R extends KeyedLine>(rows: R[], existing: BankLineIndex): { fresh: (R & { debit: number; credit: number })[]; duplicates: number } {
+export function planBankImport<R extends KeyedLine>(rows: R[], existing: BankLineIndex): {
+  fresh: (R & { debit: number; credit: number })[];
+  skipped: (R & { debit: number; credit: number })[];
+  duplicates: number;
+} {
   const cleaned = rows
     .map((r) => {
       // A bank line is debit XOR credit — coerce to non-negative integers so
@@ -633,6 +640,12 @@ export type BankImportInput = {
   /** R-1623: shown in the account's Imports list. */
   fileName?: string | null;
   source?: Exclude<BankImportSource, "legacy">;
+  /**
+   * R-1644: "Import them anyway" — the owner looked at the lines listed as already imported
+   * and says they are real (e.g. two equal ₹500 payments the books hold only one of).
+   * They go in with the rest; nothing is skipped.
+   */
+  importSkipped?: boolean;
 };
 
 export async function importBankTransactions(
@@ -644,7 +657,10 @@ export async function importBankTransactions(
 
   // Skip lines already in this account (re-uploaded / overlapping statement).
   const existing = await fetchExistingTxnKeys(supabase, input.accountId);
-  const { fresh, duplicates } = planBankImport(input.rows, existing);
+  const plan = planBankImport(input.rows, existing);
+  /* R-1644: never silently — the skipped lines were listed; the owner may take them anyway. */
+  const fresh = input.importSkipped ? [...plan.fresh, ...plan.skipped] : plan.fresh;
+  const duplicates = input.importSkipped ? 0 : plan.duplicates;
 
   if (fresh.length === 0) {
     if (duplicates > 0) return { inserted: 0, duplicates };   // all already imported — no batch
@@ -686,7 +702,7 @@ export function useImportBankTransactions() {
       qc.invalidateQueries({ queryKey: ["bank_transactions", vars.accountId] });
       qc.invalidateQueries({ queryKey: ["bank_accounts"] });   // current_balance changed
       qc.invalidateQueries({ queryKey: ["bank_imports", vars.accountId] });
-      const dupMsg = duplicates > 0 ? ` · ${duplicates} duplicates skipped` : "";
+      const dupMsg = duplicates > 0 ? ` · ${duplicates} line${duplicates === 1 ? "" : "s"} skipped as already imported` : "";
       if (inserted === 0 && duplicates > 0) toast.success(`All ${duplicates} lines are already there — nothing new found`);
       else toast.success(`${inserted} transaction${inserted === 1 ? "" : "s"} imported${dupMsg}`);
     },

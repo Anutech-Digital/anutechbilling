@@ -102,11 +102,12 @@ describe("R-1691 — same day, same amount, same narration prefix", () => {
     expect(inserted[0].balance_after).toBe(11000);
   });
 
-  it("lines without a balance keep the old narration-prefix rule (re-parsed spacing still matches)", async () => {
+  it("lines without a balance keep the narration-prefix rule against the books (re-parsed spacing still matches)", async () => {
     const noBal = [rzp(500, null, "RZP111"), rzp(500, null, "RZP222")];
+    /* R-1644: two such lines in ONE file are two payments — a statement never prints a line twice. */
     const { client, inserted } = fakeClient([]);
-    expect(await importBankTransactions(client, { accountId: "a1", rows: noBal })).toEqual({ inserted: 1, duplicates: 1 });
-    expect(inserted).toHaveLength(1);
+    expect(await importBankTransactions(client, { accountId: "a1", rows: noBal })).toEqual({ inserted: 2, duplicates: 0 });
+    expect(inserted).toHaveLength(2);
     const { client: c2 } = fakeClient([noBal[0]]);
     const respaced = [{ ...noBal[0], description: "UPI-RAZORPAY  SOFTWARE PRIVATE LIMITED-RZP999" }];
     expect(await importBankTransactions(c2, { accountId: "a1", rows: respaced })).toEqual({ inserted: 0, duplicates: 1 });
@@ -128,10 +129,10 @@ describe("R-1691 — same day, same amount, same narration prefix", () => {
     expect(inserted).toHaveLength(1);
   });
 
-  it("the same line twice in one upload (same date, amount, balance) is one line", async () => {
+  it("R-1644: lines inside one upload are never matched to each other — a bank statement prints each line once", async () => {
     const { client } = fakeClient([]);
     expect(await importBankTransactions(client, { accountId: "a1", rows: [statement[0], { ...statement[0], description: "x" }] }))
-      .toEqual({ inserted: 1, duplicates: 1 });
+      .toEqual({ inserted: 2, duplicates: 0 });
   });
 
   it("the dialog's preview count equals what the import inserts (one shared function)", async () => {
@@ -145,5 +146,56 @@ describe("R-1691 — same day, same amount, same narration prefix", () => {
     expect(preview.duplicates).toBe(res.duplicates);
     // and the preview did not use up the cached index
     expect(planBankImport(upload, index).fresh.length).toBe(res.inserted);
+  });
+});
+
+/* ─── R-1644 — genuine repeated lines (same date, amount and narration) ──────────────────────
+   Two ₹500 UPI payments on one day with the same narration, in a statement with no running
+   balance: the old rule kept one key per narration prefix, so the second payment was dropped
+   silently — inside the same file, and against the books. Now the rule counts: each stored
+   line accounts for ONE line of the upload. */
+describe("R-1644 — count-aware duplicate check", () => {
+  const upi = (balance_after: number | null = null) => ({
+    txn_date: "2026-10-03", debit: 500, credit: 0, description: "UPI/P2M/628812345678/SWIGGY", balance_after, reference: null as string | null,
+  });
+
+  it("file has 2 identical lines, books have none → both imported", async () => {
+    const { client, inserted } = fakeClient([]);
+    expect(await importBankTransactions(client, { accountId: "a1", rows: [upi(), upi()] })).toEqual({ inserted: 2, duplicates: 0 });
+    expect(inserted).toHaveLength(2);
+  });
+
+  it("file has 2 identical lines, books have 1 → 1 imported, 1 skipped", async () => {
+    const { client, inserted } = fakeClient([upi()]);
+    expect(await importBankTransactions(client, { accountId: "a1", rows: [upi(), upi()] })).toEqual({ inserted: 1, duplicates: 1 });
+    expect(inserted).toHaveLength(1);
+  });
+
+  it("the same file again → 0 imported, both skipped", async () => {
+    const { client } = fakeClient([upi(), upi()]);
+    expect(await importBankTransactions(client, { accountId: "a1", rows: [upi(), upi()] })).toEqual({ inserted: 0, duplicates: 2 });
+  });
+
+  it("same-day same charge with different running balances → 2 rows; same file again → 0", async () => {
+    const file = [upi(9_500), upi(9_000)];
+    const { client } = fakeClient([]);
+    expect(await importBankTransactions(client, { accountId: "a1", rows: file })).toEqual({ inserted: 2, duplicates: 0 });
+    const { client: again } = fakeClient(file);
+    expect(await importBankTransactions(again, { accountId: "a1", rows: file })).toEqual({ inserted: 0, duplicates: 2 });
+  });
+
+  it("the skipped lines are handed back so the screen can list them", () => {
+    const p = planBankImport([upi(), upi(), upi()], indexBankLines([upi()]));
+    expect(p.fresh).toHaveLength(2);
+    expect(p.duplicates).toBe(1);
+    expect(p.skipped).toHaveLength(1);
+    expect(p.skipped[0].description).toBe("UPI/P2M/628812345678/SWIGGY");
+  });
+
+  it("'Import them anyway' brings in the skipped lines too, and says none were skipped", async () => {
+    const { client, inserted } = fakeClient([upi()]);
+    expect(await importBankTransactions(client, { accountId: "a1", rows: [upi(), upi()], importSkipped: true }))
+      .toEqual({ inserted: 2, duplicates: 0 });
+    expect(inserted).toHaveLength(2);
   });
 });
