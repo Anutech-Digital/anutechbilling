@@ -3077,7 +3077,7 @@ function QuoteBuilderBody() {
               <Button icon="file" className="hidden md:inline-flex" onClick={openPreview}>
                 Preview
               </Button>
-              <DropdownMenu>
+              <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
                   <IconButton icon="more_h" aria-label="More actions" className="md:hidden border border-hairline" />
                 </DropdownMenuTrigger>
@@ -3107,7 +3107,7 @@ function QuoteBuilderBody() {
             Preview
           </Button>
           {/* Phone only: Save draft and Preview live here; Send ▾ stays on the row. */}
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <IconButton
                 icon="more_h"
@@ -3128,7 +3128,7 @@ function QuoteBuilderBody() {
           {/* R-1726: ONE send button — the three ways to send (email / WhatsApp / mark sent) are
               its menu. Ctrl+Enter still runs the usual send (email when there is an address,
               else mark sent) — the item it runs carries the shortcut hint. */}
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="primary"

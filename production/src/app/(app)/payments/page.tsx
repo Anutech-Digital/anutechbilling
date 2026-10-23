@@ -1280,7 +1280,7 @@ function PaymentRowView({
       </td>
       <td className="px-2 py-2.5 text-right align-top" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-end">
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"

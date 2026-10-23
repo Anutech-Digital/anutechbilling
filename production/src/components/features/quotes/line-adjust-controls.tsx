@@ -78,7 +78,7 @@ export function LineMoreMenu({ line, onChange, confirmOptional = false }: {
     onChange(optionalPatch(true, line));
   };
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <IconButton icon="more_h" aria-label={`More options for ${line.name}`} size="sm" />
       </DropdownMenuTrigger>

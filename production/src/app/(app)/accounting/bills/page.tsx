@@ -400,7 +400,7 @@ function BillActions({ bill, onPay, onDelete }: { bill: VendorBill; onPay: () =>
       {bill.status !== "paid" && outstanding > 0 && (
         <Button size="sm" variant="primary" icon="rupee" onClick={onPay}>Pay</Button>
       )}
-      <DropdownMenu>
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <button type="button" aria-label="Actions" className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2">
             <Icon name="more_h" size={18} />

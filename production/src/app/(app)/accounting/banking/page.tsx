@@ -194,7 +194,7 @@ function BankAccountCard({
     <div className="relative rounded-lg border border-hairline bg-paper hover:border-hairline-strong hover:shadow-md transition-all">
       {/* Actions menu — absolutely positioned so it doesn't nest in the open button */}
       <div className="absolute top-3 right-3 z-10">
-        <DropdownMenu>
+        <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <button
               type="button"

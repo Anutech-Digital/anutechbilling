@@ -57,7 +57,7 @@ function AiCallButton({ leadId }: { leadId: string }) {
     );
   }
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button icon="sparkles" loading={busy} title="Pick an agent — it will call this lead now">
           AI call

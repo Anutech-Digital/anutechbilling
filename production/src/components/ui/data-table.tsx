@@ -353,7 +353,7 @@ function ViewsMenu({ views, sort, setSort }: {
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button size="sm" variant="ghost" icon="bookmark" aria-label="Saved views">
           {active ? active.name : "Views"}

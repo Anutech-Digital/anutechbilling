@@ -593,7 +593,7 @@ export default function CustomersPage() {
           <p className="text-xs sm:text-sm text-ink-3 mt-0.5 hidden sm:block">Your book of business — recurring revenue, money owed, and who to grow.</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button icon="more_h" size="sm">More</Button>
             </DropdownMenuTrigger>
@@ -1264,7 +1264,7 @@ function RowActions({
 }) {
   const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
         <IconButton
           icon="more_h"

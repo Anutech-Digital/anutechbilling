@@ -361,7 +361,7 @@ function EmployeeRowMenu({ e, canWrite, onView, onOffer, onEdit, onDelete }: {
   onDelete: (e: Employee) => void;
 }) {
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -1437,7 +1437,7 @@ function PayrollRowMenu({ e, p, canWrite, me, paidVia, onYear, onEdit, onUndo, o
   onYear: () => void; onEdit: () => void; onUndo: () => void; onReconcile?: () => void;
 }) {
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button type="button" aria-label={`More actions for ${toTitleCase(e.name)}`}
           className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2">

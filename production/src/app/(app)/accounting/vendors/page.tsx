@@ -297,7 +297,7 @@ function VendorActions({
   onView: () => void; onEdit: () => void; onDelete: () => void;
 }) {
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="h-8 w-8 p-0 border-0" aria-label="Vendor options">
           <Icon name="more_horizontal" size={16} />

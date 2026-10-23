@@ -231,7 +231,7 @@ export function LeadsToolbar({
         </div>
 
         {/* Filter Dropdown */}
-        <DropdownMenu>
+        <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button icon="filter" size="sm">
               Filter
@@ -352,7 +352,7 @@ export function LeadsToolbar({
         {/* R-420: Sort — one choice for the list and the Kanban, kept in the URL (?sort=).
             On a phone the button is the icon alone (plus a dot when it is not the default),
             so the row still fits 375px; the menu names every order. */}
-        <DropdownMenu>
+        <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button icon="sort" size="sm" aria-label={`Sort: ${LEAD_SORT_LABELS[leadSort]}`} title="Sort">
               <span className="hidden sm:inline">{LEAD_SORT_LABELS[leadSort]}</span>

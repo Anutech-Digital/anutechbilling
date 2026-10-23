@@ -414,7 +414,7 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
                 Ek hi menu me dono kism: pehle "abhi karo" (call/WhatsApp/email), phir
                 "jo hua wo darj karo" (outcomes). Alag-alag menu banane se wahi do-jagah
                 wali dikkat wapas aa jati. */}
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <span
                   role="button"

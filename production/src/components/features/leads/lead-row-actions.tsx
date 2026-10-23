@@ -95,7 +95,7 @@ export function RowActions({
     >
       <div className="flex items-center justify-end gap-0.5">
 
-        <DropdownMenu>
+        <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <button
               type="button"

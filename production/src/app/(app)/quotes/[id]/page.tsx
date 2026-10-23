@@ -1065,7 +1065,7 @@ export default function QuoteDetailPage() {
               has one clear reading order — the money next-step lives in the
               status action bar below, not fighting these buttons. Delete is
               separated at the bottom to avoid a fat-finger next to Send. */}
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button icon="more_h">More</Button>
             </DropdownMenuTrigger>

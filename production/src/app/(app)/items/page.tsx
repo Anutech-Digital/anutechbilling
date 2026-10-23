@@ -561,7 +561,7 @@ export default function ItemsPage() {
                       </div>
                     </td>
                     <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
-                      <DropdownMenu>
+                      <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
                           <IconButton icon="more_h" aria-label="More actions" size="sm" />
                         </DropdownMenuTrigger>
@@ -729,7 +729,7 @@ function OneTimeCatalog({
                   <td className="p-3 text-right tabular-nums text-sm text-emerald">{rupee(margin)}</td>
                   <td className="p-3">{it.is_active ? <Badge kind="success" dot>Active</Badge> : <Badge kind="muted">Inactive</Badge>}</td>
                   <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
-                    <DropdownMenu>
+                    <DropdownMenu modal={false}>
                       <DropdownMenuTrigger asChild>
                         <IconButton icon="more_h" aria-label="More actions" size="sm" />
                       </DropdownMenuTrigger>

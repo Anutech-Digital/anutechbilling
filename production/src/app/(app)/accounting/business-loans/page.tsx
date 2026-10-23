@@ -213,7 +213,7 @@ function LoanActions({ onEmi, onHistory, onDelete }: {
   return (
     <div className="flex items-center gap-2">
       {onEmi && <Button size="sm" variant="primary" onClick={onEmi}>Pay EMI</Button>}
-      <DropdownMenu>
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
