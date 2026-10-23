@@ -131,6 +131,9 @@ const ADDED_11OCT_ACCOUNTANT = ["/accounting/loans", "/accounting/employees", "/
 /** R-1663 (19 Oct 2026): Cold Calling — a new page under Marketing Hub for owner, manager and sales
  *  (RLS on cold_call_* checks the same four roles). */
 const ADDED_19OCT_COLD_CALLING = ["/marketing/cold-calling"];
+/** R-1793 (23 Oct 2026): Budget & Payments — owner, marketing, billing, accountant (RLS on the two
+ *  tables admits the asker, owner, billing and accountant). */
+const ADDED_23OCT_BUDGET = ["/marketing/budget"];
 /** R-1791 (23 Oct 2026): the new Marketing role — its part of the Marketing Hub. */
 const ADDED_23OCT_MARKETING_ROLE = [
   "/marketing", "/marketing/cold-calling", "/marketing/campaigns", "/marketing/spend", "/marketing/reports",
@@ -159,6 +162,7 @@ const addedFor = (role: string) => [
   ...(role === "accountant" ? ADDED_11OCT_ACCOUNTANT : []),
   ...(["owner", "manager", "sales", "sales_senior"].includes(role) ? ADDED_19OCT_COLD_CALLING : []),
   ...(role === "marketing" ? ADDED_23OCT_MARKETING_ROLE : []),
+  ...(["owner", "marketing", "billing", "accountant"].includes(role) ? ADDED_23OCT_BUDGET : []),
   ...ADDED_FOR_EVERY_ROLE,
 ];
 
@@ -349,7 +353,8 @@ describe("2. structure", () => {
       (e.item.roles ?? []).filter((r) => !(e.parent!.roles ?? []).includes(r)).map((r) => ({ e, r: r as UserRole })));
     /* R-1663 (19 Oct 2026): Cold Calling is the second — sales use it, the Hub stays owner/manager. */
     expect(wider.map(({ e, r }) => `${e.item.href} (${r})`).sort()).toEqual(
-      ["/contacts (sales)", "/marketing/cold-calling (sales)", "/marketing/cold-calling (sales_senior)"]);
+      ["/contacts (sales)", "/marketing/budget (accountant)", "/marketing/budget (billing)",
+       "/marketing/cold-calling (sales)", "/marketing/cold-calling (sales_senior)"]);
     for (const { e, r } of wider) {
       const parent = filterNavForRole(APP_NAV, r).flatMap((s) => s.items).find((i) => i.id === e.parent!.id);
       expect(parent?.headerOnly, `${r}: ${e.parent!.href} should be a heading`).toBe(true);

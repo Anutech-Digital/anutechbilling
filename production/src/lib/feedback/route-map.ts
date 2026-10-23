@@ -136,6 +136,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { route: "/lp/google-workspace-enterprise-1", file: "src/app/(lp)/lp/google-workspace-enterprise-1/page.tsx" },
   { route: "/marketing", file: "src/app/(app)/marketing/page.tsx" },
   { route: "/marketing/ads", file: "src/app/(app)/marketing/ads/page.tsx" },
+  { route: "/marketing/budget", file: "src/app/(app)/marketing/budget/page.tsx" },
   { route: "/marketing/campaigns", file: "src/app/(app)/marketing/campaigns/page.tsx" },
   { route: "/marketing/cold-calling", file: "src/app/(app)/marketing/cold-calling/page.tsx" },
   { route: "/marketing/cold-calling/[id]", file: "src/app/(app)/marketing/cold-calling/[id]/page.tsx" },
