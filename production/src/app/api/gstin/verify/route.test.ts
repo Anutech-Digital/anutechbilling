@@ -45,6 +45,8 @@ vi.mock("@/lib/api/with-route", () => ({
 vi.mock("@/lib/gst/mock-gstin", () => ({
   mockGstinVerification: (g: string) => mockGstin(g),
 }));
+/* R-735: Sandbox is fetched through safeFetch, which resolves the host first — a public answer here. */
+vi.mock("node:dns/promises", () => ({ lookup: async () => [{ address: "104.18.1.1", family: 4 }] }));
 
 import { POST } from "./route";
 
@@ -109,7 +111,7 @@ describe("laptop (next dev / tests), no provider → mock as before", () => {
 describe("provider configured → Sandbox path unchanged, even in production", () => {
   it("calls Sandbox (mocked fetch), never the mock", async () => {
     vi.stubEnv("NODE_ENV", "production");
-    secretsRow = { sandbox_api_key: "k", sandbox_api_secret: "s", sandbox_api_base: "https://sandbox.invalid" };
+    secretsRow = { sandbox_api_key: "k", sandbox_api_secret: "s", sandbox_api_base: "https://api.sandbox.co.in" };
     const fetchMock = vi.fn(async (url: string) => {
       if (url.endsWith("/authenticate")) {
         return new Response(JSON.stringify({ access_token: "tok" }), { status: 200 });
@@ -131,4 +133,23 @@ describe("provider configured → Sandbox path unchanged, even in production", (
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(mockGstin).not.toHaveBeenCalled();
   });
+});
+
+describe("R-735 — a saved base URL outside Sandbox never receives the keys", () => {
+  it.each(["http://169.254.169.254", "https://evil.example.com", "https://127.0.0.1"])(
+    "%s → fetch never called, the answer says where to fix it",
+    async (base) => {
+      secretsRow = { sandbox_api_key: "k", sandbox_api_secret: "s", sandbox_api_base: base };
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      const res = await POST(req({ gstin: GSTIN, save: false }));
+      err.mockRestore();
+      const json = await res.json();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(json.ok).toBe(false);
+      expect(json.error).toMatch(/Settings → Integrations/);
+      expect(mockGstin).not.toHaveBeenCalled();
+    },
+  );
 });
