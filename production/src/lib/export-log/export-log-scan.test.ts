@@ -23,6 +23,7 @@ const ALLOW: Record<string, string> = {
   // the shared helpers — they call logExport for every caller
   "lib/csv.ts": "downloadCSV logs (download-logs.test.ts)",
   "lib/reports/print.ts": "printReport logs (download-logs.test.ts)",
+  "lib/exports/download-server-export.ts": "R-1007: the server route api/exports/[kind] logs (log_export) before it sends the file",
   // one business document the user is looking at, not a bulk export
   "lib/pdf/index.tsx": "single quote / invoice / receipt / payslip PDF",
   "components/features/quotes/tax-invoice-dialog.tsx": "single invoice PDF",

@@ -68,7 +68,8 @@ import type { Invoice } from "@/lib/supabase/database.types";
 import { InvoiceNotesList, InvoicePaymentsAccordion } from "./invoice-detail";
 import { invoiceHref, legacyOpenRedirect } from "./invoice-href";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
-import { downloadCSV } from "@/lib/csv";
+import { downloadServerExport } from "@/lib/exports/download-server-export";
+import { mayExport } from "@/lib/exports/server-export";
 import { ImportZohoInvoicesDialog, canImportOpeningInvoices } from "@/components/features/invoices/import-zoho-invoices-dialog";
 
 /* R-085: on the shared DataTable. Widths are fluid percentages (with the 3% checkbox
@@ -101,6 +102,9 @@ function InvoicesPageInner() {
   /* R-487: "Fill missing costs" writes invoice lines — the owner's call only (the RPC checks too). */
   const isOwner      = me?.role === "owner";
   const [fillCostsOpen, setFillCostsOpen] = React.useState(false);
+  /* R-1007: the bulk Export CSV is served by /api/exports/invoices — owner, manager and the money roles. */
+  const canExport    = mayExport("invoices", me?.role);
+  const [exporting, setExporting] = React.useState(false);
   /** Who the outbound WhatsApp reminders are from — see lib/hooks/useWhatsAppSender. */
   const waSender     = useWhatsAppSender();
   /* R-245: the reminder goes to the customer's phone — from the cached customer list. */
@@ -726,24 +730,24 @@ function InvoicesPageInner() {
           {selected.size > 1 ? "WhatsApp first" : "WhatsApp"}
         </BulkBarButton>}
 
-        <BulkBarButton
+        {/* R-1007: the file is built on the server (role check, export_log, "Exported by …"
+            footer), so the button shows only for a role the server will serve. */}
+        {canExport && <BulkBarButton
           icon="download"
-          onClick={() => {
-            const selectedInvoices = rows.filter((r) => selected.has(r.id));
-            /* R-1795: the shared downloadCSV — csvEscape on every cell (a customer named "=…"
-               stays text, R-734) and an export_log row (R-1006). */
-            downloadCSV(
-              `selected-invoices-${new Date().toISOString().slice(0, 10)}.csv`,
-              ["Invoice ID", "Customer", "Amount", "Status", "Date"],
-              selectedInvoices.map((i) => [i.id, i.customer_name ?? "", String(i.amount ?? ""), i.status ?? "", i.created_at || ""]),
-            );
+          disabled={exporting}
+          onClick={async () => {
+            const ids = rows.filter((r) => selected.has(r.id)).map((r) => r.id);
+            setExporting(true);
+            const r = await downloadServerExport("invoices", { ids });
+            setExporting(false);
             /* Toast AFTER the download is triggered, not before. It used to fire first and
                say "Exporting…" whether or not anything followed. */
-            toast.success(`Exported ${selectedInvoices.length} invoice${selectedInvoices.length === 1 ? "" : "s"} to CSV`);
+            if (r.ok) toast.success(`Exported ${r.rows} invoice${r.rows === 1 ? "" : "s"} to CSV`);
+            else toast.error("Could not export the invoices", { description: r.error });
           }}
         >
-          Export CSV
-        </BulkBarButton>
+          {exporting ? "Exporting…" : "Export CSV"}
+        </BulkBarButton>}
       </BulkActionBar>
 
       {/* Error */}
