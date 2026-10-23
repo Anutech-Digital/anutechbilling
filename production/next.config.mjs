@@ -156,6 +156,13 @@ const nextConfig = {
         source: "/(.*)",
         headers: [
           ...(isDev ? [] : [{ key: "X-Frame-Options", value: "SAMEORIGIN" }]),
+          /* HSTS (R-738, 23 Oct 2026): after one https visit the browser never tries plain http
+             for a year — no SSL-strip on a shared Wi-Fi. Production only (dev is http://localhost;
+             browsers ignore it over http anyway). NO includeSubDomains / preload: this app also
+             answers on companies' OWN domains (documents under the company's domain, middleware),
+             and includeSubDomains there would force https on subdomains we do not run.
+             Pinned by src/security-headers.test.ts. */
+          ...(isDev ? [] : [{ key: "Strict-Transport-Security", value: "max-age=31536000" }]),
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           /* ── CSP — pehli baar (audit C1, 1 Sep 2026) ─────────────────────────
@@ -174,7 +181,18 @@ const nextConfig = {
               "default-src 'self'",
               /* Google Ads conversion tag (R-139, 4 Oct 2026): loaded only after a landing-page form is
                  sent, and only when GOOGLE_ADS_SEND_TO is set (site/lib/google-ads.ts). */
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://challenges.cloudflare.com https://www.googletagmanager.com https://www.googleadservices.com",
+              /* R-738 (23 Oct 2026): 'unsafe-eval' only in dev (Next's dev runtime — React Refresh,
+                 eval source maps — needs it). Production gets 'wasm-unsafe-eval' instead: the PDF
+                 renderer's yoga-layout wasm (R-365) is the only eval the built bundle needs, and
+                 this lets WebAssembly compile without letting a string run as JavaScript.
+                 'unsafe-inline' STAYS, on purpose: a nonce policy in Next 15 means every page is
+                 rendered per request (the nonce is read in middleware and stamped on each inline
+                 script), which turns off static rendering for the whole site — the marketing pages
+                 and the app shell included — and every hand-written inline <script> (theme, JSON-LD,
+                 the Ads tag) would need the nonce threaded through. Not a clean switch; recorded on
+                 R-738 as the follow-up. Styles keep 'unsafe-inline' (Tailwind/Radix inline styles).
+                 Pinned by src/security-headers.test.ts. */
+              `script-src 'self' 'unsafe-inline' ${isDev ? "'unsafe-eval'" : "'wasm-unsafe-eval'"} https://checkout.razorpay.com https://challenges.cloudflare.com https://www.googletagmanager.com https://www.googleadservices.com`,
               /* worker-src (R-525, 9 Oct 2026): without it the browser falls back to script-src,
                  which has no blob:, so the PDF renderer's blob: worker was refused and quote
                  "Download PDF" spun forever in the production build. blob: goes on WORKERS only —
@@ -188,7 +206,7 @@ const nextConfig = {
                  Refused, yoga decoded the bytes itself and the PDF still came out, but every
                  Download PDF logged a CSP violation and AI Help showed "API FAILED". A data:
                  URL never leaves the browser, so this opens no way to send data out. script-src
-                 is untouched (wasm compiles under its existing 'unsafe-eval'). */
+                 is untouched (wasm compiles under 'wasm-unsafe-eval' in production — R-738). */
               `connect-src 'self' data: ${supaConnect} https://api.razorpay.com https://lumberjack.razorpay.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://www.googletagmanager.com https://www.googleadservices.com https://www.google.com https://googleads.g.doubleclick.net`,
               "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://challenges.cloudflare.com https://td.doubleclick.net https://www.googletagmanager.com",
               "object-src 'none'",
