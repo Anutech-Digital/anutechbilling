@@ -184,7 +184,16 @@ export default function CustomerGroupDetailPage() {
                     const mrr = mrrByCustomer.get(c.id) ?? 0;
                     return (
                       <tr key={c.id} className="hover:bg-paper-2/40 cursor-pointer" onClick={() => router.push(`/customers/${c.id}` as never)}>
-                        <td className="px-4 py-3 font-medium text-ink">{c.name}</td>
+                        <td className="px-4 py-3 font-medium text-ink">
+                          {/* R-1134: a real link, so Tab reaches the row and Enter opens it. */}
+                          <Link
+                            href={`/customers/${c.id}` as never}
+                            onClick={(e) => e.stopPropagation()}
+                            className="hover:underline rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+                          >
+                            {c.name}
+                          </Link>
+                        </td>
                         <td className="px-4 py-3 font-mono text-xs text-ink-2">{c.gstin ?? "—"}</td>
                         <td className="px-4 py-3 text-ink-2">{c.state ?? "—"}</td>
                         <td className={`px-4 py-3 text-right tabular-nums ${out > 0 ? "text-rose font-semibold" : "text-ink-3"}`}>{out > 0 ? rupee(out) : "—"}</td>
@@ -204,7 +213,12 @@ export default function CustomerGroupDetailPage() {
               const mrr = mrrByCustomer.get(c.id) ?? 0;
               return (
                 <li key={c.id}>
-                  <Card className="p-3 active:bg-paper-2/60" onClick={() => router.push(`/customers/${c.id}` as never)}>
+                  {/* R-1134: the card is one link (Tab + Enter), not a mouse-only onClick. */}
+                  <Link
+                    href={`/customers/${c.id}` as never}
+                    className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+                  >
+                  <Card className="p-3 active:bg-paper-2/60">
                     <div className="font-medium text-ink">{c.name}</div>
                     <div className="text-xs text-ink-3 font-mono mt-0.5">{c.gstin ?? "No GSTIN"} · {c.state ?? "—"}</div>
                     <div className="flex justify-between mt-2 text-sm">
@@ -212,6 +226,7 @@ export default function CustomerGroupDetailPage() {
                       <span className="text-ink-2 tabular-nums">{mrr > 0 ? `${rupee(mrr)} MRR` : ""}</span>
                     </div>
                   </Card>
+                  </Link>
                 </li>
               );
             })}

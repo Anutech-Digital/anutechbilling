@@ -434,9 +434,14 @@ export default function ContactsPage() {
               <div className="flex items-start gap-3">
                 <RowAvatar c={c} />
                 <div className="min-w-0 flex-1">
-                  <p className="font-medium text-ink truncate">
+                  {/* R-1134: a real button, so Tab reaches the card and Enter/Space open it. */}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); openContact(c); }}
+                    className="block max-w-full text-left font-medium text-ink truncate rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+                  >
                     {c.name ?? <span className="italic text-ink-3">No name</span>}
-                  </p>
+                  </button>
                   {c.isCompany && c.title && <p className="text-xs text-ink-2 truncate mt-0.5">{c.title}</p>}
                   {c.company && <p className="text-xs text-ink-3 truncate mt-0.5">{c.company}</p>}
                   {isCompanyWithoutPerson(c) && (
