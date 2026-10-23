@@ -20,7 +20,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { CERTS } from "@/site/lib/data/catalog";
-import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, quotePrefill, withLiveEditions, quoteRate, quoteInr, quoteLineAmount, quoteUnitAmount, quoteRenewal, type QuoteProduct } from "@/site/lib/data/quote-catalog";
+import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, quotePrefill, withLiveEditions, quoteRate, quoteInr, quoteLineAmount, quoteUnitAmount, quoteRenewal, withPriceBook, type QuoteBookPrices, type QuoteProduct } from "@/site/lib/data/quote-catalog";
 import { WHATSAPP_URL, COMPANY } from "@/site/lib/config";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
@@ -39,12 +39,13 @@ const P = "var(--primary)";
 /* R-1504: the certificate /ssl includes free (its "Included" card) — named, not repriced, here. */
 const FREE_DV = CERTS.find((c) => c.cta === "Included");
 
-export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
+export function QuoteBuilder({ editions, prices }: { editions?: MergedEdition[]; prices?: QuoteBookPrices }) {
   const params = useSearchParams();
 
   // Live rates (if the page supplied them) override the static edition prices. An edition
   // with no flexible tier comes back with monthly: null — annual only (R-224).
-  const products = useMemo<QuoteProduct[]>(() => withLiveEditions(QUOTE_PRODUCTS, editions), [editions]);
+  // R-1797: hosting and SSL from the price book the page read (what checkout and /ssl say).
+  const products = useMemo<QuoteProduct[]>(() => withPriceBook(withLiveEditions(QUOTE_PRODUCTS, editions), prices), [editions, prices]);
   const byName = useMemo(() => new Map(products.map((p) => [p.name, p])), [products]);
 
   const [lines, setLines] = useState<Record<string, number>>({ "GW Business Starter": 1 });

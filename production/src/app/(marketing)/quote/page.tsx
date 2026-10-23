@@ -3,13 +3,17 @@ import { Suspense } from "react";
 import { SLA } from "@/site/lib/config";
 import { QuoteBuilder } from "@/site/components/quote/QuoteBuilder";
 import { fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
+import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
+import { websiteTenantId } from "@/lib/website-tenant";
 
 export const metadata: Metadata = {
   title: "Get a quote",
   description: `Pick the edition, the commitment and the headcount — the estimate builds itself, and the formal GST quotation follows by email ${SLA.quote}.`,
 };
 
-export const revalidate = 600;
+/* R-1797: 60 s like /hosting and /ssl — the hosting and SSL estimate come from the price book.
+   Live Workspace prices keep their own 10-minute cache (lib/live-catalog.ts). */
+export const revalidate = 60;
 
 /**
  * The form's products are the same live-merged editions the calculator shows, so the two
@@ -20,7 +24,9 @@ export const revalidate = 600;
  * the rest of the page statically renderable.
  */
 export default async function QuotePage() {
-  const editions = mergeEditions(await fetchLiveWorkspace());
+  const [workspace, book] = await Promise.all([fetchLiveWorkspace(), getPriceBook(websiteTenantId())]);
+  const editions = mergeEditions(workspace);
+  const prices = { tiers: book.tiers, ssl: book.ssl };
   return (
     <section className="section rise">
       <div className="wrap">
@@ -32,7 +38,7 @@ export default async function QuotePage() {
           </p>
         </div>
         <Suspense fallback={null}>
-          <QuoteBuilder editions={editions} />
+          <QuoteBuilder editions={editions} prices={prices} />
         </Suspense>
       </div>
     </section>

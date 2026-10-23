@@ -20,7 +20,8 @@
  */
 import { CERTS, LICENCE_EDITIONS, TLDS, type Tld } from "./catalog";
 import { PLUS_EDITION } from "@/lib/catalog/public-price-policy";
-import { HOSTING_TIERS } from "./hosting-landing-v2";
+import { HOSTING_TIERS, type HostingTier } from "./hosting-landing-v2";
+import { SSL_SKU_BY_CERT } from "@/lib/catalog/catalog-prices";
 import { SLA } from "../config";
 import { rupee } from "../money";
 import { gstBreakup } from "@/lib/quotes/amounts";
@@ -168,6 +169,36 @@ export function withLiveEditions(products: readonly QuoteProduct[], editions: re
     if (!l || p.priceOnRequest) return p;
     const monthly = l.monthlyOrNull === undefined ? l.monthly : l.monthlyOrNull;
     return { ...p, annual: l.annual ?? p.annual, monthly };
+  });
+}
+
+/** The price-book figures /quote needs (lib/catalog/catalog-prices PriceBook: tiers + ssl). */
+export interface QuoteBookPrices {
+  tiers: readonly HostingTier[];
+  /** SKU (SSL-POSITIVE-YR…) → ₹ ex-GST per year. */
+  ssl: Readonly<Record<string, number>>;
+}
+
+/**
+ * R-1797: hosting and SSL lines at the price book's figures (items rows with CATALOG_FROM_DB
+ * on), so the estimate is what /hosting, /ssl and checkout say. A product the book does not
+ * price, or prices at ₹0, keeps its code figure; a price-on-request line stays on request.
+ * No book, or the code book → the same products, unchanged.
+ */
+export function withPriceBook(products: readonly QuoteProduct[], book: QuoteBookPrices | undefined): QuoteProduct[] {
+  if (!book) return [...products];
+  const sslSku = new Map(Object.entries(CERT_QUOTE_LINE).map(([cert, line]) => [line, SSL_SKU_BY_CERT[cert]]));
+  return products.map((p) => {
+    if (p.priceOnRequest) return p;
+    if (p.vendor === "Web hosting") {
+      const t = book.tiers.find((x) => `Hosting ${x.name}` === p.name);
+      if (!t || !(t.yearlyMo > 0) || !(t.monthly > 0)) return p;
+      return t.yearlyMo === p.annual && t.monthly === p.monthly ? p : { ...p, annual: t.yearlyMo, monthly: t.monthly };
+    }
+    const sku = sslSku.get(p.name);
+    const price = sku ? book.ssl[sku] : undefined;
+    if (!price || price <= 0 || price === p.annual) return p;
+    return { ...p, annual: Math.round(price), monthly: Math.round(price) };
   });
 }
 

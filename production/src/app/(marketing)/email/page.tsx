@@ -3,6 +3,9 @@ import { HomeV2 } from "@/site/components/home/HomeV2";
 import { HOME_FAQS } from "@/site/lib/data/home-faqs";
 import { SITE_URL, SLA, PARTNER_LINE } from "@/site/lib/config";
 import { fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
+import { bookMailboxMonthly } from "@/lib/catalog/catalog-prices";
+import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
+import { websiteTenantId } from "@/lib/website-tenant";
 
 /**
  * /email — the Business Email category page (R-155, 5 Oct 2026). This is the email-first
@@ -35,8 +38,10 @@ export const metadata: Metadata = {
   },
 };
 
-/* Live GW prices from the app, re-read every 10 minutes — see lib/live-catalog.ts. */
-export const revalidate = 600;
+/* Live GW prices from the app keep their 10-minute cache (lib/live-catalog.ts). R-1797: the
+   page itself every 60 s, so the Anutech Mail price from the price book follows an Items
+   page edit within a minute, like /hosting and /ssl. */
+export const revalidate = 60;
 
 /** Suite → its editions, for the Product/Offer structured data. */
 const SUITES: { name: string; prefix: string; desc: string }[] = [
@@ -46,7 +51,8 @@ const SUITES: { name: string; prefix: string; desc: string }[] = [
 ];
 
 export default async function EmailPage() {
-  const editions = mergeEditions(await fetchLiveWorkspace());
+  const [workspace, book] = await Promise.all([fetchLiveWorkspace(), getPriceBook(websiteTenantId())]);
+  const editions = mergeEditions(workspace);
 
   const jsonLd = {
     "@context": "https://schema.org",
@@ -95,7 +101,7 @@ export default async function EmailPage() {
         // eslint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
-      <HomeV2 editions={editions} page="email" />
+      <HomeV2 editions={editions} page="email" mailboxMonthly={bookMailboxMonthly(book)} />
     </>
   );
 }

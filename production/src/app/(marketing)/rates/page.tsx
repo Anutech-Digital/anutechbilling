@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "@/site/components/ui/SiteLink";
 import { SectionHead } from "@/site/components/ui/bits";
 import { CERTS, MAIL_RATES } from "@/site/lib/data/catalog";
-import { bookCerts } from "@/lib/catalog/catalog-prices";
+import { bookCerts, bookMailRates } from "@/lib/catalog/catalog-prices";
 import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
 import { websiteTenantId } from "@/lib/website-tenant";
 import { fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
@@ -23,8 +23,10 @@ export const metadata: Metadata = {
     "Anutech Digital's full rate card in rupees: domain register, renew and transfer prices, web hosting, business email and SSL. All prices exclusive of 18% GST.",
 };
 
-/* The live Workspace and domain prices revalidate every 10 minutes, same as /email. */
-export const revalidate = 600;
+/* R-1797: every 60 s, like /hosting and /ssl — the price-book rows (hosting, mailbox, SSL)
+   follow an Items page edit within a minute. Workspace and domain prices keep their own
+   10-minute caches (live-catalog.ts, live-tld-pricing.ts). */
+export const revalidate = 60;
 
 export default async function RatesPage() {
   /* R-1599: domain rows are the live registry prices the checkout charges, never TLDS. */
@@ -34,7 +36,7 @@ export default async function RatesPage() {
     tlds,
     hosting: book.tiers,
     editions: mergeEditions(live),
-    mailRates: MAIL_RATES,
+    mailRates: bookMailRates(book, MAIL_RATES), // R-1797: Anutech Mail from the book
     certs: bookCerts(book, CERTS),
   });
 

@@ -36,8 +36,10 @@ export const metadata: Metadata = {
 };
 
 /* ISR: the rate table, result card and JSON-LD read the live registry prices (10-min cache,
-   last good kept on a failed read — site/lib/live-tld-pricing.ts); availability runs client-side. */
-export const revalidate = 600;
+   last good kept on a failed read — site/lib/live-tld-pricing.ts); availability runs client-side.
+   R-1797: the page itself every 60 s, like /hosting and /ssl, so a hosting or mailbox price
+   edited on the Items page shows here within a minute (the registry read keeps its own cache). */
+export const revalidate = 60;
 
 export default async function DomainsPage() {
   /* R-1599: every domain price on this page — table, result card, JSON-LD — is the live

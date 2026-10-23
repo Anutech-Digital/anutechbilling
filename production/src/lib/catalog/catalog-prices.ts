@@ -18,7 +18,7 @@
  */
 import { HOSTING_TIERS, type HostingTier } from "@/site/lib/data/hosting-landing-v2";
 import { MAILBOX_YR } from "@/site/lib/data/domains-landing";
-import { CERTS, type Cert } from "@/site/lib/data/catalog";
+import { CERTS, MAIL_RATES, type Cert } from "@/site/lib/data/catalog";
 
 export const CATALOG_FUNCTIONS = ["hosting", "mail", "ssl"] as const;
 export type CatalogFunction = (typeof CATALOG_FUNCTIONS)[number];
@@ -239,6 +239,23 @@ export function bookCerts(book: Pick<PriceBook, "ssl">, certs: readonly Cert[] =
     const price = "₹" + Math.round(p).toLocaleString("en-IN");
     return { ...c, price, addPrice: c.addPrice === null ? null : Math.round(p) };
   });
+}
+
+/**
+ * R-1797: the Anutech Mail mailbox per month, as the site prints it ("₹79/mailbox/mo") — the
+ * book's yearly price over 12, whole rupees, never below ₹1. Flag off: 948 / 12 = ₹79.
+ */
+export function bookMailboxMonthly(book: Pick<PriceBook, "mailboxYearly">): number {
+  return Math.max(1, Math.round(book.mailboxYearly / 12));
+}
+
+/** MAIL_RATES with Anutech Mail from the book (the same object when unchanged) — /rates. */
+export function bookMailRates(
+  book: Pick<PriceBook, "mailboxYearly">,
+  rates: Readonly<Record<string, number>> = MAIL_RATES,
+): Readonly<Record<string, number>> {
+  const mo = bookMailboxMonthly(book);
+  return rates["Anutech Mail"] === mo ? rates : { ...rates, "Anutech Mail": mo };
 }
 
 /** The ex-GST rate for one hosting tier and cycle in this book, or null for an unknown tier. */

@@ -154,7 +154,12 @@ const wrap = (extra?: React.CSSProperties): React.CSSProperties => ({ maxWidth: 
 const eyebrow: React.CSSProperties = { fontFamily: MONO, fontSize: 10.5, fontWeight: 500, letterSpacing: "0.14em", textTransform: "uppercase", color: C.blue };
 const monoNum = (extra?: React.CSSProperties): React.CSSProperties => ({ fontFamily: MONO, fontVariantNumeric: "tabular-nums", ...extra });
 
-export function HomeV2({ editions, page = "email" }: { editions?: MergedEdition[]; page?: "email" | "home" } = {}) {
+export function HomeV2({ editions, page = "email", mailboxMonthly }: {
+  editions?: MergedEdition[];
+  page?: "email" | "home";
+  /** R-1797: the Anutech Mail mailbox per month from the price book (bookMailboxMonthly). */
+  mailboxMonthly?: number;
+} = {}) {
   const onEmail = page === "email";
   const [vendorKey, setVendorKey] = useState<VendorKey>("gw");
   const [billing, setBilling] = useState<Billing>("annual");
@@ -559,7 +564,7 @@ export function HomeV2({ editions, page = "email" }: { editions?: MergedEdition[
               </div>
               <div style={{ background: C.surf, border: `1px solid ${C.borderL}`, borderRadius: 12, padding: "18px 20px", boxShadow: SH_CARD }}>
                 <span style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
-                  <span style={monoNum({ fontSize: 26, fontWeight: 500, letterSpacing: "-0.03em", color: C.ink })}>{inr(MAIL_RATES["Anutech Mail"] ?? 79)}</span>
+                  <span style={monoNum({ fontSize: 26, fontWeight: 500, letterSpacing: "-0.03em", color: C.ink })}>{inr(mailboxMonthly && mailboxMonthly > 0 ? mailboxMonthly : MAIL_RATES["Anutech Mail"] ?? 79)}</span>
                   <span style={{ fontSize: 12, color: C.sec }}>/mailbox/mo + GST</span>
                 </span>
                 <ul style={{ listStyle: "none", margin: "10px 0 14px", padding: 0, display: "grid", gap: 5 }}>

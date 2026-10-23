@@ -210,6 +210,7 @@ export function suitePriceRows(
  * edition's annual rate (live where the catalogue has it). One function so the header
  * teaser and the home page card cannot disagree.
  */
-export function emailFromRate(editions: readonly LicenceEdition[]): number {
-  return Math.min(MAIL_RATES["Anutech Mail"] ?? Infinity, ...editions.map((e) => e.annual));
+export function emailFromRate(editions: readonly LicenceEdition[], mailboxMonthly: number = MAIL_RATES["Anutech Mail"] ?? Infinity): number {
+  /* R-1797: server pages pass the price book's mailbox (bookMailboxMonthly). */
+  return Math.min(mailboxMonthly > 0 ? mailboxMonthly : Infinity, ...editions.map((e) => e.annual));
 }

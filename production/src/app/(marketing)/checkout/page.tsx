@@ -35,6 +35,8 @@ import { CheckoutNotice } from "@/site/components/cart/CheckoutNotice";
 import { settlePageScroll } from "@/lib/ui/scroll-lock";
 import { checkoutProblem, actionLabel, type ProblemAction, type ProblemFlags } from "@/site/lib/checkout-problem";
 import { paidHostingLine } from "@/site/lib/hosting-cart-line";
+import { tierWithPrices } from "@/site/lib/cart-reprice";
+import { PriceChangeNotice } from "@/site/components/cart/PriceChangeNotice";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { COMPANY } from "@/site/lib/config";
 import { AfterYouPay } from "@/site/components/checkout/AfterYouPay";
@@ -424,7 +426,10 @@ export default function CheckoutPage() {
      "Buy Starter" puts in the cart. */
   const trialLine = cart.lines.find((l) => (l.sku || "").startsWith("hosting-trial:"));
   const trialYearly = trialLine?.cycle !== "monthly";
-  const paidTier = HOSTING_TIERS.find((p) => p.name === TRIAL_PLAN_NAME);
+  /* R-1797: at the price book's price (CATALOG_FROM_DB on), the same figure checkout charges —
+     not the code tier. Before the book is read (or with the flag off) it is the code tier. */
+  const codeTier = HOSTING_TIERS.find((p) => p.name === TRIAL_PLAN_NAME);
+  const paidTier = codeTier ? tierWithPrices(codeTier, cart.prices) : undefined;
   const paidPrice = paidTier
     ? `${rupee(Math.round(trialYearly ? paidTier.yearlyTotal : paidTier.monthly))}/${trialYearly ? "year" : "month"} + GST`
     : undefined;
@@ -494,6 +499,8 @@ export default function CheckoutPage() {
               ? "Your details — no card needed, nothing is charged"
               : step === "details" ? "Step 1 of 2 — who the invoice is for" : "Step 2 of 2 — how you would like to pay"}
           </p>
+          {/* R-1797: a saved line moved to today's price — the summary already shows it. */}
+          <PriceChangeNotice changes={cart.priceChanges} />
 
           {step === "details" ? (
             <div style={{ maxWidth: 460 }}>

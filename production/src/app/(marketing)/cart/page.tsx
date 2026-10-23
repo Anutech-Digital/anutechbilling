@@ -12,6 +12,7 @@ import { useCart } from "@/site/components/cart/CartProvider";
 import { rupee, cycleLabel, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
 import { DomainYears } from "@/site/components/cart/DomainYears";
 import { BundleNote, LinePrice } from "@/site/components/cart/LinePrice";
+import { PriceChangeNotice } from "@/site/components/cart/PriceChangeNotice";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
 
 export default function CartPage() {
@@ -44,6 +45,8 @@ export default function CartPage() {
       <div className="wrap" style={{ display: "grid", gridTemplateColumns: "1.5fr .8fr", gap: 40, alignItems: "start" }} data-grid>
         <div>
           <h1 className="h1-narrow" style={{ marginBottom: 24 }}>Your cart</h1>
+          {/* R-1797: a saved line moved to today's price — say so, once, above the lines. */}
+          <PriceChangeNotice changes={cart.priceChanges} />
           {t.priced.map((p) => { const l = p.line; return (
             <div key={l.key} style={{ display: "flex", gap: 16, padding: "18px 0", borderBottom: "1px solid var(--border-hairline)", flexWrap: "wrap" }}>
               <div style={{ flex: "1 1 240px" }}>

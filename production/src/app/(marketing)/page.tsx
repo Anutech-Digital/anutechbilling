@@ -8,6 +8,9 @@ import { HomeCompany } from "@/site/components/home/HomeCompany";
 import { COMPANY_FAQS } from "@/site/lib/data/company-faqs";
 import { COMPANY, SITE_URL, SHOW_PREMIER_PARTNER, PARTNER_BADGE } from "@/site/lib/config";
 import { emailFromRate, fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
+import { bookMailboxMonthly } from "@/lib/catalog/catalog-prices";
+import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
+import { websiteTenantId } from "@/lib/website-tenant";
 import { getSiteTldPrices } from "@/site/lib/live-tld-pricing";
 import { domainTeaser } from "@/site/lib/data/domain-teaser";
 
@@ -70,9 +73,10 @@ export default async function HomePage(
   // "Business email from ₹…" on the IT card: the cheapest of the live licence rates and
   // the Anutech Mail mailbox, so the card never undercuts or overstates /email.
   // R-1599: the Domains card's ".in from ₹…" is the live price the checkout charges.
-  const [workspace, tlds] = await Promise.all([fetchLiveWorkspace(), getSiteTldPrices()]);
+  // R-1797: the Anutech Mail mailbox from the price book (items rows with CATALOG_FROM_DB on).
+  const [workspace, tlds, book] = await Promise.all([fetchLiveWorkspace(), getSiteTldPrices(), getPriceBook(websiteTenantId())]);
   const editions = mergeEditions(workspace);
-  const emailFrom = emailFromRate(editions);
+  const emailFrom = emailFromRate(editions, bookMailboxMonthly(book));
 
   const jsonLd = {
     "@context": "https://schema.org",
