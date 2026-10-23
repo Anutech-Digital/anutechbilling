@@ -12,7 +12,7 @@ import { PAYMENT_TABS } from "@/lib/navigation/drilldown";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { csvEscape } from "@/lib/csv";
+import { downloadCSV } from "@/lib/csv";
 import { useListKeys } from "@/lib/hooks/useKeyboard";
 import { KeyHintBar, ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { getDocumentSignedUrl } from "@/lib/queries/documents";
@@ -331,11 +331,10 @@ function PaymentsPageInner() {
   const topMethod = Object.entries(methodBreakdown).sort((a, b) => b[1] - a[1])[0];
 
   // Real CSV export of the currently-filtered payments (hand this file to your
-  // CA / accountant). Data is already in memory, so it's a plain Blob download —
+  // CA / accountant). Data is already in memory, so it's a plain downloadCSV —
   // no fake "coming soon".
   const handleExportCsv = () => {
     if (filtered.length === 0) { toast.info("No payments to export"); return; }
-    const esc = (v: string) => csvEscape(v); // R-734: formula-safe (a customer named "=…" stays text)
     /* R-045: gateway fee + net received, blank when not known (never a guessed zero). */
     const header = ["Date", "Customer", "Quote", "Amount", "Gateway fee", "Net received", "Method", "Reference", "Status", "Receipt Voucher"];
     const lines = filtered.map((p) => {
@@ -344,17 +343,10 @@ function PaymentsPageInner() {
         formatDate(p.received_at), customerOf(p).customerName ?? "", paymentDocId(p), String(p.amount),
         fee ? String(fee.fee) : "", fee ? String(fee.net) : "",
         p.method ? paymentMethodLabel(p.method) : "", p.reference ?? "", p.status, p.receipt_voucher_no ?? "",
-      ].map(esc).join(",");
+      ];
     });
-    const csv = [header.map(esc).join(","), ...lines].join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `payments-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    /* R-1795: the shared downloadCSV — csvEscape on every cell (R-734) and an export_log row (R-1006). */
+    downloadCSV(`payments-${new Date().toISOString().slice(0, 10)}.csv`, header, lines);
     toast.success(`Exported ${filtered.length} payment${filtered.length === 1 ? "" : "s"} to CSV`);
   };
 

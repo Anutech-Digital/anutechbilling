@@ -37,11 +37,8 @@ const ALLOW: Record<string, string> = {
   "components/features/leads/import-csv-dialog.tsx": "sample CSV template, no data",
   "components/features/coldcall/cold-call-ui.tsx": "Cold Calling sample CSV (constant SAMPLE_CSV), no tenant data — R-1776",
   "components/features/invoices/import-zoho-invoices-dialog.tsx": "sample CSV template (constant SAMPLE_ZOHO_INVOICE_CSV), no tenant data",
-  // OWNER TO ADD logExport (docs/CROSS-TEAM-REQUESTS.md, R-1006) — remove the line once done
-  "app/(app)/customers/page.tsx": "R-1006 pending: Billing (Abhishek) — CSV built by hand at the bulk export",
-  "app/(app)/invoices/page.tsx": "R-1006 pending: Billing (Abhishek) — selected-invoices CSV",
-  "app/(app)/payments/page.tsx": "R-1006 pending: Billing (Abhishek) — payments CSV",
-  "components/features/subscriptions/reconcile-google-dialog.tsx": "R-1006 pending: Billing (Abhishek) — reconcile bucket CSV",
+  // (R-1795, 23 Oct: the four Billing screens — customers, invoices, payments, reconcile-google —
+  // left this list; they call downloadCSV now, which logs.)
 };
 
 function walk(dir: string, out: string[] = []): string[] {

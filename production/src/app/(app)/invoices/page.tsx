@@ -68,6 +68,7 @@ import type { Invoice } from "@/lib/supabase/database.types";
 import { InvoiceNotesList, InvoicePaymentsAccordion } from "./invoice-detail";
 import { invoiceHref, legacyOpenRedirect } from "./invoice-href";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
+import { downloadCSV } from "@/lib/csv";
 import { ImportZohoInvoicesDialog, canImportOpeningInvoices } from "@/components/features/invoices/import-zoho-invoices-dialog";
 
 /* R-085: on the shared DataTable. Widths are fluid percentages (with the 3% checkbox
@@ -729,13 +730,13 @@ function InvoicesPageInner() {
           icon="download"
           onClick={() => {
             const selectedInvoices = rows.filter((r) => selected.has(r.id));
-            const csv = "Invoice ID,Customer,Amount,Status,Date\n" + selectedInvoices.map(i => `${i.id},"${i.customer_name}",${i.amount},${i.status},${i.created_at || ""}`).join("\n");
-            const blob = new Blob([csv], { type: "text/csv" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `selected-invoices-${new Date().toISOString().slice(0, 10)}.csv`;
-            a.click();
+            /* R-1795: the shared downloadCSV — csvEscape on every cell (a customer named "=…"
+               stays text, R-734) and an export_log row (R-1006). */
+            downloadCSV(
+              `selected-invoices-${new Date().toISOString().slice(0, 10)}.csv`,
+              ["Invoice ID", "Customer", "Amount", "Status", "Date"],
+              selectedInvoices.map((i) => [i.id, i.customer_name ?? "", String(i.amount ?? ""), i.status ?? "", i.created_at || ""]),
+            );
             /* Toast AFTER the download is triggered, not before. It used to fire first and
                say "Exporting…" whether or not anything followed. */
             toast.success(`Exported ${selectedInvoices.length} invoice${selectedInvoices.length === 1 ? "" : "s"} to CSV`);

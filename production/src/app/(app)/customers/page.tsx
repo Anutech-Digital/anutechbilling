@@ -41,7 +41,7 @@ import { customerMatchesContact } from "@/lib/contacts/search-index";
 import { newestFirst } from "@/lib/sort/newest-first";
 import { bulkOutcomeMessage, type BulkFailure } from "@/lib/customers/bulk-outcome";
 import { CUSTOMERS_CSV_HEADERS, customersCsvRows } from "@/lib/export/crm-csv";
-import { downloadCSV, csvEscape } from "@/lib/csv";
+import { downloadCSV } from "@/lib/csv";
 import { InvoiceChooserDialog } from "@/components/features/invoices/invoice-chooser-dialog";
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 import { toast } from "sonner";
@@ -574,17 +574,12 @@ export default function CustomersPage() {
     }
     if (rows.length === 0) { toast.error("No companies to export yet."); return; }
     const cols = ["name", "contact_name", "contact_email", "contact_phone", "gstin", "state", "domain", "since"] as const;
-    const lines = [cols.join(",")];
-    for (const c of rows) lines.push(cols.map((k) => csvEscape(String((c as Record<string, unknown>)[k] ?? ""))).join(","));
-    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `customers-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    /* R-1795: the shared downloadCSV — csvEscape on every cell (R-734) and an export_log row (R-1006). */
+    downloadCSV(
+      `customers-${new Date().toISOString().slice(0, 10)}.csv`,
+      [...cols],
+      rows.map((c) => cols.map((k) => String((c as Record<string, unknown>)[k] ?? ""))),
+    );
     toast.success(`Exported ${rows.length} compan${rows.length === 1 ? "y" : "ies"} to CSV`);
   }
 

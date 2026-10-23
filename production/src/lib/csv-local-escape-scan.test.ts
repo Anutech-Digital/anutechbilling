@@ -23,7 +23,6 @@ const NOT_CSV = new Set([
 const KNOWN = new Set([
   "components/features/coldcall/cold-call-ui.tsx",
   "components/features/coldcall/contact-dialogs.tsx",
-  "components/features/subscriptions/reconcile-google-dialog.tsx",
   "lib/banking/statement-parse.ts",
 ]);
 
