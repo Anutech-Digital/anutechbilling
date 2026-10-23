@@ -22,6 +22,9 @@ export interface FixedAsset {
   disposal_value: number;
   notes: string | null;
   created_at: string;
+  /** R-1650: the expense it was capitalised from — the delete confirm says it returns to that
+   *  month's P&L. Null when there is none or this login cannot read it. */
+  source_expense: { amount: number; expense_date: string } | null;
 }
 
 const KEY = ["fixed-assets"] as const;
@@ -31,9 +34,11 @@ export function useFixedAssets() {
     queryKey: KEY,
     queryFn: async (): Promise<FixedAsset[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase.from("fixed_assets").select("*").order("put_to_use", { ascending: false });
+      const { data, error } = await supabase.from("fixed_assets")
+        .select("*, source_expense:expenses!fixed_assets_expense_id_fkey(amount, expense_date)")
+        .order("put_to_use", { ascending: false });
       if (error) throw error;
-      return (data ?? []) as FixedAsset[];
+      return (data ?? []).map((a) => ({ ...a, block: a.block as AssetBlock, source_expense: a.source_expense ?? null }));
     },
     staleTime: 30_000,
   });
