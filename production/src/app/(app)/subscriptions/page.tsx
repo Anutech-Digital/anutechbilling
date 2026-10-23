@@ -58,6 +58,7 @@ import { LicenseLeakageCard, leakageRows } from "@/components/features/subscript
 import { SubsInsightsStrip } from "@/components/features/subscriptions/subs-insights-strip";
 import { seatsPhrase, manageSeatsIdFromSearch } from "@/components/features/subscriptions/seat-words";
 import { openSubscriptionIdFromSearch } from "./open-link";
+import { raisedInvoiceHref } from "../invoices/invoice-href";
 import { useMarginAlerts } from "@/lib/queries/margin-alerts";
 import { SeatRequestsCard } from "@/components/features/subscriptions/seat-requests-card";
 import { useSeatRequests, useAmendments } from "@/lib/queries/seat-requests";
@@ -463,7 +464,7 @@ export default function SubscriptionsPage() {
       toast.success(`GST invoice ${String(data ?? "")} raised · subscription is live 🎉`, {
         description: "Not sent yet — open it to email or download the PDF.",
         duration: 8000,
-        action: { label: "Open invoice", onClick: () => router.push("/invoices" as Route) },
+        action: { label: "Open invoice", onClick: () => router.push(raisedInvoiceHref(data == null ? null : String(data)) as Route) },
       });
     }
     refetch();

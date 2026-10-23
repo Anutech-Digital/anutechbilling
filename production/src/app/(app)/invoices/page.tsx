@@ -66,7 +66,7 @@ import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import type { Invoice } from "@/lib/supabase/database.types";
 import { InvoiceNotesList, InvoicePaymentsAccordion } from "./invoice-detail";
-import { invoiceHref, legacyOpenRedirect } from "./invoice-href";
+import { invoiceHref, legacyOpenRedirect, NEW_INVOICE_HREF } from "./invoice-href";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 import { downloadServerExport } from "@/lib/exports/download-server-export";
 import { mayExport } from "@/lib/exports/server-export";
@@ -344,7 +344,7 @@ function InvoicesPageInner() {
           )}
           <Button icon="upload" onClick={() => router.push("/accounting/gst" as any)}>Export GSTR-1</Button>
           {canQuotes && (
-            <Button variant="primary" icon="plus" onClick={() => router.push("/quotes" as any)}>
+            <Button variant="primary" icon="plus" onClick={() => router.push(NEW_INVOICE_HREF as never)}>
               New invoice
             </Button>
           )}
@@ -873,7 +873,7 @@ function InvoicesPageInner() {
       )}
 
       {/* Mobile primary — the header "New invoice" scrolls away on a phone. */}
-      {canQuotes && <FAB icon="plus" label="New invoice" onClick={() => router.push("/quotes" as any)} />}
+      {canQuotes && <FAB icon="plus" label="New invoice" onClick={() => router.push(NEW_INVOICE_HREF as never)} />}
 
       {/* ── The two taps that issue a GST invoice ────────────────────────────
           Both used to fire on a bare click. Each states the number it will take,
