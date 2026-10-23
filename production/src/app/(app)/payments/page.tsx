@@ -36,7 +36,6 @@ import {
   useWriteOffSubscription,
   usePaymentInvoiceCustomers,
   type Payment,
-  type OutstandingRow,
 } from "@/lib/queries/payments";
 import { useQuotes } from "@/lib/queries/quotes";
 import { useOpenSeatQuotes } from "@/lib/queries/seat-quotes";
@@ -67,6 +66,7 @@ import { Icon } from "@/components/ui/icon";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { RecordQuotePaymentDialog } from "./record-quote-payment";
 import { DuesPayButton, duesPaymentRoute, useDuesQuoteLinks } from "./dues-pay";
+import { SubscriptionDuesList } from "./dues-list";
 import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
 import { paymentsKpiPlan } from "./kpi-plan";
 import { PaymentRefundButton, usePaymentRefundFlow } from "@/components/features/payments/payment-refund";
@@ -80,8 +80,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { rupee, formatDate, bankLabel, cleanDisplayName, cn } from "@/lib/utils";
 import { istMonth, toIstDate } from "@/lib/dates/ist";
-/* The postpaid countdown, shared with /subscriptions and the onboarding dialog. */
-import { paymentDueState, paymentDueChipLabel, todayIST } from "@/lib/subscriptions/payment-due";
 import { useConfirm, useAskText } from "@/components/providers/confirm-provider";
 import { PAYMENTS_PAGE_SIZE } from "./load-more";
 import { paymentMethodLabel } from "./method-label";
@@ -117,6 +115,8 @@ const PAY_COL_WIDTHS: Record<string, string> = {
 function PaymentsPageInner() {
   /* window.prompt returns null in the desktop app — Write off did nothing (R-052). */
   const askText = useAskText();
+  /* R-1698: Remind asks "did it go out?" before it writes Last reminder. */
+  const confirm = useConfirm();
   const router = useRouter();
   const [tab, setTab]       = useUrlChoice<"all" | "received" | "refunded">("tab", PAYMENT_TABS, "all"); // R-118
   /* R-118: "Collected MTD"'s own set (lib/payments/focus.ts) — "" = none. */
@@ -509,112 +509,52 @@ function PaymentsPageInner() {
               </div>
             </div>
 
-            {/* Mobile card list — phones only. The desktop table's advanced
-                money ops (suspend / write-off) stay desktop-only; mobile keeps
-                the safe primary action (Record payment → the quote, R-1697). */}
-            {outstanding.length > 0 && (<>
-            <ul className="md:hidden space-y-2">
-              {outstanding.map((o) => {
-                const ageKind =
-                  o.days_outstanding <= 7   ? "fresh"  :
-                  o.days_outstanding <= 15  ? "warning" :
-                  o.days_outstanding <= 30  ? "danger" : "danger";
-                return (
-                  <li key={o.subscription_id} className="rounded-lg border border-hairline bg-paper p-3">
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-ink truncate">{o.customer_name}</p>
-                        <p className="text-2xs text-ink-3 truncate mt-0.5">{o.plan}</p>
-                        {/* The postpaid credit clock — the SAME countdown the
-                            subscriptions list shows, from the same function, so the
-                            two screens cannot disagree about who is late.
-                            `days_outstanding` beside it answers a different question:
-                            how long the balance has existed, not when it was due. */}
-                        {(() => {
-                          const due = paymentDueState(o.payment_due_date, todayIST(), o.outstanding_amount);
-                          if (due.kind === "none") return null;
-                          return (
-                            <Badge
-                              kind={due.kind === "overdue" ? "danger" : due.kind === "upcoming" ? "muted" : "warning"}
-                              size="sm"
-                              className="mt-1"
-                              title={`Agreed due date ${formatDate(o.payment_due_date!)}`}
-                            >
-                              {paymentDueChipLabel(due, formatDate(o.payment_due_date!))}
-                            </Badge>
-                          );
-                        })()}
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-serif text-base tabular-nums text-rose">{rupee(o.outstanding_amount)}</p>
-                        <p className="text-3xs text-ink-3">of {rupee(o.total_quote_amount)}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-hairline/60">
-                      <div className="flex items-center gap-1.5">
-                        <Badge kind={ageKind === "fresh" ? "muted" : ageKind === "warning" ? "warning" : "danger"} size="sm" dot title={`Age counted from ${formatDate(o.age_from)}`}>{o.days_outstanding}d</Badge>
-                        <Badge kind={o.status === "active" ? "success" : o.status === "paused" ? "warning" : "muted"} size="sm">{o.status}</Badge>
-                      </div>
-                      {canWrite && (
-                        <DuesPayButton route={duesPaymentRoute(o, duesQuoteLinks?.get(o.subscription_id))} onRecord={setPayQuoteId} />
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-
-            <div className="hidden xl:block rounded-md border border-hairline bg-paper overflow-auto max-h-[calc(100vh-15rem)]">
-              <table className="w-full">
-                <thead className="sticky top-0 z-10 bg-paper-2 border-b border-hairline">
-                  <tr>
-                    <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Customer</th>
-                    <th className="text-right p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Paid</th>
-                    <th className="text-right p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Balance due</th>
-                    <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Age</th>
-                    <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Status</th>
-                    <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Last reminder</th>
-                    <th className="text-right p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3 w-72">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {outstanding.map((o) => (
-                    <OutstandingRowView
-                      key={o.subscription_id}
-                      o={o}
-                      onReminder={async () => {
-                        await markReminderSent.mutateAsync(o.subscription_id);
-                        const subject = `Payment reminder · ${rupee(o.outstanding_amount)} pending`;
-                        const body =
-                          `Hi ${o.customer_name},\n\nThis is a friendly reminder that ${rupee(o.outstanding_amount)} is still pending against ` +
-                          `your subscription for ${o.plan} (started ${formatDate(o.started_at)}).\n\n` +
-                          `You've paid ${rupee(o.paid_amount)} of ${rupee(o.total_quote_amount)}.\n\n` +
-                          `Please complete the payment at your earliest convenience to keep your service uninterrupted.\n\n— Anutech Digital`;
-                        window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-                      }}
-                      onSuspend={() => setSuspendRow({ id: o.subscription_id, customer_name: o.customer_name, plan: o.plan, outstanding_amount: o.outstanding_amount })}
-                      onResume={() => resumeSub.mutate(o.subscription_id)}
-                      onWriteOff={async () => {
-                        const reason = await askText({
-                          title: `Write off ${rupee(o.outstanding_amount)} from ${o.customer_name}?`,
-                          /* R-1635: the invoices leave the chase too (write_off_subscription). */
-                          body: "This cancels the subscription and marks the balance as uncollectable. Its unpaid invoices leave Payment Follow-up and Overdue, and no more reminders go out. The invoices stay issued as they are (GST unchanged).",
-                          label: "Reason (for audit)",
-                          confirmLabel: "Write off",
-                          danger: true,
-                        });
-                        if (reason) {
-                          writeOffSub.mutate({ id: o.subscription_id, reason });
-                        }
-                      }}
-                      payButton={<DuesPayButton route={duesPaymentRoute(o, duesQuoteLinks?.get(o.subscription_id))} onRecord={setPayQuoteId} />}
-                      readOnly={!canWrite}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            </>)}
+            {/* R-1698: one list for every width — cards below 1280px, the table from 1280px
+                (before, 768–1279px showed no rows at all). One filled button per row (Record
+                payment, R-1697); Remind / Suspend / Resume / Write off behind "⋯". */}
+            {outstanding.length > 0 && (
+              <SubscriptionDuesList
+                rows={outstanding}
+                readOnly={!canWrite}
+                actions={{
+                  payButton: (o) => <DuesPayButton route={duesPaymentRoute(o, duesQuoteLinks?.get(o.subscription_id))} onRecord={setPayQuoteId} />,
+                  onRemind: async (o) => {
+                    const subject = `Payment reminder · ${rupee(o.outstanding_amount)} pending`;
+                    const body =
+                      `Hi ${o.customer_name},\n\nThis is a friendly reminder that ${rupee(o.outstanding_amount)} is still pending against ` +
+                      `your subscription for ${o.plan} (started ${formatDate(o.started_at)}).\n\n` +
+                      `You've paid ${rupee(o.paid_amount)} of ${rupee(o.total_quote_amount)}.\n\n` +
+                      `Please complete the payment at your earliest convenience to keep your service uninterrupted.\n\n— Anutech Digital`;
+                    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+                    /* R-1698: "Last reminder" is written only once the mail app opened and the
+                       user says it went (it was written before the mail app even opened). */
+                    const sent = await confirm({
+                      title: `Did the reminder to ${o.customer_name} go out?`,
+                      body: "Your mail app opened with the reminder. Mark it as sent once you have sent it.",
+                      confirmLabel: "Yes, mark as sent",
+                      cancelLabel: "Not sent",
+                      icon: "mail",
+                    });
+                    if (sent) await markReminderSent.mutateAsync(o.subscription_id);
+                  },
+                  onSuspend: (o) => setSuspendRow({ id: o.subscription_id, customer_name: o.customer_name, plan: o.plan, outstanding_amount: o.outstanding_amount }),
+                  onResume: (o) => resumeSub.mutate(o.subscription_id),
+                  onWriteOff: async (o) => {
+                    const reason = await askText({
+                      title: `Write off ${rupee(o.outstanding_amount)} from ${o.customer_name}?`,
+                      /* R-1635: the invoices leave the chase too (write_off_subscription). */
+                      body: "This cancels the subscription and marks the balance as uncollectable. Its unpaid invoices leave Payment Follow-up and Overdue, and no more reminders go out. The invoices stay issued as they are (GST unchanged).",
+                      label: "Reason (for audit)",
+                      confirmLabel: "Write off",
+                      danger: true,
+                    });
+                    if (reason) {
+                      writeOffSub.mutate({ id: o.subscription_id, reason });
+                    }
+                  },
+                }}
+              />
+            )}
 
             {/* R-1705: open add-seats quotes — the seats are live, the money is not in. */}
             {scopedSeatQuotes.length > 0 && (
@@ -645,11 +585,6 @@ function PaymentsPageInner() {
                 <p className="mt-2 text-2xs text-ink-3">Not paid for? Reject the quote — that takes the seats and MRR back off the subscription.</p>
               </div>
             )}
-
-            <p className="text-2xs text-ink-3 mt-2 flex items-center gap-1">
-              <Icon name="info" size={11} />
-              0–15 days: friendly reminder · 16–30 days: stronger nudge · 30+ days: consider suspending service · 60+ days: accept it as a loss (bad debt)
-            </p>
           </Card>
         );
       })()}
@@ -1011,86 +946,6 @@ export default function PaymentsPage() {
     <React.Suspense fallback={null}>
       <PaymentsPageInner />
     </React.Suspense>
-  );
-}
-
-// ============================================================
-// OutstandingRowView — single row in the outstanding receivables table
-// ============================================================
-function OutstandingRowView({
-  o,
-  onReminder,
-  onSuspend,
-  onResume,
-  onWriteOff,
-  payButton,
-  readOnly = false,
-}: {
-  o: OutstandingRow;
-  /** R-255: a view-only role (the accountant) sees the row with no action buttons. */
-  readOnly?: boolean;
-  onReminder: () => void;
-  onSuspend:  () => void;
-  onResume:   () => void;
-  onWriteOff: () => void;
-  /** R-237: opens the payment dialog on this page (was a /quotes link billing could not open).
-      R-1697: "Record payment" on every row — DuesPayButton picks the quote or says why not. */
-  payButton: React.ReactNode;
-}) {
-  const aging =
-    o.days_outstanding <= 7   ? "fresh" :
-    o.days_outstanding <= 15  ? "warn"  :
-    o.days_outstanding <= 30  ? "urgent" : "overdue";
-  const ageKind: "success" | "warning" | "danger" =
-    aging === "fresh"   ? "success" :
-    aging === "warn"    ? "warning" :
-                          "danger";
-
-  return (
-    <tr className="border-b border-hairline last:border-0 hover:bg-paper-2/40">
-      <td className="p-2">
-        <div className="font-medium text-sm text-ink">{o.customer_name}</div>
-        <div className="text-3xs text-ink-3">{o.plan}</div>
-      </td>
-      {/* R-1701: received on THIS subscription's quote, not the customer's total. */}
-      <td className="p-2 text-right tabular-nums text-xs text-emerald" title={o.quote_id ? `Received on ${o.quote_id}` : "Received on this subscription's quote"}>{rupee(o.paid_amount)}</td>
-      <td className="p-2 text-right tabular-nums text-sm font-medium text-rose">{rupee(o.outstanding_amount)}</td>
-      <td className="p-2">
-        <Badge kind={ageKind} dot title={`Age counted from ${formatDate(o.age_from)}`}>{o.days_outstanding}d</Badge>
-      </td>
-      <td className="p-2">
-        {o.status === "active" ? (
-          <Badge kind="success" dot>Active</Badge>
-        ) : o.status === "paused" ? (
-          <Badge kind="warning" dot>Paused</Badge>
-        ) : (
-          <Badge kind="muted">{o.status}</Badge>
-        )}
-      </td>
-      <td className="p-2 text-xs text-ink-3">
-        {o.last_reminder_at ? formatDate(o.last_reminder_at) : <span className="italic">never</span>}
-      </td>
-      <td className="p-2 text-right">
-        {readOnly ? <span className="text-2xs text-ink-3">View only</span> : (
-        <div className="flex justify-end gap-1 flex-wrap">
-          {payButton}
-          <Button size="sm" icon="mail" onClick={onReminder}>
-            Remind
-          </Button>
-          {o.status === "active" ? (
-            <Button size="sm" variant="ghost" onClick={onSuspend}>Suspend</Button>
-          ) : (
-            <Button size="sm" variant="ghost" onClick={onResume}>Resume</Button>
-          )}
-          {o.days_outstanding > 30 && (
-            <Button size="sm" variant="ghost" className="!text-rose hover:!bg-rose/10" onClick={onWriteOff}>
-              Write off
-            </Button>
-          )}
-        </div>
-        )}
-      </td>
-    </tr>
   );
 }
 
