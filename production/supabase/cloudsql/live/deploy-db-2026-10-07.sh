@@ -206,6 +206,7 @@ MIGS=(
   "r1645cogsbycategory|20261023194233_r1645_pnl_cogs_by_category.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_pnl(date,date)') and 'cogs_by_category' = any(proargnames))"
   "r1803cronprojectgstin|20261023202157_r1803_cron_project_invoice_needs_supplier_gstin.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-1803%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_project_milestone_invoice(uuid)') and prosrc like '%R-1803%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.create_project_direct_invoice(uuid,text,text,text,jsonb,integer,boolean)') and prosrc like '%R-1803%')"
   "r1650assetexpenselock|20261023223717_r1650_asset_delete_locked_expense.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_fixed_asset_expense_lock' and tgrelid = to_regclass('public.fixed_assets'))"
+  "r1809assetlinklock|20261023232214_r1809_asset_link_locked_expense.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_fixed_asset_expense_lock' and tgrelid = to_regclass('public.fixed_assets') and (tgtype & 4) = 4)"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

@@ -178,4 +178,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r1645cogsbycategory", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.report_pnl(date,date)') and 'cogs_by_category' = any(proargnames))" },
   { key: "r1803cronprojectgstin", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-1803%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_project_milestone_invoice(uuid)') and prosrc like '%R-1803%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.create_project_direct_invoice(uuid,text,text,text,jsonb,integer,boolean)') and prosrc like '%R-1803%')" },
   { key: "r1650assetexpenselock", peek: "exists(select 1 from pg_trigger where tgname = 'trg_fixed_asset_expense_lock' and tgrelid = to_regclass('public.fixed_assets'))" },
+  { key: "r1809assetlinklock", peek: "exists(select 1 from pg_trigger where tgname = 'trg_fixed_asset_expense_lock' and tgrelid = to_regclass('public.fixed_assets') and (tgtype & 4) = 4)" },
 ];
