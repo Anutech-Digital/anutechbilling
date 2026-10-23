@@ -33,6 +33,7 @@ import { CONTACT_FOR_PRICING, isPublicPriceHiddenTier } from "@/lib/catalog/publ
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
 import { tierAnnualPrice, annualTotals } from "./tier-price";
 import { workspaceGstLabel } from "./gst-heads";
+import { postJson, NOT_REACHED } from "./post-json";
 import { buyNowSchema,buyerCompany, BUY_ANNUAL_NOTE, type BuyNowForm } from "./buy-now-schema";
 import { normalizeGstinInput } from "@/site/lib/checkout-details";
 import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database.types";
@@ -175,6 +176,18 @@ function buyFail(apiError: string | undefined, fallback: string, why: string): v
       ? { label: "WhatsApp us", onClick: () => { window.open(whatsappLink(`Hi, I got "${d.message}" on the Google Workspace buy page.`), "_blank", "noopener,noreferrer"); } }
       : { label: "Email us", onClick: () => { window.location.href = `mailto:${COMPANY.supportEmail}?subject=${encodeURIComponent("Help with Google Workspace purchase")}`; } },
     duration: 10_000,
+  });
+}
+
+/**
+ * R-1110: our server was not reached (offline, timeout, a proxy's HTML 502). Say so, say what
+ * did NOT happen, and offer the same step again — the form keeps everything typed.
+ */
+function notReached(nothingDone: string, retry: () => void): void {
+  toast.error(NOT_REACHED, {
+    description: `${nothingDone} Check your internet connection and try again.`,
+    action: { label: "Try again", onClick: retry },
+    duration: 15_000,
   });
 }
 
@@ -2281,13 +2294,14 @@ function TrialDialog({
 
   const ts = useTurnstile(); // R-737
   async function onSubmit(values: TrialForm) {
-    const res = await fetch("/api/public/trial/workspace", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json", ...ts.headers },
-      body:    JSON.stringify(values),
-    });
-    const json = await res.json() as { success?: boolean; error?: string };
-    if (!res.ok || json.error) {
+    const r = await postJson<{ success: boolean; error: string }>("/api/public/trial/workspace", values, ts.headers);
+    if (!r.reached) {
+      ts.reset();
+      notReached("Your trial was not requested.", () => { void handleSubmit(onSubmit)(); });
+      return;
+    }
+    const json = r.json;
+    if (!r.ok || json.error) {
       ts.reset();
       buyFail(json.error, "Could not start the trial.", "Your trial was not requested yet.");
       return;
@@ -2417,13 +2431,14 @@ function EnquiryDialog({
     // customer it converts into) carries both — state_code drives IGST vs CGST+SGST.
     const stateCode = values.stateCode || undefined;
     const state     = stateCode ? `${GST_STATE_BY_CODE[stateCode]} (${stateCode})` : undefined;
-    const res = await fetch("/api/public/enquiry/workspace", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json", ...ts.headers },
-      body:    JSON.stringify({ ...values, stateCode, state }),
-    });
-    const json = await res.json() as { success?: boolean; error?: string };
-    if (!res.ok || json.error) {
+    const r = await postJson<{ success: boolean; error: string }>("/api/public/enquiry/workspace", { ...values, stateCode, state }, ts.headers);
+    if (!r.reached) {
+      ts.reset();
+      notReached("We did not receive your enquiry.", () => { void handleSubmit(onSubmit)(); });
+      return;
+    }
+    const json = r.json;
+    if (!r.ok || json.error) {
       ts.reset();
       buyFail(json.error, "Could not send your enquiry.", "We did not receive it yet.");
       return;
@@ -2822,14 +2837,14 @@ function BuyNowDialog({
       couponCode: couponApplied?.code ?? undefined,
     };
 
-    const res = await fetch("/api/public/checkout/workspace", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json", ...ts.headers },
-      body:    JSON.stringify(payload),
-    });
-    const json: CheckoutApiResponse = await res.json();
+    const r = await postJson<CheckoutApiResponse>("/api/public/checkout/workspace", payload, ts.headers);
     ts.reset(); // R-737: a token works once — the next try (or a retry after Razorpay) needs a fresh one
-    if (!res.ok || json.error) {
+    if (!r.reached) {
+      notReached("No money was taken.", () => { void handleSubmit(onSubmit)(); });
+      return;
+    }
+    const json = r.json;
+    if (!r.ok || json.error) {
       buyFail(json.error, "Could not start checkout.", "No money was taken.");
       return;
     }
