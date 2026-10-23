@@ -20,7 +20,11 @@ import type { LossReasonCode } from "@/lib/leads/loss-reasons";
 import { RejectQuoteDialog } from "./reject-quote-dialog";
 import { isQuoteEditableInPlace } from "@/lib/quotes/editable";
 import { paymentDomainDefault } from "@/lib/quotes/payment-domain";
-import { useGenerateInvoice } from "@/lib/queries/invoices";
+import { useGenerateInvoice, useDocumentSeries } from "@/lib/queries/invoices";
+import { ConfirmIssueDialog } from "@/components/features/invoices/confirm-issue-dialog";
+import { issueConsequences } from "@/lib/invoices/issue-consequences";
+import { useTurnoverBracket } from "@/lib/compliance/turnover";
+import { issueEinvoiceNotice, isB2B } from "@/lib/compliance/einvoice";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage";
 import { planForQuote, splitDue } from "@/lib/billing/instalments";
@@ -105,7 +109,7 @@ import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { FeeNetLine } from "@/app/(app)/payments/gateway-fee";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
-import { billOfSupplyBuilderLine, quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
+import { billOfSupplyBuilderLine, billOfSupplyStatus, quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 
 // ============================================================
 // Status meta
@@ -635,6 +639,12 @@ export default function QuoteDetailPage() {
   // snapshot per Rule 53), and links quote_id correctly. The previous local
   // implementation used Math.random() which broke all three properties.
   const generateInvoice = useGenerateInvoice();
+  /* R-1633: "Generate GST Invoice" asks first — a GST invoice cannot be deleted, only
+     credit-noted. The confirm (same ConfirmIssueDialog as /invoices) names the number,
+     customer, GSTIN, amount with GST and the date before anything is issued. */
+  const [issueOpen, setIssueOpen] = React.useState(false);
+  const { data: docSeries } = useDocumentSeries();
+  const { data: turnover } = useTurnoverBracket();
 
   // ────────── Loading / Error ──────────
   if (isLoading) {
@@ -1546,15 +1556,7 @@ export default function QuoteDetailPage() {
                   loading={generateInvoice.isPending}
                   disabled={!!gstBlock}
                   title={gstBlock ? gstBlock.title : undefined}
-                  onClick={() => generateInvoice.mutate(params.id, {
-                    /* R-409: show the issued invoice at once — button gone, "Invoiced"
-                       ticked, "View invoice" link — instead of waiting for a reload. */
-                    onSuccess: ({ invoiceId }) => {
-                      qc.setQueryData<Quote | null>(["quotes", params.id], (prev) => (prev ? withInvoiceIssued(prev, invoiceId) : prev));
-                      void qc.refetchQueries({ queryKey: ["quotes", params.id], exact: true });
-                      /* payments, dues, /collections: useGenerateInvoice → invalidateReceivables (R-1634). */
-                    },
-                  })}
+                  onClick={() => setIssueOpen(true)}
                 >
                   {money.outstanding > 0 && money.outstanding === total
                     ? "Invoice now (before payment)"
@@ -2223,6 +2225,41 @@ export default function QuoteDetailPage() {
         leadOffer={leadOffer}
         pending={markRejected.isPending}
         onConfirm={(input) => markRejected.mutate(input)}
+      />
+
+      {/* R-1633: what "Generate GST Invoice" issues, before it is issued. */}
+      <ConfirmIssueDialog
+        open={issueOpen}
+        onOpenChange={setIssueOpen}
+        consequences={issueOpen ? issueConsequences({
+          quote: {
+            id: quote.id,
+            customerName: quote.customer_name ?? null,
+            amount: total,
+            taxAmount: tax,
+            paymentTermsDays: quote.payment_terms_days ?? null,
+            /* undefined (no customer linked / not loaded) says nothing; null warns B2C. */
+            customerGstin: customer ? (customer.gstin ?? null) : undefined,
+            invoiceDate: istToday(),
+            billOfSupply: !!billOfSupplyStatus(gstRegistration.data?.saved),
+          },
+          series: docSeries?.invoice ?? null,
+        }) : null}
+        einvoiceNotice={issueOpen ? issueEinvoiceNotice(turnover?.bracket ?? null, isB2B(customer?.gstin) ? 1 : 0, 1) : null}
+        confirmLabel="Issue invoice"
+        busy={generateInvoice.isPending}
+        onConfirm={() => {
+          setIssueOpen(false);
+          generateInvoice.mutate(params.id, {
+            /* R-409: show the issued invoice at once — button gone, "Invoiced"
+               ticked, "View invoice" link — instead of waiting for a reload. */
+            onSuccess: ({ invoiceId }) => {
+              qc.setQueryData<Quote | null>(["quotes", params.id], (prev) => (prev ? withInvoiceIssued(prev, invoiceId) : prev));
+              void qc.refetchQueries({ queryKey: ["quotes", params.id], exact: true });
+              /* payments, dues, /collections: useGenerateInvoice → invalidateReceivables (R-1634). */
+            },
+          });
+        }}
       />
 
       {/* Reusable confirm dialog (replaces native window.confirm, which is

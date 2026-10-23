@@ -60,7 +60,11 @@ describe("GSTIN na ho to YAAD dilata hai", () => {
 
 describe("GSTIN ho, ya poochha hi na gaya ho — tab CHUP", () => {
   it("GSTIN maujood ho to koi reminder nahi", () => {
-    expect(textOf(quote({ customerGstin: "07ABDCA0298H1ZP" }))).not.toMatch(/GSTIN/);
+    /* R-1633 (24 Oct): ab confirm GSTIN DIKHATA hai ("Billed to …, GSTIN …") taaki galat
+       number pakda ja sake — par wo ek fact hai, chetavni nahi. Reminder (warning) nahi aata. */
+    const c = issueConsequences({ quote: quote({ customerGstin: "07ABDCA0298H1ZP" }), series: SERIES });
+    expect(c.consequences.filter((x) => x.tone === "warning" && /GSTIN/.test(x.text))).toEqual([]);
+    expect(c.consequences.map((x) => x.text).join(" | ")).not.toMatch(/No GSTIN on file|B2C/);
   });
 
   it("caller ne bataya hi nahi (undefined) — tab bhi chup", () => {

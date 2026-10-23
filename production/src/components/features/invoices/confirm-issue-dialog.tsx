@@ -66,7 +66,9 @@ export function ConfirmIssueDialog({
           <DialogTitle className="font-serif text-xl">
             {consequences?.predictedIsCertain && consequences.predictedNumber
               ? consequences.predictedNumber
-              : "Issue tax invoice"}
+              : consequences?.predictedNumber === "Bill of Supply"   /* R-1633: issue-consequences billOfSupply */
+                ? "Issue Bill of Supply"
+                : "Issue tax invoice"}
           </DialogTitle>
           <DialogDescription>
             {/* Named as a prediction, because it is one: next_document_number is the only
