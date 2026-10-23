@@ -35,7 +35,7 @@ import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { Icon } from "@/components/ui/icon";
 import { FAB } from "@/components/ui/fab";
 import { rupee, formatDate } from "@/lib/utils";
-import { daysUntilRenewal, onRenewalsPage, renewalBucket } from "@/lib/renewals/buckets";
+import { daysUntilRenewal, onRenewalsPage } from "@/lib/renewals/buckets";
 import { cn } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import type { Subscription } from "@/lib/supabase/database.types";
@@ -60,6 +60,7 @@ import { renewalRisk } from "./risk";
 import { priorTermDueText } from "./prior-due";
 import { openRenewalQuoteMap, withRenewalQuote } from "./open-renewal-quotes";
 import { GraceOverCard } from "./grace-over-card";
+import { classifyRenewals, expiredGraceText, isStopped } from "./classify";
 import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
 
 // ─── Vendor logo pill ─────────────────────────────────────────────────────────
@@ -277,6 +278,11 @@ function RenewalBucket({
                   <VendorHoldBadge sub={sub} />
                 </div>
 
+                {/* R-1124: an expired row says when the service stops (or that the owner decides). */}
+                {!isStopped(sub) && expiredGraceText(sub, days, graceDays) && (
+                  <p className="mb-2 text-xs font-medium text-rose-600">{expiredGraceText(sub, days, graceDays)}</p>
+                )}
+
                 {priorDue && (
                   <p role="status" className="mb-2 flex items-center gap-1 text-xs font-medium text-rose-600">
                     <Icon name="alert" size={12} className="shrink-0" />
@@ -467,14 +473,13 @@ function RenewalBucket({
                           <div className="mt-1 empty:hidden">
                             <VendorHoldBadge sub={sub} />
                           </div>
-                          {days < 0 && sub.renewal_state !== "suspended" && (
+                          {!isStopped(sub) && expiredGraceText(sub, days, graceDays) && (
                             /* R-1621: nothing suspends by itself any more — at the end of grace
                                the owner gets a "Stop service" task (Grace over list above).
-                               Company grace here; a trusted customer may have more. */
+                               R-1124: the real IST stop date, not a day count. Company grace
+                               (or the owner's +N days); a trusted customer may have more. */
                             <p className="mt-1 text-2xs font-medium text-rose-600">
-                              {graceDays - Math.abs(days) >= 0
-                                ? `Grace ends in ${graceDays - Math.abs(days)}d`
-                                : "Grace over — owner decides"}
+                              {expiredGraceText(sub, days, graceDays)}
                             </p>
                           )}
                         </td>
@@ -664,21 +669,20 @@ export default function RenewalsPage() {
       daysUntil: daysUntilRenewal(s.renewal_date!, today),
     }));
 
-  // Urgency buckets. Urgent INCLUDES already-lapsed subs (daysUntil < 0, in grace
-  // before auto-suspend) — otherwise the very rows about to suspend vanished from
-  // every bucket. The row UI already renders the "Expired Nd ago" state.
-  const urgent   = enriched.filter((r) => renewalBucket(r.daysUntil) === "urgent");
-  const upcoming = enriched.filter((r) => renewalBucket(r.daysUntil) === "upcoming");
-  const future   = enriched.filter((r) => renewalBucket(r.daysUntil) === "future");
+  /* R-1124: ONE classification (./classify.ts) feeds every number and list on this page.
+     The Urgent tab still holds lapsed rows (the sidebar badge counts them, R-1541), but as
+     their own "Expired · in grace" group — never under "Next 7 days". The header's "at risk"
+     and the At risk card are the same set: expired unpaid + high risk within 90 days. */
+  const groups   = classifyRenewals(enriched, (r) => renewalRisk(r.sub).level === "high", today);
+  const urgent   = groups.urgentTab;
+  const upcoming = groups.upcoming;
+  const future   = groups.future;
 
   // KPI aggregates
   const urgentMrr   = urgent.reduce((s, r)   => s + r.sub.mrr, 0);
   const upcomingMrr = upcoming.reduce((s, r) => s + r.sub.mrr, 0);
   const futureMrr   = future.reduce((s, r)   => s + r.sub.mrr, 0);
-  const arrAtRisk   = [...urgent, ...upcoming, ...future].reduce(
-    (s, r) => s + r.sub.mrr * 12,
-    0,
-  );
+  const lapsedCount = groups.expired.length + groups.stopped.length;
 
   /* Forecast (audit B7): agle 6 mahine, mahina-war — "is quarter kitna aayega?"
      ab list jodne se nahi, curve se dikhta hai. Flex alag (12x-sabak: forecast.ts). */
@@ -686,8 +690,7 @@ export default function RenewalsPage() {
   const maxForecast = Math.max(1, ...forecast.months.map((m) => m.amount));
 
   const upcoming90   = enriched.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 90);
-  const highRiskSubs = upcoming90.filter((r) => renewalRisk(r.sub).level === "high");
-  const highRiskArr  = highRiskSubs.reduce((s, r) => s + r.sub.mrr * 12, 0);
+  const highRiskSubs = groups.atRisk;
 
   /* R-239: the search narrows the bucket lists (and their tab counts) only. */
   const shown = <T extends { sub: Subscription }>(rows: T[]): T[] =>
@@ -701,7 +704,12 @@ export default function RenewalsPage() {
   const topHighRisk   = highRiskSubs[0]?.sub.customer_name ?? "a key customer";
   // Real, computed reasons for the top high-risk sub — never fabricate signals
   // (NPS/logins) we don't collect on a money screen.
-  const topReasons    = highRiskSubs[0] ? renewalRisk(highRiskSubs[0].sub).reasons : [];
+  const topReasons    = highRiskSubs[0]
+    ? [
+        ...(highRiskSubs[0].daysUntil < 0 ? [`Renewal ${Math.abs(highRiskSubs[0].daysUntil)}d overdue, not paid`] : []),
+        ...renewalRisk(highRiskSubs[0].sub).reasons,
+      ]
+    : [];
 
   // Real CSV export of the renewals pipeline (next 90 days) — raw integer ₹ so
   // Excel/Tally treat amounts as numbers. Replaces the old "coming soon" stub.
@@ -744,8 +752,9 @@ export default function RenewalsPage() {
     if (bulkSending) return;
     /* R-239: renewed / suspended customers are never reminded, and nobody is emailed
        until the operator has seen the count and the names. */
-    const targets = bulkReminderTargets(enriched);
-    if (targets.length === 0) { toast.info("No renewals due in the next 30 days"); return; }
+    /* R-1124: lapsed rows still in grace are included (and named apart in the confirm). */
+    const targets = bulkReminderTargets(enriched, today, graceDays);
+    if (targets.length === 0) { toast.info("No renewals due in the next 30 days, and none lapsed in grace"); return; }
     const ok = await confirm({ ...bulkReminderConfirm(targets), confirmLabel: `Email ${targets.length}`, icon: "mail" });
     if (!ok) return;
     setBulkSending(true);
@@ -783,12 +792,17 @@ export default function RenewalsPage() {
           <h1 className="font-serif text-3xl text-ink">Renewals</h1>
           <p className="mt-1 text-sm text-ink-3">
             {activeSubs} active subscription{activeSubs !== 1 ? "s" : ""}
-            {arrAtRisk > 0 && (
+            {groups.atRiskArr > 0 && (
               <>
                 {" · "}
-                <span className="font-medium text-rose-600">
-                  {rupee(arrAtRisk, { compact: true })} yearly value at risk
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setBucketTab("risk")}
+                  className="font-medium text-rose-600 underline-offset-2 hover:underline"
+                  title="Expired and unpaid, or high risk within 90 days — the At risk list"
+                >
+                  {rupee(groups.atRiskArr, { compact: true })} yearly value at risk ({highRiskSubs.length})
+                </button>
               </>
             )}
           </p>
@@ -827,11 +841,11 @@ export default function RenewalsPage() {
             <Icon name="bar_chart" size={15} className="text-amber-ink" />
             <span className="font-semibold text-ink">Renewals Churn &amp; Revenue Risk</span>
             <span className="text-ink-3">·</span>
-            <span className="text-ink-2 font-mono font-medium">Urgent (≤7d): <b className="text-rose-600">{urgent.length} ({rupee(urgentMrr, { compact: true })})</b></span>
+            <span className="text-ink-2 font-mono font-medium">Urgent (≤7d or lapsed): <b className="text-rose-600">{urgent.length} ({rupee(urgentMrr, { compact: true })})</b></span>
             <span className="text-ink-3 font-mono">·</span>
             <span className="text-ink-2 font-mono font-medium">Upcoming (30d): <b className="text-amber-ink">{upcoming.length} ({rupee(upcomingMrr, { compact: true })})</b></span>
             <span className="text-ink-3 font-mono">·</span>
-            <span className="text-ink-2 font-mono font-medium">High Risk ARR: <b className="text-rose-600">{rupee(highRiskArr, { compact: true })}</b> ({highRiskSubs.length})</span>
+            <span className="text-ink-2 font-mono font-medium">At risk ARR: <b className="text-rose-600">{rupee(groups.atRiskArr, { compact: true })}</b> ({highRiskSubs.length})</span>
           </div>
           <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
             <span>{kpiOpen ? "Collapse" : "Expand"}</span>
@@ -843,8 +857,11 @@ export default function RenewalsPage() {
           <div className="p-3 border-t border-hairline space-y-3 bg-paper">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               <button type="button" onClick={() => setBucketTab("urgent")} aria-pressed={bucketTab === "urgent"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Urgent (≤7d)</p>
+                <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Urgent (≤7d or lapsed)</p>
                 <p className="font-serif text-lg font-bold text-rose-600 tabular-nums mt-0.5">{urgent.length} <span className="text-xs text-ink-3 font-normal">({rupee(urgentMrr, { compact: true })} MRR)</span></p>
+                {lapsedCount > 0 && (
+                  <p className="text-2xs text-ink-3 tabular-nums">{groups.due7.length} due in 7 days · {lapsedCount} lapsed</p>
+                )}
               </button>
               <button type="button" onClick={() => setBucketTab("upcoming")} aria-pressed={bucketTab === "upcoming"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
                 <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Upcoming (30d)</p>
@@ -855,8 +872,9 @@ export default function RenewalsPage() {
                 <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{future.length} <span className="text-xs text-ink-3 font-normal">({rupee(futureMrr, { compact: true })} MRR)</span></p>
               </button>
               <button type="button" onClick={() => setBucketTab("risk")} aria-pressed={bucketTab === "risk"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">High Risk ARR</p>
-                <p className="font-serif text-lg font-bold text-rose-600 tabular-nums mt-0.5">{rupee(highRiskArr, { compact: true })} <span className="text-xs text-ink-3 font-normal">({highRiskSubs.length} subs)</span></p>
+                <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">At risk ARR</p>
+                <p className="font-serif text-lg font-bold text-rose-600 tabular-nums mt-0.5">{rupee(groups.atRiskArr, { compact: true })} <span className="text-xs text-ink-3 font-normal">({highRiskSubs.length} subs)</span></p>
+                <p className="text-2xs text-ink-3">Expired unpaid + high risk ≤90d</p>
               </button>
             </div>
 
@@ -906,9 +924,9 @@ export default function RenewalsPage() {
                 compact
               >
                 <strong className="text-ink">
-                  {highRiskSubs.length} high-risk renewal
-                  {highRiskSubs.length !== 1 ? "s" : ""} worth{" "}
-                  {rupee(highRiskArr, { compact: true })} ARR detected.
+                  {highRiskSubs.length} renewal
+                  {highRiskSubs.length !== 1 ? "s" : ""} at risk, worth{" "}
+                  {rupee(groups.atRiskArr, { compact: true })} ARR.
                 </strong>{" "}
                 Top priority: <strong>{topHighRisk}</strong>
                 {topReasons.length > 0 ? <> — {topReasons.join(" · ").toLowerCase()}</> : null}.
@@ -940,16 +958,30 @@ export default function RenewalsPage() {
               { id: "urgent",   label: "Urgent · ≤7d",      count: urgentShown.length   || undefined },
               { id: "upcoming", label: "Upcoming · 30d",    count: upcomingShown.length || undefined },
               { id: "future",   label: "Future · 31–90d",   count: futureShown.length   || undefined },
-              /* R-118: the High Risk ARR tile's own set — it had no list to open. */
-              { id: "risk",     label: "High risk · 90d",   count: riskShown.length || undefined },
+              /* R-118: the At risk ARR tile's own set — it had no list to open. */
+              { id: "risk",     label: "At risk",           count: riskShown.length || undefined },
             ] satisfies TabBarItem[]}
           />
         </div>
-        {bucketTab === "urgent" && (
+        {/* R-1124: the Urgent tab keeps lapsed rows (sidebar badge parity, R-1541) but in their
+            own groups — nothing past its renewal date is listed under "Next 7 days". */}
+        {bucketTab === "urgent" && shown(groups.expired).length > 0 && (
+          <RenewalBucket embedded kind="rose"
+            title="Expired · in grace"
+            subtitle="Renewal date passed, not paid — each row says when the service stops"
+            rows={shown(groups.expired)} graceDays={graceDays} />
+        )}
+        {bucketTab === "urgent" && (shown(groups.due7).length > 0 || urgentShown.length === 0) && (
           <RenewalBucket embedded kind="rose"
             title="Urgent · Next 7 days"
             subtitle="Call within 24 hours — every day of delay risks revenue"
-            rows={urgentShown} graceDays={graceDays} />
+            rows={shown(groups.due7)} graceDays={graceDays} />
+        )}
+        {bucketTab === "urgent" && shown(groups.stopped).length > 0 && (
+          <RenewalBucket embedded kind="rose"
+            title="Service stopped"
+            subtitle="Marked suspended — paying the renewal turns it back on"
+            rows={shown(groups.stopped)} graceDays={graceDays} />
         )}
         {bucketTab === "upcoming" && (
           <RenewalBucket embedded kind="amber"
@@ -965,8 +997,8 @@ export default function RenewalsPage() {
         )}
         {bucketTab === "risk" && (
           <RenewalBucket embedded kind="rose"
-            title="High risk · next 90 days"
-            subtitle="Renewals the risk score marks high — talk to these customers first"
+            title="At risk · expired or high risk"
+            subtitle="Expired and unpaid, or marked high risk within 90 days — talk to these customers first"
             rows={riskShown} graceDays={graceDays} />
         )}
       </Card>

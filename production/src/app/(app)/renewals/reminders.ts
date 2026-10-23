@@ -7,7 +7,7 @@
  * toast printed the raw state key ("Sent notice_sent to Acme"). Pure rules here, tested;
  * the page only wires them.
  */
-import { decideCadence, renewalIsSettled, renewalStateLabel, type RenewalState } from "@/lib/renewals/cadence";
+import { decideCadence, effectiveGraceDays, renewalIsSettled, renewalStateLabel, type RenewalState } from "@/lib/renewals/cadence";
 
 export interface RenewalSubLike {
   id: string;
@@ -16,6 +16,8 @@ export interface RenewalSubLike {
   renewal_state?: string | null;
   renewal_date: string | null;
   term_months?: number | null;
+  /** R-1621: the owner's "+N days" for this term (select * carries it). */
+  grace_until?: string | null;
 }
 
 export interface RenewalRowLike {
@@ -40,19 +42,36 @@ export function isTerminalRenewal(
   return renewalDate ? renewalIsSettled(state, renewalDate, termMonths, today) : true;
 }
 
-/** Who "Bulk reminder" emails: renewing in the next 30 days, not suspended / settled-renewed. */
-export function bulkReminderTargets<T extends RenewalRowLike>(rows: T[], today: Date = new Date()): T[] {
-  return rows.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 30
-    && !isTerminalRenewal(r.sub.renewal_state, r.sub.renewal_date, r.sub.term_months, today));
+/**
+ * Who "Bulk reminder" emails: renewing in the next 30 days, AND (R-1124) already past the
+ * renewal date but still inside the grace — the customers closest to losing the service
+ * were the ones it skipped. Past the grace the owner decides on the Grace over list (R-1621),
+ * so those are not mailed from here. Never suspended / settled-renewed.
+ */
+export function bulkReminderTargets<T extends RenewalRowLike>(rows: T[], today: Date = new Date(), tenantGraceDays = 0): T[] {
+  return rows.filter((r) => {
+    if (r.daysUntil > 30) return false;
+    if (isTerminalRenewal(r.sub.renewal_state, r.sub.renewal_date, r.sub.term_months, today)) return false;
+    if (r.daysUntil >= 0) return true;
+    if (!r.sub.renewal_date) return false;
+    const grace = effectiveGraceDays({ tenantGraceDays, renewalDate: r.sub.renewal_date, graceUntil: r.sub.grace_until ?? null });
+    return -r.daysUntil <= grace;
+  });
 }
 
 export function bulkReminderConfirm(targets: RenewalRowLike[]): { title: string; body: string } {
   const n = targets.length;
   const names = targets.slice(0, 5).map((r) => r.sub.customer_name).join(", ");
   const more = n > 5 ? `, and ${n - 5} more` : "";
+  /* R-1124: name the lapsed ones apart — they get the grace email, not a "renewing soon" one. */
+  const lapsed = targets.filter((r) => r.daysUntil < 0);
+  const lapsedNames = lapsed.slice(0, 5).map((r) => r.sub.customer_name).join(", ");
+  const lapsedLine = lapsed.length > 0
+    ? `\n${lapsed.length} already past the renewal date (in grace): ${lapsedNames}${lapsed.length > 5 ? `, and ${lapsed.length - 5} more` : ""}.`
+    : "";
   return {
     title: `Email ${n} customer${n === 1 ? "" : "s"}?`,
-    body: `Each gets its renewal reminder for the step it is due (renewing in the next 30 days).\n${names}${more}.`,
+    body: `Each gets its renewal reminder for the step it is due (renewing in the next 30 days, or lapsed and still in grace).\n${names}${more}.${lapsedLine}`,
   };
 }
 
