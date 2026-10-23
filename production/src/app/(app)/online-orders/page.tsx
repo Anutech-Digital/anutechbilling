@@ -37,6 +37,7 @@ import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import { invoiceHref } from "./invoice-links";
 import { orderPaymentView, paymentByLead, type OrderPayment, type QuotePaymentRow } from "./order-payment";
+import { orderMoney, pickOrderQuote, type Fact, type OrderMoney, type OrderQuoteRow, type OrderInvoiceRow, type OrderPaymentRow } from "./order-money";
 import { ordersEmptyState } from "./empty-state";
 import { orderDrawerActions, type DrawerAction } from "./drawer-actions";
 import { useLeadOutcome } from "@/lib/leads/use-outcome";
@@ -69,10 +70,9 @@ interface Order {
   contact:     { name: string; email: string; phone: string };
   tier:        string;
   seats:       number;
-  billing:     "annual" | "monthly" | null;
-  monthlyRate: number;
-  lineTotal:   number | null;
-  gst:         number | null;
+  /** R-1120: every money row comes from the order's quote / GST invoice / payment — never the lead value. */
+  money:       OrderMoney;
+  /** The stored total (invoice, else quote) — null when unknown; list, KPIs and drawer read it. */
   total:       number | null;
   trialDay:    number | null;
   /** The trial's own length — hosting 15, Workspace 14 — from the lead's dates. */
@@ -83,7 +83,6 @@ interface Order {
   paid:        boolean;
   /** R-351: drawer Invoice row text when there is no invoice to link. */
   invoiceText: string;
-  razorpayId:  string | null;
   /** R-083: the GST invoice raised for this order's quote (R-079), or null if none yet. */
   invoiceNo:   string | null;
   status:      OrderStatus;
@@ -170,6 +169,7 @@ function OrderDetailDrawer({
   const isPaid = order.type === "paid";
   const steps  = isPaid ? PAID_STEPS : TRIAL_STEPS;
   const s      = STATUS_META[order.status];
+  const m      = order.money;
   /* R-236: every button does its real job or is not shown — see drawer-actions.ts. */
   const actions = orderDrawerActions({
     type: order.type, status: order.status, trialDay: order.trialDay,
@@ -249,16 +249,19 @@ function OrderDetailDrawer({
             <DrawerRow label="Seats">{order.seats}</DrawerRow>
             {isPaid ? (
               <>
-                <DrawerRow label="Billing">
-                  {order.billing === "annual" ? "Annual" : "Monthly"}
-                </DrawerRow>
-                <DrawerRow label="Rate/seat">{rupee(order.monthlyRate)}/month</DrawerRow>
-                <DrawerRow label="Line total">{rupee(order.lineTotal)}</DrawerRow>
-                <DrawerRow label="GST (18%)">{rupee(order.gst)}</DrawerRow>
+                {/* R-1120: stored facts only — "—" plus the reason when a fact is not stored. */}
+                <DrawerRow label="Billing"><FactText fact={m.billing} /></DrawerRow>
+                <DrawerRow label="Subtotal"><FactText fact={m.subtotal} money /></DrawerRow>
+                {m.discountPct != null && <DrawerRow label="Discount">{m.discountPct}%</DrawerRow>}
+                <DrawerRow label="Taxable value"><FactText fact={m.taxable} money /></DrawerRow>
+                <DrawerRow label={m.gstLabel}><FactText fact={m.gst} money /></DrawerRow>
+                <DrawerRow label="GST split"><FactText fact={m.gstSplit} /></DrawerRow>
                 <DrawerRow label="Total">
-                  <span className="font-semibold text-amber">{rupee(order.total)}</span>
+                  {m.total.value != null
+                    ? <span className="font-semibold text-amber">{rupee(m.total.value)}</span>
+                    : <FactText fact={m.total} money />}
                 </DrawerRow>
-                <DrawerRow label="Razorpay ID" mono>{order.razorpayId}</DrawerRow>
+                <DrawerRow label="Razorpay ID" mono={m.razorpayId.value != null}><FactText fact={m.razorpayId} /></DrawerRow>
                 <DrawerRow label="Invoice" mono>
                   {order.invoiceNo ? (
                     <Link href={invoiceHref(order.invoiceNo) as never} className="text-indigo-ink hover:underline" title="Open GST invoice">
@@ -355,6 +358,18 @@ function DrawerSection({
       {children}
     </div>
   );
+}
+
+/** R-1120: a stored value, or "—" with the short reason it is unknown. */
+function FactText({ fact, money }: { fact: Fact<string> | Fact<number>; money?: boolean }) {
+  if (fact.value == null) {
+    return (
+      <span className="font-sans text-ink-3">
+        —<span className="ml-1.5 text-xs">{"why" in fact ? fact.why : ""}</span>
+      </span>
+    );
+  }
+  return <>{money && typeof fact.value === "number" ? rupee(fact.value) : fact.value}</>;
 }
 
 function DrawerRow({
@@ -478,15 +493,15 @@ function nextActionFromLead(l: LeadRow, paid: boolean): string {
   }
 }
 
-function leadToOrder(l: LeadRow, payment?: OrderPayment): Order {
+function leadToOrder(l: LeadRow, payment?: OrderPayment, money?: OrderMoney): Order {
   const isTrial = isTrialOrder(l);
   const pay     = orderPaymentView(payment);
   const win     = isTrial ? trialWindow(l) : null;
   const tier    = tierFromPlan(l.plan);
   const seats   = l.seats ?? 0;
-  const lineTotal = isTrial ? null : (l.value ?? null);
-  const gst       = lineTotal ? Math.round(lineTotal * 0.18) : null;
-  const total     = lineTotal && gst ? lineTotal + gst : null;
+  /* R-1120: was lead.value × 1.18 — now the quote's / invoice's stored total, or unknown. */
+  const m         = money ?? orderMoney(undefined, undefined, []);
+  const total     = isTrial ? null : m.total.value;
   const day       = trialDay(l);
 
   return {
@@ -504,16 +519,12 @@ function leadToOrder(l: LeadRow, payment?: OrderPayment): Order {
     },
     tier,
     seats,
-    billing:     "annual",
-    monthlyRate: lineTotal && seats ? Math.round(lineTotal / seats / 12) : 0,
-    lineTotal,
-    gst,
+    money:       m,
     total,
     trialDay:    day,
     trialLength: win?.length ?? null,
     trialEndsOn: win ? win.endsOn.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : null,
     paid:        pay.paid,
-    razorpayId:  null,    // future: from payments table
     invoiceNo:   pay.invoiceNo,
     invoiceText: pay.invoiceText,
     status:      statusFromLead(l, pay.paid),
@@ -573,20 +584,64 @@ export default function OnlineOrdersPage() {
        PAID (quotes.payment_status) — the one source for the badge and the steps. A failure
        here shows nothing as paid (never a guess) — the orders themselves still show. */
     let payments = new Map<string, OrderPayment>();
+    /* R-1120: the drawer's money rows read the same quote rows, plus the order quote's GST
+       invoice and its recorded payments (the Razorpay payment id). */
+    const money = new Map<string, OrderMoney>();
+    let noQuoteWhy: string | undefined;
     const leadIds = leads.map((l) => l.id);
     if (leadIds.length) {
       const { data: qRows, error: qErr } = await supabase
         .from("quotes")
-        .select("lead_id, payment_status, invoice_id, created_at")
+        .select("id, lead_id, payment_status, invoice_id, created_at, amount, subtotal, tax_rate, discount_pct, billing_cycle")
         .in("lead_id", leadIds);
       if (signal?.cancelled) return;
-      if (qErr) console.error("[online-orders] payment/invoice lookup failed:", qErr);
-      else payments = paymentByLead((qRows ?? []) as QuotePaymentRow[]);
+      if (qErr) {
+        console.error("[online-orders] payment/invoice lookup failed:", qErr);
+        noQuoteWhy = "Could not load the quote — reload the page";
+      } else {
+        const rows = (qRows ?? []) as OrderQuoteRow[];
+        payments = paymentByLead(rows as QuotePaymentRow[]);
+        const byLead = new Map<string, OrderQuoteRow[]>();
+        for (const r of rows) {
+          if (!r.lead_id) continue;
+          byLead.set(r.lead_id, [...(byLead.get(r.lead_id) ?? []), r]);
+        }
+        const picked = new Map<string, OrderQuoteRow>();
+        for (const [lead, list] of byLead) {
+          const q = pickOrderQuote(list);
+          if (q) picked.set(lead, q);
+        }
+        const quoteIds = [...picked.values()].map((q) => q.id);
+        const invoiceIds = [...picked.values()].map((q) => q.invoice_id).filter((v): v is string => !!v);
+        const [invRes, payRes] = await Promise.all([
+          invoiceIds.length
+            ? supabase.from("invoices").select("id, amount, taxable_value, tax_amount, tax_rate, inter_state").in("id", invoiceIds)
+            : Promise.resolve({ data: [], error: null }),
+          quoteIds.length
+            ? supabase.from("payments").select("quote_id, method, reference, status, received_at").in("quote_id", quoteIds)
+            : Promise.resolve({ data: [], error: null }),
+        ]);
+        if (signal?.cancelled) return;
+        if (invRes.error) console.error("[online-orders] invoice lookup failed:", invRes.error);
+        if (payRes.error) console.error("[online-orders] payment lookup failed:", payRes.error);
+        const invoices = new Map(((invRes.data ?? []) as OrderInvoiceRow[]).map((i) => [i.id, i]));
+        const pays = (payRes.data ?? []) as OrderPaymentRow[];
+        for (const [lead, q] of picked) {
+          const m = orderMoney(q, q.invoice_id ? invoices.get(q.invoice_id) : undefined, pays);
+          /* A failed side lookup is "not loaded", never "none". */
+          if (q.invoice_id && invRes.error) {
+            const why = { value: null, why: "Could not load the invoice — reload the page" } as const;
+            m.taxable = why; m.gst = why; m.gstSplit = why; m.total = why;
+          }
+          if (payRes.error && m.razorpayId.value == null) m.razorpayId = { value: null, why: "Could not load payments — reload the page" };
+          money.set(lead, m);
+        }
+      }
     }
 
     // Real orders only — no demo/seed data. An empty buy-flow correctly shows
     // an empty state, never fabricated revenue.
-    setOrders(leads.map((l) => leadToOrder(l, payments.get(l.id))));
+    setOrders(leads.map((l) => leadToOrder(l, payments.get(l.id), money.get(l.id) ?? orderMoney(undefined, undefined, [], noQuoteWhy))));
     setLoading(false);
   }, []);
 
@@ -830,13 +885,15 @@ export default function OnlineOrdersPage() {
                         <p className="font-mono text-2xs text-ink-3 truncate">{o.domain}</p>
                       </div>
                       <div className="text-right shrink-0">
-                        {o.total ? (
+                        {o.total != null ? (
                           <>
                             <p className="font-serif text-base tabular-nums text-ink">{rupee(o.total)}</p>
                             <p className="text-3xs text-ink-3">{o.seats} seats</p>
                           </>
-                        ) : (
+                        ) : o.type === "trial" ? (
                           <Badge kind="warning" size="sm">Trial</Badge>
+                        ) : (
+                          <p className="text-xs text-ink-3" title={o.money.total.value == null ? o.money.total.why : undefined}>—</p>
                         )}
                       </div>
                     </div>
@@ -934,11 +991,10 @@ export default function OnlineOrdersPage() {
                       <td className="px-4 py-3">
                         <p className="text-xs text-ink">{o.tier}</p>
                         <p className="text-2xs text-ink-3">
-                          {o.billing === "annual"
-                            ? "Annual"
-                            : o.billing === "monthly"
-                              ? "Monthly"
-                              : `${o.trialLength ?? 14}-day trial`}
+                          {/* R-1120: the quote's own billing cycle — it said "Annual" for every paid order. */}
+                          {o.type === "trial"
+                            ? `${o.trialLength ?? 14}-day trial`
+                            : o.money.billing.value ?? "—"}
                         </p>
                       </td>
 
@@ -953,8 +1009,10 @@ export default function OnlineOrdersPage() {
                           <span className="font-medium text-ink">
                             {rupee(o.total)}
                           </span>
-                        ) : (
+                        ) : o.type === "trial" ? (
                           <span className="italic text-ink-3">Trial</span>
+                        ) : (
+                          <span className="text-ink-3" title={o.money.total.value == null ? o.money.total.why : undefined}>—</span>
                         )}
                       </td>
 
