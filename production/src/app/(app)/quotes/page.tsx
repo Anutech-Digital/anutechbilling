@@ -33,6 +33,7 @@ import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { useLead } from "@/lib/queries/leads";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { quotesEmptyCopy } from "@/lib/quotes/empty-tab";
 import { computeMargin } from "@/components/features/margin-pill";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -722,14 +723,9 @@ export default function QuotesPage() {
           )}
 
       {/* Error */}
-      {error && (
-        <EmptyState
-          icon="alert"
-          title="Could not load quotes"
-          body={error.message}
-          action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
-        />
-      )}
+      {/* R-1655: useQuotes now throws on a failed read, so this branch really runs — plain
+          words + Try again (§24), never the raw database text. */}
+      {error && <LoadError what="Quotes" error={error} onRetry={() => refetch()} />}
 
       {/* Loading */}
       {isLoading && (

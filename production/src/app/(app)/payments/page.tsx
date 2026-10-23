@@ -56,6 +56,7 @@ import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-vouch
 import { EditPaymentDialog } from "@/components/features/quotes/edit-payment-dialog";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -148,9 +149,13 @@ function PaymentsPageInner() {
     const p = payments.find((x) => x.id === id);
     if (p) setEditPayment(p);
   }, [payments]);
-  const { data: projectPayments } = useAllProjectPayments();
-  const { data: quotes } = useQuotes();
-  const { data: outstanding } = useOutstandingReceivables();
+  const projectPaymentsQ = useAllProjectPayments();
+  const quotesQ = useQuotes();
+  const outstandingQ = useOutstandingReceivables();
+  const { data: projectPayments } = projectPaymentsQ;
+  const { data: quotes } = quotesQ;
+  const { data: outstanding } = outstandingQ;
+  const sideFailed = [projectPaymentsQ, quotesQ, outstandingQ].filter((q) => q.isError);
   /* R-1697: each dues row's own quote / renewal quote, so a row with no customer quote still
      gets "Record payment" through the same record_payment path. */
   const { data: duesQuoteLinks } = useDuesQuoteLinks((outstanding ?? []).map((o) => o.subscription_id));
@@ -724,13 +729,11 @@ function PaymentsPageInner() {
       )}
 
       {/* Error */}
-      {error && (
-        <EmptyState
-          icon="alert"
-          title="Could not load payments"
-          body={error.message}
-          action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
-        />
+      {error && <LoadError what="Payments" error={error} onRetry={() => refetch()} />}
+      {/* R-1655: the side lists (awaiting invoice, part-paid, dues, project payments) come from
+          other reads — a failed one used to leave its list silently empty. */}
+      {!error && sideFailed.length > 0 && (
+        <LoadErrorBanner onRetry={() => sideFailed.forEach((q) => void q.refetch())} />
       )}
 
       {/* Loading */}
