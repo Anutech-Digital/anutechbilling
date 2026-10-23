@@ -25,7 +25,7 @@ import { normaliseIndianPhone } from "@/lib/ai/telecall";
 
 export type Run = <T>(fn: (tx: Tx) => Promise<T>) => Promise<T>;
 
-export const COLD_CALL_ROLES = ["owner", "manager", "sales_senior", "sales"] as const;
+export const COLD_CALL_ROLES = ["owner", "manager", "sales_senior", "sales", "marketing"] as const;
 
 /** The caller's role, or null when the user row is missing / inactive. */
 export async function roleOf(run: Run, userId: string): Promise<string | null> {

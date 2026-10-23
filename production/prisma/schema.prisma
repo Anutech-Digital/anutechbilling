@@ -4974,6 +4974,7 @@ enum user_role {
   billing
   delivery
   partner_agent
+  marketing
 
   @@schema("public")
 }

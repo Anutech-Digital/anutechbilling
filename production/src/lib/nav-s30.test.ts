@@ -42,6 +42,9 @@ const OLD_MENU = Object.fromEntries(
   Object.entries(snapshot.menuHrefsByRole as Record<string, string[]>).map(([r, hs]) => [r, kept(hs)]),
 );
 const OLD_CRUMBS = snapshot.crumbs as Record<string, string[]>;
+/* R-1791 (23 Oct 2026): the Marketing role is newer than the snapshot — it had no pages before. */
+OLD_MENU.marketing ??= [];
+OLD_ALLOWED.marketing ??= [];
 
 /** S28 (29 Sep 2026): the WhatsApp renewal / invoice reminders settings page, a Marketing Hub
  *  directory row for owner / manager — the same roles as every other row there. */
@@ -128,6 +131,12 @@ const ADDED_11OCT_ACCOUNTANT = ["/accounting/loans", "/accounting/employees", "/
 /** R-1663 (19 Oct 2026): Cold Calling — a new page under Marketing Hub for owner, manager and sales
  *  (RLS on cold_call_* checks the same four roles). */
 const ADDED_19OCT_COLD_CALLING = ["/marketing/cold-calling"];
+/** R-1791 (23 Oct 2026): the new Marketing role — its part of the Marketing Hub. */
+const ADDED_23OCT_MARKETING_ROLE = [
+  "/marketing", "/marketing/cold-calling", "/marketing/campaigns", "/marketing/spend", "/marketing/reports",
+  "/marketing/ads", "/marketing/landing-pages", "/marketing/links", "/lead-gen",
+  "/marketing/google-business", "/marketing/reviews", "/online-promos",
+];
 const REMOVED_3OCT: Record<string, string[]> = { billing: ["/accounting/balance-sheet", ...R1003_BILLING_REMOVED] };
 const removedFor = (role: string) => REMOVED_3OCT[role] ?? [];
 const addedFor = (role: string) => [
@@ -149,6 +158,7 @@ const addedFor = (role: string) => [
   ...(role === "owner" || role === "accountant" ? ADDED_10OCT_OWNER_ACCOUNTANT : []),
   ...(role === "accountant" ? ADDED_11OCT_ACCOUNTANT : []),
   ...(["owner", "manager", "sales", "sales_senior"].includes(role) ? ADDED_19OCT_COLD_CALLING : []),
+  ...(role === "marketing" ? ADDED_23OCT_MARKETING_ROLE : []),
   ...ADDED_FOR_EVERY_ROLE,
 ];
 
@@ -508,6 +518,22 @@ describe("R-061: payroll — the menu and the guard give the same answer", () =>
       for (const h of SALARY_PAGES) {
         expect(menu.has(h), `${r}: menu says ${menu.has(h)}, guard says ${isRouteAllowed(r, h)} for ${h}`).toBe(isRouteAllowed(r, h));
       }
+    }
+  });
+});
+
+describe("R-1791: the Marketing role", () => {
+  it("opens its Hub pages and Help, nothing about money or customers", () => {
+    for (const h of ["/marketing", "/marketing/spend", "/marketing/cold-calling", "/help"]) {
+      expect(isRouteAllowed("marketing", h), h).toBe(true);
+    }
+    for (const h of ["/invoices", "/payments", "/customers", "/leads", "/accounting/pnl", "/dashboard"]) {
+      expect(isRouteAllowed("marketing", h), h).toBe(false);
+    }
+  });
+  it("cannot reach the Hub pages kept for owner / manager by typing the URL", () => {
+    for (const h of ["/marketing/whatsapp", "/marketing/whatsapp/reminders", "/marketing/templates", "/marketing/indiamart", "/marketing/lead-finder"]) {
+      expect(isRouteAllowed("marketing", h), h).toBe(false);
     }
   });
 });

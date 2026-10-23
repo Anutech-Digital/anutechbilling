@@ -50,6 +50,9 @@ export const USER_ROLES = [
   "accountant",
   "support",
   "partner_agent",
+  /* R-1791 (Abhishek, 23 Oct 2026): asks the owner for a marketing budget and asks billing to
+     pay against it; works in the Marketing Hub. */
+  "marketing",
 ] as const;
 
 export type UserRole = (typeof USER_ROLES)[number];
@@ -99,6 +102,7 @@ export const ROLE_LABEL: Record<UserRole, string> = {
   accountant:    "Accountant / CA",
   support:       "Support",
   partner_agent: "Partner Agent",
+  marketing:     "Marketing",
 };
 
 /** Label for a role that may not be a known one (a stale row, a new enum value). */
@@ -207,6 +211,9 @@ export const PERMISSIONS: Record<UserRole, Permissions> = {
   // External-facing internal role: sees only its own referred leads and payouts
   // under /partners. No customer data, no export, nothing else.
   partner_agent: { ...NONE },
+  // R-1791: runs the Marketing Hub and its own budget requests. No customer data, no export,
+  // no books — what it spends is visible on its own budget page.
+  marketing: { ...NONE },
 };
 
 /**
@@ -290,6 +297,7 @@ export const GATEWAY_LIMITED_BY_ROLE: Record<UserRole, boolean> = {
   support:       true,
   delivery:      true,
   partner_agent: true,
+  marketing:     true,
 };
 
 export function isGatewayLimitedRole(role: string | null | undefined): boolean {
