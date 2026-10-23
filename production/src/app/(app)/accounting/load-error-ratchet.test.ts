@@ -62,7 +62,6 @@ const KNOWN_GAPS = [
   "advances/page.tsx",
   "banking/rules/page.tsx",
   "bill-payments/page.tsx",
-  "cash-flow/page.tsx",
   "day-book/page.tsx",
   "esi-register/page.tsx",
   "loans/page.tsx",
