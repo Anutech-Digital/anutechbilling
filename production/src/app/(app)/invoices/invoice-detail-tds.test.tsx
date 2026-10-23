@@ -38,7 +38,9 @@ describe("Invoice detail — TDS banner (R-1520)", () => {
   it("the page wires the banner to Record payment in TDS mode (tdsOnly), only when money is due", () => {
     const src = readFileSync(join(__dirname, "invoice-detail.tsx"), "utf8");
     expect(src).toMatch(/<InvoiceTdsBanner[\s\S]{0,400}onRecordTds=/);
-    expect(src).toMatch(/moneyDue && quote\?\.id && \(\s*<InvoiceTdsBanner/);
-    expect(src).toMatch(/tdsOnly=\{tdsOnly\}/);
+    /* R-1636: the money comes from invoiceTdsMoney — null when there is no quote to record on. */
+    expect(src).toMatch(/moneyDue && tdsMoney && \(\s*<InvoiceTdsBanner/);
+    expect(src).toMatch(/<RecordPaymentDialog[\s\S]{0,900}tdsOnly=\{tdsOnly\}/);
+    expect(src).toMatch(/<RecordSubscriptionPaymentContainer[^>]*tdsOnly=\{tdsOnly\}/);
   });
 });

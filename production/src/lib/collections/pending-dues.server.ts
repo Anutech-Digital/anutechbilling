@@ -46,7 +46,7 @@ export async function loadPendingDuesRaw(db: Db, opts: { customerId: string; ten
       .select(INVOICE_COLS)
       .eq("tenant_id", tenantId)
       .eq("customer_id", customerId)
-      .in("status", ["pending", "overdue"])
+      .in("status", ["pending", "overdue"]).is("written_off_at", null)
       .order("id", { ascending: true })
       .range(from, to)),
     fetchAllRows<DuesSubscriptionRow>((from, to) => db

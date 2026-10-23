@@ -4,7 +4,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "@/lib/queries/keys";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import type { SeriesState } from "@/lib/actions/consequence";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
@@ -260,13 +260,10 @@ export function useGenerateInvoice() {
       /* R-334: a zero-rated export issued with no LUT on file — warn, never block. */
       const lutWarn = lutMissingWarning({ taxRate, lutNumber: me.data?.tenantLutNumber });
       if (lutWarn) toast.warning(lutWarn, { duration: 12_000 });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["nav-badges"] });
       /* R-1686: "Invoice now (before payment)" files the subscription and its dues in the
-         same database call — the Subscriptions list and Payments → Subscription dues re-read. */
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
+         same database call — the Subscriptions list and Payments → Subscription dues re-read;
+         R-1634: the new invoice is a due on /collections too. */
+      invalidateReceivables(qc);
       if (totalAdvances > 0 && netPayable > 0) {
         toast.success(
           `Invoice ${invoiceId} generated · ₹${totalAdvances.toLocaleString("en-IN")} advance adjusted · ₹${netPayable.toLocaleString("en-IN")} payable`,
@@ -317,11 +314,7 @@ export function useCreateDirectInvoice() {
       return row as { invoice_id: string; quote_id: string; net_payable: number; tax_rate: number };
     },
     onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["customers"] });
-      qc.invalidateQueries({ queryKey: queryKeys.aging() });
-      qc.invalidateQueries({ queryKey: ["nav-badges"] });
+      invalidateReceivables(qc);   // R-1634: a new due — /collections and Aging too
       toast.success(
         `Invoice ${res.invoice_id} raised · ₹${res.net_payable.toLocaleString("en-IN")} due${res.tax_rate === 0 ? " · export (zero-rated)" : ""}`,
       );

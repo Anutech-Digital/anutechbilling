@@ -14,6 +14,7 @@ import { fetchAllRows, fetchAllRowsIn, type PageQuery } from "@/lib/ops/fetch-al
 import { toOpenBalanceMap, type QuoteOpenBalanceRow } from "@/lib/quotes/open-balances";
 import { todayIST } from "@/lib/subscriptions/payment-due";
 import { queryKeys } from "@/lib/queries/keys";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { rupee } from "@/lib/utils";
 import { PAYMENT_COLUMNS } from "@/lib/queries/columns";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
@@ -160,9 +161,8 @@ export function useUpdatePayment() {
       return input.id;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["payments"] });
-      qc.invalidateQueries({ queryKey: ["payments", "by-quote"] });
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
+      /* R-1634: the receipt date moves a promise's status on /collections too. */
+      invalidateReceivables(qc);
       toast.success("Payment details updated");
     },
     onError: (err) => toastError(err),
@@ -210,16 +210,9 @@ export function useRefundPayment(opts?: { onBlocked?: (message: string) => void 
       return data as { refund_voucher_no: string; amount: number; opening_invoice?: boolean; invoice_number?: string | null; invoice_due_after?: number };
     },
     onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: ["payments"] });
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
-      qc.invalidateQueries({ queryKey: queryKeys.aging() });
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
-      // R-1567: the refund gives back credit this payment used and reverses its TDS receivable.
-      qc.invalidateQueries({ queryKey: ["tds_receivable"] });
-      // R-1563: a refund on an invoiced quote pays out credit-note credit and moves the invoice.
-      qc.invalidateQueries({ queryKey: ["invoices"] });
+      /* R-1567: gives back credit this payment used and reverses its TDS receivable; R-1563: an
+         invoiced quote's invoice moves; R-1634: /collections shows the due again. */
+      invalidateReceivables(qc);
       toast.success(`Refund booked — voucher ${r.refund_voucher_no}`, {
         /* R-1747: a refund on an imported Zoho invoice reopens that invoice — say by how much. */
         description: (r.opening_invoice && r.invoice_number
@@ -255,16 +248,9 @@ export function useDeletePayment(opts?: { onBlocked?: (message: string) => void 
       if (error) throw new Error(error.message);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["payments"] });
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
-      qc.invalidateQueries({ queryKey: queryKeys.purchaseOrders() });
-      qc.invalidateQueries({ queryKey: ["nav-badges"] });
       // R-1568: delete removes its open credit, gives back credit it used, reverses its TDS.
-      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
-      qc.invalidateQueries({ queryKey: queryKeys.aging() });
-      qc.invalidateQueries({ queryKey: ["tds_receivable"] });
+      invalidateReceivables(qc);
+      qc.invalidateQueries({ queryKey: queryKeys.purchaseOrders() });
       toast.success("Payment deleted & reversed");
     },
     // When the caller wants to surface blockers in a dialog (dependency-aware
@@ -507,10 +493,10 @@ export async function fetchOutstandingReceivables(supabase: DuesClient, today: s
   // 5. Their open invoices: the quotes' own invoices, and the instalment invoices.
   const INVOICE_COLS = "id, quote_id, invoice_date, due_date, status, amount, net_payable, paid_amount";
   const byQuote = await fetchAllRowsIn<DuesInvoiceRow, string>(quoteIds, (ids, from, to) =>
-    supabase.from("invoices").select(INVOICE_COLS).in("quote_id", ids).in("status", ["pending", "overdue"]).order("id").range(from, to) as never,
+    supabase.from("invoices").select(INVOICE_COLS).in("quote_id", ids).in("status", ["pending", "overdue"]).is("written_off_at", null).order("id").range(from, to) as never,
   );
   const byId = await fetchAllRowsIn<DuesInvoiceRow, string>(billings.map((b) => b.invoice_id), (ids, from, to) =>
-    supabase.from("invoices").select(INVOICE_COLS).in("id", ids).in("status", ["pending", "overdue"]).order("id").range(from, to) as never,
+    supabase.from("invoices").select(INVOICE_COLS).in("id", ids).in("status", ["pending", "overdue"]).is("written_off_at", null).order("id").range(from, to) as never,
   );
 
   return buildDuesRows(subs, quotes, payments, [...byQuote, ...byId], billings, today, openBalances);
@@ -538,7 +524,7 @@ export function useMarkReminderSent() {
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
+      invalidateReceivables(qc);
     },
     onError: (e) => toastError(e, { fallback: "Could not mark the reminder — please try again" }),
   });
@@ -564,33 +550,63 @@ export function useResumeSubscription() {
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      invalidateReceivables(qc);
       toast.success("Subscription resumed");
     },
   });
 }
 
+/** What write_off_subscription answers (migration 20261023184545). */
+export interface WriteOffResult {
+  subscription_id: string;
+  outstanding_amount: number;
+  /** The subscription's open invoices now stamped written off. */
+  invoices_written_off: string[];
+  /** Their balance together, ₹. */
+  invoice_amount: number;
+  /** Open invoices left as they are — their quote also bills another live subscription. */
+  invoices_left_open: string[];
+}
+type WriteOffRpc = (
+  fn: "write_off_subscription",
+  args: { p_subscription_id: string; p_reason: string },
+) => PromiseLike<{ data: WriteOffResult | null; error: { message: string } | null }>;
+
+/** The toast after a write-off: what left the chase, and what did not (R-1635). */
+export function writeOffSummary(r: WriteOffResult): string {
+  const n = r.invoices_written_off.length;
+  const parts = [
+    n > 0
+      ? `${n === 1 ? "Invoice" : `${n} invoices`} ${r.invoices_written_off.join(", ")} (${rupee(r.invoice_amount)}) written off — no more reminders or follow-up.`
+      : "No open invoice of this subscription was found to write off.",
+  ];
+  if (r.invoices_left_open.length > 0) {
+    parts.push(`${r.invoices_left_open.join(", ")} also bills another subscription of this customer, so it is still due — issue a credit note for this part if needed.`);
+  }
+  return parts.join(" ");
+}
+
+/* R-1635: was a bare subscriptions update — the subscription's invoices stayed pending, so
+   Payment Follow-up, Overdue, the dunning cron and the reminders kept chasing them.
+   write_off_subscription stamps the subscription AND its open invoices in one transaction. */
 export function useWriteOffSubscription() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
+    mutationFn: async ({ id, reason }: { id: string; reason: string }): Promise<WriteOffResult> => {
       const supabase = createClient();
-      const { error } = await supabase
-        .from("subscriptions")
-        .update({
-          status: "cancelled",
-          write_off_reason: reason,
-          written_off_at:   new Date().toISOString(),
-        })
-        .eq("id", id);
-      if (error) throw error;
+      /* write_off_subscription is newer than the generated types; same narrow cast as suspend_subscription. */
+      const rpc = supabase.rpc as unknown as WriteOffRpc;
+      const { data, error } = await rpc.call(supabase, "write_off_subscription", {
+        p_subscription_id: id,
+        p_reason:          reason.trim(),
+      });
+      if (error) throw new Error(error.message);
+      if (!data) throw new Error("The write-off was not confirmed — refresh Payments to see whether it was saved.");
+      return data;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["nav-badges"] });
-      toast.success("Receivable written off · subscription cancelled");
+    onSuccess: (r) => {
+      invalidateReceivables(qc);
+      toast.success("Receivable written off · subscription cancelled", { description: writeOffSummary(r), duration: 10_000 });
     },
     onError: (e) => toastError(e),
   });
@@ -635,6 +651,7 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined) {
           .select("id, invoice_date, due_date, amount, net_payable, paid_amount, status, tax_rate, quote_id, document_kind")
           .eq("customer_id", customerId!)
           .not("status", "in", "(paid,void)")
+          .is("written_off_at", null)   // R-1635: written off = not collected here
           .order("invoice_date", { ascending: true })
           .order("id", { ascending: true })
           .range(from, to));
@@ -706,13 +723,9 @@ export function useRecordMultiInvoicePayment() {
       return data;
     },
     onSuccess: () => {
-      for (const key of ["payments", "invoices", "quotes", "customers", "outstanding-receivables", "nav-badges", "tds_receivable", "subscriptions"]) {
-        qc.invalidateQueries({ queryKey: [key] });
-      }
-      /* R-1589: was "customer-credits" — no query reads that key, so the excess-to-credit
-         balance stayed old. Aging was not refreshed at all. */
-      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
-      qc.invalidateQueries({ queryKey: queryKeys.aging() });
+      /* R-1589 (credit, Aging) + R-1634: this is /collections' own sheet — its row kept the
+         old due until a reload. */
+      invalidateReceivables(qc);
     },
   });
 }

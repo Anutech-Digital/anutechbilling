@@ -31,7 +31,7 @@ import { useConfirm, useAskText } from "@/components/providers/confirm-provider"
 import { CancelSubscriptionDialog } from "@/components/features/subscriptions/cancel-subscription-dialog";
 import { createClient } from "@/lib/supabase/client";
 import { toastError } from "@/lib/errors/toast-error";
-import { queryKeys } from "@/lib/queries/keys";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { fetchRefundCredit, useRefundPayment } from "@/lib/queries/payments";
 import { cashReceived } from "@/lib/payments/cash-received";
 import { partialRefundMax, partialRefundProblem, refundCover } from "@/lib/payments/refund-cover";
@@ -70,11 +70,8 @@ export function useRefundCreditNoteCredit() {
       return data;
     },
     onSuccess: (r) => {
-      for (const key of [["payments"], ["quotes"], ["subscriptions"], ["invoices"], ["credit-notes"], ["outstanding-receivables"], ["tds_receivable"]]) {
-        qc.invalidateQueries({ queryKey: key });
-      }
-      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
-      qc.invalidateQueries({ queryKey: queryKeys.aging() });
+      qc.invalidateQueries({ queryKey: ["credit-notes"] });
+      invalidateReceivables(qc);   // R-1634: payments, dues, /collections, credit, Aging
       toast.success(`Refund booked — voucher ${r.refund_voucher_no}`, {
         description: `${rupee(r.amount)} in the books${r.split ? `; the payment keeps ${rupee(r.kept_amount)} received` : ""}. Send the actual money yourself from Razorpay or the bank.`,
       });

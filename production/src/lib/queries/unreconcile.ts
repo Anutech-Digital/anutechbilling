@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { toastError } from "@/lib/errors/toast-error";
 import type { BankTransactionRow } from "@/lib/queries/bank";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 
 /** The receipt note useBookCreditAsInvoice writes — how a sale raised FROM a bank line is recognised. */
 export const BANK_RECEIPT_NOTE = "Reconciled from bank receipt";
@@ -82,10 +83,12 @@ export function useUnreconcileBankTxn() {
       return data as { invoice_voided: string | null; invoice_credited: string | null; credit_note_id: string | null; receipt_removed: string | null };
     },
     onSuccess: (res) => {
-      for (const k of ["bank_transactions", "bank_accounts", "invoices", "quotes", "payments", "customers",
+      for (const k of ["bank_transactions", "bank_accounts",
                        "salary-payments", "expenses", "balance-sheet", "tax-payments", "project_sales", "accounting", "itr-pack"]) {
         qc.invalidateQueries({ queryKey: [k] });
       }
+      /* R-1634: a receipt removed / invoice credited changes what the customer owes. */
+      invalidateReceivables(qc);
       toast.success(
         res?.invoice_credited ? `Un-reconciled · credit note ${res.credit_note_id ?? ""} raised on invoice ${res.invoice_credited}, receipt removed`
         : res?.invoice_voided ? `Un-reconciled · draft invoice ${res.invoice_voided} voided, receipt removed`

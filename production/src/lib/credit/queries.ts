@@ -28,7 +28,7 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined, e
         .from("invoices")
         .select("id, status, amount, net_payable, paid_amount")
         .eq("customer_id", customerId!)
-        .in("status", ["pending", "overdue"]);
+        .in("status", ["pending", "overdue"]).is("written_off_at", null);
       if (error) throw error;
       return (data ?? []) as OpenInvoice[];
     },

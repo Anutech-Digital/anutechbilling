@@ -27,10 +27,13 @@ export function RecordSubscriptionPaymentContainer({
   invoice,
   open,
   onOpenChange,
+  tdsOnly = null,
 }: {
   invoice: Invoice;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** R-1636: the invoice page's TDS banner ("Record TDS") opens an instalment's sheet in TDS mode. */
+  tdsOnly?: { section: string; ratePct: number } | null;
 }) {
   const quoteQ = useQuoteByInvoiceId(invoice.id);
   const linkQ = useInstalmentLink(invoice.quote_id ? null : invoice.id);
@@ -83,6 +86,7 @@ export function RecordSubscriptionPaymentContainer({
         instalmentInvoiceId={invoice.id}
         customerId={invoice.customer_id}
         askDomain={false}
+        tdsOnly={tdsOnly}
       />
     );
   }

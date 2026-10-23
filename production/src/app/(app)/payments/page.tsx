@@ -592,7 +592,8 @@ function PaymentsPageInner() {
                       onWriteOff={async () => {
                         const reason = await askText({
                           title: `Write off ${rupee(o.outstanding_amount)} from ${o.customer_name}?`,
-                          body: "This cancels the subscription and marks the balance as uncollectable.",
+                          /* R-1635: the invoices leave the chase too (write_off_subscription). */
+                          body: "This cancels the subscription and marks the balance as uncollectable. Its unpaid invoices leave Payment Follow-up and Overdue, and no more reminders go out. The invoices stay issued as they are (GST unchanged).",
                           label: "Reason (for audit)",
                           confirmLabel: "Write off",
                           danger: true,

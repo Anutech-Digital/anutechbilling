@@ -33,6 +33,7 @@ const OWED = new Set<string>(INVOICE_OWED_STATUSES);
  *  (`net_payable`) and of receipts against it since (`paid_amount`), never below 0. */
 export function invoiceBalance(inv: KpiInvoice): number {
   if (!OWED.has(inv.status)) return 0;
+  if (inv.written_off_at) return 0;   // R-1635: written off — not owed (amount-due.ts)
   return Math.max(0, (inv.net_payable ?? inv.amount) - (inv.paid_amount ?? 0));
 }
 

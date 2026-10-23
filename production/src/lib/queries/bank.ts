@@ -15,7 +15,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "@/lib/queries/keys";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
@@ -819,11 +819,7 @@ export function useBookCreditAsInvoice() {
     },
     onSuccess: (inv) => {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["payments"] });
-      qc.invalidateQueries({ queryKey: ["customers"] });
-      qc.invalidateQueries({ queryKey: queryKeys.aging() });
+      invalidateReceivables(qc);   // R-1634: /collections too
       toast.success(`Invoice ${inv.invoice_id} created & reconciled`);
     },
     onError: (err) => toastError(err),
@@ -1326,11 +1322,7 @@ export function useMatchCreditToInvoice() {
     },
     onSuccess: ({ invoiceId }) => {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["payments"] });
-      qc.invalidateQueries({ queryKey: ["customers"] });
-      qc.invalidateQueries({ queryKey: queryKeys.aging() });
+      invalidateReceivables(qc);   // R-1634: /collections too
       toast.success(`Payment recorded on ${invoiceId} & line reconciled`);
     },
     onError: (err) => toastError(err, { fallback: "Match failed" }),

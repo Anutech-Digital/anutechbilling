@@ -21,6 +21,7 @@ import { RejectQuoteDialog } from "./reject-quote-dialog";
 import { isQuoteEditableInPlace } from "@/lib/quotes/editable";
 import { paymentDomainDefault } from "@/lib/quotes/payment-domain";
 import { useGenerateInvoice } from "@/lib/queries/invoices";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage";
 import { planForQuote, splitDue } from "@/lib/billing/instalments";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
@@ -576,10 +577,7 @@ export default function QuoteDetailPage() {
       qc.invalidateQueries({ queryKey: ["leads"] });
       /* R-1705: rejecting an add-seats quote takes its seats and MRR back off the subscription
          (DB trigger trg_quotes_add_seats_take_back) — refresh what shows them. */
-      if (quote?.is_add_seats) {
-        qc.invalidateQueries({ queryKey: ["subscriptions"] });
-        qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
-      }
+      if (quote?.is_add_seats) invalidateReceivables(qc);   // R-1634: /collections too
       setRejectOpen(false);
       toast.success(
         input.markLeadLost ? "Quote rejected · lead marked Lost"
@@ -1554,7 +1552,7 @@ export default function QuoteDetailPage() {
                     onSuccess: ({ invoiceId }) => {
                       qc.setQueryData<Quote | null>(["quotes", params.id], (prev) => (prev ? withInvoiceIssued(prev, invoiceId) : prev));
                       void qc.refetchQueries({ queryKey: ["quotes", params.id], exact: true });
-                      void qc.invalidateQueries({ queryKey: ["payments"] });
+                      /* payments, dues, /collections: useGenerateInvoice → invalidateReceivables (R-1634). */
                     },
                   })}
                 >

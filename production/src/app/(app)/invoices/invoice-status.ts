@@ -25,6 +25,8 @@ export function invoiceStatusBadge(
   const partial = (hasAdvances || (inv.paid_amount ?? 0) > 0) && inv.status !== "paid";
   const bucket = invoiceBucket(inv, today);
   if (bucket === "paid") return { label: "Paid", kind: "success" };
+  /* R-1635: written off on /payments — still issued, no longer collected or chased. */
+  if (inv.written_off_at && bucket !== "void") return { label: "Written off", kind: "muted" };
   if (bucket === "pending") return { label: partial ? "Partial" : "Pending", kind: "warning" };
   if (bucket === "overdue") {
     const lateBy = invoiceOverdueDays(inv, today);

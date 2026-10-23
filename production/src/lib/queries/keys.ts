@@ -26,4 +26,6 @@ export const queryKeys = {
   bankAccounts: () => ["bank_accounts"] as const,
   /** Bank statement lines — every account's lines, matched and unmatched. */
   bankTransactions: () => ["bank_transactions"] as const,
+  /** R-1634: Payment Follow-up (/collections) — the list and one customer's row. */
+  collections: () => ["collections"] as const,
 } as const;

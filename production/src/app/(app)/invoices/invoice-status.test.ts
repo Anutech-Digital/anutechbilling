@@ -34,6 +34,17 @@ describe("invoiceStatusBadge (R-238)", () => {
   });
 });
 
+describe("written off (R-1635)", () => {
+  const base = { status: "pending", due_date: "2026-09-01", amount: 1180, net_payable: 1180, paid_amount: 0 };
+  it("an overdue invoice written off reads 'Written off', not 'Overdue'", () => {
+    expect(invoiceStatusBadge(base, "2026-10-23")?.label).toMatch(/^Overdue/);
+    expect(invoiceStatusBadge({ ...base, written_off_at: "2026-10-23T06:00:00Z" }, "2026-10-23")).toEqual({ label: "Written off", kind: "muted" });
+  });
+  it("a paid invoice stays Paid", () => {
+    expect(invoiceStatusBadge({ ...base, status: "paid", written_off_at: "2026-10-23T06:00:00Z" }, "2026-10-23")?.label).toBe("Paid");
+  });
+});
+
 describe("invoice page wiring (R-238)", () => {
   const detail = readFileSync(join(process.cwd(), "src/app/(app)/invoices/invoice-detail.tsx"), "utf8");
   const list = readFileSync(join(process.cwd(), "src/app/(app)/invoices/page.tsx"), "utf8");

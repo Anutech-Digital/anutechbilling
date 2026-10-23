@@ -11,7 +11,7 @@ import { useForm, type UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "@/lib/queries/keys";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { toast } from "sonner";
 import { isSubscriptionLine, type QuoteLine } from "@/lib/subscriptions/orphan-quote";
 import {
@@ -827,21 +827,11 @@ export function RecordPaymentDialog({
     },
     onSuccess: async (res) => {
       // Invalidate everything that this touches
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["quotes", quoteId] });
-      qc.invalidateQueries({ queryKey: ["payments"] });
-      qc.invalidateQueries({ queryKey: ["payments", "by-quote", quoteId] });
+      /* Every balance screen — payments (incl. this quote's), quotes, invoices, subscriptions,
+         dues, credit, TDS, Aging (R-1589) and Payment Follow-up (R-1634, kept the old due). */
+      invalidateReceivables(qc);
       qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["customers"] });
       qc.invalidateQueries({ queryKey: ["contacts", "all"] });
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
-      qc.invalidateQueries({ queryKey: ["nav-badges"] });
-      qc.invalidateQueries({ queryKey: ["tds_receivable"] });
-      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
-      // R-1589: Aging showed the old balance after a payment until a reload.
-      qc.invalidateQueries({ queryKey: queryKeys.aging() });
 
       /* R-374: the reference was already recorded — nothing new was saved. Say so, and keep
          the sheet open so the operator can enter the new payment's own reference. */
@@ -962,8 +952,7 @@ export function RecordPaymentDialog({
         } catch (e) {
           splitRaise = { raised: [], errors: [{ message: e instanceof Error ? e.message : String(e) }] };
         }
-        qc.invalidateQueries({ queryKey: ["invoices"] });
-        qc.invalidateQueries({ queryKey: ["subscriptions"] });
+        invalidateReceivables(qc);   // the instalments just raised are dues (R-1634: /collections too)
       }
       const splitToastBase = split
         ? splitPaymentToast(toastBase, {

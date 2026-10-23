@@ -22,6 +22,8 @@ import { SAAS_HSN } from "@/lib/gst/hsn";
 import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
 import { usePaymentsByQuote, totalReceived, useInstalmentLink } from "@/lib/queries/payments";
 import { RecordSubscriptionPaymentContainer } from "./record-invoice-payment";
+import { invoiceReceiptsQuote, invoiceTdsMoney } from "./invoice-receipts";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { invoiceBucket } from "@/lib/invoices/overdue";
 import { invoiceStatusBadge } from "./invoice-status";
@@ -185,6 +187,13 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
     { customerGstin: customer?.gstin, sellerGstin: supplier?.gstin, treatment: invoice.gst_treatment ?? customer?.gst_treatment },
   );
   const receivedPayments = (payments ?? []).filter((p) => p.status === "received");
+  /* R-1520 TDS banner: the quote's total and receipts — or, R-1636, an instalment's own money. */
+  const tdsMoney = invoiceTdsMoney({
+    invoice,
+    source: invoiceReceiptsQuote(quote?.id, instalment),
+    quoteTotal: total,
+    quoteReceived: totalReceived(payments ?? []),
+  });
 
   return (
     <>
@@ -198,11 +207,12 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
         <EinvoiceBanner notice={einvoiceNotice} className="mb-3" />
         {/* R-1520: Partial invoice whose remaining due is exactly a common TDS (INV-A378:
             ₹25,500 = 10% of ₹2,55,000) → say so, and one button to record it as TDS. */}
-        {moneyDue && quote?.id && (
+        {/* R-1636: an instalment (no quote of its own) gets the banner too, on its own money. */}
+        {moneyDue && tdsMoney && (
           <InvoiceTdsBanner
             className="mb-3"
-            total={total}
-            received={totalReceived(payments ?? [])}
+            total={tdsMoney.total}
+            received={tdsMoney.received}
             gstRatePct={taxRate}
             preferredSection={customer?.tds_default_section ?? null}
             onRecordTds={(m) => { setTdsOnly({ section: m.section, ratePct: m.ratePct }); setPayOpen(true); }}
@@ -491,7 +501,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
         />
       )}
       {payOpen && !quote && instalment?.quoteId && (
-        <RecordSubscriptionPaymentContainer invoice={invoice} open={payOpen} onOpenChange={setPayOpen} />
+        <RecordSubscriptionPaymentContainer invoice={invoice} open={payOpen} onOpenChange={setPayOpen} tdsOnly={tdsOnly} />
       )}
       {payOpen && quote && (
         <RecordPaymentDialog
@@ -614,7 +624,10 @@ export function InvoicePaymentsAccordion({
   onRecordPayment?: () => void;
 }) {
   const { data: quote } = useQuoteByInvoiceId(inv.id);
-  const { data: payments, isLoading } = usePaymentsByQuote(quote?.id);
+  /* R-1636: an instalment has no quote of its own — its receipts are on its subscription's quote. */
+  const { data: instalment } = useInstalmentLink(inv.quote_id ? null : inv.id);
+  const source = invoiceReceiptsQuote(quote?.id, instalment);
+  const { data: payments, isLoading } = usePaymentsByQuote(source?.quoteId);
   // Project invoices have no parent quote — their receipts live in project_payments.
   const { data: projPays, isLoading: projLoading } = useProjectPaymentsByInvoice(inv.id);
   const { data: customer } = useCustomer(inv.customer_id ?? undefined);
@@ -668,8 +681,15 @@ export function InvoicePaymentsAccordion({
   return (
     <div>
       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-2">
-        Payment receipts ({received.length})
+        {source?.instalment ? "Receipts on this subscription" : "Payment receipts"} ({received.length})
       </div>
+      {source?.instalment && (
+        /* R-1636: these receipts are the subscription's; say how they reach THIS invoice. */
+        <p className="text-2xs text-ink-2 mb-2">
+          Paid on this invoice: <b className="tabular-nums">{rupee(Math.max(0, inv.amount - invoiceAmountDue(inv)))}</b> of{" "}
+          <span className="tabular-nums">{rupee(inv.amount)}</span>. A receipt goes to the oldest unpaid instalment first.
+        </p>
+      )}
       <ul className="space-y-1.5">
         {received.map((p) => (
           <li key={p.id}>
@@ -710,8 +730,8 @@ export function InvoicePaymentsAccordion({
           tenantAddress={me.tenantAddress}
           tenantState={me.tenantState}
           interState={interState}
-          quoteId={quote?.id}
-          gstRate={quote?.tax_rate ?? 18}
+          quoteId={source?.quoteId}
+          gstRate={quote?.tax_rate ?? inv.tax_rate ?? 18}
         />
       )}
     </div>

@@ -30,6 +30,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import { queryKeys } from "@/lib/queries/keys";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { matchTdsShortfall, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
@@ -56,6 +57,8 @@ export interface CollectionInvoice {
   taxable_value: number | null;
   tax_amount: number | null;
   tax_rate: number | null;
+  /** R-1635: the read skips written-off invoices; invoiceAmountDue answers 0 for one anyway. */
+  written_off_at?: string | null;
 }
 
 export interface CollectionSubscription {
@@ -382,7 +385,7 @@ const SUB_COLS = "id, customer_id, customer_name, plan, domain, quote_id, outsta
 export async function fetchCollectionsInput(supabase: Client, customerId?: string): Promise<CollectionsInput> {
   const [invoices, subscriptions] = await Promise.all([
     fetchAllRows<CollectionInvoice>((from, to) => {
-      let q = supabase.from("invoices").select(INVOICE_COLS).in("status", ["pending", "overdue"]);
+      let q = supabase.from("invoices").select(INVOICE_COLS).in("status", ["pending", "overdue"]).is("written_off_at", null);
       if (customerId) q = q.eq("customer_id", customerId);
       return q.order("id", { ascending: true }).range(from, to);
     }),
@@ -457,7 +460,7 @@ export async function fetchCollectionsInput(supabase: Client, customerId?: strin
 
 export function useCollections() {
   return useQuery({
-    queryKey: ["collections"],
+    queryKey: queryKeys.collections(),
     queryFn: async (): Promise<CollectionRow[]> =>
       buildCollectionRows(await fetchCollectionsInput(createClient()), istToday()),
     staleTime: 30_000,
@@ -470,7 +473,7 @@ export function useCollections() {
  */
 export function useCustomerCollection(customerId: string | null | undefined) {
   return useQuery({
-    queryKey: ["collections", "customer", customerId],
+    queryKey: [...queryKeys.collections(), "customer", customerId],
     enabled: !!customerId,
     queryFn: async (): Promise<CollectionRow | null> =>
       buildCollectionRows(await fetchCollectionsInput(createClient(), customerId ?? undefined), istToday())

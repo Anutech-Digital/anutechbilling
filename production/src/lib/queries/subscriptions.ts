@@ -5,6 +5,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queries/keys";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { guardErrorToast } from "@/lib/ui/guard-toast";
@@ -143,10 +144,8 @@ export function useDeleteSubscription() {
       if (error) throw new Error(error.message);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
+      invalidateReceivables(qc);   // R-1634: its dues leave /collections too
       qc.invalidateQueries({ queryKey: queryKeys.purchaseOrders() });
-      qc.invalidateQueries({ queryKey: ["nav-badges"] });
       toast.success("Subscription deleted");
     },
     // Blocked (came from a paid quote)? Point to where the fix happens.
@@ -175,9 +174,7 @@ export function useCancelSubscription() {
       return data as { due_cleared: number; last_day: string };
     },
     onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
-      qc.invalidateQueries({ queryKey: ["nav-badges"] });
+      invalidateReceivables(qc);   // R-1634: a cleared due leaves /collections too
       toast.success("Subscription cancelled", {
         description: r.due_cleared > 0
           ? `Out of MRR and renewals. ₹${r.due_cleared.toLocaleString("en-IN")} due cleared.`

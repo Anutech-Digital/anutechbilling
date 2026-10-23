@@ -6628,6 +6628,8 @@ export type Database = {
           taxable_value: number | null
           tenant_id: string
           updated_at: string
+          write_off_reason: string | null
+          written_off_at: string | null
         }
         Insert: {
           adjusted_advances?: Json
@@ -6671,6 +6673,8 @@ export type Database = {
           taxable_value?: number | null
           tenant_id: string
           updated_at?: string
+          write_off_reason?: string | null
+          written_off_at?: string | null
         }
         Update: {
           adjusted_advances?: Json
@@ -6714,6 +6718,8 @@ export type Database = {
           taxable_value?: number | null
           tenant_id?: string
           updated_at?: string
+          write_off_reason?: string | null
+          written_off_at?: string | null
         }
         Relationships: [
           {

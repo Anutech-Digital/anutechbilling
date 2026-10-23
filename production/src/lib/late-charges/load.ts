@@ -118,7 +118,7 @@ export async function loadLateCharges(
     const cutoff = addDaysISO(today, -PAID_LOOKBACK_DAYS);
     const [open, paid] = await Promise.all([
       fetchAllRows<InvoiceRow>((from, to) => sb.from("invoices").select(INVOICE_COLUMNS)
-        .in("status", ["pending", "overdue"]).not("due_date", "is", null).order("id").range(from, to)),
+        .in("status", ["pending", "overdue"]).is("written_off_at", null).not("due_date", "is", null).order("id").range(from, to)),
       fetchAllRows<InvoiceRow>((from, to) => sb.from("invoices").select(INVOICE_COLUMNS)
         .eq("status", "paid").not("due_date", "is", null).gte("paid_date", cutoff).order("id").range(from, to)),
     ]);
