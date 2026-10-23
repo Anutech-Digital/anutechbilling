@@ -40,7 +40,7 @@ describe("R-1775 wipe — SQL", () => {
     expect(core(TEST_SQL)).toBe(core(SQL));
   });
 
-  it("keep-list is logins, settings, secrets/keys and numbering only (Pardeep, 23 Oct)", () => {
+  it("keep-list is logins, settings, secrets/keys, numbering and the bug reports only (Pardeep, 23 Oct)", () => {
     const s = readFileSync(SQL, "utf8");
     const m = s.match(/function pg_temp\.r1775_keep\(\)[\s\S]*?\$f\$([\s\S]*?)\$f\$/);
     expect(m).not.toBeNull();
@@ -50,7 +50,7 @@ describe("R-1775 wipe — SQL", () => {
         "users", "user_google_tokens", "push_subscriptions", "api_keys", "team_invites", "join_requests",
         "personal_vault_pin", "attendance_settings", "whatsapp_reminder_settings", "ai_autonomy", "demo_tenants",
         "tenant_domains", "document_series", "customer_number_seq", "tenant_secrets", "ad_accounts",
-        "gbp_locations", "indiamart_sync_state",
+        "gbp_locations", "indiamart_sync_state", "feedback", "feedback_screenshots", "feedback_votes",
       ].sort(),
     );
   });
