@@ -34,6 +34,7 @@ import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
 import { tierAnnualPrice, annualTotals } from "./tier-price";
 import { workspaceGstLabel } from "./gst-heads";
 import { postJson, NOT_REACHED } from "./post-json";
+import { checkCoupon, recheckCoupon, type AppliedCoupon } from "./coupon-check";
 import { buyNowSchema,buyerCompany, BUY_ANNUAL_NOTE, type BuyNowForm } from "./buy-now-schema";
 import { normalizeGstinInput } from "@/site/lib/checkout-details";
 import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database.types";
@@ -2625,18 +2626,7 @@ function loadRazorpayCheckout(): Promise<RazorpayCtor> {
 // ──────────────────────────────────────────────────────────────────────
 // Schema lives in ./buy-now-schema (R-226: tested on its own).
 
-/**
- * Coupon validation state — owned by the dialog. Updated each time the
- * visitor hits "Apply". The successful shape carries the server-computed
- * pre-GST rupee discount so we can re-render the price breakdown.
- */
-interface AppliedCoupon {
-  code:           string;
-  discount:       number;       // pre-GST rupees off
-  discount_type:  "percent" | "flat";
-  discount_value: number;
-  description?:   string | null;
-}
+/* Coupon validation (AppliedCoupon, checkCoupon, recheckCoupon) lives in ./coupon-check (R-1630). */
 
 interface CheckoutApiResponse {
   success?:        boolean;
@@ -2695,9 +2685,8 @@ function BuyNowDialog({
   const [seats, setSeats] = React.useState<number>(Math.max(1, initialSeats));
   const calc = React.useMemo(() => calcForTier(tier, seats), [tier, seats]);
 
-  // Coupon state — owned locally, cleared if visitor edits tier/seats
-  // (server re-validates anyway, but we don't want a stale "applied" pill
-  //  showing when the underlying basis has changed).
+  // Coupon state — owned locally, re-checked if visitor edits tier/seats
+  // (R-1630; server re-validates at checkout anyway).
   const [couponInput,    setCouponInput]    = React.useState("");
   const [couponApplied,  setCouponApplied]  = React.useState<AppliedCoupon | null>(null);
   const [couponError,    setCouponError]    = React.useState<string | null>(null);
@@ -2738,13 +2727,27 @@ function BuyNowDialog({
   const anyDiscount       = sitePromoOff > 0 || couponPreGstOff > 0;
   const totalToPay        = anyDiscount ? finalTotal : calc.total;
 
-  // When tier or seats change, clear any applied coupon. The discount math
-  // depends on gross_amount, so a stale apply could mislead the visitor.
+  /* R-1630: when tier or seats change, check the applied code again for the new basket
+     (the discount depends on gross_amount). Still valid → it stays with the new discount;
+     not valid → removed, and the error line under the code box says why. It used to be
+     cleared silently, so the discount vanished from the total with no word.
+     Waits 400 ms so clicking "+" five times asks once; a newer change wins (seq). */
+  const recheckSeq = React.useRef(0);
   React.useEffect(() => {
-    if (couponApplied) {
-      setCouponApplied(null);
-      setCouponError(null);
-    }
+    if (!couponApplied) return;
+    const seq = ++recheckSeq.current;
+    const t = setTimeout(async () => {
+      setValidatingCoupon(true);
+      const next = await recheckCoupon(couponApplied, {
+        code: couponApplied.code, tier: tier.id, seats, gross_amount: postSitePromoSubtot,
+      });
+      if (seq !== recheckSeq.current) return;
+      setCouponApplied(next.applied);
+      setCouponError(next.error);
+      if (!next.applied) setCouponInput(couponApplied.code); // the code stays in the box to re-apply
+      setValidatingCoupon(false);
+    }, 400);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tierId, seats]);
 
@@ -2754,44 +2757,22 @@ function BuyNowDialog({
       setCouponError("Enter a code first");
       return;
     }
+    recheckSeq.current++; // an explicit Apply overrides a pending re-check
     setValidatingCoupon(true);
     setCouponError(null);
     try {
-      const res = await fetch("/api/public/coupons/validate", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code,
-          tier:         tier.id,
-          seats,
-          gross_amount: postSitePromoSubtot,  // stacks BELOW site promo
-        }),
+      const r = await checkCoupon({
+        code,
+        tier:         tier.id,
+        seats,
+        gross_amount: postSitePromoSubtot,  // stacks BELOW site promo
       });
-      const json = await res.json();
-      if (!json.ok) {
-        const friendly: Record<string, string> = {
-          invalid_code:        "That code doesn't exist",
-          inactive:            "This coupon is no longer active",
-          expired:             "This coupon has expired",
-          not_started:         "This coupon isn't active yet",
-          maxed_out:           "This coupon has reached its usage limit",
-          wrong_tier:          json.required_tier ? `Code is only for the ${json.required_tier} tier` : "Code doesn't apply to this tier",
-          min_seats_not_met:   `Needs at least ${json.min_seats ?? "more"} seats`,
-          max_seats_exceeded:  `Code only works up to ${json.max_seats ?? "fewer"} seats`,
-          bad_request:         json.message ?? "Invalid request",
-          server_error:        "Server error — try again",
-        };
-        setCouponError(friendly[json.reason as string] ?? "Could not apply this code");
+      if (!r.ok) {
+        setCouponError(r.message);
         setCouponApplied(null);
         return;
       }
-      setCouponApplied({
-        code:           json.code,
-        discount:       json.discount,
-        discount_type:  json.discount_type,
-        discount_value: json.discount_value,
-        description:    json.description,
-      });
+      setCouponApplied(r.coupon);
       setCouponError(null);
     } catch {
       setCouponError("Network error — try again");
@@ -2801,6 +2782,8 @@ function BuyNowDialog({
   }
 
   function removeCoupon() {
+    recheckSeq.current++; // a pending re-check must not put it back
+    setValidatingCoupon(false);
     setCouponApplied(null);
     setCouponInput("");
     setCouponError(null);
