@@ -60,6 +60,7 @@ import { renewalRisk } from "./risk";
 import { priorTermDueText } from "./prior-due";
 import { openRenewalQuoteMap, withRenewalQuote } from "./open-renewal-quotes";
 import { GraceOverCard } from "./grace-over-card";
+import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
 
 // ─── Vendor logo pill ─────────────────────────────────────────────────────────
 
@@ -271,6 +272,11 @@ function RenewalBucket({
                   )}
                 </div>
 
+                {/* R-1796: unpaid past the renewal date — the vendor renewal waits for the payment. */}
+                <div className="mb-2 empty:hidden">
+                  <VendorHoldBadge sub={sub} />
+                </div>
+
                 {priorDue && (
                   <p role="status" className="mb-2 flex items-center gap-1 text-xs font-medium text-rose-600">
                     <Icon name="alert" size={12} className="shrink-0" />
@@ -457,6 +463,10 @@ function RenewalBucket({
                               {sub.reminder_count} email{sub.reminder_count === 1 ? "" : "s"} sent
                             </p>
                           )}
+                          {/* R-1796: vendor renewal hold + the owner/manager "Renew anyway". */}
+                          <div className="mt-1 empty:hidden">
+                            <VendorHoldBadge sub={sub} />
+                          </div>
                           {days < 0 && sub.renewal_state !== "suspended" && (
                             /* R-1621: nothing suspends by itself any more — at the end of grace
                                the owner gets a "Stop service" task (Grace over list above).

@@ -396,7 +396,7 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                   {...register("grace_period_days", { valueAsNumber: true })}
                 />
                 <p className="mt-1 text-xs text-ink-3">
-                  Buffer between renewal date and auto-suspend. 0 means service suspends the day after renewal if unpaid; up to 30 days extra.
+                  Days after the renewal date before you get a Stop service task. Nothing stops by itself.
                 </p>
               </Field>
               <Field htmlFor="settings-address" label="Address">

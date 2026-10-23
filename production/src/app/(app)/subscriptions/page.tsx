@@ -70,6 +70,7 @@ import { ReconcileGoogleDialog } from "@/components/features/subscriptions/recon
 import { ImportGoogleSubsDialog } from "@/components/features/subscriptions/import-google-subs-dialog";
 import { MarginAlertsCard, marginAlertCounts } from "@/components/features/subscriptions/margin-alerts-card";
 import { SubDrawerActions, SubDrawerDangerZone } from "@/components/features/subscriptions/sub-drawer-actions";
+import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
 import Link from "next/link";
 import { toast } from "sonner";
 import { toastError, describeError } from "@/lib/errors/toast-error";
@@ -1786,6 +1787,11 @@ export default function SubscriptionsPage() {
                   Each one CLOSES the drawer first. Every action either navigates away or
                   opens its own dialog, and a dialog stacked on an open sheet leaves two
                   dismissable layers over the page. */}
+              {/* R-1796: unpaid past the renewal date — the vendor renewal waits for the
+                  payment; owner / manager may "Renew anyway" for this term (logged). */}
+              <div className="mb-3 empty:hidden" data-testid="sub-drawer-vendor-hold">
+                <VendorHoldBadge sub={scheduleSub} size="md" />
+              </div>
               <SubDrawerActions
                 hasCustomer={!!scheduleSub.customer_id}
                 primary={!leakFixShown}
