@@ -32,7 +32,7 @@ import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-quote";
 import { addSeatsCount } from "@/lib/subscriptions/seat-quotes-pending";
 import { renewalSubOfQuote, priorTermDueText } from "@/app/(app)/renewals/prior-due";
-import { useSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
+import { useQuoteSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { historyTime, quoteCreatedAt } from "@/lib/quotes/history-time";
 import { quotePaymentBadge } from "@/lib/quotes/status-badge";
@@ -63,6 +63,8 @@ import { payIntent } from "./pay-intent";
 import { quotePrimaryAction, variantFor, isClosedForSending } from "./primary-action";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
 import { quoteContact } from "@/lib/quotes/quote-contact";
+import { addGstinHref, buyerGstinMissing, quoteBuyerGstin } from "@/lib/quotes/buyer-gstin";
+import { paletteMayOpen } from "@/components/layout/palette-access";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
 import { PayQrNotice } from "@/components/features/quotes/pay-qr-notice";
@@ -161,6 +163,9 @@ export default function QuoteDetailPage() {
   /* R-445 (1): who the quote is addressed to — customer first, else the lead. Same values in
      the preview, the downloaded PDF and the WhatsApp attachment preview. */
   const contact = quoteContact(customer, lead);
+  /* R-1485: the buyer's GSTIN — the customer row's (a customer quote never borrows the lead's),
+     else the lead's. Same value on the page, the preview and the downloaded PDF. */
+  const buyerGstin = quoteBuyerGstin(quote?.customer_id ? (customer ?? { gstin: null }) : null, lead);
   const { data: me } = useCurrentUser();
   /* R-718: recording a payment is owner / manager / accountant / billing — sales, support and
      delivery see the money state but no Record button (the database refuses them). */
@@ -178,7 +183,8 @@ export default function QuoteDetailPage() {
   const [blockedOpen, setBlockedOpen] = React.useState(false);
   const [approvalOpen, setApprovalOpen] = React.useState(false);
   const requestApproval = useRequestApproval();
-  const { data: allSubs } = useSubscriptions();
+  /* R-1121: this quote's, the renewed one and the customer's subscriptions — not the whole table. */
+  const { data: allSubs } = useQuoteSubscriptions(quote ?? null);
   /* R-1764: each subscription line's "Domain:" and "Subscription period:" in the preview. */
   const periodCtx = React.useMemo(
     () => (quote ? quoteLinePeriodContext(quote, renewedSubscriptionDomain(quote, allSubs)) : null),
@@ -820,6 +826,7 @@ export default function QuoteDetailPage() {
       quoteId:       quote.id,
       customerName:  quote.customer_name,
       ...contact,
+      customerGstin: buyerGstin,
       createdDate:   quote.created_at,
       expiresDate:   quote.expires_date,
       validityDays:  quote.expires_date
@@ -981,6 +988,25 @@ export default function QuoteDetailPage() {
                   <b className="text-ink">{quote.customer_name}</b>
                 )}
               </span>
+              {/* R-1485: the buyer's GSTIN, read from the customer (else the lead) — or, for a
+                  business customer without one, a quiet way to add it. */}
+              {buyerGstin ? (
+                <>
+                  <span>·</span>
+                  <span data-testid="quote-buyer-gstin">GSTIN <span className="font-mono text-ink-2">{buyerGstin}</span></span>
+                </>
+              ) : quote.customer_id && buyerGstinMissing(customer) ? (
+                <>
+                  <span>·</span>
+                  {paletteMayOpen(me?.role, addGstinHref(quote.customer_id)) ? (
+                    <Link href={addGstinHref(quote.customer_id) as never} className="text-ink-3 underline underline-offset-2 hover:text-amber-ink">
+                      GSTIN not on file — add it
+                    </Link>
+                  ) : (
+                    <span>GSTIN not on file</span>
+                  )}
+                </>
+              ) : null}
               <span>·</span>
               <Badge kind={status.kind} dot>{status.label}</Badge>
               {quote.revision_no > 1 && quote.revision_of && (
@@ -2014,6 +2040,7 @@ export default function QuoteDetailPage() {
         contactName={contact.contactName}
         contactEmail={contact.contactEmail}
         contactPhone={contact.contactPhone}
+        customerGstin={buyerGstin}
         lineItems={items}
         subtotal={quote.subtotal}
         discountPct={quote.discount_pct}

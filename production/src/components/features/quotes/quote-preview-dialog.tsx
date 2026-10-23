@@ -81,6 +81,8 @@ interface Props {
   contactName?:  string | null;
   contactEmail?: string | null;
   contactPhone?: string | null;
+  /** R-1485: the buyer's GSTIN under "Bill to" (quoteBuyerGstin — customer row, else the lead). */
+  customerGstin?: string | null;
   lineItems:     QuoteLineItem[];
   subtotal:      number;
   discountPct:   number;
@@ -133,6 +135,7 @@ export function QuotePreviewDialog({
   contactName,
   contactEmail,
   contactPhone,
+  customerGstin,
   lineItems,
   subtotal,
   discountPct,
@@ -322,6 +325,12 @@ export function QuotePreviewDialog({
                 Bill to
               </p>
               <p className="font-serif text-lg leading-tight">{customerName}</p>
+              {/* R-1485: the buyer's GSTIN, as the PDF prints it (lib/quotes/buyer-gstin). */}
+              {customerGstin && (
+                <p className="text-xs text-ink-3 mt-0.5" data-testid="preview-buyer-gstin">
+                  GSTIN: <span className="font-mono">{customerGstin}</span>
+                </p>
+              )}
               {contactName && (
                 <p className="text-sm text-ink-2 mt-1">Attn: {contactName}</p>
               )}

@@ -33,6 +33,7 @@ import { replyToAddress } from "@/lib/email/reply-to";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { quoteContact } from "@/lib/quotes/quote-contact";
+import { quoteBuyerGstin } from "@/lib/quotes/buyer-gstin";
 import { firstChaseAfterSend } from "@/lib/ai/cadence";
 import { scheduleSalesLoop } from "@/lib/ai/sales-loops.server";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
@@ -305,6 +306,8 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       customerName:  quote.customer_name,
       /* R-445 (1): a lead quote's PDF names the lead's person, as the in-app preview does. */
       ...quoteContact(customer, lead),
+      /* R-1485: the buyer's GSTIN under Bill to — customer row, else the lead's. */
+      customerGstin: quoteBuyerGstin(customer, lead),
       lineItems,
       subtotal,
       discountPct:   quote.discount_pct ?? 0,

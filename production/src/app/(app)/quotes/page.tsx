@@ -41,6 +41,7 @@ import { Button, IconButton } from "@/components/ui/button";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
 import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
 import { quoteContact } from "@/lib/quotes/quote-contact";
+import { quoteBuyerGstin } from "@/lib/quotes/buyer-gstin";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -1301,6 +1302,8 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
       contactName={contact.contactName}
       contactEmail={contact.contactEmail}
       contactPhone={contact.contactPhone}
+      /* R-1485: the buyer's GSTIN under Bill to — customer row, else the lead's. */
+      customerGstin={quoteBuyerGstin(customer, lead)}
       lineItems={items}
       subtotal={quote.subtotal}
       discountPct={quote.discount_pct}

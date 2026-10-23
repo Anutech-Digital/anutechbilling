@@ -59,6 +59,8 @@ import { matchLeadToCustomer, matchNote } from "@/lib/quotes/match-customer";
 import { SUPPORT_TIERS, findSupportSku, isSupportSkuId } from "@/lib/support/tiers";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
 import { quoteContact } from "@/lib/quotes/quote-contact";
+import { addGstinHref, buyerGstinMissing, quoteBuyerGstin } from "@/lib/quotes/buyer-gstin";
+import { paletteMayOpen } from "@/components/layout/palette-access";
 import { useCustomers } from "@/lib/queries/customers";
 import { CustomerCombobox } from "@/components/features/customers/customer-combobox";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
@@ -878,6 +880,12 @@ function QuoteBuilderBody() {
     : customerId
       ? quoteContact(customer, leadFromQuery)
       : quoteContact({ contact_email: prospectEmail, contact_phone: prospectPhone });
+  /* R-1485: the buyer's GSTIN in the preview — lead mode: the (editable) lead GSTIN; a
+     customer: its own row only (quoteBuyerGstin). A typed prospect has none. */
+  const previewGstin = isLeadMode
+    ? quoteBuyerGstin(null, { gstin: leadGstin })
+    : customerId ? quoteBuyerGstin(customer ?? { gstin: null }) : null;
+  const gstinMissing = !!customerId && buyerGstinMissing(customer);
   // Invoice mode: pre-fill the payment terms from the customer's default (0164).
   // Fires when a customer with a saved term is selected; a manual Terms change
   // still wins (this only re-runs if the selected customer's term changes).
@@ -2030,7 +2038,28 @@ function QuoteBuilderBody() {
                     </div>
                     <div className="min-w-0">
                       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-0.5">GSTIN</div>
-                      <div className="text-sm text-ink-2 font-mono truncate">{customer?.gstin || "—"}</div>
+                      {/* R-1485: from the customer row; a business without one gets a quiet
+                          way to add it (only where this role may open the customer form). */}
+                      {gstinMissing && customerId ? (
+                        paletteMayOpen(currentUser?.role, addGstinHref(customerId)) ? (
+                          <Link
+                            href={addGstinHref(customerId) as never}
+                            className="text-sm text-ink-3 underline underline-offset-2 hover:text-amber-ink"
+                            data-testid="builder-add-gstin"
+                            /* A new tab, so the quote being built is not lost; coming back
+                               refetches the customer and the GSTIN appears here. */
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            GSTIN not on file — add it
+                            <span className="sr-only"> (opens in a new tab)</span>
+                          </Link>
+                        ) : (
+                          <div className="text-sm text-ink-3">GSTIN not on file</div>
+                        )
+                      ) : (
+                        <div className="text-sm text-ink-2 font-mono truncate" data-testid="builder-buyer-gstin">{previewGstin || "—"}</div>
+                      )}
                     </div>
                     <div className="min-w-0">
                       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-0.5">Place of supply</div>
@@ -3279,6 +3308,7 @@ function QuoteBuilderBody() {
         contactName={previewContact.contactName}
         contactEmail={previewContact.contactEmail}
         contactPhone={previewContact.contactPhone}
+        customerGstin={previewGstin}
         lineItems={lineItems}
         subtotal={subtotal}
         discountPct={0}
