@@ -91,9 +91,13 @@ import { useCustomers } from "@/lib/queries/customers";
 import { usePrimaryContacts } from "@/lib/queries/contacts";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { subscriptionExceptions } from "@/lib/subscriptions/exceptions";
-import { renewalDistance, termValue, termValueLabel } from "@/lib/subscriptions/renewal-display";
-import { subscriptionCycle, cycleInvoiceTitle, matchesCycle, cycleOptions, CYCLE_FILTERS, type CycleFilter } from "@/lib/subscriptions/billing-cycle";
+import { renewalClock, termValue, termValueLabel } from "@/lib/subscriptions/renewal-display";
+import {
+  subscriptionCycle, matchesCycle, cycleOptions, cycleFromUrl,
+  CYCLE_URL_VALUES, type CycleFilter, type CycleUrlValue,
+} from "@/lib/subscriptions/billing-cycle";
 import { BillingCycleFilter } from "@/components/features/subscriptions/billing-cycle-filter";
+import { SubCycleBadge } from "@/components/features/subscriptions/sub-cycle-badge";
 import { useQuotes } from "@/lib/queries/quotes";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { SubCustomerLink, SubQuoteLink } from "./sub-links";
@@ -254,7 +258,9 @@ export default function SubscriptionsPage() {
   const [vendor, setVendor] = React.useState("all");
   /* R-1696: billing cycle, kept in ?cycle= like ?tab= — one rule with the row label
      (lib/subscriptions/billing-cycle.ts). */
-  const [cycle, setCycle] = useUrlChoice<CycleFilter>("cycle", CYCLE_FILTERS, "all");
+  /* R-1774: old ?cycle=quarterly / half_yearly links still open — on Check term. */
+  const [cycleRaw, setCycle] = useUrlChoice<CycleUrlValue>("cycle", CYCLE_URL_VALUES, "all");
+  const cycle: CycleFilter = cycleFromUrl(cycleRaw);
   const [search, setSearch] = React.useState("");
   /* R-244: ?q= pre-fills the search — Ctrl+K opens a subscription as the list filtered to it.
      Read once after mount (no useSearchParams: build rule, see ?from_lead below). */
@@ -1091,6 +1097,7 @@ export default function SubscriptionsPage() {
         <ul className="xl:hidden space-y-2 mb-3">
           {shown.map((s) => {
             const dl = daysUntil(s.renewal_date);
+            const clock = renewalClock(s, dl);
             const cyc = subscriptionCycle(s);
             const t  = cyc.term;
             const vm = vendorMeta(s.vendor);
@@ -1165,16 +1172,16 @@ export default function SubscriptionsPage() {
                     utilisation gate: don't assert what isn't measured. */}
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <Badge kind={vm.kind} size="sm" dot>{vm.label}</Badge>
-                  {t && (
-                    <Badge kind="muted" size="sm"
-                           title={cycleInvoiceTitle(cyc, termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee))}>
-                      {t.label}{t.months > 1 ? ` · ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)}` : ""}
-                    </Badge>
-                  )}
+                  {/* R-1774: same words as the cycle chips; Check term → Correct details. */}
+                  <SubCycleBadge
+                    cyc={cyc}
+                    amount={t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null}
+                    onCorrect={() => setEditSub(s)}
+                  />
                 </div>
 
                 {/* Status, anything abnormal, and the renewal clock. The day
-                    count is always shown — see renewalDistance() for why. */}
+                    count is shown for live rows — see renewalClock() (R-1774). */}
                 <div className="flex items-end justify-between gap-2 mt-2 pt-2 border-t border-hairline/60">
                   <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                     <Badge
@@ -1198,13 +1205,15 @@ export default function SubscriptionsPage() {
                     <p className="text-xs text-ink-2 tabular-nums">
                       {s.renewal_date ? formatDate(s.renewal_date) : "—"}
                     </p>
-                    {dl !== null && (
+                    {/* R-1774: a cancelled / expired row says "Ended …", never a red
+                        "overdue"; a suspended row shows no clock. */}
+                    {clock && (
                       <p className={cn(
                         "text-3xs tabular-nums",
-                        dl <= 7  ? "text-rose font-medium"     :
-                        dl <= 30 ? "text-amber-ink font-medium" : "text-ink-3"
+                        clock.tone === "urgent" ? "text-rose font-medium"      :
+                        clock.tone === "soon"   ? "text-amber-ink font-medium" : "text-ink-3"
                       )}>
-                        {renewalDistance(dl)}
+                        {clock.text}
                       </p>
                     )}
                   </div>
@@ -1293,9 +1302,12 @@ export default function SubscriptionsPage() {
                     pricePerSeatMonth: s.seats > 0 ? Math.round(s.mrr / s.seats) : null,
                   });
                   const dl = daysUntil(s.renewal_date);
+                  const clock = renewalClock(s, dl);
                   const cyc = subscriptionCycle(s);
                   const t  = cyc.term;
-                  const isUrgent = dl !== null && dl >= 0 && dl <= 30;
+                  /* R-1774: only a live subscription renews — a cancelled row due next
+                     week gets no "In 5d" badge and no Renew button. */
+                  const isUrgent = s.status === "active" && dl !== null && dl >= 0 && dl <= 30;
                   /* Postpaid credit clock. `none` for everything else, so prepaid rows
                      and pre-10-Sep-2026 rows look exactly as they did. */
                   const due = paymentDueState(s.payment_due_date, todayIST(), s.outstanding_amount ?? 0);
@@ -1389,12 +1401,13 @@ export default function SubscriptionsPage() {
                       </td>
                       <td className="px-3 py-2.5 text-sm text-ink-2 align-middle">
                         <div className="break-words leading-snug">{s.plan}</div>
-                        {t && (
-                          <Badge kind="muted" size="sm" className="mt-1"
-                                 title={cycleInvoiceTitle(cyc, termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee))}>
-                            {t.label}{t.months > 1 ? ` · ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)}` : ""}
-                          </Badge>
-                        )}
+                        {/* R-1774: same words as the cycle chips; Check term → Correct details. */}
+                        <SubCycleBadge
+                          cyc={cyc}
+                          className="mt-1"
+                          amount={t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null}
+                          onCorrect={() => setEditSub(s)}
+                        />
                       </td>
                       <td className="px-3 py-2.5 align-middle">
                         {(() => { const vm = vendorMeta(s.vendor); return <Badge kind={vm.kind} dot>{vm.label}</Badge>; })()}
@@ -1479,12 +1492,13 @@ export default function SubscriptionsPage() {
                       <td className="px-3 py-2.5 text-sm text-ink-2 align-middle whitespace-nowrap">{s.start_date ? formatDate(s.start_date) : "—"}</td>
                       <td className="px-3 py-2.5 text-sm align-middle whitespace-nowrap">
                         <div className="text-ink-2">{s.renewal_date ? formatDate(s.renewal_date) : "—"}</div>
-                        {dl !== null && s.status !== "expired" && dl >= 0 && dl <= 30 ? (
+                        {isUrgent && dl !== null ? (
                           <div className="mt-0.5"><Badge kind={dl <= 7 ? "danger" : "warning"} dot>{dl === 0 ? "Due today" : `In ${dl}d`}</Badge></div>
-                        ) : dl !== null && s.status !== "expired" ? (
+                        ) : clock ? (
                           // Beyond 30 days the badge would be alarmist, but the
                           // distance still beats making the reader subtract dates.
-                          <div className="mt-0.5 text-2xs text-ink-3 tabular-nums">{renewalDistance(dl)}</div>
+                          // R-1774: a cancelled / expired row reads "Ended …" here.
+                          <div className="mt-0.5 text-2xs text-ink-3 tabular-nums">{clock.text}</div>
                         ) : null}
                       </td>
                       <td className="px-3 py-2.5 align-middle">

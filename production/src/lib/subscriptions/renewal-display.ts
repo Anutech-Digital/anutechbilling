@@ -7,7 +7,7 @@
  * show four times the real renewal amount — that is money display, so it gets a
  * test rather than a hope.
  */
-import { daysBetween } from "@/lib/utils";
+import { daysBetween, formatDate } from "@/lib/utils";
 
 export interface Term {
   label: string;
@@ -55,6 +55,38 @@ export function renewalDistance(days: number): string {
   if (days === 1) return "in 1 day";
   if (days <= 60) return `in ${days} days`;
   return `in ~${Math.round(days / 30.44)} months`;
+}
+
+/**
+ * R-1774. The renewal clock under a row's renewal date — and when there is none.
+ *
+ * Reported on staging (23 Oct 2026): a CANCELLED subscription read "Renewal 19 Oct 2026 ·
+ * 4d overdue" in red. A closed subscription does not renew, so counting days to (or past)
+ * its renewal is a live-money status on a closed record. Instead:
+ *   cancelled → "Ended <cancel date, else renewal date>"
+ *   expired   → "Ended <renewal date>"
+ *   paused    → nothing (the status already says Suspended; renewal is on hold)
+ *   active    → renewalDistance(), red when lapsed or within a week, amber within 30 days.
+ */
+export interface RenewalClock {
+  text: string;
+  tone: "urgent" | "soon" | "calm" | "ended";
+}
+
+export function renewalClock(
+  sub: { status: string | null | undefined; renewal_date: string | null | undefined; cancelled_at?: string | null },
+  days: number | null,
+): RenewalClock | null {
+  if (sub.status === "cancelled" || sub.status === "expired") {
+    const when = (sub.status === "cancelled" ? sub.cancelled_at : null) ?? sub.renewal_date;
+    return { text: when ? `Ended ${formatDate(when)}` : "Ended", tone: "ended" };
+  }
+  if (sub.status === "paused") return null;
+  if (days === null || !Number.isFinite(days)) return null;
+  return {
+    text: renewalDistance(days),
+    tone: days <= 7 ? "urgent" : days <= 30 ? "soon" : "calm",
+  };
 }
 
 /* ── What is actually invoiced at renewal ───────────────────────────────────── */

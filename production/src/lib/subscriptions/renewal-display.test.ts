@@ -1,5 +1,37 @@
 import { describe, it, expect } from "vitest";
-import { term, rowTerm, renewalDistance, termValue } from "./renewal-display";
+import { term, rowTerm, renewalDistance, termValue, renewalClock } from "./renewal-display";
+
+/* R-1774 (Pardeep, 23 Oct 2026): a CANCELLED subscription on staging read
+   "Renewal 19 Oct 2026 · 4d overdue" in red. A closed subscription does not renew. */
+describe("R-1774 renewalClock — closed subscriptions never read 'overdue'", () => {
+  const owner = { status: "cancelled", renewal_date: "2026-10-19", cancelled_at: null };
+  it("the owner's cancelled row says Ended with the date, not overdue", () => {
+    const c = renewalClock(owner, -4)!;
+    expect(c.text).toBe("Ended 19 Oct 2026");
+    expect(c.tone).toBe("ended");
+    expect(c.text).not.toMatch(/overdue/);
+  });
+  it("uses the cancel date when there is one", () => {
+    expect(renewalClock({ ...owner, cancelled_at: "2026-10-09" }, -4)!.text).toBe("Ended 9 Oct 2026");
+  });
+  it("a cancelled row renewing next week is not 'in 5 days' either", () => {
+    expect(renewalClock({ ...owner, renewal_date: "2026-10-28" }, 5)!.text).toBe("Ended 28 Oct 2026");
+  });
+  it("expired → Ended, never overdue", () => {
+    const c = renewalClock({ status: "expired", renewal_date: "2026-10-19" }, -4)!;
+    expect(c.text).toBe("Ended 19 Oct 2026");
+    expect(c.tone).toBe("ended");
+  });
+  it("suspended (paused) shows no renewal clock", () => {
+    expect(renewalClock({ status: "paused", renewal_date: "2026-10-19" }, -4)).toBeNull();
+  });
+  it("an active row keeps the clock, red when lapsed or within a week", () => {
+    expect(renewalClock({ status: "active", renewal_date: "2026-10-19" }, -4)).toEqual({ text: "4d overdue", tone: "urgent" });
+    expect(renewalClock({ status: "active", renewal_date: "2026-11-12" }, 20)).toEqual({ text: "in 20 days", tone: "soon" });
+    expect(renewalClock({ status: "active", renewal_date: "2027-05-11" }, 200)!.tone).toBe("calm");
+    expect(renewalClock({ status: "active", renewal_date: null }, null)).toBeNull();
+  });
+});
 
 describe("term — the label AND the money it implies", () => {
   it("reads a 12-month span as Annual", () => {
