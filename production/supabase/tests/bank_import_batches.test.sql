@@ -1,4 +1,5 @@
--- R-1623 — bank statement import batches + "Ye import hatao" (migration 20261020050000).
+-- R-1623 — bank statement import batches + "Remove import" (migration 20261020050000; refusal
+-- and Activity log text in English since 20261023115842, R-1623b).
 --
 -- Self-asserting: RAISEs on failure. One transaction that ROLLS BACK.
 --
@@ -10,7 +11,7 @@
 --   2. bank_import_history lists the batches AND the old (no-batch) imports, grouped by insert
 --      time (> 60 s apart = another import); hand-typed lines are not listed.
 --   3. remove_bank_import refuses: a sales role; another company; an empty reason; an import
---      with a reconciled line (message "Ye 1 lines reconcile hain — pehle Un-reconcile karo",
+--      with a reconciled line (message "1 of this import's 3 lines are reconciled — un-reconcile them first",
 --      nothing deleted); a line booked by an expense with no match on the line itself; a
 --      line inside the books lock.
 --   4. It deletes ONLY that batch's lines, marks the batch removed (row kept), writes
@@ -140,7 +141,7 @@ begin
     perform public.remove_bank_import('c1623000-0000-0000-0000-0000000acc01', v_jan, null, null, 'galat file');
     raise exception 'FAIL 3a: a sales user removed an import';
   exception when insufficient_privilege then
-    if sqlerrm not like 'Import hatana sirf owner ya accountant%' then raise exception 'FAIL 3a msg: %', sqlerrm; end if;
+    if sqlerrm not like 'Only an owner or accountant can remove an import.%' then raise exception 'FAIL 3a msg: %', sqlerrm; end if;
   end;
   -- 3b. sales cannot import either
   begin
@@ -155,7 +156,7 @@ begin
     perform public.remove_bank_import('c1623000-0000-0000-0000-0000000acc01', v_jan, null, null, 'galat file');
     raise exception 'FAIL 3c: another company removed A''s import';
   exception when no_data_found then
-    if sqlerrm not like 'Ye bank account nahi mila%' then raise exception 'FAIL 3c msg: %', sqlerrm; end if;
+    if sqlerrm not like 'This bank account was not found%' then raise exception 'FAIL 3c msg: %', sqlerrm; end if;
   end;
   begin
     perform public.import_bank_statement('c1623000-0000-0000-0000-0000000acc01', '[{"txn_date":"2026-05-09","description":"X","debit":1,"credit":0}]', 'x.csv', 'csv');
@@ -196,11 +197,11 @@ begin
     perform public.remove_bank_import('c1623000-0000-0000-0000-0000000acc01', v_jan, null, null, 'galat file');
     raise exception 'FAIL 3g: removed an import with a reconciled line';
   exception when raise_exception then
-    if sqlerrm not like 'Ye 1 lines reconcile hain — pehle Un-reconcile karo.%' then raise exception 'FAIL 3g msg: %', sqlerrm; end if;
+    if sqlerrm not like '1 of this import''s 3 lines are reconciled — un-reconcile them first.%' then raise exception 'FAIL 3g msg: %', sqlerrm; end if;
   end;
   select count(*) into v_n from public.bank_transactions where import_batch_id = v_jan;
   if v_n <> 3 then raise exception 'FAIL 3g: lines deleted despite the refusal (% left)', v_n; end if;
-  raise notice 'PASS 3g: reconciled line → "Ye 1 lines reconcile hain — pehle Un-reconcile karo", nothing deleted';
+  raise notice 'PASS 3g: reconciled line → "1 of this import''s 3 lines are reconciled — un-reconcile them first", nothing deleted';
 end $$;
 
 -- 3h. a line booked by an expense (reverse link only) also refuses
@@ -218,7 +219,7 @@ begin
     perform public.remove_bank_import('c1623000-0000-0000-0000-0000000acc01', v_jan, null, null, 'galat file');
     raise exception 'FAIL 3h: removed an import whose line an expense is booked against';
   exception when raise_exception then
-    if sqlerrm not like 'Ye 1 lines reconcile hain%' then raise exception 'FAIL 3h msg: %', sqlerrm; end if;
+    if sqlerrm not like '1 of this import''s 3 lines are reconciled%' then raise exception 'FAIL 3h msg: %', sqlerrm; end if;
   end;
   raise notice 'PASS 3h: a line booked by an expense refuses too';
 end $$;
@@ -236,7 +237,7 @@ begin
     perform public.remove_bank_import('c1623000-0000-0000-0000-0000000acc01', v_jan, null, null, 'galat file');
     raise exception 'FAIL 3i: removed lines inside the books lock';
   exception when raise_exception then
-    if sqlerrm not like 'Is import ki 3 lines (pehli 02 May 2026 ki) band books me hain — books 31 May 2026 tak lock hain.%' then
+    if sqlerrm not like '3 of this import''s lines (the first dated 02 May 2026) are in closed books — the books are locked up to 31 May 2026.%Month-end close%' then
       raise exception 'FAIL 3i msg: %', sqlerrm;
     end if;
   end;
@@ -272,7 +273,7 @@ begin
     perform public.remove_bank_import('c1623000-0000-0000-0000-0000000acc01', v_jan, null, null, 'phir se');
     raise exception 'FAIL 4f: removed the same import twice';
   exception when raise_exception then
-    if sqlerrm not like 'Ye import % ko pehle hi hata diya gaya tha%' then raise exception 'FAIL 4f msg: %', sqlerrm; end if;
+    if sqlerrm not like 'This import was already removed on %' then raise exception 'FAIL 4f msg: %', sqlerrm; end if;
   end;
   raise notice 'PASS 4: only that batch''s 3 lines deleted; batch kept and marked removed; second removal refused';
 end $$;
@@ -288,7 +289,11 @@ begin
      or v_a.changes->>'file' <> 'jan.pdf' or v_a.changes->>'reason' <> 'galat statement chadh gaya' then
     raise exception 'FAIL 4g: activity_log row missing or wrong: %', row_to_json(v_a);
   end if;
-  raise notice 'PASS 4g: activity_log says who removed what and why';
+  -- R-1623b: the label the Activity log shows is English
+  if v_a.label <> 'Import removed: 3 lines (jan.pdf) — galat statement chadh gaya' then
+    raise exception 'FAIL 4g label: %', v_a.label;
+  end if;
+  raise notice 'PASS 4g: activity_log says who removed what and why, in English';
 end $$;
 set local role authenticated;
 

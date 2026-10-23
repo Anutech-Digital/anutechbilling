@@ -193,6 +193,7 @@ MIGS=(
   "r1763zohobilledinzoho|20261022130550_r1763_zoho_import_billed_in_zoho.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscriptions' and column_name = 'billed_externally_until') and exists(select 1 from pg_proc where oid = to_regprocedure('public.zoho_books_import_step(uuid,integer)') and prosrc like '%R-1763%') and to_regprocedure('public.subscription_billings_not_billed_elsewhere()') is not null"
   "r1766zohoundosmallparts|20261022143646_r1766_zoho_undo_small_parts.sql|resellersos_migration|exists(select 1 from pg_proc where proname = 'zoho_books_import_undo' and prosrc like '%R-1766%')"
   "r1785catalog1|20261023114500_r1785_catalog_phase1.sql|resellersos_migration|exists(select 1 from pg_proc where proname = 'sync_hosting_catalog' and prosrc like '%R-1785%') and to_regprocedure('public.seed_core_catalog(uuid)') is not null"
+  "r1623english|20261023115842_r1623b_bank_import_english.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.remove_bank_import(uuid,uuid,text,text,text)') and prosrc like '%R-1623b%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.import_bank_statement(uuid,jsonb,text,text)') and prosrc like '%R-1623b%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
