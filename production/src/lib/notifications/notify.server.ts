@@ -12,10 +12,12 @@
  */
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/lib/auth/roles";
 
 export interface NotifyInput {
   tenantId: string;
-  kind: "payment.received" | "payment.refunded" | "quote.accepted" | "lead.created" | "ticket.created";
+  kind: "payment.received" | "payment.refunded" | "quote.accepted" | "lead.created" | "ticket.created"
+    | "marketing.budget";
   title: string;
   body?: string;
   href?: string;
@@ -23,14 +25,26 @@ export interface NotifyInput {
 }
 
 export async function notifyTenantOwners(input: NotifyInput): Promise<void> {
+  return notifyPeople(input, { roles: ["owner", "manager"] });
+}
+
+/**
+ * R-1793 (23 Oct 2026): the same door, for a chosen set of people — by role (e.g. everyone in
+ * billing) and/or by id (the person who asked). Same best-effort contract: never throws.
+ */
+export async function notifyPeople(
+  input: NotifyInput, to: { roles?: readonly UserRole[]; userIds?: readonly string[] },
+): Promise<void> {
   try {
     const admin = createAdminClient();
-    const { data: recipients, error: rErr } = await admin
-      .from("users")
-      .select("id")
-      .eq("tenant_id", input.tenantId)
-      .in("role", ["owner", "manager"])
-      .eq("is_active", true);
+    const roles = [...(to.roles ?? [])];
+    const ids = [...(to.userIds ?? [])];
+    if (!roles.length && !ids.length) return;
+    let query = admin.from("users").select("id").eq("tenant_id", input.tenantId).eq("is_active", true);
+    query = roles.length && ids.length
+      ? query.or(`role.in.(${roles.join(",")}),id.in.(${ids.join(",")})`)
+      : roles.length ? query.in("role", roles) : query.in("id", ids);
+    const { data: recipients, error: rErr } = await query;
     if (rErr || !recipients?.length) {
       if (rErr) console.error("[notify] recipients read failed:", rErr.message);
       return;
