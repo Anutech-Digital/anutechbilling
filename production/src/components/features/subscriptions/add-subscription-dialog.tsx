@@ -63,6 +63,7 @@ import { findPlanProduct, type LeadPrefill } from "@/lib/subscriptions/lead-pref
 /* The same countdown the subscriptions list and /payments render, so the hint under
    the field cannot disagree with the chip the operator sees a second later. */
 import { paymentDueState, todayIST } from "@/lib/subscriptions/payment-due";
+import { onboardingQuoteLine } from "./onboarding-line";
 
 /** GST on SaaS in India — CGST 9% + SGST 9%, or IGST 18%. CLAUDE.md §13. */
 const TAX_RATE_PCT = 18;
@@ -922,24 +923,10 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       const quoteId = await findOrMintQuoteId(supabase, tenantId, customerId, storedTaxable);
       const isPaid = paymentTerms === "paid";
 
+      /* R-1442: the line carries the Start Date — on "Payment Received" record_payment starts
+         the subscription from it (else from today, which dropped a back-dated start). */
       const lineItems: QuoteLineItem[] = [
-        {
-          id: `line-${Date.now()}`,
-          name: `${plan} (${seats} seats)`,
-          qty: seats,
-          /* rate × qty must equal what the quote stores, so the rate carries the same
-             `periods` multiplier the total does. On annual-billed-monthly that makes
-             this the ₹/seat/YEAR the customer committed to, which is what a line under
-             commitment 'annual_yearly' is required to mean. */
-          rate: pricePerSeat * terms.periods,
-          /* The real catalog cost when we have it, in the same unit as the rate.
-             `× 0.83` — a flat 17% — survives only for a custom plan that has no
-             catalog row, and it is the last of the three places that guess used to live. */
-          cost: terms.costPerSeat !== null
-            ? terms.costPerSeat * terms.periods
-            : Math.round(pricePerSeat * terms.periods * 0.83),
-          commitment: terms.commitment,
-        },
+        onboardingQuoteLine({ id: `line-${Date.now()}`, plan, seats, pricePerSeat, terms, startDate }),
       ];
 
       /* `amount`, NOT `total` — `quotes` has no `total` column (it has amount,

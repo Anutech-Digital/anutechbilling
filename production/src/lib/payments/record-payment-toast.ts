@@ -169,6 +169,19 @@ export function subscriptionNoteFor(i: SubscriptionNoteInput): SubscriptionNote 
  * readable and unique per submit, while an RQ retry of the same submit reuses it.
  */
 export function cashReference(receivedDate: string, now: Date = new Date()): string {
+  return blankReference("cash", receivedDate, now);
+}
+
+const BLANK_REF_WORD: Record<string, string> = {
+  cash: "Cash", upi: "UPI", bank_transfer: "Bank transfer", cheque: "Cheque", razorpay: "Razorpay",
+};
+
+/**
+ * R-1444: the reference is optional for EVERY method now (Pardeep, 14 Oct). A blank one is
+ * saved as "<Method> <date> <IST time>" for the same reason as cash above — never blank, never
+ * the same twice — so a second payment on the same quote is not taken as a replay.
+ */
+export function blankReference(method: string, receivedDate: string, now: Date = new Date()): string {
   const time = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Kolkata",
     hour: "2-digit",
@@ -176,5 +189,5 @@ export function cashReference(receivedDate: string, now: Date = new Date()): str
     second: "2-digit",
     hour12: false,
   }).format(now);
-  return `Cash ${receivedDate} ${time}`.trim();
+  return `${BLANK_REF_WORD[method] ?? "Payment"} ${receivedDate} ${time}`.trim();
 }
