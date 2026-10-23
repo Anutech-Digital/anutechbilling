@@ -258,6 +258,19 @@ export interface QuoteRenewal {
  * ₹23,724. Yearly items (domain, SSL, onsite) renew once a year at their renewal rate.
  * An annual commitment is one invoice: monthly-cycle lines × 12 per unit plus yearly items, one GST.
  */
+/**
+ * The renewal line as words, WITH its GST basis (R-1629, 24 Oct 2026). quoteRenewal's numbers
+ * include GST; the page said so but the printed/PDF quote and the email did not — next to
+ * "GST 18% billed separately", so a buyer would add 18% again. Every place that shows the
+ * renewal (page, print, email) uses this one helper.
+ */
+export function quoteRenewalText(r: QuoteRenewal): string {
+  const price = r.perMonth === null
+    ? `${quoteInr(r.perYear)}/yr`
+    : `${quoteInr(r.perMonth)}/mo × 12${r.yearlyOnce > 0 ? ` + ${quoteInr(r.yearlyOnce)} yearly items` : ""} = ${quoteInr(r.perYear)}/yr`;
+  return `Renews ${price} incl. 18% GST`;
+}
+
 export function quoteRenewal(lines: readonly QuoteRenewalLine[], term: "annual" | "monthly"): QuoteRenewal {
   const yearlyItems = lines.filter((l) => l.cycle === "yr").reduce((n, l) => n + quoteLineAmount(l.renewRate, l.qty, 1), 0);
   const moLines = lines.filter((l) => l.cycle === "mo");
