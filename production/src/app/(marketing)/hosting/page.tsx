@@ -4,6 +4,7 @@ import { HOSTING_FAQS_V2, HOSTING_FROM_MO, hostingCharge, type HostingTier } fro
 import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
 import { websiteTenantId } from "@/lib/website-tenant";
 import { rupee } from "@/site/lib/money";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 /**
  * /hosting — the conversion-focused hosting landing page (redesign, 2 Sep 2026).
@@ -29,12 +30,12 @@ const SITE_URL = "https://resellersos-njvk4nxhdq-el.a.run.app";
 const PAGE_URL = `${SITE_URL}/hosting`;
 
 export const metadata: Metadata = {
-  title: "Web hosting on Google Cloud — 15-day free trial, no credit card",
+  title: `Web hosting on Google Cloud — ${HOSTING_TRIAL_DAYS}-day free trial, no credit card`,
   description:
-    `cPanel web hosting on Google Cloud from Anutech Digital. Free SSL, daily backups, free migration and real-person support. Plans from ${HOSTING_FROM_MO}/mo. Start a 15-day free trial — no credit card, GST invoice on every order.`,
+    `cPanel web hosting on Google Cloud from Anutech Digital. Free SSL, daily backups, free migration and real-person support. Plans from ${HOSTING_FROM_MO}/mo. Start a ${HOSTING_TRIAL_DAYS}-day free trial — no credit card, GST invoice on every order.`,
   keywords: [
     "web hosting India", "cPanel hosting", "Google Cloud hosting", "free website migration",
-    "WordPress hosting India", "GST invoice hosting", "15-day free trial hosting", "Anutech Digital",
+    "WordPress hosting India", "GST invoice hosting", `${HOSTING_TRIAL_DAYS}-day free trial hosting`, "Anutech Digital",
   ],
   alternates: { canonical: PAGE_URL },
   robots: { index: true, follow: true },
@@ -42,13 +43,13 @@ export const metadata: Metadata = {
     type: "website",
     url: PAGE_URL,
     siteName: "Anutech Digital",
-    title: "Web hosting on Google Cloud — 15-day free trial, no credit card",
+    title: `Web hosting on Google Cloud — ${HOSTING_TRIAL_DAYS}-day free trial, no credit card`,
     description:
-      `cPanel web hosting on Google Cloud. Free SSL, daily backups, free migration, real-person support. Plans from ${HOSTING_FROM_MO}/mo. 15-day free trial, no credit card.`,
+      `cPanel web hosting on Google Cloud. Free SSL, daily backups, free migration, real-person support. Plans from ${HOSTING_FROM_MO}/mo. ${HOSTING_TRIAL_DAYS}-day free trial, no credit card.`,
   },
   twitter: {
     card: "summary_large_image",
-    title: "Web hosting on Google Cloud — 15-day free trial",
+    title: `Web hosting on Google Cloud — ${HOSTING_TRIAL_DAYS}-day free trial`,
     description: "cPanel hosting from Anutech Digital. Free migration, GST invoice, no-card trial.",
   },
 };

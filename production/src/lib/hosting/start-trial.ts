@@ -26,12 +26,13 @@ import { TRIAL_PLAN_ID, TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { checkTrialHistory, recordTrialInDms } from "@/lib/dms-engine/trials";
 import { maskContactValue, redactContacts } from "@/lib/security/redact-contact";
 import { websiteTenantId, WEBSITE_TENANT_MISSING_MESSAGE } from "@/lib/website-tenant";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
 /* R-1499: the website tenant is read per call (websiteTenantId) — outside production an unset
    BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
 
-export const TRIAL_DAYS = 15;
+export const TRIAL_DAYS = HOSTING_TRIAL_DAYS; // R-1117: one place for the length
 
 export interface StartTrialInput {
   fullName: string;

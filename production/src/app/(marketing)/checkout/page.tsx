@@ -51,6 +51,7 @@ import { TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { Field, TermsCheckbox, TERMS_NUDGE_ID } from "./fields";
 import { usePaymentMode } from "./payment-mode";
 import { payButtonLabel } from "@/lib/checkout/checkout-payment-mode";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 /* 30 Sep 2026: the choice was never sent anywhere, so every option opened the same Razorpay
    window, and "Bank transfer — NEFT/RTGS, activated on credit" was not a path this checkout
@@ -687,7 +688,7 @@ export default function CheckoutPage() {
                     </div>
                   ) : (
                   <button className="btn btn-primary" style={{ width: "100%", marginTop: 8 }} disabled={paying || trialMixed} onClick={() => proceed(() => void startTrial())}>
-                    {paying ? "Starting your trial…" : "Start my 15-day free trial"}
+                    {paying ? "Starting your trial…" : `Start my ${HOSTING_TRIAL_DAYS}-day free trial`}
                   </button>
                   )}
                   <p className="meta" style={{ marginTop: 10 }}>

@@ -14,6 +14,7 @@ import { DomainYears } from "@/site/components/cart/DomainYears";
 import { BundleNote, LinePrice } from "@/site/components/cart/LinePrice";
 import { PriceChangeNotice } from "@/site/components/cart/PriceChangeNotice";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 export default function CartPage() {
   const cart = useCart();
@@ -60,7 +61,7 @@ export default function CartPage() {
                 )}
                 <DomainYears line={l} firstYearFree={p.freeNote !== null} />
                 <div style={{ fontSize: 13, marginTop: 2, color: l.cycle === "monthly" ? "var(--primary)" : "var(--text-muted)" }}>
-                  {isTrialLine(l) ? `Free for 15 days · one trial per customer` : (l.years ?? 1) > 1 ? `Renews after ${l.years} years, then yearly` : cycleLabel(l.cycle)}
+                  {isTrialLine(l) ? `Free for ${HOSTING_TRIAL_DAYS} days · one trial per customer` : (l.years ?? 1) > 1 ? `Renews after ${l.years} years, then yearly` : cycleLabel(l.cycle)}
                 </div>
               </div>
               {/* Every line shows the quantity control; a single-unit line shows it LOCKED

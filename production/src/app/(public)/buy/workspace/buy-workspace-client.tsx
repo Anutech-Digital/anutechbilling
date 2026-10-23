@@ -44,6 +44,7 @@ import {
   COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay,
   SHOW_PREMIER_PARTNER, PARTNER_LINE, PARTNER_BADGE, PARTNER_SHORT,
 } from "@/site/lib/config";
+import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 // ──────────────────────────────────────────────────────────────────────
 // Site promo — fetched from /api/public/site-promo/current. Updates as
@@ -1585,7 +1586,7 @@ export function BuyWorkspaceClient({
             </div>
 
             {/* Tertiary trial CTA — small, low-commit. "No card needed" is the
-                key SME hesitation killer; the 14-day promise is industry-standard. */}
+                key SME hesitation killer; the trial-length promise is industry-standard. */}
             <div className="mb-4">
               <button
                 type="button"
@@ -1593,7 +1594,7 @@ export function BuyWorkspaceClient({
                 className="inline-flex items-center gap-1.5 text-sm text-ink hover:text-amber transition-colors underline underline-offset-4 decoration-dotted"
               >
                 <Icon name="rocket" size={14} className="text-amber" />
-                Or start a 14-day free trial
+                Or start a {WORKSPACE_TRIAL_DAYS}-day free trial
                 <span className="text-ink-3 text-xs">(no credit card needed)</span>
               </button>
             </div>
@@ -1875,7 +1876,7 @@ export function BuyWorkspaceClient({
             />
             <FaqItem
               q="What if I want to cancel?"
-              a="On the annual plan you pay for the full year — users can be added any time but not removed, and it cannot be cancelled mid-year (this is Google's own rule for annual plans). A flexible (monthly) plan can be stopped at the end of any month. Not sure? Start with the free 14-day trial."
+              a={`On the annual plan you pay for the full year — users can be added any time but not removed, and it cannot be cancelled mid-year (this is Google's own rule for annual plans). A flexible (monthly) plan can be stopped at the end of any month. Not sure? Start with the free ${WORKSPACE_TRIAL_DAYS}-day trial.`}
             />
             <FaqItem
               q="Do you support Google Workspace Migrate tool?"
@@ -2258,7 +2259,7 @@ function FaqItem({ q, a }: { q: string; a: string }) {
 // ──────────────────────────────────────────────────────────────────────
 // ──────────────────────────────────────────────────────────────────────
 // Trial dialog — separate flow from the GST-quote enquiry.
-// Lands at stage='trial' (qualified intent), free 14-day access, requires
+// Lands at stage='trial' (qualified intent), free WORKSPACE_TRIAL_DAYS access, requires
 // the customer's domain so we can provision in Google Reseller Console.
 // ──────────────────────────────────────────────────────────────────────
 const trialFormSchema = z.object({
@@ -2306,7 +2307,9 @@ function TrialDialog({
       buyFail(json.error, "Could not start the trial.", "Your trial was not requested yet.");
       return;
     }
-    toast.success(`Trial requested! Pardeep will WhatsApp you ${SLA.firstReply}.`);
+    /* R-1116: the company answers, not one named person — and only promise WhatsApp when the
+       site's WhatsApp number is live (WHATSAPP_READY). */
+    toast.success(`Trial requested! Our team will ${WHATSAPP_READY ? "WhatsApp" : "call or email"} you ${SLA.firstReply}.`);
     onClose();
   }
 
@@ -2325,7 +2328,7 @@ function TrialDialog({
             <div>
               <div className="text-3xs uppercase tracking-wider text-emerald mb-1 font-semibold inline-flex items-center gap-1.5">
                 <Icon name="rocket" size={11} />
-                14-day free trial · no card needed
+                {WORKSPACE_TRIAL_DAYS}-day free trial · no card needed
               </div>
               <DialogTitle className="font-serif text-2xl leading-tight">
                 Try <GWInline /> free
@@ -2345,7 +2348,7 @@ function TrialDialog({
 
           {/* Trial promise band */}
           <div className="mb-5 p-3 rounded-lg bg-emerald-soft/40 border border-emerald/20 text-xs text-ink-2 leading-relaxed">
-            <b className="text-ink">First call:</b> Pardeep WhatsApps you {SLA.firstReply} to verify
+            <b className="text-ink">First call:</b> Our team {WHATSAPP_READY ? "WhatsApps" : "calls or emails"} you {SLA.firstReply} to verify
             domain. <br />
             <b className="text-ink">Live:</b> Your team is on Workspace {SLA.workspaceLive}.
             <br />
@@ -2395,11 +2398,11 @@ function TrialDialog({
               style={{ background: "#10B981", borderColor: "#059669" }}
               loading={isSubmitting}
             >
-              Start my 14-day trial
+              Start my {WORKSPACE_TRIAL_DAYS}-day trial
             </Button>
 
             <p className="text-2xs text-ink-3 text-center leading-relaxed">
-              No credit card upfront. No auto-charge. Cancel anytime in 14 days.
+              No credit card upfront. No auto-charge. Cancel anytime in {WORKSPACE_TRIAL_DAYS} days.
             </p>
           </form>
         </div>
@@ -2890,7 +2893,9 @@ function BuyNowDialog({
         leadId:  json.leadId  ?? "",
         domain:  values.domain,
       },
-      theme: { color: "#C2410C" },
+      /* R-1116: the storefront blue — the same value as site.css --primary and the /checkout
+         Razorpay window (Razorpay takes a hex, not a CSS variable). Was orange #C2410C. */
+      theme: { color: "#1668E3" },
       handler: () => {
         // Razorpay captured the payment client-side. The webhook will do the
         // real database work; we just take the visitor to the confirmation
@@ -2900,7 +2905,7 @@ function BuyNowDialog({
       modal: {
         ondismiss: () => {
           setRzpOpen(false);
-          toast.message("Payment cancelled. We've saved your quote — Pardeep will follow up.");
+          toast.message("Payment cancelled. We've saved your quote — our team will follow up.");
         },
         escape: true,
       },

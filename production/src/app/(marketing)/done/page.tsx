@@ -34,6 +34,7 @@ import { AfterYouPay } from "@/site/components/checkout/AfterYouPay";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { confirmPayment, readPayment, savePayment, type ReturnedPayment, type VerifyBody } from "@/lib/checkout/confirm-payment";
 import { doneView, SIMULATED_KEY } from "./done-view";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 /* R-1596: while Razorpay completes an authorised payment, ask again this often, this many times.
    Kept small: /api/public/checkout/* shares one per-IP limit (10 per 10 min, lib/security/rate-limit.ts). */
@@ -257,7 +258,7 @@ export default function DonePage() {
         aside={<>
           <div className="mono-label" style={{ color: "var(--text-muted)", marginBottom: 8 }}>Link sent to</div>
           <div style={{ fontWeight: 600, fontSize: 16, wordBreak: "break-all" }}>{trialEmail}</div>
-          <div className="meta" style={{ marginTop: 8 }}>Starter hosting · 15 days free</div>
+          <div className="meta" style={{ marginTop: 8 }}>Starter hosting · {HOSTING_TRIAL_DAYS} days free</div>
           <HelpBlock subject="My hosting trial" />
         </>}
         actions={<>

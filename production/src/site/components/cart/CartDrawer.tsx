@@ -13,6 +13,7 @@ import { rupee, cycleLabel, isSingleUnit, isTrialLine, singleUnitNote } from "@/
 import { DomainYears } from "@/site/components/cart/DomainYears";
 import { BundleNote, LinePrice } from "@/site/components/cart/LinePrice";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 export function CartDrawer() {
   const cart = useCart();
@@ -72,7 +73,7 @@ export function CartDrawer() {
               <DomainYears line={l} compact firstYearFree={p.freeNote !== null} />
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontSize: 13, color: l.cycle === "monthly" ? "var(--primary)" : "var(--text-muted)" }}>
-                  {isTrialLine(l) ? "Free for 15 days" : (l.years ?? 1) > 1 ? `Renews after ${l.years} years` : cycleLabel(l.cycle)}
+                  {isTrialLine(l) ? `Free for ${HOSTING_TRIAL_DAYS} days` : (l.years ?? 1) > 1 ? `Renews after ${l.years} years` : cycleLabel(l.cycle)}
                 </span>
                 <span style={{ flex: 1 }} />
                 {/* Locked at 1 for a single-unit line, with the reason beside it (see cart page). */}

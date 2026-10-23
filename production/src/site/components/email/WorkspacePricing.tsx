@@ -19,6 +19,7 @@ import { buyWorkspaceHref } from "@/lib/checkout/buy-link";
 import { FIRST_YEAR_PER_USER, OFFER_MIN_USERS, offerPercentOff } from "@/site/lib/workspace-offer";
 import { CONTACT_FOR_PRICING, PLUS_EDITION } from "@/lib/catalog/public-price-policy";
 import { WHATSAPP_URL, SLA } from "@/site/lib/config";
+import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 export type PlanKey = "starter" | "standard" | "plus" | "enterprise";
 export interface PricedPlan {
@@ -259,12 +260,12 @@ export function WorkspacePricing({ plans, head, intro }: {
                   <>
                     <Link href={buyHref} className="wp-btn wp-primary">Buy now</Link>
                     <Link href={`/quote?${q({ ed: edition, seats: String(users), term })}`} className="wp-btn wp-ghost">Get a GST quote</Link>
-                    <Link href={`/trial?${q({ ed: edition })}`} className="wp-sub">or start a free 14-day trial</Link>
+                    <Link href={`/trial?${q({ ed: edition })}`} className="wp-sub">or start a free {WORKSPACE_TRIAL_DAYS}-day trial</Link>
                   </>
                 ) : (
                   <>
                     <Link href={`/quote?${q({ ed: edition, seats: String(users), term })}`} className="wp-btn wp-primary">Get this plan</Link>
-                    <Link href={`/trial?${q({ ed: edition })}`} className="wp-btn wp-ghost">Free 14-day trial</Link>
+                    <Link href={`/trial?${q({ ed: edition })}`} className="wp-btn wp-ghost">Free {WORKSPACE_TRIAL_DAYS}-day trial</Link>
                   </>
                 )}
               </div>

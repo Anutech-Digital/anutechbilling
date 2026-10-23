@@ -30,13 +30,14 @@ import { isTrialPlan } from "@/lib/hosting/trial-plan";
 import { commandsConfigured, sendEngineCommand } from "@/lib/dms-engine/commands";
 import { normalisePhone, splitName } from "@/lib/provisioning/domain-registration";
 import { websiteTenantId, WEBSITE_TENANT_MISSING_MESSAGE } from "@/lib/website-tenant";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /* R-1499: the website tenant is read per request (websiteTenantId) — outside production an unset
    BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
-const TRIAL_DAYS = 15;
+const TRIAL_DAYS = HOSTING_TRIAL_DAYS; // R-1117: one place for the length
 const PKG_NAME: Record<string, string> = { starter: "Starter", standard: "Standard", plus: "Plus" };
 
 /**

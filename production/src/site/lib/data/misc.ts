@@ -6,6 +6,7 @@
  * drop that sentence: it is the difference between a draft and a representation.
  */
 import { DATA_LOCATION } from "../config";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 export const KB_ARTICLES = [
   { title: "How to point your domain at our nameservers", cat: "DOMAINS" },
@@ -79,7 +80,7 @@ export const LEGAL: Readonly<Record<"terms" | "privacy" | "refund", LegalPage>> 
       { h: "Pricing and taxes", p: "Prices published on this site are in Indian rupees and exclusive of GST at 18% unless a page states otherwise. First-year and renewal prices are shown together; we give thirty days written notice before changing a renewal price on an active subscription." },
       { h: "Payment and activation", p: "Orders are paid online through Razorpay (UPI, netbanking, cards and wallets) and set up once the payment is confirmed. Licence orders are subject to vendor provisioning timelines. A GST tax invoice is issued in your name for every paid order." },
       { h: "Hosting and domains", p: "Every hosting plan is attached to a domain you own or buy from us. Domains are registered in your name, with the owner details you give at checkout, and those details must be accurate: the registry can suspend a domain whose owner details are false." },
-      { h: "Free hosting trial", p: "The Starter hosting plan can be tried free for 15 days, once per customer. No card is taken, so nothing is charged when the trial ends." },
+      { h: "Free hosting trial", p: `The Starter hosting plan can be tried free for ${HOSTING_TRIAL_DAYS} days, once per customer. No card is taken, so nothing is charged when the trial ends.` },
       { h: "Renewals and expiry", p: "We send renewal reminders by email from thirty days before expiry. Auto-renew is configurable per subscription. Domains that lapse enter the registry redemption period, and redemption fees set by the registry apply." },
       { h: "Support", p: "Support is provided by email at support@anutech.in, Monday to Saturday, 10:00 to 19:00 IST. Our target is a first reply inside four working hours." },
       { h: "Uptime and credits", p: "Hosting carries a 99.9% monthly uptime commitment. Where a calendar month falls below it, we credit the affected month to your account without you having to ask." },

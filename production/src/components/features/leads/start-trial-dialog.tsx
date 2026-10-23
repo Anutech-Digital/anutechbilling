@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 interface Props {
   open: boolean;
@@ -110,7 +111,7 @@ export default function StartTrialDialog({ open, onOpenChange }: Props) {
         <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
         <header className="border-b border-hairline pb-3 mb-4">
           <p className="text-3xs uppercase tracking-wider font-semibold text-amber-ink mb-1">
-            Workspace · Start 14-day trial
+            Workspace · Start {WORKSPACE_TRIAL_DAYS}-day trial
           </p>
           <h2 className="font-serif text-2xl text-ink">New trial</h2>
           <p className="text-xs text-ink-3 mt-1">
@@ -200,7 +201,7 @@ export default function StartTrialDialog({ open, onOpenChange }: Props) {
             Cancel
           </Button>
           <Button variant="primary" icon="check_circle" onClick={onSubmit} disabled={submitting}>
-            {submitting ? "Starting trial…" : "Start 14-day trial"}
+            {submitting ? "Starting trial…" : `Start ${WORKSPACE_TRIAL_DAYS}-day trial`}
           </Button>
         </SheetFooter>
       </SheetContent>

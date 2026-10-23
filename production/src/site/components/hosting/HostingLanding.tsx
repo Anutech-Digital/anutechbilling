@@ -123,7 +123,7 @@ export function HostingLanding({ tiers = HOSTING_TIERS }: { tiers?: readonly Hos
   const startTrialInCart = () => {
     for (const l of cart.lines) if ((l.sku || "").startsWith("hosting-trial:")) cart.remove(l.key);
     cart.add({
-      label: `${TRIAL_PLAN_NAME} hosting — 15-day free trial`,
+      label: `${TRIAL_PLAN_NAME} hosting — ${TRIAL_DAYS}-day free trial`,
       detail: `No card · then ${TRIAL_PLAN_NAME} billed ${yearly ? "yearly" : "monthly"} if you keep it`,
       unitPrice: 0,
       unit: "trial",

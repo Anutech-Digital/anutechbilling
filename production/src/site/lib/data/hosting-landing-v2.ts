@@ -26,12 +26,13 @@
 import { LANDING_PLANS } from "./hosting-landing";
 import { SLA, WHATSAPP_URL } from "@/site/lib/config";
 import { rupee, GST_RATE } from "@/site/lib/money";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 /* Re-exported so HostingLanding keeps its import. This file used to hold its own copy of
    the placeholder, so setting the real number in config.ts would have left /hosting
    pointing at the fake one. */
 export { WHATSAPP_URL };
-export const TRIAL_DAYS = 15;
+export const TRIAL_DAYS = HOSTING_TRIAL_DAYS; // R-1117: one place for the length
 
 export interface HostingTier {
   name: string;

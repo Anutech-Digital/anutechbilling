@@ -34,6 +34,7 @@ import { FIRST_YEAR_PER_USER, OFFER_MIN_USERS } from "@/site/lib/workspace-offer
 import { LP_PLANS, type LpPlan } from "@/site/lib/lp-plans";
 import { CONTACT_FOR_PRICING } from "@/lib/catalog/public-price-policy";
 import { LP_TEXT, type LpDict, type Rich, type WorkspaceAdCopy } from "./lp-copy";
+import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 export type { WorkspaceAdCopy } from "./lp-copy";
 
@@ -516,7 +517,7 @@ function EnquiryModal({ t, kind, landing, plan, defaultUsers, onClose }: { t: Lp
       tierId: plan.key,
       billing: "annual",
       /* Internal note for the sales team (not shown to the visitor) — stays English. */
-      message: kind === "buy" ? `Google Ads landing page: wants to BUY ${plan.name}` : `Google Ads landing page: 14-day free trial request (${plan.name})`,
+      message: kind === "buy" ? `Google Ads landing page: wants to BUY ${plan.name}` : `Google Ads landing page: ${WORKSPACE_TRIAL_DAYS}-day free trial request (${plan.name})`,
       /* R-157: a trial is a trial (no priced quote is emailed), and a 30+ Starter enquiry on an
          offer page is the first-year offer, which needs Google approval before it is quoted. */
       ...(kind === "trial" ? { trial: true } : {}),
