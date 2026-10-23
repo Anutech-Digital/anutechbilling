@@ -25,6 +25,7 @@ import { sendCustomerEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
+import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 
 /* The owner recipient was hardcoded here to an address on a retired domain
    (CLAUDE.md §1). Resolved from the storefront tenant's row now — see
@@ -51,6 +52,9 @@ export async function POST(request: NextRequest) {
   if (!BUY_PAGE_TENANT_ID) return NextResponse.json(websiteTenantMissingBody(), { status: 503 });
   try {
     const body   = await request.json();
+    /* R-737: a script cannot open trial leads + tasks — no-op until TURNSTILE_SECRET_KEY is set. */
+    const bot = await turnstileRefusalFor(request, body);
+    if (bot) return bot;
     const parsed = trialSchema.safeParse(body);
 
     if (!parsed.success) {

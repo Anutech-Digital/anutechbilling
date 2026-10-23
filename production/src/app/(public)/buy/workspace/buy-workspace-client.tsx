@@ -2262,14 +2262,16 @@ function TrialDialog({
     },
   });
 
+  const ts = useTurnstile(); // R-737
   async function onSubmit(values: TrialForm) {
     const res = await fetch("/api/public/trial/workspace", {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...ts.headers },
       body:    JSON.stringify(values),
     });
     const json = await res.json() as { success?: boolean; error?: string };
     if (!res.ok || json.error) {
+      ts.reset();
       toast.error(json.error ?? "Could not start trial. Please try again.");
       return;
     }
@@ -2354,6 +2356,7 @@ function TrialDialog({
             </FormField>
 
             <BusyPanel active={isSubmitting} title="Starting your Google Workspace trial" steps={["Saving your trial request", "Letting our team know, so we can set it up"]} />
+            {ts.widget}
             <Button
               type="submit"
               variant="primary"
@@ -2664,6 +2667,7 @@ function BuyNowDialog({
   const [validatingCoupon, setValidatingCoupon] = React.useState(false);
   /* R-023: true while Razorpay's window is open — the dialog steps aside (see the return). */
   const [rzpOpen, setRzpOpen] = React.useState(false);
+  const ts = useTurnstile(); // R-737: the checkout POST carries the bot-check token
 
   // Pre-promo subtotal + discount line — needed for the breakdown card.
   // (calc.annual is the post-promo pre-GST subtotal, calc.savings is the
@@ -2802,10 +2806,11 @@ function BuyNowDialog({
 
     const res = await fetch("/api/public/checkout/workspace", {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...ts.headers },
       body:    JSON.stringify(payload),
     });
     const json: CheckoutApiResponse = await res.json();
+    ts.reset(); // R-737: a token works once — the next try (or a retry after Razorpay) needs a fresh one
     if (!res.ok || json.error) {
       toast.error(json.error ?? "Could not start checkout. Please try again.");
       return;
@@ -3290,6 +3295,7 @@ function BuyNowDialog({
             )}
 
             <BusyPanel active={isSubmitting} title="Preparing your secure payment" steps={["Re-checking the price on our server", "Creating your order", "Opening the Razorpay payment window"]} />
+            {ts.widget}
             <Button
               type="submit"
               variant="primary"

@@ -14,7 +14,8 @@ export async function turnstileRefusal(headers: Headers, body: unknown): Promise
   const ts = await verifyTurnstile(readTurnstileToken(headers, body), clientIp(headers));
   if (ts.ok) return null;
   return NextResponse.json(
-    { error: "We could not verify this request. Reload the page and try again." },
+    /* R-737 (§24): what happened, why, what to do — and a way out if the check keeps failing. */
+    { error: "We could not verify this request came from a person — the security check was missing or has expired. Reload the page, let the check finish, and send again. If it keeps failing, WhatsApp or call us and we'll do it for you." },
     { status: 403 },
   );
 }

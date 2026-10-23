@@ -34,6 +34,7 @@ vi.mock("@/lib/supabase/bare", () => ({ createBareClient: () => emptyQuery() }))
 
 import { POST } from "./route";
 import { isTrustedInternalCall } from "@/lib/security/turnstile-guard";
+import { TURNSTILE_VERIFY_URL } from "@/lib/security/turnstile";
 import { resetRateLimiter } from "@/lib/security/rate-limit";
 /* R-1499: outside production the website tenant is never implied any more — name it, as a
    deployment does. (The fixture is the same id the routes used to fall back to.) */
@@ -49,7 +50,8 @@ const modelLead = {
 const req = (ip = "203.0.113.7", email = EMAIL) =>
   new NextRequest("https://site.example.invalid/api/public/agent/chat", {
     method: "POST",
-    headers: { "content-type": "application/json", "x-forwarded-for": ip },
+    /* R-737: the chat itself is bot-checked now — the visitor's widget token travels with each message. */
+    headers: { "content-type": "application/json", "x-forwarded-for": ip, "x-turnstile-token": "visitor-widget-token" },
     body: JSON.stringify({ messages: [{ ...visitorSays, text: visitorSays.text.replace(EMAIL, email) }] }),
   });
 const answer = (status: number, json: unknown) =>
@@ -60,7 +62,10 @@ beforeEach(() => {
   general.mockReset(); workspace.mockReset(); geminiJson.mockReset(); fetchMock.mockReset();
   geminiJson.mockResolvedValue(modelLead);
   /* What the old loopback hop met once Turnstile was on: a refusal. */
-  fetchMock.mockResolvedValue(answer(403, { error: "We could not verify this request." }));
+  fetchMock.mockImplementation(async (url: string) =>
+    url === TURNSTILE_VERIFY_URL
+      ? answer(200, { success: true })   // R-737: Cloudflare accepts the visitor's token
+      : answer(403, { error: "We could not verify this request." }));
   vi.stubGlobal("fetch", fetchMock);
   vi.stubEnv("TURNSTILE_SECRET_KEY", "test-secret-not-real");
 });
@@ -72,7 +77,8 @@ describe("/api/public/agent/chat — R-1549: the chat lead is really filed", () 
     const res = await POST(req());
     const json = await res.json();
     expect(json.leadCreated).toEqual({ quoteId: null });
-    expect(fetchMock).not.toHaveBeenCalled();
+    /* No loopback HTTP hop — the only network call is the visitor's own bot check. */
+    expect(fetchMock.mock.calls.filter(([u]) => u !== TURNSTILE_VERIFY_URL)).toEqual([]);
     expect(general).toHaveBeenCalledTimes(1);
     const [r] = general.mock.calls[0] as [NextRequest];
     expect(isTrustedInternalCall(r)).toBe(true);
@@ -108,5 +114,19 @@ describe("/api/public/agent/chat — R-1549: the chat lead is really filed", () 
     expect(json.leadCreated).toBeNull();
     expect(json.reply).toMatch(/could not save your details/i);
     expect(general).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe("/api/public/agent/chat — R-737: a script without the bot-check token gets no AI answer", () => {
+  it("no token, Turnstile on → 403 with the next step; Gemini never called", async () => {
+    const bot = new NextRequest("https://site.example.invalid/api/public/agent/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.9" },
+      body: JSON.stringify({ messages: [visitorSays] }),
+    });
+    const res = await POST(bot);
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/reload the page/i);
+    expect(geminiJson).not.toHaveBeenCalled();
   });
 });

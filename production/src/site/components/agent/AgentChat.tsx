@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
 import { WHATSAPP_URL, WHATSAPP_READY } from "@/site/lib/config";
 import { hideFloatingOn } from "@/site/components/chrome/Chrome";
 import { floatingLauncher, useAvoidFloating, useIsMobile } from "@/site/components/chrome/floating";
+import { useTurnstile } from "@/components/shared/turnstile";
 
 interface Msg {
   role: "user" | "assistant";
@@ -73,6 +74,7 @@ export function AgentChat() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const ts = useTurnstile(); // R-737: renders nothing until NEXT_PUBLIC_TURNSTILE_SITE_KEY is in the build
   /* Ek chat, ek lead — server ko har request me batate hain ki lead ban chuki, taaki
      model dobara lead field bhare to bhi doosri row na bane. */
   const [leadCaptured, setLeadCaptured] = useState(false);
@@ -141,7 +143,8 @@ export function AgentChat() {
     try {
       const res = await fetch("/api/agent", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        /* R-737: the bot-check token (none until the site key is in the build); one per message. */
+        headers: { "Content-Type": "application/json", ...ts.headers },
         /* The greeting is presentation, not conversation — the agent should not have to
            account for words the model never said. Only real turns travel. */
         body: JSON.stringify({
@@ -157,6 +160,13 @@ export function AgentChat() {
         setMsgs((cur) => [...cur, { role: "assistant", text: limited.reply || "You have sent too many messages in a short time. Please wait a few minutes and send it again — or use the Get a quote page." }]);
         return;
       }
+      /* R-737: the bot check refused — its message says what to do (reload, or WhatsApp). */
+      if (res.status === 403) {
+        const refused = (await res.json().catch(() => ({}))) as { error?: string };
+        setFailed(true);
+        setMsgs((cur) => [...cur, { role: "assistant", text: refused.error || "We could not verify this message came from a person. Reload the page and send it again — or WhatsApp us." }]);
+        return;
+      }
       if (!res.ok) throw new Error(String(res.status));
       const data = (await res.json()) as { reply?: string; suggestQuote?: Msg["suggestQuote"]; leadCreated?: { quoteId: string | null } | null };
       if (!data.reply) throw new Error("empty");
@@ -170,6 +180,7 @@ export function AgentChat() {
       ]);
     } finally {
       setBusy(false);
+      ts.reset(); // a token works once — the next message gets a fresh one
     }
   };
 
@@ -346,6 +357,7 @@ export function AgentChat() {
             )}
           </div>
 
+          {ts.widget && <div style={{ padding: "0 12px" }}>{ts.widget}</div>}
           <form
             onSubmit={(e) => { e.preventDefault(); void send(); }}
             style={{ display: "flex", gap: 8, padding: 12, borderTop: "1px solid var(--border-light)" }}

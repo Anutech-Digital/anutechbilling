@@ -32,7 +32,7 @@ import {
 import { POST as generalEnquiry } from "@/app/api/public/enquiry/general/route";
 import { POST as workspaceEnquiry } from "@/app/api/public/enquiry/workspace/route";
 import { passThroughHeaders, type LocalHandler } from "@/site/lib/app-forward";
-import { markTrustedInternalCall } from "@/lib/security/turnstile-guard";
+import { markTrustedInternalCall, turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { siteVisitorLimit } from "@/lib/security/rate-limit";
 import { redactContacts } from "@/lib/security/redact-contact";
 import { loadAutonomyPolicy, logAiAction } from "@/lib/ai/autonomy.server";
@@ -67,6 +67,11 @@ export async function POST(request: NextRequest) {
   } catch {
     return NextResponse.json({ error: "malformed" }, { status: 400 });
   }
+
+  /* R-737: every chat turn burns paid Gemini — a script gets no answer. No-op until
+     TURNSTILE_SECRET_KEY is set; the widget in AgentChat sends a fresh token per message. */
+  const bot = await turnstileRefusalFor(request, body);
+  if (bot) return bot;
 
   const messages = sanitizeMessages((body as Record<string, unknown>)?.messages);
   if (!messages) {

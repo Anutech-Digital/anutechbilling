@@ -52,6 +52,40 @@ describe("R-020 — bot check on public forms", () => {
     expect(src("site/lib/app-forward.ts")).toMatch(/"x-turnstile-token"/);
   });
 
+  it("R-737: the refusal says what happened, why, and what to do (§24)", async () => {
+    process.env.TURNSTILE_SECRET_KEY = "0x_aitest_secret";
+    const msg = (await (await turnstileRefusal(new Headers(), {}))!.json()).error as string;
+    expect(msg).toMatch(/could not verify/i);          // what
+    expect(msg).toMatch(/security check/i);            // why
+    expect(msg).toMatch(/reload the page/i);           // next step
+    expect(msg).toMatch(/WhatsApp|call us/i);          // a way out if it keeps failing
+  });
+
+  it("R-737: trial, checkout and the website chat call the guard before reading the body", () => {
+    const cases: Array<[string, string]> = [
+      ["app/api/public/trial/workspace/route.ts", "trialSchema.safeParse(body)"],
+      ["app/api/public/checkout/workspace/route.ts", "checkoutSchema.safeParse(body)"],
+      ["app/api/public/agent/chat/route.ts", "sanitizeMessages("],
+    ];
+    for (const [p, firstUse] of cases) {
+      const s = src(p);
+      const at = s.search(/turnstileRefusalFor\(request, body\)/);
+      expect(at, p).toBeGreaterThan(-1);
+      expect(at, p).toBeLessThan(s.indexOf(firstUse));
+    }
+  });
+
+  it("R-737: the trial, checkout and chat forms send the widget token", () => {
+    const buy = src("app/(public)/buy/workspace/buy-workspace-client.tsx");
+    for (const api of ["/api/public/trial/workspace", "/api/public/checkout/workspace"]) {
+      const at = buy.indexOf(`fetch("${api}"`);
+      expect(at, api).toBeGreaterThan(-1);
+      expect(buy.slice(at, at + 200), api).toMatch(/\.\.\.ts\.headers/);
+    }
+    expect(src("site/components/agent/AgentChat.tsx")).toMatch(/\.\.\.ts\.headers/);
+    expect(src("site/components/agent/AgentChat.tsx")).toMatch(/ts\.widget/);
+  });
+
   it("quote accept records the signer IP with the shared clientIp, not the spoofable first XFF entry", () => {
     const s = src("app/api/public/quote/[id]/accept/route.ts");
     expect(s).toMatch(/signer_ip: clientIp\(request\.headers\)/);
