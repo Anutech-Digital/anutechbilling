@@ -15,7 +15,7 @@
 import type { BillingCycle, Subscription } from "@/lib/supabase/database.types";
 import { subscriptionSchedule } from "./subscription-schedule";
 import { buildBillingSchedule } from "./schedule";
-import { grossAmount } from "@/lib/quotes/amounts";
+import { grossAmount, taxableAfterDiscount } from "@/lib/quotes/amounts";
 
 /** The cycles that produce more than one invoice per term. */
 export const SPLIT_CYCLES: readonly BillingCycle[] = ["monthly", "quarterly", "half_yearly"] as const;
@@ -363,7 +363,7 @@ export function planForQuote(q: SplitQuoteFields, termStart: string): QuoteInsta
   const subtotal = Math.round(q.subtotal ?? 0);
   return quoteInstalmentPlan({
     cycle:          (q.billing_cycle ?? null) as BillingCycle | null,
-    termTaxable:    subtotal - Math.round((subtotal * (q.discount_pct ?? 0)) / 100),
+    termTaxable:    taxableAfterDiscount(subtotal, q.discount_pct ?? 0), // R-1133: the tax invoice's formula
     termGross:      q.amount ?? 0,
     taxRate:        q.tax_rate ?? 18,
     lineCommitment: firstLineCommitment(q.line_items),

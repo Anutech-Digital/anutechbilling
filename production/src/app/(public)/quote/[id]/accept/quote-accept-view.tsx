@@ -26,6 +26,7 @@ import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { AcceptedPay } from "./accepted-pay";
 import type { QuoteDueNow } from "@/lib/payments/quote-due-now";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { taxableAfterDiscount } from "@/lib/quotes/amounts";
 import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
 import { billOfSupplyCustomerLine, type BillOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
 
@@ -253,7 +254,7 @@ export function QuoteAcceptView({
    */
   const dueToday = React.useMemo(() => quoteInstalments({
     cycle:       effectiveCycle,
-    termTaxable: (quote.subtotal ?? 0) - Math.round((quote.subtotal ?? 0) * (quote.discount_pct ?? 0) / 100),
+    termTaxable: taxableAfterDiscount(quote.subtotal ?? 0, quote.discount_pct ?? 0), // R-1133: the tax invoice's formula
     termGross:   payableTotal,
     taxRate:     quote.tax_rate ?? 18,
     // Flex me stored aankde per-month hain — split kuch hai hi nahi (12× ka parivar).

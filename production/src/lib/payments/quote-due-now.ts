@@ -24,6 +24,7 @@
 import { quoteInstalments } from "@/lib/billing/instalments";
 import { cycleFromLegacyCommitment } from "@/lib/quotes/billing";
 import { quotePerPeriodFigures } from "@/lib/quotes/per-period-figures";
+import { taxableAfterDiscount } from "@/lib/quotes/amounts";
 import { isForeignCurrency } from "@/lib/currency";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 
@@ -93,7 +94,7 @@ export function quoteDueNow(q: QuoteDueNowFields, received: number): QuoteDueNow
 
   const split = quoteInstalments({
     cycle,
-    termTaxable: subtotal - Math.round(subtotal * discountPct / 100),
+    termTaxable: taxableAfterDiscount(subtotal, discountPct), // R-1133: the tax invoice's formula
     termGross: totalInr,
     taxRate,
     lineCommitment: firstCommitment,
