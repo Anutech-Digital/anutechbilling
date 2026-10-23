@@ -101,7 +101,8 @@ import { lineCostUnknown, fillUnknownCosts } from "@/lib/quotes/line-cost";
 import { matchCatalogItemForPlan } from "@/lib/quotes/lead-plan-match";
 import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice, markOneTimeLines } from "@/lib/quotes/line-commit-choice";
 import { leadLinePrice } from "./lead-line-commitment";
-import { quoteSeatCount, isDomainRegistrationLine } from "@/lib/quotes/seat-lines";
+import { quoteSeatCount } from "@/lib/quotes/seat-lines";
+import { isTermLine, lineForYears } from "./domain-term";
 import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
@@ -115,9 +116,6 @@ const NO_APPROVAL_ROW = {
   approved_discount_bps: null, approved_margin_bps: null, approval_rejection_reason: null,
 };
 
-/** R-156: show the term picker on a domain REGISTRATION line — by its name too, so it is there
- *  before the domain is typed (isDomainPurchaseLine needs the name filled in). */
-const isRegistrationLine = (l: QuoteLineItem) => isDomainRegistrationLine(l);   // R-1673: same rule as seats + PDF label
 
 // Quote IDs are allocated at SAVE time via the central document-numbering RPC
 // (see migration 0004_document_series.sql) — this guarantees sequential per-tenant
@@ -198,6 +196,14 @@ function QuoteBuilderBody() {
      made optional (lib/quotes/optional-line.ts); unknown (custom, not loaded) asks too. */
   const catalogKindOf = (itemId: string | undefined) =>
     itemId ? (allCatalog ?? []).find((c) => c.id === itemId)?.kind : undefined;
+  /* R-156 / R-1445: the "Register for N years" picker — a domain registration line by its name
+     (R-1673 rule, there before the domain is typed) or any catalogue item of the Domain vendor
+     (named ".in", ".com", which had no picker: "nothing above 1 year", Pratik 16 Oct). */
+  const domainItemIds = React.useMemo(
+    () => new Set((allCatalog ?? []).filter((c) => c.vendor === "domain").map((c) => c.id)),
+    [allCatalog],
+  );
+  const isRegistrationLine = (l: QuoteLineItem) => isTermLine(l, domainItemIds);
   const { data: currentUser } = useCurrentUser();
   /* R-1532: a business that is not GST-registered / under composition issues a Bill of
      Supply — its quotes carry 0% GST, locked (R-1529's database refuses GST on the invoice). */
@@ -1169,9 +1175,11 @@ function QuoteBuilderBody() {
   const updateDomain = (id: string, d: string) => {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, domain: d || null } : l)));
   };
-  /** R-156: a domain registration line's term. The register cron registers for exactly this. */
+  /** R-156: a domain registration line's term. The register cron registers for exactly this.
+   *  R-1445: the rate is the whole term's price, so it moves with the years (price x years);
+   *  the subscription filed from it renews after those years (trigger subscription_term_follows_line). */
   const updateYears = (id: string, years: number) => {
-    setLineItems((s) => s.map((l) => (l.id === id ? { ...l, years: years > 1 ? years : undefined } : l)));
+    setLineItems((s) => s.map((l) => (l.id === id ? lineForYears(l, years) : l)));
   };
   /** What the customer may change on the public page. See line-adjust-controls.tsx (LineMoreMenu). */
   const updateAdjustable = (id: string, patch: Partial<QuoteLineItem>) => {

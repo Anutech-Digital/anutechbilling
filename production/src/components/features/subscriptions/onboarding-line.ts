@@ -15,9 +15,13 @@ export function onboardingQuoteLine(input: {
   pricePerSeat: number;
   terms: Pick<BillingTerms, "periods" | "costPerSeat" | "commitment">;
   startDate: string;
-}): QuoteLineItem {
+  /** R-1442 follow-up: the Renewal / Expiry date on screen (derived or hand-edited). */
+  renewalDate?: string;
+}): QuoteLineItem & { renewal_date?: string } {
   const { id, plan, seats, pricePerSeat, terms } = input;
   const start = input.startDate.trim();
+  const renewal = (input.renewalDate ?? "").trim();
+  const isDay = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d);
   return {
     id,
     name: `${plan} (${seats} seats)`,
@@ -34,6 +38,11 @@ export function onboardingQuoteLine(input: {
       ? terms.costPerSeat * terms.periods
       : Math.round(pricePerSeat * terms.periods * 0.83),
     commitment: terms.commitment,
-    ...(/^\d{4}-\d{2}-\d{2}$/.test(start) ? { start_date: start } : {}),
+    ...(isDay(start) ? { start_date: start } : {}),
+    /* R-1442 follow-up: on "Payment Received" record_payment files the subscription with
+       renewal = start + 1 year; trigger subscription_term_follows_line (migration
+       …_r1445_subscription_term_follows_line.sql) replaces that with this date, so the
+       expiry the operator saw — or typed — is the one saved. Only a date after the start. */
+    ...(isDay(start) && isDay(renewal) && renewal > start ? { renewal_date: renewal } : {}),
   };
 }
