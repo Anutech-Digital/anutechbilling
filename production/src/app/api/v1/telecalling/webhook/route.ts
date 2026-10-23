@@ -225,7 +225,7 @@ export async function POST(req: NextRequest) {
   /* R-1437: the suggestion, in the line the rep reads. Not written into the lead's fields —
      a person confirms it (Abhishek, 14 Oct 2026). */
   if (call.provider === "bolna" && call.signals.seatsDiscussed !== null) {
-    noteParts.push(`Sujhaav: AI ne suna ${call.signals.seatsDiscussed} seats — sahi ho to lead me Edit karke bharo.`);
+    noteParts.push(`Suggestion: the AI heard ${call.signals.seatsDiscussed} seats — if that is right, Edit the lead and fill it in.`);
   }
 
   if (row.leadId) {
@@ -279,9 +279,9 @@ export async function POST(req: NextRequest) {
   if (call.provider === "bolna" && classification.action === "quote_requested" && row.leadId) {
     const heard = call.signals.seatsDiscussed;
     const reason =
-      "AI call: customer ne quotation maanga" +
-      (heard !== null ? ` — AI ne suna ${heard} seats` : "") +
-      ". Seats/plan check karke quote banao aur bhejo.";
+      "AI call: the customer asked for a quote" +
+      (heard !== null ? ` — the AI heard ${heard} seats` : "") +
+      ". Check the seats and plan, then make and send the quote.";
     const flagged = await flagLeadForHumanAttention({ tenantId: row.tenantId, leadId: row.leadId, reason });
     if (!flagged.ok) console.error("[telecall-webhook] could not flag the lead:", flagged.error);
     await logAiAction({

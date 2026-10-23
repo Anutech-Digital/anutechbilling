@@ -35,23 +35,23 @@ function AiCallButton({ leadId }: { leadId: string }) {
       });
       const body = (await res.json().catch(() => ({}))) as { ok?: boolean; detail?: string; error?: string };
       if (res.ok && body.ok) {
-        toast.success("AI call lag rahi hai", {
-          description: "Call khatam hone par baat-cheet aur sujhaav is lead ki Activity me aa jayega.",
+        toast.success("AI call is being placed", {
+          description: "When the call ends, the conversation and suggestions will appear in this lead's Activity.",
         });
       } else {
-        toast.error(body.error ?? "AI call nahi lagi", {
-          description: body.detail ?? "Thodi der baad dobara try karo, ya khud Call karo.",
+        toast.error(body.error ?? "AI call could not be placed", {
+          description: body.detail ?? "Try again in a little while, or call them yourself.",
         });
       }
     } catch {
-      toast.error("AI call nahi lagi", { description: "Internet ya server ki dikkat — dobara try karo." });
+      toast.error("AI call could not be placed", { description: "Network or server problem — try again." });
     } finally {
       setBusy(false);
     }
   };
   if (list.length < 2) {
     return (
-      <Button icon="sparkles" onClick={() => run(list[0]?.id)} loading={busy} title="AI voice agent (Bolna) is lead ko abhi call karega">
+      <Button icon="sparkles" onClick={() => run(list[0]?.id)} loading={busy} title="The AI voice agent (Bolna) will call this lead now">
         AI call
       </Button>
     );
@@ -59,7 +59,7 @@ function AiCallButton({ leadId }: { leadId: string }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button icon="sparkles" loading={busy} title="Agent chuno — wo is lead ko abhi call karega">
+        <Button icon="sparkles" loading={busy} title="Pick an agent — it will call this lead now">
           AI call
         </Button>
       </DropdownMenuTrigger>
