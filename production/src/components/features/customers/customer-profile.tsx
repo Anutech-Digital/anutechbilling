@@ -74,7 +74,7 @@ import { PrimaryContactLine } from "@/components/features/customers/primary-cont
 /* R-1740: my relationship with this company's best-known person — saves to that contact. */
 import { CustomerRelationshipChip } from "@/components/features/contacts/relationship-chip";
 import { txnHref, primaryContactOf } from "@/components/features/customers/customer-links";
-import { buildCustomerStatement, useCustomerNotes } from "@/components/features/customers/customer-statement";
+import { buildCustomerStatement, statementPayments, useCustomerNotes } from "@/components/features/customers/customer-statement";
 import { RecordTable, RowLink } from "@/components/features/customers/customer-record-table";
 
 export interface CustomerProfileProps {
@@ -211,7 +211,9 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const allInvoices = invoices ?? [];
   const allQuotes = quotes ?? [];
   const allProjects = projects ?? [];
-  const customerPayments = (allPayments ?? []).filter((p) => p.customer_id === c.id);
+  /* R-1632: the /payments rule — a receipt taken before the lead was converted has no
+     customer_id but its quote is this customer's (statementPayments → paymentBelongsTo). */
+  const customerPayments = statementPayments(allPayments ?? [], c.id, (quotes ?? []).map((q) => q.id as string));
   const receivedPaymentsTotal = customerPayments
     .filter((p) => p.status === "received")
     .reduce((s, p) => s + (p.amount ?? 0), 0);
