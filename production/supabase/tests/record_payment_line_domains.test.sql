@@ -22,6 +22,21 @@
 
 -- ── A: two different domains ───────────────────────────────────────────────
 begin;
+
+-- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('dddddddd-0000-0000-0000-000000829a01','R829 A','r829a@example.in','07','R8A9');
@@ -46,6 +61,21 @@ rollback;
 
 -- ── B: same domain on two different plans ──────────────────────────────────
 begin;
+
+-- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('dddddddd-0000-0000-0000-000000829b01','R829 B','r829b@example.in','07','R8B9');
@@ -74,6 +104,21 @@ rollback;
 
 -- ── C: same plan twice, same domain -> conflict reported ───────────────────
 begin;
+
+-- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('dddddddd-0000-0000-0000-000000829c01','R829 C','r829c@example.in','07','R8C9');
@@ -98,6 +143,21 @@ rollback;
 
 -- ── D: borrowed quote domain still goes on one subscription only ────────────
 begin;
+
+-- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('dddddddd-0000-0000-0000-000000829d01','R829 D','r829d@example.in','07','R8D9');
@@ -119,6 +179,21 @@ rollback;
 
 -- ── E: activate on credit, same domain on two plans ────────────────────────
 begin;
+
+-- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
 select set_config('request.jwt.claims', '', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('dddddddd-0000-0000-0000-000000829e01','R829 E','r829e@example.in','07','R8E9');
