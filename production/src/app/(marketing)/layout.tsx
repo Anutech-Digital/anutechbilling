@@ -51,6 +51,7 @@ import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
 import { websiteTenantId } from "@/lib/website-tenant";
 import { getSiteTldPrices } from "@/site/lib/live-tld-pricing";
 import { domainTeaser } from "@/site/lib/data/domain-teaser";
+import { domainRenewals } from "@/site/lib/renewal-line";
 
 
 export default async function MarketingLayout({ children }: { children: React.ReactNode }) {
@@ -63,7 +64,8 @@ export default async function MarketingLayout({ children }: { children: React.Re
   const domains = domainTeaser(tlds);
   return (
     <div className={`anutech-site ${archivo.variable} ${plexMono.variable}`}>
-      <CartProvider>
+      {/* R-1628: what each domain renews at, for the cart page and checkout — the same live rate card. */}
+      <CartProvider domainRenewals={domainRenewals(tlds)}>
         <a href="#main" className="skip-link">Skip to content</a>
         {/* R-1508: signed-in team member previewing the site — Back to dashboard + Report a problem. */}
         <SitePreviewBar />

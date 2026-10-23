@@ -73,7 +73,6 @@ const KNOWN: Record<string, number> = {
   "site/components/cart/CartProvider.tsx": 1,
   "site/components/chrome/Header.tsx": 1,
   "site/components/domains/DomainLanding.tsx": 3,
-  "site/components/domains/domain-offer.ts": 1,
   "site/components/email/WorkspacePricing.tsx": 2,
   "site/components/home/HomeCompany.tsx": 1,
   "site/components/home/HomeV2.tsx": 1,

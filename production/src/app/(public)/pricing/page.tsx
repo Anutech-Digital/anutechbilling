@@ -3,8 +3,8 @@
  *
  * Honest positioning during beta: free for first 10 paying resellers,
  * tier structure shown for transparency about what's coming. Prices
- * are aspirational targets aligned with the 90-day plan (₹15K MRR at
- * 10 customers = ~₹1,500/customer/month average).
+ * are the planned launch prices (R-1631: the internal revenue target
+ * behind them stays out of the page and its metadata).
  *
  * No paywall switches enabled in product yet — tier names + features
  * here are forward-looking. Update PROJECT_TRACKER + this page together
@@ -25,7 +25,7 @@ import {
 export const metadata: Metadata = {
   title: "Pricing",
   description:
-    "Free during beta. Starter / Growth / Pro tiers launch once we hit ₹15K MRR. All features included today.",
+    "ResellerOS is free during beta for the first 10 resellers, personally onboarded. See the Starter, Growth and Pro plans in rupees (plus 18% GST) — every feature is included today.",
 };
 
 export default function PricingPage() {

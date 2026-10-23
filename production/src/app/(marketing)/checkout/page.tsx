@@ -14,7 +14,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { rupee, cycleLabel } from "@/site/lib/money";
+import { rupee } from "@/site/lib/money";
+import { lineRenewalText } from "@/site/lib/renewal-line";
 import { missingCheckoutDetails, missingCheckoutFields, missingDetailsMessage, gstinProblem, normalizeGstinInput, type CheckoutFieldKey } from "@/site/lib/checkout-details";
 
 /* R-1113: the box each missing item points at — the first one gets focus on Continue. */
@@ -823,7 +824,8 @@ export default function CheckoutPage() {
             <div key={p.line.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border-hairline)" }}>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{p.line.label} × {p.line.qty}</div>
-                <div className="meta" style={{ fontSize: 12 }}>{cycleLabel(p.line.cycle)}</div>
+                {/* R-1628: the renewal per year incl. GST — the figure /domains promises here. */}
+                <div className="meta" style={{ fontSize: 12 }}>{lineRenewalText(p.line, cart.domainRenewals ?? {})}</div>
                 <BundleNote p={p} />
               </div>
               <LinePrice p={p} size={14} />

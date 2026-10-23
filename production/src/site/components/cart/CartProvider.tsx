@@ -18,6 +18,7 @@ import { cartTotals, domainTermPrice, isSingleUnit, type CartLine, type CartTota
 import { SEVERAL_HOSTING_PLANS_READY } from "@/lib/checkout/hosting-limit";
 import { MAILBOX_YR } from "@/site/lib/data/domains-landing";
 import { cartPricesFromCatalog, repriceCartLines, type CartPrices, type PriceChange } from "@/site/lib/cart-reprice";
+import type { DomainRenewals } from "@/site/lib/renewal-line";
 
 const STORAGE_KEY = "anutech.cart.v1";
 const NO_DRAWER_ROUTES = ["/cart", "/checkout", "/done"];
@@ -68,6 +69,11 @@ interface CartApi {
   prices: CartPrices | null;
   /** Lines whose saved price the book changed on this visit — the one-line notice. */
   priceChanges: PriceChange[];
+  /**
+   * R-1628: extension → renewal ₹/yr ex GST from the live rate card (the figure /domains prints),
+   * so the cart page and checkout say what a domain renews at. Empty when the card is unknown.
+   */
+  domainRenewals: DomainRenewals;
 }
 
 const CartContext = createContext<CartApi | null>(null);
@@ -161,7 +167,9 @@ function save(lines: CartLine[]): void {
   }
 }
 
-export function CartProvider({ children }: { children: React.ReactNode }) {
+const NO_RENEWALS: DomainRenewals = {};
+
+export function CartProvider({ children, domainRenewals = NO_RENEWALS }: { children: React.ReactNode; domainRenewals?: DomainRenewals }) {
   const [lines, setLines] = useState<CartLine[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [coupon, setCoupon] = useState("");
@@ -339,8 +347,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       prices,
       // Only lines still in the cart (a removed line's change is no longer news).
       priceChanges: priceChanges.filter((c) => lines.some((l) => l.key === c.key)),
+      domainRenewals,
     }),
-    [lines, loaded, totals, coupon, couponStatus, couponRate, add, setQty, setYears, remove, clear, drawerOpen, justAdded, prices, priceChanges],
+    [lines, loaded, totals, coupon, couponStatus, couponRate, add, setQty, setYears, remove, clear, drawerOpen, justAdded, prices, priceChanges, domainRenewals],
   );
 
   return (

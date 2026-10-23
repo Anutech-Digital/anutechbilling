@@ -68,6 +68,9 @@ const MONO = "var(--df-mono), 'JetBrains Mono', monospace";
 const SERIF = "var(--df-serif), 'Instrument Serif', serif";
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
+/* R-1628: an extension the live rate card has no renewal price for. It said "renewal shown at
+   checkout", but the checkout reads the same rate card, so it could not show one either. */
+const RENEWAL_UNLISTED = "renewal price on request — ask us before you buy";
 type Term = "yearly" | "monthly";
 type Tab = "register" | "transfer" | "bulk";
 
@@ -396,7 +399,7 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
             {anchorReg != null && <>Hosting costs {inr(anchorTier.yearlyTotal - anchorReg)} more, not {inr(anchorTier.yearlyTotal)} — so the domain line reads ₹0. </>}
             {anchorRenew != null
               ? <>The renewal, {inr(anchorRenew)} + {inr(anchorTier.yearlyTotal)}, is printed on the invoice.</>
-              : <>The renewal price is shown at search and printed on the invoice.</>}
+              : <>The renewal price is printed on the invoice.</>}
           </p>
         </div>
       </section>
@@ -599,7 +602,7 @@ function ResultBlock(p: {
       <div style={{ background: C.successSurf, padding: "16px 22px", borderBottom: `1px solid ${C.successBorder}`, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: "0.1em", textTransform: "uppercase", color: C.success, fontWeight: 600 }}>Available</span>
         <span style={{ fontFamily: SERIF, fontSize: 23, letterSpacing: "-0.02em", color: C.ink, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={primary.domain}>{primary.domain}</span>
-        <span style={priceMono({ fontSize: 13, color: C.success })}>{domainRenew != null ? `renews ${inr(domainRenew)}/yr` : "renewal shown at checkout"}</span>
+        <span style={priceMono({ fontSize: 13, color: C.success })}>{domainRenew != null ? `renews ${inr(domainRenew)}/yr` : RENEWAL_UNLISTED}</span>
       </div>
       {primary.testPrice && <TestPriceNote C={C} MONO={MONO} />}
       <p style={{ padding: "16px 22px 6px", fontSize: 13.5, color: C.muted, margin: 0 }}>Pick one — you can change it any time before you pay.</p>
@@ -637,7 +640,7 @@ function ResultBlock(p: {
             <span style={priceMono({ fontSize: 29, fontWeight: 500, color: C.ink })}>{regText}</span>
             <span style={{ fontSize: 13, color: C.muted }}>first year + GST</span>
           </div>
-          <p style={{ fontSize: 13, color: C.muted, margin: "8px 0 0", lineHeight: 1.5 }}>{domainRenew != null ? `renews ${inr(domainRenew)}/yr` : "renewal shown at checkout"} · nothing else added. You get the name and DNS control — nothing will load at it until you point it at a host.</p>
+          <p style={{ fontSize: 13, color: C.muted, margin: "8px 0 0", lineHeight: 1.5 }}>{domainRenew != null ? `renews ${inr(domainRenew)}/yr` : RENEWAL_UNLISTED} · nothing else added. You get the name and DNS control — nothing will load at it until you point it at a host.</p>
         </button>
       </div>
 

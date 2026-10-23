@@ -9,7 +9,8 @@
 import Link from "@/site/components/ui/SiteLink";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { rupee, cycleLabel, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
+import { rupee, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
+import { lineRenewalText } from "@/site/lib/renewal-line";
 import { DomainYears } from "@/site/components/cart/DomainYears";
 import { BundleNote, LinePrice } from "@/site/components/cart/LinePrice";
 import { PriceChangeNotice } from "@/site/components/cart/PriceChangeNotice";
@@ -61,7 +62,7 @@ export default function CartPage() {
                 )}
                 <DomainYears line={l} firstYearFree={p.freeNote !== null} />
                 <div style={{ fontSize: 13, marginTop: 2, color: l.cycle === "monthly" ? "var(--primary)" : "var(--text-muted)" }}>
-                  {isTrialLine(l) ? `Free for ${HOSTING_TRIAL_DAYS} days · one trial per customer` : (l.years ?? 1) > 1 ? `Renews after ${l.years} years, then yearly` : cycleLabel(l.cycle)}
+                  {isTrialLine(l) ? `Free for ${HOSTING_TRIAL_DAYS} days · one trial per customer` : lineRenewalText(l, cart.domainRenewals ?? {})}
                 </div>
               </div>
               {/* Every line shows the quantity control; a single-unit line shows it LOCKED

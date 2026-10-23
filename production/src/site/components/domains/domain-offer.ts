@@ -42,11 +42,12 @@ export interface DomainOffer {
   saved: number;
 }
 
-const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 
 export function domainOffer(p: DomainOfferInput): DomainOffer {
   if (p.domainReg == null) return { lines: [], total: null, domainFree: false, saved: 0 };
-  const regDetail = p.domainRenew != null ? `Registration, 1 year · renews ${inr(p.domainRenew)}` : "Registration, 1 year";
+  /* R-1628: the renewal is not repeated here (ex GST) — the cart page and checkout print it on its
+     own line, incl. GST, from the same rate card (site/lib/renewal-line.ts). One fact, one place. */
+  const regDetail = "Registration, 1 year";
   const lines: OfferLine[] = [{
     label: p.domain,
     // R-1769: a test-list price says so in the cart and at checkout too.
