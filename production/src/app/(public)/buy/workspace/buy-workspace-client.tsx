@@ -32,6 +32,7 @@ import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { CONTACT_FOR_PRICING, isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
 import { tierAnnualPrice, annualTotals } from "./tier-price";
+import { workspaceGstLabel } from "./gst-heads";
 import { buyNowSchema,buyerCompany, BUY_ANNUAL_NOTE, type BuyNowForm } from "./buy-now-schema";
 import { normalizeGstinInput } from "@/site/lib/checkout-details";
 import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database.types";
@@ -2789,6 +2790,7 @@ function BuyNowDialog({
     register,
     handleSubmit,
     setValue,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<BuyNowForm>({
     resolver: zodResolver(buyNowSchema),
@@ -3106,7 +3108,8 @@ function BuyNowDialog({
                   </div>
                 )}
                 <div className="flex justify-between gap-2 text-ink-2">
-                  <span>+ GST 18% (CGST 9% + SGST 9%)</span>
+                  {/* R-1109: the head follows the place of supply — IGST outside Delhi. */}
+                  <span>+ {workspaceGstLabel({ stateCode: watch("stateCode"), gstin: watch("gstin") })}</span>
                   <span className="font-mono whitespace-nowrap">
                     ₹{(anyDiscount ? recomputedGst : calc.gst).toLocaleString("en-IN")}
                   </span>
