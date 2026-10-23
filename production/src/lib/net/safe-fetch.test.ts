@@ -59,7 +59,7 @@ describe("safeFetch", () => {
     expect(f).not.toHaveBeenCalled();
   });
   it("follows a redirect only after re-checking the new target", async () => {
-    const f = vi.fn(async (u: string) =>
+    const f = vi.fn(async (u: string, _init?: RequestInit) =>
       u === "https://ok.example/"
         ? new Response(null, { status: 302, headers: { location: "http://127.0.0.1/admin" } })
         : new Response("secret"));
