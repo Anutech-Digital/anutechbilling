@@ -148,7 +148,8 @@ describe("payments page wiring (R-1698)", () => {
     const at = src.indexOf("onRemind:");
     expect(at).toBeGreaterThan(-1);
     const body = src.slice(at, at + 1500);
-    const mail = body.indexOf("mailto:");
+    /* R-1638: the mailto: link is built by duesReminderMailto (dues-reminder.ts). */
+    const mail = body.indexOf("window.location.href = duesReminderMailto(");
     const ask = body.indexOf("await confirm(");
     const mark = body.indexOf("markReminderSent.mutateAsync");
     expect(mail).toBeGreaterThan(-1);

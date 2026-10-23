@@ -48,6 +48,7 @@ import { OpeningInvoiceDuesCard } from "@/components/features/invoices/opening-i
 import { useCustomers } from "@/lib/queries/customers";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { duesReminderMailto, duesReminderTo } from "./dues-reminder";
 import { canWriteSales } from "@/lib/nav";
 import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
@@ -512,18 +513,16 @@ function PaymentsPageInner() {
                 actions={{
                   payButton: (o) => <DuesPayButton route={duesPaymentRoute(o, duesQuoteLinks?.get(o.subscription_id))} onRecord={setPayQuoteId} />,
                   onRemind: async (o) => {
-                    const subject = `Payment reminder · ${rupee(o.outstanding_amount)} pending`;
-                    const body =
-                      `Hi ${o.customer_name},\n\nThis is a friendly reminder that ${rupee(o.outstanding_amount)} is still pending against ` +
-                      `your subscription for ${o.plan} (started ${formatDate(o.started_at)}).\n\n` +
-                      `You've paid ${rupee(o.paid_amount)} of ${rupee(o.total_quote_amount)}.\n\n` +
-                      `Please complete the payment at your earliest convenience to keep your service uninterrupted.\n\n— Anutech Digital`;
-                    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+                    /* R-1638: To = the customer's billing contact, signed with this business's name. */
+                    const to = await duesReminderTo(o.customer_id);
+                    window.location.href = duesReminderMailto(o, { to, sellerName: me?.tenantName });
                     /* R-1698: "Last reminder" is written only once the mail app opened and the
                        user says it went (it was written before the mail app even opened). */
                     const sent = await confirm({
                       title: `Did the reminder to ${o.customer_name} go out?`,
-                      body: "Your mail app opened with the reminder. Mark it as sent once you have sent it.",
+                      body: to
+                        ? `Your mail app opened with the reminder to ${to}. Mark it as sent once you have sent it.`
+                        : `${o.customer_name} has no email on file, so the "To" line is empty — type the address in your mail app (or add a contact to the customer). Mark it as sent once you have sent it.`,
                       confirmLabel: "Yes, mark as sent",
                       cancelLabel: "Not sent",
                       icon: "mail",
