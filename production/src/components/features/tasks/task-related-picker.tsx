@@ -12,7 +12,8 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { useCustomers } from "@/lib/queries/customers";
 import { useLeadLabel, useLeadSearch } from "@/lib/queries/leads";
-import { useQuotes } from "@/lib/queries/quotes";
+import { useQuotePickerSearch, useQuoteLabel } from "@/lib/queries/palette-search";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 
 export type RelatedKind = "customer" | "lead" | "deal" | "subscription";
 export interface RelatedValue { kind: RelatedKind; id: string }
@@ -35,7 +36,7 @@ export function TaskRelatedPicker({
   id?: string;
 }) {
   const { data: customers } = useCustomers();
-  const { data: quotes } = useQuotes();
+  const { data: me } = useCurrentUser();
   const [query, setQuery] = React.useState("");
   const [open, setOpen] = React.useState(false);
   /* Leads are searched on the server as you type (S40) — this picker sits in every "Add
@@ -47,6 +48,9 @@ export function TaskRelatedPicker({
     return () => clearTimeout(t);
   }, [query]);
   const { data: leads } = useLeadSearch(leadQuery, open);
+  /* R-1121: deals too — a few matches for what is typed, not the whole quotes table. */
+  const { data: quotes } = useQuotePickerSearch(leadQuery, open, me?.tenantId);
+  const { data: chosenQuote } = useQuoteLabel(value?.kind === "deal" ? value.id : null);
   const { data: chosenLead } = useLeadLabel(value?.kind === "lead" ? value.id : null);
 
   const options = React.useMemo<Opt[]>(() => {
@@ -68,7 +72,9 @@ export function TaskRelatedPicker({
     const sel = options.find((o) => o.kind === value.kind && o.id === value.id)
       ?? (value.kind === "lead" && chosenLead
         ? { kind: "lead" as const, id: chosenLead.id, label: chosenLead.company || chosenLead.contact_name || "Lead" }
-        : undefined);
+        : value.kind === "deal" && chosenQuote
+          ? { kind: "deal" as const, id: chosenQuote.id, label: `${chosenQuote.customer_name || "Deal"} · ${chosenQuote.id}` }
+          : undefined);
     return (
       <div className="flex items-center gap-2 rounded-md border border-hairline bg-paper-2/40 px-3 py-2">
         <span className={`text-3xs px-1.5 py-0.5 rounded ${TAG[value.kind].cls}`}>{TAG[value.kind].label}</span>

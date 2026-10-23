@@ -37,6 +37,48 @@ export function useSubscriptions() {
   });
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * R-1121: the PostgREST `or=(…)` for the subscriptions one quote page needs — the quote's own
+ * (quote_id), the one it renews (renewal_subscription_id / renewal_quote_id), and the customer's
+ * others (their domains prefill the payment dialog). Ids that are not uuids are left out, so a
+ * typed value can never widen the filter. The quote id is a text id ("Q-…") and is quoted.
+ */
+export function quoteSubscriptionsOr(q: {
+  id: string; customer_id?: string | null; renewal_subscription_id?: string | null;
+}): string {
+  const qid = `"${q.id.replace(/["\\]/g, "")}"`;
+  const parts = [`quote_id.eq.${qid}`, `renewal_quote_id.eq.${qid}`];
+  if (q.renewal_subscription_id && UUID_RE.test(q.renewal_subscription_id)) parts.push(`id.eq.${q.renewal_subscription_id}`);
+  if (q.customer_id && UUID_RE.test(q.customer_id)) parts.push(`customer_id.eq.${q.customer_id}`);
+  return parts.join(",");
+}
+
+/**
+ * R-1121: only the subscriptions a quote page uses (quoteSubscriptionsOr), not the whole table
+ * — /quotes/[id] used to read every subscription in the workspace to find two or three.
+ * Under ["subscriptions"], so every subscription mutation's invalidation reaches it.
+ */
+export function useQuoteSubscriptions(q: {
+  id: string; customer_id?: string | null; renewal_subscription_id?: string | null;
+} | null | undefined) {
+  return useQuery({
+    queryKey: ["subscriptions", "quote", q?.id, q?.customer_id ?? null, q?.renewal_subscription_id ?? null],
+    enabled: !!q?.id,
+    queryFn: async (): Promise<Subscription[]> => {
+      const { data, error } = await createClient()
+        .from("subscriptions")
+        .select("*")
+        .or(quoteSubscriptionsOr(q!))
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
 /**
  * Inline-edit hook for setting the domain on an existing subscription.
  * Used by Subscriptions page when an older row was created before the

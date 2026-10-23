@@ -36,7 +36,7 @@ import { RenewalGraceCard } from "@/components/features/customers/renewal-grace-
 import { CustomerFollowupCard } from "@/components/features/collections/customer-followup-card";
 import { EntitlementCard } from "@/components/features/support/entitlement-card";
 import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
-import { usePayments, useDeletePayment } from "@/lib/queries/payments";
+import { useCustomerPayments, useDeletePayment } from "@/lib/queries/payments";
 import { useTdsReceivables } from "@/lib/queries/tds-receivable";
 import { receiptSplitLine, tdsByPayment } from "@/lib/accounting/tds-receipt";
 import { useCustomerProjects, useCustomerProjectPayments } from "@/lib/queries/projects";
@@ -105,13 +105,14 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const { data: allGroups } = useCustomerGroups();
   const { data: subs }     = useCustomerSubscriptions(params.id);
   const { data: invoices } = useCustomerInvoices(params.id);
-  const { data: quotes }   = useCustomerQuotes(params.id);
+  const { data: quotes, isPending: quotesPending } = useCustomerQuotes(params.id);
   const { data: projects } = useCustomerProjects(params.id);
   const { data: projPay } = useCustomerProjectPayments(params.id);
   const { data: openCredit } = useCustomerOpenCredit(params.id);
   /* R-1682: credit / debit notes belong on the Statement. */
   const { data: customerNotes } = useCustomerNotes(params.id);
-  const { data: allPayments } = usePayments();
+  /* R-1121: this customer's payments only (theirs, or on their quotes) — not every payment. */
+  const { data: allPayments } = useCustomerPayments(params.id, quotesPending ? undefined : (quotes ?? []).map((q) => q.id as string));
   /* R-523: TDS this customer deducted — the statement and Lifetime paid show the bank
      money and the TDS apart, else the bank reconciliation can never match. */
   const { data: customerTds } = useTdsReceivables({ customerId: params.id });

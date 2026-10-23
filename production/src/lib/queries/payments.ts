@@ -42,6 +42,43 @@ export function usePayments() {
   });
 }
 
+/**
+ * R-1121: the PostgREST `or=(…)` for one customer's payments — recorded against the customer,
+ * or against one of the customer's quotes (a quote payment can carry no customer_id; the same
+ * test as statementPayments → paymentBelongsTo). Quote ids are text ("Q-…"), so each is quoted.
+ */
+export function customerPaymentsOr(customerId: string, quoteIds: readonly string[]): string {
+  const parts = [`customer_id.eq.${customerId}`];
+  const ids = [...new Set(quoteIds)].map((id) => id.replace(/["\\]/g, "")).filter(Boolean);
+  if (ids.length > 0) parts.push(`quote_id.in.(${ids.map((id) => `"${id}"`).join(",")})`);
+  return parts.join(",");
+}
+
+/**
+ * R-1121: one customer's payments (customerPaymentsOr) — the customer page used to read every
+ * payment in the workspace (usePayments) and filter in the browser. `quoteIds` undefined = the
+ * customer's quotes are still loading; it waits for them rather than missing quote payments.
+ */
+export function useCustomerPayments(customerId: string | null | undefined, quoteIds: readonly string[] | undefined) {
+  const ids = [...new Set(quoteIds ?? [])].sort();
+  return useQuery({
+    queryKey: ["payments", "by-customer", customerId, ids.join(",")],
+    enabled: !!customerId && quoteIds !== undefined,
+    queryFn: async (): Promise<Payment[]> => {
+      const supabase = createClient();
+      /* Paged like usePayments (R-264) — a long-standing customer can pass 1000 receipts. */
+      return await fetchAllRows<Payment>((from, to) =>
+        supabase
+          .from("payments")
+          .select(PAYMENT_COLUMNS)
+          .or(customerPaymentsOr(customerId!, ids))
+          .order("received_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to));
+    },
+  });
+}
+
 // ============================================================
 // Read — all payments for one quote (used by quote detail history card)
 // ============================================================
