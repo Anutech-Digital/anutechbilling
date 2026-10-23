@@ -41,7 +41,8 @@ import { startEmailVerification } from "@/lib/auth/email-verification";
 import { findVerifiedDomainTenant } from "@/lib/auth/tenant-match";
 import { checkNewPassword } from "@/lib/auth/password-rules";
 import { INVITE_EXPIRED_MESSAGE, inviteAcceptRefusal, isInviteExpired } from "@/lib/auth/invite-accept";
-import { CHECK_EMAIL_RESPONSE, SIGNUP_FAILED_MESSAGE, isEmailTaken } from "./signup-response";
+import { CHECK_EMAIL_RESPONSE, SIGNUP_FAILED_MESSAGE, SIGNUP_SERVER_FAILED_MESSAGE, isEmailTaken } from "./signup-response";
+import { apiFailure } from "@/lib/errors/api-error";
 
 export async function POST(request: NextRequest) {
   try {
@@ -221,7 +222,8 @@ export async function POST(request: NextRequest) {
     if (tenantError) {
       // Rollback: delete the auth user we just created
       await admin.auth.admin.deleteUser(userId);
-      return NextResponse.json({ error: "Tenant creation failed: " + tenantError.message }, { status: 500 });
+      /* R-1137 pattern: the database text is logged here, never sent to the browser. */
+      return NextResponse.json(apiFailure("signup_company_failed", SIGNUP_SERVER_FAILED_MESSAGE, tenantError, "signup"), { status: 500 });
     }
 
     const { error: userError } = await admin.from("users").insert({
@@ -238,7 +240,7 @@ export async function POST(request: NextRequest) {
       // Rollback: delete tenant + auth user
       await admin.from("tenants").delete().eq("id", tenantId);
       await admin.auth.admin.deleteUser(userId);
-      return NextResponse.json({ error: "User record creation failed: " + userError.message }, { status: 500 });
+      return NextResponse.json(apiFailure("signup_user_failed", SIGNUP_SERVER_FAILED_MESSAGE, userError, "signup"), { status: 500 });
     }
 
     // Claim the company's own domain for this new tenant, unverified. It costs
@@ -253,8 +255,7 @@ export async function POST(request: NextRequest) {
        is not something a visitor can cause on purpose. */
     return NextResponse.json({ ...CHECK_EMAIL_RESPONSE, verificationSent: verify.sent });
   } catch (e) {
-    const err = e as Error;
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json(apiFailure("signup_failed", SIGNUP_SERVER_FAILED_MESSAGE, e, "signup"), { status: 500 });
   }
 }
 
