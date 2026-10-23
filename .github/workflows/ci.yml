@@ -91,9 +91,12 @@ jobs:
       # 11 Oct 2026 (R-712): `tsc --noEmit` now hits the same default ~2 GB old-space cap the
       # build hit on 28 Aug (exit 134, "Ineffective mark-compacts near heap limit") on three
       # runs in a row with no TypeScript change. Same fix as the build step below.
+      # R-1802 (23 Oct 2026): 4096 is now too small too — runs for 72f27e0c, 2073625e and 1f02c2c6
+      # died the same way at ~4030 MB after ~8 min. ubuntu-latest has 16 GB and nothing else runs
+      # in this job while tsc does, so 8192.
       - run: npm run typecheck
         env:
-          NODE_OPTIONS: --max-old-space-size=4096
+          NODE_OPTIONS: --max-old-space-size=8192
       - run: npm run test
       # Blocking since S18. `next lint` fails on any ESLint ERROR; the ratchet fails when any
       # rule has more WARNINGS than lint-baseline.json allows (no-explicit-any, max-lines…).
@@ -154,7 +157,7 @@ jobs:
           # (39192223157 was a full cold build); 8eba80ea, a cold build just before, passed.
           # No single heavy import — the app's type graph grew past it. ubuntu-latest has
           # 16 GB, so 6144 leaves ~10 GB for webpack's own workers. Build step only: the
-          # typecheck step above (plain tsc) still fits in 4096. Cloud Build's image build is
+          # typecheck step above (plain tsc) has its own cap (8192 since R-1802). Cloud Build's image build is
           # not affected: it skips this type check (SKIP_BUILD_TYPECHECK=1) and its builder
           # stage already has 6144 (production/Dockerfile NODE_HEAP_MB).
           NODE_OPTIONS: --max-old-space-size=6144

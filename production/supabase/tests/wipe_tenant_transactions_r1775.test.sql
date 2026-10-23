@@ -324,7 +324,20 @@ begin
   -- a bug report of 1111 with a screenshot and a vote (local 1111 has none; rolled back with the rest).
   -- Pardeep, 23 Oct: the bug reports stay through the wipe, screenshot rows and votes with them.
   select id into v_fb_user from public.users where tenant_id = t1 order by id limit 1;
-  if v_fb_user is null then raise exception 'FAIL: tenant 1111 has no login to file a bug report with'; end if;
+  -- R-1802: CI's seed (supabase/seed.sql) gives 1111 data but no login - only scripts/dev-local.mjs adds
+  -- one on a laptop. Make one here (rolled back) so the bug report has a reporter in both places.
+  if v_fb_user is null then
+    v_fb_user := '11111111-1111-1111-1111-00000000f1ee';
+    insert into auth.users (id, instance_id, aud, role, email)
+      values (v_fb_user, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'r1775-reporter@example.in');
+    insert into public.users (id, tenant_id, email, role) values (v_fb_user, t1, 'r1775-reporter@example.in', 'owner');
+  end if;
+  -- R-1802: the same for E2E Test Co - it comes from e2e/fixtures/seed-e2e-tenant.mjs, which CI's SQL job
+  -- never runs. Without it the guards below have no second company to protect (rolled back too).
+  if not exists (select 1 from public.tenants where id = e2e) then
+    insert into public.tenants (id, name, email, state_code) values (e2e, 'E2E Test Co', 'e2e@example.in', '07');
+    insert into public.customers (tenant_id, name) values (e2e, 'R-1802 E2E customer');
+  end if;
   insert into public.feedback (tenant_id, title, body, reported_by, reporter_name)
     values (t1, 'R-1775 test report', 'kept through the wipe', v_fb_user, 'R-1775 test') returning id into v_fb;
   insert into public.feedback_screenshots (feedback_id, tenant_id, file_path, file_name)
