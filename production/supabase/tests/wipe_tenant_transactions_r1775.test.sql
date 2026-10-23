@@ -1,7 +1,7 @@
 -- R-1775 (23 Oct 2026): the staging wipe of ONE company's data
 -- (supabase/cloudsql/staging/wipe-tenant-transactions.sh) proved on the LOCAL DB, inside begin ... rollback.
 -- Tenant 1111 stands in for Anutech Digital. Asserts: every non-keep tenant table is 0 for it, the keep-list
--- (logins, settings, secrets) is unchanged, the tenants rows and E2E Test Co + every other company are
+-- (logins, settings, secrets, bug reports) is unchanged, the tenants rows and E2E Test Co + every other company are
 -- unchanged, no dangling foreign-key rows, every trigger back in its exact mode.
 -- The CORE block below is a byte-for-byte copy of the one in wipe-tenant-transactions.sql
 -- (tests/ops/wipe-tenant-transactions.test.ts fails if they differ).
@@ -32,7 +32,10 @@ create or replace function pg_temp.r1775_keep() returns text[] language sql immu
     -- numbering / sequence config: next numbers are NOT reset (runbook says how, if ever wanted)
     'document_series', 'customer_number_seq',
     -- secrets and integration keys / connections (Ads + Google Business tokens, IndiaMART sync state)
-    'tenant_secrets', 'ad_accounts', 'gbp_locations', 'indiamart_sync_state'
+    'tenant_secrets', 'ad_accounts', 'gbp_locations', 'indiamart_sync_state',
+    -- bug reports (Pardeep, 23 Oct: keep the 30 reports) and what hangs only off them. Their foreign
+    -- keys point only at tenants and users, both kept; r1775_keep_refs() stops the run if that changes.
+    'feedback', 'feedback_screenshots', 'feedback_votes'
   ]::text[]
 $f$;
 
@@ -98,6 +101,38 @@ begin
   return v_out;
 end $f$;
 
+-- keep-list rows that point at a row about to be wiped through a foreign key whose ON DELETE action
+-- is one of p_actions ('a' no action / 'r' restrict = the delete would fail; 'n' set null / 'd' set
+-- default = the database itself would change the kept row). Key: table.columns:action.
+-- This script never nulls or rewrites a kept row itself: 'a'/'r' rows stop the run (reported, nothing
+-- changed); 'n'/'d' rows are shown in the dry run so Pardeep sees them before saying yes.
+create or replace function pg_temp.r1775_keep_refs(p_tenants uuid[], p_actions text[]) returns jsonb
+language plpgsql as $f$
+declare con record; v_cond text; v_cols text; v_n bigint; v_out jsonb := '{}'::jsonb;
+  v_targets text[] := pg_temp.r1775_targets();
+begin
+  for con in select c.conrelid, c.confrelid, c.conkey, c.confkey, c.confdeltype::text as act, kc.relname::text as k
+               from pg_constraint c
+               join pg_class kc on kc.oid = c.conrelid
+               join pg_class pc on pc.oid = c.confrelid
+              where c.contype = 'f' and c.confdeltype::text = any (p_actions)
+                and kc.relnamespace = 'public'::regnamespace and kc.relname::text = any (pg_temp.r1775_keep_present())
+                and pc.relnamespace = 'public'::regnamespace and pc.relname::text = any (v_targets)
+              order by kc.relname, c.conname loop
+    select string_agg(format('p.%I = k.%I', pa.attname, ka.attname), ' and '),
+           string_agg(ka.attname::text, ',')
+      into v_cond, v_cols
+      from unnest(con.conkey, con.confkey) as u(kk, fk)
+      join pg_attribute ka on ka.attrelid = con.conrelid and ka.attnum = u.kk
+      join pg_attribute pa on pa.attrelid = con.confrelid and pa.attnum = u.fk;
+    execute format('select count(*) from public.%I k where k.tenant_id = any($1) and exists (select 1 from %s p where p.tenant_id = any($1) and %s)',
+                   con.k, con.confrelid::regclass, v_cond)
+      into v_n using p_tenants;
+    if v_n > 0 then v_out := v_out || jsonb_build_object(con.k || '.' || v_cols || ':' || con.act, v_n); end if;
+  end loop;
+  return v_out;
+end $f$;
+
 -- one line per company: name | id | GSTIN (made safe for the RAISE channel)
 create or replace function pg_temp.r1775_describe(p_tenants uuid[]) returns text language sql stable as $f$
   select string_agg(regexp_replace(t.name, '[^A-Za-z0-9 .,&()-]', ' ', 'g') || ' | ' || t.id || ' | '
@@ -147,7 +182,7 @@ declare
   v_del_after jsonb; v_keep_after jsonb;
   v_rels oid[]; v_bad text; v_forced oid[];
   v_trig_rel oid[] := '{}'; v_trig_name text[] := '{}'; v_trig_mode text[] := '{}';
-  v_trig_before text; v_trig_after text;
+  v_trig_before text; v_trig_after text; v_blocked jsonb; v_nulled jsonb;
   r record; i int; v_t text; v_n bigint; v_progress boolean; v_left int; v_err text; v_pass int := 0;
 begin
   if p_tenants is null or cardinality(p_tenants) = 0 then
@@ -161,6 +196,15 @@ begin
      <> (select count(distinct x) from unnest(p_tenants) x) then
     raise exception 'WIPESTOP a company id is not in tenants - nothing changed';
   end if;
+
+  -- A kept row (e.g. a bug report) pointing at a row to be wiped through RESTRICT / NO ACTION would
+  -- make the delete fail. Report exactly which, and stop - the script never rewrites a kept row.
+  v_blocked := pg_temp.r1775_keep_refs(p_tenants, array['a', 'r']);
+  if v_blocked <> '{}'::jsonb then
+    raise exception 'WIPESTOP kept rows point at rows that would be wiped (table.columns:action=rows): % - nothing changed. Send Claude this screen.',
+      pg_temp.r1775_fmt(v_blocked, true);
+  end if;
+  v_nulled := pg_temp.r1775_keep_refs(p_tenants, array['n', 'd']);
 
   v_del_before  := pg_temp.r1775_counts(v_targets, p_tenants);
   v_keep_before := pg_temp.r1775_counts(v_keep, p_tenants);
@@ -254,7 +298,8 @@ begin
       pg_temp.r1775_fmt(v_keep_expected, false), pg_temp.r1775_fmt(v_keep_after, false);
   end if;
 
-  return jsonb_build_object('deleted', v_del_before, 'keep', v_keep_after, 'cascade', v_cascade, 'passes', v_pass);
+  return jsonb_build_object('deleted', v_del_before, 'keep', v_keep_after, 'cascade', v_cascade,
+                            'nulled', v_nulled, 'passes', v_pass);
 end $f$;
 -- <<< R-1775 CORE (end)
 
@@ -274,13 +319,29 @@ declare
   v_users_before text; v_users_after text; v_secrets_before bigint;
   v_trig_before text; v_trig_after text; v_rls_before text; v_rls_after text;
   v_t text; v_n bigint; v_ok boolean; con record; v_sql text;
+  v_fb uuid; v_fb_user uuid; v_fb_before text; v_fb_after text;
 begin
+  -- a bug report of 1111 with a screenshot and a vote (local 1111 has none; rolled back with the rest).
+  -- Pardeep, 23 Oct: the bug reports stay through the wipe, screenshot rows and votes with them.
+  select id into v_fb_user from public.users where tenant_id = t1 order by id limit 1;
+  if v_fb_user is null then raise exception 'FAIL: tenant 1111 has no login to file a bug report with'; end if;
+  insert into public.feedback (tenant_id, title, body, reported_by, reporter_name)
+    values (t1, 'R-1775 test report', 'kept through the wipe', v_fb_user, 'R-1775 test') returning id into v_fb;
+  insert into public.feedback_screenshots (feedback_id, tenant_id, file_path, file_name)
+    values (v_fb, t1, t1 || '/feedback/' || v_fb || '/shot.png', 'shot.png');
+  insert into public.feedback_votes (tenant_id, feedback_id, user_id) values (t1, v_fb, v_fb_user);
+  select string_agg(x, '|' order by x) into v_fb_before from (
+    select to_jsonb(f)::text as x from public.feedback f where f.tenant_id = t1
+    union all select to_jsonb(s)::text from public.feedback_screenshots s where s.tenant_id = t1
+    union all select to_jsonb(v)::text from public.feedback_votes v where v.tenant_id = t1) q;
+
   -- the keep-list is what Pardeep chose on 23 Oct (scope change): logins, settings, secrets/keys only
-  foreach v_t in array array['users', 'tenant_secrets', 'document_series', 'user_google_tokens'] loop
+  foreach v_t in array array['users', 'tenant_secrets', 'document_series', 'user_google_tokens',
+                             'feedback', 'feedback_screenshots', 'feedback_votes'] loop
     if not v_t = any (v_keep) then raise exception 'FAIL: % must be on the keep-list', v_t; end if;
   end loop;
   foreach v_t in array array['customers', 'invoices', 'quotes', 'payments', 'subscriptions', 'items',
-                             'vendors', 'expenses', 'vendor_bills', 'leads', 'tasks', 'feedback',
+                             'vendors', 'expenses', 'vendor_bills', 'leads', 'tasks',
                              'bank_accounts', 'employees', 'zoho_books_import_runs'] loop
     if not v_t = any (v_targets) then raise exception 'FAIL: % must be wiped (not on the keep-list)', v_t; end if;
   end loop;
@@ -354,6 +415,15 @@ begin
   select string_agg((to_jsonb(u) - 'employee_id' - 'updated_at')::text, '|' order by id) into v_users_after
     from public.users u where tenant_id = t1;
   if v_users_after is distinct from v_users_before then raise exception 'FAIL: login rows of 1111 changed'; end if;
+  -- the bug reports, their screenshot rows and votes: every row byte-for-byte the same
+  select string_agg(x, '|' order by x) into v_fb_after from (
+    select to_jsonb(f)::text as x from public.feedback f where f.tenant_id = t1
+    union all select to_jsonb(s)::text from public.feedback_screenshots s where s.tenant_id = t1
+    union all select to_jsonb(v)::text from public.feedback_votes v where v.tenant_id = t1) q;
+  if v_fb_after is distinct from v_fb_before then raise exception 'FAIL: bug reports of 1111 changed'; end if;
+  if (v_res -> 'deleted') ?| array['feedback', 'feedback_screenshots', 'feedback_votes'] then
+    raise exception 'FAIL: a feedback table is in the DELETE list';
+  end if;
   -- 3. the tenants table (1111's company row with its settings, and every other company) is untouched
   select string_agg(t::text, '|' order by id) into v_tenants_after from public.tenants t;
   if v_tenants_after is distinct from v_tenants_before then raise exception 'FAIL: tenants rows changed'; end if;

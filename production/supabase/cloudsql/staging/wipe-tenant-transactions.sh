@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # R-1775 (23 Oct 2026) - STAGING ONLY: delete ALL data of ONE company (Anutech Digital) on the staging DB,
-# keeping only its logins, company settings, secrets/integration keys and numbering config.
+# keeping only its logins, company settings, secrets/integration keys, numbering config and the bug
+# reports (feedback + screenshots + votes - Pardeep, 23 Oct).
 # Every other company, and E2E Test Co (staging's automatic tests), is never touched.
 # Pardeep runs this in his own terminal (Claude may not touch the staging DB). The SQL, with the
 # KEEP-LIST, is wipe-tenant-transactions.sql next to this file.
@@ -32,7 +33,8 @@
 #      gcloud sql backups restore <BACKUP_ID> --restore-instance=resellersos-staging-db --backup-instance=resellersos-staging-db --project=resellsubsos-prod
 #
 # Not touched: storage files (screenshots, uploads, PDFs) - only database rows go; their links just
-# stop pointing anywhere. Document numbering (document_series, customer_number_seq) is KEPT, so the
+# stop pointing anywhere. Bug-report screenshots keep both file and row, so they still open.
+# Document numbering (document_series, customer_number_seq) is KEPT, so the
 # next invoice/quote number continues where it was; resetting it is a separate decision, not done here.
 # Every trigger is switched off only for the wiped tables and only inside the transaction, and put
 # back to its exact mode before it commits (why not session_replication_role: see the .sql).
