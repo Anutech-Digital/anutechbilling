@@ -320,7 +320,8 @@ export function WorkspacePricing({ plans, head, intro }: {
         <p className="wp-fine">Feature list as published by Google for India, October 2026. Google may change features; we will tell you before your renewal if anything you use changes.</p>
       </section>
 
-      <section className="wp-faq" aria-labelledby="wp-faq-h">
+      {/* R-1495: the FAQ rows' toggles sit where the phone launcher floats — it steps aside here too. */}
+      <section className="wp-faq" data-avoid-floating="" aria-labelledby="wp-faq-h">
         <h2 id="wp-faq-h">Questions about pricing</h2>
         {FAQ.map(([qq, a]) => (
           <details key={qq}><summary>{qq}</summary><p>{a}</p></details>

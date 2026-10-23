@@ -113,3 +113,36 @@ describe("floating launcher on the homepage (R-464)", () => {
     expect(screen.getAllByRole("button", { name: LAUNCHER })).toHaveLength(1);
   });
 });
+
+/* R-1495 galat (Pawan, 17 Oct, phone): the AI launcher sat over the Workspace plan cards'
+   buttons. The hook scanned for [data-avoid-floating] once per route, when the layout's
+   pathname changed — a page whose content arrives after that (client navigation, streamed
+   server page, a remount) was never watched, so the launcher never stepped aside. */
+describe("launcher steps aside for blocks that render after it (R-1495)", () => {
+  function LatePage({ show }: { show: boolean }) {
+    return (
+      <>
+        {show && (
+          <div data-avoid-floating="" className="wp-cards">
+            <a href="/buy">Buy now</a>
+          </div>
+        )}
+        <AgentChat />
+      </>
+    );
+  }
+
+  it("390px: plan cards that appear after mount are still watched", async () => {
+    setViewport(true);
+    const { rerender } = render(<LatePage show={false} />);
+    expect(observed.length).toBe(0);
+
+    rerender(<LatePage show={true} />);
+    // MutationObserver callbacks are microtasks; let them (and any frame) run.
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    expect(observed.some((el) => el.classList.contains("wp-cards"))).toBe(true);
+
+    formScrolls(true);
+    expect(screen.queryByRole("button", { name: LAUNCHER })).toBeNull();
+  });
+});
