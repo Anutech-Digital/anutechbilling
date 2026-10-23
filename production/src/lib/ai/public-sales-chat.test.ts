@@ -282,10 +282,16 @@ describe("self-learning — sabak advice hai, hukum nahi, aur figure-proof hai",
       join(process.cwd(), "src", "app", "api", "public", "agent", "chat", "route.ts"),
       "utf8",
     );
-    expect(route).toContain('resolveAutonomy("public_chat.learn", policy)');
-    expect(route).toContain('action: "public_chat.learn"');
-    /* READ par bhi sanitize — store ek DB row hai jise koi edit kar sakta hai. */
-    expect(route).toContain("sanitizeLearning((r as { reason: string | null }).reason)");
+    /* R-727: dial ke peeche, aur naya sabak HELD likha jaata hai — insaan approve kare tab prompt me. */
+    expect(route).toContain("resolveAutonomy(LESSON_ACTION, policy)");
+    expect(route).toContain("action: LESSON_ACTION");
+    expect(route).toContain('outcome: "held"');
+    expect(route).not.toContain('outcome: "did"');
+    /* READ: sirf approved sabak, aur unpar bhi sanitize (approvedLessons → sanitizeLearning) —
+       store ek DB row hai jise koi edit kar sakta hai. */
+    expect(route).toContain("approvedLessons(");
+    const lib = readFileSync(join(process.cwd(), "src", "lib", "ai", "public-chat-lessons.ts"), "utf8");
+    expect(lib).toContain("sanitizeLearning(r.reason)");
   });
 });
 
