@@ -6,6 +6,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -286,6 +287,18 @@ export function QuoteAcceptView({
   const fullyPaid = dueNow?.state === "paid";
 
   const [notifying, setNotifying] = React.useState(false);
+
+  /* R-1137: a failed step on this customer page says what happened (server sentence, or a
+     plain one for raw DB text — toastError), why nothing changed, and offers Try again; the
+     reseller's phone is the other way through. */
+  const failToast = (e: unknown, fallback: string, why: string, retry: () => void) =>
+    toastError(e, {
+      fallback,
+      description: `${why}${tenantPhone ? ` You can also call ${tenantName} on ${tenantPhone}.` : ""}`,
+      action: { label: "Try again", onClick: retry },
+      duration: 10_000,
+    });
+
   /**
    * "I've sent the payment" — tells the reseller to go and look.
    *
@@ -308,9 +321,7 @@ export function QuoteAcceptView({
         duration: 8000,
       });
     } catch (e) {
-      toast.error((e as Error).message, {
-        description: tenantPhone ? `You can also call them on ${tenantPhone}.` : undefined,
-      });
+      failToast(e, "Could not send the message.", "They have not been told yet.", () => { void handleUpiPaid(); });
     } finally {
       setNotifying(false);
     }
@@ -343,7 +354,7 @@ export function QuoteAcceptView({
       setAccepted(true);
       toast.success("Quote accepted · the reseller has been notified");
     } catch (e) {
-      toast.error((e as Error).message);
+      failToast(e, "Could not accept the quote.", "The quote is not accepted yet.", () => { void handleAccept(); });
     } finally {
       setAccepting(false);
     }
@@ -363,7 +374,7 @@ export function QuoteAcceptView({
       setAccepted(true);
       toast.success("Quote accepted with Purchase Order · reseller notified");
     } catch (e) {
-      toast.error((e as Error).message);
+      failToast(e, "Could not accept the quote.", "The quote is not accepted yet.", () => { void handlePoAccept(); });
     } finally {
       setAccepting(false);
     }
@@ -426,13 +437,17 @@ export function QuoteAcceptView({
         modal:       { ondismiss: () => setPaying(false) },
       });
       rzp.on("payment.failed", (r) => {
-        toast.error(r.error?.description ?? "Payment failed — please try again.");
+        toast.error(r.error?.description ?? "Payment failed.", {
+          description: `No money was taken. Try again, or ask ${tenantName} for another way to pay.`,
+          action: { label: "Try again", onClick: () => { void handlePayOnline(); } },
+          duration: 10_000,
+        });
         setPaying(false);
       });
       rzp.open();
       setPreparingPay(false); // Razorpay's window now shows its own progress
     } catch (e) {
-      toast.error((e as Error).message);
+      failToast(e, "Could not start the payment.", "No money was taken.", () => { void handlePayOnline(); });
       setPreparingPay(false);
       setPaying(false);
     }

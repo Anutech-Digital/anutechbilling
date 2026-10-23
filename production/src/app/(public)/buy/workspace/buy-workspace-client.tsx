@@ -20,6 +20,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
+import { describeError } from "@/lib/errors/toast-error";
 
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -159,6 +160,21 @@ const phoneDisplay = () => whatsappDisplay(WHATSAPP_NUMBER);
 
 function whatsappLink(message: string): string {
   return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+}
+
+/**
+ * R-1137: a failed step on this public page — the server's sentence (raw DB text is
+ * translated by describeError), why nothing happened, and a button to reach us.
+ */
+function buyFail(apiError: string | undefined, fallback: string, why: string): void {
+  const d = describeError(apiError ? { message: apiError } : null, fallback);
+  toast.error(d.message, {
+    description: `${why} ${d.translated && d.description ? d.description : "Try again, or contact us and we'll finish it for you."}`,
+    action: WHATSAPP_READY
+      ? { label: "WhatsApp us", onClick: () => { window.open(whatsappLink(`Hi, I got "${d.message}" on the Google Workspace buy page.`), "_blank", "noopener,noreferrer"); } }
+      : { label: "Email us", onClick: () => { window.location.href = `mailto:${COMPANY.supportEmail}?subject=${encodeURIComponent("Help with Google Workspace purchase")}`; } },
+    duration: 10_000,
+  });
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -2272,7 +2288,7 @@ function TrialDialog({
     const json = await res.json() as { success?: boolean; error?: string };
     if (!res.ok || json.error) {
       ts.reset();
-      toast.error(json.error ?? "Could not start trial. Please try again.");
+      buyFail(json.error, "Could not start the trial.", "Your trial was not requested yet.");
       return;
     }
     toast.success(`Trial requested! Pardeep will WhatsApp you ${SLA.firstReply}.`);
@@ -2408,7 +2424,7 @@ function EnquiryDialog({
     const json = await res.json() as { success?: boolean; error?: string };
     if (!res.ok || json.error) {
       ts.reset();
-      toast.error(json.error ?? "Could not submit enquiry. Please try again.");
+      buyFail(json.error, "Could not send your enquiry.", "We did not receive it yet.");
       return;
     }
     toast.success(`Got it! We'll call you ${SLA.firstReply}.`);
@@ -2812,7 +2828,7 @@ function BuyNowDialog({
     const json: CheckoutApiResponse = await res.json();
     ts.reset(); // R-737: a token works once — the next try (or a retry after Razorpay) needs a fresh one
     if (!res.ok || json.error) {
-      toast.error(json.error ?? "Could not start checkout. Please try again.");
+      buyFail(json.error, "Could not start checkout.", "No money was taken.");
       return;
     }
 
@@ -2826,7 +2842,7 @@ function BuyNowDialog({
 
     // ── Live: open the Razorpay Checkout widget with the server's order.
     if (!json.orderId || !json.razorpayKeyId || !json.amount) {
-      toast.error("Server response missing payment details. Please retry.");
+      buyFail(undefined, "Could not open the payment window.", "No money was taken — our server did not send the payment details.");
       return;
     }
 
@@ -2834,8 +2850,9 @@ function BuyNowDialog({
     try {
       RazorpayCtor = await loadRazorpayCheckout();
     } catch (err) {
-      const m = err instanceof Error ? err.message : "Could not load payment widget";
-      toast.error(`${m}. Please check your internet connection.`);
+      // eslint-disable-next-line no-console
+      console.error("[buy-workspace] Razorpay load failed", err);
+      buyFail(undefined, "Could not load the payment window.", "No money was taken. Check your internet connection and press Pay again.");
       return;
     }
 
@@ -2872,7 +2889,7 @@ function BuyNowDialog({
       },
     });
     rzp.on("payment.failed", (resp) => {
-      toast.error(`Payment failed: ${resp.error?.description ?? "Please retry or use WhatsApp."}`);
+      buyFail(undefined, `Payment failed${resp.error?.description ? `: ${resp.error.description}` : "."}`, "No money was taken.");
     });
     setRzpOpen(true);
     rzp.open();

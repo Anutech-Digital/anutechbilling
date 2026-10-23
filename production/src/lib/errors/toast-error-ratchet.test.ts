@@ -21,8 +21,8 @@ import { join } from "path";
 import { readFileSync } from "fs";
 const { countRaw } = require("../../../scripts/count-raw-toast-errors.cjs");
 
-/** Naapa hua: 1 Sep 2026 — kul 481 me se 450 nange. 6 Oct (R-266): 16 query files toastError par — 403. R-283: agle 8 — 366. R-284: 6 more — 344. R-299: 5 heaviest files — 298. R-304: re-measured 270 (R-300 kept its own test file and never lowered this), then 5 more files — 245. 7 Oct (R-312): re-measured after R-300/R-305/R-308/R-309/R-310/R-311 (each kept its own zero test and never lowered this) — 129. */
-const BASELINE = 129;
+/** Naapa hua: 1 Sep 2026 — kul 481 me se 450 nange. 6 Oct (R-266): 16 query files toastError par — 403. R-283: agle 8 — 366. R-284: 6 more — 344. R-299: 5 heaviest files — 298. R-304: re-measured 270 (R-300 kept its own test file and never lowered this), then 5 more files — 245. 7 Oct (R-312): re-measured after R-300/R-305/R-308/R-309/R-310/R-311 (each kept its own zero test and never lowered this) — 129. 23 Oct (R-1137): re-measured 79 (later cards fixed 50 without lowering this), then sign-in / forgot-password / sign-up / quote-accept / buy-workspace (14) — 65. */
+const BASELINE = 65;
 
 describe("§24 ratchet — error-toast me 'aage kya' ki disha", () => {
   it(`nange toast.error ${BASELINE} se zyada nahi ho sakte (aaj: dekho fail-message)`, () => {

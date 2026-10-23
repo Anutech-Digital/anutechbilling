@@ -11,6 +11,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { apiFailure } from "@/lib/errors/api-error";
 
 /** Delete every stored selfie for one employee + null the row columns.
  *
@@ -51,7 +52,16 @@ export async function POST(request: NextRequest) {
 
   if (action === "record") {
     const { error } = await supabase.rpc("record_attendance_consent");
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    if (error) {
+      // R-1137: the RPC's guards map to fixed sentences; anything else is logged, not shown.
+      const body =
+        /employee link|not linked/i.test(error.message)
+          ? apiFailure("NOT_LINKED", "Your login is not linked to an employee yet. Ask the owner to link you on the Team page, then give consent.", error, "attendance/consent")
+        : /sign in again/i.test(error.message)
+          ? apiFailure("SIGN_IN_AGAIN", "Please sign in again (with your authenticator code), then give consent.", error, "attendance/consent")
+        : apiFailure("CONSENT_SAVE_FAILED", "Could not save your consent — nothing was saved. Try again; if it keeps failing, tell the owner.", error, "attendance/consent");
+      return NextResponse.json(body, { status: 400 });
+    }
     return NextResponse.json({ ok: true });
   }
 

@@ -14,6 +14,7 @@ import { FormField } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { isValidGstin } from "@/lib/utils";
+import { describeError } from "@/lib/errors/toast-error";
 import { checkNewPassword } from "@/lib/auth/password-rules";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { GoogleAuthButton } from "@/components/features/auth/google-button";
@@ -106,7 +107,13 @@ export default function SignupPage() {
 
     if (!res.ok || json.error) {
       ts.reset();
-      toast.error(json.error ?? "Signup failed. Please try again.");
+      // R-1137: raw DB text from the API is translated (describeError); the API's own
+      // sentences pass through. The why + next step go in the description / button.
+      const d = describeError(json.error ? { message: json.error } : null, "Signup failed.");
+      toast.error(d.message, {
+        description: d.description ?? "Nothing was created. Check the details above and press Create account again — or sign in if you already have an account.",
+        action: { label: "Sign in instead", onClick: () => { window.location.href = "/login"; } },
+      });
       return;
     }
 
