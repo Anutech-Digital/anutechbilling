@@ -132,6 +132,27 @@ function fullPrice(l: CartLine): CartLine {
   return rest;
 }
 
+/* R-1114 (23 Oct 2026): the typed coupon code, so a reload of /cart or /checkout keeps the
+   discount. Only the code is kept — never the rate: the server judges it again on load (R-329). */
+const COUPON_KEY = "anutech.cart.coupon.v1";
+
+function loadCoupon(): string {
+  try {
+    return (window.localStorage.getItem(COUPON_KEY) ?? "").slice(0, 40);
+  } catch {
+    return "";
+  }
+}
+
+function saveCoupon(code: string): void {
+  try {
+    if (code.trim()) window.localStorage.setItem(COUPON_KEY, code);
+    else window.localStorage.removeItem(COUPON_KEY);
+  } catch {
+    /* Storage refused — the code still applies for this visit. */
+  }
+}
+
 function save(lines: CartLine[]): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(lines));
@@ -154,8 +175,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setLines(load());
+    setCoupon(loadCoupon());
     setLoaded(true);
   }, []);
+  /* R-1114: keep the code across a reload — written only after the saved one was read. */
+  useEffect(() => {
+    if (loaded) saveCoupon(coupon);
+  }, [coupon, loaded]);
 
   /* R-1797: the checkout API charges every hosting and mailbox line at the price book's price
      (lib/checkout/cart-checkout repriceLine), never the price saved in this browser. So the
