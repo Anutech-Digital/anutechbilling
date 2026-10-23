@@ -203,6 +203,7 @@ MIGS=(
   "r1635writeoffinvoices|20261023184545_r1635_write_off_invoices.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'invoices' and column_name = 'written_off_at') and to_regprocedure('public.write_off_subscription(uuid,text)') is not null"
   "r1635badgesinbox|20261023184546_r1635_badges_inbox_written_off.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.today_inbox()') and prosrc like '%R-1635%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.nav_badges(text[])') and prosrc like '%written_off_at%')"
   "r1643suppliergstin|20261023192418_r1643_tax_invoice_needs_supplier_gstin.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.supplier_invoice_problem(uuid,date)')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.generate_invoice(text)') and prosrc like '%R-1643%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.create_direct_invoice(uuid,jsonb,text,boolean)') and prosrc like '%R-1643%')"
+  "r1645cogsbycategory|20261023194233_r1645_pnl_cogs_by_category.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_pnl(date,date)') and 'cogs_by_category' = any(proargnames))"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
