@@ -10,7 +10,9 @@ export const DONE_STEP = 4;
 
 export type WizardMove = "save-company" | "finish" | "advance";
 
-export function wizardMove(step: number, target: number = step + 1): WizardMove {
+export function wizardMove(step: number, target: number = step + 1, canSave = true): WizardMove {
+  // R-1798: a non-owner only looks — the tenant row is owner-only, so nothing is saved.
+  if (!canSave) return "advance";
   if (step === 0 && target > 0) return "save-company";
   if (target >= DONE_STEP) return "finish";
   return "advance";
