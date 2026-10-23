@@ -19,6 +19,7 @@ import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
+import { toastInvoiceIssueError } from "@/lib/queries/invoices";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
@@ -822,7 +823,8 @@ export function useBookCreditAsInvoice() {
       invalidateReceivables(qc);   // R-1634: /collections too
       toast.success(`Invoice ${inv.invoice_id} created & reconciled`);
     },
-    onError: (err) => toastError(err),
+    /* R-1643: a refusal for the company's missing GSTIN / address opens Settings → Company. */
+    onError: (err) => toastInvoiceIssueError(err),
   });
 }
 

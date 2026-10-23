@@ -14,18 +14,20 @@ import type { Invoice } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { lutMissingWarning } from "@/lib/gst/export-lut";
-import { COMPANY_STATE_FIX, isCompanyStateMissingError } from "@/lib/onboarding/setup-links";
+import { invoiceIssueFix } from "@/lib/onboarding/setup-links";
 import { customerBeforeInvoice } from "@/lib/quotes/quote-page-actions";
 
 /**
  * R-431 (board R-406): generate_invoice refuses when the company's own state is empty. The
  * toast used to vanish in ~4 s with no button; now it stays and opens Settings → Company.
  */
-function toastInvoiceIssueError(err: unknown): void {
-  if (isCompanyStateMissingError(err)) {
+export function toastInvoiceIssueError(err: unknown): void {
+  /* R-1643: the company's GSTIN / address refusal gets the same one-click fix. */
+  const fix = invoiceIssueFix(err);
+  if (fix) {
     toastError(err, {
       duration: 15000,
-      action: { label: COMPANY_STATE_FIX.label, onClick: () => window.location.assign(COMPANY_STATE_FIX.href) },
+      action: { label: fix.label, onClick: () => window.location.assign(fix.href) },
     });
     return;
   }
