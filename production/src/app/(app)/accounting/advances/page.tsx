@@ -40,6 +40,8 @@ import { AddExpenseDialog } from "@/components/features/accounting/add-expense-d
 import { getBillAttachmentUrl } from "@/lib/queries/vendor-bills";
 import { toast } from "sonner";
 import { istToday } from "@/lib/dates/ist";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canMoveAdvanceMoney } from "@/lib/accounting/advance-roles";
 
 function todayISO() {
   return istToday();
@@ -47,6 +49,10 @@ function todayISO() {
 
 export default function EmployeeAdvancesPage() {
   const { data: advances = [], isLoading } = useEmployeeAdvances();
+  /* R-857: Give / Top-up / Settle only for the roles the RPCs accept (owner, manager,
+     accountant). Billing still opens this page to record expenses, edit and delete. Unknown
+     role (still loading) = hidden: never show a button the database will refuse. */
+  const canMoveMoney = canMoveAdvanceMoney(useCurrentUser().data?.role);
   const [disburseOpen, setDisburseOpen] = React.useState(false);
   /* ?give=1&name=&amount=&date=&method=&purpose= opens Give advance filled — AI Entry sends
      "Prashant ko kharche ke liye 5000 advance" straight here (2 Oct 2026). Read once after
@@ -97,9 +103,15 @@ export default function EmployeeAdvancesPage() {
           </p>
         </div>
 
-        <Button variant="primary" icon="plus" onClick={() => setDisburseOpen(true)}>
-          Give Advance to Employee
-        </Button>
+        {canMoveMoney ? (
+          <Button variant="primary" icon="plus" onClick={() => setDisburseOpen(true)}>
+            Give Advance to Employee
+          </Button>
+        ) : (
+          <p className="text-xs text-ink-3 max-w-xs md:text-right" data-testid="advance-money-roles-note">
+            Only an owner, manager or accountant can give, top up or settle an advance. You can record expenses against one.
+          </p>
+        )}
       </div>
 
       {/* Summary Cards */}
@@ -139,7 +151,9 @@ export default function EmployeeAdvancesPage() {
             <EmptyState
               icon="wallet"
               title="No Active Employee Advances"
-              body="When you give advance money to employees for travel, client meetings, or office expenses, click 'Give Advance to Employee' above."
+              body={canMoveMoney
+                ? "When you give advance money to employees for travel, client meetings, or office expenses, click 'Give Advance to Employee' above."
+                : "When an owner, manager or accountant gives an employee an advance, it shows here and you can record expenses against it."}
             />
           </Card>
         ) : (
@@ -168,21 +182,16 @@ export default function EmployeeAdvancesPage() {
                       Record expense
                     </Button>
 
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setTopUpFor(adv)}
-                    >
-                      Top-up
-                    </Button>
-
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setSettleFor(adv)}
-                    >
-                      Settle
-                    </Button>
+                    {canMoveMoney && (
+                      <>
+                        <Button size="sm" variant="outline" onClick={() => setTopUpFor(adv)}>
+                          Top-up
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setSettleFor(adv)}>
+                          Settle
+                        </Button>
+                      </>
+                    )}
 
                     <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditFor(adv)} aria-label={`Edit advance for ${adv.employee_name}`}>
                       Edit
@@ -276,7 +285,7 @@ export default function EmployeeAdvancesPage() {
       )}
 
       {/* Disburse Advance Modal */}
-      <DisburseAdvanceDialog open={disburseOpen} onOpenChange={setDisburseOpen} prefill={prefill} />
+      <DisburseAdvanceDialog open={disburseOpen && canMoveMoney} onOpenChange={setDisburseOpen} prefill={prefill} />
 
       {/* Record Expense Modal */}
       {/* R-101: the normal Expense form (bill attach, GST, categories) with this
@@ -288,7 +297,7 @@ export default function EmployeeAdvancesPage() {
         />
       )}
 
-      {topUpFor && (
+      {topUpFor && canMoveMoney && (
         <TopUpAdvanceDialog
           advance={topUpFor}
           open={!!topUpFor}
@@ -304,7 +313,7 @@ export default function EmployeeAdvancesPage() {
       )}
 
       {/* Settle Advance Modal */}
-      {settleFor && (
+      {settleFor && canMoveMoney && (
         <SettleAdvanceDialog
           advance={settleFor}
           open={!!settleFor}
