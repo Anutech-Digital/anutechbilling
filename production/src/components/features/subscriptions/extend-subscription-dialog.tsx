@@ -27,6 +27,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn, rupee, formatDate } from "@/lib/utils";
 import type { Subscription } from "@/lib/supabase/database.types";
+import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
+import { billOfSupplyBuilderLine, billOfSupplyStatus, quoteStartTaxRate } from "@/lib/quotes/bill-of-supply";
 import {
   EXTENSION_MONTH_PRESETS, MAX_EXTENSION_MONTHS,
   extensionBlockedReason, extensionCharge, extensionLabel, extensionLengthError, extensionMonths, extensionRenewalDate,
@@ -54,6 +56,9 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
   const [months, setMonths] = React.useState(3);
   const [customMonths, setCustomMonths] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
+  /* R-1532: a Bill of Supply business's extension quote carries no GST — same rule as the quote. */
+  const gstSaved = useGstRegistration().data?.saved ?? null;
+  const bosStatus = billOfSupplyStatus(gstSaved);
 
   /* R-807: a subscription billed in parts (monthly / quarterly / half-yearly) cannot be
      extended at all — the extension quote and the billing cron would both bill the same
@@ -70,6 +75,7 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
     seats: sub.seats ?? 0,
     mrr:   sub.mrr ?? 0,
     len:   lenError ? { unit: "years", count: 0 } : len,
+    taxRatePct: quoteStartTaxRate(gstSaved),
   });
   const annualEstimate = Math.max(0, Math.round((sub.mrr ?? 0) * 12));
 
@@ -236,12 +242,16 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
             </span>
             <span className="tabular-nums text-ink-2">{rupee(charge.subtotal)}</span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-ink-3">GST 18%</span>
-            <span className="tabular-nums text-ink-2">{rupee(charge.tax)}</span>
-          </div>
+          {bosStatus ? (
+            <p className="text-2xs text-ink-2">{billOfSupplyBuilderLine(bosStatus)}</p>
+          ) : (
+            <div className="flex justify-between">
+              <span className="text-ink-3">GST 18%</span>
+              <span className="tabular-nums text-ink-2">{rupee(charge.tax)}</span>
+            </div>
+          )}
           <div className="flex justify-between pt-2 border-t border-hairline">
-            <span className="font-medium text-ink">Total (incl GST)</span>
+            <span className="font-medium text-ink">{bosStatus ? "Total" : "Total (incl GST)"}</span>
             <span className="font-serif text-lg tabular-nums text-ink">{rupee(charge.total)}</span>
           </div>
         </div>

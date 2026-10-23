@@ -15,6 +15,7 @@ import { istToday, addDaysISO } from "@/lib/dates/ist";
 import * as React from "react";
 import { convertRateForCommitment, isAnnualTier } from "@/lib/quotes/commitment-rate";
 import { quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
+import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
 import { isMixedTerm, ONE_TERM_MESSAGE } from "@/lib/quotes/single-term";
 import { storedLineRate, quoteTotalsDivisor, lineAmountSuffix, lineRateUnitSuffix } from "@/lib/quotes/line-rate-unit";
 import { perInvoiceDivisor } from "@/lib/pdf/invoice-divisor";
@@ -71,6 +72,8 @@ import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
+import { billOfSupplyStatus, billOfSupplyBuilderLine, quoteEffectiveTaxRate } from "@/lib/quotes/bill-of-supply";
 import { isInterStateSupply, isExportSupply, placeOfSupplyLabel, supplyHead, treatmentIsAlwaysInterState } from "@/lib/gst/place-of-supply";
 import { hsnSummary } from "@/lib/gst/hsn";
 import { Kbd } from "@/components/ui/kbd";
@@ -196,6 +199,11 @@ function QuoteBuilderBody() {
   const catalogKindOf = (itemId: string | undefined) =>
     itemId ? (allCatalog ?? []).find((c) => c.id === itemId)?.kind : undefined;
   const { data: currentUser } = useCurrentUser();
+  /* R-1532: a business that is not GST-registered / under composition issues a Bill of
+     Supply — its quotes carry 0% GST, locked (R-1529's database refuses GST on the invoice). */
+  const gstRegistration = useGstRegistration();
+  const gstSaved        = gstRegistration.data?.saved ?? null;
+  const bosStatus       = billOfSupplyStatus(gstSaved);
   const createQuote     = useCreateQuote();
   const generateInvoice = useGenerateInvoice();
   const updateLead = useUpdateLead();
@@ -247,6 +255,14 @@ function QuoteBuilderBody() {
     if (isInvoiceMode) document.title = "New Invoice · ResellerOS";
   }, [isInvoiceMode]);
   const { data: sourceQuote } = useQuote(prefillFrom ?? undefined);
+  /* R-1764: the preview's "Domain:" / "Subscription period:" under each subscription line.
+     Editing a saved quote reads its own flags (a renewal's next term); a new quote or a copy
+     starts on the line's start date, else today. */
+  const editedQuotePeriod = useQuotePeriodContext(editOf ? sourceQuote : null);
+  const previewPeriodContext = React.useMemo(
+    () => editedQuotePeriod ?? { startFallback: istToday() },
+    [editedQuotePeriod],
+  );
 
   // Look up the lead by id (useQuoteLead) so the operator can
   // navigate to /quotes/new?lead=L-XXX with JUST the ID — we fill in the
@@ -596,6 +612,11 @@ function QuoteBuilderBody() {
   // Whether the quote is linked to a lead is a separate question, answered by
   // isLeadMode where it matters: on save.
   const prefilledRef = React.useRef(false);
+  /* R-1765: the line whose qty is 1 only because the lead had no seat count — it carries a
+     hint until the qty is typed. And a lead plan that matched no Items row: no line, a message
+     over the empty table, and the item picker opens searching that plan. */
+  const [seatsGuessLineId, setSeatsGuessLineId] = React.useState<string | null>(null);
+  const [planNotInItems, setPlanNotInItems] = React.useState<string | null>(null);
   React.useEffect(() => {
     if (prefilledRef.current) return;
     /* R-1675: Edit / Duplicate / Revise copy an existing quote — ITS saved lines are the
@@ -605,7 +626,11 @@ function QuoteBuilderBody() {
        discounted → ₹12,960 list on staging, Q-5F40-27-0091). `prefillFrom` is read from the
        URL, so it is known before the quote, the lead or the catalogue answers — any order. */
     if (prefillFrom) { prefilledRef.current = true; return; }
-    if (!leadCompany) return;
+    /* R-1765: a lead with no company is still a lead — a person or a small shop with just a
+       contact name (localhost L-MVJL9MN0, 22 Oct 2026). Company used to be required here, so
+       its plan never reached the quote. Any of company (URL or lead), plan, or a loaded lead
+       starts the prefill. */
+    if (!leadCompanyInit && !leadPlan && !(linkedLeadId && leadFromQuery)) return;
     /* Wait for the catalogue query to ANSWER — so we use the tenant's actual prices,
        not the hardcoded fallback map. R-388: this used to be `if (!catalog) return`, but
        `catalog` is `[]` while loading, never falsy — so on a reload (empty query cache)
@@ -620,7 +645,13 @@ function QuoteBuilderBody() {
 
     prefilledRef.current = true;
 
-    const seatsNum = leadSeats ? parseInt(leadSeats, 10) : 0;
+    const leadSeatsNum = leadSeats ? parseInt(leadSeats, 10) : 0;
+    /* R-1765: blank / 0 seats on the lead → 1 seat, and the line says to check it. */
+    const seatsMissing = !(leadSeatsNum > 0);
+    const seatsNum = seatsMissing ? 1 : leadSeatsNum;
+    const leadName = leadQuoteName({
+      company: leadCompanyInit, contact_name: leadContactInit, contact_email: leadEmailInit, contact_phone: leadPhoneInit,
+    });
 
     // 1. Find the matching catalog item — exact / substring / family-then-tier (lib/quotes/lead-plan-match.ts).
     const catalogItem = matchCatalogItemForPlan(catalog, leadPlan);
@@ -665,7 +696,7 @@ function QuoteBuilderBody() {
       }
     }
 
-    if (leadPlan && seatsNum > 0 && rate > 0) {
+    if (leadPlan && rate > 0) {
       const lineId = `line-${Date.now()}`;
       /* R-388: no cost from the catalogue = UNKNOWN, not zero. Mark it so the backfill
          fills it the moment the catalogue can answer (until the user types one). */
@@ -686,6 +717,7 @@ function QuoteBuilderBody() {
           start_date: todayISO,
         },
       ]);
+      if (seatsMissing) setSeatsGuessLineId(lineId);
       if (source === "catalog") {
         toast.success(
           `Pre-filled from catalog: ${seatsNum} × ${leadPlan} @ ₹${priced.rate}/seat/${priced.unit}${priced.unit === "mo" ? " (monthly, as on the lead)" : ""}`,
@@ -701,24 +733,22 @@ function QuoteBuilderBody() {
           duration: 10_000,
         });
       }
-    } else if (leadPlan && seatsNum > 0) {
+    } else if (leadPlan) {
       /* R-1667: the plan did not match ONE catalogue item. The line stays empty on purpose —
-         a guessed item is a wrong price on a customer's quote. */
-      toast.warning(`"${leadPlan}" did not match one catalogue item — line left empty`, {
-        description: `Pick the right item for ${seatsNum} seat${seatsNum === 1 ? "" : "s"} yourself. Nothing was guessed.`,
-        duration: 10_000,
-      });
+         a guessed item is a wrong price on a customer's quote. R-1765: said ON the page (not
+         only in a toast that fades), with the item picker one click away, searching the plan. */
+      setPlanNotInItems(leadPlan);
     } else {
-      toast.info(`Add line items for ${leadCompany}'s quote`);
+      toast.info(`Add line items for ${leadName}'s quote`);
     }
 
     // Pre-fill notes with friendly customer-facing message
     setNotes(
-      `Quote for ${leadCompany}\n` +
-      (leadContact ? `Attn: ${leadContact}\n` : "") +
+      `Quote for ${leadName}\n` +
+      (leadContactInit && leadContactInit !== leadName ? `Attn: ${leadContactInit}\n` : "") +
       `\nPricing valid for 30 days. Onboarding includes DNS, MX, SPF, DKIM, DMARC setup. Free training (2 sessions).`,
     );
-  }, [prefillFrom, isLeadMode, leadCompany, leadPlan, leadSeats, leadContact, catalog, catalogPending, linkedLeadId, leadsPending, leadCycle]);
+  }, [prefillFrom, leadCompanyInit, leadContactInit, leadEmailInit, leadPhoneInit, leadFromQuery, leadPlan, leadSeats, catalog, catalogPending, linkedLeadId, leadsPending, leadCycle]);
 
   /* ── R-388: fill UNKNOWN costs when the catalogue arrives ───────────────────────
      The prefill above waits for the catalogue, but if that query failed (or a row
@@ -928,7 +958,7 @@ function QuoteBuilderBody() {
     void fetchLatestFx("USD");
   }, [isExport, currency, duplicateOf, fetchLatestFx]);
 
-  const effectiveTaxRate  = isExport ? 0 : taxRate;
+  const effectiveTaxRate  = quoteEffectiveTaxRate({ saved: gstSaved, isExport, taxRate });
   const tax               = Math.round(taxable * (effectiveTaxRate / 100));
   const total             = taxable + tax;
   // Foreign-currency billing (books stay ₹). The whole builder renders in `currency`
@@ -1035,6 +1065,24 @@ function QuoteBuilderBody() {
     );
   };
 
+  /* One tap per product the lead is interested in — the rep used to open the catalogue and
+     search for what the lead already said (2 Oct 2026). Shown on the empty line table. */
+  const planChipRow = planChips.length > 0 ? (
+    <div className="flex flex-wrap justify-center gap-2 mb-4">
+      {planChips.map((it) => (
+        <button
+          key={it.id}
+          type="button"
+          onClick={() => addLine(lineFromCatalog(it, { qty: chipSeats ?? undefined }))}
+          className="inline-flex flex-col items-start rounded-lg border border-hairline bg-paper px-3 py-2 text-left hover:border-amber hover:bg-amber-soft/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+        >
+          <span className="text-sm font-medium text-ink">{it.name}</span>
+          <span className="text-2xs text-ink-3 tabular-nums">{rupee(catalogYearlyPrice(it).rate)}{lineRateSuffix(billingUnitOf(it))}</span>
+        </button>
+      ))}
+    </div>
+  ) : null;
+
   const updateQty = (id: string, qty: number) => {
     const nextQty = Math.max(1, qty);
     setLineItems((s) => s.map((l) => {
@@ -1091,6 +1139,7 @@ function QuoteBuilderBody() {
     });
   };
   const onQtyInput = (id: string, raw: string) => {
+    if (id === seatsGuessLineId) setSeatsGuessLineId(null);
     const r = parseLineQty(raw);
     setLineDraft(`${id}:qty`, raw, r.ok ? null : r.problem);
     if (r.ok) updateQty(id, r.value);
@@ -1630,7 +1679,7 @@ function QuoteBuilderBody() {
           <IconButton icon="arrow_left" aria-label="Back" onClick={() => router.back()} />
           <div>
             <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
-              {isInvoiceMode ? "Direct invoice · GST tax invoice" : "Quotation · Auto-generated"}
+              {isInvoiceMode ? (bosStatus ? "Direct invoice · Bill of Supply" : "Direct invoice · GST tax invoice") : "Quotation · Auto-generated"}
             </p>
             <h1 className="font-serif text-3xl md:text-4xl leading-tight">
               {isInvoiceMode
@@ -1823,7 +1872,7 @@ function QuoteBuilderBody() {
                 </p>
               ) : sellerStateMissing ? (
                 <p className="text-2xs flex items-center gap-1 -mt-1"><CompanyStateFix /></p>
-              ) : leadStateCode && (
+              ) : leadStateCode && !bosStatus && (
                 <p className="text-2xs flex items-center gap-1 -mt-1">
                   {interState
                     ? <span className="text-amber-ink">⚠ Inter-state → IGST {taxRate}% will apply</span>
@@ -1980,7 +2029,7 @@ function QuoteBuilderBody() {
                       <div className="text-sm text-ink-2 truncate">{customer?.state || "—"}</div>
                     </div>
                   </div>
-                  {customer && (
+                  {customer && !(bosStatus && !isExport) && (
                     <p className="text-2xs mt-2.5 pt-2.5 border-t border-hairline/70 flex items-center gap-1">
                       {isExport ? (
                         <span className="text-indigo-ink">🌍 Export ({exportCountryName}) → zero-rated under LUT, no GST</span>
@@ -2039,6 +2088,9 @@ function QuoteBuilderBody() {
                         <span className="text-indigo-ink">🌍 Export ({prospectCountry}) → zero-rated under LUT, no GST</span>
                       ) : sellerStateMissing ? (
                         <CompanyStateFix />
+                      ) : bosStatus ? (
+                        /* R-1532: no GST on a Bill of Supply — no head to choose. */
+                        null
                       ) : !prospectStateCode ? (
                         <span className="text-ink-3">Pick the customer&apos;s state so GST (CGST+SGST vs IGST) is correct.</span>
                       ) : !buyerStateCode ? (
@@ -2215,27 +2267,25 @@ function QuoteBuilderBody() {
               </svg>
             </div>
             <div className="font-serif text-lg mb-1">No line items yet</div>
-            {planChips.length > 0 ? (
+            {planNotInItems ? (
               <>
-                {/* One tap per product the lead is interested in — the rep used to open
-                    the catalogue and search for what the lead already said (2 Oct 2026). */}
+                {/* R-1765: the lead's plan matched no Items row — say so here, and open the
+                    picker already searching that plan. Nothing was guessed. */}
+                <p role="status" className="text-sm text-ink-2 mb-4">
+                  The lead&apos;s plan &quot;{planNotInItems}&quot; is not in your Items — pick the item
+                </p>
+                {planChipRow}
+                <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
+                  Pick the item
+                </Button>
+              </>
+            ) : planChipRow ? (
+              <>
                 <p className="text-sm text-ink-3 mb-3">
                   {leadPlan ? <>Interested in <b className="text-ink">{leadPlan}</b>. </> : null}
                   Tap a plan to add it{chipSeats ? ` with ${chipSeats} seats` : ""}.
                 </p>
-                <div className="flex flex-wrap justify-center gap-2 mb-4">
-                  {planChips.map((it) => (
-                    <button
-                      key={it.id}
-                      type="button"
-                      onClick={() => addLine(lineFromCatalog(it, { qty: chipSeats ?? undefined }))}
-                      className="inline-flex flex-col items-start rounded-lg border border-hairline bg-paper px-3 py-2 text-left hover:border-amber hover:bg-amber-soft/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
-                    >
-                      <span className="text-sm font-medium text-ink">{it.name}</span>
-                      <span className="text-2xs text-ink-3 tabular-nums">{rupee(catalogYearlyPrice(it).rate)}{lineRateSuffix(billingUnitOf(it))}</span>
-                    </button>
-                  ))}
-                </div>
+                {planChipRow}
                 <Button variant="default" icon="plus" onClick={() => setAddOpen(true)}>
                   Something else
                 </Button>
@@ -2303,6 +2353,9 @@ function QuoteBuilderBody() {
                           />
                           {lineDrafts[`${line.id}:qty`] && (
                             <span role="alert" className="mt-0.5 block text-3xs text-rose">{lineDrafts[`${line.id}:qty`]!.problem}</span>
+                          )}
+                          {line.id === seatsGuessLineId && !lineDrafts[`${line.id}:qty`] && (
+                            <span className="mt-0.5 block text-3xs text-amber-ink">Seats not on the lead — check the quantity</span>
                           )}
                         </>
                       )}
@@ -2569,6 +2622,9 @@ function QuoteBuilderBody() {
                           {lineDrafts[`${line.id}:qty`] && (
                             <span role="alert" className="mt-0.5 block max-w-[10rem] text-3xs leading-snug text-rose">{lineDrafts[`${line.id}:qty`]!.problem}</span>
                           )}
+                          {line.id === seatsGuessLineId && !lineDrafts[`${line.id}:qty`] && (
+                            <span className="mt-0.5 ml-auto block max-w-[10rem] text-3xs leading-snug text-amber-ink">Seats not on the lead — check the quantity</span>
+                          )}
                         </>
                       )}
                     </td>
@@ -2694,6 +2750,11 @@ function QuoteBuilderBody() {
                   <span>🌍</span>
                   <span>Export ({exportCountryName}) → <b>zero-rated under LUT</b> · no GST (CGST/SGST/IGST) applies</span>
                 </div>
+              ) : bosStatus ? (
+                /* R-1532: the one line that says why there is no GST on this quote. */
+                <div className="text-2xs text-ink-2 flex items-start gap-1 py-1" data-testid="bill-of-supply-line">
+                  <span>{billOfSupplyBuilderLine(bosStatus)}</span>
+                </div>
               ) : (
                 <div className="text-2xs text-ink-3 italic flex items-center gap-1 py-1">
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -2740,7 +2801,7 @@ function QuoteBuilderBody() {
                         </span>
                       )}
                       <span className="text-ink-3" aria-hidden>·</span>
-                      <span>GST <b>{isExport ? "0% (export)" : `${taxRate}%`}</b></span>
+                      <span>GST <b>{isExport ? "0% (export)" : bosStatus ? "0% (Bill of Supply)" : `${taxRate}%`}</b></span>
                       <button
                         type="button"
                         onClick={() => setTermsOpen(true)}
@@ -2839,9 +2900,10 @@ function QuoteBuilderBody() {
                     suffix="%"
                     // Export supply is zero-rated under LUT — show 0% and lock the field
                     // so it never contradicts the "Export → no GST" badge above.
-                    value={isExport ? 0 : taxRate}
+                    value={isExport || bosStatus ? 0 : taxRate}
                     onChange={(e) => setTaxRate(parseInt(e.target.value) || 18)}
-                    disabled={isExport}
+                    /* R-1532: a Bill of Supply business cannot charge GST — locked at 0. */
+                    disabled={isExport || !!bosStatus}
                     /* The smart default, SAID OUT LOUD. The rate and the SAC are filled in
                        for the operator and always were — but nothing ever showed what would
                        be printed on the document their customer's accountant reads, and a
@@ -2853,8 +2915,10 @@ function QuoteBuilderBody() {
                        knows. hsnSummary(null) says so instead. */
                     helper={isExport
                       ? "Export → zero-rated under LUT · no GST"
+                      : bosStatus
+                      ? "Bill of Supply → no GST. Your GST registration is set in Settings → Company."
                       : hsnSummary(buyerStateCode && !sellerStateMissing ? interState : null)}
-                    className={isExport ? "bg-paper-2 cursor-not-allowed" : undefined}
+                    className={isExport || bosStatus ? "bg-paper-2 cursor-not-allowed" : undefined}
                   />
                 </FormField>
                 <button
@@ -2880,7 +2944,7 @@ function QuoteBuilderBody() {
 
               {/* R-431: an unknown head (company or customer state empty) is one GST line,
                   never a guessed CGST + SGST split. The amount is the same either way. */}
-              {isExport ? null : (sellerStateMissing || !buyerStateCode) ? (
+              {isExport || bosStatus ? null : (sellerStateMissing || !buyerStateCode) ? (
                 <TotalRow label={`GST (${taxRate}%)`} value={fmtTotalC(dispTax)} />
               ) : interState ? (
                 <TotalRow label={`IGST (${taxRate}%)`} value={fmtTotalC(dispTax)} />
@@ -3162,7 +3226,10 @@ function QuoteBuilderBody() {
       </Card>
 
       {/* Add item modal */}
-      <AddLineItemDialog open={addOpen} onOpenChange={setAddOpen} onAdd={addLine} currency={currency} exchangeRate={exchangeRate} pricingBasis={usdPricingBasis} />
+      <AddLineItemDialog
+        open={addOpen} onOpenChange={setAddOpen} onAdd={addLine} currency={currency} exchangeRate={exchangeRate} pricingBasis={usdPricingBasis}
+        initialSearch={planNotInItems && lineItems.length === 0 ? planNotInItems : undefined}
+      />
 
       {/* Solution packages — several catalogue products in one click */}
       <SolutionPackagePicker
@@ -3210,6 +3277,7 @@ function QuoteBuilderBody() {
         discount={0}
         taxable={taxable}
         taxRate={effectiveTaxRate}
+        billOfSupply={bosStatus}
         tax={tax}
         total={total}
         interState={interState}
@@ -3222,6 +3290,7 @@ function QuoteBuilderBody() {
         validityDays={validityDays}
         notes={notes}
         isProspect={isLeadMode}
+        periodContext={previewPeriodContext}
       />
     </div>
   );

@@ -52,9 +52,9 @@ describe("subscriptionCycle — one rule for the label and the filter", () => {
     expect(subscriptionCycle(flexMonthly).term?.label).toBe("Monthly");
   });
 
-  it("quarterly and half-yearly terms from the start↔renewal span", () => {
-    expect(subscriptionCycle(qtrTerm).kind).toBe("quarterly");
-    expect(subscriptionCycle(halfTerm).kind).toBe("half_yearly");
+  it("quarterly and half-yearly terms from the start↔renewal span go under Check term (R-1774)", () => {
+    expect(subscriptionCycle(qtrTerm).kind).toBe("check_term");
+    expect(subscriptionCycle(halfTerm).kind).toBe("check_term");
   });
 
   it("no dates and no split cycle → no term", () => {
@@ -70,12 +70,12 @@ describe("subscriptionCycle — one rule for the label and the filter", () => {
 });
 
 describe("cycleInvoiceTitle — the row tooltip", () => {
-  it("keeps the old wording for a plain term", () => {
-    expect(cycleInvoiceTitle(subscriptionCycle(annual), "₹1,39,500")).toBe("Annual — ₹1,39,500 per invoice");
+  it("names the term the way its chip does (R-1774)", () => {
+    expect(cycleInvoiceTitle(subscriptionCycle(annual), "₹1,39,500")).toBe("Annual · billed yearly — ₹1,39,500 per invoice");
   });
   it("says an annual term is billed in parts", () => {
     expect(cycleInvoiceTitle(subscriptionCycle(splitQtr), "₹7,646")).toBe(
-      "Quarterly — ₹7,646 per invoice (annual term, billed in parts)",
+      "Annual · billed quarterly — ₹7,646 per invoice",
     );
   });
 });
@@ -89,7 +89,7 @@ describe("matchesCycle", () => {
     expect(all.filter((s) => matchesCycle(s, "monthly"))).toEqual([flexMonthly]);
     expect(all.filter((s) => matchesCycle(s, "annual_split"))).toEqual([splitQtr, splitMonth]);
     expect(all.filter((s) => matchesCycle(s, "annual"))).toEqual([annual]);
-    expect(all.filter((s) => matchesCycle(s, "quarterly"))).toEqual([qtrTerm]);
+    expect(all.filter((s) => matchesCycle(s, "check_term"))).toEqual([qtrTerm, halfTerm]);
   });
 });
 
@@ -110,8 +110,8 @@ describe("cycleOptions — only the cycles in the data, each with a count", () =
     expect(sum).toBe(opts[0].count);
   });
   it("keeps the selected cycle on screen even when nothing matches it now", () => {
-    const opts = cycleOptions([annual], "quarterly");
-    expect(opts.find((o) => o.value === "quarterly")?.count).toBe(0);
+    const opts = cycleOptions([annual], "check_term");
+    expect(opts.find((o) => o.value === "check_term")?.count).toBe(0);
   });
   it("every option value is a valid ?cycle= value", () => {
     for (const o of cycleOptions([annual, splitQtr, flexMonthly, qtrTerm, halfTerm, noDates], "all")) {

@@ -30,9 +30,11 @@ import {
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-divisor";
 import { quoteInstalmentPlan } from "@/lib/billing/instalments";
-import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
+import { ONE_TIME_SCHEDULE, type LinePeriodContext } from "@/lib/quotes/service-period";
+import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
 import { UPI_SETTINGS_HREF } from "@/lib/pdf/quote-template";
+import { billOfSupplyCustomerLine, billOfSupplyPlaceLabel, type BillOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
 
 /** R-1694: the scan-to-pay QR the customer's PDF carries (api/quotes/[id]/pay-qr → quotePayQr). */
 interface PreviewPayQr { dataUrl: string; vpa: string; amount: number }
@@ -93,6 +95,9 @@ interface Props {
   placeOfSupply?: string | null;
   /** Export supply (recipient outside India) → zero-rated under LUT, no GST. */
   isExport?:     boolean;
+  /** R-1532: the business issues a Bill of Supply and the quote carries no GST → one
+   *  "No GST — Bill of Supply" line instead of CGST/SGST/IGST rows. */
+  billOfSupply?: BillOfSupplyStatus | null;
   /** Billing currency + rate — foreign → the whole quote shows in that currency. */
   currency?:     string | null;
   exchangeRate?: number | null;
@@ -110,6 +115,9 @@ interface Props {
   upiVpa?:       string | null;
   /** R-1694: the SAVED quote's id, for its PDF QR. Null → not saved yet (builder), no QR to fetch. */
   payQrQuoteId?: string | null;
+  /** R-1764: what each subscription line's "Domain:" and "Subscription period:" lines read
+   *  (quoteLinePeriodContext). Omitted → neither line. */
+  periodContext?: LinePeriodContext | null;
 }
 
 export function QuotePreviewDialog({
@@ -136,6 +144,7 @@ export function QuotePreviewDialog({
   interState,
   placeOfSupply,
   isExport = false,
+  billOfSupply = null,
   currency,
   exchangeRate,
   billingCycle,
@@ -147,6 +156,7 @@ export function QuotePreviewDialog({
   extensionTitle = null,
   upiVpa,
   payQrQuoteId = null,
+  periodContext = null,
 }: Props) {
   /* R-813: this previews what the CUSTOMER sees — never the staff-only audit part. */
   const notes = customerQuoteNotes(rawNotes, lineItems);
@@ -325,6 +335,8 @@ export function QuotePreviewDialog({
               <p className="text-sm">
                 {isExport
                   ? "Export · zero-rated under LUT (no GST)"
+                  : billOfSupply
+                  ? billOfSupplyPlaceLabel(placeOfSupply)
                   : placeOfSupply || (interState ? "Inter-state (IGST applies)" : "Intra-state (CGST + SGST)")}
               </p>
               {lineItems.length > 0 && firstCommitment && (
@@ -379,6 +391,10 @@ export function QuotePreviewDialog({
                     <tr key={line.id} className="border-b border-hairline">
                       <td className="py-3 text-sm">
                         <p className="font-medium text-ink">{line.name}</p>
+                        {/* R-1764: "Domain:" / "Subscription period:" — the PDF's words. */}
+                        {lineDetailNotes(line, periodContext).map((t) => (
+                          <p key={t} className="text-2xs text-ink-3 mt-0.5 tabular-nums" data-testid="line-period">{t}</p>
+                        ))}
                         <p className="text-2xs text-ink-3 mt-0.5">
                           {lineUnitLabel(line, showPer || oneTime)} · HSN 998313
                           {line.commitment && !oneTime && (
@@ -433,6 +449,8 @@ export function QuotePreviewDialog({
                 <Row label="Taxable amount" value={firstInst ? fmtInst(firstInst.taxable) : fmtF(taxable, ff?.taxable)} />
                 {isExport ? (
                   <Row label="Export — zero-rated (LUT), no GST" value={money(0)} />
+                ) : billOfSupply ? (
+                  <p className="text-2xs text-ink-2 py-1">{billOfSupplyCustomerLine(billOfSupply)}</p>
                 ) : interState ? (
                   <Row label={`IGST (${taxRate}%)`} value={firstInst ? fmtInst(firstInst.tax) : fmtF(tax, ff?.tax)} />
                 ) : (
@@ -529,7 +547,7 @@ export function QuotePreviewDialog({
                   <p className="font-mono text-xs font-semibold text-ink-2 break-all">{payQr.vpa}</p>
                   <p>
                     Amount and quote number are pre-filled. You&apos;ll receive a receipt
-                    voucher, and a GST tax invoice when the order is provisioned.
+                    voucher, and {billOfSupply ? "a Bill of Supply" : "a GST tax invoice"} when the order is provisioned.
                   </p>
                 </div>
               </div>

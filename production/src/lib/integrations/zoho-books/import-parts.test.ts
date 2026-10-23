@@ -30,3 +30,15 @@ describe("Zoho import in parts", () => {
     expect(importPercent({ stage: "done", offset: 0, totals: owner, done: true })).toBe(100);
   });
 });
+
+describe("R-1766: undo progress", () => {
+  it("reads like the import: Undoing… 300 of 1,371 subscriptions removed, then customers", async () => {
+    const { undoProgressText, UNDO_STOPPED_TEXT } = await import("./import-parts");
+    expect(undoProgressText({ subscriptions_removed: 300, subscriptions_total: 1371, customers_removed: 0, customers_total: 1245 }))
+      .toBe("Undoing… 300 of 1,371 subscriptions removed");
+    expect(undoProgressText({ subscriptions_removed: 1371, subscriptions_total: 1371, customers_removed: 500, customers_total: 1245 }))
+      .toBe("Undoing… 500 of 1,245 customers removed");
+    expect(undoProgressText({})).toBe("Undoing…");
+    expect(UNDO_STOPPED_TEXT).toBe("Undo stopped part way — press Undo import to continue.");
+  });
+});

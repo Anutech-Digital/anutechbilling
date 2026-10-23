@@ -9,6 +9,71 @@ import type { NextAction } from "@/lib/leads/next-action";
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { subscriptionFromLeadHref } from "@/lib/subscriptions/lead-prefill";
+import { toast } from "sonner";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu";
+import { useBolnaAgents } from "@/lib/queries/cold-calling";
+
+/**
+ * R-1437: "AI call" — the voice agent (Bolna) rings this lead now. Only on a press: Abhishek
+ * chose button-only, never automatic. What the call heard comes back on the lead's timeline as a
+ * suggestion; nothing in the lead is changed by it.
+ */
+function AiCallButton({ leadId }: { leadId: string }) {
+  const [busy, setBusy] = React.useState(false);
+  /* R-1664: pick which Bolna agent rings. If the list can't be read, the default agent calls. */
+  const agents = useBolnaAgents();
+  const list = agents.data?.agents ?? [];
+  const run = async (agentId?: string) => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/leads/${encodeURIComponent(leadId)}/ai-call`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(agentId ? { agentId } : {}),
+      });
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; detail?: string; error?: string };
+      if (res.ok && body.ok) {
+        toast.success("AI call is being placed", {
+          description: "When the call ends, the conversation and suggestions will appear in this lead's Activity.",
+        });
+      } else {
+        toast.error(body.error ?? "AI call could not be placed", {
+          description: body.detail ?? "Try again in a little while, or call them yourself.",
+        });
+      }
+    } catch {
+      toast.error("AI call could not be placed", { description: "Network or server problem — try again." });
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (list.length < 2) {
+    return (
+      <Button icon="sparkles" onClick={() => run(list[0]?.id)} loading={busy} title="The AI voice agent (Bolna) will call this lead now">
+        AI call
+      </Button>
+    );
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button icon="sparkles" loading={busy} title="Pick an agent — it will call this lead now">
+          AI call
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        <DropdownMenuLabel>Kaunsa agent call kare?</DropdownMenuLabel>
+        {list.map((a) => (
+          <DropdownMenuItem key={a.id} onSelect={() => run(a.id)}>
+            {a.name}{a.id === agents.data?.defaultAgentId ? " (default)" : ""}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 /**
  * R-073: does this won deal's customer already have a subscription? An online purchase gets
@@ -107,6 +172,9 @@ export function LeadDetailFooter({
               >
                 Call
               </Button>
+            )}
+            {lead.contact_phone && lead.stage !== "won" && lead.stage !== "lost" && (
+              <AiCallButton leadId={lead.id} />
             )}
             <Button icon="mail" onClick={handleEmail}>Email</Button>
             {lead.contact_phone && (

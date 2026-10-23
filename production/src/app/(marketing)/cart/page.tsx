@@ -23,6 +23,8 @@ export default function CartPage() {
   // R-329: checked on the server — the code table is not in this page's JavaScript.
   const couponValid = cart.couponStatus === "valid";
 
+  if (!cart.loaded) return <CartLoading title="Your cart" />;
+
   if (cart.lines.length === 0) {
     return (
       <section className="section rise">
@@ -134,6 +136,18 @@ export default function CartPage() {
             Checkout
           </button>
         </aside>
+      </div>
+    </section>
+  );
+}
+
+/** R-1502: shown for the moment before the saved cart is read — never "Nothing in it yet". */
+function CartLoading({ title }: { title: string }) {
+  return (
+    <section className="section rise">
+      <div className="wrap" style={{ maxWidth: 720 }}>
+        <h1 className="h1-narrow" style={{ marginBottom: 24 }}>{title}</h1>
+        <p className="body-lg" role="status" style={{ color: "var(--text-muted)" }}>Loading your cart…</p>
       </div>
     </section>
   );

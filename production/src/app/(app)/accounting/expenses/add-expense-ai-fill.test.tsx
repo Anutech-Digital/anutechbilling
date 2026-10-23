@@ -8,6 +8,8 @@
 //      "Google Cloud India — Workspace — Oct 2026".
 //   2. AWS (US) bill $20, no GST → currency USD and a chip "Foreign vendor, no GST — reverse
 //      charge?" — reverse charge NOT ticked.
+//   (R-1767: a Workspace bill is read as COGS-Workspace, so the preview also offers "Record as COGS
+//   bill"; "Add as expense anyway" is the same fill as "Yes, fill it in".)
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import * as React from "react";
 import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -77,7 +79,7 @@ function answer(status: number, body: unknown) {
 }
 async function uploadAndConfirm() {
   fireEvent.change(el("bill-file"), { target: { files: [pdf()] } });
-  const yes = await screen.findByRole("button", { name: /Yes, fill it in/ });
+  const yes = await screen.findByRole("button", { name: /Yes, fill it in|Add as expense anyway/ });
   fireEvent.click(yes);
 }
 
@@ -100,7 +102,7 @@ describe("R-1744 — the bill comes first", () => {
     fireEvent.dragEnter(zone, { dataTransfer: { types: ["Files"], files: [] } });
     expect(zone.getAttribute("data-dragging")).toBe("true");
     fireEvent.drop(zone, { dataTransfer: { types: ["Files"], files: [pdf()] } });
-    await screen.findByRole("button", { name: /Yes, fill it in/ });
+    await screen.findByRole("button", { name: /Yes, fill it in|Add as expense anyway/ });
     expect(fetchMock).toHaveBeenCalledWith("/api/ai/extract-bill", expect.anything());
   });
 });
@@ -166,7 +168,7 @@ describe("R-1744 — AI not available", () => {
     render(<AddExpenseDialog onClose={() => {}} />);
     fireEvent.change(el("bill-file"), { target: { files: [pdf()] } });
     await screen.findByText(/AI bill reading is not set up for your company/);
-    expect(screen.queryByRole("button", { name: /Yes, fill it in/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Yes, fill it in|Add as expense anyway/ })).toBeNull();
     expect(screen.getByText(/bill\.pdf/)).toBeTruthy();
     expect(Number(el("amount").value)).toBe(0);
     expect(document.querySelector("[data-ai-mark]")).toBeNull();

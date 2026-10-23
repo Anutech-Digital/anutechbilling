@@ -22,9 +22,13 @@ import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
 import { QuoteAcceptView, type PublicQuote, type PublicLine } from "./quote-accept-view";
 import { extensionTitle, isOneTimeQuote, quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
+import { loadQuotePeriodContext } from "@/lib/quotes/line-period-context";
+import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import { QuoteReplaced, replacementHref } from "./replaced";
 import { isBotUserAgent } from "@/lib/quotes/quote-intent";
 import { maybeAlertHotLead, recordQuoteView } from "@/lib/quotes/quote-views.server";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 
 export const dynamic = "force-dynamic"; // never cache — quotes change state
 
@@ -67,7 +71,7 @@ export default async function QuoteAcceptPage(props: Props) {
     // payment_status / payment_amount / invoice_id are here for quoteAmountDue, which
     // refuses to build a UPI QR for money already settled or already asked for on an
     // invoice — two documents collecting the same amount is how a customer pays twice.
-    .select("id, status, tenant_id, public_token, customer_name, plan, subtotal, discount_pct, tax_rate, amount, expires_date, notes, line_items, billing_cycle, currency, exchange_rate, payment_status, payment_amount, invoice_id, hot_lead_alerted_at, customer_id, lead_id, prospect_state_code, prospect_country, is_add_seats, is_renewal, is_extension, is_one_off, extension_months")
+    .select("id, status, tenant_id, public_token, customer_name, plan, subtotal, discount_pct, tax_rate, amount, expires_date, notes, line_items, billing_cycle, currency, exchange_rate, payment_status, payment_amount, invoice_id, hot_lead_alerted_at, customer_id, lead_id, prospect_state_code, prospect_country, is_add_seats, is_renewal, is_extension, is_one_off, extension_months, created_date, domain, renewal_term_date, renewal_subscription_id")
     .eq("id", params.id)
     .maybeSingle();
 
@@ -196,8 +200,12 @@ export default async function QuoteAcceptPage(props: Props) {
     /* R-811: "3-month extension" from extension_months. */
     extension_title: extensionTitle({ isExtension: quote.is_extension, extensionMonths: quote.extension_months }),
   };
+  /* R-1764: "Domain:" / "Subscription period:" under each subscription line — the same helper
+     and inputs as the PDF and the tax invoice, so all three name the same dates. */
+  const periodContext = await loadQuotePeriodContext(supabase, quote);
   const lineItems: PublicLine[] = ((quote.line_items ?? []) as QuoteLineItem[]).map((l) => ({
     id: l.id, name: l.name, qty: l.qty, rate: l.rate, commitment: l.commitment,
+    detail_notes: lineDetailNotes(l, periodContext),
     /* R-495: the list price the line was priced from, so the customer sees list →
        discount → final. A selling price the reseller shows on the PDF anyway — not cost. */
     ...(typeof l.list_rate === "number" ? { list_rate: l.list_rate } : {}),
@@ -274,9 +282,11 @@ export default async function QuoteAcceptPage(props: Props) {
           .maybeSingle()
       : Promise.resolve({ data: null }),
   ]);
-  const { interState } = quotePlaceOfSupply({
+  const { interState, isExport } = quotePlaceOfSupply({
     customer: buyer, lead, quote, seller: { state_code: tenant?.state_code, gstin: tenant?.gstin },
   });
+  /* R-1532: a Bill of Supply seller's 0% quote — "No GST — Bill of Supply", no heads. */
+  const billOfSupply = isExport ? null : quoteDocBillOfSupply(await readTenantGstRegistration(supabase, quote.tenant_id), quote.tax_rate);
   const signerDefault = signerNameDefault({ customer: buyer, lead, company: quote.customer_name });
 
   /* R-376(b): "Support: Free — Included" — the same builder the preview and the PDF use,
@@ -298,6 +308,7 @@ export default async function QuoteAcceptPage(props: Props) {
       acceptedPay={acceptedPay}
       dueNow={dueNow}
       interState={interState}
+      billOfSupply={billOfSupply}
       signerDefault={signerDefault}
       supportLine={supportLine ? { text: supportLine.text, detail: supportLine.detail } : null}
     />

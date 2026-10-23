@@ -36,6 +36,8 @@ import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import type { Invoice, Payment, QuoteLineItem } from "@/lib/supabase/database.types";
 import { splitTaxHeads } from "@/lib/gst/tax-split";
 import { SAAS_HSN } from "@/lib/gst/hsn";
+import { lineDetailNotes } from "@/lib/pdf/invoice-display";
+import type { LinePeriodContext } from "@/lib/quotes/service-period";
 import { billOfSupplyDeclarations, billOfSupplyPlace, documentTitle, isBillOfSupply } from "@/lib/invoices/document-kind";
 
 /** Display-shape for advance rows in the dialog — works for both frozen + live data */
@@ -54,6 +56,8 @@ interface Props {
 
   /** Quote data — line items, discount, tax rate (so we can re-render the breakdown) */
   lineItems:    QuoteLineItem[];
+  /** R-1764: each subscription line's "Domain:" / "Subscription period:" (the quote's words). */
+  periodContext?: LinePeriodContext | null;
   subtotal:     number;
   discountPct:  number;
   discount:     number;
@@ -101,6 +105,7 @@ export function TaxInvoiceDialog({
   onOpenChange,
   invoice,
   lineItems,
+  periodContext = null,
   subtotal,
   discountPct,
   discount,
@@ -259,7 +264,7 @@ export function TaxInvoiceDialog({
         },
         razorpayConfigured,
       }),
-      invoice, lineItems, subtotal, discountPct, discount,
+      invoice, lineItems, periodContext, subtotal, discountPct, discount,
       taxable: fTaxable, taxRate: fRate, tax: fTax, total: fTotal, interState: fInter,
       customerGstin, customerEmail, customerAddress, customerState, customerCountry,
       currency, exchangeRate, fxSource, fxDate,
@@ -516,6 +521,9 @@ export function TaxInvoiceDialog({
                       <td className="p-2.5 text-xs text-ink-3">{i + 1}</td>
                       <td className="p-2.5 text-sm">
                         <p className="font-medium">{li.name}</p>
+                        {lineDetailNotes(li, periodContext).map((n) => (
+                          <p key={n} className="text-2xs text-ink-3 mt-0.5 tabular-nums" data-testid="line-period">{n}</p>
+                        ))}
                         {li.description && (
                           <p className="text-2xs text-ink-3 mt-0.5">{li.description}</p>
                         )}

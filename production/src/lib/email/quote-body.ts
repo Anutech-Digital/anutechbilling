@@ -40,6 +40,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import type { QuoteLineItem, BillingCycle } from "@/lib/supabase/database.types";
 import { cycleScheduleLabel, cycleFromLegacyCommitment } from "@/lib/quotes/billing";
 import { quotePerPeriodFigures } from "@/lib/quotes/per-period-figures";
+import { billOfSupplyCustomerLine, type BillOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
 
 /** The supplier's own particulars, as they must appear on a GST document. */
 export interface SupplierIdentity {
@@ -83,6 +84,9 @@ export interface QuoteBodyInput {
   total: number;
   /** Inter-state supply → one IGST line. Intra-state → CGST + SGST at half each. */
   interState: boolean;
+  /** R-1532: the supplier issues a Bill of Supply and the quote carries no GST → one
+   *  "No GST — Bill of Supply" line, no CGST/SGST/IGST rows, no "GST tax invoice". */
+  billOfSupply?: BillOfSupplyStatus | null;
   createdDate: string | null;
   expiresDate: string | null;
   terms?: QuoteTerms;
@@ -177,7 +181,9 @@ export function quoteEmailBody(input: QuoteBodyInput): string {
     taxRate: input.taxRate,
   });
   const split = pp.perInvoice && !pp.flex;
-  const gstRows = input.interState
+  const gstRows = input.billOfSupply
+    ? [`  ${billOfSupplyCustomerLine(input.billOfSupply)}`]
+    : input.interState
     ? [row(`IGST ${input.taxRate}%`, `${rupee(pp.tax)}${unit}`)]
     : [
         row(`CGST ${input.taxRate / 2}%`, `${rupee(pp.cgst)}${unit}`),
@@ -228,7 +234,7 @@ export function quoteEmailBody(input: QuoteBodyInput): string {
     row("Billing", billingWords),
     row("HSN / SAC", "998313 — software as a service"),
     ...(input.supplier.state
-      ? [row("Place of supply", `${input.supplier.state} (${input.interState ? "inter-state" : "intra-state"})`)]
+      ? [row("Place of supply", input.billOfSupply ? input.supplier.state : `${input.supplier.state} (${input.interState ? "inter-state" : "intra-state"})`)]
       : []),
     "",
     "COMMERCIALS",
@@ -245,7 +251,7 @@ export function quoteEmailBody(input: QuoteBodyInput): string {
     ...(termLines.length ? ["", "TERMS", ...termLines] : []),
     "",
     "NEXT STEPS",
-    "  1. Reply confirming this quotation and we will raise the GST tax invoice.",
+    `  1. Reply confirming this quotation and we will raise the ${input.billOfSupply ? "Bill of Supply" : "GST tax invoice"}.`,
     "  2. On receipt of payment the accounts are provisioned and migration begins.",
     "",
     "Should anything need changing — the seat count, the plan, or the billing term — please",

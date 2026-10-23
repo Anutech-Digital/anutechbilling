@@ -114,6 +114,17 @@ describe("nothing else may reach the vendor", () => {
     expect(strip(read(DISPATCHER))).toContain("placeCall(provider");
   });
 
+  it("Cold Calling asks the kill switch before it dials (R-1662)", () => {
+    /* Cold-call contacts are not leads, so the campaign tick dials itself — but never past the
+       workspace brake. */
+    const code = strip(read("server/coldcall/coldcall.server.ts"));
+    const brake = code.indexOf('resolveAutonomy("telecall.place"');
+    const dial = code.indexOf("placeCall(");
+    expect(brake).toBeGreaterThan(0);
+    expect(brake).toBeLessThan(dial);
+    expect(code).toContain('verdict.mode === "off"');
+  });
+
   it.each([
     ["app/api/v1/telecalling/make-call/route.ts"],
     ["app/api/cron/ai-telecall-renewals/route.ts"],

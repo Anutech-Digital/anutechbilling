@@ -5,7 +5,10 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, act } from "@testing-library/react";
 import { renderHook } from "@testing-library/react";
 import { BillingCycleFilter } from "./billing-cycle-filter";
-import { cycleOptions, CYCLE_FILTERS, type CycleFilter, type CycleSub } from "@/lib/subscriptions/billing-cycle";
+import {
+  cycleOptions, cycleFromUrl, CYCLE_FILTERS, CYCLE_URL_VALUES,
+  type CycleFilter, type CycleSub, type CycleUrlValue,
+} from "@/lib/subscriptions/billing-cycle";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 
 afterEach(() => {
@@ -33,7 +36,7 @@ describe("BillingCycleFilter", () => {
     const group = screen.getByRole("group", { name: "Billing cycle" });
     expect(group).toBeTruthy();
     const names = screen.getAllByRole("button").map((b) => b.textContent);
-    expect(names).toEqual(["All cycles4", "Annual2", "Annual · in parts1", "Monthly1"]);
+    expect(names).toEqual(["All cycles4", "Annual · billed yearly2", "Annual · billed monthly/quarterly1", "Monthly (Flexible)1"]);
     expect(screen.queryByRole("button", { name: /Quarterly/ })).toBeNull();
   });
 
@@ -46,10 +49,20 @@ describe("BillingCycleFilter", () => {
   it("calls onChange with the cycle clicked (real buttons, so Enter/Space work)", () => {
     const onChange = vi.fn();
     render(<BillingCycleFilter options={cycleOptions(rows, "all")} value="all" onChange={onChange} />);
-    const btn = screen.getByRole("button", { name: /Annual · in parts/ });
+    const btn = screen.getByRole("button", { name: /Annual · billed monthly\/quarterly/ });
     expect(btn.tagName).toBe("BUTTON");
     fireEvent.click(btn);
     expect(onChange).toHaveBeenCalledWith("annual_split");
+  });
+
+  it("R-1774: a 3-month term shows as a yellow Check term chip, never as Quarterly", () => {
+    const withQtr = [...rows, sub({ billing_cycle: "quarterly", term_months: 3, start_date: "2026-07-19", renewal_date: "2026-10-19" })];
+    render(<BillingCycleFilter options={cycleOptions(withQtr, "all")} value="all" onChange={() => {}} />);
+    const chip = screen.getByRole("button", { name: /^Check term/ });
+    expect(chip.getAttribute("data-tone")).toBe("warning");
+    expect(chip.className).toMatch(/bg-amber-soft/);
+    expect(chip.getAttribute("title")).toMatch(/Correct details/);
+    expect(screen.queryByRole("button", { name: /Quarterly/ })).toBeNull();
   });
 
   it("hides itself when the data has fewer than two cycles (nothing to choose)", () => {
@@ -65,6 +78,12 @@ describe("?cycle= in the URL", () => {
     window.history.replaceState(null, "", "/subscriptions?tab=active&cycle=monthly");
     const { result } = renderHook(() => useUrlChoice<CycleFilter>("cycle", CYCLE_FILTERS, "all"));
     expect(result.current[0]).toBe("monthly");
+  });
+
+  it("R-1774: an old ?cycle=quarterly link still opens — on Check term", () => {
+    window.history.replaceState(null, "", "/subscriptions?cycle=quarterly");
+    const { result } = renderHook(() => useUrlChoice<CycleUrlValue>("cycle", CYCLE_URL_VALUES, "all"));
+    expect(cycleFromUrl(result.current[0])).toBe("check_term");
   });
 
   it("ignores a cycle it does not know", () => {

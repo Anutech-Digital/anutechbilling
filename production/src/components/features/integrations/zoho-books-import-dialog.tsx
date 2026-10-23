@@ -22,7 +22,7 @@ import { Icon } from "@/components/ui/icon";
 import { useAskText, useConfirm } from "@/components/providers/confirm-provider";
 import { formatDate, rupee } from "@/lib/utils";
 import {
-  importPercent, importProgressText, type ImportProgress, type ImportStage,
+  importPercent, importProgressText, undoProgressText, UNDO_STOPPED_TEXT, type ImportProgress, type ImportStage,
 } from "@/lib/integrations/zoho-books/import-parts";
 
 const URL_IMPORT = "/api/integrations/zoho-books/import";
@@ -94,6 +94,7 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
   const [error, setError] = React.useState<string | null>(null);
   const [loaded, setLoaded] = React.useState(false);
   const [progress, setProgress] = React.useState<ImportProgress | null>(null);
+  const [undoText, setUndoText] = React.useState<string | null>(null);
   const openRef = React.useRef(open);
   openRef.current = open;
 
@@ -210,15 +211,22 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
     } finally { setBusy(null); }
   }
 
-  /* R-1760: Undo removes what fits in one call; call again until done. */
+  /* R-1760: Undo removes what fits in one call; call again until done.
+     R-1766: progress while it runs; a call that stops (timeout, refusal) says so IN the dialog. */
   async function runUndo(runId: string, reason: string): Promise<boolean> {
-    for (let guard = 0; guard < 200; guard++) {
-      const { ok, data } = await post({ action: "undo", run_id: runId, reason });
-      if (!ok) { toast.error(String(data.error ?? "Could not undo the import."), { description: "Press Undo import again to finish." }); return false; }
-      const r = (data.result ?? {}) as Record<string, unknown>;
-      if (r.done !== false) return true;
-    }
-    return false;
+    setError(null);
+    setUndoText("Undoing…");
+    try {
+      for (let guard = 0; guard < 400; guard++) {
+        const { ok, data } = await post({ action: "undo", run_id: runId, reason });
+        if (!ok) { setError(String(data.error ?? UNDO_STOPPED_TEXT)); return false; }
+        const r = (data.result ?? {}) as Record<string, unknown>;
+        if (r.done !== false) return true;
+        setUndoText(undoProgressText(r));
+      }
+      setError(UNDO_STOPPED_TEXT);
+      return false;
+    } finally { setUndoText(null); }
   }
 
   async function undoHalfDone() {
@@ -293,6 +301,10 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
               <p className="mt-0.5 text-xs text-ink-3">
                 Batch <span className="font-mono">{lastImport!.id.slice(0, 8)}</span> · {fmt(n(result.customers_existing))} customers were already here and were not changed
               </p>
+              {busy === "undo" && undoText && <p className="mt-1 text-xs text-ink-2" aria-live="polite">{undoText}</p>}
+              {busy !== "undo" && !error && lastImport?.undo_started_at && (
+                <p className="mt-1 text-xs text-amber-ink">{UNDO_STOPPED_TEXT}</p>
+              )}
               <Button className="mt-2" variant="ghost" size="sm" onClick={undo} loading={busy === "undo"} disabled={busy !== null || readingNow}>
                 Undo import
               </Button>
@@ -340,9 +352,9 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
           {importNow && (
             <div className="space-y-2" data-testid="zoho-import-progress">
               <p className="text-sm font-medium text-ink" aria-live="polite">
-                {undoing ? "Undo of this import stopped part way." : importProgressText(importNow)}
+                {busy === "undo" && undoText ? undoText : undoing ? (error ? "Undo of this import is not finished." : UNDO_STOPPED_TEXT) : importProgressText(importNow)}
               </p>
-              {!undoing && (
+              {!undoing && busy !== "undo" && (
                 <div className="h-2 w-full overflow-hidden rounded bg-paper-2" role="progressbar" aria-valuenow={importPercent(importNow)} aria-valuemin={0} aria-valuemax={100} aria-label="Import progress">
                   <div className="h-full bg-amber transition-all" style={{ width: `${importPercent(importNow)}%` }} />
                 </div>
@@ -350,9 +362,11 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
               <p className="text-xs text-ink-3">
                 {busy === "import"
                   ? "Imported in parts. Keep this window open until it finishes."
-                  : undoing
-                    ? "Press Undo import to finish removing what this import created."
-                    : "Stopped part way. What was imported so far is kept — Continue import picks up where it stopped."}
+                  : busy === "undo"
+                    ? "Removed in parts. Keep this window open until it finishes."
+                    : undoing
+                      ? "What was removed so far stays removed."
+                      : "Stopped part way. What was imported so far is kept — Continue import picks up where it stopped."}
               </p>
             </div>
           )}

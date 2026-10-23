@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
   /* Our own numbers, so nothing dials back to us — the voice version of the self-email loop the
      sales pipeline already suppresses. The tenant's recorded phone plus whatever this
      deployment calls FROM: a call to our own outbound number connects two robots. */
-  const ourNumbers = [tenant.data?.phone, process.env.RETELL_FROM_NUMBER, process.env.VAPI_FROM_NUMBER]
+  const ourNumbers = [tenant.data?.phone, process.env.RETELL_FROM_NUMBER, process.env.VAPI_FROM_NUMBER, process.env.BOLNA_FROM_NUMBER]
     .filter((n): n is string => typeof n === "string" && n.trim().length > 0);
 
   const result = await dispatchTelecall({

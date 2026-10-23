@@ -10,6 +10,9 @@ import type { Subscription } from "@/lib/supabase/database.types";
 const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => nav }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+/* R-1532: the dialog reads the business's GST registration (Bill of Supply → no GST). */
+const gst = vi.hoisted(() => ({ saved: null as string | null }));
+vi.mock("@/lib/compliance/gst-registration-query", () => ({ useGstRegistration: () => ({ data: { saved: gst.saved } }) }));
 
 import ExtendSubscriptionDialog from "./extend-subscription-dialog";
 import { toast } from "sonner";
@@ -27,6 +30,26 @@ function openMonths() {
   fireEvent.click(screen.getByRole("radio", { name: "Months" }));
   return screen.getByLabelText("Custom months") as HTMLInputElement;
 }
+
+describe("Extend term dialog — Bill of Supply business (R-1532)", () => {
+  it("not registered: no GST row, total = subtotal, the Bill of Supply line instead", () => {
+    gst.saved = "unregistered";
+    try {
+      render(<ExtendSubscriptionDialog sub={sub} open onOpenChange={() => {}} />);
+      const t = document.body.textContent ?? "";
+      expect(t).toContain("No GST — Bill of Supply (your business is not GST-registered)");
+      expect(t).not.toContain("GST 18%");
+      expect(t).not.toContain("Total (incl GST)");
+    } finally {
+      gst.saved = null;
+    }
+  });
+
+  it("registered (not chosen): GST 18% as before", () => {
+    render(<ExtendSubscriptionDialog sub={sub} open onOpenChange={() => {}} />);
+    expect(document.body.textContent).toContain("GST 18%");
+  });
+});
 
 describe("Extend term dialog — advance sentence (R-809)", () => {
   it("invalid custom months (12): no 'advance by 0 months'", () => {

@@ -83,6 +83,12 @@ Object.assign(env, {
   NEXT_PUBLIC_APP_ENV: "local",
   NEXT_PUBLIC_APP_URL: `http://localhost:${port}`,
   CRON_SECRET: "local-dev-cron-secret",
+  /* R-1502 (22 Oct 2026): the website (cart, checkout, hosting trial) files its orders under
+     BUY_PAGE_TENANT_ID. Blanked above, it fell back to the LIVE tenant's id, which the local
+     database (supabase/seed.sql) does not have — every local order stopped at "Could not
+     start checkout". Sell under the seed's tenant instead; LOCAL_BUY_PAGE_TENANT_ID (in the
+     shell, not .env.local) picks another local tenant. */
+  BUY_PAGE_TENANT_ID: process.env.LOCAL_BUY_PAGE_TENANT_ID || "11111111-1111-1111-1111-111111111111",
 });
 
 console.log(`\n  dev:local  →  http://localhost:${port}`);

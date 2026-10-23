@@ -36,6 +36,21 @@
       "port": 3001
     },
     {
+      "name": "ResellerOS (no VM, turbo)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "production",
+        "--",
+        "-p",
+        "3001",
+        "--turbopack"
+      ],
+      "port": 3001
+    },
+    {
       "name": "ResellerOS (no VM, fast)",
       "runtimeExecutable": "npm",
       "runtimeArgs": [

@@ -17,6 +17,7 @@ import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import type { Invoice, Quote, Customer } from "@/lib/supabase/database.types";
 import { readTenantUdyam } from "@/lib/compliance/udyam";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
+import { loadRenewedSubscriptionDomain } from "@/lib/quotes/line-period-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -71,6 +72,8 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
   const props = buildInvoicePdfProps({
     logoDataUri: logo,
     razorpayConfigured,
+    /* R-1764: a renewal quote's "Domain:" comes from the subscription it renews. */
+    subscriptionDomain: await loadRenewedSubscriptionDomain(admin, (quote as Quote) ?? null),
     invoice:  inv,
     quote:    (quote as Quote) ?? null,
     customer: (customer as Customer) ?? null,

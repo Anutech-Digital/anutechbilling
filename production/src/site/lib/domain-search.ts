@@ -27,7 +27,12 @@ export interface DomainResult {
   priceKnown: boolean;
   /** R-156: total ₹ per offered term ("1", "2", "3", "5"); see lib/domains/live-lookup. */
   prices?: Record<string, number>;
+  /** R-1769: the price is from the laptop-only TEST list — every screen that shows it says "TEST price". */
+  testPrice?: boolean;
 }
+
+/** R-1769: the words a test-list price carries wherever it is shown (search, cart, checkout). */
+export const TEST_PRICE_LABEL = "TEST price";
 
 export type SearchOutcome =
   | { ok: true; base: string; domains: DomainResult[] }

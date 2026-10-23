@@ -53,6 +53,7 @@ export const AUTOMATION_JOBS = {
   "ai-sales-loop":        { label: "AI sales follow-ups", what: "Sends the AI's planned follow-ups to leads.", customerFacing: true, scope: "tenant", dryRun: false },
   "ai-support-sla":       { label: "AI support ticket sweep", what: "Closes support tickets the customer never came back to, and flags unowned ones.", customerFacing: true, scope: "tenant", dryRun: false },
   "ai-telecall-renewals": { label: "AI renewal calls", what: "Calls customers whose subscription renews in five days.", customerFacing: true, scope: "tenant", dryRun: false },
+  "cold-calls":           { label: "AI cold calls", what: "Calls the numbers on running Cold Calling lists, within their hours and daily limit.", customerFacing: true, scope: "tenant", dryRun: false },
   "provision-hosting":    { label: "Set up paid hosting", what: "Creates the hosting account for a paid hosting order.", customerFacing: true, scope: "tenant", dryRun: false },
   "register-domains":     { label: "Register paid domains", what: "Registers a domain once it is paid for.", customerFacing: true, scope: "tenant", dryRun: false },
   "renew-domains":        { label: "Renew paid domains", what: "Renews a domain once the renewal is paid for.", customerFacing: true, scope: "tenant", dryRun: false },

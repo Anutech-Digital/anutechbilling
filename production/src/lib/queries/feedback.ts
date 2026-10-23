@@ -30,6 +30,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
+import { forgetBrowserSession } from "@/lib/auth/browser-auth";
 import type { Database } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { FeedbackSeverity, FeedbackType } from "@/lib/feedback/triage";
@@ -222,87 +223,103 @@ export interface SubmitFeedbackResult {
 export function useSubmitFeedback() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: SubmitFeedbackInput): Promise<SubmitFeedbackResult> => {
-      const supabase = createClient();
-
-      const cleaned = input.text.trim();
-      if (!cleaned) throw new Error("Please describe what happened before submitting.");
-      if (!input.tenantId) {
-        // Previously this defaulted to Anutech's tenant id, which filed one tenant's bug
-        // report into another tenant's books.
-        throw new Error("Your workspace is still loading — please try again in a moment.");
-      }
-
-      const firstLine = cleaned.split("\n").map((l) => l.trim()).find(Boolean) ?? cleaned;
-      const id = crypto.randomUUID();
-
-      const { error } = await supabase.from("feedback").insert({
-        id,
-        tenant_id: input.tenantId,
-        reported_type: input.reportedType,
-        reported_severity: input.reportedSeverity,
-        title: firstLine.slice(0, 200),
-        body: cleaned,
-        page_path: input.pagePath,
-        reported_by: input.reporterId,
-        reporter_name: input.reporterName,
-        reporter_email: input.reporterEmail,
-        filed_via: input.filedVia ?? "form",
-        ai_chat_summary: input.filedVia === "ai-chat" ? (input.aiChatSummary ?? null)?.slice(0, 1000) ?? null : null,
-      });
-      // Fatal on purpose. The old code logged this and thanked the reporter anyway.
-      /* As an Error with the real message (5 Oct 2026): a PostgrestError is a plain object, so
-         both callers' `err instanceof Error` fell through to "Could not submit the report." —
-         on staging that hid "Could not find the 'filed_via' column … in the schema cache". */
-      if (error) throw new Error(`Report not saved: ${error.message}${error.code ? ` (${error.code})` : ""}`);
-
-      const failedUploads: string[] = [];
-      let uploaded = 0;
-
-      for (const shot of input.screenshots) {
-        const blob = dataUrlToBlob(shot.dataUrl);
-        if (!blob) { failedUploads.push(shot.name); continue; }
-
-        // The leading tenant segment is what the bucket policy matches on.
-        const safeName = shot.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80) || "screenshot.png";
-        const path = `${input.tenantId}/feedback/${id}/${crypto.randomUUID()}-${safeName}`;
-
-        const up = await supabase.storage.from(SCREENSHOT_BUCKET).upload(path, blob, {
-          contentType: blob.type || "image/png",
-          upsert: false,
-        });
-        if (up.error) { failedUploads.push(shot.name); continue; }
-
-        const link = await supabase.from("feedback_screenshots").insert({
-          feedback_id: id,
-          tenant_id: input.tenantId,
-          file_path: path,
-          file_name: safeName,
-          byte_size: blob.size,
-        });
-        if (link.error) { failedUploads.push(shot.name); continue; }
-
-        uploaded++;
-      }
-
-      // Triage last, and never fatal — an unreachable API must not cost us the report.
-      // The row stays `triage_status: 'pending'` and the admin page can retry it.
-      let triaged = false;
-      try {
-        const res = await fetch("/api/feedback/triage", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ feedbackId: id }),
-        });
-        triaged = res.ok;
-      } catch {
-        triaged = false;
-      }
-
-      return { id, uploaded, failedUploads, triaged };
-    },
+    mutationFn: submitFeedback,
     onSuccess: () => invalidate(qc),
   });
+}
+
+/** The database said "not allowed" (RLS / privilege), in whatever shape the error came. */
+function isNoAccess(error: { code?: string | null; message?: string | null }): boolean {
+  return error.code === "42501" || /row-level security|permission denied/i.test(error.message ?? "");
+}
+
+export async function submitFeedback(input: SubmitFeedbackInput): Promise<SubmitFeedbackResult> {
+  const supabase = createClient();
+
+  const cleaned = input.text.trim();
+  if (!cleaned) throw new Error("Please describe what happened before submitting.");
+  if (!input.tenantId) {
+    // Previously this defaulted to Anutech's tenant id, which filed one tenant's bug
+    // report into another tenant's books.
+    throw new Error("Your workspace is still loading — please try again in a moment.");
+  }
+
+  const firstLine = cleaned.split("\n").map((l) => l.trim()).find(Boolean) ?? cleaned;
+  const id = crypto.randomUUID();
+
+  const row = {
+    id,
+    tenant_id: input.tenantId,
+    reported_type: input.reportedType,
+    reported_severity: input.reportedSeverity,
+    title: firstLine.slice(0, 200),
+    body: cleaned,
+    page_path: input.pagePath,
+    reported_by: input.reporterId,
+    reporter_name: input.reporterName,
+    reporter_email: input.reporterEmail,
+    filed_via: input.filedVia ?? "form",
+    ai_chat_summary: input.filedVia === "ai-chat" ? (input.aiChatSummary ?? null)?.slice(0, 1000) ?? null : null,
+  };
+  let { error } = await supabase.from("feedback").insert(row);
+  /* R-1501: "not allowed" for a report into the person's OWN workspace means the request did not
+     carry their sign-in (a failed token refresh sent it as a visitor — Pawan, 17 Oct). Drop the
+     remembered token, fetch a fresh one and try once more. Same client-made id, so a retry can
+     never file the report twice. */
+  if (error && isNoAccess(error)) {
+    forgetBrowserSession();
+    ({ error } = await supabase.from("feedback").insert(row));
+  }
+  // Fatal on purpose. The old code logged this and thanked the reporter anyway.
+  /* As an Error with the real message (5 Oct 2026): a PostgrestError is a plain object, so
+     both callers' `err instanceof Error` fell through to "Could not submit the report." —
+     on staging that hid "Could not find the 'filed_via' column … in the schema cache". */
+  if (error) throw new Error(`Report not saved: ${error.message}${error.code ? ` (${error.code})` : ""}`);
+
+  const failedUploads: string[] = [];
+  let uploaded = 0;
+
+  for (const shot of input.screenshots) {
+    const blob = dataUrlToBlob(shot.dataUrl);
+    if (!blob) { failedUploads.push(shot.name); continue; }
+
+    // The leading tenant segment is what the bucket policy matches on.
+    const safeName = shot.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80) || "screenshot.png";
+    const path = `${input.tenantId}/feedback/${id}/${crypto.randomUUID()}-${safeName}`;
+
+    const up = await supabase.storage.from(SCREENSHOT_BUCKET).upload(path, blob, {
+      contentType: blob.type || "image/png",
+      upsert: false,
+    });
+    if (up.error) { failedUploads.push(shot.name); continue; }
+
+    const link = await supabase.from("feedback_screenshots").insert({
+      feedback_id: id,
+      tenant_id: input.tenantId,
+      file_path: path,
+      file_name: safeName,
+      byte_size: blob.size,
+    });
+    if (link.error) { failedUploads.push(shot.name); continue; }
+
+    uploaded++;
+  }
+
+  // Triage last, and never fatal — an unreachable API must not cost us the report.
+  // The row stays `triage_status: 'pending'` and the admin page can retry it.
+  let triaged = false;
+  try {
+    const res = await fetch("/api/feedback/triage", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ feedbackId: id }),
+    });
+    triaged = res.ok;
+  } catch {
+    triaged = false;
+  }
+
+  return { id, uploaded, failedUploads, triaged };
 }
 
 /** Run (or re-run) the triage for one report. */

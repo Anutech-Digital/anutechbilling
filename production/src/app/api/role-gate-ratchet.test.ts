@@ -66,6 +66,9 @@ const ROLE_GATE = new RegExp([
   String.raw`["'](owner|manager)["']\s*\]\s*\.includes\s*\(`,
   String.raw`\.includes\s*\(\s*(me|caller|who|row)?\.?role\b`,
   String.raw`\brequireRole\s*\(`, String.raw`\bassertRole\s*\(`,
+  // R-1776: every Cold Calling route starts with coldCallContext() (src/server/coldcall/route-context.ts),
+  // which returns 403 unless the users row's role is in COLD_CALL_ROLES — fail-closed, like mayOpenPage.
+  String.raw`\bcoldCallContext\s*\(`,
 ].join("|"));
 
 /** Anonymous or self-service by design — a session is not what bounds these. Each says why. */

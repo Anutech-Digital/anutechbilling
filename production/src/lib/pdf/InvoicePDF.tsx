@@ -30,7 +30,8 @@ import { formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { pdfRupee, pdfSafeMoney } from "./pdf-money";
 import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import { pdfText } from "./pdf-text";
-import { invoicePaidInFull, lineDomainNote } from "./invoice-display";
+import { invoicePaidInFull, lineDetailNotes } from "./invoice-display";
+import type { LinePeriodContext } from "@/lib/quotes/service-period";
 import { isRenderableLogo } from "./logo";
 import { splitTaxHeads } from "@/lib/gst/tax-split";
 import { SAAS_HSN, SAAS_HSN_LABEL } from "@/lib/gst/hsn";
@@ -61,6 +62,9 @@ export interface InvoicePDFProps {
 
   // Quote-derived data (re-passes for breakdown — same shape TaxInvoiceDialog uses)
   lineItems:    QuoteLineItem[];
+  /** R-1764: the quote this invoice was raised from, for each subscription line's "Domain:" and
+   *  "Subscription period:" (the same words as the quote). Absent → neither line. */
+  periodContext?: LinePeriodContext | null;
   subtotal:     number;
   discountPct:  number;
   discount:     number;
@@ -452,6 +456,7 @@ const s = StyleSheet.create({
 export function InvoicePDF(props: InvoicePDFProps) {
   const {
     invoice, lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
+    periodContext = null,
     interState = false,
     customerGstin, customerEmail, customerAddress, customerState, customerCountry, placeOfSupply,
     currency, exchangeRate, fxSource = null, fxDate = null, termsConditions,
@@ -621,12 +626,13 @@ export function InvoicePDF(props: InvoicePDFProps) {
                       {li.description}
                     </Text>
                   )}
-                  {/* Which website the line is for (3 Oct 2026; invoice-display.ts). */}
-                  {lineDomainNote(li) && (
-                    <Text style={{ fontSize: 9, color: COLORS.ink3, marginTop: 2 }}>
-                      {pdfText(lineDomainNote(li) ?? "")}
+                  {/* Which website the line is for (3 Oct 2026; invoice-display.ts), and R-1764's
+                      "Domain:" / "Subscription period:" — the same words the quote printed. */}
+                  {lineDetailNotes(li, periodContext).map((n) => (
+                    <Text key={n} style={{ fontSize: 9, color: COLORS.ink3, marginTop: 2 }}>
+                      {pdfText(n)}
                     </Text>
-                  )}
+                  ))}
                 </View>
                 <Text style={s.tdHsn}>{li.hsn ?? SAAS_HSN}</Text>
                 <Text style={s.tdQty}>{li.qty}</Text>

@@ -41,6 +41,8 @@ import { useVendors, ensureVendor } from "@/lib/queries/vendors";
 import { istToday } from "@/lib/dates/ist";
 import { rupee } from "@/lib/utils";
 import { fillLineQty } from "@/app/api/ai/extract-bill/sanitize";
+import { buyerConfirmedNote, buyerWarningText, isBuyerMismatch, type BuyerMismatch } from "@/app/api/ai/extract-bill/buyer-check";
+import { useConfirm } from "@/components/providers/confirm-provider";
 
 const schema = z.object({
   vendor_name:  z.string().min(2, "Vendor name required"),
@@ -84,6 +86,34 @@ export interface VendorBillPrefill {
   /** R-1510 reader: "tax_invoice" | "proforma" | "other". R-1576 saves it on the bill. */
   document_type?: string | null;
   line_items?:   Array<{ description?: string; qty?: number | null; unit_price?: number | null; amount?: number | null }>;
+  /** R-1767: the extract-bill route's answer — the bill is addressed to another company. */
+  buyer_mismatch?: BuyerMismatch | null;
+  /** R-1767 addition: the bill already uploaded in Add expense — attached on save, never re-read. */
+  file?: File | null;
+}
+
+/**
+ * R-1767 — the red "addressed to another company" line and the proforma line, shown on the AI
+ * preview of BOTH bill dialogs (Add expense, Add COGS Bill) so the two never word it differently.
+ */
+export function BillReadWarnings({ buyer, proforma }: { buyer: BuyerMismatch | null; proforma: boolean }) {
+  if (!buyer && !proforma) return null;
+  return (
+    <div className="mb-2 space-y-1.5">
+      {buyer && (
+        <div role="alert" className="flex items-start gap-1.5 rounded-md bg-rose-soft/40 px-2.5 py-2 text-xs text-rose">
+          <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
+          <span>{buyerWarningText(buyer)}</span>
+        </div>
+      )}
+      {proforma && (
+        <div role="status" className="flex items-start gap-1.5 rounded-md bg-amber-soft/60 px-2.5 py-2 text-xs text-amber-ink">
+          <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
+          <span>This is a proforma, not a tax invoice — no GST input credit. Save it when the tax invoice comes, or save it without credit.</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -106,6 +136,9 @@ export function AddVendorBillDialog({
 }) {
   const create = useCreateVendorBill();
   const today  = istToday();
+  const confirm = useConfirm();
+  /* R-1767: the bill is addressed to another company → red line + a confirm before Save. */
+  const [aiBuyer, setAiBuyer] = React.useState<BuyerMismatch | null>(null);
 
   // Vendor master autocomplete — pick an existing supplier (fills GSTIN +
   // category) or type a new name (auto-added to Vendors on save).
@@ -150,7 +183,7 @@ export function AddVendorBillDialog({
     setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
 
   async function handleBillFile(file: File) {
-    setAiError(null); setAiNote(null);
+    setAiError(null); setAiNote(null); setAiBuyer(null);
     if (file.size > 8 * 1024 * 1024) { setAiError("File is too big (max 8 MB) — try a smaller photo."); return; }
     setAttachFile(file);   // keep it — attaches to the bill on save
     setReading(true);
@@ -169,6 +202,8 @@ export function AddVendorBillDialog({
       const json = await res.json();
       if (!res.ok) { setAiError(json.error ?? "Couldn't read the bill."); return; }
       const f = json.fields as Record<string, string | number | null>;
+      const bm = (f as Record<string, unknown>).buyer_mismatch;
+      setAiBuyer(isBuyerMismatch(bm) ? bm : null);
       // Prefill — only overwrite what the AI actually found.
       if (f.vendor_name)  setValue("vendor_name",  String(f.vendor_name));
       if (f.vendor_gstin) setValue("vendor_gstin", String(f.vendor_gstin));
@@ -254,6 +289,15 @@ export function AddVendorBillDialog({
     }
 
     if (isBillDocumentType(prefill.document_type)) setDocType(prefill.document_type);
+    /* R-1767 */
+    setAiBuyer(isBuyerMismatch(prefill.buyer_mismatch) ? prefill.buyer_mismatch : null);
+    if (prefill.file) {
+      setAttachFile(prefill.file);
+      setAiNote(`Filled from the bill read in Add expense · 📎 "${prefill.file.name}" will be attached to the bill — check the amounts against the bill, then Save.`
+        + (prefill.document_type === "proforma"
+          ? " ⚠ This is a PROFORMA, not a tax invoice — no GST input credit can be claimed on it; ask the vendor for the tax invoice."
+          : ""));
+    }
 
     const cur = String(prefill.currency ?? "INR") || "INR";
     setCurrency(cur);
@@ -315,6 +359,20 @@ export function AddVendorBillDialog({
     setFxError(null);
     /* R-1576: GST that gives no credit becomes cost — ask once, plainly, before saving. */
     if (noCredit && !noCreditOk) { setNoCreditOk(true); return; }
+    /* R-1767: another company's bill never enters our books without a clear yes — the yes is
+       written into the bill's notes. */
+    let buyerNote: string | null = null;
+    if (aiBuyer) {
+      const ok = await confirm({
+        title: `Did ${aiBuyer.own_name} really pay this bill?`,
+        body: buyerWarningText(aiBuyer),
+        danger: true,
+        confirmLabel: `Yes, ${aiBuyer.own_name} paid it`,
+        cancelLabel: "No, don't save",
+      });
+      if (!ok) return;
+      buyerNote = buyerConfirmedNote(aiBuyer);
+    }
     // Convert the bill's own-currency amounts to ₹ for the books (rate = 1 for INR).
     const inr = (n: number) => Math.round(n * rate);
 
@@ -339,7 +397,7 @@ export function AddVendorBillDialog({
     const fxNote = isForeign
       ? `Foreign bill: ${currency} ${values.total.toLocaleString("en-US")} @ ₹${rate}/${currency} = ₹${inr(values.total).toLocaleString("en-IN")}.`
       : "";
-    const notes = [fxNote, values.notes?.trim()].filter(Boolean).join(" ") || null;
+    const notes = [fxNote, values.notes?.trim(), buyerNote].filter(Boolean).join(" ") || null;
 
     // Link to the vendors master — reuse the picked vendor, else find-or-create
     // one from the typed name (keeps the master clean + dedup'd).
@@ -413,6 +471,7 @@ export function AddVendorBillDialog({
               </Button>
               <input
                 ref={fileRef}
+                id="vendor-bill-file"
                 type="file"
                 accept="image/*,application/pdf"
                 className="hidden"
@@ -429,9 +488,10 @@ export function AddVendorBillDialog({
                 <Icon name="alert" size={12} /> {aiError}
               </p>
             )}
+            {aiBuyer && <div className="mt-2"><BillReadWarnings buyer={aiBuyer} proforma={false} /></div>}
             {attachFile && !aiNote && (
               <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-2">
-                <Icon name="file" size={12} /> {attachFile.name} — bill ke saath attach hoga
+                <Icon name="file" size={12} /> {attachFile.name} — will be attached to the bill
               </p>
             )}
           </div>

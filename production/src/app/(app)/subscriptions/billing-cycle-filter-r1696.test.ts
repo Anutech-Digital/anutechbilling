@@ -15,7 +15,9 @@ const src = fs.readFileSync(
 
 describe("R-1696 — /subscriptions filters by billing cycle", () => {
   it("keeps the cycle in ?cycle= with the same hook as ?tab=", () => {
-    expect(src).toMatch(/useUrlChoice<CycleFilter>\("cycle", CYCLE_FILTERS, "all"\)/);
+    // R-1774: the URL also accepts the old quarterly / half_yearly values, read through cycleFromUrl.
+    expect(src).toMatch(/useUrlChoice<CycleUrlValue>\("cycle", CYCLE_URL_VALUES, "all"\)/);
+    expect(src).toMatch(/const cycle: CycleFilter = cycleFromUrl\(cycleRaw\)/);
   });
 
   it("filters the rows with matchesCycle, alongside vendor and search", () => {
@@ -34,7 +36,19 @@ describe("R-1696 — /subscriptions filters by billing cycle", () => {
   it("the row label and tooltip come from subscriptionCycle — never rowTerm directly", () => {
     expect(src).not.toMatch(/rowTerm\(s\.billing_cycle/);
     expect((src.match(/subscriptionCycle\(s\)/g) ?? []).length).toBeGreaterThanOrEqual(2);
-    expect((src.match(/cycleInvoiceTitle\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    // R-1774: the badge + tooltip (cycleInvoiceTitle) live in ONE component for table and card.
+    expect((src.match(/<SubCycleBadge\b/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((src.match(/cyc=\{cyc\}/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("R-1774: Check term rows open the existing Correct details dialog, from table and card", () => {
+    expect((src.match(/onCorrect=\{\(\) => setEditSub\(s\)\}/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("R-1774: the renewal clock comes from renewalClock (closed rows never read 'overdue')", () => {
+    expect(src).not.toMatch(/renewalDistance\(dl\)/);
+    expect((src.match(/renewalClock\(s, dl\)/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(src).toMatch(/const isUrgent = s\.status === "active" && dl !== null/);
   });
 
   it("Export writes the filtered rows, not every subscription", () => {

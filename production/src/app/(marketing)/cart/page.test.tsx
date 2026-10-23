@@ -11,7 +11,7 @@ import { cartTotals, type CartLine } from "@/site/lib/money";
 import type { CouponStatus } from "@/site/components/cart/CartProvider";
 
 const CODES = ["ANUTECH10", "MIGRATE15"];
-const state: { lines: CartLine[]; coupon: string; status: CouponStatus; rate: number } = { lines: [], coupon: "", status: "empty", rate: 0 };
+const state: { lines: CartLine[]; coupon: string; status: CouponStatus; rate: number; loaded?: boolean } = { lines: [], coupon: "", status: "empty", rate: 0 };
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => {} }) }));
 vi.mock("@/site/components/ui/SiteLink", () => ({ default: ({ children }: { children: React.ReactNode }) => children }));
@@ -19,6 +19,7 @@ vi.mock("@/site/components/cart/DomainYears", () => ({ DomainYears: () => null }
 vi.mock("@/site/components/cart/CartProvider", () => ({
   useCart: () => ({
     lines: state.lines,
+    loaded: state.loaded ?? true,
     coupon: state.coupon,
     couponStatus: state.status,
     setCoupon: () => {},
@@ -76,5 +77,24 @@ describe("a valid code (R-225, R-329)", () => {
     const out = render([hosting], "ANUTECH10", "error");
     expect(out).not.toContain("% off");
     expect(out).toContain("Could not check the code");
+  });
+});
+
+/* R-1502 (Pawan: "the cart doesn't work"): on the way to /cart the page first rendered
+   "Nothing in it yet" — the saved cart is read from the browser only after the page starts —
+   so a buyer (and a tester) saw an empty cart with hosting in it. Until the read is done the
+   page says it is loading, never that the cart is empty. */
+describe("before the saved cart is read (R-1502)", () => {
+  it("does not say the cart is empty", () => {
+    Object.assign(state, { lines: [], coupon: "", status: "empty", rate: 0, loaded: false });
+    const out = renderToStaticMarkup(<CartPage />);
+    expect(out).not.toContain("Nothing in it yet");
+    expect(out).toContain("Loading your cart");
+    state.loaded = undefined;
+  });
+  it("once read, an empty cart still says so", () => {
+    Object.assign(state, { lines: [], loaded: true });
+    expect(renderToStaticMarkup(<CartPage />)).toContain("Nothing in it yet");
+    state.loaded = undefined;
   });
 });

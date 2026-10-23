@@ -49,6 +49,7 @@ import {
   noteProvisioning,
 } from "@/lib/provisioning/provisioning.server";
 import { commandsConfigured, sendEngineCommand } from "@/lib/dms-engine/commands";
+import { billingCustomerIdFor } from "@/lib/dms-engine/billing-customer";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import {
   hostingLineFor,
@@ -143,7 +144,7 @@ async function handle(req: Request) {
 
     const { data: quote } = await admin
       .from("quotes")
-      .select("id, lead_id, customer_name, domain, line_items")
+      .select("id, lead_id, customer_id, customer_name, domain, line_items")
       .eq("id", row.quote_id)
       .eq("tenant_id", row.tenant_id) // service-role client: this IS the tenant boundary
       .maybeSingle();
@@ -175,6 +176,9 @@ async function handle(req: Request) {
     }
 
     const name = splitName(lead?.contact_name || quote.customer_name || email.split("@")[0]);
+    /* R-1771: the ResellerOS customer this order belongs to, so DMS links its account by ID
+       rather than only by the buyer's email. Absent when the quote names no customer. */
+    const billingCustomerId = await billingCustomerIdFor(admin, row.tenant_id, (quote as { customer_id?: string | null }).customer_id);
     const outcome = await sendEngineCommand({
       commandId: provisionCommandId(row.id),
       command: "hosting.provision",
@@ -183,7 +187,7 @@ async function handle(req: Request) {
       payload: {
         planId: plan!.planId,
         months: plan!.months,
-        customer: { ...name, email, ...normalisePhone(lead?.contact_phone ?? ""), companyName: lead?.company || quote.customer_name || undefined },
+        customer: { ...name, email, ...normalisePhone(lead?.contact_phone ?? ""), companyName: lead?.company || quote.customer_name || undefined, ...(billingCustomerId ? { billingCustomerId } : {}) },
         /* Said as it is: DMS refuses a TEST payment unless its own local-only switch is on. */
         paymentMode: row.payment_mode === "test" ? "test" : "live",
         sourceRef: row.quote_id,

@@ -33,6 +33,10 @@ export const BILL_PROMPT =
   '  "document_type": string|null,      // "tax_invoice", "proforma" (Proforma / Pro-forma Invoice, quotation) or "other", from the document\'s own title\n' +
   '  "vendor_name": string|null,        // the SUPPLIER who issued the bill (the seller, NOT the buyer)\n' +
   '  "vendor_gstin": string|null,       // 15-char India GST/VAT registration of the supplier if printed\n' +
+  /* R-1767 (22 Oct 2026): a bill "Bill To" ANOTHER company was saved in ours with no warning —
+     the reader never read the buyer. The extract-bill route compares it with our own GSTIN/name. */
+  '  "buyer_name": string|null,         // the BUYER the bill is addressed to: the "Bill To" / "Billed To" / "Buyer" block. NEVER the seller\n' +
+  '  "buyer_gstin": string|null,        // 15-char GSTIN printed in that Bill To / Buyer block (null if none). NEVER the seller\'s GSTIN\n' +
   '  "bill_no": string|null,            // the invoice/bill number\n' +
   '  "bill_date": string|null,          // invoice/issue date as YYYY-MM-DD\n' +
   '  "currency": string|null,           // ISO code of the amounts on the bill: "INR", "USD", etc.\n' +
@@ -89,7 +93,8 @@ export const BILL_PROMPT =
   "A single foreign 'GST - India' / 'VAT' line goes in igst. " +
   "CREDIT lines are NEGATIVE: a refund / 'unused time' / proration credit / discount row must have a NEGATIVE amount (and negative unit_price), e.g. -61.41 — never 0. " +
   "The line_items amounts must sum to the pre-tax subtotal (total minus tax), so keep signs correct. " +
-  "vendor_name is the SELLER, never the reseller/buyer.";
+  "vendor_name is the SELLER, never the reseller/buyer. buyer_name / buyer_gstin are the BUYER from " +
+  "the 'Bill To' / 'Billed To' / 'Buyer' block, never the seller's name or GSTIN; null when the bill shows no buyer.";
 
 /** Types Gemini vision can read. Anything else is refused before the call. */
 export const READABLE_BILL_MIME = /^(image\/(png|jpe?g|webp|heic|heif)|application\/pdf)$/i;

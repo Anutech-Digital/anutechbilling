@@ -8,6 +8,7 @@
 
 // A single line on the bill (product/service the supplier charged for).
 import { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
+import { normaliseCompanyName } from "./buyer-check";
 
 export interface ExtractedLine {
   description?: string | null;
@@ -49,6 +50,9 @@ export interface ExtractedBill {
   paid_status?: string | null;
   /** R-1744: how it was paid, as printed ("UPI", "Credit card", "Net banking") — only with paid. */
   payment_mode?: string | null;
+  /** R-1767: who the bill is addressed to ("Bill To" / "Billed To" / "Buyer") — never the seller. */
+  buyer_name?:  string | null;
+  buyer_gstin?: string | null;
 }
 
 /**
@@ -195,6 +199,22 @@ export function normalisePaymentMode(v: unknown): "upi" | "card" | "bank_transfe
   return null;
 }
 
+/**
+ * R-1767: the buyer as read, or nulls. A "buyer" with the seller's own GSTIN or name is the
+ * model confusing the two — dropped, because a false "addressed to another company" alarm is
+ * worse than none.
+ */
+function sanitizeBuyer(ai: ExtractedBill): { buyer_name: string | null; buyer_gstin: string | null } {
+  const name  = (ai.buyer_name ?? "").toString().trim() || null;
+  const gstin = (ai.buyer_gstin ?? "").toString().trim().toUpperCase() || null;
+  const vGstin = (ai.vendor_gstin ?? "").toString().trim().toUpperCase();
+  const vName  = normaliseCompanyName(ai.vendor_name);
+  if ((gstin && gstin === vGstin) || (name && vName && normaliseCompanyName(name) === vName)) {
+    return { buyer_name: null, buyer_gstin: null };
+  }
+  return { buyer_name: name, buyer_gstin: gstin };
+}
+
 export function sanitizeExtractedBill(ai: ExtractedBill) {
   const lines = Array.isArray(ai.line_items) ? ai.line_items : [];
   const line_items = lines
@@ -233,5 +253,7 @@ export function sanitizeExtractedBill(ai: ExtractedBill) {
     item_short:   (ai.item_short ?? "").toString().trim().slice(0, 40) || null,
     paid_status:  normalisePaidStatus(ai.paid_status),
     payment_mode: normalisePaidStatus(ai.paid_status) === "paid" ? normalisePaymentMode(ai.payment_mode) : null,
+    /* R-1767 — who the bill is addressed to; the route compares it with our own company. */
+    ...sanitizeBuyer(ai),
   };
 }

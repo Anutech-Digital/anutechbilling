@@ -63,7 +63,8 @@ describe("quote builder wiring (R-1667)", () => {
     expect(src).not.toMatch(/kl\.includes\(lpLower\)/);
     expect(src).toMatch(/matchCatalogItemForPlan\(\s*Object\.keys\(PLAN_PRICE_PER_SEAT_PM\)/);
   });
-  it("no match → the line stays empty and a warning says so", () => {
-    expect(src).toMatch(/did not match one catalogue item — line left empty/);
+  it("no match → the line stays empty and the page says so (R-1765: on screen, not a fading toast)", () => {
+    expect(src).toMatch(/setPlanNotInItems\(leadPlan\)/);
+    expect(src).toMatch(/is not in your Items — pick the item/);
   });
 });

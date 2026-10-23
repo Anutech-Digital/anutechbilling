@@ -91,7 +91,7 @@ function flexRate(prices: ItemPrices | null): number | null {
   return m && typeof m.msrp === "number" && m.msrp > 0 ? m.msrp : null;
 }
 
-interface CatalogRow {
+export interface CatalogRow {
   id: string | null;
   name: string | null;
   vendor: string | null;
@@ -133,7 +133,15 @@ export async function loadSalesCatalog(
     return [];
   }
 
-  const rows = (data ?? []) as CatalogRow[];
+  return catalogueFromRows((data ?? []) as CatalogRow[]);
+}
+
+/**
+ * The `items` rows → what the agent may quote. Shared by loadSalesCatalog (supabase client) and
+ * Cold Calling (R-1662, read through Prisma), so both paths convert units and withhold
+ * below-cost items the same way.
+ */
+export function catalogueFromRows(rows: readonly CatalogRow[]): SalesCatalogEntry[] {
   return rows.flatMap((r): SalesCatalogEntry[] => {
     if (!r.id || !r.name || typeof r.msrp !== "number" || r.msrp <= 0) return [];
 

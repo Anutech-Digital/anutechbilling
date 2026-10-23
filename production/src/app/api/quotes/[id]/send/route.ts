@@ -43,9 +43,13 @@ import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
 import { buildCustomerQuoteHtml } from "@/lib/email/quote-template";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
+import { loadQuotePeriodContext } from "@/lib/quotes/line-period-context";
+import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import {
   parseQuoteTemplate, proformaBank, quoteTemplateFileName, quoteTemplateNoun, PROFORMA_NOTICE,
 } from "@/lib/pdf/quote-template";
@@ -110,6 +114,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       id, tenant_id, customer_id, customer_name, plan, seats, amount,
       status, payment_status, line_items, subtotal, discount_pct, tax_rate,
       created_date, expires_date, notes, is_renewal, is_add_seats, is_one_off, is_extension, extension_months, public_token, lead_id,
+      domain, renewal_term_date, renewal_subscription_id,
       prospect_state_code, prospect_country, currency, terms_conditions,
       billing_cycle, exchange_rate, invoice_id,
       approval_status, approval_tier, approval_requested_by, approved_by,
@@ -193,6 +198,8 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   const tax         = quoteDisplayTax(taxable, taxRate, quote.amount); // R-804
   const total       = quote.amount ?? taxable + tax;
   const lineItems   = (quote.line_items ?? []) as QuoteLineItem[];
+  /* R-1764: each subscription line's "Domain:" / "Subscription period:" (email + PDF). */
+  const periodContext = await loadQuotePeriodContext(supabase, quote);
 
   // Build the accept/pay link from the ACTUAL host the request came in on, not
   // NEXT_PUBLIC_APP_URL — that's baked at build time to a domain that may not be
@@ -265,7 +272,8 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
     totalAmount: total,
     expiresDate: quote.expires_date,
     acceptUrl: customerUrl,
-    lineItems: lineItems.map((li) => ({ name: li.name, qty: li.qty, rate: li.rate })),
+    /* R-1764: the email's lines say the domain and the period too, as the PDF does. */
+    lineItems: lineItems.map((li) => ({ name: li.name, qty: li.qty, rate: li.rate, notes: lineDetailNotes(li, periodContext) })),
     documentLabel: proforma ? docNoun : undefined,
   });
 
@@ -308,6 +316,8 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       // GST head derived from seller (tenant) vs buyer (customer) state. (audit #18-20)
       interState:    pos.interState,
       isExport:      pos.isExport,
+      /* R-1532: a Bill of Supply business's 0% quote — "No GST — Bill of Supply", no heads. */
+      billOfSupply:  pos.isExport ? null : quoteDocBillOfSupply(await readTenantGstRegistration(supabase, me.tenant_id), taxRate),
       /* R-376 (f): "Haryana (06) · IGST" — state name and code, not just the head. */
       placeOfSupply: pos.label,
       validityDays:  30,
@@ -325,6 +335,7 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
         isExtension: quote.is_extension, extensionMonths: quote.extension_months,
       }),
       extensionTitle: extensionTitle({ isExtension: quote.is_extension, extensionMonths: quote.extension_months }),
+      periodContext,
     });
     const arrBuf = await blob.arrayBuffer();
     attachments = [{

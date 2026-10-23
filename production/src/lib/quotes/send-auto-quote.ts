@@ -32,6 +32,7 @@
 import { sendCustomerEmail } from "@/lib/messaging";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { renderQuotePDF } from "@/lib/pdf";
+import { quoteLinePeriodContext } from "@/lib/quotes/service-period";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { rupee } from "@/lib/utils";
 import { quoteEmailBody } from "@/lib/email/quote-body";
@@ -40,6 +41,8 @@ import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import type { createAdminClient } from "@/lib/supabase/server";
 import type { QuoteLineItem, BillingCycle } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteDocBillOfSupply } from "./bill-of-supply";
 
 export interface SendAutoQuoteArgs {
   tenantId: string;
@@ -169,6 +172,8 @@ export async function sendAutoQuote(
      the operator would see in the app — a PDF that disagrees with the row by a rupee is a
      conversation nobody wants to have with a customer. */
   const total = quote.amount ?? taxable + tax;
+  /* R-1532: a Bill of Supply business's 0% quote — "No GST — Bill of Supply", no heads. */
+  const billOfSupply = quoteDocBillOfSupply(await readTenantGstRegistration(admin, args.tenantId), taxRate);
 
   let attachments: { filename: string; content: Buffer; contentType: string }[] | undefined;
   try {
@@ -196,6 +201,7 @@ export async function sendAutoQuote(
       discount,
       taxable,
       taxRate,
+      billOfSupply,
       tax,
       total,
       /* No customer record on a lead-quote, so there is no buyer state to compare — the
@@ -209,6 +215,8 @@ export async function sendAutoQuote(
          line's commitment — "annual, billed monthly" printed as one yearly total while the
          covering letter (quote-body.ts) printed per month. Both now read the same cycle. */
       billingCycle:  (quote.billing_cycle ?? undefined) as BillingCycle | undefined,
+      /* R-1764: "Subscription period:" under each subscription line (a new lead quote). */
+      periodContext: quoteLinePeriodContext(quote),
     });
     attachments = [{
       filename:    `Quote-${quote.id}.pdf`,
@@ -274,6 +282,7 @@ quoteEmailBody({
       /* Lead-quote par customer ka record nahi hota, to place of supply tenant ka apna hai —
          wahi jawab jo PDF me jata hai. */
       interState:   false,
+      billOfSupply,
       createdDate:  quote.created_date,
       expiresDate:  quote.expires_date,
       /* ── VAADE, TATHYA NAHI ─────────────────────────────────────────────────

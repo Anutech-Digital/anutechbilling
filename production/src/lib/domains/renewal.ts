@@ -29,6 +29,8 @@ import { rcConfigured, rcTldPricing } from "@/lib/resellerclub";
 import { splitDomain } from "@/lib/domains/live-lookup";
 import { domainLineYears, isDomainPurchaseLine } from "@/lib/provisioning/products";
 import { istToday, toIstDate, utcDateISO } from "@/lib/dates/ist";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteStartTaxRate } from "@/lib/quotes/bill-of-supply";
 
 type SupabaseAdmin = SupabaseClient<Database>;
 
@@ -205,7 +207,8 @@ export async function createDomainRenewalQuote(input: DomainRenewalQuoteInput): 
     return null;
   }
 
-  let taxRate = 18;
+  /* R-1532: a business that issues a Bill of Supply renews at 0% (R-1529 refuses GST on it). */
+  let taxRate = quoteStartTaxRate(await readTenantGstRegistration(supabase, input.tenantId));
   if (input.customerId) {
     const { data: cust } = await supabase.from("customers").select("country").eq("id", input.customerId).maybeSingle();
     if (isExportSupply(cust?.country)) taxRate = 0;

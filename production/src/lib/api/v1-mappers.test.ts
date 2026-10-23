@@ -86,6 +86,17 @@ describe("mapSubscription", () => {
   it("detects a monthly term from a short date span", () => {
     expect(mapSubscription({ ...base, renewal_date: "2026-02-01" }).plan).toBe("monthly");
   });
+  it("R-1770: names the domain and vendor (DMS shows which domain the plan is for)", () => {
+    const m = mapSubscription({ ...base, domain: "acme.in", vendor: "google" } as SubscriptionRow);
+    expect(m.domain).toBe("acme.in");
+    expect(m.vendor).toBe("google");
+    expect(mapSubscription({ ...base, domain: null, vendor: "microsoft" } as SubscriptionRow).domain).toBeNull();
+  });
+  it("R-1770: old fields stay as they were (DMS still reads the old shape)", () => {
+    const m = mapSubscription({ ...base, domain: "acme.in", vendor: "google" } as SubscriptionRow);
+    expect(m).toMatchObject({ id: "SUB-1", product: base.plan, plan: "annual", seats: 25, status: "active",
+      start_date: "2026-01-01", renewal_date: "2027-01-01", amount: 300000, currency: "INR" });
+  });
 });
 
 describe("mapInvoice", () => {
@@ -119,6 +130,16 @@ describe("mapQuote", () => {
     expect(mapQuote(base, "x")).not.toHaveProperty("renews");
     expect(mapQuote(base, "x", null, []).renews).toEqual([]);
     expect(mapQuote(base, "x", null, [{ vendor: "hosting", domain: "acme.in" }]).renews).toEqual([{ vendor: "hosting", domain: "acme.in" }]);
+  });
+  it("R-1770: carries valid_until (the quote's expiry date) and title (the plan the quote is named by)", () => {
+    const m = mapQuote({ ...base, expires_date: "2026-11-05", plan: "Google Workspace Business Starter" } as QuoteRow, "x");
+    expect(m.valid_until).toBe("2026-11-05");
+    expect(m.title).toBe("Google Workspace Business Starter");
+  });
+  it("R-1770: no expiry / blank plan → null, never a made-up date or name", () => {
+    const m = mapQuote({ ...base, expires_date: null, plan: "  " } as QuoteRow, "x");
+    expect(m.valid_until).toBeNull();
+    expect(m.title).toBeNull();
   });
 });
 

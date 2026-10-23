@@ -32,6 +32,7 @@ import type { createAdminClient } from "@/lib/supabase/server";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { isOneTimeQuote } from "@/lib/quotes/service-period";
+import { loadQuotePeriodContext } from "@/lib/quotes/line-period-context";
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -49,7 +50,7 @@ export async function quotePdfAttachment(
   try {
     const { data: q } = await admin
       .from("quotes")
-      .select("id, customer_name, line_items, subtotal, discount_pct, tax_rate, amount, notes, is_renewal, is_add_seats, is_one_off, billing_cycle")
+      .select("id, customer_name, line_items, subtotal, discount_pct, tax_rate, amount, notes, is_renewal, is_add_seats, is_one_off, billing_cycle, is_extension, extension_months, renewal_term_date, renewal_subscription_id, created_date, domain")
       .eq("id", quoteId)
       .eq("tenant_id", tenantId)
       .maybeSingle();
@@ -59,6 +60,10 @@ export async function quotePdfAttachment(
       subtotal: number | null; discount_pct: number | null; tax_rate: number | null;
       amount: number | null; notes: string | null; is_renewal: boolean | null;
       billing_cycle: string | null; is_add_seats: boolean | null; is_one_off: boolean | null;
+      /* R-1764: what the lines' "Domain:" / "Subscription period:" are read from. */
+      is_extension?: boolean | null; extension_months?: number | null;
+      renewal_term_date?: string | null; renewal_subscription_id?: string | null;
+      created_date?: string | null; domain?: string | null;
     } | null;
     if (!quote) return null;
 
@@ -111,6 +116,7 @@ export async function quotePdfAttachment(
       notes:         quote.notes ?? undefined,
       isRenewal:     quote.is_renewal ?? false,
       oneTime:       isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off }),
+      periodContext: await loadQuotePeriodContext(admin, { ...quote, tenant_id: tenantId }),
     });
 
     return {
