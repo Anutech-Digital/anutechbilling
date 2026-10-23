@@ -46,9 +46,11 @@ import { z } from "zod";
 import Razorpay from "razorpay";
 import { createAdminClient } from "@/lib/supabase/server";
 import { loadCheckoutRazorpayKeys } from "./razorpay-keys.server";
-import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { lookupDomains, splitDomain } from "@/lib/domains/live-lookup";
-import { MAILBOX_YR } from "@/site/lib/data/domains-landing";
+/* R-1786: hosting and mailbox prices come from the price book — the code prices with
+   CATALOG_FROM_DB off (today), the `items` rows with it on (missing row → code price, logged). */
+import { codePriceBook, type PriceBook } from "@/lib/catalog/catalog-prices";
+import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
 import { applyCartCoupon } from "./cart-coupon";
 import { normalisePhone, splitName, type Registrant } from "@/lib/provisioning/domain-registration";
 import { isTrialPlan, TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
@@ -56,7 +58,7 @@ import { startHostingTrial } from "@/lib/hosting/start-trial";
 import { trialsConfigured, TRIALS_PAUSED_MESSAGE } from "@/lib/dms-engine/trials";
 import { hostingLimitProblem } from "./hosting-limit";
 import { hostingDomain, planDomains, BUY_A_DOMAIN_HREF } from "./hosting-domain";
-import { hostingRate } from "./hosting-prices";
+import { hostingRateIn } from "./hosting-prices";
 import { bundleAllowance, FREE_DOMAIN_TLDS_LABEL } from "./hosting-bundle";
 import { buyPageTenantId, buyPageTenantIdOrEmpty, BuyPageTenantMissingError, simulatedPaymentAllowed } from "./live-guards";
 import { issueInvoiceForOnlinePayment } from "./online-invoice.server";
@@ -171,15 +173,16 @@ const newId = () => globalThis.crypto?.randomUUID() ?? Math.random().toString(36
  * Re-price one line from its sku against the server's OWN source of truth.
  * Returns null for anything we can't price server-side.
  *
- *   hosting:<tier>   → HOSTING_TIERS (whole rupees)
+ *   hosting:<tier>   → the price book's tiers (whole rupees; R-1786)
  *   domain:<tld>     → null here; priced live per name in priceDomainLines() (R-1603: the
  *                      old "TLDS reg price" note was stale). The ₹0 bundle is NOT applied here — it is
  *                      applied after the whole cart is priced, and ONLY when a
  *                      yearly hosting line is present. A client that sends ₹0 for
  *                      a bare domain still gets charged the real reg price.
- *   mailbox:anutech  → MAILBOX_YR. One unit free per yearly plan (R-1595, hosting-bundle.ts).
+ *   mailbox:anutech  → the book's mailboxYearly (MAILBOX_YR with the flag off). One unit free
+ *                      per yearly plan (R-1595, hosting-bundle.ts).
  */
-function repriceLine(sku: string | undefined, cycle: string | undefined, qty: number): Repriced | null {
+function repriceLine(sku: string | undefined, cycle: string | undefined, qty: number, book: PriceBook = codePriceBook()): Repriced | null {
   if (!sku) return null;
   const s = sku.toLowerCase();
   const yearly = cycle !== "monthly";
@@ -187,9 +190,9 @@ function repriceLine(sku: string | undefined, cycle: string | undefined, qty: nu
   const h = /^hosting:(starter|standard|plus)$/.exec(s);
   if (h) {
     const tier = h[1];
-    const t = HOSTING_TIERS.find((x) => x.name.toLowerCase() === tier);
+    const t = book.tiers.find((x) => x.name.toLowerCase() === tier);
     // The one rate DMS also shows (lib/checkout/hosting-prices.ts, /api/public/hosting-prices).
-    const rate = t ? hostingRate(tier, yearly) : null;
+    const rate = t ? hostingRateIn(book.tiers, tier, yearly) : null;
     if (!t || rate === null) return null;
     // No `domain` on this line, on purpose: provisioning reads any line's `domain` as a
     // domain to REGISTER (lib/provisioning/products.ts). The subscription takes the
@@ -201,7 +204,7 @@ function repriceLine(sku: string | undefined, cycle: string | undefined, qty: nu
   if (/^domain:/.test(s)) return null;
 
   if (s === "mailbox:anutech") {
-    return { kind: "mailbox", yearly: true, line: { id: newId(), name: "Mailbox — Anutech Mail, 1 year", qty, rate: Math.round(MAILBOX_YR), cost: 0 } };
+    return { kind: "mailbox", yearly: true, line: { id: newId(), name: "Mailbox — Anutech Mail, 1 year", qty, rate: Math.round(book.mailboxYearly), cost: 0 } };
   }
 
   return null;
@@ -443,6 +446,7 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
     const mailboxLines: QuoteLine[] = []; // R-1595: one unit free per yearly plan, the rest charged
     const firstYearOf = new Map<QuoteLine, number>(); // domain line → its 1-year price (R-156)
     const domainPricing = await priceDomainLines(lines);
+    const book = await getPriceBook(BUY_PAGE_TENANT_ID); // R-1786: one book for the whole cart
     const domainNames: string[] = [];
     const domainLineSet: QuoteLine[] = []; // every domain:* line, priced by priceDomainLines
     /* Each hosting line with what was typed for it, in cart order (one domain per plan). */
@@ -459,7 +463,7 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
         if (dp.line.domain) domainNames.push(dp.line.domain);
         continue;
       }
-      const r = repriceLine(l.sku, l.cycle, l.qty);
+      const r = repriceLine(l.sku, l.cycle, l.qty, book);
       if (!r) { unpriced.push(l.label || l.sku || "an item"); continue; }
       items.push(r.line);
       if (r.kind === "hosting") {

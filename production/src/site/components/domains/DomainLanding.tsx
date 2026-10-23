@@ -24,6 +24,7 @@
  *     server (getSiteTldPrices, R-1599) and passed in as `tlds`. A TLD with no live price
  *     shows "Price at search" — the placeholder figures in catalog.ts TLDS are never printed.
  *   · Hosting prices come from HOSTING_TIERS — the SAME source the cart's
+ *     (R-1786: or the `tiers` / `mailboxYearly` the server page passes from the price book)
  *     server-side checkout re-prices against (sku `hosting:<tier>`), so the ₹0
  *     the page shows is the ₹0 the server charges. The domain line carries
  *     sku `domain:<tld>`; the server zeroes it only when a yearly hosting line
@@ -41,7 +42,7 @@ import { useCart } from "@/site/components/cart/CartProvider";
 import { searchDomains, normaliseName, domainHelpLinks, TEST_PRICE_LABEL, type DomainResult } from "@/site/lib/domain-search";
 import type { SiteTld } from "@/site/lib/live-tld-pricing";
 import { PRICE_AT_SEARCH, tldCell } from "@/site/lib/rate-card";
-import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
+import { HOSTING_TIERS, type HostingTier } from "@/site/lib/data/hosting-landing-v2";
 import { SLA } from "@/site/lib/config";
 import { freeDomainEligible, FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
 import { domainOffer } from "./domain-offer";
@@ -81,7 +82,7 @@ const RATE_FILTERS: { key: string; label: string; groups: SiteTld["group"][] }[]
  * @param tlds the live rate card (server: getSiteTldPrices) — the only domain prices this
  *   page prints besides the search result's own live price.
  */
-export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
+export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAILBOX_YR }: { tlds: readonly SiteTld[]; tiers?: readonly HostingTier[]; mailboxYearly?: number }) {
   /* The rows indexed by extension for the result card's renewal + the hero arithmetic. */
   const tldByExt = useMemo(() => new Map(tlds.map((t) => [t.tld, t])), [tlds]);
   const anchorTld = tldByExt.get(ANCHOR_TLD) ?? null;
@@ -151,8 +152,8 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
     [results, primary],
   );
 
-  const tier = HOSTING_TIERS.find((t) => t.name === planName) ?? HOSTING_TIERS[0];
-  const anchorTier = HOSTING_TIERS.find((t) => t.name === ANCHOR_TIER) ?? HOSTING_TIERS[0];
+  const tier = tiers.find((t) => t.name === planName) ?? tiers[0];
+  const anchorTier = tiers.find((t) => t.name === ANCHOR_TIER) ?? tiers[0];
   /* R-1599: the result's own live price (what the checkout charges, whole rupees) — never a
      rate-card fallback; unknown stays null and the card says so. Renewal: the live rate card. */
   const domainReg = primary?.priceKnown && primary.price > 0 ? Math.round(primary.price) : null;
@@ -167,12 +168,12 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
      touches the Yearly/Monthly choice. */
   const bundle = useMemo(() => domainOffer({
     domain: primary?.domain ?? "", tld, domainReg, domainRenew, yearPrices: primary?.prices,
-    testPrice: primary?.testPrice, tier, yearly, mailOn, hostingOn: true,
-  }), [primary, tld, domainReg, domainRenew, tier, yearly, mailOn]);
+    testPrice: primary?.testPrice, tier, yearly, mailOn, hostingOn: true, mailboxYearly,
+  }), [primary, tld, domainReg, domainRenew, tier, yearly, mailOn, mailboxYearly]);
   const domainOnly = useMemo(() => domainOffer({
     domain: primary?.domain ?? "", tld, domainReg, domainRenew, yearPrices: primary?.prices,
-    testPrice: primary?.testPrice, tier, yearly, mailOn, hostingOn: false,
-  }), [primary, tld, domainReg, domainRenew, tier, yearly, mailOn]);
+    testPrice: primary?.testPrice, tier, yearly, mailOn, hostingOn: false, mailboxYearly,
+  }), [primary, tld, domainReg, domainRenew, tier, yearly, mailOn, mailboxYearly]);
   const chosen = hostingOn ? bundle : domainOnly;
   const planFree = yearly; // a yearly plan: one mailbox free
   const bundleFree = bundle.domainFree; // the only state where the domain is ₹0
@@ -277,7 +278,7 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
                   hostingOn={hostingOn} setHostingOn={setHostingOn}
                   planName={planName} setPlanName={setPlanName}
                   term={term} setTerm={setTerm} mailOn={mailOn} setMailOn={setMailOn}
-                  tier={tier}
+                  tier={tier} tiers={tiers} mailboxYearly={mailboxYearly}
                   bundleFree={bundleFree} planFree={planFree} total={chosen.total} saved={chosen.saved}
                   onAdd={addToCart}
                   alternates={alternates} onAddAlt={(d) => { const ext = tlds.find((t) => d.domain.endsWith(t.tld))?.tld; if (ext) setTld(ext); }}
@@ -564,7 +565,7 @@ function ResultBlock(p: {
   hostingOn: boolean; setHostingOn: (v: boolean) => void;
   planName: string; setPlanName: (v: string) => void;
   term: Term; setTerm: (v: Term) => void; mailOn: boolean; setMailOn: (v: boolean) => void;
-  tier: (typeof HOSTING_TIERS)[number];
+  tier: HostingTier; tiers: readonly HostingTier[]; mailboxYearly: number;
   bundleFree: boolean; planFree: boolean; total: number | null; saved: number; onAdd: () => void;
   alternates: DomainResult[]; onAddAlt: (d: DomainResult) => void;
 }) {
@@ -658,7 +659,7 @@ function ResultBlock(p: {
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "repeat(3, 1fr)", gap: 10, marginTop: 12 }}>
-            {HOSTING_TIERS.map((t) => {
+            {p.tiers.map((t) => {
               const on = planName === t.name;
               return (
                 <button key={t.name} onClick={() => setPlanName(t.name)} aria-pressed={on}
@@ -678,7 +679,7 @@ function ResultBlock(p: {
           <div style={{ display: "flex", alignItems: "center", gap: 13, background: C.paper, border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 14px", marginTop: 12 }}>
             <Switch on={mailOn} onToggle={() => setMailOn(!mailOn)} color={C.accent} off={C.line} />
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14.5, fontWeight: 600, color: C.ink }}>Add one mailbox on {primary.domain} — {planFree ? "free with the plan" : `${inr(MAILBOX_YR_CONST)}/yr`}</div>
+              <div style={{ fontSize: 14.5, fontWeight: 600, color: C.ink }}>Add one mailbox on {primary.domain} — {planFree ? "free with the plan" : `${inr(p.mailboxYearly)}/yr`}</div>
               <div style={{ fontSize: 13, color: C.muted }}>you@{primary.domain}, Anutech Mail. Follows the plan — drops if you switch to domain-only.</div>
             </div>
           </div>
@@ -764,4 +765,3 @@ const C_TYPE = {} as {
   line: string; lineSoft: string; accent: string; accentDark: string; accentLight: string; accSurf: string; accSurf2: string;
   accBorder: string; success: string; successSurf: string; successBorder: string; dot: string; warn: string; darkCard: string; darkBorder: string;
 };
-const MAILBOX_YR_CONST = MAILBOX_YR;

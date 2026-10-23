@@ -25,7 +25,8 @@ describe("hosting prices — one computation for checkout and the DMS panel", ()
   });
   it("checkout charges through hostingRate, not its own formula", () => {
     const src = readFileSync(join(process.cwd(), "src/lib/checkout/cart-checkout.ts"), "utf8");
-    expect(src).toMatch(/hostingRate\(tier, yearly\)/);
+    // R-1786: the same rule over the price book's tiers (= HOSTING_TIERS with CATALOG_FROM_DB off).
+    expect(src).toMatch(/hostingRateIn\(book\.tiers, tier, yearly\)/);
     expect(src).not.toMatch(/Math\.round\(yearly \? t\.yearlyTotal : t\.monthly\)/);
   });
   it("the public endpoint publishes the table with the GST rate", async () => {

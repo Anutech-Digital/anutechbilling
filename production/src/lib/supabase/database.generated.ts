@@ -6750,57 +6750,78 @@ export type Database = {
         Row: {
           covered_product: string | null
           created_at: string
+          engine_ref: string | null
+          fulfilment: string | null
+          gst_rate: number
           hsn: string | null
           id: string
           is_active: boolean
           is_partner_visible: boolean
+          is_public: boolean
           item_type: string
           kind: string
           margin_pct: number | null
           msrp: number
           name: string
           partner_price: number | null
+          price_source: string
           prices: Json
+          sku: string | null
           synced_from_partner_id: string | null
           tenant_id: string
+          term_months: number | null
           vendor: Database["public"]["Enums"]["vendor"]
           wholesale: number
         }
         Insert: {
           covered_product?: string | null
           created_at?: string
+          engine_ref?: string | null
+          fulfilment?: string | null
+          gst_rate?: number
           hsn?: string | null
           id: string
           is_active?: boolean
           is_partner_visible?: boolean
+          is_public?: boolean
           item_type?: string
           kind?: string
           margin_pct?: number | null
           msrp: number
           name: string
           partner_price?: number | null
+          price_source?: string
           prices?: Json
+          sku?: string | null
           synced_from_partner_id?: string | null
           tenant_id: string
+          term_months?: number | null
           vendor: Database["public"]["Enums"]["vendor"]
           wholesale: number
         }
         Update: {
           covered_product?: string | null
           created_at?: string
+          engine_ref?: string | null
+          fulfilment?: string | null
+          gst_rate?: number
           hsn?: string | null
           id?: string
           is_active?: boolean
           is_partner_visible?: boolean
+          is_public?: boolean
           item_type?: string
           kind?: string
           margin_pct?: number | null
           msrp?: number
           name?: string
           partner_price?: number | null
+          price_source?: string
           prices?: Json
+          sku?: string | null
           synced_from_partner_id?: string | null
           tenant_id?: string
+          term_months?: number | null
           vendor?: Database["public"]["Enums"]["vendor"]
           wholesale?: number
         }

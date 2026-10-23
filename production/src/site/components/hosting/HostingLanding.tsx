@@ -12,7 +12,8 @@
  * etc. is never lost. So this component renders only its own body (hero → final
  * CTA); in-page navigation is the quick-jump strip. "Start free trial" leads to
  * the cart as a ₹0 trial line (no form in between); "Buy now" adds the plan to the cart.
- * Prices come from LANDING_PLANS via HOSTING_TIERS.
+ * Prices come from LANDING_PLANS via HOSTING_TIERS, or (R-1786, CATALOG_FROM_DB on) from the
+ * `tiers` the server page passes in, read from the `items` catalogue.
  *
  * Responsive is driven off a measured window width (`w`), exactly as the
  * prototype did; SSR and the first client render both use 1200 (desktop), so
@@ -43,6 +44,7 @@ import {
   HOSTING_FAQS_V2,
   WHATSAPP_URL,
   TRIAL_DAYS,
+  type HostingTier,
 } from "@/site/lib/data/hosting-landing-v2";
 
 
@@ -60,7 +62,7 @@ const SERIF = "var(--hf-serif), 'Instrument Serif', serif";
    auto-calculated). Billed and pay-today figures come from hostingCardPrices — the numbers
    checkout charges, not a re-computation with paise. */
 
-export function HostingLanding() {
+export function HostingLanding({ tiers = HOSTING_TIERS }: { tiers?: readonly HostingTier[] } = {}) {
   const [billing, setBilling] = useState<"Monthly" | "Yearly">("Yearly");
   const [sites, setSites] = useState<string | null>(null);
   const [traffic, setTraffic] = useState<string | null>(null);
@@ -95,7 +97,7 @@ export function HostingLanding() {
     }
   }
 
-  const plans = HOSTING_TIERS.map((p) => {
+  const plans = tiers.map((p) => {
     const isRec = p.name === rec;
     const isTop = isRec || (!rec && p.isPopular);
     const shown = hostingCardPrices(p, yearly);
@@ -132,10 +134,10 @@ export function HostingLanding() {
     router.push("/cart" as never);
   };
   const anchor = plans.find((p) => p.badge) ?? plans[1];
-  const anchorBase = HOSTING_TIERS.find((t) => t.name === anchor.name)!;
+  const anchorBase = tiers.find((t) => t.name === anchor.name)!;
 
   /* Three years incl. GST, as the payments checkout takes: 3 yearly or 36 monthly. */
-  const costRows = HOSTING_TIERS.map((p) => {
+  const costRows = tiers.map((p) => {
     const y = hostingCharge(p, true).inclGst * 3, m = hostingCharge(p, false).inclGst * 36;
     return { name: p.name, yearly: rupee(y), monthly: rupee(m), save: rupee(m - y) };
   });

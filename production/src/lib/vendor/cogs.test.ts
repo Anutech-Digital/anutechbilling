@@ -8,6 +8,8 @@ const item = (over: Partial<Item> = {}): Item => ({
   prices: { annual: { msrp: 270, wholesale: 110 } },
   margin_pct: 0, is_active: true, is_partner_visible: false, partner_price: null,
   synced_from_partner_id: null, created_at: "2026-01-01T00:00:00Z",
+  /* R-1785 catalogue columns (unused by this test). */
+  sku: null, term_months: null, gst_rate: 18, fulfilment: null, engine_ref: null, price_source: "catalog", is_public: false,
   ...over,
 });
 

@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import Link from "@/site/components/ui/SiteLink";
 import { SectionHead } from "@/site/components/ui/bits";
 import { CERTS, MAIL_RATES } from "@/site/lib/data/catalog";
-import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
+import { bookCerts } from "@/lib/catalog/catalog-prices";
+import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
+import { websiteTenantId } from "@/lib/website-tenant";
 import { fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
 import { buildRateCard } from "@/site/lib/rate-card";
 import { getSiteTldPrices } from "@/site/lib/live-tld-pricing";
@@ -26,13 +28,14 @@ export const revalidate = 600;
 
 export default async function RatesPage() {
   /* R-1599: domain rows are the live registry prices the checkout charges, never TLDS. */
-  const [live, tlds] = await Promise.all([fetchLiveWorkspace(), getSiteTldPrices()]);
+  /* R-1786: hosting and SSL rows from the price book (items rows with CATALOG_FROM_DB on). */
+  const [live, tlds, book] = await Promise.all([fetchLiveWorkspace(), getSiteTldPrices(), getPriceBook(websiteTenantId())]);
   const sections = buildRateCard({
     tlds,
-    hosting: HOSTING_TIERS,
+    hosting: book.tiers,
     editions: mergeEditions(live),
     mailRates: MAIL_RATES,
-    certs: CERTS,
+    certs: bookCerts(book, CERTS),
   });
 
   return (

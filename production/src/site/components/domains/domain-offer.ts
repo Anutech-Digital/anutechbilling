@@ -28,6 +28,8 @@ export interface DomainOfferInput {
   tier: Pick<HostingTier, "name" | "monthly" | "yearlyTotal">;
   yearly: boolean;
   mailOn: boolean;
+  /** ₹ one mailbox, one year (R-1786: the price book's figure; default MAILBOX_YR). */
+  mailboxYearly?: number;
 }
 
 export interface DomainOffer {
@@ -76,7 +78,7 @@ export function domainOffer(p: DomainOfferInput): DomainOffer {
       lines.push({
         label: `Mailbox on ${p.domain}`,
         detail: "Anutech Mail · billed yearly",
-        unitPrice: MAILBOX_YR, // full price; the cart frees one per yearly plan (R-1601)
+        unitPrice: p.mailboxYearly ?? MAILBOX_YR, // full price; the cart frees one per yearly plan (R-1601)
         unit: "year",
         cycle: "yearly",
         sku: "mailbox:anutech",

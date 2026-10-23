@@ -5,14 +5,15 @@
  * open /quote on Google Workspace, so SSL looked missing). Free DV is included, not sold.
  */
 import Link from "next/link";
-import { CERTS } from "@/site/lib/data/catalog";
+import { CERTS, type Cert } from "@/site/lib/data/catalog";
 import { sslQuoteHref } from "@/site/lib/data/quote-catalog";
 import { Tick } from "@/site/components/ui/bits";
 
-export function CertCards() {
+/** `certs`: R-1786 — the /ssl page passes the price book's figures (CATALOG_FROM_DB); default = code. */
+export function CertCards({ certs = CERTS }: { certs?: readonly Cert[] } = {}) {
   return (
     <div className="grid-4" style={{ gap: 20 }}>
-      {CERTS.map((c) => {
+      {certs.map((c) => {
         const href = sslQuoteHref(c.name);
         const btn = `btn btn-sm ${c.highlighted ? "btn-primary" : "btn-outline"}`;
         return (

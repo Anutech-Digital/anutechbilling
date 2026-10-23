@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { HostingLanding } from "@/site/components/hosting/HostingLanding";
-import { HOSTING_TIERS, HOSTING_FAQS_V2, HOSTING_FROM_MO, hostingCharge } from "@/site/lib/data/hosting-landing-v2";
+import { HOSTING_FAQS_V2, HOSTING_FROM_MO, hostingCharge, type HostingTier } from "@/site/lib/data/hosting-landing-v2";
+import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
+import { websiteTenantId } from "@/lib/website-tenant";
 import { rupee } from "@/site/lib/money";
 
 /**
@@ -52,7 +54,7 @@ export const metadata: Metadata = {
 };
 
 /** JSON-LD built from the SAME real data the page renders — never a second copy. */
-function structuredData() {
+function structuredData(tiers: readonly HostingTier[]) {
   const organization = {
     "@type": "Organization",
     name: "Anutech Digital Pvt Ltd",
@@ -68,7 +70,7 @@ function structuredData() {
   };
 
   /* R-1465: the whole-rupee yearly figure checkout charges (₹600), not ₹599.88. */
-  const prices = HOSTING_TIERS.map((t) => hostingCharge(t, true).exGst);
+  const prices = tiers.map((t) => hostingCharge(t, true).exGst);
   const product = {
     "@type": "Product",
     name: "Web hosting on Google Cloud",
@@ -81,8 +83,8 @@ function structuredData() {
       priceCurrency: "INR",
       lowPrice: Math.min(...prices),
       highPrice: Math.max(...prices),
-      offerCount: HOSTING_TIERS.length,
-      offers: HOSTING_TIERS.map((t) => ({
+      offerCount: tiers.length,
+      offers: tiers.map((t) => ({
         "@type": "Offer",
         name: `${t.name} hosting (billed yearly)`,
         priceCurrency: "INR",
@@ -106,14 +108,19 @@ function structuredData() {
   return { "@context": "https://schema.org", "@graph": [organization, product, faq] };
 }
 
-export default function HostingPage() {
+/* R-1786: with CATALOG_FROM_DB on, the plan prices are the `items` rows (60 s cache), so an
+   Items page edit reaches this page within a minute. With the flag off: the code prices. */
+export const revalidate = 60;
+
+export default async function HostingPage() {
+  const { tiers } = await getPriceBook(websiteTenantId());
   return (
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData()) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData(tiers)) }}
       />
-      <HostingLanding />
+      <HostingLanding tiers={tiers} />
     </>
   );
 }
