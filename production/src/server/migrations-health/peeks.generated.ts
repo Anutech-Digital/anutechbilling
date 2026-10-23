@@ -164,4 +164,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r1762reaccept", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.accept_quote(text)') and prosrc like '%R-1762%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_r1762_won_lost_rejects_quote()') and prosrc like '%R-1762b%')" },
   { key: "r1763zohobilledinzoho", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscriptions' and column_name = 'billed_externally_until') and exists(select 1 from pg_proc where oid = to_regprocedure('public.zoho_books_import_step(uuid,integer)') and prosrc like '%R-1763%') and to_regprocedure('public.subscription_billings_not_billed_elsewhere()') is not null" },
   { key: "r1766zohoundosmallparts", peek: "exists(select 1 from pg_proc where proname = 'zoho_books_import_undo' and prosrc like '%R-1766%')" },
+  { key: "r1785catalog1", peek: "exists(select 1 from pg_proc where proname = 'sync_hosting_catalog' and prosrc like '%R-1785%') and to_regprocedure('public.seed_core_catalog(uuid)') is not null" },
 ];
