@@ -57,6 +57,7 @@ import { subscriptionCogs, cogsBadge, cogsTotals } from "@/lib/vendor/cogs";
 import { LicenseLeakageCard, leakageRows } from "@/components/features/subscriptions/license-leakage-card";
 import { SubsInsightsStrip } from "@/components/features/subscriptions/subs-insights-strip";
 import { seatsPhrase, manageSeatsIdFromSearch } from "@/components/features/subscriptions/seat-words";
+import { openSubscriptionIdFromSearch } from "./open-link";
 import { useMarginAlerts } from "@/lib/queries/margin-alerts";
 import { SeatRequestsCard } from "@/components/features/subscriptions/seat-requests-card";
 import { useSeatRequests, useAmendments } from "@/lib/queries/seat-requests";
@@ -275,6 +276,25 @@ export default function SubscriptionsPage() {
   }, []);
   const [extendSub,  setExtendSub]   = React.useState<Subscription | null>(null);
   const [scheduleSub, setScheduleSub] = React.useState<Subscription | null>(null);
+  /* R-1433: ?open=<subscription id> — "Open subscription" on an invoice lands here and opens
+     that subscription's drawer. Read once after mount (no useSearchParams: build rule), then
+     dropped from the URL so a refresh does not reopen it; ?q= (its domain) stays as the filter. */
+  const [openFromLink, setOpenFromLink] = React.useState("");
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const id = openSubscriptionIdFromSearch(window.location.search);
+    if (!id) return;
+    setOpenFromLink(id);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("open");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search);
+  }, []);
+  React.useEffect(() => {
+    if (!openFromLink || !subs) return;
+    const sub = subs.find((x) => x.id === openFromLink);
+    setOpenFromLink("");
+    if (sub) setScheduleSub(sub);
+  }, [openFromLink, subs]);
   /** Null = the newest-first default. Set when a column header is clicked. */
   const [sort, setSort] = React.useState<SubSort | null>(null);
   /* First click opens the column the way it is usually asked about; clicking the SAME

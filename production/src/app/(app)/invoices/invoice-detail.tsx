@@ -59,6 +59,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { rupee, formatDate, cleanDisplayName } from "@/lib/utils";
 import type { Invoice, Payment } from "@/lib/supabase/database.types";
 import { IssueCreditNoteDialog } from "@/components/features/invoices/issue-credit-note-dialog";
+import { InvoiceSubscriptionCard } from "./invoice-subscription-card";
 
 export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const router = useRouter();
@@ -331,6 +332,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                 </div>
               )}
             </Card>
+
+            {/* R-1433: the subscription this invoice belongs to (by its quote or instalment). */}
+            <InvoiceSubscriptionCard invoiceId={invoice.id} quoteIds={[invoice.quote_id, quote?.id]} />
 
             {/* 🔽 Collapsible Panel 2: Line Items & HSN/SAC Breakdown */}
             <Card className="overflow-hidden">
