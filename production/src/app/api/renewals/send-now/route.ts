@@ -29,8 +29,12 @@ import {
   decideCadence,
   renewalIsSettled,
   firstReminderDaysOut,
+  effectiveGraceDays,
+  serviceStopDate,
   type CadenceTone,
 } from "@/lib/renewals/cadence";
+import { readGraceOverrides } from "@/lib/renewals/grace-overrides";
+import { formatIstDate } from "@/lib/dates/ist";
 import { renderTemplate } from "@/lib/renewals/templates";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
@@ -150,10 +154,19 @@ export async function POST(req: Request) {
         .single()
     : { data: null };
 
+  /* R-1621: the same grace the nightly run uses — trusted customer, company, "+N days". */
+  const overrides = await readGraceOverrides(supabase, [sub.id], [sub.customer_id]);
+  const graceDays = effectiveGraceDays({
+    tenantGraceDays:  tenant.grace_period_days,
+    trustedGraceDays: sub.customer_id ? overrides.trustedByCustomer.get(sub.customer_id) ?? null : null,
+    renewalDate:      sub.renewal_date,
+    graceUntil:       overrides.bySubscription.get(sub.id)?.graceUntil ?? null,
+  });
+
   // ── Decide cadence; if off-trigger, pick closest tone ───────────
   const decision = decideCadence({
     renewalDate:  sub.renewal_date,
-    graceDays:    tenant.grace_period_days ?? 0,
+    graceDays,
     currentState: (sub.renewal_state ?? "pending") as never,
     /* The cron passes this and this route did not, so a monthly subscription force-sent
        from the screen was judged against the ANNUAL ladder while the same subscription in
@@ -192,7 +205,7 @@ export async function POST(req: Request) {
     mrr:             sub.mrr ?? 0,
     termMonths:      sub.term_months ?? null,
     renewalDate:     sub.renewal_date,
-    graceDays:       tenant.grace_period_days ?? 0,
+    graceDays,
     existingQuoteId: sub.renewal_quote_id,
   });
   /* R-1571: no quote → no email. This went out with an amount made up as mrr × 12 (12x
@@ -254,11 +267,11 @@ export async function POST(req: Request) {
     planName:        sub.plan,
     seats:           sub.seats,
     amount:          renewalQuote.amount,
-    renewalDate:     new Date(sub.renewal_date).toLocaleDateString("en-IN", {
-      day: "numeric", month: "short", year: "numeric",
-    }),
+    renewalDate:     formatIstDate(sub.renewal_date),
     daysUntil:       Math.abs(decision.daysUntilRenewal),
-    graceDays:       tenant.grace_period_days ?? 0,
+    graceDays,
+    /* R-1621: the exact IST day the service stops if still unpaid. */
+    stopDate:        formatIstDate(serviceStopDate(sub.renewal_date, graceDays)),
     acceptLink:      renewalQuoteId && renewalToken
       /* `?? undefined` because quoteAcceptUrl now returns null when NEXT_PUBLIC_APP_URL is
          missing or has no scheme. NO LINK is the right outcome there — the template omits

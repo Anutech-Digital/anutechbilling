@@ -17,7 +17,13 @@
  *   d == 0        → 'final_sent'     final notice + suspension warning
  *   d ∈ (−grace,−1] → 'grace_period' grace reminder (only if grace > 0)
  *   d < −grace    → 'suspended'      auto-suspend, no email
+ *
+ * R-1621: 'suspended' + shouldSuspend means GRACE IS OVER. The cron no longer pauses the
+ * subscription by itself — it raises ONE "Stop service" task for the owner, who stops it
+ * (renewal_grace_decide 'stop') or gives more days. graceDays is effectiveGraceDays().
  */
+
+import { addDaysISO, daysBetweenISO, toIstDate } from "@/lib/dates/ist";
 
 export type RenewalState =
   | "pending"
@@ -108,6 +114,43 @@ export function triggersForTerm(termMonths: number | null | undefined) {
   return termMonths === 1 ? MONTHLY_CADENCE_TRIGGERS : CADENCE_TRIGGERS;
 }
 
+/**
+ * R-1621 — how many grace days THIS subscription gets after its renewal date.
+ *
+ *   trusted customer's own grace (customers.trusted_grace_days, owner/manager set it)
+ *   else the company's grace (tenants.grace_period_days — 7 for a new company)
+ *   and, when the owner pressed "+N days" this term, at least up to subscriptions.grace_until.
+ *
+ * A grace_until on or before the renewal date belongs to an earlier term and is ignored.
+ * The SAME rule is in SQL (raise_renewal_grace_task / renewal_grace_decide, migration
+ * 20261023131000) — change both or neither.
+ */
+export function effectiveGraceDays(input: {
+  tenantGraceDays:   number | null | undefined;
+  trustedGraceDays?: number | null;
+  renewalDate:       Date | string;
+  graceUntil?:       string | null;
+}): number {
+  const base = Math.max(0, input.trustedGraceDays ?? input.tenantGraceDays ?? 0);
+  if (!input.graceUntil) return base;
+  const extra = daysBetweenISO(isoDay(input.renewalDate), input.graceUntil);
+  return extra > 0 ? Math.max(base, extra) : base;
+}
+
+/**
+ * R-1621 — the IST date the service stops if the renewal is still unpaid: the day after the
+ * last grace day. The final and grace mails state it, so the customer knows the exact day.
+ * Stopping itself is the owner's decision (a task on that day), never automatic.
+ */
+export function serviceStopDate(renewalDate: Date | string, graceDays: number): string {
+  return addDaysISO(isoDay(renewalDate), Math.max(0, graceDays) + 1);
+}
+
+/** 'YYYY-MM-DD' of a renewal date — a date column string as is, an instant by its IST day. */
+function isoDay(d: Date | string): string {
+  return typeof d === "string" && /^\d{4}-\d{2}-\d{2}/.test(d) ? d.slice(0, 10) : toIstDate(d);
+}
+
 /** Days between two dates (calendar, IST-aware). Positive when `to` is in the future. */
 export function daysBetween(from: Date, to: Date): number {
   // Snap both to IST midnight then diff
@@ -133,7 +176,7 @@ export interface CadenceDecision {
 
 export interface CadenceInput {
   renewalDate:      Date | string;      // subscription.renewal_date
-  graceDays:        number;             // tenant.grace_period_days
+  graceDays:        number;             // effectiveGraceDays() — R-1621 (trusted customer / +N days)
   currentState:     RenewalState;       // subscription.renewal_state
   /**
    * subscription.term_months — how long one term is, which is what decides the reminder

@@ -59,6 +59,7 @@ import {
 import { renewalRisk } from "./risk";
 import { priorTermDueText } from "./prior-due";
 import { openRenewalQuoteMap, withRenewalQuote } from "./open-renewal-quotes";
+import { GraceOverCard } from "./grace-over-card";
 
 // ─── Vendor logo pill ─────────────────────────────────────────────────────────
 
@@ -457,8 +458,13 @@ function RenewalBucket({
                             </p>
                           )}
                           {days < 0 && sub.renewal_state !== "suspended" && (
+                            /* R-1621: nothing suspends by itself any more — at the end of grace
+                               the owner gets a "Stop service" task (Grace over list above).
+                               Company grace here; a trusted customer may have more. */
                             <p className="mt-1 text-2xs font-medium text-rose-600">
-                              Suspends in {Math.max(0, graceDays - Math.abs(days))}d
+                              {graceDays - Math.abs(days) >= 0
+                                ? `Grace ends in ${graceDays - Math.abs(days)}d`
+                                : "Grace over — owner decides"}
                             </p>
                           )}
                         </td>
@@ -902,6 +908,9 @@ export default function RenewalsPage() {
           </div>
         )}
       </div>
+
+      {/* R-1621: grace ended unpaid → the owner stops the service or gives more days. */}
+      <GraceOverCard />
 
       {/* ── Renewal buckets — tabbed (Urgent / Upcoming / Future) ── */}
       <Card flush>
