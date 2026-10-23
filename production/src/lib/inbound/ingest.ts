@@ -47,6 +47,7 @@ import { readBillWithGemini } from "@/lib/ai/read-bill";
 import { sanitizeExtractedBill } from "@/app/api/ai/extract-bill/sanitize";
 import { inboundTenantId, inboundTenantMissingMessage } from "@/lib/inbound/tenant";
 import { senderDomainVerified, headersFromBody } from "@/lib/inbound/sender-auth";
+import { istToday } from "@/lib/dates/ist";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /* The trading name the AI sales agent signs as. Env-overridable because this route already
@@ -889,7 +890,7 @@ export async function ingestInboundEmail(body: Record<string, unknown>): Promise
   //     The lookup itself moved above the classifier gate — see the comment there.
   if (disposition.action === "append" && existing) {
     await admin.from("leads").update({
-      notes: `${existing.notes ? existing.notes + "\n\n" : ""}[New email ${new Date().toISOString().slice(0, 10)}] ${subject || extracted.summary}`,
+      notes: `${existing.notes ? existing.notes + "\n\n" : ""}[New email ${istToday()}] ${subject || extracted.summary}`,
     }).eq("id", existing.id);
     // Log on the lead's activity timeline (visible in the drawer).
     await admin.from("lead_activities").insert({
