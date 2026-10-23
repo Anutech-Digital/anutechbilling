@@ -110,3 +110,16 @@ describe("topbar badge uses the panel's count (R-1122)", () => {
     expect(src).toMatch(/useNotificationFeed\(/);
   });
 });
+
+describe("task notification opens the linked record (R-1126)", () => {
+  const linkOf = (extra: Partial<TaskWithLink>) =>
+    buildNotifications({ tasks: [{ ...task("t", NOW - DAY), ...extra }], readIds: new Set(), now: NOW })[0].link;
+
+  it("lead, then quote, then customer, else /tasks", () => {
+    expect(linkOf({ lead_id: "L1", quote_id: "Q1" })).toBe("/leads?lead=L1");
+    expect(linkOf({ quote_id: "Q1" })).toBe("/quotes/Q1");
+    expect(linkOf({ customer_id: "C1" })).toBe("/customers/C1");
+    expect(linkOf({ quote_id: "Q1", customer_id: "C1" })).toBe("/quotes/Q1");
+    expect(linkOf({})).toBe("/tasks");
+  });
+});

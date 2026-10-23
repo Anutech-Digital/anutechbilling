@@ -106,7 +106,11 @@ export function buildNotifications(input: {
       icon: overdue ? "alert" : "clock",
       tone: overdue ? "rose" : "amber",
       unread: !input.readIds.has(`task-${t.id}`),
-      link: t.lead_id ? `/leads?lead=${t.lead_id}` : "/tasks",
+      // R-1126: open the record the task is about (same order as the task row), else /tasks.
+      link: t.lead_id ? `/leads?lead=${t.lead_id}`
+        : t.quote_id ? `/quotes/${t.quote_id}`
+        : t.customer_id ? `/customers/${t.customer_id}`
+        : "/tasks",
       when: due,
       actionable: true,
     });
