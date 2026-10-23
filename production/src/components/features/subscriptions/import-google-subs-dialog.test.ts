@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { parseGoogle, classifyRows, buildSubscriptionRow, type RawSub, type GRow } from "./google-subs-parse";
+import { describe, it, expect, afterEach } from "vitest";
+import { parseGoogle, classifyRows, buildSubscriptionRow, gDate, textDateISO, type RawSub, type GRow } from "./google-subs-parse";
 import { planKey } from "@/lib/subscriptions/plan-match";
 
 /**
@@ -179,5 +179,46 @@ describe("buildSubscriptionRow — what an imported subscription knows", () => {
   it("falls back to the domain when Google gave no customer name", () => {
     const out = buildSubscriptionRow({ ...row, customer_name: undefined }, input)!;
     expect(out.customer_name).toBe("accesstel.in");
+  });
+});
+
+/* R-1652: Google's panel dates ("November 27, 2026") are calendar dates with no time zone.
+   `new Date("November 27, 2026")` is LOCAL midnight — in an IST browser that is 18:30 UTC the
+   day before, so `.toISOString().slice(0, 10)` saved the 26th. Same for any 00:00–05:30 IST
+   time. Run under TZ=Asia/Kolkata (the office browsers), UTC (the server) and a US zone. */
+describe("gDate / textDateISO — calendar dates stay the same day (R-1652)", () => {
+  const ORIGINAL_TZ = process.env.TZ;
+  afterEach(() => { process.env.TZ = ORIGINAL_TZ; });
+
+  for (const tz of ["Asia/Kolkata", "UTC", "America/Los_Angeles"]) {
+    it(`keeps the panel's day under TZ=${tz}`, () => {
+      process.env.TZ = tz;
+      expect(gDate("November 27, 2026")).toBe("2026-11-27");
+      expect(gDate('"Jan 1, 2027"')).toBe("2027-01-01");
+      expect(textDateISO("November 27, 2026")).toBe("2026-11-27");
+      expect(textDateISO("March 31, 2027")).toBe("2027-03-31");
+    });
+  }
+
+  it("a time between 00:00 and 05:30 IST keeps the IST calendar day", () => {
+    process.env.TZ = "Asia/Kolkata";
+    expect(gDate("November 27, 2026 03:15")).toBe("2026-11-27");
+    expect(textDateISO("April 1, 2027 00:10")).toBe("2027-04-01");
+  });
+
+  it("parseGoogle saves start and renewal on the panel's day in an IST browser", () => {
+    process.env.TZ = "Asia/Kolkata";
+    const { rows } = parseGoogle(csv(
+      'orphan.com,Google Workspace,Google Workspace Business Starter,"April 1, 2026",Active,ANNUAL,"November 27, 2026",2,2,uid2,cid2,prov2,C-999',
+    ), lookups, priceMap);
+    expect(rows[0]).toMatchObject({ start_date: "2026-04-01", renewal_date: "2026-11-27" });
+  });
+
+  it("blank, dash and nonsense stay empty", () => {
+    expect(gDate("")).toBeUndefined();
+    expect(gDate("-")).toBeUndefined();
+    expect(gDate("not a date")).toBeUndefined();
+    expect(textDateISO("not a date")).toBeNull();
+    expect(textDateISO("February 30, 2027")).toBeNull();
   });
 });
