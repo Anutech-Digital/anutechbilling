@@ -31,6 +31,7 @@ const STATE_OPTIONS = Object.entries(GST_STATE_BY_CODE)
 import { razorpayContact } from "@/lib/checkout/razorpay-contact";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { confirmPayment, fromRazorpayHandler, savePayment } from "@/lib/checkout/confirm-payment";
+import { SIMULATED_KEY } from "../done/done-view";
 import { CheckoutNotice } from "@/site/components/cart/CheckoutNotice";
 import { settlePageScroll } from "@/lib/ui/scroll-lock";
 import { checkoutProblem, actionLabel, type ProblemAction, type ProblemFlags } from "@/site/lib/checkout-problem";
@@ -274,6 +275,7 @@ export default function CheckoutPage() {
         // Whether the confirmation link really left — the done page must not claim it did.
         window.sessionStorage.setItem("anutech.trial.sent", json.confirmationSent === false ? "0" : "1");
         window.sessionStorage.removeItem("anutech.order");
+        window.sessionStorage.removeItem(SIMULATED_KEY);
       } catch { /* done page falls back */ }
       cart.clear();
       router.push("/done" as never);
@@ -333,7 +335,8 @@ export default function CheckoutPage() {
       }
 
       if (json.simulated) {
-        try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", json.quoteId || ""); } catch { /* default shown */ }
+        /* R-1111: the server recorded this simulated order, so /done may say "received" for it. */
+        try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", json.quoteId || ""); window.sessionStorage.setItem(SIMULATED_KEY, json.quoteId || ""); } catch { /* default shown */ }
         savePayment(null); // a simulated order was recorded by the server already
         cart.clear();
         router.push("/done" as never);
@@ -394,7 +397,7 @@ export default function CheckoutPage() {
         /* R-1596: the payment is confirmed on OUR server before /done, not left to the webhook
            alone. /done shows the answer (and asks again while it is still confirming). */
         handler: async (resp: unknown) => {
-          try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", order.quoteId || ""); } catch { /* default */ }
+          try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.removeItem(SIMULATED_KEY); window.sessionStorage.setItem("anutech.order", order.quoteId || ""); } catch { /* default */ }
           afterRazorpay();
           const returned = fromRazorpayHandler(resp);
           if (returned) {
