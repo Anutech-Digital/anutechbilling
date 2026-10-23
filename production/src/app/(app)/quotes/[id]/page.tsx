@@ -103,6 +103,8 @@ import type { Quote, QuoteLineItem, Payment, BillingCycle } from "@/lib/supabase
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { FeeNetLine } from "@/app/(app)/payments/gateway-fee";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
+import { billOfSupplyBuilderLine, quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 
 // ============================================================
 // Status meta
@@ -352,6 +354,10 @@ export default function QuoteDetailPage() {
     seller: { state_code: me?.tenantStateCode, gstin: me?.tenantGstin },
   });
   const interState = pos.interState;
+  /* R-1532: a Bill of Supply business's 0% quote shows "No GST — Bill of Supply" (here, in the
+     preview and in the PDF) instead of "GST (0%)" / CGST + SGST rows. */
+  const gstRegistration = useGstRegistration();
+  const billOfSupply = !quote || pos.isExport ? null : quoteDocBillOfSupply(gstRegistration.data?.saved, quote.tax_rate);
   /* R-431 (board R-406): before an invoice exists, an unknown head blocks it — the company's
      own state first (one click to Settings), then the customer's. generate_invoice refuses
      both server-side; this says so BEFORE the click, with the fix one tap away. An issued
@@ -822,6 +828,7 @@ export default function QuoteDetailPage() {
       interState,
       placeOfSupply: pos.label,
       isExport:      pos.isExport,
+      billOfSupply,
       notes:         quote.notes ?? "",
       /* R-034. Same rule as the server builder — a paid quote downloads as a record of
          the order, not as an offer with a validity window and Net-7 terms on it. */
@@ -1748,7 +1755,9 @@ export default function QuoteDetailPage() {
             <Row label="Subtotal" value={rupee(quote.subtotal)} />
             {discount > 0 && <Row label={`Discount (${quote.discount_pct}%)`} value={`−${rupee(discount)}`} tone="emerald" />}
             <Row label="Taxable amount" value={rupee(taxable)} />
-            <Row label={`GST (${quote.tax_rate}%)`} value={rupee(tax)} />
+            {billOfSupply
+              ? <p className="text-2xs text-ink-2" data-testid="bill-of-supply-line">{billOfSupplyBuilderLine(billOfSupply)}</p>
+              : <Row label={`GST (${quote.tax_rate}%)`} value={rupee(tax)} />}
             <div className="border-t border-hairline pt-3 flex items-baseline justify-between">
               <span className="text-xs uppercase tracking-wider text-ink-3 font-semibold">Total</span>
               <span className="font-serif text-2xl text-amber tabular-nums">
@@ -2016,6 +2025,7 @@ export default function QuoteDetailPage() {
         interState={interState}
         placeOfSupply={pos.label}
         isExport={pos.isExport}
+        billOfSupply={billOfSupply}
         /* R-1677: a USD quote previews in USD — without these the staff preview showed ₹32,400. */
         currency={quote.currency}
         exchangeRate={quote.exchange_rate}
@@ -2132,6 +2142,7 @@ export default function QuoteDetailPage() {
               interState,
               placeOfSupply: pos.label,
               isExport:      pos.isExport,
+              billOfSupply,
               notes:         quote.notes ?? "",
               isRenewal:     quote.is_renewal,
               oneTime:       oneTimeQuote,

@@ -115,6 +115,8 @@ export interface PlanQuoteInput {
   term?: "monthly" | "annual" | null;
   /** Injected so the plan is deterministic under test — the route passes crypto. */
   newLineId?: () => string;
+  /** R-1532: 0 for a business that issues a Bill of Supply (quoteStartTaxRate); else 18. */
+  taxRatePct?: 0 | 18;
 }
 
 export function planQuoteFromEnquiry(input: PlanQuoteInput): EnquiryQuotePlan {
@@ -233,7 +235,9 @@ export function planQuoteFromEnquiry(input: PlanQuoteInput): EnquiryQuotePlan {
   /* One rounding, at the end, on the ex-GST total — the same single-rounding rule
      buildWorkspaceLines follows, so the two paths cannot disagree by a rupee on the same
      product and seat count. */
-  const amount = Math.round((subtotal - discountValue) * 1.18);
+  const amount = input.taxRatePct === 0
+    ? subtotal - discountValue                       // R-1532: Bill of Supply — no GST
+    : Math.round((subtotal - discountValue) * 1.18);
 
   /* The rate card, in words, on the draft's own notes. Whoever opens this quote must READ
      why the price is what it is rather than reverse-engineer it from the total — the same

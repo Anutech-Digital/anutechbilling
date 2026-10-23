@@ -72,6 +72,8 @@ import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
+import { billOfSupplyStatus, billOfSupplyBuilderLine, quoteEffectiveTaxRate } from "@/lib/quotes/bill-of-supply";
 import { isInterStateSupply, isExportSupply, placeOfSupplyLabel, supplyHead, treatmentIsAlwaysInterState } from "@/lib/gst/place-of-supply";
 import { hsnSummary } from "@/lib/gst/hsn";
 import { Kbd } from "@/components/ui/kbd";
@@ -197,6 +199,11 @@ function QuoteBuilderBody() {
   const catalogKindOf = (itemId: string | undefined) =>
     itemId ? (allCatalog ?? []).find((c) => c.id === itemId)?.kind : undefined;
   const { data: currentUser } = useCurrentUser();
+  /* R-1532: a business that is not GST-registered / under composition issues a Bill of
+     Supply — its quotes carry 0% GST, locked (R-1529's database refuses GST on the invoice). */
+  const gstRegistration = useGstRegistration();
+  const gstSaved        = gstRegistration.data?.saved ?? null;
+  const bosStatus       = billOfSupplyStatus(gstSaved);
   const createQuote     = useCreateQuote();
   const generateInvoice = useGenerateInvoice();
   const updateLead = useUpdateLead();
@@ -951,7 +958,7 @@ function QuoteBuilderBody() {
     void fetchLatestFx("USD");
   }, [isExport, currency, duplicateOf, fetchLatestFx]);
 
-  const effectiveTaxRate  = isExport ? 0 : taxRate;
+  const effectiveTaxRate  = quoteEffectiveTaxRate({ saved: gstSaved, isExport, taxRate });
   const tax               = Math.round(taxable * (effectiveTaxRate / 100));
   const total             = taxable + tax;
   // Foreign-currency billing (books stay ₹). The whole builder renders in `currency`
@@ -1672,7 +1679,7 @@ function QuoteBuilderBody() {
           <IconButton icon="arrow_left" aria-label="Back" onClick={() => router.back()} />
           <div>
             <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
-              {isInvoiceMode ? "Direct invoice · GST tax invoice" : "Quotation · Auto-generated"}
+              {isInvoiceMode ? (bosStatus ? "Direct invoice · Bill of Supply" : "Direct invoice · GST tax invoice") : "Quotation · Auto-generated"}
             </p>
             <h1 className="font-serif text-3xl md:text-4xl leading-tight">
               {isInvoiceMode
@@ -1865,7 +1872,7 @@ function QuoteBuilderBody() {
                 </p>
               ) : sellerStateMissing ? (
                 <p className="text-2xs flex items-center gap-1 -mt-1"><CompanyStateFix /></p>
-              ) : leadStateCode && (
+              ) : leadStateCode && !bosStatus && (
                 <p className="text-2xs flex items-center gap-1 -mt-1">
                   {interState
                     ? <span className="text-amber-ink">⚠ Inter-state → IGST {taxRate}% will apply</span>
@@ -2022,7 +2029,7 @@ function QuoteBuilderBody() {
                       <div className="text-sm text-ink-2 truncate">{customer?.state || "—"}</div>
                     </div>
                   </div>
-                  {customer && (
+                  {customer && !(bosStatus && !isExport) && (
                     <p className="text-2xs mt-2.5 pt-2.5 border-t border-hairline/70 flex items-center gap-1">
                       {isExport ? (
                         <span className="text-indigo-ink">🌍 Export ({exportCountryName}) → zero-rated under LUT, no GST</span>
@@ -2081,6 +2088,9 @@ function QuoteBuilderBody() {
                         <span className="text-indigo-ink">🌍 Export ({prospectCountry}) → zero-rated under LUT, no GST</span>
                       ) : sellerStateMissing ? (
                         <CompanyStateFix />
+                      ) : bosStatus ? (
+                        /* R-1532: no GST on a Bill of Supply — no head to choose. */
+                        null
                       ) : !prospectStateCode ? (
                         <span className="text-ink-3">Pick the customer&apos;s state so GST (CGST+SGST vs IGST) is correct.</span>
                       ) : !buyerStateCode ? (
@@ -2740,6 +2750,11 @@ function QuoteBuilderBody() {
                   <span>🌍</span>
                   <span>Export ({exportCountryName}) → <b>zero-rated under LUT</b> · no GST (CGST/SGST/IGST) applies</span>
                 </div>
+              ) : bosStatus ? (
+                /* R-1532: the one line that says why there is no GST on this quote. */
+                <div className="text-2xs text-ink-2 flex items-start gap-1 py-1" data-testid="bill-of-supply-line">
+                  <span>{billOfSupplyBuilderLine(bosStatus)}</span>
+                </div>
               ) : (
                 <div className="text-2xs text-ink-3 italic flex items-center gap-1 py-1">
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -2786,7 +2801,7 @@ function QuoteBuilderBody() {
                         </span>
                       )}
                       <span className="text-ink-3" aria-hidden>·</span>
-                      <span>GST <b>{isExport ? "0% (export)" : `${taxRate}%`}</b></span>
+                      <span>GST <b>{isExport ? "0% (export)" : bosStatus ? "0% (Bill of Supply)" : `${taxRate}%`}</b></span>
                       <button
                         type="button"
                         onClick={() => setTermsOpen(true)}
@@ -2885,9 +2900,10 @@ function QuoteBuilderBody() {
                     suffix="%"
                     // Export supply is zero-rated under LUT — show 0% and lock the field
                     // so it never contradicts the "Export → no GST" badge above.
-                    value={isExport ? 0 : taxRate}
+                    value={isExport || bosStatus ? 0 : taxRate}
                     onChange={(e) => setTaxRate(parseInt(e.target.value) || 18)}
-                    disabled={isExport}
+                    /* R-1532: a Bill of Supply business cannot charge GST — locked at 0. */
+                    disabled={isExport || !!bosStatus}
                     /* The smart default, SAID OUT LOUD. The rate and the SAC are filled in
                        for the operator and always were — but nothing ever showed what would
                        be printed on the document their customer's accountant reads, and a
@@ -2899,8 +2915,10 @@ function QuoteBuilderBody() {
                        knows. hsnSummary(null) says so instead. */
                     helper={isExport
                       ? "Export → zero-rated under LUT · no GST"
+                      : bosStatus
+                      ? "Bill of Supply → no GST. Your GST registration is set in Settings → Company."
                       : hsnSummary(buyerStateCode && !sellerStateMissing ? interState : null)}
-                    className={isExport ? "bg-paper-2 cursor-not-allowed" : undefined}
+                    className={isExport || bosStatus ? "bg-paper-2 cursor-not-allowed" : undefined}
                   />
                 </FormField>
                 <button
@@ -2926,7 +2944,7 @@ function QuoteBuilderBody() {
 
               {/* R-431: an unknown head (company or customer state empty) is one GST line,
                   never a guessed CGST + SGST split. The amount is the same either way. */}
-              {isExport ? null : (sellerStateMissing || !buyerStateCode) ? (
+              {isExport || bosStatus ? null : (sellerStateMissing || !buyerStateCode) ? (
                 <TotalRow label={`GST (${taxRate}%)`} value={fmtTotalC(dispTax)} />
               ) : interState ? (
                 <TotalRow label={`IGST (${taxRate}%)`} value={fmtTotalC(dispTax)} />
@@ -3259,6 +3277,7 @@ function QuoteBuilderBody() {
         discount={0}
         taxable={taxable}
         taxRate={effectiveTaxRate}
+        billOfSupply={bosStatus}
         tax={tax}
         total={total}
         interState={interState}

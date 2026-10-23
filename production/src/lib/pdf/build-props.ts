@@ -20,6 +20,7 @@ import { quoteIsPaid } from "./quote-document-kind";
 import { payMethods } from "./pay-methods";
 import { includedSupportLine } from "./quote-support-line";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 import { extensionTitle, isOneTimeQuote, quoteLinePeriodContext } from "@/lib/quotes/service-period";
 
 /**
@@ -255,6 +256,9 @@ export function buildQuotePdfProps(args: {
   lead?: { state_code?: string | null; gstin?: string | null; country?: string | null } | null;
   /** R-1764: the renewed subscription's domain, for a renewal quote that stores none. */
   subscriptionDomain?: string | null;
+  /** R-1532: tenants.gst_registration (readTenantGstRegistration) — a Bill of Supply business's
+   *  0% quote prints "No GST — Bill of Supply" instead of CGST/SGST/IGST rows. */
+  gstRegistration?: string | null;
 }): QuotePDFProps {
   const { quote, customer, tenant } = args;
   const a = quoteAmounts(quote);
@@ -301,6 +305,7 @@ export function buildQuotePdfProps(args: {
     // frozen to respect — always compute the best answer available today.
     interState:    pos.interState,
     isExport:      pos.isExport,
+    billOfSupply:  pos.isExport ? null : quoteDocBillOfSupply(args.gstRegistration, a.taxRate),
     /* R-175 / R-376 (f): name the buyer's state, as the invoice does — "Haryana (06) · IGST". */
     placeOfSupply: pos.label,
     currency:      quote.currency ?? null,

@@ -27,6 +27,7 @@ import type { AcceptedPay } from "./accepted-pay";
 import type { QuoteDueNow } from "@/lib/payments/quote-due-now";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
+import { billOfSupplyCustomerLine, type BillOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
 
 /** Customer-SAFE quote shape — no cost/margin. Built server-side in page.tsx. */
 export type PublicQuote = {
@@ -103,6 +104,9 @@ interface Props {
   dueNow?: QuoteDueNow | null;
   /** R-376(b): inter-state → one IGST row; intra-state → CGST + SGST (quote preview rule). */
   interState?: boolean;
+  /** R-1532: the seller issues a Bill of Supply and this quote carries no GST → one
+   *  "No GST — Bill of Supply" line instead of GST rows. */
+  billOfSupply?: BillOfSupplyStatus | null;
   /** R-376(b): "Support: Free — Included" from lib/pdf/quote-support-line. */
   supportLine?: { text: string; detail: string } | null;
   /** R-376(d): the contact PERSON to pre-fill "Your full name" (./signer-default.ts) —
@@ -112,7 +116,7 @@ interface Props {
 
 export function QuoteAcceptView({
   quote, lineItems, token, payOnline = false, tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress,
-  upiQr = null, acceptedPay = null, dueNow = null, interState = false, supportLine = null, signerDefault = null,
+  upiQr = null, acceptedPay = null, dueNow = null, interState = false, billOfSupply = null, supportLine = null, signerDefault = null,
 }: Props) {
   const [accepting, setAccepting] = React.useState(false);
   const [accepted, setAccepted] = React.useState(quote.status === "accepted");
@@ -918,6 +922,7 @@ export function QuoteAcceptView({
                 taxRate={quote.tax_rate}
                 tax={inst ? inst.firstGross - inst.firstTaxable : liveConfig ? liveConfig.total - liveConfig.subtotal : dTax}
                 interState={interState}
+                billOfSupply={billOfSupply}
                 fmt={inst ? fmtInst : fmtInv}
               />
               <div className="border-t-2 border-ink pt-2 mt-2">
@@ -1280,9 +1285,12 @@ export function QuoteAcceptView({
 }
 
 /** GST rows: one IGST line inter-state, CGST + SGST halves intra-state (R-376b). */
-export function TaxRows({ taxRate, tax, interState, fmt }: {
+export function TaxRows({ taxRate, tax, interState, fmt, billOfSupply = null }: {
   taxRate: number; tax: number; interState: boolean; fmt: (v: number) => string;
+  billOfSupply?: BillOfSupplyStatus | null;
 }) {
+  /* R-1532: no GST on a Bill of Supply — say why, print no head. */
+  if (billOfSupply && !taxRate) return <p className="text-xs text-ink-2">{billOfSupplyCustomerLine(billOfSupply)}</p>;
   // Zero-rated (export under LUT) — no head to split; keep the plain row.
   if (!taxRate) return <Row label={`GST (${taxRate}%)`} value={fmt(tax)} />;
   if (interState) return <Row label={`IGST (${taxRate}%)`} value={fmt(tax)} />;

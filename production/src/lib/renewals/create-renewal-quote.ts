@@ -22,6 +22,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json, QuoteLineItem } from "@/lib/supabase/database.types";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteStartTaxRate } from "@/lib/quotes/bill-of-supply";
 import { grossAmount } from "@/lib/quotes/amounts";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { renewalTerm } from "@/lib/renewals/renewal-term";
@@ -117,7 +119,9 @@ export async function createOrGetRenewalQuote(
   // ── Path 2: price a new quote; create_renewal_quote numbers, stores and links it ──
   // Export (international) customer → zero-rated under LUT: the renewal quote
   // must NOT add GST (the old hardcoded 18% wrongly taxed foreign auto-renewals).
-  let renewalTaxRate = 18;
+  /* R-1532: a business that issues a Bill of Supply (not GST-registered / composition) renews
+     at 0% — R-1529's database refuses GST on its invoice. */
+  let renewalTaxRate = quoteStartTaxRate(await readTenantGstRegistration(supabase, input.tenantId));
   if (input.customerId) {
     const { data: cust } = await supabase
       .from("customers").select("country").eq("id", input.customerId).maybeSingle();

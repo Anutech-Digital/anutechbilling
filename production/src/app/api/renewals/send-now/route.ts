@@ -43,6 +43,8 @@ import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -289,6 +291,8 @@ export async function POST(req: Request) {
         discount:      0,
         taxable:       renewalQuote.subtotal ?? renewalQuote.amount,
         taxRate:       renewalQuote.tax_rate ?? 18,
+        /* R-1532: Bill of Supply business → "No GST — Bill of Supply" on a 0% quote. */
+        billOfSupply:  quoteDocBillOfSupply(await readTenantGstRegistration(supabase, sub.tenant_id), renewalQuote.tax_rate ?? 18),
         tax:           quoteDisplayTax(renewalQuote.subtotal ?? renewalQuote.amount, renewalQuote.tax_rate ?? 18, renewalQuote.amount), // R-804
         total:         renewalQuote.amount,
         interState:    isInterStateSupply(customer?.state_code, tenant.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant.gstin, treatment: customer?.gst_treatment }),

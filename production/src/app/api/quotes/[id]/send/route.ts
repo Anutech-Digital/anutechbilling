@@ -43,6 +43,8 @@ import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
 import { buildCustomerQuoteHtml } from "@/lib/email/quote-template";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
@@ -314,6 +316,8 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       // GST head derived from seller (tenant) vs buyer (customer) state. (audit #18-20)
       interState:    pos.interState,
       isExport:      pos.isExport,
+      /* R-1532: a Bill of Supply business's 0% quote — "No GST — Bill of Supply", no heads. */
+      billOfSupply:  pos.isExport ? null : quoteDocBillOfSupply(await readTenantGstRegistration(supabase, me.tenant_id), taxRate),
       /* R-376 (f): "Haryana (06) · IGST" — state name and code, not just the head. */
       placeOfSupply: pos.label,
       validityDays:  30,

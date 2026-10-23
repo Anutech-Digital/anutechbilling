@@ -28,6 +28,8 @@ import { decideAutoSend } from "./auto-send-quote";
 import { sendAutoQuote } from "./send-auto-quote";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { toIstDate } from "@/lib/dates/ist";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteStartTaxRate } from "./bill-of-supply";
 
 /* Typed as the RETURN of createAdminClient — hand-rolling this shape is what produced the
    TS2589 "excessively deep" failure in lib/email/owner-alert.ts. */
@@ -140,7 +142,10 @@ export async function autoQuoteForLead(
   admin: Admin,
   args: AutoQuoteArgs,
 ): Promise<AutoQuoteOutcome> {
-  const plan = planQuoteFromEnquiry({ item: args.item, seats: args.seats, term: args.term });
+  /* R-1532: a business that issues a Bill of Supply quotes at 0% — R-1529's database refuses
+     GST on its invoice. */
+  const taxRate: 0 | 18 = quoteStartTaxRate(await readTenantGstRegistration(admin, args.tenantId)) === 0 ? 0 : 18;
+  const plan = planQuoteFromEnquiry({ item: args.item, seats: args.seats, term: args.term, taxRatePct: taxRate });
 
   if (!plan.ok) {
     /* Four of the planner's five outcomes are refusals, each with a reason, so a lead that
@@ -227,7 +232,7 @@ export async function autoQuoteForLead(
     billing_cycle: (args.billing ?? (plan.items[0]?.commitment === "monthly" ? "monthly" : "yearly")) as BillingCycle,
     total_cost:    plan.items.reduce((sum, i) => sum + i.qty * i.cost, 0),
     discount_pct:  plan.discountPct,
-    tax_rate:      18,
+    tax_rate:      taxRate,
     amount:        plan.amount,
   };
 

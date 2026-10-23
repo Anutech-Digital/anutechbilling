@@ -49,6 +49,9 @@ import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
 import { udyamPdfLine } from "@/lib/compliance/udyam";
 import { ONE_TIME_SCHEDULE, type LinePeriodContext } from "@/lib/quotes/service-period";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
+import {
+  billOfSupplyCustomerLine, billOfSupplyPlaceLabel, PROFORMA_NOTICE_BILL_OF_SUPPLY, type BillOfSupplyStatus,
+} from "@/lib/quotes/bill-of-supply";
 
 /* Styles ke BANNE se pehle. `StyleSheet.create` ab hi chal jata hai, aur `PDF_FONT`
    ek `let` hai — baad me register karne par style purani value pakde rehti. */
@@ -108,6 +111,9 @@ export interface QuotePDFProps {
   placeOfSupply?: string | null;
   /** Export supply (recipient outside India) → zero-rated under LUT, no GST. */
   isExport?:     boolean;
+  /** R-1532: the business issues a Bill of Supply and the quote carries no GST → one
+   *  "No GST — Bill of Supply" line, never CGST/SGST/IGST rows (lib/quotes/bill-of-supply). */
+  billOfSupply?: BillOfSupplyStatus | null;
   /** Billing currency + rate — foreign → the whole quote shows in that currency. */
   currency?:     string | null;
   exchangeRate?: number | null;
@@ -450,7 +456,7 @@ export function QuotePDF(props: QuotePDFProps) {
     quoteId, customerName, contactName, contactEmail, contactPhone, customerState, customerGstin,
     createdDate, expiresDate, validityDays,
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
-    interState, placeOfSupply, isExport = false, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, termsConditions, isRenewal,
+    interState, placeOfSupply, isExport = false, billOfSupply = null, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, termsConditions, isRenewal,
     isPaid = false, oneTime = false, extensionTitle = null, periodContext = null,
     upiQrDataUrl, upiVpa, template = "quotation", bank = null, payLinkUrl = null,
   } = props;
@@ -597,7 +603,7 @@ export function QuotePDF(props: QuotePDFProps) {
 
         {/* R-1523: the line that keeps a Proforma from being taken for a tax invoice. */}
         {proforma && (
-          <Text style={s.proformaNotice}>{PROFORMA_NOTICE}</Text>
+          <Text style={s.proformaNotice}>{billOfSupply ? PROFORMA_NOTICE_BILL_OF_SUPPLY : PROFORMA_NOTICE}</Text>
         )}
 
         {/* ── Bill to + Meta ──────────────────────────────────────── */}
@@ -626,6 +632,8 @@ export function QuotePDF(props: QuotePDFProps) {
             <Text style={s.metaValue}>
               {isExport
                 ? "Export · zero-rated under LUT (no GST)"
+                : billOfSupply
+                ? billOfSupplyPlaceLabel(placeOfSupply)
                 : placeOfSupply || (interState ? "Inter-state (IGST applies)" : "Intra-state (CGST + SGST)")}
             </Text>
             {lineItems.length > 0 && firstCommitment && (
@@ -752,6 +760,10 @@ export function QuotePDF(props: QuotePDFProps) {
                 <View style={s.totalRow}>
                   <Text style={s.totalLabel}>Export — zero-rated (LUT), no GST</Text>
                   <Text style={s.totalValue}>{fmtC(0)}</Text>
+                </View>
+              ) : billOfSupply ? (
+                <View style={s.totalRow}>
+                  <Text style={[s.totalLabel, { flex: 1 }]}>{billOfSupplyCustomerLine(billOfSupply)}</Text>
                 </View>
               ) : interState ? (
                 <View style={s.totalRow}>
@@ -911,7 +923,7 @@ export function QuotePDF(props: QuotePDFProps) {
                 {upiVpa ? <Text style={s.upiVpa}>{upiVpa}</Text> : null}
                 <Text style={s.upiSub}>
                   Amount and quote number are pre-filled. You&apos;ll receive a receipt
-                  voucher, and a GST tax invoice when the order is provisioned.
+                  voucher, and {billOfSupply ? "a Bill of Supply" : "a GST tax invoice"} when the order is provisioned.
                 </Text>
               </View>
             </View>

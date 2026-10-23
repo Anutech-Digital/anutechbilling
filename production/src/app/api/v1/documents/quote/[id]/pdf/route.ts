@@ -14,6 +14,7 @@ import { quotePayQr, type QuotePayQrTenant } from "@/lib/pdf/quote-pay-qr";
 import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import type { Quote, Customer } from "@/lib/supabase/database.types";
 import { readTenantUdyam } from "@/lib/compliance/udyam";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { parseQuoteTemplate, proformaBank, quoteTemplateFileName } from "@/lib/pdf/quote-template";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { trustedOrigin } from "@/lib/app-url";
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
      margin approval is not rendered — the button is disabled too, but a link can be shared. */
   const block = customerCopyBlock(q);
   if (block) return deny(409, `This quote needs approval before it can go to the customer. ${block.reason} ${block.nextStep}`);
-  const [{ data: customer }, { data: lead }, { data: tenant }, udyamNumber] = await Promise.all([
+  const [{ data: customer }, { data: lead }, { data: tenant }, udyamNumber, gstRegistration] = await Promise.all([
     q.customer_id
       ? admin.from("customers").select("*").eq("id", q.customer_id).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -55,6 +56,8 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
     admin.from("tenants").select("name, gstin, email, phone, address, state, state_code, upi_vpa, upi_payee_name, logo_url, remit_bank_name, remit_account_name, remit_account_number, remit_ifsc, remit_branch").eq("id", q.tenant_id).maybeSingle(),
     /* R-368: read on its own — never fails the PDF, null before its migration. */
     readTenantUdyam(admin, q.tenant_id),
+    /* R-1532: Bill of Supply business → "No GST — Bill of Supply" on a 0% quote. */
+    readTenantGstRegistration(admin, q.tenant_id),
   ]);
 
   /* Fetched here, not inside the renderer: `logoDataUri` carries a 4s deadline and swallows
@@ -63,6 +66,7 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
 
   const props = buildQuotePdfProps({
     logoDataUri: logo,
+    gstRegistration,
     /* R-1764: a renewal quote's "Domain:" comes from the subscription it renews. */
     subscriptionDomain: await loadRenewedSubscriptionDomain(admin, q),
     quote:    q,

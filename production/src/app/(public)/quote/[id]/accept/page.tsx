@@ -27,6 +27,8 @@ import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import { QuoteReplaced, replacementHref } from "./replaced";
 import { isBotUserAgent } from "@/lib/quotes/quote-intent";
 import { maybeAlertHotLead, recordQuoteView } from "@/lib/quotes/quote-views.server";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 
 export const dynamic = "force-dynamic"; // never cache — quotes change state
 
@@ -280,9 +282,11 @@ export default async function QuoteAcceptPage(props: Props) {
           .maybeSingle()
       : Promise.resolve({ data: null }),
   ]);
-  const { interState } = quotePlaceOfSupply({
+  const { interState, isExport } = quotePlaceOfSupply({
     customer: buyer, lead, quote, seller: { state_code: tenant?.state_code, gstin: tenant?.gstin },
   });
+  /* R-1532: a Bill of Supply seller's 0% quote — "No GST — Bill of Supply", no heads. */
+  const billOfSupply = isExport ? null : quoteDocBillOfSupply(await readTenantGstRegistration(supabase, quote.tenant_id), quote.tax_rate);
   const signerDefault = signerNameDefault({ customer: buyer, lead, company: quote.customer_name });
 
   /* R-376(b): "Support: Free — Included" — the same builder the preview and the PDF use,
@@ -304,6 +308,7 @@ export default async function QuoteAcceptPage(props: Props) {
       acceptedPay={acceptedPay}
       dueNow={dueNow}
       interState={interState}
+      billOfSupply={billOfSupply}
       signerDefault={signerDefault}
       supportLine={supportLine ? { text: supportLine.text, detail: supportLine.detail } : null}
     />

@@ -34,6 +34,8 @@ import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
 import { loadQuotePeriodContext } from "@/lib/quotes/line-period-context";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -156,6 +158,8 @@ export const POST = withRoute({
         discount,
         taxable,
         taxRate,
+        /* R-1532: Bill of Supply business → "No GST — Bill of Supply" on a 0% quote. */
+        billOfSupply:  quoteDocBillOfSupply(await readTenantGstRegistration(admin, tenantId), taxRate),
         tax,
         total,
         interState:    isInterStateSupply(customer?.state_code, tenant?.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant?.gstin, treatment: customer?.gst_treatment }),
