@@ -14,6 +14,8 @@
 import "server-only";
 import { createBareClient } from "@/lib/supabase/bare";
 import { stateOf, type AutomationState, type AutomationSwitch } from "./jobs";
+import { currentManualRun } from "./manual-run";
+import { runStatus, shouldRecordRun, type JobRun, type RunStatus, type RunTrigger } from "./run-history";
 
 export interface AutomationJobRow {
   job: string;
@@ -79,20 +81,111 @@ export async function cronTenants(job: string): Promise<{ on: string[]; dry: str
   return { on, dry };
 }
 
-/** Stamps last_run_at / last_result. Never throws — a failed stamp must not fail the job. */
+/**
+ * Stamps last_run_at / last_result, and (R-1104) adds the run to automation_job_runs — with
+ * who pressed Run now / Retry when this is a manual run (manual-run.ts). Never throws — a
+ * failed stamp must not fail the job.
+ */
 export async function recordRun(job: string, tenantIds: readonly string[], result: string): Promise<void> {
   const ids = [...new Set(tenantIds)].filter(Boolean);
   if (ids.length === 0) return;
   const db = bare();
   if (!db) return;
+  const line = result.slice(0, 500);
   try {
     const { error } = await db.rpc("automation_record_run", {
-      p_job: job, p_tenants: ids, p_result: result.slice(0, 500),
+      p_job: job, p_tenants: ids, p_result: line,
     });
     if (error) console.error(`[automation] could not record the ${job} run:`, error.message);
   } catch (e) {
     console.error(`[automation] recording the ${job} run crashed:`, (e as Error).message);
   }
+
+  const manual = currentManualRun();
+  const trigger: RunTrigger = manual?.trigger ?? "schedule";
+  if (!shouldRecordRun(line, trigger)) return;
+  const status: RunStatus = runStatus(line);
+  try {
+    const { error } = await db.from("automation_job_runs").insert(ids.map((tenant_id) => ({
+      tenant_id,
+      job,
+      status,
+      trigger,
+      result: line,
+      started_by: manual && manual.tenantId === tenant_id ? manual.userId : null,
+      retry_of: manual && manual.tenantId === tenant_id ? manual.retryOf : null,
+    })));
+    if (error) console.error(`[automation] could not add the ${job} run to the history:`, error.message);
+  } catch (e) {
+    console.error(`[automation] run history for ${job} crashed:`, (e as Error).message);
+  }
+}
+
+interface RunRow {
+  id: string; job: string; ran_at: string; status: RunStatus; trigger: RunTrigger;
+  result: string | null; started_by: string | null; retry_of: string | null;
+}
+
+const RUN_COLUMNS = "id, job, ran_at, status, trigger, result, started_by, retry_of";
+
+function toRun(r: RunRow): JobRun {
+  return {
+    id: r.id, job: r.job, ranAt: r.ran_at, status: r.status, trigger: r.trigger,
+    result: r.result, startedBy: r.started_by, retryOf: r.retry_of,
+  };
+}
+
+/** R-1104: one company's recent runs, newest first (the /automation page). Null = could not read. */
+export async function readRunHistory(tenantId: string, limit = 400): Promise<JobRun[] | null> {
+  const db = bare();
+  if (!db) return null;
+  const { data, error } = await db
+    .from("automation_job_runs")
+    .select(RUN_COLUMNS)
+    .eq("tenant_id", tenantId)          // <- the only tenant boundary on this read
+    .order("ran_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error("[automation] could not read the run history:", error.message);
+    return null;
+  }
+  return ((data ?? []) as RunRow[]).map(toRun);
+}
+
+/** R-1104: the newest run of one job for one company. null = none; undefined = could not read. */
+export async function readLatestRun(tenantId: string, job: string): Promise<JobRun | null | undefined> {
+  const db = bare();
+  if (!db) return undefined;
+  const { data, error } = await db
+    .from("automation_job_runs")
+    .select(RUN_COLUMNS)
+    .eq("tenant_id", tenantId)          // <- the only tenant boundary on this read
+    .eq("job", job)
+    .order("ran_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error(`[automation] could not read the latest ${job} run:`, error.message);
+    return undefined;
+  }
+  return data ? toRun(data as RunRow) : null;
+}
+
+/** R-1104: one run of this company. null = not found (or another company's); undefined = could not read. */
+export async function readRun(tenantId: string, runId: string): Promise<JobRun | null | undefined> {
+  const db = bare();
+  if (!db) return undefined;
+  const { data, error } = await db
+    .from("automation_job_runs")
+    .select(RUN_COLUMNS)
+    .eq("tenant_id", tenantId)          // <- the only tenant boundary on this read
+    .eq("id", runId)
+    .maybeSingle();
+  if (error) {
+    console.error("[automation] could not read the run:", error.message);
+    return undefined;
+  }
+  return data ? toRun(data as RunRow) : null;
 }
 
 /** One company's row for one job. null = no row; undefined = could not read. */
