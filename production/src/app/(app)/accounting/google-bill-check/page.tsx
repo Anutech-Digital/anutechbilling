@@ -43,7 +43,7 @@ const STATUS: Record<RowStatus, { label: string; kind: "danger" | "warning" | "s
 async function pdfToText(file: File): Promise<string> {
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
   let out = "";
   for (let p = 1; p <= pdf.numPages; p++) {
     const tc = await (await pdf.getPage(p)).getTextContent();

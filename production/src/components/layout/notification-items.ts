@@ -68,7 +68,7 @@ export function buildNotifications(input: {
   tasks?: TaskWithLink[] | null;
   leads?: RecentLead[] | null;
   celebrations?: Celebration[] | null;
-  readIds: Set<string>;
+  readIds: ReadonlySet<string>;
   now?: number;
 }): NotificationItem[] {
   const now = input.now ?? Date.now();
@@ -163,3 +163,55 @@ export function buildNotifications(input: {
     .sort((a, b) => Number(!!b.actionable) - Number(!!a.actionable) || b.when - a.when)
     .slice(0, NOTIFICATION_LIMIT);
 }
+
+/**
+ * R-1122: the ONE unread count — the bell badge and the panel header both call this on the
+ * same buildNotifications list, so "Mark all read" takes both to 0 and they never disagree.
+ * (The badge used to add every due task on top, so it could never clear.)
+ */
+export function countUnread(items: readonly NotificationItem[]): number {
+  return items.filter((n) => n.unread).length;
+}
+
+/**
+ * R-1122: which task/celebration items this browser has opened or marked read. One shared
+ * store (localStorage-backed) so the bell in the top bar and the panel see the same set the
+ * moment either changes it. Shape fits React's useSyncExternalStore.
+ */
+const READ_KEY = "ros_notif_read";
+const EMPTY_READ: ReadonlySet<string> = new Set();
+
+function createReadStore() {
+  let snap: ReadonlySet<string> | null = null;
+  const listeners = new Set<() => void>();
+  const load = (): ReadonlySet<string> => {
+    try {
+      const s = typeof localStorage !== "undefined" ? localStorage.getItem(READ_KEY) : null;
+      return s ? new Set(JSON.parse(s) as string[]) : new Set();
+    } catch {
+      return new Set();
+    }
+  };
+  // Plain closures, not methods — React calls getSnapshot/subscribe unbound.
+  const getSnapshot = (): ReadonlySet<string> => {
+    if (!snap) snap = load();
+    return snap;
+  };
+  const getServerSnapshot = (): ReadonlySet<string> => EMPTY_READ;
+  const subscribe = (fn: () => void): (() => void) => {
+    listeners.add(fn);
+    return () => { listeners.delete(fn); };
+  };
+  const markRead = (ids: Iterable<string>): void => {
+    const cur = getSnapshot();
+    const next = new Set(cur);
+    for (const id of ids) next.add(id);
+    if (next.size === cur.size) return;
+    snap = next;
+    try { localStorage.setItem(READ_KEY, JSON.stringify([...next])); } catch { /* private window */ }
+    listeners.forEach((l) => l());
+  };
+  return { getSnapshot, getServerSnapshot, subscribe, markRead };
+}
+
+export const notifReadStore = createReadStore();
