@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  PALETTE_LIMIT, paletteTerms, ilikeAny,
+  PALETTE_LIMIT, PALETTE_INVOICE_COLUMNS, paletteTerms, ilikeAny,
   searchPaletteCustomers, searchPaletteQuotes, searchPaletteInvoices,
   searchPaletteSubscriptions, searchPaletteContacts, searchPalettePayments,
 } from "./palette-search";
@@ -113,5 +113,60 @@ describe("palette searches (R-1121)", () => {
     const { db, calls } = fakeDb();
     await searchPaletteContacts(db, "rohit");
     expect(calls[0].neq).toContainEqual(["source", "enquiry"]);
+  });
+});
+
+describe("R-1639: Ctrl+K finds a payment by receipt number and invoice number", () => {
+  it("the receipt voucher number and the quote / imported-invoice id are searched on the server", async () => {
+    const { db, calls } = fakeDb();
+    await searchPalettePayments(db, "RV-2026-0042", [], "t1");
+    const or = calls[0].or.join(",");
+    expect(or).toContain('receipt_voucher_no.ilike."%rv-2026-0042%"');
+    expect(or).toContain('quote_id.ilike."%rv-2026-0042%"');
+    expect(or).toContain('invoice_id.ilike."%rv-2026-0042%"');
+    expect(calls[0].eq).toContainEqual(["tenant_id", "t1"]);
+  });
+
+  it("a GST invoice the Invoices search found brings its payments (by its quote, or by the invoice itself)", async () => {
+    const { db, calls } = fakeDb();
+    await searchPalettePayments(db, "INV-2026-0031", [], "t1", [
+      { id: "INV-2026-0031", quote_id: "Q-2026-0107" },
+      { id: "zb-uuid-1", quote_id: null },
+    ]);
+    const or = calls[0].or.join(",");
+    expect(or).toContain('quote_id.in.("Q-2026-0107")');
+    expect(or).toContain('invoice_id.in.("INV-2026-0031","zb-uuid-1")');
+  });
+
+  it("a found payment is named from its quote's customer when it has no customer of its own", async () => {
+    const tables: Record<string, unknown[]> = {
+      payments: [{ id: "p1", amount: 500, method: "upi", reference: null, received_at: null, customer_id: null, quote_id: "Q-1", invoice_id: null, receipt_voucher_no: "RV-1" }],
+      quotes: [{ id: "Q-1", customer_name: "Acme Pvt Ltd" }],
+    };
+    type Asked = { table: string; in?: [string, string[]]; eq: [string, string][] };
+    const asked: Asked[] = [];
+    const db = {
+      from(table: string) {
+        const call: Asked = { table, eq: [] };
+        asked.push(call);
+        const done = () => Promise.resolve({ data: tables[table] ?? [], error: null });
+        const b = {
+          select() { return b; }, or() { return b; }, order() { return b; },
+          eq(c: string, v: string) { call.eq.push([c, v]); return b; },
+          in(c: string, v: string[]) { call.in = [c, v]; return done(); },
+          limit() { return done(); },
+        };
+        return b;
+      },
+    };
+    const rows = await searchPalettePayments(db as never, "RV-1", [], "t1");
+    expect(rows[0].customer_name).toBe("Acme Pvt Ltd");
+    const q = asked.find((a) => a.table === "quotes");
+    expect(q?.in).toEqual(["id", ["Q-1"]]);
+    expect(q?.eq).toContainEqual(["tenant_id", "t1"]);
+  });
+
+  it("the invoices search returns quote_id, so the payment search can use it", () => {
+    expect(PALETTE_INVOICE_COLUMNS).toContain("quote_id");
   });
 });

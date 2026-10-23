@@ -84,6 +84,7 @@ import { istMonth, toIstDate } from "@/lib/dates/ist";
 import { useConfirm, useAskText } from "@/components/providers/confirm-provider";
 import { PAYMENTS_PAGE_SIZE } from "./load-more";
 import { paymentMethodLabel } from "./method-label";
+import { paymentMatchesSearch } from "./payment-search";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { paymentSortValues, PAY_ROW_ATTR } from "./payment-table";
 import { useRowOrder } from "./use-row-order";
@@ -247,15 +248,9 @@ function PaymentsPageInner() {
   const filtered = React.useMemo(() => scopedPayments.filter((p) => {
     if (tab !== "all" && p.status !== tab) return false;
     if (focus && !paymentInFocus(p, focus)) return false;   // the tile's own predicate
-    if (!search.trim()) return true;
-    const s = search.toLowerCase();
-    return (
-      paymentDocId(p).toLowerCase().includes(s) ||
-      (p.reference?.toLowerCase().includes(s) ?? false) ||
-      p.method.toLowerCase().includes(s) ||
-      (customerOf(p).customerName?.toLowerCase().includes(s) ?? false)
-    );
-  }), [scopedPayments, tab, focus, customerOf, search]);
+    /* R-1639: also the receipt voucher no. and the invoice number (payment-search.ts). */
+    return paymentMatchesSearch(p, search, { customerName: customerOf(p).customerName, invoiceNumber: invoiceOf(p).invoiceNumber });
+  }), [scopedPayments, tab, focus, customerOf, invoiceOf, search]);
 
   /* R-215: the list is on the shared DataTable — header sort, and R-104's "paint 50 at a
      time" now comes from its pageSize. Tab counts, KPIs, "collected" and the CSV export
@@ -646,7 +641,7 @@ function PaymentsPageInner() {
               <Input
                 prefix={<Icon name="search" size={14} />}
                 aria-label="Search payments"
-                placeholder="Quote ID, customer, reference, method…"
+                placeholder="Receipt / invoice no., customer, amount…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />

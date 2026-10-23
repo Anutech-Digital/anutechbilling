@@ -41,7 +41,7 @@ import {
 } from "@/lib/search/keywords";
 import AddSeatsDialog from "@/components/features/subscriptions/add-seats-dialog";
 import type { Subscription } from "@/lib/supabase/database.types";
-import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { invoiceHref, NEW_INVOICE_HREF } from "@/app/(app)/invoices/invoice-href";
 import {
   subscriptionHref, subscriptionStatusLabel, paymentHref, SUBSCRIPTION_SEARCH_EVENT, searchFromSubscriptionHref,
 } from "@/app/(app)/subscriptions/palette-links";
@@ -252,7 +252,7 @@ export function CommandPalette({
     { icon: "sparkles", label: "AI Entry",              meta: "Paste or photograph anything — it fills the entry", href: "/ai-entry" },
     { icon: "plus",    label: "Create new lead",        meta: "Open the quick-add form",                     href: "/leads?action=quick-add" },
     { icon: "file",    label: COPY.newQuote,             meta: "Open Quote Builder",                          href: "/quotes/new" },
-    { icon: "receipt", label: "Create invoice",         meta: "Direct GST tax invoice",                      href: "/quotes/new?invoice=1" },
+    { icon: "receipt", label: "Create invoice",         meta: "Direct GST tax invoice",                      href: NEW_INVOICE_HREF },
     /* R-243: the invoices still owed (pending, partial, overdue), not the whole list. */
     { icon: "rupee",   label: "Record a payment",       meta: "Invoices still owed — pick one to record what you received", href: "/invoices?focus=unpaid" },
     { icon: "users",   label: "Add new company",        meta: "Open new company (customer) form",           href: "/customers/new" },
@@ -495,9 +495,10 @@ export function CommandPalette({
               {fPayments.length > 0 && (
                 <Command.Group heading={`Payments · ${count(fPayments)}`}>
                   {fPayments.map((p) => {
-                    const who = (p.customer_id && customerNameById.get(p.customer_id)) || "Payment";
+                    /* R-1639: named from its quote / invoice / customer by the search itself. */
+                    const who = p.customer_name || (p.customer_id && customerNameById.get(p.customer_id)) || "Payment";
                     const amount = rupee(p.amount, { compact: true });
-                    const meta = [amount, p.method ? paymentMethodLabel(p.method) : null, formatDate(p.received_at), p.reference].filter(Boolean).join(" · ");
+                    const meta = [amount, p.receipt_voucher_no, p.method ? paymentMethodLabel(p.method) : null, formatDate(p.received_at), p.reference].filter(Boolean).join(" · ");
                     return (
                       <PaletteItem
                         key={p.id}
