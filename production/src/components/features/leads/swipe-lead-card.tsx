@@ -61,6 +61,8 @@ import type { LeadListRow } from "@/lib/leads/list-page";
 import { istToday } from "@/lib/dates/ist";
 import { CloseDateBadge } from "@/components/features/leads/close-date-badge";
 import { leadTitle } from "@/lib/leads/display-name";
+import { followRevealed, isMaskedContact } from "@/lib/contacts/reveal-client";
+import { waFrom } from "./lead-row-actions";
 
 // R-290: the stage chip reads the shared table (lib/leads/stage-meta) — this used to be a
 // private copy, and copies are how stage order and labels drift between screens.
@@ -124,8 +126,13 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
   const waNumber    = phoneDigits.startsWith("91")
     ? phoneDigits
     : (phoneDigits.length === 10 ? `91${phoneDigits}` : phoneDigits);
-  const hasPhone    = phoneDigits.length >= 10;
+  /* R-1009: a masked phone ("••••••3210") is still a phone — Call / WhatsApp / Email fetch the
+     real value (logged) when used. */
+  const phoneMasked = isMaskedContact(lead.contact_phone);
+  const hasPhone    = phoneDigits.length >= 10 || phoneMasked;
   const hasEmail    = Boolean(lead.contact_email);
+  const phoneRef    = { table: "leads" as const, id: lead.id, field: "contact_phone" };
+  const waHref      = (real: string) => `https://wa.me/${waFrom(real)}?text=${encodeURIComponent(buildWaMessage(lead))}`;
 
   const waMessage = buildWaMessage(lead);
   const followUp  = followUpLabel(lead.follow_up_date);
@@ -176,6 +183,10 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
         onOutcome?.("call_tomorrow", lead);
         break;
       case "whatsapp":
+        if (phoneMasked) {
+          followRevealed({ preventDefault: () => {} }, lead.contact_phone, phoneRef, "whatsapp", waHref, true);
+          break;
+        }
         window.open(
           `https://wa.me/${waNumber}?text=${encodeURIComponent(waMessage)}`,
           "_blank",
@@ -440,7 +451,10 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
                     </DropdownMenuLabel>
                     {hasPhone && (
                       <DropdownMenuItem asChild className="cursor-pointer gap-2.5 py-2">
-                        <a href={`tel:${lead.contact_phone}`}>
+                        <a
+                          href={`tel:${lead.contact_phone}`}
+                          onClick={(e) => followRevealed(e, lead.contact_phone, phoneRef, "call", (real) => `tel:${real}`)}
+                        >
                           <Icon name="mobile" size={15} className="text-emerald" /> Call
                         </a>
                       </DropdownMenuItem>
@@ -451,6 +465,7 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
                           href={`https://wa.me/${waNumber}?text=${encodeURIComponent(waMessage)}`}
                           target="_blank"
                           rel="noopener noreferrer"
+                          onClick={(e) => followRevealed(e, lead.contact_phone, phoneRef, "whatsapp", waHref, true)}
                         >
                           <Icon name="whatsapp" size={15} className="text-emerald" /> WhatsApp
                         </a>
@@ -462,6 +477,8 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
                           href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(lead.contact_email ?? "")}`}
                           target="_blank"
                           rel="noopener noreferrer"
+                          onClick={(e) => followRevealed(e, lead.contact_email, { table: "leads", id: lead.id, field: "contact_email" }, "email",
+                            (real) => `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(real)}`, true)}
                         >
                           <Icon name="mail" size={15} className="text-indigo" /> Email
                         </a>

@@ -259,6 +259,15 @@ export function maskContact(value: string | null | undefined): string {
 }
 
 /**
+ * R-1009: is this a value maskContact() produced? The data gateway sends masked contacts to a
+ * role without can_view_contact_details, so a screen uses this to swap a dial / mail link for
+ * the "reveal on Call" path (lib/contacts/reveal-client.ts) instead of dialling "••••3210".
+ */
+export function isMaskedContact(value: string | null | undefined): boolean {
+  return typeof value === "string" && value.includes("•");
+}
+
+/**
  * R-718 (11 Oct 2026, Pardeep's role table): who may do money actions. The database refuses
  * everyone else (migration 20261011120000_r718_money_roles), so the buttons are hidden too.
  *   MONEY_RECORD_ROLES — record a payment, credit / debit note, direct invoice, bank match /

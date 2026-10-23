@@ -34,6 +34,7 @@ import { gstTreatmentOption } from "@/lib/gst/customer-gst-treatment";
 import type { PrimaryContact } from "@/components/features/customers/customer-links";
 import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
 import { seatsPhrase, manageSeatsHref } from "@/components/features/subscriptions/seat-words";
+import { followRevealed, isMaskedContact } from "@/lib/contacts/reveal-client";
 
 // ════════════════════════════════════════════════════════════════════════
 // Pure logic
@@ -426,7 +427,22 @@ export function NextBestActionCard({ nba, customer }: { nba: Nba; customer: Cust
                     <Button size="sm" variant="default" onClick={() => { navigator.clipboard?.writeText(draft.message); toast.success("Copied"); }}>Copy</Button>
                     {sendLink && (
                       <Button asChild size="sm" variant="primary">
-                        <a href={sendLink} target={channel === "whatsapp" ? "_blank" : undefined} rel="noopener noreferrer">
+                        <a
+                          href={sendLink}
+                          target={channel === "whatsapp" ? "_blank" : undefined}
+                          rel="noopener noreferrer"
+                          onClick={(e) => {
+                            /* R-1009: a masked phone / email is fetched (logged) before the send opens. */
+                            const wa = channel === "whatsapp" && Boolean(phone);
+                            followRevealed(e, wa ? phone : customer.contact_email,
+                              { table: "customers", id: customer.id, field: wa ? "contact_phone" : "contact_email" },
+                              wa ? "whatsapp" : "email",
+                              (real) => wa
+                                ? `https://wa.me/${real.replace(/\D/g, "")}?text=${encodeURIComponent(draft.message)}`
+                                : `mailto:${real}?subject=${encodeURIComponent(draft.subject || `Regarding ${customer.name}`)}&body=${encodeURIComponent(draft.message)}`,
+                              wa);
+                          }}
+                        >
                           <Icon name={channel === "whatsapp" ? "whatsapp" : "mail"} size={13} className="mr-1.5" />Send
                         </a>
                       </Button>
@@ -443,8 +459,12 @@ export function NextBestActionCard({ nba, customer }: { nba: Nba; customer: Cust
 }
 
 /** Quick contact action buttons (Call / WhatsApp / Email) — real deep-links. */
-export function CustomerContactActions({ phone: rawPhone, email }: { phone: string | null | undefined; email: string | null | undefined }) {
-  const phone = rawPhone?.replace(/\s+/g, "");
+export function CustomerContactActions({ phone: rawPhone, email: rawEmail }: { phone: string | null | undefined; email: string | null | undefined }) {
+  /* R-1009: a masked value (a role without can_view_contact_details) gets no deep link — a
+     tel: to "••••••3210" can only fail. The masked text itself stays on the card above. */
+  const rawTel = rawPhone?.replace(/\s+/g, "");
+  const phone = rawTel && !isMaskedContact(rawTel) ? rawTel : undefined;
+  const email = rawEmail && !isMaskedContact(rawEmail) ? rawEmail : undefined;
   if (!phone && !email) return null;
   return (
     <div className="flex flex-wrap gap-2">
@@ -684,13 +704,22 @@ export function CustomerIdentityRail({ c, contact, onAddContact }: {
             {contact.title && <div className="text-2xs text-ink-3">{contact.title}</div>}
             <div className="mt-1.5 space-y-1">
               {contact.email && (
-                <a href={`mailto:${contact.email}`} className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors">
+                /* R-1009: a masked value stays text — no mailto: / tel: to a mask. */
+                <a
+                  href={isMaskedContact(contact.email) ? undefined : `mailto:${contact.email}`}
+                  title={isMaskedContact(contact.email) ? "Hidden for your role. The owner or a manager can see it." : undefined}
+                  className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors"
+                >
                   <Icon name="mail" size={12} className="text-ink-3 flex-shrink-0" />
                   <span className="font-mono truncate">{contact.email}</span>
                 </a>
               )}
               {phone && (
-                <a href={`tel:${phone}`} className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors">
+                <a
+                  href={isMaskedContact(phone) ? undefined : `tel:${phone}`}
+                  title={isMaskedContact(phone) ? "Hidden for your role. The owner or a manager can see it." : undefined}
+                  className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors"
+                >
                   <Icon name="phone" size={12} className="text-ink-3 flex-shrink-0" />
                   <span className="tabular-nums">{formatPhone(phone)}</span>
                 </a>

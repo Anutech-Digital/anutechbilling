@@ -23,6 +23,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { LeadListRow } from "@/lib/leads/list-page";
 import { STICK_R_ACTIONS } from "@/components/features/leads/lead-list-grid";
+import { isMaskedContact, usableContact, type ContactPurpose } from "@/lib/contacts/reveal-client";
 
 const MarkJunkDialog = dynamic(() => import("@/components/features/leads/mark-junk-dialog").then((m) => m.MarkJunkDialog), { ssr: false });
 
@@ -36,6 +37,12 @@ export function openWhatsApp(rawNumber: string, text?: string) {
     ? `https://wa.me/${num}${q}`
     : `https://web.whatsapp.com/send?phone=${num}${q}`;
   window.open(url, "_blank", "noopener,noreferrer");
+}
+
+/** The number wa.me wants: digits, with 91 in front of a 10-digit Indian number. */
+export function waFrom(phone: string): string {
+  const d = (phone || "").replace(/\D/g, "");
+  return d.startsWith("91") ? d : (d.length === 10 ? `91${d}` : d);
 }
 
 // ============================================================
@@ -55,11 +62,15 @@ export function RowActions({
   onWhatsApp?: (l: LeadListRow) => void;
 }) {
   const phoneDigits = (lead.contact_phone ?? "").replace(/\D/g, "");
-  const waNumber = phoneDigits.startsWith("91")
-    ? phoneDigits
-    : (phoneDigits.length === 10 ? `91${phoneDigits}` : phoneDigits);
-  const hasPhone = phoneDigits.length >= 10;
+  /* R-1009: a role without can_view_contact_details gets "••••••3210" from the gateway. The
+     lead still has a phone — Call / WhatsApp / Email fetch the real value (logged) when used. */
+  const phoneMasked = isMaskedContact(lead.contact_phone);
+  const hasPhone = phoneDigits.length >= 10 || phoneMasked;
   const hasEmail = Boolean(lead.contact_email);
+  const realPhone = (purpose: ContactPurpose) =>
+    usableContact(lead.contact_phone, { table: "leads", id: lead.id, field: "contact_phone" }, purpose);
+  const realEmail = () =>
+    usableContact(lead.contact_email, { table: "leads", id: lead.id, field: "contact_email" }, "email");
   const logActivity = useLogLeadActivity();
   const setJunk = useSetLeadJunk();
   const runOutcome = useLeadOutcome();
@@ -114,7 +125,13 @@ export function RowActions({
               <DropdownMenuItem asChild className={itemCls}>
                 <a
                   href={`tel:${lead.contact_phone}`}
-                  onClick={() => logActivity.mutate({ leadId: lead.id, kind: "call", detail: `Called ${lead.contact_phone}` })}
+                  onClick={(e) => {
+                    if (phoneMasked) {
+                      e.preventDefault();
+                      void realPhone("call").then((p) => { if (p) window.location.href = `tel:${p}`; });
+                    }
+                    logActivity.mutate({ leadId: lead.id, kind: "call", detail: `Called ${lead.contact_phone}` });
+                  }}
                 >
                   <Icon name="call" size={20} className="text-emerald" /> Call
                   <span className="ml-auto max-w-[9rem] truncate text-xs text-ink-3">{lead.contact_phone}</span>
@@ -124,8 +141,10 @@ export function RowActions({
             {hasPhone && (
               <DropdownMenuItem
                 className={itemCls}
-                onClick={() => {
-                  if (onWhatsApp) { onWhatsApp(lead); } else { openWhatsApp(waNumber); }
+                onClick={async () => {
+                  const p = await realPhone("whatsapp");
+                  if (!p) return;
+                  if (onWhatsApp) { onWhatsApp({ ...lead, contact_phone: p }); } else { openWhatsApp(waFrom(p)); }
                   logActivity.mutate({ leadId: lead.id, kind: "whatsapp", detail: `WhatsApp to ${lead.contact_phone}` });
                 }}
               >
@@ -171,7 +190,7 @@ export function RowActions({
           </DropdownMenuItem>
           <DropdownMenuItem
             className={itemCls}
-            onClick={() => {
+            onClick={async () => {
               const url  = `${window.location.origin}/enquiry`;
               const hi   = lead.contact_name ? `Hi ${lead.contact_name},` : "Hello,";
               const text =
@@ -180,11 +199,15 @@ export function RowActions({
                 `${url}\n\n` +
                 `Once you submit it, we'll review and send you a price quote with GST. Thank you!`;
               if (hasPhone) {
+                const p = await realPhone("whatsapp");
+                if (!p) return;
                 // wa.me/<number>?text= reliably opens THIS number's chat (desktop
                 // app OR web) with the link pre-filled — not the "new chat" picker.
-                window.open(`https://wa.me/${waNumber}?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+                window.open(`https://wa.me/${waFrom(p)}?text=${encodeURIComponent(text)}`, "_blank", "noopener");
               } else if (hasEmail) {
-                window.location.href = `mailto:${encodeURIComponent(lead.contact_email ?? "")}?subject=${encodeURIComponent("Please share your requirement for a quote")}&body=${encodeURIComponent(text)}`;
+                const m = await realEmail();
+                if (!m) return;
+                window.location.href = `mailto:${encodeURIComponent(m)}?subject=${encodeURIComponent("Please share your requirement for a quote")}&body=${encodeURIComponent(text)}`;
               }
               logActivity.mutate({ leadId: lead.id, kind: "email", detail: "Sent enquiry form link" });
             }}
@@ -199,7 +222,15 @@ export function RowActions({
                 href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(lead.contact_email ?? "")}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                onClick={() => logActivity.mutate({ leadId: lead.id, kind: "email", detail: `Emailed ${lead.contact_email}` })}
+                onClick={(e) => {
+                  if (isMaskedContact(lead.contact_email)) {
+                    e.preventDefault();
+                    void realEmail().then((m) => {
+                      if (m) window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(m)}`, "_blank", "noopener,noreferrer");
+                    });
+                  }
+                  logActivity.mutate({ leadId: lead.id, kind: "email", detail: `Emailed ${lead.contact_email}` });
+                }}
               >
                 <Icon name="email" size={20} /> Email
                 <span className="ml-auto max-w-[9rem] truncate text-xs text-ink-3">{lead.contact_email}</span>

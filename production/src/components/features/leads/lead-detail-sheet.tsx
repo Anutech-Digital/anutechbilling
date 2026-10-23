@@ -46,6 +46,7 @@ import { LeadDetailHeader } from "@/components/features/leads/lead-detail-header
 import { leadTitle } from "@/lib/leads/display-name";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { leadQuoteHref } from "@/lib/leads/lead-quote-href";
+import { usableContact } from "@/lib/contacts/reveal-client";
 
 type DrawerTab = "email" | "details" | "followups" | "activity";
 /* "auto" = no tab chosen yet: the drawer picks one from what the lead has (below). */
@@ -247,6 +248,8 @@ export function LeadDetailSheet({
   const deleteTask   = useDeleteTask();
   const [addTaskOpen, setAddTaskOpen] = React.useState(false);
   const [whatsOpen,   setWhatsOpen]   = React.useState(false);
+  /* R-1009: the real number WhatsApp opened with, when the list only had a masked one. */
+  const [waTo,        setWaTo]        = React.useState<string | null>(null);
   const [cardsOpen,   setCardsOpen]   = React.useState(false);
 
   /* Deal health. Built from what this drawer already loads — activities give both the
@@ -328,6 +331,21 @@ export function LeadDetailSheet({
      /api/leads/[id]/email sends through lib/email/send.ts (the tenant's own connected
      Gmail, when they have one) and files the text into inbound_emails the same way the
      enquiry reply route does, so both sides of the thread are real. */
+  /* R-1009: a role without can_view_contact_details holds a masked phone ("••••••3210").
+     Call and WhatsApp ask the server for the real one (logged) at the moment of use. */
+  const phoneRef = { table: "leads" as const, id: lead.id, field: "contact_phone" };
+  const callLead = async (phone?: string | null) => {
+    const p = await usableContact(phone ?? lead.contact_phone, phoneRef, "call");
+    if (p) window.location.href = `tel:${p}`;
+  };
+  const openWhatsApp = async (open: boolean) => {
+    if (!open) { setWhatsOpen(false); return; }
+    const p = await usableContact(lead.contact_phone, phoneRef, "whatsapp");
+    if (!p) return;
+    setWaTo(p);
+    setWhatsOpen(true);
+  };
+
   const handleEmail = () => {
     if (!lead.contact_email) {
       /* §24 — where to fix it, not just what is wrong. */
@@ -371,7 +389,7 @@ export function LeadDetailSheet({
     if (t.kind === "go") { router.push(t.href as never); return; }
     if (t.kind === "send_quote") { handleSendQuote(); return; }
     if (t.kind === "email") { handleEmail(); return; }
-    window.location.href = `tel:${t.phone}`;
+    void callLead(t.phone);
   };
 
 
@@ -696,7 +714,8 @@ export function LeadDetailSheet({
           handleDelete={handleDelete}
           deletePending={deleteLead.isPending}
           handleEmail={handleEmail}
-          setWhatsOpen={setWhatsOpen}
+          setWhatsOpen={(o) => void openWhatsApp(o)}
+          onCall={() => void callLead()}
           latestQuote={latestQuote}
           hasQuotes={hasQuotes}
           nextAction={nextAction}
@@ -736,7 +755,7 @@ export function LeadDetailSheet({
         <SendWhatsAppDialog
           open={whatsOpen}
           onOpenChange={setWhatsOpen}
-          defaultTo={lead.contact_phone}
+          defaultTo={waTo ?? lead.contact_phone}
           defaultText={
             `Hi ${lead.contact_name ?? "there"},\n\n` +
             `Thanks for your interest in ${lead.plan ?? "our cloud services"}` +

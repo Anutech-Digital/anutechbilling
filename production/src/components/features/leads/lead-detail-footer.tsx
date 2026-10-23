@@ -104,6 +104,9 @@ export interface LeadDetailFooterProps {
   deletePending: boolean;
   handleEmail: () => void;
   setWhatsOpen: (open: boolean) => void;
+  /** R-1009: dials the lead — through /api/contacts/reveal when this role sees a masked phone.
+   *  Without it the button dials contact_phone as it is. */
+  onCall?: () => void;
   latestQuote: Quote | undefined;
   hasQuotes: boolean;
   nextAction: NextAction | null;
@@ -112,7 +115,7 @@ export interface LeadDetailFooterProps {
 }
 
 export function LeadDetailFooter({
-  lead, onEdit, handleArchive, handleDelete, deletePending, handleEmail, setWhatsOpen,
+  lead, onEdit, handleArchive, handleDelete, deletePending, handleEmail, setWhatsOpen, onCall,
   latestQuote, hasQuotes, nextAction, handleSendQuote, handleReviseQuote,
 }: LeadDetailFooterProps) {
   const router = useRouter();
@@ -167,7 +170,7 @@ export function LeadDetailFooter({
             {lead.contact_phone && (
               <Button
                 icon="mobile"
-                onClick={() => { window.location.href = `tel:${lead.contact_phone}`; }}
+                onClick={() => { if (onCall) onCall(); else window.location.href = `tel:${lead.contact_phone}`; }}
                 title="Native dialer"
               >
                 Call

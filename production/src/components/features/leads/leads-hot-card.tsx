@@ -18,6 +18,7 @@ import type { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import type { LeadCounts } from "@/lib/leads/list-page";
 import { leadTitle } from "@/lib/leads/display-name";
 import { dialable } from "@/lib/leads/call-queue";
+import { followRevealed, isMaskedContact, usableContact } from "@/lib/contacts/reveal-client";
 import type { Lead } from "@/lib/supabase/database.types";
 
 /**
@@ -55,9 +56,12 @@ export function LeadsHotCard({ hotCount, topHot, currentUser, tipsOpen, toggleTi
 
   /* R-1476: same rule as R-1426's call queue — a number that cannot be dialled (none, "NA",
      five digits) gets no Call button that can only fail (CLAUDE.md §24); it gets the fix. */
-  const num = topHot ? dialable(topHot.contact_phone) : null;
+  /* R-1009: a masked phone ("••••••3210") still gets the Call button; the tap fetches the real
+     number (logged) first. */
+  const phoneMasked = Boolean(topHot) && isMaskedContact(topHot?.contact_phone);
+  const num = topHot ? (phoneMasked ? "masked" : dialable(topHot.contact_phone)) : null;
 
-  const handleSendNudge = () => {
+  const handleSendNudge = async () => {
     if (!topHot) { toast.info("No hot leads right now"); return; }
     if (!topHot.contact_email) {
       toast.error(`${leadTitle(topHot).label} has no email on record.`, { description: "Open the lead and add an email, then send the nudge." });
@@ -70,7 +74,9 @@ export function LeadsHotCard({ hotCount, topHot, currentUser, tipsOpen, toggleTi
       `Just checking in on ${topHot.plan ? `the ${topHot.plan} discussion` : "your inquiry"}. ` +
       `Let me know if you have any questions or want to set up a quick call.\n\n` +
       `— ${signoff}`;
-    window.location.href = `mailto:${topHot.contact_email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    const to = await usableContact(topHot.contact_email, { table: "leads", id: topHot.id, field: "contact_email" }, "email");
+    if (!to) return;
+    window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   };
 
   return (
@@ -87,7 +93,13 @@ export function LeadsHotCard({ hotCount, topHot, currentUser, tipsOpen, toggleTi
                 <Button size="sm" variant="primary" icon="phone" disabled>Call top lead</Button>
               ) : num ? (
                 <Button size="sm" variant="primary" icon="phone" asChild>
-                  <a href={`tel:+${num}`}>{hotCallLabel(topHot)}</a>
+                  <a
+                    href={`tel:+${num}`}
+                    onClick={(e) => followRevealed(e, topHot.contact_phone, { table: "leads", id: topHot.id, field: "contact_phone" }, "call",
+                      (real) => { const d = dialable(real); return d ? `tel:+${d}` : null; })}
+                  >
+                    {hotCallLabel(topHot)}
+                  </a>
                 </Button>
               ) : (
                 <Button

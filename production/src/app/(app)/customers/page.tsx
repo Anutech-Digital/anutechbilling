@@ -66,6 +66,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canWriteSales } from "@/lib/nav";
 import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
+import { followRevealed } from "@/lib/contacts/reveal-client";
 
 // Saved-view segments (Zoho-style) — compact filters over already-loaded data
 // (receivables + unused credit + subscriptions).
@@ -891,6 +892,10 @@ export default function CustomersPage() {
                           href={`https://wa.me/${c.contact_phone.replace(/\D/g, "")}`}
                           target="_blank"
                           rel="noreferrer"
+                          /* R-1009: a masked phone (role without can_view_contact_details) is
+                             fetched from the server (logged) before WhatsApp opens. */
+                          onClick={(e) => followRevealed(e, c.contact_phone, { table: "customers", id: c.id, field: "contact_phone" }, "whatsapp",
+                            (real) => `https://wa.me/${real.replace(/\D/g, "")}`, true)}
                           className="relative z-10 inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded bg-emerald-soft text-emerald font-medium hover:bg-emerald hover:text-white transition-colors"
                         >
                           <Icon name="message_square" size={12} /> WhatsApp

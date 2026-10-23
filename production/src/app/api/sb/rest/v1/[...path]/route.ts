@@ -14,6 +14,8 @@ import {
   rowsFromContentRange, selectHasEmbeds,
 } from "@/server/postgrest/gateway-limits";
 import { BodyTooLargeError, bodyTooLargeJson, readBodyCapped } from "@/server/postgrest/body-limit";
+import { maskContactsInBody, mustMaskContacts, stripMaskedContactWrites, touchesContactTables } from "@/server/postgrest/contact-mask";
+import { getCatalog } from "@/server/postgrest/catalog";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -41,8 +43,12 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
        rate, a daily row budget, paging caps and no select=* on customers/contacts/payments —
        src/server/postgrest/gateway-limits.ts. Owner/manager/accountant/billing pass untouched. */
     let limitedUser: string | null = null;
+    /* R-1009: a role without can_view_contact_details (sales, accountant, partner agent) gets
+       leads / customers / contacts with the phone and email masked — server/postgrest/contact-mask.ts. */
+    let maskContacts = false;
     if (identity.mode === "user") {
       const role = await gatewayRole(identity.userId);
+      maskContacts = mustMaskContacts(role);
       if (isGatewayLimitedRole(role)) {
         limitedUser = identity.userId;
         const refusal = await gatewayGuard(identity.userId, req.method, joined, req.nextUrl.searchParams);
@@ -52,13 +58,25 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
         }
       }
     }
-    const res = await handlePostgrest({
+    /* R-1009: a masked value sent back (an edit form opened with "••••3210") is dropped, so it
+       can never overwrite the real number. */
+    if (maskContacts && body) body = stripMaskedContactWrites(joined, body);
+    let res = await handlePostgrest({
       method: req.method,
       path: joined,
       search: req.nextUrl.searchParams,
       headers: req.headers,
       body,
     }, identity);
+    if (maskContacts && req.method !== "HEAD" && res.body) {
+      const cat = await getCatalog().catch(() => undefined);
+      if (touchesContactTables(joined, req.nextUrl.searchParams, cat)) {
+        const text = await res.text();
+        const headers = new Headers(res.headers);
+        headers.delete("content-length");      // "•" is 3 bytes — the length changed
+        res = new Response(maskContactsInBody(joined, req.nextUrl.searchParams, text, cat), { status: res.status, headers });
+      }
+    }
     res.headers.set("Cache-Control", "no-store");
     if (limitedUser && req.method !== "HEAD" && res.ok) {
       let rows = rowsFromContentRange(res.headers.get("content-range"));
