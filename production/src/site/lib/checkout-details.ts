@@ -60,28 +60,40 @@ export interface CheckoutDetails {
   address: { line1: string; city: string; state: string; pin: string };
 }
 
-export function missingCheckoutDetails(d: CheckoutDetails): string[] {
-  const missing: string[] = [];
-  if (d.name.trim().length < 2) missing.push("your name");
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.email.trim())) missing.push("a valid email address");
-  if (d.phone.replace(/\D/g, "").length < 10) missing.push("your mobile number (10 digits)");
+/** R-1113: which box on the checkout form each missing item belongs to. */
+export type CheckoutFieldKey = "name" | "email" | "phone" | "domain" | "state" | "gstin" | "address";
+
+function checkDetails(d: CheckoutDetails): { field: CheckoutFieldKey; text: string }[] {
+  const missing: { field: CheckoutFieldKey; text: string }[] = [];
+  if (d.name.trim().length < 2) missing.push({ field: "name", text: "your name" });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.email.trim())) missing.push({ field: "email", text: "a valid email address" });
+  if (d.phone.replace(/\D/g, "").length < 10) missing.push({ field: "phone", text: "your mobile number (10 digits)" });
   if (d.hasHosting) {
     // The same rule the server applies (planDomains): a real domain for every plan, none shared.
     const r = planDomains(d.plans && d.plans.length ? d.plans : [{ label: "hosting", typed: d.domain }]);
-    if (!r.ok) missing.push(...r.problems);
+    if (!r.ok) missing.push(...r.problems.map((text) => ({ field: "domain" as const, text })));
   }
   if (d.needsState && !/^\d{2}$/.test((d.stateCode ?? "").trim())) {
-    missing.push("your state (it decides the GST on your invoice)");
+    missing.push({ field: "state", text: "your state (it decides the GST on your invoice)" });
   }
-  if (gstinProblem(d.gstin)) missing.push("a valid GSTIN (or leave it blank)");
+  if (gstinProblem(d.gstin)) missing.push({ field: "gstin", text: "a valid GSTIN (or leave it blank)" });
   if (d.hasDomain) {
     // The state is its own field now (R-091) and is checked above.
     const a = d.address;
     if (a.line1.trim().length < 3 || a.city.trim().length < 2 || !/^\d{6}$/.test(a.pin.trim())) {
-      missing.push("the domain owner's postal address (address, city and a 6-digit PIN code)");
+      missing.push({ field: "address", text: "the domain owner's postal address (address, city and a 6-digit PIN code)" });
     }
   }
   return missing;
+}
+
+export function missingCheckoutDetails(d: CheckoutDetails): string[] {
+  return checkDetails(d).map((m) => m.text);
+}
+
+/** R-1113: the boxes to mark invalid, in form order, each once — the first one gets focus. */
+export function missingCheckoutFields(d: CheckoutDetails): CheckoutFieldKey[] {
+  return [...new Set(checkDetails(d).map((m) => m.field))];
 }
 
 /** "Please add your name and your mobile number (10 digits) to continue." */
