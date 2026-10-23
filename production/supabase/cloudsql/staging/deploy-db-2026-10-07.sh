@@ -199,6 +199,7 @@ MIGS=(
   "r1445termfollowsline|20261023162200_r1445_subscription_term_follows_line.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'subscriptions_term_follows_line' and tgrelid = to_regclass('public.subscriptions'))"
   "r858domainunique|20261023173000_r858_tenant_domains_verified_unique.sql|resellersos_migration|(exists(select 1 from pg_indexes where schemaname = 'public' and tablename = 'tenant_domains' and indexname = 'tenant_domains_domain_unique' and indexdef like '%WHERE (verified_at IS NOT NULL)%') and exists(select 1 from pg_indexes where schemaname = 'public' and tablename = 'tenant_domains' and indexname = 'tenant_domains_tenant_domain_unique'))"
   "r1010loginlog|20261023173100_r1010_server_login_log.sql|resellersos_migration|(exists(select 1 from pg_proc where oid = to_regprocedure('public.log_activity(text,text,text,text)') and prosrc like '%R-1010%') and exists(select 1 from pg_indexes where schemaname = 'public' and tablename = 'activity_log' and indexname = 'activity_log_login_once'))"
+  "r1104jobruns|20261023181904_r1104_automation_job_runs.sql|resellersos_migration|to_regclass('public.automation_job_runs') is not null and exists(select 1 from pg_policy where polname = 'automation_job_runs_select_owner_manager' and polrelid = to_regclass('public.automation_job_runs')) and exists(select 1 from pg_trigger where tgname = 'trg_automation_job_runs_keep')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
