@@ -92,6 +92,8 @@ export function PnlHeadline({ model, revenueCount, expensesCount, outputGst, onO
                     : "licences from vendor bills")
                   : null,
                 model.grossMarginPct !== null ? `gross margin ${model.grossMarginPct}%` : null,
+                /* R-1649: salaries are hidden from this role, so is the project cost and the margin. */
+                model.projectCostHidden ? "project salary hidden for your role · gross margin hidden" : null,
               ].filter(Boolean).join(" · ")}
           onClick={() => onOpen("cogs")}
         />

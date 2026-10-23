@@ -18,7 +18,6 @@
 "use client";
 
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
 
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,9 +26,7 @@ import { Term } from "@/components/shared/term";
 import { Button } from "@/components/ui/button";
 import { rupee } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
-import { createClient } from "@/lib/supabase/client";
-import { usePnL } from "@/lib/queries/pnl";
-import { rpcValueOrThrow } from "@/lib/accounting/report-rpc";
+import { usePnL, usePnLMonths } from "@/lib/queries/pnl";
 import { PnLDrilldownDialog, type PnLDrillKind } from "@/components/features/accounting/pnl-drilldown-dialog";
 import { PnlWaterfall, HundredRupeeBar } from "@/components/features/accounting/pnl-waterfall";
 import { MoneyFlow } from "@/components/features/accounting/money-flow";
@@ -37,7 +34,7 @@ import { compareFigures, isPartialPeriod, isEstimatedBasis, licenceCostHint } fr
 import { pnlWaterfall, hundredRupeeSplit } from "@/lib/accounting/waterfall";
 import { ProfitDonut, MonthlyTrend } from "@/components/features/accounting/pnl-charts";
 import {
-  profitContribution, monthlySeries, trendHighlights, type MonthPoint,
+  profitContribution, monthlySeriesFromPnl, trendHighlights,
 } from "@/lib/accounting/pnl-charts";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -108,44 +105,8 @@ const QUICK_RANGES: { label: string; build: () => DateRange }[] = [
 // P&L aggregation hook
 // ────────────────────────────────────────────────────────────────
 
-// P&L aggregation — lib/queries/pnl.ts (shared with the Balance Sheet).
-
-/**
- * Twelve months of revenue and expenses for the trend chart.
- *
- * ONE query per table for the whole financial year, bucketed client-side — not twelve
- * calls to `usePnL`. That would be 12 × 6 round trips to draw a line, and the page would
- * visibly assemble itself month by month.
- *
- * The cost ratio is passed in from the headline figures, so every point on the line is
- * consistent with the waterfall above it. Deriving it separately here is how a chart ends
- * up disagreeing with the number printed beside it.
- */
-function useMonthlyTrend(fyStartYear: number, cogsRatio: number, enabled: boolean) {
-  const from = `${fyStartYear}-04-01`;
-  const to   = `${fyStartYear + 1}-03-31`;
-
-  return useQuery({
-    queryKey: ["accounting", "pnl", "trend", fyStartYear, cogsRatio],
-    enabled,
-    queryFn: async (): Promise<MonthPoint[]> => {
-      const supabase = createClient();
-      /* S17: mahine-war jod SQL me (report_pnl_monthly) — saal bhar ki har invoice aur
-         expense browser me nahi. Taxable value, never the GST-inclusive amount — same rule
-         as the headline. monthlySeries mahine se hi bucket karta hai, isliye har mahine ki
-         ek row (pehli tareekh par) wahi series deti hai. */
-      const res = await supabase.rpc("report_pnl_monthly", { p_from: from, p_to: to });
-      const months = rpcValueOrThrow<{ month: string; revenue: number; expenses: number }[]>(res, "report_pnl_monthly");
-      const revenue = months.map((m) => ({ date: `${m.month}-01`, amount: m.revenue }));
-      const expenses = months.map((m) => ({ date: `${m.month}-01`, amount: m.expenses }));
-
-      return monthlySeries({
-        fyStartYear, revenue, expenses, cogsRatio,
-        today: yyyymmdd(istToday()),
-      });
-    },
-  });
-}
+// P&L aggregation — lib/queries/pnl.ts (shared with the Balance Sheet). The FY trend is the
+// same P&L month by month (usePnLMonths, R-1647).
 
 // ────────────────────────────────────────────────────────────────
 // Page
@@ -180,21 +141,19 @@ export default function PnLPage() {
 
   const [vendorTab, setVendorTab] = React.useState<string | "all">("all");
 
-  /* Profit contribution + the FY trend. The ratio comes from the headline so the chart
-     and the number beside it cannot disagree. */
+  /* Profit contribution + the FY trend. R-1647: each month of the trend is THAT month's P&L
+     (same assemblePnl / reportProfit as the statement), not a cost ratio borrowed from the
+     range on screen — so the chart, "best / weakest month" and the statement cannot disagree. */
   const contribution = React.useMemo(
     () => profitContribution(data?.model.byVendor ?? []),
     [data?.model.byVendor],
   );
-  const cogsRatio = React.useMemo(() => {
-    const m = data?.model;
-    if (!m || m.revenue <= 0) return 0;
-    /* Licence part only: the trend subtracts every booked expense month by month, and
-       project salary is already inside those — adding it again as cost would count it twice. */
-    return m.licenceCogs / m.revenue;
-  }, [data?.model]);
   const fyStart = React.useMemo(() => fiscalYearStart(istToday()).getUTCFullYear(), []);
-  const { data: trend } = useMonthlyTrend(fyStart, cogsRatio, !!data);
+  const { data: monthPnl } = usePnLMonths(fyStart, today, !!data);
+  const trend = React.useMemo(
+    () => (monthPnl ? monthlySeriesFromPnl({ fyStartYear: fyStart, today, months: monthPnl }) : undefined),
+    [monthPnl, fyStart, today],
+  );
   const highlights = React.useMemo(() => trendHighlights(trend ?? []), [trend]);
 
   // Export the statement as a CSV the owner can hand to their CA (mirrors GST export).
@@ -208,10 +167,10 @@ export default function PnLPage() {
            "not recorded", not as ₹0 with a profit computed on top of it. */
         ["Period", `${range.from} to ${range.to}`],
         ["Revenue", data.model.revenue],
-        ["Cost of goods — project delivery (salary on projects)", -data.model.projectCost],
+        ["Cost of goods — project delivery (salary on projects)", data.model.projectCostHidden ? "hidden for your role (inside operating expenses)" : -data.model.projectCost],
         ["Cost of goods — licence cost", data.model.cogsBasis === "unknown" ? "not recorded" : -data.model.licenceCogs],
         ["Licence cost basis", data.model.cogsBasis],
-        ["Gross margin", data.model.grossMargin ?? "unknown"],
+        ["Gross margin", data.model.grossMargin ?? (data.model.projectCostHidden ? "hidden for your role (needs project salary)" : "unknown")],
         ["Operating expenses", -(data.expenses - data.model.projectCost)],
         ["Commissions", -data.commissions], ["Depreciation", -data.depreciation],
         ["Net profit", data.model.netProfit ?? "unknown (cost of goods not recorded)"],
@@ -340,6 +299,11 @@ export default function PnLPage() {
                      onHint={() => setProjectCostOpen(true)}
                      tone="rose" />
               )}
+              {/* R-1649: salaries are owner / manager / accountant only, so for other roles the
+                  project cost is unknown — said so, never printed as ₹0. */}
+              {data.model.projectCostHidden && (
+                <UnknownRow label={<>− <Term k="cogs">Cost of goods</Term> (project delivery)</>} value="Hidden" note={HIDDEN_NOTE} />
+              )}
               {data.model.cogsBasis === "unknown" ? (
                 <UnknownRow label={<>− <Term k="cogs">Cost of goods</Term> (licence cost)</>} value="Not recorded" note="enter the vendor bills" />
               ) : data.model.licenceCogs === 0 && data.model.projectCost > 0 ? null : (
@@ -352,7 +316,9 @@ export default function PnLPage() {
 
               <Divider />
               {data.model.grossMargin === null ? (
-                <UnknownRow label={<Term k="gross_margin">Gross Margin</Term>} value="Unknown" note="needs the cost of goods" />
+                data.model.projectCostHidden && data.model.netProfit !== null
+                  ? <UnknownRow label={<Term k="gross_margin">Gross Margin</Term>} value="Hidden" note="needs the project salary — net profit below is complete" />
+                  : <UnknownRow label={<Term k="gross_margin">Gross Margin</Term>} value="Unknown" note="needs the cost of goods" />
               ) : (
                 <Row label={<Term k="gross_margin">Gross Margin</Term>}
                      amount={data.model.grossMargin}
@@ -536,7 +502,8 @@ export default function PnLPage() {
       {/* ── PROJECT MARGIN ─────────────────────────────────────────────────────
           Software built for customers: what each project brought in this period against
           the salary and expenses spent delivering it. */}
-      {!isLoading && data && (data.projectCost.byProject.length > 0 || data.projectCost.undated > 0) && (
+      {/* R-1649: per-project margins need the salaries — hidden for roles that cannot read them. */}
+      {!isLoading && data && !data.model.projectCostHidden && (data.projectCost.byProject.length > 0 || data.projectCost.undated > 0) && (
         <ProjectMarginCard result={data.projectCost} periodLabel={`${range.from} to ${range.to}`} />
       )}
 
@@ -576,7 +543,8 @@ export default function PnLPage() {
               const split = hundredRupeeSplit({
                 revenue: m.revenue, cogs: m.cogs, expenses: m.expenses,
               });
-              return split ? (
+              /* R-1649: with the project salary hidden, "cost" vs "running costs" would be split wrong. */
+              return split && !m.projectCostHidden ? (
                 <div className="mb-4 border-b border-hairline pb-4">
                   <HundredRupeeBar
                     split={split}
@@ -672,6 +640,16 @@ export default function PnLPage() {
                  shape asserts that every step is known — drawing one over a missing COGS
                  would be the same confident lie the ₹0 told, only prettier. §24: say what
                  is wrong and where to fix it. */
+              m.projectCostHidden && m.netProfit !== null ? (
+                <div className="rounded-md border border-amber/40 bg-amber-soft/30 px-3 py-2.5">
+                  <p className="text-[12px] font-medium text-ink">
+                    The step chart needs the project delivery cost — salary on customer projects — which your role cannot see.
+                  </p>
+                  <p className="mt-0.5 text-xs leading-snug text-ink-2">
+                    Net profit above is complete. The owner, a manager or the accountant sees the gross margin and this chart.
+                  </p>
+                </div>
+              ) :
               <div className="rounded-md border border-amber/40 bg-amber-soft/30 px-3 py-2.5">
                 <p className="text-[12px] font-medium text-ink">
                   The step chart needs the cost of goods (licence cost), which isn&apos;t recorded for this period.
@@ -888,6 +866,9 @@ function Row({
 }
 
 /** A statement line whose figure is not known — shown as words, never as ₹0. */
+/** R-1649: why the project delivery cost is not shown to this role. */
+const HIDDEN_NOTE = "salary on projects — owner, manager and accountant see it";
+
 function UnknownRow({ label, value, note, large }: {
   label: React.ReactNode; value: string; note: string; large?: boolean;
 }) {

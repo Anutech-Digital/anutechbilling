@@ -120,6 +120,13 @@ export interface ProjectCostResult {
   salaryPool: number;
   /** Allocations with no date anywhere — cannot be placed in a period. */
   undated: number;
+  /**
+   * R-1649: allocations in the period whose employee's salary the caller could not read
+   * (`employees` is owner / manager / accountant only — R-1001; project_labour's employee FK
+   * is ON DELETE RESTRICT, so a missing employee can only mean "not visible to this role").
+   * > 0 means `labour` / `total` are NOT the project delivery cost — the caller must hide it.
+   */
+  salaryHidden: number;
   byProject: ProjectCostLine[];
   /** Every allocation that counted, biggest first — what "salary on projects" is made of. */
   labourLines: LabourLine[];
@@ -169,12 +176,14 @@ export function projectCostForPeriod(input: {
 
   const labourLines: LabourLine[] = [];
   let undated = 0;
+  let salaryHidden = 0;
   for (const a of input.allocations) {
     const start = a.start_date ?? projectById.get(a.project_id)?.start_date ?? null;
     if (!start) { undated += 1; continue; }
     const end = a.end_date ?? allocationEnd(start, a.months);
     const months = monthsActiveInPeriod({ startDate: start, renewalDate: end }, input.from, input.to);
     if (months <= 0) continue;
+    if (!input.monthlyGross.has(a.employee_id)) { salaryHidden += 1; continue; }
     const monthlyGross = input.monthlyGross.get(a.employee_id) ?? 0;
     const allocated = Math.round(monthlyGross * (a.percent / 100) * months);
     if (allocated <= 0) continue;
@@ -221,6 +230,6 @@ export function projectCostForPeriod(input: {
   const direct = [...directBy.values()].reduce((s, v) => s + v, 0);
   return {
     labour, direct, total: labour + direct,
-    labourAllocated, capped, salaryPool, undated, byProject, labourLines, directLines,
+    labourAllocated, capped, salaryPool, undated, salaryHidden, byProject, labourLines, directLines,
   };
 }

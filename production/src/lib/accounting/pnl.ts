@@ -123,8 +123,15 @@ export interface PnlPeriod {
   grossMargin: number | null;
   /** Integer percent of revenue. Null when the basis is `unknown`, or revenue is 0. */
   grossMarginPct: number | null;
-  /** grossMargin − expenses. Null when gross margin is null. */
+  /** Revenue − cost of goods − expenses. Null only when the licence cost basis is `unknown`. */
   netProfit: number | null;
+  /**
+   * R-1649: the project delivery cost could not be read by this role (salaries are owner /
+   * manager / accountant only — R-1001). Then `projectCost` is 0, the salary stays inside
+   * `expenses`, and `grossMargin` is null — hidden, never overstated. Net profit is unaffected
+   * (project cost is a reclassification, never an addition).
+   */
+  projectCostHidden?: boolean;
   byVendor: VendorLine[];
 }
 
@@ -194,6 +201,8 @@ export interface PnlInput {
    * not added: cost of goods goes up and operating expenses go down by the same rupees.
    */
   projectCost?: number;
+  /** R-1649: the caller could not read the salaries behind the project cost — hide the margin. */
+  projectCostHidden?: boolean;
   /** Part of `revenue` invoiced against projects — the licence ratio is not applied to it. */
   projectRevenue?: number;
   /** Total ₹ of vendor bills in the period. Null when the table holds none. */
@@ -255,7 +264,10 @@ export function buildPnl(input: PnlInput): PnlPeriod {
      licence ratio is the "one-off consulting job costed like a licence" error above. Its
      cost is the project delivery cost, which is booked, so only the rest is estimated. */
   const projectRevenue = Math.min(Math.max(0, input.projectRevenue ?? 0), input.revenue);
-  const projectCost = Math.max(0, input.projectCost ?? 0);
+  /* R-1649: a project cost built on unreadable salaries is not a figure — it stays in operating
+     expenses (where it was booked) and the gross margin is hidden below. */
+  const projectCostHidden = input.projectCostHidden === true;
+  const projectCost = projectCostHidden ? 0 : Math.max(0, input.projectCost ?? 0);
   const licenceRevenue = input.revenue - projectRevenue;
   const estimated = bookRevenue > 0
     ? Math.round(licenceRevenue * (bookCost / bookRevenue))
@@ -297,12 +309,13 @@ export function buildPnl(input: PnlInput): PnlPeriod {
   const licenceCogs = billedPart + estimatedPart;
   const cogs = licenceCogs + projectCost;
   const expenses = input.expenses - projectCost;
-  const grossMargin = cogsBasis === "unknown" ? null : input.revenue - cogs;
+  const knownGross = cogsBasis === "unknown" ? null : input.revenue - cogs;
+  const grossMargin = projectCostHidden ? null : knownGross;
   const grossMarginPct =
     grossMargin === null || input.revenue <= 0
       ? null
       : Math.round((grossMargin / input.revenue) * 100);
-  const netProfit = grossMargin === null ? null : grossMargin - expenses;
+  const netProfit = knownGross === null ? null : knownGross - expenses;
 
   return {
     revenue: input.revenue,
@@ -317,6 +330,7 @@ export function buildPnl(input: PnlInput): PnlPeriod {
     grossMargin,
     grossMarginPct,
     netProfit,
+    projectCostHidden,
     byVendor,
   };
 }

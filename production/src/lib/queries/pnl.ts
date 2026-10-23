@@ -12,6 +12,10 @@
  * niyam (ITC, expense report, project cost, COGS basis) lib/accounting/pnl-assemble.ts
  * me wahi purane functions hain. Subscriptions / project labour / employees master data
  * hain (transactions ke saath nahi badhte), isliye yahin padhe jaate hain.
+ *
+ * ─── R-1647 (24 Oct 2026): THE TREND IS THE SAME P&L, MONTH BY MONTH ────────
+ * usePnLMonths() reads the masters ONCE and runs report_pnl per month through the same
+ * assemblePnl(), so a month on the FY trend is exactly that month's P&L.
  */
 "use client";
 
@@ -19,7 +23,8 @@ import { useQuery } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queries/keys";
 import { createClient } from "@/lib/supabase/client";
 import { vendorsFromSubscriptions } from "@/lib/accounting/pnl";
-import { assemblePnl, type PnLNumbers, type PnlRpcRow } from "@/lib/accounting/pnl-assemble";
+import { assemblePnl, type PnLNumbers, type PnlMasters, type PnlRpcRow } from "@/lib/accounting/pnl-assemble";
+import { fyMonthsSoFar, monthRange } from "@/lib/accounting/pnl-charts";
 import { rpcRowOrThrow } from "@/lib/accounting/report-rpc";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import type { AssetBlock } from "@/lib/accounting/depreciation";
@@ -29,7 +34,72 @@ export type { PnLNumbers } from "@/lib/accounting/pnl-assemble";
 /** Wide enough to hold every entry the books have; the Balance Sheet reads profit from here. */
 export const BOOKS_START = "2000-04-01";
 
-export function usePnL(range: { from: string; to: string }, enabled = true) {
+type Range = { from: string; to: string };
+type Client = ReturnType<typeof createClient>;
+
+/** The master data a P&L needs, read once — the subscription book is prorated per range. */
+async function fetchPnlMasters(supabase: Client) {
+  /* R-265: the master-data reads page with fetchAllRows on `id` — a bare select stops
+     at PostgREST's 1000-row cap and the subscription cost / project cost would silently
+     cover only the first 1000 rows. fetchAllRows throws a page's error itself. */
+  const [subs, labourRows, emps, projects, assets] = await Promise.all([
+    /* ── THE SUBSCRIPTION BOOK — where the licence cost actually lives ──────
+       `vendor_bills` is EMPTY on this tenant, so billed COGS is ₹0 and the report used
+       to claim a 100% gross margin. The subscriptions carry the cost; lib/accounting/
+       pnl.ts prorates it by how long each ran inside the window and labels the basis,
+       so an estimate never renders as a fact. */
+    fetchAllRows((a, b) => supabase.from("subscriptions")
+      .select("id, vendor, seats, mrr, start_date, renewal_date, item_id, status")
+      .neq("status", "cancelled")
+      .order("id").range(a, b)),
+    /* ── PROJECT DELIVERY COST — salary spent building customers' software ──
+       project_labour says who worked on which project; that salary moves from operating
+       expenses into cost of goods — moved, never added (lib/accounting/project-cost.ts).
+       R-1649: `employees` is readable by owner / manager / accountant only (R-1001); for any
+       other role the salary is missing and project-cost.ts reports it as hidden, never ₹0. */
+    fetchAllRows((a, b) => supabase.from("project_labour")
+      .select("id, project_id, employee_id, percent, months, start_date, end_date")
+      .order("id").range(a, b)),
+    fetchAllRows((a, b) => supabase.from("employees").select("id, name, monthly_gross").order("id").range(a, b)),
+    fetchAllRows((a, b) => supabase.from("project_sales").select("id, title, customer_name, start_date").order("id").range(a, b)),
+    /* ── R-1578: THE FIXED-ASSET REGISTER — its depreciation is a P&L expense ──
+       report_pnl leaves out an expense that became an asset (capitalised); the cost
+       reaches the P&L only as depreciation (lib/accounting/depreciation.ts). */
+    fetchAllRows((a, b) => supabase.from("fixed_assets")
+      .select("id, name, block, cost, put_to_use, disposed_on, disposal_value")
+      .order("id").range(a, b)),
+  ]);
+
+  const itemIds = [...new Set(subs.map((s) => s.item_id).filter((id): id is string => !!id))];
+  const items = await fetchAllRowsIn(itemIds, (ids, a, b) =>
+    supabase.from("items").select("id, wholesale").in("id", ids).order("id").range(a, b));
+  const wholesaleById = new Map(items.map((i) => [i.id, i.wholesale ?? 0]));
+
+  const book = subs.map((s) => ({
+    vendor: String(s.vendor ?? "other"),
+    seats: s.seats ?? 0,
+    mrr: s.mrr ?? 0,
+    wholesalePerSeatMonth: s.item_id ? (wholesaleById.get(s.item_id) ?? 0) : 0,
+    startDate: s.start_date,
+    renewalDate: s.renewal_date,
+  }));
+  const fixed: Omit<PnlMasters, "vendors"> = {
+    allocations: labourRows.map((l) => ({ ...l, percent: Number(l.percent), months: Number(l.months) })),
+    monthlyGross: new Map(emps.map((e) => [e.id, e.monthly_gross ?? 0])),
+    projects,
+    employeeNames: new Map(emps.map((e) => [e.id, e.name])),
+    assets: assets.map((x) => ({ ...x, block: x.block as AssetBlock })),
+  };
+  return (range: Range): PnlMasters => ({ ...fixed, vendors: vendorsFromSubscriptions(book, range.from, range.to) });
+}
+
+async function pnlFor(supabase: Client, range: Range, masters: (r: Range) => PnlMasters): Promise<PnLNumbers> {
+  const rpc = await supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to });
+  const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
+  return assemblePnl(range, row, masters(range));
+}
+
+export function usePnL(range: Range, enabled = true) {
   return useQuery({
     queryKey: [...queryKeys.pnl(), range.from, range.to],
     /* The comparison period is fetched only once the owner asks for it. A second full
@@ -38,63 +108,31 @@ export function usePnL(range: { from: string; to: string }, enabled = true) {
     enabled,
     queryFn: async (): Promise<PnLNumbers> => {
       const supabase = createClient();
-
-      /* R-265: the master-data reads page with fetchAllRows on `id` — a bare select stops
-         at PostgREST's 1000-row cap and the subscription cost / project cost would silently
-         cover only the first 1000 rows. fetchAllRows throws a page's error itself. */
-      const [rpc, subs, labourRows, emps, projects, assets] = await Promise.all([
+      const [rpc, masters] = await Promise.all([
         supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
-        /* ── THE SUBSCRIPTION BOOK — where the licence cost actually lives ──────
-           `vendor_bills` is EMPTY on this tenant, so billed COGS is ₹0 and the report used
-           to claim a 100% gross margin. The subscriptions carry the cost; lib/accounting/
-           pnl.ts prorates it by how long each ran inside the window and labels the basis,
-           so an estimate never renders as a fact. */
-        fetchAllRows((a, b) => supabase.from("subscriptions")
-          .select("id, vendor, seats, mrr, start_date, renewal_date, item_id, status")
-          .neq("status", "cancelled")
-          .order("id").range(a, b)),
-        /* ── PROJECT DELIVERY COST — salary spent building customers' software ──
-           project_labour says who worked on which project; that salary moves from operating
-           expenses into cost of goods — moved, never added (lib/accounting/project-cost.ts). */
-        fetchAllRows((a, b) => supabase.from("project_labour")
-          .select("id, project_id, employee_id, percent, months, start_date, end_date")
-          .order("id").range(a, b)),
-        fetchAllRows((a, b) => supabase.from("employees").select("id, name, monthly_gross").order("id").range(a, b)),
-        fetchAllRows((a, b) => supabase.from("project_sales").select("id, title, customer_name, start_date").order("id").range(a, b)),
-        /* ── R-1578: THE FIXED-ASSET REGISTER — its depreciation is a P&L expense ──
-           report_pnl leaves out an expense that became an asset (capitalised); the cost
-           reaches the P&L only as depreciation (lib/accounting/depreciation.ts). */
-        fetchAllRows((a, b) => supabase.from("fixed_assets")
-          .select("id, name, block, cost, put_to_use, disposed_on, disposal_value")
-          .order("id").range(a, b)),
+        fetchPnlMasters(supabase),
       ]);
       const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
+      return assemblePnl(range, row, masters(range));
+    },
+  });
+}
 
-      const itemIds = [...new Set(subs.map((s) => s.item_id).filter((id): id is string => !!id))];
-      const items = await fetchAllRowsIn(itemIds, (ids, a, b) =>
-        supabase.from("items").select("id, wholesale").in("id", ids).order("id").range(a, b));
-      const wholesaleById = new Map(items.map((i) => [i.id, i.wholesale ?? 0]));
-
-      const vendors = vendorsFromSubscriptions(
-        subs.map((s) => ({
-          vendor: String(s.vendor ?? "other"),
-          seats: s.seats ?? 0,
-          mrr: s.mrr ?? 0,
-          wholesalePerSeatMonth: s.item_id ? (wholesaleById.get(s.item_id) ?? 0) : 0,
-          startDate: s.start_date,
-          renewalDate: s.renewal_date,
-        })),
-        range.from, range.to,
-      );
-
-      return assemblePnl(range, row, {
-        vendors,
-        allocations: labourRows.map((l) => ({ ...l, percent: Number(l.percent), months: Number(l.months) })),
-        monthlyGross: new Map(emps.map((e) => [e.id, e.monthly_gross ?? 0])),
-        projects,
-        employeeNames: new Map(emps.map((e) => [e.id, e.name])),
-        assets: assets.map((x) => ({ ...x, block: x.block as AssetBlock })),
-      });
+/**
+ * R-1647: the P&L of every FY month up to the current one — month key → that month's P&L, by
+ * the same assemblePnl() as usePnL. The masters are read once; report_pnl runs per month (each
+ * a small, indexed range) in parallel.
+ */
+export function usePnLMonths(fyStartYear: number, today: string, enabled = true) {
+  return useQuery({
+    queryKey: [...queryKeys.pnl(), "months", fyStartYear, today.slice(0, 7)],
+    enabled,
+    queryFn: async (): Promise<Map<string, PnLNumbers>> => {
+      const supabase = createClient();
+      const masters = await fetchPnlMasters(supabase);
+      const months = fyMonthsSoFar(fyStartYear, today);
+      const rows = await Promise.all(months.map((m) => pnlFor(supabase, monthRange(m.key), masters)));
+      return new Map(months.map((m, i) => [m.key, rows[i]]));
     },
   });
 }

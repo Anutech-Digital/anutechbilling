@@ -203,6 +203,8 @@ export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m
     billedByVendor: billedByVendor(r),
     vendors: m.vendors,
     projectCost: projectCost.total,
+    /* R-1649: salaries this role cannot read → the project cost is hidden, never ₹0. */
+    projectCostHidden: projectCost.salaryHidden > 0,
     projectRevenue,
   });
 
