@@ -13,7 +13,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Database, TdsReceivableRow, TdsStatus } from "@/lib/supabase/database.types";
 import { TDS_RATE_VARIANTS, TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
-import { fyStartYear, fyCodeOfYear } from "@/lib/dates/ist";
+import { fyStartYear, fyCodeOfYear, istToday } from "@/lib/dates/ist";
 
 type TdsInsert = Database["public"]["Tables"]["tds_receivable"]["Insert"];
 type TdsUpdate = Database["public"]["Tables"]["tds_receivable"]["Update"];
@@ -251,7 +251,7 @@ export function useMarkCertReceived() {
         .from("tds_receivable")
         .update({
           status:                  "cert_received",
-          form_16a_received_date:  new Date().toISOString().slice(0, 10),
+          form_16a_received_date:  istToday(),
           ...(form16aUrl ? { form_16a_url: form16aUrl } : {}),
         })
         .eq("id", id)
@@ -279,7 +279,7 @@ export function useMarkVerified26AS() {
         .update({
           status:                "verified_26as",
           appears_in_26as:       true,
-          appears_in_26as_date:  new Date().toISOString().slice(0, 10),
+          appears_in_26as_date:  istToday(),
         })
         .eq("id", id)
         .select()
@@ -331,7 +331,7 @@ export function useMarkClaimed() {
         .update({
           status:               "claimed",
           claimed_in_itr:       true,
-          claimed_in_itr_date:  new Date().toISOString().slice(0, 10),
+          claimed_in_itr_date:  istToday(),
         })
         .eq("id", id)
         .select()
@@ -357,7 +357,7 @@ export function useMarkDisputed() {
         .from("tds_receivable")
         .update({
           status: "disputed",
-          notes:  reason ? `[Disputed ${new Date().toISOString().slice(0,10)}] ${reason}` : null,
+          notes:  reason ? `[Disputed ${istToday()}] ${reason}` : null,
         })
         .eq("id", id)
         .select()

@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { InboundPurchaseRow } from "@/lib/supabase/database.types";
+import { istToday } from "@/lib/dates/ist";
 
 export type InboundPurchase = InboundPurchaseRow;
 
@@ -89,7 +90,7 @@ export function useImportPurchase() {
         fx_rate:       1,
         bill_type:     gst > 0 ? "gst" : "none",
         bill_no:       row.order_id,
-        expense_date:  row.order_date ?? new Date().toISOString().slice(0, 10),
+        expense_date:  row.order_date ?? istToday(),   // R-1653: IST day, not UTC
         amount:        net,
         gst_paid:      Math.round(gst),
         paid:          false,
