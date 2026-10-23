@@ -24,6 +24,11 @@ vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { 
 vi.mock("@/lib/queries/feedback", () => ({ useSubmitFeedback: () => ({ mutateAsync: h.mutateAsync, isPending: false }) }));
 vi.mock("@/lib/ai/page-test-runs", async (orig) => ({ ...(await orig<typeof import("@/lib/ai/page-test-runs")>()), loadLastPageTestRun: async () => null }));
 vi.mock("sonner", () => ({ toast: h.toast }));
+/* R-1501: jsdom has no image decoding — a pasted picture becomes a fixed small JPEG. */
+vi.mock("@/components/shared/help-shot", async (orig) => ({
+  ...(await orig<typeof import("./help-shot")>()),
+  toShot: async () => ({ dataUrl: "data:image/jpeg;base64,AAAA", mimeType: "image/jpeg", base64: "AAAA" }),
+}));
 /* R-1417: the matches list reads the DB; here only what the tab hands it is checked (its own test covers the read). */
 vi.mock("./help-report-matches", () => ({
   HelpReportMatches: ({ text, tenantId }: { text: string; tenantId: string | null }) => <div data-testid="matches-stub" data-text={text} data-tenant={tenantId ?? ""} />,
@@ -121,6 +126,26 @@ describe("R-383 — reporting never waits on AI", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Submit report" })); });
     expect(h.toast.error).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ description: expect.stringMatching(/NOT saved/) }));
     expect(box().value).toBe("Keep me");
+  });
+
+  it("R-1501: a failed submit keeps the screenshot too, and the retry sends it", async () => {
+    h.mutateAsync.mockRejectedValueOnce(new Error("Report not saved: permission denied for function current_tenant_id (42501)"));
+    mount();
+    ctrlShiftB();
+    fireEvent.change(box(), { target: { value: "Cart is not working" } });
+    const shot = new File([new Uint8Array([137, 80, 78, 71])], "pasted.png", { type: "image/png" });
+    await act(async () => { fireEvent.paste(box(), { clipboardData: { files: [shot] } }); });
+    await waitFor(() => expect(screen.getByRole("list", { name: "1 screenshot(s) attached" })).toBeTruthy());
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Submit report" })); });
+    expect(h.toast.error).toHaveBeenCalledWith("You don't have access to this.", expect.objectContaining({ description: expect.stringMatching(/NOT saved/) }));
+    expect(box().value).toBe("Cart is not working");
+    expect(screen.getByRole("list", { name: "1 screenshot(s) attached" })).toBeTruthy();
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Submit report" })); });
+    expect(h.mutateAsync).toHaveBeenCalledTimes(2);
+    expect(h.mutateAsync.mock.calls[1][0].screenshots).toHaveLength(1);
+    expect(h.mutateAsync.mock.calls[1][0].text.startsWith("Cart is not working")).toBe(true);
   });
 
   it("an empty box is not sent", async () => {
