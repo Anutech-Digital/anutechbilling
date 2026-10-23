@@ -221,7 +221,10 @@ export function LeadDetailSheet({
   };
 
   // History: every quote that's been sent to this lead
-  const { data: quotesForLead = [] } = useQuotesByLead(lead?.id);
+  /* R-1806: a failed read is not "no quotes" — the Quotes section shows the error + Try again,
+     and Delete refuses until the quotes are known (it must never delete a deal with a quote). */
+  const quotesQ = useQuotesByLead(lead?.id);
+  const quotesForLead = React.useMemo(() => quotesQ.data ?? [], [quotesQ.data]);
 
   // Follow-up tasks linked to this lead — drives the "Follow-ups" drawer section
   const { data: tasksForLead = [] } = useTasksForLead(lead?.id);
@@ -275,7 +278,7 @@ export function LeadDetailSheet({
 
   const handleDelete = async () => {
     /* Owner/manager only, never with a quote (lib/deals/delete-rules.ts, 2 Oct 2026). */
-    const block = dealDeleteBlock({ role: currentUser?.role, quoteIds: quotesForLead.map((q) => q.id) });
+    const block = dealDeleteBlock({ role: currentUser?.role, quoteIds: quotesForLead.map((q) => q.id), quotesFailed: quotesQ.isError });
     if (block) {
       toast.error("This can't be deleted", {
         description: block,
@@ -642,8 +645,9 @@ export function LeadDetailSheet({
               userNames={userNames}
               activities={activities}
               setDrawerTab={setDrawerTab}
-              hasQuotes={hasQuotes}
               quotesForLead={quotesForLead}
+              quotesError={quotesQ.isError ? quotesQ.error : undefined}
+              onRetryQuotes={() => void quotesQ.refetch()}
               latestQuote={latestQuote}
               onClose={onClose}
               changeStage={changeStage}

@@ -66,7 +66,7 @@ import { Icon } from "@/components/ui/icon";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { RecordQuotePaymentDialog } from "./record-quote-payment";
 import { DuesPayButton, duesPaymentRoute, useDuesQuoteLinks } from "./dues-pay";
-import { SubscriptionDuesList } from "./dues-list";
+import { SubscriptionDuesList, SubscriptionDuesHeading } from "./dues-list";
 import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
 import { paymentsKpiPlan } from "./kpi-plan";
 import { PaymentRefundButton, usePaymentRefundFlow } from "@/components/features/payments/payment-refund";
@@ -486,26 +486,19 @@ function PaymentsPageInner() {
       {/* ── Outstanding Receivables — actionable card ── */}
       {(scopedOutstanding.length > 0 || scopedSeatQuotes.length > 0) && (() => {
         const outstanding = scopedOutstanding;
-        const totalDue = outstanding.reduce((s, o) => s + o.outstanding_amount, 0);
-        const overdueCount = outstanding.filter((o) => o.days_outstanding > 30).length;
         return (
           <Card className="border-rose/30 bg-rose-soft/20">
             <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
               <div className="flex items-center gap-2.5">
                 <Icon name="alert" size={18} className="text-rose" />
-                <div>
-                  <h2 className="font-semibold text-ink">Subscription dues · {rupee(totalDue)}</h2>
-                  <p className="text-xs text-ink-3">
-                    {outstanding.length} subscription{outstanding.length === 1 ? "" : "s"} with a balance
-                    {overdueCount > 0 && <> · <b className="text-rose">{overdueCount} overdue 30+ days</b></>}
-                    {" · "}<Link href="/accounting/aging" className="text-amber-ink hover:text-amber">all receivables (incl. projects & invoices)</Link>
-                  </p>
+                {/* R-1806: a failed dues read shows no total (the banner above explains it). */}
+                <SubscriptionDuesHeading rows={outstanding} failed={outstandingQ.isError}>
                   {seatQuotesTotal > 0 && (
                     <p className="text-xs text-amber-ink">
                       + {rupee(seatQuotesTotal)} in {scopedSeatQuotes.length} unpaid seat quote{scopedSeatQuotes.length === 1 ? "" : "s"} (seats already added, listed below)
                     </p>
                   )}
-                </div>
+                </SubscriptionDuesHeading>
               </div>
             </div>
 

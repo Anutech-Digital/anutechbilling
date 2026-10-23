@@ -14,6 +14,7 @@
  * lives on the Age header's tooltip instead of a line under the list. Money logic unchanged.
  */
 import * as React from "react";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -27,6 +28,39 @@ import {
 import { rupee, formatDate } from "@/lib/utils";
 import { paymentDueState, paymentDueChipLabel, todayIST } from "@/lib/subscriptions/payment-due";
 import type { OutstandingRow } from "@/lib/queries/payments";
+
+/**
+ * The dues card heading. R-1806: when the dues read FAILED there is no total to show — it used
+ * to read "Subscription dues · ₹0 · 0 subscriptions with a balance" (with 12 unpaid) whenever
+ * pending seat quotes kept the card on screen. The page's load-error banner (R-1655) says
+ * what went wrong and has Try again; the heading only points at it.
+ */
+export function SubscriptionDuesHeading({ rows, failed, children }: {
+  rows: readonly Pick<OutstandingRow, "outstanding_amount" | "days_outstanding">[];
+  failed: boolean;
+  /** Extra lines under the summary (the unpaid seat quotes). */
+  children?: React.ReactNode;
+}) {
+  const total = rows.reduce((s, o) => s + o.outstanding_amount, 0);
+  const overdue = rows.filter((o) => o.days_outstanding > 30).length;
+  return (
+    <div>
+      <h2 className="font-semibold text-ink">{failed ? "Subscription dues" : `Subscription dues · ${rupee(total)}`}</h2>
+      <p className="text-xs text-ink-3">
+        {failed ? (
+          <>Couldn&apos;t load the subscription dues, so no total is shown — use Try again in the red message on this page</>
+        ) : (
+          <>
+            {rows.length} subscription{rows.length === 1 ? "" : "s"} with a balance
+            {overdue > 0 && <> · <b className="text-rose">{overdue} overdue 30+ days</b></>}
+          </>
+        )}
+        {" · "}<Link href="/accounting/aging" className="text-amber-ink hover:text-amber">all receivables (incl. projects & invoices)</Link>
+      </p>
+      {children}
+    </div>
+  );
+}
 
 /** Rows shown before "Show all N". */
 export const DUES_FIRST = 5;

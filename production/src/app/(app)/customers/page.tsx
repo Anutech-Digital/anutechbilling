@@ -46,6 +46,7 @@ import { CreateProjectQuoteDialog } from "@/components/features/projects/create-
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatStrip } from "@/components/shared/stat-strip";
+import { LoadErrorBanner } from "@/components/shared/load-error";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -132,15 +133,24 @@ function customerSubline(c: CustomerLike): string {
    subscriptions. */
 
 export default function CustomersPage() {
-  const { data: subscriptions } = useSubscriptions();
-  const { data: outstanding } = useOutstandingReceivables();
-  const { data: creditsByCustomer = {} } = useOpenCreditsByCustomer();
-  const { data: projRecv = {} } = useProjectReceivablesByCustomer();
+  const subsQ = useSubscriptions();
+  const outstandingQ = useOutstandingReceivables();
+  const creditsQ = useOpenCreditsByCustomer();
+  const projRecvQ = useProjectReceivablesByCustomer();
   /* R-005: money actually received this FY — payments + project payments, TDS included. */
-  const { data: receivedBy = {} } = useReceivedThisFyByCustomer();
+  const receivedQ = useReceivedThisFyByCustomer();
+  const subscriptions = subsQ.data;
+  const outstanding = outstandingQ.data;
+  const creditsByCustomer = React.useMemo(() => creditsQ.data ?? {}, [creditsQ.data]);
+  const projRecv = React.useMemo(() => projRecvQ.data ?? {}, [projRecvQ.data]);
+  const receivedBy = React.useMemo(() => receivedQ.data ?? {}, [receivedQ.data]);
   /* R-005. Already fetched for the Project Sales page, so this is a cache hit in
      practice rather than a new round trip. */
-  const { data: allProjects } = useProjectSales();
+  const projectsQ = useProjectSales();
+  const allProjects = projectsQ.data;
+  /* R-1806: the money tiles (To collect, Recurring, Received, Project value) come from these
+     reads, not the companies list — a failed one used to show ₹0 with no error. */
+  const moneyFailed = [subsQ, outstandingQ, creditsQ, projRecvQ, receivedQ, projectsQ].filter((q) => q.isError);
 
   // customer_id → outstanding = subscription dues + project invoiced-but-unpaid,
   // so project receivables show on the list too (matches the customer 360 page).
@@ -618,6 +628,10 @@ export default function CustomersPage() {
       </div>
 
       {!canWrite && <ViewOnlyNote what="add, import or edit companies" />}
+
+      {!error && moneyFailed.length > 0 && (
+        <LoadErrorBanner onRetry={() => moneyFailed.forEach((q) => void q.refetch())} />
+      )}
 
       {/* Collapsible Customer Analytics Banner */}
       {stats.length > 0 && !selectedId && (

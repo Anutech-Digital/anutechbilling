@@ -71,3 +71,80 @@ describe("query modules do not turn a failed list read into [] (R-1655 ratchet)"
     expect(n, `${f}: a failed read must throw so the page shows an error + Try again (CLAUDE.md §24)`).toBeLessThanOrEqual(ALLOWED[f] ?? 0);
   });
 });
+
+/* ── R-1806 (24 Oct 2026) — the same mistake one level up, in the screen ─────────────────
+   useQuotesByLead() throws, but the lead drawer read it as `{ data: quotesForLead = [] }` and
+   the deal page as `quotesQ.data ?? []` without isError — "No quotes yet", and Delete's
+   "never with a quote" check ran on an empty list. Two scans over src/app + src/components:
+    A. a money read (quotes / invoices / payments / receivables / dues) destructured with a
+       `= []` default. The count may only go down.
+    B. every screen that calls useQuotesByLead() looks at its error (isError / LoadError). */
+const SRC = join(__dirname, "..", "..");
+
+function walk(d: string, out: string[] = []): string[] {
+  for (const e of readdirSync(d, { withFileTypes: true })) {
+    const p = join(d, e.name);
+    if (e.isDirectory()) walk(p, out);
+    else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name)) out.push(p);
+  }
+  return out;
+}
+const rel = (p: string) => p.slice(SRC.length + 1).replace(/\\/g, "/");
+
+const MONEY_HOOK = String.raw`use\w*(?:Quote|Invoice|Payment|Receivable|Outstanding|Due)\w*`;
+function defaultedMoneyReads(src: string): number {
+  const re = new RegExp(String.raw`\{\s*data:\s*\w+\s*=\s*\[\s*\]\s*\}\s*=\s*` + MONEY_HOOK + String.raw`\(`, "g");
+  return src.match(re)?.length ?? 0;
+}
+
+/** Deliberate `= []` money reads: file → how many, and why. */
+const ALLOWED_DEFAULTED: Record<string, number> = {
+  /* Salary payments only mark which bank lines are already booked as salary; booking goes
+     through the RPC, which refuses a duplicate. No ₹ total is shown from it. */
+  "components/features/banking/salary-lines-dialog.tsx": 1,
+};
+
+/** Screens that call useQuotesByLead() without looking at its error, and why. */
+const ALLOWED_BYLEAD_NO_ERROR: Record<string, string> = {
+  /* Only feeds the reject dialog's "this was the lead's last open quote — mark it Lost too?"
+     offer; listed on R-1806 as a follow-up. */
+  "app/(app)/quotes/[id]/page.tsx": "reject dialog offer only",
+};
+
+describe("screens do not read a failed money read as [] (R-1806 ratchet)", () => {
+  const files = [...walk(join(SRC, "app")), ...walk(join(SRC, "components"))];
+
+  it("scanner sees the old lead-drawer pattern", () => {
+    expect(defaultedMoneyReads("const { data: quotesForLead = [] } = useQuotesByLead(lead?.id);")).toBe(1);
+    expect(defaultedMoneyReads("const { data: members = [] } = useTeamMembers();")).toBe(0);
+  });
+
+  it("A. no new `{ data: x = [] } = use<Money>()`", () => {
+    const over = files
+      .map((f) => [rel(f), defaultedMoneyReads(readFileSync(f, "utf8"))] as const)
+      .filter(([r, n]) => n > (ALLOWED_DEFAULTED[r] ?? 0));
+    expect(over, "a failed money read must show the §24 error + Try again, not an empty list").toEqual([]);
+  });
+
+  /* C. Money tiles found by the R-1806 scan that printed ₹0 when THEIR read failed (the page
+     only checked its main query). Each must now look at that query's isError. */
+  it.each([
+    ["app/(app)/marketing/page.tsx", "spend", "Spend this month"],
+    ["app/(app)/accounting/cash-flow/page.tsx", "bsQ", "Cash in bank now"],
+    ["app/(app)/customers/page.tsx", "moneyFailed", "To collect / Received"],
+  ])("C. %s checks %s before showing %s", (file, name) => {
+    const src = readFileSync(join(SRC, file), "utf8");
+    expect(src).toMatch(new RegExp(String.raw`\b${name}(\.isError|\b)`));
+    expect(src).toMatch(/LoadErrorBanner|LoadError\b|LoadErrorInline/);
+    if (name !== "moneyFailed") expect(src).toContain(`${name}.isError`);
+  });
+
+  it("B. every screen calling useQuotesByLead() handles its error", () => {
+    const missing = files
+      .filter((f) => /=\s*useQuotesByLead\(/.test(readFileSync(f, "utf8")))
+      .map(rel)
+      .filter((r) => !ALLOWED_BYLEAD_NO_ERROR[r])
+      .filter((r) => !/isError|LoadError/.test(readFileSync(join(SRC, r), "utf8")));
+    expect(missing).toEqual([]);
+  });
+});

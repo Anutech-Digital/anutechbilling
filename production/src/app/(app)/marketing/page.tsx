@@ -15,6 +15,7 @@ import Link from "next/link";
 import type { Route } from "next";
 
 import { Card } from "@/components/ui/card";
+import { LoadErrorBanner } from "@/components/shared/load-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -70,10 +71,12 @@ export default function MarketingHubPage() {
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-24" />)}</div>
       ) : (
         <>
+          {/* R-1806: the spend read failed — spend would read ₹0 everywhere below. */}
+          {spend.isError && <LoadErrorBanner onRetry={() => void spend.refetch()} />}
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
             <Metric label="Tools running" value={`${sum.active} / ${sum.total}`} sub={`"Not needed" tools are not counted`} />
             <Metric label="Budget this month" value={rupee(sum.budget)} sub="Running tools only" />
-            <Metric label="Spend this month" value={rupee(sum.spent)} sub="Channel-tagged marketing expenses" />
+            <Metric label="Spend this month" value={spend.isError ? "—" : rupee(sum.spent)} sub="Channel-tagged marketing expenses" />
             <Metric
               label="Over budget"
               value={String(sum.overBudget.length)}
