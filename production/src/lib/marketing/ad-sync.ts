@@ -8,6 +8,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { AD_REFRESH_DAYS, AD_BACKFILL_DAYS, type AdSpendRow } from "@/lib/marketing/ad-platforms";
 import { getFreshGoogleAdsAccessToken, fetchCampaignSpend } from "@/lib/google/google-ads-api";
 import { fetchMetaCampaignSpend } from "@/lib/meta/meta-ads-api";
+import { openMetaToken, resealMetaTokenIfPlain } from "@/lib/meta/meta-token-vault";
 import { istToday, addDaysISO } from "@/lib/dates/ist";
 
 type Admin = SupabaseClient<Database>;
@@ -29,6 +30,8 @@ export async function syncTenantAds(admin: Admin, tenantId: string, trigger: "ma
         const { count } = await admin.from("ad_spend_daily").select("day", { count: "exact", head: true }).eq("ad_account_id", acc.id);
         const from = addDays(today, -((count ? AD_REFRESH_DAYS : AD_BACKFILL_DAYS) - 1));
         let rows: AdSpendRow[] = [];
+        // R-1884: a legacy plaintext Meta token is sealed on this account's success write.
+        let reseal: { access_token?: string } = {};
         if (acc.platform === "google-ads") {
           if (!acc.connected_user_id) throw new Error("Google Ads account has no connected user — reconnect it.");
           const token = await getFreshGoogleAdsAccessToken(admin, acc.connected_user_id);
@@ -36,7 +39,11 @@ export async function syncTenantAds(admin: Admin, tenantId: string, trigger: "ma
         } else {
           if (!acc.access_token) throw new Error("Meta token missing — reconnect it.");
           if (acc.token_expires_at && Date.parse(acc.token_expires_at) < Date.now()) throw new Error("Meta token expired (60 days) — reconnect it.");
-          rows = await fetchMetaCampaignSpend(acc.access_token, acc.account_id.startsWith("act_") ? acc.account_id : `act_${acc.account_id}`, from, today, acc.id);
+          // Opened server-side only; throws (naming SECRETS_MASTER_KEY) if a sealed row cannot be read.
+          const token = openMetaToken(acc.access_token);
+          if (!token) throw new Error("Meta token missing — reconnect it.");
+          reseal = resealMetaTokenIfPlain(acc.access_token);
+          rows = await fetchMetaCampaignSpend(token,acc.account_id.startsWith("act_") ? acc.account_id : `act_${acc.account_id}`, from, today, acc.id);
         }
         // Days the platform now reports as zero must not keep yesterday's number.
         await admin.from("ad_spend_daily").delete().eq("ad_account_id", acc.id).gte("day", from);
@@ -47,7 +54,7 @@ export async function syncTenantAds(admin: Admin, tenantId: string, trigger: "ma
         }
         result.rowsWritten += payload.length;
         result.accounts++;
-        await admin.from("ad_accounts").update({ last_synced_at: new Date().toISOString(), last_error: null, updated_at: new Date().toISOString() }).eq("id", acc.id);
+        await admin.from("ad_accounts").update({ last_synced_at: new Date().toISOString(), last_error: null, updated_at: new Date().toISOString(), ...reseal }).eq("id", acc.id);
       } catch (e) {
         const why = (e as Error).message;
         result.errors.push(`${acc.name}: ${why}`);
