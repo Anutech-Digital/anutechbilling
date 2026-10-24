@@ -77,7 +77,7 @@ export function ownerEquityWords(type: BusinessType | null | undefined): OwnerEq
 export interface DirectorChoice { key: string; label: string; hint: string; href: string; caution?: string }
 export const DIRECTOR_CHOICES: readonly DirectorChoice[] = [
   { key: "salary", label: "Director's salary / remuneration", hint: "Book it in Payroll (TDS u/s 192), or as a Director's Remuneration expense.", href: "/accounting/payroll" },
-  { key: "loan", label: "Loan to the director", hint: "Book it in Loans given — the director owes it back.", href: "/accounting/loans-given",
+  { key: "loan", label: "Loan to the director", hint: "Book it in Loans given — the director owes it back.", href: "/accounting/loans-given?give=director",
     caution: "Companies Act s.185 restricts loans to directors — check with your CA before booking one." },
   { key: "reimbursement", label: "Reimbursement", hint: "The director paid a company expense from their own pocket — settle it in Reimbursements.", href: "/accounting/reimbursements" },
   { key: "dividend", label: "Dividend", hint: "Needs a board resolution and TDS u/s 194 — record it with your CA; it is not an expense.", href: "/accounting/balance-sheet" },

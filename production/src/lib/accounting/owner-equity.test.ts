@@ -62,7 +62,7 @@ describe("R-1839 labels by company type", () => {
     expect(DIRECTOR_CHOICES.map((c) => c.key)).toEqual(["salary", "loan", "reimbursement", "dividend"]);
     expect(DIRECTOR_CHOICES.find((c) => c.key === "loan")?.caution).toMatch(/s\.185/);
     expect(DIRECTOR_CHOICES.find((c) => c.key === "salary")?.href).toBe("/accounting/payroll");
-    expect(DIRECTOR_CHOICES.find((c) => c.key === "loan")?.href).toBe("/accounting/loans-given");
+    expect(DIRECTOR_CHOICES.find((c) => c.key === "loan")?.href).toBe("/accounting/loans-given?give=director");
   });
   it("company type not set reads as Pvt Ltd — one rule with the calendar (coordinator, 24 Oct)", () => {
     expect(ownerEquityWords(null)).toEqual(ownerEquityWords("pvt_ltd"));

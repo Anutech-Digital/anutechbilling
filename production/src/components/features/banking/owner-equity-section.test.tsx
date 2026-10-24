@@ -115,7 +115,7 @@ describe("R-1839 reconcile — owner drawings (debit)", () => {
     expect(container.textContent).not.toMatch(/Owner drawings|Partner drawings|Partner withdrawal/);
     expect(screen.queryByRole("button", { name: /Book/ })).toBeNull();
     expect((screen.getAllByRole("link", { name: "Open" }) as HTMLAnchorElement[]).map((a) => a.getAttribute("href")))
-      .toEqual(["/accounting/payroll", "/accounting/loans-given", "/accounting/reimbursements"]);
+      .toEqual(["/accounting/payroll", "/accounting/loans-given?give=director", "/accounting/reimbursements"]);
   });
 });
 

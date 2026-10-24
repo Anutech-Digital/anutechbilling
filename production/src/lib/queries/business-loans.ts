@@ -11,13 +11,17 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { BusinessLoanRow, BusinessLoanPaymentRow } from "@/lib/supabase/database.types";
 
+/** R-1853: director_id / director_declaration are newer than database.types.ts. */
 export type BusinessLoan = BusinessLoanRow & {
+  director_id?: string | null;
+  director_declaration?: boolean | null;
   principalPaid: number;   // sum of principal parts repaid
   interestPaid:  number;   // sum of interest parts (total finance cost so far)
   outstanding:   number;   // principal − principalPaid
@@ -58,9 +62,10 @@ export async function fetchBusinessLoans(supabase: ReturnType<typeof createClien
   });
 }
 
-export function useBusinessLoans() {
+export function useBusinessLoans(enabled = true) {
   return useQuery({
     queryKey: ["business-loans"],
+    enabled,
     queryFn: (): Promise<BusinessLoan[]> => fetchBusinessLoans(createClient()),
     staleTime: 30_000,
   });
@@ -110,6 +115,33 @@ export function useRecordBusinessLoan() {
       return data as string;
     },
     onSuccess: () => { invalidate(qc); toast.success("Loan recorded — cash added to the account"); },
+    onError: (err) => toastError(err),
+  });
+}
+
+/** R-1853: money a director lent the company — director from the register, declaration answered. */
+export function useRecordDirectorLoanTaken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      directorId: string; principal: number; interestRate: number | null; disbursedOn: string;
+      depositAccountId: string; declaration: boolean; purpose: string | null;
+    }) => {
+      // Untyped: record_director_loan_taken is newer than database.generated.ts.
+      const supabase = createClient() as unknown as SupabaseClient;
+      const { data, error } = await supabase.rpc("record_director_loan_taken", {
+        p_director_id:     input.directorId,
+        p_principal:       Math.round(input.principal),
+        p_disbursed_on:    input.disbursedOn,
+        p_deposit_account: input.depositAccountId,
+        p_interest_rate:   input.interestRate,
+        p_declaration:     input.declaration,
+        p_purpose:         input.purpose,
+      });
+      if (error) throw new Error(error.message);
+      return data as string;
+    },
+    onSuccess: () => { invalidate(qc); toast.success("Loan from the director recorded — cash added to the account"); },
     onError: (err) => toastError(err),
   });
 }

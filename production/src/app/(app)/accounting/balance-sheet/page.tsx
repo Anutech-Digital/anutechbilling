@@ -67,6 +67,8 @@ import { useFirmPartners } from "@/lib/queries/partners";
 import { PartnerCapitalBox } from "./partner-capital-box";
 import { entityProfile } from "@/lib/compliance/entity";
 import type { BusinessType } from "@/lib/compliance/obligations";
+import { useBusinessLoans } from "@/lib/queries/business-loans";
+import { showsDirectorLoans, splitLoansTaken, undeclaredDirectorLoans } from "@/lib/accounting/director-loans";
 
 export default function BalanceSheetPage() {
   const { data: auto, isLoading: autoLoading, isError: autoFailed, refetch: refetchAuto } = useBalanceSheetAuto();
@@ -126,9 +128,17 @@ export default function BalanceSheetPage() {
     return { paidUpCapital: s.paidUpCapital, paidUpShares: s.paidUpShares, faceValue: shareQ.data.capital.face_value };
   }, [shareQ.data]);
 
-  const loading = autoLoading || itemsLoading || (movementsQ.isLoading && !movementsMissing) || shareQ.isLoading;
+  /* R-1853: loans FROM directors show apart from bank loans — the split of the report's one
+     "business loans payable" total (lib/accounting/director-loans.ts). Only a company has them. */
+  const companyLoans = showsDirectorLoans(businessType);
+  const bizLoansQ = useBusinessLoans(companyLoans);
+  const bizLoans = React.useMemo(() => bizLoansQ.data ?? [], [bizLoansQ.data]);
+  const loansTaken = splitLoansTaken(auto?.businessLoansPayable ?? 0, bizLoans);
+  const undeclared = undeclaredDirectorLoans(bizLoans);
+
+  const loading = autoLoading || itemsLoading || (movementsQ.isLoading && !movementsMissing) || shareQ.isLoading || (companyLoans && bizLoansQ.isLoading);
   /* R-270: a failed fetch must not print a ₹0 balance sheet that reads as "you own nothing". */
-  const failed = autoFailed || itemsFailed || (movementsQ.isError && !movementsMissing) || shareQ.isError;
+  const failed = autoFailed || itemsFailed || (movementsQ.isError && !movementsMissing) || shareQ.isError || (companyLoans && bizLoansQ.isError);
 
   const manual = (section: BalanceSheetSection) => (items ?? []).filter((i) => i.section === section);
   const manualAssetRows = manual("asset");
@@ -218,7 +228,8 @@ export default function BalanceSheetPage() {
         ["Licence cost provision (estimate, no vendor bill yet)", licenceProvision ?? 0],
         ["Credit card payable", auto.creditCardPayable ?? 0],
         ["EMI loans payable", auto.emiLoansPayable ?? 0],
-        ["Business loans payable", auto.businessLoansPayable ?? 0],
+        ...(loansTaken.fromDirectors > 0 ? [["Loans from directors (unsecured)", loansTaken.fromDirectors] as [string, number]] : []),
+        ["Business loans payable", loansTaken.others],
         ["GST payable", gstPayable],
         ...manualLiabRows.map((r): [string, number] => [r.label, r.amount]),
         ["Total liabilities", totalLiab],
@@ -405,8 +416,17 @@ export default function BalanceSheetPage() {
                 {(auto?.emiLoansPayable ?? 0) > 0 && (
                   <BSLine label="EMI / asset loans" hint="outstanding financing on purchases" amount={auto?.emiLoansPayable ?? 0} kind="auto" source="Assets & EMIs" href="/accounting/assets" />
                 )}
-                {(auto?.businessLoansPayable ?? 0) > 0 && (
-                  <BSLine label="Bank / business loans" hint="outstanding principal on borrowings" amount={auto?.businessLoansPayable ?? 0} kind="auto" source="Business Loans" href="/accounting/business-loans" />
+                {loansTaken.fromDirectors > 0 && (
+                  <BSLine
+                    label="Loans from directors"
+                    hint={undeclared > 0
+                      ? `unsecured — ${undeclared} without the director's written declaration on file`
+                      : "unsecured — money the directors lent the company"}
+                    amount={loansTaken.fromDirectors} kind="auto" source="Business Loans" href="/accounting/business-loans"
+                  />
+                )}
+                {loansTaken.others > 0 && (
+                  <BSLine label="Bank / business loans" hint="outstanding principal on borrowings" amount={loansTaken.others} kind="auto" source="Business Loans" href="/accounting/business-loans" />
                 )}
                 {gstPayable > 0 && (
                   <BSLine
