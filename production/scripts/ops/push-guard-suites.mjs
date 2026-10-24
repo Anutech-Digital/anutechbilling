@@ -63,6 +63,7 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/nav-route-guard.test.ts",
   "src/lib/queries/__tests__/money-read-scan.test.ts",
   "tests/secret-scan.test.ts",
+  "tests/radix-single-copy.test.ts", // R-1822: one copy of each Radix package (two = Esc/dropdown-in-dialog freeze)
   "src/lib/auth/no-passwords-in-source.test.ts",
   "src/lib/security/no-public-admin-env.test.ts", // R-730: admin allowlists never NEXT_PUBLIC_
   "src/lib/email/no-hardcoded-recipient.test.ts",
