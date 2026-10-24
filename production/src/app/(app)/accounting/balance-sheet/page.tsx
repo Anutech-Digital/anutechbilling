@@ -69,10 +69,16 @@ import { entityProfile } from "@/lib/compliance/entity";
 import type { BusinessType } from "@/lib/compliance/obligations";
 import { useBusinessLoans } from "@/lib/queries/business-loans";
 import { showsDirectorLoans, splitLoansTaken, undeclaredDirectorLoans } from "@/lib/accounting/director-loans";
+import { useEmployeeAdvances } from "@/lib/queries/advances";
+import { splitPrepaidAdvances } from "@/lib/accounting/employee-advance";
 
 export default function BalanceSheetPage() {
   const { data: auto, isLoading: autoLoading, isError: autoFailed, refetch: refetchAuto } = useBalanceSheetAuto();
   const { data: items, isLoading: itemsLoading, isError: itemsFailed, refetch: refetchItems } = useBalanceSheetItems();
+  /* R-1872: employee advances sit inside the Prepaid total (both are prepaid_advances rows) —
+     shown as their own line by taking them out of Prepaid, so total assets do not move. */
+  const { data: employeeAdvances } = useEmployeeAdvances();
+  const advanceSplit = splitPrepaidAdvances(auto?.prepaidAdvances ?? 0, employeeAdvances ?? []);
   const del = useDeleteBalanceSheetItem();
   const confirm = useConfirm();
   /* D16 (27 Sep 2026): the unexplained difference is almost always the owner's money that
@@ -207,9 +213,10 @@ export default function BalanceSheetPage() {
         ["Accounts receivable", auto.receivables ?? 0],
         ["Project receivable", auto.projectReceivable ?? 0],
         ["TDS receivable", auto.tdsReceivable ?? 0],
-        ["Employee loans (advances)", auto.employeeLoans ?? 0],
+        ["Employee loans", auto.employeeLoans ?? 0],
         ["Loans given", auto.loansGiven ?? 0],
-        ["Prepaid / vendor advances", auto.prepaidAdvances ?? 0],
+        ["Advances to employees", advanceSplit.employee],
+        ["Prepaid / vendor advances", advanceSplit.vendor],
         ["Fixed assets", auto.fixedAssets ?? 0],
         ["GST input credit (ITC)", gstCredit],
         [`Advance tax paid (${auto.fyLabel})`, auto.advanceTaxPaid ?? 0],
@@ -355,13 +362,16 @@ export default function BalanceSheetPage() {
                 )}
                 <BSLine label="TDS receivable" hint="credits from customers' TDS" amount={auto?.tdsReceivable ?? 0} kind="auto" source="TDS Receivable" href="/accounting/tds-receivable" />
                 {(auto?.employeeLoans ?? 0) > 0 && (
-                  <BSLine label="Employee loans / advances" hint="outstanding, owed back" amount={auto?.employeeLoans ?? 0} kind="auto" source="Loans" href="/accounting/loans" />
+                  <BSLine label="Employee loans" hint="lent to staff, owed back (office-expense advances are their own line)" amount={auto?.employeeLoans ?? 0} kind="auto" source="Loans" href="/accounting/loans" />
                 )}
                 {(auto?.loansGiven ?? 0) > 0 && (
                   <BSLine label="Loans given" hint="lent to outside parties, still owed back" amount={auto?.loansGiven ?? 0} kind="auto" source="Loans given" href="/accounting/loans-given" />
                 )}
-                {(auto?.prepaidAdvances ?? 0) > 0 && (
-                  <BSLine label="Prepaid / vendor advances" hint="paid, not yet consumed" amount={auto?.prepaidAdvances ?? 0} kind="auto" source="Prepaid" href="/accounting/prepaid" />
+                {advanceSplit.employee > 0 && (
+                  <BSLine label="Advances to employees" hint="office-expense money still with staff (given − bills − returned)" amount={advanceSplit.employee} kind="auto" source="Advances" href="/accounting/advances" />
+                )}
+                {advanceSplit.vendor > 0 && (
+                  <BSLine label="Prepaid / vendor advances" hint="paid, not yet consumed" amount={advanceSplit.vendor} kind="auto" source="Prepaid" href="/accounting/prepaid" />
                 )}
                 {(auto?.fixedAssets ?? 0) > 0 && (
                   <BSLine label="Fixed assets" hint={auto?.fixedAssetsCost != null && auto.accumulatedDepreciation != null

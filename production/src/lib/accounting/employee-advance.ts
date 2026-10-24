@@ -157,6 +157,21 @@ export function openEmployeeAdvanceTotal(advances: readonly Pick<AdvanceLite, "s
   return advances.reduce((s, a) => s + (a.status === "active" ? Math.max(0, a.remaining_balance) : 0), 0);
 }
 
+/**
+ * R-1872 — the Balance Sheet's two advance lines. report_balance_sheet.prepaid_advances is
+ * Σ(total − consumed) over EVERY prepaid_advances row, and an employee advance is one of those
+ * rows (category 'Employee advance', R-101). So "Advances to employees" is carved OUT of that
+ * total, never added on top: employee + vendor = the Prepaid total, total assets unchanged.
+ */
+export function splitPrepaidAdvances(
+  prepaidTotal: number,
+  advances: readonly Pick<AdvanceLite, "status" | "remaining_balance">[],
+): { employee: number; vendor: number } {
+  const total = Math.max(0, prepaidTotal);
+  const employee = Math.min(total, openEmployeeAdvanceTotal(advances));
+  return { employee, vendor: total - employee };
+}
+
 /** Whole rupees from what a person typed ("4,130", "₹ 630"); NaN when it is not a whole number. */
 export function parseRupees(v: string): number {
   const s = v.replace(/[,\s₹]/g, "");

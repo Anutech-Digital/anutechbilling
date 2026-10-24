@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  advanceForReturn, advanceRegister, billProblem, isOverdueAdvance, openAdvancesOf, openEmployeeAdvanceTotal, parseRupees,
+  advanceForReturn, advanceRegister, billProblem, isOverdueAdvance, openAdvancesOf, openEmployeeAdvanceTotal, parseRupees, splitPrepaidAdvances,
   REGISTER_CSV_HEADERS, registerCsvRows, returnedFromNotes, samePerson, splitBills, type AdvanceLite,
 } from "./employee-advance";
 
@@ -89,5 +89,24 @@ describe("R-1871 employee office-expense advance rules", () => {
     expect(parseRupees("₹ 630")).toBe(630);
     expect(parseRupees("")).toBe(0);
     expect(parseRupees("12.5")).toBeNaN();
+  });
+});
+
+describe("R-1872 Balance Sheet: 'Advances to employees' is taken OUT of Prepaid, not added", () => {
+  const open = (n: number) => ({ status: "active" as const, remaining_balance: n });
+  it("employee money moves to its own line; the two lines add up to the old Prepaid total", () => {
+    // report_balance_sheet.prepaid_advances = vendor ₹20,000 + employee ₹3,500 + ₹1,000
+    const s = splitPrepaidAdvances(24_500, [open(3_500), open(1_000), { status: "closed" as const, remaining_balance: 0 }]);
+    expect(s).toEqual({ employee: 4_500, vendor: 20_000 });
+    expect(s.employee + s.vendor).toBe(24_500);
+  });
+  it("no employee advances → Prepaid unchanged", () => {
+    expect(splitPrepaidAdvances(8_000, [])).toEqual({ employee: 0, vendor: 8_000 });
+  });
+  it("never more employee money than the Prepaid total the sheet already counts (no double count)", () => {
+    expect(splitPrepaidAdvances(2_000, [open(3_500)])).toEqual({ employee: 2_000, vendor: 0 });
+  });
+  it("a settled advance's leftover is not counted as with the employee", () => {
+    expect(splitPrepaidAdvances(5_000, [{ status: "settled" as const, remaining_balance: 700 }])).toEqual({ employee: 0, vendor: 5_000 });
   });
 });
