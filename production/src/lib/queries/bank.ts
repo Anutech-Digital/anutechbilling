@@ -59,7 +59,7 @@ export type BankTransactionRow = {
   balance_after:    number | null;
   reference:        string | null;
   source:           "manual" | "csv_upload" | "api_fetch";
-  matched_to_type:  "payment" | "project" | "expense" | "vendor_bill" | "transfer" | "salary" | "split" | "manual" | "statutory" | "prepaid" | "referral_commission" | null;
+  matched_to_type:  "payment" | "project" | "expense" | "vendor_bill" | "transfer" | "salary" | "split" | "manual" | "statutory" | "prepaid" | "referral_commission" | "owner_equity" | null;
   matched_to_id:    string | null;
   matched_at:       string | null;
   matched_by:       string | null;
@@ -1211,7 +1211,7 @@ export function useBookBankCredit() {
     onSuccess: (_d, input) => {
       qc.invalidateQueries({ queryKey: ["bank_transactions", input.accountId] });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
-      toast.success(input.kind === "capital" ? "Booked as owner's capital & reconciled" : "Booked as director's loan & reconciled");
+      toast.success(input.kind === "capital" ? "Booked as owner's capital & reconciled" : "Booked as a loan (liability) & reconciled");
     },
     onError: (err) => toastError(err, { fallback: "Couldn't book this credit" }),
   });

@@ -51,6 +51,10 @@ import { reportProfit } from "@/lib/accounting/pnl-assemble";
 import { istToday, addDaysISO } from "@/lib/dates/ist";
 import { fyOf } from "@/lib/accounting/ledger";
 import { fmtBS, parseWholeRupees } from "./format";
+import { useComplianceProfile } from "@/lib/compliance/profile";
+import { ownerEquityWords, movementTotals, unexplainedAfterEntries, looksLikeDrawingsLine } from "@/lib/accounting/owner-equity";
+import { useOwnerEquityMovements, isOwnerEquityTableMissing } from "@/lib/queries/owner-equity";
+import { OwnerEquityCard, RecordOwnerEquityDialog, type RecordInit } from "./owner-equity-card";
 
 export default function BalanceSheetPage() {
   const { data: auto, isLoading: autoLoading, isError: autoFailed, refetch: refetchAuto } = useBalanceSheetAuto();
@@ -58,21 +62,25 @@ export default function BalanceSheetPage() {
   const del = useDeleteBalanceSheetItem();
   const confirm = useConfirm();
   /* D16 (27 Sep 2026): the unexplained difference is almost always the owner's money that
-     never got a line — capital put in, or drawings taken out. One click books it. */
+     never got a line — capital put in, or drawings taken out. One click books it.
+     R-1839: money taken out is now recorded as real drawings entries (date, amount, account),
+     which move the bank / cash balance too — not a lump equity line. A company has no drawings. */
   const createItem = useCreateBalanceSheetItem();
   async function bookUnexplained() {
     if (unexplained === null || unexplained === 0) return;
     const capital = unexplained > 0;
+    if (!capital) {
+      if (words.allowed) setRecordInit({ kind: "drawings", amount: -unexplained });
+      return;
+    }
     const ok = await confirm({
-      title: capital ? `Add Owner's capital of ${rupee(unexplained)}?` : `Add Drawings of ${rupee(-unexplained)}?`,
-      body: capital
-        ? "Assets are more than the books explain — this much money was put into the business without an entry (opening bank balance, your own money). An Owner's capital line is added under Equity."
-        : "Liabilities are more than the books explain — this much money was taken out of the business without an entry. A Drawings (negative) line is added under Equity. If it is an expense or loss missing from the books, record that entry first.",
+      title: `Add Owner's capital of ${rupee(unexplained)}?`,
+      body: "Assets are more than the books explain — this much money was put into the business without an entry (opening bank balance, your own money). An Owner's capital line is added under Equity.",
       confirmLabel: "Add line", cancelLabel: "Cancel",
     });
     if (!ok) return;
     await createItem.mutateAsync({
-      section: "equity", label: capital ? "Owner's capital" : "Drawings", amount: unexplained,
+      section: "equity", label: "Owner's capital", amount: unexplained,
       notes: `Created on ${today} from the Balance Sheet's unexplained difference — the gap left after cumulative P&L.`,
     });
   }
@@ -81,9 +89,21 @@ export default function BalanceSheetPage() {
   const [retainedInfoOpen, setRetainedInfoOpen] = React.useState(false);
   const today = istToday();
 
-  const loading = autoLoading || itemsLoading;
+  /* R-1839: owner drawings / capital introduced — real entries, labelled by company type. */
+  const profileQ = useComplianceProfile();
+  const words = ownerEquityWords(profileQ.data?.businessType ?? null);
+  const movementsQ = useOwnerEquityMovements();
+  const movementsMissing = movementsQ.isError && isOwnerEquityTableMissing(movementsQ.error);
+  const movements = React.useMemo(() => movementsQ.data ?? [], [movementsQ.data]);
+  const [recordInit, setRecordInit] = React.useState<RecordInit | null>(null);
+  const partners = React.useMemo(
+    () => [...new Set(movements.map((m) => m.partner_name).filter((p): p is string => !!p))].sort(),
+    [movements],
+  );
+
+  const loading = autoLoading || itemsLoading || (movementsQ.isLoading && !movementsMissing);
   /* R-270: a failed fetch must not print a ₹0 balance sheet that reads as "you own nothing". */
-  const failed = autoFailed || itemsFailed;
+  const failed = autoFailed || itemsFailed || (movementsQ.isError && !movementsMissing);
 
   const manual = (section: BalanceSheetSection) => (items ?? []).filter((i) => i.section === section);
   const manualAssetRows = manual("asset");
@@ -117,7 +137,15 @@ export default function BalanceSheetPage() {
     gstCredit, gstPayable, totalAssets, totalLiab, netWorth, retained, currentRatio, debtToEquity,
   } = balanceSheetTotals(auto, items ?? [], { licenceProvision });
   const openingEquity = (opening?.ownerCapital ?? 0) + (opening?.retainedEarnings ?? 0);
-  const unexplained = cumulativeProfit === null ? null : retained - openingEquity - cumulativeProfit;
+  /* R-1839: entries after the CA's opening date (earlier ones are inside the opening figure), up
+     to today. Each has its bank / cash line, so cash & bank already moved — this is the equity side. */
+  const ownerTotals = movementTotals(movements, { after: opening?.asOf ?? null, upTo: today });
+  const unexplained = cumulativeProfit === null ? null
+    : unexplainedAfterEntries({ retained, openingEquity, profit: cumulativeProfit, totals: ownerTotals });
+  const closingCapital = openingEquity + (cumulativeProfit ?? 0) + ownerTotals.capitalIntroduced - ownerTotals.drawings;
+  const hasOwnerEntries = ownerTotals.capitalIntroduced !== 0 || ownerTotals.drawings !== 0;
+  /* Old hand-entered "Drawings" lines stay as they are; if real entries exist too, say it once. */
+  const drawingsTwice = ownerTotals.drawings > 0 && manualEqRows.some((r) => looksLikeDrawingsLine(r.label));
 
 
   // Export the full sheet as a CSV the owner can hand to their CA (mirrors GST/P&L).
@@ -172,6 +200,9 @@ export default function BalanceSheetPage() {
         ] : [
           ["Retained earnings (cumulative net profit per P&L)", cumulativeProfit ?? ""] as [string, number | string],
         ]),
+        ...(ownerTotals.capitalIntroduced ? [[`${words.capital} (recorded entries)`, ownerTotals.capitalIntroduced] as [string, number]] : []),
+        ...(ownerTotals.drawings ? [[`Less: ${words.drawings} (recorded entries)`, -ownerTotals.drawings] as [string, number]] : []),
+        ...(hasOwnerEntries ? [["Closing capital (opening + capital introduced + profit − drawings)", closingCapital] as [string, number]] : []),
         ["Unexplained difference (balancing figure)", unexplained ?? retained],
         ["Net worth (total equity)", netWorth],
       ],
@@ -225,8 +256,8 @@ export default function BalanceSheetPage() {
           <span>
             Auto figures (cash &amp; bank, receivables, TDS, payables, GST) come from your
             ResellerOS records. Add manual lines for anything the app doesn&apos;t track —
-            fixed assets, loans, owner&apos;s capital, drawings — to make this a complete,
-            CA-ready sheet. <b>Retained earnings comes from the P&amp;L; whatever the sheet still needs to balance is shown separately as an unexplained difference.</b>
+            fixed assets, loans, owner&apos;s opening capital — to make this a complete,
+            CA-ready sheet{words.allowed ? <> (money the {words.person} takes out goes in <b>{words.register}</b> below)</> : null}. <b>Retained earnings comes from the P&amp;L; whatever the sheet still needs to balance is shown separately as an unexplained difference.</b>
           </span>
         </p>
       </Card>
@@ -395,6 +426,31 @@ export default function BalanceSheetPage() {
                     amount={cumulativeProfit ?? 0}
                     kind="auto" source="P&L" href="/accounting/pnl"
                   />
+                  {/* R-1839: the capital account — real entries, never the P&L. */}
+                  {ownerTotals.capitalIntroduced !== 0 && (
+                    <BSLine label={words.capital} hint={opening ? `money put in after ${formatDate(opening.asOf)}` : "money put into the business"}
+                      amount={ownerTotals.capitalIntroduced} kind="auto" source="Entries" href="/accounting/balance-sheet#drawings" />
+                  )}
+                  {ownerTotals.drawings !== 0 && (
+                    <BSLine label={`Less: ${words.drawings}`} hint={`money the ${words.person} took out — lowers capital, not an expense`}
+                      amount={-ownerTotals.drawings} kind="auto" source="Entries" href="/accounting/balance-sheet#drawings" />
+                  )}
+                  {hasOwnerEntries && cumulativeProfit !== null && (
+                    <div className="flex items-start justify-between gap-3 py-1.5 border-t border-hairline mt-1">
+                      <span className="text-sm text-ink font-medium">
+                        Closing capital
+                        <span className="block text-xs text-ink-3 font-normal">
+                          {opening ? "opening + " : ""}capital introduced + profit − drawings
+                        </span>
+                      </span>
+                      <span className="text-sm font-semibold tabular-nums">{fmtBS(closingCapital)}</span>
+                    </div>
+                  )}
+                  {drawingsTwice && (
+                    <p className="text-xs text-amber-ink bg-amber-soft/40 rounded px-2 py-1.5 my-1">
+                      A hand-entered Drawings line above and the recorded drawings are both counted. If they are the same money, delete the hand-entered line.
+                    </p>
+                  )}
                   {(unexplained === null || unexplained !== 0) && (
                     <BSLine
                       label="Unexplained difference"
@@ -422,17 +478,26 @@ export default function BalanceSheetPage() {
                           <div className="flex justify-between gap-3"><span>− Opening capital + retained earnings b/f (CA)</span><span className="tabular-nums">{fmtBS(openingEquity)}</span></div>
                         )}
                         <div className="flex justify-between gap-3"><span>{opening ? "− Profit since the opening date (P&L)" : "− Retained earnings (P&L, all periods)"}</span><span className="tabular-nums">{fmtBS(cumulativeProfit ?? 0)}</span></div>
+                        {hasOwnerEntries && (
+                          <div className="flex justify-between gap-3"><span>− Capital introduced + drawings (entries)</span><span className="tabular-nums">{fmtBS(ownerTotals.capitalIntroduced - ownerTotals.drawings)}</span></div>
+                        )}
                         <div className="flex justify-between gap-3 border-t border-hairline pt-1 font-semibold text-ink"><span>= Unexplained difference</span><span className="tabular-nums">{fmtBS(unexplained ?? retained)}</span></div>
                       </div>
                       <p className="mt-2 text-xs text-ink-3">
-                        Usual causes: bank opening balances entered without the matching capital line, owner drawings taken without an entry, or income / expense that never reached the books. Add the missing line (Owner&apos;s capital, Drawings) and this goes to zero.
+                        {words.allowed
+                          ? `Usual causes: bank opening balances entered without the matching capital line, money the ${words.person} took out without an entry, or income / expense that never reached the books. Record the missing drawings (date, amount, account) or add the capital line and this goes to zero.`
+                          : "Usual causes: bank opening balances entered without the matching share capital line, money paid to a director that was not booked (salary, loan, reimbursement), or income / expense that never reached the books."}
                       </p>
-                      {unexplained !== null && unexplained !== 0 && (
+                      {unexplained !== null && unexplained !== 0 && (unexplained > 0 || words.allowed) && (
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           <Button size="sm" variant="primary" loading={createItem.isPending} onClick={bookUnexplained}>
-                            {unexplained > 0 ? `Add Owner's capital ${rupee(unexplained)}` : `Add Drawings ${rupee(-unexplained)}`}
+                            {unexplained > 0 ? `Add Owner's capital ${rupee(unexplained)}` : `Record ${words.drawings.toLowerCase()} ${rupee(-unexplained)}`}
                           </Button>
-                          <span className="text-xs text-ink-3">One click adds the equity line and the difference becomes zero. You can edit or delete it later.</span>
+                          <span className="text-xs text-ink-3">
+                            {unexplained > 0
+                              ? "One click adds the equity line and the difference becomes zero. You can edit or delete it later."
+                              : "Pick the date and the account the money left from — split it into several entries if it was taken out more than once."}
+                          </span>
                         </div>
                       )}
                     </div>
@@ -449,6 +514,11 @@ export default function BalanceSheetPage() {
 
           <OpeningBalancesCard opening={opening} loading={openingQ.isLoading} failed={openingQ.isError} fyStart={`${fyOf(today)}-04-01`} today={today} />
 
+          {!movementsMissing && (
+            <OwnerEquityCard words={words} movements={movements} loading={movementsQ.isLoading} error={movementsQ.error}
+              onRetry={() => void movementsQ.refetch()} onRecord={setRecordInit} />
+          )}
+
           {/* Balance check — always balanced by construction */}
           <Card className="mt-6 p-4 flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2">
@@ -464,8 +534,10 @@ export default function BalanceSheetPage() {
         </>
       )}
 
-      <AddLineDialog open={addOpen} onClose={() => setAddOpen(false)} />
+      <AddLineDialog open={addOpen} onClose={() => setAddOpen(false)} hideDrawings={words.allowed && !movementsMissing}
+        onRecordDrawings={() => { setAddOpen(false); setRecordInit({ kind: "drawings" }); }} />
       {editItem && <EditLineDialog item={editItem} onClose={() => setEditItem(null)} />}
+      <RecordOwnerEquityDialog init={recordInit} words={words} partners={partners} onClose={() => setRecordInit(null)} />
     </div>
   );
 }
@@ -811,9 +883,14 @@ function EditLineDialog({ item, onClose }: { item: BalanceSheetItem; onClose: ()
   );
 }
 
-function AddLineDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+function AddLineDialog({ open, onClose, hideDrawings, onRecordDrawings }: {
+  open: boolean; onClose: () => void;
+  /** R-1839: drawings are recorded as dated entries (they move the bank / cash balance), not a lump line. */
+  hideDrawings?: boolean; onRecordDrawings?: () => void;
+}) {
   const create = useCreateBalanceSheetItem();
   const [categoryValue, setCategoryValue] = React.useState<string>("fixed_asset");
+  const categories = hideDrawings ? CATEGORIES.filter((c) => c.value !== "drawings") : CATEGORIES;
 
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -847,6 +924,13 @@ function AddLineDialog({ open, onClose }: { open: boolean; onClose: () => void }
             owner&apos;s capital, etc. Pick what it is and we&apos;ll file it correctly.
           </DialogDescription>
         </DialogHeader>
+        {hideDrawings && onRecordDrawings && (
+          <p className="text-xs text-ink-3 -mt-1">
+            Money taken out for personal use?{" "}
+            <button type="button" className="text-indigo underline" onClick={onRecordDrawings}>Record drawings</button>{" "}
+            — with its date and account, so the bank or cash balance moves too.
+          </p>
+        )}
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <FormField label="What kind of line?" required htmlFor="bs-category">
@@ -854,7 +938,7 @@ function AddLineDialog({ open, onClose }: { open: boolean; onClose: () => void }
               <SelectTrigger id="bs-category"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {(["asset", "liability", "equity"] as BalanceSheetSection[]).map((sec) => {
-                  const group = CATEGORIES.filter((c) => c.section === sec);
+                  const group = categories.filter((c) => c.section === sec);
                   const secLabel = SECTIONS.find((s) => s.value === sec)?.label ?? sec;
                   return (
                     <SelectGroup key={sec}>

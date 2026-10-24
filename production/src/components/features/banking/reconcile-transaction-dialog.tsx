@@ -66,6 +66,10 @@ import { useReferralCommissions } from "@/lib/queries/referral-commissions";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
 import { ProjectPaymentSection } from "@/components/features/banking/project-payment-section";
 import { CreditPayForSection } from "@/components/features/banking/credit-pay-for-section";
+import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
+import { IncentiveFromBankSection } from "@/components/features/banking/incentive-from-bank-section";
+import { useComplianceProfile } from "@/lib/compliance/profile";
+import { ownerEquityWords } from "@/lib/accounting/owner-equity";
 
 interface Props {
   open: boolean;
@@ -315,14 +319,19 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const [creditLabel, setCreditLabel] = React.useState("");
   React.useEffect(() => { setCreditKind("capital"); setCreditLabel(""); }, [transaction?.id]);
 
+  /* R-1839: company type decides the owner's words; a firm's box here is only a partner's loan
+     (capital goes in as a dated "Capital introduced" entry, OwnerEquitySection). */
+  const profileQ = useComplianceProfile();
+  const ownerWords = ownerEquityWords(profileQ.data?.businessType ?? null);
   const handleBookCredit = async () => {
     if (!transaction) return;
+    const kind = ownerWords.allowed ? "director_loan" : creditKind;
     try {
       await bookCredit.mutateAsync({
         transactionId: transaction.id,
         accountId:     transaction.bank_account_id,
-        kind:          creditKind,
-        label:         creditLabel.trim() || (creditKind === "capital" ? "Owner's capital" : "Director's loan"),
+        kind,
+        label:         creditLabel.trim() || (ownerWords.allowed ? "Loan from partner" : kind === "capital" ? "Owner's capital" : "Director's loan"),
         notes:         transaction.description,
       });
       onOpenChange(false);
@@ -756,13 +765,19 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
 
             {/* Book money-IN as capital / a director's loan — credit lines only.
                 Adds the Balance-Sheet line AND reconciles, in one step. */}
-            {isCredit && (
+            {/* R-1839: a proprietor / firm books money the owner puts in as dated "Capital
+                introduced" (OwnerEquitySection, below) — one way, not a lump line here. A firm
+                keeps the loan-from-partner choice; a company keeps both choices as before. */}
+            {isCredit && !(ownerWords.allowed && !ownerWords.needsPartner) && (
               <div className="rounded-md border border-emerald/40 bg-emerald/5 p-3">
-                <p className="text-xs font-semibold text-ink-2 mb-1">Money put into the business?</p>
+                <p className="text-xs font-semibold text-ink-2 mb-1">{ownerWords.allowed ? "A loan from a partner?" : "Money put into the business?"}</p>
                 <p className="text-xs text-ink-3 mb-3 leading-relaxed">
-                  Account opening / promoter funds — this {rupee(amount)} is <b>not income</b>. Book it correctly and reconcile in one step.
+                  {ownerWords.allowed
+                    ? <>Money a partner lent the firm, to be repaid — this {rupee(amount)} is <b>not income</b> and not capital.</>
+                    : <>Account opening / promoter funds — this {rupee(amount)} is <b>not income</b>. Book it correctly and reconcile in one step.</>}
                 </p>
                 <div className="space-y-2">
+                  {!ownerWords.allowed && (
                   <div className="grid grid-cols-1 gap-1.5">
                     <label className={`flex items-start gap-2 rounded-md border px-3 py-2 cursor-pointer ${creditKind === "capital" ? "border-emerald bg-emerald/10" : "border-hairline"}`}>
                       <input type="radio" name="creditKind" checked={creditKind === "capital"} onChange={() => setCreditKind("capital")} className="mt-1" />
@@ -779,10 +794,11 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                       </span>
                     </label>
                   </div>
+                  )}
                   <Input aria-label="Ledger label"
                     value={creditLabel}
                     onChange={(e) => setCreditLabel(e.target.value)}
-                    placeholder={creditKind === "capital" ? "Label (default: Owner's capital)" : "Label (default: Director's loan)"}
+                    placeholder={ownerWords.allowed ? "Label (default: Loan from partner)" : creditKind === "capital" ? "Label (default: Owner's capital)" : "Label (default: Director's loan)"}
                   />
                 </div>
                 <Button
@@ -793,7 +809,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                   loading={bookCredit.isPending}
                   onClick={handleBookCredit}
                 >
-                  Book {rupee(amount)} as {creditKind === "capital" ? "capital" : "director's loan"}
+                  Book {rupee(amount)} as {ownerWords.allowed ? "a loan from a partner" : creditKind === "capital" ? "capital" : "director's loan"}
                 </Button>
               </div>
             )}
@@ -912,6 +928,12 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 </p>
               </div>
             )}
+
+            {/* R-1839: not an expense — the owner's own money (drawings / capital introduced), or
+                for a Pvt Ltd the "Paid to a director" choices; and an employee's incentive, which
+                is salary (Payroll), never a plain expense. */}
+            {!isCredit && <IncentiveFromBankSection transaction={transaction} onDone={() => onOpenChange(false)} />}
+            <OwnerEquitySection transaction={transaction} onDone={() => onOpenChange(false)} />
 
             {/* Vendor bill (COGS) paid from this line — settled against THIS line, never a second one. */}
             {!isCredit && (

@@ -24,6 +24,8 @@ import { useBalanceSheetAuto, useBalanceSheetItems, useOpeningBalances } from "@
 import { usePnL, BOOKS_START } from "@/lib/queries/pnl";
 import { buildTrialBalance, trialBalanceCsvRows, LICENCE_ESTIMATE_HEAD, type TbGroup } from "@/lib/accounting/trial-balance";
 import { retainedProfitRange, licenceProvisionOf } from "@/lib/accounting/balance-sheet-totals";
+import { movementTotals } from "@/lib/accounting/owner-equity";
+import { useOwnerEquityMovements, isOwnerEquityTableMissing } from "@/lib/queries/owner-equity";
 
 const GROUPS: TbGroup[] = ["Assets", "Liabilities", "Equity", "Income", "Expenses", "Difference"];
 
@@ -41,13 +43,23 @@ export default function TrialBalancePage() {
   const retainedQ = usePnL({ from: profitRange.from, to: profitRange.to }, openingQ.data !== undefined && profitRange.open);
   const licenceProvision = openingQ.data === undefined ? null : !profitRange.open ? 0 : licenceProvisionOf(retainedQ.data);
 
+  /* R-1839: owner drawings / capital introduced — same range as the Balance Sheet (after the
+     CA's opening date, up to today). A table not there yet (before the migration) = none. */
+  const ownerQ = useOwnerEquityMovements();
+  const ownerMissing = ownerQ.isError && isOwnerEquityTableMissing(ownerQ.error);
+  const ownerEquity = React.useMemo(
+    () => (ownerQ.data ? movementTotals(ownerQ.data, { after: openingQ.data?.asOf ?? null, upTo: today }) : null),
+    [ownerQ.data, openingQ.data, today],
+  );
+
   const tb = React.useMemo(() => {
     if (!bsQ.data || !pnlQ.data || !itemsQ.data || openingQ.data === undefined || licenceProvision === null) return null;
-    return buildTrialBalance({ bs: bsQ.data, pnl: pnlQ.data, items: itemsQ.data, opening: openingQ.data, licenceProvision });
-  }, [bsQ.data, pnlQ.data, itemsQ.data, openingQ.data, licenceProvision]);
+    if (!ownerEquity && !ownerMissing) return null;
+    return buildTrialBalance({ bs: bsQ.data, pnl: pnlQ.data, items: itemsQ.data, opening: openingQ.data, licenceProvision, ownerEquity });
+  }, [bsQ.data, pnlQ.data, itemsQ.data, openingQ.data, licenceProvision, ownerEquity, ownerMissing]);
   const estimatedLicence = tb?.rows.find((r) => r.head === LICENCE_ESTIMATE_HEAD)?.debit ?? 0;
 
-  const error = bsQ.error ?? pnlQ.error ?? itemsQ.error ?? openingQ.error ?? retainedQ.error;
+  const error = bsQ.error ?? pnlQ.error ?? itemsQ.error ?? openingQ.error ?? retainedQ.error ?? (ownerMissing ? null : ownerQ.error);
   const retryFailed = () => {
     for (const q of [bsQ, pnlQ, itemsQ, openingQ, retainedQ]) if (q.error) void q.refetch();
   };
