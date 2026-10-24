@@ -12,6 +12,7 @@
  * (it used to say "fully paid" and "₹X outstanding" together), and the owner report of
  * past TDS entries whose rate does not fit their section.
  */
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import { checkTdsRate } from "./tds-rates";
 import { rupee } from "@/lib/utils";
 
@@ -162,6 +163,6 @@ export function advanceLinesWithTds(
 /** "Bank transfer", "TDS deducted by customer" — the method words of an advance line. */
 export function advanceMethodLabel(method: string): string {
   if (method === "tds") return "TDS deducted by customer";
-  const words = method.replace(/_/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  /* R-1715 / R-1680: every other method from the one payment-method map ("UPI", not "Upi"). */
+  return paymentMethodLabel(method);
 }

@@ -30,6 +30,7 @@
  *   - payments belong to the customer by the /payments rule (paymentBelongsTo: own
  *     customer_id, else the customer on its quote) — statementPayments().
  */
+import { rupee } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
@@ -74,6 +75,14 @@ export interface StatementInput {
   projectPayments: ReadonlyArray<{ received_at: string; amount: number | null; reference?: string | null; project_title: string; invoice_id?: string | null; project_id: string }>;
   /** Optional "— ₹X bank + ₹Y TDS" tail for a payment row (R-523). */
   paymentSplit?: (paymentId: string, amount: number) => string | null;
+}
+
+/**
+ * R-1680: a running balance below zero is money the customer has with us — "₹5,000 credit",
+ * the closing line's own words. rupee(-5000) printed "₹-5,000" in the Balance column.
+ */
+export function statementBalanceText(balance: number): string {
+  return balance < 0 ? `${rupee(-balance)} credit` : rupee(balance);
 }
 
 export function buildCustomerStatement(input: StatementInput): { rows: StatementRow[]; closing: number } {

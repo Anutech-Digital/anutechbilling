@@ -60,8 +60,8 @@ describe("the list badge, tab and closed rule use it", () => {
     expect(quoteListTab(q(), today)).toBe("expired");
     expect(isClosedQuote(q(), today)).toBe(true);
   });
-  it("on its last valid day it is still 'Out for review'", () => {
-    expect(unifiedStatus(q(), "2026-10-18").label).toBe("Out for review");
+  it("on its last valid day it is still 'Sent' (R-1713: one name per state)", () => {
+    expect(unifiedStatus(q(), "2026-10-18").label).toBe("Sent");
     expect(isClosedQuote(q(), "2026-10-18")).toBe(false);
   });
 });

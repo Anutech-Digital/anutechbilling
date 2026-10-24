@@ -86,6 +86,10 @@ import { LateInterestLine } from "@/components/features/quotes/late-interest-lin
 import { overallProvisionStatus, type ProvisionStatus } from "@/lib/provisioning/plan";
 import { useProvisioning } from "@/lib/queries/provisioning";
 import { useQuoteSignature } from "@/lib/queries/quote-signatures";
+import { useInvoiceCreatedAt } from "./invoice-created-at";
+import { QUOTE_STATE_LABEL } from "@/lib/quotes/state-labels";
+import { lineScheduleNote } from "@/lib/quotes/billing";
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import { requiredApproval, canSend, canApprove, approvalBadge } from "@/lib/quotes/approval";
 import { eligibleApprovers, approverSentence } from "@/lib/quotes/awaiting-approval";
 import { useTeamMembers } from "@/lib/queries/team";
@@ -119,24 +123,25 @@ import { billOfSupplyBuilderLine, billOfSupplyStatus, quoteDocBillOfSupply } fro
 // Status meta
 // ============================================================
 const STATUS_META: Record<Quote["status"], { kind: "muted" | "success" | "warning" | "danger" | "info"; label: string }> = {
-  draft:    { kind: "muted",   label: "Draft" },
-  sent:     { kind: "warning", label: "Sent" },
-  viewed:   { kind: "info",    label: "Viewed" },
-  accepted: { kind: "success", label: "Accepted" },
-  rejected: { kind: "danger",  label: "Rejected" },
-  expired:  { kind: "danger",  label: "Expired" },
+  /* R-1713: words from the one label map (lib/quotes/state-labels.ts) — the list says the same. */
+  draft:    { kind: "muted",   label: QUOTE_STATE_LABEL.draft },
+  sent:     { kind: "warning", label: QUOTE_STATE_LABEL.sent },
+  viewed:   { kind: "info",    label: QUOTE_STATE_LABEL.viewed },
+  accepted: { kind: "success", label: QUOTE_STATE_LABEL.accepted },
+  rejected: { kind: "danger",  label: QUOTE_STATE_LABEL.rejected },
+  expired:  { kind: "danger",  label: QUOTE_STATE_LABEL.expired },
 };
 
 const PAYMENT_META: Record<Quote["payment_status"], { kind: "muted" | "success" | "warning" | "info" | "danger"; label: string }> = {
   none:     { kind: "muted",   label: "Not awaiting" },
-  awaiting: { kind: "warning", label: "Awaiting payment" },
+  awaiting: { kind: "warning", label: QUOTE_STATE_LABEL.awaiting },
   /* Rose, matching the list. `info` put half-collected money in the same blue as
      "Invoiced" and "Payment received" — the two states where nothing is owed — so the one
      row with cash outstanding looked like the settled ones. Tone is the only thing a
      glance reads. */
-  partial:  { kind: "danger",  label: "Partly paid" },
-  received: { kind: "info",    label: "Payment received" },
-  invoiced: { kind: "success", label: "Invoiced" },
+  partial:  { kind: "danger",  label: QUOTE_STATE_LABEL.partial },
+  received: { kind: "info",    label: QUOTE_STATE_LABEL.received },
+  invoiced: { kind: "success", label: QUOTE_STATE_LABEL.invoiced },
 };
 
 // ============================================================
@@ -261,6 +266,8 @@ export default function QuoteDetailPage() {
      lib/quotes/lifecycle.ts on why a skipped step must never render as a tick. */
   const { data: provisioningTasks = [] } = useProvisioning(params.id);
   const { data: signature } = useQuoteSignature(params.id);
+  /* R-1715: the invoice's own created_at for the history — never quote.updated_at. */
+  const { data: invoiceCreatedAt } = useInvoiceCreatedAt(quote?.invoice_id);
   const lifecycle = quote
     ? quoteLifecycle({
         status: quote.status,
@@ -693,14 +700,14 @@ export default function QuoteDetailPage() {
   /* R-448: a replaced quote reads "Replaced", not "Expired". */
   /* R-1679: a sent / viewed quote past its validity reads "Expired" (one rule: quote-expiry.ts). */
   const shownStatus = shownQuoteStatus(quote);
-  const status = quote.superseded_by ? { kind: "muted" as const, label: "Replaced" } : STATUS_META[shownStatus];
+  const status = quote.superseded_by ? { kind: "muted" as const, label: QUOTE_STATE_LABEL.replaced } : STATUS_META[shownStatus];
   const revise = canReviseQuote(quote, totalReceivedSoFar);
   /* R-1718: one rule with the list — no "Awaiting payment" on a rejected / expired / replaced quote. */
   const paymentBadge = quotePaymentBadge(quote);
   /* R-1710: "Invoiced" alone hid a half payment (T-A1: ₹20,000 of ₹38,232) — money beside the stage. */
   const payment = paymentBadge
     ? paymentBadge === "invoiced" && invoicedPartPaid(quote)
-      ? { kind: "danger" as const, label: "Invoiced · Partly paid" }
+      ? { kind: "danger" as const, label: `${QUOTE_STATE_LABEL.invoiced} · ${QUOTE_STATE_LABEL.partial}` }
       : PAYMENT_META[paymentBadge]
     : null;
   const items: QuoteLineItem[] = Array.isArray(quote.line_items) ? quote.line_items : [];
@@ -870,6 +877,8 @@ export default function QuoteDetailPage() {
       extensionTitle: extTitle,
       /* R-1764: "Domain:" / "Subscription period:" — the same words as the preview. */
       periodContext: periodCtx,
+      /* R-1713: the quote's own billing cycle — without it the PDF guessed "billed yearly" from the line. */
+      billingCycle:  quote.billing_cycle,
     });
   };
 
@@ -949,10 +958,10 @@ export default function QuoteDetailPage() {
   ];
   const sentEvent = quoteSentEvent(quote, quoteSends);
   if (sentEvent) {
-    events.push({ icon: "send", kind: "indigo", title: sentEvent.title, body: sentEvent.body, time: historyTime(sentEvent.at ?? quote.updated_at) });
+    events.push({ icon: "send", kind: "indigo", title: sentEvent.title, body: sentEvent.body, time: historyTime(sentEvent.at) });
   }
   if (quote.status === "accepted") {
-    events.push({ icon: "check_circle", kind: "emerald", title: "Customer accepted", body: "Quote accepted · payment workflow started", time: historyTime(quote.updated_at) });
+    events.push({ icon: "check_circle", kind: "emerald", title: "Customer accepted", body: "Quote accepted · payment workflow started", time: historyTime(signature?.signed_at ?? null) });
   }
   // Only record a "Payment received" event when money ACTUALLY landed. A quote
   // can be 'invoiced' with ₹0 received (invoice raised, awaiting payment) — the
@@ -967,16 +976,17 @@ export default function QuoteDetailPage() {
       body: received.length > 1
         ? `${received.length} payments received`
         : latest?.method
-          ? `${latest.method.toUpperCase()}${latest.reference ? ` · ref: ${latest.reference}` : ""}`
+          ? `${paymentMethodLabel(latest.method)}${latest.reference ? ` · ref: ${latest.reference}` : ""}`
           : "Recorded",
-      time: latest?.received_at ? historyTime(latest.received_at) : "Recently",
+      time: historyTime(latest?.received_at ?? null),
     });
   }
   if (quote.payment_status === "invoiced" && quote.invoice_id) {
     events.push({
       icon: "receipt", kind: "emerald", title: `Invoice ${quote.invoice_id} generated`,
-      body: "GST e-invoice ready",
-      time: historyTime(quote.updated_at),
+      /* R-1715: no IRP is connected, so no e-invoice — say what happened. */
+      body: "GST tax invoice raised",
+      time: historyTime(invoiceCreatedAt ?? null),
     });
   }
 
@@ -1787,9 +1797,8 @@ export default function QuoteDetailPage() {
                     </span>
                   ) : line.commitment && (
                     <span className="block text-xs text-ink-3 font-normal">
-                      {isAnnualTier(line.commitment)
-                        ? "Annual commitment · billed per year"
-                        : "Monthly, flexible · billed per month"}
+                      {/* R-1713: the quote's real cycle (Q-0016 billed quarterly said "billed per year"). */}
+                      {lineScheduleNote(line.commitment, quote.billing_cycle)}
                     </span>
                   )}
                 </td>
@@ -1894,7 +1903,7 @@ export default function QuoteDetailPage() {
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-sm">
                     <span className="font-medium tabular-nums">{rupee(p.amount)}</span>{" "}
-                    <span className="text-ink-3 capitalize">· {p.method.replace("_", " ")}</span>
+                    <span className="text-ink-3">· {paymentMethodLabel(p.method)}</span>
                   </div>
                   {p.status === "received" ? (
                     <Badge kind="success" dot>received</Badge>
@@ -1953,7 +1962,7 @@ export default function QuoteDetailPage() {
                     {rupee(p.amount)}
                     <FeeNetLine payment={p} className="font-normal" />
                   </td>
-                  <td className="p-3 text-sm capitalize">{p.method.replace("_", " ")}</td>
+                  <td className="p-3 text-sm">{paymentMethodLabel(p.method)}</td>
                   <td className="p-3 font-mono text-xs text-ink-2 truncate max-w-[180px]">{p.reference ?? "—"}</td>
                   <td className="p-3">
                     {p.status === "received" ? (
@@ -2259,7 +2268,7 @@ export default function QuoteDetailPage() {
                 <ul className="space-y-0.5 pl-6">
                   {receivedPayments.map((p, i) => (
                     <li key={p.id} className="text-2xs text-ink-3 tabular-nums">
-                      #{i + 1} · {rupee(p.amount)} · {p.method.replace("_", " ")} · {formatDate(p.received_at)}
+                      #{i + 1} · {rupee(p.amount)} · {paymentMethodLabel(p.method)} · {formatDate(p.received_at)}
                     </li>
                   ))}
                 </ul>

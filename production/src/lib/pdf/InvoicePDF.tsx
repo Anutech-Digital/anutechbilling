@@ -50,7 +50,7 @@ import type {
 } from "@/lib/supabase/database.types";
 
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
-import { advanceLinesWithTds } from "@/lib/accounting/tds-receipt";
+import { advanceLinesWithTds, advanceMethodLabel } from "@/lib/accounting/tds-receipt";
 
 /* Styles ke BANNE se pehle. `StyleSheet.create` ab hi chal jata hai, aur `PDF_FONT`
    ek `let` hai — baad me register karne par style purani value pakde rehti. */
@@ -751,7 +751,7 @@ export function InvoicePDF(props: InvoicePDFProps) {
               >
                 <Text style={s.advVoucher}>{line.voucherNo ?? (line.method === "tds" ? "" : "—")}</Text>
                 <Text style={s.advDate}>{formatDate(line.receivedAt)}</Text>
-                <Text style={s.advMethod}>{line.method === "tds" ? "TDS DEDUCTED BY CUSTOMER" : line.method.toUpperCase()}</Text>
+                <Text style={s.advMethod}>{advanceMethodLabel(line.method)}</Text>
                 <Text style={s.advAmount}>{money(line.amount)}</Text>
               </View>
             ))}

@@ -11,6 +11,7 @@
  */
 "use client";
 
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { INVOICE_TABS } from "@/lib/navigation/drilldown";
@@ -1333,7 +1334,7 @@ function DeleteInvoiceDialog({
             <ul className="mt-1.5 space-y-1">
               {projPays!.map((p) => (
                 <li key={p.id} className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-paper px-2.5 py-1.5 text-2xs">
-                  <span className="text-ink-2 capitalize">{(p.method ?? "payment").replace("_", " ")}{p.reference ? ` · ${p.reference}` : ""}{p.bank_txn_id ? " · bank-reconciled" : ""}</span>
+                  <span className="text-ink-2">{p.method ? paymentMethodLabel(p.method) : "Payment"}{p.reference ? ` · ${p.reference}` : ""}{p.bank_txn_id ? " · bank-reconciled" : ""}</span>
                   <span className="tabular-nums font-medium text-ink">{rupee(p.amount)} · {formatDate(p.received_at)}</span>
                 </li>
               ))}

@@ -14,6 +14,7 @@
  */
 "use client";
 
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -339,6 +340,17 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                       <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(invoice.net_payable ?? total)}</p>
                     </div>
                   </div>
+                  {/* R-1680: what is still owed sits next to the total (staging 19 Oct: no Balance due line). */}
+                  <div className="grid grid-cols-2 gap-3 pb-3 border-b border-hairline/60" data-testid="invoice-balance">
+                    <div>
+                      <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Paid</p>
+                      <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(Math.max(0, (invoice.net_payable ?? total) - invoiceAmountDue(invoice)))}</p>
+                    </div>
+                    <div>
+                      <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Balance due</p>
+                      <p className={`font-serif text-lg font-bold tabular-nums mt-0.5 ${invoiceAmountDue(invoice) > 0 ? "text-rose" : "text-emerald"}`}>{rupee(invoiceAmountDue(invoice))}</p>
+                    </div>
+                  </div>
                   <div className="grid grid-cols-2 gap-2 text-ink-2">
                     <div><span className="text-ink-3">Invoice Date:</span> {formatDate(invoice.invoice_date)}</div>
                     <div><span className="text-ink-3">Due Date:</span> {invoice.due_date ? formatDate(invoice.due_date) : "—"}</div>
@@ -658,7 +670,7 @@ export function InvoicePaymentsAccordion({
             <li key={p.id} className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-paper px-3 py-2">
               <span className="flex items-center gap-2 min-w-0">
                 <Icon name="receipt" size={14} className="text-amber-ink shrink-0" />
-                <span className="text-xs text-ink capitalize">{p.method ?? "Payment"}{p.reference ? ` · ${p.reference}` : ""}</span>
+                <span className="text-xs text-ink">{p.method ? paymentMethodLabel(p.method) : "Payment"}{p.reference ? ` · ${p.reference}` : ""}</span>
                 {p.bank_txn_id && <span className="text-3xs text-emerald">· bank-reconciled</span>}
               </span>
               <span className="flex items-center gap-3 shrink-0">
@@ -709,7 +721,7 @@ export function InvoicePaymentsAccordion({
               <span className="flex items-center gap-2 min-w-0">
                 <Icon name="receipt" size={14} className="text-amber-ink shrink-0" />
                 <span className="font-mono text-xs text-ink truncate">{p.receipt_voucher_no ?? "Receipt"}</span>
-                <span className="text-2xs text-ink-3 capitalize">· {p.method}</span>
+                <span className="text-2xs text-ink-3">· {paymentMethodLabel(p.method)}</span>
               </span>
               <span className="flex items-center gap-3 shrink-0">
                 <span className="tabular-nums text-sm font-medium text-ink">{rupee(p.amount)}</span>

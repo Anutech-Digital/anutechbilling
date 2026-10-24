@@ -27,6 +27,7 @@ import { quoteBalanceDue } from "./list-tab";
 import { invoicedPartPaid } from "./quote-payment-state";
 import { shownQuoteStatus } from "./quote-expiry";
 import { istToday } from "@/lib/dates/ist";
+import { QUOTE_STATE_LABEL } from "./state-labels";
 
 export type QuoteBadgeKind = "muted" | "success" | "warning" | "danger" | "info";
 
@@ -54,27 +55,28 @@ export function unifiedStatus(q: QuoteStatusFields, today: string = istToday()):
      these was previously reachable only from `status === "accepted"`. */
   if (q.payment_status === "invoiced") {
     /* R-1710: the stage alone hid a half payment — say both (money from quote-payment-state.ts). */
-    return invoicedPartPaid(q) ? { label: "Invoiced · Partly paid", kind: "danger" } : { label: "Invoiced", kind: "info" };
+    return invoicedPartPaid(q) ? { label: `${QUOTE_STATE_LABEL.invoiced} · ${QUOTE_STATE_LABEL.partial}`, kind: "danger" } : { label: QUOTE_STATE_LABEL.invoiced, kind: "info" };
   }
   if (q.payment_status === "partial") {
     /* Rose, not amber. Amber is the same tone this list gives "Out for review" and
        "expiring soon" — ordinary busywork. A part-paid quote is money sitting half
        collected, and it should not look like a reminder to send an email. */
-    return { label: "Partly paid", kind: "danger" };
+    return { label: QUOTE_STATE_LABEL.partial, kind: "danger" };
   }
-  if (q.payment_status === "received") return { label: "Paid", kind: "success" };
+  if (q.payment_status === "received") return { label: QUOTE_STATE_LABEL.received, kind: "success" };
 
-  if (q.status === "accepted") return { label: "Accepted", kind: "success" };
+  if (q.status === "accepted") return { label: QUOTE_STATE_LABEL.accepted, kind: "success" };
 
   /* R-1679: a sent / viewed quote past its validity date is Expired — staff saw "Sent" on
      Q-5F40-27-0096 a day after "Valid until 18 Oct" while the customer's accept was refused. */
   switch (shownQuoteStatus(q, today)) {
-    case "draft":    return { label: "Draft", kind: "muted" };
-    case "sent":     return { label: "Out for review", kind: "warning" };
-    case "viewed":   return { label: "Viewed", kind: "info" };
-    case "rejected": return { label: "Rejected", kind: "danger" };
-    case "expired":  return q.superseded_by ? { label: "Replaced", kind: "muted" } : { label: "Expired", kind: "danger" };
-    default:         return { label: "Draft", kind: "muted" };
+    case "draft":    return { label: QUOTE_STATE_LABEL.draft, kind: "muted" };
+    /* R-1713: "Sent" — the tab's word. "Out for review" was a third name for the same state. */
+    case "sent":     return { label: QUOTE_STATE_LABEL.sent, kind: "warning" };
+    case "viewed":   return { label: QUOTE_STATE_LABEL.viewed, kind: "info" };
+    case "rejected": return { label: QUOTE_STATE_LABEL.rejected, kind: "danger" };
+    case "expired":  return q.superseded_by ? { label: QUOTE_STATE_LABEL.replaced, kind: "muted" } : { label: QUOTE_STATE_LABEL.expired, kind: "danger" };
+    default:         return { label: QUOTE_STATE_LABEL.draft, kind: "muted" };
   }
 }
 
@@ -136,7 +138,7 @@ export function cashNote(q: QuoteStatusFields): QuoteCashNote | null {
     quotePaymentBadge(q) === "awaiting" ||
     (q.status === "accepted" && !q.superseded_by && (!q.payment_status || q.payment_status === "none"))
   ) {
-    return { text: "Awaiting payment", tone: "waiting" };
+    return { text: QUOTE_STATE_LABEL.awaiting, tone: "waiting" };
   }
   return null;
 }

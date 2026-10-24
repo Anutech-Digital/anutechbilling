@@ -1596,6 +1596,8 @@ export function RecordPaymentDialog({
                   /* R-1564: an instalment's payment is recorded on its subscription's quote,
                      which has no invoice of its own — record_payment does issue one. */
                   receiptSeries: invoiceId && !instalmentInvoiceId ? null : (series?.receiptVoucher ?? null),
+                  /* R-1680: say "No receipt voucher" — never "Issues one" beside the post-invoice note. */
+                  afterInvoice: !!invoiceId && !instalmentInvoiceId,
                 })}
               />
             </div>

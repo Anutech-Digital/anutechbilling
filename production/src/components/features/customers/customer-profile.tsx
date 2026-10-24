@@ -75,7 +75,7 @@ import { PrimaryContactLine } from "@/components/features/customers/primary-cont
 /* R-1740: my relationship with this company's best-known person — saves to that contact. */
 import { CustomerRelationshipChip } from "@/components/features/contacts/relationship-chip";
 import { txnHref, primaryContactOf } from "@/components/features/customers/customer-links";
-import { buildCustomerStatement, statementPayments, useCustomerNotes } from "@/components/features/customers/customer-statement";
+import { buildCustomerStatement, statementBalanceText, statementPayments, useCustomerNotes } from "@/components/features/customers/customer-statement";
 import { RecordTable, RowLink } from "@/components/features/customers/customer-record-table";
 
 export interface CustomerProfileProps {
@@ -774,7 +774,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
                       <RowLink key="desc" href={e.href}>{e.desc}</RowLink>,
                       <span key="d" className="tabular-nums text-ink-2">{e.debit ? rupee(e.debit) : "—"}</span>,
                       <span key="cr" className="tabular-nums text-emerald">{e.credit ? rupee(e.credit) : "—"}</span>,
-                      <span key="b" className="tabular-nums font-medium">{rupee(e.balance)}</span>,
+                      <span key="b" className="tabular-nums font-medium">{statementBalanceText(e.balance)}</span>,
                     ],
                   }))}
                 />

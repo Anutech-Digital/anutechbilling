@@ -10,7 +10,7 @@
  *   invoiced, fully paid      → invoiced
  *   rejected                  → rejected
  *   expired / replaced        → expired
- *   awaiting / partly paid    → awaiting
+ *   accepted + awaiting, or partly paid → awaiting  (R-1713: a sent quote stays Sent)
  *   otherwise                 → its status (draft / sent / viewed / accepted)
  *
  * "Pipeline" = the quotes still open: draft, sent or viewed. Invoiced, rejected and replaced
@@ -60,7 +60,10 @@ export function quoteListTab(q: ListTabQuote, today: string = istToday()): Quote
   if (q.status === "rejected") return "rejected";
   /* R-1679: a sent / viewed quote whose validity ended is Expired, not Sent (quote-expiry.ts). */
   if (shownQuoteStatus(q, today) === "expired") return "expired";
-  if (q.payment_status === "awaiting" || q.payment_status === "partial") return "awaiting";
+  /* R-1713: 'awaiting' counts only once the customer ACCEPTED. Extension, add-seats and
+     checkout quotes are created with payment_status 'awaiting', so a sent one landed in
+     "Awaiting payment" with its badge saying it was sent and the Sent tab at 0. */
+  if (q.payment_status === "partial" || (q.payment_status === "awaiting" && q.status === "accepted")) return "awaiting";
   if (q.status === "draft" || q.status === "sent" || q.status === "viewed" || q.status === "accepted") {
     return q.status;
   }

@@ -9,6 +9,7 @@
  */
 "use client";
 
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import * as React from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
@@ -132,7 +133,7 @@ export function OpeningInvoiceDetail({ invoice }: { invoice: Invoice }) {
                     <span className="flex items-center gap-2 min-w-0">
                       <Icon name="receipt" size={14} className="text-amber-ink shrink-0" />
                       <span className="font-mono text-xs text-ink truncate">{p.receipt_voucher_no ?? "Receipt"}</span>
-                      <span className="text-2xs text-ink-3 capitalize">· {p.method}{p.reference ? ` · ${p.reference}` : ""}</span>
+                      <span className="text-2xs text-ink-3">· {paymentMethodLabel(p.method)}{p.reference ? ` · ${p.reference}` : ""}</span>
                       {p.status === "refunded" && <Badge kind="muted" size="sm">Refunded</Badge>}
                     </span>
                     <span className="flex items-center gap-3 shrink-0">

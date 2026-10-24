@@ -9,6 +9,7 @@
  */
 "use client";
 
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import * as React from "react";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { logoDataUri } from "@/lib/pdf/logo";
@@ -223,7 +224,7 @@ ${tenantName}`
             </div>
             <div>
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-0.5">Payment method</p>
-              <p className="capitalize">{payment.method.replace("_", " ")}</p>
+              <p>{paymentMethodLabel(payment.method)}</p>
             </div>
             <div>
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-0.5">Transaction ref.</p>

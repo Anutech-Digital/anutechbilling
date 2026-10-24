@@ -44,7 +44,7 @@ describe("a payment is never hidden by the quote's status", () => {
 
   it("leaves the plain workflow statuses alone", () => {
     expect(unifiedStatus(q({ status: "draft" })).label).toBe("Draft");
-    expect(unifiedStatus(q({ status: "sent" })).label).toBe("Out for review");
+    expect(unifiedStatus(q({ status: "sent" })).label).toBe("Sent");   // R-1713: the tab's word
     expect(unifiedStatus(q({ status: "viewed" })).label).toBe("Viewed");
     expect(unifiedStatus(q({ status: "rejected" })).label).toBe("Rejected");
     expect(unifiedStatus(q({ status: "expired" })).label).toBe("Expired");

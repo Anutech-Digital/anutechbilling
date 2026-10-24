@@ -178,7 +178,8 @@ describe("quotes tiles: tile and list agree, and the nudge button is honest", ()
     const { QUOTE_FOCUS } = await import("./drilldown");
     expect([...QUOTE_FOCUS]).toEqual([...QUOTE_FOCI]);
   });
-  it("review = sent + viewed; accepted includes invoiced", async () => {
+  /* R-1713: the Accepted tile = the Accepted TAB (an invoiced quote with money due lives in Awaiting payment). */
+  it("review = sent + viewed; accepted = the Accepted tab", async () => {
     const { quoteInFocus, focusValue } = await import("@/lib/quotes/focus");
     const qs = [
       { status: "sent", amount: 10 }, { status: "viewed", amount: 20 }, { status: "draft", amount: 99 },
@@ -186,7 +187,7 @@ describe("quotes tiles: tile and list agree, and the nudge button is honest", ()
     ];
     expect(qs.filter((q) => quoteInFocus(q, "review")).length).toBe(2);
     expect(focusValue(qs, "review")).toBe(30);
-    expect(focusValue(qs, "accepted")).toBe(12);
+    expect(focusValue(qs, "accepted")).toBe(7);
   });
   it("the page uses the predicates and no longer claims a nudge it never sent", () => {
     const page = read("app/(app)/quotes/page.tsx");

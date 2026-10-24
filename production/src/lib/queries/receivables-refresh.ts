@@ -27,6 +27,11 @@ export const RECEIVABLE_KEYS: readonly (readonly string[])[] = [
   ["tds_receivable"],
   queryKeys.customerCredits(),
   queryKeys.aging(),
+  /* R-1680: the customer page's Statement and money tiles also read credit notes and project
+     money; after a payment they kept old figures ("Lifetime paid —") until a reload. */
+  ["credit-notes"],
+  ["project_sales"],
+  ["project_payments"],
 ];
 
 /** Mark every balance screen stale; a mounted one re-reads at once. */

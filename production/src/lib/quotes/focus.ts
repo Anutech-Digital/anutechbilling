@@ -8,6 +8,7 @@
  */
 import { isPipelineQuote, quoteListTab } from "./list-tab";
 import { invoicedPartPaid } from "./quote-payment-state";
+import { QUOTE_STATE_LABEL, QUOTE_WITH_CUSTOMER_LABEL } from "./state-labels";
 
 /** Paid in full, GST invoice not raised yet. R-1541: the Payments Received sidebar badge counts
  *  these quotes (nav_badges().payments) and opens ?focus=to-invoice. */
@@ -16,13 +17,14 @@ export const QUOTE_TO_INVOICE_PAYMENT_STATUS = "received";
 export const QUOTE_FOCI = ["", "pipeline", "review", "accepted", "partial", "to-invoice"] as const;
 export type QuoteFocus = (typeof QUOTE_FOCI)[number];
 
+/* R-1713: state words from the one label map (state-labels.ts). */
 export const QUOTE_FOCUS_LABEL: Record<Exclude<QuoteFocus, "">, string> = {
   /* R-469: the Pipeline tile — open quotes only, not invoiced/rejected/replaced ones. */
   pipeline: "Pipeline — draft, sent or viewed, not yet won",
-  review: "Out for review — sent or viewed, waiting on the customer",
-  accepted: "Accepted — including ones already invoiced",
-  partial: "Part-paid — some money in, balance still due",
-  "to-invoice": "Paid, GST invoice not raised yet",
+  review: `${QUOTE_WITH_CUSTOMER_LABEL} — waiting on the customer`,
+  accepted: `${QUOTE_STATE_LABEL.accepted} — not yet invoiced or awaiting payment`,
+  partial: `${QUOTE_STATE_LABEL.partial} — some money in, balance still due`,
+  "to-invoice": `${QUOTE_STATE_LABEL.received}, GST invoice not raised yet`,
 };
 
 /* partial / to-invoice are the /payments tiles "Partial Quotes" and "Awaiting GST Invoice":
@@ -37,7 +39,9 @@ export function quoteInFocus(q: { status: string; payment_status?: string | null
   /* R-1710: part-paid by MONEY — also once invoiced ('invoiced' alone said nothing about it). */
   if (focus === "partial") return q.payment_status === "partial" || invoicedPartPaid(q);
   if (focus === "to-invoice") return q.payment_status === QUOTE_TO_INVOICE_PAYMENT_STATUS;
-  return q.status === "accepted";
+  /* R-1713: the SAME set as the Accepted tab. "Accepted ₹6.2L (18)" counted every accepted
+     quote while the tab it opened held 3 (the rest live in Awaiting payment / Invoiced). */
+  return quoteListTab(q) === "accepted";
 }
 
 /** Sum of amount over the quotes in a focus — what the tile shows. */

@@ -15,6 +15,7 @@
  */
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { BILLING_CYCLE_INVOICES_PER_YEAR } from "@/lib/supabase/database.types";
+import { isOneTimeQuote } from "./service-period";
 
 export const BILLING_CYCLE_OPTIONS: { id: BillingCycle; label: string }[] = [
   { id: "yearly",      label: "Annual — 1 invoice/yr (popular)" },
@@ -61,4 +62,39 @@ export function cycleFromLegacyCommitment(commitment: string | null | undefined)
     case "annual_half_yearly": return "half_yearly";
     default:                   return "yearly";
   }
+}
+
+/**
+ * R-1713: the term line under a quote line on /quotes/<id> — the line's price tier plus the
+ * quote's REAL billing cycle. Q-0016 (billed quarterly) said "Annual commitment · billed per
+ * year": the page read only the line's tier. An old quote with no billing_cycle falls back to
+ * the line's legacy commitment, the same bridge the PDF uses.
+ */
+export function lineScheduleNote(commitment: string | null | undefined, cycle: BillingCycle | null | undefined): string {
+  if (commitment === "monthly") return "Monthly, flexible · billed monthly";
+  return `Annual commitment · ${cycleScheduleLabel(cycle ?? cycleFromLegacyCommitment(commitment))}`;
+}
+
+/**
+ * R-1715: the unit after a quote's total on /quotes — "/mo", "/yr", or nothing. A one-time
+ * charge (add seats pro-rata, a direct invoice, a month extension) is paid once, so it carries
+ * no period: "₹1,006/yr" on a pro-rata quote read as a yearly charge. No billing_cycle → nothing
+ * (a guessed unit is the same wrong-unit bug).
+ */
+export function quoteTotalUnit(q: {
+  billing_cycle?: string | null;
+  is_add_seats?: boolean | null;
+  is_one_off?: boolean | null;
+  is_extension?: boolean | null;
+  extension_months?: number | null;
+}): string {
+  if (isOneTimeQuote({ isAddSeats: q.is_add_seats, isOneOff: q.is_one_off, isExtension: q.is_extension, extensionMonths: q.extension_months })) return "";
+  return q.billing_cycle === "monthly" ? "/mo" : q.billing_cycle === "yearly" ? "/yr" : "";
+}
+
+/** R-1715: the extension badge — "Ext · 3 months" (was "Ext · 0yr"), "Ext · 1 yr" for whole years. */
+export function extensionBadgeLabel(months: number | null | undefined): string {
+  const m = typeof months === "number" && months > 0 ? Math.round(months) : 12;
+  if (m % 12 === 0) return `Ext · ${m / 12} yr`;
+  return `Ext · ${m} ${m === 1 ? "month" : "months"}`;
 }
