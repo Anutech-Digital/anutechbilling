@@ -3,7 +3,8 @@
  *
  * Allows company owners/accountants to:
  * 1. Disburse advance money to employees for official expenses (Travel, Client Meetings, Maintenance).
- * 2. Record expenses incurred by employees against their advance balance (Hits P&L as Expense & reduces available advance).
+ * 2. Add the employee's bills against their advance balance (each bill is an expense in its category; R-1871 Add bills —
+ *    several at once, the part over the balance becomes a reimbursement).
  * 3. Track real-time remaining advance balance & settle completed advances.
  */
 "use client";
@@ -37,7 +38,8 @@ import {
 import { useEmployees } from "@/lib/queries/payroll";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { defaultCashAccountId } from "@/lib/payments/deposit-accounts";
-import { AddExpenseDialog } from "@/components/features/accounting/add-expense-dialog";
+import { AddBillsDialog } from "./add-bills-dialog";
+import { AdvanceRegister } from "./advance-register";
 import { getBillAttachmentUrl } from "@/lib/queries/vendor-bills";
 import { toast } from "sonner";
 import { istToday } from "@/lib/dates/ist";
@@ -69,7 +71,7 @@ export default function EmployeeAdvancesPage() {
     setDisburseOpen(true);
     window.history.replaceState(null, "", window.location.pathname);
   }, []);
-  const [recordExpenseFor, setRecordExpenseFor] = React.useState<EmployeeAdvance | null>(null);
+  const [billsFor, setBillsFor] = React.useState<EmployeeAdvance | null>(null);
   const [topUpFor, setTopUpFor] = React.useState<EmployeeAdvance | null>(null);
 
   async function openBill(path: string) {
@@ -177,10 +179,10 @@ export default function EmployeeAdvancesPage() {
                       size="sm"
                       variant="primary"
                       className="gap-1.5"
-                      onClick={() => setRecordExpenseFor(adv)}
+                      onClick={() => setBillsFor(adv)}
                     >
                       <Icon name="plus" size={14} />
-                      Record expense
+                      Add bills
                     </Button>
 
                     {canMoveMoney && (
@@ -285,17 +287,16 @@ export default function EmployeeAdvancesPage() {
         </div>
       )}
 
+      {/* R-1872: per employee — given, spent, returned, balance, days out; > 30 days filter; CSV. */}
+      {!isLoading && <AdvanceRegister advances={advances} />}
+
       {/* Disburse Advance Modal */}
       <DisburseAdvanceDialog open={disburseOpen && canMoveMoney} onOpenChange={setDisburseOpen} prefill={prefill} />
 
-      {/* Record Expense Modal */}
-      {/* R-101: the normal Expense form (bill attach, GST, categories) with this
-          advance already picked under "Paid by". */}
-      {recordExpenseFor && (
-        <AddExpenseDialog
-          advanceId={recordExpenseFor.id}
-          onClose={() => setRecordExpenseFor(null)}
-        />
+      {/* R-1871: the employee's bills, several at once (photo + bill reader, GST); the part over
+          the balance becomes a reimbursement. The one way to book a bill against an advance here. */}
+      {billsFor && (
+        <AddBillsDialog advance={billsFor} open={!!billsFor} onOpenChange={(open) => !open && setBillsFor(null)} />
       )}
 
       {topUpFor && canMoveMoney && (
@@ -690,6 +691,7 @@ function SettleAdvanceDialog({ advance, open, onOpenChange }: { advance: Employe
           {advance.remaining_balance > 0 ? (
             <p className="text-ink-2 bg-amber-soft/20 p-2.5 rounded border border-amber/30">
               💡 <strong>Employee has {rupee(advance.remaining_balance)} cash remaining.</strong> Settling records that they handed it back. Given from petty cash, it goes back into petty cash.
+              {" "}Paid back into the bank? Don&apos;t settle here — reconcile that bank credit as &quot;Advance returned by employee&quot; in Banking; it settles this advance.
             </p>
           ) : (
             <p className="text-emerald font-medium">

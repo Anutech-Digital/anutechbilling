@@ -70,6 +70,7 @@ import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-
 import { EmiRepaymentSection } from "@/components/features/banking/emi-repayment-section";
 import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
 import { IncentiveFromBankSection } from "@/components/features/banking/incentive-from-bank-section";
+import { EmployeeAdvanceBankSection } from "@/components/features/banking/employee-advance-bank-section";
 import { useComplianceProfile } from "@/lib/compliance/profile";
 import { ownerEquityWords } from "@/lib/accounting/owner-equity";
 
@@ -925,6 +926,9 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 for a Pvt Ltd the "Paid to a director" choices; and an employee's incentive, which
                 is salary (Payroll), never a plain expense. */}
             {!isCredit && <IncentiveFromBankSection transaction={transaction} onDone={() => onOpenChange(false)} />}
+            {/* R-1871: office-expense advance to an employee (money-out: give / top-up, or a
+                reimbursement owed) and its unused money coming back (money-in). An asset, not an expense. */}
+            <EmployeeAdvanceBankSection transaction={transaction} onDone={() => onOpenChange(false)} />
             <OwnerEquitySection transaction={transaction} onDone={() => onOpenChange(false)} />
 
             {/* A bill payment already recorded on the Bills page has its own manual bank line;
