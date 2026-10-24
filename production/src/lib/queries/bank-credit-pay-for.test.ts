@@ -1,7 +1,31 @@
 /* R-1838 — exactly what reaches the two server paths. The money work is proven by
    supabase/tests/r1838_bank_credit_pay_for.test.sql; this pins the arguments. */
 import { describe, it, expect } from "vitest";
-import { newSaleArgs, payItemArgs } from "./bank-credit-pay-for";
+import { advanceArgs, newSaleArgs, payItemArgs, relinkArgs } from "./bank-credit-pay-for";
+
+describe("R-1863 advance + relink arguments", () => {
+  it("an advance sends only the line and the customer", () => {
+    expect(advanceArgs({ transactionId: "t", customerId: "c1" })).toEqual({ p_txn_id: "t", p_customer_id: "c1" });
+  });
+  it("relink carries the chosen path's own arguments (no p_ prefix) as p_target — keys the SQL reads", () => {
+    expect(relinkArgs({ path: "advance", transactionId: "t", customerId: "c1" }))
+      .toEqual({ p_txn_id: "t", p_target: { path: "advance", customer_id: "c1" } });
+    expect(relinkArgs({
+      path: "item", transactionId: "t", quoteId: "Q-REN", invoiceId: null, tdsAmount: 0, tdsRatePct: null,
+      createSubscription: null, subStart: null, subRenewal: null,
+    })).toEqual({
+      p_txn_id: "t",
+      p_target: { path: "item", quote_id: "Q-REN", invoice_id: null, tds_amount: 0, tds_rate_pct: null, tds_section: null,
+                  create_subscription: null, sub_start: null, sub_renewal: null },
+    });
+    const sale = relinkArgs({
+      path: "new_sale", transactionId: "t", customerId: "c1", createSubscription: true, subStart: "2026-10-21", subRenewal: null,
+      tdsAmount: 0, tdsRatePct: null, lines: [{ itemId: "GW", name: "GWS", qty: 5, rate: 3000, cost: 0, cycle: "annual_yearly", perSeat: true }],
+    });
+    expect(sale.p_target).toMatchObject({ path: "new_sale", customer_id: "c1", create_subscription: true, sub_start: "2026-10-21" });
+    expect((sale.p_target.lines as unknown[])[0]).toMatchObject({ qty: 5, rate: 3000, commitment: "annual_yearly" });
+  });
+});
 
 describe("R-1838 reconcile_bank_credit_to_item arguments", () => {
   it("an invoice is paid by its invoice id (never also by the quote)", () => {

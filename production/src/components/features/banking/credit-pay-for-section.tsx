@@ -9,7 +9,9 @@
  *   2. What the money is for —
  *        (a) one of that customer's open items: renewal / add-seats / new-product quotes and
  *            unpaid invoices, the one whose due equals the credit pre-selected; or
- *        (b) a new sale: product, seats, unit price, term — GST shown.
+ *        (b) a new sale: product, seats, unit price, term — GST shown; or
+ *        (c) R-1863: an advance — nothing to invoice yet; the whole credit becomes the customer's
+ *            advance credit (reconcile_bank_credit_as_advance), offered on their next payment.
  *      A new subscription sale offers "Create subscription" (ticked) with start + renewal dates.
  *   3. Amount check — exact / short (TDS deducted, or part payment) / over (kept as credit).
  *   4. One button → one server transaction (lib/queries/bank-credit-pay-for.ts), then the sheet
@@ -35,13 +37,14 @@ import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { useOpenInvoicesForCreditMatch, type BankTransactionRow } from "@/lib/queries/bank";
 import { matchCreditToInvoices } from "@/lib/banking/invoice-credit-match";
 import {
-  useBankCreditOpenItems, useNewSaleFromBankCredit, usePayItemFromBankCredit,
+  useAdvanceFromBankCredit, useBankCreditOpenItems, useNewSaleFromBankCredit, usePayItemFromBankCredit,
+  useRelinkOneOffSale, type RelinkTarget,
 } from "@/lib/queries/bank-credit-pay-for";
 import {
   amountCheck, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
   linesAreMonthly, preselectItem, rateSuffix, repriceLine, resultLines, saleLineFromItem,
   saleMakesSubscription, salePreview, saleTermsMixed, tdsRateToRecord, tdsToRecord,
-  type AmountCheck, type OpenItem, type PayForResult, type SaleCycle, type SaleLine, type ShortChoice,
+  type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
 
 const NEW_CUSTOMER = "__new_customer__";
@@ -51,20 +54,32 @@ export interface PayForCustomer { id: string; name: string; country?: string | n
 interface Props {
   transaction: BankTransactionRow;
   customers: readonly PayForCustomer[];
-  /** Opens the shared Add-customer form; the parent passes back the new id via `pickedCustomerId`. */
-  onNewCustomer: () => void;
+  /** Opens the shared Add-customer form; the parent passes back the new id via `pickedCustomerId`.
+   *  Left out (relink) → no "New customer" choice. */
+  onNewCustomer?: () => void;
   /** A customer the parent just created — picked here. */
   pickedCustomerId?: string | null;
-  onProjectPayment: () => void;
+  /** Left out (relink) → no "Project payment" button. */
+  onProjectPayment?: () => void;
   /** The line is booked — the parent hides the choices that no longer apply. */
   onSaved?: () => void;
   onDone: () => void;
+  /** R-1863: an old one-off bank sale being moved — save goes through relink_bank_one_off_sale
+   *  (undo the old sale + book this choice, one transaction). */
+  relink?: OldOneOffBooking | null;
 }
+
+type Mode = "item" | "sale" | "advance";
+const MODES: ReadonlyArray<readonly [Mode, string]> = [
+  ["item", "An open quote / invoice"],
+  ["sale", "A new sale (no quote yet)"],
+  ["advance", "Advance — nothing to invoice yet"],
+];
 
 const selectCls =
   "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
 
-export function CreditPayForSection({ transaction, customers, onNewCustomer, pickedCustomerId, onProjectPayment, onSaved, onDone }: Props) {
+export function CreditPayForSection({ transaction, customers, onNewCustomer, pickedCustomerId, onProjectPayment, onSaved, onDone, relink }: Props) {
   const credit = transaction.credit;
 
   /* ── 1. Customer ─────────────────────────────────────────────────────────────── */
@@ -89,7 +104,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
   /* ── 2. What for ─────────────────────────────────────────────────────────────── */
   const { data: items, isLoading: itemsLoading } = useBankCreditOpenItems(customerId || null);
-  const [mode, setMode] = React.useState<"item" | "sale">("item");
+  const [mode, setMode] = React.useState<Mode>("item");
   const [pickKey, setPickKey] = React.useState("");
   React.useEffect(() => {
     if (!items) return;
@@ -109,7 +124,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const preview = salePreview(lines, gstRate);
 
   /* Subscription choice (new subscription sale only). */
-  const makesSub = mode === "item" ? Boolean(picked?.makes_subscription) : saleMakesSubscription(lines);
+  const makesSub = mode === "item" ? Boolean(picked?.makes_subscription) : mode === "sale" && saleMakesSubscription(lines);
   const monthly = mode === "item" ? linesAreMonthly(picked?.lines ?? null) : lines.some((l) => l.cycle === "monthly");
   const [createSub, setCreateSub] = React.useState(true);
   const [subStart, setSubStart] = React.useState(transaction.txn_date);
@@ -119,7 +134,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const datesBad = makesSub && createSub && (!subStart || renewalShown <= subStart);
 
   /* ── 3. Amount check ─────────────────────────────────────────────────────────── */
-  const due = mode === "item" ? (picked?.amount_due ?? null) : (preview.total > 0 ? preview.total : null);
+  /* An advance has nothing due — the whole credit is kept as the customer's credit. */
+  const due = mode === "item" ? (picked?.amount_due ?? null) : mode === "sale" && preview.total > 0 ? preview.total : null;
   const taxable = mode === "item" ? (picked?.taxable_value ?? 0) : preview.taxable;
   const check: AmountCheck | null = due === null ? null : amountCheck(credit, due, taxable);
   const [shortChoice, setShortChoice] = React.useState<ShortChoice>("part");
@@ -130,14 +146,17 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   /* ── 4. Save ─────────────────────────────────────────────────────────────────── */
   const payItem = usePayItemFromBankCredit();
   const newSale = useNewSaleFromBankCredit();
+  const advance = useAdvanceFromBankCredit();
+  const relinkSale = useRelinkOneOffSale();
   const [result, setResult] = React.useState<PayForResult | null>(null);
   React.useEffect(() => { setResult(null); }, [transaction.id]);
-  const busy = payItem.isPending || newSale.isPending;
+  const busy = payItem.isPending || newSale.isPending || advance.isPending || relinkSale.isPending;
 
   const tdsAmount = check ? tdsToRecord(check, shortChoice) : 0;
   const tdsRate = check ? tdsRateToRecord(check, taxable) : null;
   const saleInvalid = lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0)) || preview.taxable <= 0 || saleTermsMixed(lines);
-  const canSave = Boolean(customerId) && !busy && !datesBad && (mode === "item" ? Boolean(picked) : !saleInvalid);
+  const canSave = Boolean(customerId) && !busy && !datesBad
+    && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : true);
 
   const save = async () => {
     if (!canSave) return;
@@ -146,17 +165,26 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
       subStart: makesSub && createSub ? subStart : null,
       subRenewal: makesSub && createSub ? subRenewal : null,
     };
-    try {
-      const r = mode === "item" && picked
-        ? await payItem.mutateAsync({
-            transactionId: transaction.id, quoteId: picked.quote_id, invoiceId: picked.invoice_id,
-            tdsAmount, tdsRatePct: tdsRate, ...subArgs,
-          })
-        : await newSale.mutateAsync({
-            transactionId: transaction.id, customerId, lines,
+    const target: RelinkTarget = mode === "item" && picked
+      ? {
+          path: "item", transactionId: transaction.id, quoteId: picked.quote_id, invoiceId: picked.invoice_id,
+          tdsAmount, tdsRatePct: tdsRate, ...subArgs,
+        }
+      : mode === "sale"
+        ? {
+            path: "new_sale", transactionId: transaction.id, customerId, lines,
             createSubscription: subArgs.createSubscription ?? false, subStart: subArgs.subStart, subRenewal: subArgs.subRenewal,
             tdsAmount, tdsRatePct: tdsRate,
-          });
+          }
+        : { path: "advance", transactionId: transaction.id, customerId };
+    try {
+      const r = relink
+        ? await relinkSale.mutateAsync(target)
+        : target.path === "item"
+          ? await payItem.mutateAsync(target)
+          : target.path === "new_sale"
+            ? await newSale.mutateAsync(target)
+            : await advance.mutateAsync(target);
       setResult(r);
       onSaved?.();
     } catch { /* the hook toasts */ }
@@ -192,7 +220,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   return (
     <section aria-labelledby="payfor-h" className="rounded-md border border-amber/50 bg-amber-soft/25 p-3 space-y-3">
       <div>
-        <p id="payfor-h" className="text-xs font-semibold text-ink-2">Money from a customer? This money is for:</p>
+        <p id="payfor-h" className="text-xs font-semibold text-ink-2">{relink ? "This money was really for:" : "Money from a customer? This money is for:"}</p>
         <p className="text-xs text-ink-3 mt-0.5">Pick the customer and what they paid — the renewal, extra seats or new subscription is updated with the payment.</p>
       </div>
 
@@ -201,14 +229,14 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         <select
           value={customerId}
           onChange={(e) => {
-            if (e.target.value === NEW_CUSTOMER) { onNewCustomer(); return; }
+            if (e.target.value === NEW_CUSTOMER) { onNewCustomer?.(); return; }
             setCustomerId(e.target.value); setTouchedCustomer(true);
           }}
           aria-label="Customer who paid"
           className={selectCls}
         >
           <option value="" disabled>Who paid? Select a customer…</option>
-          <option value={NEW_CUSTOMER}>＋ New customer</option>
+          {onNewCustomer && <option value={NEW_CUSTOMER}>＋ New customer</option>}
           {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         {guess && customerId === guess.customerId && !touchedCustomer && (
@@ -219,8 +247,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
       {customerId && (
         <>
           {/* 2. What for */}
-          <div className="grid grid-cols-2 gap-1.5" role="group" aria-label="What this money is for">
-            {([["item", "An open quote / invoice"], ["sale", "A new sale (no quote yet)"]] as const).map(([k, label]) => (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5" role="group" aria-label="What this money is for">
+            {MODES.map(([k, label]) => (
               <button
                 key={k}
                 type="button"
@@ -233,10 +261,15 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
             ))}
           </div>
 
-          {mode === "item" ? (
+          {mode === "advance" ? (
+            <p className="text-xs text-ink-2 bg-paper rounded-md border border-hairline px-2.5 py-2">
+              The whole {rupee(credit)} is kept as {customer?.name ?? "the customer"}&apos;s advance credit, with a receipt voucher.
+              Nothing is invoiced now — it is offered when you record their next payment.
+            </p>
+          ) : mode === "item" ? (
             itemsLoading ? <Skeleton className="h-16" /> : (items ?? []).length === 0 ? (
               <p className="text-xs text-ink-3">
-                {customer?.name ?? "This customer"} has nothing open — no unpaid quote or invoice. Book it as a new sale.
+                {customer?.name ?? "This customer"} has nothing open — no unpaid quote or invoice. Book it as a new sale, or keep it as an advance.
               </p>
             ) : (
               <ul className="space-y-1.5" role="radiogroup" aria-label="Open quotes and invoices">
@@ -293,11 +326,14 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
             <Button size="sm" variant="primary" icon="check" disabled={!canSave} loading={busy} onClick={save}
               className="whitespace-normal h-auto min-h-8 py-1.5 text-left max-w-full">
 
+              {relink ? "Relink: " : ""}
               {mode === "item"
                 ? picked ? `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile` : "Pick what it pays"
-                : `Record sale & reconcile ${rupee(credit)}`}
+                : mode === "sale"
+                  ? `Record sale & reconcile ${rupee(credit)}`
+                  : `Keep ${rupee(credit)} as advance & reconcile`}
             </Button>
-            <Button size="sm" variant="default" icon="briefcase" onClick={onProjectPayment}>Project payment</Button>
+            {onProjectPayment && <Button size="sm" variant="default" icon="briefcase" onClick={onProjectPayment}>Project payment</Button>}
           </div>
         </>
       )}

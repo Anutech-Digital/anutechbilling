@@ -14,6 +14,8 @@ const state = vi.hoisted(() => ({
   items: [] as unknown[],
   pay: vi.fn(),
   sale: vi.fn(),
+  adv: vi.fn(),
+  relink: vi.fn(),
 }));
 
 vi.mock("@/lib/queries/bank", () => ({
@@ -23,6 +25,8 @@ vi.mock("@/lib/queries/bank-credit-pay-for", () => ({
   useBankCreditOpenItems: (id: string | null) => ({ data: id ? state.items : undefined, isLoading: false }),
   usePayItemFromBankCredit: () => ({ mutateAsync: state.pay, isPending: false }),
   useNewSaleFromBankCredit: () => ({ mutateAsync: state.sale, isPending: false }),
+  useAdvanceFromBankCredit: () => ({ mutateAsync: state.adv, isPending: false }),
+  useRelinkOneOffSale: () => ({ mutateAsync: state.relink, isPending: false }),
 }));
 vi.mock("@/lib/queries/items", () => ({
   useItems: () => ({
@@ -37,7 +41,7 @@ vi.mock("@/lib/compliance/gst-registration-query", () => ({ useGstRegistration: 
 import { CreditPayForSection } from "./credit-pay-for-section";
 
 afterEach(cleanup);
-beforeEach(() => { state.pay.mockReset(); state.sale.mockReset(); state.items = []; });
+beforeEach(() => { state.pay.mockReset(); state.sale.mockReset(); state.adv.mockReset(); state.relink.mockReset(); state.items = []; });
 
 const customers = [{ id: "c1", name: "Acme Traders", country: "India" }, { id: "c2", name: "Bharat Steel", country: "India" }];
 const txn = (credit: number): BankTransactionRow => ({
@@ -148,5 +152,42 @@ describe("R-1838 CreditPayForSection", () => {
     fireEvent.click(screen.getByRole("button", { name: /Part payment/ }));
     fireEvent.click(screen.getByRole("button", { name: "Record ₹11,600 on INV-1 & reconcile" }));
     expect(state.pay.mock.calls[1][0]).toMatchObject({ tdsAmount: 0 });
+  });
+});
+
+describe("R-1863 (c) Advance — nothing to invoice yet", () => {
+  it("keeps the whole credit as the customer's advance: one advance call, no amount check, the card's message after save", async () => {
+    state.items = [item({ kind: "renewal", quote_id: "Q-REN", amount_due: 35400 })];
+    state.adv.mockResolvedValue(done({
+      kind: "advance", quote_id: "Q-9", amount: 25000, advance_credit: 25000, customer_id: "c1", customer_name: "Acme Traders", receipt_voucher_no: "RV-1",
+    }));
+    renderIt(25000);
+    fireEvent.click(screen.getByRole("button", { name: "Advance — nothing to invoice yet" }));
+    expect(screen.getByRole("button", { name: "Advance — nothing to invoice yet" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText(/The whole ₹25,000 is kept as Acme Traders's advance credit/)).toBeTruthy();
+    expect(screen.queryByText(/received is/)).toBeNull();
+    expect(screen.queryByText("Create subscription")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Keep ₹25,000 as advance & reconcile" }));
+    const msg = await screen.findByText("₹25,000 kept as advance for Acme Traders — it will be offered when you record their next payment");
+    expect(msg.closest("a")?.getAttribute("href")).toBe("/customers/c1");
+    expect(state.adv).toHaveBeenCalledTimes(1);
+    expect(state.adv.mock.calls[0][0]).toMatchObject({ path: "advance", transactionId: "t1", customerId: "c1" });
+    expect(state.pay).not.toHaveBeenCalled();
+    expect(state.sale).not.toHaveBeenCalled();
+  });
+
+  it("relink: the same choice goes through the ONE relink call, never the plain reconcile paths", async () => {
+    state.items = [item({ kind: "renewal", quote_id: "Q-REN", amount_due: 11800 })];
+    state.relink.mockResolvedValue(done({ kind: "renewal", quote_id: "Q-REN", relinked_from_quote: "Q-OLD", old_invoice_credited: "INV-4", old_credit_note_id: "CN-1" }));
+    render(<CreditPayForSection transaction={txn(11800)} customers={customers} pickedCustomerId="c1" onDone={() => {}}
+      relink={{ txn_id: "t1", txn_date: "2026-10-12", amount: 11800, description: null, payment_id: "p", receipt_voucher_no: null, received_on: "2026-10-12",
+                quote_id: "Q-OLD", customer_id: "c1", customer_name: "Acme Traders", product: null, invoice_id: "INV-4", invoice_status: "paid",
+                invoice_date: "2026-10-12", invoice_amount: 11800, blocker: null }} />);
+    expect(screen.queryByRole("button", { name: "Project payment" })).toBeNull();
+    expect(screen.queryByText("＋ New customer")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Relink: Record ₹11,800 on Q-REN & reconcile" }));
+    await screen.findByText("Old one-off sale Q-OLD undone — invoice INV-4 reversed by credit note CN-1");
+    expect(state.relink.mock.calls[0][0]).toMatchObject({ path: "item", transactionId: "t1", quoteId: "Q-REN" });
+    expect(state.pay).not.toHaveBeenCalled();
   });
 });

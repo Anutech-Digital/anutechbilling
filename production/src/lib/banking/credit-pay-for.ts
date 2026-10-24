@@ -253,7 +253,8 @@ export function linesAreMonthly(lines: OpenItem["lines"]): boolean {
 /* ─── Result ─────────────────────────────────────────────────────────────────────────── */
 
 export interface PayForResult {
-  kind: OpenItemKind;
+  /** "advance" — R-1863: booked as the customer's advance (on account), nothing invoiced. */
+  kind: OpenItemKind | "advance";
   quote_id: string | null;
   invoice_id: string | null;
   invoice_issued: string | null;
@@ -270,9 +271,24 @@ export interface PayForResult {
   subscriptions: Array<{ id: string; plan: string | null; seats: number | null; start_date: string | null; renewal_date: string | null; billing_cycle: string | null }>;
   new_quote?: boolean;
   quote_total?: number;
+  /* R-1863 advance */
+  advance_credit?: number;
+  customer_id?: string | null;
+  customer_name?: string | null;
+  /* R-1863 relink of an old one-off bank sale */
+  relinked_from_quote?: string | null;
+  relinked_from_invoice?: string | null;
+  old_invoice_credited?: string | null;
+  old_invoice_voided?: string | null;
+  old_credit_note_id?: string | null;
 }
 
 export interface ResultLine { text: string; href?: string; tone?: "ok" | "warn" }
+
+/** R-1863: the after-save line for an advance (Pardeep's wording, card R-1863). */
+export function advanceMessage(amount: number, customerName: string): string {
+  return `${rupee(amount)} kept as advance for ${customerName} — it will be offered when you record their next payment`;
+}
 
 /** "Renewal of Google Workspace (15 seats) paid → subscription renewed to 24 Oct 2027", etc. */
 export function resultLines(r: PayForResult): ResultLine[] {
@@ -280,6 +296,27 @@ export function resultLines(r: PayForResult): ResultLine[] {
   const sub = r.subscriptions[0];
   const subName = sub ? `${sub.plan ?? "subscription"}${sub.seats ? ` (${sub.seats} seats)` : ""}` : "";
   const quoteHref = r.quote_id ? `/quotes/${encodeURIComponent(r.quote_id)}` : undefined;
+
+  /* R-1863: a relink first says what happened to the old one-off sale. */
+  if (r.relinked_from_quote) {
+    out.push({
+      text: r.old_invoice_credited
+        ? `Old one-off sale ${r.relinked_from_quote} undone — invoice ${r.old_invoice_credited} reversed by credit note ${r.old_credit_note_id ?? ""}`.trim()
+        : r.old_invoice_voided
+          ? `Old one-off sale ${r.relinked_from_quote} undone — draft invoice ${r.old_invoice_voided} voided`
+          : `Old one-off sale ${r.relinked_from_quote} undone`,
+      href: r.old_invoice_credited ? `/invoices/${encodeURIComponent(r.old_invoice_credited)}` : undefined,
+    });
+  }
+
+  if (r.kind === "advance") {
+    out.push({
+      text: advanceMessage(r.advance_credit ?? r.amount, r.customer_name ?? "the customer"),
+      href: r.customer_id ? `/customers/${encodeURIComponent(r.customer_id)}` : undefined,
+    });
+    if (r.receipt_voucher_no) out.push({ text: `Receipt voucher ${r.receipt_voucher_no}` });
+    return out;
+  }
 
   if (r.already_recorded) {
     out.push({ text: `This payment was already recorded on ${r.quote_id ?? r.invoice_id} — the bank line is now matched to it.`, href: quoteHref });
@@ -313,4 +350,60 @@ export function resultLines(r: PayForResult): ResultLine[] {
   if (r.outstanding > 0 && !r.already_recorded) out.push({ text: `${rupee(r.outstanding)} still due on it`, tone: "warn" });
   if (r.overpaid_credit > 0) out.push({ text: `${rupee(r.overpaid_credit)} extra kept as the customer's advance credit` });
   return out;
+}
+
+/* ─── R-1863: old one-off bank sales (booked before R-1838) and their relink ─────────────── */
+
+/** A row of bank_old_one_off_bookings. */
+export interface OldOneOffBooking {
+  txn_id: string;
+  txn_date: string;
+  amount: number;
+  description: string | null;
+  payment_id: string;
+  receipt_voucher_no: string | null;
+  received_on: string;
+  quote_id: string;
+  customer_id: string | null;
+  customer_name: string | null;
+  product: string | null;
+  invoice_id: string | null;
+  invoice_status: string | null;
+  invoice_date: string | null;
+  invoice_amount: number;
+  /** Why it cannot be relinked from the bank page (null = it can). */
+  blocker: "books_locked" | "other_receipts" | "invoice_notes" | null;
+}
+
+/** "What will happen" — shown before the operator confirms a relink. Mirrors relink_bank_one_off_sale. */
+export function relinkSteps(b: OldOneOffBooking): string[] {
+  const steps: string[] = [];
+  if (b.invoice_id && b.invoice_status === "draft") {
+    steps.push(`Draft invoice ${b.invoice_id} is voided.`);
+  } else if (b.invoice_id && b.invoice_status !== "void") {
+    steps.push(`Invoice ${b.invoice_id} (${rupee(b.invoice_amount)}${b.invoice_date ? `, ${formatDate(b.invoice_date)}` : ""}) gets a full credit note (GST section 34). It stays in your records with nothing due.`);
+  }
+  steps.push(`The old receipt${b.receipt_voucher_no ? ` ${b.receipt_voucher_no}` : ""} and one-off quote ${b.quote_id} are removed (the voucher number is kept as cancelled).`);
+  steps.push(`${rupee(b.amount)} is then recorded on what you pick below — all in one step, or nothing changes.`);
+  return steps;
+}
+
+/** The blocker in the owner's words, with where to fix it (§24). */
+export function relinkBlocker(b: OldOneOffBooking): { text: string; href: string; action: string } | null {
+  switch (b.blocker) {
+    case "books_locked":
+      return {
+        text: `The books are locked over this receipt (${formatDate(b.received_on)})${b.invoice_id ? ` or invoice ${b.invoice_id}` : ""}. Unlock the month, relink, then lock it again.`,
+        href: "/accounting/close", action: "Open Close month",
+      };
+    case "other_receipts":
+      return { text: `Quote ${b.quote_id} has other receipts too, so it cannot be undone from the bank line.`, href: `/quotes/${encodeURIComponent(b.quote_id)}`, action: "Open quote" };
+    case "invoice_notes":
+      return {
+        text: `Invoice ${b.invoice_id ?? ""} already has a credit / debit note or TDS entry — settle it from the invoice.`,
+        href: `/invoices/${encodeURIComponent(b.invoice_id ?? "")}`, action: "Open invoice",
+      };
+    default:
+      return null;
+  }
 }

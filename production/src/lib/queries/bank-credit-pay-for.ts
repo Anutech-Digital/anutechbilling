@@ -6,6 +6,10 @@
  *   reconcile_bank_credit_new_sale  — a new sale (seats × unit price) with no quote yet
  * Both go through record_desk_payment → (generate_invoice) → reconcile_bank_txn. Nothing here
  * computes money: the result the sheet shows is what the database did.
+ *
+ * R-1863 (migration 20261024144118): reconcile_bank_credit_as_advance (an advance — receipt +
+ * customer credit, as record_payment writes an overpayment), bank_old_one_off_bookings (read) and
+ * relink_bank_one_off_sale (undo an old one-off bank sale + book one of the three, one transaction).
  */
 "use client";
 
@@ -13,7 +17,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { toastInvoiceIssueError } from "@/lib/queries/invoices";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
-import type { OpenItem, PayForResult, SaleLine } from "@/lib/banking/credit-pay-for";
+import type { OldOneOffBooking, OpenItem, PayForResult, SaleLine } from "@/lib/banking/credit-pay-for";
 import { saleLinesPayload } from "@/lib/banking/credit-pay-for";
 
 /* The generated types do not know the R-1838 functions yet (migration not applied there). */
@@ -118,6 +122,83 @@ export function usePayItemFromBankCredit() {
       return data as PayForResult;
     },
     onSuccess: after,
+    onError: onPayError,
+  });
+}
+
+/* ─── R-1863: advance, old one-off bookings, relink (migration 20261024144118_r1863_bank_credit_advance) ─────────────────── */
+
+export interface AdvanceInput { transactionId: string; customerId: string }
+
+export function advanceArgs(i: AdvanceInput) {
+  return { p_txn_id: i.transactionId, p_customer_id: i.customerId };
+}
+
+/** Books the line as the customer's advance (on account) — one transaction on the server. */
+export function useAdvanceFromBankCredit() {
+  const after = useAfterPay();
+  return useMutation({
+    mutationFn: async (input: AdvanceInput): Promise<PayForResult> => {
+      const { data, error } = await rpc("reconcile_bank_credit_as_advance", advanceArgs(input));
+      if (error) throw error;
+      if (!data) throw new Error("The advance was not confirmed — refresh the page to see whether it was saved.");
+      return data as PayForResult;
+    },
+    onSuccess: after,
+    onError: onPayError,
+  });
+}
+
+export const oldOneOffKey = (accountId: string | null) => ["bank_transactions", "old_one_off", accountId] as const;
+
+/** Bank lines booked before R-1838 as a one-off "bank sale" — read only. */
+export function useOldOneOffBookings(accountId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: oldOneOffKey(accountId),
+    enabled: Boolean(accountId) && enabled,
+    queryFn: async (): Promise<OldOneOffBooking[]> => {
+      const { data, error } = await rpc("bank_old_one_off_bookings", { p_bank_account_id: accountId });
+      if (error) throw error;
+      return ((data ?? []) as OldOneOffBooking[]).map((r) => ({
+        ...r,
+        amount: Number(r.amount) || 0,
+        invoice_amount: Number(r.invoice_amount) || 0,
+      }));
+    },
+    staleTime: 15_000,
+  });
+}
+
+/** What a relink books the line on — the same three paths, as one JSON target. */
+export type RelinkTarget =
+  | ({ path: "item" } & PayItemInput)
+  | ({ path: "new_sale" } & NewSaleInput)
+  | ({ path: "advance" } & AdvanceInput);
+
+/** relink_bank_one_off_sale's p_target: the path's own RPC arguments without the p_ prefix. */
+export function relinkArgs(t: RelinkTarget) {
+  const args = t.path === "item" ? payItemArgs(t) : t.path === "new_sale" ? newSaleArgs(t) : advanceArgs(t);
+  const target: Record<string, unknown> = { path: t.path };
+  for (const [k, v] of Object.entries(args)) if (k !== "p_txn_id") target[k.replace(/^p_/, "")] = v;
+  return { p_txn_id: t.transactionId, p_target: target };
+}
+
+/** Undo the old one-off sale and book the line on what it paid — ONE server transaction. */
+export function useRelinkOneOffSale() {
+  const after = useAfterPay();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (t: RelinkTarget): Promise<PayForResult> => {
+      const { data, error } = await rpc("relink_bank_one_off_sale", relinkArgs(t));
+      if (error) throw error;
+      if (!data) throw new Error("The relink was not confirmed — refresh the page to see whether it was saved.");
+      return data as PayForResult;
+    },
+    onSuccess: () => {
+      after();
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["credit_notes"] });
+    },
     onError: onPayError,
   });
 }

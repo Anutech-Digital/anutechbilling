@@ -36,7 +36,12 @@ import {
   useOpenInvoicesForCreditMatch,
   type BankTransactionRow,
 } from "@/lib/queries/bank";
-import { certainInvoiceMatches, type InvoiceMatch } from "@/lib/banking/invoice-credit-match";
+import { certainInvoiceMatches, matchCreditToInvoices, type InvoiceMatch } from "@/lib/banking/invoice-credit-match";
+import { noCustomerYet } from "@/lib/banking/no-customer-yet";
+import type { OldOneOffBooking } from "@/lib/banking/credit-pay-for";
+import { useOldOneOffBookings } from "@/lib/queries/bank-credit-pay-for";
+import { useCustomers } from "@/lib/queries/customers";
+import { RelinkOneOffDialog } from "@/components/features/banking/old-one-off-bookings";
 import { InvoiceMatchChip } from "@/components/features/banking/invoice-match-chip";
 import { rupee, formatDate } from "@/lib/utils";
 import { ImportStatementDialog } from "@/components/features/banking/import-statement-dialog";
@@ -54,6 +59,9 @@ import { canWriteMoney } from "@/lib/nav";
 import { useBankAaConnection, useFetchAaNow } from "@/lib/queries/bank-aa";
 
 type FilterTab = "all" | "unmatched" | "matched";
+/* R-1863: a narrower list inside a tab — unassigned receipts to work through one by one, and
+   lines booked before R-1838 as a one-off bank sale (to relink). */
+type Chip = "none" | "no_customer" | "old_one_off";
 
 // Column order (left→right) + default widths (px) for the resizable table.
 // Status is folded into the last column: an unmatched row just shows the
@@ -89,6 +97,12 @@ export default function BankAccountDetailPage() {
   /* Un-reconcile goes through a confirm that says what the line leaves behind (and can
      undo a sale raised from it) — components/features/banking/unreconcile-dialog.tsx. */
   const [unreconcileTxn, setUnreconcileTxn] = React.useState<BankTransactionRow | null>(null);
+  const [chip,          setChip]          = React.useState<Chip>("none");
+  /* The booking is kept as it was when Relink was pressed: after the save the line leaves the
+     old-bookings list, and the dialog must stay open to show what happened. */
+  const [relink,        setRelink]        = React.useState<{ txn: BankTransactionRow; booking: OldOneOffBooking } | null>(null);
+  /* Relink removes the old receipt — owner / accountant, as delete_payment (the server checks too). */
+  const canRelink = role === "owner" || role === "accountant";
 
   // Resizable columns — drag the full-height divider between any two columns.
   const { colW, startResize, totalWidth: bankTableW } = useResizableColumns("ros_bank_colw_v3", BANK_COL_DEFAULTS);
@@ -119,6 +133,19 @@ export default function BankAccountDetailPage() {
     [transactions, openInvoices],
   );
 
+  /* R-1863: "Money in · no customer yet" — unmatched credits the Reconcile sheet cannot guess a
+     customer for (no name in the narration, no certain invoice match). */
+  const { data: customers } = useCustomers({ enabled: canWrite && hasUnmatchedCredit });
+  const noCustomerIds = React.useMemo(() => new Set(
+    noCustomerYet(transactions ?? [], customers ?? [], (t) => matchCreditToInvoices(
+      { amount: t.credit, txnDate: t.txn_date, description: t.description, reference: t.reference },
+      openInvoices ?? [],
+    )).map((t) => t.id),
+  ), [transactions, customers, openInvoices]);
+  /* R-1863: lines booked before R-1838 as a one-off "bank sale" — each can be relinked. */
+  const { data: oldBookings } = useOldOneOffBookings(accountId, canWrite);
+  const oldById = React.useMemo(() => new Map((oldBookings ?? []).map((b) => [b.txn_id, b])), [oldBookings]);
+
   const tabs: TabBarItem[] = [
     { id: "all",       label: "All",        count: counts.all       },
     { id: "unmatched", label: "Unmatched",  count: counts.unmatched },
@@ -130,12 +157,34 @@ export default function BankAccountDetailPage() {
     let list = transactions;
     if (tab === "unmatched") list = list.filter((t) => t.matched_to_type === null);
     else if (tab === "matched") list = list.filter((t) => t.matched_to_type !== null);
+    if (chip === "no_customer") list = list.filter((t) => noCustomerIds.has(t.id));
+    else if (chip === "old_one_off") list = list.filter((t) => oldById.has(t.id));
     const q = search.trim().toLowerCase();
     if (q) list = list.filter((t) =>
       [t.description, t.reference, String(t.debit ?? ""), String(t.credit ?? "")]
         .some((f) => (f ?? "").toString().toLowerCase().includes(q)));
     return list;
-  }, [transactions, tab, search]);
+  }, [transactions, tab, search, chip, noCustomerIds, oldById]);
+
+  /* R-1863: in "no customer yet", saving a line opens the next one — the list is worked through
+     one receipt after another. The sheet is closed after its save; once the refreshed list shows
+     that line reconciled, the next unassigned line opens. */
+  const nextAfterRef = React.useRef<string | null>(null);
+  const openNextUnassigned = React.useCallback((list: readonly BankTransactionRow[] | undefined) => {
+    const id = nextAfterRef.current;
+    if (!id || !list) return;
+    const done = list.find((t) => t.id === id);
+    if (!done || done.matched_to_type === null) return;
+    nextAfterRef.current = null;
+    const next = list.find((t) => t.id !== id && noCustomerIds.has(t.id));
+    if (next) setReconcileTxn(next);
+  }, [noCustomerIds]);
+  React.useEffect(() => { openNextUnassigned(transactions); }, [transactions, openNextUnassigned]);
+  const openReconcile = (t: BankTransactionRow) => { nextAfterRef.current = null; setReconcileTxn(t); };
+  const openRelink = (t: BankTransactionRow) => {
+    const booking = oldById.get(t.id);
+    if (booking) setRelink({ txn: t, booking });
+  };
 
   // Deep-link from elsewhere (e.g. Payroll "Reconcile in Banking →"):
   //   ?focus=<txnId>   → open that transaction's reconcile
@@ -331,7 +380,7 @@ export default function BankAccountDetailPage() {
 
       {/* Filter tabs + one-tap auto-reconcile */}
       <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
-        <TabBar items={tabs} value={tab} onChange={(v) => setTab(v as FilterTab)} />
+        <TabBar items={tabs} value={tab} onChange={(v) => { setTab(v as FilterTab); setChip("none"); }} />
         {canWrite && counts.unmatched > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
             {/* Salary lines Payroll never recorded — auto-reconcile has nothing to match
@@ -363,6 +412,36 @@ export default function BankAccountDetailPage() {
           </div>
         )}
       </div>
+
+      {/* R-1863: narrower lists — unassigned receipts, and old one-off bookings to relink. */}
+      {canWrite && (noCustomerIds.size > 0 || oldById.size > 0 || chip !== "none") && (
+        <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Narrow the list">
+          {(noCustomerIds.size > 0 || chip === "no_customer") && (
+            <FilterChip
+              pressed={chip === "no_customer"}
+              onClick={() => { if (chip === "no_customer") setChip("none"); else { setTab("unmatched"); setChip("no_customer"); } }}
+              title="Money-in lines where no customer could be guessed — reconcile them one after another"
+            >
+              Money in · no customer yet ({noCustomerIds.size})
+            </FilterChip>
+          )}
+          {(oldById.size > 0 || chip === "old_one_off") && (
+            <FilterChip
+              pressed={chip === "old_one_off"}
+              onClick={() => { if (chip === "old_one_off") setChip("none"); else { setTab("matched"); setChip("old_one_off"); } }}
+              title="Lines booked before 24 Oct 2026 as a one-off sale — relink each to its renewal, extra seats or quote"
+            >
+              Old one-off bookings ({oldById.size})
+            </FilterChip>
+          )}
+        </div>
+      )}
+      {chip === "old_one_off" && oldById.size > 0 && (
+        <p className="mb-3 text-xs text-ink-3 max-w-3xl">
+          These were booked as one-off sales before the bank page asked what the money was for. They stay as they are.
+          If one was really a renewal, extra seats or a quote, press <b>Relink</b>: you see what will happen, then pick what it paid.
+        </p>
+      )}
 
       {/* R-1831: every run ends with a result that stays — matched N, and why the rest were left. */}
       {autoReconcile.isSuccess && autoReconcile.data && (
@@ -401,8 +480,10 @@ export default function BankAccountDetailPage() {
       ) : visibleTxns.length === 0 ? (
         <Card>
           <EmptyState
-            icon={tab === "unmatched" ? "check_circle" : "upload"}
+            icon={tab === "unmatched" || chip !== "none" ? "check_circle" : "upload"}
             title={
+              chip === "no_customer" ? "Every money-in line has a customer ✓" :
+              chip === "old_one_off" ? "No old one-off bookings left ✓" :
               tab === "unmatched"  ? "All transactions reconciled ✓" :
               tab === "matched"    ? "No reconciled transactions yet." :
                                      "No transactions yet."
@@ -417,7 +498,9 @@ export default function BankAccountDetailPage() {
             action={
               counts.all === 0 && canWrite
                 ? <Button variant="primary" icon="upload" onClick={() => setImportOpen(true)}>Import statement</Button>
-                : undefined
+                : chip !== "none"
+                  ? <Button variant="default" onClick={() => setChip("none")}>Show all {tab === "matched" ? "reconciled" : "unmatched"} lines</Button>
+                  : undefined
             }
           />
         </Card>
@@ -452,8 +535,9 @@ export default function BankAccountDetailPage() {
                       key={txn.id}
                       txn={txn}
                       invoiceMatch={canWrite ? invoiceChips.get(txn.id) : undefined}
-                      onReconcile={canWrite ? () => setReconcileTxn(txn) : undefined}
+                      onReconcile={canWrite ? () => openReconcile(txn) : undefined}
                       onUnreconcile={canWrite ? () => setUnreconcileTxn(txn) : undefined}
+                      onRelink={canWrite && oldById.has(txn.id) ? () => openRelink(txn) : undefined}
                     />
                   ))}
                 </tbody>
@@ -467,7 +551,14 @@ export default function BankAccountDetailPage() {
               show every column + the Reconcile button without clipping). */}
           <ul className="lg:hidden space-y-2.5">
             {visibleTxns.map((txn) => (
-              <TransactionCard key={txn.id} txn={txn} invoiceMatch={canWrite ? invoiceChips.get(txn.id) : undefined} onReconcile={canWrite ? () => setReconcileTxn(txn) : undefined} onUnreconcile={canWrite ? () => setUnreconcileTxn(txn) : undefined} />
+              <TransactionCard
+                key={txn.id}
+                txn={txn}
+                invoiceMatch={canWrite ? invoiceChips.get(txn.id) : undefined}
+                onReconcile={canWrite ? () => openReconcile(txn) : undefined}
+                onUnreconcile={canWrite ? () => setUnreconcileTxn(txn) : undefined}
+                onRelink={canWrite && oldById.has(txn.id) ? () => openRelink(txn) : undefined}
+              />
             ))}
           </ul>
         </>
@@ -483,10 +574,23 @@ export default function BankAccountDetailPage() {
       />
       <ReconcileTransactionDialog
         open={Boolean(reconcileTxn)}
-        onOpenChange={(o) => !o && setReconcileTxn(null)}
+        onOpenChange={(o) => {
+          if (o) return;
+          if (chip === "no_customer" && reconcileTxn) {
+            nextAfterRef.current = reconcileTxn.id;
+            openNextUnassigned(transactions);
+          }
+          setReconcileTxn((cur) => (cur?.id === reconcileTxn?.id ? null : cur));
+        }}
         transaction={reconcileTxn}
       />
       <UnreconcileDialog txn={unreconcileTxn} onClose={() => setUnreconcileTxn(null)} />
+      <RelinkOneOffDialog
+        txn={relink?.txn ?? null}
+        booking={relink?.booking ?? null}
+        canRelink={canRelink}
+        onClose={() => setRelink(null)}
+      />
     </div>
   );
 }
@@ -494,6 +598,20 @@ export default function BankAccountDetailPage() {
 // ============================================================
 // Shared bits (used by both the desktop row and the mobile card)
 // ============================================================
+function FilterChip({ pressed, onClick, title, children }: { pressed: boolean; onClick: () => void; title: string; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onClick}
+      title={title}
+      className={`rounded-full border px-3 py-1 text-xs font-medium ${pressed ? "border-amber bg-amber/10 text-amber-ink" : "border-hairline bg-paper text-ink-2 hover:border-hairline-strong"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function TxnAmount({ txn }: { txn: BankTransactionRow }) {
   if (txn.debit > 0)  return <span className="text-rose">-{rupee(txn.debit)}</span>;
   if (txn.credit > 0) return <span className="text-emerald">+{rupee(txn.credit)}</span>;
@@ -523,6 +641,7 @@ function TransactionRow({
   invoiceMatch,
   onReconcile,
   onUnreconcile,
+  onRelink,
 }: {
   txn: BankTransactionRow;
   /** R-399: a certain open-invoice match for this unmatched credit — the chip opens the drawer. */
@@ -530,6 +649,8 @@ function TransactionRow({
   /** Both left out for a read-only viewer (R-254) — the status shows, the buttons do not. */
   onReconcile?: () => void;
   onUnreconcile?: () => void;
+  /** R-1863: an old one-off bank sale — move it onto what it really paid. */
+  onRelink?: () => void;
 }) {
   const reconcile = useReconcileTransaction();
 
@@ -568,6 +689,11 @@ function TransactionRow({
           // plus a quiet way to undo it.
           <div className="flex flex-col items-end gap-0.5">
             <Badge kind="success" size="sm" dot>{txnStatusLabel(txn.matched_to_type)}</Badge>
+            {onRelink && (
+              <Button size="sm" variant="default" onClick={onRelink} title="Move this one-off sale onto the renewal, extra seats or quote it paid">
+                Relink
+              </Button>
+            )}
             {onUnreconcile && (
               <button
                 type="button"
@@ -595,7 +721,9 @@ function TransactionRow({
 // ============================================================
 // Card (mobile)
 // ============================================================
-function TransactionCard({ txn, invoiceMatch, onReconcile, onUnreconcile }: { txn: BankTransactionRow; invoiceMatch?: InvoiceMatch; onReconcile?: () => void; onUnreconcile?: () => void }) {
+function TransactionCard({ txn, invoiceMatch, onReconcile, onUnreconcile, onRelink }: {
+  txn: BankTransactionRow; invoiceMatch?: InvoiceMatch; onReconcile?: () => void; onUnreconcile?: () => void; onRelink?: () => void;
+}) {
   const reconcile = useReconcileTransaction();
   return (
     <li>
@@ -620,16 +748,19 @@ function TransactionCard({ txn, invoiceMatch, onReconcile, onUnreconcile }: { tx
           {txn.matched_to_type === "transfer" ? (
             <span className="text-xs text-ink-3">Auto</span>
           ) : txn.matched_to_type ? (
-            onUnreconcile ? (
-              <button
-                type="button"
-                onClick={onUnreconcile}
-                disabled={reconcile.isPending}
-                className="text-xs text-ink-3 hover:text-rose"
-              >
-                Un-reconcile
-              </button>
-            ) : null
+            <div className="flex items-center gap-3">
+              {onRelink && <Button size="sm" variant="default" onClick={onRelink}>Relink</Button>}
+              {onUnreconcile ? (
+                <button
+                  type="button"
+                  onClick={onUnreconcile}
+                  disabled={reconcile.isPending}
+                  className="text-xs text-ink-3 hover:text-rose"
+                >
+                  Un-reconcile
+                </button>
+              ) : null}
+            </div>
           ) : onReconcile ? (
             <Button size="sm" variant="default" onClick={onReconcile} disabled={reconcile.isPending}>
               Reconcile

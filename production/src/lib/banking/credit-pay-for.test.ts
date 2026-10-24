@@ -1,9 +1,45 @@
 import { describe, it, expect } from "vitest";
 import {
-  amountCheck, defaultRenewal, guessCustomer, itemDetail, kindLabel, preselectItem, repriceLine,
+  amountCheck, defaultRenewal, guessCustomer, itemDetail, kindLabel, preselectItem, relinkBlocker, relinkSteps, repriceLine,
   resultLines, saleLineFromItem, saleLinesPayload, salePreview, saleMakesSubscription, saleTermsMixed,
-  tdsRateToRecord, tdsToRecord, type OpenItem, type PayForResult,
+  tdsRateToRecord, tdsToRecord, type OldOneOffBooking, type OpenItem, type PayForResult,
 } from "./credit-pay-for";
+
+describe("R-1863 advance result", () => {
+  it("says the card's sentence, links the customer, names the receipt voucher", () => {
+    const ls = resultLines({
+      kind: "advance", quote_id: "Q-9", invoice_id: null, invoice_issued: null, payment_id: "p", receipt_voucher_no: "RV-12",
+      amount: 25000, advance_credit: 25000, customer_id: "c1", customer_name: "Acme Traders", tds_amount: 0, outstanding: 0,
+      is_fully_paid: true, overpaid_credit: 0, renewal_rolled_forward: false, subscription_skipped: false, already_recorded: false, subscriptions: [],
+    });
+    expect(ls[0]).toEqual({ text: "₹25,000 kept as advance for Acme Traders — it will be offered when you record their next payment", href: "/customers/c1" });
+    expect(ls.map((l) => l.text)).toEqual([ls[0].text, "Receipt voucher RV-12"]);
+  });
+});
+
+const old = (o: Partial<OldOneOffBooking>): OldOneOffBooking => ({
+  txn_id: "t", txn_date: "2026-10-12", amount: 11800, description: "NEFT BETA", payment_id: "p", receipt_voucher_no: "RV-3",
+  received_on: "2026-10-12", quote_id: "Q-OLD", customer_id: "c2", customer_name: "Beta", product: "Google Workspace",
+  invoice_id: "INV-4", invoice_status: "paid", invoice_date: "2026-10-12", invoice_amount: 11800, blocker: null, ...o,
+});
+
+describe("R-1863 relink — what will happen, and what blocks it", () => {
+  it("an issued invoice gets a full credit note, the receipt + quote go, then the new booking", () => {
+    const s = relinkSteps(old({}));
+    expect(s[0]).toBe("Invoice INV-4 (₹11,800, 12 Oct 2026) gets a full credit note (GST section 34). It stays in your records with nothing due.");
+    expect(s[1]).toContain("receipt RV-3 and one-off quote Q-OLD are removed");
+    expect(s[2]).toContain("₹11,800 is then recorded on what you pick below");
+  });
+  it("a draft invoice is voided, not credit-noted; no invoice → no invoice step", () => {
+    expect(relinkSteps(old({ invoice_status: "draft" }))[0]).toBe("Draft invoice INV-4 is voided.");
+    expect(relinkSteps(old({ invoice_id: null, invoice_status: null }))).toHaveLength(2);
+  });
+  it("a locked month says to unlock it and links Close month (§24)", () => {
+    expect(relinkBlocker(old({ blocker: "books_locked" }))).toMatchObject({ href: "/accounting/close", action: "Open Close month" });
+    expect(relinkBlocker(old({ blocker: "invoice_notes" }))?.href).toBe("/invoices/INV-4");
+    expect(relinkBlocker(old({}))).toBeNull();
+  });
+});
 
 const item = (o: Partial<OpenItem>): OpenItem => ({
   kind: "new", quote_id: "Q-1", invoice_id: null, doc_date: "2026-10-10", amount_due: 11800,
