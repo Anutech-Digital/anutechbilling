@@ -90,7 +90,23 @@ interface Props {
   account?: BankAccountRow | null;
 }
 
+type OpenDropdown = "bank" | "type" | null;
+
 export function AddBankAccountForm({ open, onOpenChange, account }: Props) {
+  /* R-1692: Escape while the Bank / Account type dropdown is open closes the dropdown only.
+     react-select and react-dialog bring different copies of Radix's dismissable layer, so
+     neither knows the other is on top — one Escape closed both, and the dropdown then left
+     `pointer-events: none` on <body>: nothing could be clicked and "Add account" would not
+     open again until a reload. The drawer sees the Escape first (and the same event stops the
+     dropdown's own handler), so it closes the open dropdown itself and stays open; the next
+     Escape closes the drawer. */
+  const [dropdown, setDropdown] = React.useState<OpenDropdown>(null);
+  const onSheetEscape = (e: KeyboardEvent) => {
+    if (dropdown === null) return;
+    e.preventDefault();
+    setDropdown(null);
+  };
+  React.useEffect(() => { if (!open) setDropdown(null); }, [open]);
   const create = useCreateBankAccount();
   const update = useUpdateBankAccount();
   const isEdit = Boolean(account);
@@ -178,6 +194,7 @@ export function AddBankAccountForm({ open, onOpenChange, account }: Props) {
       <SheetContent
         side="right"
         className="w-full sm:max-w-[480px] md:max-w-[520px] p-0 flex flex-col overflow-x-hidden"
+        onEscapeKeyDown={onSheetEscape}
       >
         <SheetHeader>
           <SheetTitle>{isEdit ? "Edit account" : "Add bank account"}</SheetTitle>
@@ -209,7 +226,8 @@ export function AddBankAccountForm({ open, onOpenChange, account }: Props) {
             {!isCash && !isCard && (
               <>
                 <FormField label="Bank" required htmlFor="bank_name">
-                  <Select value={bankName} onValueChange={setBankName}>
+                  <Select value={bankName} onValueChange={setBankName}
+                    open={dropdown === "bank"} onOpenChange={(o) => setDropdown(o ? "bank" : null)}>
                     <SelectTrigger id="bank_name" error={!!errors.bank_name}>
                       <SelectValue placeholder="Select your bank" />
                     </SelectTrigger>
@@ -272,7 +290,8 @@ export function AddBankAccountForm({ open, onOpenChange, account }: Props) {
             )}
 
             <FormField label="Account type" htmlFor="account_type">
-              <Select value={accountType} onValueChange={(v) => setAccountType(v as FormData["account_type"])}>
+              <Select value={accountType} onValueChange={(v) => setAccountType(v as FormData["account_type"])}
+                open={dropdown === "type"} onOpenChange={(o) => setDropdown(o ? "type" : null)}>
                 <SelectTrigger id="account_type">
                   <SelectValue />
                 </SelectTrigger>

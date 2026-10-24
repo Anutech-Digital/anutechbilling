@@ -37,6 +37,7 @@ import {
   useBankAccount,
   useUpdateBankAccount,
 } from "@/lib/queries/bank";
+import { importBadge } from "./import-badge";
 import { openingBalanceFromStatement, fyStartFor } from "@/lib/banking/opening-balance";
 import { isEncryptedPdf, pdfPageCount } from "@/lib/banking/pdf-check";
 import {
@@ -549,13 +550,11 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
             <div className="rounded-md border border-hairline bg-paper-2/30 p-3">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm font-semibold">Parse summary</p>
-                {parsed.rows.length > 0 ? (
-                  <Badge kind="success" dot size="sm">
-                    {parsed.rows.length} ready to import
-                  </Badge>
-                ) : (
-                  <Badge kind="danger" dot size="sm">Couldn&apos;t parse</Badge>
-                )}
+                {/* R-1692: what Import will add (the same plan), not every parsed line. */}
+                {(() => {
+                  const b = importBadge({ parsedCount: parsed.rows.length, freshCount });
+                  return <Badge kind={b.kind} dot size="sm">{b.text}</Badge>;
+                })()}
               </div>
               {chainCheck && (
                 <StatementChainBlock
