@@ -102,8 +102,9 @@ const MIGRATIONS = join(process.cwd(), "supabase", "migrations");
 const migrationFiles = readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort();
 const migrationText = (f: string) => readFileSync(join(MIGRATIONS, f), "utf8");
 
-/** Drop `--` comments so a comment that quotes CURRENT_DATE is not a hit. */
-const stripSqlComments = (sql: string) => sql.split(/\r?\n/).map((l) => l.replace(/--.*$/, "")).join("\n");
+/** Drop `/* … *\/` and `--` comments so a comment that quotes CURRENT_DATE is not a hit. */
+const stripSqlComments = (sql: string) =>
+  sql.replace(/\/\*[\s\S]*?\*\//g, "").split(/\r?\n/).map((l) => l.replace(/--.*$/, "")).join("\n");
 
 const DOCUMENT_DATES: [table: string, column: string][] = [
   ["quotes", "created_date"], ["invoices", "invoice_date"], ["credit_notes", "credit_date"],
@@ -130,19 +131,10 @@ describe("document dates default to the IST day, not CURRENT_DATE (R-1716)", () 
 
   /* SQL functions that write a document / customer row with an explicit CURRENT_DATE do not use
      the column default. Ratchet over the LATEST definition of each function: the list may only
-     go DOWN. Each one is a whole money RPC owned by its own card; rewriting it here would copy
-     a large body for a one-word change, so it is recorded instead (R-1716 needsDecision). */
-  const KNOWN_SQL_CURRENT_DATE = new Set([
-    "accept_project_quote",          // customers.since for a new project customer
-    "accept_quote",                  // customers.since for a converted lead
-    "activate_quote_on_credit",      // subscription start when the quote line has none
-    "create_project_sale",           // customers.since
-    "customer_from_prospect_quote",  // customers.since
-    "fn_accrue_referral_commission", // referral earned_date (not a document)
-    "get_partner_metrics",           // read-only report window
-    "record_payment",                // customers.since + subscription start fallback
-    "record_project_payment",        // project receipt date fallback + invoice paid_date
-  ]);
+     go DOWN. R-1716 recorded nine money RPCs here; R-1816 (migration
+     20261024022950_r1816_money_rpcs_ist_today) moved all nine to public.ist_today(), so the
+     list is EMPTY — any hit now is a new regression. */
+  const KNOWN_SQL_CURRENT_DATE = new Set<string>([]);
   const WRITES = /(invoices|credit_notes|debit_notes|quotes|customers)\b/i;
 
   function latestFunctionsUsingCurrentDate(): string[] {
