@@ -18,7 +18,7 @@ import { tdsDepositDueDate } from "./tds-due";
 import { fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
 
 export type ComplianceCategory = "roc" | "income_tax" | "tds" | "gst" | "payroll";
-export type ComplianceFreq = "monthly" | "quarterly" | "half_yearly" | "annual";
+export type ComplianceFreq = "monthly" | "quarterly" | "half_yearly" | "annual" | "every_3_years";
 
 /**
  * R-262: who the business is, which decides what it files. Stored on
@@ -235,6 +235,42 @@ function tdsDepositNext(): Obligation["next"] {
   };
 }
 
+/**
+ * R-1856 — DIR-3 KYC Web: once every third consecutive FY, by 30 June.
+ *
+ * G.S.R. 943(E) — Companies (Appointment and Qualification of Directors) Amendment Rules, 2025,
+ * dated 31 Dec 2025, in force 31 Mar 2026 — substituted Rule 12A: "Every individual who holds a
+ * Director Identification Number as on the 31st March of a financial year … shall file KYC
+ * intimation in Form No. DIR-3 KYC Web … on or before the 30th June of the immediately following
+ * every third consecutive financial year." The MCA press release (1 Jan 2026) says directors whose
+ * KYC is up to date are next due by 30 June 2028. Sources: ICAI CLCGC 02-01-2026
+ * https://www.icai.org/post/clcgc-director-kyc-compliance-02012026 ; gazette text as reproduced at
+ * https://taxguru.in/?p=1014465 ; MCA notification
+ * https://www.mca.gov.in/bin/dms/getdocument?mds=Vk%252FT5sIBKBare6St1b%252FznQ%253D%253D&type=open
+ * (MCA's server refused a direct fetch on 24 Oct 2026 — confirm with a CA/CS).
+ *
+ * The cycle is per director: one who got a DIN recently or missed the last KYC can be due on a
+ * different 30 June. Until R-1857 tracks each director, this row shows the common cycle
+ * (2028, 2031, …) and the `applies` text asks the owner to check each director's last KYC year.
+ */
+const DIR3_KYC_FIRST_CYCLE_YEAR = 2028;
+function dir3KycNext(): Obligation["next"] {
+  return (t, isFiled) => {
+    const y = t.getFullYear();
+    // The first cycle year on or after this year, then one cycle either side.
+    const ahead = Math.max(0, Math.ceil((y - DIR3_KYC_FIRST_CYCLE_YEAR) / 3));
+    const c = DIR3_KYC_FIRST_CYCLE_YEAR + 3 * ahead;
+    const cands = [c - 3, c, c + 3]
+      .filter((yr) => yr >= DIR3_KYC_FIRST_CYCLE_YEAR)
+      .map((yr) => ({
+        dueDate: iso(yr, 6, 30),
+        periodKey: `kyc${yr}`,
+        periodLabel: `3-year KYC due ${yr}`,
+      }));
+    return pick(t, cands, isFiled);
+  };
+}
+
 // Fixed set of dated instances per FY (advance tax, quarterly TDS returns).
 function fixedNext(build: (fyStartYear: number) => ComplianceInstance[]): Obligation["next"] {
   return (t, isFiled) => {
@@ -284,18 +320,20 @@ export const OBLIGATIONS: Obligation[] = [
   {
     key: "roc_dir3kyc", name: "DIR-3 KYC — director KYC", authority: "MCA / ROC",
     entities: ["pvt_ltd", "llp"],
-    category: "roc", freq: "annual", form: "DIR-3 KYC",
-    penalty: "₹5,000 per director if late", link: "https://www.mca.gov.in",
-    applies: "Every director with a DIN — by 30 Sep each year.",
+    category: "roc", freq: "every_3_years", form: "DIR-3 KYC Web",
+    penalty: "₹5,000 per director if late; the DIN is deactivated until filed", link: "https://www.mca.gov.in",
+    applies:
+      "Every director with a DIN — due once every 3 years by 30 June (next 30 Jun 2028 for directors whose KYC is up to date). " +
+      "A new DIN or a missed KYC can make it due sooner — check each director's last KYC year. " +
+      "Changed mobile, email or address? Update it on DIR-3 KYC Web within 30 days.",
     filingSteps: [
       "Keep each director's PAN, Aadhaar, personal mobile and personal email ready (they're OTP-verified).",
-      "Go to MCA → DIR-3 KYC: use the WEB service if nothing changed since last year, or the e-form if it's the first time / details changed.",
-      "Verify the mobile + email via OTP.",
-      "e-form path: affix the director's DSC + certification by a practising professional.",
+      "Log in to MCA V3 (mca.gov.in) and open DIR-3 KYC Web — since 31 Mar 2026 the only director KYC form.",
+      "Enter the DIN, verify the mobile + email via OTP, and confirm the address.",
       "Submit → note the SRN. Repeat for EVERY director holding a DIN.",
       "Mark filed here.",
     ],
-    next: annualNext(9, 30),
+    next: dir3KycNext(),
   },
   {
     key: "roc_dpt3", name: "DPT-3 — return of deposits", authority: "MCA / ROC",
