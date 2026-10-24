@@ -79,6 +79,15 @@ describe("R-1848 partners' capital accounts on the Balance Sheet", () => {
     render(box({ sectionTotal: 380000 }));
     expect(screen.getByText(/Not yet split between partners/)).toBeTruthy();
     expect(screen.getByText(/3,00,000/)).toBeTruthy();
+    expect(screen.getByText(/Set each partner's capital contribution/)).toBeTruthy();
+  });
+
+  it("partner accounts MORE than the equity: says so and points at the opening balance, not at setting contributions", () => {
+    render(box({ partners: [fp("a", "Partner A", 60, 500000), B], sectionTotal: 80000 }));
+    expect(screen.getByText(/Not yet split between partners/)).toBeTruthy();
+    expect(screen.getByText(/partner accounts add up to more than the equity/i)).toBeTruthy();
+    expect(screen.getByText(/check the opening balance/i)).toBeTruthy();
+    expect(screen.queryByText(/Set each partner's capital contribution/)).toBeNull();
   });
 
   it("an older entry with a typed name is listed under it and can be linked to a register partner", () => {

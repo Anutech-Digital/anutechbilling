@@ -128,7 +128,11 @@ export function PartnerCapitalBox({ partners, movements, profit, range, sectionT
               <span className="text-ink-2">Not yet split between partners</span>
               <span className="tabular-nums shrink-0">{fmtBS(acc.notSplit)}</span>
             </span>
-            <span className="block text-xs text-ink-3">The CA&apos;s opening figure, hand-entered lines or profit not covered by the ratios. Set each partner&apos;s capital contribution in <Link href={PARTNERS_HREF as never} className="underline">the register</Link>.</span>
+            {acc.notSplit > 0 ? (
+              <span className="block text-xs text-ink-3">The CA&apos;s opening figure, hand-entered lines or profit not covered by the ratios. Set each partner&apos;s capital contribution in <Link href={PARTNERS_HREF as never} className="underline">the register</Link>.</span>
+            ) : (
+              <span className="block text-xs text-ink-3">The partner accounts add up to more than the equity on this Balance Sheet — usually the opening equity is lower than the capital contributions in <Link href={PARTNERS_HREF as never} className="underline">the register</Link>. Check the opening balance with your CA.</span>
+            )}
           </li>
         )}
       </ul>
