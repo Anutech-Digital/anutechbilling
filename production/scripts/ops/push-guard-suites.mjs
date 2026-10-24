@@ -55,6 +55,7 @@ export const PUSH_GUARD_SUITES = [
   "src/components/ui/button-hover.test.tsx",
   "src/lib/ai/autonomy-chokepoint.test.ts",
   "src/lib/ai/gemini-one-door.test.ts", // R-1817: only the scans; gemini.test.ts (~35 s of real retry timers) runs in CI
+  "src/lib/automation/cron-tenant-gate-scan.test.ts", // R-1818: every company-scoped cron asks cronTenantAllowed()
   "src/lib/app-url-fallback.test.ts",
   // R-1592 (18 Oct): repo-wide scans only CI ran — dd34789d (R-1598) broke the R-723 raw-host scan
   // past the push gate and CI stayed red ~2 h.
