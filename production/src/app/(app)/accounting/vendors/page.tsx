@@ -32,7 +32,8 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { useConfirm } from "@/components/providers/confirm-provider";
-import { useVendors, useUpsertVendor, useDeleteVendor, useBillsByVendor, useExpensesByVendor, type Vendor } from "@/lib/queries/vendors";
+import { useVendors, useUpsertVendor, useDeleteVendor, useBillsByVendor, useExpensesByVendor, useVendorPayments, type Vendor } from "@/lib/queries/vendors";
+import { isOpenExpenseBill, expenseBillDue, vendorBalance, balanceWords, type VendorPaymentRow } from "@/lib/accounting/vendor-account";
 import type { VendorBill } from "@/lib/queries/vendor-bills";
 import { BillDetailDialog } from "@/components/features/accounting/bill-detail-dialog";
 import { AddExpenseDialog } from "@/components/features/accounting/add-expense-dialog";
@@ -217,9 +218,10 @@ export default function VendorsPage() {
                         {v.outstanding > 0
                           ? <span className="font-serif text-[15px] font-semibold text-rose">{rupee(v.outstanding)}</span>
                           : <span className="text-emerald">✓</span>}
-                        {v.billCurrency && v.outstanding > 0 && (
+                        {v.billCurrency && v.outstanding > 0 && v.expenseBillsOutstanding === 0 && (
                           <div className="text-xs font-normal text-rose/70">{formatForeignAmount(v.billCurrency, v.foreignOutstanding)}</div>
                         )}
+                        {v.advance > 0 && <div className="text-xs text-emerald">Advance {rupee(v.advance)}</div>}
                       </td>
                       <td className="px-2 py-2.5 align-top" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end">
@@ -255,9 +257,10 @@ export default function VendorsPage() {
                         {v.outstanding > 0
                           ? <span className="font-serif text-lg text-rose">{rupee(v.outstanding, { compact: true })}</span>
                           : <span className="text-emerald text-sm">✓ clear</span>}
-                        {v.billCurrency && v.outstanding > 0 && (
+                        {v.billCurrency && v.outstanding > 0 && v.expenseBillsOutstanding === 0 && (
                           <div className="text-xs text-rose/70">{formatForeignAmount(v.billCurrency, v.foreignOutstanding)}</div>
                         )}
+                        {v.advance > 0 && <div className="text-xs text-emerald">Advance {rupee(v.advance, { compact: true })}</div>}
                       </div>
                     </div>
 
@@ -559,6 +562,7 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
 function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClose: () => void; onEdit: () => void }) {
   const { data: bills, isLoading } = useBillsByVendor(vendor.id);
   const { data: vExpenses } = useExpensesByVendor(vendor.id);
+  const payments = useVendorPayments(vendor.id, bills, vExpenses);
   const [detailBill, setDetailBill] = React.useState<VendorBill | null>(null);
   const [detailExpense, setDetailExpense] = React.useState<ExpenseRow | null>(null);
   const prods = parseSuppliedProducts(vendor.notes);
@@ -581,8 +585,7 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
           </DialogTitle>
           <DialogDescription>
             {vendor.docCount} {vendor.docCount === 1 ? "entry" : "entries"} · {rupee(vendor.totalSpend)}
-            {vendor.billCurrency ? ` (${formatForeignAmount(vendor.billCurrency, vendor.foreignBilled)})` : ""} spent ·{" "}
-            <b className={vendor.outstanding > 0 ? "text-rose" : "text-emerald"}>{vendor.outstanding > 0 ? `${rupee(vendor.outstanding)} due` : "all settled"}</b>
+            {vendor.billCurrency ? ` (${formatForeignAmount(vendor.billCurrency, vendor.foreignBilled)})` : ""} spent
             {vendor.billCount > 0 && vendor.expenseCount > 0 && (
               <span className="text-ink-3"> · {vendor.billCount} COGS bill{vendor.billCount === 1 ? "" : "s"} + {vendor.expenseCount} expense{vendor.expenseCount === 1 ? "" : "s"}</span>
             )}
@@ -593,6 +596,8 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
             )}
           </DialogDescription>
         </DialogHeader>
+
+        <VendorBalanceBox vendor={vendor} />
 
         {/* Supplied Products Portfolio Section */}
         <div className="p-3 bg-paper-2/60 border border-hairline rounded-xl space-y-1.5">
@@ -670,7 +675,11 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
                     </div>
                     <div className="text-right shrink-0">
                       <p className="font-mono text-sm font-semibold text-ink">{fx ? <>{fx} <span className="text-xs font-normal text-ink-3">({rupee(e.amount)})</span></> : rupee(e.amount)}</p>
-                      {e.gst_paid > 0 && (() => { const gfx = foreignAmount(e.currency, e.gst_paid, e.fx_rate); return <p className="text-xs text-emerald">+{gfx ?? rupee(e.gst_paid)} GST{gfx ? ` (${rupee(e.gst_paid)})` : ""}</p>; })()}
+                      {e.gst_paid > 0 && (() => { const gfx = foreignAmount(e.currency, e.gst_paid, e.fx_rate); return <p className="text-xs text-ink-3">incl. {gfx ?? rupee(e.gst_paid)} GST{gfx ? ` (${rupee(e.gst_paid)})` : ""}</p>; })()}
+                      {/* R-1868: an unpaid expense bill is owed, like a COGS bill. */}
+                      {isOpenExpenseBill(e)
+                        ? <p className="text-xs text-rose">{rupee(expenseBillDue(e))} due</p>
+                        : e.paid ? <p className="text-xs text-emerald">paid</p> : null}
                     </div>
                   </li>
                   );
@@ -680,6 +689,7 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
             )}
           </>
           )}
+          {!isLoading && <VendorPaymentsList rows={payments.data} loading={payments.isLoading} error={payments.isError ? payments.error : null} onRetry={() => void payments.refetch()} />}
         </div>
 
         <DialogFooter className="gap-2">
@@ -698,5 +708,72 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
     {detailBill && <BillDetailDialog bill={detailBill} onClose={() => setDetailBill(null)} />}
     {detailExpense && <AddExpenseDialog expense={detailExpense} onClose={() => setDetailExpense(null)} />}
     </>
+  );
+}
+
+/**
+ * R-1868: the vendor's balance in one line — open bills (COGS + unpaid expense bills) less the
+ * advance still with them — and the next step: pay the bills, or use the advance on a bill.
+ */
+function VendorBalanceBox({ vendor }: { vendor: Vendor }) {
+  const b = vendorBalance(vendor.outstanding, vendor.advance);
+  const w = balanceWords(b);
+  const toneCls = w.tone === "rose" ? "text-rose" : w.tone === "emerald" ? "text-emerald" : "text-ink";
+  const split = [
+    vendor.billsOutstanding > 0 ? `COGS bills ${rupee(vendor.billsOutstanding)}` : null,
+    vendor.expenseBillsOutstanding > 0 ? `expense bills ${rupee(vendor.expenseBillsOutstanding)}` : null,
+  ].filter(Boolean).join(" + ");
+  const next = b.advance > 0 && b.bills > 0
+    ? { href: "/accounting/prepaid", label: "Use advance on a bill", icon: "wallet" as const }
+    : b.state === "owe" ? { href: "/accounting/payment-runs", label: "Pay these bills", icon: "rupee" as const }
+    : b.state === "advance" ? { href: "/accounting/prepaid", label: "See the advance", icon: "wallet" as const }
+    : null;
+  return (
+    <section aria-label="Balance" className="rounded-xl border border-hairline bg-paper-2/60 p-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="min-w-0">
+        <p className={`font-serif text-lg font-semibold ${toneCls}`}>{w.headline}</p>
+        {(w.detail || (b.state === "owe" && split)) && <p className="text-xs text-ink-3">{w.detail ?? split}</p>}
+      </div>
+      {next && (
+        <Button asChild size="sm" variant="default" icon={next.icon} className="w-full sm:w-auto">
+          <Link href={next.href as Route}>{next.label}</Link>
+        </Button>
+      )}
+    </section>
+  );
+}
+
+/** R-1868: payments made to the vendor — bank lines (with the TDS withheld) and bills paid outside the bank. */
+function VendorPaymentsList({ rows, loading, error, onRetry }: {
+  rows: VendorPaymentRow[] | undefined; loading: boolean; error: unknown; onRetry: () => void;
+}) {
+  return (
+    <div>
+      <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1 px-1">Payments</p>
+      {loading ? (
+        <Skeleton className="h-10" />
+      ) : error ? (
+        <LoadError what="Payments" error={error} onRetry={onRetry} />
+      ) : (rows ?? []).length === 0 ? (
+        <p className="text-xs text-ink-3 px-1 py-2">No payments to this vendor yet.</p>
+      ) : (
+        <ul className="divide-y divide-hairline">
+          {(rows ?? []).map((p) => (
+            <li key={p.key}>
+              <Link href={p.href as Route} className="flex items-center justify-between gap-3 py-2.5 -mx-1 px-1 rounded-md hover:bg-paper-2/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+                <div className="min-w-0">
+                  <p className="text-sm text-ink truncate">{p.what}</p>
+                  <p className="text-xs text-ink-3 truncate">{formatDate(p.date)} · {p.via}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="font-mono text-sm font-semibold text-ink">{rupee(p.cash)}</p>
+                  {p.tds > 0 && <p className="text-xs text-ink-3">+ TDS {rupee(p.tds)}</p>}
+                </div>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

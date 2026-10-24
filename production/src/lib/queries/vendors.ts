@@ -9,15 +9,26 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
-import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { fetchAllRows, fetchAllRowsIn, type PageQuery } from "@/lib/ops/fetch-all";
 import type { VendorRow, ExpenseRow } from "@/lib/supabase/database.types";
 import type { VendorBill } from "@/lib/queries/vendor-bills";
+import {
+  expenseBillDue, advanceLeft, vendorPaymentRows, NOT_VENDOR_BILL_METHODS,
+  type ExpenseBillLike, type AdvanceLike, type VendorBankLine, type VendorPayLine, type VendorPaymentRow,
+} from "@/lib/accounting/vendor-account";
 
 export type Vendor = VendorRow & {
   /** COGS bills (resale purchases). */
   billCount:   number;
   totalBilled: number;
+  /** R-1868: everything still owed = billsOutstanding + expenseBillsOutstanding. */
   outstanding: number;
+  /** COGS bills still due. */
+  billsOutstanding: number;
+  /** Unpaid expense bills (rent, fees, contractors), less the TDS already on them. */
+  expenseBillsOutstanding: number;
+  /** Advance paid to the vendor, not yet adjusted against a bill (Prepaid). */
+  advance: number;
   /** Operating expenses invoiced by this vendor. */
   expenseCount: number;
   expenseTotal: number;
@@ -34,17 +45,20 @@ export type Vendor = VendorRow & {
 
 // Minimal shapes the rollup needs (keeps the pure fn independent of full rows).
 type RollupBill    = { vendor_id: string | null; total: number | null; paid_amount: number | null; bill_date: string | null; currency?: string | null; fx_rate?: number | null };
-type RollupExpense = { vendor_id: string | null; amount: number | null; expense_date: string | null; currency?: string | null; fx_rate?: number | null };
+type RollupExpense = { vendor_id: string | null; amount: number | null; expense_date: string | null; currency?: string | null; fx_rate?: number | null }
+  & Partial<Pick<ExpenseBillLike, "paid" | "tds_amount" | "reconciled_txn_id" | "category" | "payment_method" | "prepaid_advance_id">>;
+type RollupAdvance = { vendor_id: string | null; vendor_name: string | null } & AdvanceLike;
 
 /**
  * Pure rollup — folds COGS bills + operating expenses into each vendor.
  * A vendor is anyone who invoices us, so their "total spend" spans both.
- * Outstanding stays from COGS bills (expenses are recorded costs, settled via
- * bank reconciliation — no separate payable balance). Exported for unit tests.
+ * R-1868: outstanding = COGS bills still due + unpaid expense BILLS (paid = false, the same rule
+ * as the bank "This payment is for:" step — lib/accounting/vendor-account.ts); `advance` = what
+ * is left of advances paid to the vendor (Prepaid; by vendor id, else by name). Exported for tests.
  */
-export function rollupVendors(vendors: VendorRow[], bills: RollupBill[], expenses: RollupExpense[]): Vendor[] {
-  type Agg = { count: number; total: number; out: number; last: string | null; curs: Set<string>; fBilled: number; fOut: number; expCount: number; expTotal: number };
-  const blank = (): Agg => ({ count: 0, total: 0, out: 0, last: null, curs: new Set<string>(), fBilled: 0, fOut: 0, expCount: 0, expTotal: 0 });
+export function rollupVendors(vendors: VendorRow[], bills: RollupBill[], expenses: RollupExpense[], advances: RollupAdvance[] = []): Vendor[] {
+  type Agg = { count: number; total: number; out: number; expOut: number; adv: number; last: string | null; curs: Set<string>; fBilled: number; fOut: number; expCount: number; expTotal: number };
+  const blank = (): Agg => ({ count: 0, total: 0, out: 0, expOut: 0, adv: 0, last: null, curs: new Set<string>(), fBilled: 0, fOut: 0, expCount: 0, expTotal: 0 });
   const agg = new Map<string, Agg>();
 
   for (const b of bills) {
@@ -65,6 +79,10 @@ export function rollupVendors(vendors: VendorRow[], bills: RollupBill[], expense
     const a = agg.get(e.vendor_id) ?? blank();
     const amt = e.amount ?? 0;
     a.expCount += 1; a.expTotal += amt;
+    if (e.paid === false) a.expOut += expenseBillDue({
+      amount: amt, paid: e.paid, tds_amount: e.tds_amount ?? 0, reconciled_txn_id: e.reconciled_txn_id ?? null,
+      category: e.category ?? null, payment_method: e.payment_method ?? null, prepaid_advance_id: e.prepaid_advance_id ?? null,
+    });
     if (e.expense_date && (!a.last || e.expense_date > a.last)) a.last = e.expense_date;
     const code = (e.currency || "INR").toUpperCase();
     const rate = Number(e.fx_rate) || 1;
@@ -73,12 +91,22 @@ export function rollupVendors(vendors: VendorRow[], bills: RollupBill[], expense
     agg.set(e.vendor_id, a);
   }
 
+  const byName = new Map(vendors.map((v) => [v.name.trim().toLowerCase(), v.id]));
+  for (const p of advances) {
+    const id = p.vendor_id ?? byName.get((p.vendor_name ?? "").trim().toLowerCase());
+    if (!id) continue;
+    const a = agg.get(id) ?? blank();
+    a.adv += advanceLeft(p);
+    agg.set(id, a);
+  }
+
   return vendors.map((v) => {
     const a = agg.get(v.id) ?? blank();
     const billCurrency = a.curs.size === 1 && !a.curs.has("INR") ? [...a.curs][0] : null;
     return {
       ...(v as VendorRow),
-      billCount: a.count, totalBilled: a.total, outstanding: a.out,
+      billCount: a.count, totalBilled: a.total, outstanding: a.out + a.expOut,
+      billsOutstanding: a.out, expenseBillsOutstanding: a.expOut, advance: a.adv,
       expenseCount: a.expCount, expenseTotal: a.expTotal,
       totalSpend: a.total + a.expTotal, docCount: a.count + a.expCount,
       lastBillDate: a.last,
@@ -109,11 +137,18 @@ export function useVendors() {
           .range(from, to));
       const expenses = await fetchAllRows<RollupExpense>((from, to) =>
         supabase
-          .from("expenses").select("vendor_id, amount, expense_date, currency, fx_rate")
+          .from("expenses").select("vendor_id, amount, expense_date, currency, fx_rate, paid, tds_amount, reconciled_txn_id, category, payment_method, prepaid_advance_id")
+          .order("id", { ascending: true })
+          .range(from, to));
+      // R-1868: what is left of advances paid to vendors (Prepaid).
+      const advances = await fetchAllRows<RollupAdvance>((from, to) =>
+        supabase
+          .from("prepaid_advances").select("id, vendor_id, vendor_name, total_amount, consumed_amount, closed_at")
+          .is("closed_at", null)
           .order("id", { ascending: true })
           .range(from, to));
 
-      return rollupVendors(vendors, bills, expenses);
+      return rollupVendors(vendors, bills, expenses, advances);
     },
     staleTime: 30_000,
   });
@@ -134,6 +169,70 @@ export function useExpensesByVendor(vendorId: string | null | undefined) {
         .order("id", { ascending: true })
         .range(from, to))) as ExpenseRow[];
     },
+  });
+}
+
+/**
+ * R-1868: payments made to one vendor — the bank lines reconciled to it (a vendor payment from
+ * the bank step, a COGS bill, an expense bill, an advance) with the TDS withheld, plus expense
+ * bills marked paid without a bank line. Reads the bills / expenses the popup already loaded.
+ */
+export function useVendorPayments(vendorId: string | null | undefined, bills: VendorBill[] | undefined, expenses: ExpenseRow[] | undefined) {
+  return useQuery({
+    queryKey: ["vendor-payments", vendorId, bills?.length ?? -1, expenses?.length ?? -1],
+    enabled: Boolean(vendorId) && bills !== undefined && expenses !== undefined,
+    queryFn: async (): Promise<VendorPaymentRow[]> => {
+      const supabase = createClient();
+      const cols = "id, txn_date, debit, reference, matched_to_type, matched_to_id, bank_account_id";
+      const billIds = (bills ?? []).map((b) => b.id);
+      const expIds = (expenses ?? []).map((e) => e.id);
+      type Prep = { id: string; paid_date: string | null; total_amount: number | null; payment_method: string | null; bank_txn_id: string | null };
+      const prep = await fetchAllRows<Prep>((from, to) => supabase
+        .from("prepaid_advances").select("id, paid_date, total_amount, payment_method, bank_txn_id")
+        .eq("vendor_id", vendorId!).order("id", { ascending: true }).range(from, to));
+      const [direct, byBill, byExp, byPrep, { data: accounts, error: accErr }] = await Promise.all([
+        fetchAllRows<VendorBankLine>((from, to) => supabase.from("bank_transactions").select(cols)
+          /* R-1866's type, not yet in the generated types. */
+          .eq("matched_to_type", "vendor_payment" as never).eq("matched_to_id", vendorId!).order("id", { ascending: true }).range(from, to)),
+        fetchAllRowsIn<VendorBankLine, string>(billIds, (run, from, to) => supabase.from("bank_transactions").select(cols)
+          .eq("matched_to_type", "vendor_bill").in("matched_to_id", run).order("id", { ascending: true }).range(from, to)),
+        fetchAllRowsIn<VendorBankLine, string>(expIds, (run, from, to) => supabase.from("bank_transactions").select(cols)
+          .eq("matched_to_type", "expense").in("matched_to_id", run).order("id", { ascending: true }).range(from, to)),
+        fetchAllRowsIn<VendorBankLine, string>(prep.map((p) => p.id), (run, from, to) => supabase.from("bank_transactions").select(cols)
+          .eq("matched_to_type", "prepaid").in("matched_to_id", run).order("id", { ascending: true }).range(from, to)),
+        supabase.from("bank_accounts").select("id, name"),
+      ]);
+      if (accErr) throw accErr;
+      /* R-1866's table (not yet in the generated types): what each of those bank lines paid. */
+      const paymentLines = await fetchAllRowsIn<VendorPayLine & { prepaid_advance_id: string | null }, string>(direct.map((t) => t.id), (run, from, to) => supabase
+        .from("bank_vendor_payment_lines" as never)
+        .select("id, bank_txn_id, kind, cash, tds_amount, expense_id, vendor_bill_id, prepaid_advance_id")
+        .in("bank_txn_id", run).order("id", { ascending: true }).range(from, to) as unknown as PageQuery<VendorPayLine & { prepaid_advance_id: string | null }>);
+      /* An advance is a payment of its own only when no bank line carries it already. */
+      const advViaBank = new Set<string>([
+        ...byPrep.map((t) => t.matched_to_id ?? ""),
+        ...paymentLines.map((l) => l.prepaid_advance_id ?? ""),
+      ]);
+      const advancesOutsideBank = prep.filter((p) => !p.bank_txn_id && !advViaBank.has(p.id));
+      const docNo = new Map<string, string | null>([
+        ...(bills ?? []).map((b) => [b.id, b.bill_no] as [string, string | null]),
+        ...(expenses ?? []).map((e) => [e.id, e.bill_no] as [string, string | null]),
+      ]);
+      const viaBankExp = new Set(byExp.map((t) => t.matched_to_id));
+      const paidOutsideBank = (expenses ?? []).filter((e) => e.paid && !e.reconciled_txn_id && !viaBankExp.has(e.id)
+        && e.category !== "Salaries" && !NOT_VENDOR_BILL_METHODS.includes(e.payment_method ?? ""));
+      return vendorPaymentRows({
+        bankLines: [...direct, ...byBill, ...byExp, ...byPrep],
+        paymentLines,
+        docNo,
+        paidOutsideBank: paidOutsideBank.map((e) => ({
+          id: e.id, bill_no: e.bill_no, paid_date: e.paid_date ?? e.expense_date, amount: e.amount, tds_amount: e.tds_amount, payment_method: e.payment_method,
+        })),
+        advancesOutsideBank,
+        accounts: new Map((accounts ?? []).map((a) => [a.id, a.name])),
+      });
+    },
+    staleTime: 30_000,
   });
 }
 

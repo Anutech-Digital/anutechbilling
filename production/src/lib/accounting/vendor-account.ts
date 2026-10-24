@@ -1,0 +1,162 @@
+/**
+ * R-1868 (24 Oct 2026, Pardeep — split from R-1866): a vendor's account in one place — what we
+ * still owe (COGS bills + unpaid expense bills), the advance still with them, the net, and the
+ * payments made.
+ *
+ * Before: the Vendors list and popup said "₹X due / all settled" from COGS bills only, so a
+ * vendor with ₹70,800 of unpaid professional-fee bills (expenses, paid = false) showed
+ * "all settled", and an advance paid to a vendor was not shown at all.
+ *
+ * The rules are the ones the bank "This payment is for:" step already uses (R-1866,
+ * supabase/migrations/20261024160000_r1866_bank_debit_vendor.sql → bank_debit_vendor_open_items):
+ * an expense is an open BILL only when it is unpaid, not matched to a bank line, not salary /
+ * payroll / statutory / EMI / an advance booking — so the popup and the bank step never disagree.
+ */
+import { rupee } from "@/lib/utils";
+
+/* ─── Open expense bills ───────────────────────────────────────────────────────────── */
+
+/** payment_method values that mark an expense row as NOT a vendor's bill (R-1866 list). */
+export const NOT_VENDOR_BILL_METHODS: readonly string[] = ["payroll", "statutory", "reimbursement", "emi", "advance", "employee_advance"];
+
+export interface ExpenseBillLike {
+  amount: number | null;
+  paid: boolean | null;
+  tds_amount: number | null;
+  reconciled_txn_id: string | null;
+  category: string | null;
+  payment_method: string | null;
+  prepaid_advance_id: string | null;
+}
+
+export function isOpenExpenseBill(e: ExpenseBillLike): boolean {
+  return e.paid === false
+    && !e.reconciled_txn_id
+    && e.category !== "Salaries"
+    && !NOT_VENDOR_BILL_METHODS.includes(e.payment_method ?? "")
+    && !e.prepaid_advance_id
+    && (e.amount ?? 0) > 0;
+}
+
+/** Cash still owed on an expense bill: its amount less the TDS already recorded on it. */
+export function expenseBillDue(e: ExpenseBillLike): number {
+  return isOpenExpenseBill(e) ? Math.max(0, (e.amount ?? 0) - (e.tds_amount ?? 0)) : 0;
+}
+
+/* ─── Advance ──────────────────────────────────────────────────────────────────────── */
+
+export interface AdvanceLike { total_amount: number | null; consumed_amount: number | null; closed_at: string | null }
+
+/** What is left of an advance (Prepaid): paid less already adjusted against bills. */
+export function advanceLeft(a: AdvanceLike): number {
+  if (a.closed_at) return 0;
+  return Math.max(0, (a.total_amount ?? 0) - (a.consumed_amount ?? 0));
+}
+
+/* ─── Balance ──────────────────────────────────────────────────────────────────────── */
+
+export interface VendorBalance {
+  /** Open bills: COGS bills still due + unpaid expense bills (less TDS on them). */
+  bills: number;
+  /** Advance paid to the vendor, not yet adjusted. */
+  advance: number;
+  /** bills − advance: > 0 we owe, < 0 the vendor holds our money. */
+  net: number;
+  state: "owe" | "advance" | "settled";
+}
+
+export function vendorBalance(billsDue: number, advance: number): VendorBalance {
+  const bills = Math.max(0, Math.round(billsDue || 0));
+  const adv = Math.max(0, Math.round(advance || 0));
+  const net = bills - adv;
+  return { bills, advance: adv, net, state: net > 0 ? "owe" : net < 0 ? "advance" : "settled" };
+}
+
+export function balanceWords(b: VendorBalance): { headline: string; detail: string | null; tone: "rose" | "emerald" | "ink" } {
+  const both = b.bills > 0 && b.advance > 0 ? `Open bills ${rupee(b.bills)} − advance ${rupee(b.advance)}` : null;
+  if (b.state === "owe") return { headline: `You owe ${rupee(b.net)}`, detail: both, tone: "rose" };
+  if (b.state === "advance") return { headline: `Advance with vendor ${rupee(-b.net)}`, detail: both, tone: "emerald" };
+  return { headline: "All settled", detail: both, tone: "ink" };
+}
+
+/* ─── Payments made ────────────────────────────────────────────────────────────────── */
+
+export interface VendorBankLine {
+  id: string; txn_date: string; debit: number; reference: string | null;
+  matched_to_type: string | null; matched_to_id: string | null; bank_account_id: string;
+}
+/** bank_vendor_payment_lines rows (R-1866): what one bank line paid. */
+export interface VendorPayLine {
+  bank_txn_id: string; kind: string; cash: number; tds_amount: number;
+  expense_id: string | null; vendor_bill_id: string | null;
+}
+/** Expense bills marked paid without a bank line (cash, card, paid at entry). */
+export interface PaidOutsideBank {
+  id: string; bill_no: string | null; paid_date: string | null; amount: number; tds_amount: number | null; payment_method: string | null;
+}
+
+export interface VendorPaymentRow {
+  key: string;
+  date: string;
+  /** Money that left us. */
+  cash: number;
+  /** TDS withheld on it (paid to the government for the vendor). */
+  tds: number;
+  /** Bank account, or how it was paid. */
+  via: string;
+  /** What it paid: "Bills KL-201, KL-202", "Advance", … */
+  what: string;
+  href: string;
+}
+
+const billsWord = (nos: string[]) => (nos.length === 0 ? "Vendor payment" : `${nos.length === 1 ? "Bill" : "Bills"} ${nos.join(", ")}`);
+
+export function vendorPaymentRows(i: {
+  bankLines: readonly VendorBankLine[];
+  paymentLines: readonly VendorPayLine[];
+  /** expense / bill id → its bill number. */
+  docNo: ReadonlyMap<string, string | null>;
+  paidOutsideBank: readonly PaidOutsideBank[];
+  /** Advances (Prepaid) paid without a bank line — cash, card. */
+  advancesOutsideBank?: readonly { id: string; paid_date: string | null; total_amount: number | null; payment_method: string | null }[];
+  accounts: ReadonlyMap<string, string>;
+}): VendorPaymentRow[] {
+  const linesOf = new Map<string, VendorPayLine[]>();
+  for (const l of i.paymentLines) linesOf.set(l.bank_txn_id, [...(linesOf.get(l.bank_txn_id) ?? []), l]);
+  const no = (id: string | null) => (id ? i.docNo.get(id) || id : null);
+
+  const rows: VendorPaymentRow[] = i.bankLines.map((t) => {
+    let tds = 0, what = "Vendor payment";
+    if (t.matched_to_type === "vendor_payment") {
+      const ls = linesOf.get(t.id) ?? [];
+      tds = ls.reduce((s, l) => s + (l.tds_amount || 0), 0);
+      const nos = ls.filter((l) => l.kind !== "advance" && l.kind !== "bank_charge").map((l) => no(l.vendor_bill_id ?? l.expense_id)).filter((x): x is string => !!x);
+      const parts = [
+        nos.length ? billsWord(nos) : null,
+        ls.some((l) => l.kind === "advance") ? "advance" : null,
+        ls.some((l) => l.kind === "bank_charge") ? "bank charge" : null,
+      ].filter((x): x is string => !!x);
+      what = parts.length ? parts[0][0].toUpperCase() + parts.join(" + ").slice(1) : "Vendor payment";
+    } else if (t.matched_to_type === "vendor_bill" || t.matched_to_type === "expense") {
+      what = billsWord([no(t.matched_to_id) ?? ""].filter(Boolean));
+    } else if (t.matched_to_type === "prepaid") {
+      what = "Advance";
+    }
+    return {
+      key: `bank:${t.id}`, date: t.txn_date, cash: t.debit, tds, via: i.accounts.get(t.bank_account_id) ?? "Bank",
+      what, href: `/accounting/banking/${encodeURIComponent(t.bank_account_id)}?focus=${encodeURIComponent(t.id)}`,
+    };
+  });
+  for (const e of i.paidOutsideBank) {
+    if (!e.paid_date) continue;
+    rows.push({
+      key: `exp:${e.id}`, date: e.paid_date, cash: Math.max(0, e.amount - (e.tds_amount ?? 0)), tds: e.tds_amount ?? 0,
+      via: e.payment_method || "Paid", what: billsWord([e.bill_no || e.id]), href: `/accounting/expenses?edit=${encodeURIComponent(e.id)}`,
+    });
+  }
+  for (const a of i.advancesOutsideBank ?? []) {
+    if (!a.paid_date || !(a.total_amount && a.total_amount > 0)) continue;
+    rows.push({ key: `adv:${a.id}`, date: a.paid_date, cash: a.total_amount, tds: 0, via: a.payment_method || "Paid", what: "Advance", href: "/accounting/prepaid" });
+  }
+  return rows.sort((a, b) => b.date.localeCompare(a.date) || a.key.localeCompare(b.key));
+}
