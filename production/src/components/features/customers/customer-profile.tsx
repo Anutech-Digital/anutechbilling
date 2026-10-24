@@ -558,6 +558,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
             customerName={c.name}
             autoOpenAdd={addContactAsked}
             onAutoOpenHandled={clearAddContactAsk}
+            recordContact={primaryContact}
           />
 
           {/* R-346: may this customer be activated on credit, and up to how much. */}

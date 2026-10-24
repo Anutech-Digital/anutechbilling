@@ -117,7 +117,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       created_date, expires_date, notes, is_renewal, is_add_seats, is_one_off, is_extension, extension_months, public_token, lead_id,
       domain, renewal_term_date, renewal_subscription_id,
       prospect_state_code, prospect_country, currency, terms_conditions,
-      billing_cycle, exchange_rate, invoice_id,
+      billing_cycle, exchange_rate, invoice_id, payment_terms_days,
       approval_status, approval_tier, approval_requested_by, approved_by,
       approved_discount_bps, approved_margin_bps, approval_rejection_reason
     `)
@@ -333,6 +333,8 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       payLinkUrl:    customerUrl,
       notes:         quote.notes ?? undefined,
       isRenewal:     quote.is_renewal,
+      /* R-1670 (3): the invoice terms this quote will carry, not a fixed "Net 7". */
+      paymentTermsDays: quote.payment_terms_days ?? null,
       oneTime:       isOneTimeQuote({
         isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off,
         isExtension: quote.is_extension, extensionMonths: quote.extension_months,

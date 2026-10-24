@@ -36,6 +36,7 @@ import {
   useSetPrimaryContact, useDeleteCustomerContact,
   CONTACT_ROLES, roleLabel, useContactSearchIndex, type Contact, type ContactRole,
 } from "@/lib/queries/contacts";
+import type { PrimaryContact } from "@/components/features/customers/customer-links";
 
 interface Props {
   customerId: string;
@@ -44,6 +45,12 @@ interface Props {
   autoOpenAdd?: boolean;
   /** Called once the dialog was opened for `autoOpenAdd`, so it does not reopen. */
   onAutoOpenHandled?: () => void;
+  /**
+   * R-1670 (5): the person on the customer record itself (customers.contact_*), from
+   * primaryContactOf — what the header shows when no contact person is saved. Reminders and
+   * renewals do go there, so the card must not say "no contact" over it.
+   */
+  recordContact?: PrimaryContact | null;
 }
 
 type Draft = {
@@ -57,7 +64,7 @@ type Draft = {
 
 const emptyDraft: Draft = { full_name: "", email: "", phone: "", title: "", role: "poc" };
 
-export function CustomerContactsCard({ customerId, customerName, autoOpenAdd, onAutoOpenHandled }: Props) {
+export function CustomerContactsCard({ customerId, customerName, autoOpenAdd, onAutoOpenHandled, recordContact = null }: Props) {
   const { data: contacts, isLoading } = useCustomerContacts(customerId);
   /* How many customers each of these people serves — drives the "Serves N customers"
      chip. Already cached by the Customers and Subscriptions pages. */
@@ -77,6 +84,11 @@ export function CustomerContactsCard({ customerId, customerName, autoOpenAdd, on
     setOpen(true);
     onAutoOpenHandled?.();
   }, [autoOpenAdd, onAutoOpenHandled]);
+  /* R-1670 (5): turn the record's contact into a real contact person, prefilled. */
+  const saveRecordContact = (r: PrimaryContact) => {
+    setDraft({ full_name: r.name, email: r.email ?? "", phone: r.phone ?? "", title: r.title ?? "", role: "poc" });
+    setOpen(true);
+  };
   const startEdit = (c: Contact) => {
     setDraft({
       id: c.id,
@@ -132,7 +144,7 @@ export function CustomerContactsCard({ customerId, customerName, autoOpenAdd, on
           <h3 className="font-semibold text-ink text-sm">Contacts</h3>
           <p className="text-2xs text-ink-3 mt-0.5">
             {rows.length === 0
-              ? "Nobody to contact yet"
+              ? (recordContact ? "On the customer record only" : "Nobody to contact yet")
               : `${rows.length} ${rows.length === 1 ? "person" : "people"} · the primary gets invoices and reminders`}
           </p>
         </div>
@@ -146,7 +158,25 @@ export function CustomerContactsCard({ customerId, customerName, autoOpenAdd, on
       {/* Every customer should have one. If this shows, something upstream let a
           customer through without a contact — say so plainly rather than showing an
           empty box the operator has to interpret. */}
-      {!isLoading && rows.length === 0 && (
+      {!isLoading && rows.length === 0 && recordContact && (
+        <div className="rounded-lg border border-hairline bg-paper-2/40 p-3" data-testid="record-contact">
+          <p className="text-sm font-medium text-ink break-words">
+            {recordContact.name}
+            {recordContact.title && <span className="text-ink-3 font-normal"> · {recordContact.title}</span>}
+          </p>
+          <p className="mt-0.5 text-2xs text-ink-3 break-words">
+            {[recordContact.email, recordContact.phone].filter(Boolean).join(" · ") || "No email or phone yet"}
+          </p>
+          <p className="mt-1.5 text-2xs text-ink-2">
+            Saved on the customer record, not as a contact person. Save it as a contact to give it a role and make it the primary.
+          </p>
+          <Button size="sm" variant="outline" className="mt-2" onClick={() => saveRecordContact(recordContact)}>
+            Save as contact
+          </Button>
+        </div>
+      )}
+
+      {!isLoading && rows.length === 0 && !recordContact && (
         <div className="rounded-lg border border-amber/40 bg-amber-soft/40 p-3">
           <p className="text-xs font-semibold text-amber-ink flex items-center gap-1.5">
             <Icon name="alert" size={14} />

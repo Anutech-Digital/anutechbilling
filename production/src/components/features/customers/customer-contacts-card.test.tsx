@@ -94,6 +94,24 @@ describe("Customer contacts — what is on screen", () => {
     expect(document.body.textContent).toContain("Invoices and payment reminders have nowhere to go");
   });
 
+  it("R-1670 (5): a contact on the customer record (header shows it) is not called 'no contact'", () => {
+    /* T-1 on staging: the header showed the person from customers.contact_* while this card
+       said "This customer has no contact" — reminders DO go there (renewals read contact_email). */
+    render(
+      <CustomerContactsCard
+        customerId="cust1"
+        customerName="Chandan Trading"
+        recordContact={{ name: "Rajesh K", title: null, phone: "+91 98765 43210", email: "rajesh@chandan.in" }}
+      />,
+    );
+    expect(screen.queryByText("This customer has no contact")).toBeNull();
+    expect(document.body.textContent).toContain("Rajesh K");
+    expect(document.body.textContent).toContain("rajesh@chandan.in");
+    /* One click turns it into a real contact person (prefilled), the first → primary. */
+    fireEvent.click(screen.getByRole("button", { name: "Save as contact" }));
+    expect((screen.getByLabelText(/name/i, { selector: "input" }) as HTMLInputElement).value).toBe("Rajesh K");
+  });
+
   it("offers 'Make primary' only on contacts that are not already primary", () => {
     state.contacts = [
       contact(),

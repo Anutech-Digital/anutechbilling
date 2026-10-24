@@ -39,6 +39,8 @@ import { SAAS_HSN } from "@/lib/gst/hsn";
 import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import type { LinePeriodContext } from "@/lib/quotes/service-period";
 import { billOfSupplyDeclarations, billOfSupplyPlace, documentTitle, isBillOfSupply } from "@/lib/invoices/document-kind";
+import { advanceLinesWithTds, advanceMethodLabel } from "@/lib/accounting/tds-receipt";
+import { useTdsByPayments } from "@/lib/queries/tds-receivable";
 
 /** Display-shape for advance rows in the dialog — works for both frozen + live data */
 interface DisplayAdvance {
@@ -228,6 +230,13 @@ export function TaxInvoiceDialog({
       }));
 
   const advancesAdjusted = displayAdvances.reduce((s, a) => s + a.amount, 0);
+  /* R-1670 (2): an advance paid with TDS deducted shows the bank money + the TDS (same total),
+     on screen and in the downloaded PDF — not one gross "Bank transfer" the bank never saw. */
+  const { data: advanceTds = null } = useTdsByPayments(displayAdvances.map((a) => a.id), open);
+  const advanceLines = advanceLinesWithTds(
+    displayAdvances.map((a) => ({ payment_id: a.id, voucher_no: a.voucher_no, received_at: a.received_at, method: a.method, amount: a.amount })),
+    advanceTds,
+  );
   // Prefer frozen net_payable from invoice — guaranteed to match what was issued
   const netPayable       = invoice.net_payable ?? Math.max(0, fTotal - advancesAdjusted);
 
@@ -273,6 +282,8 @@ export function TaxInvoiceDialog({
       tenantLogo: await logoDataUri(me?.tenantLogoUrl),
       /* R-334: LUT ARN for the Rule 46 export endorsement — same source as the server PDF. */
       lutNumber: me?.tenantLutNumber ?? null,
+      /* R-1670 (2): the same TDS split the dialog shows. */
+      advanceTds,
     });
   }
 
@@ -622,13 +633,13 @@ export function TaxInvoiceDialog({
                   </tr>
                 </thead>
                 <tbody>
-                  {displayAdvances.map((a) => (
-                    <tr key={a.id} className="border-b border-emerald/10 last:border-0">
+                  {advanceLines.map((a) => (
+                    <tr key={a.key} className="border-b border-emerald/10 last:border-0">
                       <td className="py-1.5 font-mono text-2xs">
-                        {a.voucher_no ?? <span className="italic text-ink-3">(unnumbered)</span>}
+                        {a.voucherNo ?? (a.method === "tds" ? "" : <span className="italic text-ink-3">(unnumbered)</span>)}
                       </td>
-                      <td className="py-1.5 text-ink-2">{formatDate(a.received_at)}</td>
-                      <td className="py-1.5 text-ink-2 capitalize">{a.method.replace("_", " ")}</td>
+                      <td className="py-1.5 text-ink-2">{formatDate(a.receivedAt)}</td>
+                      <td className="py-1.5 text-ink-2">{advanceMethodLabel(a.method)}</td>
                       <td className="py-1.5 text-right tabular-nums">{money(a.amount)}</td>
                     </tr>
                   ))}

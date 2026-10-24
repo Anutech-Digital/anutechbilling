@@ -10,7 +10,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
-import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
+import { fillTdsInvoiceIds, paymentIdsMissingInvoice } from "@/lib/accounting/tds-invoice-link";
+import { tdsByPayment } from "@/lib/accounting/tds-receipt";
 import type { Database, TdsReceivableRow, TdsStatus } from "@/lib/supabase/database.types";
 import { TDS_RATE_VARIANTS, TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
 import { fyStartYear, fyCodeOfYear, istToday } from "@/lib/dates/ist";
@@ -86,7 +88,7 @@ export function useTdsReceivables(opts?: {
     queryFn: async (): Promise<TdsReceivable[]> => {
       const supabase = createClient();
       // R-1519: paged — "All years" past 1000 entries listed only the newest 1000.
-      return fetchAllRows<TdsReceivable>((from, to) => {
+      const rows = await fetchAllRows<TdsReceivable>((from, to) => {
         let q = supabase
           .from("tds_receivable")
           .select("*")
@@ -99,8 +101,29 @@ export function useTdsReceivables(opts?: {
         if (customerId)                 q = q.eq("customer_id", customerId);
         return q.range(from, to);
       });
+      return linkTdsInvoices(supabase, rows);
     },
   });
+}
+
+/**
+ * R-1670 (1): an entry recorded on a quote before its invoice existed has no invoice_id —
+ * name the invoice raised from that quote (lib/accounting/tds-invoice-link). A failed lookup
+ * leaves the column as stored; it never hides the entries.
+ */
+async function linkTdsInvoices(supabase: ReturnType<typeof createClient>, rows: TdsReceivable[]): Promise<TdsReceivable[]> {
+  const paymentIds = paymentIdsMissingInvoice(rows);
+  if (paymentIds.length === 0) return rows;
+  try {
+    const payments = await fetchAllRowsIn<{ id: string; quote_id: string | null }, string>(paymentIds, (ids, from, to) =>
+      supabase.from("payments").select("id, quote_id").in("id", ids).order("id", { ascending: true }).range(from, to));
+    const quoteIds = payments.map((p) => p.quote_id);
+    const invoices = await fetchAllRowsIn<{ id: string; quote_id: string | null; status: string | null }, string>(quoteIds, (ids, from, to) =>
+      supabase.from("invoices").select("id, quote_id, status").in("quote_id", ids).order("id", { ascending: true }).range(from, to));
+    return fillTdsInvoiceIds(rows, payments, invoices);
+  } catch {
+    return rows;
+  }
 }
 
 /** Status counts + totals — drives the tab badges + KPI strip. */
@@ -449,6 +472,29 @@ export function useTdsForPayment(paymentId: string | null | undefined, enabled =
         .eq("payment_id", paymentId as string);
       if (error) throw error;
       return (data ?? []).reduce((s, r) => s + Math.max(0, r.tds_amount ?? 0), 0);
+    },
+  });
+}
+
+/**
+ * R-1670 (2): TDS per payment id for several payments (an invoice's adjusted advances), so the
+ * tax invoice shows the bank money + the TDS. Reversed rows count, as in useTdsForPayment — the
+ * invoice is frozen as issued. An error leaves the advances as one line each (null).
+ */
+export function useTdsByPayments(paymentIds: readonly string[], enabled = true) {
+  const ids = Array.from(new Set(paymentIds.filter(Boolean))).sort();
+  return useQuery({
+    queryKey: ["tds_receivable", "payments", ids],
+    enabled: enabled && ids.length > 0,
+    queryFn: async (): Promise<Record<string, number> | null> => {
+      const supabase = createClient();
+      try {
+        const rows = await fetchAllRowsIn<{ payment_id: string | null; tds_amount: number | null }, string>(ids, (chunk, from, to) =>
+          supabase.from("tds_receivable").select("payment_id, tds_amount").in("payment_id", chunk).order("id", { ascending: true }).range(from, to));
+        return tdsByPayment(rows);
+      } catch {
+        return null;
+      }
     },
   });
 }
