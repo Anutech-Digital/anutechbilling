@@ -16,7 +16,6 @@
 --   · ~60 policies and ~190 functions still read auth.uid() / auth.role() directly, which is
 --     NULL for an app_runtime connection (no JWT) — e.g. current_user_has_role(), so the
 --     Marketing budget and Cold calling policies refused every row.
--- Local passwords are all "localdev", same as db/local/build.sh.
 --
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
 --     < production/db/local/supabase-stack-runtime.sql
@@ -39,10 +38,19 @@ do $$ begin
   end if;
 end $$;
 
-alter role app_runtime with password 'localdev';
-alter role app_jobs    with password 'localdev';
-alter role app_anon    with password 'localdev';
-alter role app_service with password 'localdev';
+-- The password is not in git (R-059): dev:local derives one from THIS machine's local stack and
+-- hands it over as the session setting r1837.local_pw. Run by hand without it, the logins keep
+-- whatever password they had.
+do $$
+declare pw text := nullif(current_setting('r1837.local_pw', true), '');
+begin
+  if pw is not null then
+    execute format('alter role app_runtime with password %L', pw);
+    execute format('alter role app_jobs    with password %L', pw);
+    execute format('alter role app_anon    with password %L', pw);
+    execute format('alter role app_service with password %L', pw);
+  end if;
+end $$;
 
 grant authenticated to app_runtime, app_jobs;
 grant anon to app_anon;
