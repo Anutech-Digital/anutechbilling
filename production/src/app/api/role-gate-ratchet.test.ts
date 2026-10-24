@@ -71,6 +71,11 @@ const ROLE_GATE = new RegExp([
   // R-1776: every Cold Calling route starts with coldCallContext() (src/server/coldcall/route-context.ts),
   // which returns 403 unless the users row's role is in COLD_CALL_ROLES — fail-closed, like mayOpenPage.
   String.raw`\bcoldCallContext\s*\(`,
+  // R-1792 (merged 24 Oct 2026): every Marketing budget route starts with budgetContext()
+  // (src/server/marketing-budget/budget.server.ts) — 403 unless the users row's role is in
+  // BUDGET_ROLES (owner, marketing, billing, accountant); who may approve / pay is then checked
+  // per route (canApproveBudget / canPay / canAskBudget) and again by the DB triggers.
+  String.raw`\bbudgetContext\s*\(`,
 ].join("|"));
 
 /** Anonymous or self-service by design — a session is not what bounds these. Each says why. */

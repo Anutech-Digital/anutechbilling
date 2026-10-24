@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { getTenantSession } from "@/server/auth/session";
 import { withTenant, type TenantSession, type Tx } from "@/server/db";
 import { notifyPeople } from "@/lib/notifications/notify.server";
+import { rupee } from "@/lib/utils";
 import {
   BUDGET_ROLES, budgetLeft, budgetPaid, channelLabel, expenseFor, type BudgetChannel,
 } from "@/lib/marketing-budget/budget";
@@ -107,7 +108,7 @@ function refused(err: unknown, fallback: string): Refusal {
   return { ok: false, status: 500, error: fallback, detail: "Try again in a moment." };
 }
 
-const rupees = (n: number) => `₹${n.toLocaleString("en-IN")}`;
+const rupees = (n: number) => rupee(n);
 const monthName = (d: Date) => d.toLocaleDateString("en-IN", { month: "short", year: "numeric", timeZone: "UTC" });
 
 export async function askBudget(ctx: BudgetContext, input: {
