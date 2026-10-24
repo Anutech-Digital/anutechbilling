@@ -4,6 +4,8 @@ import { DOMAIN_FAQS, domainOfferCatalog } from "@/site/lib/data/domains-landing
 import { getSiteTldPrices } from "@/site/lib/live-tld-pricing";
 import { SITE_URL } from "@/site/lib/config";
 import { FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
+import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
+import { websiteTenantId } from "@/lib/website-tenant";
 
 /**
  * /domains — the conversion redesign ("Domain hosting improvement strategy",
@@ -34,13 +36,17 @@ export const metadata: Metadata = {
 };
 
 /* ISR: the rate table, result card and JSON-LD read the live registry prices (10-min cache,
-   last good kept on a failed read — site/lib/live-tld-pricing.ts); availability runs client-side. */
-export const revalidate = 600;
+   last good kept on a failed read — site/lib/live-tld-pricing.ts); availability runs client-side.
+   R-1797: the page itself every 60 s, like /hosting and /ssl, so a hosting or mailbox price
+   edited on the Items page shows here within a minute (the registry read keeps its own cache). */
+export const revalidate = 60;
 
 export default async function DomainsPage() {
   /* R-1599: every domain price on this page — table, result card, JSON-LD — is the live
      price the checkout charges. Never TLDS' placeholders. */
-  const tlds = await getSiteTldPrices();
+  /* R-1786: the hosting plans and mailbox in the result card from the price book (items rows
+     with CATALOG_FROM_DB on) — the same figures checkout charges. */
+  const [tlds, book] = await Promise.all([getSiteTldPrices(), getPriceBook(websiteTenantId())]);
   const offers = domainOfferCatalog(tlds);
   const cheapest = offers ? (offers.lowPrice as number) : null;
 
@@ -80,7 +86,7 @@ export default async function DomainsPage() {
         // eslint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
-      <DomainLanding tlds={tlds} />
+      <DomainLanding tlds={tlds} tiers={book.tiers} mailboxYearly={book.mailboxYearly} />
       <span hidden>{`${cheapest != null ? `Domains from ₹${cheapest} + GST; a` : "A"} ${FREE_DOMAIN_TLDS_LABEL} is ₹0 for the first year with yearly hosting.`}</span>
     </>
   );

@@ -11,7 +11,7 @@
  * Purana per-row hisaab src/lib/accounting/reports-reference.ts me oracle ke roop me hai;
  * tests/parity/reports-parity.test.ts dono ko ek hi fixture par milata hai.
  */
-import { buildPnl, type PnlPeriod, type VendorInput } from "@/lib/accounting/pnl";
+import { buildPnl, vendorOfCogsCategory, type PnlPeriod, type VendorInput } from "@/lib/accounting/pnl";
 import { buildExpenseReport, type ExpenseReport } from "@/lib/accounting/expense-report";
 import { splitItc } from "@/lib/gst/itc";
 import { splitBillGroups, type BillItcGroup } from "@/lib/gst/bill-itc";
@@ -82,6 +82,9 @@ export interface PnlRpcRow {
   itc_groups: { bill_type: string | null; category: string | null; vendorGstin: string | null; gst_paid: number; n: number }[];
   /** R-1576: the COGS bills grouped for the ITC rule (lib/gst/bill-itc.ts). Absent before that migration. */
   bill_itc_groups?: BillItcGroup[] | null;
+  /** R-1645: COGS bills per category (pre-GST subtotal). Absent before that migration — then the
+   *  P&L keeps the old rule (any bill switches the whole licence estimate off). */
+  cogs_by_category?: { category: string | null; subtotal: number; n: number }[] | null;
   unassigned_by_category: { category: string | null; amount: number }[];
   project_expenses: {
     project_id: string; amount: number; category: string | null; expense_date: string | null;
@@ -100,6 +103,33 @@ export interface PnlMasters {
   employeeNames: Map<string, string>;
   /** R-1578: the fixed-asset register. Absent = no depreciation line (₹0). */
   assets?: readonly AssetLike[];
+}
+
+/**
+ * R-1645: billed licence cost per subscription vendor — each COGS category's subtotal plus the
+ * GST on those bills that is not credit (R-1576, same rule as `cogs` below). Null when the
+ * database has no per-category split yet.
+ */
+export function billedByVendor(r: Pick<PnlRpcRow, "cogs_by_category" | "bill_itc_groups">): Record<string, number> | null {
+  if (!Array.isArray(r.cogs_by_category)) return null;
+  const groups = Array.isArray(r.bill_itc_groups) ? r.bill_itc_groups : [];
+  const out: Record<string, number> = {};
+  for (const c of r.cogs_by_category) {
+    const vendor = vendorOfCogsCategory(c.category);
+    if (!vendor) continue;
+    const blocked = splitBillGroups(groups.filter((g) => g.category === c.category)).blocked;
+    out[vendor] = (out[vendor] ?? 0) + Number(c.subtotal) + blocked;
+  }
+  return out;
+}
+
+/**
+ * R-1646: THE profit of a period — what the P&L headline shows, what the Balance Sheet carries
+ * as retained earnings and what the Trial Balance's income − expenses come to. `model` (with the
+ * licence-cost estimate, marked) when it can be stated; the flat figure when the cost is unknown.
+ */
+export function reportProfit(p: Pick<PnLNumbers, "model" | "netProfit">): number {
+  return p.model.netProfit ?? p.netProfit;
 }
 
 export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m: PnlMasters): PnLNumbers {
@@ -170,8 +200,11 @@ export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m
     revenue,
     expenses: expensesTotal + commissions + depreciation,
     billedCogs: cogs > 0 ? cogs : null,
+    billedByVendor: billedByVendor(r),
     vendors: m.vendors,
     projectCost: projectCost.total,
+    /* R-1649: salaries this role cannot read → the project cost is hidden, never ₹0. */
+    projectCostHidden: projectCost.salaryHidden > 0,
     projectRevenue,
   });
 

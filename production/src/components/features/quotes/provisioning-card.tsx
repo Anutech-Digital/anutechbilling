@@ -28,6 +28,8 @@ import { createClient } from "@/lib/supabase/client";
 import { stampPaymentDomain } from "@/lib/payments/after-payment-fill";
 import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
+import { useQuote } from "@/lib/queries/quotes";
+import { quotePaymentState, partPaidLine, type QuoteMoneyState } from "@/lib/quotes/quote-payment-state";
 
 /**
  * R-1730 — should the "Setting up" card ask for the customer's domain? Record payment no longer
@@ -46,6 +48,23 @@ export function needsDomainSetup(args: {
   if (quoteDomain?.trim()) return false;
   if (tasks.some((t) => t.domain?.trim())) return false;
   return !planItems.some((i) => i.domain?.trim());
+}
+
+/**
+ * R-1689 — the first line of the "Setting up" box, from the quote's MONEY (R-1710's
+ * quotePaymentState), never assumed. The set-up task is also raised when a quote is activated
+ * before payment ("Activate now, pay later" / credit), and the box said "This quote is paid."
+ * on Q-F588-27-0018 while nothing had come in. `money` null = the quote is not read yet: no
+ * claim about payment at all.
+ */
+export function setupBoxLine(money: Pick<QuoteMoneyState, "state" | "received" | "due"> | null, productCount: number): string {
+  const what = productCount > 0
+    ? `${productCount} ${productCount === 1 ? "product" : "products"} to set up.`
+    : "Nothing on it looks like a product that needs setting up.";
+  if (!money) return what;
+  if (money.state === "paid") return `This quote is paid. ${what}`;
+  if (money.state === "part-paid") return `Part paid — ${partPaidLine(money)}. ${what}`;
+  return `Not paid yet — set up before payment. ${what}`;
 }
 
 /** R-1730: the domain field on the card — saves to the quote's subscription, customer and task. */
@@ -105,6 +124,9 @@ export function ProvisioningCard({ tasks, quoteId, tenantId, lines, quoteDomain,
 }) {
   const expand = useExpandProvisioning();
   const update = useUpdateProvisioning();
+  /* R-1689: the quote's money state — the same cached read as the quote page (["quotes", id]). */
+  const { data: quote } = useQuote(quoteId);
+  const money = quote ? quotePaymentState(quote) : null;
 
   /* The trigger's unresolved row: raised on payment, not yet turned into per-line
      work. Recognised by having no vendor. */
@@ -142,9 +164,7 @@ export function ProvisioningCard({ tasks, quoteId, tenantId, lines, quoteDomain,
       {placeholder && (
         <div className="rounded-lg border border-hairline bg-paper p-3">
           <p className="text-sm text-ink">
-            This quote is paid. {plan.items.length > 0
-              ? `${plan.items.length} ${plan.items.length === 1 ? "product" : "products"} to set up.`
-              : "Nothing on it looks like a product that needs setting up."}
+            {setupBoxLine(money, plan.items.length)}
           </p>
           {plan.skipped.length > 0 && (
             <ul className="mt-2 space-y-0.5">

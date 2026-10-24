@@ -25,6 +25,8 @@ import { extensionTitle, isOneTimeQuote, quoteServicePeriod, servicePeriodText }
 import { loadQuotePeriodContext } from "@/lib/quotes/line-period-context";
 import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import { QuoteReplaced, replacementHref } from "./replaced";
+import { shownQuoteStatus } from "@/lib/quotes/quote-expiry";
+import { notifyQuoteExpired } from "@/lib/notifications/quote-expired.server";
 import { isBotUserAgent } from "@/lib/quotes/quote-intent";
 import { maybeAlertHotLead, recordQuoteView } from "@/lib/quotes/quote-views.server";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
@@ -139,6 +141,13 @@ export default async function QuoteAcceptPage(props: Props) {
      Not gated by the autonomy dial: this is the app talking to OUR OWN desk, the same
      exemption the SLA breach alert has and the same reason `compliance.send` was removed from
      the registry — the dial must never be able to silence what the app says to us. */
+  /* R-1679: a customer opening an EXPIRED quote is a customer who still wants it — sales hears. */
+  if (!isBotUserAgent(ua) && shownQuoteStatus(quote) === "expired") {
+    await notifyQuoteExpired({
+      admin: supabase, tenantId: quote.tenant_id, quoteId: quote.id,
+      customerName: quote.customer_name ?? "", event: "opened",
+    });
+  }
   if (!isBotUserAgent(ua)) {
     await maybeAlertHotLead({
       admin: supabase,
@@ -168,7 +177,9 @@ export default async function QuoteAcceptPage(props: Props) {
   // the display fields; cost/margin are dropped.
   const publicQuote: PublicQuote = {
     id: quote.id,
-    status: quote.status,
+    /* R-1679: a sent / viewed quote past its validity is shown as expired — the page then offers
+       "Request a fresh quote", never an Accept button the server would refuse (quote-expiry.ts). */
+    status: shownQuoteStatus(quote),
     customer_name: quote.customer_name,
     subtotal: quote.subtotal,
     discount_pct: quote.discount_pct,

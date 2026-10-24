@@ -232,7 +232,7 @@ describe("Remove import", () => {
 
   it("a refusal from the database is shown in the dialog, not swallowed", async () => {
     history = [pdf];
-    mutateAsync.mockRejectedValueOnce({ message: "Is import ki 2 lines (pehli 02 Aug 2026 ki) band books me hain — books 31 Aug 2026 tak lock hain. Owner Accounting → Month-end close par lock kholein, phir import hatao." });
+    mutateAsync.mockRejectedValueOnce({ message: "2 of this import's lines (the first dated 02 Aug 2026) are in closed books — the books are locked up to 31 Aug 2026. Ask the owner to unlock them in Accounting → Month-end close, then remove the import." });
     renderSection();
     expand();
     fireEvent.click(screen.getByRole("button", { name: /Remove import/ }));

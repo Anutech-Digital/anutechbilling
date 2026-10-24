@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { attachPrimaryContact } from "@/lib/contacts/attach";
+import { searchableColumns } from "@/lib/contacts/search-columns";
 import { requireTenantId } from "@/lib/queries/require-tenant";
 import type { Customer, Database } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
@@ -90,6 +91,8 @@ export interface CustomerPageFilters {
   archived: boolean;
   /** Customers whose PEOPLE match the search (contact link table) — they match too. */
   contactIds?: readonly string[] | null;
+  /** R-1821: a role that sees masked contacts — the search skips contact_email / contact_phone. */
+  hideContacts?: boolean;
 }
 
 /**
@@ -102,11 +105,12 @@ export interface CustomerPageFilters {
  * escaped (an escape inside a quoted or-value is itself unescaped by PostgREST, so it is
  * not dependable). `_` stays — it can only widen a match, never hide a row.
  */
-export function customerSearchOr(search: string, contactIds?: readonly string[] | null): string | null {
+export function customerSearchOr(search: string, contactIds?: readonly string[] | null, hideContacts = false): string | null {
   const s = search.trim().toLowerCase().replace(/[%*"\\]/g, "");
   if (!s) return null;
   const pat = `"%${s}%"`;
-  const parts: string[] = CUSTOMER_SEARCH_COLUMNS.map((c) => `${c}.ilike.${pat}`);
+  /* R-1821: the gateway refuses a phone / email filter from a role that sees them masked. */
+  const parts: string[] = searchableColumns(CUSTOMER_SEARCH_COLUMNS, hideContacts).map((c) => `${c}.ilike.${pat}`);
   const ids = [...new Set(contactIds ?? [])];
   if (ids.length > 0) parts.push(`id.in.(${ids.join(",")})`);
   return parts.join(",");
@@ -125,7 +129,7 @@ export async function fetchCustomersPage(
 ): Promise<CustomerPage> {
   let q = supabase.from("customers").select(CUSTOMER_COLUMNS, { count: "exact" });
   q = f.archived ? q.eq("is_active", false) : q.not("is_active", "is", false);
-  const or = customerSearchOr(f.search, f.contactIds);
+  const or = customerSearchOr(f.search, f.contactIds, f.hideContacts);
   if (or) q = q.or(or);
   const { data, error, count } = await q
     .order("created_at", { ascending: false, nullsFirst: false })
@@ -151,6 +155,7 @@ export function useCustomersPaged(f: CustomerPageFilters, opts: { enabled?: bool
     search: f.search.trim().toLowerCase(),
     archived: f.archived,
     contactIds: [...new Set(f.contactIds ?? [])].sort(),
+    hideContacts: Boolean(f.hideContacts),
   };
   const q = useInfiniteQuery({
     /* Under ["customers"], so every customer mutation's invalidation reaches it. */

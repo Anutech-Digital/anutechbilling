@@ -34,6 +34,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { cn, formatDate, rupee } from "@/lib/utils";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { useUrlState } from "@/lib/hooks/use-url-state";
@@ -58,6 +59,7 @@ import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { ReplyComposer } from "@/components/features/enquiries/reply-composer";
 import { FolderChips, AddLeadButton, SetUpEmailButton } from "./mobile-folders";
+import { useReadOnOpen } from "./read-on-open";
 import { inboxListView } from "@/lib/inbound/list-load-state";
 import { dialable } from "@/lib/leads/call-queue";
 import type { InboundEmailRow } from "@/lib/supabase/database.types";
@@ -314,16 +316,14 @@ export default function EnquiriesPage() {
     return merged;
   }, [selectedThread, catalogue]);
 
-  /* Opening a conversation marks its unread messages read — all of them, the way a
-     mail client does. An effect on the selection rather than the click handler, so
-     it also fires when the selection survives a list change. */
-  React.useEffect(() => {
-    if (!selectedThread) return;
-    for (const m of selectedThread.messages) {
-      if (m.read_at == null) setState.mutate({ id: m.id, read: true });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedThread?.key]);
+  /* R-1125: a conversation is marked read (all its messages, the way a mail client does)
+     when it stays open 2s or is clicked — not the moment j/k passes over it. "Mark unread"
+     in the toolbar puts the dot back. */
+  const markOne = React.useCallback(
+    (id: string, read: boolean) => setState.mutate({ id, read }),
+    [setState],
+  );
+  const { markRead, markUnread } = useReadOnOpen(selectedThread, markOne);
 
   /* A folder change drops the selection: keeping it would leave the reading pane
      showing an email that is no longer in the list beside it. */
@@ -539,7 +539,7 @@ export default function EnquiriesPage() {
                 <EmptyState
                   icon="alert"
                   title="Could not load your enquiries"
-                  body={(error as Error).message}
+                  body={loadErrorBody(error)}
                   action={<Button size="sm" onClick={() => refetch()}>Try again</Button>}
                 />
               </div>
@@ -607,7 +607,7 @@ export default function EnquiriesPage() {
 
                         <button
                           type="button"
-                          onClick={() => setSelectedId(e.id)}
+                          onClick={() => { setSelectedId(e.id); markRead(t); }}
                           className="min-w-0 flex-1 text-left"
                         >
                           <div className="flex items-baseline justify-between gap-2">
@@ -871,6 +871,19 @@ export default function EnquiriesPage() {
                 >
                   {selected.starred ? "★ Starred" : "☆ Star"}
                 </Button>
+
+                {selectedThread && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      markUnread(selectedThread);
+                      toast.success("Marked unread — it keeps its dot in the list until you open it again.");
+                    }}
+                  >
+                    ● Mark unread
+                  </Button>
+                )}
 
                 <div className="relative">
                   <Button size="sm" variant="ghost" onClick={() => setSnoozeOpen((v) => !v)}>

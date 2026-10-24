@@ -60,6 +60,8 @@ const SQL_NOT_SALE: Record<string, string> = {
   split_outstanding_for: "per quote",
   suggest_invoice_write_off: "open balances",
   suspend_subscription: "per subscription",
+  cancel_subscription: "R-1711: what one subscription's open invoices still ask for, so a cancel never clears it (no money column changes on invoices)",
+  write_off_subscription: "R-1635: stamps one subscription's open invoices written off (no money column changes)",
   sync_project_invoice_paid: "project receipts",
   tg_payment_followups_same_tenant: "tenant check",
   tg_quotes_add_seats_take_back: "per quote",
@@ -133,9 +135,12 @@ const TS_SALE = new Set([
   "src/lib/queries/month-close.ts",                               // month's output GST
 ]);
 const TS_NOT_SALE: Record<string, string> = {
+  "src/lib/exports/read-rows.server.ts": "R-1007: the invoice-register CSV lists every invoice the user ticked or can see (opening ones too, as the Invoices screen does) — not GST or revenue",
   "src/lib/integrations/zoho-books/import-store.ts": "R-1753: Zoho numbers already imported as opening invoices (so a second import skips them)",
   "src/app/(app)/accounting/aging/read.ts": "aging of open balances — includes opening invoices on purpose",
   "src/app/(app)/invoices/[id]/page.tsx": "one invoice; an opening invoice gets its own view",
+  "src/app/(app)/quotes/[id]/invoice-created-at.ts": "R-1715: one invoice's created_at by id, for the quote's workflow history time — not a list or a total",
+  "src/app/(app)/online-orders/page.tsx":"R-1120: the order quote's own invoice by id (taxable, GST, split) for the drawer — not a list or a total",
   "src/app/api/cron/billing/route.ts": "raises our subscription invoices",
   "src/app/api/cron/invoice-dunning/route.ts": "reminders on open balances — includes opening invoices",
   "src/app/api/invoices/[id]/pdf-link/route.ts": "refuses an opening invoice (isOpeningInvoice)",
@@ -163,8 +168,10 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/lib/queries/collections.ts": "open balances",
   "src/lib/queries/deal-history.ts": "invoices of a quote",
   "src/lib/queries/invoices.ts": "invoice list (badge shows imported ones)",
+  "src/lib/queries/palette-search.ts": "Ctrl+K lookup by number or name (R-1121) — imported ones are findable too",
   "src/lib/queries/payments.ts": "open invoices to pay",
   "src/lib/queries/subscriptions.ts": "a subscription's invoice status",
+  "src/lib/queries/tds-receivable.ts": "R-1670: the invoice number raised from a TDS entry's quote (a label on the row) — not GST or revenue",
   "src/lib/import/zoho-opening-invoices.queries.ts": "Zoho numbers already imported",
   "src/components/features/invoices/opening-invoice-dues-card.tsx": "balances on imported Zoho invoices (dues)",
 };

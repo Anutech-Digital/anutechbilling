@@ -11,6 +11,7 @@ import { withRoute } from "@/lib/api/with-route";
 import { MONEY_RECORD_ROLES } from "@/lib/auth/roles";
 import { requestFiData, fetchFiData } from "@/lib/aa/setu";
 import { refuseWithoutMfa } from "@/lib/aa/require-mfa";
+import { istToday, toIstDate } from "@/lib/dates/ist";
 
 export const runtime = "nodejs";
 
@@ -45,9 +46,9 @@ export const POST = withRoute({
   }
 
   // Request + fetch
-  const today    = new Date().toISOString().slice(0, 10);
+  const today    = istToday();   // R-1653: IST day, not the UTC one
   const fromDate: string = conn.last_fetch_at
-    ? new Date(conn.last_fetch_at).toISOString().slice(0, 10)
+    ? toIstDate(conn.last_fetch_at)
     : (conn.fetch_window_from ?? today);
 
   const session = await requestFiData({

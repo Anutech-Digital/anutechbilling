@@ -50,6 +50,7 @@ import type {
 } from "@/lib/supabase/database.types";
 
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
+import { advanceLinesWithTds, advanceMethodLabel } from "@/lib/accounting/tds-receipt";
 
 /* Styles ke BANNE se pehle. `StyleSheet.create` ab hi chal jata hai, aur `PDF_FONT`
    ek `let` hai — baad me register karne par style purani value pakde rehti. */
@@ -130,6 +131,13 @@ export interface InvoicePDFProps {
    * account to send it to and naming a gateway that might not exist.
    */
   payMethods?:   PayMethods | null;
+
+  /**
+   * R-1670 (2). TDS the customer deducted, per adjusted advance (payment id → ₹), from
+   * tds_receivable. An advance with TDS prints as the bank money plus a "TDS deducted by
+   * customer" line; absent → each advance prints as one line, as before.
+   */
+  advanceTds?:   Readonly<Record<string, number>> | null;
 }
 
 // ─── Styles (shared shape with QuotePDF) ──────────────────────────────────
@@ -462,7 +470,7 @@ export function InvoicePDF(props: InvoicePDFProps) {
     currency, exchangeRate, fxSource = null, fxDate = null, termsConditions,
     tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress, tenantState, tenantLogo,
     lutNumber = null, udyamNumber = null,
-    upiQrDataUrl, upiVpa, payMethods = null,
+    upiQrDataUrl, upiVpa, payMethods = null, advanceTds = null,
   } = props;
 
   /* R-046: one definition of the CGST/SGST split, shared with the GSTR-1 return.
@@ -509,6 +517,8 @@ export function InvoicePDF(props: InvoicePDFProps) {
 
   const advances: InvoiceAdvanceAdjustment[] = invoice.adjusted_advances ?? [];
   const advancesTotal = advances.reduce((acc, a) => acc + a.amount, 0);
+  /* R-1670 (2): an advance paid with TDS → bank money + a TDS line (same total). */
+  const advanceLines = advanceLinesWithTds(advances, advanceTds);
   const netPayable    = invoice.net_payable ?? Math.max(0, total - advancesTotal);
   /* Settled → "Paid on" instead of a due date (3 Oct 2026; invoice-display.ts). Anything still
      owed keeps its due date. */
@@ -734,15 +744,15 @@ export function InvoicePDF(props: InvoicePDFProps) {
     broken glyph here on every invoice with an adjusted advance — found in the same
     audit as the rupee sign, one line below it on the page. */}
             <Text style={s.advHeader}>Advances adjusted against this invoice</Text>
-            {advances.map((adv, i) => (
+            {advanceLines.map((line, i) => (
               <View
-                key={`${adv.payment_id}-${i}`}
-                style={i === advances.length - 1 ? s.advRowLast : s.advRow}
+                key={line.key}
+                style={i === advanceLines.length - 1 ? s.advRowLast : s.advRow}
               >
-                <Text style={s.advVoucher}>{adv.voucher_no ?? "—"}</Text>
-                <Text style={s.advDate}>{formatDate(adv.received_at)}</Text>
-                <Text style={s.advMethod}>{adv.method.toUpperCase()}</Text>
-                <Text style={s.advAmount}>{money(adv.amount)}</Text>
+                <Text style={s.advVoucher}>{line.voucherNo ?? (line.method === "tds" ? "" : "—")}</Text>
+                <Text style={s.advDate}>{formatDate(line.receivedAt)}</Text>
+                <Text style={s.advMethod}>{advanceMethodLabel(line.method)}</Text>
+                <Text style={s.advAmount}>{money(line.amount)}</Text>
               </View>
             ))}
             <View style={s.advTotal}>

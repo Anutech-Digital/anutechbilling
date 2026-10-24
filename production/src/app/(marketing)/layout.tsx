@@ -46,20 +46,26 @@ import { UtilityBar, CtaBand, Footer, ConsentBanner } from "@/site/components/ch
 import { AgentChat } from "@/site/components/agent/AgentChat";
 import { SitePreviewBar } from "@/site/components/chrome/SitePreviewBar";
 import { emailFromRate, fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
+import { bookMailboxMonthly } from "@/lib/catalog/catalog-prices";
+import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
+import { websiteTenantId } from "@/lib/website-tenant";
 import { getSiteTldPrices } from "@/site/lib/live-tld-pricing";
 import { domainTeaser } from "@/site/lib/data/domain-teaser";
+import { domainRenewals } from "@/site/lib/renewal-line";
 
 
 export default async function MarketingLayout({ children }: { children: React.ReactNode }) {
   /* R-076: the header's "Mailboxes from ₹…" teaser reads the live catalogue (10-min cache,
      typed fallback if the app is unreachable) — the same figure the home page shows. */
-  const [workspace, tlds] = await Promise.all([fetchLiveWorkspace(), getSiteTldPrices()]);
-  const emailFrom = emailFromRate(mergeEditions(workspace));
+  /* R-1797: the Anutech Mail mailbox in that teaser from the price book (60 s cache). */
+  const [workspace, tlds, book] = await Promise.all([fetchLiveWorkspace(), getSiteTldPrices(), getPriceBook(websiteTenantId())]);
+  const emailFrom = emailFromRate(mergeEditions(workspace), bookMailboxMonthly(book));
   /* R-1599: the Domains menu teaser is the live .in price (same 10-min cache), never TLDS. */
   const domains = domainTeaser(tlds);
   return (
     <div className={`anutech-site ${archivo.variable} ${plexMono.variable}`}>
-      <CartProvider>
+      {/* R-1628: what each domain renews at, for the cart page and checkout — the same live rate card. */}
+      <CartProvider domainRenewals={domainRenewals(tlds)}>
         <a href="#main" className="skip-link">Skip to content</a>
         {/* R-1508: signed-in team member previewing the site — Back to dashboard + Report a problem. */}
         <SitePreviewBar />

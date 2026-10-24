@@ -12,7 +12,7 @@
  *   · the Trial Balance shows cost, accumulated depreciation and the year's Depreciation, and
  *     turning the expense into an asset does not move its Difference line.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterAll } from "vitest";
 import { assemblePnl, type PnlRpcRow, type PnlMasters } from "./pnl-assemble";
 import { balanceSheetFromRpc, type BalanceSheetRpcRow } from "./report-rpc";
 import { buildTrialBalance } from "./trial-balance";
@@ -57,6 +57,13 @@ function bsRow(asOf: string, assets: (AssetLike & { emi_purchase_id: string | nu
 /* Laptop put to use 5 Oct 2026 → 178 days to 31 Mar 2027 (< 180) → half of 40% = 20% →
    ₹24,000 for FY 2026-27, spread over those 178 days. 5–31 Oct = 27 days → 24,000 × 27/178. */
 const OCT_DEP = Math.round((24_000 * 27) / 178);   // 3,640
+
+/* R-1808: depreciation stops at today (IST). These cases read a whole FY (2026-27) as a year
+   already over, so the clock is pinned after it (at load: some cases compute while the
+   describe is collected) — only Date is faked. */
+vi.useFakeTimers({ toFake: ["Date"] });
+vi.setSystemTime(new Date("2028-04-10T06:00:00Z"));
+afterAll(() => { vi.useRealTimers(); });
 
 describe("R-1578 — capitalised expense + depreciation through P&L, Balance Sheet, Trial Balance", () => {
   it("the register's charge for FY 2026-27 is ₹24,000 (half rate, under 180 days)", () => {

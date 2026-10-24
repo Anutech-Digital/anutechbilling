@@ -233,6 +233,7 @@ export default function ImportContactsDialog({ open, onOpenChange }: Props) {
                     return (
                       <tr
                         key={r.rowIndex}
+                        data-keyboard-route="inner-control"
                         onClick={() => toggle(r.rowIndex)}
                         className={`border-t border-hairline cursor-pointer ${isSel ? "bg-amber-soft/40" : "hover:bg-paper-2/40"}`}
                       >

@@ -30,17 +30,11 @@ import { APP_NAV, filterNavForRole, flattenNav, type UserRole } from "@/lib/nav"
 import { buildSidebarApps, appLabelForHref } from "@/lib/nav-apps";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { rupee, cn } from "@/lib/utils";
-// Real-data queries — Linear/Notion-style universal search. Each hook is
-// already cached by TanStack Query so opening the palette is instant once
-// the user has visited the corresponding page at least once. First-time
-// open shows a brief loading flicker per group (acceptable trade-off).
+// Real-data search. R-1121: nothing is read until something is typed; then every group asks
+// the server for a few matching rows (palette-search.ts). Leads have their own server search.
 import { useLeadSearch } from "@/lib/queries/leads";
-import { useCustomers } from "@/lib/queries/customers";
-import { useQuotes } from "@/lib/queries/quotes";
-import { useAllContacts } from "@/lib/queries/contacts";
-import { useInvoices } from "@/lib/queries/invoices";
-import { useSubscriptions } from "@/lib/queries/subscriptions";
-import { usePayments } from "@/lib/queries/payments";
+import { usePaletteSearch } from "@/lib/queries/palette-search";
+import { contactSearchHidden } from "@/lib/contacts/search-columns";
 import { formatDate } from "@/lib/utils";
 import {
   customerKeywords, companyPaletteMeta, leadKeywords, quoteKeywords,
@@ -48,7 +42,7 @@ import {
 } from "@/lib/search/keywords";
 import AddSeatsDialog from "@/components/features/subscriptions/add-seats-dialog";
 import type { Subscription } from "@/lib/supabase/database.types";
-import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { invoiceHref, NEW_INVOICE_HREF } from "@/app/(app)/invoices/invoice-href";
 import {
   subscriptionHref, subscriptionStatusLabel, paymentHref, SUBSCRIPTION_SEARCH_EVENT, searchFromSubscriptionHref,
 } from "@/app/(app)/subscriptions/palette-links";
@@ -96,6 +90,10 @@ export function useCommandPalette() {
  * types, every row is rendered and cmdk filters the whole set. Rendering a few
  * hundred rows is what cmdk is built for, and measured scoring cost across the
  * entire working set is ~2.5ms per keystroke.
+ *
+ * R-1121 (23 Oct 2026): only Leads still have an empty-query preview. Every other group
+ * is searched on the server once something is typed (palette-search.ts) — the
+ * server does the matching, so no truncated set can hide a row.
  */
 const PREVIEW_PER_GROUP = 10;
 
@@ -111,24 +109,7 @@ export function CommandPalette({
 }) {
   const router = useRouter();
 
-  // Pull real tenant-scoped data. RLS ensures we only see this tenant's
-  // rows. Queries are cached by TanStack Query — opening the palette
-  // multiple times is instant after first load.
-  const { data: customers } = useCustomers();
-  const { data: quotes }    = useQuotes({ status: "all" });
-  const { data: contacts }  = useAllContacts();
-  const { data: invoices }  = useInvoices({ status: "all" });
-  const { data: subscriptions } = useSubscriptions();
-  const { data: payments }  = usePayments();
   const { data: me }        = useCurrentUser();
-
-  // customer_id → name, so payments (which store no customer_name) become
-  // name-searchable in the palette.
-  const customerNameById = React.useMemo(() => {
-    const m = new Map<string, string>();
-    (customers ?? []).forEach((c) => m.set(c.id, c.name));
-    return m;
-  }, [customers]);
 
   // Page list must respect the SAME role gating as the sidebar — otherwise a
   // sales user could ⌘K into owner/accounting destinations that just bounce off
@@ -175,13 +156,47 @@ export function CommandPalette({
     const t = setTimeout(() => setLeadQuery(q), 200);
     return () => clearTimeout(t);
   }, [query]);
-  const { data: leads } = useLeadSearch(leadQuery, open);
+  const { data: leads, isFetching: leadsFetching } = useLeadSearch(leadQuery, open);
+
+  /* R-1121: the other groups — the same beat after the last keystroke, then a few rows each
+     from the server (palette-search.ts). Nothing is read while nothing is typed. */
+  const [searchTerm, setSearchTerm] = React.useState("");
+  React.useEffect(() => {
+    const t = setTimeout(() => setSearchTerm(query.trim()), 200);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  /* R-1543: a result is offered only when this role may open the page it leads to — the same
+     rule as the URL guard (palette-access.ts). Sales picking a company bounced to /leads;
+     billing picking a lead landed on /invoices. A group whose page is closed is not searched. */
+  const role = me?.role;
+  const allowed = paletteGroupsFor(role);
+  const contactsOn = paletteMayOpen(role, "/contacts") || allowed.companies;
+  const found = usePaletteSearch(
+    searchTerm,
+    open,
+    {
+      companies: allowed.companies, quotes: allowed.quotes, invoices: allowed.invoices,
+      subscriptions: allowed.subscriptions || allowed.seats, payments: allowed.payments, contacts: contactsOn,
+    },
+    me?.tenantId,
+    /* R-1821: a role that sees masked contacts does not search by phone / email. */
+    contactSearchHidden(role),
+  );
+  const { customers, quotes, invoices, subscriptions, payments } = found;
+
+  // customer_id → name, so a payment (which stores no customer_name) can say whose it is.
+  const customerNameById = React.useMemo(() => {
+    const m = new Map<string, string>();
+    customers.forEach((c) => m.set(c.id, c.name));
+    return m;
+  }, [customers]);
 
   // Seats can only be added to something currently running. A paused or expired
   // subscription needs reviving first, and offering the action on one would send
   // the operator into a dialog that cannot succeed.
   const activeSubs = React.useMemo(
-    () => (subscriptions ?? []).filter((s) => s.status === "active"),
+    () => subscriptions.filter((s) => s.status === "active"),
     [subscriptions],
   );
 
@@ -189,6 +204,9 @@ export function CommandPalette({
   // the operator types, so cmdk can filter the whole set rather than a truncated
   // slice of it. See PREVIEW_PER_GROUP for why this is conditional.
   const searching = query.trim().length > 0;
+  /* R-1121: typed, but the answer for exactly this text is not in yet → "Searching…", never
+     "No results found" (it used to say that while six tables were still loading). */
+  const loading = searching && (searchTerm !== query.trim() || found.fetching || leadsFetching);
   /* The palette filters itself (2 Oct 2026): every typed word must be in the row.
      cmdk's fuzzy scoring matched letters scattered across a line ("Thetaco" found
      "Test User 3 Etaco…") and hid leads that arrived from the server after the
@@ -196,31 +214,27 @@ export function CommandPalette({
   const pick = <T,>(rows: T[] | undefined | null, fields: (r: T) => (string | number | null | undefined)[]): T[] =>
     !rows ? [] : searching ? rows.filter((r) => matchesAllTerms(fields(r), query)) : rows.slice(0, PREVIEW_PER_GROUP);
 
-  /* R-1543: a result is offered only when this role may open the page it leads to — the same
-     rule as the URL guard (palette-access.ts). Sales picking a company bounced to /leads;
-     billing picking a lead landed on /invoices. A group whose page is closed is not searched. */
-  const role = me?.role;
-  const allowed = paletteGroupsFor(role);
-  /* A contact opens the record it came from, not the contacts list. */
-  const contactHref = (c: { source: string; refId: string }) =>
-    c.source === "lead" ? `/leads?lead=${c.refId}` : c.source === "customer" ? `/customers/${c.refId}` : "/contacts";
-  const openContacts = React.useMemo(
-    () => (contacts ?? []).filter((c) => paletteMayOpen(role, contactHref(c))),
-    // contactHref is a pure function of the row; role is the only other input.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [contacts, role],
-  );
+  /* A contact opens the company it belongs to, else the contact book. Shown only when this
+     role may open that page. */
+  const contactHref = (c: { customer_id: string | null }) =>
+    c.customer_id ? `/customers/${c.customer_id}` : "/contacts";
+  const openContacts = found.contacts
+    .filter((c) => paletteMayOpen(role, contactHref(c)))
+    .map((c) => ({ ...c, name: c.full_name, designation: c.title }));
 
-  const fCustomers = allowed.companies ? pick(customers, (c) => [c.name, c.id, ...customerKeywords(c)]) : [];
+  /* R-1121: the server already matched every typed word (palette-search.ts) — its rows are
+     shown as they come, only while searching (an empty palette reads nothing). */
+  const shown = <T,>(on: boolean, rows: T[]): T[] => (on && searching ? rows : []);
+  const fCustomers = shown(allowed.companies, customers);
   const fLeads = allowed.leads ? pick(leads, (l) => [l.company, l.stage, ...leadKeywords({ ...l, email: l.contact_email, phone: l.contact_phone })]) : [];
-  const fContacts = pick(openContacts, (c) => [c.name, c.company, c.email, c.phone, ...contactKeywords(c)]);
-  const fQuotes = allowed.quotes ? pick(quotes, (q) => [q.id, q.customer_name, q.status, ...quoteKeywords(q)]) : [];
-  const fInvoices = allowed.invoices ? pick(invoices, (inv) => [inv.id, inv.customer_name, inv.status, ...invoiceKeywords(inv)]) : [];
-  const fSubs = allowed.subscriptions ? pick(subscriptions, (s) => [s.customer_name, s.plan, s.status, ...subscriptionKeywords(s)]) : [];
-  const fSeats = allowed.seats && query.trim().length >= 2 ? activeSubs.filter((s) => matchesAllTerms([s.customer_name, s.plan], query)) : [];
-  const fPayments = allowed.payments ? pick(payments, (p) => [p.customer_id ? customerNameById.get(p.customer_id) : null, p.reference, p.method, p.amount]) : [];
+  const fContacts = shown(true, openContacts);
+  const fQuotes = shown(allowed.quotes, quotes);
+  const fInvoices = shown(allowed.invoices, invoices);
+  const fSubs = shown(allowed.subscriptions, subscriptions);
+  const fSeats = allowed.seats && query.trim().length >= 2 ? activeSubs : [];
+  const fPayments = shown(allowed.payments, payments);
   const fPages = searching ? pageItems.filter((i) => matchesAllTerms([i.label, i.section], query)) : pageItems;
-  const count = (shown: unknown[], all: unknown[] | undefined | null) => (searching ? shown.length : (all?.length ?? 0));
+  const count = (rows: unknown[]) => rows.length;
 
   // Pages — role-filtered + href-deduped (see pageItems). Placed first while searching.
   const pagesGroup = fPages.length > 0 && (
@@ -241,7 +255,7 @@ export function CommandPalette({
     { icon: "sparkles", label: "AI Entry",              meta: "Paste or photograph anything — it fills the entry", href: "/ai-entry" },
     { icon: "plus",    label: "Create new lead",        meta: "Open the quick-add form",                     href: "/leads?action=quick-add" },
     { icon: "file",    label: COPY.newQuote,             meta: "Open Quote Builder",                          href: "/quotes/new" },
-    { icon: "receipt", label: "Create invoice",         meta: "Direct GST tax invoice",                      href: "/quotes/new?invoice=1" },
+    { icon: "receipt", label: "Create invoice",         meta: "Direct GST tax invoice",                      href: NEW_INVOICE_HREF },
     /* R-243: the invoices still owed (pending, partial, overdue), not the whole list. */
     { icon: "rupee",   label: "Record a payment",       meta: "Invoices still owed — pick one to record what you received", href: "/invoices?focus=unpaid" },
     { icon: "users",   label: "Add new company",        meta: "Open new company (customer) form",           href: "/customers/new" },
@@ -289,9 +303,19 @@ export function CommandPalette({
             </div>
 
             <Command.List className="max-h-[60vh] overflow-y-auto p-2">
-              <Command.Empty className="py-8 text-center text-sm text-ink-3">
-                No results found.
-              </Command.Empty>
+              {/* R-1121: while the server is answering, say so — "No results found" only once
+                  the answer for exactly what is typed is in. */}
+              {loading ? (
+                <Command.Loading>
+                  <div role="status" className="py-3 px-3 flex items-center gap-2 text-sm text-ink-3">
+                    <Icon name="search" size={14} className="animate-pulse" /> Searching…
+                  </div>
+                </Command.Loading>
+              ) : (
+                <Command.Empty className="py-8 text-center text-sm text-ink-3">
+                  No results found.
+                </Command.Empty>
+              )}
 
               {/* Typing a page's name ("Invoices") should open that page on Enter — with
                   the actions first, Enter ran "Create invoice" instead (R-088 jaanch,
@@ -312,7 +336,7 @@ export function CommandPalette({
 
               {/* Customers — real, tenant-scoped */}
               {fCustomers.length > 0 && (
-                <Command.Group heading={`Companies · ${count(fCustomers, customers)}`}>
+                <Command.Group heading={`Companies · ${count(fCustomers)}`}>
                   {fCustomers.map((c) => {
                     // R-821: readable subtitle, never the row id.
                     const meta = companyPaletteMeta(c);
@@ -358,7 +382,7 @@ export function CommandPalette({
 
               {/* Contacts — unified across leads/customers/imported */}
               {fContacts.length > 0 && (
-                <Command.Group heading={`Contacts · ${count(fContacts, openContacts)}`}>
+                <Command.Group heading={`Contacts · ${count(fContacts)}`}>
                   {fContacts.map((c) => (
                     <PaletteItem
                       key={c.id}
@@ -374,7 +398,7 @@ export function CommandPalette({
 
               {/* Quotes — real tenant-scoped quotes with status + ₹ */}
               {fQuotes.length > 0 && (
-                <Command.Group heading={`Quotes · ${count(fQuotes, quotes)}`}>
+                <Command.Group heading={`Quotes · ${count(fQuotes)}`}>
                   {fQuotes.map((q) => {
                     const total = q.amount != null ? rupee(q.amount, { compact: true }) : "";
                     const meta = [q.customer_name, total, q.status].filter(Boolean).join(" · ");
@@ -395,7 +419,7 @@ export function CommandPalette({
               {/* Invoices — real, tenant-scoped. Opens the invoice's own page
                   (invoiceHref → /invoices/<id>, R-218). */}
               {fInvoices.length > 0 && (
-                <Command.Group heading={`Invoices · ${count(fInvoices, invoices)}`}>
+                <Command.Group heading={`Invoices · ${count(fInvoices)}`}>
                   {fInvoices.map((inv) => {
                     const total = inv.amount != null ? rupee(inv.amount, { compact: true }) : "";
                     const meta = [inv.customer_name, total, inv.status].filter(Boolean).join(" · ");
@@ -446,7 +470,7 @@ export function CommandPalette({
 
               {/* Subscriptions — real, tenant-scoped */}
               {fSubs.length > 0 && (
-                <Command.Group heading={`Subscriptions · ${count(fSubs, subscriptions)}`}>
+                <Command.Group heading={`Subscriptions · ${count(fSubs)}`}>
                   {fSubs.map((s) => {
                     const mrr = s.mrr ? `${rupee(s.mrr, { compact: true })}/mo` : "";
                     const meta = [s.plan, mrr, subscriptionStatusLabel(s.status)].filter(Boolean).join(" · ");
@@ -472,11 +496,12 @@ export function CommandPalette({
               {/* Payments — no customer_name column, so we resolve it from the
                   customers cache to make receipts name-searchable. */}
               {fPayments.length > 0 && (
-                <Command.Group heading={`Payments · ${count(fPayments, payments)}`}>
+                <Command.Group heading={`Payments · ${count(fPayments)}`}>
                   {fPayments.map((p) => {
-                    const who = (p.customer_id && customerNameById.get(p.customer_id)) || "Payment";
+                    /* R-1639: named from its quote / invoice / customer by the search itself. */
+                    const who = p.customer_name || (p.customer_id && customerNameById.get(p.customer_id)) || "Payment";
                     const amount = rupee(p.amount, { compact: true });
-                    const meta = [amount, p.method ? paymentMethodLabel(p.method) : null, formatDate(p.received_at), p.reference].filter(Boolean).join(" · ");
+                    const meta = [amount, p.receipt_voucher_no, p.method ? paymentMethodLabel(p.method) : null, formatDate(p.received_at), p.reference].filter(Boolean).join(" · ");
                     return (
                       <PaletteItem
                         key={p.id}

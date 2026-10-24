@@ -14,6 +14,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { createClient } from "@/lib/supabase/client";
 import { downloadCSV } from "@/lib/csv";
 import { toast } from "sonner";
@@ -43,7 +44,7 @@ const STATUS: Record<RowStatus, { label: string; kind: "danger" | "warning" | "s
 async function pdfToText(file: File): Promise<string> {
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
   let out = "";
   for (let p = 1; p <= pdf.numPages; p++) {
     const tc = await (await pdf.getPage(p)).getTextContent();
@@ -230,7 +231,11 @@ export default function GoogleBillCheckPage() {
         </Card>
       )}
 
-      {books.isError && <Card className="p-3 mb-4 text-sm text-rose">Could not load subscriptions: {(books.error as Error).message}</Card>}
+      {books.isError && (
+        <Card className="mb-4">
+          <LoadErrorInline what="Your subscriptions" error={books.error} onRetry={() => void books.refetch()} />
+        </Card>
+      )}
 
       {check && partner && (
         <>

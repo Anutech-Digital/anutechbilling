@@ -20,6 +20,7 @@ import type { Json, Lead, Database } from "@/lib/supabase/database.types";
 import { flattenPages } from "@/lib/queries/keyset";
 import { fetchAllRows, fetchAllRowsIn, idsKey } from "@/lib/ops/fetch-all";
 import { istToday } from "@/lib/dates/ist";
+import { isMaskedContact } from "@/lib/auth/roles";
 import {
   LEAD_LIST_COLUMNS, toLeadCountsFilters, toListLeadsFilters,
   type LeadCounts, type LeadListCursor, type LeadListFilters, type LeadListPage, type LeadListRow,
@@ -492,27 +493,6 @@ export function useLeadTotalCount() {
   });
 }
 
-/**
- * Every lead the caller can see, for "Export CSV" — fetched when the button is pressed, in
- * 1000-row pages (PostgREST's max_rows), with only the columns the CSV writes. The old
- * export wrote whatever useLeads() had loaded, which stopped silently at 1000.
- */
-export async function fetchLeadsForExport(): Promise<LeadListRow[]> {
-  const supabase = createClient();
-  const out: LeadListRow[] = [];
-  const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
-      .from("leads").select(SLIM)
-      .order("created_at", { ascending: false }).order("id", { ascending: false })
-      .range(from, from + PAGE - 1);
-    if (error) throw error;
-    const rows = (data ?? []) as unknown as LeadListRow[];
-    out.push(...rows);
-    if (rows.length < PAGE) return out;
-  }
-}
-
 /** The columns the merge dialog reads (its "richest record" pick counts gstin and notes). */
 export const MERGE_COLUMNS =
   "id, company, contact_name, contact_email, contact_phone, plan, seats, value, gstin, notes, created_at" as const;
@@ -951,8 +931,10 @@ export function useLeadsForPerson(args: {
   phones?: readonly string[];
 }) {
   const contactId = args.contactId ?? null;
-  const emails = (args.emails ?? []).map((e) => e.trim().toLowerCase()).filter(Boolean);
-  const phones = (args.phones ?? []).map((p) => p.trim()).filter(Boolean);
+  /* R-1821: a masked value ("ra•••@shop.in" — the role sees contacts masked) matches nothing,
+     and the gateway refuses a filter on a contact column from that role — so it is not asked. */
+  const emails = (args.emails ?? []).map((e) => e.trim().toLowerCase()).filter((e) => e && !isMaskedContact(e));
+  const phones = (args.phones ?? []).map((p) => p.trim()).filter((p) => p && !isMaskedContact(p));
 
   return useQuery({
     queryKey: ["leads-for-person", contactId, emails, phones],

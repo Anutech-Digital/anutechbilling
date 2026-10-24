@@ -18,6 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Button } from "@/components/ui/button";
 import { StatStrip } from "@/components/shared/stat-strip";
 import { Icon } from "@/components/ui/icon";
@@ -26,6 +27,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { formatMonthLabel, utcDateISO, fyStartYear } from "@/lib/dates/ist";
 import { logExport } from "@/lib/export-log";
+import { csvEscape } from "@/lib/csv";
 import { printReport } from "@/lib/reports/print";
 
 type RangeKey = "month" | "fy" | "12m" | "all";
@@ -182,7 +184,7 @@ export default function PurchasesReportPage() {
       [],
       ["Total", totals.count, totals.net, totals.gst, totals.gross],
     ];
-    const csv = rows.map((r) => r.map((c) => (typeof c === "string" && /[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(",")).join("\n");
+    const csv = rows.map((r) => r.map((c) => csvEscape(c)).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     const a = document.createElement("a");
     a.href = url; a.download = `purchases-${range}.csv`; a.click();
@@ -237,7 +239,7 @@ export default function PurchasesReportPage() {
       )}
 
       {error && (
-        <EmptyState icon="alert" title="Could not load report" body={error.message}
+        <EmptyState icon="alert" title="Could not load report" body={loadErrorBody(error)}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>} />
       )}
 
@@ -356,7 +358,7 @@ function BreakdownTable({
           const isOpen = open.has(r.key);
           return (
             <li key={r.key} className="p-3">
-              <button type="button" className="w-full text-left" onClick={() => toggle(r.key)}>
+              <button type="button" aria-expanded={isOpen} className="w-full text-left rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" onClick={() => toggle(r.key)}>
                 <div className="flex items-center justify-between gap-2 mb-1">
                   <span className="font-medium text-ink text-sm truncate flex items-center gap-1">
                     <Icon name={isOpen ? "chevron_down" : "chevron_up"} size={13} className="text-ink-3 rotate-90 data-[o=1]:rotate-0" data-o={isOpen ? 1 : 0} />
@@ -391,10 +393,16 @@ function BreakdownTable({
                 <React.Fragment key={r.key}>
                   <tr className="border-b border-hairline hover:bg-paper-2/40 cursor-pointer" onClick={() => toggle(r.key)}>
                     <td className="p-3 text-sm font-medium text-ink">
-                      <span className="inline-flex items-center gap-1.5">
+                      {/* R-1134: a real button, so Tab reaches the row and Enter/Space expand it. */}
+                      <button
+                        type="button"
+                        aria-expanded={isOpen}
+                        onClick={(e) => { e.stopPropagation(); toggle(r.key); }}
+                        className="inline-flex items-center gap-1.5 text-left rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+                      >
                         <Icon name={isOpen ? "chevron_down" : "chevron_up"} size={13} className={isOpen ? "text-ink-2" : "text-ink-3 rotate-180"} />
                         {r.key}
-                      </span>
+                      </button>
                     </td>
                     <td className="p-3 text-right tabular-nums text-sm text-ink-2">{r.count}</td>
                     <td className="p-3 text-right tabular-nums text-sm text-ink-2">{rupee(r.net)}</td>

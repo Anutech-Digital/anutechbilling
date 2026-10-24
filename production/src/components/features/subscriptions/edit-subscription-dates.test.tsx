@@ -20,7 +20,12 @@ import type { Subscription } from "@/lib/supabase/database.types";
 
 vi.mock("@/lib/queries/subscriptions", () => ({
   useUpdateSubscription: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  /* R-1684: seats / plan / price (not exercised by date edits). */
+  useCorrectSubscriptionTerms: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useScheduleInvoices: () => ({ data: undefined }),
 }));
+vi.mock("@/lib/queries/items", () => ({ useItems: () => ({ data: [] }) }));
+vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { role: "owner" } }) }));
 /* R-1681: the dialog pauses through suspend_subscription; not exercised by date edits. */
 vi.mock("./suspend-subscription-dialog", () => ({
   MIN_SUSPEND_REASON: 3,

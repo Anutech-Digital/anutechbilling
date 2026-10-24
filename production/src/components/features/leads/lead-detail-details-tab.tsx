@@ -15,6 +15,7 @@ import type { dealHealth } from "@/lib/leads/deal-health";
 import { DealHealthCard } from "@/components/features/leads/deal-health-card";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { rupee, formatDate, cn } from "@/lib/utils";
 import type { Lead, Quote } from "@/lib/supabase/database.types";
 import { addedByLabel } from "@/lib/leads/added-by";
@@ -37,8 +38,10 @@ export interface LeadDetailsTabProps {
   userNames: ReturnType<typeof useUserNames>["data"];
   activities: NonNullable<ReturnType<typeof useLeadActivities>["data"]>;
   setDrawerTab: (t: DrawerTab) => void;
-  hasQuotes: boolean;
   quotesForLead: Quote[];
+  /** R-1806: the quotes-by-lead read failed — the Quotes section shows the error + Try again. */
+  quotesError?: unknown;
+  onRetryQuotes?: () => void;
   latestQuote: Quote | undefined;
   onClose: () => void;
   changeStage: ReturnType<typeof useChangeLeadStage>["changeStage"];
@@ -47,9 +50,8 @@ export interface LeadDetailsTabProps {
 
 export function LeadDetailsTab({
   lead, health, setAddTaskOpen, setCardsOpen, drawerPlanCosts, userNames, activities,
-  setDrawerTab, hasQuotes, quotesForLead, latestQuote, onClose, changeStage, handleSendQuote,
+  setDrawerTab, quotesForLead, quotesError, onRetryQuotes, latestQuote, onClose, changeStage, handleSendQuote,
 }: LeadDetailsTabProps) {
-  const router = useRouter();
   return (
           <>
           {/* Is this deal being WORKED well? Sits above the facts because the facts
@@ -218,64 +220,7 @@ export function LeadDetailsTab({
             </div>
           </div>
           {/* ── Quotes history (only when this lead has received at least one quote) ── */}
-          {hasQuotes && (
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-xs uppercase tracking-wider text-ink-3 font-semibold">
-                  Quotes ({quotesForLead.length})
-                </div>
-              </div>
-              <div className="rounded-md border border-hairline divide-y divide-hairline overflow-hidden">
-                {quotesForLead.map((q) => {
-                  const statusKind: "muted" | "warning" | "success" | "info" | "danger" =
-                    q.status === "draft"    ? "muted" :
-                    q.status === "sent"     ? "warning" :
-                    q.status === "viewed"   ? "info" :
-                    q.status === "accepted" ? "success" :
-                    "danger";
-                  return (
-                    <button
-                      key={q.id}
-                      type="button"
-                      onClick={() => {
-                        router.push(`/quotes/${q.id}` as never);
-                      }}
-                      className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-paper-2 transition-colors"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-semibold text-ink truncate">
-                            {q.id}
-                          </span>
-                          <Badge kind={statusKind} dot>{q.status}</Badge>
-                        </div>
-                        <div className="text-xs text-ink-3 mt-0.5">
-                          {formatDate(q.created_at)} · {q.line_items && Array.isArray(q.line_items) ? q.line_items.length : 0} item
-                          {Array.isArray(q.line_items) && q.line_items.length === 1 ? "" : "s"}
-                        </div>
-                      </div>
-                      <div className="text-right flex-shrink-0">
-                        <div className="font-serif text-sm tabular-nums text-ink">
-                          {rupee(q.amount ?? 0)}
-                        </div>
-                        <Icon name="arrow_right" size={11} className="text-ink-3 ml-auto" />
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="text-xs text-ink-3 mt-1.5 flex items-center gap-1">
-                <Icon name="info" size={11} />
-                {lead.stage === "won"
-                  ? "Click any quote to view · upsell with a new quote below"
-                  : lead.stage === "lost"
-                  ? "Click any quote to view · re-engage with a fresh quote below"
-                  : latestQuote?.status === "draft"
-                  ? "Click the draft to review & send it below"
-                  : "Click any quote to view · or send a revised quote below"}
-              </p>
-            </div>
-          )}
+          <LeadQuotesSection lead={lead} quotes={quotesForLead} latestQuote={latestQuote} error={quotesError} onRetry={onRetryQuotes} />
           {/* Quick stage change
               For a raw lead (no plan picked yet), only "new" / "contact" are
               logically valid — demo/trial/quote/won all require a plan to
@@ -382,5 +327,82 @@ export function LeadDetailsTab({
             );
           })()}
           </>
+  );
+}
+
+/**
+ * The drawer's quote history. Nothing when the lead has no quote; R-1806: when the read
+ * FAILED it says so with Try again — before, a failed read looked exactly like "no quotes".
+ */
+export function LeadQuotesSection({ lead, quotes, latestQuote, error, onRetry }: {
+  lead: Lead; quotes: Quote[]; latestQuote: Quote | undefined; error?: unknown; onRetry?: () => void;
+}) {
+  const router = useRouter();
+  if (error != null) {
+    return (
+      <div>
+        <div className="text-xs uppercase tracking-wider text-ink-3 font-semibold">Quotes</div>
+        <LoadErrorInline what="Quotes" error={error} onRetry={onRetry ?? (() => {})} />
+      </div>
+    );
+  }
+  if (quotes.length === 0) return null;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs uppercase tracking-wider text-ink-3 font-semibold">
+          Quotes ({quotes.length})
+        </div>
+      </div>
+      <div className="rounded-md border border-hairline divide-y divide-hairline overflow-hidden">
+        {quotes.map((q) => {
+          const statusKind: "muted" | "warning" | "success" | "info" | "danger" =
+            q.status === "draft"    ? "muted" :
+            q.status === "sent"     ? "warning" :
+            q.status === "viewed"   ? "info" :
+            q.status === "accepted" ? "success" :
+            "danger";
+          return (
+            <button
+              key={q.id}
+              type="button"
+              onClick={() => {
+                router.push(`/quotes/${q.id}` as never);
+              }}
+              className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-paper-2 transition-colors"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs font-semibold text-ink truncate">
+                    {q.id}
+                  </span>
+                  <Badge kind={statusKind} dot>{q.status}</Badge>
+                </div>
+                <div className="text-xs text-ink-3 mt-0.5">
+                  {formatDate(q.created_at)} · {q.line_items && Array.isArray(q.line_items) ? q.line_items.length : 0} item
+                  {Array.isArray(q.line_items) && q.line_items.length === 1 ? "" : "s"}
+                </div>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <div className="font-serif text-sm tabular-nums text-ink">
+                  {rupee(q.amount ?? 0)}
+                </div>
+                <Icon name="arrow_right" size={11} className="text-ink-3 ml-auto" />
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-xs text-ink-3 mt-1.5 flex items-center gap-1">
+        <Icon name="info" size={11} />
+        {lead.stage === "won"
+          ? "Click any quote to view · upsell with a new quote below"
+          : lead.stage === "lost"
+          ? "Click any quote to view · re-engage with a fresh quote below"
+          : latestQuote?.status === "draft"
+          ? "Click the draft to review & send it below"
+          : "Click any quote to view · or send a revised quote below"}
+      </p>
+    </div>
   );
 }

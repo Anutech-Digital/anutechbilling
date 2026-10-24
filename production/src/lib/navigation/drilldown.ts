@@ -19,7 +19,8 @@ export const LEAD_VIEWS = [
 export type LeadViewId = (typeof LEAD_VIEWS)[number];
 
 export const QUOTE_TABS = ["all", "draft", "sent", "viewed", "accepted", "awaiting", "invoiced", "rejected", "expired"] as const;
-export const INVOICE_TABS = ["all", "paid", "partial", "pending", "overdue", "draft", "void"] as const;
+/* R-1709: "credited" = settled by a credit note, not by money. */
+export const INVOICE_TABS = ["all", "paid", "credited", "partial", "pending", "overdue", "draft", "void"] as const;
 export const SUBSCRIPTION_TABS = ["all", "active", "expiring", "suspended", "ended", "trials"] as const;
 export const TASK_TABS = ["today", "overdue", "upcoming", "done", "all"] as const;
 export const RENEWAL_BUCKETS = ["urgent", "upcoming", "future", "risk"] as const;

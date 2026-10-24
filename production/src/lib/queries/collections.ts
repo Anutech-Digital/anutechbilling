@@ -30,8 +30,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import { queryKeys } from "@/lib/queries/keys";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
+import { invoiceReceivable, subscriptionReceivable } from "@/lib/payments/receivables";
 import { matchTdsShortfall, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { istDayStartUtc, istToday, toIstDate } from "@/lib/dates/ist";
 import {
@@ -56,6 +58,8 @@ export interface CollectionInvoice {
   taxable_value: number | null;
   tax_amount: number | null;
   tax_rate: number | null;
+  /** R-1635: the read skips written-off invoices; invoiceAmountDue answers 0 for one anyway. */
+  written_off_at?: string | null;
 }
 
 export interface CollectionSubscription {
@@ -260,8 +264,8 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
   };
 
   for (const inv of input.invoices) {
-    if (inv.status !== "pending" && inv.status !== "overdue") continue;
-    const due = invoiceAmountDue(inv);
+    /* R-1708: the one receivables rule (lib/payments/receivables.ts) — open invoices only. */
+    const due = invoiceReceivable(inv);
     if (due <= 0) continue;
     const sub = inv.quote_id ? subByQuote.get(inv.quote_id) : undefined;
     rowFor(inv.customer_id, inv.customer_name).items.push({
@@ -279,9 +283,9 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
   }
 
   for (const s of input.subscriptions) {
-    const due = Math.max(0, Math.round(s.outstanding_amount ?? 0));
+    /* R-1708: 0 when written off or when its quote is invoiced (the invoice is the claim). */
+    const due = subscriptionReceivable(s, input.invoicedQuoteIds);
     if (due <= 0) continue;
-    if (s.quote_id && input.invoicedQuoteIds.has(s.quote_id)) continue;   // the invoice is the claim
     const href = subscriptionHref(s);
     rowFor(s.customer_id, s.customer_name).items.push({
       kind: "subscription",
@@ -350,6 +354,30 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
   return [...rows.values()].filter((r) => r.amountDue > 0).sort(compareCollectionRows);
 }
 
+/** R-1708: one owed line — what Payments' "Owed to you" adds up (per customer, for ?customer=). */
+export interface ReceivableLine {
+  kind: "invoice" | "subscription";
+  customerId: string | null;
+  amountDue: number;
+}
+
+/**
+ * R-1708: every line Payment Follow-up lists, without the follow-up data — so Payments' dues
+ * card adds up the very same lines (sumReceivables) instead of its own copy of the rule.
+ */
+export function receivableLines(input: Pick<CollectionsInput, "invoices" | "subscriptions" | "invoicedQuoteIds">): ReceivableLine[] {
+  const out: ReceivableLine[] = [];
+  for (const inv of input.invoices) {
+    const due = invoiceReceivable(inv);
+    if (due > 0) out.push({ kind: "invoice", customerId: inv.customer_id, amountDue: due });
+  }
+  for (const s of input.subscriptions) {
+    const due = subscriptionReceivable(s, input.invoicedQuoteIds);
+    if (due > 0) out.push({ kind: "subscription", customerId: s.customer_id, amountDue: due });
+  }
+  return out;
+}
+
 /** "Mere": the customer is mine (owner) or the latest follow-up was handed to me. */
 export function isMine(r: Pick<CollectionRow, "ownerId" | "assignedTo">, meId: string | null | undefined): boolean {
   if (!meId) return false;
@@ -380,33 +408,16 @@ const SUB_COLS = "id, customer_id, customer_name, plan, domain, quote_id, outsta
  * R-1517: `customerId` narrows it to one customer (the customer page's follow-up card).
  */
 export async function fetchCollectionsInput(supabase: Client, customerId?: string): Promise<CollectionsInput> {
-  const [invoices, subscriptions] = await Promise.all([
-    fetchAllRows<CollectionInvoice>((from, to) => {
-      let q = supabase.from("invoices").select(INVOICE_COLS).in("status", ["pending", "overdue"]);
-      if (customerId) q = q.eq("customer_id", customerId);
-      return q.order("id", { ascending: true }).range(from, to);
-    }),
-    fetchAllRows<CollectionSubscription>((from, to) => {
-      let q = supabase.from("subscriptions").select(SUB_COLS).gt("outstanding_amount", 0).is("written_off_at", null);
-      if (customerId) q = q.eq("customer_id", customerId);
-      return q.order("id", { ascending: true }).range(from, to);
-    }),
-  ]);
+  const owed = await fetchOwedRows(supabase, customerId);
+  const { invoices, subscriptions } = owed;
 
   const invoiceQuoteIds = invoices.map((i) => i.quote_id);
-  const subQuoteIds = subscriptions.map((s) => s.quote_id);
   const customerIds = [...invoices.map((i) => i.customer_id), ...subscriptions.map((s) => s.customer_id)];
 
-  const [quoteSubscriptions, invoicedQuotes, customers, followups] = await Promise.all([
+  const [quoteSubscriptions, customers, followups] = await Promise.all([
     fetchAllRowsIn<CollectionSubscription, string>(invoiceQuoteIds, (ids, from, to) => supabase
       .from("subscriptions")
       .select(SUB_COLS)
-      .in("quote_id", ids)
-      .order("id", { ascending: true })
-      .range(from, to)),
-    fetchAllRowsIn<{ id: string; quote_id: string | null }, string>(subQuoteIds, (ids, from, to) => supabase
-      .from("invoices")
-      .select("id, quote_id")
       .in("quote_id", ids)
       .order("id", { ascending: true })
       .range(from, to)),
@@ -444,20 +455,60 @@ export async function fetchCollectionsInput(supabase: Client, customerId?: strin
       .range(from, to),
   );
 
+  return { ...owed, payments, quoteSubscriptions, customers, followups };
+}
+
+type OwedRows = Pick<CollectionsInput, "invoices" | "subscriptions" | "invoicedQuoteIds">;
+
+/**
+ * R-1708: the rows the receivables number is added from — open, not-written-off invoices, the
+ * subscriptions with a balance, and which of their quotes are invoiced. Payment Follow-up and
+ * Payments' "Owed to you" both read THIS, so they cannot drift apart. RLS scopes it.
+ */
+async function fetchOwedRows(supabase: Client, customerId?: string): Promise<OwedRows> {
+  const [invoices, subscriptions] = await Promise.all([
+    fetchAllRows<CollectionInvoice>((from, to) => {
+      let q = supabase.from("invoices").select(INVOICE_COLS).in("status", ["pending", "overdue"]).is("written_off_at", null);
+      if (customerId) q = q.eq("customer_id", customerId);
+      return q.order("id", { ascending: true }).range(from, to);
+    }),
+    fetchAllRows<CollectionSubscription>((from, to) => {
+      let q = supabase.from("subscriptions").select(SUB_COLS).gt("outstanding_amount", 0).is("written_off_at", null);
+      if (customerId) q = q.eq("customer_id", customerId);
+      return q.order("id", { ascending: true }).range(from, to);
+    }),
+  ]);
+  const invoicedQuotes = await fetchAllRowsIn<{ id: string; quote_id: string | null }, string>(
+    subscriptions.map((s) => s.quote_id),
+    (ids, from, to) => supabase
+      .from("invoices")
+      .select("id, quote_id")
+      .in("quote_id", ids)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   return {
-    payments,
     invoices,
     subscriptions,
-    quoteSubscriptions,
     invoicedQuoteIds: new Set(invoicedQuotes.map((i) => i.quote_id).filter((x): x is string => !!x)),
-    customers,
-    followups,
   };
+}
+
+/**
+ * R-1708: Payments' "Owed to you" — the same lines as Payment Follow-up (receivableLines), keyed
+ * under ["collections"] so every money save refreshes it (invalidateReceivables).
+ */
+export function useReceivableLines() {
+  return useQuery({
+    queryKey: [...queryKeys.collections(), "receivable-lines"],
+    queryFn: async (): Promise<ReceivableLine[]> => receivableLines(await fetchOwedRows(createClient())),
+    staleTime: 30_000,
+  });
 }
 
 export function useCollections() {
   return useQuery({
-    queryKey: ["collections"],
+    queryKey: queryKeys.collections(),
     queryFn: async (): Promise<CollectionRow[]> =>
       buildCollectionRows(await fetchCollectionsInput(createClient()), istToday()),
     staleTime: 30_000,
@@ -470,7 +521,7 @@ export function useCollections() {
  */
 export function useCustomerCollection(customerId: string | null | undefined) {
   return useQuery({
-    queryKey: ["collections", "customer", customerId],
+    queryKey: [...queryKeys.collections(), "customer", customerId],
     enabled: !!customerId,
     queryFn: async (): Promise<CollectionRow | null> =>
       buildCollectionRows(await fetchCollectionsInput(createClient(), customerId ?? undefined), istToday())

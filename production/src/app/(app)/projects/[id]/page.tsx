@@ -41,6 +41,11 @@ import { istToday } from "@/lib/dates/ist";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canRecordMoney } from "@/lib/auth/roles";
 import { bookedToDate, labourMonthsElapsed, labourToDate } from "@/lib/projects/pnl";
+import { useDocumentSeries } from "@/lib/queries/invoices";
+import { ConfirmIssueDialog } from "@/components/features/invoices/confirm-issue-dialog";
+import { issueConsequences } from "@/lib/invoices/issue-consequences";
+import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
+import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
 
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
@@ -53,6 +58,10 @@ export default function ProjectDetailPage() {
   // R-004: change the deal itself — value, title, customer, remaining schedule.
   const [editOpen, setEditOpen] = React.useState(false);
   const raise = useRaiseMilestoneInvoice();
+  /* R-1633: "Raise invoice" asks first — a GST invoice cannot be deleted, only credit-noted. */
+  const [raiseFor, setRaiseFor] = React.useState<ProjectMilestoneRow | null>(null);
+  const { data: docSeries } = useDocumentSeries();
+  const gstRegistration = useGstRegistration();
   const accept = useAcceptProjectQuote();
   const [payFor, setPayFor] = React.useState<ProjectMilestoneRow | null>(null);
   /* R-885: record_project_payment is owner / manager / accountant / billing. */
@@ -455,7 +464,7 @@ export default function ProjectDetailPage() {
                   ) : (
                     <>
                       {!m.invoice_id && (
-                        <Button size="sm" variant="outline" loading={raise.isPending} onClick={() => handleRaise(m)}>
+                        <Button size="sm" variant="outline" loading={raise.isPending && raise.variables?.milestoneId === m.id} onClick={() => setRaiseFor(m)}>
                           Raise invoice
                         </Button>
                       )}
@@ -591,6 +600,35 @@ export default function ProjectDetailPage() {
         existing={editLabour}
         projectStart={project.start_date}
         projectTarget={project.target_date}
+      />
+
+      {/* R-1633: what "Raise invoice" issues for this milestone, before it is issued. The
+          figures are raise_project_milestone_invoice's own: GST-inclusive milestone amount,
+          GST backed out at the project rate, dated today, due on the milestone date. */}
+      <ConfirmIssueDialog
+        open={raiseFor !== null}
+        onOpenChange={(o) => { if (!o) setRaiseFor(null); }}
+        consequences={raiseFor ? issueConsequences({
+          quote: {
+            id: project.id,
+            customerName: project.customer_name ?? null,
+            amount: raiseFor.total_amount,
+            taxAmount: raiseFor.total_amount - Math.round((raiseFor.total_amount * 100) / (100 + (project.gst_rate ?? 18))),
+            paymentTermsDays: null,
+            customerGstin: customer ? (customer.gstin ?? null) : undefined,
+            invoiceDate: todayStr,
+            dueDate: raiseFor.due_date && raiseFor.due_date > todayStr ? raiseFor.due_date : todayStr,
+            billOfSupply: !!billOfSupplyStatus(gstRegistration.data?.saved),
+          },
+          series: docSeries?.invoice ?? null,
+        }) : null}
+        confirmLabel="Raise invoice"
+        busy={raise.isPending}
+        onConfirm={() => {
+          const m = raiseFor;
+          setRaiseFor(null);
+          if (m) void handleRaise(m);
+        }}
       />
 
       <RecordProjectPaymentDialog

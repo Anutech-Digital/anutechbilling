@@ -106,7 +106,7 @@ const CALLER_RULES = [
   ["cron secret", /\bCRON_SECRET\b|\bcronAuthFailure\s*\(|\bgatedCron\b/],
   ["webhook signature", /\bverifyMetaSignature\b|\bverifyRetellSignature\b|\bverifySharedSecretHeader\b|\bcreateHmac\b|\bWEBHOOK_SECRET\b|validateWebhookSignature|x-razorpay-signature|x-hub-signature/i],
   ["inbound secret", /\bINBOUND_EMAIL_SECRET\b|\bx-ingest-key\b/],
-  ["agent token", /\bAGENT_QUEUE_TOKEN\b/],
+  ["agent token", /\bAGENT_QUEUE_TOKEN\b|\bauthorizeAgent\(/],   // R-739: shared check in lib/security/agent-token.ts
   ["API key", /\bauthenticateApiKey\s*\(/],
   ["DMS panel key", /\bcheckPanelKey\s*\(|\bDMS_PANEL_API_KEY\b/],
   ["signed token", /\bverifyPdfToken\b|\bquoteTokenMatches\b|\bverifyClaimToken\b|\bverifyUnsubscribe\b|\bverifyTrialToken\b/],

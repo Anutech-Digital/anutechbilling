@@ -73,6 +73,10 @@ import { STAGE_META } from "@/lib/leads/stage-meta";
 import { leadStatePatch, stateFromLeadGstin, stateLabel } from "@/lib/leads/lead-state";
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
 import { blankLeadValues, ownerForSave, phoneProblem, priceProblem } from "./add-lead-rules";
+import { isMaskedContact } from "@/lib/auth/roles";
+
+/** R-1009: shown on a contact field this role sees masked. */
+const MASKED_HINT = "Phone and email are hidden for your role. Use Call / WhatsApp on the lead to reach them, or ask a manager to change them.";
 
 /* R-249: the same funnel order and labels as the board (lib/leads/stage-meta). */
 const STAGES: { value: Lead["stage"]; label: string }[] = STAGE_META.map((s) => ({ value: s.id, label: s.label }));
@@ -232,10 +236,13 @@ const optionalIntField = (max: number, min = 0, minMessage?: string) =>
 const schema = z.object({
   company:       z.string().optional().or(z.literal("")),
   contact_name:  z.string().min(2, "Contact name is required"),
-  contact_email: z.string().email("Invalid email").optional().or(z.literal("")),
+  /* R-1009: a masked value (a role without can_view_contact_details) is not checked — it is
+     shown read-only and never saved. */
+  contact_email: z.string().email("Invalid email").optional().or(z.literal("")).or(z.string().refine(isMaskedContact)),
   /* R-449: same rule as Quick add — a phone, when given, has 10+ digits. It used to show
      "5 more digits" and save "12345" anyway. */
   contact_phone: z.string().optional().superRefine((v, ctx) => {
+    if (isMaskedContact(v)) return;
     const problem = phoneProblem(v);
     if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
   }),
@@ -433,10 +440,14 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
   const wCompany = watch("company");
   const wPhone   = watch("contact_phone");
   const wEmail   = watch("contact_email");
+  const phoneMasked = isMaskedContact(wPhone);
+  const emailMasked = isMaskedContact(wEmail);
   const wGstin   = watch("gstin");
   const [dupKeys, setDupKeys] = React.useState(() => dupCheckKeys({}));
   React.useEffect(() => {
-    const t = setTimeout(() => setDupKeys(dupCheckKeys({ company: wCompany, phone: wPhone, email: wEmail, gstin: wGstin })), 300);
+    const t = setTimeout(() => setDupKeys(dupCheckKeys({
+      company: wCompany, phone: isMaskedContact(wPhone) ? "" : wPhone, email: isMaskedContact(wEmail) ? "" : wEmail, gstin: wGstin,
+    })), 300);
     return () => clearTimeout(t);
   }, [wCompany, wPhone, wEmail, wGstin]);
   /* R-376 (a): a valid GSTIN proves the state (its first two digits) — fill the State select
@@ -983,15 +994,20 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
                 {...register("contact_name")}
               />
             </FormField>
+            {/* R-1009: a role without can_view_contact_details gets these masked ("••••3210").
+                The field is then read-only — retyping or formatting a mask must never save it
+                (the gateway also drops a masked value from the save). */}
             <FormField label="Email" htmlFor="contact_email">
               <Input
                 id="contact_email"
-                type="email"
+                type={emailMasked ? "text" : "email"}
                 placeholder="e.g. rajesh@acme.com"
                 error={errors.contact_email?.message}
                 {...smart("contact_email", { live: liveEmail })}
+                readOnly={emailMasked}
+                title={emailMasked ? MASKED_HINT : undefined}
               />
-              <FieldPill check={checkEmail(watch("contact_email") ?? "")} />
+              {!emailMasked && <FieldPill check={checkEmail(watch("contact_email") ?? "")} />}
             </FormField>
             <FormField label="Phone" htmlFor="contact_phone">
               <Input
@@ -1000,11 +1016,16 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
                 placeholder="e.g. +91 98765 43210"
                 error={errors.contact_phone?.message}
                 {...smart("contact_phone", { live: livePhone, commit: commitPhone })}
+                readOnly={phoneMasked}
+                title={phoneMasked ? MASKED_HINT : undefined}
               />
               {/* Catches the ten-digit landline, which looks perfect right up until
                   somebody tries to WhatsApp it. */}
-              <FieldPill check={checkPhone(watch("contact_phone") ?? "")} />
+              {!phoneMasked && <FieldPill check={checkPhone(watch("contact_phone") ?? "")} />}
             </FormField>
+            {(emailMasked || phoneMasked) && (
+              <p className="sm:col-span-2 -mt-1 text-2xs text-ink-3">{MASKED_HINT}</p>
+            )}
           </div>
 
           {/* GSTIN — optional. When set, the existing Sandbox.co.in verifier

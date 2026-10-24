@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
+import { istToday, addDaysISO } from "@/lib/dates/ist";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
 import { foreignQuoteFigures, cents } from "@/lib/quotes/foreign-totals";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
@@ -81,6 +82,8 @@ interface Props {
   contactName?:  string | null;
   contactEmail?: string | null;
   contactPhone?: string | null;
+  /** R-1485: the buyer's GSTIN under "Bill to" (quoteBuyerGstin — customer row, else the lead). */
+  customerGstin?: string | null;
   lineItems:     QuoteLineItem[];
   subtotal:      number;
   discountPct:   number;
@@ -104,6 +107,8 @@ interface Props {
   /** Quote-level invoice frequency (migration 0161); falls back to legacy per-line commitment. */
   billingCycle?: BillingCycle;
   validityDays:  number;
+  /** R-1679: a saved quote's own validity date (IST) — shown as is, never re-counted from today. */
+  expiresDate?:  string | null;
   notes:         string;
   termsConditions?: string | null;
   isProspect?:   boolean;
@@ -133,6 +138,7 @@ export function QuotePreviewDialog({
   contactName,
   contactEmail,
   contactPhone,
+  customerGstin,
   lineItems,
   subtotal,
   discountPct,
@@ -149,6 +155,7 @@ export function QuotePreviewDialog({
   exchangeRate,
   billingCycle,
   validityDays,
+  expiresDate = null,
   notes: rawNotes,
   termsConditions,
   isProspect = false,
@@ -162,7 +169,8 @@ export function QuotePreviewDialog({
   const notes = customerQuoteNotes(rawNotes, lineItems);
   // First letter of tenant name → brand monogram (e.g. "Demo Co" → "E")
   const brandInitial = (tenantName?.trim()?.[0] ?? "?").toUpperCase();
-  const expiresOn = new Date(Date.now() + validityDays * 86400000);
+  /* R-1679: the saved date when there is one; else the date the builder will save (IST). */
+  const expiresOn = expiresDate ?? addDaysISO(istToday(), validityDays);
 
   // Billing frequency is a single quote-level value (migration 0161). Fall back
   // to the legacy per-line commitment for quotes written before the split.
@@ -226,13 +234,15 @@ export function QuotePreviewDialog({
         <DialogTitle className="sr-only">Quote preview · {quoteId}</DialogTitle>
 
         {/* Toolbar (hidden when printing) */}
-        <div className="flex items-center justify-between gap-2 px-5 py-3 border-b border-hairline bg-paper-2 sticky top-0 z-10 print:hidden">
-          <div className="flex items-center gap-2">
+        {/* R-1654: wraps on a phone (as R-187 did for the invoice/receipt toolbars) — one line
+            of toolbar was 459px and pushed the whole sheet, Amount column too, off a 375px screen. */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-5 py-3 border-b border-hairline bg-paper-2 sticky top-0 z-10 print:hidden">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
             <Icon name="file" size={16} className="text-ink-3" />
             <span className="text-sm font-semibold text-ink">Preview</span>
             <span className="text-xs text-ink-3">· This is how the customer will see it</span>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button size="sm" icon="printer" onClick={handlePrint}>
               Print / Save as PDF
             </Button>
@@ -268,14 +278,16 @@ export function QuotePreviewDialog({
         )}
 
         {/* ─────── PDF-style document ─────── */}
-        <div className="bg-paper p-10 print:p-0 font-sans text-ink" data-testid="preview-document">
+        {/* R-1654: p-4 on a phone (p-10 cut the Amount column off at 375px); sm: and print keep
+            the A4 look unchanged. The emailed PDF is a separate react-pdf template. */}
+        <div className="bg-paper p-4 sm:p-10 print:p-0 font-sans text-ink" data-testid="preview-document">
           {/* Brand header */}
-          <div className="flex items-start justify-between border-b-2 border-ink pb-5 mb-6">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-md bg-ink text-paper grid place-items-center font-serif text-2xl">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between border-b-2 border-ink pb-5 mb-6 [overflow-wrap:anywhere]">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="w-12 h-12 shrink-0 rounded-md bg-ink text-paper grid place-items-center font-serif text-2xl">
                 {brandInitial}
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="font-serif text-2xl leading-tight">{tenantName}</div>
                 {tenantGstin && (
                   <div className="text-xs text-ink-3 mt-0.5">
@@ -292,7 +304,7 @@ export function QuotePreviewDialog({
                 )}
               </div>
             </div>
-            <div className="text-right">
+            <div className="sm:text-right">
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold">
                 Quotation
               </p>
@@ -312,12 +324,18 @@ export function QuotePreviewDialog({
           </div>
 
           {/* Bill to */}
-          <div className="grid grid-cols-2 gap-6 mb-6">
-            <div>
+          <div className="grid grid-cols-2 gap-3 sm:gap-6 mb-6 [overflow-wrap:anywhere]">
+            <div className="min-w-0">
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-1.5">
                 Bill to
               </p>
               <p className="font-serif text-lg leading-tight">{customerName}</p>
+              {/* R-1485: the buyer's GSTIN, as the PDF prints it (lib/quotes/buyer-gstin). */}
+              {customerGstin && (
+                <p className="text-xs text-ink-3 mt-0.5" data-testid="preview-buyer-gstin">
+                  GSTIN: <span className="font-mono">{customerGstin}</span>
+                </p>
+              )}
               {contactName && (
                 <p className="text-sm text-ink-2 mt-1">Attn: {contactName}</p>
               )}
@@ -328,7 +346,7 @@ export function QuotePreviewDialog({
                 <p className="text-sm text-ink-3 font-mono">{contactPhone}</p>
               )}
             </div>
-            <div className="text-right">
+            <div className="min-w-0 text-right">
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-1.5">
                 Place of supply
               </p>
@@ -358,13 +376,14 @@ export function QuotePreviewDialog({
           </div>
 
           {/* Line items */}
-          <table className="w-full mb-6">
+          <div className="mb-6 overflow-x-auto">
+          <table className="w-full">
             <thead className="border-y-2 border-ink">
               <tr>
-                <th className="text-left py-2 text-2xs uppercase tracking-wider font-semibold text-ink">Description</th>
-                <th className="text-right py-2 text-2xs uppercase tracking-wider font-semibold text-ink w-20">Qty</th>
-                <th className="text-right py-2 text-2xs uppercase tracking-wider font-semibold text-ink w-32">Rate</th>
-                <th className="text-right py-2 text-2xs uppercase tracking-wider font-semibold text-ink w-36">Amount</th>
+                <th className="text-left py-2 whitespace-nowrap text-2xs uppercase tracking-normal sm:tracking-wider font-semibold text-ink">Description</th>
+                <th className="text-right py-2 whitespace-nowrap text-2xs uppercase tracking-normal sm:tracking-wider font-semibold text-ink pl-2 sm:w-20">Qty</th>
+                <th className="text-right py-2 whitespace-nowrap text-2xs uppercase tracking-normal sm:tracking-wider font-semibold text-ink pl-2 sm:w-32">Rate</th>
+                <th className="text-right py-2 whitespace-nowrap text-2xs uppercase tracking-normal sm:tracking-wider font-semibold text-ink pl-2 sm:w-36">Amount</th>
               </tr>
             </thead>
             <tbody>
@@ -389,7 +408,7 @@ export function QuotePreviewDialog({
                   const breakdown = linePriceBreakdown(line, (n) => (showPer ? Math.round(n / lineDiv) : n));
                   return (
                     <tr key={line.id} className="border-b border-hairline">
-                      <td className="py-3 text-sm">
+                      <td className="py-3 text-sm [overflow-wrap:anywhere]">
                         <p className="font-medium text-ink">{line.name}</p>
                         {/* R-1764: "Domain:" / "Subscription period:" — the PDF's words. */}
                         {lineDetailNotes(line, periodContext).map((t) => (
@@ -412,11 +431,11 @@ export function QuotePreviewDialog({
                           </p>
                         )}
                       </td>
-                      <td className="py-3 text-right text-sm tabular-nums">{line.qty}</td>
-                      <td className="py-3 text-right text-sm tabular-nums">
+                      <td className="py-3 pl-2 text-right text-sm tabular-nums">{line.qty}</td>
+                      <td className="py-3 pl-2 text-right text-sm tabular-nums">
                         {ff && !showPer ? fgn(ff.lines[li].unit) : money(rate)}{showPer ? lineUnit : ""}
                       </td>
-                      <td className="py-3 text-right text-sm tabular-nums font-medium">
+                      <td className="py-3 pl-2 text-right text-sm tabular-nums font-medium">
                         <div>{ff && !showPer ? fgn(ff.lines[li].gross) : money(amount)}{showPer ? lineUnit : ""}</div>
                         {showPer && (
                           <div className="text-3xs font-normal text-ink-3">
@@ -430,6 +449,7 @@ export function QuotePreviewDialog({
               )}
             </tbody>
           </table>
+          </div>
 
           {/* Totals */}
           {lineItems.length > 0 && (

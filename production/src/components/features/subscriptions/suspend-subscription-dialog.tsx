@@ -23,6 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormField } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { toastError } from "@/lib/errors/toast-error";
 import { rupee } from "@/lib/utils";
 
@@ -79,8 +80,7 @@ export function useSuspendSubscription() {
       return data;
     },
     onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      invalidateReceivables(qc);
       const t = suspendToast(r);
       toast.success(t.title, { description: t.description });
     },

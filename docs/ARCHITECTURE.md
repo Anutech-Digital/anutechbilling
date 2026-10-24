@@ -216,6 +216,20 @@ client yet** (`src/lib/compliance/einvoice.ts` only tracks readiness). No Gupshu
 4. **Staging train** — the manager runs `node scripts/ops/staging-train.mjs` every 2–3 hours: newest
    green `manager-pardeep` commit → merge into `staging` (never a force push). New migrations stop
    it until the staging DB step is done (`--db-done`). A push to `staging` builds `resellersos-staging`.
+
+   **Smoke check after the train (R-1722).** When `staging-train.mjs --db-done --push` has finished
+   (it waits until staging's `/api/version` shows the merge), the manager runs, from `production/`:
+   `SMOKE_EMAIL=<staging test login> SMOKE_PASSWORD=<its password> npm run smoke -- <staging URL>`.
+   It prints the version sha, logs in through `/login`, opens 17 real pages (dashboard, leads,
+   customers + one customer, quotes + one quote, invoices + one invoice, payments, subscriptions,
+   renewals, collections, online orders, accounting, P&L, banking, settings) and per page counts the
+   HTTP status, console errors, same-origin requests that failed or came back 4xx/5xx, and an error
+   boundary / "didn't load" text. Table, then exit 1 if any page is red (each red page lists its bad
+   requests). Read-only: it only opens pages, never clicks a button. The login comes only from env —
+   a staging TEST user, never a real person's login, never typed into chat. On localhost it falls back
+   to the E2E seed owner from `.env.test`. `--mock-500 /customers` fakes a 500 in the browser to prove
+   it turns red; `--only quotes,leads` checks a few pages. Exit 2 = could not run (no login, version
+   unreachable).
 5. **Live** — on deploy days (docs/LIVE-OPERATIONS.md, R-911: Tuesday and Friday after 17:00 IST
    from 17 Oct 2026; older docs still say Thursday): the live `deploy-db-<day>.sh` prints "DB READY",
    then `production/deploy.sh` (gated by `scripts/ops/deploy-gate.mjs`: clean tree, sha pushed, CI +

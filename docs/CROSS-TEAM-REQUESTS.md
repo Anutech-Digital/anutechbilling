@@ -703,7 +703,7 @@ the correct renewal date and MRR. Don't fix them yourself.
 
 ### R-018 · Export log (board card R-1006) — 4 Billing exports still need one line each
 - **For:** Abhishek
-- **Status:** Open
+- **Status:** Done 2026-10-23 by board card R-1795 (Pardeep owns this area since 19 Oct) — all four call `downloadCSV`
 - **Raised:** 2026-10-19
 - **Why accounting needs it:** R-1006 records every export (who, what, how many rows) in `export_log`, owner-only.
   Every export through `downloadCSV` (lib/csv) — customers list, quotes, renewals, subscriptions — is already logged

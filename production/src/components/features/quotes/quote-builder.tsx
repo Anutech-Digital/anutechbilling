@@ -59,13 +59,16 @@ import { matchLeadToCustomer, matchNote } from "@/lib/quotes/match-customer";
 import { SUPPORT_TIERS, findSupportSku, isSupportSkuId } from "@/lib/support/tiers";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
 import { quoteContact } from "@/lib/quotes/quote-contact";
+import { addGstinHref, buyerGstinMissing, quoteBuyerGstin } from "@/lib/quotes/buyer-gstin";
+import { paletteMayOpen } from "@/components/layout/palette-access";
 import { useCustomers } from "@/lib/queries/customers";
 import { CustomerCombobox } from "@/components/features/customers/customer-combobox";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
 import { useCreateQuote, useQuote } from "@/lib/queries/quotes";
 import { useGenerateInvoice } from "@/lib/queries/invoices";
 import { useUpdateLead, useQuoteLead, useCreateLead } from "@/lib/queries/leads";
-import { prospectContactProblem, hasProspectContact, prospectLeadRow } from "@/lib/quotes/prospect-contact";
+import { prospectContactProblem, hasProspectContact, prospectLeadRow, validProspectGstin } from "@/lib/quotes/prospect-contact";
+import { checkGstin, liveGstin, gstinState } from "@/lib/forms/poka-yoke";
 import { sameProductSubscriptions, sameProductNote } from "@/lib/quotes/same-product";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
@@ -101,7 +104,8 @@ import { lineCostUnknown, fillUnknownCosts } from "@/lib/quotes/line-cost";
 import { matchCatalogItemForPlan } from "@/lib/quotes/lead-plan-match";
 import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice, markOneTimeLines } from "@/lib/quotes/line-commit-choice";
 import { leadLinePrice } from "./lead-line-commitment";
-import { quoteSeatCount, isDomainRegistrationLine } from "@/lib/quotes/seat-lines";
+import { quoteSeatCount } from "@/lib/quotes/seat-lines";
+import { isTermLine, lineForYears } from "./domain-term";
 import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
@@ -115,9 +119,6 @@ const NO_APPROVAL_ROW = {
   approved_discount_bps: null, approved_margin_bps: null, approval_rejection_reason: null,
 };
 
-/** R-156: show the term picker on a domain REGISTRATION line — by its name too, so it is there
- *  before the domain is typed (isDomainPurchaseLine needs the name filled in). */
-const isRegistrationLine = (l: QuoteLineItem) => isDomainRegistrationLine(l);   // R-1673: same rule as seats + PDF label
 
 // Quote IDs are allocated at SAVE time via the central document-numbering RPC
 // (see migration 0004_document_series.sql) — this guarantees sequential per-tenant
@@ -198,6 +199,14 @@ function QuoteBuilderBody() {
      made optional (lib/quotes/optional-line.ts); unknown (custom, not loaded) asks too. */
   const catalogKindOf = (itemId: string | undefined) =>
     itemId ? (allCatalog ?? []).find((c) => c.id === itemId)?.kind : undefined;
+  /* R-156 / R-1445: the "Register for N years" picker — a domain registration line by its name
+     (R-1673 rule, there before the domain is typed) or any catalogue item of the Domain vendor
+     (named ".in", ".com", which had no picker: "nothing above 1 year", Pratik 16 Oct). */
+  const domainItemIds = React.useMemo(
+    () => new Set((allCatalog ?? []).filter((c) => c.vendor === "domain").map((c) => c.id)),
+    [allCatalog],
+  );
+  const isRegistrationLine = (l: QuoteLineItem) => isTermLine(l, domainItemIds);
   const { data: currentUser } = useCurrentUser();
   /* R-1532: a business that is not GST-registered / under composition issues a Bill of
      Supply — its quotes carry 0% GST, locked (R-1529's database refuses GST on the invoice). */
@@ -361,6 +370,10 @@ function QuoteBuilderBody() {
      (lib/quotes/prospect-contact.ts) — quotes have no contact columns of their own. */
   const [prospectEmail, setProspectEmail] = React.useState<string>("");
   const [prospectPhone, setProspectPhone] = React.useState<string>("");
+  /* R-1712: a business typed as a new prospect got a B2C invoice — the GSTIN was never asked.
+     Saved on the prospect's lead (leads.gstin), which accept / record_payment copy to the new
+     customer's customers.gstin — the field every invoice reads. */
+  const [prospectGstin, setProspectGstin] = React.useState<string>("");
   /** The lead made for a typed prospect on an earlier save of this screen — never two. */
   const prospectLeadRef = React.useRef<string | null>(null);
   // Customer-entry mode — a clean either/or toggle (was two inputs shown at once,
@@ -872,6 +885,13 @@ function QuoteBuilderBody() {
     : customerId
       ? quoteContact(customer, leadFromQuery)
       : quoteContact({ contact_email: prospectEmail, contact_phone: prospectPhone });
+  /* R-1485: the buyer's GSTIN in the preview — lead mode: the (editable) lead GSTIN; a
+     customer: its own row only (quoteBuyerGstin). A typed prospect: the GSTIN typed here once it
+     passes the checksum (R-1712). */
+  const previewGstin = isLeadMode
+    ? quoteBuyerGstin(null, { gstin: leadGstin })
+    : customerId ? quoteBuyerGstin(customer ?? { gstin: null }) : validProspectGstin(prospectGstin);
+  const gstinMissing = !!customerId && buyerGstinMissing(customer);
   // Invoice mode: pre-fill the payment terms from the customer's default (0164).
   // Fires when a customer with a saved term is selected; a manual Terms change
   // still wins (this only re-runs if the selected customer's term changes).
@@ -1169,9 +1189,11 @@ function QuoteBuilderBody() {
   const updateDomain = (id: string, d: string) => {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, domain: d || null } : l)));
   };
-  /** R-156: a domain registration line's term. The register cron registers for exactly this. */
+  /** R-156: a domain registration line's term. The register cron registers for exactly this.
+   *  R-1445: the rate is the whole term's price, so it moves with the years (price x years);
+   *  the subscription filed from it renews after those years (trigger subscription_term_follows_line). */
   const updateYears = (id: string, years: number) => {
-    setLineItems((s) => s.map((l) => (l.id === id ? { ...l, years: years > 1 ? years : undefined } : l)));
+    setLineItems((s) => s.map((l) => (l.id === id ? lineForYears(l, years) : l)));
   };
   /** What the customer may change on the public page. See line-adjust-controls.tsx (LineMoreMenu). */
   const updateAdjustable = (id: string, patch: Partial<QuoteLineItem>) => {
@@ -1355,7 +1377,7 @@ function QuoteBuilderBody() {
       return;
     }
     const typedProspect = !isLeadMode && !customerId && !isInvoiceMode;
-    const contactProblem = typedProspect ? prospectContactProblem({ email: prospectEmail, phone: prospectPhone }) : null;
+    const contactProblem = typedProspect ? prospectContactProblem({ email: prospectEmail, phone: prospectPhone, gstin: prospectGstin }) : null;
     if (contactProblem) {
       toast.error("Check the prospect's contact", { description: contactProblem });
       return;
@@ -1462,11 +1484,11 @@ function QuoteBuilderBody() {
          linked to it — the contact then lives where Send, Record payment and the pipeline
          already read it. Made once per screen (the ref), never for a picked customer. */
       let prospectLeadId: string | null = prospectLeadRef.current;
-      if (typedProspect && !linkedLeadId && !prospectLeadId && hasProspectContact({ email: prospectEmail, phone: prospectPhone })) {
+      if (typedProspect && !linkedLeadId && !prospectLeadId && hasProspectContact({ email: prospectEmail, phone: prospectPhone, gstin: prospectGstin })) {
         const seats = quoteSeatCount(lineItems) ?? 0;
         const row = prospectLeadRow({
           name: resolvedCustomerName,
-          contact: { email: prospectEmail, phone: prospectPhone },
+          contact: { email: prospectEmail, phone: prospectPhone, gstin: prospectGstin },
           stateCode: prospectStateCode || null,
           stateName: prospectStateCode ? (GST_STATE_BY_CODE[prospectStateCode] ?? null) : null,
           country: prospectCountry,
@@ -1997,6 +2019,32 @@ function QuoteBuilderBody() {
                       onChange={(e) => setProspectPhone(e.target.value)}
                     />
                   </FormField>
+                  {/* R-1712: GSTIN, checked as typed; a valid one sets the place of supply below. */}
+                  <FormField label="GSTIN" htmlFor="prospectGstin" className="sm:col-span-2">
+                    <Input
+                      id="prospectGstin"
+                      autoComplete="off"
+                      placeholder="27AAPFU0939F1ZV"
+                      className="font-mono uppercase"
+                      value={prospectGstin}
+                      onChange={(e) => {
+                        const v = liveGstin(e.target.value);
+                        setProspectGstin(v);
+                        const st = gstinState(v);
+                        if (st) setProspectStateCode(st.code);
+                      }}
+                    />
+                    {(() => {
+                      const g = checkGstin(prospectGstin);
+                      if (g.tone === "ok") return <p className="mt-1 text-3xs text-emerald">Valid GSTIN · {g.detail} — place of supply set from it.</p>;
+                      if (g.tone === "typing" || g.tone === "error") return <p role="alert" className="mt-1 text-3xs text-rose">{g.message}</p>;
+                      return (
+                        <p className="mt-1 text-3xs text-amber-ink">
+                          A registered business? Add its GSTIN — without it the tax invoice is B2C and they cannot claim the GST back. Leave it empty for a person.
+                        </p>
+                      );
+                    })()}
+                  </FormField>
                   {prospectContactProblem({ email: prospectEmail, phone: prospectPhone }) ? (
                     <p role="alert" className="sm:col-span-2 -mt-1 text-3xs text-rose">
                       {prospectContactProblem({ email: prospectEmail, phone: prospectPhone })}
@@ -2022,7 +2070,28 @@ function QuoteBuilderBody() {
                     </div>
                     <div className="min-w-0">
                       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-0.5">GSTIN</div>
-                      <div className="text-sm text-ink-2 font-mono truncate">{customer?.gstin || "—"}</div>
+                      {/* R-1485: from the customer row; a business without one gets a quiet
+                          way to add it (only where this role may open the customer form). */}
+                      {gstinMissing && customerId ? (
+                        paletteMayOpen(currentUser?.role, addGstinHref(customerId)) ? (
+                          <Link
+                            href={addGstinHref(customerId) as never}
+                            className="text-sm text-ink-3 underline underline-offset-2 hover:text-amber-ink"
+                            data-testid="builder-add-gstin"
+                            /* A new tab, so the quote being built is not lost; coming back
+                               refetches the customer and the GSTIN appears here. */
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            GSTIN not on file — add it
+                            <span className="sr-only"> (opens in a new tab)</span>
+                          </Link>
+                        ) : (
+                          <div className="text-sm text-ink-3">GSTIN not on file</div>
+                        )
+                      ) : (
+                        <div className="text-sm text-ink-2 font-mono truncate" data-testid="builder-buyer-gstin">{previewGstin || "—"}</div>
+                      )}
                     </div>
                     <div className="min-w-0">
                       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-0.5">Place of supply</div>
@@ -2797,7 +2866,7 @@ function QuoteBuilderBody() {
                       ) : (
                         <span>
                           Valid till{" "}
-                          <b className="tabular-nums">{formatDate(new Date(Date.now() + validityDays * 86400000))}</b>
+                          <b className="tabular-nums">{formatDate(addDaysISO(istToday(), validityDays)) /* R-1679: the date that is saved (IST) */}</b>
                         </span>
                       )}
                       <span className="text-ink-3" aria-hidden>·</span>
@@ -2875,7 +2944,7 @@ function QuoteBuilderBody() {
                         min={1}
                         max={365}
                         value={validityDays}
-                        onChange={(e) => setValidityDays(parseInt(e.target.value) || 30)}
+                        onChange={(e) => setValidityDays(Math.min(365, Math.max(1, parseInt(e.target.value) || 30)))} /* R-1679: never 0 or −1 days */
                         className="tabular-nums"
                       />
                     </FormField>
@@ -2883,7 +2952,7 @@ function QuoteBuilderBody() {
                     <FormField label="Expires on" htmlFor="expires">
                       <Input
                         id="expires"
-                        value={formatDate(new Date(Date.now() + validityDays * 86400000))}
+                        value={formatDate(addDaysISO(istToday(), validityDays)) /* R-1679: the date that is saved (IST) */}
                         readOnly
                         className="bg-paper-2 cursor-default font-mono"
                       />
@@ -3069,7 +3138,7 @@ function QuoteBuilderBody() {
               <Button icon="file" className="hidden md:inline-flex" onClick={openPreview}>
                 Preview
               </Button>
-              <DropdownMenu>
+              <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
                   <IconButton icon="more_h" aria-label="More actions" className="md:hidden border border-hairline" />
                 </DropdownMenuTrigger>
@@ -3099,7 +3168,7 @@ function QuoteBuilderBody() {
             Preview
           </Button>
           {/* Phone only: Save draft and Preview live here; Send ▾ stays on the row. */}
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <IconButton
                 icon="more_h"
@@ -3120,7 +3189,7 @@ function QuoteBuilderBody() {
           {/* R-1726: ONE send button — the three ways to send (email / WhatsApp / mark sent) are
               its menu. Ctrl+Enter still runs the usual send (email when there is an address,
               else mark sent) — the item it runs carries the shortcut hint. */}
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="primary"
@@ -3271,6 +3340,7 @@ function QuoteBuilderBody() {
         contactName={previewContact.contactName}
         contactEmail={previewContact.contactEmail}
         contactPhone={previewContact.contactPhone}
+        customerGstin={previewGstin}
         lineItems={lineItems}
         subtotal={subtotal}
         discountPct={0}

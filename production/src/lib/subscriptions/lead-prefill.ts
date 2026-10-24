@@ -23,6 +23,9 @@ export interface LeadPrefill {
   plan: string;
   seats: number | null;
   billingChoice: BillingChoice;
+  /** R-1712: the lead's GSTIN and state — a new customer made from the deal starts with them. */
+  gstin: string;
+  stateCode: string;
 }
 
 export interface PrefillLead {
@@ -36,6 +39,8 @@ export interface PrefillLead {
   plan?: string | null;
   seats?: number | null;
   billing_cycle?: string | null;
+  gstin?: string | null;
+  state_code?: string | null;
 }
 
 /** leads.billing_cycle → the form's billing choice. Monthly is flexible; anything else annual. */
@@ -56,6 +61,8 @@ export function prefillFromLead(l: PrefillLead): LeadPrefill {
     plan: t(l.plan),
     seats: l.seats && l.seats > 0 ? Math.round(l.seats) : null,
     billingChoice: billingChoiceFromCycle(l.billing_cycle),
+    gstin: t(l.gstin).toUpperCase(),
+    stateCode: t(l.state_code),
   };
 }
 

@@ -32,10 +32,11 @@ import { useCustomerSubscriptions } from "@/lib/queries/subscriptions";
 import { CustomerContactsCard } from "@/components/features/customers/customer-contacts-card";
 import { LateChargesPreview } from "@/components/features/late-charges/customer-late-charges";
 import { CreditSettingsCard } from "@/components/features/customers/credit-settings-card";
+import { RenewalGraceCard } from "@/components/features/customers/renewal-grace-card";
 import { CustomerFollowupCard } from "@/components/features/collections/customer-followup-card";
 import { EntitlementCard } from "@/components/features/support/entitlement-card";
 import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
-import { usePayments, useDeletePayment } from "@/lib/queries/payments";
+import { useCustomerPayments, useDeletePayment } from "@/lib/queries/payments";
 import { useTdsReceivables } from "@/lib/queries/tds-receivable";
 import { receiptSplitLine, tdsByPayment } from "@/lib/accounting/tds-receipt";
 import { useCustomerProjects, useCustomerProjectPayments } from "@/lib/queries/projects";
@@ -45,6 +46,7 @@ import { Button, IconButton } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { TabBar } from "@/components/ui/tabs";
 import { LeadHistoryCard } from "@/components/features/contacts/lead-history-card";
 import { Icon } from "@/components/ui/icon";
@@ -73,7 +75,7 @@ import { PrimaryContactLine } from "@/components/features/customers/primary-cont
 /* R-1740: my relationship with this company's best-known person — saves to that contact. */
 import { CustomerRelationshipChip } from "@/components/features/contacts/relationship-chip";
 import { txnHref, primaryContactOf } from "@/components/features/customers/customer-links";
-import { buildCustomerStatement, useCustomerNotes } from "@/components/features/customers/customer-statement";
+import { buildCustomerStatement, statementBalanceText, statementPayments, useCustomerNotes } from "@/components/features/customers/customer-statement";
 import { RecordTable, RowLink } from "@/components/features/customers/customer-record-table";
 
 export interface CustomerProfileProps {
@@ -102,15 +104,28 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
 
   const { data: customer, isLoading, error } = useCustomer(params.id);
   const { data: allGroups } = useCustomerGroups();
-  const { data: subs }     = useCustomerSubscriptions(params.id);
-  const { data: invoices } = useCustomerInvoices(params.id);
-  const { data: quotes }   = useCustomerQuotes(params.id);
-  const { data: projects } = useCustomerProjects(params.id);
-  const { data: projPay } = useCustomerProjectPayments(params.id);
+  const subsQ = useCustomerSubscriptions(params.id);
+  const invoicesQ = useCustomerInvoices(params.id);
+  const quotesQ = useCustomerQuotes(params.id);
+  const projectsQ = useCustomerProjects(params.id);
+  const projPayQ = useCustomerProjectPayments(params.id);
+  const { data: subs } = subsQ;
+  const { data: invoices } = invoicesQ;
+  const { data: quotes, isPending: quotesPending } = quotesQ;
+  const { data: projects } = projectsQ;
+  const { data: projPay } = projPayQ;
   const { data: openCredit } = useCustomerOpenCredit(params.id);
   /* R-1682: credit / debit notes belong on the Statement. */
   const { data: customerNotes } = useCustomerNotes(params.id);
-  const { data: allPayments } = usePayments();
+  /* R-1121: this customer's payments only (theirs, or on their quotes) — not every payment. */
+  const paymentsQ = useCustomerPayments(params.id, quotesPending ? undefined : (quotes ?? []).map((q) => q.id as string));
+  const { data: allPayments } = paymentsQ;
+  /* R-1807: Outstanding / Lifetime paid / MRR are built from these five reads. When one
+     fails its rows were never seen, so "Outstanding: All clear" would be a guess — the
+     metric bar shows "—" and the error + Try again sits under it. */
+  const moneyReads = [subsQ, invoicesQ, quotesQ, projectsQ, projPayQ, paymentsQ];
+  const moneyFailed = moneyReads.some((q) => q.isError);
+  const retryMoney = () => { for (const q of moneyReads) if (q.isError) void q.refetch(); };
   /* R-523: TDS this customer deducted — the statement and Lifetime paid show the bank
      money and the TDS apart, else the bank reconciliation can never match. */
   const { data: customerTds } = useTdsReceivables({ customerId: params.id });
@@ -210,7 +225,9 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const allInvoices = invoices ?? [];
   const allQuotes = quotes ?? [];
   const allProjects = projects ?? [];
-  const customerPayments = (allPayments ?? []).filter((p) => p.customer_id === c.id);
+  /* R-1632: the /payments rule — a receipt taken before the lead was converted has no
+     customer_id but its quote is this customer's (statementPayments → paymentBelongsTo). */
+  const customerPayments = statementPayments(allPayments ?? [], c.id, (quotes ?? []).map((q) => q.id as string));
   const receivedPaymentsTotal = customerPayments
     .filter((p) => p.status === "received")
     .reduce((s, p) => s + (p.amount ?? 0), 0);
@@ -488,7 +505,14 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
       <>
       {/* Answer-bar */}
       <div className="mb-4">
-        <CustomerMetricBar insights={insights} customerId={customer.id} lifetimeTds={lifetimeTds} />
+        <CustomerMetricBar insights={insights} customerId={customer.id} lifetimeTds={lifetimeTds} failed={moneyFailed} />
+        {moneyFailed && (
+          <LoadErrorInline
+            what="Some of this customer's records"
+            error={moneyReads.find((q) => q.isError)?.error}
+            onRetry={retryMoney}
+          />
+        )}
       </div>
 
       {/* Advance credit held (from an earlier overpayment) — adjustable against the next bill */}
@@ -501,10 +525,12 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
         </div>
       )}
 
-      {/* Next-best-action */}
-      <div className="mb-6">
-        <NextBestActionCard nba={insights.nba} customer={c} />
-      </div>
+      {/* Next-best-action — not while the records it reads are unknown (R-1807). */}
+      {!moneyFailed && (
+        <div className="mb-6">
+          <NextBestActionCard nba={insights.nba} customer={c} />
+        </div>
+      )}
 
       {/* Body — identity rail (Zoho-style) on the left, money + activity on the right */}
       {/* Side by side on the page; stacked in the pane, which is about half as wide as
@@ -532,10 +558,18 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
             customerName={c.name}
             autoOpenAdd={addContactAsked}
             onAutoOpenHandled={clearAddContactAsk}
+            recordContact={primaryContact}
           />
 
           {/* R-346: may this customer be activated on credit, and up to how much. */}
           <CreditSettingsCard customer={c} isOwner={me?.role === "owner"} />
+
+          {/* R-1621: a trusted customer's own grace after the renewal date (owner/manager). */}
+          <RenewalGraceCard
+            customerId={params.id}
+            canEdit={me?.role === "owner" || me?.role === "manager"}
+            companyGraceDays={me?.tenantGracePeriodDays}
+          />
 
           {/* R-1517: payment follow-ups — log a call / promise, next date, full history. */}
           <CustomerFollowupCard customerId={params.id} customerName={c.name} />
@@ -676,7 +710,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
                               <Icon name={isCollapsed ? "chevron_right" : "chevron_down"} size={13} />
                             </button>
                           ) : t.indent > 0 ? (
-                            <span className="text-ink-4 mr-1">└</span>
+                            <span aria-hidden className="text-ink-3 mr-1">└</span>
                           ) : null}
                           <RowLink href={t.href}>{t.ref}</RowLink>
                         </span>,
@@ -740,7 +774,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
                       <RowLink key="desc" href={e.href}>{e.desc}</RowLink>,
                       <span key="d" className="tabular-nums text-ink-2">{e.debit ? rupee(e.debit) : "—"}</span>,
                       <span key="cr" className="tabular-nums text-emerald">{e.credit ? rupee(e.credit) : "—"}</span>,
-                      <span key="b" className="tabular-nums font-medium">{rupee(e.balance)}</span>,
+                      <span key="b" className="tabular-nums font-medium">{statementBalanceText(e.balance)}</span>,
                     ],
                   }))}
                 />

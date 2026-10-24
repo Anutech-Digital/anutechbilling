@@ -164,8 +164,10 @@ export function DealDetailView({ leadId }: { leadId: string }) {
     () => [...new Set([
       ...(leadSrc.data?.failed ?? []), ...(quoteSrc.data?.failed ?? []), ...(projectSrc.data?.failed ?? []),
       ...(leadSrc.error || quoteSrc.error || projectSrc.error ? ["Some records"] : []),
+      /* R-1806: a failed quotes read — history has no quote events, not "none sent". */
+      ...(quotesQ.isError ? ["Quotes"] : []),
     ])],
-    [leadSrc.data, quoteSrc.data, projectSrc.data, leadSrc.error, quoteSrc.error, projectSrc.error],
+    [leadSrc.data, quoteSrc.data, projectSrc.data, leadSrc.error, quoteSrc.error, projectSrc.error, quotesQ.isError],
   );
 
   // ── Gates ────────────────────────────────────────────────────────────────
@@ -209,7 +211,7 @@ export function DealDetailView({ leadId }: { leadId: string }) {
   /* Delete — owner/manager only, never with a quote on it (lib/deals/delete-rules.ts; the
      database enforces both). Blocked → say why and offer Lost, in the toast. */
   const onDelete = async () => {
-    const block = dealDeleteBlock({ role: me?.role, quoteIds: quotes.map((q) => q.id) });
+    const block = dealDeleteBlock({ role: me?.role, quoteIds: quotes.map((q) => q.id), quotesFailed: quotesQ.isError });
     if (block) {
       toast.error("This deal can't be deleted", {
         description: block,
@@ -326,11 +328,15 @@ export function DealDetailView({ leadId }: { leadId: string }) {
             openTasks={openTasks} doneTasks={doneTasks} setAddTaskOpen={setAddTaskOpen}
             completeTask={completeTask} snoozeTask={snoozeTask} deleteTask={deleteTask}
           />
-          <DealQuotesCard rows={quoteRows} onNewQuote={newQuote} projectFailed={(projectSrc.data?.failed ?? []).includes("Project quotation") || !!projectSrc.error} />
+          <DealQuotesCard
+            rows={quoteRows} onNewQuote={newQuote}
+            projectFailed={(projectSrc.data?.failed ?? []).includes("Project quotation") || !!projectSrc.error}
+            error={quotesQ.isError ? quotesQ.error : undefined} onRetry={() => void quotesQ.refetch()}
+          />
           <DealMoneyCard
             money={money}
             subscriptions={quoteSrc.data?.subscriptions?.length ?? 0}
-            failed={[...(quoteSrc.data?.failed ?? []), ...(projectSrc.data?.failed ?? [])].some((f) => f === "Invoices" || f === "Payments" || f.startsWith("Project"))}
+            failed={quotesQ.isError || [...(quoteSrc.data?.failed ?? []), ...(projectSrc.data?.failed ?? [])].some((f) => f === "Invoices" || f === "Payments" || f.startsWith("Project"))}
             hasQuotes={quoteRows.length > 0}
           />
           <DealDetailsCard lead={lead} userNames={userNames} onEdit={() => setEditOpen(true)} />

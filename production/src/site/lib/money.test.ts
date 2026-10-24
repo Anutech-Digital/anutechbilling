@@ -90,7 +90,7 @@ describe("coupon aur domain (R-225)", () => {
     const t = cartTotals([line({ unitPrice: 799, sku: "domain:in", domain: "acme.in", cycle: "yearly" })], 0.10);
     expect(t.discount).toBe(0);
     expect(t.discountRate).toBe(0);
-    expect(t.payable).toBeCloseTo(799 * 1.18);
+    expect(t.payable).toBe(943); // R-1108: round(799 × 1.18), what the server charges
   });
 
   it("workspace line par coupon pehle jaisa — gross ka 10%", () => {
@@ -122,7 +122,33 @@ describe("coupon aur domain (R-225)", () => {
       ],
       0.15,
     );
-    expect(t.discount).toBeCloseTo(2999 * 0.15);
+    // R-1108: whole rupees, as the server stores it — subtotal round(2999 × 0.85) = 2549.
+    expect(t.discount).toBe(450);
+    expect(t.subtotal).toBe(2549);
+  });
+});
+
+/* R-1108 (23 Oct 2026): the rows a buyer reads must add up, and the payable must be what the
+   server charges (lib/checkout/cart-coupon.ts subtotal = round(...); cart-checkout.ts amount =
+   round(subtotal × 1.18)). Rs 899 at 20% read 719 + 129 = 849 while the server charged 848. */
+describe("R-1108 shown totals add up and equal the server's charge", () => {
+  it("Rs 899 at 20% off reads 719 + 129 = 848 (server: round(719 × 1.18) = 848)", () => {
+    const t = cartTotals([line({ unitPrice: 899 })], 0.2);
+    expect([t.subtotal, t.gst, t.payable]).toEqual([719, 129, 848]);
+    expect(t.discount).toBe(180);
+  });
+  it("grid: whole rupees, gross − discount = subtotal, subtotal + gst = payable = round(subtotal × 1.18)", () => {
+    for (const price of [99, 149, 270, 499, 799, 899, 1299, 2399, 4999]) {
+      for (const qty of [1, 3, 7]) {
+        for (const rate of [0, 0.05, 0.1, 0.15, 0.2, 0.25]) {
+          const t = cartTotals([line({ unitPrice: price, qty })], rate);
+          for (const v of [t.discount, t.subtotal, t.gst, t.payable]) expect(Number.isInteger(v)).toBe(true);
+          expect(t.gross - t.discount).toBe(t.subtotal);
+          expect(t.subtotal + t.gst).toBe(t.payable);
+          expect(t.payable).toBe(Math.round(t.subtotal * 1.18));
+        }
+      }
+    }
   });
 });
 

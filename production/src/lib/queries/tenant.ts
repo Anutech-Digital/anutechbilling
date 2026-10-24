@@ -14,8 +14,25 @@ import { createClient } from "@/lib/supabase/client";
 import { shrinkLogo } from "@/lib/images/shrink-logo";
 import type { Database } from "@/lib/supabase/database.types";
 import { companyGstinStateConflict } from "@/lib/gst/gstin-state";
+import { toastError } from "@/lib/errors/toast-error";
 
 type TenantUpdate = Database["public"]["Tables"]["tenants"]["Update"];
+
+/** R-1798 (§24): what a non-owner sees when the owner-only update matched no row. */
+export const OWNER_ONLY_COMPANY = {
+  message: "Only the owner can change company details",
+  description: "Nothing was saved. Ask the workspace owner to make this change — they can do it in Settings → Company.",
+} as const;
+
+/**
+ * RLS `tenants_self_update` is owner-only, so a manager's UPDATE matches 0 rows and
+ * `.single()` reports PGRST116 ("JSON object requested, multiple (or no) rows returned").
+ * The row is the caller's own tenant, so 0 rows here can only mean "not the owner".
+ */
+export function tenantUpdateError(error: { code?: string; message?: string }): Error {
+  if (error.code === "PGRST116") return new Error(OWNER_ONLY_COMPANY.message);
+  return error instanceof Error ? error : Object.assign(new Error(error.message ?? "Update failed"), error);
+}
 
 export function useUpdateTenant() {
   const qc = useQueryClient();
@@ -46,7 +63,7 @@ export function useUpdateTenant() {
         .eq("id", me.tenant_id)
         .select()
         .single();
-      if (error) throw error;
+      if (error) throw tenantUpdateError(error);
       return data;
     },
     onSuccess: () => {
@@ -55,7 +72,10 @@ export function useUpdateTenant() {
       qc.invalidateQueries({ queryKey: ["current-user"] });
       toast.success("Company info updated");
     },
-    onError: (err) => toast.error(`Update failed: ${(err as Error).message}`),
+    onError: (err) =>
+      toastError(err, (err as Error).message === OWNER_ONLY_COMPANY.message
+        ? { description: OWNER_ONLY_COMPANY.description }
+        : { fallback: "Could not save company details" }),
   });
 }
 

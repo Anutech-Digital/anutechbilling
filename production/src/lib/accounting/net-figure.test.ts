@@ -81,7 +81,7 @@ describe("every P&L place shows a loss with a minus", () => {
 
   it("headline tile", () => {
     const model: PnlPeriod = {
-      revenue: 100_000, cogs: 60_000, cogsBasis: "billed", licenceCogs: 60_000, projectCost: 0,
+      revenue: 100_000, cogs: 60_000, cogsBasis: "billed", licenceCogs: 60_000, billedLicenceCogs: 60_000, estimatedLicenceCogs: 0, projectCost: 0,
       projectRevenue: 0, expenses: 108_100, grossMargin: 40_000, grossMarginPct: 40, netProfit: -68_100, byVendor: [],
     };
     const html = renderToStaticMarkup(createElement(PnlHeadline, {

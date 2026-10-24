@@ -17,6 +17,7 @@ import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { isForeignCurrency } from "@/lib/currency";
 import { logDbError } from "@/lib/errors/db-error";
 import { maskContactValue } from "@/lib/security/redact-contact";
+import { rupee } from "@/lib/utils";
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -52,7 +53,7 @@ export function captureMismatch(
 function shown(paise: number, currency: string | null | undefined): string {
   const c = String(currency ?? "").trim().toUpperCase() || "INR";
   const major = (Number(paise) || 0) / 100;
-  return c === "INR" ? `₹${Math.round(major).toLocaleString("en-IN")}` : `${c} ${major.toFixed(2)}`;
+  return c === "INR" ? rupee(Math.round(major)) : `${c} ${major.toFixed(2)}`;
 }
 
 export interface ReviewArgs {

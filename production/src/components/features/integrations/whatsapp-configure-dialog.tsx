@@ -257,6 +257,8 @@ export default function WhatsAppConfigureDialog({ open, onOpenChange }: Props) {
                     <Button
                       type="button" variant="ghost" size="sm"
                       className="shrink-0"
+                      aria-label="Copy webhook URL"
+                      title="Copy webhook URL"
                       onClick={() => status?.webhook_url && copyToClipboard(status.webhook_url, "Webhook URL")}
                     >
                       <Icon name="copy" size={12} />
@@ -278,7 +280,8 @@ export default function WhatsAppConfigureDialog({ open, onOpenChange }: Props) {
                         type="button" variant="ghost" size="sm"
                         className="shrink-0"
                         onClick={() => setVerifyToken(randomVerifyToken())}
-                        title="Generate fresh"
+                        title="Generate a new verify token"
+                        aria-label="Generate a new verify token"
                       >
                         <Icon name="refresh" size={13} />
                       </Button>

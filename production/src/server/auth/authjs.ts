@@ -15,6 +15,8 @@
  *   two-step (R-048)  → after password, a session with a verified factor is aal1; the /mfa
  *                       page calls update({ mfaCode }) and the code is checked HERE, server-side,
  *                       before the session becomes aal2. Nothing the browser sends is trusted.
+ *   login log (R-1010) → each successful password / Google sign-in writes one activity_log row
+ *                       (IP, device, time) from HERE — ./login-log. The browser cannot write it.
  */
 import "server-only";
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
@@ -22,6 +24,7 @@ import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import { checkPassword, ensureOAuthUser, lastSignInAt, recordSignIn } from "./accounts";
 import { loginAttemptAllowed } from "./login-limit";
+import { recordLogin } from "./login-log";
 import { hasVerifiedFactor, verifyCode } from "./mfa";
 import { publicSession } from "./session-public";
 
@@ -53,6 +56,16 @@ interface Token {
   [k: string]: unknown;
 }
 
+/** The current request's headers (the Google callback) — null outside a request. */
+async function requestHeaders(): Promise<Headers | null> {
+  try {
+    const { headers } = await import("next/headers");
+    return new Headers(await headers());
+  } catch {
+    return null;
+  }
+}
+
 const googleId = process.env.AUTH_GOOGLE_ID ?? process.env.GOOGLE_OAUTH_CLIENT_ID;
 const googleSecret = process.env.AUTH_GOOGLE_SECRET ?? process.env.GOOGLE_OAUTH_CLIENT_SECRET;
 
@@ -77,6 +90,7 @@ export const authConfig: NextAuthConfig = {
         const r = await checkPassword(email, password);
         if (!r.ok) throw new LoginError(r.reason);
         await recordSignIn(r.user.id);
+        await recordLogin({ userId: r.user.id, headers: request?.headers, method: "password" });
         return { id: r.user.id, email: r.user.email, name: (r.user.user_metadata.full_name as string | undefined) ?? null };
       },
     }),
@@ -109,6 +123,7 @@ export const authConfig: NextAuthConfig = {
         if (!r.ok) throw new LoginError(r.reason);
         const u = r.user;
         await recordSignIn(u.id);
+        await recordLogin({ userId: u.id, headers: await requestHeaders(), method: "google" });
         t.uid = u.id;
         t.email = u.email;
         t.gat = account.access_token;

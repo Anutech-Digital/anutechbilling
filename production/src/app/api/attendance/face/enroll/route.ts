@@ -8,6 +8,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { apiFailure } from "@/lib/errors/api-error";
 
 export async function POST(request: NextRequest) {
   const supabase = createClient();
@@ -55,7 +56,13 @@ export async function POST(request: NextRequest) {
      clock in as them. targetId passed the owner/self + same-tenant + consent checks above. */
   const path = `${me.tenant_id}/_enroll/${targetId}.jpg`;
   const up = await admin.storage.from("attendance-selfies").upload(path, buf, { contentType: "image/jpeg", upsert: true });
-  if (up.error) return NextResponse.json({ error: up.error.message }, { status: 500 });
+  // R-1137: storage / DB text is logged, the screen gets a fixed sentence + code.
+  if (up.error) {
+    return NextResponse.json(
+      apiFailure("FACE_UPLOAD_FAILED", "Could not save the face photo — nothing was changed. Take the photo again and retry.", up.error, "attendance/face/enroll"),
+      { status: 500 },
+    );
+  }
 
   /* R-601: on the server client. employees writes are owner/manager/accountant only
      (20260930175000_role_hardening.sql), and an RLS-blocked update is silent, so an
@@ -64,7 +71,12 @@ export async function POST(request: NextRequest) {
   const { error } = await admin.from("employees")
     .update({ face_enrolled_at: new Date().toISOString(), face_ref_path: path })
     .eq("id", targetId).eq("tenant_id", me.tenant_id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    return NextResponse.json(
+      apiFailure("FACE_SAVE_FAILED", "The photo was uploaded but the employee record was not updated. Save the photo again; if it keeps failing, tell the owner.", error, "attendance/face/enroll"),
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({ ok: true });
 }

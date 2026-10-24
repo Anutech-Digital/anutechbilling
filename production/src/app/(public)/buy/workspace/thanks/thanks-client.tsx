@@ -13,7 +13,12 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay, PARTNER_BADGE } from "@/site/lib/config";
+import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, PARTNER_BADGE } from "@/site/lib/config";
+import { mailtoLink, phoneDisplay, whatsappLink } from "./support-links";
+import { ConfirmPaymentView } from "./confirm-payment-view";
+import { forgetWorkspacePayment } from "./payment-handoff";
+import { settlePageScroll } from "@/lib/ui/scroll-lock";
+import type { OrderPaymentState } from "@/lib/checkout/order-payment-state";
 
 export interface ThanksOrder {
   quoteId:        string;
@@ -22,24 +27,15 @@ export interface ThanksOrder {
   seats:          number;
   amount:         number;
   paymentStatus:  string;
+  /** R-1624: from lib/checkout/order-payment-state — never read payment_status here. */
+  paymentState:   OrderPaymentState;
+  /** Rupees received against the quote; null when it could not be read. */
+  amountReceived: number | null;
   paymentDate:    string | null;
 }
 
-/* Contact comes from the site config, one place for the whole site (owner, 29 Sep 2026).
-   Until then this page carried one person's phone and a retired-brand email address.
-   While the site's WhatsApp number is still the placeholder, WHATSAPP_READY is false and
-   the WhatsApp / call links are not shown: a dead button in front of somebody who has
-   just paid is worse than an email address. */
+/* Contact: site config, through ./support-links (one place, also used by the confirming view). */
 const SUPPORT_EMAIL = COMPANY.supportEmail;
-const phoneDisplay = () => whatsappDisplay(WHATSAPP_NUMBER);
-
-function whatsappLink(message: string): string {
-  return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
-}
-
-function mailtoLink(subject: string): string {
-  return `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}`;
-}
 
 /** Multi-color "Google Workspace" inline logo — same as buy page. */
 function GWInline() {
@@ -60,13 +56,24 @@ function GWInline() {
 export function ThanksClient({
   order,
   isSimulation,
+  orderRef,
 }: {
   order: ThanksOrder | null;
   isSimulation: boolean;
+  /** R-1625: the order number from the address. With no order to show yet, the page looks for
+   *  the Razorpay payment the buy page kept for THIS order and asks our server to confirm it. */
+  orderRef?: string;
 }) {
-  // Fallback view — quote not found, not paid, or guessed wrong ID.
-  if (!order) {
-    return (
+  if (!order && orderRef && !isSimulation) {
+    return <ConfirmPaymentView quoteId={orderRef} notFound={<OrderNotFound />} />;
+  }
+  if (!order) return <OrderNotFound />;
+  return <OrderView order={order} isSimulation={isSimulation} />;
+}
+
+/** Fallback view — quote not found, not paid, or guessed wrong ID (and no payment of ours to confirm). */
+function OrderNotFound() {
+  return (
       <div className="min-h-screen bg-paper grid place-items-center px-4 py-12">
         <Card className="max-w-md w-full p-8 text-center">
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-paper-2 grid place-items-center">
@@ -107,9 +114,22 @@ export function ThanksClient({
         </Card>
       </div>
     );
-  }
+}
 
-  const isFullyPaid    = order.paymentStatus === "received";
+function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: boolean }) {
+  /* R-1625: arriving from Razorpay — undo any scroll lock it left (§24), and drop the kept
+     payment once this order shows as paid. */
+  React.useEffect(() => {
+    settlePageScroll();
+    const t = window.setTimeout(settlePageScroll, 1000);
+    if (order.paymentState === "paid") forgetWorkspacePayment();
+    return () => window.clearTimeout(t);
+  }, [order.paymentState]);
+
+  /* R-1624: 'invoiced' (the GST invoice issued right after payment) is paid in full when the
+     money says so — the state comes from orderPaymentState, one mapping for every reader. */
+  const isFullyPaid    = order.paymentState === "paid";
+  const statusLabel    = isFullyPaid ? "Paid in full" : order.paymentState === "part-paid" ? "Partially paid" : "Awaiting payment";
   const firstName      = order.customerName.split(/[\s,&]/)[0] || "there";
   const amountFmt      = `₹${order.amount.toLocaleString("en-IN")}`;
   const waSupportMsg   = `Hi, I just placed order ${order.quoteId} (${order.tierName}, ${order.seats} users). Wanted to confirm next steps for domain verification.`;
@@ -229,7 +249,7 @@ export function ThanksClient({
                 <span className={`font-medium inline-flex items-center gap-1.5 ${isFullyPaid ? "text-emerald" : "text-amber-ink"}`}>
                   <span className="w-1.5 h-1.5 rounded-full"
                         style={{ background: isFullyPaid ? "#10B981" : "#C2410C" }} />
-                  {isFullyPaid ? "Paid in full" : "Partially paid"}
+                  {statusLabel}
                 </span>
               </div>
             </div>
@@ -260,7 +280,7 @@ export function ThanksClient({
           {[
             {
               done: true,
-              title: "Order placed & payment confirmed",
+              title: isFullyPaid ? "Order placed & payment confirmed" : "Order placed",
               body:  `Order ${order.quoteId} for ${order.seats} ${order.seats === 1 ? "user" : "users"} of ${order.tierName} is in our system.`,
             },
             {

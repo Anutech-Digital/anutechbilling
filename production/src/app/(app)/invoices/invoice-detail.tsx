@@ -14,6 +14,7 @@
  */
 "use client";
 
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -22,6 +23,8 @@ import { SAAS_HSN } from "@/lib/gst/hsn";
 import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
 import { usePaymentsByQuote, totalReceived, useInstalmentLink } from "@/lib/queries/payments";
 import { RecordSubscriptionPaymentContainer } from "./record-invoice-payment";
+import { invoiceReceiptsQuote, invoiceTdsMoney } from "./invoice-receipts";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { invoiceBucket } from "@/lib/invoices/overdue";
 import { invoiceStatusBadge } from "./invoice-status";
@@ -33,6 +36,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
 import { useCreditNotesByInvoice } from "@/lib/queries/credit-notes";
 import { useDebitNotesByInvoice } from "@/lib/queries/debit-notes";
+import { noteTotalsByInvoice } from "@/lib/invoices/note-totals";
 import { isCreditNoteLate, creditNoteDeadline } from "@/lib/gst/credit-note-deadline";
 import { TaxInvoiceDialog } from "@/components/features/quotes/tax-invoice-dialog";
 import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
@@ -59,6 +63,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { rupee, formatDate, cleanDisplayName } from "@/lib/utils";
 import type { Invoice, Payment } from "@/lib/supabase/database.types";
 import { IssueCreditNoteDialog } from "@/components/features/invoices/issue-credit-note-dialog";
+import { InvoiceSubscriptionCard } from "./invoice-subscription-card";
 
 export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const router = useRouter();
@@ -85,7 +90,13 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   /* R-255: the accountant reads invoices — no Record payment, no WhatsApp reminder. */
   const canWrite = canWriteSales(me?.role);
   const moneyDue = canWrite && (bucket === "pending" || bucket === "overdue");
-  const statusBadge = invoiceStatusBadge(invoice);
+  /* R-1709: a paid invoice a credit note closed reads "Credited" — the same rule as the list. */
+  const { data: creditNotesForBadge } = useCreditNotesByInvoice(invoice.id);
+  const { data: debitNotesForBadge } = useDebitNotesByInvoice(invoice.id);
+  const invoiceNotes = creditNotesForBadge && debitNotesForBadge
+    ? noteTotalsByInvoice(creditNotesForBadge, debitNotesForBadge).get(invoice.id) ?? null
+    : undefined;
+  const statusBadge = invoiceStatusBadge(invoice, undefined, invoiceNotes);
   const [payOpen, setPayOpen] = React.useState(false);
   /* R-1682: Credit note from the invoice itself, at every width. It lived only in the
      invoices table's ⋯ menu, which shows from 1280px — on a laptop / tablet there was no way
@@ -184,6 +195,13 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
     { customerGstin: customer?.gstin, sellerGstin: supplier?.gstin, treatment: invoice.gst_treatment ?? customer?.gst_treatment },
   );
   const receivedPayments = (payments ?? []).filter((p) => p.status === "received");
+  /* R-1520 TDS banner: the quote's total and receipts — or, R-1636, an instalment's own money. */
+  const tdsMoney = invoiceTdsMoney({
+    invoice,
+    source: invoiceReceiptsQuote(quote?.id, instalment),
+    quoteTotal: total,
+    quoteReceived: totalReceived(payments ?? []),
+  });
 
   return (
     <>
@@ -197,11 +215,12 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
         <EinvoiceBanner notice={einvoiceNotice} className="mb-3" />
         {/* R-1520: Partial invoice whose remaining due is exactly a common TDS (INV-A378:
             ₹25,500 = 10% of ₹2,55,000) → say so, and one button to record it as TDS. */}
-        {moneyDue && quote?.id && (
+        {/* R-1636: an instalment (no quote of its own) gets the banner too, on its own money. */}
+        {moneyDue && tdsMoney && (
           <InvoiceTdsBanner
             className="mb-3"
-            total={total}
-            received={totalReceived(payments ?? [])}
+            total={tdsMoney.total}
+            received={tdsMoney.received}
             gstRatePct={taxRate}
             preferredSection={customer?.tds_default_section ?? null}
             onRecordTds={(m) => { setTdsOnly({ section: m.section, ratePct: m.ratePct }); setPayOpen(true); }}
@@ -321,6 +340,17 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                       <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(invoice.net_payable ?? total)}</p>
                     </div>
                   </div>
+                  {/* R-1680: what is still owed sits next to the total (staging 19 Oct: no Balance due line). */}
+                  <div className="grid grid-cols-2 gap-3 pb-3 border-b border-hairline/60" data-testid="invoice-balance">
+                    <div>
+                      <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Paid</p>
+                      <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(Math.max(0, (invoice.net_payable ?? total) - invoiceAmountDue(invoice)))}</p>
+                    </div>
+                    <div>
+                      <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Balance due</p>
+                      <p className={`font-serif text-lg font-bold tabular-nums mt-0.5 ${invoiceAmountDue(invoice) > 0 ? "text-rose" : "text-emerald"}`}>{rupee(invoiceAmountDue(invoice))}</p>
+                    </div>
+                  </div>
                   <div className="grid grid-cols-2 gap-2 text-ink-2">
                     <div><span className="text-ink-3">Invoice Date:</span> {formatDate(invoice.invoice_date)}</div>
                     <div><span className="text-ink-3">Due Date:</span> {invoice.due_date ? formatDate(invoice.due_date) : "—"}</div>
@@ -331,6 +361,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                 </div>
               )}
             </Card>
+
+            {/* R-1433: the subscription this invoice belongs to (by its quote or instalment). */}
+            <InvoiceSubscriptionCard invoiceId={invoice.id} quoteIds={[invoice.quote_id, quote?.id]} />
 
             {/* 🔽 Collapsible Panel 2: Line Items & HSN/SAC Breakdown */}
             <Card className="overflow-hidden">
@@ -487,7 +520,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
         />
       )}
       {payOpen && !quote && instalment?.quoteId && (
-        <RecordSubscriptionPaymentContainer invoice={invoice} open={payOpen} onOpenChange={setPayOpen} />
+        <RecordSubscriptionPaymentContainer invoice={invoice} open={payOpen} onOpenChange={setPayOpen} tdsOnly={tdsOnly} />
       )}
       {payOpen && quote && (
         <RecordPaymentDialog
@@ -610,7 +643,10 @@ export function InvoicePaymentsAccordion({
   onRecordPayment?: () => void;
 }) {
   const { data: quote } = useQuoteByInvoiceId(inv.id);
-  const { data: payments, isLoading } = usePaymentsByQuote(quote?.id);
+  /* R-1636: an instalment has no quote of its own — its receipts are on its subscription's quote. */
+  const { data: instalment } = useInstalmentLink(inv.quote_id ? null : inv.id);
+  const source = invoiceReceiptsQuote(quote?.id, instalment);
+  const { data: payments, isLoading } = usePaymentsByQuote(source?.quoteId);
   // Project invoices have no parent quote — their receipts live in project_payments.
   const { data: projPays, isLoading: projLoading } = useProjectPaymentsByInvoice(inv.id);
   const { data: customer } = useCustomer(inv.customer_id ?? undefined);
@@ -634,7 +670,7 @@ export function InvoicePaymentsAccordion({
             <li key={p.id} className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-paper px-3 py-2">
               <span className="flex items-center gap-2 min-w-0">
                 <Icon name="receipt" size={14} className="text-amber-ink shrink-0" />
-                <span className="text-xs text-ink capitalize">{p.method ?? "Payment"}{p.reference ? ` · ${p.reference}` : ""}</span>
+                <span className="text-xs text-ink">{p.method ? paymentMethodLabel(p.method) : "Payment"}{p.reference ? ` · ${p.reference}` : ""}</span>
                 {p.bank_txn_id && <span className="text-3xs text-emerald">· bank-reconciled</span>}
               </span>
               <span className="flex items-center gap-3 shrink-0">
@@ -664,8 +700,15 @@ export function InvoicePaymentsAccordion({
   return (
     <div>
       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-2">
-        Payment receipts ({received.length})
+        {source?.instalment ? "Receipts on this subscription" : "Payment receipts"} ({received.length})
       </div>
+      {source?.instalment && (
+        /* R-1636: these receipts are the subscription's; say how they reach THIS invoice. */
+        <p className="text-2xs text-ink-2 mb-2">
+          Paid on this invoice: <b className="tabular-nums">{rupee(Math.max(0, inv.amount - invoiceAmountDue(inv)))}</b> of{" "}
+          <span className="tabular-nums">{rupee(inv.amount)}</span>. A receipt goes to the oldest unpaid instalment first.
+        </p>
+      )}
       <ul className="space-y-1.5">
         {received.map((p) => (
           <li key={p.id}>
@@ -678,7 +721,7 @@ export function InvoicePaymentsAccordion({
               <span className="flex items-center gap-2 min-w-0">
                 <Icon name="receipt" size={14} className="text-amber-ink shrink-0" />
                 <span className="font-mono text-xs text-ink truncate">{p.receipt_voucher_no ?? "Receipt"}</span>
-                <span className="text-2xs text-ink-3 capitalize">· {p.method}</span>
+                <span className="text-2xs text-ink-3">· {paymentMethodLabel(p.method)}</span>
               </span>
               <span className="flex items-center gap-3 shrink-0">
                 <span className="tabular-nums text-sm font-medium text-ink">{rupee(p.amount)}</span>
@@ -706,8 +749,8 @@ export function InvoicePaymentsAccordion({
           tenantAddress={me.tenantAddress}
           tenantState={me.tenantState}
           interState={interState}
-          quoteId={quote?.id}
-          gstRate={quote?.tax_rate ?? 18}
+          quoteId={source?.quoteId}
+          gstRate={quote?.tax_rate ?? inv.tax_rate ?? 18}
         />
       )}
     </div>

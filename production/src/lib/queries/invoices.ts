@@ -4,7 +4,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "@/lib/queries/keys";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import type { SeriesState } from "@/lib/actions/consequence";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
@@ -14,18 +14,20 @@ import type { Invoice } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { lutMissingWarning } from "@/lib/gst/export-lut";
-import { COMPANY_STATE_FIX, isCompanyStateMissingError } from "@/lib/onboarding/setup-links";
+import { invoiceIssueFix } from "@/lib/onboarding/setup-links";
 import { customerBeforeInvoice } from "@/lib/quotes/quote-page-actions";
 
 /**
  * R-431 (board R-406): generate_invoice refuses when the company's own state is empty. The
  * toast used to vanish in ~4 s with no button; now it stays and opens Settings → Company.
  */
-function toastInvoiceIssueError(err: unknown): void {
-  if (isCompanyStateMissingError(err)) {
+export function toastInvoiceIssueError(err: unknown): void {
+  /* R-1643: the company's GSTIN / address refusal gets the same one-click fix. */
+  const fix = invoiceIssueFix(err);
+  if (fix) {
     toastError(err, {
       duration: 15000,
-      action: { label: COMPANY_STATE_FIX.label, onClick: () => window.location.assign(COMPANY_STATE_FIX.href) },
+      action: { label: fix.label, onClick: () => window.location.assign(fix.href) },
     });
     return;
   }
@@ -260,13 +262,10 @@ export function useGenerateInvoice() {
       /* R-334: a zero-rated export issued with no LUT on file — warn, never block. */
       const lutWarn = lutMissingWarning({ taxRate, lutNumber: me.data?.tenantLutNumber });
       if (lutWarn) toast.warning(lutWarn, { duration: 12_000 });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["nav-badges"] });
       /* R-1686: "Invoice now (before payment)" files the subscription and its dues in the
-         same database call — the Subscriptions list and Payments → Subscription dues re-read. */
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
+         same database call — the Subscriptions list and Payments → Subscription dues re-read;
+         R-1634: the new invoice is a due on /collections too. */
+      invalidateReceivables(qc);
       if (totalAdvances > 0 && netPayable > 0) {
         toast.success(
           `Invoice ${invoiceId} generated · ₹${totalAdvances.toLocaleString("en-IN")} advance adjusted · ₹${netPayable.toLocaleString("en-IN")} payable`,
@@ -317,11 +316,7 @@ export function useCreateDirectInvoice() {
       return row as { invoice_id: string; quote_id: string; net_payable: number; tax_rate: number };
     },
     onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["customers"] });
-      qc.invalidateQueries({ queryKey: queryKeys.aging() });
-      qc.invalidateQueries({ queryKey: ["nav-badges"] });
+      invalidateReceivables(qc);   // R-1634: a new due — /collections and Aging too
       toast.success(
         `Invoice ${res.invoice_id} raised · ₹${res.net_payable.toLocaleString("en-IN")} due${res.tax_rate === 0 ? " · export (zero-rated)" : ""}`,
       );

@@ -13,14 +13,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 import { CommandPalette, useCommandPalette } from "./command-palette";
-import { NotificationPanel } from "./notification-panel";
-import { useNotifications } from "@/lib/queries/notifications";
+import { NotificationPanel, useNotificationFeed } from "./notification-panel";
 import { QuickActionsPanel } from "./quick-actions-panel";
 import { TopBarBreadcrumb } from "./topbar-breadcrumb";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { getCrumb, getParentListHref } from "@/lib/nav";
 import type { Route } from "next";
-import { useTaskCountDueOrOverdue } from "@/lib/queries/tasks";
 import { logLoginOnce } from "@/lib/queries/activity";
 
 interface TopBarProps {
@@ -45,13 +43,10 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
   const cmdk = useCommandPalette();
   const [notifOpen,   setNotifOpen]   = React.useState(false);
   const [actionsOpen, setActionsOpen] = React.useState(false);
-  // Bell badge = open tasks due by end of today (today + overdue). When push
-  // notifications + WhatsApp reminders arrive in Phase 2 they'll feed the
-  // same number (any unread notification becomes a virtual task surface).
-  const { data: taskCount } = useTaskCountDueOrOverdue();
-  /* + asli events (payment/quote/lead/ticket) jinka read_at DB me null hai (audit B4). */
-  const { data: dbNotifs } = useNotifications();
-  const unreadCount = (taskCount ?? 0) + (dbNotifs ?? []).filter((n) => !n.read_at).length;
+  // R-1122: bell badge = the panel's own unread count (same list, same read-state), so
+  // "Mark all read" clears it and the panel header always agrees. It used to add every
+  // due task on top, which no read-state could ever clear.
+  const { unreadCount } = useNotificationFeed();
 
   // Mount-only flag to avoid theme hydration mismatch
   const [mounted, setMounted] = React.useState(false);

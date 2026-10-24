@@ -68,6 +68,22 @@ export function renewalDistance(days: number): string {
  *   paused    → nothing (the status already says Suspended; renewal is on hold)
  *   active    → renewalDistance(), red when lapsed or within a week, amber within 30 days.
  */
+/**
+ * R-1685 — THE rule for "is this subscription over?". Every place that shows a renewal, a
+ * renewal amount, a renewal / payment clock or an auto-renew warning asks this, so a closed
+ * subscription can never read "Quarterly · ₹1,620, renews in 0d / due today" again
+ * (staging 19 Oct, T-19). Money really still owed (outstanding_amount) is still shown — as
+ * owed, not as a renewal.
+ */
+export function subscriptionEnded(status: string | null | undefined): boolean {
+  return status === "cancelled" || status === "expired";
+}
+
+/** R-1685: the per-invoice renewal amount for a term badge — none once the subscription has ended. */
+export function liveTermAmount(status: string | null | undefined, amount: string | null): string | null {
+  return subscriptionEnded(status) ? null : amount;
+}
+
 export interface RenewalClock {
   text: string;
   tone: "urgent" | "soon" | "calm" | "ended";
@@ -77,7 +93,7 @@ export function renewalClock(
   sub: { status: string | null | undefined; renewal_date: string | null | undefined; cancelled_at?: string | null },
   days: number | null,
 ): RenewalClock | null {
-  if (sub.status === "cancelled" || sub.status === "expired") {
+  if (subscriptionEnded(sub.status)) {
     const when = (sub.status === "cancelled" ? sub.cancelled_at : null) ?? sub.renewal_date;
     return { text: when ? `Ended ${formatDate(when)}` : "Ended", tone: "ended" };
   }
@@ -131,7 +147,14 @@ export function termValue(
   /** ₹/year from the originating quote line (`rate × qty`), when known. */
   contractedAnnual?: number | null,
 ): TermValue {
-  if (contractedAnnual != null && contractedAnnual > 0) {
+  /* R-1683: the quote line is the contract only while the subscription still matches it. After
+     seats are added (or a correction) the stored MRR moves and the old line does not — T-12 showed
+     "Annual · ₹1,29,600" (10 seats) beside MRR ₹16,200 (15 seats). The round trip annual → mrr is
+     at most ₹6 out (round(annual / 12)), so a contracted annual whose monthly rounds to the stored
+     MRR still wins; anything further is a changed contract and the MRR is the figure. */
+  const mrrNow = mrr ?? 0;
+  const stillMatches = mrrNow <= 0 || Math.round((contractedAnnual ?? 0) / 12) === Math.round(mrrNow);
+  if (contractedAnnual != null && contractedAnnual > 0 && stillMatches) {
     /* Scaled from the annual for a non-annual term, and rounded ONCE — going via a
        monthly would reintroduce exactly the drift this function exists to remove. */
     return { amount: Math.round((contractedAnnual * months) / 12), exact: true };

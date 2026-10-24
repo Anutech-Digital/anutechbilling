@@ -32,6 +32,8 @@ import { sendCustomerEmail } from "@/lib/messaging";
 import { unsubscribeUrl, unsubscribeFooter, normaliseEmail } from "@/lib/marketing/unsubscribe-token";
 import { fillName, greetingName, NO_NAME } from "@/lib/marketing/greeting-name";
 import { cleanPitch } from "@/lib/leads/lead-finder";
+import { campaignHtmlVars, campaignHtmlName } from "@/lib/marketing/campaign-html";
+import { IST_TZ } from "@/lib/dates/ist";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -192,7 +194,7 @@ export const POST = withRoute(
   const emailMode   = isEmailConfigured() ? "real" : "stub";
 
   const offerExpiresFmt = offer?.expires_at
-    ? new Date(offer.expires_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+    ? new Date(offer.expires_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: IST_TZ })
     : "";
 
   let sent   = 0;
@@ -228,9 +230,9 @@ export const POST = withRoute(
     const footer = unsub ? unsubscribeFooter(unsub, senderName) : null;
     const renderedBody    = applyTemplate(fillName(bodyTemplate, r.contact_name), vars) + (footer?.text ?? "");
     const renderedSubject = applyTemplate(fillName(subject, r.contact_name),      vars);
-    // The pitch is model-written text: escape it before it goes into HTML.
-    const htmlVars        = { ...vars, pitch: pitch.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") };
-    const renderedHtml    = htmlTemplate ? applyTemplate(fillName(htmlTemplate, r.contact_name), htmlVars) + (footer?.html ?? "") : undefined;
+    // R-734: every merge value (company, name, the model-written pitch …) is text in the HTML body.
+    const htmlVars        = campaignHtmlVars(vars);
+    const renderedHtml    = htmlTemplate ? applyTemplate(fillName(htmlTemplate, campaignHtmlName(r.contact_name)), htmlVars) + (footer?.html ?? "") : undefined;
 
     let sendStatus: "sent" | "failed" | "stubbed" = "sent";
     let providerId: string | null = null;

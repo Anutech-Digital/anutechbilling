@@ -28,7 +28,7 @@ import { rateLimitShared } from "@/lib/security/rate-limit";
 import { TEMP_PASSWORD_RATE, checkTypedTempPassword } from "@/lib/auth/temp-password";
 import { MUST_CHANGE_PASSWORD_KEY } from "@/lib/auth/must-change-password";
 import { initials } from "@/lib/utils";
-import { isActiveOwner } from "@/lib/auth/deactivated";
+import { can, roleLabel } from "@/lib/auth/roles";
 import { inviteExpiresAt, isInviteExpired } from "@/lib/auth/invite-accept";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
@@ -60,7 +60,8 @@ export async function POST(request: NextRequest) {
   if (meErr || !me) {
     return NextResponse.json({ error: "User not linked to a tenant" }, { status: 403 });
   }
-  if (!isActiveOwner(me)) { // R-722: a deactivated owner is not an owner
+  /* R-1651: the same flag the Team page reads (owner only). R-722: deactivated never counts. */
+  if (me.is_active === false || !can(me.role, "can_manage_team")) {
     return NextResponse.json({ error: "Only the workspace owner can invite teammates" }, { status: 403 });
   }
 
@@ -161,7 +162,7 @@ export async function POST(request: NextRequest) {
        re-invite is how an owner says "create their login now", so it goes on. */
     if (existing.role === role && tempPassword === null && !expired) {
       return NextResponse.json(
-        { error: `${email} is already invited as ${role}. Nothing to change — they just need to sign in with Google using that address.` },
+        { error: `${email} is already invited as ${roleLabel(role)}. Nothing to change — they just need to sign in with Google using that address.` },
         { status: 409 },
       );
     }
@@ -210,6 +211,8 @@ export async function POST(request: NextRequest) {
     .eq("id", me.tenant_id)
     .maybeSingle();
   const workspace = tenant?.name ?? "the workspace";
+  /* R-1651: "as Sales Senior", never the raw key "as sales_senior". */
+  const roleName = roleLabel(role);
 
   const base  = trustedOrigin(request.headers); // R-723: never a raw request host
   const loginUrl  = `${base}/login`;
@@ -228,7 +231,7 @@ export async function POST(request: NextRequest) {
     text: memberCreated
 ? `Hello,
 
-You've been added to ${workspace} on ResellerOS as ${role}.
+You've been added to ${workspace} on ResellerOS as ${roleName}.
 
 Sign in here with this email address (${email}) and the temporary password ${workspace} gives you:
 ${loginUrl}
@@ -238,7 +241,7 @@ You'll choose your own password straight after signing in.
 — ${workspace} (via ResellerOS)`
 : `Hello,
 
-You've been added to ${workspace} on ResellerOS as ${role}.
+You've been added to ${workspace} on ResellerOS as ${roleName}.
 
 Easiest way to join — sign in with Google using THIS email address (${email}):
 ${loginUrl}

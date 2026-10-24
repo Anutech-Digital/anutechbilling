@@ -42,11 +42,11 @@ export function PlatformAiStatus({ row }: { row: AiRow }) {
     return (
       <p data-testid="platform-ai-fixed" className="mt-1 text-2xs text-ink-2 bg-emerald-soft/40 border border-emerald/30 rounded-md px-2 py-1 inline-flex flex-wrap gap-x-1.5">
         <span className="font-semibold text-emerald-ink">🤖 Fixed by AI</span>
-        {n.card && <><span className="text-ink-4">·</span><span className="font-mono font-semibold text-ink">{n.card}</span></>}
-        {n.commit && <><span className="text-ink-4">·</span><span className="font-mono text-ink-3">{n.commit}</span></>}
-        <span className="text-ink-4">·</span>
+        {n.card && <><span aria-hidden className="text-ink-3">·</span><span className="font-mono font-semibold text-ink">{n.card}</span></>}
+        {n.commit && <><span aria-hidden className="text-ink-3">·</span><span className="font-mono text-ink-3">{n.commit}</span></>}
+        <span aria-hidden className="text-ink-3">·</span>
         <span className="min-w-0 break-words">{n.text}</span>
-        {row.resolved_at && <><span className="text-ink-4">·</span><span className="text-ink-3">{formatDate(row.resolved_at, "relative")}</span></>}
+        {row.resolved_at && <><span aria-hidden className="text-ink-3">·</span><span className="text-ink-3">{formatDate(row.resolved_at, "relative")}</span></>}
       </p>
     );
   }

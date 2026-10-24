@@ -53,9 +53,9 @@ describe("R-1707: a credit-noted / refunded quote is not 'due'", () => {
 });
 
 describe("R-1707: a part-paid quote still shows the right ₹", () => {
-  it("invoiced, part-paid → Awaiting payment, ₹18,232 due", () => {
+  it("invoiced, part-paid → Awaiting payment, ₹20,000 paid · ₹18,232 left (R-1710: both halves)", () => {
     expect(quoteListTab(ip)).toBe("awaiting");
-    expect(cashNote(ip)).toEqual({ text: "₹18,232 due", tone: "owed" });
+    expect(cashNote(ip)).toEqual({ text: "₹20,000 paid · ₹18,232 left", tone: "owed" });
   });
   it("part-paid before invoice → ₹5,000 paid · ₹6,800 left", () => {
     expect(quoteListTab(pp)).toBe("awaiting");

@@ -17,8 +17,11 @@
  *        c. Render the renewal Quote PDF as attachment.
  *        d. Send via lib/email/send.ts (real Resend if key configured;
  *           stub mode otherwise — both paths log to renewal_email_log).
- *   3. If shouldSuspend → flip status='paused' + stamp suspended_at +
- *      set renewal_state='suspended'.
+ *   3. If grace is over (shouldSuspend) → R-1621: raise ONE "Stop service" task for the
+ *      owner (raise_renewal_grace_task, once per subscription per term). Nothing is paused
+ *      here any more — the owner stops it (renewal_grace_decide 'stop') or gives more days.
+ *      Grace = effectiveGraceDays(): trusted customer's own grace, else the company's, plus
+ *      any "+N days" for this term.
  *   4. Update renewal_state + reminder_count + last_reminder_sent_at_v2.
  *
  * Auth: Vercel adds `Authorization: Bearer <CRON_SECRET>` to its cron
@@ -36,7 +39,8 @@ import { NextResponse } from "next/server";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { createAdminClient } from "@/lib/supabase/server";
 import { primaryContactEmail } from "@/lib/contacts/primary";
-import { decideCadence, CADENCE_TRIGGERS, reopensForNewTerm } from "@/lib/renewals/cadence";
+import { decideCadence, CADENCE_TRIGGERS, reopensForNewTerm, effectiveGraceDays, serviceStopDate } from "@/lib/renewals/cadence";
+import { readGraceOverrides } from "@/lib/renewals/grace-overrides";
 import { renderTemplate } from "@/lib/renewals/templates";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 import { splitBilledRenewalStep } from "@/lib/renewals/split-billed-renewal";
@@ -56,7 +60,7 @@ import { fetchAllRows, fetchAllRowsIn, errorMessage } from "@/lib/ops/fetch-all"
 import { createReminderSender } from "@/lib/marketing/whatsapp-reminders.server";
 import { renewalReminderKind } from "@/lib/marketing/whatsapp-reminders";
 import { rupee } from "@/lib/utils";
-import { istToday, toIstDate, addDaysISO } from "@/lib/dates/ist";
+import { istToday, toIstDate, addDaysISO, formatIstDate } from "@/lib/dates/ist";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
@@ -94,6 +98,8 @@ interface CronResult {
   emails_sent:      number;
   emails_skipped:   number;
   suspends:         number;
+  /** R-1621: grace over → "Stop service" owner tasks raised this run (nothing is paused by the cron). */
+  grace_tasks?:     number;
   /** RN-24: subscriptions lapsed to 'expired' because they're not renewing and the term ended. */
   lapsed:           number;
   /** R-808: split-billed subscriptions whose term rolled on this run (no renewal quote). */
@@ -247,6 +253,15 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
     return NextResponse.json({ error: `prefetch failed: ${(e as Error).message}` }, { status: 500 });
   }
 
+  /* R-1621: trusted customer grace + "+N days" per term. Read apart from the prefetch above so a
+     database without the migration yet still reminds everyone on the company grace. */
+  let overrides: Awaited<ReturnType<typeof readGraceOverrides>>;
+  try {
+    overrides = await readGraceOverrides(supabase, allSubs.map((s) => s.id), customerIds);
+  } catch (e) {
+    return NextResponse.json({ error: `grace overrides read failed: ${errorMessage(e)}` }, { status: 500 });
+  }
+
   /* The logo is the same image for every renewal PDF a tenant sends in a run. */
   const logoByTenant = new Map<string, ReturnType<typeof logoDataUri>>();
   const tenantLogo = (tenantId: string, url: string | null | undefined) => {
@@ -321,10 +336,18 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
       // ── Per-customer info — need email to actually send ──
       const customer = sub.customer_id ? customerById.get(sub.customer_id) ?? null : null;
 
+      /* R-1621: this subscription's grace — trusted customer, company default, "+N days". */
+      const graceDays = effectiveGraceDays({
+        tenantGraceDays:  tenant.grace_period_days,
+        trustedGraceDays: sub.customer_id ? overrides.trustedByCustomer.get(sub.customer_id) ?? null : null,
+        renewalDate:      sub.renewal_date!,
+        graceUntil:       overrides.bySubscription.get(sub.id)?.graceUntil ?? null,
+      });
+
       // Decide cadence
       const decision = decideCadence({
         renewalDate:  sub.renewal_date!,
-        graceDays:    tenant.grace_period_days ?? 0,
+        graceDays,
         currentState: sub.renewal_state ?? "pending",
         /* The TERM picks the ladder, not the invoice frequency. An annual plan paid
            monthly is invoiced twelve times and renews once, and it needs the 30-day
@@ -359,19 +382,28 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
         }
       }
 
-      // ── Suspend path ─────────────────────────────────────────────
+      // ── Grace over → the owner's task (R-1621) ───────────────────
+      /* This used to flip the subscription to 'paused' by itself while the real service at
+         Google / Microsoft / the hosting panel kept running (no vendor API, R-338) and nobody
+         was told. Now ONE "Stop service" task goes to the owner — customer, plan, ₹ due, the
+         Renewals link and the manual steps — and the owner presses Stop service (the same
+         pause as before) or "+ days". The function stamps grace_task_for, so re-runs raise
+         nothing new; a database without the migration gets an error line, never a pause. */
       if (decision.shouldSuspend) {
-        await supabase
-          .from("subscriptions")
-          .update({
-            status:        "paused",
-            renewal_state: "suspended",
-            suspended_at:  new Date().toISOString(),
-          })
-          .eq("id", sub.id);
-        result.suspends += 1;
-        detail.emailStatus = "(suspended)";
-        result.details.push(detail);
+        if (overrides.bySubscription.get(sub.id)?.taskFor === sub.renewal_date) return;
+        const raise = supabase.rpc as unknown as (
+          fn: "raise_renewal_grace_task", args: { p_subscription_id: string },
+        ) => PromiseLike<{ data: { raised?: boolean; why?: string } | null; error: { message: string } | null }>;
+        const { data: raised, error: raiseErr } = await raise.call(supabase, "raise_renewal_grace_task", { p_subscription_id: sub.id });
+        if (raiseErr) {
+          result.errors.push({ subscription_id: sub.id, message: `Grace is over but the owner's "Stop service" task could not be raised: ${raiseErr.message}` });
+          return;
+        }
+        if (raised?.raised) {
+          result.grace_tasks = (result.grace_tasks ?? 0) + 1;
+          detail.emailStatus = "(grace over — owner task raised)";
+          result.details.push(detail);
+        }
         return;
       }
 
@@ -421,7 +453,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
               customerName:    sub.customer_name,
               domain:          sub.domain,
               renewalDate:     sub.renewal_date!,
-              graceDays:       tenant.grace_period_days ?? 0,
+              graceDays,
               existingQuoteId: sub.renewal_quote_id,
             })
           : await createOrGetRenewalQuote({
@@ -436,7 +468,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
           mrr:             sub.mrr ?? 0,
           termMonths:      sub.term_months ?? null,
           renewalDate:     sub.renewal_date!,
-          graceDays:       tenant.grace_period_days ?? 0,
+          graceDays,
           existingQuoteId: sub.renewal_quote_id,
           notes:           `Auto-generated renewal quote for subscription ${sub.id}`,
         });
@@ -508,7 +540,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
             seller_name:   tenant.name,
             plan:          sub.plan,
             amount:        rupee(renewalQuote.amount),
-            due_date:      new Date(sub.renewal_date!).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
+            due_date:      formatIstDate(sub.renewal_date!),
             days:          Math.abs(decision.daysUntilRenewal),
             link:          renewalQuoteId && renewalToken
               ? quoteAcceptUrl(process.env.NEXT_PUBLIC_APP_URL, renewalQuoteId, renewalToken)
@@ -545,11 +577,11 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
           planName:        sub.plan,
           seats:           sub.seats,
           amount:          renewalQuote.amount,
-          renewalDate:     new Date(sub.renewal_date!).toLocaleDateString("en-IN", {
-            day: "numeric", month: "short", year: "numeric",
-          }),
+          renewalDate:     formatIstDate(sub.renewal_date!),
           daysUntil:       Math.abs(decision.daysUntilRenewal),
-          graceDays:       tenant.grace_period_days ?? 0,
+          graceDays,
+          /* R-1621: the exact IST day the service stops if still unpaid. */
+          stopDate:        formatIstDate(serviceStopDate(sub.renewal_date!, graceDays)),
           acceptLink:      renewalQuoteId && renewalToken
             /* `?? undefined` because quoteAcceptUrl now returns null when NEXT_PUBLIC_APP_URL
                is missing or has no scheme. NO LINK is the right outcome — the template omits
@@ -705,7 +737,8 @@ interface PlannedAction {
   days_until:      number;
   step:            string;
   tone:            string | null;
-  action:          "email" | "suspend";
+  /** "grace_task" = grace is over; a real run raises the owner's "Stop service" task (R-1621). */
+  action:          "email" | "grace_task";
   /** Where the email would land — or why it would go nowhere. */
   recipient:       string;
   /** True when the action is planned but cannot actually be delivered. */
@@ -720,7 +753,8 @@ interface DryRunResult {
   /** Active + auto_renew + has a renewal date — what the cron would look at. */
   eligible:           number;
   would_email:        number;
-  would_suspend:      number;
+  /** R-1621: subscriptions whose grace is over — a real run raises the owner's task, it does not pause. */
+  would_raise_grace_task: number;
   /** Planned sends with no usable customer email — these fail silently in a real run. */
   blocked_no_email:   number;
   next_action_on:     string | null;
@@ -762,6 +796,8 @@ async function planOnly(
   const tenants = await fetchAllRowsIn(eligible.map((s) => s.tenant_id), (ids, from, to) => supabase
     .from("tenants").select("id, grace_period_days").in("id", ids).order("id", { ascending: true }).range(from, to));
   const graceByTenant = new Map(tenants.map((t) => [t.id, t.grace_period_days ?? 0]));
+  /* R-1621: trusted customer grace + "+N days", as the live pass reads them. */
+  const overrides = await readGraceOverrides(supabase, eligible.map((s) => s.id), eligible.map((s) => s.customer_id));
 
   // One fetch for every customer involved, rather than per-subscription — a dry
   // run should be cheap enough that nobody hesitates to use it.
@@ -788,7 +824,12 @@ async function planOnly(
     }
     const decision = decideCadence({
       renewalDate:  sub.renewal_date!,
-      graceDays:    graceByTenant.get(sub.tenant_id) ?? 0,
+      graceDays:    effectiveGraceDays({
+        tenantGraceDays:  graceByTenant.get(sub.tenant_id) ?? 0,
+        trustedGraceDays: sub.customer_id ? overrides.trustedByCustomer.get(sub.customer_id) ?? null : null,
+        renewalDate:      sub.renewal_date!,
+        graceUntil:       overrides.bySubscription.get(sub.id)?.graceUntil ?? null,
+      }),
       currentState: (sub.renewal_state ?? "pending") as never,
       termMonths:   sub.term_months,
       today:        asOf,
@@ -816,7 +857,7 @@ async function planOnly(
       days_until:      decision.daysUntilRenewal,
       step:            decision.targetState,
       tone:            decision.tone,
-      action:          decision.shouldSuspend ? "suspend" : "email",
+      action:          decision.shouldSuspend ? "grace_task" : "email",
       recipient:       email ?? "— no customer email on file —",
       blocked,
     });
@@ -850,7 +891,7 @@ async function planOnly(
     subscriptions_seen: subsSeen ?? eligible.length,
     eligible:           eligible.length,
     would_email:        actions.filter((a) => a.action === "email").length,
-    would_suspend:      actions.filter((a) => a.action === "suspend").length,
+    would_raise_grace_task: actions.filter((a) => a.action === "grace_task").length,
     blocked_no_email:   blockedNoEmail,
     next_action_on:     nextActionOn,
     actions,

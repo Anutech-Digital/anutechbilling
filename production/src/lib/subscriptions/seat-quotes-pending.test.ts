@@ -66,6 +66,9 @@ describe("R-1705: open seat quotes are visible money", () => {
     expect(pay).toMatch(/scopedOutstanding\.length > 0 \|\| scopedSeatQuotes\.length > 0/);
     const quote = readFileSync("src/app/(app)/quotes/[id]/page.tsx", "utf8");
     expect(quote).toMatch(/!seatsTakenBack && \(/);
-    expect(quote).toMatch(/queryKey: \["subscriptions"\]/);
+    // R-1634 moved the refresh into invalidateReceivables(), which covers ["subscriptions"].
+    expect(quote).toMatch(/if \(quote\?\.is_add_seats\) invalidateReceivables\(qc\)/);
+    const refresh = readFileSync("src/lib/queries/receivables-refresh.ts", "utf8");
+    expect(refresh).toMatch(/\["subscriptions"\]/);
   });
 });

@@ -140,11 +140,12 @@ describe("R-1525 multi-invoice payment sheet", () => {
     expect(document.body.textContent).not.toMatch(/Haan|lagao|karein/);
   });
 
-  it("schema: a UPI reference must be 12 digits; cash may be blank", () => {
+  it("schema: a typed UPI reference must be 12 digits; any method may be blank (R-1444)", () => {
     const base = { customerId: "c1", received: 100, receivedDate: "2026-10-17", bankAccountId: "", excessToCredit: true, lines: [] };
     expect(multiInvoicePaymentSchema.safeParse({ ...base, method: "upi", reference: "abc" }).success).toBe(false);
     expect(multiInvoicePaymentSchema.safeParse({ ...base, method: "upi", reference: "402312345678" }).success).toBe(true);
     expect(multiInvoicePaymentSchema.safeParse({ ...base, method: "cash", reference: "" }).success).toBe(true);
-    expect(multiInvoicePaymentSchema.safeParse({ ...base, method: "bank_transfer", reference: "" }).success).toBe(false);
+    expect(multiInvoicePaymentSchema.safeParse({ ...base, method: "bank_transfer", reference: "" }).success).toBe(true);
+    expect(multiInvoicePaymentSchema.safeParse({ ...base, method: "bank_transfer", reference: "dfg" }).success).toBe(false);
   });
 });

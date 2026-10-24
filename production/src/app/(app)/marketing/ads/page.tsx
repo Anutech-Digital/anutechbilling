@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { TabBar } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError, LoadErrorInline } from "@/components/shared/load-error";
 import { rupee, cn, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import {
@@ -138,6 +139,11 @@ export default function AdPlatformsPage() {
             <p className="text-xs text-amber-ink">{foreign.map((a) => `${a.name} (${a.currency})`).join(", ")} not in INR — the numbers below are in the account's currency.</p>
           )}
 
+          {/* R-1807: a failed spend read is an error + Try again, never "₹0 spent". */}
+          {spend.isError ? (
+            <LoadError what="Ad spend" error={spend.error} onRetry={() => void spend.refetch()} />
+          ) : (<>
+
           {/* This month's pace */}
           <div className="grid gap-3 md:grid-cols-2">
             {([["google-ads", paceG], ["meta-ads", paceM]] as const).map(([p, pc]) => (
@@ -239,6 +245,9 @@ export default function AdPlatformsPage() {
           <Card className="p-4">
             <p className="text-sm font-semibold text-ink">Platform vs books · by month</p>
             <p className="text-xs text-ink-3 mb-3">Platform = amount consumed; books = channel-tagged marketing expenses (incl. GST). The reason for any difference is shown alongside.</p>
+            {booked.isError ? (
+              <LoadErrorInline what="The booked marketing expenses" error={booked.error} onRetry={() => void booked.refetch()} />
+            ) : (
             <div className="grid gap-4 lg:grid-cols-2">
               {(["google-ads", "meta-ads"] as const).map((p) => {
                 const rec = reconcileMonths(allRows.filter((r) => r.platform === p), booked.data?.[PLATFORM_CHANNEL[p]] ?? new Map(), p).slice(0, 6);
@@ -265,8 +274,10 @@ export default function AdPlatformsPage() {
                 );
               })}
             </div>
+            )}
             <p className="text-xs text-ink-3 mt-3"><Link href={"/marketing/spend" as Route} className="underline">Spend page</Link>: book or tag expenses · <Link href={"/accounting/prepaid" as Route} className="underline">Prepaid</Link>: draw down the Facebook advance.</p>
           </Card>
+          </>)}
 
           {(runs.data?.length ?? 0) > 0 && (
             <details className="text-xs text-ink-3">

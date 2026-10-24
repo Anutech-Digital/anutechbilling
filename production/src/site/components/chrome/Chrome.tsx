@@ -131,7 +131,10 @@ export function Footer() {
   return (
     <footer style={{ background: "var(--tint-2)", borderTop: "1px solid var(--border-light)", padding: "52px 0 28px" }}>
       <div className="wrap">
-        <div style={{ display: "grid", gridTemplateColumns: "1.5fr repeat(5, 1fr)", gap: 28 }} className="footer-grid">
+        {/* R-1811: the columns live in site.css (.footer-grid), not styled-jsx — styled-jsx has no
+            server registry here, so its phone rule arrived only after hydration and a phone's first
+            paint was six columns, 592px wide on a 375px screen. */}
+        <div className="footer-grid">
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
               <Image src="/lp/anutech-logo.png" alt="ANUTECH Digital Pvt Ltd" width={108} height={36} style={{ objectFit: "contain", height: 36, width: "auto" }} />
@@ -163,11 +166,6 @@ export function Footer() {
           <span>All prices exclusive of GST at 18%, stated separately on every invoice.</span>
         </div>
       </div>
-      <style jsx>{`
-        @media (max-width: 979px) {
-          .footer-grid { grid-template-columns: 1fr 1fr !important; }
-        }
-      `}</style>
     </footer>
   );
 }

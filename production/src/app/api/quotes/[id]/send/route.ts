@@ -33,6 +33,7 @@ import { replyToAddress } from "@/lib/email/reply-to";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { quoteContact } from "@/lib/quotes/quote-contact";
+import { quoteBuyerGstin } from "@/lib/quotes/buyer-gstin";
 import { firstChaseAfterSend } from "@/lib/ai/cadence";
 import { scheduleSalesLoop } from "@/lib/ai/sales-loops.server";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
@@ -116,7 +117,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       created_date, expires_date, notes, is_renewal, is_add_seats, is_one_off, is_extension, extension_months, public_token, lead_id,
       domain, renewal_term_date, renewal_subscription_id,
       prospect_state_code, prospect_country, currency, terms_conditions,
-      billing_cycle, exchange_rate, invoice_id,
+      billing_cycle, exchange_rate, invoice_id, payment_terms_days,
       approval_status, approval_tier, approval_requested_by, approved_by,
       approved_discount_bps, approved_margin_bps, approval_rejection_reason
     `)
@@ -305,6 +306,8 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       customerName:  quote.customer_name,
       /* R-445 (1): a lead quote's PDF names the lead's person, as the in-app preview does. */
       ...quoteContact(customer, lead),
+      /* R-1485: the buyer's GSTIN under Bill to — customer row, else the lead's. */
+      customerGstin: quoteBuyerGstin(customer, lead),
       lineItems,
       subtotal,
       discountPct:   quote.discount_pct ?? 0,
@@ -330,6 +333,8 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       payLinkUrl:    customerUrl,
       notes:         quote.notes ?? undefined,
       isRenewal:     quote.is_renewal,
+      /* R-1670 (3): the invoice terms this quote will carry, not a fixed "Net 7". */
+      paymentTermsDays: quote.payment_terms_days ?? null,
       oneTime:       isOneTimeQuote({
         isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off,
         isExtension: quote.is_extension, extensionMonths: quote.extension_months,

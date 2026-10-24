@@ -184,7 +184,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
     invoices = await fetchAllRows<InvoiceRow>((from, to) => supabase
       .from("invoices")
       .select("id, tenant_id, customer_id, customer_name, amount, net_payable, paid_amount, status, due_date, quote_id")
-      .in("status", ["pending", "overdue"])
+      .in("status", ["pending", "overdue"]).is("written_off_at", null)
       .not("due_date", "is", null)
       .order("id", { ascending: true })
       .range(from, to));

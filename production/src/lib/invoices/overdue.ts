@@ -55,6 +55,8 @@ export interface OverdueInvoice {
   /** amount less credit notes / advances adjusted at issue. Absent → falls back to amount. */
   net_payable?: number | null;
   paid_amount?: number | null;
+  /** R-1635: written off — never overdue, never chased. */
+  written_off_at?: string | null;
 }
 
 /** Statuses where a due date means nothing: the money is settled or the document isn't real. */
@@ -70,6 +72,7 @@ const SETTLED = new Set(["paid", "void", "draft", "cancelled"]);
 export function invoiceIsOverdue(inv: OverdueInvoice, today: string = istToday()): boolean {
   /* A stored 'overdue' is still honoured. Nothing writes it today, but a value that
      arrives from a future cron or a data import must not be argued with. */
+  if (inv.written_off_at) return false;   // R-1635: the owner wrote it off — not chased
   if (inv.status === "overdue") return true;
   if (SETTLED.has(inv.status)) return false;
   /* No due date is NOT "overdue since forever" — it is an invoice nobody gave a

@@ -12,6 +12,7 @@
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { formatPhone } from "@/lib/utils";
+import { isMaskedContact } from "@/lib/auth/roles";
 import type { PrimaryContact } from "@/components/features/customers/customer-links";
 
 export function PrimaryContactLine({ contact, onAddContact }: {
@@ -35,6 +36,9 @@ export function PrimaryContactLine({ contact, onAddContact }: {
     );
   }
   const tel = contact.phone?.replace(/\s+/g, "");
+  /* R-1009: a role without can_view_contact_details gets "••••••3210" from the data gateway —
+     shown as text, never as a tel: / mailto: link that could only dial a mask. */
+  const hidden = "Hidden for your role. The owner or a manager can see it.";
   return (
     <div
       className="mt-1 flex items-center gap-x-3 gap-y-1 flex-wrap text-sm text-ink-2 min-w-0"
@@ -45,7 +49,19 @@ export function PrimaryContactLine({ contact, onAddContact }: {
         <span className="font-medium text-ink break-words">{contact.name}</span>
         {contact.title && <span className="text-ink-3">· {contact.title}</span>}
       </span>
-      {tel && (
+      {tel && isMaskedContact(tel) && (
+        <span className="inline-flex items-center gap-1 text-ink-3 tabular-nums" title={hidden}>
+          <Icon name="phone" size={12} className="flex-shrink-0" />
+          {tel}
+        </span>
+      )}
+      {contact.email && isMaskedContact(contact.email) && (
+        <span className="inline-flex items-center gap-1 text-ink-3 min-w-0 break-all" title={hidden}>
+          <Icon name="mail" size={12} className="flex-shrink-0" />
+          {contact.email}
+        </span>
+      )}
+      {tel && !isMaskedContact(tel) && (
         <a
           href={`tel:${tel}`}
           className="inline-flex items-center gap-1 text-ink-2 hover:text-amber-ink tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-sm"
@@ -54,7 +70,7 @@ export function PrimaryContactLine({ contact, onAddContact }: {
           {formatPhone(tel)}
         </a>
       )}
-      {contact.email && (
+      {contact.email && !isMaskedContact(contact.email) && (
         <a
           href={`mailto:${contact.email}`}
           className="inline-flex items-center gap-1 text-ink-2 hover:text-amber-ink min-w-0 break-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-sm"

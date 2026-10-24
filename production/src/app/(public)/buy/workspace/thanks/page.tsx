@@ -40,5 +40,8 @@ export default async function ThanksPage(
   const order   = quoteId ? await fetchOrder(quoteId, searchParams.t?.trim()) : null;
   const isSim   = searchParams.sim === "1";
 
-  return <ThanksClient order={order} isSimulation={isSim} />;
+  /* R-1625: with no paid order yet (the webhook not in), the client confirms the Razorpay
+     payment the buy page kept for this order number — the number is only a lookup key into the
+     buyer's own sessionStorage; nothing is shown from it until our server confirms. */
+  return <ThanksClient order={order} isSimulation={isSim} orderRef={quoteId || undefined} />;
 }

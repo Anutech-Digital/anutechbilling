@@ -1,9 +1,29 @@
 import { describe, it, expect } from "vitest";
 import {
-  profitContribution, fyMonths, monthlySeries, trendHighlights,
-  type MonthlyRow,
+  profitContribution, fyMonths, monthlySeriesFromPnl, trendHighlights, type MonthPnl,
 } from "./pnl-charts";
-import { vendorLine, type VendorInput } from "./pnl";
+import { buildPnl, vendorLine, type VendorInput } from "./pnl";
+
+/* R-1647: the series is built from each month's own P&L (pnl-monthly.test.ts checks it against
+   assemblePnl). These tests are about the series' shape and the highlights, so a month's P&L is
+   made here from three numbers through buildPnl — revenue, a billed cost, expenses. */
+interface MonthlyRow { date: string; amount: number }
+function monthlySeries(args: {
+  fyStartYear: number; revenue: readonly MonthlyRow[]; expenses: readonly MonthlyRow[]; cogsRatio: number; today: string;
+}) {
+  const sum = (rows: readonly MonthlyRow[]) => {
+    const m = new Map<string, number>();
+    for (const r of rows) m.set(r.date.slice(0, 7), (m.get(r.date.slice(0, 7)) ?? 0) + r.amount);
+    return m;
+  };
+  const rev = sum(args.revenue), exp = sum(args.expenses);
+  const months = new Map<string, MonthPnl>();
+  for (const key of new Set([...rev.keys(), ...exp.keys()])) {
+    const r = rev.get(key) ?? 0, e = exp.get(key) ?? 0, c = Math.round(r * args.cogsRatio);
+    months.set(key, { revenue: r, cogs: c, netProfit: r - c - e, model: buildPnl({ revenue: r, expenses: e, billedCogs: c > 0 ? c : null, vendors: [] }) });
+  }
+  return monthlySeriesFromPnl({ fyStartYear: args.fyStartYear, today: args.today, months });
+}
 
 const line = (over: Partial<VendorInput>) => vendorLine({
   vendor: "google", revenue: 55_194, billedCost: null, estimatedCost: 35_283,

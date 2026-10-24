@@ -23,8 +23,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { LifecycleStep } from "@/lib/quotes/lifecycle";
 import { addDaysISO, istDayStartUtc, toIstDate } from "@/lib/dates/ist";
 import { trialDaysLeft } from "./days-left";
+import { WORKSPACE_TRIAL_DAYS } from "./trial-days";
 
-export const QUOTE_TRIAL_DAYS = 14;
+export const QUOTE_TRIAL_DAYS = WORKSPACE_TRIAL_DAYS; // R-1117: same Workspace trial, one number
 /** Google's own cap on a Workspace trial. Above this is a warning — never a silent clamp. */
 export const GOOGLE_TRIAL_MAX_USERS = 10;
 export const QUOTE_TRIAL_MIN_DAYS = 1;

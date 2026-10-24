@@ -17,10 +17,26 @@
  *   project receipt credit
  * closing = invoices + debit notes − payments − credit notes + refunds. Positive = the customer
  * owes; negative = the company owes the customer (open credit to use or refund).
+ *
+ * R-1632 (weekly audit 19 Oct 2026) — the same closing as /collections (invoiceAmountDue per
+ * invoice) minus the customer's open credit:
+ *   - a VOID or DRAFT invoice is not owed: no line (and no line for a note against it);
+ *   - a WRITTEN-OFF invoice (R-1635) stays on as issued, and a "Written off" credit line on
+ *     the write-off date clears what was still due on it (invoiceAmountDue before the
+ *     write-off) — /collections asks for nothing on it;
+ *   - a payment counts the CASH that came in (cashReceived: amount − credit_applied, R-1565);
+ *     the credit it spent was already counted on the payment that created it. A refund gives
+ *     back that same cash;
+ *   - payments belong to the customer by the /payments rule (paymentBelongsTo: own
+ *     customer_id, else the customer on its quote) — statementPayments().
  */
+import { rupee } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
+import { cashReceived } from "@/lib/payments/cash-received";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
+import { paymentBelongsTo, type ScopablePayment } from "@/app/(app)/payments/customer-scope";
 
 export type StatementLink =
   | { kind: "invoice"; invoiceId: string }
@@ -40,9 +56,17 @@ export interface StatementInput {
   /** R-1739: an invoice imported from Zoho Books (document_kind opening_invoice) is the
    *  customer's opening balance — only what was still due when it came in (opening_balance);
    *  its earlier Zoho receipts were never recorded here. */
-  invoices: ReadonlyArray<{ id: string; invoice_date: string; amount: number | null; document_kind?: string | null; opening_balance?: number | null }>;
+  invoices: ReadonlyArray<{
+    id: string; invoice_date: string; amount: number | null; document_kind?: string | null; opening_balance?: number | null;
+    /** R-1632: void / draft → not on the statement. Omitted = issued (older callers). */
+    status?: string | null;
+    /** R-1632: what invoiceAmountDue reads — the write-off line clears exactly that. */
+    net_payable?: number | null; paid_amount?: number | null; written_off_at?: string | null;
+  }>;
   payments: ReadonlyArray<{
     id: string; quote_id: string | null; invoice_id?: string | null; amount: number | null; status: string;
+    /** R-1565: the part of `amount` paid from the customer's credit, not new money. */
+    credit_applied?: number | null;
     received_at: string; refunded_at?: string | null;
     receipt_voucher_no?: string | null; refund_voucher_no?: string | null;
   }>;
@@ -53,18 +77,43 @@ export interface StatementInput {
   paymentSplit?: (paymentId: string, amount: number) => string | null;
 }
 
+/**
+ * R-1680: a running balance below zero is money the customer has with us — "₹5,000 credit",
+ * the closing line's own words. rupee(-5000) printed "₹-5,000" in the Balance column.
+ */
+export function statementBalanceText(balance: number): string {
+  return balance < 0 ? `${rupee(-balance)} credit` : rupee(balance);
+}
+
 export function buildCustomerStatement(input: StatementInput): { rows: StatementRow[]; closing: number } {
   type Raw = Omit<StatementRow, "balance"> & { order: number };
   const raw: Raw[] = [];
+  /* R-1632: a void invoice was never a supply (only drafts are voided — an issued one is
+     reversed with a credit note, 20260927140000) and a draft is not issued yet. */
+  const offStatement = new Set(
+    input.invoices.filter((i) => i.status === "void" || i.status === "draft").map((i) => i.id),
+  );
   for (const i of input.invoices) {
+    if (offStatement.has(i.id)) continue;
     const opening = isOpeningInvoice(i);
     raw.push({
       date: i.invoice_date,
       desc: opening ? `Opening balance · ${i.id} (imported from Zoho Books)` : `Invoice ${i.id}`,
       debit: opening ? i.opening_balance ?? 0 : i.amount ?? 0, credit: 0, link: { kind: "invoice", invoiceId: i.id }, order: 0,
     });
+    if (i.written_off_at) {
+      /* R-1635: the invoice stays issued; what was still due on it is no longer asked for. */
+      const due = invoiceAmountDue({ ...i, written_off_at: null });
+      if (due > 0) {
+        raw.push({
+          date: i.written_off_at, desc: `Written off · ${i.id} (not collected)`,
+          debit: 0, credit: due, link: { kind: "invoice", invoiceId: i.id }, order: 5,
+        });
+      }
+    }
   }
   for (const d of input.debitNotes) {
+    if (d.invoice_id && offStatement.has(d.invoice_id)) continue;
     raw.push({
       date: d.debit_date, desc: `Debit note ${d.id}${d.invoice_id ? ` · on ${d.invoice_id}` : ""}`,
       debit: d.amount ?? 0, credit: 0,
@@ -72,7 +121,8 @@ export function buildCustomerStatement(input: StatementInput): { rows: Statement
     });
   }
   for (const p of input.payments) {
-    const amount = p.amount ?? 0;
+    /* R-1632: the cash that came in — credit spent here was counted when it was received. */
+    const amount = cashReceived({ amount: p.amount ?? 0, credit_applied: p.credit_applied });
     /* R-1739: a payment on an imported Zoho invoice has no quote — it opens that invoice. */
     const link: StatementLink = p.quote_id ? { kind: "payment", quoteId: p.quote_id } : { kind: "invoice", invoiceId: p.invoice_id ?? "" };
     const split = input.paymentSplit?.(p.id, amount) ?? null;
@@ -90,6 +140,7 @@ export function buildCustomerStatement(input: StatementInput): { rows: Statement
     }
   }
   for (const c of input.creditNotes) {
+    if (c.invoice_id && offStatement.has(c.invoice_id)) continue;
     raw.push({
       date: c.credit_date, desc: `Credit note ${c.id}${c.invoice_id ? ` · on ${c.invoice_id}` : ""}`,
       debit: 0, credit: c.amount ?? 0,
@@ -110,6 +161,20 @@ export function buildCustomerStatement(input: StatementInput): { rows: Statement
   let bal = 0;
   const rows = raw.map(({ order: _order, ...r }) => { bal += r.debit - r.credit; return { ...r, balance: bal }; });
   return { rows, closing: bal };
+}
+
+/**
+ * R-1632: this customer's payments by the /payments rule (paymentBelongsTo) — its own
+ * customer_id, or, when that is empty (taken before the lead was converted), the customer
+ * on its quote. `quoteIds` = this customer's quotes.
+ */
+export function statementPayments<P extends ScopablePayment>(
+  payments: readonly P[],
+  customerId: string,
+  quoteIds: Iterable<string>,
+): P[] {
+  const mine = new Set(quoteIds);
+  return payments.filter((p) => paymentBelongsTo(p, customerId, (id) => (mine.has(id) ? customerId : null)));
 }
 
 export interface CustomerNotes {

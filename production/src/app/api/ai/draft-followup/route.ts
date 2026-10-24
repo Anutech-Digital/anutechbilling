@@ -28,6 +28,7 @@ import { verifyDraftMoney } from "@/lib/ai/money-guard";
 import { logAiDecision, formatGuardBlock } from "@/lib/ai/audit";
 import { rupee } from "@/lib/utils";
 import { stubDraft, type Draft } from "@/lib/ai/stub-draft";
+import { istToday } from "@/lib/dates/ist";
 
 const bodySchema = z
   .object({
@@ -229,7 +230,7 @@ export async function POST(request: NextRequest) {
   const activePlan = (subs ?? []).find((s) => s.status === "active")?.plan ?? (subs ?? [])[0]?.plan ?? null;
   const planLabel = activePlan ? activePlan.replace(/^google-workspace-/, "Google Workspace ") : "your subscription";
   // Soonest upcoming renewal (fallback to the earliest on file) — for renewal nudges.
-  const today = new Date().toISOString().slice(0, 10);
+  const today = istToday();   // R-1653: IST day, not the UTC one
   const renewalDates = (subs ?? []).map((s) => s.renewal_date).filter(Boolean) as string[];
   const renewalDate = renewalDates.filter((d) => d >= today).sort()[0] ?? renewalDates.sort()[0] ?? null;
 

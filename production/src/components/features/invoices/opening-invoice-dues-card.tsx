@@ -41,7 +41,7 @@ export function useOpeningInvoiceDues() {
         supabase.from("invoices")
           .select("id, customer_id, customer_name, due_date, invoice_date, amount, net_payable, paid_amount")
           .eq("document_kind", OPENING_INVOICE_KIND)
-          .in("status", ["pending", "overdue"])
+          .in("status", ["pending", "overdue"]).is("written_off_at", null)
           .order("id", { ascending: true })
           .range(from, to) as never);
     },
@@ -73,7 +73,7 @@ export function OpeningInvoiceDuesCard({ customerId, canRecord }: { customerId?:
           </p>
         </div>
       </div>
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-3xs uppercase tracking-wider text-ink-3 border-b border-hairline">

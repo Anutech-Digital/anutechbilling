@@ -14,11 +14,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { errorResponse, RouteError, mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
+import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const TRIAL_DAYS = 14;
+const TRIAL_DAYS = WORKSPACE_TRIAL_DAYS; // R-1117: one place for the length
 
 const schema = z.object({
   fullName:    z.string().min(2).max(120),
@@ -94,7 +95,7 @@ export async function POST(req: NextRequest) {
     `NEXT STEPS:`,
     `  1. Verify domain ownership via DNS TXT record`,
     `  2. Create trial Org in Google Reseller Console`,
-    `  3. Provision ${seats} ${tierName} licenses (14-day expiry)`,
+    `  3. Provision ${seats} ${tierName} licenses (${TRIAL_DAYS}-day expiry)`,
     `  4. Send admin credentials to ${email} + WhatsApp ${phone}`,
     `  5. Calendar reminders auto-set for Day 7 / 12 / 14`,
   ].filter(Boolean).join("\n");
@@ -127,7 +128,7 @@ export async function POST(req: NextRequest) {
   try {
     const day7  = new Date(trialStartedAt.getTime() + 7  * 86400000);
     const day12 = new Date(trialStartedAt.getTime() + 12 * 86400000);
-    const day14 = new Date(trialStartedAt.getTime() + 14 * 86400000);
+    const day14 = new Date(trialStartedAt.getTime() + TRIAL_DAYS * 86400000);
     day7.setHours(10, 0, 0, 0);
     day12.setHours(10, 0, 0, 0);
     day14.setHours(10, 0, 0, 0);
@@ -136,7 +137,7 @@ export async function POST(req: NextRequest) {
       {
         tenant_id: me.tenant_id,
         title:     `Trial check-in: ${companyName} (${cleanDomain})`,
-        notes:     `Day 7 of 14-day trial. Ask about adoption, onboarding blockers, any questions.`,
+        notes:     `Day 7 of ${TRIAL_DAYS}-day trial. Ask about adoption, onboarding blockers, any questions.`,
         kind:      "call",
         due_at:    day7.toISOString(),
         lead_id:   leadId,
@@ -144,7 +145,7 @@ export async function POST(req: NextRequest) {
       {
         tenant_id: me.tenant_id,
         title:     `Conversion call: ${companyName} — trial ends in 2 days`,
-        notes:     `Day 12 of 14-day trial. Discuss converting to paid. Quote ready to issue.`,
+        notes:     `Day 12 of ${TRIAL_DAYS}-day trial. Discuss converting to paid. Quote ready to issue.`,
         kind:      "call",
         due_at:    day12.toISOString(),
         lead_id:   leadId,
@@ -152,7 +153,7 @@ export async function POST(req: NextRequest) {
       {
         tenant_id: me.tenant_id,
         title:     `Trial expires TODAY: ${companyName}`,
-        notes:     `14-day trial ends. Final outreach. Either convert to paid quote OR mark lead lost + suspend in Google CSP.`,
+        notes:     `${TRIAL_DAYS}-day trial ends. Final outreach. Either convert to paid quote OR mark lead lost + suspend in Google CSP.`,
         kind:      "call",
         due_at:    day14.toISOString(),
         lead_id:   leadId,

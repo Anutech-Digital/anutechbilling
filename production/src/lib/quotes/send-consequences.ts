@@ -85,7 +85,14 @@ export function sendQuoteConsequences(quote: QuoteToSend): Consequence[] {
     });
   }
 
-  if (quote.validityDays !== null && quote.validityDays > 0) {
+  if (quote.validityDays !== null && quote.validityDays < 0) {
+    /* R-1679: negative = the validity already ended. Sending it gives the customer a link that
+       refuses to accept — the builder used to say "Valid for −1 days" and send anyway. */
+    out.push({
+      tone: "warning",
+      text: "This quote's validity has already ended, so the customer's accept link will refuse it. Revise it (that sets a new validity) and send the new one instead.",
+    });
+  } else if (quote.validityDays !== null && quote.validityDays > 0) {
     out.push({
       tone: "fact",
       text: `Valid for ${quote.validityDays} day${quote.validityDays === 1 ? "" : "s"} from today, and the accept link keeps working until then.`,

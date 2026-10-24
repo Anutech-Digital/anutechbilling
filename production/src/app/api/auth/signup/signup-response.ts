@@ -21,6 +21,13 @@ export const SIGNUP_FAILED_MESSAGE =
   "We could not create the account. Check that the email address is typed correctly and try again. " +
   "If you already use ResellerOS, sign in instead — or use Forgot password on the sign-in page.";
 
+/** Our own step failed (company / user record, or anything unexpected). Nothing was kept —
+ *  the login made a moment earlier is rolled back — so trying again is safe. The database
+ *  text is logged on the server only (lib/errors/api-error.ts, R-1137). */
+export const SIGNUP_SERVER_FAILED_MESSAGE =
+  "We could not finish setting up your account on our side, and nothing was saved. " +
+  "Please try again in a minute. If it keeps happening, email support@anutech.in.";
+
 /** GoTrue: code `email_exists` (422); older builds only the message. Auth.js store: same code (server/auth/accounts.ts). */
 export function isEmailTaken(err: { message?: string; code?: string; status?: number } | null | undefined): boolean {
   if (!err) return false;

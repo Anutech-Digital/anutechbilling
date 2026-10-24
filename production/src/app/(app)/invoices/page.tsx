@@ -11,6 +11,7 @@
  */
 "use client";
 
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { INVOICE_TABS } from "@/lib/navigation/drilldown";
@@ -29,6 +30,8 @@ import { netAfterNotes, type NoteTotals } from "@/lib/invoices/note-totals";
    due_date instead — see the header of lib/invoices/overdue.ts for why not a cron. */
 import { invoiceBucket } from "@/lib/invoices/overdue";
 import { invoiceStatusBadge } from "./invoice-status";
+import { toInvoiceAgeDays } from "./to-invoice-age";
+import { istToday } from "@/lib/dates/ist";
 import {
   invoiceChip, invoiceChipCounts, invoiceKpis, invoiceInFocus, INVOICE_FOCI, INVOICE_FOCUS_LABEL, type InvoiceFocus,
 } from "@/lib/invoices/kpis";
@@ -38,6 +41,7 @@ import { FocusBanner } from "@/components/shared/focus-banner";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { FAB } from "@/components/ui/fab";
@@ -66,8 +70,10 @@ import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import type { Invoice } from "@/lib/supabase/database.types";
 import { InvoiceNotesList, InvoicePaymentsAccordion } from "./invoice-detail";
-import { invoiceHref, legacyOpenRedirect } from "./invoice-href";
+import { invoiceHref, legacyOpenRedirect, NEW_INVOICE_HREF } from "./invoice-href";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
+import { downloadServerExport } from "@/lib/exports/download-server-export";
+import { mayExport } from "@/lib/exports/server-export";
 import { ImportZohoInvoicesDialog, canImportOpeningInvoices } from "@/components/features/invoices/import-zoho-invoices-dialog";
 
 /* R-085: on the shared DataTable. Widths are fluid percentages (with the 3% checkbox
@@ -100,6 +106,9 @@ function InvoicesPageInner() {
   /* R-487: "Fill missing costs" writes invoice lines — the owner's call only (the RPC checks too). */
   const isOwner      = me?.role === "owner";
   const [fillCostsOpen, setFillCostsOpen] = React.useState(false);
+  /* R-1007: the bulk Export CSV is served by /api/exports/invoices — owner, manager and the money roles. */
+  const canExport    = mayExport("invoices", me?.role);
+  const [exporting, setExporting] = React.useState(false);
   /** Who the outbound WhatsApp reminders are from — see lib/hooks/useWhatsAppSender. */
   const waSender     = useWhatsAppSender();
   /* R-245: the reminder goes to the customer's phone — from the cached customer list. */
@@ -255,18 +264,18 @@ function InvoicesPageInner() {
   const [generating, setGenerating] = React.useState(false);
 
 
-  // Counts — split pending into bare-pending vs partial (advances applied).
-  // "Partial" is derived (not a DB enum value): status='pending' AND
-  // adjusted_advances non-empty. Useful for "how many invoices have SOME
-  // money in, balance still owed" — a different operational signal from
-  // "absolutely nothing received yet".
+  // Counts — split pending into bare-pending vs partial (money in: advances applied OR
+  // receipts after the invoice), and paid into Paid vs Credited (a credit note closed it).
   /* R-060: bucket, not raw status (an unpaid invoice past due is Overdue). R-063: one
-     invoice, one chip — invoiceChip — so the chips add up to All, Void included. */
-  const counts = React.useMemo(() => invoiceChipCounts(viewInvoices), [viewInvoices]);
+     invoice, one chip — invoiceChip — so the chips add up to All, Void included.
+     R-1709: chip, row badge and "Paid this month" read one money state (lib/invoices/payment-state.ts). */
+  const counts = React.useMemo(() => invoiceChipCounts(viewInvoices, undefined, noteTotals), [viewInvoices, noteTotals]);
 
   const tabs: TabBarItem[] = [
     { id: "all",     label: "All",     count: counts.all ?? 0 },
     { id: "paid",    label: "Paid",    count: counts.paid ?? 0, dot: "emerald" },
+    /* R-1709: shown only when some invoice was settled by a credit note — keeps the bar short. */
+    ...((counts.credited ?? 0) > 0 || tab === "credited" ? [{ id: "credited", label: "Credited", count: counts.credited ?? 0 }] : []),
     { id: "partial", label: "Partial", count: counts.partial ?? 0, dot: "amber" },
     { id: "pending", label: "Pending", count: counts.pending ?? 0, dot: "amber" },
     { id: "overdue", label: "Overdue", count: counts.overdue ?? 0, dot: "rose" },
@@ -280,9 +289,9 @@ function InvoicesPageInner() {
   // customer, or status.
   const rows = dateFilteredInvoices.filter((i) => {
     // Tile focus (R-118) — the same predicate the tile summed
-    if (focus && !invoiceInFocus(i, focus)) return false;
+    if (focus && !invoiceInFocus(i, focus, undefined, noteTotals)) return false;
     // Status tab
-    if (tab !== "all" && invoiceChip(i) !== tab) return false;   // same function the counts use
+    if (tab !== "all" && invoiceChip(i, undefined, noteTotals) !== tab) return false;   // same function the counts use
     // Search
     if (search.trim()) {
       const s = search.toLowerCase();
@@ -300,7 +309,7 @@ function InvoicesPageInner() {
      overdue invoices (net of advances and receipts) — void and draft owe nothing.
      "Paid this month" = invoices fully paid in this IST month, by paid date; the
      /payments page's "Collected MTD" is money RECEIVED (incl. part payments and TDS). */
-  const { outstanding, overdueTotal, paidThisMonth: collectedMTD, paidThisMonthCount, outstandingCount } = invoiceKpis(invoices ?? []);
+  const { outstanding, overdueTotal, paidThisMonth: collectedMTD, paidThisMonthCount, outstandingCount } = invoiceKpis(invoices ?? [], undefined, noteTotals);
   /* A tile opens its exact set over EVERY invoice, as the tile counted it: no tab, date or
      type narrowing left over from before the click. */
   const focusOn = (f: InvoiceFocus) => { setView("all"); setDateRange("all"); setTab("all"); setFocus(f); };
@@ -339,7 +348,7 @@ function InvoicesPageInner() {
           )}
           <Button icon="upload" onClick={() => router.push("/accounting/gst" as any)}>Export GSTR-1</Button>
           {canQuotes && (
-            <Button variant="primary" icon="plus" onClick={() => router.push("/quotes" as any)}>
+            <Button variant="primary" icon="plus" onClick={() => router.push(NEW_INVOICE_HREF as never)}>
               New invoice
             </Button>
           )}
@@ -377,12 +386,14 @@ function InvoicesPageInner() {
       */}
       {/* R-255: a queue of invoices to issue — nothing a view-only role can act on. */}
       {canIssue && view !== "project" && pending && pending.length > 0 && (() => {
-        const now = Date.now();
+        /* R-1716: age in IST calendar days, never negative (was raw ms from a UTC-midnight date → "-1d"). */
+        const today = istToday();
+        const ageOf = (q: { first_advance_at?: string | null; payment_received_at?: string | null }) => toInvoiceAgeDays(q.first_advance_at ?? q.payment_received_at, today);
         const buckets = {
-          fresh:   pending.filter((q: any) => { const a = q.first_advance_at ?? q.payment_received_at; return a && (now - new Date(a).getTime()) <= 15 * 86400000; }),
-          warn:    pending.filter((q: any) => { const a = q.first_advance_at ?? q.payment_received_at; const d = a ? (now - new Date(a).getTime()) / 86400000 : 0; return d > 15 && d <= 30; }),
-          urgent:  pending.filter((q: any) => { const a = q.first_advance_at ?? q.payment_received_at; const d = a ? (now - new Date(a).getTime()) / 86400000 : 0; return d > 30 && d <= 60; }),
-          overdue: pending.filter((q: any) => { const a = q.first_advance_at ?? q.payment_received_at; return a && (now - new Date(a).getTime()) > 60 * 86400000; }),
+          fresh:   pending.filter((q: any) => (q.first_advance_at ?? q.payment_received_at) && ageOf(q) <= 15),
+          warn:    pending.filter((q: any) => { const d = ageOf(q); return d > 15 && d <= 30; }),
+          urgent:  pending.filter((q: any) => { const d = ageOf(q); return d > 30 && d <= 60; }),
+          overdue: pending.filter((q: any) => ageOf(q) > 60),
         };
         const sumAmt = (arr: any[]) => arr.reduce((s, q) => s + Math.max(0, (q.amount ?? 0) - (q.paid_amount ?? 0)), 0);
         const totalAmt = sumAmt(pending);
@@ -463,7 +474,7 @@ function InvoicesPageInner() {
                 <ul className="md:hidden space-y-2">
                   {pending.map((q: any) => {
                     const anchor = q.first_advance_at ?? q.payment_received_at;
-                    const days = anchor ? Math.floor((now - new Date(anchor).getTime()) / 86400000) : 0;
+                    const days = toInvoiceAgeDays(anchor, today);
                     const ageKind: "emerald" | "amber" | "rose" = days <= 15 ? "emerald" : days <= 30 ? "amber" : "rose";
                     const isPartial = q.payment_status === "partial";
                     return (
@@ -528,9 +539,7 @@ function InvoicesPageInner() {
                     <tbody>
                       {pending.map((q: any) => {
                         const anchor = q.first_advance_at ?? q.payment_received_at;
-                        const days = anchor
-                          ? Math.floor((now - new Date(anchor).getTime()) / 86400000)
-                          : 0;
+                        const days = toInvoiceAgeDays(anchor, today);
                         const ageKind: "emerald" | "amber" | "rose" =
                           days <= 15 ? "emerald" : days <= 30 ? "amber" : "rose";
                         const isSel = pendingSelected.has(q.id);
@@ -624,7 +633,9 @@ function InvoicesPageInner() {
           >
             <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Outstanding</p>
             <p className="font-serif text-lg font-bold text-rose-ink tabular-nums mt-0.5">{rupee(outstanding, { compact: true })}</p>
-            <p className="text-3xs text-ink-3 mt-0.5">{outstandingCount} invoice{outstandingCount === 1 ? "" : "s"} owed</p>
+            {/* R-1708: a subset of "owed to you" — subscription dues not yet invoiced are on
+                Payments and Payment Follow-up (lib/payments/receivables.ts). */}
+            <p className="text-3xs text-ink-3 mt-0.5">{outstandingCount} invoice{outstandingCount === 1 ? "" : "s"} owed · invoiced only</p>
           </button>
           <button
             type="button"
@@ -725,24 +736,24 @@ function InvoicesPageInner() {
           {selected.size > 1 ? "WhatsApp first" : "WhatsApp"}
         </BulkBarButton>}
 
-        <BulkBarButton
+        {/* R-1007: the file is built on the server (role check, export_log, "Exported by …"
+            footer), so the button shows only for a role the server will serve. */}
+        {canExport && <BulkBarButton
           icon="download"
-          onClick={() => {
-            const selectedInvoices = rows.filter((r) => selected.has(r.id));
-            const csv = "Invoice ID,Customer,Amount,Status,Date\n" + selectedInvoices.map(i => `${i.id},"${i.customer_name}",${i.amount},${i.status},${i.created_at || ""}`).join("\n");
-            const blob = new Blob([csv], { type: "text/csv" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `selected-invoices-${new Date().toISOString().slice(0, 10)}.csv`;
-            a.click();
+          disabled={exporting}
+          onClick={async () => {
+            const ids = rows.filter((r) => selected.has(r.id)).map((r) => r.id);
+            setExporting(true);
+            const r = await downloadServerExport("invoices", { ids });
+            setExporting(false);
             /* Toast AFTER the download is triggered, not before. It used to fire first and
                say "Exporting…" whether or not anything followed. */
-            toast.success(`Exported ${selectedInvoices.length} invoice${selectedInvoices.length === 1 ? "" : "s"} to CSV`);
+            if (r.ok) toast.success(`Exported ${r.rows} invoice${r.rows === 1 ? "" : "s"} to CSV`);
+            else toast.error("Could not export the invoices", { description: r.error });
           }}
         >
-          Export CSV
-        </BulkBarButton>
+          {exporting ? "Exporting…" : "Export CSV"}
+        </BulkBarButton>}
       </BulkActionBar>
 
       {/* Error */}
@@ -750,7 +761,7 @@ function InvoicesPageInner() {
         <EmptyState
           icon="alert"
           title="Could not load invoices"
-          body={error.message}
+          body={loadErrorBody(error)}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
         />
       )}
@@ -868,7 +879,7 @@ function InvoicesPageInner() {
       )}
 
       {/* Mobile primary — the header "New invoice" scrolls away on a phone. */}
-      {canQuotes && <FAB icon="plus" label="New invoice" onClick={() => router.push("/quotes" as any)} />}
+      {canQuotes && <FAB icon="plus" label="New invoice" onClick={() => router.push(NEW_INVOICE_HREF as never)} />}
 
       {/* ── The two taps that issue a GST invoice ────────────────────────────
           Both used to fire on a bare click. Each states the number it will take,
@@ -963,7 +974,7 @@ function MobileInvoiceCard({ inv, notes }: { inv: Invoice; notes?: NoteTotals })
                 laptop would name the same invoice differently (R-060). */}
             {(() => {
               /* R-238: same label as the desktop row and the invoice page. */
-              const sb = invoiceStatusBadge(inv);
+              const sb = invoiceStatusBadge(inv, undefined, notes);
               return (
                 <Badge kind={sb?.kind ?? "muted"} size="sm" dot>
                   {sb?.label ?? invoiceBucket(inv)}
@@ -1085,7 +1096,7 @@ function InvoiceRow({
              ever have rendered "Overdue 0d" — and never did, because nothing set the
              status that reached it either.
              R-238: the label lives in ./invoice-status.ts so /invoices/<id> shows the same word. */
-          const sb = invoiceStatusBadge(inv);
+          const sb = invoiceStatusBadge(inv, undefined, notes);
           const badge = sb ? <Badge kind={sb.kind} dot={sb.kind !== "muted"}>{sb.label}</Badge> : null;
           // Draft/void have no receipts — badge stays static. Others toggle the
           // payment-receipts accordion on click.
@@ -1323,7 +1334,7 @@ function DeleteInvoiceDialog({
             <ul className="mt-1.5 space-y-1">
               {projPays!.map((p) => (
                 <li key={p.id} className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-paper px-2.5 py-1.5 text-2xs">
-                  <span className="text-ink-2 capitalize">{(p.method ?? "payment").replace("_", " ")}{p.reference ? ` · ${p.reference}` : ""}{p.bank_txn_id ? " · bank-reconciled" : ""}</span>
+                  <span className="text-ink-2">{p.method ? paymentMethodLabel(p.method) : "Payment"}{p.reference ? ` · ${p.reference}` : ""}{p.bank_txn_id ? " · bank-reconciled" : ""}</span>
                   <span className="tabular-nums font-medium text-ink">{rupee(p.amount)} · {formatDate(p.received_at)}</span>
                 </li>
               ))}

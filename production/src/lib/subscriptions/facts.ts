@@ -21,6 +21,7 @@
  * to render.
  */
 import { rupee } from "@/lib/utils";
+import { subscriptionEnded } from "./renewal-display";
 
 export interface SubscriptionFactsInput {
   seats: number | null | undefined;
@@ -41,7 +42,8 @@ export function subscriptionFacts(sub: SubscriptionFactsInput): Fact[] {
   return [
     { label: "Status",  value: statusLabel(sub.status),           tone: "plain" },
     { label: "Seats",   value: seatsLabel(sub.seats, sub.used),   tone: "plain" },
-    { label: "MRR",     value: `${rupee(sub.mrr ?? 0)}/mo`,       tone: "plain" },
+    /* R-1685: an ended subscription earns nothing a month — "₹540/mo" on it read as live. */
+    { label: "MRR",     value: subscriptionEnded(sub.status) ? "— (ended)" : `${rupee(sub.mrr ?? 0)}/mo`, tone: "plain" },
     { label: "Owed",    value: owedLabel(sub.outstanding_amount), tone: (sub.outstanding_amount ?? 0) > 0 ? "owed" : "plain" },
   ];
 }

@@ -12,6 +12,7 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -100,7 +101,7 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
           <p role="alert" className="text-sm text-rose rounded-md border border-rose/40 bg-rose-soft/30 p-3">{fileError}</p>
         )}
         {allQ.error && (
-          <p role="alert" className="text-sm text-rose">Could not load TDS entries: {(allQ.error as Error).message}. Reload the page.</p>
+          <LoadErrorInline what="TDS entries" error={allQ.error} onRetry={() => void allQ.refetch()} />
         )}
 
         {parsed && (

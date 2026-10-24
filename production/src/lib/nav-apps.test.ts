@@ -74,7 +74,12 @@ describe("what each role sees", () => {
     const m = buildSidebarApps("accountant");
     const ids = rowIds(m);
     expect(ids).toEqual(expect.arrayContaining(["acc-overview", "ledger", "reports", "vendors", "bills", "bill-payments", "expenses", "customers", "invoices", "payments"]));
-    for (const id of ["leads", "deals", "quotes", "whatsapp", "support", "team", "marketing-hub", "settings", "purchase-orders"]) expect(ids).not.toContain(id);
+    for (const id of ["leads", "deals", "quotes", "whatsapp", "support", "team", "settings", "purchase-orders"]) expect(ids).not.toContain(id);
+    /* R-1793 (23 Oct 2026): the Hub appears only as a heading over Budget & Payments — the
+       accountant pays marketing's budget requests; no other marketing row. */
+    const hub = m.apps.flatMap((a) => a.items).find((i) => i.id === "marketing-hub");
+    expect(hub?.headerOnly).toBe(true);
+    expect(hub?.children?.map((c) => c.id)).toEqual(["marketing-budget"]);
     /* 16 rows since R-255 — past FLAT_MENU_MAX_ROWS, so the accountant gets the app switcher. */
     expect(m.flat).toBe(false);
   });

@@ -75,3 +75,27 @@ export function isCompanyStateMissingError(err: unknown): boolean {
   const m = err && typeof err === "object" ? (err as { message?: unknown }).message : err;
   return typeof m === "string" && /own company has no state on record/i.test(m);
 }
+
+/**
+ * R-1643: the "go fix it" button when generate_invoice / create_direct_invoice refuse because
+ * the company's own GSTIN or address is not on record (a Tax Invoice must show both — CGST
+ * Rule 46; a Bill of Supply its address — Rule 49). Migration
+ * 20261023192418_r1643_tax_invoice_needs_supplier_gstin, supplier_invoice_problem().
+ */
+export const COMPANY_GSTIN_FIX = {
+  label: "Add GSTIN and address",
+  href: SETUP_HREF.company,
+} as const;
+
+/** True when a thrown error is that refusal (the SQL message's own fix sentence). */
+export function isCompanyGstinMissingError(err: unknown): boolean {
+  const m = err && typeof err === "object" ? (err as { message?: unknown }).message : err;
+  return typeof m === "string" && /Add your company's (GSTIN and address|address) in Settings → Company first/i.test(m);
+}
+
+/** The one-click fix for an invoice the database refused for a company-settings gap, or null. */
+export function invoiceIssueFix(err: unknown): { label: string; href: string } | null {
+  if (isCompanyGstinMissingError(err)) return { label: COMPANY_GSTIN_FIX.label, href: COMPANY_GSTIN_FIX.href };
+  if (isCompanyStateMissingError(err)) return { label: COMPANY_STATE_FIX.label, href: COMPANY_STATE_FIX.href };
+  return null;
+}

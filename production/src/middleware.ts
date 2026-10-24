@@ -407,7 +407,10 @@ export async function middleware(request: NextRequest) {
     if (!isAllowedPath) {
       const url = request.nextUrl.clone();
       url.pathname = ROLE_HOME[userRole];
-      url.searchParams.delete("next");
+      // R-1810: say which page was refused — the app shell shows "You don't have access to …"
+      // (components/layout/denied-route-toast.tsx). The refused page's own query is dropped.
+      url.search = "";
+      url.searchParams.set("denied", pathname);
       return NextResponse.redirect(url);
     }
   }

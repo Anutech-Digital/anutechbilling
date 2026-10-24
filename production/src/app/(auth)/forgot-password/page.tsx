@@ -31,6 +31,7 @@ import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { describeAuthError } from "@/lib/errors/auth-error";
 
 const schema = z.object({ email: z.string().email("Enter a valid email") });
 type FormData = z.infer<typeof schema>;
@@ -55,7 +56,12 @@ export default function ForgotPasswordPage() {
        anonymous visitor "no account with that email" turns this box into a way to find out
        who banks with this reseller. So the screen says the same thing either way. */
     if (error) {
-      toast.error(error.message);
+      // R-1137: §24 copy, never the raw auth/DB text.
+      const d = describeAuthError(error, "reset");
+      toast.error(d.message, {
+        description: d.description,
+        action: { label: "Try again", onClick: () => { void handleSubmit(onSubmit)(); } },
+      });
       return;
     }
     setSentTo(values.email);

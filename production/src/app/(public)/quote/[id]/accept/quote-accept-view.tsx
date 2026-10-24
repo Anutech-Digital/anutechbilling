@@ -6,6 +6,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -24,8 +25,10 @@ import { quoteInstalments } from "@/lib/billing/instalments";
 import { whatsAppLink } from "@/lib/marketing/review-request";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { AcceptedPay } from "./accepted-pay";
+import { ExpiredQuote } from "./expired-quote";
 import type { QuoteDueNow } from "@/lib/payments/quote-due-now";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { taxableAfterDiscount } from "@/lib/quotes/amounts";
 import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
 import { billOfSupplyCustomerLine, type BillOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
 
@@ -253,7 +256,7 @@ export function QuoteAcceptView({
    */
   const dueToday = React.useMemo(() => quoteInstalments({
     cycle:       effectiveCycle,
-    termTaxable: (quote.subtotal ?? 0) - Math.round((quote.subtotal ?? 0) * (quote.discount_pct ?? 0) / 100),
+    termTaxable: taxableAfterDiscount(quote.subtotal ?? 0, quote.discount_pct ?? 0), // R-1133: the tax invoice's formula
     termGross:   payableTotal,
     taxRate:     quote.tax_rate ?? 18,
     // Flex me stored aankde per-month hain — split kuch hai hi nahi (12× ka parivar).
@@ -285,6 +288,18 @@ export function QuoteAcceptView({
   const fullyPaid = dueNow?.state === "paid";
 
   const [notifying, setNotifying] = React.useState(false);
+
+  /* R-1137: a failed step on this customer page says what happened (server sentence, or a
+     plain one for raw DB text — toastError), why nothing changed, and offers Try again; the
+     reseller's phone is the other way through. */
+  const failToast = (e: unknown, fallback: string, why: string, retry: () => void) =>
+    toastError(e, {
+      fallback,
+      description: `${why}${tenantPhone ? ` You can also call ${tenantName} on ${tenantPhone}.` : ""}`,
+      action: { label: "Try again", onClick: retry },
+      duration: 10_000,
+    });
+
   /**
    * "I've sent the payment" — tells the reseller to go and look.
    *
@@ -307,9 +322,7 @@ export function QuoteAcceptView({
         duration: 8000,
       });
     } catch (e) {
-      toast.error((e as Error).message, {
-        description: tenantPhone ? `You can also call them on ${tenantPhone}.` : undefined,
-      });
+      failToast(e, "Could not send the message.", "They have not been told yet.", () => { void handleUpiPaid(); });
     } finally {
       setNotifying(false);
     }
@@ -342,7 +355,7 @@ export function QuoteAcceptView({
       setAccepted(true);
       toast.success("Quote accepted · the reseller has been notified");
     } catch (e) {
-      toast.error((e as Error).message);
+      failToast(e, "Could not accept the quote.", "The quote is not accepted yet.", () => { void handleAccept(); });
     } finally {
       setAccepting(false);
     }
@@ -362,7 +375,7 @@ export function QuoteAcceptView({
       setAccepted(true);
       toast.success("Quote accepted with Purchase Order · reseller notified");
     } catch (e) {
-      toast.error((e as Error).message);
+      failToast(e, "Could not accept the quote.", "The quote is not accepted yet.", () => { void handlePoAccept(); });
     } finally {
       setAccepting(false);
     }
@@ -425,13 +438,17 @@ export function QuoteAcceptView({
         modal:       { ondismiss: () => setPaying(false) },
       });
       rzp.on("payment.failed", (r) => {
-        toast.error(r.error?.description ?? "Payment failed — please try again.");
+        toast.error(r.error?.description ?? "Payment failed.", {
+          description: `No money was taken. Try again, or ask ${tenantName} for another way to pay.`,
+          action: { label: "Try again", onClick: () => { void handlePayOnline(); } },
+          duration: 10_000,
+        });
         setPaying(false);
       });
       rzp.open();
       setPreparingPay(false); // Razorpay's window now shows its own progress
     } catch (e) {
-      toast.error((e as Error).message);
+      failToast(e, "Could not start the payment.", "No money was taken.", () => { void handlePayOnline(); });
       setPreparingPay(false);
       setPaying(false);
     }
@@ -599,29 +616,13 @@ export function QuoteAcceptView({
   // ──────────── No-longer-available screen (expired / rejected) ────────────
   // These states can't be accepted (the API rejects them), so don't show the
   // customer a working "Accept" button that only errors when clicked.
+  /* R-1679: the page passes "expired" for a sent / viewed quote past its validity too. */
   if (quote.status === "expired" || quote.status === "rejected") {
     return (
-      <div className="min-h-screen bg-paper-2/30 flex items-start justify-center py-10 px-4">
-        <div className="max-w-2xl w-full bg-paper rounded-xl shadow-sm border border-hairline p-8 md:p-12 text-center">
-          <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-rose/15 grid place-items-center">
-            <Icon name="alert" size={32} className="text-rose" />
-          </div>
-          <h1 className="font-serif text-3xl text-ink mb-2">
-            {quote.status === "expired" ? "This quote has expired" : "This quote is no longer available"}
-          </h1>
-          <p className="text-sm text-ink-3">
-            Quote <span className="font-mono">{quote.id}</span> can no longer be accepted online.
-            Please contact <b className="text-ink">{tenantName}</b> for an updated quote.
-          </p>
-          {tenantEmail && (
-            <Button asChild variant="primary" className="mt-6">
-              <a href={`mailto:${tenantEmail}?subject=${encodeURIComponent(`New quote request (ref ${quote.id})`)}`}>
-                Request a fresh quote
-              </a>
-            </Button>
-          )}
-        </div>
-      </div>
+      <ExpiredQuote
+        quoteId={quote.id} status={quote.status === "expired" ? "expired" : "rejected"} expiresDate={quote.expires_date} token={token}
+        tenantName={tenantName} tenantEmail={tenantEmail} tenantPhone={tenantPhone}
+      />
     );
   }
 

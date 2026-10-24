@@ -49,6 +49,7 @@ import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
 import { udyamPdfLine } from "@/lib/compliance/udyam";
 import { ONE_TIME_SCHEDULE, type LinePeriodContext } from "@/lib/quotes/service-period";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
+import { quotePaymentTermsLine } from "./payment-terms";
 import {
   billOfSupplyCustomerLine, billOfSupplyPlaceLabel, PROFORMA_NOTICE_BILL_OF_SUPPLY, type BillOfSupplyStatus,
 } from "@/lib/quotes/bill-of-supply";
@@ -152,6 +153,11 @@ export interface QuotePDFProps {
    * reason `upiQrDataUrl` is the caller's call).
    */
   isPaid?:       boolean;
+  /**
+   * R-1670 (3): quotes.payment_terms_days — the invoice raised from this quote is due that many
+   * days after the invoice date. Null / absent → the invoice default (30, generate_invoice).
+   */
+  paymentTermsDays?: number | null;
   /** Scan-to-pay QR as a PNG data-URL, from buildQuoteUpiQr(). Null → no block.
    *  The decision of WHETHER to offer a QR belongs to the caller, not here: it
    *  depends on currency and payment status, which this component doesn't see. */
@@ -457,7 +463,7 @@ export function QuotePDF(props: QuotePDFProps) {
     createdDate, expiresDate, validityDays,
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
     interState, placeOfSupply, isExport = false, billOfSupply = null, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, termsConditions, isRenewal,
-    isPaid = false, oneTime = false, extensionTitle = null, periodContext = null,
+    isPaid = false, paymentTermsDays = null, oneTime = false, extensionTitle = null, periodContext = null,
     upiQrDataUrl, upiVpa, template = "quotation", bank = null, payLinkUrl = null,
   } = props;
   /* R-1523: a paid quote stays a "Paid order" — a Proforma asks for money that is already in. */
@@ -877,7 +883,8 @@ export function QuotePDF(props: QuotePDFProps) {
           {!isPaid && (
             <Text style={s.footerLine}>
               <Text style={s.footerBold}>Payment terms: </Text>
-              Net 7 days from acceptance. UPI / NEFT / Razorpay accepted.
+              {/* R-1670 (3): the quote's own terms (what its invoice will be due on), not "Net 7". */}
+              {quotePaymentTermsLine(paymentTermsDays)} UPI / NEFT / Razorpay accepted.
             </Text>
           )}
           {!isPaid && (

@@ -7,11 +7,13 @@
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { PAYMENT_FOCI, paymentInFocus, projectReceivedInMonth, type PaymentFocus } from "@/lib/payments/focus";
+import { quoteInFocus } from "@/lib/quotes/focus";
 import { FocusBanner } from "@/components/shared/focus-banner";
 import { PAYMENT_TABS } from "@/lib/navigation/drilldown";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
+import { downloadCSV } from "@/lib/csv";
 import { useListKeys } from "@/lib/hooks/useKeyboard";
 import { KeyHintBar, ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { getDocumentSignedUrl } from "@/lib/queries/documents";
@@ -35,7 +37,6 @@ import {
   useWriteOffSubscription,
   usePaymentInvoiceCustomers,
   type Payment,
-  type OutstandingRow,
 } from "@/lib/queries/payments";
 import { useQuotes } from "@/lib/queries/quotes";
 import { useOpenSeatQuotes } from "@/lib/queries/seat-quotes";
@@ -48,6 +49,7 @@ import { OpeningInvoiceDuesCard } from "@/components/features/invoices/opening-i
 import { useCustomers } from "@/lib/queries/customers";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { duesReminderMailto, duesReminderTo } from "./dues-reminder";
 import { canWriteSales } from "@/lib/nav";
 import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
@@ -55,6 +57,7 @@ import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-vouch
 import { EditPaymentDialog } from "@/components/features/quotes/edit-payment-dialog";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -65,6 +68,9 @@ import { Icon } from "@/components/ui/icon";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { RecordQuotePaymentDialog } from "./record-quote-payment";
 import { DuesPayButton, duesPaymentRoute, useDuesQuoteLinks } from "./dues-pay";
+import { SubscriptionDuesList, SubscriptionDuesHeading } from "./dues-list";
+import { useReceivableLines } from "@/lib/queries/collections";
+import { sumReceivables } from "@/lib/payments/receivables";
 import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
 import { paymentsKpiPlan } from "./kpi-plan";
 import { PaymentRefundButton, usePaymentRefundFlow } from "@/components/features/payments/payment-refund";
@@ -77,12 +83,11 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { rupee, formatDate, bankLabel, cleanDisplayName, cn } from "@/lib/utils";
-import { istMonth, toIstDate } from "@/lib/dates/ist";
-/* The postpaid countdown, shared with /subscriptions and the onboarding dialog. */
-import { paymentDueState, paymentDueChipLabel, todayIST } from "@/lib/subscriptions/payment-due";
+import { istMonth, istToday, toIstDate } from "@/lib/dates/ist";
 import { useConfirm, useAskText } from "@/components/providers/confirm-provider";
 import { PAYMENTS_PAGE_SIZE } from "./load-more";
 import { paymentMethodLabel } from "./method-label";
+import { paymentMatchesSearch } from "./payment-search";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { paymentSortValues, PAY_ROW_ATTR } from "./payment-table";
 import { useRowOrder } from "./use-row-order";
@@ -115,6 +120,8 @@ const PAY_COL_WIDTHS: Record<string, string> = {
 function PaymentsPageInner() {
   /* window.prompt returns null in the desktop app — Write off did nothing (R-052). */
   const askText = useAskText();
+  /* R-1698: Remind asks "did it go out?" before it writes Last reminder. */
+  const confirm = useConfirm();
   const router = useRouter();
   const [tab, setTab]       = useUrlChoice<"all" | "received" | "refunded">("tab", PAYMENT_TABS, "all"); // R-118
   /* R-118: "Collected MTD"'s own set (lib/payments/focus.ts) — "" = none. */
@@ -147,9 +154,15 @@ function PaymentsPageInner() {
     const p = payments.find((x) => x.id === id);
     if (p) setEditPayment(p);
   }, [payments]);
-  const { data: projectPayments } = useAllProjectPayments();
-  const { data: quotes } = useQuotes();
-  const { data: outstanding } = useOutstandingReceivables();
+  const projectPaymentsQ = useAllProjectPayments();
+  const quotesQ = useQuotes();
+  const outstandingQ = useOutstandingReceivables();
+  const { data: projectPayments } = projectPaymentsQ;
+  const { data: quotes } = quotesQ;
+  const { data: outstanding } = outstandingQ;
+  /* R-1708: the one "owed to us" number — the same lines Payment Follow-up lists. */
+  const receivablesQ = useReceivableLines();
+  const sideFailed = [projectPaymentsQ, quotesQ, outstandingQ, receivablesQ].filter((q) => q.isError);
   /* R-1697: each dues row's own quote / renewal quote, so a row with no customer quote still
      gets "Record payment" through the same record_payment path. */
   const { data: duesQuoteLinks } = useDuesQuoteLinks((outstanding ?? []).map((o) => o.subscription_id));
@@ -240,15 +253,9 @@ function PaymentsPageInner() {
   const filtered = React.useMemo(() => scopedPayments.filter((p) => {
     if (tab !== "all" && p.status !== tab) return false;
     if (focus && !paymentInFocus(p, focus)) return false;   // the tile's own predicate
-    if (!search.trim()) return true;
-    const s = search.toLowerCase();
-    return (
-      paymentDocId(p).toLowerCase().includes(s) ||
-      (p.reference?.toLowerCase().includes(s) ?? false) ||
-      p.method.toLowerCase().includes(s) ||
-      (customerOf(p).customerName?.toLowerCase().includes(s) ?? false)
-    );
-  }), [scopedPayments, tab, focus, customerOf, search]);
+    /* R-1639: also the receipt voucher no. and the invoice number (payment-search.ts). */
+    return paymentMatchesSearch(p, search, { customerName: customerOf(p).customerName, invoiceNumber: invoiceOf(p).invoiceNumber });
+  }), [scopedPayments, tab, focus, customerOf, invoiceOf, search]);
 
   /* R-215: the list is on the shared DataTable — header sort, and R-104's "paint 50 at a
      time" now comes from its pageSize. Tab counts, KPIs, "collected" and the CSV export
@@ -298,13 +305,17 @@ function PaymentsPageInner() {
   const scopedOutstanding = scoped.outstanding;
   const scopedSeatQuotes = (seatQuotes ?? []).filter((q) => !customerFilter || q.customerId === customerFilter);
   const seatQuotesTotal = scopedSeatQuotes.reduce((s, q) => s + q.pending, 0);
+  /* R-1708 + R-533: "Owed to you" — this customer's lines only when ?customer= is set. */
+  const receivables = receivablesQ.data
+    ? sumReceivables(receivablesQ.data.filter((l) => !customerFilter || l.customerId === customerFilter))
+    : null;
 
   // Awaiting-invoice: quotes with payment_status = 'received' (fully paid, no invoice yet)
   const awaitingInvoiceQuotes = scoped.quotes.filter((q) => q.payment_status === "received");
   const awaitingInvoiceTotal = awaitingInvoiceQuotes.reduce((s, q) => s + (q.amount ?? 0), 0);
 
-  // Partial payments (quotes with status=partial)
-  const partialQuotes = scoped.quotes.filter((q) => q.payment_status === "partial");
+  // Partial payments — R-1710: part-paid by money, also once invoiced (the /quotes?focus=partial set).
+  const partialQuotes = scoped.quotes.filter((q) => quoteInFocus(q, "partial"));
   /* R-1730: one figure, one place — the strip shows figures only while collapsed, and the two
      quote counts live in "Action needed" whenever it is shown (kpi-plan.ts). */
   const actionCardShown = canWrite && !isLoading && (partialQuotes.length > 0 || awaitingInvoiceQuotes.length > 0);
@@ -330,11 +341,10 @@ function PaymentsPageInner() {
   const topMethod = Object.entries(methodBreakdown).sort((a, b) => b[1] - a[1])[0];
 
   // Real CSV export of the currently-filtered payments (hand this file to your
-  // CA / accountant). Data is already in memory, so it's a plain Blob download —
+  // CA / accountant). Data is already in memory, so it's a plain downloadCSV —
   // no fake "coming soon".
   const handleExportCsv = () => {
     if (filtered.length === 0) { toast.info("No payments to export"); return; }
-    const esc = (v: string) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     /* R-045: gateway fee + net received, blank when not known (never a guessed zero). */
     const header = ["Date", "Customer", "Quote", "Amount", "Gateway fee", "Net received", "Method", "Reference", "Status", "Receipt Voucher"];
     const lines = filtered.map((p) => {
@@ -343,17 +353,10 @@ function PaymentsPageInner() {
         formatDate(p.received_at), customerOf(p).customerName ?? "", paymentDocId(p), String(p.amount),
         fee ? String(fee.fee) : "", fee ? String(fee.net) : "",
         p.method ? paymentMethodLabel(p.method) : "", p.reference ?? "", p.status, p.receipt_voucher_no ?? "",
-      ].map(esc).join(",");
+      ];
     });
-    const csv = [header.map(esc).join(","), ...lines].join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `payments-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    /* R-1795: the shared downloadCSV — csvEscape on every cell (R-734) and an export_log row (R-1006). */
+    downloadCSV(`payments-${istToday()}.csv`, header, lines);
     toast.success(`Exported ${filtered.length} payment${filtered.length === 1 ? "" : "s"} to CSV`);
   };
 
@@ -486,136 +489,72 @@ function PaymentsPageInner() {
       )}
 
       {/* ── Outstanding Receivables — actionable card ── */}
-      {(scopedOutstanding.length > 0 || scopedSeatQuotes.length > 0) && (() => {
+      {(scopedOutstanding.length > 0 || scopedSeatQuotes.length > 0 || (receivables?.total ?? 0) > 0) && (() => {
         const outstanding = scopedOutstanding;
-        const totalDue = outstanding.reduce((s, o) => s + o.outstanding_amount, 0);
-        const overdueCount = outstanding.filter((o) => o.days_outstanding > 30).length;
         return (
           <Card className="border-rose/30 bg-rose-soft/20">
             <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
               <div className="flex items-center gap-2.5">
                 <Icon name="alert" size={18} className="text-rose" />
-                <div>
-                  <h2 className="font-semibold text-ink">Subscription dues · {rupee(totalDue)}</h2>
-                  <p className="text-xs text-ink-3">
-                    {outstanding.length} subscription{outstanding.length === 1 ? "" : "s"} with a balance
-                    {overdueCount > 0 && <> · <b className="text-rose">{overdueCount} overdue 30+ days</b></>}
-                    {" · "}<Link href="/accounting/aging" className="text-amber-ink hover:text-amber">all receivables (incl. projects & invoices)</Link>
-                  </p>
+                {/* R-1806: a failed dues read shows no total (the banner above explains it). */}
+                <SubscriptionDuesHeading
+                  rows={outstanding}
+                  failed={outstandingQ.isError}
+                  receivables={{ totals: receivables, failed: receivablesQ.isError }}
+                >
                   {seatQuotesTotal > 0 && (
                     <p className="text-xs text-amber-ink">
                       + {rupee(seatQuotesTotal)} in {scopedSeatQuotes.length} unpaid seat quote{scopedSeatQuotes.length === 1 ? "" : "s"} (seats already added, listed below)
                     </p>
                   )}
-                </div>
+                </SubscriptionDuesHeading>
               </div>
             </div>
 
-            {/* Mobile card list — phones only. The desktop table's advanced
-                money ops (suspend / write-off) stay desktop-only; mobile keeps
-                the safe primary action (Record payment → the quote, R-1697). */}
-            {outstanding.length > 0 && (<>
-            <ul className="md:hidden space-y-2">
-              {outstanding.map((o) => {
-                const ageKind =
-                  o.days_outstanding <= 7   ? "fresh"  :
-                  o.days_outstanding <= 15  ? "warning" :
-                  o.days_outstanding <= 30  ? "danger" : "danger";
-                return (
-                  <li key={o.subscription_id} className="rounded-lg border border-hairline bg-paper p-3">
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-ink truncate">{o.customer_name}</p>
-                        <p className="text-2xs text-ink-3 truncate mt-0.5">{o.plan}</p>
-                        {/* The postpaid credit clock — the SAME countdown the
-                            subscriptions list shows, from the same function, so the
-                            two screens cannot disagree about who is late.
-                            `days_outstanding` beside it answers a different question:
-                            how long the balance has existed, not when it was due. */}
-                        {(() => {
-                          const due = paymentDueState(o.payment_due_date, todayIST(), o.outstanding_amount);
-                          if (due.kind === "none") return null;
-                          return (
-                            <Badge
-                              kind={due.kind === "overdue" ? "danger" : due.kind === "upcoming" ? "muted" : "warning"}
-                              size="sm"
-                              className="mt-1"
-                              title={`Agreed due date ${formatDate(o.payment_due_date!)}`}
-                            >
-                              {paymentDueChipLabel(due, formatDate(o.payment_due_date!))}
-                            </Badge>
-                          );
-                        })()}
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-serif text-base tabular-nums text-rose">{rupee(o.outstanding_amount)}</p>
-                        <p className="text-3xs text-ink-3">of {rupee(o.total_quote_amount)}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-hairline/60">
-                      <div className="flex items-center gap-1.5">
-                        <Badge kind={ageKind === "fresh" ? "muted" : ageKind === "warning" ? "warning" : "danger"} size="sm" dot title={`Age counted from ${formatDate(o.age_from)}`}>{o.days_outstanding}d</Badge>
-                        <Badge kind={o.status === "active" ? "success" : o.status === "paused" ? "warning" : "muted"} size="sm">{o.status}</Badge>
-                      </div>
-                      {canWrite && (
-                        <DuesPayButton route={duesPaymentRoute(o, duesQuoteLinks?.get(o.subscription_id))} onRecord={setPayQuoteId} />
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-
-            <div className="hidden xl:block rounded-md border border-hairline bg-paper overflow-auto max-h-[calc(100vh-15rem)]">
-              <table className="w-full">
-                <thead className="sticky top-0 z-10 bg-paper-2 border-b border-hairline">
-                  <tr>
-                    <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Customer</th>
-                    <th className="text-right p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Paid</th>
-                    <th className="text-right p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Balance due</th>
-                    <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Age</th>
-                    <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Status</th>
-                    <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Last reminder</th>
-                    <th className="text-right p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3 w-72">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {outstanding.map((o) => (
-                    <OutstandingRowView
-                      key={o.subscription_id}
-                      o={o}
-                      onReminder={async () => {
-                        await markReminderSent.mutateAsync(o.subscription_id);
-                        const subject = `Payment reminder · ${rupee(o.outstanding_amount)} pending`;
-                        const body =
-                          `Hi ${o.customer_name},\n\nThis is a friendly reminder that ${rupee(o.outstanding_amount)} is still pending against ` +
-                          `your subscription for ${o.plan} (started ${formatDate(o.started_at)}).\n\n` +
-                          `You've paid ${rupee(o.paid_amount)} of ${rupee(o.total_quote_amount)}.\n\n` +
-                          `Please complete the payment at your earliest convenience to keep your service uninterrupted.\n\n— Anutech Digital`;
-                        window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-                      }}
-                      onSuspend={() => setSuspendRow({ id: o.subscription_id, customer_name: o.customer_name, plan: o.plan, outstanding_amount: o.outstanding_amount })}
-                      onResume={() => resumeSub.mutate(o.subscription_id)}
-                      onWriteOff={async () => {
-                        const reason = await askText({
-                          title: `Write off ${rupee(o.outstanding_amount)} from ${o.customer_name}?`,
-                          body: "This cancels the subscription and marks the balance as uncollectable.",
-                          label: "Reason (for audit)",
-                          confirmLabel: "Write off",
-                          danger: true,
-                        });
-                        if (reason) {
-                          writeOffSub.mutate({ id: o.subscription_id, reason });
-                        }
-                      }}
-                      payButton={<DuesPayButton route={duesPaymentRoute(o, duesQuoteLinks?.get(o.subscription_id))} onRecord={setPayQuoteId} />}
-                      readOnly={!canWrite}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            </>)}
+            {/* R-1698: one list for every width — cards below 1280px, the table from 1280px
+                (before, 768–1279px showed no rows at all). One filled button per row (Record
+                payment, R-1697); Remind / Suspend / Resume / Write off behind "⋯". */}
+            {outstanding.length > 0 && (
+              <SubscriptionDuesList
+                rows={outstanding}
+                readOnly={!canWrite}
+                actions={{
+                  payButton: (o) => <DuesPayButton route={duesPaymentRoute(o, duesQuoteLinks?.get(o.subscription_id))} onRecord={setPayQuoteId} />,
+                  onRemind: async (o) => {
+                    /* R-1638: To = the customer's billing contact, signed with this business's name. */
+                    const to = await duesReminderTo(o.customer_id);
+                    window.location.href = duesReminderMailto(o, { to, sellerName: me?.tenantName });
+                    /* R-1698: "Last reminder" is written only once the mail app opened and the
+                       user says it went (it was written before the mail app even opened). */
+                    const sent = await confirm({
+                      title: `Did the reminder to ${o.customer_name} go out?`,
+                      body: to
+                        ? `Your mail app opened with the reminder to ${to}. Mark it as sent once you have sent it.`
+                        : `${o.customer_name} has no email on file, so the "To" line is empty — type the address in your mail app (or add a contact to the customer). Mark it as sent once you have sent it.`,
+                      confirmLabel: "Yes, mark as sent",
+                      cancelLabel: "Not sent",
+                      icon: "mail",
+                    });
+                    if (sent) await markReminderSent.mutateAsync(o.subscription_id);
+                  },
+                  onSuspend: (o) => setSuspendRow({ id: o.subscription_id, customer_name: o.customer_name, plan: o.plan, outstanding_amount: o.outstanding_amount }),
+                  onResume: (o) => resumeSub.mutate(o.subscription_id),
+                  onWriteOff: async (o) => {
+                    const reason = await askText({
+                      title: `Write off ${rupee(o.outstanding_amount)} from ${o.customer_name}?`,
+                      /* R-1635: the invoices leave the chase too (write_off_subscription). */
+                      body: "This cancels the subscription and marks the balance as uncollectable. Its unpaid invoices leave Payment Follow-up and Overdue, and no more reminders go out. The invoices stay issued as they are (GST unchanged).",
+                      label: "Reason (for audit)",
+                      confirmLabel: "Write off",
+                      danger: true,
+                    });
+                    if (reason) {
+                      writeOffSub.mutate({ id: o.subscription_id, reason });
+                    }
+                  },
+                }}
+              />
+            )}
 
             {/* R-1705: open add-seats quotes — the seats are live, the money is not in. */}
             {scopedSeatQuotes.length > 0 && (
@@ -646,11 +585,6 @@ function PaymentsPageInner() {
                 <p className="mt-2 text-2xs text-ink-3">Not paid for? Reject the quote — that takes the seats and MRR back off the subscription.</p>
               </div>
             )}
-
-            <p className="text-2xs text-ink-3 mt-2 flex items-center gap-1">
-              <Icon name="info" size={11} />
-              0–15 days: friendly reminder · 16–30 days: stronger nudge · 30+ days: consider suspending service · 60+ days: accept it as a loss (bad debt)
-            </p>
           </Card>
         );
       })()}
@@ -720,7 +654,7 @@ function PaymentsPageInner() {
               <Input
                 prefix={<Icon name="search" size={14} />}
                 aria-label="Search payments"
-                placeholder="Quote ID, customer, reference, method…"
+                placeholder="Receipt / invoice no., customer, amount…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -730,13 +664,11 @@ function PaymentsPageInner() {
       )}
 
       {/* Error */}
-      {error && (
-        <EmptyState
-          icon="alert"
-          title="Could not load payments"
-          body={error.message}
-          action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
-        />
+      {error && <LoadError what="Payments" error={error} onRetry={() => refetch()} />}
+      {/* R-1655: the side lists (awaiting invoice, part-paid, dues, project payments) come from
+          other reads — a failed one used to leave its list silently empty. */}
+      {!error && sideFailed.length > 0 && (
+        <LoadErrorBanner onRetry={() => sideFailed.forEach((q) => void q.refetch())} />
       )}
 
       {/* Loading */}
@@ -1017,86 +949,6 @@ export default function PaymentsPage() {
   );
 }
 
-// ============================================================
-// OutstandingRowView — single row in the outstanding receivables table
-// ============================================================
-function OutstandingRowView({
-  o,
-  onReminder,
-  onSuspend,
-  onResume,
-  onWriteOff,
-  payButton,
-  readOnly = false,
-}: {
-  o: OutstandingRow;
-  /** R-255: a view-only role (the accountant) sees the row with no action buttons. */
-  readOnly?: boolean;
-  onReminder: () => void;
-  onSuspend:  () => void;
-  onResume:   () => void;
-  onWriteOff: () => void;
-  /** R-237: opens the payment dialog on this page (was a /quotes link billing could not open).
-      R-1697: "Record payment" on every row — DuesPayButton picks the quote or says why not. */
-  payButton: React.ReactNode;
-}) {
-  const aging =
-    o.days_outstanding <= 7   ? "fresh" :
-    o.days_outstanding <= 15  ? "warn"  :
-    o.days_outstanding <= 30  ? "urgent" : "overdue";
-  const ageKind: "success" | "warning" | "danger" =
-    aging === "fresh"   ? "success" :
-    aging === "warn"    ? "warning" :
-                          "danger";
-
-  return (
-    <tr className="border-b border-hairline last:border-0 hover:bg-paper-2/40">
-      <td className="p-2">
-        <div className="font-medium text-sm text-ink">{o.customer_name}</div>
-        <div className="text-3xs text-ink-3">{o.plan}</div>
-      </td>
-      {/* R-1701: received on THIS subscription's quote, not the customer's total. */}
-      <td className="p-2 text-right tabular-nums text-xs text-emerald" title={o.quote_id ? `Received on ${o.quote_id}` : "Received on this subscription's quote"}>{rupee(o.paid_amount)}</td>
-      <td className="p-2 text-right tabular-nums text-sm font-medium text-rose">{rupee(o.outstanding_amount)}</td>
-      <td className="p-2">
-        <Badge kind={ageKind} dot title={`Age counted from ${formatDate(o.age_from)}`}>{o.days_outstanding}d</Badge>
-      </td>
-      <td className="p-2">
-        {o.status === "active" ? (
-          <Badge kind="success" dot>Active</Badge>
-        ) : o.status === "paused" ? (
-          <Badge kind="warning" dot>Paused</Badge>
-        ) : (
-          <Badge kind="muted">{o.status}</Badge>
-        )}
-      </td>
-      <td className="p-2 text-xs text-ink-3">
-        {o.last_reminder_at ? formatDate(o.last_reminder_at) : <span className="italic">never</span>}
-      </td>
-      <td className="p-2 text-right">
-        {readOnly ? <span className="text-2xs text-ink-3">View only</span> : (
-        <div className="flex justify-end gap-1 flex-wrap">
-          {payButton}
-          <Button size="sm" icon="mail" onClick={onReminder}>
-            Remind
-          </Button>
-          {o.status === "active" ? (
-            <Button size="sm" variant="ghost" onClick={onSuspend}>Suspend</Button>
-          ) : (
-            <Button size="sm" variant="ghost" onClick={onResume}>Resume</Button>
-          )}
-          {o.days_outstanding > 30 && (
-            <Button size="sm" variant="ghost" className="!text-rose hover:!bg-rose/10" onClick={onWriteOff}>
-              Write off
-            </Button>
-          )}
-        </div>
-        )}
-      </td>
-    </tr>
-  );
-}
-
 /** R-237: a quote link for roles that can open quotes, plain content for the rest (billing). */
 function MaybeQuoteLink({
   href,
@@ -1287,7 +1139,7 @@ function PaymentRowView({
       </td>
       <td className="px-2 py-2.5 text-right align-top" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-end">
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"

@@ -51,9 +51,28 @@ describe("R-237 no unguarded quote link on billing screens", () => {
     const src = readFileSync(join(SRC, "app/(app)/payments/page.tsx"), "utf8");
     expect(src).not.toMatch(/recordPaymentHref/);
     expect(src).toMatch(/<RecordQuotePaymentDialog/);
-    // R-1697: both dues layouts (table + phone cards) go through DuesPayButton, which hands the
+    // R-1697/R-1698: every dues row's Record payment goes through DuesPayButton, which hands the
     // chosen quote to the same in-page dialog (setPayQuoteId) — never a link to /quotes/<id>.
-    expect(src.match(/<DuesPayButton route=\{duesPaymentRoute\(o, [^\n]*? onRecord=\{setPayQuoteId\} \/>/g)?.length).toBe(2);
+    // R-1698 moved the rows into dues-list.tsx: the page now builds ONE payButton for both
+    // layouts, so the guard checks the page wiring and the list together.
+    expect(src.match(/<DuesPayButton\b/g)?.length).toBe(1);
+    expect(src).toMatch(/payButton: \(o\) => <DuesPayButton route=\{duesPaymentRoute\(o, [^\n]*? onRecord=\{setPayQuoteId\} \/>/);
+    // Role gate: a view-only role (canWriteSales false) gets the list with no pay button.
+    expect(src).toMatch(/<SubscriptionDuesList\s+rows=\{outstanding\}\s+readOnly=\{!canWrite\}/);
+    expect(src).toMatch(/const canWrite = canWriteSales\(me\?\.role\)/);
+
+    const list = readFileSync(join(SRC, "app/(app)/payments/dues-list.tsx"), "utf8");
+    // Both layouts (cards below 1280px, table from 1280px) render the page's payButton…
+    const uses = [...list.matchAll(/\{actions\.payButton\(o\)\}/g)];
+    expect(uses.length).toBe(2);
+    // …and each one sits behind the readOnly gate (cards: `!readOnly && (`, table: `readOnly ? … : (`).
+    for (const u of uses) {
+      const before = list.slice(Math.max(0, (u.index ?? 0) - 300), u.index);
+      expect(before).toMatch(/(\{!readOnly && \(|\{readOnly \? [^\n]*: \()[^{}]*<div[^>]*>\s*$/);
+    }
+    // No second, ungated pay path in the list: no own Record-payment button, no quote link.
+    expect(list).not.toMatch(/\/quotes\//);
+    expect(list).not.toMatch(/>\s*Record payment\s*<|onRecordPayment=|<DuesPayButton\b|<RecordQuotePaymentDialog\b|icon="(wallet|rupee)"/);
     const btn = readFileSync(join(SRC, "app/(app)/payments/dues-pay.tsx"), "utf8");
     expect(btn).toMatch(/onClick=\{route\.kind === "quote" \? \(\) => onRecord\(route\.quoteId\)/);
     expect(btn).not.toMatch(/\/quotes\//);

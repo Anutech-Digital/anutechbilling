@@ -9,10 +9,13 @@
 import Link from "@/site/components/ui/SiteLink";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { rupee, cycleLabel, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
+import { rupee, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
+import { lineRenewalText } from "@/site/lib/renewal-line";
 import { DomainYears } from "@/site/components/cart/DomainYears";
 import { BundleNote, LinePrice } from "@/site/components/cart/LinePrice";
+import { PriceChangeNotice } from "@/site/components/cart/PriceChangeNotice";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 export default function CartPage() {
   const cart = useCart();
@@ -44,6 +47,8 @@ export default function CartPage() {
       <div className="wrap" style={{ display: "grid", gridTemplateColumns: "1.5fr .8fr", gap: 40, alignItems: "start" }} data-grid>
         <div>
           <h1 className="h1-narrow" style={{ marginBottom: 24 }}>Your cart</h1>
+          {/* R-1797: a saved line moved to today's price — say so, once, above the lines. */}
+          <PriceChangeNotice changes={cart.priceChanges} />
           {t.priced.map((p) => { const l = p.line; return (
             <div key={l.key} style={{ display: "flex", gap: 16, padding: "18px 0", borderBottom: "1px solid var(--border-hairline)", flexWrap: "wrap" }}>
               <div style={{ flex: "1 1 240px" }}>
@@ -57,7 +62,7 @@ export default function CartPage() {
                 )}
                 <DomainYears line={l} firstYearFree={p.freeNote !== null} />
                 <div style={{ fontSize: 13, marginTop: 2, color: l.cycle === "monthly" ? "var(--primary)" : "var(--text-muted)" }}>
-                  {isTrialLine(l) ? `Free for 15 days · one trial per customer` : (l.years ?? 1) > 1 ? `Renews after ${l.years} years, then yearly` : cycleLabel(l.cycle)}
+                  {isTrialLine(l) ? `Free for ${HOSTING_TRIAL_DAYS} days · one trial per customer` : lineRenewalText(l, cart.domainRenewals ?? {})}
                 </div>
               </div>
               {/* Every line shows the quantity control; a single-unit line shows it LOCKED

@@ -24,6 +24,7 @@
  *     server (getSiteTldPrices, R-1599) and passed in as `tlds`. A TLD with no live price
  *     shows "Price at search" — the placeholder figures in catalog.ts TLDS are never printed.
  *   · Hosting prices come from HOSTING_TIERS — the SAME source the cart's
+ *     (R-1786: or the `tiers` / `mailboxYearly` the server page passes from the price book)
  *     server-side checkout re-prices against (sku `hosting:<tier>`), so the ₹0
  *     the page shows is the ₹0 the server charges. The domain line carries
  *     sku `domain:<tld>`; the server zeroes it only when a yearly hosting line
@@ -41,7 +42,7 @@ import { useCart } from "@/site/components/cart/CartProvider";
 import { searchDomains, normaliseName, domainHelpLinks, TEST_PRICE_LABEL, type DomainResult } from "@/site/lib/domain-search";
 import type { SiteTld } from "@/site/lib/live-tld-pricing";
 import { PRICE_AT_SEARCH, tldCell } from "@/site/lib/rate-card";
-import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
+import { HOSTING_TIERS, type HostingTier } from "@/site/lib/data/hosting-landing-v2";
 import { SLA } from "@/site/lib/config";
 import { freeDomainEligible, FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
 import { domainOffer } from "./domain-offer";
@@ -67,6 +68,9 @@ const MONO = "var(--df-mono), 'JetBrains Mono', monospace";
 const SERIF = "var(--df-serif), 'Instrument Serif', serif";
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
+/* R-1628: an extension the live rate card has no renewal price for. It said "renewal shown at
+   checkout", but the checkout reads the same rate card, so it could not show one either. */
+const RENEWAL_UNLISTED = "renewal price on request — ask us before you buy";
 type Term = "yearly" | "monthly";
 type Tab = "register" | "transfer" | "bulk";
 
@@ -81,7 +85,7 @@ const RATE_FILTERS: { key: string; label: string; groups: SiteTld["group"][] }[]
  * @param tlds the live rate card (server: getSiteTldPrices) — the only domain prices this
  *   page prints besides the search result's own live price.
  */
-export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
+export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAILBOX_YR }: { tlds: readonly SiteTld[]; tiers?: readonly HostingTier[]; mailboxYearly?: number }) {
   /* The rows indexed by extension for the result card's renewal + the hero arithmetic. */
   const tldByExt = useMemo(() => new Map(tlds.map((t) => [t.tld, t])), [tlds]);
   const anchorTld = tldByExt.get(ANCHOR_TLD) ?? null;
@@ -151,8 +155,8 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
     [results, primary],
   );
 
-  const tier = HOSTING_TIERS.find((t) => t.name === planName) ?? HOSTING_TIERS[0];
-  const anchorTier = HOSTING_TIERS.find((t) => t.name === ANCHOR_TIER) ?? HOSTING_TIERS[0];
+  const tier = tiers.find((t) => t.name === planName) ?? tiers[0];
+  const anchorTier = tiers.find((t) => t.name === ANCHOR_TIER) ?? tiers[0];
   /* R-1599: the result's own live price (what the checkout charges, whole rupees) — never a
      rate-card fallback; unknown stays null and the card says so. Renewal: the live rate card. */
   const domainReg = primary?.priceKnown && primary.price > 0 ? Math.round(primary.price) : null;
@@ -167,12 +171,12 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
      touches the Yearly/Monthly choice. */
   const bundle = useMemo(() => domainOffer({
     domain: primary?.domain ?? "", tld, domainReg, domainRenew, yearPrices: primary?.prices,
-    testPrice: primary?.testPrice, tier, yearly, mailOn, hostingOn: true,
-  }), [primary, tld, domainReg, domainRenew, tier, yearly, mailOn]);
+    testPrice: primary?.testPrice, tier, yearly, mailOn, hostingOn: true, mailboxYearly,
+  }), [primary, tld, domainReg, domainRenew, tier, yearly, mailOn, mailboxYearly]);
   const domainOnly = useMemo(() => domainOffer({
     domain: primary?.domain ?? "", tld, domainReg, domainRenew, yearPrices: primary?.prices,
-    testPrice: primary?.testPrice, tier, yearly, mailOn, hostingOn: false,
-  }), [primary, tld, domainReg, domainRenew, tier, yearly, mailOn]);
+    testPrice: primary?.testPrice, tier, yearly, mailOn, hostingOn: false, mailboxYearly,
+  }), [primary, tld, domainReg, domainRenew, tier, yearly, mailOn, mailboxYearly]);
   const chosen = hostingOn ? bundle : domainOnly;
   const planFree = yearly; // a yearly plan: one mailbox free
   const bundleFree = bundle.domainFree; // the only state where the domain is ₹0
@@ -277,7 +281,7 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
                   hostingOn={hostingOn} setHostingOn={setHostingOn}
                   planName={planName} setPlanName={setPlanName}
                   term={term} setTerm={setTerm} mailOn={mailOn} setMailOn={setMailOn}
-                  tier={tier}
+                  tier={tier} tiers={tiers} mailboxYearly={mailboxYearly}
                   bundleFree={bundleFree} planFree={planFree} total={chosen.total} saved={chosen.saved}
                   onAdd={addToCart}
                   alternates={alternates} onAddAlt={(d) => { const ext = tlds.find((t) => d.domain.endsWith(t.tld))?.tld; if (ext) setTld(ext); }}
@@ -288,7 +292,7 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
 
           {/* ── TRANSFER ── */}
           {tab === "transfer" && (
-            <div style={{ padding: mob ? "22px 18px 26px" : "26px 28px 30px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1fr 1fr", gap: mid ? 28 : 40 }}>
+            <div data-grid-phone style={{ padding: mob ? "22px 18px 26px" : "26px 28px 30px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1fr 1fr", gap: mid ? 28 : 40 }}>
               <div>
                 <h3 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, color: C.ink, margin: 0 }}>Move a name in. Three things, ten minutes.</h3>
                 <p style={{ fontSize: 15, color: C.ink2, lineHeight: 1.6, marginTop: 12 }}>We copy your DNS records first so nothing breaks, then start the transfer. A transfer adds a full year to the registration.</p>
@@ -325,7 +329,7 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
             <div style={{ padding: mob ? "22px 18px 26px" : "26px 28px 30px" }}>
               <h3 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, color: C.ink, margin: 0 }}>For resellers running a book of names.</h3>
               <p style={{ fontSize: 15, color: C.ink2, lineHeight: 1.6, maxWidth: "62ch", marginTop: 12 }}>Sweep availability across a whole list, price it on wholesale slabs, and host the portfolio too — one GST invoice, one dashboard.</p>
-              <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "repeat(3, 1fr)", gap: 14, marginTop: 18 }}>
+              <div data-grid-phone style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "repeat(3, 1fr)", gap: 14, marginTop: 18 }}>
                 {[
                   { t: "Bulk availability sweep", b: "Paste hundreds of names; get a live available/taken map back in one pass.", hot: false },
                   { t: "Wholesale slabs", b: "Reseller pricing that steps down with volume — shown before you commit.", hot: false },
@@ -343,7 +347,7 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
       </section>
 
       {/* ── 1 · HERO + ARITHMETIC ─────────────────────────────────────────── */}
-      <section style={wrap({ paddingTop: mob ? 44 : 52, display: "grid", gridTemplateColumns: mid ? "1fr" : "1.15fr 0.85fr", gap: mid ? 36 : 56, alignItems: "start" })}>
+      <section data-grid-phone style={wrap({ paddingTop: mob ? 44 : 52, display: "grid", gridTemplateColumns: mid ? "1fr" : "1.15fr 0.85fr", gap: mid ? 36 : 56, alignItems: "start" })}>
         <div>
           <div style={eyebrow}>Why the domain can cost ₹0</div>
           <h1 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: mob ? 44 : 62, lineHeight: 1.02, letterSpacing: "-0.02em", color: C.ink, margin: "14px 0 0", textWrap: "balance" as const }}>
@@ -395,13 +399,13 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
             {anchorReg != null && <>Hosting costs {inr(anchorTier.yearlyTotal - anchorReg)} more, not {inr(anchorTier.yearlyTotal)} — so the domain line reads ₹0. </>}
             {anchorRenew != null
               ? <>The renewal, {inr(anchorRenew)} + {inr(anchorTier.yearlyTotal)}, is printed on the invoice.</>
-              : <>The renewal price is shown at search and printed on the invoice.</>}
+              : <>The renewal price is printed on the invoice.</>}
           </p>
         </div>
       </section>
 
       {/* ── 3 · WHY HOSTING IS IN THE BOX ──────────────────────────────────── */}
-      <section style={wrap({ paddingTop: mob ? 48 : 64, display: "grid", gridTemplateColumns: mid ? "1fr" : "1fr 1fr", gap: mid ? 28 : 52, alignItems: "start" })}>
+      <section data-grid-phone style={wrap({ paddingTop: mob ? 48 : 64, display: "grid", gridTemplateColumns: mid ? "1fr" : "1fr 1fr", gap: mid ? 28 : 52, alignItems: "start" })}>
         <div>
           <div style={eyebrow}>Why hosting is in the box</div>
           <h2 style={h2}>A registered domain does nothing on its own.</h2>
@@ -422,7 +426,7 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
 
       {/* ── 4 · THE HONEST COUNTER-ARGUMENT ────────────────────────────────── */}
       <section style={wrap({ paddingTop: mob ? 48 : 60 })}>
-        <div style={{ background: C.darkCard, color: "#EDE6DE", borderRadius: 18, padding: mob ? "26px 22px" : "34px 36px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1fr 1fr", gap: mid ? 24 : 44 }}>
+        <div data-grid-phone style={{ background: C.darkCard, color: "#EDE6DE", borderRadius: 18, padding: mob ? "26px 22px" : "34px 36px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1fr 1fr", gap: mid ? 24 : 44 }}>
           <div>
             <div style={{ ...eyebrow, color: "#FFB388" }}>The honest counter-argument</div>
             <h3 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: mob ? 26 : 32, color: "#fff", margin: "10px 0 0" }}>Don&apos;t add hosting if any of these is you.</h3>
@@ -506,7 +510,7 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
       <section id="included" style={wrap({ paddingTop: mob ? 48 : 62, scrollMarginTop: 84 })}>
         <div style={eyebrow}>Included</div>
         <h2 style={{ ...h2, marginBottom: 20 }}>Included with every domain — hosting or not.</h2>
-        <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : mid ? "1fr 1fr" : "repeat(4, 1fr)", gap: 1, background: C.line, border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
+        <div data-grid-phone style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : mid ? "1fr 1fr" : "repeat(4, 1fr)", gap: 1, background: C.line, border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
           {DOMAIN_INCLUDED.map((f) => (
             <div key={f.t} style={{ background: C.card, padding: "20px 22px" }}>
               <div style={{ fontSize: 15.5, fontWeight: 600, color: C.ink }}>{f.t}</div>
@@ -517,7 +521,7 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
       </section>
 
       {/* ── 7 · FAQ ────────────────────────────────────────────────────────── */}
-      <section id="faq" style={wrap({ paddingTop: mob ? 48 : 62, display: "grid", gridTemplateColumns: mid ? "1fr" : "0.72fr 1.28fr", gap: mid ? 24 : 52, scrollMarginTop: 84 })}>
+      <section data-grid-phone id="faq" style={wrap({ paddingTop: mob ? 48 : 62, display: "grid", gridTemplateColumns: mid ? "1fr" : "0.72fr 1.28fr", gap: mid ? 24 : 52, scrollMarginTop: 84 })}>
         <div>
           <div style={eyebrow}>Objections</div>
           <h2 style={h2}>The four reasons people skip the hosting box — and two we agree with.</h2>
@@ -542,7 +546,7 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
 
       {/* ── 8 · CLOSING CTA ────────────────────────────────────────────────── */}
       <section style={wrap({ paddingTop: mob ? 48 : 66, paddingBottom: 20 })}>
-        <div style={{ border: `1.5px solid ${C.accent}`, background: C.accSurf2, borderRadius: 18, padding: mob ? "26px 22px" : "34px 36px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1.3fr 0.7fr", gap: mid ? 20 : 32, alignItems: "center" }}>
+        <div data-grid-phone style={{ border: `1.5px solid ${C.accent}`, background: C.accSurf2, borderRadius: 18, padding: mob ? "26px 22px" : "34px 36px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1.3fr 0.7fr", gap: mid ? 20 : 32, alignItems: "center" }}>
           <div>
             <h2 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: mob ? 28 : 38, color: C.ink, margin: 0 }}>Name, hosting and mailbox — one invoice, one afternoon.</h2>
             <p style={{ fontSize: 15.5, color: C.accentDark, lineHeight: 1.6, margin: "10px 0 0" }}>Search the name, pick a plan, and our team wires the DNS and mailbox for you — the domain is registered {SLA.domainRegistered}. Nothing is charged until you review the cart.</p>
@@ -564,7 +568,7 @@ function ResultBlock(p: {
   hostingOn: boolean; setHostingOn: (v: boolean) => void;
   planName: string; setPlanName: (v: string) => void;
   term: Term; setTerm: (v: Term) => void; mailOn: boolean; setMailOn: (v: boolean) => void;
-  tier: (typeof HOSTING_TIERS)[number];
+  tier: HostingTier; tiers: readonly HostingTier[]; mailboxYearly: number;
   bundleFree: boolean; planFree: boolean; total: number | null; saved: number; onAdd: () => void;
   alternates: DomainResult[]; onAddAlt: (d: DomainResult) => void;
 }) {
@@ -598,13 +602,13 @@ function ResultBlock(p: {
       <div style={{ background: C.successSurf, padding: "16px 22px", borderBottom: `1px solid ${C.successBorder}`, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: "0.1em", textTransform: "uppercase", color: C.success, fontWeight: 600 }}>Available</span>
         <span style={{ fontFamily: SERIF, fontSize: 23, letterSpacing: "-0.02em", color: C.ink, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={primary.domain}>{primary.domain}</span>
-        <span style={priceMono({ fontSize: 13, color: C.success })}>{domainRenew != null ? `renews ${inr(domainRenew)}/yr` : "renewal shown at checkout"}</span>
+        <span style={priceMono({ fontSize: 13, color: C.success })}>{domainRenew != null ? `renews ${inr(domainRenew)}/yr` : RENEWAL_UNLISTED}</span>
       </div>
       {primary.testPrice && <TestPriceNote C={C} MONO={MONO} />}
       <p style={{ padding: "16px 22px 6px", fontSize: 13.5, color: C.muted, margin: 0 }}>Pick one — you can change it any time before you pay.</p>
 
       {/* two options */}
-      <div role="radiogroup" aria-label="Domain options" style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "1fr 1fr", gap: 12, padding: "0 22px 4px" }}>
+      <div data-grid-phone role="radiogroup" aria-label="Domain options" style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "1fr 1fr", gap: 12, padding: "0 22px 4px" }}>
         {/* bundle */}
         <button role="radio" aria-checked={hostingOn} onClick={() => setHostingOn(true)}
           style={{ appearance: "none", cursor: "pointer", textAlign: "left", background: hostingOn ? C.accSurf : C.paper, border: `1.5px solid ${hostingOn ? C.accent : C.line}`, borderRadius: 12, padding: "16px 18px", fontFamily: "inherit" }}>
@@ -636,7 +640,7 @@ function ResultBlock(p: {
             <span style={priceMono({ fontSize: 29, fontWeight: 500, color: C.ink })}>{regText}</span>
             <span style={{ fontSize: 13, color: C.muted }}>first year + GST</span>
           </div>
-          <p style={{ fontSize: 13, color: C.muted, margin: "8px 0 0", lineHeight: 1.5 }}>{domainRenew != null ? `renews ${inr(domainRenew)}/yr` : "renewal shown at checkout"} · nothing else added. You get the name and DNS control — nothing will load at it until you point it at a host.</p>
+          <p style={{ fontSize: 13, color: C.muted, margin: "8px 0 0", lineHeight: 1.5 }}>{domainRenew != null ? `renews ${inr(domainRenew)}/yr` : RENEWAL_UNLISTED} · nothing else added. You get the name and DNS control — nothing will load at it until you point it at a host.</p>
         </button>
       </div>
 
@@ -657,8 +661,8 @@ function ResultBlock(p: {
               })}
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "repeat(3, 1fr)", gap: 10, marginTop: 12 }}>
-            {HOSTING_TIERS.map((t) => {
+          <div data-grid-phone style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "repeat(3, 1fr)", gap: 10, marginTop: 12 }}>
+            {p.tiers.map((t) => {
               const on = planName === t.name;
               return (
                 <button key={t.name} onClick={() => setPlanName(t.name)} aria-pressed={on}
@@ -678,7 +682,7 @@ function ResultBlock(p: {
           <div style={{ display: "flex", alignItems: "center", gap: 13, background: C.paper, border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 14px", marginTop: 12 }}>
             <Switch on={mailOn} onToggle={() => setMailOn(!mailOn)} color={C.accent} off={C.line} />
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14.5, fontWeight: 600, color: C.ink }}>Add one mailbox on {primary.domain} — {planFree ? "free with the plan" : `${inr(MAILBOX_YR_CONST)}/yr`}</div>
+              <div style={{ fontSize: 14.5, fontWeight: 600, color: C.ink }}>Add one mailbox on {primary.domain} — {planFree ? "free with the plan" : `${inr(p.mailboxYearly)}/yr`}</div>
               <div style={{ fontSize: 13, color: C.muted }}>you@{primary.domain}, Anutech Mail. Follows the plan — drops if you switch to domain-only.</div>
             </div>
           </div>
@@ -764,4 +768,3 @@ const C_TYPE = {} as {
   line: string; lineSoft: string; accent: string; accentDark: string; accentLight: string; accSurf: string; accSurf2: string;
   accBorder: string; success: string; successSurf: string; successBorder: string; dot: string; warn: string; darkCard: string; darkBorder: string;
 };
-const MAILBOX_YR_CONST = MAILBOX_YR;

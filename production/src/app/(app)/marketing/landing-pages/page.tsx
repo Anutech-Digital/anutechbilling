@@ -9,6 +9,7 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -114,7 +115,7 @@ function LandingPageCard({ page }: { page: AdLandingPage }) {
             {stats.isLoading ? (
               [0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)
             ) : stats.error ? (
-              <p className="col-span-3 text-sm text-red-ink">Could not count leads: {(stats.error as Error).message}</p>
+              <p className="col-span-3 text-sm text-red-ink">Could not count leads. {loadErrorBody(stats.error)}</p>
             ) : (
               <>
                 <Stat label={`Leads, last ${DAYS} days`} value={stats.data!.leads} />

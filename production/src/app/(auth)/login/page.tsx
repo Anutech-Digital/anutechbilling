@@ -20,6 +20,7 @@ import { GoogleAuthButton } from "@/components/features/auth/google-button";
 import { ResendVerification } from "@/components/features/auth/resend-verification";
 import { MfaCodeForm } from "@/components/features/auth/mfa-code-form";
 import { LocalTestLogin } from "./local-test-login";
+import { describeAuthError } from "@/lib/errors/auth-error";
 import { DEACTIVATED_ERROR, DEACTIVATED_MESSAGE } from "@/lib/auth/deactivated";
 import { TOO_MANY_ATTEMPTS_CODE, TOO_MANY_ATTEMPTS_MESSAGE } from "@/lib/auth/browser-auth";
 import {
@@ -111,7 +112,14 @@ function LoginPageInner() {
         setUnconfirmed(values.email);
         return;
       }
-      toast.error(error.message);
+      // R-1137: §24 copy, never the raw auth/DB text; the button is the next step.
+      const d = describeAuthError(error, "sign-in");
+      toast.error(d.message, {
+        description: d.description,
+        action: d.next === "forgot-password"
+          ? { label: "Forgot password", onClick: () => { window.location.href = "/forgot-password"; } }
+          : { label: "Try again", onClick: () => { void handleSubmit(onSubmit)(); } },
+      });
       return;
     }
     const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();

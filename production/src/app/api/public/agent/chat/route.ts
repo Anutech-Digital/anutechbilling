@@ -32,7 +32,7 @@ import {
 import { POST as generalEnquiry } from "@/app/api/public/enquiry/general/route";
 import { POST as workspaceEnquiry } from "@/app/api/public/enquiry/workspace/route";
 import { passThroughHeaders, type LocalHandler } from "@/site/lib/app-forward";
-import { markTrustedInternalCall } from "@/lib/security/turnstile-guard";
+import { markTrustedInternalCall, turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { siteVisitorLimit } from "@/lib/security/rate-limit";
 import { redactContacts } from "@/lib/security/redact-contact";
 import { loadAutonomyPolicy, logAiAction } from "@/lib/ai/autonomy.server";
@@ -40,6 +40,14 @@ import { createBareClient } from "@/lib/supabase/bare";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveAutonomy } from "@/lib/ai/autonomy";
 import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
+import {
+  approvedLessons,
+  escapeIlike,
+  LESSON_ACTION,
+  LESSON_DECISION_ENTITY,
+  LESSON_ENTITY,
+  type LessonLogRow,
+} from "@/lib/ai/public-chat-lessons";
 
 /* R-1499: the website tenant is read per request (websiteTenantId) — outside production an unset
    BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
@@ -58,6 +66,35 @@ function bareLog(): SupabaseClient | null {
   });
 }
 
+/** R-727: how long one email counts as "already a lead" for the chat. */
+const LEAD_DEDUP_MS = 24 * 60 * 60_000;
+
+/**
+ * R-727: does this workspace already have a lead for this email from the last day? Decided
+ * from the leads table, never from the browser. A failed read answers "no" — losing a real
+ * lead is worse, and the per-email limit (siteVisitorLimit) still bounds repeats.
+ */
+async function emailHasRecentLead(
+  admin: ReturnType<typeof createAdminClient>,
+  tenantId: string,
+  email: string,
+): Promise<boolean> {
+  try {
+    const since = new Date(Date.now() - LEAD_DEDUP_MS).toISOString();
+    const { data, error } = await admin
+      .from("leads")
+      .select("id")
+      .eq("tenant_id", tenantId)
+      .ilike("contact_email", escapeIlike(email.trim()))
+      .gte("created_at", since)
+      .limit(1);
+    if (error) return false;
+    return (data ?? []).length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest) {
   const BUY_PAGE_TENANT_ID = websiteTenantId();
   if (!BUY_PAGE_TENANT_ID) return NextResponse.json(websiteTenantMissingBody(), { status: 503 });
@@ -67,6 +104,11 @@ export async function POST(request: NextRequest) {
   } catch {
     return NextResponse.json({ error: "malformed" }, { status: 400 });
   }
+
+  /* R-737: every chat turn burns paid Gemini — a script gets no answer. No-op until
+     TURNSTILE_SECRET_KEY is set; the widget in AgentChat sends a fresh token per message. */
+  const bot = await turnstileRefusalFor(request, body);
+  if (bot) return bot;
 
   const messages = sanitizeMessages((body as Record<string, unknown>)?.messages);
   if (!messages) {
@@ -101,24 +143,24 @@ export async function POST(request: NextRequest) {
   });
 
   /* ── SELF-LEARNING, READ SIDE ────────────────────────────────────────────
-     The agent's own recent lessons (written by the reflection below) go back into its
-     prompt. Each one re-passes sanitizeLearning at READ time too — the store is a
-     database row somebody could edit, and the filter is cheap. Advice-only by prompt
-     construction; HARD RULES outrank. */
+     R-727 (23 Oct 2026): only lessons a PERSON approved on /automation go back into the
+     prompt (lib/ai/public-chat-lessons.ts). A lesson distilled from an anonymous visitor's
+     conversation used to go straight in, so a visitor could teach every later visitor's chat.
+     Each one re-passes sanitizeLearning at READ time too — the store is a database row
+     somebody could edit. Advice-only by prompt construction; HARD RULES outrank. */
   const lessonsDb = bareLog();
   const { data: lessonRows } = lessonsDb === null
-    ? { data: [] as { reason: string | null }[] }
+    ? { data: [] as LessonLogRow[] }
     : await lessonsDb
         .from("ai_action_log")
-    .select("reason")
-    .eq("tenant_id", BUY_PAGE_TENANT_ID)
-    .eq("action", "public_chat.learn")
-    .eq("outcome", "did")
-    .order("created_at", { ascending: false })
-    .limit(5);
-  const learnings = (lessonRows ?? [])
-    .map((r) => sanitizeLearning((r as { reason: string | null }).reason))
-    .filter((l): l is string => l !== null);
+        .select("reason, outcome, entity, facts")
+        .eq("tenant_id", BUY_PAGE_TENANT_ID)
+        .eq("action", LESSON_ACTION)
+        .eq("outcome", "did")
+        .eq("entity", LESSON_DECISION_ENTITY)
+        .order("created_at", { ascending: false })
+        .limit(5);
+  const learnings = approvedLessons((lessonRows ?? []) as LessonLogRow[]);
 
   const gemini = await resolveGeminiConfig(admin, BUY_PAGE_TENANT_ID);
   if (!gemini.apiKey) {
@@ -158,8 +200,11 @@ export async function POST(request: NextRequest) {
        2. The details literally appear in VISITOR turns — the model only ever sees the
           transcript, so a true detail must be quoted from it. A hallucinated contact is
           dropped silently and the visitor simply gets asked again later.
-       3. The widget has not already been credited (leadAlreadyCaptured) — one chat, one
-          lead. The app's own Duplicate? marker is the backstop behind that.
+       3. This email has no lead in this workspace in the last day — decided HERE, from the
+          leads table (R-727). The widget's `leadAlreadyCaptured` used to be the only check,
+          and a script simply sent `false` every time: a new lead + auto-quote mail to any
+          address on every message. The flag is still honoured when it says TRUE (it can
+          only save a write); it can no longer cause one.
 
      Then the enquiry goes to this deployment's OWN public enquiry handlers — the same
      machinery, gates, auto-quote and mails as the website form.
@@ -174,11 +219,16 @@ export async function POST(request: NextRequest) {
      it since R-1598), with the visitor's headers (IP, Referer), on a request object marked as
      this server's own call so Turnstile lets it through; the lead counts against this
      visitor's IP and email (siteVisitorLimit); and a lead that was not saved is SAID. */
-  const alreadyCaptured = (body as Record<string, unknown>)?.leadAlreadyCaptured === true;
+  const widgetSaysCaptured = (body as Record<string, unknown>)?.leadAlreadyCaptured === true;
   let leadCreated: { quoteId: string | null } | null = null;
   let leadSaveFailed = false;
 
-  if (guarded.lead && !alreadyCaptured && leadDetailsAppearInTranscript(guarded.lead, messages)) {
+  if (
+    guarded.lead &&
+    !widgetSaysCaptured &&
+    leadDetailsAppearInTranscript(guarded.lead, messages) &&
+    !(await emailHasRecentLead(admin, BUY_PAGE_TENANT_ID, guarded.lead.email))
+  ) {
     const L = guarded.lead;
     const summary = messages
       .filter((m) => m.role === "user")
@@ -262,12 +312,15 @@ export async function POST(request: NextRequest) {
     guarded = { ...guarded, reply: honestNoDeliveryReply(messages[messages.length - 1]?.text ?? "") };
   }
 
+  /* R-727: the lesson is written HELD — it waits on /automation for an owner or manager to
+     press Use lesson (api/ai/action-log/lesson). The dial supports off/hold only; there is no
+     "auto" any more, so no setting can put an unreviewed lesson into the prompt. */
   const guardTripped = guarded.reply === fallbackReply().reply;
   if (leadCreated || guardTripped) {
     void (async () => {
       try {
         const policy = await loadAutonomyPolicy(BUY_PAGE_TENANT_ID);
-        if (resolveAutonomy("public_chat.learn", policy).mode !== "auto") return;
+        if (resolveAutonomy(LESSON_ACTION, policy).mode !== "hold") return;
         const lessonRaw = await geminiJson<{ lesson?: string }>({
           apiKey: gemini.apiKey!,
           model: gemini.model,
@@ -280,11 +333,11 @@ export async function POST(request: NextRequest) {
         if (!lesson) return;
         await logAiAction({
           tenantId: BUY_PAGE_TENANT_ID,
-          action: "public_chat.learn",
-          outcome: "did",
+          action: LESSON_ACTION,
+          outcome: "held",
           reason: lesson,
-          mode: "auto",
-          entity: "public_chat",
+          mode: "hold",
+          entity: LESSON_ENTITY,
           entityId: null,
           facts: { ending: leadCreated ? "lead_captured" : "guard_fallback", turns: messages.length },
         });

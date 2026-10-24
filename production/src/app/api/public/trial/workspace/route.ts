@@ -25,6 +25,9 @@ import { sendCustomerEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
+import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
+import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
+import { IST_TZ } from "@/lib/dates/ist";
 
 /* The owner recipient was hardcoded here to an address on a retired domain
    (CLAUDE.md §1). Resolved from the storefront tenant's row now — see
@@ -33,7 +36,7 @@ const FROM_EMAIL    = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <on
 /* R-1499: the website tenant is read per request (websiteTenantId) — outside production an unset
    BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
 
-const TRIAL_DAYS = 14;
+const TRIAL_DAYS = WORKSPACE_TRIAL_DAYS; // R-1117: one place for the length
 
 const trialSchema = z.object({
   fullName:    z.string().min(2).max(120),
@@ -51,6 +54,9 @@ export async function POST(request: NextRequest) {
   if (!BUY_PAGE_TENANT_ID) return NextResponse.json(websiteTenantMissingBody(), { status: 503 });
   try {
     const body   = await request.json();
+    /* R-737: a script cannot open trial leads + tasks — no-op until TURNSTILE_SECRET_KEY is set. */
+    const bot = await turnstileRefusalFor(request, body);
+    if (bot) return bot;
     const parsed = trialSchema.safeParse(body);
 
     if (!parsed.success) {
@@ -92,7 +98,7 @@ export async function POST(request: NextRequest) {
       `NEXT STEPS:`,
       `  1. Verify domain ownership via DNS TXT record`,
       `  2. Create trial Org in Google Reseller Console`,
-      `  3. Provision ${seats} ${tierName} licenses (14-day expiry)`,
+      `  3. Provision ${seats} ${tierName} licenses (${TRIAL_DAYS}-day expiry)`,
       `  4. Send admin credentials to ${email} + WhatsApp ${phone}`,
       `  5. Set calendar reminder for Day 12 conversion outreach`,
     ].filter(Boolean).join("\n");
@@ -142,7 +148,7 @@ export async function POST(request: NextRequest) {
     try {
       const day7  = new Date(trialStartedAt.getTime() + 7  * 86400000);
       const day12 = new Date(trialStartedAt.getTime() + 12 * 86400000);
-      const day14 = new Date(trialStartedAt.getTime() + 14 * 86400000);
+      const day14 = new Date(trialStartedAt.getTime() + TRIAL_DAYS * 86400000);
       day7.setHours(10, 0, 0, 0);  // 10am IST-ish
       day12.setHours(10, 0, 0, 0);
       day14.setHours(10, 0, 0, 0);
@@ -151,7 +157,7 @@ export async function POST(request: NextRequest) {
         {
           tenant_id: BUY_PAGE_TENANT_ID,
           title:     `Trial check-in: ${companyName} (${cleanDomain})`,
-          notes:     `Day 7 of 14-day trial. Ask about adoption, onboarding blockers, any questions.`,
+          notes:     `Day 7 of ${TRIAL_DAYS}-day trial. Ask about adoption, onboarding blockers, any questions.`,
           kind:      "call",
           due_at:    day7.toISOString(),
           lead_id:   leadId,
@@ -159,7 +165,7 @@ export async function POST(request: NextRequest) {
         {
           tenant_id: BUY_PAGE_TENANT_ID,
           title:     `Conversion call: ${companyName} — trial ends in 2 days`,
-          notes:     `Day 12 of 14-day trial. Discuss converting to paid. Quote ready to issue.`,
+          notes:     `Day 12 of ${TRIAL_DAYS}-day trial. Discuss converting to paid. Quote ready to issue.`,
           kind:      "call",
           due_at:    day12.toISOString(),
           lead_id:   leadId,
@@ -167,7 +173,7 @@ export async function POST(request: NextRequest) {
         {
           tenant_id: BUY_PAGE_TENANT_ID,
           title:     `Trial expires TODAY: ${companyName}`,
-          notes:     `14-day trial ends. Final outreach. Either convert to paid quote OR mark lead lost + suspend in Google CSP.`,
+          notes:     `${TRIAL_DAYS}-day trial ends. Final outreach. Either convert to paid quote OR mark lead lost + suspend in Google CSP.`,
           kind:      "call",
           due_at:    day14.toISOString(),
           lead_id:   leadId,
@@ -181,7 +187,7 @@ export async function POST(request: NextRequest) {
     const trialEnds = new Date();
     trialEnds.setDate(trialEnds.getDate() + TRIAL_DAYS);
     const trialEndsFmt = trialEnds.toLocaleDateString("en-IN", {
-      day: "2-digit", month: "short", year: "numeric",
+      day: "2-digit", month: "short", year: "numeric", timeZone: IST_TZ,
     });
 
     const { alert: owner, tenant: ownerTenant } = await loadOwnerAlert(admin, BUY_PAGE_TENANT_ID);

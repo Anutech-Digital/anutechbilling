@@ -42,6 +42,8 @@ vi.mock("@/lib/supabase/server", () => ({
 import { POST } from "./route";
 
 const ID = "93b38539-0a9b-4942-bb33-3daa6cff97df";
+/** R-739: the workspaces this token may touch. */
+const SCOPE = "fbb976f1-9090-4f10-9726-0901bd144e42";
 const call = (body: unknown, token: string | null = "q-token") =>
   POST(new Request("https://example.invalid/api/agent/feedback-claimed", {
     method: "POST",
@@ -54,6 +56,7 @@ beforeEach(() => {
   db.updates = []; db.eqs = []; db.ins = []; db.iss = [];
   db.matched = true; db.existing = null; db.error = null;
   process.env.AGENT_QUEUE_TOKEN = "q-token";
+  process.env.AGENT_QUEUE_TENANT_IDS = SCOPE;
 });
 afterEach(() => { process.env = { ...ENV }; });
 
@@ -81,7 +84,8 @@ describe("POST /api/agent/feedback-claimed", () => {
     const r = await call({ id: ID, card: "R-357" });
     expect(r.status).toBe(200);
     expect(db.eqs).toEqual([["id", ID]]);
-    expect(db.ins).toEqual([["status", ["open", "agent_queued"]]]);
+    /* R-739: only a report from a workspace the token is scoped to. */
+    expect(db.ins).toEqual([["tenant_id", [SCOPE]], ["status", ["open", "agent_queued"]]]);
     expect(db.iss).toEqual([["agent_claimed_at", null]]);
     expect(Object.keys(db.updates[0]).sort()).toEqual(["agent_card", "agent_claimed_at", "updated_at"]);
     expect(db.updates[0].agent_card).toBe("R-357");

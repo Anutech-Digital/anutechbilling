@@ -50,7 +50,10 @@ export function LocalTestLogin({ nextPath }: { nextPath: string }) {
       });
       const out = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
-        toast.error(out.error ?? `Test login failed (${res.status})`);
+        toast.error(out.error ?? `Test login failed (${res.status})`, {
+          description: "Local test sign-in only. Check the test users are seeded, then try again.",
+          action: { label: "Try again", onClick: () => { void signIn(role); } },
+        });
         return;
       }
       /* Hard navigation, as the password form does, so the new session cookie is sent. */

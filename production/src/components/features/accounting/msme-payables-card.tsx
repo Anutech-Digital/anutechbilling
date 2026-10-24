@@ -12,6 +12,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { rupee, formatDate } from "@/lib/utils";
 import { useMsmePayables } from "@/lib/queries/day-book";
 import { msmeSummary, MSME_LIMIT_DAYS, MSME_LIMIT_DAYS_NO_AGREEMENT } from "@/lib/accounting/msme";
@@ -44,7 +45,7 @@ export function MsmePayablesCard() {
       {q.isLoading ? (
         <Skeleton className="h-20 w-full" />
       ) : q.error ? (
-        <p role="alert" className="text-sm text-rose">Could not load MSME payables: {(q.error as Error).message}</p>
+        <LoadErrorInline what="MSME payables" error={q.error} onRetry={() => void q.refetch()} />
       ) : rows.length === 0 ? (
         <p className="text-sm text-ink-3">
           No unpaid bills from Udyam-registered vendors. Vendors that are MSME but have no Udyam number

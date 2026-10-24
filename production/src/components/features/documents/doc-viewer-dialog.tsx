@@ -70,7 +70,7 @@ export function DocViewerDialog({ open, onOpenChange, title, mimeType, fileName,
           // via `new URL(...import.meta.url)` — the latter makes Next's Terser
           // choke on the pre-minified worker at build time.
           pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-          const pdf = await pdfjs.getDocument({ data: buf.slice(0) }).promise;
+          const pdf = await pdfjs.getDocument({ data: buf.slice(0), isEvalSupported: false }).promise;
           if (cancelled) return;
           const wrap = canvasWrapRef.current;
           if (wrap) wrap.innerHTML = "";

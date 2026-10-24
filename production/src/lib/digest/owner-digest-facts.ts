@@ -16,6 +16,7 @@ interface Q<T> extends PageQuery<T> {
   select(cols: string, o?: { count?: "exact"; head?: boolean }): Q<T>;
   eq(col: string, v: unknown): Q<T>;
   in(col: string, vs: readonly unknown[]): Q<T>;
+  is(col: string, v: null): Q<T>;
   gte(col: string, v: string): Q<T>;
   lt(col: string, v: string): Q<T>;
   order(col: string, o?: { ascending?: boolean }): Q<T>;
@@ -45,7 +46,7 @@ export async function loadOwnerDigestFacts(db: DigestDb, tenantId: string, now: 
       .order("id", { ascending: true }).range(a, b)),
     fetchAllRows<DigestInvoice>((a, b) => db.from<DigestInvoice>("invoices")
       .select("status, due_date, amount, net_payable, paid_amount")
-      .eq("tenant_id", tenantId).in("status", ["pending", "overdue"])
+      .eq("tenant_id", tenantId).in("status", ["pending", "overdue"]).is("written_off_at", null)
       .order("id", { ascending: true }).range(a, b)),
     fetchAllRows<DigestHeld>((a, b) => db.from<DigestHeld>("ai_action_log")
       .select("created_at, reason")

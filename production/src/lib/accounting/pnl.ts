@@ -40,10 +40,37 @@
  * which is presentation, never stored.
  */
 
+import { rupee } from "@/lib/utils";
+
 /** Vendors whose products are BOUGHT and resold — a zero cost here is missing data. */
 export const RESOLD_VENDORS: ReadonlySet<string> = new Set(["google", "microsoft", "zoho"]);
 
-export type CogsBasis = "billed" | "estimated" | "unknown";
+/**
+ * `mixed` (R-1645): some vendors have bills in the period and are costed from them, the rest
+ * keep their subscription estimate. Before, one bill from any vendor switched the estimate
+ * off for every vendor.
+ */
+export type CogsBasis = "billed" | "estimated" | "mixed" | "unknown";
+
+/** True when part or all of the licence cost is the subscription-book estimate. */
+export function isEstimatedBasis(b: CogsBasis): boolean {
+  return b === "estimated" || b === "mixed";
+}
+
+/**
+ * Which subscription vendor a COGS bill category belongs to (R-1645) — the categories the
+ * bill forms offer (add-vendor-bill-dialog, create-bill-from-po-dialog). COGS-Other and
+ * anything unknown belong to no resold vendor: they add to cost and switch no estimate off.
+ */
+const COGS_CATEGORY_VENDOR: Readonly<Record<string, string>> = {
+  "COGS-Workspace": "google",
+  "COGS-M365":      "microsoft",
+  "COGS-Zoho":      "zoho",
+};
+
+export function vendorOfCogsCategory(category: string | null | undefined): string | null {
+  return (category && COGS_CATEGORY_VENDOR[category]) || null;
+}
 
 export interface VendorLine {
   /** `google`, `microsoft`, `zoho`, `support`, … as stored on the subscription. */
@@ -76,8 +103,16 @@ export interface PnlPeriod {
   cogs: number;
   /** The basis of the LICENCE part. Project delivery cost is always a booked figure. */
   cogsBasis: CogsBasis;
-  /** Licence / resale cost (0 when the basis is `unknown`). */
+  /** Licence / resale cost (0 when the basis is `unknown`) = billedLicenceCogs + estimatedLicenceCogs. */
   licenceCogs: number;
+  /** R-1645/R-1646: the part of licenceCogs from vendor bills (incl. blocked GST). */
+  billedLicenceCogs: number;
+  /**
+   * R-1646: the part of licenceCogs estimated from the subscription book — not billed yet.
+   * The Trial Balance books it as its own head with a provision, the Balance Sheet carries
+   * the same provision, so all three reports state one profit.
+   */
+  estimatedLicenceCogs: number;
   /** Salary on customer projects + project-tagged expenses (lib/accounting/project-cost.ts). */
   projectCost: number;
   /** Revenue invoiced against project milestones — not costed like a licence. */
@@ -88,8 +123,15 @@ export interface PnlPeriod {
   grossMargin: number | null;
   /** Integer percent of revenue. Null when the basis is `unknown`, or revenue is 0. */
   grossMarginPct: number | null;
-  /** grossMargin − expenses. Null when gross margin is null. */
+  /** Revenue − cost of goods − expenses. Null only when the licence cost basis is `unknown`. */
   netProfit: number | null;
+  /**
+   * R-1649: the project delivery cost could not be read by this role (salaries are owner /
+   * manager / accountant only — R-1001). Then `projectCost` is 0, the salary stays inside
+   * `expenses`, and `grossMargin` is null — hidden, never overstated. Net profit is unaffected
+   * (project cost is a reclassification, never an addition).
+   */
+  projectCostHidden?: boolean;
   byVendor: VendorLine[];
 }
 
@@ -159,10 +201,19 @@ export interface PnlInput {
    * not added: cost of goods goes up and operating expenses go down by the same rupees.
    */
   projectCost?: number;
+  /** R-1649: the caller could not read the salaries behind the project cost — hide the margin. */
+  projectCostHidden?: boolean;
   /** Part of `revenue` invoiced against projects — the licence ratio is not applied to it. */
   projectRevenue?: number;
   /** Total ₹ of vendor bills in the period. Null when the table holds none. */
   billedCogs: number | null;
+  /**
+   * R-1645: the part of `billedCogs` per subscription vendor (vendorOfCogsCategory). A vendor
+   * with a bill is costed from its bills; every other vendor keeps its estimate. The rest of
+   * `billedCogs` (COGS-Other) is added on top. Absent / null = no per-vendor split (an older
+   * report_pnl) — then the old rule: any bill switches the whole estimate off.
+   */
+  billedByVendor?: Readonly<Record<string, number>> | null;
   vendors: VendorInput[];
 }
 
@@ -174,8 +225,17 @@ export interface PnlInput {
  * useful for a reseller who has not entered a single bill, which is the live situation.
  */
 export function buildPnl(input: PnlInput): PnlPeriod {
+  /* R-1645: a vendor with a bill in the period is costed from its bills, on its own line. */
+  const perVendor = input.billedByVendor ?? null;
+  const billedFor = (vendor: string): number | null => {
+    const b = perVendor?.[vendor] ?? 0;
+    return b > 0 ? b : null;
+  };
   const byVendor = input.vendors
-    .map(vendorLine)
+    .map((v) => {
+      const b = billedFor(v.vendor);
+      return vendorLine(b === null ? v : { ...v, billedCost: b });
+    })
     .sort((a, b) => b.revenue - a.revenue);
 
   /* ── THE ESTIMATE IS A RATIO, NOT A RUPEE TOTAL ─────────────────────────────
@@ -196,12 +256,18 @@ export function buildPnl(input: PnlInput): PnlPeriod {
      you sell. A reseller who suddenly bills a large one-off consulting job would see it
      costed like a licence, which is why the fix is a vendor bill, not a better guess. */
   const bookRevenue = byVendor.reduce((s, v) => s + v.revenue, 0);
-  const bookCost = byVendor.reduce((s, v) => s + v.cost, 0);
+  /* R-1645: only the vendors WITHOUT a bill are estimated — their book cost against the whole
+     book's revenue, so a billed vendor's share of revenue is not costed a second time. */
+  const unbilled = byVendor.filter((v) => billedFor(v.vendor) === null);
+  const bookCost = unbilled.reduce((s, v) => s + v.cost, 0);
   /* Project revenue is software the team built, not a licence bought — costing it at the
      licence ratio is the "one-off consulting job costed like a licence" error above. Its
      cost is the project delivery cost, which is booked, so only the rest is estimated. */
   const projectRevenue = Math.min(Math.max(0, input.projectRevenue ?? 0), input.revenue);
-  const projectCost = Math.max(0, input.projectCost ?? 0);
+  /* R-1649: a project cost built on unreadable salaries is not a figure — it stays in operating
+     expenses (where it was booked) and the gross margin is hidden below. */
+  const projectCostHidden = input.projectCostHidden === true;
+  const projectCost = projectCostHidden ? 0 : Math.max(0, input.projectCost ?? 0);
   const licenceRevenue = input.revenue - projectRevenue;
   const estimated = bookRevenue > 0
     ? Math.round(licenceRevenue * (bookCost / bookRevenue))
@@ -210,49 +276,61 @@ export function buildPnl(input: PnlInput): PnlPeriod {
   /* `unknown` only when there is genuinely nothing to go on: no bills, no estimate, and
      revenue that must have cost something. Revenue with no cost basis at all is the case
      that must NOT render as a margin. */
-  const anyResoldWithoutCost = byVendor.some(
+  const anyResoldWithoutCost = unbilled.some(
     (v) => RESOLD_VENDORS.has(v.vendor) && v.cost === 0 && v.revenue > 0,
   );
+  const billed = input.billedCogs !== null && input.billedCogs > 0 ? input.billedCogs : 0;
+  const nothingKnown = (): CogsBasis => (licenceRevenue > 0 && anyResoldWithoutCost ? "unknown" : "billed");
 
-  let cogs: number;
+  let billedPart = 0;
+  let estimatedPart = 0;
   let cogsBasis: CogsBasis;
-  if (input.billedCogs !== null && input.billedCogs > 0) {
-    cogs = input.billedCogs;
+  if (perVendor !== null) {
+    /* R-1645: the bills, plus the estimate of every vendor that has none. */
+    billedPart = billed;
+    estimatedPart = Math.max(0, estimated);
+    cogsBasis = billedPart > 0 && estimatedPart > 0 ? "mixed"
+      : billedPart > 0 ? "billed"
+      : estimatedPart > 0 ? "estimated"
+      : nothingKnown();
+  } else if (billed > 0) {
+    /* No per-vendor split (an older report_pnl): a real invoice beats a rate card, whole. */
+    billedPart = billed;
     cogsBasis = "billed";
-  } else if (estimated > 0 && !anyResoldWithoutCost) {
-    cogs = estimated;
-    cogsBasis = "estimated";
   } else if (estimated > 0) {
-    /* Part of the book is priced and part is not. The estimate is still the best figure
+    /* Part of the book may be priced and part not. The estimate is still the best figure
        available, and the caller surfaces which vendors are missing. */
-    cogs = estimated;
+    estimatedPart = estimated;
     cogsBasis = "estimated";
   } else {
-    cogs = 0;
-    cogsBasis = licenceRevenue > 0 && anyResoldWithoutCost ? "unknown" : "billed";
+    cogsBasis = nothingKnown();
   }
 
-  const licenceCogs = cogs;
-  cogs = licenceCogs + projectCost;
+  const licenceCogs = billedPart + estimatedPart;
+  const cogs = licenceCogs + projectCost;
   const expenses = input.expenses - projectCost;
-  const grossMargin = cogsBasis === "unknown" ? null : input.revenue - cogs;
+  const knownGross = cogsBasis === "unknown" ? null : input.revenue - cogs;
+  const grossMargin = projectCostHidden ? null : knownGross;
   const grossMarginPct =
     grossMargin === null || input.revenue <= 0
       ? null
       : Math.round((grossMargin / input.revenue) * 100);
-  const netProfit = grossMargin === null ? null : grossMargin - expenses;
+  const netProfit = knownGross === null ? null : knownGross - expenses;
 
   return {
     revenue: input.revenue,
     cogs,
     cogsBasis,
     licenceCogs,
+    billedLicenceCogs: billedPart,
+    estimatedLicenceCogs: estimatedPart,
     projectCost,
     projectRevenue,
     expenses,
     grossMargin,
     grossMarginPct,
     netProfit,
+    projectCostHidden,
     byVendor,
   };
 }
@@ -346,9 +424,19 @@ export function vendorsFromSubscriptions(
   }));
 }
 
+/** The short "where from" under the licence-cost line — the P&L page and headline say it one way. */
+export function licenceCostHint(p: Pick<PnlPeriod, "cogsBasis" | "estimatedLicenceCogs">, billCount: number): string {
+  const bills = `${billCount} vendor bill${billCount === 1 ? "" : "s"}`;
+  if (p.cogsBasis === "mixed") return `${bills} + ${rupee(p.estimatedLicenceCogs)} estimated from your wholesale rates`;
+  if (p.cogsBasis === "estimated") return "estimated from your wholesale rates";
+  return bills;
+}
+
 /** One line the page prints under the COGS row, saying where the number came from. */
 export function cogsBasisNote(p: PnlPeriod): string {
   switch (p.cogsBasis) {
+    case "mixed":
+      return `Part estimated: ${rupee(p.billedLicenceCogs)} is from vendor bills recorded for this period; ${rupee(p.estimatedLicenceCogs)} is estimated for the vendors with no bill yet, from your subscription book's wholesale-to-price ratio. Enter those vendors' invoices to make it exact.`;
     case "billed":
       if (p.projectCost > 0 && p.licenceCogs === 0) return "Project delivery cost only — salary on customer projects and project-tagged expenses. No licence cost in this period.";
       return p.cogs > 0

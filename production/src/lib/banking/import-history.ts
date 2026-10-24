@@ -71,7 +71,7 @@ export function linesOfImport<L extends ImportLine>(r: BankImportRow, lines: L[]
     && ms(l.created_at) >= from && ms(l.created_at) <= to);
 }
 
-/** The import's lines that are reconciled — "Ye N lines reconcile hain — pehle Un-reconcile karo". */
+/** The import's lines that are reconciled — "N of this import's lines are reconciled — un-reconcile them first". */
 export function reconciledLinesOf<L extends ImportLine>(r: BankImportRow, lines: L[]): L[] {
   return linesOfImport(r, lines).filter((l) => l.matched_to_type !== null);
 }

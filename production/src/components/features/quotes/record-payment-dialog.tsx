@@ -11,7 +11,7 @@ import { useForm, type UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "@/lib/queries/keys";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { toast } from "sonner";
 import { isSubscriptionLine, type QuoteLine } from "@/lib/subscriptions/orphan-quote";
 import {
@@ -34,7 +34,7 @@ import { recordPaymentConsequences } from "@/lib/payments/record-consequences";
 import { useDocumentSeries, useGenerateInvoice } from "@/lib/queries/invoices";
 import { useRouter } from "next/navigation";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
-import { paymentToast, cashReference, subscriptionNoteFor, type PaymentToastAction, type SubscriptionNote } from "@/lib/payments/record-payment-toast";
+import { paymentToast, blankReference, subscriptionNoteFor, type PaymentToastAction, type SubscriptionNote } from "@/lib/payments/record-payment-toast";
 import {
   invoiceNowOffer,
   paymentBuyerPlace,
@@ -105,7 +105,8 @@ const schema = z.object({
   // txn id / cheque number always has digits; cash/other can be looser.
   const ref = d.reference.trim();
   const digital = d.method !== "cash" && d.method !== "other";
-  if (d.method === "cash") return;
+  /* R-1444: blank is fine for every method — filled on submit with blankReference(). */
+  if (d.method === "cash" || !ref) return;
   /* R-449: UPI = 12 digits, bank UTR = 12–22 letters/digits (lib/forms/poka-yoke.ts). */
   const formatProblem = paymentRefProblem(d.method, ref);
   if (ref && formatProblem) {
@@ -128,6 +129,22 @@ type FormData = z.infer<typeof schema>;
 /** Exported for tests only (R-819) — the same schema the sheet validates with. */
 export { schema as recordPaymentSchema };
 export type RecordPaymentFormData = FormData;
+
+/**
+ * R-1442: run `fill` once each time the sheet OPENS — never again while it stays open.
+ * The fill effect used to depend on `remaining` and the customer's TDS defaults, which both
+ * arrive after opening; each arrival reset the form and put a back-dated "Received on" (and
+ * the typed reference) back to today's blank form. Late data now sets only its own fields.
+ */
+export function useFillOnOpen(open: boolean, fill: () => void): void {
+  const wasOpen = React.useRef(false);
+  const fillRef = React.useRef(fill);
+  fillRef.current = fill;
+  React.useEffect(() => {
+    if (open && !wasOpen.current) fillRef.current();
+    wasOpen.current = open;
+  }, [open]);
+}
 
 /**
  * R-819: change the payment method and re-check the reference with the NEW method's rule.
@@ -517,33 +534,43 @@ export function RecordPaymentDialog({
   React.useEffect(() => { if (!open) setIssueTouched(false); }, [open]);
 
   React.useEffect(() => {
-    if (!open) {
-      reset();
-      setMethod(DEFAULT_PAYMENT_METHOD);
-      setBankAccountId("");
-      setAccountTouched(false);
-      setAmountEdited(false);
-      setReceiptFile(null);
-    } else {
-      /* R-1520: "Record TDS" opens ticked, at the suggested section + rate, method Other with
-         a "TDS <section>" reference the operator can overwrite with the 26AS / challan ref.
-         The amount effect below then sets the bank amount to remaining − TDS (₹0). */
-      reset({
-        amount:       remaining,
-        method:       tdsOnly ? "other" : DEFAULT_PAYMENT_METHOD,
-        /* R-407: named, so a re-opened sheet never carries the last payment's UTR. */
-        reference:    tdsOnly ? `TDS ${tdsOnly.section}` : "",
-        notes:        "",
-        receivedDate: istToday(),      // R-025 — same UTC trap as the defaults above.
-        tdsDeducted:  !!tdsOnly,
-        tdsSection:   tdsOnly?.section ?? customerTdsDefaults.section,
-        tdsRatePct:   tdsOnly?.ratePct ?? customerTdsDefaults.ratePct,
-        customerTan:  customerTdsDefaults.tan ?? "",
-      });
-      if (tdsOnly) setMethod("other");
-      setAmountEdited(false);
-    }
-  }, [open, reset, remaining, customerTdsDefaults, tdsOnly]);
+    if (open) return;
+    reset();
+    setMethod(DEFAULT_PAYMENT_METHOD);
+    setBankAccountId("");
+    setAccountTouched(false);
+    setAmountEdited(false);
+    setReceiptFile(null);
+  }, [open, reset]);
+  /* R-1442: filled ONCE per open (see useFillOnOpen). The amount follows `remaining` through
+     the amount effect below; the customer's TDS defaults through the effect after this. */
+  useFillOnOpen(open, () => {
+    /* R-1520: "Record TDS" opens ticked, at the suggested section + rate, method Other with
+       a "TDS <section>" reference the operator can overwrite with the 26AS / challan ref.
+       The amount effect below then sets the bank amount to remaining − TDS (₹0). */
+    reset({
+      amount:       remaining,
+      method:       tdsOnly ? "other" : DEFAULT_PAYMENT_METHOD,
+      /* R-407: named, so a re-opened sheet never carries the last payment's UTR. */
+      reference:    tdsOnly ? `TDS ${tdsOnly.section}` : "",
+      notes:        "",
+      receivedDate: istToday(),      // R-025 — same UTC trap as the defaults above.
+      tdsDeducted:  !!tdsOnly,
+      tdsSection:   tdsOnly?.section ?? customerTdsDefaults.section,
+      tdsRatePct:   tdsOnly?.ratePct ?? customerTdsDefaults.ratePct,
+      customerTan:  customerTdsDefaults.tan ?? "",
+    });
+    if (tdsOnly) setMethod("other");
+    setAmountEdited(false);
+  });
+  /* The customer's TDS defaults arrive after the sheet opens — they set only the TDS fields,
+     and only while TDS is not ticked (once ticked, the operator's own values stand). */
+  React.useEffect(() => {
+    if (!open || tdsOnly || getValues("tdsDeducted")) return;
+    setValue("tdsSection", customerTdsDefaults.section);
+    setValue("tdsRatePct", customerTdsDefaults.ratePct);
+    setValue("customerTan", customerTdsDefaults.tan ?? "");
+  }, [open, tdsOnly, customerTdsDefaults, getValues, setValue]);
 
   /* R-379 (j): the reset above passes no `domain`, and react-hook-form's reset(values)
      replaces ALL values — so the required Domain field opened empty even when the page
@@ -800,21 +827,11 @@ export function RecordPaymentDialog({
     },
     onSuccess: async (res) => {
       // Invalidate everything that this touches
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["quotes", quoteId] });
-      qc.invalidateQueries({ queryKey: ["payments"] });
-      qc.invalidateQueries({ queryKey: ["payments", "by-quote", quoteId] });
+      /* Every balance screen — payments (incl. this quote's), quotes, invoices, subscriptions,
+         dues, credit, TDS, Aging (R-1589) and Payment Follow-up (R-1634, kept the old due). */
+      invalidateReceivables(qc);
       qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["customers"] });
       qc.invalidateQueries({ queryKey: ["contacts", "all"] });
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
-      qc.invalidateQueries({ queryKey: ["nav-badges"] });
-      qc.invalidateQueries({ queryKey: ["tds_receivable"] });
-      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
-      // R-1589: Aging showed the old balance after a payment until a reload.
-      qc.invalidateQueries({ queryKey: queryKeys.aging() });
 
       /* R-374: the reference was already recorded — nothing new was saved. Say so, and keep
          the sheet open so the operator can enter the new payment's own reference. */
@@ -935,8 +952,7 @@ export function RecordPaymentDialog({
         } catch (e) {
           splitRaise = { raised: [], errors: [{ message: e instanceof Error ? e.message : String(e) }] };
         }
-        qc.invalidateQueries({ queryKey: ["invoices"] });
-        qc.invalidateQueries({ queryKey: ["subscriptions"] });
+        invalidateReceivables(qc);   // the instalments just raised are dues (R-1634: /collections too)
       }
       const splitToastBase = split
         ? splitPaymentToast(toastBase, {
@@ -1091,9 +1107,10 @@ export function RecordPaymentDialog({
             /* R-248: cash needs no reference. A blank one is filled ONCE here (not inside
                mutationFn) so a react-query retry of this submit sends the same value and
                stays an idempotent replay; see cashReference() for why it is not just "Cash". */
+            /* R-1444: any method may be left blank now — same fill, "<Method> <date> <time>". */
             (data) => recordPayment.mutate(
-              data.method === "cash" && !data.reference.trim()
-                ? { ...data, reference: cashReference(data.receivedDate) }
+              !data.reference.trim()
+                ? { ...data, reference: blankReference(data.method, data.receivedDate) }
                 : data,
             ),
             (formErrors) => {
@@ -1295,7 +1312,6 @@ export function RecordPaymentDialog({
           {/* Transaction Reference Number — Dynamic prompts per payment mode */}
           <FormField
             label={referenceLabel(method)}
-            required={method !== "cash"}
             htmlFor="reference"
           >
             <Input
@@ -1580,6 +1596,8 @@ export function RecordPaymentDialog({
                   /* R-1564: an instalment's payment is recorded on its subscription's quote,
                      which has no invoice of its own — record_payment does issue one. */
                   receiptSeries: invoiceId && !instalmentInvoiceId ? null : (series?.receiptVoucher ?? null),
+                  /* R-1680: say "No receipt voucher" — never "Issues one" beside the post-invoice note. */
+                  afterInvoice: !!invoiceId && !instalmentInvoiceId,
                 })}
               />
             </div>

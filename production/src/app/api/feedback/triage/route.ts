@@ -31,6 +31,7 @@ import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { triageFeedback, type FeedbackSeverity, type FeedbackType, FEEDBACK_TYPES } from "@/lib/feedback/triage";
 import { buildDirective } from "@/lib/feedback/directive";
 import { isAutoSendOn, shouldAutoDispatch } from "@/lib/feedback/auto-send";
+import { IST_TZ } from "@/lib/dates/ist";
 
 const bodySchema = z.object({ feedbackId: z.string().uuid() });
 
@@ -218,7 +219,7 @@ export async function POST(request: NextRequest) {
     screenshotCount: shotCount ?? 0,
     reportId: row.id,
     reportedAt: row.created_at
-      ? new Date(row.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+      ? new Date(row.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: IST_TZ })
       : null,
   });
 

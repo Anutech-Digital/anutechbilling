@@ -62,12 +62,14 @@ export interface AiActionSpec {
 export const AI_ACTIONS = {
   "public_chat.learn": {
     label: "Learn from website chat conversations",
-    /* The public agent distils ONE lesson from each finished conversation and feeds the
-       recent lessons back into its own prompt (lib/ai/public-sales-chat.ts). `auto`
-       because the lessons are advice-only, guarded, and never contain figures — and this
-       dial exists precisely so Pardeep can stop the loop with one click if it drifts. */
-    today: "auto",
-    supports: ["off", "auto"],
+    /* The public agent distils ONE lesson from each finished conversation; approved lessons
+       go back into its own prompt (lib/ai/public-chat-lessons.ts). R-727 (23 Oct 2026): `hold`,
+       and `auto` is no longer a mode it supports — the conversation comes from an anonymous
+       visitor, so a lesson could carry their instruction to every later visitor. Each lesson
+       waits on /automation for Use lesson / Discard. A stored "auto" is reported and falls
+       back to `hold` (resolveAutonomy). */
+    today: "hold",
+    supports: ["off", "hold"],
   },
   "lead.create": {
     label: "Create a lead from an inbound email",

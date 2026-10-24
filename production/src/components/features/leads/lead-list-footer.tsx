@@ -68,7 +68,7 @@ export function LeadListFooter({ density, setDensity, hidden, setHidden, colW, r
           Research: column hide/reorder ke saath ek saaf reset bhi hona chahiye. Reorder
           jaan-boojh kar nahi banaya — wo drag-and-drop ka apna poora kaam hai, aur is
           table par asli dard "bahut zyada column" tha, "galat kram" nahi. */}
-      <DropdownMenu>
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <button
             type="button"

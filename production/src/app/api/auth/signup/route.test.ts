@@ -17,6 +17,7 @@ const st = vi.hoisted(() => ({
   pending: null as Record<string, unknown> | null,      // row for the by-email lookup
   createErr: null as { message: string; code?: string; status?: number } | null,
   rpcErr: null as { message: string } | null,
+  insertErr: {} as Record<string, { message: string; code?: string }>, // per table
   calls: [] as string[],
 }));
 
@@ -38,7 +39,7 @@ vi.mock("@/lib/supabase/server", () => {
     self.is = () => self;
     self.update = () => { st.calls.push(`${table}.update`); return self; };
     self.delete = () => { st.calls.push(`${table}.delete`); return self; };
-    self.insert = () => { st.calls.push(`${table}.insert`); return Promise.resolve({ error: null }); };
+    self.insert = () => { st.calls.push(`${table}.insert`); return Promise.resolve({ error: st.insertErr[table] ?? null }); };
     self.maybeSingle = async () => ({
       data: table === "team_invites" ? (byToken ? st.invite : st.pending) : null,
       error: null,
@@ -84,7 +85,39 @@ beforeEach(() => {
   st.pending = null;
   st.createErr = null;
   st.rpcErr = null;
+  st.insertErr = {};
   st.calls = [];
+});
+
+/* R-1137 follow-up (23 Oct 2026): the tenant / users insert failures and the catch-all sent
+   raw database text to the browser ("Tenant creation failed: duplicate key … tenants_pkey"). */
+describe("signup never sends raw database text to the browser", () => {
+  const RAW = 'duplicate key value violates unique constraint "tenants_pkey"';
+  it("a tenant insert failure is a fixed sentence with a code, and the login is rolled back", async () => {
+    st.insertErr = { tenants: { message: RAW, code: "23505" } };
+    const res = await post(base);
+    const body = await res.json();
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(body)).not.toMatch(/tenants_pkey|duplicate key|Tenant creation failed/);
+    expect(body.code).toBe("signup_company_failed");
+    expect(body.error).toMatch(/try again/i);
+    expect(st.calls).toContain("deleteUser");
+  });
+  it("a users insert failure is a fixed sentence too", async () => {
+    st.insertErr = { users: { message: 'null value in column "tenant_id" of relation "users"' } };
+    const res = await post(base);
+    const body = await res.json();
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(body)).not.toMatch(/relation|column|User record creation failed/);
+    expect(body.code).toBe("signup_user_failed");
+  });
+  it("an unexpected throw is a fixed sentence, not the exception text", async () => {
+    const res = await POST(new Request("http://localhost:3001/api/auth/signup", { method: "POST", body: "{not json" }) as never);
+    const body = await res.json();
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(body)).not.toMatch(/JSON|Unexpected token|position/i);
+    expect(body.code).toBe("signup_failed");
+  });
 });
 
 describe("R-736: signup does not reveal whether an email is registered", () => {

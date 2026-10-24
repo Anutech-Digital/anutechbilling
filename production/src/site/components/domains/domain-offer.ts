@@ -28,6 +28,8 @@ export interface DomainOfferInput {
   tier: Pick<HostingTier, "name" | "monthly" | "yearlyTotal">;
   yearly: boolean;
   mailOn: boolean;
+  /** ₹ one mailbox, one year (R-1786: the price book's figure; default MAILBOX_YR). */
+  mailboxYearly?: number;
 }
 
 export interface DomainOffer {
@@ -40,11 +42,12 @@ export interface DomainOffer {
   saved: number;
 }
 
-const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 
 export function domainOffer(p: DomainOfferInput): DomainOffer {
   if (p.domainReg == null) return { lines: [], total: null, domainFree: false, saved: 0 };
-  const regDetail = p.domainRenew != null ? `Registration, 1 year · renews ${inr(p.domainRenew)}` : "Registration, 1 year";
+  /* R-1628: the renewal is not repeated here (ex GST) — the cart page and checkout print it on its
+     own line, incl. GST, from the same rate card (site/lib/renewal-line.ts). One fact, one place. */
+  const regDetail = "Registration, 1 year";
   const lines: OfferLine[] = [{
     label: p.domain,
     // R-1769: a test-list price says so in the cart and at checkout too.
@@ -76,7 +79,7 @@ export function domainOffer(p: DomainOfferInput): DomainOffer {
       lines.push({
         label: `Mailbox on ${p.domain}`,
         detail: "Anutech Mail · billed yearly",
-        unitPrice: MAILBOX_YR, // full price; the cart frees one per yearly plan (R-1601)
+        unitPrice: p.mailboxYearly ?? MAILBOX_YR, // full price; the cart frees one per yearly plan (R-1601)
         unit: "year",
         cycle: "yearly",
         sku: "mailbox:anutech",

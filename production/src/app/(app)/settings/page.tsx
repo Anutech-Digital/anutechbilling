@@ -327,8 +327,11 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                 {/* R-250: same select as the setup wizard — the value is always a 2-digit
                     GST state code, so a typo can no longer save state_code = null. */}
                 <Field htmlFor="settings-registered-state" label="Registered state">
+                  {/* R-1428: "Set company state" deep-links here (#settings-registered-state).
+                      scroll-mt-24 (96px) clears the sticky topbar (h-14) and keeps this label
+                      in view — without it the field landed under the header. */}
                   <select id="settings-registered-state"
-                    className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber"
+                    className="scroll-mt-24 w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber"
                     aria-invalid={!!errors.state_code || !!stateConflict}
                     aria-describedby={errors.state_code || stateConflict ? "settings-registered-state-error" : undefined}
                     {...register("state_code")}
@@ -396,7 +399,7 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                   {...register("grace_period_days", { valueAsNumber: true })}
                 />
                 <p className="mt-1 text-xs text-ink-3">
-                  Buffer between renewal date and auto-suspend. 0 means service suspends the day after renewal if unpaid; up to 30 days extra.
+                  Days after the renewal date before you get a Stop service task. Nothing stops by itself.
                 </p>
               </Field>
               <Field htmlFor="settings-address" label="Address">

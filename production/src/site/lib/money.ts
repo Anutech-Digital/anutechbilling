@@ -227,16 +227,20 @@ export function cartTotals(lines: readonly CartLine[], couponRate: number, planT
   );
   // Reported only when it took something off — a domain-only cart shows no "10% off" row.
   const discountRate = discount > 0 ? rate : 0;
-  const subtotal = gross - discount;
-  const gst = subtotal * GST_RATE;
+  /* R-1108 (23 Oct 2026): whole rupees, the server's own sums — lib/checkout/cart-coupon.ts
+     stores subtotal = round(...), cart-checkout.ts charges round(subtotal × 1.18). GST is the
+     difference, so Discount, Subtotal, GST and Payable as shown always add up (₹899 at 20%
+     read 719 + 129 = 849 while ₹848 was charged). */
+  const subtotal = Math.round(gross - discount);
+  const payable = Math.round(subtotal * (1 + GST_RATE));
   return {
     priced,
     gross,
     discountRate,
-    discount,
+    discount: gross - subtotal,
     subtotal,
-    gst,
-    payable: subtotal + gst,
+    gst: payable - subtotal,
+    payable,
     recurring: priced.filter((p) => p.line.cycle === "monthly").reduce((n, p) => n + p.total, 0),
   };
 }

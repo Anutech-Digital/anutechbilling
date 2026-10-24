@@ -39,7 +39,16 @@ import {
 } from "@/lib/accounting/reports-reference";
 import { buildLedger, fyPeriod, customPeriod, type LedgerPeriod } from "@/lib/accounting/ledger";
 import { statementFromRpc, type PartyLedgerRpc } from "@/lib/queries/ledger";
-import { monthlySeries } from "@/lib/accounting/pnl-charts";
+
+/* R-1647: the page's trend no longer reads report_pnl_monthly (each month is now report_pnl +
+   assemblePnl), so the old chart helper is gone; the RPC is still checked against its reference
+   month by month. */
+function byMonth(rows: readonly { date: string; amount: number }[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.date.slice(0, 7)] = (out[r.date.slice(0, 7)] ?? 0) + r.amount;
+  for (const k of Object.keys(out)) if (out[k] === 0) delete out[k];
+  return out;
+}
 
 const URL = process.env.PARITY_PG_URL ?? "";
 const PSQL = process.env.PARITY_PSQL ?? "psql";
@@ -256,15 +265,9 @@ run("S17 parity — report_* SQL functions reproduce the old TS numbers", () => 
   });
 
   it("P&L monthly trend", () => {
-    const today = "2027-03-31";
     const legacy = referencePnlMonthlyRows(d!.trend.inv, d!.trend.exp, d!.trend.cn, d!.trend.dn);
-    const want = monthlySeries({ fyStartYear: 2026, ...legacy, cogsRatio: 0.3, today });
-    const got = monthlySeries({
-      fyStartYear: 2026, cogsRatio: 0.3, today,
-      revenue: d!.trend.rpc.map((m) => ({ date: `${m.month}-01`, amount: m.revenue })),
-      expenses: d!.trend.rpc.map((m) => ({ date: `${m.month}-01`, amount: m.expenses })),
-    });
-    expect(got).toEqual(want);
+    expect(byMonth(d!.trend.rpc.map((m) => ({ date: `${m.month}-01`, amount: m.revenue })))).toEqual(byMonth(legacy.revenue));
+    expect(byMonth(d!.trend.rpc.map((m) => ({ date: `${m.month}-01`, amount: m.expenses })))).toEqual(byMonth(legacy.expenses));
   });
 
   it("customer ledger: FY and a mid-year quarter (opening carries the earlier months)", () => {

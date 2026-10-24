@@ -23,7 +23,7 @@
  */
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
+import { authorizeAgent } from "@/lib/security/agent-token";
 import { AGENT_CLAIMED_AT_COLUMN, isMissingColumnError } from "@/lib/feedback/auto-send";
 import { URGENT_AT_COLUMN, isUrgent, urgentFirst } from "@/lib/feedback/urgent";
 
@@ -47,14 +47,12 @@ const distinctIds = (rows: Array<Record<string, unknown>>, col: string) =>
   [...new Set(rows.map((r) => r[col]).filter((v): v is string => typeof v === "string" && v.length > 0))];
 
 export async function GET(req: Request) {
-  const expected = process.env.AGENT_QUEUE_TOKEN?.trim();
-  if (!expected) return NextResponse.json({ error: "agent queue not configured" }, { status: 503 });
-  const provided = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-  if (!timingSafeEqualStr(provided, expected)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = authorizeAgent(req);
+  if (!auth.ok) return auth.response;
 
-  /* Every tenant: a tester's own workspace files reports too (see admin/feedback/platform).
+  /* R-739 (23 Oct 2026): only the workspaces the token is scoped to (AGENT_QUEUE_TENANT_IDS,
+     default the platform company) — it used to read every tenant's reports. A tester's own
+     workspace is added to that list by the manager, not reached by default.
      R-357: a report an AI card already took (agent_claimed_at set) is not handed out again.
      The claim column arrives with migration 20261007110000; until then the first read fails
      on the unknown column and the plain read runs — nothing can be claimed yet anyway. */
@@ -64,7 +62,7 @@ export async function GET(req: Request) {
      queue cannot push one past FETCH. */
   const admin = createAdminClient();
   const read = async (cols: string, urgent: boolean) => {
-    let q = admin.from("feedback").select(cols).eq("status", "agent_queued");
+    let q = admin.from("feedback").select(cols).eq("status", "agent_queued").in("tenant_id", auth.tenantIds);
     if (urgent) q = q.order(URGENT_AT_COLUMN, { ascending: true, nullsFirst: false });
     const { data, error } = await q.order("dispatched_at", { ascending: true }).limit(FETCH);
     return { rows: (data ?? []) as unknown as Array<Record<string, unknown>>, error };

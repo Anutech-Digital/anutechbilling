@@ -24,6 +24,10 @@
  */
 import type { Quote } from "@/lib/supabase/database.types";
 import { quoteBalanceDue } from "./list-tab";
+import { invoicedPartPaid } from "./quote-payment-state";
+import { shownQuoteStatus } from "./quote-expiry";
+import { istToday } from "@/lib/dates/ist";
+import { QUOTE_STATE_LABEL } from "./state-labels";
 
 export type QuoteBadgeKind = "muted" | "success" | "warning" | "danger" | "info";
 
@@ -32,6 +36,9 @@ type QuoteStatusFields = Pick<Quote, "status" | "payment_status" | "amount" | "p
   superseded_by?: string | null;
   /** R-1707: quote_open_balance() (lib/quotes/open-balances.ts). null/absent = not loaded. */
   open_balance?: number | null;
+  /** R-1679: the validity date — a sent / viewed quote past it reads "Expired" (quote-expiry.ts). */
+  expires_date?: string | null;
+  invoice_id?: string | null;
 };
 
 /** What is still owed on this quote. Never negative — an overpayment is not a debt. */
@@ -43,27 +50,33 @@ export function outstanding(q: Pick<Quote, "amount" | "payment_amount">): number
  * ONE primary status per row (Stripe/Linear style) — quote.status and payment_status
  * folded into a single lifecycle stage, so a row never shows two competing badges.
  */
-export function unifiedStatus(q: QuoteStatusFields): { label: string; kind: QuoteBadgeKind } {
+export function unifiedStatus(q: QuoteStatusFields, today: string = istToday()): { label: string; kind: QuoteBadgeKind } {
   /* Payment first, and independent of `status`. This ordering IS the fix: every one of
      these was previously reachable only from `status === "accepted"`. */
-  if (q.payment_status === "invoiced") return { label: "Invoiced", kind: "info" };
+  if (q.payment_status === "invoiced") {
+    /* R-1710: the stage alone hid a half payment — say both (money from quote-payment-state.ts). */
+    return invoicedPartPaid(q) ? { label: `${QUOTE_STATE_LABEL.invoiced} · ${QUOTE_STATE_LABEL.partial}`, kind: "danger" } : { label: QUOTE_STATE_LABEL.invoiced, kind: "info" };
+  }
   if (q.payment_status === "partial") {
     /* Rose, not amber. Amber is the same tone this list gives "Out for review" and
        "expiring soon" — ordinary busywork. A part-paid quote is money sitting half
        collected, and it should not look like a reminder to send an email. */
-    return { label: "Partly paid", kind: "danger" };
+    return { label: QUOTE_STATE_LABEL.partial, kind: "danger" };
   }
-  if (q.payment_status === "received") return { label: "Paid", kind: "success" };
+  if (q.payment_status === "received") return { label: QUOTE_STATE_LABEL.received, kind: "success" };
 
-  if (q.status === "accepted") return { label: "Accepted", kind: "success" };
+  if (q.status === "accepted") return { label: QUOTE_STATE_LABEL.accepted, kind: "success" };
 
-  switch (q.status) {
-    case "draft":    return { label: "Draft", kind: "muted" };
-    case "sent":     return { label: "Out for review", kind: "warning" };
-    case "viewed":   return { label: "Viewed", kind: "info" };
-    case "rejected": return { label: "Rejected", kind: "danger" };
-    case "expired":  return q.superseded_by ? { label: "Replaced", kind: "muted" } : { label: "Expired", kind: "danger" };
-    default:         return { label: "Draft", kind: "muted" };
+  /* R-1679: a sent / viewed quote past its validity date is Expired — staff saw "Sent" on
+     Q-5F40-27-0096 a day after "Valid until 18 Oct" while the customer's accept was refused. */
+  switch (shownQuoteStatus(q, today)) {
+    case "draft":    return { label: QUOTE_STATE_LABEL.draft, kind: "muted" };
+    /* R-1713: "Sent" — the tab's word. "Out for review" was a third name for the same state. */
+    case "sent":     return { label: QUOTE_STATE_LABEL.sent, kind: "warning" };
+    case "viewed":   return { label: QUOTE_STATE_LABEL.viewed, kind: "info" };
+    case "rejected": return { label: QUOTE_STATE_LABEL.rejected, kind: "danger" };
+    case "expired":  return q.superseded_by ? { label: QUOTE_STATE_LABEL.replaced, kind: "muted" } : { label: QUOTE_STATE_LABEL.expired, kind: "danger" };
+    default:         return { label: QUOTE_STATE_LABEL.draft, kind: "muted" };
   }
 }
 
@@ -72,8 +85,12 @@ export function unifiedStatus(q: QuoteStatusFields): { label: string; kind: Quot
  * for money. Rejecting leaves payment_status at "awaiting" (Q-F588-27-0031 showed "Rejected"
  * and "Awaiting payment" side by side), so the payment status is read through this rule.
  */
-export function isClosedQuote(q: Pick<QuoteStatusFields, "status" | "superseded_by">): boolean {
-  return q.status === "rejected" || q.status === "expired" || !!q.superseded_by;
+export function isClosedQuote(
+  q: Pick<QuoteStatusFields, "status" | "superseded_by" | "expires_date" | "payment_status" | "invoice_id">,
+  today: string = istToday(),
+): boolean {
+  /* R-1679: validity ended (sent / viewed, nothing paid) counts as expired — one rule, quote-expiry.ts. */
+  return q.status === "rejected" || shownQuoteStatus(q, today) === "expired" || !!q.superseded_by;
 }
 
 /**
@@ -110,7 +127,8 @@ export function cashNote(q: QuoteStatusFields): QuoteCashNote | null {
   const paid = q.payment_amount ?? 0;
   const inr = (n: number) => `₹${n.toLocaleString("en-IN")}`;
 
-  if (q.payment_status === "partial" && due > 0) {
+  /* R-1710: invoiced after a part payment — the same two halves as before the invoice. */
+  if ((q.payment_status === "partial" || invoicedPartPaid(q)) && due > 0) {
     return { text: `${inr(paid)} paid · ${inr(due)} left`, tone: "owed" };
   }
   if (q.payment_status === "invoiced" && due > 0) {
@@ -120,7 +138,7 @@ export function cashNote(q: QuoteStatusFields): QuoteCashNote | null {
     quotePaymentBadge(q) === "awaiting" ||
     (q.status === "accepted" && !q.superseded_by && (!q.payment_status || q.payment_status === "none"))
   ) {
-    return { text: "Awaiting payment", tone: "waiting" };
+    return { text: QUOTE_STATE_LABEL.awaiting, tone: "waiting" };
   }
   return null;
 }

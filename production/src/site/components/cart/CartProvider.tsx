@@ -17,9 +17,13 @@ import { usePathname } from "next/navigation";
 import { cartTotals, domainTermPrice, isSingleUnit, type CartLine, type CartTotals } from "@/site/lib/money";
 import { SEVERAL_HOSTING_PLANS_READY } from "@/lib/checkout/hosting-limit";
 import { MAILBOX_YR } from "@/site/lib/data/domains-landing";
+import { cartPricesFromCatalog, repriceCartLines, type CartPrices, type PriceChange } from "@/site/lib/cart-reprice";
+import type { DomainRenewals } from "@/site/lib/renewal-line";
 
 const STORAGE_KEY = "anutech.cart.v1";
 const NO_DRAWER_ROUTES = ["/cart", "/checkout", "/done"];
+/** R-1797: the pages that show a total to pay — they re-price the cart from the price book. */
+const REPRICE_ROUTES = ["/cart", "/checkout"];
 
 /**
  * The typed coupon code as the SERVER judged it (R-329): the code table is not in the
@@ -58,6 +62,18 @@ interface CartApi {
   closeDrawer: () => void;
   /** The label of the line just added — the drawer's green headline. */
   justAdded: string | null;
+  /**
+   * R-1797: the price book as GET /api/public/catalog gave it on the cart page / checkout —
+   * null until read, and always null with CATALOG_FROM_DB off (the cart is left as today).
+   */
+  prices: CartPrices | null;
+  /** Lines whose saved price the book changed on this visit — the one-line notice. */
+  priceChanges: PriceChange[];
+  /**
+   * R-1628: extension → renewal ₹/yr ex GST from the live rate card (the figure /domains prints),
+   * so the cart page and checkout say what a domain renews at. Empty when the card is unknown.
+   */
+  domainRenewals: DomainRenewals;
 }
 
 const CartContext = createContext<CartApi | null>(null);
@@ -122,6 +138,27 @@ function fullPrice(l: CartLine): CartLine {
   return rest;
 }
 
+/* R-1114 (23 Oct 2026): the typed coupon code, so a reload of /cart or /checkout keeps the
+   discount. Only the code is kept — never the rate: the server judges it again on load (R-329). */
+const COUPON_KEY = "anutech.cart.coupon.v1";
+
+function loadCoupon(): string {
+  try {
+    return (window.localStorage.getItem(COUPON_KEY) ?? "").slice(0, 40);
+  } catch {
+    return "";
+  }
+}
+
+function saveCoupon(code: string): void {
+  try {
+    if (code.trim()) window.localStorage.setItem(COUPON_KEY, code);
+    else window.localStorage.removeItem(COUPON_KEY);
+  } catch {
+    /* Storage refused — the code still applies for this visit. */
+  }
+}
+
 function save(lines: CartLine[]): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(lines));
@@ -130,7 +167,9 @@ function save(lines: CartLine[]): void {
   }
 }
 
-export function CartProvider({ children }: { children: React.ReactNode }) {
+const NO_RENEWALS: DomainRenewals = {};
+
+export function CartProvider({ children, domainRenewals = NO_RENEWALS }: { children: React.ReactNode; domainRenewals?: DomainRenewals }) {
   const [lines, setLines] = useState<CartLine[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [coupon, setCoupon] = useState("");
@@ -144,8 +183,49 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setLines(load());
+    setCoupon(loadCoupon());
     setLoaded(true);
   }, []);
+  /* R-1114: keep the code across a reload — written only after the saved one was read. */
+  useEffect(() => {
+    if (loaded) saveCoupon(coupon);
+  }, [coupon, loaded]);
+
+  /* R-1797: the checkout API charges every hosting and mailbox line at the price book's price
+     (lib/checkout/cart-checkout repriceLine), never the price saved in this browser. So the
+     cart page and checkout read the same book when they open and move each line to it — the
+     total shown is the total charged, and a change is said in one line (PriceChangeNotice).
+     Flag off → the API says source "code" → prices stay null and nothing changes. */
+  const [prices, setPrices] = useState<CartPrices | null>(null);
+  const [priceChanges, setPriceChanges] = useState<PriceChange[]>([]);
+  const repriceHere = loaded && REPRICE_ROUTES.includes(pathname);
+  useEffect(() => {
+    if (!repriceHere) return;
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch("/api/public/catalog", { cache: "no-store", signal: ctrl.signal });
+        if (!res.ok) return; // the server still re-prices at Pay and says so if the total moved
+        setPrices(cartPricesFromCatalog(await res.json()));
+      } catch {
+        /* Offline or aborted — the Pay step's server check still guards the total. */
+      }
+    })();
+    return () => ctrl.abort();
+  }, [repriceHere]);
+  useEffect(() => {
+    if (!prices) return;
+    const r = repriceCartLines(lines, prices);
+    if (!r.changes.length) return;
+    save(r.lines);
+    setLines(r.lines);
+    setPriceChanges((prev) => {
+      // One entry per line: keep the price it was first shown at, update where it is now.
+      const byKey = new Map(prev.map((c) => [c.key, c]));
+      for (const c of r.changes) byKey.set(c.key, byKey.has(c.key) ? { ...c, from: byKey.get(c.key)!.from } : c);
+      return [...byKey.values()].filter((c) => c.from !== c.to);
+    });
+  }, [prices, lines]);
 
   const add = useCallback<CartApi["add"]>(
     (line) => {
@@ -208,6 +288,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       save([]);
       return [];
     });
+    setPriceChanges([]);
     setCoupon("");
     setDrawerOpen(false);
   }, []);
@@ -263,8 +344,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       drawerOpen,
       closeDrawer: () => setDrawerOpen(false),
       justAdded,
+      prices,
+      // Only lines still in the cart (a removed line's change is no longer news).
+      priceChanges: priceChanges.filter((c) => lines.some((l) => l.key === c.key)),
+      domainRenewals,
     }),
-    [lines, loaded, totals, coupon, couponStatus, couponRate, add, setQty, setYears, remove, clear, drawerOpen, justAdded],
+    [lines, loaded, totals, coupon, couponStatus, couponRate, add, setQty, setYears, remove, clear, drawerOpen, justAdded, prices, priceChanges, domainRenewals],
   );
 
   return (

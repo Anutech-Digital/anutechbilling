@@ -34,6 +34,7 @@ import { gstTreatmentOption } from "@/lib/gst/customer-gst-treatment";
 import type { PrimaryContact } from "@/components/features/customers/customer-links";
 import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
 import { seatsPhrase, manageSeatsHref } from "@/components/features/subscriptions/seat-words";
+import { followRevealed, isMaskedContact } from "@/lib/contacts/reveal-client";
 
 // ════════════════════════════════════════════════════════════════════════
 // Pure logic
@@ -265,8 +266,12 @@ export function buildCustomerActivity(subs: Subscription[], invoices: Invoice[],
 // ════════════════════════════════════════════════════════════════════════
 
 /** 4-KPI answer-bar — health / owed / value in one glance (real numbers). */
-export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0 }: {
+export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0, failed = false }: {
   insights: CustomerInsights;
+  /** R-1807: one of the reads the insights are built from (subscriptions, invoices, projects,
+   *  payments) failed. Its rows were never seen, so "All clear" / ₹0 would be a guess — every
+   *  tile reads "—" and says so. The screen shows the error + Try again beside it. */
+  failed?: boolean;
   /** When given, the money tiles link to the records behind them. Optional so the
    *  contacts panel — which derives insights for a company that may have no customer
    *  row — keeps working rather than linking to a filter that would match nothing. */
@@ -286,6 +291,15 @@ export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0 }: {
   // auto-fit → columns follow the CONTAINER width (not the viewport), so this
   // strip fits whether it's in the narrow split-view panel, the full-width panel,
   // or the /customers/[id] page — 4-across when wide, wraps otherwise, never cut.
+  if (failed) {
+    return (
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
+        {["Outstanding", "Lifetime paid", "MRR", "Next renewal"].map((label) => (
+          <MetricCard key={label} label={label} value="—" hint="Didn't load" />
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
       <MetricCard
@@ -426,7 +440,22 @@ export function NextBestActionCard({ nba, customer }: { nba: Nba; customer: Cust
                     <Button size="sm" variant="default" onClick={() => { navigator.clipboard?.writeText(draft.message); toast.success("Copied"); }}>Copy</Button>
                     {sendLink && (
                       <Button asChild size="sm" variant="primary">
-                        <a href={sendLink} target={channel === "whatsapp" ? "_blank" : undefined} rel="noopener noreferrer">
+                        <a
+                          href={sendLink}
+                          target={channel === "whatsapp" ? "_blank" : undefined}
+                          rel="noopener noreferrer"
+                          onClick={(e) => {
+                            /* R-1009: a masked phone / email is fetched (logged) before the send opens. */
+                            const wa = channel === "whatsapp" && Boolean(phone);
+                            followRevealed(e, wa ? phone : customer.contact_email,
+                              { table: "customers", id: customer.id, field: wa ? "contact_phone" : "contact_email" },
+                              wa ? "whatsapp" : "email",
+                              (real) => wa
+                                ? `https://wa.me/${real.replace(/\D/g, "")}?text=${encodeURIComponent(draft.message)}`
+                                : `mailto:${real}?subject=${encodeURIComponent(draft.subject || `Regarding ${customer.name}`)}&body=${encodeURIComponent(draft.message)}`,
+                              wa);
+                          }}
+                        >
                           <Icon name={channel === "whatsapp" ? "whatsapp" : "mail"} size={13} className="mr-1.5" />Send
                         </a>
                       </Button>
@@ -443,8 +472,12 @@ export function NextBestActionCard({ nba, customer }: { nba: Nba; customer: Cust
 }
 
 /** Quick contact action buttons (Call / WhatsApp / Email) — real deep-links. */
-export function CustomerContactActions({ phone: rawPhone, email }: { phone: string | null | undefined; email: string | null | undefined }) {
-  const phone = rawPhone?.replace(/\s+/g, "");
+export function CustomerContactActions({ phone: rawPhone, email: rawEmail }: { phone: string | null | undefined; email: string | null | undefined }) {
+  /* R-1009: a masked value (a role without can_view_contact_details) gets no deep link — a
+     tel: to "••••••3210" can only fail. The masked text itself stays on the card above. */
+  const rawTel = rawPhone?.replace(/\s+/g, "");
+  const phone = rawTel && !isMaskedContact(rawTel) ? rawTel : undefined;
+  const email = rawEmail && !isMaskedContact(rawEmail) ? rawEmail : undefined;
   if (!phone && !email) return null;
   return (
     <div className="flex flex-wrap gap-2">
@@ -684,13 +717,22 @@ export function CustomerIdentityRail({ c, contact, onAddContact }: {
             {contact.title && <div className="text-2xs text-ink-3">{contact.title}</div>}
             <div className="mt-1.5 space-y-1">
               {contact.email && (
-                <a href={`mailto:${contact.email}`} className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors">
+                /* R-1009: a masked value stays text — no mailto: / tel: to a mask. */
+                <a
+                  href={isMaskedContact(contact.email) ? undefined : `mailto:${contact.email}`}
+                  title={isMaskedContact(contact.email) ? "Hidden for your role. The owner or a manager can see it." : undefined}
+                  className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors"
+                >
                   <Icon name="mail" size={12} className="text-ink-3 flex-shrink-0" />
                   <span className="font-mono truncate">{contact.email}</span>
                 </a>
               )}
               {phone && (
-                <a href={`tel:${phone}`} className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors">
+                <a
+                  href={isMaskedContact(phone) ? undefined : `tel:${phone}`}
+                  title={isMaskedContact(phone) ? "Hidden for your role. The owner or a manager can see it." : undefined}
+                  className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors"
+                >
                   <Icon name="phone" size={12} className="text-ink-3 flex-shrink-0" />
                   <span className="tabular-nums">{formatPhone(phone)}</span>
                 </a>

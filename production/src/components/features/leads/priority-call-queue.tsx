@@ -53,6 +53,7 @@ import { OutcomeChips } from "./outcome-chips";
 import type { LeadOutcome } from "@/lib/leads/outcomes";
 import type { LeadListRow } from "@/lib/leads/list-page";
 import { leadTitle } from "@/lib/leads/display-name";
+import { followRevealed, isMaskedContact } from "@/lib/contacts/reveal-client";
 
 /** Remembered per browser, not per user — it is a layout preference, not a setting. */
 const STORAGE_KEY = "ros_call_queue_open";
@@ -78,7 +79,11 @@ function QueueRow({
   const { lead, heat, daysOverdue } = entry;
   const badge = heatBadge(heat.band);
   const late  = overdueLabel(daysOverdue);
-  const num   = dialable(lead.contact_phone);
+  /* R-1009: a masked phone ("••••••3210", a role without can_view_contact_details) is still a
+     phone — the buttons stay, and fetch the real number (logged) when tapped. */
+  const masked = isMaskedContact(lead.contact_phone);
+  const num   = masked ? "" : dialable(lead.contact_phone);
+  const ref   = { table: "leads" as const, id: lead.id, field: "contact_phone" };
   const waMsg = queueWhatsAppMessage(lead, tenantName);
 
   return (
@@ -118,7 +123,7 @@ function QueueRow({
             five digits) used to keep both buttons and answer a tap with an error toast. A
             button that can only fail is a mystery button (CLAUDE.md §24) — so the row offers
             the one thing that helps instead: open the lead and add the number. */}
-        {!num ? (
+        {num === null ? (
           <button
             type="button"
             onClick={() => onOpen(lead)}
@@ -134,7 +139,10 @@ function QueueRow({
         <div className="flex items-center gap-2">
           <a
             href={`tel:${num}`}
-            onClick={() => onLogCall(lead)}
+            onClick={(e) => {
+              followRevealed(e, lead.contact_phone, ref, "call", (real) => { const d = dialable(real); return d ? `tel:${d}` : null; });
+              onLogCall(lead);
+            }}
             className={cn(
               "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg px-3 text-xs font-bold",
               "bg-primary text-white hover:opacity-90",
@@ -146,7 +154,13 @@ function QueueRow({
             href={`https://wa.me/${num}?text=${encodeURIComponent(waMsg)}`}
             target="_blank"
             rel="noopener noreferrer"
-            onClick={() => onLogWhatsApp(lead)}
+            onClick={(e) => {
+              followRevealed(e, lead.contact_phone, ref, "whatsapp", (real) => {
+                const d = dialable(real);
+                return d ? `https://wa.me/${d}?text=${encodeURIComponent(waMsg)}` : null;
+              }, true);
+              onLogWhatsApp(lead);
+            }}
             title={waMsg}
             className={cn(
               "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 text-xs font-bold",

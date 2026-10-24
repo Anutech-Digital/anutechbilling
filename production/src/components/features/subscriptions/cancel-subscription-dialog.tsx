@@ -10,6 +10,13 @@
  * "Clear the ₹X still due" is offered only when something is due. It is ON when the
  * caller knows the money was refunded (Payments → Refund → "customer leaving?"), and OFF
  * otherwise — a customer who used the service and has not paid still owes it.
+ *
+ * R-1711: the part of that due an OPEN GST invoice still asks for is never cleared here —
+ * zeroing it left the subscription saying "nothing owed" while INV-0013 kept asking for
+ * ₹18,232. An issued invoice is reduced only by a credit note on it (CGST s.34), so the
+ * dialog names the invoice and offers "Issue credit note for the unused part"; once that note
+ * lands, what is left is clearable. lib/subscriptions/cancel-due.ts is the split;
+ * cancel_subscription() applies the same rule on the server.
  */
 import * as React from "react";
 import { Dialog, DialogContent, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -21,7 +28,9 @@ import { FormField } from "@/components/ui/label";
 import { rupee, formatDate } from "@/lib/utils";
 import { istToday } from "@/lib/dates/ist";
 import type { Subscription } from "@/lib/supabase/database.types";
-import { useCancelSubscription } from "@/lib/queries/subscriptions";
+import { useCancelSubscription, useSubscriptionInvoices } from "@/lib/queries/subscriptions";
+import { cancelDueSplit } from "@/lib/subscriptions/cancel-due";
+import { IssueCreditNoteDialog } from "@/components/features/invoices/issue-credit-note-dialog";
 
 /** "Cancelled on 9 Oct 2026 — Refunded, customer left · ₹956 due cleared" for the panel.
  *  R-489: the cancel columns (20261009151000) are typed in database.generated.ts now. */
@@ -33,7 +42,7 @@ export function cancelNote(c: Subscription): string {
 }
 
 export function CancelSubscriptionDialog({ sub, open, onOpenChange, clearDueDefault = false, defaultReason = "" }: {
-  sub: Pick<Subscription, "id" | "customer_name" | "plan" | "outstanding_amount" | "start_date">;
+  sub: Pick<Subscription, "id" | "customer_name" | "plan" | "outstanding_amount" | "start_date" | "quote_id" | "renewal_quote_id">;
   open: boolean;
   onOpenChange: (v: boolean) => void;
   /** True when the payment was just refunded — the due is not real any more. */
@@ -42,6 +51,13 @@ export function CancelSubscriptionDialog({ sub, open, onOpenChange, clearDueDefa
 }) {
   const cancel = useCancelSubscription();
   const due = sub.outstanding_amount ?? 0;
+  /* R-1711: which part of the due an open invoice still asks for. Read only when there is a due. */
+  const invoicesQ = useSubscriptionInvoices(sub, open && due > 0);
+  const split = cancelDueSplit(due, invoicesQ.data ?? []);
+  const invoicesKnown = due <= 0 || !!invoicesQ.data || invoicesQ.isError;   // the server applies the same rule
+  const [cnFor, setCnFor] = React.useState<string | null>(null);
+  const cnInvoice = cnFor ? (invoicesQ.data ?? []).find((i) => i.id === cnFor) ?? null : null;
+  const cnDue = cnFor ? split.openInvoices.find((i) => i.id === cnFor)?.due ?? 0 : 0;
   const [lastDay, setLastDay] = React.useState(istToday());
   const [reason, setReason]   = React.useState(defaultReason);
   const [clearDue, setClearDue] = React.useState(clearDueDefault);
@@ -58,7 +74,7 @@ export function CancelSubscriptionDialog({ sub, open, onOpenChange, clearDueDefa
   const onConfirm = () => {
     if (!reasonOk || !dateOk) return;
     cancel.mutate(
-      { id: sub.id, lastDay, reason: reason.trim(), clearDue: due > 0 && clearDue },
+      { id: sub.id, lastDay, reason: reason.trim(), clearDue: split.clearable > 0 && clearDue },
       { onSuccess: () => onOpenChange(false) },
     );
   };
@@ -89,11 +105,34 @@ export function CancelSubscriptionDialog({ sub, open, onOpenChange, clearDueDefa
           <FormField label="Reason (at least 5 characters)" htmlFor="cancel-sub-reason" required>
             <Textarea id="cancel-sub-reason" name="reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Customer moved to another provider" />
           </FormField>
-          {due > 0 && (
+          {due > 0 && !invoicesKnown && (
+            <p className="text-2xs text-ink-3">Checking this subscription&apos;s invoices…</p>
+          )}
+          {/* R-1711: an open invoice holds (part of) the due — a credit note, not a clear. */}
+          {split.onInvoices > 0 && (
+            <div role="status" className="rounded-md border border-amber/40 bg-amber-soft/50 px-3 py-2 text-2xs leading-relaxed text-amber-ink">
+              <p>
+                <b>{rupee(split.onInvoices)}</b> of the due is on open GST invoice{split.openInvoices.length === 1 ? "" : "s"}{" "}
+                <b className="font-mono">{split.openInvoices.map((i) => i.id).join(", ")}</b>. Cancelling does not
+                change {split.openInvoices.length === 1 ? "that invoice" : "those invoices"} — if they will not pay for
+                the unused part, reduce it with a credit note (CGST §34). If they still have to pay, leave it as it is.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {split.openInvoices.map((i) => (
+                  <Button key={i.id} type="button" size="sm" variant="default" icon="receipt" onClick={() => setCnFor(i.id)}>
+                    Issue credit note for the unused part{split.openInvoices.length > 1 ? ` · ${i.id}` : ""}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+          {split.clearable > 0 && (
             <label className="flex items-start gap-2 text-sm text-ink-2">
               <Checkbox checked={clearDue} onCheckedChange={(v) => setClearDue(v === true)} className="mt-0.5" />
               <span>
-                Clear the {rupee(due)} still shown as due
+                {split.onInvoices > 0
+                  ? <>Clear the {rupee(split.clearable)} not on any invoice</>
+                  : <>Clear the {rupee(split.clearable)} still shown as due</>}
                 <span className="block text-2xs text-ink-3">
                   Tick only if they owe nothing (for example, the payment was refunded). Leave it off if they still have to pay.
                 </span>
@@ -106,11 +145,25 @@ export function CancelSubscriptionDialog({ sub, open, onOpenChange, clearDueDefa
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={cancel.isPending}>
             Keep it
           </Button>
-          <Button variant="danger" onClick={onConfirm} disabled={!reasonOk || !dateOk} loading={cancel.isPending}>
+          <Button variant="danger" onClick={onConfirm} disabled={!reasonOk || !dateOk || !invoicesKnown} loading={cancel.isPending}>
             Cancel subscription
           </Button>
         </DialogFooter>
       </DialogContent>
+      {cnFor && (
+        <IssueCreditNoteDialog
+          open={!!cnFor}
+          onOpenChange={(v) => { if (!v) setCnFor(null); }}
+          invoiceId={cnFor}
+          customerName={cnInvoice?.customer_name ?? sub.customer_name}
+          netPayable={cnDue}
+          taxRate={cnInvoice?.tax_rate ?? null}
+          interState={cnInvoice?.inter_state ?? null}
+          isExport={(cnInvoice?.tax_rate ?? 18) === 0}
+          invoiceDate={cnInvoice?.invoice_date ?? null}
+          defaultReasonCode="cancellation"
+        />
+      )}
     </Dialog>
   );
 }

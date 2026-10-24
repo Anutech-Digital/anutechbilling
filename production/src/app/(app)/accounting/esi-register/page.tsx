@@ -20,6 +20,7 @@ import { buildEcr } from "@/lib/payroll/ecr";
 import { pfWageCeiling } from "@/lib/payroll/pf";
 import { toast } from "sonner";
 import { logExport } from "@/lib/export-log";
+import { csvEscape } from "@/lib/csv";
 
 function periodLabel(period: string): string {
   return formatMonthLabel(period);
@@ -33,10 +34,9 @@ function downloadEsicCsv(period: string, rows: EsiRegisterRow[]) {
     "IP Number", "IP Name", "No of Days", "Total Monthly Wages",
     "Reason Code for Zero Working Days", "Last Working Day",
   ];
-  const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
   const lines = [header.join(",")];
   for (const r of rows) {
-    lines.push([r.esiNo ?? "", esc(r.employee), r.days, r.wage, "0", ""].join(","));
+    lines.push([csvEscape(r.esiNo ?? ""), csvEscape(r.employee), r.days, r.wage, "0", ""].join(","));
   }
   const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);

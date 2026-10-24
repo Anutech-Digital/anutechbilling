@@ -22,6 +22,9 @@
  * order, payment and signature Razorpay returned). "Payment received" is shown only once our
  * server has confirmed it; until then this page shows "confirming" with progress, or what
  * went wrong and what to do next.
+ * R-1111 (23 Oct 2026): "Payment received" was the last fallback, so any visitor (bookmark,
+ * fresh tab, stray link) was told they had paid. It now needs proof for this order in this
+ * session (done-view.ts); otherwise the page asks "Looking for your order?".
  */
 import Link from "@/site/components/ui/SiteLink";
 import { useEffect, useState, type ReactNode } from "react";
@@ -30,6 +33,8 @@ import { settlePageScroll } from "@/lib/ui/scroll-lock";
 import { AfterYouPay } from "@/site/components/checkout/AfterYouPay";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { confirmPayment, readPayment, savePayment, type ReturnedPayment, type VerifyBody } from "@/lib/checkout/confirm-payment";
+import { doneView, SIMULATED_KEY } from "./done-view";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 /* R-1596: while Razorpay completes an authorised payment, ask again this often, this many times.
    Kept small: /api/public/checkout/* shares one per-IP limit (10 per 10 min, lib/security/rate-limit.ts). */
@@ -156,6 +161,10 @@ export default function DonePage() {
   const [trialEmail, setTrialEmail] = useState<string | null>(null);
   /* False only when the server said the confirmation link did NOT go out (30 Sep 2026). */
   const [trialSent, setTrialSent] = useState(true);
+  /* R-1111: the simulated-order mark (laptop, no Razorpay keys), and "storage has been read" —
+     until then nothing renders, so no screen flashes before the real one. */
+  const [simulatedFor, setSimulatedFor] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
   /* Nothing on this page locks scrolling, so whatever the checkout or Razorpay left behind is
      undone here (3 Oct 2026: the page arrived unscrollable after a payment). */
   useEffect(() => {
@@ -168,7 +177,9 @@ export default function DonePage() {
       setOrderNo(window.sessionStorage.getItem("anutech.order") || null);
       setTrialEmail(window.sessionStorage.getItem("anutech.trial") || null);
       setTrialSent(window.sessionStorage.getItem("anutech.trial.sent") !== "0");
-    } catch { /* storage blocked: the generic wording below still holds */ }
+      setSimulatedFor(window.sessionStorage.getItem(SIMULATED_KEY));
+    } catch { /* storage blocked: the neutral screen below still holds */ }
+    setReady(true);
   }, []);
 
   /* R-1596: a Razorpay payment is confirmed by OUR server (POST /api/public/checkout/verify),
@@ -202,6 +213,9 @@ export default function DonePage() {
     void ask();
     return () => { stop = true; window.clearTimeout(timer); };
   }, [payment, round]);
+
+  const view = doneView({ trialEmail, trialSent, hasPayment: payment !== null, verdict: verdict?.state ?? null, orderNo, simulatedFor });
+  if (!ready) return null;
 
   if (trialEmail && !trialSent) {
     return (
@@ -244,7 +258,7 @@ export default function DonePage() {
         aside={<>
           <div className="mono-label" style={{ color: "var(--text-muted)", marginBottom: 8 }}>Link sent to</div>
           <div style={{ fontWeight: 600, fontSize: 16, wordBreak: "break-all" }}>{trialEmail}</div>
-          <div className="meta" style={{ marginTop: 8 }}>Starter hosting · 15 days free</div>
+          <div className="meta" style={{ marginTop: 8 }}>Starter hosting · {HOSTING_TRIAL_DAYS} days free</div>
           <HelpBlock subject="My hosting trial" />
         </>}
         actions={<>
@@ -312,6 +326,33 @@ export default function DonePage() {
         actions={<>
           {/* While a check runs the BusyPanel shows it; the button only appears when idle, so it is never silently disabled. */}
           {!checking && <button type="button" className="btn btn-primary" onClick={() => setRound((r) => r + 1)}>Check again</button>}
+          <Link href="/" className="btn btn-outline">Back to home</Link>
+        </>}
+      />
+    );
+  }
+
+  if (view !== "paid") {
+    return (
+      <DoneLayout
+        tone="warn"
+        badge="No order in this browser"
+        title="Looking for your order?"
+        lead={orderNo
+          ? <>This page can&apos;t confirm a payment for <span className="mono">{orderNo}</span>. If you paid, the confirmation email is your record.</>
+          : "This page shows your order right after you pay. Opened later, in a new tab or from a link, it has nothing to show."}
+        steps={[
+          { title: "Paid already?", body: "Look for the “Payment received” email — it carries your order number and arrives within a few minutes of paying. Check spam too." },
+          { title: "No email after 15 minutes?", body: "Write to support from the email address you used at checkout and we find your order." },
+          { title: "Haven't ordered yet?", body: "Your cart is kept on this device — go back to it and check out." },
+        ]}
+        aside={<>
+          <div className="mono-label" style={{ color: "var(--text-muted)", marginBottom: 10 }}>Your order</div>
+          <div style={{ fontSize: 15, lineHeight: 1.55, color: "var(--text-secondary)" }}>Your order number is in the confirmation email.</div>
+          <HelpBlock subject={orderNo ? `My order ${orderNo}` : "Finding my order"} />
+        </>}
+        actions={<>
+          <Link href="/cart" className="btn btn-primary">Go to cart</Link>
           <Link href="/" className="btn btn-outline">Back to home</Link>
         </>}
       />

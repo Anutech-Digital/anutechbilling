@@ -50,6 +50,9 @@ export const USER_ROLES = [
   "accountant",
   "support",
   "partner_agent",
+  /* R-1791 (Abhishek, 23 Oct 2026): asks the owner for a marketing budget and asks billing to
+     pay against it; works in the Marketing Hub. */
+  "marketing",
 ] as const;
 
 export type UserRole = (typeof USER_ROLES)[number];
@@ -99,6 +102,7 @@ export const ROLE_LABEL: Record<UserRole, string> = {
   accountant:    "Accountant / CA",
   support:       "Support",
   partner_agent: "Partner Agent",
+  marketing:     "Marketing",
 };
 
 /** Label for a role that may not be a known one (a stale row, a new enum value). */
@@ -137,7 +141,7 @@ export interface Permissions {
   can_reveal_vault: boolean;
   /** P&L, balance sheet, bank reconciliation — the books. */
   can_view_financials: boolean;
-  /** Invite, offboard, and change roles. */
+  /** Invite, offboard, and change roles. The ONE check for it — Team page and invite API (R-1651). */
   can_manage_team: boolean;
   /** API keys, integration secrets, tenant-wide configuration. */
   can_manage_secrets: boolean;
@@ -177,7 +181,10 @@ export const PERMISSIONS: Record<UserRole, Permissions> = {
     can_export_data:          true,
     can_view_contact_details: true,
     can_reveal_vault:         true,
-    can_manage_team:          true,
+    /* R-1651: false — inviting, role changes and offboarding are owner-only on the server
+       (api/team/invite, team_invites RLS). This said true while nothing read it, and the
+       Team page promised a manager an invite they could not send. */
+    can_manage_team:          false,
     can_contact_customers:    true,
   },
   // Owns named corporate accounts, so needs the real contact details — but a
@@ -218,6 +225,9 @@ export const PERMISSIONS: Record<UserRole, Permissions> = {
   // External-facing internal role: sees only its own referred leads and payouts
   // under /partners. No customer data, no export, nothing else.
   partner_agent: { ...NONE },
+  // R-1791: runs the Marketing Hub and its own budget requests. No customer data, no export,
+  // no books — what it spends is visible on its own budget page.
+  marketing: { ...NONE },
 };
 
 /**
@@ -256,6 +266,15 @@ export function maskContact(value: string | null | undefined): string {
   const digits = v.replace(/\D/g, "");
   if (digits.length < 5) return "•".repeat(v.length);
   return `${"•".repeat(digits.length - 4)}${digits.slice(-4)}`;
+}
+
+/**
+ * R-1009: is this a value maskContact() produced? The data gateway sends masked contacts to a
+ * role without can_view_contact_details, so a screen uses this to swap a dial / mail link for
+ * the "reveal on Call" path (lib/contacts/reveal-client.ts) instead of dialling "••••3210".
+ */
+export function isMaskedContact(value: string | null | undefined): boolean {
+  return typeof value === "string" && value.includes("•");
 }
 
 /**
@@ -301,6 +320,7 @@ export const GATEWAY_LIMITED_BY_ROLE: Record<UserRole, boolean> = {
   support:       true,
   delivery:      true,
   partner_agent: true,
+  marketing:     true,
 };
 
 export function isGatewayLimitedRole(role: string | null | undefined): boolean {

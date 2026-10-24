@@ -10,6 +10,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { resolveGeminiConfig, geminiJson, geminiGroundedText } from "@/lib/ai/gemini";
 import { resolveDoh, DNS_TYPE } from "@/lib/dns/doh";
 import { cronTenantAllowed } from "@/lib/automation/cron-gate";
+import { safeFetch } from "@/lib/net/safe-fetch";
 import {
   discoveryPrompt, parseDiscovery, mxProvider, siteNote, baselineScore, scoringPrompt, mergeScores, spreadByIndustryCity,
   type FinderProfile, type DiscoveredCompany, type ScoreInput, type SiteAudit, type MxProvider,
@@ -23,6 +24,11 @@ import { OLD_WHO_TO_ASK, OLD_NAME_UNKNOWN } from "@/lib/leads/legacy-task-labels
 
 type Admin = SupabaseClient<Database>;
 
+const UA = { "user-agent": "Mozilla/5.0 (compatible; ResellerOS-LeadFinder/1.0)" };
+/* R-735: URLs here come from the AI or a company's site — public addresses only, redirects
+   re-checked hop by hop (grounding links are a Google redirect first). http is tried once. */
+const OPEN_WEB = { allowHttp: true, maxRedirects: 5 } as const;
+
 export interface FinderRunResult { discovered: number; skippedDupe: number; saved: number; noContact: number; errors: string[] }
 
 async function mxLookup(domain: string): Promise<{ provider: MxProvider; hosts: string[] | null }> {
@@ -33,7 +39,7 @@ async function mxLookup(domain: string): Promise<{ provider: MxProvider; hosts: 
 
 async function probe(url: string): Promise<{ ok: boolean; status: number | null; server: string | null; generator: string | null; title: string | null }> {
   try {
-    const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(8000), headers: { "user-agent": "Mozilla/5.0 (compatible; ResellerOS-LeadFinder/1.0)" } });
+    const res = await safeFetch(url, { signal: AbortSignal.timeout(8000), headers: UA }, OPEN_WEB);
     let generator: string | null = null, title: string | null = null;
     if (res.ok && (res.headers.get("content-type") ?? "").includes("html")) {
       const html = (await res.text()).slice(0, 60_000);
@@ -44,11 +50,10 @@ async function probe(url: string): Promise<{ ok: boolean; status: number | null;
   } catch { return { ok: false, status: null, server: null, generator: null, title: null }; }
 }
 
-const UA = { "user-agent": "Mozilla/5.0 (compatible; ResellerOS-LeadFinder/1.0)" };
 
 async function fetchHtml(url: string): Promise<string | null> {
   try {
-    const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(6000), headers: UA });
+    const res = await safeFetch(url, { signal: AbortSignal.timeout(6000), headers: UA }, OPEN_WEB);
     if (!res.ok || !(res.headers.get("content-type") ?? "").includes("html")) return null;
     return (await res.text()).slice(0, 200_000);
   } catch { return null; }
@@ -105,7 +110,7 @@ export async function findContacts(domain: string, website?: string | null): Pro
 /** Open a cited page. `finalUrl` is where it landed — grounding links are Google redirects that expire. */
 async function checkSource(url: string, name: string): Promise<{ verdict: "ok" | "blocked" | "bad"; finalUrl: string }> {
   try {
-    const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(8000), headers: UA });
+    const res = await safeFetch(url, { signal: AbortSignal.timeout(8000), headers: UA }, OPEN_WEB);
     const body = res.ok ? (await res.text()).slice(0, 400_000) : null;
     return { verdict: sourceVerdict(res.status, body, name), finalUrl: res.url || url };
   } catch { return { verdict: sourceVerdict(null, null, name), finalUrl: url }; }

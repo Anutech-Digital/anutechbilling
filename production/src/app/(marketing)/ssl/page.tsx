@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { CertCards } from "@/site/components/ssl/CertCards";
 import { SectionHead, Reveal } from "@/site/components/ui/bits";
 import { SECURITY_FEATURES } from "@/site/lib/data/copy";
+import { bookCerts } from "@/lib/catalog/catalog-prices";
+import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
+import { websiteTenantId } from "@/lib/website-tenant";
 
 export const metadata: Metadata = {
   title: "SSL & security",
@@ -9,7 +12,11 @@ export const metadata: Metadata = {
     "Free DV on every site. Paid certificates only when a client needs the paperwork — and we will say so rather than sell you one.",
 };
 
-export default function SslPage() {
+/* R-1786: certificate prices from the price book (items rows with CATALOG_FROM_DB on). */
+export const revalidate = 60;
+
+export default async function SslPage() {
+  const certs = bookCerts(await getPriceBook(websiteTenantId()));
   return (
     <>
       <section className="section rise">
@@ -23,7 +30,7 @@ export default function SslPage() {
               sell you one.
             </p>
           </div>
-          <CertCards />
+          <CertCards certs={certs} />
         </div>
       </section>
 

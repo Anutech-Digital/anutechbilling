@@ -77,7 +77,7 @@ describe("Income-tax WDV depreciation", () => {
     const nb = netBlockAt([laptop, sold, chair], "2026-03-31");
     expect(nb).toEqual({ cost: 280_000, accumulated: 76_800 * 2 + 4_000, net: 280_000 - 157_600 });
     expect(netBlockAt([sold], "2026-07-02")).toEqual({ cost: 0, accumulated: 0, net: 0 });
-    expect(registerDepreciationForRange([laptop, chair], "2026-04-01", "2027-03-31")).toBe(17_280 + 3_600);
+    expect(registerDepreciationForRange([laptop, chair], "2026-04-01", "2027-03-31", "2027-04-10")).toBe(17_280 + 3_600);   // R-1808: a year already over
   });
 
   it("fyStartOf", () => {

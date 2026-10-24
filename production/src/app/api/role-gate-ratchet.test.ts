@@ -52,6 +52,8 @@ const MACHINE_CALLER = new RegExp([
   "verifyMetaSignature", "createHmac", "timingSafeEqual", "secretMatches", "WEBHOOK_SECRET",
   "INBOUND_EMAIL_SECRET", "x-ingest-key", "verifyPdfToken", "quoteTokenMatches",
   "verifyClaimToken", "verifyUnsubscribe", "verifyTrialToken", "portalSession", "requirePortal",
+  /* R-739: the AGENT_QUEUE_TOKEN check, now shared (lib/security/agent-token.ts). */
+  "authorizeAgent\\(",
 ].join("|"));
 
 const ROLE_GATE = new RegExp([
@@ -69,6 +71,11 @@ const ROLE_GATE = new RegExp([
   // R-1776: every Cold Calling route starts with coldCallContext() (src/server/coldcall/route-context.ts),
   // which returns 403 unless the users row's role is in COLD_CALL_ROLES — fail-closed, like mayOpenPage.
   String.raw`\bcoldCallContext\s*\(`,
+  // R-1792 (merged 24 Oct 2026): every Marketing budget route starts with budgetContext()
+  // (src/server/marketing-budget/budget.server.ts) — 403 unless the users row's role is in
+  // BUDGET_ROLES (owner, marketing, billing, accountant); who may approve / pay is then checked
+  // per route (canApproveBudget / canPay / canAskBudget) and again by the DB triggers.
+  String.raw`\bbudgetContext\s*\(`,
 ].join("|"));
 
 /** Anonymous or self-service by design — a session is not what bounds these. Each says why. */
@@ -108,6 +115,7 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
   "attendance/device/register/verify": "WebAuthn for the caller's own device",
   "attendance/mark": "the caller's own attendance",
   "attendance/self": "the caller's own attendance",
+  "auth/login-event": "records the caller's OWN sign-in (R-1010) — user, time, IP and device all read on the server; the body is ignored",
   "push/subscribe": "the caller's own push endpoint",
   "push/unsubscribe": "the caller's own push endpoint",
   "push/test": "a test push to the caller's own device",

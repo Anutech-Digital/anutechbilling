@@ -55,6 +55,7 @@ import {
 } from "@/lib/pricing/workspace";
 import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
+import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 /* The owner inbox used to be hardcoded here, with the comment "Hardcoded for v1
    (single tenant); resolve per-tenant once we go multi-tenant." That TODO came due
@@ -158,7 +159,7 @@ export async function POST(request: NextRequest) {
        and what was asked — a trial or the first-year offer are not a plain price request. */
     const leadNotes = [
       `Submitted via ${pagePath(body) ?? "the website"}`,
-      trial ? "Asked for the free 14-day trial — set the trial up, do not send a price first." : null,
+      trial ? `Asked for the free ${WORKSPACE_TRIAL_DAYS}-day trial — set the trial up, do not send a price first.` : null,
       offer === "starter-30" ? "Asked for the 30+ users first-year offer (₹1,650/user, new account) — needs Google's approval before it is quoted." : null,
       `Billing preference: ${billing}`,
       message ? `Message: ${message}` : null,

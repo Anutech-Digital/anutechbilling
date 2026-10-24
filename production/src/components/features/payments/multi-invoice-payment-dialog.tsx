@@ -28,7 +28,7 @@ import {
   type PaymentMethod,
 } from "@/lib/payments/deposit-accounts";
 import { paymentRefProblem } from "@/lib/forms/poka-yoke";
-import { cashReference } from "@/lib/payments/record-payment-toast";
+import { blankReference } from "@/lib/payments/record-payment-toast";
 import { tdsShortfallLine } from "@/lib/accounting/tds-match";
 import { istToday } from "@/lib/dates/ist";
 import { rupee, formatDate } from "@/lib/utils";
@@ -78,8 +78,9 @@ export const multiInvoicePaymentSchema = z.object({
   lines:          z.array(lineSchema),
 }).superRefine((d, ctx) => {
   const ref = d.reference.trim();
-  if (d.method === "cash") return;   // blank cash reference is filled on submit (R-248)
-  const problem = ref ? paymentRefProblem(d.method, ref) : "Enter the UTR / cheque no. / transaction ID.";
+  /* R-248 / R-1444: a blank reference (any method) is filled on submit with blankReference(). */
+  if (d.method === "cash" || !ref) return;
+  const problem = paymentRefProblem(d.method, ref);
   if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reference"], message: problem });
 });
 
@@ -186,7 +187,7 @@ export function MultiInvoicePaymentDialog({
       });
       return;
     }
-    const reference = d.method === "cash" && !d.reference.trim() ? cashReference(d.receivedDate) : d.reference;
+    const reference = !d.reference.trim() ? blankReference(d.method, d.receivedDate) : d.reference;
     record.mutate(
       {
         customerId: d.customerId,
@@ -288,7 +289,7 @@ export function MultiInvoicePaymentDialog({
                   onChange={(id) => { setAccountTouched(true); setValue("bankAccountId", id); }}
                 />
               </FormField>
-              <FormField label={referenceLabel(method)} required={method !== "cash"} htmlFor="mip_reference" className="sm:col-span-2">
+              <FormField label={referenceLabel(method)} htmlFor="mip_reference" className="sm:col-span-2">
                 <Input id="mip_reference" placeholder={referencePlaceholder(method)} error={errors.reference?.message} {...register("reference")} />
                 <p className="text-2xs text-ink-3 mt-1">{referenceHint(method)}</p>
               </FormField>

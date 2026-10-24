@@ -9,6 +9,7 @@ import * as React from "react";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { cn } from "@/lib/utils";
 import { useActivityLog, type ActivityRow } from "@/lib/queries/activity";
 import { activityActorInitials, activityActorName } from "@/lib/queries/activity-actor";
@@ -22,7 +23,8 @@ function fmtVal(v: unknown): string {
   return String(v);
 }
 function ChangeLine({ changes, action }: { changes: Record<string, unknown> | null; action: string }) {
-  if (!changes) return null;
+  // R-1010: a sign-in's device / IP are already in its label; its `changes` is not a field diff.
+  if (!changes || action === "login") return null;
   if (action === "delete") {
     const old = changes.old as Record<string, unknown> | undefined;
     if (!old) return null;
@@ -125,7 +127,7 @@ export default function ActivityLogPage() {
       {isLoading ? (
         <Card className="p-4 space-y-3">{[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-8 w-full" />)}</Card>
       ) : error ? (
-        <EmptyState icon="alert" title="Could not load activity" body={(error as Error).message} />
+        <EmptyState icon="alert" title="Could not load activity" body={loadErrorBody(error)} />
       ) : filtered.length === 0 ? (
         <EmptyState icon="clock" title="No activity yet" body="When someone creates or changes a record in the app, it shows here." />
       ) : (

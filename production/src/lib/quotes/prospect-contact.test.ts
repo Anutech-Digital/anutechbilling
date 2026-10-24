@@ -25,6 +25,25 @@ describe("R-469 (6): new prospect email / phone", () => {
     expect(prospectLeadRow({ name: "X", contact: { email: "", phone: "9876543210" }, stateCode: null, stateName: null, country: "", sent: false, plan: null, seats: 0, value: 0 }))
       .toMatchObject({ stage: "new", contact_email: null, country: "India", seats: null, value: null });
   });
+  /* R-1712: a business typed as a new prospect got a B2C invoice — no GSTIN was ever asked. */
+  it("R-1712: a GSTIN must pass the checksum; a valid one alone is worth a lead, and the lead carries it", () => {
+    expect(prospectContactProblem({ email: "", phone: "", gstin: "27AAPFU0939F1ZX" })).toMatch(/check digit/);
+    expect(prospectContactProblem({ email: "", phone: "", gstin: "27AAPFU09" })).toMatch(/more characters/);
+    expect(prospectContactProblem({ email: "", phone: "", gstin: "27aapfu0939f1zv" })).toBeNull();
+    expect(hasProspectContact({ email: "", phone: "", gstin: "27AAPFU0939F1ZV" })).toBe(true);
+    expect(hasProspectContact({ email: "", phone: "", gstin: "27AAPFU0939F1ZX" })).toBe(false);
+    const row = prospectLeadRow({
+      name: "Acme", contact: { email: "", phone: "", gstin: " 27aapfu0939f1zv " },
+      stateCode: "27", stateName: "Maharashtra", country: "India", sent: false, plan: null, seats: 0, value: 0,
+    });
+    expect(row.gstin).toBe("27AAPFU0939F1ZV");
+    expect(prospectLeadRow({ name: "X", contact: { email: "a@b.in", phone: "" }, stateCode: null, stateName: null, country: "", sent: false, plan: null, seats: 0, value: 0 }).gstin)
+      .toBeNull();
+  });
+  it("R-1712: the builder's prospect form has the GSTIN box", () => {
+    const src = readFileSync(join(__dirname, "../../components/features/quotes/quote-builder.tsx"), "utf8");
+    expect(src).toMatch(/id="prospectGstin"/);
+  });
   it("the builder shows the two fields and links the quote to the new lead", () => {
     const src = readFileSync(join(__dirname, "../../components/features/quotes/quote-builder.tsx"), "utf8");
     expect(src).toMatch(/id="prospectEmail"/);

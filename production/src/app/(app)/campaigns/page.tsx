@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { KPI } from "@/components/shared/kpi";
 import { Icon } from "@/components/ui/icon";
 import { FAB } from "@/components/ui/fab";
@@ -83,7 +84,7 @@ export default function CampaignsPage() {
         <EmptyState
           icon="alert"
           title="Could not load campaigns"
-          body={error.message}
+          body={loadErrorBody(error)}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
         />
       )}

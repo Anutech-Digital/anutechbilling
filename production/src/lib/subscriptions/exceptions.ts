@@ -20,6 +20,7 @@
 import { rupee, formatDate } from "@/lib/utils";
 import { renewalStateLabel, renewalStateTone, type RenewalState } from "@/lib/renewals/cadence";
 import { paymentDueState, paymentDueChipLabel, todayIST } from "./payment-due";
+import { subscriptionEnded } from "./renewal-display";
 
 export type ExceptionTone = "muted" | "info" | "warning" | "danger" | "success";
 
@@ -34,6 +35,8 @@ export interface SubExceptionFlag {
 
 /** Only the fields this decision reads — so tests need not build a whole row. */
 export interface SubExceptionFields {
+  /** R-1685: an ended (cancelled / expired) subscription has no renewal and no payment clock. */
+  status?: string | null;
   auto_renew?: boolean | null;
   renewal_state?: RenewalState | null;
   reminder_count?: number | null;
@@ -41,6 +44,9 @@ export interface SubExceptionFields {
   outstanding_amount?: number | null;
   /** Postpaid credit clock (migration 20260910060000). Null = no agreed date. */
   payment_due_date?: string | null;
+  /** R-1689: when the money is due — the oldest unpaid invoice's due date, else the agreed date
+   *  (OutstandingRow.pay_by). Absent = not read; the agreed date alone is used. */
+  pay_by?: string | null;
   seats?: number | null;
   used?: number | null;
   suspended_at?: string | null;
@@ -52,11 +58,12 @@ const n = (v: number | null | undefined): number =>
 
 export function subscriptionExceptions(s: SubExceptionFields): SubExceptionFlag[] {
   const out: SubExceptionFlag[] = [];
+  const ended = subscriptionEnded(s.status);
 
   // Auto-renew off means the renewals cron generates no quote and the
   // subscription lapses to `expired` on its date with nobody told. This was
   // not surfaced anywhere in the app — mobile or desktop.
-  if (s.auto_renew === false) {
+  if (s.auto_renew === false && !ended) {
     out.push({
       key: "auto_renew_off",
       label: "Won't auto-renew",
@@ -68,7 +75,7 @@ export function subscriptionExceptions(s: SubExceptionFields): SubExceptionFlag[
   // Where the renewal chase has actually reached, so nobody rings a customer
   // unaware that four reminders already went out under their name.
   // `pending` is the resting state and carries no news.
-  if (s.renewal_state && s.renewal_state !== "pending") {
+  if (s.renewal_state && s.renewal_state !== "pending" && !ended) {
     const sent = n(s.reminder_count);
     out.push({
       key: "renewal_state",
@@ -81,7 +88,16 @@ export function subscriptionExceptions(s: SubExceptionFields): SubExceptionFlag[
   }
 
   // Service can be live with money still owed.
-  if (n(s.outstanding_amount) > 0) {
+  /* R-1685: an ended subscription that still owes says so — as owed, with no "service is
+     active" and no payment countdown (a closed record is not on a credit clock). */
+  if (n(s.outstanding_amount) > 0 && ended) {
+    out.push({
+      key: "outstanding",
+      label: `${rupee(n(s.outstanding_amount))} still owed`,
+      tone: "warning",
+      title: "The subscription has ended but this amount is still unpaid",
+    });
+  } else if (n(s.outstanding_amount) > 0) {
     out.push({
       key: "outstanding",
       label: `${rupee(n(s.outstanding_amount))} due`,
@@ -100,12 +116,18 @@ export function subscriptionExceptions(s: SubExceptionFields): SubExceptionFlag[
        it too, for free, and it is tested in exceptions.test.ts alongside the other
        branches — none of which fire against today's production data, which is
        exactly why they are tested here and not eyeballed on screen. */
-    const state = paymentDueState(s.payment_due_date, todayIST(), n(s.outstanding_amount));
+    /* R-1689: credit / "invoice now, pay later" raise an invoice with a due date and leave
+       payment_due_date empty — the row read "No payment due date" while the invoice fell due on
+       3 Nov. The date the money is due is the oldest unpaid invoice's (pay_by, from the dues
+       read — lib/queries/payments.ts subscriptionPayBy), else the agreed date. */
+    const payBy = s.pay_by ?? s.payment_due_date ?? null;
+    const fromInvoice = !!s.pay_by && s.pay_by !== s.payment_due_date?.slice(0, 10);
+    const state = paymentDueState(payBy, todayIST(), n(s.outstanding_amount));
     out.push({
       key: "payment-due",
       label: paymentDueChipLabel(
         state,
-        s.payment_due_date ? formatDate(s.payment_due_date) : "",
+        payBy ? formatDate(payBy) : "",
       ),
       /* Red only once it is actually late. Amber inside the last three days, quiet
          before that, and MUTED when no date was ever agreed — that last one is a
@@ -116,7 +138,9 @@ export function subscriptionExceptions(s: SubExceptionFields): SubExceptionFlag[
           : "warning",
       title: state.kind === "none"
         ? "No agreed payment date — set one via the row's ⋯ menu → Correct subscription, and the countdown starts"
-        : `Postpaid — ${rupee(n(s.outstanding_amount))} due on ${formatDate(s.payment_due_date!)}`,
+        : fromInvoice
+          ? `Unpaid invoice — ${rupee(n(s.outstanding_amount))} due, the invoice falls due on ${formatDate(payBy!)}`
+          : `Postpaid — ${rupee(n(s.outstanding_amount))} due on ${formatDate(payBy!)}`,
     });
   }
 

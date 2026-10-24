@@ -21,6 +21,7 @@ import { useEmiPurchases } from "@/lib/queries/emi";
 import { useEmployeeAssets } from "@/lib/queries/employee-assets";
 import { BLOCKS, depreciationSchedule, depreciationInFy, bookValueAt, registerSummary, fyStartOf, fyLabel, type AssetBlock } from "@/lib/accounting/depreciation";
 import { istToday } from "@/lib/dates/ist";
+import { assetDeleteConfirm } from "@/lib/accounting/asset-delete";
 
 function todayIso(): string { return istToday(); }
 
@@ -105,7 +106,7 @@ export function FixedAssetRegister() {
                         <td className="px-3 py-2 text-right whitespace-nowrap">
                           {!sold && <Button variant="ghost" size="sm" onClick={() => setDisposeFor(a)}>Sold / scrap</Button>}
                           <button type="button" aria-label="Delete asset" className="rounded p-1.5 text-ink-3 hover:bg-paper-2 hover:text-rose"
-                            onClick={async () => { if (await confirm({ title: "Remove from the asset register?", body: `${a.name} — removed from the register only; the expense / EMI it came from stays as it is.`, confirmLabel: "Remove", danger: true })) del.mutate(a.id); }}>
+                            onClick={async () => { if (await confirm({ title: "Remove from the asset register?", body: assetDeleteConfirm(a, today).body, confirmLabel: "Remove", danger: true })) del.mutate(a.id); }}>
                             <Icon name="trash" size={14} />
                           </button>
                         </td>

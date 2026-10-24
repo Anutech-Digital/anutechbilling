@@ -75,7 +75,7 @@ export function CollectionsOwnerReport({ owing }: { owing: readonly ReportOwing[
       ) : (
         <>
           <dl className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Tile label="Money received" value={rupee(report.received.total)}
+            <Tile label="Received from follow-up list" value={rupee(report.received.total)}
               sub={`${report.received.payments} ${report.received.payments === 1 ? "payment" : "payments"} · ${report.received.customers} ${report.received.customers === 1 ? "customer" : "customers"}`} />
             <Tile label="Promises made" value={String(report.promises.made)}
               sub={report.promises.madeAmount > 0 ? `${rupee(report.promises.madeAmount)} promised` : "logged this week"} />

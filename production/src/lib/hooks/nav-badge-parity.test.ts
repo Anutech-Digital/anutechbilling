@@ -127,6 +127,7 @@ describe("R-1541: invoices — badge == /invoices?focus=unpaid", () => {
     { status: "paid", due_date: "2026-10-10", amount: 1000, net_payable: 1000, paid_amount: 1000 },   // no
     { status: "void", due_date: "2026-10-10", amount: 1000, net_payable: 1000, paid_amount: 0 },      // no
     { status: "draft", due_date: "2026-10-10", amount: 1000, net_payable: 1000, paid_amount: 0 },     // no
+    { status: "pending", due_date: "2026-10-10", amount: 1000, net_payable: 1000, paid_amount: 0, written_off_at: "2026-10-20T00:00:00Z" }, // R-1635 written off — no
   ];
   it("the Outstanding focus holds 2", () => {
     expect(rows.filter((r) => invoiceInFocus(r, "unpaid", NOW)).length).toBe(2);
@@ -135,6 +136,7 @@ describe("R-1541: invoices — badge == /invoices?focus=unpaid", () => {
     const sql = countSql("invoices");
     expect(quoted(sql.match(/i\.status in \(([^)]*)\)/)?.[1] ?? "")).toEqual([...INVOICE_OWED_STATUSES].sort());
     expect(sql).toMatch(/coalesce\(i\.net_payable, i\.amount\) - coalesce\(i\.paid_amount, 0\) > 0/);
+    expect(sql, "R-1635: a written-off invoice is not unpaid").toMatch(/i\.written_off_at is null/);
   });
 });
 

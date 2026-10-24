@@ -6628,6 +6628,8 @@ export type Database = {
           taxable_value: number | null
           tenant_id: string
           updated_at: string
+          write_off_reason: string | null
+          written_off_at: string | null
         }
         Insert: {
           adjusted_advances?: Json
@@ -6671,6 +6673,8 @@ export type Database = {
           taxable_value?: number | null
           tenant_id: string
           updated_at?: string
+          write_off_reason?: string | null
+          written_off_at?: string | null
         }
         Update: {
           adjusted_advances?: Json
@@ -6714,6 +6718,8 @@ export type Database = {
           taxable_value?: number | null
           tenant_id?: string
           updated_at?: string
+          write_off_reason?: string | null
+          written_off_at?: string | null
         }
         Relationships: [
           {
@@ -6750,57 +6756,78 @@ export type Database = {
         Row: {
           covered_product: string | null
           created_at: string
+          engine_ref: string | null
+          fulfilment: string | null
+          gst_rate: number
           hsn: string | null
           id: string
           is_active: boolean
           is_partner_visible: boolean
+          is_public: boolean
           item_type: string
           kind: string
           margin_pct: number | null
           msrp: number
           name: string
           partner_price: number | null
+          price_source: string
           prices: Json
+          sku: string | null
           synced_from_partner_id: string | null
           tenant_id: string
+          term_months: number | null
           vendor: Database["public"]["Enums"]["vendor"]
           wholesale: number
         }
         Insert: {
           covered_product?: string | null
           created_at?: string
+          engine_ref?: string | null
+          fulfilment?: string | null
+          gst_rate?: number
           hsn?: string | null
           id: string
           is_active?: boolean
           is_partner_visible?: boolean
+          is_public?: boolean
           item_type?: string
           kind?: string
           margin_pct?: number | null
           msrp: number
           name: string
           partner_price?: number | null
+          price_source?: string
           prices?: Json
+          sku?: string | null
           synced_from_partner_id?: string | null
           tenant_id: string
+          term_months?: number | null
           vendor: Database["public"]["Enums"]["vendor"]
           wholesale: number
         }
         Update: {
           covered_product?: string | null
           created_at?: string
+          engine_ref?: string | null
+          fulfilment?: string | null
+          gst_rate?: number
           hsn?: string | null
           id?: string
           is_active?: boolean
           is_partner_visible?: boolean
+          is_public?: boolean
           item_type?: string
           kind?: string
           margin_pct?: number | null
           msrp?: number
           name?: string
           partner_price?: number | null
+          price_source?: string
           prices?: Json
+          sku?: string | null
           synced_from_partner_id?: string | null
           tenant_id?: string
+          term_months?: number | null
           vendor?: Database["public"]["Enums"]["vendor"]
           wholesale?: number
         }
@@ -14466,6 +14493,10 @@ export type Database = {
       approve_payment_run: { Args: { p_run_id: string }; Returns: undefined }
       audit_service_actor: { Args: never; Returns: string }
       auto_backup_if_stale: { Args: never; Returns: Json }
+      auto_reconcile_bank_account: {
+        Args: { p_account_id: string; p_after?: string; p_limit?: number }
+        Returns: Json
+      }
       backup_all_tenants: { Args: { p_label?: string }; Returns: Json }
       backup_tenant: {
         Args: { p_label?: string; p_tenant: string }
@@ -14635,6 +14666,16 @@ export type Database = {
           p_work_date: string
         }
         Returns: string
+      }
+      correct_subscription_terms: {
+        Args: {
+          p_item_id: string | null
+          p_mrr: number | null
+          p_reason: string | null
+          p_seats: number | null
+          p_subscription_id: string
+        }
+        Returns: undefined
       }
       create_direct_invoice: {
         Args: {
@@ -15822,6 +15863,7 @@ export type Database = {
           cn_tax: number
           cn_taxable: number
           cogs: number
+          cogs_by_category: Json
           cogs_count: number
           commissions: number
           commissions_count: number
@@ -16149,6 +16191,7 @@ export type Database = {
         | "billing"
         | "delivery"
         | "partner_agent"
+        | "marketing"
       vault_category:
         | "google_admin"
         | "m365_admin"
@@ -16345,6 +16388,7 @@ export const Constants = {
         "billing",
         "delivery",
         "partner_agent",
+        "marketing",
       ],
       vault_category: [
         "google_admin",

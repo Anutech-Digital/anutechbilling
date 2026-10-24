@@ -23,6 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { KPI } from "@/components/shared/kpi";
 import type { PartnerMetricsRow, TenantWithParent } from "@/lib/supabase/database.types";
 
@@ -122,7 +123,7 @@ export default function PartnersPage() {
             <EmptyState
               icon="alert"
               title="Could not load partner metrics"
-              body={error.message}
+              body={loadErrorBody(error)}
               action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
             />
           )}

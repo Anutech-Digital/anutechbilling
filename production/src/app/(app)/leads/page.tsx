@@ -737,7 +737,7 @@ function LeadsPageInner() {
           and the width it was hogging goes to the search box, which was the
           other cramped control on this row. */}
       {!isLoading && counts && (
-        <div className="sticky top-0 z-10 -mx-1 px-1 pt-1.5 bg-paper/95 backdrop-blur-sm">
+        <div className="sticky top-0 z-10 -ml-1 pl-1 pt-1.5 bg-paper/95 backdrop-blur-sm">
           <LeadsToolbar
             pool={counts.pool}
             leadMeMember={leadMeMember}

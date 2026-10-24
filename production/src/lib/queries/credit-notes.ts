@@ -6,7 +6,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "@/lib/queries/keys";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
@@ -55,12 +55,10 @@ export function useIssueCreditNote() {
     },
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: queryKeys.aging() });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
-      /* R-1566: on an invoice already paid, the note's excess is now the customer's credit. */
-      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
-      qc.invalidateQueries({ queryKey: ["payments"] });
+      /* R-1566: on an invoice already paid, the note's excess is now the customer's credit;
+         R-1634: the lower balance shows on /collections too. */
+      invalidateReceivables(qc);
       const credit = res.customer_credit ?? 0;
       toast.success(`Credit note ${res.credit_note_id} issued`, credit > 0 ? {
         description: `${rupee(credit)} was already paid on this invoice — it is now the customer's credit: use it on their next quote, or refund it from Payments (Refund on that payment).`,

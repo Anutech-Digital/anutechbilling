@@ -137,4 +137,11 @@ describe("Workspace pricing layout (R-1495)", () => {
     const { container } = render(<WorkspacePricing plans={plans} />);
     expect(container.querySelector(".wp-cards")?.hasAttribute(AVOID_FLOATING_ATTR)).toBe(true);
   });
+
+  /* R-1495 galat (Pawan, 17 Oct): on a phone the AI launcher still sat over buttons further
+     down — measured at 390px it covered the FAQ rows' "+" toggles. The FAQ steps it aside too. */
+  it("on a phone the launcher also steps aside while the pricing FAQ is on screen", () => {
+    const { container } = render(<WorkspacePricing plans={plans} />);
+    expect(container.querySelector(".wp-faq")?.hasAttribute(AVOID_FLOATING_ATTR)).toBe(true);
+  });
 });

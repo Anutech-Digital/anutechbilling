@@ -12,9 +12,12 @@
  * (it used to say "fully paid" and "₹X outstanding" together), and the owner report of
  * past TDS entries whose rate does not fit their section.
  */
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import { checkTdsRate } from "./tds-rates";
+import { rupee } from "@/lib/utils";
 
-const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
+/* R-1138: the shared formatter (lakh grouping, sign, rounding) — not a local copy. */
+const inr = (n: number) => rupee(n);
 
 export interface ReceiptSplit {
   /** Money that reached the bank. */
@@ -124,4 +127,42 @@ export function tdsRateMismatches<T extends TdsEntryLike>(rows: readonly T[]): T
   return out.sort((a, b) =>
     Number(a.knownVariant) - Number(b.knownVariant) ||
     (b.entry.payment_received_date ?? "").localeCompare(a.entry.payment_received_date ?? ""));
+}
+
+/** One printed line of an invoice's "Advances adjusted" block. */
+export interface AdvanceLine {
+  key: string;
+  voucherNo: string | null;
+  receivedAt: string;
+  /** The payment method as stored ("bank_transfer"), or "tds" for the TDS line. */
+  method: string;
+  amount: number;
+}
+
+/**
+ * R-1670 (2) — an advance the customer paid with TDS deducted, shown as what reached the bank
+ * plus the TDS, not one gross figure. The invoice said "Bank transfer ₹1,52,928" while the bank
+ * got ₹1,50,336 and ₹2,592 went to the government, so the reconciliation could never match.
+ * Same split as the receipt (receiptSplit). The total adjusted is unchanged.
+ * `tdsByPaymentId` from tds_receivable (tdsByPayment); absent → every line as before.
+ */
+export function advanceLinesWithTds(
+  advances: readonly { payment_id: string; voucher_no: string | null; received_at: string; method: string; amount: number }[],
+  tdsByPaymentId: Readonly<Record<string, number>> | null | undefined,
+): AdvanceLine[] {
+  const out: AdvanceLine[] = [];
+  advances.forEach((a, i) => {
+    const split = receiptSplit(a.amount, tdsByPaymentId?.[a.payment_id]);
+    const key = `${a.payment_id}-${i}`;
+    out.push({ key, voucherNo: a.voucher_no, receivedAt: a.received_at, method: a.method, amount: split.tds > 0 ? split.received : a.amount });
+    if (split.tds > 0) out.push({ key: `${key}-tds`, voucherNo: null, receivedAt: a.received_at, method: "tds", amount: split.tds });
+  });
+  return out;
+}
+
+/** "Bank transfer", "TDS deducted by customer" — the method words of an advance line. */
+export function advanceMethodLabel(method: string): string {
+  if (method === "tds") return "TDS deducted by customer";
+  /* R-1715 / R-1680: every other method from the one payment-method map ("UPI", not "Upi"). */
+  return paymentMethodLabel(method);
 }

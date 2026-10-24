@@ -105,7 +105,7 @@ export function VaultPinGate({ children }: { children: React.ReactNode }) {
           ) : error ? (
             <p className="text-xs text-rose text-center">{error}</p>
           ) : (
-            <p className="text-xs text-ink-4 text-center">{status.attemptsLeft} attempt(s) left</p>
+            <p className="text-xs text-ink-3 text-center">{status.attemptsLeft} attempt(s) left</p>
           )}
 
           <Button
@@ -119,7 +119,7 @@ export function VaultPinGate({ children }: { children: React.ReactNode }) {
         </form>
 
         {/* The sentence that matters. */}
-        <p className="mt-5 pt-4 border-t border-hairline text-2xs leading-relaxed text-ink-4">
+        <p className="mt-5 pt-4 border-t border-hairline text-2xs leading-relaxed text-ink-3">
           This PIN is a <b>screen lock</b> — it does not encrypt data. It is for when
           your laptop is left open. Your data is protected by something else: the database's own
           rule, which gives these rows only to your login — with or without a PIN.

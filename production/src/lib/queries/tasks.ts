@@ -197,29 +197,6 @@ export function useTasksForLead(leadId: string | null | undefined) {
   });
 }
 
-/**
- * "Today + overdue" count for the top-bar bell badge.
- * Cheap query — count(*) head-only.
- */
-export function useTaskCountDueOrOverdue() {
-  return useQuery({
-    queryKey: ["tasks", "count-due-or-overdue"],
-    queryFn: async (): Promise<number> => {
-      const supabase = createClient();
-      const { endISO } = todayBoundariesIST();
-      // pending AND due_at < endOfToday (covers both overdue + today)
-      const { count, error } = await supabase
-        .from("tasks")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "pending")
-        .lt("due_at", endISO);
-      if (error) throw error;
-      return count ?? 0;
-    },
-    staleTime: 30_000,
-  });
-}
-
 // ────────────────────────────────────────────────────────────────
 // Mutations
 // ────────────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { notifyTenantOwners } from "@/lib/notifications/notify.server";
+import { notifyQuoteExpired } from "@/lib/notifications/quote-expired.server";
 import { isQuoteExpired, rupee } from "@/lib/utils";
 import { quoteTokenMatches } from "@/lib/quotes/accept-token";
 import { sendInternalEmail } from "@/lib/messaging";
@@ -78,6 +79,11 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   // Expiry judged at END OF DAY IST — a quote "valid until 30 Jun" must accept
   // through all of 30 Jun in India, not lapse at 05:30 IST (UTC midnight). (#20)
   if (isQuoteExpired(quote.expires_date)) {
+    /* R-1679: sales hears about it — the customer wanted to buy. */
+    await notifyQuoteExpired({
+      admin: supabase, tenantId: quote.tenant_id, quoteId: quote.id,
+      customerName: quote.customer_name ?? "", event: "accept",
+    });
     return NextResponse.json({ error: "This quote has expired — please ask the reseller for a fresh one" }, { status: 400 });
   }
 

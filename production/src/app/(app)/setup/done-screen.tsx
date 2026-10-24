@@ -39,6 +39,7 @@ export function StepDone() {
     gstin:              me?.tenantGstin,
     gstinVerifiedAt:    me?.tenantGstinVerifiedAt,
     stateCode:          me?.tenantStateCode,
+    address:            me?.tenantAddress,
     upiVpa:             me?.tenantUpiVpa,
     remitAccountNumber: me?.tenantRemitAccountNumber,
     customerCount:      customersLoading ? undefined : (customers?.length ?? 0),

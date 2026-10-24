@@ -12,7 +12,7 @@
  * Travel (kaccha — blocked), Staff Welfare (s.17(5) — blocked), Bank Charges (claimable) +
  * settlement shortfall ₹236; commissions ₹25,000; laptop asset (₹24,000 depreciation).
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { assemblePnl, type PnlRpcRow } from "@/lib/accounting/pnl-assemble";
 import type { AssetLike } from "@/lib/accounting/depreciation";
 import { computeItrPack, financialYear } from "./itr";
@@ -50,6 +50,13 @@ const EXTRA = {
   creditNoteCount: 0, debitNoteCount: 0, placedPoCost: 400_000, placedPoCount: 2,
   tdsCredit: 0, tdsCount: 0, advanceTaxPaid: 0, assetCount: 1,
 };
+
+/* R-1808: depreciation stops at today (IST). These cases read a whole FY (2026-27) as a year
+   already over, so the clock is pinned after it (at load: some cases compute while the
+   describe is collected) — only Date is faked. */
+vi.useFakeTimers({ toFake: ["Date"] });
+vi.setSystemTime(new Date("2028-04-10T06:00:00Z"));
+afterAll(() => { vi.useRealTimers(); });
 
 describe("R-1579 — ITR book profit = P&L net profit (same FY)", () => {
   const pnl = assemblePnl({ from: fy.start, to: fy.end }, ROW, { ...MASTERS, assets: [laptop] });

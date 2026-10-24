@@ -285,6 +285,12 @@ export const ROUTE_DENY: Partial<Record<UserRole, string[]>> = {
   /* R-255: the accountant READS Customers (the /customers row admits its sub-pages by prefix);
      the Add-customer form is a write it does not do. */
   accountant: ["/customers/new"],
+  /* R-1791: the Marketing role opens the Hub ("/marketing"), which admits every /marketing/*
+     page by prefix. These are the Hub pages it does not get — bulk customer messaging and the
+     IndiaMART key — so a typed URL bounces too. */
+  marketing: [
+    "/marketing/whatsapp", "/marketing/templates", "/marketing/indiamart", "/marketing/lead-finder",
+  ],
 };
 
 /**
@@ -348,6 +354,8 @@ export const ROLE_HOME: Record<UserRole, string> = {
   // rule: a home the role is not allowed to visit makes middleware redirect to
   // it, disallow it, and redirect again — a login that ends in a loop.
   partner_agent: "/partners",
+  /* R-1791: the Marketing Hub overview — admitted for this role by MKT below. */
+  marketing:    "/marketing",
 };
 
 // ============================================================
@@ -364,6 +372,10 @@ export const ROLE_HOME: Record<UserRole, string> = {
 // auto-opens when you're inside it.
 const OM: UserRole[] = ["owner", "manager"];
 const OMB: UserRole[] = ["owner", "manager", "billing"];
+/** R-1791 (Abhishek, 23 Oct 2026): the Marketing role's part of the Marketing Hub — plan & spend,
+ *  ads & tracking, reputation, cold calling. Not the screens that message customers in bulk,
+ *  touch prices or keys (email/WhatsApp, coupons, IndiaMART): those stay owner / manager. */
+const OMK: UserRole[] = ["owner", "manager", "marketing"];
 /** Who may read salaries (RLS on salary_payments since 20260930175000) — and so who gets a
  *  Balance Sheet whose salary lines are real. */
 export const SALARY_ROLES: UserRole[] = ["owner", "manager", "accountant"];
@@ -442,6 +454,7 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/items/subscriptions": "Subscriptions tab of Products (/items) — the menu row opens the page, the tab links here",
   "/items/products": "One-time products tab of Products (/items) — the menu row opens the page, the tab links here",
   "/products": "Redirects to Products (/items) for people who type the menu name as a URL (R-490)",
+  "/settings/company": "redirect to /settings (Company tab), R-1670",
 };
 
 export const APP_NAV: NavSection[] = [
@@ -495,31 +508,35 @@ export const APP_NAV: NavSection[] = [
            manager only, it shows ad spend and CAC. Fifteen sidebar rows became one: the
            other fourteen are the Hub's directory, in five groups (S30); S34 added a
            fifteenth, the IndiaMART key screen (owner-only, like its API). */
-        id: "marketing-hub",   href: "/marketing",         label: "Marketing Hub",  icon: "layout", roles: OM, hint: "Tools needed, who owns them, budget vs spend",
+        id: "marketing-hub",   href: "/marketing",         label: "Marketing Hub",  icon: "layout", roles: OMK, hint: "Tools needed, who owns them, budget vs spend",
         /* R-1663 (19 Oct 2026, Abhishek): Cold Calling is a sidebar row under the Hub, and the
            sales team uses it too — so it is a CHILD, not a directory row: a sales user sees the
            Hub as a heading with only this child (R-497 pattern), never the Hub's spend pages. */
         children: [
-          { id: "cold-calling", href: "/marketing/cold-calling", label: "Cold Calling", icon: "phone", roles: ["owner", "manager", "sales_senior", "sales"], hint: "AI agent calls an imported list; interested ones go to Sales & Pipeline" },
+          { id: "cold-calling", href: "/marketing/cold-calling", label: "Cold Calling", icon: "phone", roles: ["owner", "manager", "sales_senior", "sales", "marketing"], hint: "AI agent calls an imported list; interested ones go to Sales & Pipeline" },
+          /* R-1793 (23 Oct 2026, Abhishek): marketing asks the owner for a budget, billing pays it.
+             A CHILD (not a directory row) so billing / accountant — who do not get the Hub — see the
+             Hub as a heading with just this row. Manager is not in it: only the three people are. */
+          { id: "marketing-budget", href: "/marketing/budget", label: "Budget & Payments", icon: "wallet", roles: ["owner", "marketing", "billing", "accountant"], hint: "Marketing asks for a budget, the owner approves, billing pays up to it" },
         ],
         directory: [
-          { id: "marketing-campaigns", href: "/marketing/campaigns", label: "Campaign budgets", icon: "target", roles: OM, group: "Plan & spend", hint: "Each campaign's budget, dates and target, with spend and leads" },
-          { id: "marketing-spend", href: "/marketing/spend",   label: "Spend",          icon: "wallet", roles: OM, group: "Plan & spend" },
-          { id: "marketing-roas",  href: "/marketing/reports", label: "ROAS & CAC",     icon: "chart",  roles: OM, group: "Plan & spend" },
+          { id: "marketing-campaigns", href: "/marketing/campaigns", label: "Campaign budgets", icon: "target", roles: OMK, group: "Plan & spend", hint: "Each campaign's budget, dates and target, with spend and leads" },
+          { id: "marketing-spend", href: "/marketing/spend",   label: "Spend",          icon: "wallet", roles: OMK, group: "Plan & spend" },
+          { id: "marketing-roas",  href: "/marketing/reports", label: "ROAS & CAC",     icon: "chart",  roles: OMK, group: "Plan & spend" },
           { id: "campaigns",       href: "/campaigns",         label: "Email campaigns", icon: "mail",    roles: OM, group: "Campaigns" },
           { id: "email-templates", href: "/marketing/templates", label: "Email templates", icon: "file", roles: OM, group: "Campaigns" },
           { id: "wa-broadcast",    href: "/marketing/whatsapp",  label: "WhatsApp broadcast", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Message many leads at once with an approved template" },
           /* S28: renewal / invoice reminders on WhatsApp — switch, template per kind, send log. */
           { id: "wa-reminders",    href: "/marketing/whatsapp/reminders", label: "WhatsApp reminders", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Renewal and invoice reminders on WhatsApp — ON/OFF, template, log" },
-          { id: "ad-platforms",    href: "/marketing/ads",      label: "Ad accounts (live)", icon: "trending_up", roles: OM, group: "Ads & tracking", hint: "Google Ads + Facebook spend by campaign, daily from Google/Meta" },
-          { id: "ad-landing-pages", href: "/marketing/landing-pages", label: "Ads landing pages", icon: "layout", roles: OM, group: "Ads & tracking", hint: "Ad final URL, phone preview, leads received" },
-          { id: "marketing-links", href: "/marketing/links",   label: "Tracking links", icon: "globe",  roles: OM, group: "Ads & tracking", hint: "A link per ad or post — the lead source is set automatically" },
-          { id: "lead-gen",        href: "/lead-gen",          label: "Lead sources",    icon: "target",  roles: OM, group: "Ads & tracking" },
+          { id: "ad-platforms",    href: "/marketing/ads",      label: "Ad accounts (live)", icon: "trending_up", roles: OMK, group: "Ads & tracking", hint: "Google Ads + Facebook spend by campaign, daily from Google/Meta" },
+          { id: "ad-landing-pages", href: "/marketing/landing-pages", label: "Ads landing pages", icon: "layout", roles: OMK, group: "Ads & tracking", hint: "Ad final URL, phone preview, leads received" },
+          { id: "marketing-links", href: "/marketing/links",   label: "Tracking links", icon: "globe",  roles: OMK, group: "Ads & tracking", hint: "A link per ad or post — the lead source is set automatically" },
+          { id: "lead-gen",        href: "/lead-gen",          label: "Lead sources",    icon: "target",  roles: OMK, group: "Ads & tracking" },
           { id: "indiamart-leads", href: "/marketing/indiamart", label: "IndiaMART leads", icon: "inbox", roles: ["owner"], group: "Ads & tracking", hint: "Save the CRM key — IndiaMART enquiries become leads automatically" },
-          { id: "google-business", href: "/marketing/google-business", label: "Google Business Profile", icon: "map_pin", roles: OM, group: "Reputation", hint: "Maps/Search par listing kitni dikhi, calls, reviews — Google se seedha" },
-          { id: "google-reviews",  href: "/marketing/reviews",   label: "Google reviews",  icon: "award", roles: OM, group: "Reputation", hint: "Khush customers se Google review maango" },
+          { id: "google-business", href: "/marketing/google-business", label: "Google Business Profile", icon: "map_pin", roles: OMK, group: "Reputation", hint: "Maps/Search par listing kitni dikhi, calls, reviews — Google se seedha" },
+          { id: "google-reviews",  href: "/marketing/reviews",   label: "Google reviews",  icon: "award", roles: OMK, group: "Reputation", hint: "Khush customers se Google review maango" },
           { id: "coupons",         href: "/coupons",           label: "Coupons",         icon: "ticket",  roles: OM, group: "Offers & new leads" },
-          { id: "online-promos",   href: "/online-promos",     label: "Website offer banner", icon: "sparkles", roles: OM, group: "Offers & new leads" },
+          { id: "online-promos",   href: "/online-promos",     label: "Website offer banner", icon: "sparkles", roles: OMK, group: "Offers & new leads" },
           { id: "lead-finder",     href: "/marketing/lead-finder", label: "AI Lead Finder", icon: "sparkles", roles: OM, group: "Offers & new leads", hint: "An agent finds customers like yours on the public web — approve to add a lead" },
         ],
       },
@@ -776,7 +793,7 @@ export const APP_NAV: NavSection[] = [
            in (middleware bounced /help too: its allow-list is derived from these roles).
            The guide is static text (lib/help/content.ts), nothing tenant- or role-sensitive.
            The Feedback child keeps its own OM gate. */
-        id: "help",      href: "/help",                 label: "Help & Tutorial",  icon: "question", roles: [...STAFF, "partner_agent"],
+        id: "help",      href: "/help",                 label: "Help & Tutorial",  icon: "question", roles: [...STAFF, "partner_agent", "marketing"],
       },
     ],
   },

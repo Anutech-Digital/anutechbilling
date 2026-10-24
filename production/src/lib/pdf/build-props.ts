@@ -322,6 +322,8 @@ export function buildQuotePdfProps(args: {
     /* R-034: the money is in, so this sheet is a record of a paid order, not an offer.
        Decided once, here, so the heading and the footer cannot disagree. */
     isPaid:        quoteIsPaid(quote),
+    /* R-1670 (3): the invoice terms this quote will carry, not a fixed "Net 7". */
+    paymentTermsDays: quote.payment_terms_days ?? null,
     /* R-809: add-seats / one-off → "One-time charge", not "billed yearly". */
     oneTime:       isOneTimeQuote({
       isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off,

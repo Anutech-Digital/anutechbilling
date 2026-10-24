@@ -23,6 +23,10 @@
  * gaya: <keys>" and exit 5. No MIGRATIONS_HEALTH_TOKEN here → a yellow line, never silence.
  * (scripts/ops/migrations-health-check.mjs)
  *
+ * R-1722 (24 Oct 2026): after a green --push, run the smoke check against staging —
+ * `SMOKE_EMAIL=… SMOKE_PASSWORD=… npm run smoke -- <staging URL>` (scripts/ops/smoke-check.mjs,
+ * docs/ARCHITECTURE.md §8): 17 real pages, logged in, exit 1 on any red page.
+ *
  * Exit 0 = ok (dry run done / pushed / nothing new). 1 = error or refused. 2 = merge conflict.
  * 3 = DB step needed. 4 = pushed, but the migration check could not run. 5 = pushed, and the
  * staging DB is missing migrations. Run from production/.

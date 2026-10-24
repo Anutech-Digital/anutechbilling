@@ -14,6 +14,7 @@ import { useListKeys } from "@/lib/hooks/useKeyboard";
 import { KeyHintBar, ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { useRouter } from "next/navigation";
 import { useSubscriptions, useSetSubscriptionDomain, useDeleteSubscription } from "@/lib/queries/subscriptions";
+import { useOutstandingReceivables } from "@/lib/queries/payments";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
 import { initialSubscriptionSearch, SUBSCRIPTION_SEARCH_EVENT } from "./palette-links";
@@ -57,6 +58,8 @@ import { subscriptionCogs, cogsBadge, cogsTotals } from "@/lib/vendor/cogs";
 import { LicenseLeakageCard, leakageRows } from "@/components/features/subscriptions/license-leakage-card";
 import { SubsInsightsStrip } from "@/components/features/subscriptions/subs-insights-strip";
 import { seatsPhrase, manageSeatsIdFromSearch } from "@/components/features/subscriptions/seat-words";
+import { openSubscriptionIdFromSearch } from "./open-link";
+import { raisedInvoiceHref } from "../invoices/invoice-href";
 import { useMarginAlerts } from "@/lib/queries/margin-alerts";
 import { SeatRequestsCard } from "@/components/features/subscriptions/seat-requests-card";
 import { useSeatRequests, useAmendments } from "@/lib/queries/seat-requests";
@@ -70,11 +73,13 @@ import { ReconcileGoogleDialog } from "@/components/features/subscriptions/recon
 import { ImportGoogleSubsDialog } from "@/components/features/subscriptions/import-google-subs-dialog";
 import { MarginAlertsCard, marginAlertCounts } from "@/components/features/subscriptions/margin-alerts-card";
 import { SubDrawerActions, SubDrawerDangerZone } from "@/components/features/subscriptions/sub-drawer-actions";
+import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
 import Link from "next/link";
 import { toast } from "sonner";
 import { toastError, describeError } from "@/lib/errors/toast-error";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button, IconButton } from "@/components/ui/button";
 import { FAB } from "@/components/ui/fab";
@@ -91,7 +96,7 @@ import { useCustomers } from "@/lib/queries/customers";
 import { usePrimaryContacts } from "@/lib/queries/contacts";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { subscriptionExceptions } from "@/lib/subscriptions/exceptions";
-import { renewalClock, termValue, termValueLabel } from "@/lib/subscriptions/renewal-display";
+import { renewalClock, termValue, termValueLabel, liveTermAmount, subscriptionEnded } from "@/lib/subscriptions/renewal-display";
 import {
   subscriptionCycle, matchesCycle, cycleOptions, cycleFromUrl,
   CYCLE_URL_VALUES, type CycleFilter, type CycleUrlValue,
@@ -102,6 +107,7 @@ import { useQuotes } from "@/lib/queries/quotes";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { SubCustomerLink, SubQuoteLink } from "./sub-links";
 import { cn } from "@/lib/utils";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import type { Subscription } from "@/lib/supabase/database.types";
 
@@ -136,8 +142,9 @@ function vendorMeta(v: string): { label: string; kind: "info" | "success" | "mut
  * because none of these branches fire against today's production data — a bug
  * in any of them would look exactly like silence on screen.
  */
-function SubExceptions({ sub, size = "sm" }: { sub: Subscription; size?: "sm" | "md" }) {
-  const flags = subscriptionExceptions(sub);
+function SubExceptions({ sub, payBy, size = "sm" }: { sub: Subscription; payBy?: string | null; size?: "sm" | "md" }) {
+  /* R-1689: payBy = the oldest unpaid invoice's due date (credit / invoice-now rows), else the agreed date. */
+  const flags = subscriptionExceptions({ ...sub, pay_by: payBy });
   if (flags.length === 0) return null;
   return (
     <>
@@ -207,6 +214,13 @@ function SortHeader({
 export default function SubscriptionsPage() {
   const router = useRouter();
   const { data: subs, isLoading, error, refetch } = useSubscriptions();
+  /* R-1689: when each owing subscription's money is due — the same dues read as Payments
+     (its oldest unpaid invoice's due date, else the agreed payment_due_date). */
+  const { data: dues } = useOutstandingReceivables();
+  const payByOf = React.useMemo(
+    () => new Map((dues ?? []).map((o) => [o.subscription_id, o.pay_by ?? null] as const)),
+    [dues],
+  );
   /* The catalogue is what makes a margin real rather than a multiplier — see
      lib/vendor/cogs.ts. Empty while it loads, which resolves to "Unknown" rather
      than to a wrong number. */
@@ -274,6 +288,25 @@ export default function SubscriptionsPage() {
   }, []);
   const [extendSub,  setExtendSub]   = React.useState<Subscription | null>(null);
   const [scheduleSub, setScheduleSub] = React.useState<Subscription | null>(null);
+  /* R-1433: ?open=<subscription id> — "Open subscription" on an invoice lands here and opens
+     that subscription's drawer. Read once after mount (no useSearchParams: build rule), then
+     dropped from the URL so a refresh does not reopen it; ?q= (its domain) stays as the filter. */
+  const [openFromLink, setOpenFromLink] = React.useState("");
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const id = openSubscriptionIdFromSearch(window.location.search);
+    if (!id) return;
+    setOpenFromLink(id);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("open");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search);
+  }, []);
+  React.useEffect(() => {
+    if (!openFromLink || !subs) return;
+    const sub = subs.find((x) => x.id === openFromLink);
+    setOpenFromLink("");
+    if (sub) setScheduleSub(sub);
+  }, [openFromLink, subs]);
   /** Null = the newest-first default. Set when a column header is clicked. */
   const [sort, setSort] = React.useState<SubSort | null>(null);
   /* First click opens the column the way it is usually asked about; clicking the SAME
@@ -346,7 +379,7 @@ export default function SubscriptionsPage() {
     if (!leadId) return;
     let live = true;
     void createClient().from("leads")
-      .select("id, company, customer_id, domain, contact_name, contact_email, contact_phone, plan, seats, billing_cycle")
+      .select("id, company, customer_id, domain, contact_name, contact_email, contact_phone, plan, seats, billing_cycle, gstin, state_code")
       .eq("id", leadId).maybeSingle()
       .then(({ data }) => {
         if (!live || !data) return;
@@ -442,7 +475,7 @@ export default function SubscriptionsPage() {
       toast.success(`GST invoice ${String(data ?? "")} raised · subscription is live 🎉`, {
         description: "Not sent yet — open it to email or download the PDF.",
         duration: 8000,
-        action: { label: "Open invoice", onClick: () => router.push("/invoices" as Route) },
+        action: { label: "Open invoice", onClick: () => router.push(raisedInvoiceHref(data == null ? null : String(data)) as Route) },
       });
     }
     refetch();
@@ -1055,7 +1088,7 @@ export default function SubscriptionsPage() {
         <EmptyState
           icon="alert"
           title="Could not load subscriptions"
-          body={error.message}
+          body={loadErrorBody(error)}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
         />
       )}
@@ -1135,7 +1168,7 @@ export default function SubscriptionsPage() {
                     <DomainCell sub={s} compact />
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="font-serif text-base tabular-nums text-ink">{rupee(s.mrr)}</p>
+                    <p className="font-serif text-base tabular-nums text-ink">{subscriptionEnded(s.status) ? "—" : rupee(s.mrr)}</p>
                     {/* Same shape as the table: vendor / billed, with the problem named
                         underneath. §20 — a number that exists only on the desktop table
                         is a number half the users never see. */}
@@ -1175,7 +1208,8 @@ export default function SubscriptionsPage() {
                   {/* R-1774: same words as the cycle chips; Check term → Correct details. */}
                   <SubCycleBadge
                     cyc={cyc}
-                    amount={t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null}
+                    /* R-1685: no renewal amount on an ended subscription. */
+                          amount={liveTermAmount(s.status, t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null)}
                     onCorrect={() => setEditSub(s)}
                   />
                 </div>
@@ -1195,7 +1229,7 @@ export default function SubscriptionsPage() {
                     >
                       {s.status}
                     </Badge>
-                    <SubExceptions sub={s} />
+                    <SubExceptions sub={s} payBy={payByOf.get(s.id)} />
                   </div>
                   <div className="text-right shrink-0">
                     {/* The date needs saying what it IS. On desktop the column
@@ -1310,7 +1344,8 @@ export default function SubscriptionsPage() {
                   const isUrgent = s.status === "active" && dl !== null && dl >= 0 && dl <= 30;
                   /* Postpaid credit clock. `none` for everything else, so prepaid rows
                      and pre-10-Sep-2026 rows look exactly as they did. */
-                  const due = paymentDueState(s.payment_due_date, todayIST(), s.outstanding_amount ?? 0);
+                  /* R-1685: an ended subscription is on no payment clock (its owed money still shows in SubExceptions). */
+                  const due = paymentDueState(subscriptionEnded(s.status) ? null : (payByOf.get(s.id) ?? s.payment_due_date), todayIST(), s.outstanding_amount ?? 0);
                   const kbSelected = rowIndex === subKeys.index;
                   return (
                     <tr
@@ -1405,7 +1440,8 @@ export default function SubscriptionsPage() {
                         <SubCycleBadge
                           cyc={cyc}
                           className="mt-1"
-                          amount={t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null}
+                          /* R-1685: no renewal amount on an ended subscription. */
+                          amount={liveTermAmount(s.status, t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null)}
                           onCorrect={() => setEditSub(s)}
                         />
                       </td>
@@ -1472,7 +1508,7 @@ export default function SubscriptionsPage() {
                       </td>
                       {/* MRR — the money, given weight. */}
                       <td className="px-3 py-2.5 text-right tabular-nums align-middle">
-                        <span className="font-serif text-[15px] font-semibold text-ink">{rupee(s.mrr)}</span>
+                        <span className="font-serif text-[15px] font-semibold text-ink">{subscriptionEnded(s.status) ? "—" : rupee(s.mrr)}</span>
                       </td>
                       {/* Margin — colour-coded badge. */}
                       <td className="px-3 py-2.5 text-right align-middle">
@@ -1513,7 +1549,7 @@ export default function SubscriptionsPage() {
                             suspension, write-off — one shared component so the
                             table and the mobile card can never drift apart. */}
                         <div className="flex flex-col items-start gap-1 mt-1 empty:mt-0">
-                          <SubExceptions sub={s} size="md" />
+                          <SubExceptions sub={s} payBy={payByOf.get(s.id)} size="md" />
                         </div>
                       </td>
                       {/* ── ONE ACTION ON THE ROW, THE REST IN THE DRAWER ────────
@@ -1589,8 +1625,8 @@ export default function SubscriptionsPage() {
                   return (
                     <tr
                       key={t.id}
-                      onClick={() => router.push(`/leads?lead=${t.id}` as never)}
-                      className="border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer"
+                      {...rowActivation(() => router.push(`/leads?lead=${t.id}` as never))}
+                      className={cn("border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer", ROW_FOCUS_RING)}
                     >
                       <td className="p-3">
                         <div className="font-medium text-sm text-ink">{t.company}</div>
@@ -1786,6 +1822,11 @@ export default function SubscriptionsPage() {
                   Each one CLOSES the drawer first. Every action either navigates away or
                   opens its own dialog, and a dialog stacked on an open sheet leaves two
                   dismissable layers over the page. */}
+              {/* R-1796: unpaid past the renewal date — the vendor renewal waits for the
+                  payment; owner / manager may "Renew anyway" for this term (logged). */}
+              <div className="mb-3 empty:hidden" data-testid="sub-drawer-vendor-hold">
+                <VendorHoldBadge sub={scheduleSub} size="md" />
+              </div>
               <SubDrawerActions
                 hasCustomer={!!scheduleSub.customer_id}
                 primary={!leakFixShown}

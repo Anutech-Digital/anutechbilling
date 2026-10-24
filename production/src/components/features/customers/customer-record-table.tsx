@@ -16,6 +16,7 @@ import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 
 export interface RecordRow {
   cells: React.ReactNode[];
@@ -118,7 +119,15 @@ export function RecordTable({ head, rows }: { head: string[]; rows: RecordRow[] 
                 onClick={opens(r) ? (e) => { if (!fromInnerControl(e)) activate(r, e.ctrlKey || e.metaKey); } : undefined}
                 /* Middle-click on the row opens a new tab, like the link in it. */
                 onAuxClick={r.href ? (e) => { if (e.button === 1 && !fromInnerControl(e)) activate(r, true); } : undefined}
-                className={cn("hover:bg-paper-2/30", opens(r) && "cursor-pointer")}
+                /* R-1814: a row with an address holds a real link (RowLink) — Tab reaches that. A row that
+                   opens only via onClick has no link, so the row itself takes Tab and Enter/Space (as on mobile).
+                   It keeps its native row role so the table still reads cell by cell. */
+                tabIndex={!r.href && r.onClick ? 0 : undefined}
+                onKeyDown={!r.href && r.onClick ? (e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(r, false); }
+                } : undefined}
+                className={cn("hover:bg-paper-2/30", opens(r) && "cursor-pointer", !r.href && r.onClick && ROW_FOCUS_RING)}
               >
                 {r.cells.map((cell, j) => <td key={j} className="px-3 py-2 text-ink-2 whitespace-nowrap">{cell}</td>)}
               </tr>

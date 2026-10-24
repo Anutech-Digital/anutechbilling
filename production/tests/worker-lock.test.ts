@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain .mjs ops script, no types
-import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS } from "../scripts/ops/worker-lock.mjs";
+import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, pushPlan, pushDoneLine, waitLine } from "../scripts/ops/worker-lock.mjs";
 
 describe("worker locks (two workers must never build in the same files)", () => {
   it("compares paths from the app root, whatever the slashes", () => {
@@ -150,6 +150,47 @@ describe("R-842: board v76 card contract (claim/push refuse an incomplete card)"
   it("flags come out of the args; areas stay positional", () => {
     expect(parseCardFlags(["C:/wt", "src/lib/deals", "--card", "c.json"])).toEqual({ rest: ["C:/wt", "src/lib/deals"], cardPath: "c.json", noCheck: false });
     expect(parseCardFlags(["--card=c.json", "--no-card-check"])).toEqual({ rest: [], cardPath: "c.json", noCheck: true });
+  });
+});
+
+/* R-1814 (24 Oct 2026): a worker waiting for its push turn reported "R-1813 push ho gaya: 9e4f6dfc" —
+   another worker's card and commit. The success line printed `git rev-parse HEAD` after the rebase, which is
+   the OTHER worker's tip when this branch adds nothing (commits already upstream / dropped by the rebase),
+   and the wait line put the other card's name where a summary reads it. Now: the push is judged by the
+   worker's OWN commits (anutech/manager-pardeep..HEAD), nothing → no push, and every line names its own card. */
+describe("push reports its own card and its own commits (R-1814)", () => {
+  it("nothing of its own after the rebase → no push, and it says so", () => {
+    const r = pushPlan("R-1814", []);
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/R-1814/);
+    expect(r.message).toMatch(/kuch nahi/);
+  });
+
+  it("success line = own card + own newest commit sha, never the upstream tip", () => {
+    const r = pushPlan("R-1814", [
+      { sha: "aaaa1111", subject: "R-1814: rows open from the keyboard" },
+      { sha: "bbbb2222", subject: "R-1814: raw errors" },
+    ]);
+    expect(r.ok).toBe(true);
+    expect(r.sha).toBe("aaaa1111");
+    expect(pushDoneLine("R-1814", r)).toBe("✓ R-1814 push ho gaya: aaaa1111 (2 commit apne)");
+    expect(pushDoneLine("R-1814", r)).not.toMatch(/R-1813|9e4f6dfc/);
+  });
+
+  it("warns when the branch carries commits of another card", () => {
+    const r = pushPlan("R-1814", [
+      { sha: "aaaa1111", subject: "R-1814: mine" },
+      { sha: "cccc3333", subject: "R-1813: someone else's" },
+    ]);
+    expect(r.ok).toBe(true);
+    expect(r.foreign).toEqual(["cccc3333 R-1813: someone else's"]);
+  });
+
+  it("the wait line says the other card is someone else's and names mine", () => {
+    const line = waitLine("push", "R-1814", "R-1813", "push kar raha hai");
+    expect(line).toMatch(/^… R-1814:/);
+    expect(line).toMatch(/doosra worker R-1813/);
+    expect(line).not.toMatch(/^… R-1813/);
   });
 });
 

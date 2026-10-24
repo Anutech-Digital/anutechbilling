@@ -37,6 +37,7 @@ import {
   sourceLabel,
   type BankImportRow,
 } from "@/lib/banking/import-history";
+import { linesLabel } from "./import-badge";
 
 /** Who may take an import back — the same two roles remove_bank_import allows. */
 const REMOVE_ROLES = new Set(["owner", "accountant"]);
@@ -178,7 +179,7 @@ export function BankImportsSection({ accountId, transactions, openingBalance, ro
                           <span className="truncate text-ink-2" title={tip}>{name}</span>
                         </span>
                         <span className="whitespace-nowrap text-xs text-ink-3">
-                          {r.line_count} lines · {dateRange(r.txn_from, r.txn_to)}
+                          {linesLabel(r.line_count)} · {dateRange(r.txn_from, r.txn_to)}
                           {r.reconciled_count > 0 ? <> · {r.reconciled_count} reconciled</> : null}
                         </span>
                       </div>
@@ -217,7 +218,7 @@ export function BankImportsSection({ accountId, transactions, openingBalance, ro
                     <li key={importKey(r) + (r.removed_at ?? "")} className="py-1.5 text-xs text-ink-3 min-w-0">
                       <span className="whitespace-nowrap">{formatDate(r.imported_at)}</span>
                       {" · "}<span className="break-all" title={fileLabel(r)}>{fileLabel(r)}</span>
-                      {" · "}{r.removed_lines ?? r.line_count} lines
+                      {" · "}{linesLabel(r.removed_lines ?? r.line_count)}
                       {" · "}Removed {formatDate(r.removed_at)}{r.removed_by ? ` · ${r.removed_by}` : ""}
                       {r.remove_reason ? <> · &ldquo;{r.remove_reason}&rdquo;</> : null}
                     </li>
@@ -319,7 +320,7 @@ function RemoveImportDialog({ accountId, imp, transactions, onClose, onUnreconci
             </DialogHeader>
             <div className="space-y-3 text-sm text-ink-2">
               <p>
-                This import's <b>{count} lines</b> ({imp ? dateRange(imp.txn_from, imp.txn_to) : ""}) will be removed from this account.
+                This import's <b>{linesLabel(count)}</b> ({imp ? dateRange(imp.txn_from, imp.txn_to) : ""}) will be removed from this account.
                 Other imports and manually added lines stay as they are. You can import the correct statement later.
               </p>
               <div>
@@ -344,7 +345,7 @@ function RemoveImportDialog({ accountId, imp, transactions, onClose, onUnreconci
             <DialogFooter>
               <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
               <Button type="button" variant="danger" loading={remove.isPending} onClick={confirm}>
-                Remove {count} lines
+                Remove {linesLabel(count)}
               </Button>
             </DialogFooter>
           </>

@@ -40,6 +40,7 @@ import { Icon } from "@/components/ui/icon";
 import { useUpdatePayment, type Payment } from "@/lib/queries/payments";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { rupee, bankLabel } from "@/lib/utils";
+import { blankReference } from "@/lib/payments/record-payment-toast";
 
 const METHODS = [
   { value: "upi",           label: "UPI (Google Pay / PhonePe / Paytm)" },
@@ -52,7 +53,8 @@ const METHODS = [
 
 const schema = z.object({
   method:        z.enum(["upi", "razorpay", "bank_transfer", "cheque", "cash", "other"]),
-  reference:     z.string().min(1, "Transaction reference required"),
+  /* R-1444: optional — a cleared one is saved as "<Method> <date> <time>" (blankReference). */
+  reference:     z.string(),
   receivedDate:  z.string().min(1, "Date required"),
   notes:         z.string().optional(),
   bankAccountId: z.string().optional(),   // "" = not linked
@@ -116,7 +118,7 @@ export function EditPaymentDialog({ open, onOpenChange, payment, customerName }:
         // Selects), so read them directly — the hidden-input/register bridge
         // can lag a click, which silently dropped the bank tag.
         method,
-        reference:       data.reference.trim() || null,
+        reference:       data.reference.trim() || blankReference(method, data.receivedDate),
         received_at,
         notes:           data.notes?.trim() || null,
         bank_account_id: bankAccountId || null,
@@ -178,7 +180,7 @@ export function EditPaymentDialog({ open, onOpenChange, payment, customerName }:
               <input type="hidden" {...register("method")} value={method} />
             </FormField>
 
-            <FormField label="Transaction reference" required htmlFor="edit-reference">
+            <FormField label="Transaction reference (Optional)" htmlFor="edit-reference">
               <Input
                 id="edit-reference"
                 placeholder="UPI Ref / UTR / Cheque no."

@@ -76,15 +76,15 @@ export default function PersonalVaultOverview() {
 
         <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-4 pt-5 border-t border-hairline">
           <div>
-            <p className="text-2xs uppercase tracking-wide text-ink-4">Bank, cash & deposits</p>
+            <p className="text-2xs uppercase tracking-wide text-ink-3">Bank, cash & deposits</p>
             <div className="mt-0.5"><Money amount={nw.liquidAssets} size="display" /></div>
           </div>
           <div>
-            <p className="text-2xs uppercase tracking-wide text-ink-4">Investments</p>
+            <p className="text-2xs uppercase tracking-wide text-ink-3">Investments</p>
             <div className="mt-0.5"><Money amount={nw.investments} size="display" /></div>
           </div>
           <div>
-            <p className="text-2xs uppercase tracking-wide text-ink-4">Owed (cards)</p>
+            <p className="text-2xs uppercase tracking-wide text-ink-3">Owed (cards)</p>
             <div className="mt-0.5">
               <Money amount={nw.liabilities} size="display" tone={nw.liabilities > 0 ? "negative" : "default"} autoNegative={false} />
             </div>
@@ -121,24 +121,24 @@ export default function PersonalVaultOverview() {
           <Card className="p-5">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-medium text-ink">This financial year</h2>
-              <span className="text-2xs text-ink-4 font-mono">{fyStart} to today</span>
+              <span className="text-2xs text-ink-3 font-mono">{fyStart} to today</span>
             </div>
             <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
-                <p className="text-2xs uppercase tracking-wide text-ink-4">Taken from company</p>
+                <p className="text-2xs uppercase tracking-wide text-ink-3">Taken from company</p>
                 <div className="mt-0.5"><Money amount={flow.drawnFromCompany} size="display" /></div>
-                <p className="text-3xs text-ink-4 mt-0.5">drawings + dividend</p>
+                <p className="text-3xs text-ink-3 mt-0.5">drawings + dividend</p>
               </div>
               <div>
-                <p className="text-2xs uppercase tracking-wide text-ink-4">Total in</p>
+                <p className="text-2xs uppercase tracking-wide text-ink-3">Total in</p>
                 <div className="mt-0.5"><Money amount={flow.moneyIn} size="display" /></div>
               </div>
               <div>
-                <p className="text-2xs uppercase tracking-wide text-ink-4">Total spent</p>
+                <p className="text-2xs uppercase tracking-wide text-ink-3">Total spent</p>
                 <div className="mt-0.5"><Money amount={flow.moneyOut} size="display" /></div>
               </div>
               <div>
-                <p className="text-2xs uppercase tracking-wide text-ink-4">Left over</p>
+                <p className="text-2xs uppercase tracking-wide text-ink-3">Left over</p>
                 <div className="mt-0.5"><Money amount={flow.net} size="display" /></div>
               </div>
             </div>
@@ -155,7 +155,7 @@ export default function PersonalVaultOverview() {
                       <span className="text-ink">{c.label}</span>
                       <span className="flex items-baseline gap-2">
                         <Money amount={c.currentValue} size="cell" />
-                        <span className="text-2xs text-ink-4 tabular-nums w-10 text-right">
+                        <span className="text-2xs text-ink-3 tabular-nums w-10 text-right">
                           {c.sharePct === null ? "—" : `${c.sharePct.toFixed(0)}%`}
                         </span>
                       </span>

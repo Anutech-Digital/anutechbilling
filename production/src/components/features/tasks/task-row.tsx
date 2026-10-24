@@ -204,7 +204,7 @@ export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit
         <div className="flex gap-0.5 shrink-0">
           <IconButton icon="edit" size="sm" variant="ghost" aria-label="Edit task" title="Edit task" onClick={() => onEdit(task)} />
           {/* R-471: Snooze offers choices (was a blind +1 day from the old due time). */}
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <IconButton icon="clock" size="sm" variant="ghost" aria-label="Snooze" title="Snooze" disabled={snoozeTask.isPending} />
             </DropdownMenuTrigger>

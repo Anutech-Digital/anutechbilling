@@ -46,7 +46,7 @@ export async function loadReminderRaw(
       .from("invoices")
       .select("id, amount, net_payable, paid_amount, status, invoice_date, due_date, quote_id")
       .eq("customer_id", customerId)
-      .in("status", ["pending", "overdue"])
+      .in("status", ["pending", "overdue"]).is("written_off_at", null)
       .order("id", { ascending: true })
       .range(from, to)),
     fetchAllRows<ReminderSubscriptionRow>((from, to) => db

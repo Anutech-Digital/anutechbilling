@@ -20,7 +20,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { CERTS } from "@/site/lib/data/catalog";
-import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, quotePrefill, withLiveEditions, quoteRate, quoteInr, quoteLineAmount, quoteUnitAmount, quoteRenewal, type QuoteProduct } from "@/site/lib/data/quote-catalog";
+import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, quotePrefill, withLiveEditions, quoteRate, quoteInr, quoteLineAmount, quoteUnitAmount, quoteRenewal, quoteRenewalText, withPriceBook, type QuoteBookPrices, type QuoteProduct } from "@/site/lib/data/quote-catalog";
 import { WHATSAPP_URL, COMPANY } from "@/site/lib/config";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
@@ -39,15 +39,20 @@ const P = "var(--primary)";
 /* R-1504: the certificate /ssl includes free (its "Included" card) — named, not repriced, here. */
 const FREE_DV = CERTS.find((c) => c.cta === "Included");
 
-export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
+export function QuoteBuilder({ editions, prices }: { editions?: MergedEdition[]; prices?: QuoteBookPrices }) {
   const params = useSearchParams();
 
   // Live rates (if the page supplied them) override the static edition prices. An edition
   // with no flexible tier comes back with monthly: null — annual only (R-224).
-  const products = useMemo<QuoteProduct[]>(() => withLiveEditions(QUOTE_PRODUCTS, editions), [editions]);
+  // R-1797: hosting and SSL from the price book the page read (what checkout and /ssl say).
+  const products = useMemo<QuoteProduct[]>(() => withPriceBook(withLiveEditions(QUOTE_PRODUCTS, editions), prices), [editions, prices]);
   const byName = useMemo(() => new Map(products.map((p) => [p.name, p])), [products]);
 
   const [lines, setLines] = useState<Record<string, number>>({ "GW Business Starter": 1 });
+  /* R-1627: what the visitor is typing in a quantity box, before it is a number. An empty box
+     while typing keeps the line (it used to delete it the moment the old number was cleared). */
+  const [qtyDraft, setQtyDraft] = useState<Record<string, string>>({});
+  const [qtyError, setQtyError] = useState<Record<string, string>>({});
   const [term, setTerm] = useState<"annual" | "monthly">("annual");
   const [openSec, setOpenSec] = useState<"plan" | "details">("plan");
   const [cat, setCat] = useState<string>("all");
@@ -125,9 +130,8 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   /* R-1483: Flexible monthly renews as twelve monthly invoices — the month's payable × 12
      (+ yearly items once), so ₹1,977 a month reads ₹23,724 a year, never ₹23,716. */
   const renewal = quoteRenewal(selected.map((p) => ({ cycle: p.cycle, qty: lines[p.name], rate: rateOf(p), renewRate: renewRateOf(p) })), term);
-  const renewalText = renewal.perMonth === null
-    ? `Renews ${inr(renewal.perYear)}/yr`
-    : `Renews ${inr(renewal.perMonth)}/mo × 12${renewal.yearlyOnce > 0 ? ` + ${inr(renewal.yearlyOnce)} yearly items` : ""} = ${inr(renewal.perYear)}/yr`;
+  /* R-1629: one helper writes the line WITH "incl. 18% GST" — page, print/PDF and email. */
+  const renewalText = quoteRenewalText(renewal);
   // Saving from annual commitment, over discountable (monthly-cycle) lines only.
   const moLines = selected.filter((p) => p.cycle === "mo" && p.monthly !== null && p.monthly > p.annual);
   const savePct = moLines.length
@@ -137,6 +141,30 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   const annualOnlyPicked = selected.filter(annualOnly);
 
   const setQty = (nm: string, q: number) => setLines((L) => { const v = Math.max(0, Math.min(999, q)); const c = { ...L }; if (v === 0) delete c[nm]; else c[nm] = v; return c; });
+  const forget = (nm: string, m: Record<string, string>) => { if (!(nm in m)) return m; const c = { ...m }; delete c[nm]; return c; };
+  /* R-1627: typing — only digits, up to 999; an empty box or 0 leaves the line as it was. */
+  const typeQty = (nm: string, raw: string) => {
+    const digits = raw.replace(/\D/g, "").slice(0, 3);
+    setQtyDraft((d) => ({ ...d, [nm]: digits }));
+    setQtyError((e) => forget(nm, e));
+    const n = parseInt(digits, 10);
+    if (n > 0) setQty(nm, n);
+  };
+  /* Leaving the box: empty or 0 puts back 1 and says why — removing a line is the tick box or "–". */
+  const leaveQty = (nm: string) => {
+    const draft = qtyDraft[nm];
+    setQtyDraft((d) => forget(nm, d));
+    if (draft === undefined) return;
+    if (!(parseInt(draft, 10) > 0)) {
+      setQty(nm, 1);
+      setQtyError((e) => ({ ...e, [nm]: "Quantity must be at least 1 — set to 1. Untick the line to remove it." }));
+    }
+  };
+  const stepQty = (nm: string, q: number) => {
+    setQtyDraft((d) => forget(nm, d));
+    setQtyError((e) => forget(nm, e));
+    setQty(nm, q);
+  };
   const toggle = (nm: string) => setLines((L) => {
     const c = { ...L };
     if (c[nm]) delete c[nm];
@@ -315,12 +343,15 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
                         </span>
                         {on && (
                           <span style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border-strong)", borderRadius: 8, overflow: "hidden", flex: "none" }}>
-                            <button onClick={() => setQty(p.name, lines[p.name] - 1)} aria-label="Fewer" style={{ minHeight: 36, padding: "0 10px", border: "none", background: "#fff", cursor: "pointer", color: "var(--text-secondary)" }}>–</button>
-                            <input value={lines[p.name]} inputMode="numeric" aria-label={`${p.label} quantity`} onChange={(e) => setQty(p.name, parseInt(e.target.value.replace(/\D/g, ""), 10) || 0)} style={{ width: 40, textAlign: "center", border: "none", borderLeft: "1px solid var(--border-light)", borderRight: "1px solid var(--border-light)", fontFamily: "var(--font-mono), monospace", fontSize: 14, minHeight: 36 }} />
-                            <button onClick={() => setQty(p.name, lines[p.name] + 1)} aria-label="More" style={{ minHeight: 36, padding: "0 10px", border: "none", background: "#fff", cursor: "pointer", color: "var(--text-secondary)" }}>+</button>
+                            <button onClick={() => stepQty(p.name, lines[p.name] - 1)} aria-label={lines[p.name] === 1 ? `Remove ${p.label}` : "Fewer"} style={{ minHeight: 36, padding: "0 10px", border: "none", background: "#fff", cursor: "pointer", color: "var(--text-secondary)" }}>–</button>
+                            <input value={qtyDraft[p.name] ?? String(lines[p.name])} inputMode="numeric" aria-label={`${p.label} quantity`} aria-invalid={qtyError[p.name] ? true : undefined} aria-describedby={qtyError[p.name] ? `${lockNoteId}-qty` : undefined} onChange={(e) => typeQty(p.name, e.target.value)} onBlur={() => leaveQty(p.name)} style={{ width: 40, textAlign: "center", border: "none", borderLeft: "1px solid var(--border-light)", borderRight: "1px solid var(--border-light)", fontFamily: "var(--font-mono), monospace", fontSize: 14, minHeight: 36 }} />
+                            <button onClick={() => stepQty(p.name, lines[p.name] + 1)} aria-label="More" style={{ minHeight: 36, padding: "0 10px", border: "none", background: "#fff", cursor: "pointer", color: "var(--text-secondary)" }}>+</button>
                           </span>
                         )}
                       </div>
+                      {on && qtyError[p.name] && (
+                        <p id={`${lockNoteId}-qty`} role="alert" style={{ margin: "0 0 10px", fontSize: 12.5, color: "var(--warning)", textAlign: "right" }}>{qtyError[p.name]}</p>
+                      )}
                     </div>
                   );
                 })}
@@ -402,7 +433,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
                   <span style={{ fontWeight: 700 }}>Payable on this invoice</span>
                   <span className="mono" style={{ fontSize: 18, fontWeight: 700 }}>{inr(payable)}</span>
                 </div>
-                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{renewalText} at today&apos;s rates · incl. 18% GST</div>
+                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{renewalText} at today&apos;s rates</div>
               </div>
             )}
             {err && <p role="alert" style={{ fontSize: 13, color: "var(--warning)", marginTop: 10 }}>{err}</p>}
@@ -455,7 +486,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
               <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0 2px", borderTop: "1px solid var(--border)", marginTop: 4 }}>
                 <b>Payable on this invoice</b><span className="mono" style={{ fontWeight: 700 }}>{inr(payable)}</span>
               </div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{renewalText}</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{renewalText} at today&apos;s rates</div>
             </div>
             <ul style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5, margin: "12px 0 0", paddingLeft: 16 }}>
               <li>Rate held for 15 days.</li><li>Migration is ₹0, done by us.</li><li>Setup included.</li><li>GST invoice issued on payment.</li><li>Renewal at the same rate — 30 days&apos; notice of any change.</li>

@@ -19,14 +19,21 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/a11y/a11y-r303.test.ts",
   "src/lib/a11y/a11y-r309.test.ts",
   "src/lib/a11y/billing-screens-a11y.test.ts",
+  "src/lib/a11y/ink4-contrast-ratchet.test.ts", // R-1135: no real text in ink-4 (2.4:1)
   "src/lib/errors/toast-error-ratchet.test.ts",
+  "src/server/postgrest/contact-mask-columns.test.ts", // R-1820: every phone/email column of leads/customers/contacts/customer_groups is masked
   "src/app/(app)/accounting/load-error-ratchet.test.ts",
   "src/components/features/accounting/rupee-ratchet.test.ts",
+  "src/lib/accounting/rupee-hand-rolled-ratchet.test.ts", // R-1138: no new "₹" + toLocaleString("en-IN")
   "src/app/api/admin-client-ratchet.test.ts",
   "src/app/api/role-gate-ratchet.test.ts", // R-732
   "src/app/(app)/page-widths-ratchet.test.ts", // R-1489: §20 page widths
+  "src/lib/quotes/discount-copies-ratchet.test.ts", // R-1133: no new hand-written quote discount
   "tests/ops/gen-api-doc.test.ts", // R-1665: docs/API.md regenerated when a route changes
   "src/lib/accounting/sale-documents.guard.test.ts", // R-1739: every invoices reader says if it counts sales
+  "src/lib/queries/query-error-ratchet.test.ts", // R-1806/R-1807: a failed read shows an error, not ₹0 / empty
+  "src/lib/errors/raw-error-message-ratchet.test.ts", // R-1656/R-1813: no raw Postgres/RPC text on screen
+  "src/lib/dates/server-dates-ist.test.ts", // R-1660: no server-side date formatted without timeZone (emails in UTC)
   // ── migration scans ──
   "tests/rls-initplan-migrations.test.ts",
   "src/lib/security/definer-hardening-holds.test.ts",

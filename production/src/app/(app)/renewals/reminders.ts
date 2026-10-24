@@ -7,7 +7,9 @@
  * toast printed the raw state key ("Sent notice_sent to Acme"). Pure rules here, tested;
  * the page only wires them.
  */
-import { decideCadence, renewalIsSettled, renewalStateLabel, type RenewalState } from "@/lib/renewals/cadence";
+import { decideCadence, effectiveGraceDays, renewalIsSettled, renewalStateLabel, type RenewalState } from "@/lib/renewals/cadence";
+import { describeError } from "@/lib/errors/toast-error";
+import { cleanDisplayName } from "@/lib/utils";
 
 export interface RenewalSubLike {
   id: string;
@@ -16,6 +18,8 @@ export interface RenewalSubLike {
   renewal_state?: string | null;
   renewal_date: string | null;
   term_months?: number | null;
+  /** R-1621: the owner's "+N days" for this term (select * carries it). */
+  grace_until?: string | null;
 }
 
 export interface RenewalRowLike {
@@ -40,19 +44,36 @@ export function isTerminalRenewal(
   return renewalDate ? renewalIsSettled(state, renewalDate, termMonths, today) : true;
 }
 
-/** Who "Bulk reminder" emails: renewing in the next 30 days, not suspended / settled-renewed. */
-export function bulkReminderTargets<T extends RenewalRowLike>(rows: T[], today: Date = new Date()): T[] {
-  return rows.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 30
-    && !isTerminalRenewal(r.sub.renewal_state, r.sub.renewal_date, r.sub.term_months, today));
+/**
+ * Who "Bulk reminder" emails: renewing in the next 30 days, AND (R-1124) already past the
+ * renewal date but still inside the grace — the customers closest to losing the service
+ * were the ones it skipped. Past the grace the owner decides on the Grace over list (R-1621),
+ * so those are not mailed from here. Never suspended / settled-renewed.
+ */
+export function bulkReminderTargets<T extends RenewalRowLike>(rows: T[], today: Date = new Date(), tenantGraceDays = 0): T[] {
+  return rows.filter((r) => {
+    if (r.daysUntil > 30) return false;
+    if (isTerminalRenewal(r.sub.renewal_state, r.sub.renewal_date, r.sub.term_months, today)) return false;
+    if (r.daysUntil >= 0) return true;
+    if (!r.sub.renewal_date) return false;
+    const grace = effectiveGraceDays({ tenantGraceDays, renewalDate: r.sub.renewal_date, graceUntil: r.sub.grace_until ?? null });
+    return -r.daysUntil <= grace;
+  });
 }
 
 export function bulkReminderConfirm(targets: RenewalRowLike[]): { title: string; body: string } {
   const n = targets.length;
   const names = targets.slice(0, 5).map((r) => r.sub.customer_name).join(", ");
   const more = n > 5 ? `, and ${n - 5} more` : "";
+  /* R-1124: name the lapsed ones apart — they get the grace email, not a "renewing soon" one. */
+  const lapsed = targets.filter((r) => r.daysUntil < 0);
+  const lapsedNames = lapsed.slice(0, 5).map((r) => r.sub.customer_name).join(", ");
+  const lapsedLine = lapsed.length > 0
+    ? `\n${lapsed.length} already past the renewal date (in grace): ${lapsedNames}${lapsed.length > 5 ? `, and ${lapsed.length - 5} more` : ""}.`
+    : "";
   return {
     title: `Email ${n} customer${n === 1 ? "" : "s"}?`,
-    body: `Each gets its renewal reminder for the step it is due (renewing in the next 30 days).\n${names}${more}.`,
+    body: `Each gets its renewal reminder for the step it is due (renewing in the next 30 days, or lapsed and still in grace).\n${names}${more}.${lapsedLine}`,
   };
 }
 
@@ -105,4 +126,77 @@ export async function readJsonSafe(res: Response): Promise<Record<string, unknow
     /* not JSON — fall through */
   }
   return res.ok ? {} : { error: `Server error (${res.status})` };
+}
+
+/* ── R-1642: who did not get the bulk reminder, and why ─────────────────────────────
+   The bulk run used to keep only a count ("2 failed"). Each failure now keeps the row (so
+   "Retry failed" re-sends only those), the customer name and a plain reason — the server's
+   own guard sentence when it has one, database/network plumbing mapped by describeError. */
+
+export interface BulkReminderFailure<T extends RenewalRowLike = RenewalRowLike> {
+  row: T;
+  name: string;
+  reason: string;
+}
+
+export interface BulkReminderResult<T extends RenewalRowLike = RenewalRowLike> {
+  sent: number;
+  stub: boolean;
+  failed: BulkReminderFailure<T>[];
+}
+
+export type SendReminder = (subscriptionId: string) => Promise<{ ok: boolean; json: { error?: string; email_mode?: unknown } }>;
+
+export async function sendBulkReminders<T extends RenewalRowLike>(targets: T[], send: SendReminder): Promise<BulkReminderResult<T>> {
+  const out: BulkReminderResult<T> = { sent: 0, stub: false, failed: [] };
+  for (const row of targets) {
+    const name = cleanDisplayName(row.sub.customer_name) || "A customer";
+    try {
+      const { ok, json } = await send(row.sub.id);
+      if (!ok) {
+        out.failed.push({ row, name, reason: describeError(json.error ?? "", "The server refused the send.").message });
+        continue;
+      }
+      out.sent++;
+      if (json.email_mode === "stub") out.stub = true;
+    } catch (e) {
+      out.failed.push({ row, name, reason: describeError(e, "The send did not go through.").message });
+    }
+  }
+  return out;
+}
+
+/** At most this many customers are named in the toast; the rest are counted. */
+const MAX_NAMED = 3;
+
+function describeReminderFailures(failed: readonly BulkReminderFailure[]): string {
+  const byReason = new Map<string, string[]>();
+  for (const f of failed) byReason.set(f.reason, [...(byReason.get(f.reason) ?? []), f.name]);
+  let named = 0;
+  const parts: string[] = [];
+  for (const [reason, names] of byReason) {
+    const take = names.slice(0, Math.max(0, MAX_NAMED - named));
+    if (take.length === 0) break;
+    named += take.length;
+    parts.push(`${take.join(", ")} — ${reason}`);
+  }
+  const rest = failed.length - named;
+  return rest > 0 ? `${parts.join("; ")}; and ${rest} more` : parts.join("; ");
+}
+
+export interface BulkReminderReport {
+  tone: "success" | "warning" | "error";
+  title: string;
+  description?: string;
+  /** True when some failed — the toast offers "Retry failed". */
+  retry: boolean;
+}
+
+export function bulkReminderReport(r: BulkReminderResult): BulkReminderReport {
+  const n = (c: number) => `${c} customer${c === 1 ? "" : "s"}`;
+  const stub = r.stub ? " · stub mode (no real email yet)" : "";
+  if (r.failed.length === 0) return { tone: "success", title: `Reminded ${n(r.sent)}${stub}`, retry: false };
+  const description = describeReminderFailures(r.failed);
+  if (r.sent === 0) return { tone: "error", title: `Could not remind ${n(r.failed.length)}`, description, retry: true };
+  return { tone: "warning", title: `Reminded ${n(r.sent)} · ${r.failed.length} refused${stub}`, description, retry: true };
 }

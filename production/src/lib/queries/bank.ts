@@ -14,11 +14,13 @@
  */
 "use client";
 
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "@/lib/queries/keys";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
+import { toastInvoiceIssueError } from "@/lib/queries/invoices";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
@@ -493,29 +495,37 @@ export function bankTxnBalanceKey(r: KeyedLine): string | null {
 }
 
 /**
- * What an account already holds, indexed for the duplicate check (R-1691).
+ * What an account already holds, indexed for the duplicate check (R-1691) — every key with a
+ * COUNT of stored lines (R-1644), because each stored line accounts for one line of an upload:
  *  - `bal`: balance keys of stored lines that carry a running balance;
  *  - `prefix`: narration-prefix keys of EVERY stored line (for new lines with no balance);
- *  - `prefixNoBal`: narration-prefix keys of stored lines WITHOUT a balance, with a count —
- *    each such stored line can stand for one balance-carrying line of a re-upload.
+ *  - `prefixNoBal`: narration-prefix keys of stored lines WITHOUT a balance — each can stand
+ *    for one balance-carrying line of a re-upload.
  */
 export type BankLineIndex = {
-  bal: Set<string>;
-  prefix: Set<string>;
+  bal: Map<string, number>;
+  prefix: Map<string, number>;
   prefixNoBal: Map<string, number>;
 };
 
-function addToIndex(ix: BankLineIndex, r: KeyedLine): void {
-  const bal = bankTxnBalanceKey(r);
-  const pre = bankTxnKey(r);
-  ix.prefix.add(pre);
-  if (bal) ix.bal.add(bal);
-  else ix.prefixNoBal.set(pre, (ix.prefixNoBal.get(pre) ?? 0) + 1);
+const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
+/** Use up one stored line under this key; false when none is left. */
+function take(m: Map<string, number>, k: string): boolean {
+  const left = m.get(k) ?? 0;
+  if (left <= 0) return false;
+  m.set(k, left - 1);
+  return true;
 }
 
 export function indexBankLines(rows: KeyedLine[]): BankLineIndex {
-  const ix: BankLineIndex = { bal: new Set(), prefix: new Set(), prefixNoBal: new Map() };
-  for (const r of rows) addToIndex(ix, r);
+  const ix: BankLineIndex = { bal: new Map(), prefix: new Map(), prefixNoBal: new Map() };
+  for (const r of rows) {
+    const bal = bankTxnBalanceKey(r);
+    const pre = bankTxnKey(r);
+    bump(ix.prefix, pre);
+    if (bal) bump(ix.bal, bal);
+    else bump(ix.prefixNoBal, pre);
+  }
   return ix;
 }
 
@@ -528,46 +538,41 @@ export function indexBankLines(rows: KeyedLine[]): BankLineIndex {
  * one line to it, so the second never reached the books — and the Statement check then
  * showed "Lines missing" for exactly that money. The running balance tells them apart.
  *
- *  1. A line WITH a running balance is a duplicate when a stored (or earlier in this upload)
- *     line has the same date + debit + credit + balance. The narration is not looked at: the
- *     balance changes after every line, and the same line read twice (CSV once, the AI from
- *     a PDF once) keeps it however its narration came out.
- *  2. …or when a stored line WITHOUT a balance has its narration-prefix key — an earlier
- *     import from a file with no balance column. Each such stored line absorbs ONE new line
- *     (a count, not a set), so a re-upload never doubles the line, and the second of two
- *     same-prefix lines (the one the old rule dropped) still comes in.
- *  3. A line WITHOUT a balance keeps the R-1509 narration-prefix rule against every stored
- *     line and the rest of the upload (spacing / masking variants of one line still match).
+ * R-1644: the rule COUNTS. Two ₹500 UPI payments on one day with the same narration, in a file
+ * with no running balance, were one key — the second was dropped silently, inside the same file
+ * and against the books. Now each stored line accounts for ONE line of the upload (file has 2,
+ * books have 1 → 1 comes in), and lines of one upload are never matched to each other: a bank
+ * statement prints each transaction once, so two equal lines in it are two transactions.
  *
+ *  1. A line WITH a running balance is a duplicate when a stored line, not yet used up, has the
+ *     same date + debit + credit + balance. The narration is not looked at: the balance changes
+ *     after every line, and the same line read twice (CSV once, the AI from a PDF once) keeps
+ *     it however its narration came out.
+ *  2. …or when a stored line WITHOUT a balance, not yet used up, has its narration-prefix key —
+ *     an earlier import from a file with no balance column.
+ *  3. A line WITHOUT a balance is a duplicate when a stored line, not yet used up, has its
+ *     narration-prefix key (R-1509: spacing / masking variants of one line still match).
+ *
+ * The skipped lines are returned too, so the dialog can list them and offer "Import anyway".
  * The index passed in is not changed — the dialog keeps it in its query cache.
  */
-export function splitNewBankLines<R extends KeyedLine>(rows: R[], existing: BankLineIndex): { fresh: R[]; duplicates: number } {
+export function splitNewBankLines<R extends KeyedLine>(rows: R[], existing: BankLineIndex): { fresh: R[]; skipped: R[]; duplicates: number } {
   const ix: BankLineIndex = {
-    bal: new Set(existing.bal),
-    prefix: new Set(existing.prefix),
+    bal: new Map(existing.bal),
+    prefix: new Map(existing.prefix),
     prefixNoBal: new Map(existing.prefixNoBal),
   };
   const fresh: R[] = [];
-  let duplicates = 0;
+  const skipped: R[] = [];
   for (const r of rows) {
     const bal = bankTxnBalanceKey(r);
     const pre = bankTxnKey(r);
-    let dup: boolean;
-    if (bal) {
-      if (ix.bal.has(bal)) dup = true;
-      else {
-        const left = ix.prefixNoBal.get(pre) ?? 0;
-        dup = left > 0;
-        if (dup) ix.prefixNoBal.set(pre, left - 1);
-      }
-    } else {
-      dup = ix.prefix.has(pre);
-    }
-    if (dup) { duplicates++; continue; }
-    addToIndex(ix, r);   // also dedup within the same upload
-    fresh.push(r);
+    const dup = bal
+      ? take(ix.bal, bal) || take(ix.prefixNoBal, pre)
+      : take(ix.prefix, pre);
+    (dup ? skipped : fresh).push(r);
   }
-  return { fresh, duplicates };
+  return { fresh, skipped, duplicates: skipped.length };
 }
 
 /**
@@ -575,7 +580,11 @@ export function splitNewBankLines<R extends KeyedLine>(rows: R[], existing: Bank
  * importBankTransactions runs exactly this, and the import dialog's preview count runs it too
  * (R-1691), so the number the owner is shown is the number that happens.
  */
-export function planBankImport<R extends KeyedLine>(rows: R[], existing: BankLineIndex): { fresh: (R & { debit: number; credit: number })[]; duplicates: number } {
+export function planBankImport<R extends KeyedLine>(rows: R[], existing: BankLineIndex): {
+  fresh: (R & { debit: number; credit: number })[];
+  skipped: (R & { debit: number; credit: number })[];
+  duplicates: number;
+} {
   const cleaned = rows
     .map((r) => {
       // A bank line is debit XOR credit — coerce to non-negative integers so
@@ -632,6 +641,12 @@ export type BankImportInput = {
   /** R-1623: shown in the account's Imports list. */
   fileName?: string | null;
   source?: Exclude<BankImportSource, "legacy">;
+  /**
+   * R-1644: "Import them anyway" — the owner looked at the lines listed as already imported
+   * and says they are real (e.g. two equal ₹500 payments the books hold only one of).
+   * They go in with the rest; nothing is skipped.
+   */
+  importSkipped?: boolean;
 };
 
 export async function importBankTransactions(
@@ -643,7 +658,10 @@ export async function importBankTransactions(
 
   // Skip lines already in this account (re-uploaded / overlapping statement).
   const existing = await fetchExistingTxnKeys(supabase, input.accountId);
-  const { fresh, duplicates } = planBankImport(input.rows, existing);
+  const plan = planBankImport(input.rows, existing);
+  /* R-1644: never silently — the skipped lines were listed; the owner may take them anyway. */
+  const fresh = input.importSkipped ? [...plan.fresh, ...plan.skipped] : plan.fresh;
+  const duplicates = input.importSkipped ? 0 : plan.duplicates;
 
   if (fresh.length === 0) {
     if (duplicates > 0) return { inserted: 0, duplicates };   // all already imported — no batch
@@ -685,7 +703,7 @@ export function useImportBankTransactions() {
       qc.invalidateQueries({ queryKey: ["bank_transactions", vars.accountId] });
       qc.invalidateQueries({ queryKey: ["bank_accounts"] });   // current_balance changed
       qc.invalidateQueries({ queryKey: ["bank_imports", vars.accountId] });
-      const dupMsg = duplicates > 0 ? ` · ${duplicates} duplicates skipped` : "";
+      const dupMsg = duplicates > 0 ? ` · ${duplicates} line${duplicates === 1 ? "" : "s"} skipped as already imported` : "";
       if (inserted === 0 && duplicates > 0) toast.success(`All ${duplicates} lines are already there — nothing new found`);
       else toast.success(`${inserted} transaction${inserted === 1 ? "" : "s"} imported${dupMsg}`);
     },
@@ -819,14 +837,11 @@ export function useBookCreditAsInvoice() {
     },
     onSuccess: (inv) => {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["payments"] });
-      qc.invalidateQueries({ queryKey: ["customers"] });
-      qc.invalidateQueries({ queryKey: queryKeys.aging() });
+      invalidateReceivables(qc);   // R-1634: /collections too
       toast.success(`Invoice ${inv.invoice_id} created & reconciled`);
     },
-    onError: (err) => toastError(err),
+    /* R-1643: a refusal for the company's missing GSTIN / address opens Settings → Company. */
+    onError: (err) => toastInvoiceIssueError(err),
   });
 }
 
@@ -868,95 +883,96 @@ export function useReconcileSalaryAdvanceSplit() {
   });
 }
 
-/** Reconcile input shape — shared by the single-match hook and auto-reconcile. */
-type ReconcileInput = {
-  transactionId: string;
-  matchedToType: "payment" | "project" | "expense" | "vendor_bill" | "transfer" | "salary" | "split" | "manual" | null;
-  matchedToId:   string | null;
-  confidence?:   "exact" | "high" | "low" | "manual";
-};
+/** Lines per auto_reconcile_bank_account call. An account up to this size is ONE request. */
+export const AUTO_RECONCILE_CHUNK = 500;
 
-/** Core reconcile write — one call to the `reconcile_bank_txn` RPC, which in a
- *  single transaction sets the match on the bank line AND keeps the reverse
- *  links (project_payments.bank_txn_id, expenses.reconciled_txn_id) + the
- *  statutory / balance-sheet reversals in sync. This is genuinely the single
- *  source of truth: both the manual dialog (useReconcileTransaction) and the
- *  batch auto-reconcile below call THIS, so they can never drift apart — and
- *  because it is one transaction, a failure part-way can no longer leave a
- *  matched line with an unset reverse link (the old chained-writes hazard,
- *  CLAUDE.md §17b). matched_by is auth.uid() set server-side; salary paid_amount
- *  is handled by a DB trigger on the update, so no extra client work is needed. */
-async function applyReconcile(
-  supabase: ReturnType<typeof createClient>,
-  input: ReconcileInput,
-): Promise<BankTransactionRow> {
-  const { data, error } = await supabase.rpc("reconcile_bank_txn", {
-    p_txn_id:           input.transactionId,
-    p_matched_to_type:  input.matchedToType,
-    p_matched_to_id:    input.matchedToId,
-    p_match_confidence: input.confidence ?? "manual",
-  });
-  if (error) throw error;
-  return data as BankTransactionRow;
+/** What one auto-reconcile run (or one chunk of it) did. `review` = the four reasons added up. */
+export type AutoReconcileSummary = {
+  checked: number;
+  reconciled: number;
+  review: number;
+  no_match: number;
+  low_confidence: number;
+  ambiguous: number;
+  failed: number;
+};
+type AutoReconcileChunk = AutoReconcileSummary & { last_id: string | null; done: boolean };
+
+const SUMMARY_KEYS = ["checked", "reconciled", "review", "no_match", "low_confidence", "ambiguous", "failed"] as const;
+
+/** The toast after a run: matched N, left M — and why each was left, so the owner knows what to open. */
+export function autoReconcileSummary(s: AutoReconcileSummary): { title: string; description?: string } {
+  if (s.reconciled === 0 && s.review === 0) return { title: "All already reconciled" };
+  const title = s.reconciled === 0
+    ? `No sure match found · ${s.review} left for you to check`
+    : s.review === 0
+      ? `${s.reconciled} matched`
+      : `${s.reconciled} matched · ${s.review} left for you to check`;
+  if (s.review === 0) return { title };
+  const why = [
+    s.ambiguous > 0 && `${s.ambiguous} with two equal matches`,
+    s.no_match > 0 && `${s.no_match} with no match`,
+    s.low_confidence > 0 && `${s.low_confidence} with only a weak match`,
+    s.failed > 0 && `${s.failed} could not be saved`,
+  ].filter(Boolean).join(" · ");
+  return { title, description: `Left: ${why}. Open Unmatched to finish them.` };
 }
 
 /**
- * Auto-reconcile — for every UNMATCHED line in the account, ask the server for
- * match suggestions and auto-apply ONLY an UNAMBIGUOUS 'exact' one (a single
- * exact candidate — if two records share the amount, it's left for manual review
- * so we never guess wrong on money). Reuses applyReconcile, so the links + salary
- * trigger fire exactly as in the manual flow. Returns how many were reconciled vs
- * left for review.
+ * Auto-reconcile — R-1657 (24 Oct 2026): runs on the SERVER. Was a browser loop that made two
+ * calls per unmatched line (suggest + reconcile); a thousand lines were two thousand round
+ * trips and closing the tab left the job half done. Now auto_reconcile_bank_account (migration
+ * 20261024001702) does the loop, AUTO_RECONCILE_CHUNK lines per call: an account up to that size
+ * is one request, a bigger one continues after the last line of each chunk (`progress` shows
+ * how far). The match rule is unchanged and lives only in SQL now: apply the top suggestion
+ * only when it is 'exact'/'high' and no second one shares its confidence, through
+ * reconcile_bank_txn (the same atomic write as the manual dialog, CLAUDE.md §17b). Stopping
+ * part-way is safe — earlier chunks stay matched, and a re-run reads only unmatched lines.
  */
 export function useAutoReconcile() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (accountId: string): Promise<{ reconciled: number; review: number }> => {
+  const [progress, setProgress] = useState<{ checked: number } | null>(null);
+  const mutation = useMutation({
+    mutationFn: async (accountId: string): Promise<AutoReconcileSummary> => {
       const supabase = createClient();
-      /* R-1509: every unmatched line, not the first 1000 — read in full before any
-         reconcile, so the pages do not shift under the writes. */
-      const txns = await fetchAllRows<{ id: string }>((from, to) => supabase
-        .from("bank_transactions")
-        .select("id")
-        .eq("bank_account_id", accountId)
-        .is("matched_to_id", null)
-        .order("id", { ascending: true })
-        .range(from, to));
-
-      let reconciled = 0, review = 0;
-      for (const t of txns) {
-        const { data: sugg } = await supabase.rpc("suggest_bank_transaction_matches", { p_bank_txn_id: t.id });
-        const list = (sugg ?? []) as MatchSuggestion[];
-        const top = list[0];
-        // Auto-apply only a CONFIDENT ('exact' or 'high') and UNAMBIGUOUS match —
-        // i.e. no second candidate sharing the top confidence. Two records with
-        // the same score (e.g. two months' salary of equal amount) are left for
-        // manual review so we never guess wrong on money. Everything applied is
-        // reversible via Un-reconcile.
-        const conf = top?.match_confidence;
-        const confident = conf === "exact" || conf === "high";
-        const unambiguous = list.length === 1 || list[1]?.match_confidence !== conf;
-        if (top && confident && unambiguous) {
-          try {
-            await applyReconcile(supabase, { transactionId: t.id, matchedToType: top.match_type, matchedToId: top.match_id, confidence: "high" });
-            reconciled++;
-          } catch { review++; }
-        } else {
-          review++;
+      const total: AutoReconcileSummary = { checked: 0, reconciled: 0, review: 0, no_match: 0, low_confidence: 0, ambiguous: 0, failed: 0 };
+      let after: string | null = null;
+      setProgress({ checked: 0 });
+      try {
+        for (;;) {
+          const { data, error } = await supabase.rpc("auto_reconcile_bank_account", {
+            p_account_id: accountId,
+            p_limit: AUTO_RECONCILE_CHUNK,
+            ...(after ? { p_after: after } : {}), // none = from the first line
+          });
+          if (error) throw error;
+          const c = data as unknown as AutoReconcileChunk;
+          for (const k of SUMMARY_KEYS) total[k] += Number(c[k] ?? 0);
+          setProgress({ checked: total.checked });
+          if (c.done || !c.last_id) break;
+          after = c.last_id;
         }
+      } finally {
+        setProgress(null);
       }
-      return { reconciled, review };
+      return total;
     },
-    onSuccess: ({ reconciled, review }) => {
+    onSuccess: (s) => {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["salary-payments"] });
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
-      if (reconciled === 0) toast.info(review > 0 ? `No exact match found — ${review} for manual review` : "All already reconciled");
-      else toast.success(`${reconciled} auto-reconciled${review > 0 ? ` · ${review} for manual review` : ""}`);
+      const { title, description } = autoReconcileSummary(s);
+      if (s.reconciled === 0) toast.info(title, { description });
+      else toast.success(title, { description });
     },
-    onError: (err) => toastError(err),
+    onError: (err) => {
+      // Lines matched by earlier chunks stay matched — refresh the list so they show.
+      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+      toastError(err);
+    },
   });
+  return { ...mutation, progress };
 }
 
 export function useReconcileTransaction() {
@@ -970,8 +986,8 @@ export function useReconcileTransaction() {
     }) => {
       const supabase = createClient();
       // One atomic RPC does the bank-line match, both reverse links, and the
-      // balance-sheet / statutory reversals — the SAME source of truth as the
-      // batch path (applyReconcile). See reconcile_bank_txn (migration
+      // balance-sheet / statutory reversals — the SAME write the server-side
+      // auto-reconcile (auto_reconcile_bank_account, R-1657) uses. See reconcile_bank_txn (migration
       // 20260901160000) and CLAUDE.md §17b. matched_by is set server-side.
       const { data, error } = await supabase.rpc("reconcile_bank_txn", {
         p_txn_id:           input.transactionId,
@@ -1326,11 +1342,7 @@ export function useMatchCreditToInvoice() {
     },
     onSuccess: ({ invoiceId }) => {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["payments"] });
-      qc.invalidateQueries({ queryKey: ["customers"] });
-      qc.invalidateQueries({ queryKey: queryKeys.aging() });
+      invalidateReceivables(qc);   // R-1634: /collections too
       toast.success(`Payment recorded on ${invoiceId} & line reconciled`);
     },
     onError: (err) => toastError(err, { fallback: "Match failed" }),

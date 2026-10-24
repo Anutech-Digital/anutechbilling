@@ -46,7 +46,8 @@ import {
 } from "@/lib/queries/balance-sheet";
 import type { BalanceSheetSection } from "@/lib/supabase/database.types";
 import { usePnL, BOOKS_START } from "@/lib/queries/pnl";
-import { balanceSheetTotals } from "@/lib/accounting/balance-sheet-totals";
+import { balanceSheetTotals, retainedProfitRange, licenceProvisionOf } from "@/lib/accounting/balance-sheet-totals";
+import { reportProfit } from "@/lib/accounting/pnl-assemble";
 import { istToday, addDaysISO } from "@/lib/dates/ist";
 import { fyOf } from "@/lib/accounting/ledger";
 import { fmtBS, parseWholeRupees } from "./format";
@@ -92,9 +93,6 @@ export default function BalanceSheetPage() {
   /* Totals + solvency ratios ek tested pure function me (lib/accounting/balance-sheet-totals.ts).
      R-179: "Received, not yet in bank" bhi asset hai, Cash & bank ke saath — warna bina bank
      account wale workspace me mila hua paisa sirf liability (advance) me dikhta tha. */
-  const {
-    gstCredit, gstPayable, totalAssets, totalLiab, netWorth, retained, currentRatio, debtToEquity,
-  } = balanceSheetTotals(auto, items ?? []);
   /* Retained earnings PER THE BOOKS — cumulative net profit from the P&L, all periods
      (27 Sep 2026). The plug above used to be shown AS retained earnings, which hid every
      missing entry inside a number that always looked right. Now the P&L figure is the
@@ -104,12 +102,20 @@ export default function BalanceSheetPage() {
      P&L nahi chalta (ek bekaar all-periods aggregation bachti hai). */
   const openingQ = useOpeningBalances();
   const opening: OpeningBalances | null = openingQ.data ?? null;
-  const profitFrom = opening ? addDaysISO(opening.asOf, 1) : BOOKS_START;
-  const profitRangeOpen = profitFrom <= today;
-  const cumulative = usePnL({ from: profitRangeOpen ? profitFrom : today, to: today }, openingQ.data !== undefined && profitRangeOpen);
+  const profitRange = retainedProfitRange(opening?.asOf ?? null, today, BOOKS_START);
+  const cumulative = usePnL({ from: profitRange.from, to: profitRange.to }, openingQ.data !== undefined && profitRange.open);
+  /* R-1646: one profit with the P&L and Trial Balance (reportProfit), and the licence cost it
+     estimates (no vendor bill yet) carried as a provision — not left in the unexplained gap. */
   const cumulativeProfit = openingQ.data === undefined ? null
-    : !profitRangeOpen ? 0
-    : cumulative.data ? (cumulative.data.model.netProfit ?? cumulative.data.netProfit) : null;
+    : !profitRange.open ? 0
+    : cumulative.data ? reportProfit(cumulative.data) : null;
+  const licenceProvision = !profitRange.open ? 0 : licenceProvisionOf(cumulative.data);
+  /* Totals + solvency ratios ek tested pure function me (lib/accounting/balance-sheet-totals.ts).
+     R-179: "Received, not yet in bank" bhi asset hai, Cash & bank ke saath — warna bina bank
+     account wale workspace me mila hua paisa sirf liability (advance) me dikhta tha. */
+  const {
+    gstCredit, gstPayable, totalAssets, totalLiab, netWorth, retained, currentRatio, debtToEquity,
+  } = balanceSheetTotals(auto, items ?? [], { licenceProvision });
   const openingEquity = (opening?.ownerCapital ?? 0) + (opening?.retainedEarnings ?? 0);
   const unexplained = cumulativeProfit === null ? null : retained - openingEquity - cumulativeProfit;
 
@@ -148,6 +154,7 @@ export default function BalanceSheetPage() {
         ["Expenses payable", auto.expensesPayable ?? 0],
         ["Salary deductions held (other)", auto.salaryOtherDeductions ?? 0],
         ["Commission payable (partners)", auto.commissionsPayable ?? 0],
+        ["Licence cost provision (estimate, no vendor bill yet)", licenceProvision ?? 0],
         ["Credit card payable", auto.creditCardPayable ?? 0],
         ["EMI loans payable", auto.emiLoansPayable ?? 0],
         ["Business loans payable", auto.businessLoansPayable ?? 0],
@@ -334,6 +341,9 @@ export default function BalanceSheetPage() {
                 )}
                 {(auto?.commissionsPayable ?? 0) > 0 && (
                   <BSLine label="Commission payable (partners)" hint="partner commission earned, not yet paid (after TDS)" amount={auto?.commissionsPayable ?? 0} kind="auto" source="Referrals" />
+                )}
+                {(licenceProvision ?? 0) > 0 && (
+                  <BSLine label="Licence cost provision (estimate)" hint="licence cost the P&L estimates from your wholesale rates — no vendor bill entered yet" amount={licenceProvision ?? 0} kind="auto" source="P&L" href="/accounting/pnl" />
                 )}
                 {(auto?.creditCardPayable ?? 0) > 0 && (
                   <BSLine label="Credit card payable" hint="amount owed on company credit cards" amount={auto?.creditCardPayable ?? 0} kind="auto" source="Banking" href="/accounting/banking" />

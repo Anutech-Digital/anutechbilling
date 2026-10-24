@@ -21,6 +21,7 @@ import { usePurchaseOrders, usePurchaseOrderSummaries, type PurchaseOrderSummary
 import { useSubscriptions }  from "@/lib/queries/subscriptions";
 import PlaceOrderDialog      from "@/components/features/purchase-orders/place-order-dialog";
 import { EmptyState }        from "@/components/shared/empty-state";
+import { LoadError }         from "@/components/shared/load-error";
 import { KPI }               from "@/components/shared/kpi";
 import { Skeleton }          from "@/components/ui/skeleton";
 import { Button }            from "@/components/ui/button";
@@ -31,6 +32,7 @@ import { Input }             from "@/components/ui/input";
 import { Icon }              from "@/components/ui/icon";
 import { rupee, formatDate, cn } from "@/lib/utils";
 import type { PurchaseOrderRow } from "@/lib/supabase/database.types";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 
 const STATUS_META: Record<string, { label: string; kind: "warning"|"info"|"success"|"danger"|"muted" }> = {
   draft:       { label: "Draft",       kind: "warning" },
@@ -185,14 +187,7 @@ export default function PurchaseOrdersPage() {
       )}
 
       {/* Error */}
-      {error && (
-        <EmptyState
-          icon="alert"
-          title="Could not load purchase orders"
-          body={error.message}
-          action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
-        />
-      )}
+      {error && <LoadError what="Purchase orders" error={error} onRetry={() => refetch()} />}
 
       {/* Loading */}
       {isLoading && (
@@ -246,8 +241,8 @@ export default function PurchaseOrdersPage() {
                   return (
                     <tr
                       key={p.id}
-                      className="border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer"
-                      onClick={() => setSelected(p)}
+                      className={`border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer ${ROW_FOCUS_RING}`}
+                      {...rowActivation(() => setSelected(p))}
                     >
                       <td className="p-3 font-mono text-xs font-semibold text-ink">{p.id}</td>
                       <td className="p-3">

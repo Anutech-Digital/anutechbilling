@@ -16,7 +16,8 @@
  * Sheet here is the owner's view and the ITR view, both of which use these.
  */
 
-import { utcDateISO, fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
+import { utcDateISO, fyStartYear, fyLabelOfYear, istToday } from "@/lib/dates/ist";
+import { rupee } from "@/lib/utils";
 
 export type AssetBlock ="computers" | "plant" | "furniture" | "vehicles" | "building" | "intangible";
 
@@ -64,7 +65,7 @@ export function depreciationSchedule(a: AssetLike, uptoFy: number): DepRow[] {
   for (let fy = firstFy; fy <= uptoFy; fy++) {
     if (disposalFy !== null && fy >= disposalFy) {
       rows.push({ fy, fyLabel: fyLabel(fy), opening: wdv, ratePct: 0, halfRate: false, depreciation: 0, closing: 0,
-        note: `Sold / scrapped ${a.disposed_on} for ₹${Math.round(a.disposal_value ?? 0).toLocaleString("en-IN")} — ${wdv - Math.round(a.disposal_value ?? 0) >= 0 ? "short-term loss" : "gain"} ₹${Math.abs(wdv - Math.round(a.disposal_value ?? 0)).toLocaleString("en-IN")} on the block` });
+        note: `Sold / scrapped ${a.disposed_on} for ${rupee(Math.round(a.disposal_value ?? 0))} — ${wdv - Math.round(a.disposal_value ?? 0) >= 0 ? "short-term loss" : "gain"} ${rupee(Math.abs(wdv - Math.round(a.disposal_value ?? 0)))} on the block` });
       wdv = 0;
       break;
     }
@@ -147,18 +148,27 @@ export function bookValueAt(a: AssetLike, date: string): number {
   return Math.round(a.cost) - accumulatedDepreciation(a, d);
 }
 
-/** The assets still held on `date`: cost, accumulated depreciation, net block (cost − accumulated). */
-export function netBlockAt(assets: readonly AssetLike[], date: string): { cost: number; accumulated: number; net: number } {
+/* R-1808: a report charges depreciation only for days that have happened. "This FY" runs to
+   31 Mar and the current month to its last day, so without this the P&L charged the months
+   still to come. Every report path goes through the two functions below; `today` defaults to
+   IST today (lib/dates/ist.ts) and is a parameter only so tests can pin it. */
+const upToToday = (date: string, today: string) => (date.slice(0, 10) < today ? date.slice(0, 10) : today);
+
+/** The assets still held on `date`: cost, accumulated depreciation (charged up to min(date,
+ *  today) — R-1808), net block (cost − accumulated). */
+export function netBlockAt(assets: readonly AssetLike[], date: string, today: string = istToday()): { cost: number; accumulated: number; net: number } {
   const d = date.slice(0, 10);
   const held = assets.filter((a) => a.put_to_use <= d && !(a.disposed_on && a.disposed_on <= d));
   const cost = held.reduce((s, a) => s + Math.round(a.cost), 0);
-  const accumulated = held.reduce((s, a) => s + accumulatedDepreciation(a, d), 0);
+  const accumulated = held.reduce((s, a) => s + accumulatedDepreciation(a, upToToday(d, today)), 0);
   return { cost, accumulated, net: cost - accumulated };
 }
 
-/** Depreciation for [from, to] across the register — the P&L and ITR line. */
-export function registerDepreciationForRange(assets: readonly AssetLike[], from: string, to: string): number {
-  return assets.reduce((s, a) => s + depreciationForRange(a, from, to), 0);
+/** Depreciation for [from, min(to, today)] across the register — the P&L and ITR line (R-1808:
+ *  never the months still to come). */
+export function registerDepreciationForRange(assets: readonly AssetLike[], from: string, to: string, today: string = istToday()): number {
+  const end = upToToday(to, today);
+  return assets.reduce((s, a) => s + depreciationForRange(a, from, end), 0);
 }
 
 export interface RegisterSummary {

@@ -24,6 +24,7 @@ import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -33,6 +34,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { cn, formatDate } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { killSwitchFor, needsConfirmation } from "@/lib/ai/autonomy";
+import { isLessonProposal, stillWaiting } from "@/lib/ai/public-chat-lessons";
 import { ScheduledJobs } from "./scheduled-jobs";
 
 type Mode = "off" | "hold" | "auto";
@@ -121,8 +123,36 @@ export default function AutomationPage() {
     onError: (e) => toast.error((e as Error).message),
   });
 
-  const held = (log.data?.rows ?? []).filter((r) => r.outcome === "held");
+  /* R-727: website-chat lessons are proposals until a person decides; a decided one (its
+     approve/discard row is in the log) is no longer waiting. */
+  const allRows = log.data?.rows ?? [];
+  const held = stillWaiting(allRows.filter((r) => r.outcome === "held"), allRows);
   const canEdit = policy.data?.canEdit ?? false;
+
+  const decideLesson = useMutation({
+    mutationFn: async (body: { id: number; decision: "approve" | "discard" }) => {
+      const res  = await fetch("/api/ai/action-log/lesson", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error((json as { error?: string }).error ?? "Could not save your decision");
+      return body;
+    },
+    onSuccess: (body) => {
+      toast.success(body.decision === "approve"
+        ? "Lesson approved — the website chat uses it from the next conversation."
+        : "Lesson discarded — the website chat will not use it.");
+      qc.invalidateQueries({ queryKey: ["ai-action-log"] });
+    },
+    /* The server's sentence already says what happened and what to do (§24); the action
+       reloads the list, which is the next step it names. */
+    onError: (e) => toast.error("Lesson not saved", {
+      description: (e as Error).message,
+      action: { label: "Reload list", onClick: () => qc.invalidateQueries({ queryKey: ["ai-action-log"] }) },
+    }),
+  });
 
   /**
    * `automationOn` is what the SWITCH says; `ai_kill_switch` is what the COLUMN stores.
@@ -183,6 +213,36 @@ export default function AutomationPage() {
                 </div>
                 <p className="mt-1 text-xs leading-snug text-ink-2">{r.reason}</p>
                 <FactList facts={r.facts} />
+                {isLessonProposal(r) && (
+                  /* R-727: a lesson the website chat wants to learn. It reaches the chat only
+                     after Use lesson. */
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="text-2xs text-ink-3">
+                      The website chat wants to learn this. It is used only after you approve it.
+                    </span>
+                    {canEdit ? (
+                      <>
+                        <Button
+                          size="sm"
+                          disabled={decideLesson.isPending}
+                          onClick={() => decideLesson.mutate({ id: r.id, decision: "approve" })}
+                        >
+                          Use lesson
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={decideLesson.isPending}
+                          onClick={() => decideLesson.mutate({ id: r.id, decision: "discard" })}
+                        >
+                          Discard
+                        </Button>
+                      </>
+                    ) : (
+                      <span className="text-2xs text-ink-3">An owner or a manager can approve or discard it.</span>
+                    )}
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -197,7 +257,7 @@ export default function AutomationPage() {
           <Skeleton className="h-16 w-full" />
         ) : policy.error ? (
           <p className="text-sm text-rose">
-            Could not read the automation settings — {(policy.error as Error).message}. Nothing
+            Could not read the automation settings. {loadErrorBody(policy.error)} Nothing
             has changed; reload to try again.
           </p>
         ) : (
@@ -303,7 +363,7 @@ export default function AutomationPage() {
           /* A read failure is NOT an empty log. "The app did nothing" and "we could not find
              out what the app did" look identical and mean opposite things. */
           <p className="p-4 text-sm text-rose">
-            Could not read the log — {(log.error as Error).message}. This does not mean nothing
+            Could not read the log. {loadErrorBody(log.error)} This does not mean nothing
             happened; it means we could not find out.
           </p>
         ) : (log.data?.rows ?? []).length === 0 ? (
@@ -357,7 +417,7 @@ function FactList({ facts }: { facts: Record<string, unknown> }) {
     <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
       {entries.map(([k, v]) => (
         <span key={k} className="font-mono text-3xs text-ink-3">
-          <span className="text-ink-4">{k}</span> {String(v)}
+          <span className="text-ink-3">{k}</span> {String(v)}
         </span>
       ))}
     </div>

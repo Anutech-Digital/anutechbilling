@@ -194,7 +194,7 @@ export function Header({ emailFrom, domainTeaser = DOMAIN_TEASER_NO_PRICE }: { e
       onMouseLeave={() => setOpen(null)}
       style={{ position: "sticky", top: 0, zIndex: 80, background: "#fff", borderBottom: "1px solid var(--border-light)" }}
     >
-      <div className="wrap" style={{ height: 68, display: "flex", alignItems: "center", gap: 26 }}>
+      <div className="wrap hdr-row" style={{ height: 68, display: "flex", alignItems: "center", gap: 26 }}>
         {/* R-465: plain "/". On anutech.in the company home no longer bounces a signed-in
             user to the app (R-520), so the old "?preview=1" bypass is not needed there. */}
         <Link href="/" style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }} aria-label="Anutech Digital home">

@@ -189,15 +189,15 @@ export default function PersonalWealthPage() {
         <>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Current value</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-3">Current value</p>
               <div className="mt-0.5"><Money amount={nw.investments} size="display" /></div>
             </Card>
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Amount invested</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-3">Amount invested</p>
               <div className="mt-0.5"><Money amount={nw.investedTotal} size="display" /></div>
             </Card>
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Gain / loss</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-3">Gain / loss</p>
               <div className="mt-0.5">
                 <Money amount={nw.portfolioGain} size="display" />
               </div>
@@ -273,7 +273,7 @@ export default function PersonalWealthPage() {
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="vw-kind" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Type</label>
+                <label htmlFor="vw-kind" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Type</label>
                 <Select value={form.asset_class} onValueChange={(v) => setForm((f) => ({ ...f, asset_class: v as AssetClass }))}>
                   <SelectTrigger id="vw-kind"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -282,7 +282,7 @@ export default function PersonalWealthPage() {
                 </Select>
               </div>
               <div>
-                <label htmlFor="vw-units" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Units (optional)</label>
+                <label htmlFor="vw-units" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Units (optional)</label>
                 <Input id="vw-units"
                   value={form.units}
                   onChange={(e) => setForm((f) => ({ ...f, units: e.target.value }))}
@@ -293,7 +293,7 @@ export default function PersonalWealthPage() {
             </div>
 
             <div>
-              <label htmlFor="vw-name" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Name</label>
+              <label htmlFor="vw-name" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Name</label>
               <Input id="vw-name"
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
@@ -303,7 +303,7 @@ export default function PersonalWealthPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="vw-invested" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Amount invested (₹)</label>
+                <label htmlFor="vw-invested" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Amount invested (₹)</label>
                 <Input id="vw-invested"
                   value={form.invested}
                   onChange={(e) => setForm((f) => ({ ...f, invested: e.target.value }))}
@@ -312,7 +312,7 @@ export default function PersonalWealthPage() {
                 />
               </div>
               <div>
-                <label htmlFor="vw-current-value" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Current value (₹)</label>
+                <label htmlFor="vw-current-value" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Current value (₹)</label>
                 <Input id="vw-current-value"
                   value={form.current_value}
                   onChange={(e) => setForm((f) => ({ ...f, current_value: e.target.value }))}
@@ -323,19 +323,19 @@ export default function PersonalWealthPage() {
             </div>
 
             <div>
-              <label htmlFor="vw-value-date" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Value as of</label>
+              <label htmlFor="vw-value-date" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Value as of</label>
               <Input id="vw-value-date"
                 type="date"
                 value={form.valued_on}
                 onChange={(e) => setForm((f) => ({ ...f, valued_on: e.target.value }))}
               />
-              <p className="text-2xs text-ink-4 mt-1">
+              <p className="text-2xs text-ink-3 mt-1">
                 If you leave this blank, it will show &quot;value never updated&quot; next to the total.
               </p>
             </div>
 
             <div>
-              <label htmlFor="vw-note" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Note</label>
+              <label htmlFor="vw-note" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Note</label>
               <Input id="vw-note"
                 value={form.notes}
                 onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}

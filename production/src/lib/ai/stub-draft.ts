@@ -27,6 +27,7 @@
  * falls back here when the model invents a number.
  */
 import { rupee } from "@/lib/utils";
+import { IST_TZ } from "@/lib/dates/ist";
 
 export interface Draft {
   subject: string;
@@ -58,7 +59,7 @@ export function stubDraft(args: StubDraftArgs): Draft {
   const sig = args.signOff.trim() ? `\n\nThanks,\n${args.signOff.trim()}` : "";
 
   if (purpose === "renewal") {
-    const on = renewalDate ? new Date(renewalDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "soon";
+    const on = renewalDate ? new Date(renewalDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: IST_TZ }) : "soon";
     if (channel === "whatsapp") {
       return {
         subject: "",

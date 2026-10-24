@@ -39,14 +39,15 @@ export const PAYMENT_FIELD_LABELS = {
   submit: "Confirm payment",
 } as const;
 
-/** The reference field's label for a method. */
+/** The reference field's label for a method. R-1444: optional for every method (Pardeep,
+ *  14 Oct) — a blank one is saved as "<Method> <date> <time>" (blankReference). */
 export function referenceLabel(method: string): string {
-  return method === "upi" ? "UPI Transaction Ref ID (12 digits)"
-    : method === "razorpay" ? "Razorpay Payment ID"
-    : method === "bank_transfer" ? "Bank UTR / Transaction Ref No."
-    : method === "cheque" ? "Cheque No. & Issuing Bank"
+  return method === "upi" ? "UPI Transaction Ref ID (Optional)"
+    : method === "razorpay" ? "Razorpay Payment ID (Optional)"
+    : method === "bank_transfer" ? "Bank UTR / Transaction Ref No. (Optional)"
+    : method === "cheque" ? "Cheque No. & Issuing Bank (Optional)"
     : method === "cash" ? "Cash Voucher / Receipt Ref (Optional)"
-    : "Transaction Reference";
+    : "Transaction Reference (Optional)";
 }
 
 export function referencePlaceholder(method: string): string {
@@ -58,12 +59,12 @@ export function referencePlaceholder(method: string): string {
 }
 
 export function referenceHint(method: string): string {
-  return method === "upi" ? "12-digit UTR/UPI reference from GPay, PhonePe, Paytm or your bank QR."
-    : method === "razorpay" ? "Unique Razorpay payment ID starting with pay_."
-    : method === "bank_transfer" ? "Bank UTR or NEFT/RTGS reference number from bank statement."
-    : method === "cheque" ? "Enter 6-digit cheque number and customer's bank name for clearing."
+  return method === "upi" ? "12-digit UTR/UPI reference from GPay, PhonePe, Paytm or your bank QR. Leave blank if you do not have it."
+    : method === "razorpay" ? "Unique Razorpay payment ID starting with pay_. Leave blank if you do not have it."
+    : method === "bank_transfer" ? "Bank UTR or NEFT/RTGS reference number from bank statement. Leave blank if you do not have it."
+    : method === "cheque" ? "6-digit cheque number and the customer's bank name. Leave blank if you do not have it."
     : method === "cash" ? "Optional. Leave blank and it is saved as Cash + date and time."
-    : "Optional internal cash voucher or receipt reference.";
+    : "Optional internal voucher or receipt reference.";
 }
 
 /**

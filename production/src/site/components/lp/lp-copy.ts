@@ -9,6 +9,7 @@
  * says CONTACT_FOR_PRICING.
  */
 import type { LpPlanKey } from "@/site/lib/lp-plans";
+import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 /** The hero lines. Also a prop, so an ad variant can bring its own (it then wins over the plan's own). */
 export interface WorkspaceAdCopy {
@@ -238,7 +239,7 @@ const en: LpDict = {
     sub: "Gmail, Drive, Meet, Docs and Gemini — from 1 user to 1,000+. We pick the plan together; our team moves your domain, users and old mail.",
   },
   nav: { onThisPage: "On this page", features: "Features", plans: "Plans", price: "Price", compare: "Compare", faq: "FAQ", viewOffer: "View Offer", seePrice: "See Price" },
-  btn: { buyNow: "Buy Now", getQuote: "Get Quote", startTrial: "Start 14-Day Free Trial", freeTrial: "Free Trial", whatsapp: "WhatsApp", callWhatsapp: "Call / WhatsApp", close: "Close" },
+  btn: { buyNow: "Buy Now", getQuote: "Get Quote", startTrial: `Start ${WORKSPACE_TRIAL_DAYS}-Day Free Trial`, freeTrial: "Free Trial", whatsapp: "WhatsApp", callWhatsapp: "Call / WhatsApp", close: "Close" },
   wa: {
     want: (plan) => `Hello ANUTECH, I want Google Workspace ${plan}.`,
     buy: (plan) => `Hello ANUTECH, I want to buy Google Workspace ${plan}.`,
@@ -265,11 +266,11 @@ const en: LpDict = {
     plainAria: "What you get",
     setup: "setup",
     plainHead: "FREE setup + email migration",
-    plainBody: ["Domain, users and old mail — done by our team. Plus a ", "14-day free trial", ", no card needed."],
+    plainBody: ["Domain, users and old mail — done by our team. Plus a ", `${WORKSPACE_TRIAL_DAYS}-day free trial`, ", no card needed."],
     startNow: "Get started",
     getQuote: "Get a quote",
   },
-  strip: { aria: "Why customers pick ANUTECH", trial: "14-day free trial", setup: "Free setup & migration", gst: "GST invoice", support: "Hindi / English support" },
+  strip: { aria: "Why customers pick ANUTECH", trial: `${WORKSPACE_TRIAL_DAYS}-day free trial`, setup: "Free setup & migration", gst: "GST invoice", support: "Hindi / English support" },
   apps: { aria: "Google Workspace apps", what: ["Business Email", "Cloud Storage", "Video Meetings", "Create & Collaborate", "Work Together", "Present Ideas", "Stay Organised"] },
   steps: {
     kicker: "How it starts",
@@ -348,14 +349,14 @@ const en: LpDict = {
     items: ({ plan, usersLimit, offer, offerPrice }) => [
       ["I don't have a domain — what happens?", "No problem. We register your domain too and start Google Workspace on it — all in one place."],
       ["What about my old email (cPanel, Zoho, Outlook)?", "Free migration: we move your old mail, folders, contacts and calendar into Google Workspace. You lose nothing."],
-      ["What happens after the 14-day trial?", offer
+      [`What happens after the ${WORKSPACE_TRIAL_DAYS}-day trial?`, offer
         ? `After the trial, you decide. To continue, take the yearly plan — a new account with 30+ users pays ${offerPrice}/user in the first year (with Google approval; list price from the second year); otherwise nothing is charged — no card is asked for.`
         : "After the trial, you decide. To continue, take the yearly or monthly plan; otherwise nothing is charged — no card is asked for."],
       ["Do I get a GST invoice?", "Yes, every order comes with a GST invoice, and your business can claim input tax credit on it."],
       [`How many users can ${plan} have?`, `${usersLimit}. You can add users any time, and upgrade the plan when you need to.`],
     ],
   },
-  cta: { h3: "Ready to move your business to Google Workspace?", p: "14-day free trial, free setup and migration — give your name and number and we will call you today." },
+  cta: { h3: "Ready to move your business to Google Workspace?", p: `${WORKSPACE_TRIAL_DAYS}-day free trial, free setup and migration — give your name and number and we will call you today.` },
   foot: { line: "Google Workspace solutions", callWa: "Call / WhatsApp" },
   exit: { kicker: "Before you go", h3: "One free call — no commitment", p: "Give your name and number. We will tell you which plan suits your business, and how the setup will work." },
   sticky: { aria: "Quick actions" },
@@ -379,7 +380,7 @@ const en: LpDict = {
     doneH: (first) => `Thank you, ${first}!`,
     doneP: (hours) => `Our team will call you between ${hours}. A confirmation is on its way to your email.`,
     doneWa: "Talk on WhatsApp now",
-    trialKicker: "14-day free trial",
+    trialKicker: `${WORKSPACE_TRIAL_DAYS}-day free trial`,
     buyH: "Share your details",
     trialH: "Start your free trial",
     buyP: "Our team will call you today and set it up on your domain.",

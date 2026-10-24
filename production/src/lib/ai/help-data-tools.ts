@@ -121,7 +121,7 @@ const TOOLS: Record<HelpDataToolName, ToolDef> = {
       const today = istToday(now);
       const rows = await fetchAllRows<{ status: string; due_date: string | null; amount: number; net_payable: number | null; paid_amount: number | null }>((from, to) =>
         c.from("invoices").select("status, due_date, amount, net_payable, paid_amount").eq("tenant_id", tenantId)
-          .in("status", ["pending", "overdue"]).order("id", { ascending: true }).range(from, to));
+          .in("status", ["pending", "overdue"]).is("written_off_at", null).order("id", { ascending: true }).range(from, to));
       const overdue = rows.filter((r) => invoiceIsOverdue(r, today));
       const owed = overdue.reduce((s, r) => s + invoiceBalance(r), 0);
       return `Overdue invoices: ${num(overdue.length)}. Still owed on them: ${rupee(owed)}.`;

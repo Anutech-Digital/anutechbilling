@@ -21,6 +21,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
 import { Card } from "@/components/ui/card";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -80,7 +81,7 @@ export default function IndiamartLeadsPage() {
       ) : err ? (
         <Card><div className="space-y-3">
           <p className="font-medium text-ink">Could not load the IndiaMART setting</p>
-          <p className="text-sm text-ink-2">{(err as Error).message}</p>
+          <p className="text-sm text-ink-2">{loadErrorBody(err)}</p>
           <Button variant="default" icon="refresh" onClick={() => status.refetch()} loading={status.isFetching}>Try again</Button>
         </div></Card>
       ) : status.data ? (

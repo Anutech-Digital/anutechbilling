@@ -57,7 +57,7 @@ function AiCallButton({ leadId }: { leadId: string }) {
     );
   }
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button icon="sparkles" loading={busy} title="Pick an agent — it will call this lead now">
           AI call
@@ -104,16 +104,22 @@ export interface LeadDetailFooterProps {
   deletePending: boolean;
   handleEmail: () => void;
   setWhatsOpen: (open: boolean) => void;
+  /** R-1009: dials the lead — through /api/contacts/reveal when this role sees a masked phone.
+   *  Without it the button dials contact_phone as it is. */
+  onCall?: () => void;
   latestQuote: Quote | undefined;
   hasQuotes: boolean;
+  /** R-1807: the lead's quotes failed to load (or have not answered yet). Neither "Send
+   *  quote" (no quote) nor "New quote / Revise" (has one) is known to be right — none shows. */
+  quotesUnknown?: boolean;
   nextAction: NextAction | null;
   handleSendQuote: () => void;
   handleReviseQuote: () => void;
 }
 
 export function LeadDetailFooter({
-  lead, onEdit, handleArchive, handleDelete, deletePending, handleEmail, setWhatsOpen,
-  latestQuote, hasQuotes, nextAction, handleSendQuote, handleReviseQuote,
+  lead, onEdit, handleArchive, handleDelete, deletePending, handleEmail, setWhatsOpen, onCall,
+  latestQuote, hasQuotes, quotesUnknown = false, nextAction, handleSendQuote, handleReviseQuote,
 }: LeadDetailFooterProps) {
   const router = useRouter();
   const hasSub = useCustomerHasSubscription(lead.customer_id, lead.stage === "won");
@@ -167,7 +173,7 @@ export function LeadDetailFooter({
             {lead.contact_phone && (
               <Button
                 icon="mobile"
-                onClick={() => { window.location.href = `tel:${lead.contact_phone}`; }}
+                onClick={() => { if (onCall) onCall(); else window.location.href = `tel:${lead.contact_phone}`; }}
                 title="Native dialer"
               >
                 Call
@@ -242,13 +248,13 @@ export function LeadDetailFooter({
                 is not what causes the collision — being told to call is. When nextAction IS
                 already send-quote this renders nothing, so the two-primaries mistake cannot
                 come back through the very fix for its side effect. */}
-            {lead.stage !== "won" && lead.stage !== "lost" && !hasQuotes &&
+            {lead.stage !== "won" && lead.stage !== "lost" && !hasQuotes && !quotesUnknown &&
              nextAction?.target.kind !== "send_quote" && (
               <Button icon="send" onClick={handleSendQuote}>
                 Send quote
               </Button>
             )}
-            {lead.stage !== "won" && lead.stage !== "lost" && hasQuotes && latestQuote?.status !== "draft" && (
+            {lead.stage !== "won" && lead.stage !== "lost" && hasQuotes && !quotesUnknown && latestQuote?.status !== "draft" && (
               <>
                 <Button icon="send" onClick={handleSendQuote}>
                   New quote

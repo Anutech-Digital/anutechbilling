@@ -4,6 +4,7 @@
  */
 
 import { rupee } from "@/lib/utils";
+import { escapeHtml as escapeHtmlText } from "@/lib/digest/owner-digest-html";
 
 export interface QuoteEmailData {
   quoteId: string;
@@ -20,17 +21,36 @@ export interface QuoteEmailData {
   documentLabel?: string;
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+/** R-734: every value that reaches the HTML goes through here — names come from public forms. */
+function escapeHtml(s: string | number | null | undefined): string {
+  return escapeHtmlText(String(s ?? ""));
 }
 
-export function buildCustomerQuoteHtml(data: QuoteEmailData): string {
+/** A link target is only ever http(s) — anything else (javascript:, data:) becomes an inert "#". */
+function safeHref(u: string): string {
+  const t = u.trim();
+  return /^https?:\/\//i.test(t) ? escapeHtml(t) : "#";
+}
+
+export function buildCustomerQuoteHtml(raw: QuoteEmailData): string {
+  /* R-734: escaped once here, so the template below can never print a raw value. */
+  const data = {
+    ...raw,
+    quoteId:       escapeHtml(raw.quoteId),
+    customerName:  escapeHtml(raw.customerName),
+    tenantName:    escapeHtml(raw.tenantName),
+    tenantPhone:   raw.tenantPhone ? escapeHtml(raw.tenantPhone) : null,
+    expiresDate:   raw.expiresDate ? escapeHtml(raw.expiresDate) : null,
+    documentLabel: raw.documentLabel ? escapeHtml(raw.documentLabel) : undefined,
+    acceptHref:    safeHref(raw.acceptUrl),
+    acceptUrl:     escapeHtml(raw.acceptUrl),
+  };
   const itemsHtml = (data.lineItems ?? [])
     .map(
       (item) => `
       <tr>
-        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; color: #111827;">${item.name}${(item.notes ?? []).map((n) => `<div style="font-size: 12px; color: #6b7280; margin-top: 2px;">${escapeHtml(n)}</div>`).join("")}</td>
-        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; color: #111827; text-align: center;">${item.qty}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; color: #111827;">${escapeHtml(item.name)}${(item.notes ?? []).map((n) => `<div style="font-size: 12px; color: #6b7280; margin-top: 2px;">${escapeHtml(n)}</div>`).join("")}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; color: #111827; text-align: center;">${escapeHtml(item.qty)}</td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; color: #111827; text-align: right;">${rupee(item.rate)}</td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; font-weight: bold; color: #111827; text-align: right;">${rupee(item.qty * item.rate)}</td>
       </tr>`
@@ -75,7 +95,7 @@ export function buildCustomerQuoteHtml(data: QuoteEmailData): string {
       <p style="font-size: 12px; color: #166534; margin: 0 0 16px 0;">
         Valid until: ${data.expiresDate ? data.expiresDate : "30 days from issue"}
       </p>
-      <a href="${data.acceptUrl}" class="btn-accept" target="_blank">
+      <a href="${data.acceptHref}" class="btn-accept" target="_blank">
         ✅ View & Accept Quotation Online
       </a>
     </div>
@@ -103,7 +123,7 @@ export function buildCustomerQuoteHtml(data: QuoteEmailData): string {
 
     <p style="font-size: 13px; color: #6b7280; margin-top: 24px;">
       Direct Access Link: <br/>
-      <a href="${data.acceptUrl}" style="color: #4f46e5; word-break: break-all;">${data.acceptUrl}</a>
+      <a href="${data.acceptHref}" style="color: #4f46e5; word-break: break-all;">${data.acceptUrl}</a>
     </p>
 
     <div class="footer">
@@ -116,13 +136,20 @@ export function buildCustomerQuoteHtml(data: QuoteEmailData): string {
 `;
 }
 
-export function buildSalesAcknowledgementHtml(data: {
+export function buildSalesAcknowledgementHtml(raw: {
   quoteId: string;
   customerName: string;
   tenantName: string;
   totalAmount: number;
   acceptedAt: string;
 }): string {
+  const data = {
+    ...raw,
+    quoteId:      escapeHtml(raw.quoteId),
+    customerName: escapeHtml(raw.customerName),
+    tenantName:   escapeHtml(raw.tenantName),
+    acceptedAt:   escapeHtml(raw.acceptedAt),
+  };
   return `
 <!DOCTYPE html>
 <html>

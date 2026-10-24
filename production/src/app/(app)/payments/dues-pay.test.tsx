@@ -107,8 +107,12 @@ describe("payments page wiring", () => {
     expect(DUES_PAY_LABEL).toBe("Record payment");
   });
 
-  it("both the phone list and the desktop table use DuesPayButton, not a quote-only button", () => {
-    expect((src.match(/<DuesPayButton/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  it("both the cards and the table use DuesPayButton, not a quote-only button", () => {
+    /* R-1698: the page hands ONE payButton to SubscriptionDuesList, which renders it in both
+       the cards (below xl) and the table (xl+). */
+    expect(src).toMatch(/payButton: \(o\) => <DuesPayButton /);
+    const list = readFileSync(join(__dirname, "dues-list.tsx"), "utf8");
+    expect((list.match(/actions\.payButton\(o\)/g) ?? []).length).toBe(2);
     expect(src).not.toMatch(/o\.quote_id && canWrite/);
     expect(src).not.toMatch(/onRecordPayment=\{o\.quote_id/);
   });

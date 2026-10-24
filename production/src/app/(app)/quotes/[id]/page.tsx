@@ -20,17 +20,24 @@ import type { LossReasonCode } from "@/lib/leads/loss-reasons";
 import { RejectQuoteDialog } from "./reject-quote-dialog";
 import { isQuoteEditableInPlace } from "@/lib/quotes/editable";
 import { paymentDomainDefault } from "@/lib/quotes/payment-domain";
-import { useGenerateInvoice } from "@/lib/queries/invoices";
+import { useGenerateInvoice, useDocumentSeries } from "@/lib/queries/invoices";
+import { ConfirmIssueDialog } from "@/components/features/invoices/confirm-issue-dialog";
+import { issueConsequences } from "@/lib/invoices/issue-consequences";
+import { useTurnoverBracket } from "@/lib/compliance/turnover";
+import { issueEinvoiceNotice, isB2B } from "@/lib/compliance/einvoice";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage";
 import { planForQuote, splitDue } from "@/lib/billing/instalments";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-quote";
 import { addSeatsCount } from "@/lib/subscriptions/seat-quotes-pending";
 import { renewalSubOfQuote, priorTermDueText } from "@/app/(app)/renewals/prior-due";
-import { useSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
+import { useQuoteSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { historyTime, quoteCreatedAt } from "@/lib/quotes/history-time";
 import { quotePaymentBadge } from "@/lib/quotes/status-badge";
+import { shownQuoteStatus, expiredByDate, validityDaysLeft } from "@/lib/quotes/quote-expiry";
+import { quotePaymentState, invoicedPartPaid } from "@/lib/quotes/quote-payment-state";
 import { quoteSentEvent, useQuoteSends } from "@/lib/quotes/sent-event";
 import { staffDisplayNotes } from "@/lib/quotes/customer-notes";
 import { COMPANY_STATE_FIX, companyStateFixFor } from "@/lib/onboarding/setup-links";
@@ -58,6 +65,8 @@ import { payIntent } from "./pay-intent";
 import { quotePrimaryAction, variantFor, isClosedForSending } from "./primary-action";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
 import { quoteContact } from "@/lib/quotes/quote-contact";
+import { addGstinHref, buyerGstinMissing, quoteBuyerGstin } from "@/lib/quotes/buyer-gstin";
+import { paletteMayOpen } from "@/components/layout/palette-access";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
 import { PayQrNotice } from "@/components/features/quotes/pay-qr-notice";
@@ -77,6 +86,10 @@ import { LateInterestLine } from "@/components/features/quotes/late-interest-lin
 import { overallProvisionStatus, type ProvisionStatus } from "@/lib/provisioning/plan";
 import { useProvisioning } from "@/lib/queries/provisioning";
 import { useQuoteSignature } from "@/lib/queries/quote-signatures";
+import { useInvoiceCreatedAt } from "./invoice-created-at";
+import { QUOTE_STATE_LABEL } from "@/lib/quotes/state-labels";
+import { lineScheduleNote } from "@/lib/quotes/billing";
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import { requiredApproval, canSend, canApprove, approvalBadge } from "@/lib/quotes/approval";
 import { eligibleApprovers, approverSentence } from "@/lib/quotes/awaiting-approval";
 import { useTeamMembers } from "@/lib/queries/team";
@@ -104,30 +117,31 @@ import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { FeeNetLine } from "@/app/(app)/payments/gateway-fee";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
-import { billOfSupplyBuilderLine, quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
+import { billOfSupplyBuilderLine, billOfSupplyStatus, quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 
 // ============================================================
 // Status meta
 // ============================================================
 const STATUS_META: Record<Quote["status"], { kind: "muted" | "success" | "warning" | "danger" | "info"; label: string }> = {
-  draft:    { kind: "muted",   label: "Draft" },
-  sent:     { kind: "warning", label: "Sent" },
-  viewed:   { kind: "info",    label: "Viewed" },
-  accepted: { kind: "success", label: "Accepted" },
-  rejected: { kind: "danger",  label: "Rejected" },
-  expired:  { kind: "danger",  label: "Expired" },
+  /* R-1713: words from the one label map (lib/quotes/state-labels.ts) — the list says the same. */
+  draft:    { kind: "muted",   label: QUOTE_STATE_LABEL.draft },
+  sent:     { kind: "warning", label: QUOTE_STATE_LABEL.sent },
+  viewed:   { kind: "info",    label: QUOTE_STATE_LABEL.viewed },
+  accepted: { kind: "success", label: QUOTE_STATE_LABEL.accepted },
+  rejected: { kind: "danger",  label: QUOTE_STATE_LABEL.rejected },
+  expired:  { kind: "danger",  label: QUOTE_STATE_LABEL.expired },
 };
 
 const PAYMENT_META: Record<Quote["payment_status"], { kind: "muted" | "success" | "warning" | "info" | "danger"; label: string }> = {
   none:     { kind: "muted",   label: "Not awaiting" },
-  awaiting: { kind: "warning", label: "Awaiting payment" },
+  awaiting: { kind: "warning", label: QUOTE_STATE_LABEL.awaiting },
   /* Rose, matching the list. `info` put half-collected money in the same blue as
      "Invoiced" and "Payment received" — the two states where nothing is owed — so the one
      row with cash outstanding looked like the settled ones. Tone is the only thing a
      glance reads. */
-  partial:  { kind: "danger",  label: "Partly paid" },
-  received: { kind: "info",    label: "Payment received" },
-  invoiced: { kind: "success", label: "Invoiced" },
+  partial:  { kind: "danger",  label: QUOTE_STATE_LABEL.partial },
+  received: { kind: "info",    label: QUOTE_STATE_LABEL.received },
+  invoiced: { kind: "success", label: QUOTE_STATE_LABEL.invoiced },
 };
 
 // ============================================================
@@ -156,6 +170,9 @@ export default function QuoteDetailPage() {
   /* R-445 (1): who the quote is addressed to — customer first, else the lead. Same values in
      the preview, the downloaded PDF and the WhatsApp attachment preview. */
   const contact = quoteContact(customer, lead);
+  /* R-1485: the buyer's GSTIN — the customer row's (a customer quote never borrows the lead's),
+     else the lead's. Same value on the page, the preview and the downloaded PDF. */
+  const buyerGstin = quoteBuyerGstin(quote?.customer_id ? (customer ?? { gstin: null }) : null, lead);
   const { data: me } = useCurrentUser();
   /* R-718: recording a payment is owner / manager / accountant / billing — sales, support and
      delivery see the money state but no Record button (the database refuses them). */
@@ -173,7 +190,8 @@ export default function QuoteDetailPage() {
   const [blockedOpen, setBlockedOpen] = React.useState(false);
   const [approvalOpen, setApprovalOpen] = React.useState(false);
   const requestApproval = useRequestApproval();
-  const { data: allSubs } = useSubscriptions();
+  /* R-1121: this quote's, the renewed one and the customer's subscriptions — not the whole table. */
+  const { data: allSubs } = useQuoteSubscriptions(quote ?? null);
   /* R-1764: each subscription line's "Domain:" and "Subscription period:" in the preview. */
   const periodCtx = React.useMemo(
     () => (quote ? quoteLinePeriodContext(quote, renewedSubscriptionDomain(quote, allSubs)) : null),
@@ -248,6 +266,8 @@ export default function QuoteDetailPage() {
      lib/quotes/lifecycle.ts on why a skipped step must never render as a tick. */
   const { data: provisioningTasks = [] } = useProvisioning(params.id);
   const { data: signature } = useQuoteSignature(params.id);
+  /* R-1715: the invoice's own created_at for the history — never quote.updated_at. */
+  const { data: invoiceCreatedAt } = useInvoiceCreatedAt(quote?.invoice_id);
   const lifecycle = quote
     ? quoteLifecycle({
         status: quote.status,
@@ -260,6 +280,8 @@ export default function QuoteDetailPage() {
         signerName: signature?.signer_name ?? null,
         // R-159: paid means the money is in, not that an invoice exists.
         paid: quoteIsPaid(quote),
+        /* R-1710: what came in and what is left, also once invoiced. */
+        money: quotePaymentState(quote),
       })
     : null;
 
@@ -548,8 +570,14 @@ export default function QuoteDetailPage() {
      lead's last open quote, offers to mark the lead Lost in the same step — before, the
      lead sat in Quote Sent and its value stayed in the pipeline. */
   const [rejectOpen, setRejectOpen] = React.useState(false);
-  const { data: leadQuotes } = useQuotesByLead(quote?.lead_id ?? undefined);
-  const leadOffer = rejectLeadOffer({ quoteId: params.id, lead: quote?.lead_id ? (lead ?? null) : null, leadQuotes: leadQuotes ?? [] });
+  /* R-1807: a failed (or unanswered) read is not "no other open quote" — the Lost offer waits
+     for the list; on isError the dialog says the lead stays as it is. */
+  const leadQuotesQ = useQuotesByLead(quote?.lead_id ?? undefined);
+  const leadOffer = rejectLeadOffer({
+    quoteId: params.id,
+    lead: quote?.lead_id ? (lead ?? null) : null,
+    leadQuotes: leadQuotesQ.isSuccess && !leadQuotesQ.isError ? leadQuotesQ.data : null,
+  });
   const markRejected = useMutation({
     mutationFn: async (input: { reason: LossReasonCode; note: string | null; markLeadLost: boolean }) => {
       const supabase = createClient();
@@ -576,10 +604,7 @@ export default function QuoteDetailPage() {
       qc.invalidateQueries({ queryKey: ["leads"] });
       /* R-1705: rejecting an add-seats quote takes its seats and MRR back off the subscription
          (DB trigger trg_quotes_add_seats_take_back) — refresh what shows them. */
-      if (quote?.is_add_seats) {
-        qc.invalidateQueries({ queryKey: ["subscriptions"] });
-        qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
-      }
+      if (quote?.is_add_seats) invalidateReceivables(qc);   // R-1634: /collections too
       setRejectOpen(false);
       toast.success(
         input.markLeadLost ? "Quote rejected · lead marked Lost"
@@ -637,6 +662,12 @@ export default function QuoteDetailPage() {
   // snapshot per Rule 53), and links quote_id correctly. The previous local
   // implementation used Math.random() which broke all three properties.
   const generateInvoice = useGenerateInvoice();
+  /* R-1633: "Generate GST Invoice" asks first — a GST invoice cannot be deleted, only
+     credit-noted. The confirm (same ConfirmIssueDialog as /invoices) names the number,
+     customer, GSTIN, amount with GST and the date before anything is issued. */
+  const [issueOpen, setIssueOpen] = React.useState(false);
+  const { data: docSeries } = useDocumentSeries();
+  const { data: turnover } = useTurnoverBracket();
 
   // ────────── Loading / Error ──────────
   if (isLoading) {
@@ -667,11 +698,18 @@ export default function QuoteDetailPage() {
 
   // ────────── Derived ──────────
   /* R-448: a replaced quote reads "Replaced", not "Expired". */
-  const status = quote.superseded_by ? { kind: "muted" as const, label: "Replaced" } : STATUS_META[quote.status];
+  /* R-1679: a sent / viewed quote past its validity reads "Expired" (one rule: quote-expiry.ts). */
+  const shownStatus = shownQuoteStatus(quote);
+  const status = quote.superseded_by ? { kind: "muted" as const, label: QUOTE_STATE_LABEL.replaced } : STATUS_META[shownStatus];
   const revise = canReviseQuote(quote, totalReceivedSoFar);
   /* R-1718: one rule with the list — no "Awaiting payment" on a rejected / expired / replaced quote. */
   const paymentBadge = quotePaymentBadge(quote);
-  const payment = paymentBadge ? PAYMENT_META[paymentBadge] : null;
+  /* R-1710: "Invoiced" alone hid a half payment (T-A1: ₹20,000 of ₹38,232) — money beside the stage. */
+  const payment = paymentBadge
+    ? paymentBadge === "invoiced" && invoicedPartPaid(quote)
+      ? { kind: "danger" as const, label: `${QUOTE_STATE_LABEL.invoiced} · ${QUOTE_STATE_LABEL.partial}` }
+      : PAYMENT_META[paymentBadge]
+    : null;
   const items: QuoteLineItem[] = Array.isArray(quote.line_items) ? quote.line_items : [];
   /* R-542: an add-seats quote's line is a pro-rata charge for the days left in the current
      term — paid once. Its commitment is "annual_yearly" (the seats' term), which printed
@@ -766,10 +804,10 @@ export default function QuoteDetailPage() {
 
   /* R-1726 (+R-1724): ONE orange button — the right next step for this state. Every button
      below takes its variant from this; see ./primary-action.ts for the table. */
-  const closedQuote = isClosedForSending({ status: quote.status, supersededBy: quote.superseded_by });
+  const closedQuote = isClosedForSending({ status: shownStatus, supersededBy: quote.superseded_by });
   const receiptTarget = receivedPayments[receivedPayments.length - 1] ?? null;
   const primary = quotePrimaryAction({
-    status: quote.status,
+    status: shownStatus,
     supersededBy: quote.superseded_by,
     invoiceId: quote.invoice_id,
     paymentStatus: quote.payment_status,
@@ -812,6 +850,7 @@ export default function QuoteDetailPage() {
       quoteId:       quote.id,
       customerName:  quote.customer_name,
       ...contact,
+      customerGstin: buyerGstin,
       createdDate:   quote.created_at,
       expiresDate:   quote.expires_date,
       validityDays:  quote.expires_date
@@ -838,6 +877,8 @@ export default function QuoteDetailPage() {
       extensionTitle: extTitle,
       /* R-1764: "Domain:" / "Subscription period:" — the same words as the preview. */
       periodContext: periodCtx,
+      /* R-1713: the quote's own billing cycle — without it the PDF guessed "billed yearly" from the line. */
+      billingCycle:  quote.billing_cycle,
     });
   };
 
@@ -905,7 +946,9 @@ export default function QuoteDetailPage() {
       setSharingWa(false);
     }
   };
-  const daysLeft = quote.expires_date ? daysBetween(new Date(), quote.expires_date) : null;
+  /* R-1679: counted on the IST calendar (quote-expiry.ts) — the last valid day is 1, not 0. */
+  const daysLeft = validityDaysLeft(quote.expires_date);
+  const validityOver = expiredByDate(quote);
 
   // Activity timeline
   const events: TimelineEvent[] = [
@@ -915,10 +958,10 @@ export default function QuoteDetailPage() {
   ];
   const sentEvent = quoteSentEvent(quote, quoteSends);
   if (sentEvent) {
-    events.push({ icon: "send", kind: "indigo", title: sentEvent.title, body: sentEvent.body, time: historyTime(sentEvent.at ?? quote.updated_at) });
+    events.push({ icon: "send", kind: "indigo", title: sentEvent.title, body: sentEvent.body, time: historyTime(sentEvent.at) });
   }
   if (quote.status === "accepted") {
-    events.push({ icon: "check_circle", kind: "emerald", title: "Customer accepted", body: "Quote accepted · payment workflow started", time: historyTime(quote.updated_at) });
+    events.push({ icon: "check_circle", kind: "emerald", title: "Customer accepted", body: "Quote accepted · payment workflow started", time: historyTime(signature?.signed_at ?? null) });
   }
   // Only record a "Payment received" event when money ACTUALLY landed. A quote
   // can be 'invoiced' with ₹0 received (invoice raised, awaiting payment) — the
@@ -933,16 +976,17 @@ export default function QuoteDetailPage() {
       body: received.length > 1
         ? `${received.length} payments received`
         : latest?.method
-          ? `${latest.method.toUpperCase()}${latest.reference ? ` · ref: ${latest.reference}` : ""}`
+          ? `${paymentMethodLabel(latest.method)}${latest.reference ? ` · ref: ${latest.reference}` : ""}`
           : "Recorded",
-      time: latest?.received_at ? historyTime(latest.received_at) : "Recently",
+      time: historyTime(latest?.received_at ?? null),
     });
   }
   if (quote.payment_status === "invoiced" && quote.invoice_id) {
     events.push({
       icon: "receipt", kind: "emerald", title: `Invoice ${quote.invoice_id} generated`,
-      body: "GST e-invoice ready",
-      time: historyTime(quote.updated_at),
+      /* R-1715: no IRP is connected, so no e-invoice — say what happened. */
+      body: "GST tax invoice raised",
+      time: historyTime(invoiceCreatedAt ?? null),
     });
   }
 
@@ -973,6 +1017,25 @@ export default function QuoteDetailPage() {
                   <b className="text-ink">{quote.customer_name}</b>
                 )}
               </span>
+              {/* R-1485: the buyer's GSTIN, read from the customer (else the lead) — or, for a
+                  business customer without one, a quiet way to add it. */}
+              {buyerGstin ? (
+                <>
+                  <span>·</span>
+                  <span data-testid="quote-buyer-gstin">GSTIN <span className="font-mono text-ink-2">{buyerGstin}</span></span>
+                </>
+              ) : quote.customer_id && buyerGstinMissing(customer) ? (
+                <>
+                  <span>·</span>
+                  {paletteMayOpen(me?.role, addGstinHref(quote.customer_id)) ? (
+                    <Link href={addGstinHref(quote.customer_id) as never} className="text-ink-3 underline underline-offset-2 hover:text-amber-ink">
+                      GSTIN not on file — add it
+                    </Link>
+                  ) : (
+                    <span>GSTIN not on file</span>
+                  )}
+                </>
+              ) : null}
               <span>·</span>
               <Badge kind={status.kind} dot>{status.label}</Badge>
               {quote.revision_no > 1 && quote.revision_of && (
@@ -1065,7 +1128,7 @@ export default function QuoteDetailPage() {
               has one clear reading order — the money next-step lives in the
               status action bar below, not fighting these buttons. Delete is
               separated at the bottom to avoid a fat-finger next to Send. */}
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button icon="more_h">More</Button>
             </DropdownMenuTrigger>
@@ -1341,10 +1404,19 @@ export default function QuoteDetailPage() {
           && quote.payment_status !== "invoiced" && !quote.invoice_id && (
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-ink-3">
-              {daysLeft !== null && daysLeft > 0 && (
-                <>Expires in <b>{daysLeft} days</b> · </>
+              {/* R-1679: past its validity the customer's link refuses it — say so, with the way on. */}
+              {validityOver ? (
+                <span className="font-medium text-rose">
+                  Validity ended {quote.expires_date ? formatDate(quote.expires_date) : ""} — the customer&apos;s link no longer accepts it. Revise or duplicate it to send a fresh one.{" "}
+                </span>
+              ) : (
+                <>
+                  {daysLeft !== null && daysLeft > 0 && (
+                    <>{daysLeft === 1 ? <>Valid <b>until today</b></> : <>Expires in <b>{daysLeft} days</b></>} · </>
+                  )}
+                  {acceptHint(quote)}
+                </>
               )}
-              {acceptHint(quote)}
               {" "}
               {/* What this sentence used to say, unconditionally: "Payment can land later —
                   record it when received." On Q-ADPL-2026-27-0024 that was printed under a
@@ -1548,15 +1620,7 @@ export default function QuoteDetailPage() {
                   loading={generateInvoice.isPending}
                   disabled={!!gstBlock}
                   title={gstBlock ? gstBlock.title : undefined}
-                  onClick={() => generateInvoice.mutate(params.id, {
-                    /* R-409: show the issued invoice at once — button gone, "Invoiced"
-                       ticked, "View invoice" link — instead of waiting for a reload. */
-                    onSuccess: ({ invoiceId }) => {
-                      qc.setQueryData<Quote | null>(["quotes", params.id], (prev) => (prev ? withInvoiceIssued(prev, invoiceId) : prev));
-                      void qc.refetchQueries({ queryKey: ["quotes", params.id], exact: true });
-                      void qc.invalidateQueries({ queryKey: ["payments"] });
-                    },
-                  })}
+                  onClick={() => setIssueOpen(true)}
                 >
                   {money.outstanding > 0 && money.outstanding === total
                     ? "Invoice now (before payment)"
@@ -1633,7 +1697,8 @@ export default function QuoteDetailPage() {
                   </>
                 )}
               </div>
-              <div className="flex gap-2">
+              {/* R-1805: wraps on a phone — three nowrap buttons in a row made the page 459px wide at 375px. */}
+              <div className="flex flex-wrap gap-2 min-w-0 max-w-full">
                 {hasBalance && mayRecordMoney && (
                   <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={() => setPaymentOpen(true)}>
                     {nothingPaid ? "Record payment" : "Record balance payment"}
@@ -1656,7 +1721,12 @@ export default function QuoteDetailPage() {
                     Send receipt
                   </Button>
                 )}
-                <Button asChild variant={variantFor(primary, "view_invoice", hasBalance ? "ghost" : "default")} icon="receipt">
+                <Button
+                  asChild
+                  variant={variantFor(primary, "view_invoice", hasBalance ? "ghost" : "default")}
+                  icon="receipt"
+                  className="h-auto min-h-9 py-1.5 max-w-full whitespace-normal [overflow-wrap:anywhere] text-left"
+                >
                   <Link
                     href={
                       quote.invoice_id
@@ -1727,9 +1797,8 @@ export default function QuoteDetailPage() {
                     </span>
                   ) : line.commitment && (
                     <span className="block text-xs text-ink-3 font-normal">
-                      {isAnnualTier(line.commitment)
-                        ? "Annual commitment · billed per year"
-                        : "Monthly, flexible · billed per month"}
+                      {/* R-1713: the quote's real cycle (Q-0016 billed quarterly said "billed per year"). */}
+                      {lineScheduleNote(line.commitment, quote.billing_cycle)}
                     </span>
                   )}
                 </td>
@@ -1834,7 +1903,7 @@ export default function QuoteDetailPage() {
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-sm">
                     <span className="font-medium tabular-nums">{rupee(p.amount)}</span>{" "}
-                    <span className="text-ink-3 capitalize">· {p.method.replace("_", " ")}</span>
+                    <span className="text-ink-3">· {paymentMethodLabel(p.method)}</span>
                   </div>
                   {p.status === "received" ? (
                     <Badge kind="success" dot>received</Badge>
@@ -1893,7 +1962,7 @@ export default function QuoteDetailPage() {
                     {rupee(p.amount)}
                     <FeeNetLine payment={p} className="font-normal" />
                   </td>
-                  <td className="p-3 text-sm capitalize">{p.method.replace("_", " ")}</td>
+                  <td className="p-3 text-sm">{paymentMethodLabel(p.method)}</td>
                   <td className="p-3 font-mono text-xs text-ink-2 truncate max-w-[180px]">{p.reference ?? "—"}</td>
                   <td className="p-3">
                     {p.status === "received" ? (
@@ -2007,6 +2076,7 @@ export default function QuoteDetailPage() {
         tenantPhone={me?.tenantPhone}
         tenantAddress={me?.tenantAddress}
         quoteId={quote.id}
+        expiresDate={quote.expires_date}
         /* R-1694: the PDF's scan-to-pay QR, or a "add UPI ID" hint for the owner. */
         upiVpa={me?.tenantUpiVpa ?? null}
         payQrQuoteId={quote.id}
@@ -2014,6 +2084,7 @@ export default function QuoteDetailPage() {
         contactName={contact.contactName}
         contactEmail={contact.contactEmail}
         contactPhone={contact.contactPhone}
+        customerGstin={buyerGstin}
         lineItems={items}
         subtotal={quote.subtotal}
         discountPct={quote.discount_pct}
@@ -2063,11 +2134,9 @@ export default function QuoteDetailPage() {
         /* R-1523: the "no pay QR — add your UPI ID" line inside the dialog. */
         upiVpa={me ? me.tenantUpiVpa : undefined}
         currency={quote.currency}
-        validityDays={
-          quote.expires_date
-            ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))
-            : null
-        }
+        /* R-1679: days left FROM TODAY (IST), negative once it ended — not created → expires,
+           which kept saying "valid for 30 days" on a resend weeks later. */
+        validityDays={validityOver ? -1 : daysLeft !== null ? Math.max(1, daysLeft - 1) : null}
       />
 
       {/* Approve / reject drawer */}
@@ -2199,7 +2268,7 @@ export default function QuoteDetailPage() {
                 <ul className="space-y-0.5 pl-6">
                   {receivedPayments.map((p, i) => (
                     <li key={p.id} className="text-2xs text-ink-3 tabular-nums">
-                      #{i + 1} · {rupee(p.amount)} · {p.method.replace("_", " ")} · {formatDate(p.received_at)}
+                      #{i + 1} · {rupee(p.amount)} · {paymentMethodLabel(p.method)} · {formatDate(p.received_at)}
                     </li>
                   ))}
                 </ul>
@@ -2225,6 +2294,41 @@ export default function QuoteDetailPage() {
         leadOffer={leadOffer}
         pending={markRejected.isPending}
         onConfirm={(input) => markRejected.mutate(input)}
+      />
+
+      {/* R-1633: what "Generate GST Invoice" issues, before it is issued. */}
+      <ConfirmIssueDialog
+        open={issueOpen}
+        onOpenChange={setIssueOpen}
+        consequences={issueOpen ? issueConsequences({
+          quote: {
+            id: quote.id,
+            customerName: quote.customer_name ?? null,
+            amount: total,
+            taxAmount: tax,
+            paymentTermsDays: quote.payment_terms_days ?? null,
+            /* undefined (no customer linked / not loaded) says nothing; null warns B2C. */
+            customerGstin: customer ? (customer.gstin ?? null) : undefined,
+            invoiceDate: istToday(),
+            billOfSupply: !!billOfSupplyStatus(gstRegistration.data?.saved),
+          },
+          series: docSeries?.invoice ?? null,
+        }) : null}
+        einvoiceNotice={issueOpen ? issueEinvoiceNotice(turnover?.bracket ?? null, isB2B(customer?.gstin) ? 1 : 0, 1) : null}
+        confirmLabel="Issue invoice"
+        busy={generateInvoice.isPending}
+        onConfirm={() => {
+          setIssueOpen(false);
+          generateInvoice.mutate(params.id, {
+            /* R-409: show the issued invoice at once — button gone, "Invoiced"
+               ticked, "View invoice" link — instead of waiting for a reload. */
+            onSuccess: ({ invoiceId }) => {
+              qc.setQueryData<Quote | null>(["quotes", params.id], (prev) => (prev ? withInvoiceIssued(prev, invoiceId) : prev));
+              void qc.refetchQueries({ queryKey: ["quotes", params.id], exact: true });
+              /* payments, dues, /collections: useGenerateInvoice → invalidateReceivables (R-1634). */
+            },
+          });
+        }}
       />
 
       {/* Reusable confirm dialog (replaces native window.confirm, which is

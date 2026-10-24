@@ -14,7 +14,7 @@
  */
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
+import { authorizeAgent } from "@/lib/security/agent-token";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,12 +23,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NOTE_MAX = 500;
 
 export async function POST(req: Request) {
-  const expected = process.env.AGENT_QUEUE_TOKEN?.trim();
-  if (!expected) return NextResponse.json({ error: "agent queue not configured" }, { status: 503 });
-  const provided = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-  if (!timingSafeEqualStr(provided, expected)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = authorizeAgent(req);
+  if (!auth.ok) return auth.response;
 
   let body: { id?: unknown; note?: unknown } = {};
   try { body = await req.json(); } catch { /* checked below */ }
@@ -44,6 +40,7 @@ export async function POST(req: Request) {
     .from("feedback")
     .update({ status: "fixed", resolved_at: now, resolution_note: note, checked_at: null, checked_by_name: null, updated_at: now })
     .eq("id", id)
+    .in("tenant_id", auth.tenantIds)   // R-739: only a scoped workspace's report
     .in("status", ["open", "agent_queued", "fixed"])
     .is("checked_at", null)
     .select("id");

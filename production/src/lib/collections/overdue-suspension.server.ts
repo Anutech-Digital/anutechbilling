@@ -94,7 +94,7 @@ export async function runOverdueSuspension(
     fetchAllRowsIn(tenantIds, (ids, from, to) => supabase
       .from("invoices")
       .select("id, tenant_id, customer_name, amount, net_payable, paid_amount, status, due_date, quote_id")
-      .in("tenant_id", ids).in("status", ["pending", "overdue"]).not("due_date", "is", null)
+      .in("tenant_id", ids).in("status", ["pending", "overdue"]).is("written_off_at", null).not("due_date", "is", null)
       .order("id", { ascending: true }).range(from, to)) as Promise<InvRow[]>,
   ]);
   /* R-346: "activate now, pay later" invoices are the owner's to follow up — never paused. */

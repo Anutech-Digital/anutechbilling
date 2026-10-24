@@ -25,7 +25,7 @@ export async function pdfPageCount(bytes: Uint8Array): Promise<number | null> {
     const pdfjs = await import("pdfjs-dist");
     pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
     // pdfjs takes ownership of the buffer it is given — hand it a copy.
-    const pdf = await pdfjs.getDocument({ data: bytes.slice() }).promise;
+    const pdf = await pdfjs.getDocument({ data: bytes.slice(), isEvalSupported: false }).promise;
     const n = pdf.numPages;
     void pdf.destroy();
     return Number.isInteger(n) && n > 0 ? n : null;

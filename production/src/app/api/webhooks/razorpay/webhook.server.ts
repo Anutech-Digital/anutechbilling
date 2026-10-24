@@ -707,7 +707,7 @@ export async function settleCapturedPayment(
   const tierName      = notes.tierName ?? "Google Workspace";
   const seats         = notes.seats   ?? String(quote.seats ?? "");
   const domain        = notes.domain  ?? "";
-  const amountFmt     = `₹${paymentAmount.toLocaleString("en-IN")}`;
+  const amountFmt     = rupee(paymentAmount);
 
   // Hosting orders get hosting wording (not "live on Google Workspace") and the
   // provisioning worker sends the cPanel login separately.
@@ -892,7 +892,7 @@ async function handlePaymentFailed(
 
   const reason =
     payment.error_description?.trim() || payment.error_reason?.trim() || payment.error_code?.trim() || "no reason given by Razorpay";
-  const amountFmt = `₹${Math.round((payment.amount ?? 0) / 100).toLocaleString("en-IN")}`;
+  const amountFmt = rupee(Math.round((payment.amount ?? 0) / 100));
 
   // Same event twice → one note, one email.
   if (quote.lead_id) {

@@ -25,10 +25,10 @@ describe("R-1623 hooks", () => {
   });
 
   it("a refusal is thrown, not turned into 0 removed", async () => {
-    rpc.mockResolvedValueOnce({ data: null, error: { message: "Ye 2 lines reconcile hain — pehle Un-reconcile karo." } });
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "2 of this import's 4 lines are reconciled — un-reconcile them first." } });
     const m = useRemoveBankImport() as unknown as { mutationFn: (a: unknown) => Promise<unknown> };
     await expect(m.mutationFn({ p_account_id: "acc1", p_batch_id: "b1", p_legacy_from: null, p_legacy_to: null, p_reason: "galat" }))
-      .rejects.toMatchObject({ message: expect.stringContaining("pehle Un-reconcile karo") });
+      .rejects.toMatchObject({ message: expect.stringContaining("un-reconcile them first") });
   });
 
   it("history comes back newest first", async () => {

@@ -13,6 +13,7 @@
  *   • "Amount in words" line (Indian lakh/crore format) — common GST requirement
  *   • Two signature blocks at the bottom (customer + supplier)
  */
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import {
   Document,
   Page,
@@ -395,8 +396,8 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
           </View>
           <View style={s.metaCell}>
             <Text style={s.metaLabel}>Payment method</Text>
-            <Text style={[s.metaValue, { textTransform: "capitalize" }]}>
-              {payment.method.replace("_", " ")}
+            <Text style={s.metaValue}>
+              {paymentMethodLabel(payment.method)}
             </Text>
           </View>
           <View style={s.metaCell}>

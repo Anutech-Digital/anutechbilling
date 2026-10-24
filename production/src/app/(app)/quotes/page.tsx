@@ -33,6 +33,7 @@ import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { useLead } from "@/lib/queries/leads";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { quotesEmptyCopy } from "@/lib/quotes/empty-tab";
 import { computeMargin } from "@/components/features/margin-pill";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -40,6 +41,7 @@ import { Button, IconButton } from "@/components/ui/button";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
 import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
 import { quoteContact } from "@/lib/quotes/quote-contact";
+import { quoteBuyerGstin } from "@/lib/quotes/buyer-gstin";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -71,6 +73,8 @@ import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { COPY } from "@/lib/copy";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { quoteListTab, quoteTabCounts, isPipelineQuote } from "@/lib/quotes/list-tab";
+import { QUOTE_STATE_LABEL, QUOTE_WITH_CUSTOMER_LABEL } from "@/lib/quotes/state-labels";
+import { quoteTotalUnit, extensionBadgeLabel } from "@/lib/quotes/billing";
 import { useQuoteOpenBalances, withOpenBalances } from "@/lib/quotes/open-balances";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
@@ -84,19 +88,7 @@ function quoteMoney(q: { amount: number | null; currency?: string | null; exchan
   return rupee(q.amount);
 }
 
-/**
- * Quote ke total ki IKAI — "/mo" flex par, "/yr" annual par, khaali jab pata na ho.
- *
- * Pardeep, 31 Aug 2026: "commitment bhi show karo monthly ya yearly." ₹15,340 aur
- * ₹76,464 dono sahi total hain — farak sirf ye hai ki ek MAHINE ka hai aur doosra SAAL
- * ka, aur list par wo farak dikhe bina do quote compare karna andaza ban jata hai.
- *
- * null par khaali: purani quotes jinke billing_cycle set hi nahi hua, unpar "/yr" ka
- * ANDAZA chhapna galat ikai ki wahi bimari hai — na dikhana behtar hai.
- */
-function cycleSuffix(cycle: string | null | undefined): string {
-  return cycle === "monthly" ? "/mo" : cycle === "yearly" ? "/yr" : "";
-}
+/* R-1715: the total's unit ("/mo", "/yr", none on a one-time charge) is quoteTotalUnit in lib/quotes/billing.ts. */
 
 /**
  * A quote's margin, from its LINE ITEMS.
@@ -296,14 +288,15 @@ export default function QuotesPage() {
 
   const tabs: TabBarItem[] = [
     { id: "all",      label: "All",      count: counts.all ?? 0 },
-    { id: "draft",    label: "Draft",    count: counts.draft ?? 0, dot: "slate" },
-    { id: "sent",     label: "Sent",     count: counts.sent ?? 0, dot: "amber" },
-    { id: "viewed",   label: "Viewed",   count: counts.viewed ?? 0, dot: "indigo" },
-    { id: "accepted", label: "Accepted", count: counts.accepted,        dot: "emerald" },
-    { id: "awaiting", label: "Awaiting payment", count: counts.awaiting, dot: "amber" },
-    { id: "invoiced", label: "Invoiced", count: counts.invoiced,  dot: "emerald" },
-    { id: "rejected", label: "Rejected", count: counts.rejected, dot: "rose" },
-    { id: "expired",  label: "Expired",  count: counts.expired, dot: "slate" },
+    /* R-1713: every state word from the one label map (lib/quotes/state-labels.ts). */
+    { id: "draft",    label: QUOTE_STATE_LABEL.draft,    count: counts.draft ?? 0, dot: "slate" },
+    { id: "sent",     label: QUOTE_STATE_LABEL.sent,     count: counts.sent ?? 0, dot: "amber" },
+    { id: "viewed",   label: QUOTE_STATE_LABEL.viewed,   count: counts.viewed ?? 0, dot: "indigo" },
+    { id: "accepted", label: QUOTE_STATE_LABEL.accepted, count: counts.accepted,        dot: "emerald" },
+    { id: "awaiting", label: QUOTE_STATE_LABEL.awaiting, count: counts.awaiting, dot: "amber" },
+    { id: "invoiced", label: QUOTE_STATE_LABEL.invoiced, count: counts.invoiced,  dot: "emerald" },
+    { id: "rejected", label: QUOTE_STATE_LABEL.rejected, count: counts.rejected, dot: "rose" },
+    { id: "expired",  label: QUOTE_STATE_LABEL.expired,  count: counts.expired, dot: "slate" },
   ];
 
   // Filter
@@ -349,7 +342,7 @@ export default function QuotesPage() {
   // KPIs
   /* R-469: Pipeline = quotes still open (draft, sent, viewed) — not invoiced, rejected or
      replaced ones. The margin tile below reads the same set. */
-  const pipelineQuotes = quotesByWorkspace.filter(isPipelineQuote);
+  const pipelineQuotes = quotesByWorkspace.filter((q) => isPipelineQuote(q));
   const totalValue = focusValue(quotesByWorkspace, "pipeline");
   const acceptedValue = focusValue(quotesByWorkspace, "accepted");
   const sentValue = focusValue(quotesByWorkspace, "review");
@@ -361,10 +354,12 @@ export default function QuotesPage() {
   const pipelineMarginUnknownCount = marginablePipeline.filter((m) => !m.known).length;
   /* Every accepted quote (invoiced ones too) — the same set as the Accepted tile's value. */
   const acceptedCount = quotesByWorkspace.filter((q) => quoteInFocus(q, "accepted")).length;
+  /* R-1713: the Accepted tile is the Accepted TAB now; the win rate still counts every won quote. */
+  const wonCount = quotesByWorkspace.filter((q) => q.status === "accepted").length;
   const sentishCount = quotesByWorkspace.filter((q) => quoteInFocus(q, "review")).length;
   const expiringCount = sentishCount;
   const winRate = quotesByWorkspace.length > 0
-    ? Math.round((acceptedCount / Math.max(1, quotesByWorkspace.filter((q) => q.status !== "draft").length)) * 100)
+    ? Math.round((wonCount / Math.max(1, quotesByWorkspace.filter((q) => q.status !== "draft").length)) * 100)
     : 0;
 
   return (
@@ -553,9 +548,9 @@ export default function QuotesPage() {
                   <span className="text-ink-3">·</span>
                   <span className="text-ink-2 font-mono font-medium">Pipeline: <b className="text-amber-ink">{rupee(totalValue, { compact: true })}</b></span>
                   <span className="text-ink-3 font-mono">·</span>
-                  <span className="text-ink-2 font-mono font-medium">Out for Review: <b className="text-ink">{rupee(sentValue, { compact: true })}</b> ({sentishCount})</span>
+                  <span className="text-ink-2 font-mono font-medium">{QUOTE_WITH_CUSTOMER_LABEL}: <b className="text-ink">{rupee(sentValue, { compact: true })}</b> ({sentishCount})</span>
                   <span className="text-ink-3 font-mono">·</span>
-                  <span className="text-ink-2 font-mono font-medium">Accepted: <b className="text-emerald">{rupee(acceptedValue, { compact: true })}</b> ({acceptedCount})</span>
+                  <span className="text-ink-2 font-mono font-medium">{QUOTE_STATE_LABEL.accepted}: <b className="text-emerald">{rupee(acceptedValue, { compact: true })}</b> ({acceptedCount})</span>
                 </div>
                 <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
                   <span>{kpiOpen ? "Collapse" : "Expand"}</span>
@@ -582,7 +577,7 @@ export default function QuotesPage() {
                       aria-pressed={focus === "review"}
                       className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer"
                     >
-                      <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Out for review</p>
+                      <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">{QUOTE_WITH_CUSTOMER_LABEL}</p>
                       <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(sentValue, { compact: true })}</p>
                     </button>
                     <button
@@ -591,7 +586,7 @@ export default function QuotesPage() {
                       aria-pressed={focus === "accepted"}
                       className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-emerald/60 transition-all cursor-pointer"
                     >
-                      <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Accepted</p>
+                      <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">{QUOTE_STATE_LABEL.accepted}</p>
                       <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(acceptedValue, { compact: true })}</p>
                     </button>
                     <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
@@ -635,7 +630,7 @@ export default function QuotesPage() {
                       }
                       compact
                     >
-                      <b>{expiringCount} quote{expiringCount === 1 ? "" : "s"} out for review.</b> Follow-ups run on their own on day 2, 4 and 7 after sending — drafted on the lead while the follow-up setting is on hold.
+                      <b>{expiringCount} quote{expiringCount === 1 ? "" : "s"} sent or viewed, waiting on the customer.</b> Follow-ups run on their own on day 2, 4 and 7 after sending — drafted on the lead while the follow-up setting is on hold.
                     </GeminiCard>
                   )}
                 </div>
@@ -722,14 +717,9 @@ export default function QuotesPage() {
           )}
 
       {/* Error */}
-      {error && (
-        <EmptyState
-          icon="alert"
-          title="Could not load quotes"
-          body={error.message}
-          action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
-        />
-      )}
+      {/* R-1655: useQuotes now throws on a failed read, so this branch really runs — plain
+          words + Try again (§24), never the raw database text. */}
+      {error && <LoadError what="Quotes" error={error} onRetry={() => refetch()} />}
 
       {/* Loading */}
       {isLoading && (
@@ -818,7 +808,7 @@ export default function QuotesPage() {
                     <div className="text-right shrink-0">
                       <p className="font-serif text-base font-bold tabular-nums text-ink">
                         {quoteMoney(q)}
-                        <span className="text-2xs font-normal text-ink-3">{cycleSuffix(q.billing_cycle)}</span>
+                        <span className="text-2xs font-normal text-ink-3">{quoteTotalUnit(q)}</span>
                       </p>
                       <p className="text-2xs text-ink-3 tabular-nums">
                         {q.seats ?? "—"} seats
@@ -913,7 +903,7 @@ export default function QuotesPage() {
                           </span>
                           {q.is_extension ? (
                             <Badge kind="warning" className="font-sans text-3xs">
-                              Ext · {Math.round((q.extension_months ?? 12) / 12)}yr
+                              {extensionBadgeLabel(q.extension_months)}
                             </Badge>
                           ) : q.is_renewal ? (
                             <Badge kind="info" className="font-sans text-3xs">Renewal</Badge>
@@ -941,7 +931,7 @@ export default function QuotesPage() {
                         <div className="flex flex-col items-end gap-0.5">
                           <span className="tabular-nums text-sm font-medium text-ink">
                             {quoteMoney(q)}
-                            <span className="text-3xs font-normal text-ink-3">{cycleSuffix(q.billing_cycle)}</span>
+                            <span className="text-3xs font-normal text-ink-3">{quoteTotalUnit(q)}</span>
                           </span>
                           {/* Foreign quote: show the ₹ base underneath so the amount
                               reconciles with the (all-INR) pipeline totals. */}
@@ -1048,7 +1038,7 @@ export default function QuotesPage() {
                                 icon="whatsapp"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ${rupee(q.amount ?? 0)}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
                                   window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
                                 }}
                               >
@@ -1134,7 +1124,7 @@ export default function QuotesPage() {
                               <DropdownMenuItem
                                 className="gap-2.5 py-2 cursor-pointer text-emerald font-medium"
                                 onClick={() => {
-                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ${rupee(q.amount ?? 0)}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
                                   window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
                                 }}
                               >
@@ -1301,10 +1291,13 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
       upiVpa={currentUser?.tenantUpiVpa ?? null}
       payQrQuoteId={quote.id}
       quoteId={quote.id}
+      expiresDate={quote.expires_date}
       customerName={quote.customer_name}
       contactName={contact.contactName}
       contactEmail={contact.contactEmail}
       contactPhone={contact.contactPhone}
+      /* R-1485: the buyer's GSTIN under Bill to — customer row, else the lead's. */
+      customerGstin={quoteBuyerGstin(customer, lead)}
       lineItems={items}
       subtotal={quote.subtotal}
       discountPct={quote.discount_pct}

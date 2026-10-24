@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
-import { fetchAllRows, errorMessage } from "@/lib/ops/fetch-all";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Quote, Database } from "@/lib/supabase/database.types";
 
 type QuoteInsert = Database["public"]["Tables"]["quotes"]["Insert"];
@@ -21,23 +21,22 @@ export function useQuotes(filter?: { status?: QuoteStatus | "all" }) {
     queryKey: ["quotes", filter?.status ?? "all"],
     queryFn: async (): Promise<Quote[]> => {
       const supabase = createClient();
-      /* R-264: page past PostgREST's silent 1000-row cap; order ends on id (total order). */
-      try {
-        return await fetchAllRows<Quote>((from, to) => {
-          let query = supabase
-            .from("quotes")
-            .select("*")
-            .order("created_at", { ascending: false, nullsFirst: false })
-            .order("id", { ascending: true });
-          if (filter?.status && filter.status !== "all") {
-            query = query.eq("status", filter.status);
-          }
-          return query.range(from, to);
-        });
-      } catch (error) {
-        console.warn("Supabase quotes query error:", errorMessage(error));
-        return [];
-      }
+      /* R-264: page past PostgREST's silent 1000-row cap; order ends on id (total order).
+         R-1655: a failed read THROWS, so the query is in error and the page shows "didn't
+         load" + Try again. It used to warn and return [] — the Quotes page then said "No
+         quotes yet", the dashboard's quote figures read ₹0 and Payments' awaiting-invoice
+         list was silently empty. */
+      return fetchAllRows<Quote>((from, to) => {
+        let query = supabase
+          .from("quotes")
+          .select("*")
+          .order("created_at", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: true });
+        if (filter?.status && filter.status !== "all") {
+          query = query.eq("status", filter.status);
+        }
+        return query.range(from, to);
+      });
     },
   });
 }

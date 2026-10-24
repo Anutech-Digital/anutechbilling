@@ -408,7 +408,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
 
       {/* User footer — shows REAL logged-in user (not hardcoded) */}
       <div className={cn("border-t border-hairline flex-shrink-0", collapsed ? "p-2" : "p-3")}>
-        <DropdownMenu>
+        <DropdownMenu modal={false}>
           <DropdownMenuTrigger
             /* Collapsed hides both lines, so the tooltip is the only place the role can
                appear — otherwise switching to the icon rail silently loses it. */

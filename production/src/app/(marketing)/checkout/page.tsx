@@ -14,8 +14,15 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { rupee, cycleLabel } from "@/site/lib/money";
-import { missingCheckoutDetails, missingDetailsMessage, gstinProblem, normalizeGstinInput } from "@/site/lib/checkout-details";
+import { rupee } from "@/site/lib/money";
+import { lineRenewalText } from "@/site/lib/renewal-line";
+import { missingCheckoutDetails, missingCheckoutFields, missingDetailsMessage, gstinProblem, normalizeGstinInput, type CheckoutFieldKey } from "@/site/lib/checkout-details";
+
+/* R-1113: the box each missing item points at — the first one gets focus on Continue. */
+const FIELD_ID: Record<CheckoutFieldKey, string> = {
+  name: "checkout-name", email: "checkout-email", phone: "checkout-phone", domain: "checkout-domain",
+  state: "checkout-state", gstin: "checkout-gstin", address: "checkout-address",
+};
 import { stateCodeFromGstin, gstinContradictsState } from "@/lib/gst/gstin-state";
 import { BUY_A_DOMAIN_HREF } from "@/lib/checkout/hosting-domain";
 import { FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
@@ -31,10 +38,13 @@ const STATE_OPTIONS = Object.entries(GST_STATE_BY_CODE)
 import { razorpayContact } from "@/lib/checkout/razorpay-contact";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { confirmPayment, fromRazorpayHandler, savePayment } from "@/lib/checkout/confirm-payment";
+import { SIMULATED_KEY } from "../done/done-view";
 import { CheckoutNotice } from "@/site/components/cart/CheckoutNotice";
 import { settlePageScroll } from "@/lib/ui/scroll-lock";
 import { checkoutProblem, actionLabel, type ProblemAction, type ProblemFlags } from "@/site/lib/checkout-problem";
 import { paidHostingLine } from "@/site/lib/hosting-cart-line";
+import { tierWithPrices } from "@/site/lib/cart-reprice";
+import { PriceChangeNotice } from "@/site/components/cart/PriceChangeNotice";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { COMPANY } from "@/site/lib/config";
 import { AfterYouPay } from "@/site/components/checkout/AfterYouPay";
@@ -42,6 +52,7 @@ import { TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { Field, TermsCheckbox, TERMS_NUDGE_ID } from "./fields";
 import { usePaymentMode } from "./payment-mode";
 import { payButtonLabel } from "@/lib/checkout/checkout-payment-mode";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 /* 30 Sep 2026: the choice was never sent anywhere, so every option opened the same Razorpay
    window, and "Bank transfer — NEFT/RTGS, activated on credit" was not a path this checkout
@@ -202,6 +213,27 @@ export default function CheckoutPage() {
     } catch { /* ignore */ }
   }, [name, company, email, gstin, phone, domain, planDomain, addrLine1, addrCity, stateCode, addrPin]);
 
+  /* R-1113: the payment step has its own history entry (?step=payment, through Next's native
+     pushState support), so a phone's Back returns to the details step instead of leaving the
+     checkout. A reload with ?step=payment starts at the details again, without the stale entry. */
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("step") === "payment") {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+    const onPop = () => setStep(new URLSearchParams(window.location.search).get("step") === "payment" ? "payment" : "details");
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  /* R-1113: every step change opens the new step at the top (on a phone step 2 opened
+     mid-page), and going to payment adds the history entry the Back button returns through. */
+  const firstStep = useRef(true);
+  useEffect(() => {
+    if (firstStep.current) { firstStep.current = false; return; }
+    const inUrl = new URLSearchParams(window.location.search).get("step") === "payment";
+    if (step === "payment" && !inUrl) window.history.pushState(null, "", "?step=payment");
+    window.scrollTo(0, 0);
+  }, [step]);
+
   /* R-1502: before the saved cart is read, say so — not "The cart is empty". */
   if (!cart.loaded) {
     return (
@@ -234,13 +266,34 @@ export default function CheckoutPage() {
     address: { line1: addrLine1, city: addrCity, state: GST_STATE_BY_CODE[stateCode] ?? "", pin: addrPin },
   });
   const missingMsg = missingDetailsMessage(missing);
+  /* R-1113: the same check, as boxes — each is marked once Continue was pressed. */
+  const missingFields = missingCheckoutFields({
+    name, email, phone, domain, plans, hasHosting: hasHosting || hasTrial, hasDomain,
+    needsState: !isTrialCart, stateCode, gstin,
+    address: { line1: addrLine1, city: addrCity, state: GST_STATE_BY_CODE[stateCode] ?? "", pin: addrPin },
+  });
+  const bad = (f: CheckoutFieldKey) => showMissing && missingFields.includes(f);
   const detailsOk = missing.length === 0 && !trialMixed;
-  /** Go on only when the details are complete; otherwise show what is missing. */
+  /** R-1113: bring a box into view and put the cursor in it (after the marks render). */
+  function focusField(f: CheckoutFieldKey | undefined) {
+    if (!f) return;
+    window.setTimeout(() => {
+      const el = document.getElementById(FIELD_ID[f]);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      (el as HTMLInputElement | null)?.focus({ preventScroll: true });
+    }, 50);
+  }
+  /** Go on only when the details are complete; otherwise mark what is missing and focus the first. */
   function proceed(next: () => void) {
     if (trialMixed) return;
     if (hostingWarning) return; // the amber alert above the button says why and links back to the cart
-    if (!detailsOk) { setShowMissing(true); return; }
+    if (!detailsOk) { setShowMissing(true); focusField(missingFields[0]); return; }
     next();
+  }
+  /** R-1113: "← Back to details" goes back through the history entry when there is one. */
+  function backToDetails() {
+    if (new URLSearchParams(window.location.search).get("step") === "payment") { window.history.back(); return; } // popstate sets the step
+    setStep("details");
   }
 
   /** The trial path: no payment, no quote — the server starts the trial and we show the done page. */
@@ -272,6 +325,7 @@ export default function CheckoutPage() {
         // Whether the confirmation link really left — the done page must not claim it did.
         window.sessionStorage.setItem("anutech.trial.sent", json.confirmationSent === false ? "0" : "1");
         window.sessionStorage.removeItem("anutech.order");
+        window.sessionStorage.removeItem(SIMULATED_KEY);
       } catch { /* done page falls back */ }
       cart.clear();
       router.push("/done" as never);
@@ -331,7 +385,8 @@ export default function CheckoutPage() {
       }
 
       if (json.simulated) {
-        try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", json.quoteId || ""); } catch { /* default shown */ }
+        /* R-1111: the server recorded this simulated order, so /done may say "received" for it. */
+        try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", json.quoteId || ""); window.sessionStorage.setItem(SIMULATED_KEY, json.quoteId || ""); } catch { /* default shown */ }
         savePayment(null); // a simulated order was recorded by the server already
         cart.clear();
         router.push("/done" as never);
@@ -392,7 +447,7 @@ export default function CheckoutPage() {
         /* R-1596: the payment is confirmed on OUR server before /done, not left to the webhook
            alone. /done shows the answer (and asks again while it is still confirming). */
         handler: async (resp: unknown) => {
-          try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", order.quoteId || ""); } catch { /* default */ }
+          try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.removeItem(SIMULATED_KEY); window.sessionStorage.setItem("anutech.order", order.quoteId || ""); } catch { /* default */ }
           afterRazorpay();
           const returned = fromRazorpayHandler(resp);
           if (returned) {
@@ -424,7 +479,10 @@ export default function CheckoutPage() {
      "Buy Starter" puts in the cart. */
   const trialLine = cart.lines.find((l) => (l.sku || "").startsWith("hosting-trial:"));
   const trialYearly = trialLine?.cycle !== "monthly";
-  const paidTier = HOSTING_TIERS.find((p) => p.name === TRIAL_PLAN_NAME);
+  /* R-1797: at the price book's price (CATALOG_FROM_DB on), the same figure checkout charges —
+     not the code tier. Before the book is read (or with the flag off) it is the code tier. */
+  const codeTier = HOSTING_TIERS.find((p) => p.name === TRIAL_PLAN_NAME);
+  const paidTier = codeTier ? tierWithPrices(codeTier, cart.prices) : undefined;
   const paidPrice = paidTier
     ? `${rupee(Math.round(trialYearly ? paidTier.yearlyTotal : paidTier.monthly))}/${trialYearly ? "year" : "month"} + GST`
     : undefined;
@@ -494,14 +552,16 @@ export default function CheckoutPage() {
               ? "Your details — no card needed, nothing is charged"
               : step === "details" ? "Step 1 of 2 — who the invoice is for" : "Step 2 of 2 — how you would like to pay"}
           </p>
+          {/* R-1797: a saved line moved to today's price — the summary already shows it. */}
+          <PriceChangeNotice changes={cart.priceChanges} />
 
           {step === "details" ? (
             <div style={{ maxWidth: 460 }}>
               {/* Required first, optional last (owner, 30 Sep 2026): a buyer fills top to
                   bottom and can stop at the "Optional" line. */}
-              <Field label="YOUR NAME" value={name} onChange={setName} autoComplete="name" />
-              <Field id="checkout-email" label="EMAIL — THE GST INVOICE GOES HERE" value={email} onChange={setEmail} type="email" autoComplete="email" inputMode="email" />
-              <Field label="MOBILE" value={phone} onChange={setPhone} type="tel" autoComplete="tel" inputMode="tel" />
+              <Field id="checkout-name" label="YOUR NAME" value={name} onChange={setName} autoComplete="name" invalid={bad("name")} />
+              <Field id="checkout-email" label="EMAIL — THE GST INVOICE GOES HERE" value={email} onChange={setEmail} type="email" autoComplete="email" inputMode="email" invalid={bad("email")} />
+              <Field id="checkout-phone" label="MOBILE" value={phone} onChange={setPhone} type="tel" autoComplete="tel" inputMode="tel" invalid={bad("phone")} />
               {(hasHosting || hasTrial) && (
                 <>
                   {hostingLines.length > 1 ? (
@@ -514,10 +574,11 @@ export default function CheckoutPage() {
                         value={typedFor(l.key, i)}
                         onChange={(v) => (i === 0 ? setDomain(v) : setPlanDomain((m) => ({ ...m, [l.key]: v })))}
                         mono
+                        invalid={bad("domain")}
                       />
                     ))
                   ) : (
-                    <Field id="checkout-domain" label="DOMAIN FOR YOUR HOSTING (e.g. yourcompany.in)" value={domain} onChange={setDomain} mono />
+                    <Field id="checkout-domain" label="DOMAIN FOR YOUR HOSTING (e.g. yourcompany.in)" value={domain} onChange={setDomain} mono invalid={bad("domain")} />
                   )}
                   {/* Required for hosting and the trial alike (owner, 30 Sep 2026), so a buyer
                       without one is shown where to get one rather than left stuck. */}
@@ -544,7 +605,8 @@ export default function CheckoutPage() {
                     autoComplete="address-level1"
                     value={stateCode}
                     onChange={(e) => setStateCode(e.target.value)}
-                    style={{ width: "100%", border: "1px solid var(--border-strong)", borderRadius: 6, padding: "11px 12px", fontSize: 15, fontFamily: "inherit", background: "#fff" }}
+                    aria-invalid={bad("state") || undefined}
+                    style={{ width: "100%", border: `1px solid ${bad("state") ? "#DC2626" : "var(--border-strong)"}`, borderRadius: 6, padding: "11px 12px", fontSize: 15, fontFamily: "inherit", background: "#fff" }}
                   >
                     <option value="">Choose your state</option>
                     {STATE_OPTIONS.map(([code, nameOf]) => <option key={code} value={code}>{nameOf}</option>)}
@@ -562,9 +624,9 @@ export default function CheckoutPage() {
                   <p className="meta" style={{ margin: "6px 0 2px" }}>
                     The domain is registered in your name, so the registry needs the owner&apos;s postal address.
                   </p>
-                  <Field label="ADDRESS" value={addrLine1} onChange={setAddrLine1} autoComplete="street-address" />
-                  <Field label="CITY" value={addrCity} onChange={setAddrCity} autoComplete="address-level2" />
-                  <Field label="PIN CODE" value={addrPin} onChange={setAddrPin} mono autoComplete="postal-code" inputMode="numeric" />
+                  <Field id="checkout-address" label="ADDRESS" value={addrLine1} onChange={setAddrLine1} autoComplete="street-address" invalid={bad("address") && addrLine1.trim().length < 3} />
+                  <Field label="CITY" value={addrCity} onChange={setAddrCity} autoComplete="address-level2" invalid={bad("address") && addrCity.trim().length < 2} />
+                  <Field label="PIN CODE" value={addrPin} onChange={setAddrPin} mono autoComplete="postal-code" inputMode="numeric" invalid={bad("address") && !/^\d{6}$/.test(addrPin.trim())} />
                 </>
               )}
 
@@ -573,6 +635,7 @@ export default function CheckoutPage() {
               </div>
               <Field label="COMPANY / BUSINESS NAME — YOUR NAME IS USED IF BLANK" value={company} onChange={setCompany} autoComplete="organization" />
               <Field
+                id="checkout-gstin"
                 label="GSTIN — FOR INPUT CREDIT"
                 value={gstin}
                 onChange={(v) => setGstin(normalizeGstinInput(v))}
@@ -626,7 +689,7 @@ export default function CheckoutPage() {
                     </div>
                   ) : (
                   <button className="btn btn-primary" style={{ width: "100%", marginTop: 8 }} disabled={paying || trialMixed} onClick={() => proceed(() => void startTrial())}>
-                    {paying ? "Starting your trial…" : "Start my 15-day free trial"}
+                    {paying ? "Starting your trial…" : `Start my ${HOSTING_TRIAL_DAYS}-day free trial`}
                   </button>
                   )}
                   <p className="meta" style={{ marginTop: 10 }}>
@@ -746,7 +809,7 @@ export default function CheckoutPage() {
               </>
               )}
               <button
-                onClick={() => setStep("details")}
+                onClick={backToDetails}
                 style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 14, cursor: "pointer", marginTop: 12 }}
               >
                 ← Back to details
@@ -761,7 +824,8 @@ export default function CheckoutPage() {
             <div key={p.line.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border-hairline)" }}>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{p.line.label} × {p.line.qty}</div>
-                <div className="meta" style={{ fontSize: 12 }}>{cycleLabel(p.line.cycle)}</div>
+                {/* R-1628: the renewal per year incl. GST — the figure /domains promises here. */}
+                <div className="meta" style={{ fontSize: 12 }}>{lineRenewalText(p.line, cart.domainRenewals ?? {})}</div>
                 <BundleNote p={p} />
               </div>
               <LinePrice p={p} size={14} />

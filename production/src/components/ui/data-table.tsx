@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAskText } from "@/components/providers/confirm-provider";
 import { cn } from "@/lib/utils";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 import { useUrlState } from "@/lib/hooks/use-url-state";
 import {
   sortRows, nextSort, toggleAllIds, toggleId, loadViews, saveView, deleteView, isViewActive, pagedCount,
@@ -273,8 +274,9 @@ export function DataTable<T>({
                   return (
                     <tr
                       key={id}
-                      className={cn("border-b border-hairline last:border-0", onRowClick && "cursor-pointer hover:bg-paper-2/50")}
-                      onClick={onRowClick ? () => onRowClick(row) : undefined}
+                      className={cn("border-b border-hairline last:border-0", onRowClick && cn("cursor-pointer hover:bg-paper-2/50", ROW_FOCUS_RING))}
+                      /* R-1658: a clickable row opens from the keyboard too (Tab, Enter/Space). */
+                      {...(onRowClick ? rowActivation(() => onRowClick(row)) : {})}
                     >
                       {checkboxCell}
                       {columns.map((c) => (
@@ -353,7 +355,7 @@ function ViewsMenu({ views, sort, setSort }: {
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button size="sm" variant="ghost" icon="bookmark" aria-label="Saved views">
           {active ? active.name : "Views"}

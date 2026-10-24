@@ -29,10 +29,9 @@ import { CustomerProfile } from "@/components/features/customers/customer-profil
 import { CustomersBulkBar } from "@/components/features/customers/customers-bulk-bar";
 import { useCustomerGroups, useSetCustomerGroup } from "@/lib/queries/customer-groups";
 import {
-  useCustomers, useCustomersPaged, useCustomerListCounts, fetchAllCustomers, CUSTOMERS_PAGE_SIZE,
+  useCustomers, useCustomersPaged, useCustomerListCounts, CUSTOMERS_PAGE_SIZE,
   useOpenCreditsByCustomer, useDeleteCustomer, useSetCustomerActive,
 } from "@/lib/queries/customers";
-import { createClient } from "@/lib/supabase/client";
 import {
   customerViewCounts, customerMoneyTotals, contactMatchedCustomerIds, customerListMode, customerSearchFromUrl, type ViewCtx,
 } from "./server-list";
@@ -40,13 +39,14 @@ import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
 import { newestFirst } from "@/lib/sort/newest-first";
 import { bulkOutcomeMessage, type BulkFailure } from "@/lib/customers/bulk-outcome";
-import { CUSTOMERS_CSV_HEADERS, customersCsvRows } from "@/lib/export/crm-csv";
-import { downloadCSV } from "@/lib/csv";
+import { downloadServerExport } from "@/lib/exports/download-server-export";
+import { mayExport } from "@/lib/exports/server-export";
 import { InvoiceChooserDialog } from "@/components/features/invoices/invoice-chooser-dialog";
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatStrip } from "@/components/shared/stat-strip";
+import { LoadErrorBanner, loadErrorBody } from "@/components/shared/load-error";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -63,9 +63,11 @@ import { Icon } from "@/components/ui/icon";
 import { rupee, cn, cleanDisplayName, phoneSuffixOf } from "@/lib/utils";
 import { missingInvoiceState } from "@/lib/gst/gstin-state";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { contactSearchHidden } from "@/lib/contacts/search-columns";
 import { canWriteSales } from "@/lib/nav";
 import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
+import { followRevealed } from "@/lib/contacts/reveal-client";
 
 // Saved-view segments (Zoho-style) — compact filters over already-loaded data
 // (receivables + unused credit + subscriptions).
@@ -132,15 +134,24 @@ function customerSubline(c: CustomerLike): string {
    subscriptions. */
 
 export default function CustomersPage() {
-  const { data: subscriptions } = useSubscriptions();
-  const { data: outstanding } = useOutstandingReceivables();
-  const { data: creditsByCustomer = {} } = useOpenCreditsByCustomer();
-  const { data: projRecv = {} } = useProjectReceivablesByCustomer();
+  const subsQ = useSubscriptions();
+  const outstandingQ = useOutstandingReceivables();
+  const creditsQ = useOpenCreditsByCustomer();
+  const projRecvQ = useProjectReceivablesByCustomer();
   /* R-005: money actually received this FY — payments + project payments, TDS included. */
-  const { data: receivedBy = {} } = useReceivedThisFyByCustomer();
+  const receivedQ = useReceivedThisFyByCustomer();
+  const subscriptions = subsQ.data;
+  const outstanding = outstandingQ.data;
+  const creditsByCustomer = React.useMemo(() => creditsQ.data ?? {}, [creditsQ.data]);
+  const projRecv = React.useMemo(() => projRecvQ.data ?? {}, [projRecvQ.data]);
+  const receivedBy = React.useMemo(() => receivedQ.data ?? {}, [receivedQ.data]);
   /* R-005. Already fetched for the Project Sales page, so this is a cache hit in
      practice rather than a new round trip. */
-  const { data: allProjects } = useProjectSales();
+  const projectsQ = useProjectSales();
+  const allProjects = projectsQ.data;
+  /* R-1806: the money tiles (To collect, Recurring, Received, Project value) come from these
+     reads, not the companies list — a failed one used to show ₹0 with no error. */
+  const moneyFailed = [subsQ, outstandingQ, creditsQ, projRecvQ, receivedQ, projectsQ].filter((q) => q.isError);
 
   // customer_id → outstanding = subscription dues + project invoiced-but-unpaid,
   // so project receivables show on the list too (matches the customer 360 page).
@@ -169,6 +180,9 @@ export default function CustomersPage() {
   const canDeleteCustomer = canDeleteMoney(myRole);
   /* R-885: issuing an invoice (generate_invoice / create_direct_invoice) is a money role. */
   const canInvoice = canRecordMoney(myRole);
+  /* R-1801: the contact book leaves the app only for can_export_data (owner, manager) — the
+     same rule POST /api/exports/customers enforces, so no one sees a button that will 403. */
+  const canExport = mayExport("customers", myRole);
   /* `?q=` (R-1720, like /invoices?q=) and `?contact=` (the "Serves N customers" chip on a
      contact) seed the search box rather than living as a filter of its own, so the
      operator lands on an ordinary search they can widen, narrow or clear — and so there is one filter to
@@ -272,7 +286,8 @@ export default function CustomersPage() {
   );
   const mode = customerListMode({ view, sortKey: sort.key, sortDir: sort.dir, contactIds });
   const paged = useCustomersPaged(
-    { search: serverSearch, archived: showArchived, contactIds },
+    /* R-1821: a role that sees masked contacts searches without phone / email. */
+    { search: serverSearch, archived: showArchived, contactIds, hideContacts: contactSearchHidden(myRole) },
     { enabled: mode === "server" },
   );
   const full = useCustomers({ enabled: mode === "full" });
@@ -414,14 +429,15 @@ export default function CustomersPage() {
        for the app having done half a job. */
   };
 
-  const bulkExport = () => {
+  /* R-1801: the ticked companies' file comes from POST /api/exports/customers with their ids —
+     the server checks the role, masks contacts, logs the export and signs the footer. */
+  const bulkExport = async () => {
     if (pickedCustomers.length === 0) return;
-    downloadCSV(
-      `customers-${new Date().toISOString().slice(0, 10)}.csv`,
-      [...CUSTOMERS_CSV_HEADERS],
-      customersCsvRows(pickedCustomers),
-    );
-    toast.success(`Exported ${pickedCustomers.length} compan${pickedCustomers.length === 1 ? "y" : "ies"} to CSV`);
+    setBulkBusy(true);
+    const r = await downloadServerExport("customers", { ids: pickedCustomers.map((c) => c.id) });
+    setBulkBusy(false);
+    if (r.ok) toast.success(`Exported ${r.rows} compan${r.rows === 1 ? "y" : "ies"} to CSV`);
+    else toast.error("Could not export the companies", { description: r.error });
   };
 
   /** Archive or reactivate. One code path — the flag is the only difference. */
@@ -563,33 +579,16 @@ export default function CustomersPage() {
     });
   }
 
-  /* R-210: the export is every customer, not the 50 on screen — read in full on click. */
+  /* R-210: the export is every customer, not the 50 on screen. R-1801: the server reads them
+     all (POST /api/exports/customers — role check, contact mask, export_log, "Exported by …"
+     footer); the page no longer builds the file. */
+  const [exporting, setExporting] = React.useState(false);
   async function handleExport() {
-    let rows: NonNullable<typeof full.data>;
-    try {
-      rows = mode === "full" && full.data ? full.data : await fetchAllCustomers(createClient());
-    } catch (e) {
-      toast.error("Could not export companies", { description: (e as Error).message });
-      return;
-    }
-    if (rows.length === 0) { toast.error("No companies to export yet."); return; }
-    const cols = ["name", "contact_name", "contact_email", "contact_phone", "gstin", "state", "domain", "since"] as const;
-    const esc = (v: unknown) => {
-      const s = v == null ? "" : String(v);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const lines = [cols.join(",")];
-    for (const c of rows) lines.push(cols.map((k) => esc((c as Record<string, unknown>)[k])).join(","));
-    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `customers-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast.success(`Exported ${rows.length} compan${rows.length === 1 ? "y" : "ies"} to CSV`);
+    setExporting(true);
+    const r = await downloadServerExport("customers");
+    setExporting(false);
+    if (r.ok) toast.success(`Exported ${r.rows} compan${r.rows === 1 ? "y" : "ies"} to CSV`);
+    else toast.error("Could not export the companies", { description: r.error });
   }
 
   return (
@@ -602,14 +601,16 @@ export default function CustomersPage() {
           <p className="text-xs sm:text-sm text-ink-3 mt-0.5 hidden sm:block">Your book of business — recurring revenue, money owed, and who to grow.</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button icon="more_h" size="sm">More</Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[12rem]">
-              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={handleExport}>
-                <Icon name="download" size={15} /> Export CSV
+              {canExport && (
+              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" disabled={exporting} onClick={handleExport}>
+                <Icon name="download" size={15} /> {exporting ? "Exporting…" : "Export CSV"}
               </DropdownMenuItem>
+              )}
               {canWrite && (<>
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setImportOpen(true)}>
                 <Icon name="upload" size={15} /> Import companies
@@ -629,6 +630,10 @@ export default function CustomersPage() {
       </div>
 
       {!canWrite && <ViewOnlyNote what="add, import or edit companies" />}
+
+      {!error && moneyFailed.length > 0 && (
+        <LoadErrorBanner onRetry={() => moneyFailed.forEach((q) => void q.refetch())} />
+      )}
 
       {/* Collapsible Customer Analytics Banner */}
       {stats.length > 0 && !selectedId && (
@@ -795,7 +800,7 @@ export default function CustomersPage() {
         <EmptyState
           icon="alert"
           title="Could not load companies"
-          body={error.message}
+          body={loadErrorBody(error)}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
         />
       )}
@@ -900,6 +905,10 @@ export default function CustomersPage() {
                           href={`https://wa.me/${c.contact_phone.replace(/\D/g, "")}`}
                           target="_blank"
                           rel="noreferrer"
+                          /* R-1009: a masked phone (role without can_view_contact_details) is
+                             fetched from the server (logged) before WhatsApp opens. */
+                          onClick={(e) => followRevealed(e, c.contact_phone, { table: "customers", id: c.id, field: "contact_phone" }, "whatsapp",
+                            (real) => `https://wa.me/${real.replace(/\D/g, "")}`, true)}
                           className="relative z-10 inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded bg-emerald-soft text-emerald font-medium hover:bg-emerald hover:text-white transition-colors"
                         >
                           <Icon name="message_square" size={12} /> WhatsApp
@@ -1184,7 +1193,7 @@ export default function CustomersPage() {
         count={pickedIds.size}
         groups={groups ?? []}
         busy={bulkBusy}
-        onExport={bulkExport}
+        onExport={canExport ? bulkExport : undefined}
         onArchive={() => void bulkSetActive(false)}
         onReactivate={() => void bulkSetActive(true)}
         onSetGroup={(g) => void bulkSetGroup(g)}
@@ -1273,7 +1282,7 @@ function RowActions({
 }) {
   const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
         <IconButton
           icon="more_h"

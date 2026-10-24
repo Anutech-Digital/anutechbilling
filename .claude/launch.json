@@ -65,24 +65,24 @@
       "port": 3001
     },
     {
-      "name": "dsp-backend",
+      "name": "anutech-support-backend",
       "runtimeExecutable": "npm",
       "runtimeArgs": [
         "run",
         "start",
         "--prefix",
-        "C:/dev/dsp/backend"
+        "C:/Users/mso50/anutech-support/backend"
       ],
       "port": 5050
     },
     {
-      "name": "dsp-frontend",
+      "name": "anutech-support-frontend",
       "runtimeExecutable": "npm",
       "runtimeArgs": [
         "run",
         "dev",
         "--prefix",
-        "C:/dev/dsp/frontend"
+        "C:/Users/mso50/anutech-support/frontend"
       ],
       "port": 5173
     }

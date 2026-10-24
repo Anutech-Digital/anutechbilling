@@ -9,6 +9,7 @@
  */
 "use client";
 
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import * as React from "react";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { logoDataUri } from "@/lib/pdf/logo";
@@ -165,7 +166,9 @@ ${tenantName}`
         </div>
 
         {/* PDF-style document */}
-        <div className="bg-paper p-10 print:p-0 font-sans text-ink">
+        {/* R-1654: p-4 on a phone so the Amount column fits 375px; sm: and print keep the A4
+            look unchanged. The PDF is a separate react-pdf template. */}
+        <div className="bg-paper p-4 sm:p-10 print:p-0 font-sans text-ink">
 
           {/* Header */}
           <div className="text-center mb-4">
@@ -177,8 +180,8 @@ ${tenantName}`
           </div>
 
           {/* Tenant + Customer rows */}
-          <div className="grid grid-cols-2 gap-6 mb-6 border-y-2 border-ink py-4">
-            <div>
+          <div className="grid grid-cols-2 gap-3 sm:gap-6 mb-6 border-y-2 border-ink py-4 [overflow-wrap:anywhere]">
+            <div className="min-w-0">
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-1.5">From (Supplier)</p>
               <p className="font-serif text-lg leading-tight">{tenantName}</p>
               {tenantGstin && (
@@ -194,7 +197,7 @@ ${tenantName}`
                 <p className="text-xs text-ink-3 font-mono">{tenantPhone}</p>
               )}
             </div>
-            <div className="text-right">
+            <div className="min-w-0 text-right">
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-1.5">To (Recipient)</p>
               <p className="font-serif text-lg leading-tight">{customerName}</p>
               {customerGstin && (
@@ -210,7 +213,7 @@ ${tenantName}`
           </div>
 
           {/* Voucher meta */}
-          <div className="grid grid-cols-3 gap-4 mb-6 text-sm">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6 text-sm [overflow-wrap:anywhere]">
             <div>
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-0.5">Voucher No.</p>
               <p className="font-mono">{payment.receipt_voucher_no ?? "—"}</p>
@@ -221,7 +224,7 @@ ${tenantName}`
             </div>
             <div>
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-0.5">Payment method</p>
-              <p className="capitalize">{payment.method.replace("_", " ")}</p>
+              <p>{paymentMethodLabel(payment.method)}</p>
             </div>
             <div>
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-0.5">Transaction ref.</p>
@@ -253,12 +256,12 @@ ${tenantName}`
           </div>
 
           {/* Description + breakdown */}
-          <div className="border-2 border-ink rounded-md overflow-hidden mb-6">
+          <div className="border-2 border-ink rounded-md overflow-x-auto mb-6">
             <table className="w-full">
               <thead className="bg-paper-2 border-b border-ink">
                 <tr>
                   <th className="text-left p-3 text-2xs uppercase tracking-wider font-semibold">Description</th>
-                  <th className="text-right p-3 text-2xs uppercase tracking-wider font-semibold w-36">Amount (₹)</th>
+                  <th className="text-right p-3 text-2xs uppercase tracking-wider font-semibold sm:w-36">Amount (₹)</th>
                 </tr>
               </thead>
               <tbody>

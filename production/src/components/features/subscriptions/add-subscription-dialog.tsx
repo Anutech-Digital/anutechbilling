@@ -12,6 +12,7 @@ import * as React from "react";
 import { NUMBERING_FIX } from "@/lib/onboarding/setup-links";
 import { GstStateSelect, EXPORT_STATE } from "@/components/shared/gst-state-select";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
+import { checkGstin, liveGstin, gstinState } from "@/lib/forms/poka-yoke";
 import { toast } from "sonner";
 import { describeError } from "@/lib/errors/toast-error";
 import { NEEDS_INPUT_CLASS } from "@/lib/ai/test-trail";
@@ -63,6 +64,9 @@ import { findPlanProduct, type LeadPrefill } from "@/lib/subscriptions/lead-pref
 /* The same countdown the subscriptions list and /payments render, so the hint under
    the field cannot disagree with the chip the operator sees a second later. */
 import { paymentDueState, todayIST } from "@/lib/subscriptions/payment-due";
+import { onboardingQuoteLine } from "./onboarding-line";
+import { findDuplicateSubscription, matchCustomers, type ExistingSub } from "./duplicate-subscription";
+import { subscriptionHref, searchFromSubscriptionHref, SUBSCRIPTION_SEARCH_EVENT } from "@/app/(app)/subscriptions/palette-links";
 
 /** GST on SaaS in India — CGST 9% + SGST 9%, or IGST 18%. CLAUDE.md §13. */
 const TAX_RATE_PCT = 18;
@@ -175,6 +179,12 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
   /* R-174: a new customer's place of supply (GST code, or EXPORT_STATE). Without it the
      GST invoice for this sale is refused ("no state on record"). */
   const [newCustState, setNewCustState] = React.useState("");
+  /* R-1712: a new customer's GSTIN — it was never asked, so a business got a B2C invoice that
+     cannot be changed afterwards. Written to customers.gstin (the field every invoice reads),
+     only for a customer this form CREATES; an existing customer is never changed here. */
+  const [newCustGstin, setNewCustGstin] = React.useState("");
+  const newGstinCheck = checkGstin(newCustGstin);
+  const newGstinValid = newGstinCheck.tone === "ok" ? liveGstin(newCustGstin) : null;
   /* ── Picking someone who already exists ────────────────────────────────────
      Abhishek, 18 Sep 2026: "make it searchable so if that contact available then it
      should selected". Since migration 20260918090000 a person can serve several
@@ -416,8 +426,8 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       setContactEmail("");
       setContactPhone("");
       setContactRole("poc");
-    setNewCustState("");
-      setNewCustState("");
+    setNewCustState(""); setNewCustGstin("");
+      setNewCustState(""); setNewCustGstin("");
     }
   };
 
@@ -429,7 +439,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
     setContactEmail("");
     setContactPhone("");
     setContactRole("poc");
-    setNewCustState("");
+    setNewCustState(""); setNewCustGstin("");
   };
 
   /**
@@ -442,6 +452,45 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
    * savePrimaryContact — because a TYPED name can still turn out to match.
    */
   const needsContact = !selectedCustomerId;
+
+  /* ── R-1443: reuse a customer that exists; never the same subscription twice ─────────
+     Pratik (14 Oct): typing a company that is already on file should offer it. Pardeep
+     (14 Oct): the same customer + domain + item must not be created twice — a duplicate
+     renews and bills twice. The list under Company Name offers existing customers; the
+     picked customer's live subscriptions are loaded so a duplicate shows BEFORE submit,
+     and submit re-checks against the database (the picker may be stale). */
+  const [custQueryOpen, setCustQueryOpen] = React.useState(false);
+  const customerMatches = React.useMemo(
+    () => (selectedCustomerId ? [] : matchCustomers(existingCustomers, customerName, 5)),
+    [existingCustomers, customerName, selectedCustomerId],
+  );
+  const [customerSubs, setCustomerSubs] = React.useState<ExistingSub[]>([]);
+  React.useEffect(() => {
+    if (!selectedCustomerId) { setCustomerSubs([]); return; }
+    let live = true;
+    (async () => {
+      const { data } = await createClient()
+        .from("subscriptions")
+        .select("id, customer_id, domain, plan, item_id, status")
+        .eq("customer_id", selectedCustomerId);
+      if (live) setCustomerSubs((data ?? []) as ExistingSub[]);
+    })();
+    return () => { live = false; };
+  }, [selectedCustomerId]);
+  const liveDuplicate = findDuplicateSubscription(customerSubs, {
+    customerId: selectedCustomerId, domain, itemId, plan,
+  });
+  /** The subscriptions list filtered to that row (same page: the list listens for the event). */
+  const openExistingSubscription = (sub: ExistingSub) => {
+    const href = subscriptionHref({ domain: sub.domain, customer_name: customerName });
+    onOpenChange(false);
+    if (window.location.pathname === "/subscriptions") {
+      window.history.replaceState(window.history.state, "", href);
+      window.dispatchEvent(new CustomEvent(SUBSCRIPTION_SEARCH_EVENT, { detail: searchFromSubscriptionHref(href) }));
+    } else {
+      window.location.assign(href);
+    }
+  };
 
   /**
    * People matching what has been typed into the contact name or email box.
@@ -475,6 +524,10 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       setContactName(prefill.contactName);
       setContactEmail(prefill.contactEmail);
       setContactPhone(prefill.contactPhone);
+      /* R-1712: the deal's GSTIN (and the state it proves) come along. */
+      if (prefill.gstin) setNewCustGstin(liveGstin(prefill.gstin));
+      const prefillState = gstinState(prefill.gstin)?.code ?? prefill.stateCode;
+      if (prefillState) setNewCustState(prefillState);
     }
     if (prefill.seats) setSeatsText(String(prefill.seats));
     setBillingChoice(prefill.billingChoice);
@@ -724,6 +777,18 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
        bare 10-digit mobiles, landlines with a 2-to-4 digit STD code, extensions — and
        every pattern strict enough to be worth having would eventually refuse a real
        customer's real number. Required, not policed. */
+    if (needsContact && (newGstinCheck.tone === "typing" || newGstinCheck.tone === "error")) {
+      toast.error("Check the GSTIN", { className: NEEDS_INPUT_CLASS,
+        description: `${newGstinCheck.message} Fix it, or clear the box if this customer has no GSTIN.`,
+      });
+      return;
+    }
+    if (needsContact && newGstinValid && newCustState && newCustState !== newGstinValid.slice(0, 2)) {
+      toast.error("The GSTIN and the state disagree", { className: NEEDS_INPUT_CLASS,
+        description: `The GSTIN is registered in ${GST_STATE_BY_CODE[newGstinValid.slice(0, 2)] ?? newGstinValid.slice(0, 2)}, the state says ${GST_STATE_BY_CODE[newCustState] ?? newCustState}. The invoice's GST head follows the state — pick the right one.`,
+      });
+      return;
+    }
     if (needsContact && !newCustState) {
       toast.error("Choose the customer's state", { className: NEEDS_INPUT_CLASS,
         description: "The GST invoice needs it — it decides CGST + SGST or IGST. Pick \"Outside India\" for a foreign customer.",
@@ -804,6 +869,30 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
              (c) => c.name.toLowerCase() === cleanCustomerName.toLowerCase()
                || (c.domain && c.domain.toLowerCase() === cleanDomain));
 
+      /* ── R-1443: the same customer + domain + item is ONE subscription ──────────
+         Asked of the database (not the list loaded on open), and before anything is
+         written: nothing exists yet to undo. A different item for the same company is a
+         normal second subscription and goes through. */
+      if (existingMatch) {
+        const { data: theirSubs, error: subsErr } = await supabase
+          .from("subscriptions")
+          .select("id, customer_id, domain, plan, item_id, status")
+          .eq("tenant_id", tenantId)
+          .eq("customer_id", existingMatch.id);
+        if (subsErr) throw subsErr;
+        const dup = findDuplicateSubscription((theirSubs ?? []) as ExistingSub[], {
+          customerId: existingMatch.id, domain: cleanDomain, itemId, plan,
+        });
+        if (dup) {
+          toast.error("This subscription already exists — nothing was created", {
+            description: `${cleanCustomerName} already has ${dup.plan ?? plan} on ${cleanDomain}. A second one would renew and bill twice. To add users, open it and use Manage seats.`,
+            action: { label: "Open existing subscription", onClick: () => openExistingSubscription(dup) },
+            duration: 12000,
+          });
+          return;
+        }
+      }
+
       /* ── THE REAL GUARD: a customer about to be CREATED must have a person ──
          The checks at the top of this handler use `needsContact`, which is a UI flag —
          "did the operator pick from the dropdown". That is not the same question as
@@ -853,6 +942,8 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
           ...(newCustState === EXPORT_STATE
             ? { country: "Outside India" }
             : newCustState ? { state_code: newCustState, state: GST_STATE_BY_CODE[newCustState] ?? null } : {}),
+          // R-1712: the GSTIN typed for this NEW customer (checksum-valid only).
+          ...(newGstinValid && newCustState !== EXPORT_STATE ? { gstin: newGstinValid } : {}),
         } as any);
         if (custErr) throw custErr;
         customerId = newCustId;
@@ -922,24 +1013,12 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       const quoteId = await findOrMintQuoteId(supabase, tenantId, customerId, storedTaxable);
       const isPaid = paymentTerms === "paid";
 
+      /* R-1442: the line carries the Start Date — on "Payment Received" record_payment starts
+         the subscription from it (else from today, which dropped a back-dated start). It also
+         carries the Renewal / Expiry date on screen, which the paid path used to replace with
+         start + 1 year (trigger subscription_term_follows_line, R-1445 migration). */
       const lineItems: QuoteLineItem[] = [
-        {
-          id: `line-${Date.now()}`,
-          name: `${plan} (${seats} seats)`,
-          qty: seats,
-          /* rate × qty must equal what the quote stores, so the rate carries the same
-             `periods` multiplier the total does. On annual-billed-monthly that makes
-             this the ₹/seat/YEAR the customer committed to, which is what a line under
-             commitment 'annual_yearly' is required to mean. */
-          rate: pricePerSeat * terms.periods,
-          /* The real catalog cost when we have it, in the same unit as the rate.
-             `× 0.83` — a flat 17% — survives only for a custom plan that has no
-             catalog row, and it is the last of the three places that guess used to live. */
-          cost: terms.costPerSeat !== null
-            ? terms.costPerSeat * terms.periods
-            : Math.round(pricePerSeat * terms.periods * 0.83),
-          commitment: terms.commitment,
-        },
+        onboardingQuoteLine({ id: `line-${Date.now()}`, plan, seats, pricePerSeat, terms, startDate, renewalDate }),
       ];
 
       /* `amount`, NOT `total` — `quotes` has no `total` column (it has amount,
@@ -1183,9 +1262,31 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                    pointing at Acme — so the form still believed it was an existing
                    customer, hid the contact block, and created FF Impex with nobody on
                    it. Reported 17 Sep 2026; that is exactly how it happened. */
-                onChange={(e) => { setCustomerName(e.target.value); setSelectedCustomerId(""); }}
+                onChange={(e) => { setCustomerName(e.target.value); setSelectedCustomerId(""); setCustQueryOpen(true); }}
+                onFocus={() => setCustQueryOpen(true)}
                 required
               />
+              {/* R-1443: an existing customer, offered while typing — pick to reuse it (its
+                  contacts and state are already on file) instead of creating a second one. */}
+              {custQueryOpen && customerMatches.length > 0 && (
+                <ul className="mt-1 rounded-lg border border-amber/60 bg-paper shadow-sm overflow-hidden" aria-label="Existing customers">
+                  <li className="px-2.5 py-1 text-3xs uppercase tracking-wider text-ink-2 bg-amber-soft">
+                    Already a customer? Pick to use it
+                  </li>
+                  {customerMatches.map((c) => (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        onClick={() => { handleSelectExistingCustomer(c.id); setCustQueryOpen(false); }}
+                        className="w-full text-left px-2.5 py-1.5 text-xs hover:bg-paper-2 focus:bg-paper-2 focus:outline-none flex items-center justify-between gap-2"
+                      >
+                        <span className="font-semibold text-ink truncate">{c.name}</span>
+                        <span className="font-mono text-2xs text-ink-3 truncate">{c.domain ?? ""}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </FormField>
           </div>
 
@@ -1282,6 +1383,29 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               </FormField>
               <FormField label="Customer's state (GST)" required htmlFor="newCustState">
                 <GstStateSelect id="newCustState" value={newCustState} onChange={setNewCustState} allowExport />
+              </FormField>
+              {/* R-1712: the GSTIN, checked as typed; a valid one sets the state. */}
+              <FormField label="GSTIN" htmlFor="newCustGstin">
+                <Input
+                  id="newCustGstin"
+                  autoComplete="off"
+                  placeholder="27AAPFU0939F1ZV"
+                  className="font-mono uppercase"
+                  value={newCustGstin}
+                  onChange={(e) => {
+                    const v = liveGstin(e.target.value);
+                    setNewCustGstin(v);
+                    const st = gstinState(v);
+                    if (st) setNewCustState(st.code);
+                  }}
+                />
+                {newGstinCheck.tone === "ok" ? (
+                  <p className="mt-1 text-3xs text-emerald">Valid GSTIN · {newGstinCheck.detail}</p>
+                ) : newGstinCheck.tone === "empty" ? (
+                  <p className="mt-1 text-3xs text-amber-ink">A registered business? Add it — without it the invoice is B2C and they cannot claim the GST back.</p>
+                ) : (
+                  <p role="alert" className="mt-1 text-3xs text-rose">{newGstinCheck.message}</p>
+                )}
               </FormField>
               <FormField label="Contact Phone" required htmlFor="contactPhone">
                 <Input
@@ -1661,6 +1785,19 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               <div className="font-mono text-base font-bold text-primary">{rupee(mrrAmount)}</div>
             </div>
           </div>
+
+          {/* R-1443: said BEFORE submit — submit also refuses it, after asking the database. */}
+          {liveDuplicate && (
+            <div role="alert" className="p-3 rounded-xl border border-rose/40 bg-rose-soft text-xs text-ink flex flex-wrap items-center justify-between gap-2">
+              <span>
+                <b>{customerName}</b> already has <b>{liveDuplicate.plan ?? plan}</b> on <b>{liveDuplicate.domain}</b>.
+                {" "}A second one would renew and bill twice — open it and use Manage seats to add users, or pick a different plan or domain.
+              </span>
+              <Button type="button" size="sm" variant="outline" onClick={() => openExistingSubscription(liveDuplicate)}>
+                Open existing subscription
+              </Button>
+            </div>
+          )}
 
           {/* Actions */}
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-hairline">

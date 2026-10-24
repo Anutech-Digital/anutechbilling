@@ -15,6 +15,7 @@ import Link from "next/link";
 import type { Route } from "next";
 
 import { Card } from "@/components/ui/card";
+import { LoadError } from "@/components/shared/load-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,7 +81,7 @@ export default function MarketingCampaignsPage() {
       {q.isLoading ? (
         <div className="grid gap-3 md:grid-cols-2">{[1, 2].map((i) => <Skeleton key={i} className="h-56" />)}</div>
       ) : q.error ? (
-        <Card className="p-4 text-sm text-red-600">{(q.error as Error).message}</Card>
+        <LoadError what="Your campaigns" error={q.error} onRetry={() => void q.refetch()} />
       ) : rows.length === 0 ? (
         <Card className="py-2">
           <EmptyState icon="target" title="No campaigns yet"
