@@ -21,7 +21,8 @@
  * distributor|reseller), so there is nothing to gate on. When plans arrive, filter the
  * items in buildSidebarApps() — the same place roles are applied.
  */
-import { APP_NAV, filterNavForRole, flattenNav, itemWithDescendants, type NavItem, type NavSection, type UserRole } from "@/lib/nav";
+import { APP_NAV, filterNavForRole, flattenNav, itemWithDescendants, visibleForSellMode, type NavItem, type NavSection, type UserRole } from "@/lib/nav";
+import type { SellMode } from "@/lib/sell-mode";
 
 export interface NavAppDef {
   id: string;
@@ -169,4 +170,35 @@ export function withoutDistributorOnly(
     .filter((a) => a.items.length > 0);
   const rows = apps.reduce((n, a) => n + a.items.length, 0);
   return { pinned: model.pinned.filter(keep), apps, flat: apps.length <= 1 || rows <= FLAT_MENU_MAX_ROWS };
+}
+
+/**
+ * R-1861 — the sidebar for a "What do you sell?" answer (lib/sell-mode.ts). Same shape as
+ * withoutDistributorOnly: a VIEW over the role's model, so the route guard, Ctrl+K and
+ * homeForRole never see it — a hidden row's page still opens by URL. Rows tagged for other
+ * answers (nav.ts `sellModes`) drop out, with their accordion children / directory rows;
+ * `showAll` (the user's "Show all modules") or `hasData` (≥1 subscription) keeps everything.
+ * Both / Subscriptions return the model untouched.
+ */
+export function forSellMode(
+  model: SidebarModel,
+  mode: SellMode,
+  opts: { showAll?: boolean; hasData?: boolean },
+): SidebarModel {
+  if (opts.showAll || opts.hasData) return model;
+  const shows = (i: NavItem) => visibleForSellMode(i, mode, opts);
+  const prune = (i: NavItem): NavItem => ({
+    ...i,
+    ...(i.children ? { children: i.children.filter(shows) } : {}),
+    ...(i.directory ? { directory: i.directory.filter(shows) } : {}),
+  });
+  const hidesSomething = (items: NavItem[]) =>
+    items.some((i) => !shows(i) || (i.children ?? []).some((c) => !shows(c)) || (i.directory ?? []).some((d) => !shows(d)));
+  const all = [...model.pinned, ...model.apps.flatMap((a) => a.items)];
+  if (!hidesSomething(all)) return model;
+  const apps = model.apps
+    .map((a) => ({ ...a, items: a.items.filter(shows).map(prune) }))
+    .filter((a) => a.items.length > 0);
+  const rows = apps.reduce((n, a) => n + a.items.length, 0);
+  return { pinned: model.pinned.filter(shows).map(prune), apps, flat: apps.length <= 1 || rows <= FLAT_MENU_MAX_ROWS };
 }
