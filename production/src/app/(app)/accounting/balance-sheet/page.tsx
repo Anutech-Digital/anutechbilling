@@ -60,7 +60,9 @@ import { useComplianceProfile } from "@/lib/compliance/profile";
 import { ownerEquityWords, movementTotals, unexplainedAfterEntries, looksLikeDrawingsLine } from "@/lib/accounting/owner-equity";
 import { useOwnerEquityMovements, isOwnerEquityTableMissing } from "@/lib/queries/owner-equity";
 import { OwnerEquityCard, RecordOwnerEquityDialog, type RecordInit } from "./owner-equity-card";
-import { equitySection, equityLineCategories, type EquityGroup } from "@/lib/accounting/equity-section";
+import { equitySection, equitySectionTotal, equityLineCategories, type EquityGroup } from "@/lib/accounting/equity-section";
+import { useFirmPartners } from "@/lib/queries/partners";
+import { PartnerCapitalBox } from "./partner-capital-box";
 import { entityProfile } from "@/lib/compliance/entity";
 import type { BusinessType } from "@/lib/compliance/obligations";
 
@@ -111,10 +113,9 @@ export default function BalanceSheetPage() {
   const movementsMissing = movementsQ.isError && isOwnerEquityTableMissing(movementsQ.error);
   const movements = React.useMemo(() => movementsQ.data ?? [], [movementsQ.data]);
   const [recordInit, setRecordInit] = React.useState<RecordInit | null>(null);
-  const partners = React.useMemo(
-    () => [...new Set(movements.map((m) => m.partner_name).filter((p): p is string => !!p))].sort(),
-    [movements],
-  );
+  /* R-1847: a firm's partners come from the partners register (Settings → Company → Partners). */
+  const partnersQ = useFirmPartners(words.needsPartner);
+  const partners = React.useMemo(() => partnersQ.data ?? [], [partnersQ.data]);
 
   const loading = autoLoading || itemsLoading || (movementsQ.isLoading && !movementsMissing);
   /* R-270: a failed fetch must not print a ₹0 balance sheet that reads as "you own nothing". */
@@ -160,9 +161,10 @@ export default function BalanceSheetPage() {
   const hasOwnerEntries = ownerTotals.capitalIntroduced !== 0 || ownerTotals.drawings !== 0;
   /* R-1845: the equity section by business type — same lines, same total, arranged and named
      the way a proprietor / firm / company Balance Sheet is. */
+  const equityRange = React.useMemo(() => ({ after: opening?.asOf ?? null, upTo: today }), [opening?.asOf, today]);
   const equity = equitySection({
     businessType, manualLines: manualEqRows, opening, profit: cumulativeProfit, totals: ownerTotals,
-    movements, range: { after: opening?.asOf ?? null, upTo: today }, formatDate,
+    movements, range: equityRange, formatDate,
   });
   /* Old hand-entered "Drawings" lines stay as they are; if real entries exist too, say it once. */
   const drawingsTwice = ownerTotals.drawings > 0 && manualEqRows.some((r) => looksLikeDrawingsLine(r.label));
@@ -435,19 +437,10 @@ export default function BalanceSheetPage() {
                       )}
                     </div>
                   ))}
-                  {equity.byPartner.length > 0 && (
-                    <div className="rounded-md bg-paper-2/40 px-2 py-1.5 my-1">
-                      <p className="text-xs font-medium text-ink-2">By partner (recorded entries)</p>
-                      {equity.byPartner.map((p) => (
-                        <div key={p.partner} className="flex items-baseline justify-between gap-3 text-xs text-ink-3 py-0.5">
-                          <span className="min-w-0 truncate" title={p.partner}>{p.partner}</span>
-                          <span className="tabular-nums shrink-0">
-                            {p.capitalIntroduced ? `+${fmtBS(p.capitalIntroduced)} ` : ""}{p.drawings ? `−${fmtBS(p.drawings)}` : ""}
-                          </span>
-                        </div>
-                      ))}
-                      <p className="text-3xs text-ink-3 mt-0.5">Opening capital and profit share per partner come with the partner register.</p>
-                    </div>
+                  {/* R-1848: each partner's capital account — breaks the section total down, never changes it. */}
+                  {words.needsPartner && !movementsMissing && (
+                    <PartnerCapitalBox partners={partners} movements={movements} profit={cumulativeProfit}
+                      range={equityRange} sectionTotal={cumulativeProfit === null ? null : equitySectionTotal(equity)} />
                   )}
                   {/* R-1739: Cr side of the balances imported from Zoho Books (their Dr is in receivables). */}
                   {(auto?.openingBalanceAdjustments ?? 0) !== 0 && (
@@ -529,7 +522,7 @@ export default function BalanceSheetPage() {
           <OpeningBalancesCard capitalLabel={profile.capitalLabel} opening={opening} loading={openingQ.isLoading} failed={openingQ.isError} fyStart={`${fyOf(today)}-04-01`} today={today} />
 
           {!movementsMissing && (
-            <OwnerEquityCard words={words} movements={movements} loading={movementsQ.isLoading} error={movementsQ.error}
+            <OwnerEquityCard words={words} movements={movements} partners={partners} loading={movementsQ.isLoading} error={movementsQ.error}
               onRetry={() => void movementsQ.refetch()} onRecord={setRecordInit} />
           )}
 

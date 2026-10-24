@@ -36,6 +36,8 @@ import {
 } from "@/lib/accounting/owner-equity";
 import { useRecordOwnerEquity, useDeleteOwnerEquity } from "@/lib/queries/owner-equity";
 import { BusinessTypePrompt } from "@/components/features/compliance/business-type-prompt";
+import { PartnerPicker } from "@/components/features/partners/partner-picker";
+import { activePartners, movementPartner, type FirmPartner } from "@/lib/accounting/partners";
 import { parseWholeRupees } from "./format";
 
 export interface RecordInit { kind: OwnerEquityKind; amount?: number }
@@ -51,7 +53,7 @@ const accountText = (a: Pick<BankAccountRow, "name" | "account_type"> | undefine
 // ── Record dialog ──────────────────────────────────────────────────────────────────────────
 
 export function RecordOwnerEquityDialog({ init, words, partners, onClose }: {
-  init: RecordInit | null; words: OwnerEquityWords; partners: string[]; onClose: () => void;
+  init: RecordInit | null; words: OwnerEquityWords; partners: FirmPartner[]; onClose: () => void;
 }) {
   const { data: accounts } = useBankAccounts();
   const record = useRecordOwnerEquity();
@@ -73,7 +75,9 @@ export function RecordOwnerEquityDialog({ init, words, partners, onClose }: {
     /* One bank account → that one; otherwise nothing picked (a wrong account is worse than none). */
     const banks = usable.filter((a) => a.account_type !== "cash");
     setAccountId(banks.length === 1 && usable.length === 1 ? banks[0].id : "");
-    setPartner(partners.length === 1 ? partners[0] : "");
+    /* One partner in the firm today → that one; otherwise nothing picked. */
+    const current = activePartners(partners, istToday());
+    setPartner(current.length === 1 ? current[0].name : "");
     setNote("");
     setErr(null);
   }, [init, usable, partners]);
@@ -87,7 +91,7 @@ export function RecordOwnerEquityDialog({ init, words, partners, onClose }: {
     if (amt === "bad" || amt === null || amt <= 0) { setErr("Enter the amount in whole rupees, e.g. 25000."); return; }
     if (!date || date > today) { setErr("Pick the date the money moved (not a future date)."); return; }
     if (!accountId) { setErr(kind === "drawings" ? "Pick the account the money was taken from." : "Pick the account the money went into."); return; }
-    if (words.needsPartner && !partner.trim()) { setErr(`Enter the ${words.person}'s name — each ${words.person} has their own capital account.`); return; }
+    if (words.needsPartner && !partner.trim()) { setErr(`Pick the ${words.person} — each ${words.person} has their own capital account.`); return; }
     setErr(null);
     try {
       await record.mutateAsync({ kind, date, amount: amt, accountId, partner: partner.trim() || null, note: note.trim() || null });
@@ -151,8 +155,8 @@ export function RecordOwnerEquityDialog({ init, words, partners, onClose }: {
 
           {words.needsPartner && (
             <FormField label="Partner" required htmlFor="oe-partner">
-              <Input id="oe-partner" list="oe-partners" placeholder="Partner's name" value={partner} onChange={(e) => setPartner(e.target.value)} maxLength={200} />
-              <datalist id="oe-partners">{partners.map((p) => <option key={p} value={p} />)}</datalist>
+              {/* R-1847: from the partners register, never free text. */}
+              <PartnerPicker id="oe-partner" partners={partners} onDate={date || today} value={partner} onChange={setPartner} />
             </FormField>
           )}
 
@@ -175,9 +179,11 @@ export function RecordOwnerEquityDialog({ init, words, partners, onClose }: {
 
 // ── Register card ──────────────────────────────────────────────────────────────────────────
 
-export function OwnerEquityCard({ words, movements, loading, error, onRetry, onRecord }: {
+export function OwnerEquityCard({ words, movements, partners = [], loading, error, onRetry, onRecord }: {
   words: OwnerEquityWords;
   movements: OwnerEquityMovement[];
+  /** R-1847: the firm's partners register — linked entries show the register name. */
+  partners?: FirmPartner[];
   loading: boolean;
   error: unknown;
   onRetry: () => void;
@@ -315,7 +321,10 @@ export function OwnerEquityCard({ words, movements, loading, error, onRetry, onR
                       <div className="min-w-0">
                         <p className="text-sm text-ink">
                           {m.kind === "drawings" ? words.drawings : words.capital}
-                          {m.partner_name ? <span className="text-ink-2"> · {m.partner_name}</span> : null}
+                          {(() => {
+                            const who = movementPartner(m, partners);
+                            return who ? <span className="text-ink-2"> · {who.name}{who.linked ? "" : " (typed name — link it in Partners' capital above)"}</span> : null;
+                          })()}
                         </p>
                         <p className="text-xs text-ink-3">
                           {formatDate(m.movement_date)} · {accountText(acc)}{m.note ? ` · ${m.note}` : ""}
