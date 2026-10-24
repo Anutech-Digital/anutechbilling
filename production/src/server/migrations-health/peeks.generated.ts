@@ -180,4 +180,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r1650assetexpenselock", peek: "exists(select 1 from pg_trigger where tgname = 'trg_fixed_asset_expense_lock' and tgrelid = to_regclass('public.fixed_assets'))" },
   { key: "r1809assetlinklock", peek: "exists(select 1 from pg_trigger where tgname = 'trg_fixed_asset_expense_lock' and tgrelid = to_regclass('public.fixed_assets') and (tgtype & 4) = 4)" },
   { key: "r1657autoreconcile", peek: "to_regprocedure('public.auto_reconcile_bank_account(uuid,uuid,integer)') is not null" },
+  { key: "r1716istdocdates", peek: "exists(select 1 from pg_attrdef d join pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum where d.adrelid = to_regclass('public.quotes') and a.attname = 'created_date' and pg_get_expr(d.adbin, d.adrelid) like '%Asia/Kolkata%')" },
 ];

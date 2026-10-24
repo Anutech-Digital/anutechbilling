@@ -35,6 +35,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
 import { useCreditNotesByInvoice } from "@/lib/queries/credit-notes";
 import { useDebitNotesByInvoice } from "@/lib/queries/debit-notes";
+import { noteTotalsByInvoice } from "@/lib/invoices/note-totals";
 import { isCreditNoteLate, creditNoteDeadline } from "@/lib/gst/credit-note-deadline";
 import { TaxInvoiceDialog } from "@/components/features/quotes/tax-invoice-dialog";
 import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
@@ -88,7 +89,13 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   /* R-255: the accountant reads invoices — no Record payment, no WhatsApp reminder. */
   const canWrite = canWriteSales(me?.role);
   const moneyDue = canWrite && (bucket === "pending" || bucket === "overdue");
-  const statusBadge = invoiceStatusBadge(invoice);
+  /* R-1709: a paid invoice a credit note closed reads "Credited" — the same rule as the list. */
+  const { data: creditNotesForBadge } = useCreditNotesByInvoice(invoice.id);
+  const { data: debitNotesForBadge } = useDebitNotesByInvoice(invoice.id);
+  const invoiceNotes = creditNotesForBadge && debitNotesForBadge
+    ? noteTotalsByInvoice(creditNotesForBadge, debitNotesForBadge).get(invoice.id) ?? null
+    : undefined;
+  const statusBadge = invoiceStatusBadge(invoice, undefined, invoiceNotes);
   const [payOpen, setPayOpen] = React.useState(false);
   /* R-1682: Credit note from the invoice itself, at every width. It lived only in the
      invoices table's ⋯ menu, which shows from 1280px — on a laptop / tablet there was no way

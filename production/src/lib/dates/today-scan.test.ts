@@ -20,7 +20,6 @@ const SRC = join(process.cwd(), "src");
 const UTC_TODAY = /new Date\(\)\.toISOString\(\)\s*\.\s*(?:slice\(\s*0\s*,\s*10\s*\)|substring\(\s*0\s*,\s*10\s*\)|split\(\s*["'`]T["'`]\s*\)\s*\[\s*0\s*\])/g;
 
 const KNOWN: Record<string, { count: number; why: string }> = {
-  "src/app/(app)/payments/page.tsx": { count: 1, why: "CSV file name only; payments page held by another card's lock (R-1634) — next one to fix." },
   "src/app/(app)/subscriptions/page.tsx": { count: 2, why: "CSV file names only, no stored date." },
   "src/components/features/settings/two-factor-card.tsx": { count: 1, why: "Label on the authenticator entry, not a business date." },
 };
@@ -87,5 +86,99 @@ describe("subscription import never turns a calendar date into a UTC day (R-1652
       return !(t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")) && /toISOString\(\)\.slice\(0,\s*10\)/.test(l);
     }));
     expect(bad.map((f) => relative(process.cwd(), f).split(sep).join("/"))).toEqual([]);
+  });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────────────────
+   R-1716 — quote / invoice / note dates and their Age.
+
+   The DATABASE side of "today": quotes.created_date, invoices.invoice_date,
+   credit_notes.credit_date, debit_notes.debit_date and customers.since defaulted to
+   CURRENT_DATE — the UTC day on Cloud SQL — so a quote saved at 00:30 IST was dated yesterday
+   and its Age read "-1d". Migration 20261024013223_r1716_ist_document_dates sets them to the IST
+   day; SQL test supabase/tests/r1716_ist_document_dates.test.sql proves it on a database.
+   ───────────────────────────────────────────────────────────────────────────────────────── */
+const MIGRATIONS = join(process.cwd(), "supabase", "migrations");
+const migrationFiles = readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort();
+const migrationText = (f: string) => readFileSync(join(MIGRATIONS, f), "utf8");
+
+/** Drop `--` comments so a comment that quotes CURRENT_DATE is not a hit. */
+const stripSqlComments = (sql: string) => sql.split(/\r?\n/).map((l) => l.replace(/--.*$/, "")).join("\n");
+
+const DOCUMENT_DATES: [table: string, column: string][] = [
+  ["quotes", "created_date"], ["invoices", "invoice_date"], ["credit_notes", "credit_date"],
+  ["debit_notes", "debit_date"], ["customers", "since"],
+];
+
+/** The default the LAST migration gives table.column via ALTER … SET DEFAULT (null = none). */
+function lastSetDefault(table: string, column: string): { file: string; expr: string } | null {
+  const re = new RegExp(`alter\\s+table\\s+(?:only\\s+)?(?:public\\.)?${table}\\s+alter\\s+column\\s+${column}\\s+set\\s+default\\s+([^;]+);`, "gi");
+  let last: { file: string; expr: string } | null = null;
+  for (const f of migrationFiles) {
+    for (const m of stripSqlComments(migrationText(f)).matchAll(re)) last = { file: f, expr: m[1].trim() };
+  }
+  return last;
+}
+
+describe("document dates default to the IST day, not CURRENT_DATE (R-1716)", () => {
+  it.each(DOCUMENT_DATES)("%s.%s", (table, column) => {
+    const d = lastSetDefault(table, column);
+    expect(d, `${table}.${column}: no IST default migration`).not.toBeNull();
+    expect(d!.expr).toMatch(/Asia\/Kolkata/);
+    expect(d!.expr).not.toMatch(/current_date/i);
+  });
+
+  /* SQL functions that write a document / customer row with an explicit CURRENT_DATE do not use
+     the column default. Ratchet over the LATEST definition of each function: the list may only
+     go DOWN. Each one is a whole money RPC owned by its own card; rewriting it here would copy
+     a large body for a one-word change, so it is recorded instead (R-1716 needsDecision). */
+  const KNOWN_SQL_CURRENT_DATE = new Set([
+    "accept_project_quote",          // customers.since for a new project customer
+    "accept_quote",                  // customers.since for a converted lead
+    "activate_quote_on_credit",      // subscription start when the quote line has none
+    "create_project_sale",           // customers.since
+    "customer_from_prospect_quote",  // customers.since
+    "fn_accrue_referral_commission", // referral earned_date (not a document)
+    "get_partner_metrics",           // read-only report window
+    "record_payment",                // customers.since + subscription start fallback
+    "record_project_payment",        // project receipt date fallback + invoice paid_date
+  ]);
+  const WRITES = /(invoices|credit_notes|debit_notes|quotes|customers)\b/i;
+
+  function latestFunctionsUsingCurrentDate(): string[] {
+    const latest = new Map<string, string>();
+    for (const f of migrationFiles) {
+      const sql = migrationText(f);
+      const starts = [...sql.matchAll(/create\s+or\s+replace\s+function\s+(?:public\.)?"?(\w+)"?\s*\(/gi)];
+      starts.forEach((m, i) => latest.set(m[1].toLowerCase(), sql.slice(m.index!, starts[i + 1]?.index ?? sql.length)));
+    }
+    return [...latest].filter(([, body]) => {
+      const code = stripSqlComments(body);
+      return /current_date/i.test(code) && WRITES.test(code);
+    }).map(([name]) => name).sort();
+  }
+
+  it("no NEW SQL function stamps a document or customer with CURRENT_DATE", () => {
+    const extra = latestFunctionsUsingCurrentDate().filter((n) => !KNOWN_SQL_CURRENT_DATE.has(n));
+    expect(extra, "use public.ist_today() — CURRENT_DATE is the UTC day on Cloud SQL").toEqual([]);
+  });
+
+  it("the ratchet only goes down — a fixed function must leave the list", () => {
+    const now = new Set(latestFunctionsUsingCurrentDate());
+    expect([...KNOWN_SQL_CURRENT_DATE].filter((n) => !now.has(n))).toEqual([]);
+  });
+});
+
+describe("Age is IST days and never negative (R-1716)", () => {
+  it("/invoices 'invoice to raise' age reads toInvoiceAgeDays, not raw milliseconds", () => {
+    const page = readFileSync(join(SRC, "app", "(app)", "invoices", "page.tsx"), "utf8");
+    expect(page).not.toMatch(/Math\.floor\(\(now - new Date\(/);
+    expect(page).toMatch(/toInvoiceAgeDays\(/);
+  });
+
+  it("Payments → dues age counts from the subscription's IST start day, not the UTC day of created_at", () => {
+    const src = readFileSync(join(SRC, "lib", "queries", "payments.ts"), "utf8");
+    expect(src).toMatch(/toIstDate\(s\.created_at\)/);
+    expect(src).not.toMatch(/ymd\(startedAt\)/);
   });
 });

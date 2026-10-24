@@ -13,6 +13,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows, fetchAllRowsIn, type PageQuery } from "@/lib/ops/fetch-all";
 import { toOpenBalanceMap, type QuoteOpenBalanceRow } from "@/lib/quotes/open-balances";
 import { todayIST } from "@/lib/subscriptions/payment-due";
+import { toIstDate } from "@/lib/dates/ist";
 import { queryKeys } from "@/lib/queries/keys";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { rupee } from "@/lib/utils";
@@ -460,7 +461,9 @@ export function buildDuesRows(
       .map(ymd)
       .sort();
     const startedAt = s.start_date ?? s.created_at;
-    const ageFrom = unpaidDue[0] ?? (s.payment_due_date ? ymd(s.payment_due_date) : ymd(startedAt));
+    /* R-1716: created_at is a timestamp — its IST day, not the UTC day (00:00–05:30 IST read as yesterday). */
+    const startedDay = s.start_date ? ymd(s.start_date) : toIstDate(s.created_at);
+    const ageFrom = unpaidDue[0] ?? (s.payment_due_date ? ymd(s.payment_due_date) : startedDay);
 
     return {
       subscription_id:    s.id,

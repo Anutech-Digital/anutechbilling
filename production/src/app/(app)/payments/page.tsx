@@ -7,6 +7,7 @@
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { PAYMENT_FOCI, paymentInFocus, projectReceivedInMonth, type PaymentFocus } from "@/lib/payments/focus";
+import { quoteInFocus } from "@/lib/quotes/focus";
 import { FocusBanner } from "@/components/shared/focus-banner";
 import { PAYMENT_TABS } from "@/lib/navigation/drilldown";
 import Link from "next/link";
@@ -80,7 +81,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { rupee, formatDate, bankLabel, cleanDisplayName, cn } from "@/lib/utils";
-import { istMonth, toIstDate } from "@/lib/dates/ist";
+import { istMonth, istToday, toIstDate } from "@/lib/dates/ist";
 import { useConfirm, useAskText } from "@/components/providers/confirm-provider";
 import { PAYMENTS_PAGE_SIZE } from "./load-more";
 import { paymentMethodLabel } from "./method-label";
@@ -305,8 +306,8 @@ function PaymentsPageInner() {
   const awaitingInvoiceQuotes = scoped.quotes.filter((q) => q.payment_status === "received");
   const awaitingInvoiceTotal = awaitingInvoiceQuotes.reduce((s, q) => s + (q.amount ?? 0), 0);
 
-  // Partial payments (quotes with status=partial)
-  const partialQuotes = scoped.quotes.filter((q) => q.payment_status === "partial");
+  // Partial payments — R-1710: part-paid by money, also once invoiced (the /quotes?focus=partial set).
+  const partialQuotes = scoped.quotes.filter((q) => quoteInFocus(q, "partial"));
   /* R-1730: one figure, one place — the strip shows figures only while collapsed, and the two
      quote counts live in "Action needed" whenever it is shown (kpi-plan.ts). */
   const actionCardShown = canWrite && !isLoading && (partialQuotes.length > 0 || awaitingInvoiceQuotes.length > 0);
@@ -347,7 +348,7 @@ function PaymentsPageInner() {
       ];
     });
     /* R-1795: the shared downloadCSV — csvEscape on every cell (R-734) and an export_log row (R-1006). */
-    downloadCSV(`payments-${new Date().toISOString().slice(0, 10)}.csv`, header, lines);
+    downloadCSV(`payments-${istToday()}.csv`, header, lines);
     toast.success(`Exported ${filtered.length} payment${filtered.length === 1 ? "" : "s"} to CSV`);
   };
 

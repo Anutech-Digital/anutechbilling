@@ -36,6 +36,7 @@ import { useQuoteSubscriptions, useRecreateSubscription } from "@/lib/queries/su
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { historyTime, quoteCreatedAt } from "@/lib/quotes/history-time";
 import { quotePaymentBadge } from "@/lib/quotes/status-badge";
+import { quotePaymentState, invoicedPartPaid } from "@/lib/quotes/quote-payment-state";
 import { quoteSentEvent, useQuoteSends } from "@/lib/quotes/sent-event";
 import { staffDisplayNotes } from "@/lib/quotes/customer-notes";
 import { COMPANY_STATE_FIX, companyStateFixFor } from "@/lib/onboarding/setup-links";
@@ -271,6 +272,8 @@ export default function QuoteDetailPage() {
         signerName: signature?.signer_name ?? null,
         // R-159: paid means the money is in, not that an invoice exists.
         paid: quoteIsPaid(quote),
+        /* R-1710: what came in and what is left, also once invoiced. */
+        money: quotePaymentState(quote),
       })
     : null;
 
@@ -691,7 +694,12 @@ export default function QuoteDetailPage() {
   const revise = canReviseQuote(quote, totalReceivedSoFar);
   /* R-1718: one rule with the list — no "Awaiting payment" on a rejected / expired / replaced quote. */
   const paymentBadge = quotePaymentBadge(quote);
-  const payment = paymentBadge ? PAYMENT_META[paymentBadge] : null;
+  /* R-1710: "Invoiced" alone hid a half payment (T-A1: ₹20,000 of ₹38,232) — money beside the stage. */
+  const payment = paymentBadge
+    ? paymentBadge === "invoiced" && invoicedPartPaid(quote)
+      ? { kind: "danger" as const, label: "Invoiced · Partly paid" }
+      : PAYMENT_META[paymentBadge]
+    : null;
   const items: QuoteLineItem[] = Array.isArray(quote.line_items) ? quote.line_items : [];
   /* R-542: an add-seats quote's line is a pro-rata charge for the days left in the current
      term — paid once. Its commitment is "annual_yearly" (the seats' term), which printed

@@ -164,7 +164,8 @@ describe("invoice money tiles: tile, list and dashboard agree", () => {
   it("the invoices page filters by the tile's predicate and shows the banner", () => {
     const page = read("app/(app)/invoices/page.tsx");
     expect(page).toMatch(/useUrlChoice<InvoiceFocus>\("focus", INVOICE_FOCI, ""\)/);
-    expect(page).toMatch(/if \(focus && !invoiceInFocus\(i, focus\)\) return false;/);
+    /* R-1709: the same note totals the tile summed with (credit-note settled = Credited, not paid). */
+    expect(page).toMatch(/if \(focus && !invoiceInFocus\(i, focus, undefined, noteTotals\)\) return false;/);
     expect(page).toMatch(/onClick=\{\(\) => focusOn\("unpaid"\)\}/);
     expect(page).toMatch(/onClick=\{\(\) => focusOn\("paid-month"\)\}/);
     expect(page).toMatch(/<FocusBanner/);

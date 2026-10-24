@@ -208,6 +208,7 @@ MIGS=(
   "r1650assetexpenselock|20261023223717_r1650_asset_delete_locked_expense.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_fixed_asset_expense_lock' and tgrelid = to_regclass('public.fixed_assets'))"
   "r1809assetlinklock|20261023232214_r1809_asset_link_locked_expense.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_fixed_asset_expense_lock' and tgrelid = to_regclass('public.fixed_assets') and (tgtype & 4) = 4)"
   "r1657autoreconcile|20261024001702_r1657_auto_reconcile_server.sql|resellersos_migration|to_regprocedure('public.auto_reconcile_bank_account(uuid,uuid,integer)') is not null"
+  "r1716istdocdates|20261024013223_r1716_ist_document_dates.sql|resellersos_migration|exists(select 1 from pg_attrdef d join pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum where d.adrelid = to_regclass('public.quotes') and a.attname = 'created_date' and pg_get_expr(d.adbin, d.adrelid) like '%Asia/Kolkata%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

@@ -72,9 +72,10 @@ describe("the cash note carries both halves for a part-paid quote", () => {
     expect(note?.text).toContain("₹10,00,000");
   });
 
-  it("shows only the due figure once an invoice exists", () => {
+  it("keeps both halves once an invoice exists (R-1710 — was '₹600 due' alone)", () => {
     const note = cashNote(q({ payment_status: "invoiced", amount: 1000, payment_amount: 400 }));
-    expect(note?.text).toBe("₹600 due");
+    expect(note?.text).toBe("₹400 paid · ₹600 left");
+    expect(cashNote(q({ payment_status: "invoiced", amount: 1000, payment_amount: 0 }))?.text).toBe("₹1,000 due");
   });
 
   it("says awaiting payment when nothing has arrived", () => {

@@ -7,11 +7,17 @@
  *
  * "Partial" is display-only too: money is already in (advance receipts adjusted, or
  * paid_amount from milestone receipts) but the invoice is not settled.
+ *
+ * R-1709: the money part comes from lib/invoices/payment-state.ts — the same state the
+ * /invoices chips and "Paid this month" read. A paid invoice that a credit note closed reads
+ * "Credited", not "Paid" (pass its note totals; without them it stays "Paid").
  */
 import { invoiceBucket, invoiceOverdueDays, type OverdueInvoice } from "@/lib/invoices/overdue";
+import { invoicePaymentState } from "@/lib/invoices/payment-state";
+import type { NoteTotals } from "@/lib/invoices/note-totals";
 import { istToday } from "@/lib/dates/ist";
 
-export type InvoiceBadgeKind = "success" | "warning" | "danger" | "muted";
+export type InvoiceBadgeKind = "success" | "warning" | "danger" | "muted" | "info";
 
 export interface InvoiceStatusRow extends OverdueInvoice {
   adjusted_advances?: unknown;
@@ -20,11 +26,17 @@ export interface InvoiceStatusRow extends OverdueInvoice {
 export function invoiceStatusBadge(
   inv: InvoiceStatusRow,
   today: string = istToday(),
+  /** This invoice's credit / debit note totals. Undefined = not read (never "Credited"). */
+  notes?: NoteTotals | null,
 ): { label: string; kind: InvoiceBadgeKind } | null {
-  const hasAdvances = Array.isArray(inv.adjusted_advances) && inv.adjusted_advances.length > 0;
-  const partial = (hasAdvances || (inv.paid_amount ?? 0) > 0) && inv.status !== "paid";
+  const state = invoicePaymentState({
+    ...inv,
+    credit_noted: notes === undefined ? undefined : notes?.credit ?? 0,
+    debit_noted: notes?.debit ?? 0,
+  });
+  const partial = state === "partial";
   const bucket = invoiceBucket(inv, today);
-  if (bucket === "paid") return { label: "Paid", kind: "success" };
+  if (bucket === "paid") return state === "credited" ? { label: "Credited", kind: "info" } : { label: "Paid", kind: "success" };
   /* R-1635: written off on /payments — still issued, no longer collected or chased. */
   if (inv.written_off_at && bucket !== "void") return { label: "Written off", kind: "muted" };
   if (bucket === "pending") return { label: partial ? "Partial" : "Pending", kind: "warning" };

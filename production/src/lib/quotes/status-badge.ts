@@ -24,6 +24,7 @@
  */
 import type { Quote } from "@/lib/supabase/database.types";
 import { quoteBalanceDue } from "./list-tab";
+import { invoicedPartPaid } from "./quote-payment-state";
 
 export type QuoteBadgeKind = "muted" | "success" | "warning" | "danger" | "info";
 
@@ -46,7 +47,10 @@ export function outstanding(q: Pick<Quote, "amount" | "payment_amount">): number
 export function unifiedStatus(q: QuoteStatusFields): { label: string; kind: QuoteBadgeKind } {
   /* Payment first, and independent of `status`. This ordering IS the fix: every one of
      these was previously reachable only from `status === "accepted"`. */
-  if (q.payment_status === "invoiced") return { label: "Invoiced", kind: "info" };
+  if (q.payment_status === "invoiced") {
+    /* R-1710: the stage alone hid a half payment — say both (money from quote-payment-state.ts). */
+    return invoicedPartPaid(q) ? { label: "Invoiced · Partly paid", kind: "danger" } : { label: "Invoiced", kind: "info" };
+  }
   if (q.payment_status === "partial") {
     /* Rose, not amber. Amber is the same tone this list gives "Out for review" and
        "expiring soon" — ordinary busywork. A part-paid quote is money sitting half
@@ -110,7 +114,8 @@ export function cashNote(q: QuoteStatusFields): QuoteCashNote | null {
   const paid = q.payment_amount ?? 0;
   const inr = (n: number) => `₹${n.toLocaleString("en-IN")}`;
 
-  if (q.payment_status === "partial" && due > 0) {
+  /* R-1710: invoiced after a part payment — the same two halves as before the invoice. */
+  if ((q.payment_status === "partial" || invoicedPartPaid(q)) && due > 0) {
     return { text: `${inr(paid)} paid · ${inr(due)} left`, tone: "owed" };
   }
   if (q.payment_status === "invoiced" && due > 0) {

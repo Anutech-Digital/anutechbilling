@@ -18,11 +18,24 @@
  */
 import { istMonth, istToday } from "@/lib/dates/ist";
 import { invoiceIsOverdue, type OverdueInvoice } from "./overdue";
+import { invoiceMoneyIn, invoicePaymentState } from "./payment-state";
+import type { NoteTotals } from "./note-totals";
+
+/** R-1709: credit / debit note totals per invoice id (useInvoiceNoteTotals). Absent = none. */
+export type InvoiceNotes = ReadonlyMap<string, NoteTotals>;
+
+/** The row plus its note totals, as payment-state.ts reads it. */
+function withNotes<T extends KpiInvoice>(inv: T, notes?: InvoiceNotes) {
+  const n = inv.id ? notes?.get(inv.id) : undefined;
+  return { ...inv, credit_noted: n?.credit ?? (notes ? 0 : undefined), debit_noted: n?.debit ?? 0 };
+}
 
 export interface KpiInvoice extends OverdueInvoice {
   id?: string;
   net_payable?: number | null;
   paid_date?: string | null;
+  /** invoices.adjusted_advances — advances adjusted at issue (money in, R-1709). */
+  adjusted_advances?: unknown;
 }
 
 /** Statuses that are a real, issued claim on the customer. Void and draft are not. */
@@ -46,26 +59,28 @@ export const INVOICE_FOCI = ["", "unpaid", "paid-month"] as const;
 export type InvoiceFocus = (typeof INVOICE_FOCI)[number];
 export const INVOICE_FOCUS_LABEL: Record<Exclude<InvoiceFocus, "">, string> = {
   "unpaid": "Outstanding — still owed (pending, partial and overdue)",
-  "paid-month": "Paid this month — fully paid in this IST month",
+  "paid-month": "Paid this month — fully paid in this IST month (credit-note settled ones are Credited, not paid)",
 };
 
-export function invoiceInFocus(inv: KpiInvoice, focus: InvoiceFocus, now: Date = new Date()): boolean {
+export function invoiceInFocus(inv: KpiInvoice, focus: InvoiceFocus, now: Date = new Date(), notes?: InvoiceNotes): boolean {
   if (focus === "") return true;
   if (focus === "unpaid") return invoiceBalance(inv) > 0;
-  return inv.status === "paid" && !!inv.paid_date && inv.paid_date.slice(0, 7) === istMonth(now);
+  /* R-1709: paid by MONEY — an invoice a credit note closed is "credited", not paid. */
+  return invoicePaymentState(withNotes(inv, notes)) === "paid" && !!inv.paid_date && inv.paid_date.slice(0, 7) === istMonth(now);
 }
 
 export interface InvoiceKpis {
   outstanding: number;
   overdueTotal: number;
-  /** Invoices fully paid this IST month, by `paid_date`, at their full value. */
+  /** Invoices fully paid this IST month, by `paid_date` — the money that really came in on them
+   *  (R-1709: receipts + advances, capped at the value after notes; was the full amount). */
   paidThisMonth: number;
   paidThisMonthCount: number;
   /** Invoices with something still owed — the Outstanding tile's count. */
   outstandingCount: number;
 }
 
-export function invoiceKpis(invoices: KpiInvoice[], now: Date = new Date()): InvoiceKpis {
+export function invoiceKpis(invoices: KpiInvoice[], now: Date = new Date(), notes?: InvoiceNotes): InvoiceKpis {
   const today = istToday(now);
   let outstanding = 0, overdueTotal = 0, paidThisMonth = 0, paidThisMonthCount = 0, outstandingCount = 0;
   for (const inv of invoices) {
@@ -73,8 +88,8 @@ export function invoiceKpis(invoices: KpiInvoice[], now: Date = new Date()): Inv
     outstanding += bal;
     if (invoiceInFocus(inv, "unpaid", now)) outstandingCount += 1;
     if (invoiceIsOverdue(inv, today)) overdueTotal += bal;
-    if (invoiceInFocus(inv, "paid-month", now)) {
-      paidThisMonth += inv.amount;
+    if (invoiceInFocus(inv, "paid-month", now, notes)) {
+      paidThisMonth += invoiceMoneyIn(withNotes(inv, notes));
       paidThisMonthCount += 1;
     }
   }
@@ -83,22 +98,27 @@ export function invoiceKpis(invoices: KpiInvoice[], now: Date = new Date()): Inv
 
 /** The ids of the status chips on /invoices, in display order. Every invoice lands in
  *  exactly one, so the chip counts add up to All (R-063 — Void had no chip). */
-export const INVOICE_CHIPS = ["paid", "partial", "pending", "overdue", "draft", "void"] as const;
+export const INVOICE_CHIPS = ["paid", "credited", "partial", "pending", "overdue", "draft", "void"] as const;
 export type InvoiceChip = (typeof INVOICE_CHIPS)[number];
 
 /** Which chip an invoice belongs in: its bucket (R-060, overdue derived), with pending
- *  split into Partial (advances applied) and Pending (nothing in yet). */
-export function invoiceChip(inv: KpiInvoice & { adjusted_advances?: unknown }, today: string = istToday()): string {
+ *  split into Partial (money in — advances OR receipts after the invoice) and Pending
+ *  (nothing in yet), and paid split into Paid and Credited (a credit note closed it).
+ *  R-1709: the same money state the row badge reads (payment-state.ts) — the chip counted
+ *  advances only, so a row reading "Partial" sat under a "Partial 0" chip. */
+export function invoiceChip(inv: KpiInvoice, today: string = istToday(), notes?: InvoiceNotes): string {
   const bucket = invoiceIsOverdue(inv, today) ? "overdue" : inv.status;
+  const state = invoicePaymentState(withNotes(inv, notes));
+  if (bucket === "paid") return state === "credited" ? "credited" : "paid";
   if (bucket !== "pending") return bucket;
-  return Array.isArray(inv.adjusted_advances) && inv.adjusted_advances.length > 0 ? "partial" : "pending";
+  return state === "partial" ? "partial" : "pending";
 }
 
-export function invoiceChipCounts(invoices: (KpiInvoice & { adjusted_advances?: unknown })[], today: string = istToday()): Record<string, number> {
+export function invoiceChipCounts(invoices: KpiInvoice[], today: string = istToday(), notes?: InvoiceNotes): Record<string, number> {
   const map: Record<string, number> = { all: invoices.length };
   for (const c of INVOICE_CHIPS) map[c] = 0;
   for (const inv of invoices) {
-    const c = invoiceChip(inv, today);
+    const c = invoiceChip(inv, today, notes);
     map[c] = (map[c] ?? 0) + 1;
   }
   return map;
