@@ -78,6 +78,7 @@ import { toast } from "sonner";
 import { toastError, describeError } from "@/lib/errors/toast-error";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button, IconButton } from "@/components/ui/button";
 import { FAB } from "@/components/ui/fab";
@@ -1077,7 +1078,7 @@ export default function SubscriptionsPage() {
         <EmptyState
           icon="alert"
           title="Could not load subscriptions"
-          body={error.message}
+          body={loadErrorBody(error)}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
         />
       )}

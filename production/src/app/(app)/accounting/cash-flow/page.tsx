@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatStrip } from "@/components/shared/stat-strip";
-import { LoadErrorBanner } from "@/components/shared/load-error";
+import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import { rupee } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { createClient } from "@/lib/supabase/client";
@@ -222,8 +222,7 @@ export default function CashFlowPage() {
       })()}
 
       {error && (
-        <EmptyState icon="alert" title="Could not load cash flow" body={error.message}
-          action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>} />
+        <LoadError what="Cash flow" error={error} onRetry={() => void refetch()} />
       )}
       {isLoading && <Card flush><div className="p-4 space-y-3">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-8 w-full" />)}</div></Card>}
       {empty && (

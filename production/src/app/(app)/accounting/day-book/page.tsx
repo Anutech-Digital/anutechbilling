@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate, cn } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
@@ -107,9 +108,7 @@ export default function DayBookPage() {
       {!valid ? (
         <Card className="p-4"><p className="text-sm text-ink-2">The &quot;From&quot; date must be on or before the &quot;To&quot; date.</p></Card>
       ) : q.error ? (
-        <Card className="p-4 border-rose/40 bg-rose-soft/30">
-          <p role="alert" className="text-sm text-ink-2">Could not build the Day Book: {(q.error as Error).message}</p>
-        </Card>
+        <Card><LoadErrorInline what="The Day Book" error={q.error} onRetry={() => void q.refetch()} /></Card>
       ) : q.isLoading ? (
         <div className="space-y-2">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
       ) : rows.length === 0 ? (

@@ -38,6 +38,7 @@ import { FocusBanner } from "@/components/shared/focus-banner";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { FAB } from "@/components/ui/fab";
@@ -755,7 +756,7 @@ function InvoicesPageInner() {
         <EmptyState
           icon="alert"
           title="Could not load invoices"
-          body={error.message}
+          body={loadErrorBody(error)}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
         />
       )}

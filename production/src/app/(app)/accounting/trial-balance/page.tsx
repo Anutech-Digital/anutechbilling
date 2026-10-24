@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { rupee, cn, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { localDateISO } from "@/lib/leads/outcomes";
@@ -47,6 +48,9 @@ export default function TrialBalancePage() {
   const estimatedLicence = tb?.rows.find((r) => r.head === LICENCE_ESTIMATE_HEAD)?.debit ?? 0;
 
   const error = bsQ.error ?? pnlQ.error ?? itemsQ.error ?? openingQ.error ?? retainedQ.error;
+  const retryFailed = () => {
+    for (const q of [bsQ, pnlQ, itemsQ, openingQ, retainedQ]) if (q.error) void q.refetch();
+  };
 
   const exportCsv = () => {
     if (!tb) return;
@@ -76,11 +80,7 @@ export default function TrialBalancePage() {
       </div>
 
       {error ? (
-        <Card className="p-4 border-rose/40 bg-rose-soft/30">
-          <p role="alert" className="text-sm text-ink-2">
-            Could not build the Trial Balance: {(error as Error).message}
-          </p>
-        </Card>
+        <Card><LoadErrorInline what="The Trial Balance" error={error} onRetry={retryFailed} /></Card>
       ) : !tb ? (
         <div className="space-y-2">{[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
       ) : (
