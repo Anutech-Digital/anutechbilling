@@ -661,6 +661,7 @@ function txnStatusLabel(t: BankTransactionRow["matched_to_type"]): string {
          t === "vendor_bill" ? "Bill"    :
          t === "transfer"    ? "Inter-account" :
          t === "split"       ? "Salaries" :
+         t === "owner_equity" ? "Owner drawings / capital" :
          t                   ? "Reconciled" : "Unmatched";
 }
 
