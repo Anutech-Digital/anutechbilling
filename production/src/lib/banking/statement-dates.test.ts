@@ -9,7 +9,7 @@ describe("isRealDate", () => {
 
 describe("fixStatementDates", () => {
   it("leaves a correct statement alone", () => {
-    expect(fixStatementDates(["2026-04-02", "2026-08-21"])).toEqual({ dates: ["2026-04-02", "2026-08-21"], swapped: 0, swappedAll: false });
+    expect(fixStatementDates(["2026-04-02", "2026-08-21"])).toEqual({ dates: ["2026-04-02", "2026-08-21"], swapped: 0, swappedAll: false, future: 0 });
   });
 
   it("fixes the real case: one impossible date among correct ones", () => {
@@ -26,10 +26,28 @@ describe("fixStatementDates", () => {
     expect(r.swappedAll).toBe(true);
   });
 
-  it("a date after today is impossible too — the real 8 Oct / 8 Nov misreads of 10 and 11 Aug", () => {
+  it("R-1890: a date after today is NEVER swapped — kept as it is and counted for a warning", () => {
+    // Before R-1890, 8 Oct / 8 Nov were taken as misreads of 10 / 11 Aug and flipped.
     const r = fixStatementDates(["2026-08-09", "2026-10-08", "2026-11-08", "2026-09-03"], "2026-09-25");
-    expect(r.dates).toEqual(["2026-08-09", "2026-08-10", "2026-08-11", "2026-09-03"]);
-    expect(r).toMatchObject({ swapped: 2, swappedAll: false });
+    expect(r.dates).toEqual(["2026-08-09", "2026-10-08", "2026-11-08", "2026-09-03"]);
+    expect(r).toMatchObject({ swapped: 0, swappedAll: false, future: 2 });
+  });
+
+  it("R-1890: ISO 2026-11-05 stays 5 Nov (it was turned into 11 May)", () => {
+    const r = fixStatementDates(["2026-10-20", "2026-11-05"], "2026-10-26");
+    expect(r.dates).toEqual(["2026-10-20", "2026-11-05"]);
+    expect(r).toMatchObject({ swapped: 0, future: 1 });
+  });
+
+  it("R-1890: real dates are never flipped just because flipped they look more in order", () => {
+    // All real as given. Flipped (1 Feb, 3 Jan, 2 Jan) they would run neatly backwards — no evidence of a misread.
+    const r = fixStatementDates(["2026-01-02", "2026-03-01", "2026-02-01"]);
+    expect(r.dates).toEqual(["2026-01-02", "2026-03-01", "2026-02-01"]);
+    expect(r).toMatchObject({ swapped: 0, swappedAll: false });
+  });
+
+  it("future is 0 when nothing is after today", () => {
+    expect(fixStatementDates(["2026-08-07"], "2026-09-25").future).toBe(0);
   });
 
   it("without `today`, a future date is left as it is", () => {

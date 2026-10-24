@@ -67,17 +67,36 @@ export function rowsToCsv(rows: string[][]): string {
   return rows.map((r) => r.map(cell).join(",")).join("\n");
 }
 
-/** Heuristic date parser — handles DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD. */
-function parseDate(input: string): string | null {
+const NUMERIC_DATE = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})/;
+
+/**
+ * R-1890: day-first or month-first is decided ONCE for the whole file, never per line.
+ * A first part over 12 anywhere proves day-first; otherwise a second part over 12 proves
+ * month-first; with no proof either way, Indian banks are day-first.
+ */
+export function detectDayOrder(cells: string[]): "dmy" | "mdy" {
+  let firstOver12 = false, secondOver12 = false;
+  for (const c of cells) {
+    const m = NUMERIC_DATE.exec(c.trim());
+    if (!m) continue;
+    if (Number(m[1]) > 12) firstOver12 = true;
+    if (Number(m[2]) > 12) secondOver12 = true;
+  }
+  return !firstOver12 && secondOver12 ? "mdy" : "dmy";
+}
+
+/** Heuristic date parser — handles DD/MM/YYYY (or MM/DD for the whole file), DD-MM-YYYY, YYYY-MM-DD. */
+function parseDate(input: string, order: "dmy" | "mdy" = "dmy"): string | null {
   const s = input.trim();
   if (!s) return null;
-  // YYYY-MM-DD already
+  // YYYY-MM-DD already — never swapped (R-1890)
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  // DD/MM/YYYY or DD-MM-YYYY (Indian convention)
-  const m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+  // DD/MM/YYYY or DD-MM-YYYY (Indian convention), or MM/DD/YYYY when the file proved it
+  const m = s.match(NUMERIC_DATE);
   if (m) {
-    const dd = m[1].padStart(2, "0");
-    const mm = m[2].padStart(2, "0");
+    const [a, b] = order === "mdy" ? [m[2], m[1]] : [m[1], m[2]];
+    const dd = a.padStart(2, "0");
+    const mm = b.padStart(2, "0");
     let yy = m[3];
     if (yy.length === 2) yy = (parseInt(yy, 10) > 50 ? "19" : "20") + yy;
     return `${yy}-${mm}-${dd}`;
@@ -167,9 +186,11 @@ export function parseStatementRows(raw: string[][]): ParseResult {
 
   const out: ParsedRow[] = [];
   let skipped = 0;
+  const dateCol = mapping.txn_date;
+  const order = detectDayOrder(raw.slice(headerIdx + 1).map((r) => r[dateCol] ?? ""));
   for (let i = headerIdx + 1; i < raw.length; i++) {
     const r = raw[i];
-    const date = parseDate(r[mapping.txn_date] ?? "");
+    const date = parseDate(r[mapping.txn_date] ?? "", order);
     if (!date) { skipped++; continue; }
     // Coerce to non-negative integers — a stray minus sign or a decimal would
     // otherwise break the integer column or the debit-xor-credit rule.
@@ -189,7 +210,10 @@ export function parseStatementRows(raw: string[][]): ParseResult {
     });
   }
 
-  return { rows: out, skipped, warnings: [] };
+  const warnings = order === "mdy"
+    ? ["Dates in this file are written month first (MM/DD/YYYY) — read that way for every line. Check a few dates in the preview."]
+    : [];
+  return { rows: out, skipped, warnings };
 }
 
 /** CSV / "Delimited" text → lines. */
