@@ -99,6 +99,18 @@ function openTag(src: string, i: number): string {
   return src.slice(i);
 }
 
+/**
+ * R-1814: `data-keyboard-route="inner-control"` says the row's keyboard route is a control INSIDE
+ * it (a labelled button, the row's checkbox) — a second tab stop on the row would double every Tab.
+ * Accepted only when that row really holds a <button>, <input>, <a> or <Link> before its </tr>.
+ */
+function innerControlRoute(src: string, i: number, tag: string): boolean {
+  if (!/\bdata-keyboard-route="inner-control"/.test(tag)) return false;
+  const end = src.indexOf("</tr>", i + tag.length);
+  const body = src.slice(i + tag.length, end === -1 ? undefined : end);
+  return /<(button|input|a|Link)\b/.test(body);
+}
+
 /** Lines of `<tr … onClick …>` that have neither onKeyDown nor a rowActivation spread. */
 function mouseOnlyRows(src: string): number[] {
   const out: number[] = [];
@@ -106,7 +118,7 @@ function mouseOnlyRows(src: string): number[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(src))) {
     const tag = openTag(src, m.index);
-    if (/\bonClick=/.test(tag) && !/\bonKeyDown=|rowActivation\(/.test(tag)) {
+    if (/\bonClick=/.test(tag) && !/\bonKeyDown=|rowActivation\(/.test(tag) && !innerControlRoute(src, m.index, tag)) {
       out.push(src.slice(0, m.index).split("\n").length);
     }
   }
@@ -129,13 +141,24 @@ const CARD_FILES = [
   "app/(app)/accounting/tds-receivable/page.tsx",
   "app/(app)/accounting/bill-payments/page.tsx",
   "app/(app)/items/page.tsx",
+  // R-1814 follow-up
+  "app/(app)/subscriptions/page.tsx",
+  "app/(app)/accounting/cash-flow/page.tsx",
+  "app/(app)/online-orders/page.tsx",
+  "components/features/contacts/google-contacts-import-dialog.tsx",
+  "components/features/contacts/import-contacts-dialog.tsx",
+  "components/features/customers/customer-record-table.tsx",
 ];
 
 /** Measured 24 Oct 2026 after R-1658: 16 → 9. Left: cash-flow, customers/groups/[id] and
  *  reports/purchases (R-1134 put a real link/button inside those rows, the row click is a mouse
  *  extra), online-orders, quotes, subscriptions (its row was in another worker's lock — follow-up
- *  card), the two contacts import dialogs and customer-record-table. Fix one → lower this. */
-const BASELINE = 9;
+ *  card), the two contacts import dialogs and customer-record-table. Fix one → lower this.
+ *  R-1814: subscriptions, online-orders and customer-record-table got rowActivation-style keys;
+ *  cash-flow and both contacts import dialogs are marked inner-control (their button / checkbox
+ *  is the keyboard route) → 3. Left: customers/groups/[id] and reports/purchases (a real link/button
+ *  inside the row; the row click is a mouse extra) and quotes (in R-1709's lock at the time). */
+const BASELINE = 3;
 
 describe("R-1658 — no mouse-only <tr onClick>", () => {
   it("the detector sees a multi-line tag with an arrow function, and accepts the fix", () => {
@@ -143,6 +166,12 @@ describe("R-1658 — no mouse-only <tr onClick>", () => {
     expect(mouseOnlyRows(`<tr {...rowActivation(() => go(r))} className="x">`)).toEqual([]);
     expect(mouseOnlyRows(`<tr onClick={f} onKeyDown={k}>`)).toEqual([]);
     expect(mouseOnlyRows(`<tr className="x">`)).toEqual([]);
+  });
+
+  it("R-1814: an inner-control row passes only when it really holds a control", () => {
+    expect(mouseOnlyRows(`<tr data-keyboard-route="inner-control" onClick={f}><td><input type="checkbox" /></td></tr>`)).toEqual([]);
+    expect(mouseOnlyRows(`<tr data-keyboard-route="inner-control" onClick={f}><td><button>Open</button></td></tr>`)).toEqual([]);
+    expect(mouseOnlyRows(`<tr data-keyboard-route="inner-control" onClick={f}><td>text only</td></tr>\n<tr><td><button /></td></tr>`)).toEqual([1]);
   });
 
   it.each(CARD_FILES)("src/%s has none", (f) => {

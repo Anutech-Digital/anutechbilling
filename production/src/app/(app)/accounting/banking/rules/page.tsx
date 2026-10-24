@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -208,8 +209,7 @@ export default function CategoryRulesPage() {
       {/* The rules */}
       <Card flush className="mt-4">
         {error ? (
-          <EmptyState icon="alert" title="Could not load the rules" body={error.message}
-            action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>} />
+          <LoadErrorInline what="The rules" error={error} onRetry={() => refetch()} />
         ) : isLoading ? (
           <div className="p-4 space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-9 w-full" />)}</div>
         ) : (rules ?? []).length === 0 ? (

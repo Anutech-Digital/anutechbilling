@@ -17,6 +17,7 @@ import { CatalogUnitCheck } from "@/components/features/items/catalog-unit-check
 import { FAB } from "@/components/ui/fab";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { StatStrip } from "@/components/shared/stat-strip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button, IconButton } from "@/components/ui/button";
@@ -352,14 +353,7 @@ export default function ItemsPage() {
       )}
 
       {/* Error */}
-      {error && (
-        <EmptyState
-          icon="alert"
-          title="Could not load items"
-          body={error.message}
-          action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
-        />
-      )}
+      {error && <LoadError what="Items" error={error} onRetry={() => refetch()} />}
 
       {/* Loading */}
       {isLoading && (

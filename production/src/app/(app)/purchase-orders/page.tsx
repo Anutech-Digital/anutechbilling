@@ -21,6 +21,7 @@ import { usePurchaseOrders, usePurchaseOrderSummaries, type PurchaseOrderSummary
 import { useSubscriptions }  from "@/lib/queries/subscriptions";
 import PlaceOrderDialog      from "@/components/features/purchase-orders/place-order-dialog";
 import { EmptyState }        from "@/components/shared/empty-state";
+import { LoadError }         from "@/components/shared/load-error";
 import { KPI }               from "@/components/shared/kpi";
 import { Skeleton }          from "@/components/ui/skeleton";
 import { Button }            from "@/components/ui/button";
@@ -186,14 +187,7 @@ export default function PurchaseOrdersPage() {
       )}
 
       {/* Error */}
-      {error && (
-        <EmptyState
-          icon="alert"
-          title="Could not load purchase orders"
-          body={error.message}
-          action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
-        />
-      )}
+      {error && <LoadError what="Purchase orders" error={error} onRetry={() => refetch()} />}
 
       {/* Loading */}
       {isLoading && (

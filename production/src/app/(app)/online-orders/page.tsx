@@ -33,6 +33,7 @@ import {
 import { rupee } from "@/lib/utils";
 import { orderChannel, isTrialOrder, trialWindow } from "@/lib/online-orders/sources";
 import { cn } from "@/lib/utils";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 import { createClient } from "@/lib/supabase/client";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { fetchAllRowsIn, type PageQuery } from "@/lib/ops/fetch-all";
@@ -1022,8 +1023,8 @@ export default function OnlineOrdersPage() {
                   return (
                     <tr
                       key={o.id}
-                      className="cursor-pointer border-b border-hairline last:border-0 hover:bg-muted/20"
-                      onClick={() => setOpenId(o.id)}
+                      {...rowActivation(() => setOpenId(o.id))}
+                      className={cn("cursor-pointer border-b border-hairline last:border-0 hover:bg-muted/20", ROW_FOCUS_RING)}
                     >
                       {/* Order ID */}
                       <td className="px-4 py-3">

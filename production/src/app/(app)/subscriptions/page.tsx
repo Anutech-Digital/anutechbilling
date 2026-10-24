@@ -106,6 +106,7 @@ import { useQuotes } from "@/lib/queries/quotes";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { SubCustomerLink, SubQuoteLink } from "./sub-links";
 import { cn } from "@/lib/utils";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import type { Subscription } from "@/lib/supabase/database.types";
 
@@ -1612,8 +1613,8 @@ export default function SubscriptionsPage() {
                   return (
                     <tr
                       key={t.id}
-                      onClick={() => router.push(`/leads?lead=${t.id}` as never)}
-                      className="border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer"
+                      {...rowActivation(() => router.push(`/leads?lead=${t.id}` as never))}
+                      className={cn("border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer", ROW_FOCUS_RING)}
                     >
                       <td className="p-3">
                         <div className="font-medium text-sm text-ink">{t.company}</div>

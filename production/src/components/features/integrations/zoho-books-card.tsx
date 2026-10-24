@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { describeError } from "@/lib/errors/toast-error";
 import { ZohoBooksImportDialog } from "./zoho-books-import-dialog";
 
 const STATUS_URL = "/api/integrations/zoho-books";
@@ -52,6 +53,12 @@ async function jsonOf(res: Response): Promise<Record<string, unknown>> {
 }
 
 const fmt = (n: number) => n.toLocaleString("en-IN");
+
+/** R-1814: the org-list failure in plain words — our own route sentences pass through, raw plumbing is mapped. */
+export function orgErrorText(err: unknown): string {
+  const d = describeError(err, "Could not read your Zoho Books organizations. Try again.");
+  return d.description ? `${d.message} ${d.description}` : d.message;
+}
 
 export default function ZohoBooksCard() {
   const qc = useQueryClient();
@@ -224,7 +231,9 @@ export default function ZohoBooksCard() {
           <Button variant="primary" size="sm" onClick={chooseOrg} loading={busy === "org"} disabled={!orgId || busy !== null}>
             Use this organization
           </Button>
-          {orgsError && <p className="w-full text-xs text-rose">{(orgsError as Error).message}</p>}
+          {/* The organizations route answers in plain sentences with the next step ("Press Connect Zoho Books first");
+              describeError keeps those and turns network/plumbing text into plain words (§24). */}
+          {orgsError && <p role="alert" className="w-full text-xs text-rose">{orgErrorText(orgsError)}</p>}
         </div>
       )}
 

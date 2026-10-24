@@ -248,6 +248,7 @@ export default function CashFlowPage() {
                 {months.map((r) => (
                   <tr
                     key={r.ym}
+                    data-keyboard-route="inner-control"
                     onClick={() => setOpenYm(r.ym)}
                     className="hover:bg-paper-2/40 cursor-pointer"
                     title="Click to see this month's bank lines"

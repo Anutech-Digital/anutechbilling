@@ -289,6 +289,7 @@ export default function GoogleContactsImportDialog({ open, onOpenChange }: Props
                     return (
                       <tr
                         key={c.resourceName}
+                        data-keyboard-route="inner-control"
                         onClick={() => toggle(c.resourceName)}
                         className={`border-t border-hairline cursor-pointer ${isSel ? "bg-amber-soft/40" : "hover:bg-paper-2/40"}`}
                       >

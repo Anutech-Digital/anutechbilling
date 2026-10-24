@@ -43,8 +43,9 @@ function scan(root: string): { files: number; perFile: Record<string, number>; t
  * Measured 24 Oct 2026 (R-1656): 39 before batch 1; batch 1 (6 sites on the 8 money screens — payments and quotes were already clean) → 33.
  * R-1813 batch 2: 28 more sites → 5. The 5 left (banking rules, items, purchase orders, API keys, Zoho Books)
  * were locked by R-1657 at the time — the next batch takes them.
+ * R-1814 batch 3: those 5 → 0. Nothing left; a new raw render fails this test.
  */
-const BASELINE = 5;
+const BASELINE = 0;
 
 /** Batch 1 — the money screens. Each stays at zero. */
 const BATCH_1 = [
@@ -89,6 +90,15 @@ const BATCH_2 = [
   "components/features/invoices/fill-costs-dialog.tsx",
 ] as const;
 
+/** Batch 3 (R-1814) — the 5 R-1657 had locked. Each stays at zero. */
+const BATCH_3 = [
+  "app/(app)/accounting/banking/rules/page.tsx",
+  "app/(app)/items/page.tsx",
+  "app/(app)/purchase-orders/page.tsx",
+  "components/features/integrations/api-keys-card.tsx",
+  "components/features/integrations/zoho-books-card.tsx",
+] as const;
+
 describe("R-1656 — the matcher", () => {
   it("catches the raw shapes", () => {
     expect(countRawRenders(`<p>Could not: {(q.error as Error).message}</p>`)).toBe(1);
@@ -115,7 +125,7 @@ describe("R-1656 — raw error.message on the page can only go down", () => {
     ).toBeLessThanOrEqual(BASELINE);
   });
 
-  it.each([...BATCH_1, ...BATCH_2])("%s has none", (file) => {
+  it.each([...BATCH_1, ...BATCH_2, ...BATCH_3])("%s has none", (file) => {
     expect(perFile[file] ?? 0).toBe(0);
   });
 });
