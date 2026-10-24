@@ -208,7 +208,7 @@ export function DirectorsRegisterCard() {
               </span>
             </p>
           )}
-          {contact && <p className="text-xs text-ink-3 mt-0.5 break-all">{contact}</p>}
+          {contact && <p className="text-xs text-ink-3 mt-0.5 break-words">{contact}</p>}
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <Button size="sm" variant="ghost" onClick={() => setDialog({ editing: d })} aria-label={`Edit ${d.name}`}>Edit</Button>
