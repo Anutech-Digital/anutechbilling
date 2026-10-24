@@ -159,7 +159,7 @@ export function ComplianceView({
       {/* KPI strip */}
       <div className="grid grid-cols-3 gap-2 mb-4">
         <KPI label="Overdue"   value={String(overdue)}  tone={overdue > 0 ? "rose" : undefined} />
-        <KPI label="Due soon"  value={String(dueSoon)}  tone={dueSoon > 0 ? "amber" : undefined} sub="next 15 days" />
+        <KPI label="Due soon"  value={String(dueSoon)}  tone={dueSoon > 0 ? "amber" : undefined} sub={rows.some((r) => r.status === "due_soon" && r.ob.remindDays) ? "next 15 days · DSC / KYC 30" : "next 15 days"} />
         <KPI label="Filed"     value={String(filedCount)} tone={filedCount > 0 ? "emerald" : undefined} />
       </div>
 

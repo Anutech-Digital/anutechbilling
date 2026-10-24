@@ -347,7 +347,7 @@ const isActiveOn = (p: CompliancePerson, today: Date) => !p.ceasedOn || isoOf(to
 function personKycObligation(p: CompliancePerson, base: Obligation): Obligation {
   const idLabel = p.role === "director" ? "DIN" : "DPIN";
   const reading = p.lastKycYear
-    ? `Last DIR-3 KYC in ${p.lastKycYear} → due by 30 June ${p.lastKycYear + 3} (once every 3 years).`
+    ? `Last DIR-3 KYC in ${p.lastKycYear} — due again 3 years later, by 30 June.`
     : `No last KYC year in the ${p.role === "director" ? "directors" : "partners"} register — showing the common cycle (30 June 2028 for KYC that is up to date). Add the year to be exact.`;
   return {
     ...base,
@@ -377,7 +377,7 @@ function personDscObligation(p: CompliancePerson & { dscExpiry: string }): Oblig
     person: { name: p.name, din: p.din },
     remindDays: PERSON_REMIND_DAYS,
     penalty: "No ROC form (AOC-4, MGT-7, DIR-3 KYC…) can be signed without a valid DSC",
-    applies: `${p.name}'s Digital Signature Certificate expires on ${longDate(expiry)}. Renew it before then, then save the new expiry date in Settings → Company → Directors.`,
+    applies: `Renew ${p.name}'s Digital Signature Certificate before it expires, then save the new expiry date in Settings → Company → Directors.`,
     doneBy: { href: "/settings/company", label: "Update DSC expiry" },
     filingSteps: [
       "Apply for a new Class 3 DSC (individual) with a licensed Certifying Authority — PAN, Aadhaar and a video / OTP check.",
@@ -403,7 +403,7 @@ function personDetailsChangeObligation(p: CompliancePerson & { detailsChangedOn:
     remindDays: PERSON_REMIND_DAYS,
     penalty: "Fee for late filing; the DIN can be deactivated until it is filed",
     link: "https://www.mca.gov.in",
-    applies: `${p.name}'s mobile or email changed in the register on ${longDate(changed)}. If it is the personal mobile / email (or address) registered with MCA, file DIR-3 KYC Web within 30 days — by ${longDate(due)} (Rule 12A(2)). Not an MCA detail? Mark it as not needed.`,
+    applies: `${p.name}'s mobile or email changed in the directors register. If it is the personal mobile / email (or address) registered with MCA, file DIR-3 KYC Web within 30 days (Rule 12A(2)). Not an MCA detail? Mark filed with a note.`,
     filingSteps: [
       "Log in to MCA V3 (mca.gov.in) → DIR-3 KYC Web.",
       "Enter the DIN, verify the NEW personal mobile + email by OTP, and confirm the address.",
