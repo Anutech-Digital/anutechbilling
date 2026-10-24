@@ -22,6 +22,8 @@
 --   6. pvt_ltd: both functions refuse (no drawings in a company); partnership needs the partner.
 --   7. another company's entry / line is not reachable.
 --   8. report_pnl for the period is the same before and after (drawings never touch the P&L).
+--   9. R-1870: a company with NO business type is refused like Pvt Ltd ("Set your business type");
+--      after setting Proprietor the same calls book. Needs 20261024*_r1870_owner_equity_empty_type.sql.
 
 begin;
 
@@ -223,6 +225,43 @@ do $$ begin
      is distinct from (select row_to_json(x)::text from public.report_pnl('2026-04-01', '2027-03-31') x limit 1) then
     raise exception 'FAIL 8 P&L moved: % → %', (select v from r1839_res where k = 'pnl_before'),
       (select row_to_json(x)::text from public.report_pnl('2026-04-01', '2027-03-31') x limit 1);
+  end if;
+end $$;
+
+-- 9. R-1870: an EMPTY business type counts as Pvt Ltd (lib/compliance/entity.ts) — both functions
+--    refuse it with a message saying to set the type; once Proprietor is set the same call books.
+reset role;
+select set_config('request.jwt.claims', '', true);
+insert into auth.users (id, email) values ('e1839000-0000-4000-8000-000000000007', 'r1839-07@example.test');
+insert into public.tenants (id, name, email, state_code, state, address, doc_code, gstin, gst_registration, business_type) values
+  ('e1839000-0000-0000-0000-0000000000f4', 'R1839 NoType', 'r1839d@example.in', '07', 'Delhi', 'R street, Delhi', 'R39D', '07AAACR1839R1Z4', 'registered', null);
+insert into public.users (id, tenant_id, email, full_name, role, is_active) values
+  ('e1839000-0000-4000-8000-000000000007', 'e1839000-0000-0000-0000-0000000000f4', 'r1839-07@example.in', 'NoType owner', 'owner', true);
+insert into public.bank_accounts (id, tenant_id, name, bank_name, account_type, opening_balance, opening_balance_date) values
+  ('e1839000-0000-4000-8000-0000000000e1', 'e1839000-0000-0000-0000-0000000000f4', 'NoType Bank', 'SBI', 'current', 50000, '2026-04-01');
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, source) values
+  ('e1839000-0000-4000-8000-0000000000d6', 'e1839000-0000-0000-0000-0000000000f4', 'e1839000-0000-4000-8000-0000000000e1', '2026-10-15', 'SELF', 2000, 0, 'csv_upload');
+
+select pg_temp.r1839_as('07');
+insert into r1839_res select 'notype_rec',  pg_temp.r1839_err($q$select public.record_owner_equity_movement('drawings', '2026-10-05', 100, 'e1839000-0000-4000-8000-0000000000e1')$q$);
+insert into r1839_res select 'notype_book', pg_temp.r1839_err($q$select public.book_bank_txn_as_owner_equity('e1839000-0000-4000-8000-0000000000d6')$q$);
+do $$
+begin
+  if (select v from r1839_res where k = 'notype_rec')  not like '%Set your business type%Pvt Ltd%' then raise exception 'FAIL 9a empty type record: %', (select v from r1839_res where k = 'notype_rec'); end if;
+  if (select v from r1839_res where k = 'notype_book') not like '%Set your business type%Pvt Ltd%' then raise exception 'FAIL 9b empty type book: %', (select v from r1839_res where k = 'notype_book'); end if;
+  if exists (select 1 from public.owner_equity_movements where tenant_id = 'e1839000-0000-0000-0000-0000000000f4') then raise exception 'FAIL 9c a refused call saved something'; end if;
+  if (select matched_to_type from public.bank_transactions where id = 'e1839000-0000-4000-8000-0000000000d6') is not null then raise exception 'FAIL 9c line matched'; end if;
+end $$;
+
+reset role;
+update public.tenants set business_type = 'proprietor' where id = 'e1839000-0000-0000-0000-0000000000f4';
+select pg_temp.r1839_as('07');
+insert into r1839_res select 'typed_rec',  public.record_owner_equity_movement('drawings', '2026-10-05', 100, 'e1839000-0000-4000-8000-0000000000e1')::text;
+insert into r1839_res select 'typed_book', public.book_bank_txn_as_owner_equity('e1839000-0000-4000-8000-0000000000d6')::text;
+do $$
+begin
+  if (select count(*) from public.owner_equity_movements where tenant_id = 'e1839000-0000-0000-0000-0000000000f4') <> 2 then
+    raise exception 'FAIL 9d proprietor not allowed after setting the type';
   end if;
 end $$;
 
