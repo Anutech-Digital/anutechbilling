@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { COPILOT_OBJECTIVES, PLATFORMS } from "./channel-specs";
 
 const SQL = readFileSync(
-  path.join(process.cwd(), "supabase", "migrations", "20261024234500_ad_copilot_tables.sql"),
+  path.join(process.cwd(), "supabase", "migrations", "20261025001000_ad_copilot_tables.sql"),
   "utf8",
 );
 

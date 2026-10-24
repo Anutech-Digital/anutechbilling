@@ -1,5 +1,5 @@
 -- R-1878 (25 Oct 2026): campaign co-pilot tables — ad_plans, ad_target_groups, ad_creatives,
--- ad_copies (under marketing_campaigns). Migration 20261024234500_ad_copilot_tables.
+-- ad_copies (under marketing_campaigns). Migration 20261025001000_ad_copilot_tables.
 -- Self-asserting, ONE transaction, rolled back. Run on a local/test DB only:
 --   begin; <migration without begin/commit>; <this file without begin/rollback>; rollback;
 --

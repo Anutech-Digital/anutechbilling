@@ -5119,7 +5119,7 @@ model cold_call_contacts {
   @@schema("public")
 }
 
-/// R-1878: AI campaign co-pilot plan (migration 20261024234500_ad_copilot_tables). Owner / manager / marketing only (RLS).
+/// R-1878: AI campaign co-pilot plan (migration 20261025001000_ad_copilot_tables). Owner / manager / marketing only (RLS).
 /// marketing_campaign_id / item_id are checked same-company by a trigger; no Prisma relation, so those models stay untouched.
 model ad_plans {
   id                    String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

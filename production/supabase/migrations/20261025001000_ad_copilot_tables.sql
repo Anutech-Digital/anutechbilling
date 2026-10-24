@@ -1,6 +1,6 @@
 -- deploy-peek: to_regclass('public.ad_plans') is not null and to_regclass('public.ad_target_groups') is not null and to_regclass('public.ad_creatives') is not null and to_regclass('public.ad_copies') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'ad_copies' and policyname = 'zzz_service_role_all')
 -- deploy-key: r1878adcopilot
--- 20261024234500_ad_copilot_tables.sql
+-- 20261025001000_ad_copilot_tables.sql
 --
 -- R-1878 (25 Oct 2026, epic R-1874 — AI campaign co-pilot, phase A): the tables the co-pilot
 -- wizard saves into. Pardeep's list was Brands, Products, AdAccounts, Campaigns, TargetGroups,
