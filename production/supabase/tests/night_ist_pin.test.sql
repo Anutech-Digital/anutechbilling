@@ -14,8 +14,8 @@
 --   IST_TODAY  public.ist_today()'s own body, run at that instant, gives 21 Oct
 --   DEFAULTS   EVERY public column default that names Asia/Kolkata or ist_today() gives 21 Oct
 --              at that instant (now() swapped for the instant — now() itself cannot be moved)
---   RATCHET    no NEW date column default and no NEW public function uses CURRENT_DATE; the
---              ones below are known (card R-1828) and the lists may only shrink
+--   RATCHET    no date column default and no public function uses CURRENT_DATE; R-1828 fixed
+--              the last 7 defaults + 14 functions, so both known lists are empty and stay empty
 --   MONEY      ist_today() pinned to 21 Oct inside this transaction; record_payment settles an
 --              invoice and stamps paid_date 21 Oct, not the server's day
 --   MUTATION   CURRENT_DATE put back into record_payment → MONEY refuses it
@@ -50,12 +50,7 @@ end $$;
 
 -- ── DEFAULTS (every column, discovered) ─────────────────────────────────────────────────
 create temp table night_ist_known_defaults (col text primary key);
--- R-1828 (follow-up): these still default to CURRENT_DATE (a day behind 00:00–05:30 IST).
--- Fixing one = delete its line here. Adding one = not allowed.
-insert into night_ist_known_defaults values
-  ('bank_accounts.opening_balance_date'), ('compliance_log.filed_date'), ('employee_assets.issued_on'),
-  ('payment_runs.pay_on'), ('prepaid_advances.paid_date'), ('project_payments.received_at'),
-  ('referral_commissions.earned_date');
+-- Empty since R-1828 (20261024085113) moved the last 7 to the IST day. Adding one = not allowed.
 
 do $$
 declare r record; v_val date; v_checked int := 0; v_new text[] := '{}';
@@ -82,7 +77,7 @@ begin
       if not exists (select 1 from night_ist_known_defaults k where k.col = r.col) then v_new := v_new || r.col; end if;
     end if;
   end loop;
-  if v_checked < 5 then raise exception 'R-1826: only % IST column defaults found — expected the R-1716 five at least', v_checked; end if;
+  if v_checked < 12 then raise exception 'R-1826: only % IST column defaults found — expected the R-1716 five + the R-1828 seven at least', v_checked; end if;
   if cardinality(v_new) > 0 then
     raise exception 'R-1826: new date column default on the UTC day: % — use public.ist_today()', array_to_string(v_new, ', ');
   end if;
@@ -98,13 +93,7 @@ end $$;
 
 -- ── RATCHET: functions ──────────────────────────────────────────────────────────────────
 create temp table night_ist_known_fns (fn text primary key);
--- R-1828 (follow-up): these still stamp CURRENT_DATE. Fixing one = delete its line here.
-insert into night_ist_known_fns values
-  ('add_reimbursement'), ('create_payment_run'), ('create_project_direct_invoice'),
-  ('fn_accrue_referral_commission_project'), ('give_employee_advance'), ('mark_payment_run_paid'),
-  ('pay_referral_commission'), ('pay_vendor_bill'), ('record_payment_with_tds'),
-  ('record_project_receipt_with_tds'), ('settle_employee_advance'), ('settle_reimbursement'),
-  ('submit_expense_claim'), ('top_up_employee_advance');
+-- Empty since R-1828 (20261024085113) moved the last 14 to public.ist_today(). Adding one = not allowed.
 
 create function pg_temp.night_ist_fn_scan() returns text[] language sql stable as $f$
   select coalesce(array_agg(distinct p.proname order by p.proname), '{}')
