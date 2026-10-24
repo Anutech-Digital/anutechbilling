@@ -17,6 +17,7 @@
 import { tdsDepositDueDate } from "./tds-due";
 import type { TaxAuditResult } from "./tax-audit";
 import { fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
+import type { CompliancePerson } from "./people";
 
 export type ComplianceCategory = "roc" | "income_tax" | "tds" | "gst" | "payroll";
 export type ComplianceFreq = "monthly" | "quarterly" | "half_yearly" | "annual" | "every_3_years";
@@ -43,6 +44,12 @@ export interface ComplianceProfile {
    * cash share, lib/compliance/tax-audit.ts). Optional: omitted → rows as before.
    */
   taxAudit?: TaxAuditResult | null;
+  /**
+   * R-1857: directors (Pvt Ltd) and designated partners (LLP) from the registers — each gets
+   * their own DIR-3 KYC row, a DSC-expiry row and a "details changed" row. Omitted / empty →
+   * the one common DIR-3 KYC row, as before.
+   */
+  people?: readonly CompliancePerson[];
 }
 export const UNKNOWN_PROFILE: ComplianceProfile = { businessType: null, gstFiling: null };
 
@@ -100,6 +107,18 @@ export interface Obligation {
   gstMode?: GstFiling;
   /** R-334: only for a seller exporting under an LUT (profile.exportsUnderLut). */
   lutOnly?: boolean;
+  /**
+   * R-1857: a row for one person (director / designated partner). Today shows it under its own
+   * chip, and it links to the ROC calendar.
+   */
+  person?: { name: string; din: string };
+  /**
+   * R-1857: days ahead the row turns "due soon", enters Today and gets its first reminder mail
+   * (a 30-day rung). Omitted → 15 / 7 days and the 15-7-3 ladder, as before.
+   */
+  remindDays?: number;
+  /** R-1857: false → no row today (a DSC far away, a ceased director, an old settled change). */
+  visible?: (today: Date, inst: ComplianceInstance, filed: boolean) => boolean;
   /**
    * Next actionable instance given today.
    *
@@ -256,8 +275,9 @@ function tdsDepositNext(): Obligation["next"] {
  * (MCA's server refused a direct fetch on 24 Oct 2026 — confirm with a CA/CS).
  *
  * The cycle is per director: one who got a DIN recently or missed the last KYC can be due on a
- * different 30 June. Until R-1857 tracks each director, this row shows the common cycle
- * (2028, 2031, …) and the `applies` text asks the owner to check each director's last KYC year.
+ * different 30 June. R-1857: once the directors register (or, for an LLP, the partners register)
+ * has someone in it, personObligations() below replaces this row with one row per person; with
+ * an empty register this row shows the common cycle (2028, 2031, …).
  */
 const DIR3_KYC_FIRST_CYCLE_YEAR = 2028;
 function dir3KycNext(): Obligation["next"] {
@@ -275,6 +295,140 @@ function dir3KycNext(): Obligation["next"] {
       }));
     return pick(t, cands, isFiled);
   };
+}
+
+// ── R-1857: one row per person (directors / LLP designated partners) ───────────────────────
+/*
+ * Source: Rule 12A as substituted by G.S.R. 943(E) (31 Dec 2025, in force 31 Mar 2026) — see
+ * dir3KycNext above. 12A(1): every DIN holder files DIR-3 KYC Web by 30 June once every third
+ * consecutive FY. 12A(2): "in the event of change in his personal mobile number, email address or
+ * residential address" → DIR-3 KYC Web within 30 days of the change. Per person we read
+ * "last KYC year + 3 → 30 June" (R-1850's reading; CA/CS confirm step on R-1856 / R-1857).
+ * DSC: every ROC form is signed with a director's DSC, so an expired one blocks filing — the
+ * register's expiry date is reminded 30 days ahead.
+ */
+const DAY_MS = 864e5;
+const isoOf = (d: Date) => iso(d.getFullYear(), d.getMonth() + 1, d.getDate());
+const daysFrom = (today: Date, dateIso: string) => {
+  const [y, m, d] = dateIso.split("-").map(Number);
+  return Math.round((new Date(y, m - 1, d).getTime() - day0(today).getTime()) / DAY_MS);
+};
+const addDays = (dateIso: string, n: number) => {
+  const [y, m, d] = dateIso.split("-").map(Number);
+  return isoOf(new Date(y, m - 1, d + n));
+};
+const longDate = (dateIso: string) => {
+  const [y, m, d] = dateIso.split("-").map(Number);
+  return `${d} ${MONTHS[m - 1]} ${y}`;
+};
+
+/** Days before a DSC expiry / a details-change deadline that the person's row starts. */
+export const PERSON_REMIND_DAYS = 30;
+/** Rule 12A(2): days to file DIR-3 KYC Web after a personal mobile / email / address change. */
+export const KYC_DETAILS_CHANGE_DAYS = 30;
+
+/**
+ * One person's next DIR-3 KYC date: last KYC year + 3 → 30 June; no year recorded → the common
+ * cycle (the calendar's own DIR-3 KYC row for this day). The one copy of the per-person rule —
+ * the directors register (lib/company/directors.ts kycDue) reads it from here.
+ */
+export function personKycDueDate(lastKycYear: number | null | undefined, today: Date): string {
+  if (lastKycYear) return iso(lastKycYear + 3, 6, 30);
+  return dir3KycNext()(today).dueDate;
+}
+
+const isActiveOn = (p: CompliancePerson, today: Date) => !p.ceasedOn || isoOf(today) <= p.ceasedOn;
+
+function personKycObligation(p: CompliancePerson, base: Obligation): Obligation {
+  const idLabel = p.role === "director" ? "DIN" : "DPIN";
+  const reading = p.lastKycYear
+    ? `Last DIR-3 KYC in ${p.lastKycYear} → due by 30 June ${p.lastKycYear + 3} (once every 3 years).`
+    : `No last KYC year in the ${p.role === "director" ? "directors" : "partners"} register — showing the common cycle (30 June 2028 for KYC that is up to date). Add the year to be exact.`;
+  return {
+    ...base,
+    key: `roc_dir3kyc:${p.din}`,
+    name: `DIR-3 KYC — ${p.name} (${idLabel} ${p.din})`,
+    person: { name: p.name, din: p.din },
+    applies: `${reading} Changed mobile, email or address? Update it on DIR-3 KYC Web within 30 days.`,
+    visible: (t) => isActiveOn(p, t),
+    next: (t, isFiled) => {
+      const first = Number(personKycDueDate(p.lastKycYear, t).slice(0, 4));
+      // Never skip an overdue KYC to a later cycle: the first unfiled one is the one owed.
+      const cands = [first, first + 3, first + 6].map((yr) => ({
+        dueDate: iso(yr, 6, 30), periodKey: `kyc${yr}`, periodLabel: `3-year KYC due ${yr}`,
+      }));
+      return cands.find((c) => !isFiled?.(c.periodKey)) ?? cands[cands.length - 1];
+    },
+  };
+}
+
+function personDscObligation(p: CompliancePerson & { dscExpiry: string }): Obligation {
+  const expiry = p.dscExpiry;
+  return {
+    key: `roc_dsc:${p.din}`,
+    name: `Renew DSC — ${p.name} (DIN ${p.din})`,
+    authority: "Certifying Authority",
+    category: "roc", freq: "annual", form: "DSC",
+    person: { name: p.name, din: p.din },
+    remindDays: PERSON_REMIND_DAYS,
+    penalty: "No ROC form (AOC-4, MGT-7, DIR-3 KYC…) can be signed without a valid DSC",
+    applies: `${p.name}'s Digital Signature Certificate expires on ${longDate(expiry)}. Renew it before then, then save the new expiry date in Settings → Company → Directors.`,
+    dataHref: { href: "/settings/company", label: "Update the DSC expiry in the directors register" },
+    filingSteps: [
+      "Apply for a new Class 3 DSC (individual) with a licensed Certifying Authority — PAN, Aadhaar and a video / OTP check.",
+      "On MCA V3, register the new DSC against the DIN (My Workspace → Associate DSC).",
+      "Settings → Company → Directors → edit the director → save the new DSC expiry date. This row then goes away.",
+    ],
+    visible: (t, inst, filed) => isActiveOn(p, t)
+      && daysFrom(t, inst.dueDate) <= PERSON_REMIND_DAYS
+      && !(filed && daysFrom(t, inst.dueDate) < 0),
+    next: () => ({ dueDate: expiry, periodKey: `dsc${expiry}`, periodLabel: `Expires ${longDate(expiry)}` }),
+  };
+}
+
+function personDetailsChangeObligation(p: CompliancePerson & { detailsChangedOn: string }): Obligation {
+  const changed = p.detailsChangedOn;
+  const due = addDays(changed, KYC_DETAILS_CHANGE_DAYS);
+  return {
+    key: `roc_dir3kyc_update:${p.din}`,
+    name: `DIR-3 KYC Web — update ${p.name}'s details`,
+    authority: "MCA / ROC",
+    category: "roc", freq: "annual", form: "DIR-3 KYC Web",
+    person: { name: p.name, din: p.din },
+    remindDays: PERSON_REMIND_DAYS,
+    penalty: "Fee for late filing; the DIN can be deactivated until it is filed",
+    link: "https://www.mca.gov.in",
+    applies: `${p.name}'s mobile or email changed in the register on ${longDate(changed)}. If it is the personal mobile / email (or address) registered with MCA, file DIR-3 KYC Web within 30 days — by ${longDate(due)} (Rule 12A(2)). Not an MCA detail? Mark it as not needed.`,
+    filingSteps: [
+      "Log in to MCA V3 (mca.gov.in) → DIR-3 KYC Web.",
+      "Enter the DIN, verify the NEW personal mobile + email by OTP, and confirm the address.",
+      "Submit → note the SRN.",
+      "Mark filed here (SRN in Reference).",
+    ],
+    visible: (t, inst, filed) => isActiveOn(p, t) && !(filed && daysFrom(t, inst.dueDate) < -30),
+    next: () => ({ dueDate: due, periodKey: `chg${changed}`, periodLabel: `Changed ${longDate(changed)}` }),
+  };
+}
+
+/**
+ * The person rows for this business: directors for a Pvt Ltd (or a type not set yet), DPIN-holding
+ * designated partners for an LLP, nobody for a proprietor / partnership. Returns [] when nobody
+ * fits — the caller then keeps the common DIR-3 KYC row.
+ */
+export function personObligations(
+  people: readonly CompliancePerson[] | undefined,
+  businessType: BusinessType | null,
+  kycBase: Obligation,
+): Obligation[] {
+  const type = businessType ?? "pvt_ltd";
+  const role = type === "pvt_ltd" ? "director" : type === "llp" ? "designated_partner" : null;
+  if (!role || !people?.length) return [];
+  const mine = people.filter((p) => p.role === role);
+  return mine.flatMap((p) => [
+    personKycObligation(p, kycBase),
+    ...(p.dscExpiry ? [personDscObligation({ ...p, dscExpiry: p.dscExpiry })] : []),
+    ...(p.detailsChangedOn ? [personDetailsChangeObligation({ ...p, detailsChangedOn: p.detailsChangedOn })] : []),
+  ]);
 }
 
 // Fixed set of dated instances per FY (advance tax, quarterly TDS returns).
@@ -737,9 +891,28 @@ export function obligationsFor(profile: ComplianceProfile = UNKNOWN_PROFILE): Ob
   const base = OBLIGATIONS.map((ob) =>
     qrmp && QRMP_REPLACEMENTS[ob.key] ? { ...ob, ...QRMP_REPLACEMENTS[ob.key] } : ob,
   );
-  return [...base, ...EXTRA_OBLIGATIONS]
+  const list = [...base, ...EXTRA_OBLIGATIONS]
     .filter((ob) => appliesTo(ob, profile))
     .map((ob) => withTaxAudit(ob, profile.taxAudit ?? null));
+  return withPeople(list, profile);
+}
+
+/**
+ * R-1857: add each person's rows. The common DIR-3 KYC row stays in the list but only shows on
+ * a day nobody in the register is current (all ceased) — so an empty or all-former register
+ * still gets its reminder.
+ */
+function withPeople(list: Obligation[], profile: ComplianceProfile): Obligation[] {
+  const kycBase = list.find((o) => o.key === "roc_dir3kyc");
+  if (!kycBase || !profile.people?.length) return list;
+  const rows = personObligations(profile.people, profile.businessType, kycBase);
+  const kycRows = rows.filter((o) => o.key.startsWith("roc_dir3kyc:"));
+  if (kycRows.length === 0) return list;
+  const anyCurrent = (t: Date, i: ComplianceInstance, f: boolean) => kycRows.some((k) => k.visible?.(t, i, f) ?? true);
+  return [
+    ...list.map((o) => (o === kycBase ? { ...o, visible: (t: Date, i: ComplianceInstance, f: boolean) => !anyCurrent(t, i, f) } : o)),
+    ...rows,
+  ];
 }
 
 /**
@@ -795,12 +968,14 @@ export function buildComplianceRows(
     ? catalog.filter((o) => categories.includes(o.category))
     : catalog;
   return list
-    .map((ob) => {
+    .flatMap((ob): ComplianceRow[] => {
       // Tell the picker what is already done, so it advances past a filed period
       // to the next real deadline instead of showing a settled row for 45 days.
       const na = (periodKey: string) => Boolean(notApplicable?.(ob.key, periodKey));
       const inst = ob.next(today, (periodKey) => filed.has(`${ob.key}|${periodKey}`) || na(periodKey));
       const filedDate = filed.get(`${ob.key}|${inst.periodKey}`) ?? null;
+      /* R-1857: a person row decides whether it shows today (DSC far away, ceased director…). */
+      if (ob.visible && !ob.visible(today, inst, Boolean(filedDate) || na(inst.periodKey))) return [];
       const daysToDue = Math.round((new Date(inst.dueDate).getTime() - t0) / 864e5);
       let status: ComplianceStatus;
       /* R-1859: the tax audit does not apply for this FY — N/A, the row keeps its FY and reason. */
@@ -809,9 +984,9 @@ export function buildComplianceRows(
       if (filedDate) status = "filed";
       else if (na(inst.periodKey) || noAudit) status = "not_applicable";
       else if (daysToDue < 0) status = "overdue";
-      else if (daysToDue <= 15) status = "due_soon";
+      else if (daysToDue <= (ob.remindDays ?? 15)) status = "due_soon";
       else status = "upcoming";
-      return { ob, inst, status, daysToDue, filedDate };
+      return [{ ob, inst, status, daysToDue, filedDate }];
     })
     .sort((a, b) => {
       // Overdue + due-soon first (by due date); filed / not-applicable sink to the bottom.

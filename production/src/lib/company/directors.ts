@@ -16,7 +16,7 @@
  * CA/Hitesh to confirm the per-director reading (R-1856 step). Reminders are R-1857's job.
  */
 import type { BusinessType } from "@/lib/compliance/obligations";
-import { obligationsFor } from "@/lib/compliance/obligations";
+import { personKycDueDate } from "@/lib/compliance/obligations";
 import { entityProfile } from "@/lib/compliance/entity";
 import { panError } from "@/lib/accounting/partners";
 import { isMaskedContact } from "@/lib/auth/roles";
@@ -97,16 +97,11 @@ export interface KycDue {
   text: string;
 }
 
-/** The Compliance Calendar's DIR-3 KYC date (R-1856) for this day — the one copy of the cycle. */
-function commonCycleDue(today: string): string {
-  const kyc = obligationsFor({ businessType: "pvt_ltd", gstFiling: null }).find((o) => o.key === "roc_dir3kyc");
-  const [y, m, d] = today.split("-").map(Number);
-  return kyc ? kyc.next(new Date(y, m - 1, d)).dueDate : `${y}-06-30`;
-}
-
+/** R-1857: the per-person rule lives once, in the calendar (obligations.ts personKycDueDate). */
 export function kycDue(lastKycYear: number | null | undefined, today: string): KycDue {
   const fromCycle = !lastKycYear;
-  const dueDate = lastKycYear ? `${lastKycYear + 3}-06-30` : commonCycleDue(today);
+  const [y, m, d] = today.split("-").map(Number);
+  const dueDate = personKycDueDate(lastKycYear, new Date(y, m - 1, d));
   const overdue = today > dueDate;
   const text = overdue ? `KYC overdue since ${shortDate(dueDate)}` : `KYC due ${shortDate(dueDate)}`;
   return { dueDate, overdue, fromCycle, text };

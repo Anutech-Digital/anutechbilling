@@ -7,7 +7,7 @@
  * scheduler would have had its first proof of life on the day it emailed real
  * customers.
  */
-import type { ComplianceRow } from "./obligations";
+import type { ComplianceRow, Obligation } from "./obligations";
 
 /**
  * Days before a due date that earn a reminder.
@@ -17,7 +17,11 @@ import type { ComplianceRow } from "./obligations";
  * because that is how the ladder reads.
  */
 export const REMINDER_LADDER = [15, 7, 3] as const;
-export type ReminderStep = (typeof REMINDER_LADDER)[number];
+/**
+ * R-1857: a row with its own `remindDays` (a director's DSC expiry, a details change → 30 days)
+ * gets that rung on top of the ladder. The reminder log allows 1–90 (migration 0229).
+ */
+export type ReminderStep = number;
 
 export interface PlannedReminder {
   obligationKey: string;
@@ -51,7 +55,9 @@ export interface PlannedReminder {
  * page already shows it in red), and anything still further out than the first
  * rung.
  */
-export function reminderStepFor(row: Pick<ComplianceRow, "status" | "daysToDue">): ReminderStep | null {
+export function reminderStepFor(
+  row: Pick<ComplianceRow, "status" | "daysToDue"> & { ob?: Pick<Obligation, "remindDays"> },
+): ReminderStep | null {
   if (row.status === "filed" || row.status === "not_applicable") return null;
   if (row.daysToDue < 0) return null;
 
@@ -63,7 +69,8 @@ export function reminderStepFor(row: Pick<ComplianceRow, "status" | "daysToDue">
   // misses several days resumes at the rung that matches reality, not the one it
   // was "supposed" to send.
   let chosen: ReminderStep | null = null;
-  for (const step of REMINDER_LADDER) {
+  const ladder: readonly number[] = row.ob?.remindDays ? [row.ob.remindDays, ...REMINDER_LADDER] : REMINDER_LADDER;
+  for (const step of ladder) {
     if (row.daysToDue <= step && (chosen === null || step < chosen)) chosen = step;
   }
   return chosen;
