@@ -32,6 +32,8 @@ import {
   useComplianceLog, toFiledMap, useMarkComplianceFiled, useUnmarkComplianceFiled, useTdsMonths,
 } from "@/lib/queries/compliance";
 import { noTdsDeductedPredicate, TDS_DEPOSIT_KEY } from "@/lib/compliance/tds-not-applicable";
+import { taxAuditStatus, taxAuditFyFor } from "@/lib/compliance/tax-audit";
+import { useTaxAuditInputs } from "@/lib/compliance/tax-audit-query";
 import { istToday } from "@/lib/dates/ist";
 import { RevisedInvoiceCard } from "./revised-invoice-card";
 
@@ -46,7 +48,8 @@ const STATUS_META: Record<ComplianceStatus, { label: string; cls: string; icon: 
 function dueText(r: ComplianceRow): string {
   if (r.status === "filed") return `Filed ${r.filedDate ? formatDate(r.filedDate) : ""}`.trim();
   if (r.status === "not_applicable") {
-    return r.ob.key === TDS_DEPOSIT_KEY ? "No TDS deducted — nothing to deposit" : "Nothing to file";
+    if (r.ob.key === TDS_DEPOSIT_KEY) return "No TDS deducted — nothing to deposit";
+    return r.ob.key === "it_taxaudit" ? "No tax audit needed" : "Nothing to file";
   }
   if (r.daysToDue === 0) return "Due today";
   if (r.daysToDue < 0) return `${Math.abs(r.daysToDue)} day${Math.abs(r.daysToDue) === 1 ? "" : "s"} overdue`;
@@ -84,9 +87,26 @@ export function ComplianceView({
   // migrated → the original Pvt Ltd, monthly-GST calendar.
   const profileQ = useComplianceProfile();
   const profile = profileQ.data;
+  /* R-1859: does the tax audit apply for the FY of the next audit report? From that FY's
+     turnover + cash share (lib/compliance/tax-audit.ts). Until it loads (or if it fails) the
+     Tax audit and ITR rows read exactly as before. */
+  const showsIncomeTax = !fixedCategories || fixedCategories.includes("income_tax");
+  const taxAuditFy = React.useMemo(
+    () => taxAuditFyFor(today, (k) => filedMap.has(`it_taxaudit|${k}`)),
+    [today, filedMap],
+  );
+  const auditQ = useTaxAuditInputs(showsIncomeTax && !logQ.isLoading ? taxAuditFy : null);
+  const taxAudit = React.useMemo(
+    () => (auditQ.data ? taxAuditStatus({ businessType: profile?.businessType ?? null, ...auditQ.data }) : null),
+    [auditQ.data, profile?.businessType],
+  );
+  const rowProfile = React.useMemo(
+    () => (taxAudit ? { businessType: null, gstFiling: null, ...profile, taxAudit } : profile),
+    [profile, taxAudit],
+  );
   const rows = React.useMemo(
-    () => buildComplianceRows(today, filedMap, cats, notApplicable, profile),
-    [today, filedMap, cats, notApplicable, profile],
+    () => buildComplianceRows(today, filedMap, cats, notApplicable, rowProfile),
+    [today, filedMap, cats, notApplicable, rowProfile],
   );
   const profileSet = Boolean(profile?.businessType && profile?.gstFiling);
   const profileText = profile?.businessType

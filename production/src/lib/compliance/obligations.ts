@@ -15,6 +15,7 @@
  */
 
 import { tdsDepositDueDate } from "./tds-due";
+import type { TaxAuditResult } from "./tax-audit";
 import { fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
 
 export type ComplianceCategory = "roc" | "income_tax" | "tds" | "gst" | "payroll";
@@ -37,6 +38,11 @@ export interface ComplianceProfile {
    * omitted / false → no LUT reminder, and every other row is unchanged.
    */
   exportsUnderLut?: boolean;
+  /**
+   * R-1859: whether the tax audit applies for the FY of the next audit report (turnover +
+   * cash share, lib/compliance/tax-audit.ts). Optional: omitted → rows as before.
+   */
+  taxAudit?: TaxAuditResult | null;
 }
 export const UNKNOWN_PROFILE: ComplianceProfile = { businessType: null, gstFiling: null };
 
@@ -731,7 +737,28 @@ export function obligationsFor(profile: ComplianceProfile = UNKNOWN_PROFILE): Ob
   const base = OBLIGATIONS.map((ob) =>
     qrmp && QRMP_REPLACEMENTS[ob.key] ? { ...ob, ...QRMP_REPLACEMENTS[ob.key] } : ob,
   );
-  return [...base, ...EXTRA_OBLIGATIONS].filter((ob) => appliesTo(ob, profile));
+  return [...base, ...EXTRA_OBLIGATIONS]
+    .filter((ob) => appliesTo(ob, profile))
+    .map((ob) => withTaxAudit(ob, profile.taxAudit ?? null));
+}
+
+/**
+ * R-1859: the tax-audit answer (lib/compliance/tax-audit.ts) rewrites two rows — the Tax
+ * audit row says whether it applies and why, and a business ITR moves to 31 Oct when the
+ * accounts are audited (31 Jul otherwise). A company's ITR is 31 Oct either way. No answer
+ * (not loaded / "maybe") → both rows exactly as before.
+ */
+function withTaxAudit(ob: Obligation, ta: TaxAuditResult | null): Obligation {
+  if (!ta) return ob;
+  if (ob.key === "it_taxaudit") {
+    return { ...ob, applies: [ta.reason, ta.companyNote].filter(Boolean).join(" ") };
+  }
+  /* Only "applies" moves the date. "Not applicable" keeps the row's own text (31 Jul, or
+     31 Oct if audited): the ITR row can be for a later FY than the audit answer. */
+  if (ob.key === "it_itr_business" && ta.verdict === "applies") {
+    return { ...ob, applies: "Your accounts need a tax audit (see the Tax audit row), so the return is due 31 Oct — after the audit report.", next: annualNext(10, 31) };
+  }
+  return ob;
 }
 
 // ── Status derivation ─────────────────────────────────────────────────────
@@ -776,8 +803,11 @@ export function buildComplianceRows(
       const filedDate = filed.get(`${ob.key}|${inst.periodKey}`) ?? null;
       const daysToDue = Math.round((new Date(inst.dueDate).getTime() - t0) / 864e5);
       let status: ComplianceStatus;
+      /* R-1859: the tax audit does not apply for this FY — N/A, the row keeps its FY and reason. */
+      const noAudit = ob.key === "it_taxaudit" && profile?.taxAudit?.verdict === "not_applicable"
+        && inst.periodKey === `fy${profile.taxAudit.fyStartYear}`;
       if (filedDate) status = "filed";
-      else if (na(inst.periodKey)) status = "not_applicable";
+      else if (na(inst.periodKey) || noAudit) status = "not_applicable";
       else if (daysToDue < 0) status = "overdue";
       else if (daysToDue <= 15) status = "due_soon";
       else status = "upcoming";
