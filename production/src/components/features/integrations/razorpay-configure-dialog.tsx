@@ -244,6 +244,8 @@ export default function RazorpayConfigureDialog({ open, onOpenChange }: Props) {
                     <Button
                       type="button" variant="ghost" size="sm"
                       className="shrink-0"
+                      aria-label="Copy webhook URL"
+                      title="Copy webhook URL"
                       onClick={() => status?.webhook_url && copyToClipboard(status.webhook_url, "Webhook URL")}
                     >
                       <Icon name="copy" size={12} />
