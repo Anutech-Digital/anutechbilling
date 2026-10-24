@@ -44,7 +44,6 @@ import {
   useBookBankTxnAsStatutory,
   useBookBankTxnAsVendorBill,
   useBookBankTxnAsCommission,
-  useBookCreditAsInvoice,
   useReconcileSalaryAdvanceSplit,
   type BankTransactionRow,
   type MatchSuggestion,
@@ -54,7 +53,6 @@ import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
 import { suggestForLine, categoriseByRules } from "@/lib/banking/categorise";
 import { useUnreconciledSalaries, useEmployees } from "@/lib/queries/payroll";
 import { useCustomers } from "@/lib/queries/customers";
-import { useItems } from "@/lib/queries/items";
 import { rupee, formatDate } from "@/lib/utils";
 import { useBookBankTxnAsTax } from "@/lib/queries/tax-payments";
 import { fyLabel, fyStartYearOf } from "@/lib/accounting/tax-payments";
@@ -67,12 +65,7 @@ import { useVendorBills } from "@/lib/queries/vendor-bills";
 import { useReferralCommissions } from "@/lib/queries/referral-commissions";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
 import { ProjectPaymentSection } from "@/components/features/banking/project-payment-section";
-import { InvoiceCreditMatchSection } from "@/components/features/banking/invoice-credit-match-section";
-
-/** Sentinel option value for "+ Naya customer banao" in the customer select. */
-const NEW_CUSTOMER = "__new_customer__";
-/** Sentinel option value for "Custom — type the name" in the product select. */
-const CUSTOM_ITEM = "__custom_item__";
+import { CreditPayForSection } from "@/components/features/banking/credit-pay-for-section";
 
 interface Props {
   open: boolean;
@@ -297,46 +290,24 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     } catch { /* hook toasts the error */ }
   };
 
-  // "Book as income / invoice" (credit lines): raise a GST invoice (+ its
-  // one-off quote), record its payment, and reconcile this line — one step.
-  const bookInvoice = useBookCreditAsInvoice();
+  /* R-1838: money from a customer — "This money is for:" (CreditPayForSection) picks the
+     customer and WHAT it pays (renewal / add-seats / new-product quote, unpaid invoice, or a new
+     sale with seats × unit price) and books it through record_payment in one transaction. It
+     replaces the old "Create invoice" form, which booked every receipt as a one-off sale. */
   const { data: customers } = useCustomers();
-  const [showInvoice, setShowInvoice]   = React.useState(false);
-  const [invCustomer, setInvCustomer]   = React.useState("");
   /* New customer from here opens the SAME side-sheet form the quote builder uses
      (components/features/customers — Billing's form, used as-is, not copied), and
      picks the customer it creates. */
   const [newCustomerOpen, setNewCustomerOpen] = React.useState(false);
+  const [createdCustomer, setCreatedCustomer] = React.useState<string | null>(null);
+  const [payForDone, setPayForDone] = React.useState(false);
   /* "Project payment" — which project (existing or new) this money is for; booked here
      instead of sending the operator off to the projects page. */
   const [showProject, setShowProject]   = React.useState(false);
   const [projCustomer, setProjCustomer] = React.useState("");
-  const [invLineName, setInvLineName]   = React.useState("");
-  const [invTaxable, setInvTaxable]     = React.useState("");
-  /* "" = not picked · CUSTOM_ITEM = typed name · else an items.id from the catalog. */
-  const [invItem, setInvItem]           = React.useState("");
-  const { data: items } = useItems();
-  const activeItems = (items ?? []).filter((i) => i.is_active);
   React.useEffect(() => {
-    setShowInvoice(false); setInvCustomer(""); setInvLineName(""); setInvTaxable(""); setInvItem("");
-    setShowProject(false); setProjCustomer("");
+    setShowProject(false); setProjCustomer(""); setCreatedCustomer(null); setPayForDone(false);
   }, [transaction?.id]);
-
-  const handleBookInvoice = async () => {
-    if (!transaction || !invCustomer || !invLineName.trim() || !(Number(invTaxable) > 0)) return;
-    try {
-      await bookInvoice.mutateAsync({
-        transactionId: transaction.id,
-        bankAccountId: transaction.bank_account_id,
-        customerId:    invCustomer,
-        lineName:      invLineName.trim(),
-        itemId:        invItem && invItem !== CUSTOM_ITEM ? invItem : null,
-        taxableAmount: Math.round(Number(invTaxable)),
-        reference:     transaction.reference,
-      });
-      onOpenChange(false);
-    } catch { /* hook toasts */ }
-  };
 
   // "Book this money-in as…" (credit lines): capital / director's loan. Books
   // the Balance-Sheet line AND reconciles this line in one step.
@@ -693,8 +664,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
               </div>
             </div>
 
-            {/* Suggested matches */}
-            <div>
+            {/* Suggested matches — hidden once "This money is for:" has booked the line (R-1838). */}
+            {!payForDone && <div>
               <p className="text-xs font-semibold text-ink-2 mb-2">
                 Suggested matches
               </p>
@@ -749,129 +720,39 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                   ))}
                 </ul>
               )}
-            </div>
+            </div>}
 
-            {/* R-109: money for an invoice that is already raised but not yet marked paid —
-                one operator click records the payment and reconciles this line. */}
-            {isCredit && (
-              <InvoiceCreditMatchSection transaction={transaction} onDone={() => onOpenChange(false)} />
-            )}
-
-            {/* Income from a sale — credit lines only. Most money-in with no
-                match is a customer paying for a sale that wasn't invoiced yet.
-                Route to the proper invoice/project builder (amount prefilled);
-                once the payment is recorded it shows here as a suggested match
-                to reconcile. Kept FIRST — it's the commonest money-in. */}
-            {isCredit && (
+            {/* R-1838: money from a customer — FIRST, it is the commonest money-in. Says what
+                the money is for (renewal / add seats / new-product quote, unpaid invoice, or a new
+                sale with seats × unit price) and records it through record_payment. Project
+                money keeps its own section. */}
+            {isCredit && (showProject ? (
               <div className="rounded-md border border-amber/50 bg-amber-soft/25 p-3">
-                <p className="text-xs font-semibold text-ink-2 mb-1">Money from a sale / customer?</p>
-                <p className="text-xs text-ink-3 mb-3 leading-relaxed">
-                  Income usually comes from an invoice. No invoice for this {rupee(amount)} yet? Create the invoice (or project payment) here — once its payment is recorded, this line shows under <b>suggested match</b> below and reconciles in one click.
-                </p>
-                {showProject && transaction ? (
-                  <ProjectPaymentSection
-                    txn={transaction}
-                    amount={amount}
-                    customers={customers ?? []}
-                    customerId={projCustomer}
-                    onCustomerChange={setProjCustomer}
-                    onNewCustomer={() => setNewCustomerOpen(true)}
-                    onCancel={() => setShowProject(false)}
-                    onDone={() => { setShowProject(false); onOpenChange(false); }}
-                  />
-                ) : !showInvoice ? (
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      icon="file"
-                      onClick={() => {
-                        setShowInvoice(true);
-                        /* No prefill from the bank narration: "50200008254523-TPT-PO 00038-…"
-                           is a transfer reference, not what was sold, and it would print on
-                           the customer's tax invoice. The operator picks the product. */
-                        setInvItem(""); setInvLineName("");
-                        setInvTaxable(String(Math.round(amount / 1.18)));
-                      }}
-                    >
-                      Create invoice
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="default"
-                      icon="briefcase"
-                      onClick={() => setShowProject(true)}
-                    >
-                      Project payment
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="flex gap-2">
-                      <select
-                        value={invCustomer}
-                        onChange={(e) => {
-                          /* "+ Naya customer" is an action, not a value: open the form and
-                             keep the current pick until a customer is actually created. */
-                          if (e.target.value === NEW_CUSTOMER) { setNewCustomerOpen(true); return; }
-                          setInvCustomer(e.target.value);
-                        }}
-                        aria-label="Customer"
-                        className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
-                      >
-                        <option value="" disabled>Select a customer…</option>
-                        <option value={NEW_CUSTOMER}>＋ New customer</option>
-                        {(customers ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                      </select>
-                      <Button type="button" size="sm" variant="default" icon="plus" onClick={() => setNewCustomerOpen(true)} className="shrink-0">
-                        New
-                      </Button>
-                    </div>
-                    <select
-                      value={invItem}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setInvItem(v);
-                        const it = activeItems.find((i) => i.id === v);
-                        setInvLineName(it ? it.name : "");
-                      }}
-                      aria-label="Product"
-                      className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
-                    >
-                      <option value="" disabled>What was sold? Select a product…</option>
-                      <option value={CUSTOM_ITEM}>✎ Custom — type a name</option>
-                      {activeItems.map((i) => (
-                        <option key={i.id} value={i.id}>{i.name}{i.vendor ? ` · ${i.vendor}` : ""}</option>
-                      ))}
-                    </select>
-                    {invItem === CUSTOM_ITEM && (
-                      <Input
-                        value={invLineName}
-                        onChange={(e) => setInvLineName(e.target.value)}
-                        placeholder="What was sold? (e.g. Website / Setup fee)"
-                        aria-label="Custom product name"
-                        autoFocus
-                      />
-                    )}
-                    <Input aria-label="Taxable amount ₹ (ex-GST)" value={invTaxable} onChange={(e) => setInvTaxable(e.target.value)} type="number" min={0} placeholder="Taxable amount ₹ (ex-GST)" />
-                    <p className="text-xs text-ink-3">GST is applied automatically from the customer's place of supply. The taxable value of {rupee(amount)} received (÷1.18) is prefilled — correct it if needed.</p>
-                    <div className="flex gap-2 pt-1">
-                      <Button
-                        size="sm"
-                        variant="primary"
-                        icon="check"
-                        loading={bookInvoice.isPending}
-                        disabled={!invCustomer || !invLineName.trim() || !(Number(invTaxable) > 0)}
-                        onClick={handleBookInvoice}
-                      >
-                        Create invoice &amp; reconcile
-                      </Button>
-                      <Button size="sm" variant="default" onClick={() => setShowInvoice(false)}>Cancel</Button>
-                    </div>
-                  </div>
-                )}
+                <ProjectPaymentSection
+                  txn={transaction}
+                  amount={amount}
+                  customers={customers ?? []}
+                  customerId={projCustomer}
+                  onCustomerChange={setProjCustomer}
+                  onNewCustomer={() => setNewCustomerOpen(true)}
+                  onCancel={() => setShowProject(false)}
+                  onDone={() => { setShowProject(false); onOpenChange(false); }}
+                />
               </div>
-            )}
+            ) : (
+              <CreditPayForSection
+                transaction={transaction}
+                customers={customers ?? []}
+                onNewCustomer={() => setNewCustomerOpen(true)}
+                pickedCustomerId={createdCustomer}
+                onProjectPayment={() => setShowProject(true)}
+                onSaved={() => setPayForDone(true)}
+                onDone={() => onOpenChange(false)}
+              />
+            ))}
+
+            {/* Once booked, only the result stays: the other choices no longer apply to this line. */}
+            {!payForDone && (<>
 
             {/* Book money-IN as capital / a director's loan — credit lines only.
                 Adds the Balance-Sheet line AND reconciles, in one step. */}
@@ -1372,6 +1253,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 Mark reconciled manually
               </Button>
             </div>
+            </>)}
           </div>
         )}
 
@@ -1387,7 +1269,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
       <AddCustomerForm
         open={newCustomerOpen}
         onOpenChange={setNewCustomerOpen}
-        onCreated={(id) => { setInvCustomer(id); setProjCustomer(id); setNewCustomerOpen(false); }}
+        onCreated={(id) => { setCreatedCustomer(id); setProjCustomer(id); setNewCustomerOpen(false); }}
       />
     </Sheet>
   );
