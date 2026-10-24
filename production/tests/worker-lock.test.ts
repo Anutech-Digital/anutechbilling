@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain .mjs ops script, no types
-import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, pushPlan, pushDoneLine, waitLine } from "../scripts/ops/worker-lock.mjs";
+import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine } from "../scripts/ops/worker-lock.mjs";
 
 describe("worker locks (two workers must never build in the same files)", () => {
   it("compares paths from the app root, whatever the slashes", () => {
@@ -210,5 +210,35 @@ describe("type-check sees typed routes (R-1592)", () => {
   it("tsconfig includes the generated route types and next.config keeps typedRoutes on", () => {
     expect(readFileSync(path.join(root, "tsconfig.json"), "utf8")).toContain(".next/types/**/*.ts");
     expect(readFileSync(path.join(root, "next.config.mjs"), "utf8")).toMatch(/^\s*typedRoutes: true,/m);
+  });
+});
+
+/* R-1827 (24 Oct 2026): after R-1791 tsc ran out of Node's default ~4 GB heap inside `push`/`tsc`.
+   Every TSC_STEPS child now gets CI's typecheck heap through NODE_OPTIONS, merged with what is set. */
+describe("tsc heap (R-1827)", () => {
+  const root = path.resolve(__dirname, "..");
+  it("uses the same 8 GB heap as CI's typecheck step", () => {
+    expect(TSC_HEAP_FLAG).toBe("--max-old-space-size=8192");
+    const ci = readFileSync(path.join(root, "..", ".github", "workflows", "ci.yml"), "utf8");
+    expect(ci).toContain(`NODE_OPTIONS: ${TSC_HEAP_FLAG}`);
+  });
+  it("adds the heap flag when NODE_OPTIONS is unset", () => {
+    expect(tscEnv({ PATH: "x" })).toEqual({ PATH: "x", NODE_OPTIONS: "--max-old-space-size=8192" });
+  });
+  it("keeps other NODE_OPTIONS and replaces an existing heap flag instead of doubling it", () => {
+    const env = tscEnv({ NODE_OPTIONS: "--max-old-space-size=4096  --enable-source-maps" });
+    expect(env.NODE_OPTIONS).toBe("--enable-source-maps --max-old-space-size=8192");
+  });
+  it("does not change the caller's env object", () => {
+    const orig = { NODE_OPTIONS: "--trace-warnings" };
+    tscEnv(orig);
+    expect(orig.NODE_OPTIONS).toBe("--trace-warnings");
+  });
+  it("every TSC_STEPS child is spawned with tscEnv()", () => {
+    const src = readFileSync(path.join(root, "scripts", "ops", "worker-lock.mjs"), "utf8");
+    const at = src.indexOf("function tscWithTurn");
+    const body = src.slice(at, at + 600);
+    expect(body).toMatch(/for \(const step of TSC_STEPS\)/);
+    expect(body).toMatch(/sh\(step, tscEnv\(\)\)/);
   });
 });
