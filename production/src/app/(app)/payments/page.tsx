@@ -69,6 +69,8 @@ import { canOpenQuotes } from "@/lib/quotes/access";
 import { RecordQuotePaymentDialog } from "./record-quote-payment";
 import { DuesPayButton, duesPaymentRoute, useDuesQuoteLinks } from "./dues-pay";
 import { SubscriptionDuesList, SubscriptionDuesHeading } from "./dues-list";
+import { useReceivableLines } from "@/lib/queries/collections";
+import { sumReceivables } from "@/lib/payments/receivables";
 import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
 import { paymentsKpiPlan } from "./kpi-plan";
 import { PaymentRefundButton, usePaymentRefundFlow } from "@/components/features/payments/payment-refund";
@@ -158,7 +160,9 @@ function PaymentsPageInner() {
   const { data: projectPayments } = projectPaymentsQ;
   const { data: quotes } = quotesQ;
   const { data: outstanding } = outstandingQ;
-  const sideFailed = [projectPaymentsQ, quotesQ, outstandingQ].filter((q) => q.isError);
+  /* R-1708: the one "owed to us" number — the same lines Payment Follow-up lists. */
+  const receivablesQ = useReceivableLines();
+  const sideFailed = [projectPaymentsQ, quotesQ, outstandingQ, receivablesQ].filter((q) => q.isError);
   /* R-1697: each dues row's own quote / renewal quote, so a row with no customer quote still
      gets "Record payment" through the same record_payment path. */
   const { data: duesQuoteLinks } = useDuesQuoteLinks((outstanding ?? []).map((o) => o.subscription_id));
@@ -301,6 +305,10 @@ function PaymentsPageInner() {
   const scopedOutstanding = scoped.outstanding;
   const scopedSeatQuotes = (seatQuotes ?? []).filter((q) => !customerFilter || q.customerId === customerFilter);
   const seatQuotesTotal = scopedSeatQuotes.reduce((s, q) => s + q.pending, 0);
+  /* R-1708 + R-533: "Owed to you" — this customer's lines only when ?customer= is set. */
+  const receivables = receivablesQ.data
+    ? sumReceivables(receivablesQ.data.filter((l) => !customerFilter || l.customerId === customerFilter))
+    : null;
 
   // Awaiting-invoice: quotes with payment_status = 'received' (fully paid, no invoice yet)
   const awaitingInvoiceQuotes = scoped.quotes.filter((q) => q.payment_status === "received");
@@ -481,7 +489,7 @@ function PaymentsPageInner() {
       )}
 
       {/* ── Outstanding Receivables — actionable card ── */}
-      {(scopedOutstanding.length > 0 || scopedSeatQuotes.length > 0) && (() => {
+      {(scopedOutstanding.length > 0 || scopedSeatQuotes.length > 0 || (receivables?.total ?? 0) > 0) && (() => {
         const outstanding = scopedOutstanding;
         return (
           <Card className="border-rose/30 bg-rose-soft/20">
@@ -489,7 +497,11 @@ function PaymentsPageInner() {
               <div className="flex items-center gap-2.5">
                 <Icon name="alert" size={18} className="text-rose" />
                 {/* R-1806: a failed dues read shows no total (the banner above explains it). */}
-                <SubscriptionDuesHeading rows={outstanding} failed={outstandingQ.isError}>
+                <SubscriptionDuesHeading
+                  rows={outstanding}
+                  failed={outstandingQ.isError}
+                  receivables={{ totals: receivables, failed: receivablesQ.isError }}
+                >
                   {seatQuotesTotal > 0 && (
                     <p className="text-xs text-amber-ink">
                       + {rupee(seatQuotesTotal)} in {scopedSeatQuotes.length} unpaid seat quote{scopedSeatQuotes.length === 1 ? "" : "s"} (seats already added, listed below)

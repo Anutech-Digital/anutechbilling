@@ -28,6 +28,7 @@ import {
 import { rupee, formatDate } from "@/lib/utils";
 import { paymentDueState, paymentDueChipLabel, todayIST } from "@/lib/subscriptions/payment-due";
 import type { OutstandingRow } from "@/lib/queries/payments";
+import type { ReceivablesTotals } from "@/lib/payments/receivables";
 
 /**
  * The dues card heading. R-1806: when the dues read FAILED there is no total to show — it used
@@ -35,27 +36,47 @@ import type { OutstandingRow } from "@/lib/queries/payments";
  * pending seat quotes kept the card on screen. The page's load-error banner (R-1655) says
  * what went wrong and has Try again; the heading only points at it.
  */
-export function SubscriptionDuesHeading({ rows, failed, children }: {
+export function SubscriptionDuesHeading({ rows, failed, receivables, children }: {
   rows: readonly Pick<OutstandingRow, "outstanding_amount" | "days_outstanding">[];
   failed: boolean;
+  /**
+   * R-1708: the ONE "owed to us" number (lib/payments/receivables.ts) — the same lines as
+   * Payment Follow-up. `totals` null = still loading. The heading used to add up the rows'
+   * subscriptions.outstanding_amount: it missed an invoice whose subscription reads 0 (T-L3)
+   * or has none (T-L4), and counted a balance an invoice already asks for.
+   */
+  receivables: { totals: ReceivablesTotals | null; failed: boolean };
   /** Extra lines under the summary (the unpaid seat quotes). */
   children?: React.ReactNode;
 }) {
-  const total = rows.reduce((s, o) => s + o.outstanding_amount, 0);
   const overdue = rows.filter((o) => o.days_outstanding > 30).length;
+  const t = receivables.failed ? null : receivables.totals;
   return (
     <div>
-      <h2 className="font-semibold text-ink">{failed ? "Subscription dues" : `Subscription dues · ${rupee(total)}`}</h2>
+      <h2 className="font-semibold text-ink">{t ? `Owed to you · ${rupee(t.total)}` : "Owed to you"}</h2>
       <p className="text-xs text-ink-3">
+        {receivables.failed ? (
+          <>Couldn&apos;t load what is owed, so no total is shown — use Try again in the red message on this page</>
+        ) : t ? (
+          <>
+            {rupee(t.invoiced)} on open invoices + {rupee(t.notYetInvoiced)} subscription dues not yet invoiced
+            {" — "}the same total as <Link href="/collections" className="text-amber-ink hover:text-amber">Payment Follow-up</Link>
+          </>
+        ) : (
+          <>Adding up what is owed…</>
+        )}
+      </p>
+      <p className="text-xs text-ink-3">
+        {/* R-1806: a failed dues read shows no count (the page's banner says why). */}
         {failed ? (
-          <>Couldn&apos;t load the subscription dues, so no total is shown — use Try again in the red message on this page</>
+          <>Couldn&apos;t load the subscription dues — use Try again in the red message on this page</>
         ) : (
           <>
-            {rows.length} subscription{rows.length === 1 ? "" : "s"} with a balance
+            {rows.length} subscription{rows.length === 1 ? "" : "s"} with a balance listed below
             {overdue > 0 && <> · <b className="text-rose">{overdue} overdue 30+ days</b></>}
           </>
         )}
-        {" · "}<Link href="/accounting/aging" className="text-amber-ink hover:text-amber">all receivables (incl. projects & invoices)</Link>
+        {" · "}<Link href="/accounting/aging" className="text-amber-ink hover:text-amber">by age (Customer Aging)</Link>
       </p>
       {children}
     </div>

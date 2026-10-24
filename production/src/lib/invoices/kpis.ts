@@ -20,6 +20,7 @@ import { istMonth, istToday } from "@/lib/dates/ist";
 import { invoiceIsOverdue, type OverdueInvoice } from "./overdue";
 import { invoiceMoneyIn, invoicePaymentState } from "./payment-state";
 import type { NoteTotals } from "./note-totals";
+import { invoiceReceivable } from "@/lib/payments/receivables";
 
 /** R-1709: credit / debit note totals per invoice id (useInvoiceNoteTotals). Absent = none. */
 export type InvoiceNotes = ReadonlyMap<string, NoteTotals>;
@@ -43,11 +44,12 @@ export const INVOICE_OWED_STATUSES = ["pending", "overdue"] as const;
 const OWED = new Set<string>(INVOICE_OWED_STATUSES);
 
 /** What the customer still owes on one invoice: net of advances adjusted at issue
- *  (`net_payable`) and of receipts against it since (`paid_amount`), never below 0. */
+ *  (`net_payable`) and of receipts against it since (`paid_amount`), never below 0.
+ *  R-1708: the shared receivables rule (lib/payments/receivables.ts) — so this tile is, to the
+ *  rupee, the "on open invoices" part of Payments' "Owed to you" and of Payment Follow-up. */
 export function invoiceBalance(inv: KpiInvoice): number {
   if (!OWED.has(inv.status)) return 0;
-  if (inv.written_off_at) return 0;   // R-1635: written off — not owed (amount-due.ts)
-  return Math.max(0, (inv.net_payable ?? inv.amount) - (inv.paid_amount ?? 0));
+  return invoiceReceivable(inv);   // 0 when written off (R-1635, amount-due.ts)
 }
 
 /**

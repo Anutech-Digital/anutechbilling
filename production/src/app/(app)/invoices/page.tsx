@@ -632,7 +632,9 @@ function InvoicesPageInner() {
           >
             <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Outstanding</p>
             <p className="font-serif text-lg font-bold text-rose-ink tabular-nums mt-0.5">{rupee(outstanding, { compact: true })}</p>
-            <p className="text-3xs text-ink-3 mt-0.5">{outstandingCount} invoice{outstandingCount === 1 ? "" : "s"} owed</p>
+            {/* R-1708: a subset of "owed to you" — subscription dues not yet invoiced are on
+                Payments and Payment Follow-up (lib/payments/receivables.ts). */}
+            <p className="text-3xs text-ink-3 mt-0.5">{outstandingCount} invoice{outstandingCount === 1 ? "" : "s"} owed · invoiced only</p>
           </button>
           <button
             type="button"
