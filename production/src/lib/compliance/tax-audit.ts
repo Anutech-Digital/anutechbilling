@@ -36,6 +36,7 @@
 import type { BusinessType } from "./obligations";
 import { obligationsFor } from "./obligations";
 import { entityProfile } from "./entity";
+import { rupee } from "@/lib/utils";
 
 export const TAX_AUDIT_LIMITS = {
   /** s.44AB(a): turnover above this → tax audit. */
@@ -84,7 +85,7 @@ export function inrShort(n: number): string {
   const trim = (v: number) => String(Math.round(v * 100) / 100);
   if (n >= 1_00_00_000) return `₹${trim(n / 1_00_00_000)} Cr`;
   if (n >= 1_00_000) return `₹${trim(n / 1_00_000)}L`;
-  return `₹${Math.round(n).toLocaleString("en-IN")}`;
+  return rupee(n);
 }
 
 const pct = (v: number) => `${Math.round(v * 10) / 10}%`;
