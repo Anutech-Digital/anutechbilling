@@ -174,6 +174,32 @@ export function useUpdateSubscription() {
 }
 
 /**
+ * R-1684: seats / plan / price go through correct_subscription_terms — reason required (kept on
+ * the change history), seat cut / plan change owner or manager only, plan = a catalog row.
+ * No toast here: the edit dialog saves the rest of the record after it and toasts once.
+ */
+export function useCorrectSubscriptionTerms() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; itemId: string | null; seats: number; mrr: number; reason: string }) => {
+      const supabase = createClient();
+      const { error } = await supabase.rpc("correct_subscription_terms", {
+        p_subscription_id: input.id,
+        p_item_id: input.itemId,
+        p_seats: input.seats,
+        p_mrr: input.mrr,
+        p_reason: input.reason,
+      });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+    },
+    onError: (err) => toastError(err),
+  });
+}
+
+/**
  * Delete a manual / imported subscription (correct a mistake). Guarded RPC:
  * blocks if it came from a paid quote (delete that payment instead) or a linked
  * PO has progressed past draft. Drops draft POs, then the subscription.
@@ -283,6 +309,19 @@ export function useSubscriptionInvoices(
 }
 
 /**
+ * R-1683: the quotes that billed a subscription — its sale quote, its renewal quotes and its
+ * add-seats quotes — as a PostgREST or= filter (quote id quoted, like quoteSubscriptionsOr).
+ */
+export function scheduleQuotesOr(sub: { id: string; quote_id: string | null }): string {
+  const parts: string[] = [];
+  if (sub.quote_id) parts.push(`id.eq."${sub.quote_id.replace(/["\\]/g, "")}"`);
+  if (UUID_RE.test(sub.id)) {
+    parts.push(`renewal_subscription_id.eq.${sub.id}`, `add_seats_subscription_id.eq.${sub.id}`);
+  }
+  return parts.length > 0 ? parts.join(",") : `id.eq."__none__"`;
+}
+
+/**
  * R-451: the tax invoices behind a subscription's Billing schedule — the sale quote's
  * whole-term invoice and the per-period instalment invoices — so the schedule can say
  * "Invoiced · INV-… · paid" instead of calling a paid term the "next" bill.
@@ -293,37 +332,65 @@ export function useScheduleInvoices(sub: Pick<Subscription, "id" | "quote_id"> |
     enabled: !!sub?.id,
     queryFn: async () => {
       const supabase = createClient();
-      let sale: { invoiceId: string; status: string } | null = null;
-      if (sub!.quote_id) {
-        const { data: q, error: qErr } = await supabase
-          .from("quotes").select("invoice_id").eq("id", sub!.quote_id).maybeSingle();
-        if (qErr) throw new Error(qErr.message);
-        if (q?.invoice_id) {
-          const { data: inv, error: iErr } = await supabase
-            .from("invoices").select("id, status").eq("id", q.invoice_id).maybeSingle();
-          if (iErr) throw new Error(iErr.message);
-          if (inv && inv.status !== "void") sale = { invoiceId: inv.id, status: inv.status };
-        }
-      }
+      /* R-1683: every quote that billed this subscription — the sale quote, its renewal quotes
+         and its add-seats quotes — so the schedule lists all of their invoices, not only the
+         sale's and the instalments'. */
+      const { data: qs, error: qErr } = await supabase
+        .from("quotes")
+        .select("id, invoice_id, is_add_seats, renewal_subscription_id, renewal_term_date, add_seats_subscription_id")
+        .or(scheduleQuotesOr(sub!))
+        .not("invoice_id", "is", null);
+      if (qErr) throw new Error(qErr.message);
       const { data: rows, error: bErr } = await supabase
         .from("subscription_billings")
         .select("term_start, period_index, invoice_id")
         .eq("subscription_id", sub!.id);
       if (bErr) throw new Error(bErr.message);
-      const ids = Array.from(new Set((rows ?? []).map((r) => r.invoice_id).filter((x): x is string => !!x)));
-      const statusById = new Map<string, string>();
+      const ids = Array.from(new Set([
+        ...(rows ?? []).map((r) => r.invoice_id),
+        ...(qs ?? []).map((q) => q.invoice_id),
+      ].filter((x): x is string => !!x)));
+      const byId = new Map<string, { status: string; exGst: number; date: string | null }>();
       if (ids.length > 0) {
-        const { data: invs, error: sErr } = await supabase.from("invoices").select("id, status").in("id", ids);
+        const { data: invs, error: sErr } = await supabase
+          .from("invoices").select("id, status, invoice_date, amount, tax_amount, taxable_value").in("id", ids);
         if (sErr) throw new Error(sErr.message);
-        for (const i of invs ?? []) statusById.set(i.id, i.status);
+        for (const i of invs ?? []) {
+          byId.set(i.id, {
+            status: i.status,
+            exGst: i.taxable_value ?? Math.max(0, (i.amount ?? 0) - (i.tax_amount ?? 0)),
+            date: i.invoice_date,
+          });
+        }
+      }
+      const inv = (id: string | null) => (id ? byId.get(id) : undefined);
+
+      type Inv = { invoiceId: string; status: string; exGst: number };
+      let sale: Inv | null = null;
+      const renewals: Array<Inv & { termDate: string | null }> = [];
+      const addSeats: Array<Inv & { invoiceDate: string | null }> = [];
+      for (const q of qs ?? []) {
+        const i = inv(q.invoice_id);
+        if (!i || !q.invoice_id) continue;
+        const base = { invoiceId: q.invoice_id, status: i.status, exGst: i.exGst };
+        if (q.id === sub!.quote_id) {
+          if (i.status !== "void") sale = base;
+        } else if (q.is_add_seats && q.add_seats_subscription_id === sub!.id) {
+          addSeats.push({ ...base, invoiceDate: i.date });
+        } else if (q.renewal_subscription_id === sub!.id) {
+          renewals.push({ ...base, termDate: q.renewal_term_date });
+        }
       }
       return {
         sale,
+        renewals,
+        addSeats,
         instalments: (rows ?? []).map((r) => ({
           term_start: r.term_start,
           period_index: r.period_index,
           invoice_id: r.invoice_id,
-          invoice_status: r.invoice_id ? statusById.get(r.invoice_id) ?? null : null,
+          invoice_status: inv(r.invoice_id)?.status ?? null,
+          invoice_ex_gst: inv(r.invoice_id)?.exGst ?? null,
         })),
       };
     },

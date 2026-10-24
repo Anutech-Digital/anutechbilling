@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
+import { istToday, addDaysISO } from "@/lib/dates/ist";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
 import { foreignQuoteFigures, cents } from "@/lib/quotes/foreign-totals";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
@@ -106,6 +107,8 @@ interface Props {
   /** Quote-level invoice frequency (migration 0161); falls back to legacy per-line commitment. */
   billingCycle?: BillingCycle;
   validityDays:  number;
+  /** R-1679: a saved quote's own validity date (IST) — shown as is, never re-counted from today. */
+  expiresDate?:  string | null;
   notes:         string;
   termsConditions?: string | null;
   isProspect?:   boolean;
@@ -152,6 +155,7 @@ export function QuotePreviewDialog({
   exchangeRate,
   billingCycle,
   validityDays,
+  expiresDate = null,
   notes: rawNotes,
   termsConditions,
   isProspect = false,
@@ -165,7 +169,8 @@ export function QuotePreviewDialog({
   const notes = customerQuoteNotes(rawNotes, lineItems);
   // First letter of tenant name → brand monogram (e.g. "Demo Co" → "E")
   const brandInitial = (tenantName?.trim()?.[0] ?? "?").toUpperCase();
-  const expiresOn = new Date(Date.now() + validityDays * 86400000);
+  /* R-1679: the saved date when there is one; else the date the builder will save (IST). */
+  const expiresOn = expiresDate ?? addDaysISO(istToday(), validityDays);
 
   // Billing frequency is a single quote-level value (migration 0161). Fall back
   // to the legacy per-line commitment for quotes written before the split.

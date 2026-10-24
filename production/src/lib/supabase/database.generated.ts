@@ -14667,6 +14667,16 @@ export type Database = {
         }
         Returns: string
       }
+      correct_subscription_terms: {
+        Args: {
+          p_item_id: string | null
+          p_mrr: number | null
+          p_reason: string | null
+          p_seats: number | null
+          p_subscription_id: string
+        }
+        Returns: undefined
+      }
       create_direct_invoice: {
         Args: {
           p_customer_id: string

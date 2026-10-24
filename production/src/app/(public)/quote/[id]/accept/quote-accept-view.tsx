@@ -25,6 +25,7 @@ import { quoteInstalments } from "@/lib/billing/instalments";
 import { whatsAppLink } from "@/lib/marketing/review-request";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { AcceptedPay } from "./accepted-pay";
+import { ExpiredQuote } from "./expired-quote";
 import type { QuoteDueNow } from "@/lib/payments/quote-due-now";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { taxableAfterDiscount } from "@/lib/quotes/amounts";
@@ -615,29 +616,13 @@ export function QuoteAcceptView({
   // ──────────── No-longer-available screen (expired / rejected) ────────────
   // These states can't be accepted (the API rejects them), so don't show the
   // customer a working "Accept" button that only errors when clicked.
+  /* R-1679: the page passes "expired" for a sent / viewed quote past its validity too. */
   if (quote.status === "expired" || quote.status === "rejected") {
     return (
-      <div className="min-h-screen bg-paper-2/30 flex items-start justify-center py-10 px-4">
-        <div className="max-w-2xl w-full bg-paper rounded-xl shadow-sm border border-hairline p-8 md:p-12 text-center">
-          <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-rose/15 grid place-items-center">
-            <Icon name="alert" size={32} className="text-rose" />
-          </div>
-          <h1 className="font-serif text-3xl text-ink mb-2">
-            {quote.status === "expired" ? "This quote has expired" : "This quote is no longer available"}
-          </h1>
-          <p className="text-sm text-ink-3">
-            Quote <span className="font-mono">{quote.id}</span> can no longer be accepted online.
-            Please contact <b className="text-ink">{tenantName}</b> for an updated quote.
-          </p>
-          {tenantEmail && (
-            <Button asChild variant="primary" className="mt-6">
-              <a href={`mailto:${tenantEmail}?subject=${encodeURIComponent(`New quote request (ref ${quote.id})`)}`}>
-                Request a fresh quote
-              </a>
-            </Button>
-          )}
-        </div>
-      </div>
+      <ExpiredQuote
+        quoteId={quote.id} status={quote.status === "expired" ? "expired" : "rejected"} expiresDate={quote.expires_date} token={token}
+        tenantName={tenantName} tenantEmail={tenantEmail} tenantPhone={tenantPhone}
+      />
     );
   }
 

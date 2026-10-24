@@ -36,6 +36,7 @@ import { useQuoteSubscriptions, useRecreateSubscription } from "@/lib/queries/su
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { historyTime, quoteCreatedAt } from "@/lib/quotes/history-time";
 import { quotePaymentBadge } from "@/lib/quotes/status-badge";
+import { shownQuoteStatus, expiredByDate, validityDaysLeft } from "@/lib/quotes/quote-expiry";
 import { quotePaymentState, invoicedPartPaid } from "@/lib/quotes/quote-payment-state";
 import { quoteSentEvent, useQuoteSends } from "@/lib/quotes/sent-event";
 import { staffDisplayNotes } from "@/lib/quotes/customer-notes";
@@ -690,7 +691,9 @@ export default function QuoteDetailPage() {
 
   // ────────── Derived ──────────
   /* R-448: a replaced quote reads "Replaced", not "Expired". */
-  const status = quote.superseded_by ? { kind: "muted" as const, label: "Replaced" } : STATUS_META[quote.status];
+  /* R-1679: a sent / viewed quote past its validity reads "Expired" (one rule: quote-expiry.ts). */
+  const shownStatus = shownQuoteStatus(quote);
+  const status = quote.superseded_by ? { kind: "muted" as const, label: "Replaced" } : STATUS_META[shownStatus];
   const revise = canReviseQuote(quote, totalReceivedSoFar);
   /* R-1718: one rule with the list — no "Awaiting payment" on a rejected / expired / replaced quote. */
   const paymentBadge = quotePaymentBadge(quote);
@@ -794,10 +797,10 @@ export default function QuoteDetailPage() {
 
   /* R-1726 (+R-1724): ONE orange button — the right next step for this state. Every button
      below takes its variant from this; see ./primary-action.ts for the table. */
-  const closedQuote = isClosedForSending({ status: quote.status, supersededBy: quote.superseded_by });
+  const closedQuote = isClosedForSending({ status: shownStatus, supersededBy: quote.superseded_by });
   const receiptTarget = receivedPayments[receivedPayments.length - 1] ?? null;
   const primary = quotePrimaryAction({
-    status: quote.status,
+    status: shownStatus,
     supersededBy: quote.superseded_by,
     invoiceId: quote.invoice_id,
     paymentStatus: quote.payment_status,
@@ -934,7 +937,9 @@ export default function QuoteDetailPage() {
       setSharingWa(false);
     }
   };
-  const daysLeft = quote.expires_date ? daysBetween(new Date(), quote.expires_date) : null;
+  /* R-1679: counted on the IST calendar (quote-expiry.ts) — the last valid day is 1, not 0. */
+  const daysLeft = validityDaysLeft(quote.expires_date);
+  const validityOver = expiredByDate(quote);
 
   // Activity timeline
   const events: TimelineEvent[] = [
@@ -1389,10 +1394,19 @@ export default function QuoteDetailPage() {
           && quote.payment_status !== "invoiced" && !quote.invoice_id && (
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-ink-3">
-              {daysLeft !== null && daysLeft > 0 && (
-                <>Expires in <b>{daysLeft} days</b> · </>
+              {/* R-1679: past its validity the customer's link refuses it — say so, with the way on. */}
+              {validityOver ? (
+                <span className="font-medium text-rose">
+                  Validity ended {quote.expires_date ? formatDate(quote.expires_date) : ""} — the customer&apos;s link no longer accepts it. Revise or duplicate it to send a fresh one.{" "}
+                </span>
+              ) : (
+                <>
+                  {daysLeft !== null && daysLeft > 0 && (
+                    <>{daysLeft === 1 ? <>Valid <b>until today</b></> : <>Expires in <b>{daysLeft} days</b></>} · </>
+                  )}
+                  {acceptHint(quote)}
+                </>
               )}
-              {acceptHint(quote)}
               {" "}
               {/* What this sentence used to say, unconditionally: "Payment can land later —
                   record it when received." On Q-ADPL-2026-27-0024 that was printed under a
@@ -2053,6 +2067,7 @@ export default function QuoteDetailPage() {
         tenantPhone={me?.tenantPhone}
         tenantAddress={me?.tenantAddress}
         quoteId={quote.id}
+        expiresDate={quote.expires_date}
         /* R-1694: the PDF's scan-to-pay QR, or a "add UPI ID" hint for the owner. */
         upiVpa={me?.tenantUpiVpa ?? null}
         payQrQuoteId={quote.id}
@@ -2110,11 +2125,9 @@ export default function QuoteDetailPage() {
         /* R-1523: the "no pay QR — add your UPI ID" line inside the dialog. */
         upiVpa={me ? me.tenantUpiVpa : undefined}
         currency={quote.currency}
-        validityDays={
-          quote.expires_date
-            ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))
-            : null
-        }
+        /* R-1679: days left FROM TODAY (IST), negative once it ended — not created → expires,
+           which kept saying "valid for 30 days" on a resend weeks later. */
+        validityDays={validityOver ? -1 : daysLeft !== null ? Math.max(1, daysLeft - 1) : null}
       />
 
       {/* Approve / reject drawer */}

@@ -147,7 +147,14 @@ export function termValue(
   /** ₹/year from the originating quote line (`rate × qty`), when known. */
   contractedAnnual?: number | null,
 ): TermValue {
-  if (contractedAnnual != null && contractedAnnual > 0) {
+  /* R-1683: the quote line is the contract only while the subscription still matches it. After
+     seats are added (or a correction) the stored MRR moves and the old line does not — T-12 showed
+     "Annual · ₹1,29,600" (10 seats) beside MRR ₹16,200 (15 seats). The round trip annual → mrr is
+     at most ₹6 out (round(annual / 12)), so a contracted annual whose monthly rounds to the stored
+     MRR still wins; anything further is a changed contract and the MRR is the figure. */
+  const mrrNow = mrr ?? 0;
+  const stillMatches = mrrNow <= 0 || Math.round((contractedAnnual ?? 0) / 12) === Math.round(mrrNow);
+  if (contractedAnnual != null && contractedAnnual > 0 && stillMatches) {
     /* Scaled from the annual for a non-annual term, and rounded ONCE — going via a
        monthly would reintroduce exactly the drift this function exists to remove. */
     return { amount: Math.round((contractedAnnual * months) / 12), exact: true };

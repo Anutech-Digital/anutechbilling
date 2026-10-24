@@ -2866,7 +2866,7 @@ function QuoteBuilderBody() {
                       ) : (
                         <span>
                           Valid till{" "}
-                          <b className="tabular-nums">{formatDate(new Date(Date.now() + validityDays * 86400000))}</b>
+                          <b className="tabular-nums">{formatDate(addDaysISO(istToday(), validityDays)) /* R-1679: the date that is saved (IST) */}</b>
                         </span>
                       )}
                       <span className="text-ink-3" aria-hidden>·</span>
@@ -2944,7 +2944,7 @@ function QuoteBuilderBody() {
                         min={1}
                         max={365}
                         value={validityDays}
-                        onChange={(e) => setValidityDays(parseInt(e.target.value) || 30)}
+                        onChange={(e) => setValidityDays(Math.min(365, Math.max(1, parseInt(e.target.value) || 30)))} /* R-1679: never 0 or −1 days */
                         className="tabular-nums"
                       />
                     </FormField>
@@ -2952,7 +2952,7 @@ function QuoteBuilderBody() {
                     <FormField label="Expires on" htmlFor="expires">
                       <Input
                         id="expires"
-                        value={formatDate(new Date(Date.now() + validityDays * 86400000))}
+                        value={formatDate(addDaysISO(istToday(), validityDays)) /* R-1679: the date that is saved (IST) */}
                         readOnly
                         className="bg-paper-2 cursor-default font-mono"
                       />

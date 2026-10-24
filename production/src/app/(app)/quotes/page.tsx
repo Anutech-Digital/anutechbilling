@@ -351,7 +351,7 @@ export default function QuotesPage() {
   // KPIs
   /* R-469: Pipeline = quotes still open (draft, sent, viewed) — not invoiced, rejected or
      replaced ones. The margin tile below reads the same set. */
-  const pipelineQuotes = quotesByWorkspace.filter(isPipelineQuote);
+  const pipelineQuotes = quotesByWorkspace.filter((q) => isPipelineQuote(q));
   const totalValue = focusValue(quotesByWorkspace, "pipeline");
   const acceptedValue = focusValue(quotesByWorkspace, "accepted");
   const sentValue = focusValue(quotesByWorkspace, "review");
@@ -1298,6 +1298,7 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
       upiVpa={currentUser?.tenantUpiVpa ?? null}
       payQrQuoteId={quote.id}
       quoteId={quote.id}
+      expiresDate={quote.expires_date}
       customerName={quote.customer_name}
       contactName={contact.contactName}
       contactEmail={contact.contactEmail}

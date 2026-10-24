@@ -24,10 +24,13 @@ import { Badge } from "@/components/ui/badge";
 import { cn, rupee, formatDate } from "@/lib/utils";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { subscriptionSchedule, nextTermSchedule } from "@/lib/billing/subscription-schedule";
-import { scheduleTotal, periodLastDay } from "@/lib/billing/schedule";
+import { periodLastDay } from "@/lib/billing/schedule";
 import { cycleScheduleLabel } from "@/lib/quotes/billing";
 import { useScheduleInvoices } from "@/lib/queries/subscriptions";
-import { scheduleInvoices, nextUninvoiced, nextTermShowsNext, scheduleCountLabel, type ScheduleInvoice } from "./schedule-invoices";
+import {
+  scheduleInvoices, nextUninvoiced, nextTermShowsNext, scheduleCountLabel, termAddSeatInvoices, shownTermTotal,
+  type ScheduleInvoice, type AddSeatInvoice,
+} from "./schedule-invoices";
 import { subscriptionEnded } from "@/lib/subscriptions/renewal-display";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenRoute } from "@/lib/nav";
@@ -48,7 +51,9 @@ export function BillingScheduleCard({ subscription, todayISO }: {
     saleInvoice: inv?.sale ?? null,
     instalments: inv?.instalments ?? [],
     source: subscription,
+    renewals: inv?.renewals ?? [],
   }), [current, subscription, inv]);
+  const extras = React.useMemo(() => termAddSeatInvoices(current, inv?.addSeats ?? []), [current, inv]);
 
   if (current.length === 0) {
     return (
@@ -73,7 +78,7 @@ export function BillingScheduleCard({ subscription, todayISO }: {
       title="Billing schedule"
       sub={`${termLabel} term · ${cycleScheduleLabel(subscription.billing_cycle)}`}
     >
-      <ScheduleTable rows={current} todayISO={todayISO} label={ended ? "Billing dates (ended)" : "This term"} invoiced={invoiced} showNext={!ended} />
+      <ScheduleTable rows={current} todayISO={todayISO} label={ended ? "Billing dates (ended)" : "This term"} invoiced={invoiced} showNext={!ended} extras={extras} />
 
       {next.length > 0 && (
         <div className="mt-4 border-t border-hairline pt-4">
@@ -92,7 +97,7 @@ export function BillingScheduleCard({ subscription, todayISO }: {
 
 const EMPTY = new Map<number, ScheduleInvoice>();
 
-function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true }: {
+function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true, extras = [] }: {
   rows: ReturnType<typeof subscriptionSchedule>;
   todayISO: string;
   label: string;
@@ -100,8 +105,11 @@ function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true
   invoiced: Map<number, ScheduleInvoice>;
   /** R-527: only one table on the card may tag a row "next". */
   showNext?: boolean;
+  /** R-1683: the add-seats invoices raised inside this term — listed under its billing dates. */
+  extras?: AddSeatInvoice[];
 }) {
-  const total = scheduleTotal(rows);
+  /* R-1683: invoiced rows count their invoice's own figure; the term's add-seats invoices are added. */
+  const total = shownTermTotal(rows, invoiced, extras);
   const nextIndex = showNext ? nextUninvoiced(rows, invoiced, todayISO) : null;
   return (
     <div className={cn(muted && "opacity-75")}>
@@ -112,7 +120,7 @@ function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true
             for one bill with nothing distinguishing them is how a rep and a customer
             end up arguing about which is right. */}
         <span className="text-2xs text-ink-3">
-          {scheduleCountLabel(rows.length, rows.filter((p) => invoiced.has(p.index)).length)} · {rupee(total)} ex-GST
+          {scheduleCountLabel(rows.length, rows.filter((p) => invoiced.has(p.index)).length, extras.length)} · {rupee(total)} ex-GST
         </span>
       </div>
       <ul className="divide-y divide-hairline">
@@ -135,11 +143,25 @@ function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true
                 </p>
               </div>
               <span className={cn("shrink-0 text-sm tabular-nums", dim ? "text-ink-3" : "font-medium text-ink")}>
-                {rupee(p.amount)}
+                {rupee(inv?.exGst ?? p.amount)}
               </span>
             </li>
           );
         })}
+        {/* R-1683: seats added mid-term are billed on their own invoice — shown here so this
+            term never reads as billed for fewer seats than it really was. */}
+        {extras.map((x) => (
+          <li key={`${label}-seats-${x.invoiceId}`} className="flex items-center justify-between gap-3 py-2">
+            <div className="min-w-0">
+              <p className="text-sm text-ink-3">
+                {x.invoiceDate ? formatDate(x.invoiceDate) : "Seats added"}
+                <InvoicedChip inv={x} />
+              </p>
+              <p className="text-2xs text-ink-3">seats added in this term · one-off pro-rata charge</p>
+            </div>
+            <span className="shrink-0 text-sm tabular-nums text-ink-3">{rupee(x.exGst ?? 0)}</span>
+          </li>
+        ))}
       </ul>
     </div>
   );
