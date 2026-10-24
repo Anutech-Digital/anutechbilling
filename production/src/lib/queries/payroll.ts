@@ -326,6 +326,39 @@ export function useSalaryPayments(period?: string) {
 }
 
 
+/**
+ * R-1831: unlinked money-out bank lines whose amount equals one of these salaries' net —
+ * the fact behind "Paid — link bank line" (lib/payroll/salary-status.ts). Keyed by whole
+ * rupees → the account holding the line, so the next-step button can open that account's
+ * reconcile with ?match=<net> (the bank page's existing deep link). Only lines on or after
+ * `since` (the first salary month's first day) count — an older line cannot pay this month.
+ */
+export function useUnlinkedSalaryBankLines(nets: number[], since: string | null) {
+  const amounts = [...new Set(nets.filter((n) => n > 0).map((n) => Math.round(n)))].sort((a, b) => a - b);
+  return useQuery({
+    queryKey: ["bank_transactions", "unlinked-salary-amounts", since ?? "", amounts.join(",")],
+    enabled: amounts.length > 0 && Boolean(since),
+    queryFn: async (): Promise<Map<number, string>> => {
+      const supabase = createClient();
+      const rows = await fetchAllRows<{ id: string; debit: number; bank_account_id: string }>((from, to) => supabase
+        .from("bank_transactions")
+        .select("id, debit, bank_account_id")
+        .is("matched_to_type", null)
+        .in("debit", amounts)
+        .gte("txn_date", since!)
+        .order("id", { ascending: true })
+        .range(from, to));
+      const byAmount = new Map<number, string>();
+      for (const r of rows) {
+        const k = Math.round(r.debit);
+        if (!byAmount.has(k)) byAmount.set(k, r.bank_account_id);
+      }
+      return byAmount;
+    },
+    staleTime: 30_000,
+  });
+}
+
 /** Salaries not yet fully cleared (unpaid or partially paid), with the still-
  *  owed remaining amount — fed to the reconcile dialog so a money-out bank line
  *  can be applied (fully or partially) to a chosen salary. */
@@ -425,7 +458,8 @@ export function usePaySalary() {
       qc.invalidateQueries({ queryKey: ["bank_accounts"] });
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["statutory-dues"] });
-      toast.success("Salary paid");
+      /* R-1831: this books the salary — it reads Paid once its bank line is linked. */
+      toast.success("Salary booked", { description: "It shows as Paid once its bank line is linked." });
     },
     onError: (err) => toastError(err),
   });

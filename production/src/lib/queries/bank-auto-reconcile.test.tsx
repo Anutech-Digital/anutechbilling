@@ -69,19 +69,67 @@ describe("R-1657 — auto-reconcile is one server call per chunk", () => {
   });
 });
 
-describe("R-1657 — the final summary names what was left and why", () => {
-  it("matched N, left M with reasons", () => {
-    const s = autoReconcileSummary({ checked: 10, reconciled: 6, review: 4, no_match: 1, low_confidence: 1, ambiguous: 1, failed: 1 });
-    expect(s.title).toBe("6 matched · 4 left for you to check");
+describe("R-1657 / R-1831 — the final summary names what was left, why, and what to do", () => {
+  const S = (o: Partial<Parameters<typeof autoReconcileSummary>[0]>) =>
+    autoReconcileSummary({ checked: 0, reconciled: 0, review: 0, no_match: 0, low_confidence: 0, ambiguous: 0, failed: 0, ...o });
+
+  it("matched N, left M with a reason + step for each kind", () => {
+    const s = S({ checked: 10, reconciled: 6, review: 4, no_match: 1, low_confidence: 1, ambiguous: 1, failed: 1 });
+    expect(s.title).toBe("6 matched · 4 lines left for you");
     expect(s.description).toBe(
-      "Left: 1 with two equal matches · 1 with no match · 1 with only a weak match · 1 could not be saved. Open Unmatched to finish them.",
+      "1 line fits two records equally — open each and pick one. 1 line has only a weak match — open each and confirm it. " +
+      "1 line has no payment, expense or salary record in the books yet — add or import those records, then run again. 1 line could not be saved — run again.",
     );
+    expect(s.showUnmatched).toBe(true);
   });
 
-  it("nothing to do / nothing matched", () => {
-    expect(autoReconcileSummary({ checked: 0, reconciled: 0, review: 0, no_match: 0, low_confidence: 0, ambiguous: 0, failed: 0 }).title)
-      .toBe("All already reconciled");
-    expect(autoReconcileSummary({ checked: 2, reconciled: 0, review: 2, no_match: 2, low_confidence: 0, ambiguous: 0, failed: 0 }).title)
-      .toBe("No sure match found · 2 left for you to check");
+  it("R-1831: staging 24 Oct — 1,414 lines, 0 matched, all no-match → a calm, plain reason and a next step", () => {
+    const s = S({ checked: 1414, reconciled: 0, review: 1414, no_match: 1414 });
+    expect(s.title).toBe("0 matched");
+    expect(s.description).toBe(
+      "None of these 1,414 lines has a payment, expense or salary record in the books yet. Add or import those records first, then run Auto-reconcile again — or open a line and book it from Reconcile.",
+    );
+    expect(s.tone).toBe("info");          // calm, not an error
+    expect(s.showUnmatched).toBe(true);   // next step: Show unmatched lines
+  });
+
+  it("0 matched but some lines need a choice → says which, not 'no record'", () => {
+    const s = S({ checked: 5, reconciled: 0, review: 5, no_match: 3, ambiguous: 2 });
+    expect(s.title).toBe("0 matched · 5 lines left for you");
+    expect(s.description).toMatch(/^2 lines fit two records equally/);
+  });
+
+  it("nothing to do / everything matched", () => {
+    expect(S({}).title).toBe("Nothing to match — every line is already reconciled");
+    expect(S({}).showUnmatched).toBe(false);
+    expect(S({ checked: 3, reconciled: 3 }).title).toBe("3 matched — every line is reconciled");
+  });
+});
+
+describe("R-1831 — the result stays on the page (no vanishing toast)", () => {
+  it("a 0-match run shows no toast; the summary is the hook's data for the page panel", async () => {
+    h.rpc.mockResolvedValueOnce(chunk({ checked: 1414, review: 1414, no_match: 1414, done: true }));
+    const { result } = setup();
+    act(() => result.current.mutate("acc-1"));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(h.info).not.toHaveBeenCalled();
+    expect(h.success).not.toHaveBeenCalled();
+    expect(autoReconcileSummary(result.current.data!).title).toBe("0 matched");
+  });
+
+  it("the panel shows the reason and a 'Show unmatched lines' step", async () => {
+    const { render, screen, fireEvent } = await import("@testing-library/react");
+    const { AutoReconcileResult } = await import("@/components/features/banking/auto-reconcile-result");
+    const onShow = vi.fn();
+    render(
+      <AutoReconcileResult
+        summary={{ checked: 1414, reconciled: 0, review: 1414, no_match: 1414, low_confidence: 0, ambiguous: 0, failed: 0 }}
+        unmatchedShown={false} onShowUnmatched={onShow} onClose={() => {}}
+      />,
+    );
+    expect(screen.getByRole("status").textContent).toContain("Auto-reconcile: 0 matched");
+    expect(screen.getByRole("status").textContent).toContain("Add or import those records first");
+    fireEvent.click(screen.getByRole("button", { name: "Show unmatched lines" }));
+    expect(onShow).toHaveBeenCalledOnce();
   });
 });

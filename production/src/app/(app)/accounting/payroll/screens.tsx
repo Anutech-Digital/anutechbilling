@@ -43,12 +43,14 @@ import { downloadPayslipPDF } from "@/lib/pdf";
 import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 import { toastError } from "@/lib/errors/toast-error";
 import { periodLabel } from "@/lib/payroll/period-label";
+import { SalaryStatusCell } from "./salary-status-cell";
+import { salaryPayState } from "@/lib/payroll/salary-status";
 import { toast } from "sonner";
 import {
   useEmployees, useUpsertEmployee, useDeleteEmployee, useSetEmployeePin,
   useLeaveEntries, useCreateLeaveEntry, useDeleteLeaveEntry,
   useHolidays, useCreateHoliday, useDeleteHoliday,
-  useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useEmployeeSalaryHistory,
+  useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines,
   useStatutoryDues, usePayStatutoryDues,
   useAttendance, useAttendanceNetwork, useSetAttendanceNetwork, getSelfieUrl, useSetAttendanceAnywhere, useCorrectAttendance,
   LEAVE_TYPE_LABEL,
@@ -989,6 +991,11 @@ export function PayrollTab() {
 
   const employees = (empQ.data ?? []).filter((e) => e.is_active);
   const paidByEmp = new Map((payQ.data ?? []).map((p) => [p.employee_id, p]));
+  /* R-1831: unlinked bank lines of a salary's exact net → "Paid — link bank line". */
+  const { data: waitingLines } = useUnlinkedSalaryBankLines(
+    (payQ.data ?? []).filter((p) => p.paid_amount === 0).map((p) => p.net),
+    `${period}-01`,
+  );
   const totalNet = (payQ.data ?? []).reduce((s, p) => s + p.net, 0);
   const acctName = new Map((accountsQ.data ?? []).map((a) => [a.id, a.name]));
   // Summary: full monthly cost (all active gross) vs what's actually been run.
@@ -1034,14 +1041,17 @@ export function PayrollTab() {
           <div className="min-w-0">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Run this month (net)</div>
             <div className="font-serif text-xl sm:text-2xl text-ink leading-tight mt-1 tabular-nums break-words">{rupee(totalNet)}</div>
-            <div className="text-xs text-ink-3 mt-0.5">{runCount} of {employees.length} paid</div>
+            {/* R-1831: "run" = booked; paid only once the bank line is linked — the row badges say which. */}
+            <div className="text-xs text-ink-3 mt-0.5">
+              {runCount} of {employees.length} run · {(payQ.data ?? []).filter((p) => salaryPayState(p).key === "paid").length} paid from the bank
+            </div>
           </div>
           <div className="min-w-0 col-span-2 sm:col-span-1">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Still to run</div>
             <div className={cn("font-serif text-xl sm:text-2xl leading-tight mt-1 tabular-nums", employees.length - runCount > 0 ? "text-amber-ink" : "text-emerald")}>
               {employees.length - runCount}
             </div>
-            <div className="text-xs text-ink-3 mt-0.5">{employees.length - runCount > 0 ? "employees pending" : "everyone paid 🎉"}</div>
+            <div className="text-xs text-ink-3 mt-0.5">{employees.length - runCount > 0 ? "employees pending" : "everyone's salary is run"}</div>
           </div>
         </div>
       </Card>
@@ -1144,15 +1154,8 @@ export function PayrollTab() {
                         <div className="flex items-center justify-end gap-2">
                           {p ? (
                             <>
-                              {p.paid_status === "paid" ? (
-                                <Badge kind="success" dot>Paid</Badge>
-                              ) : p.paid_status === "partial" ? (
-                                <Badge kind="warning" dot title={`Partly paid — ${rupee(p.net - p.paid_amount)} still owed. Reconcile another bank line to clear the balance.`}>
-                                  Partial · {rupee(p.paid_amount)}/{rupee(p.net)}
-                                </Badge>
-                              ) : (
-                                <Badge kind="warning" dot title="Payroll run — awaiting the bank debit to be reconciled">Awaiting reconcile</Badge>
-                              )}
+                              {/* R-1831: status from facts — one helper with the Salary Register. */}
+                              <SalaryStatusCell p={p} waitingLines={waitingLines} canWrite={canWrite} showAmounts />
                               <PayrollRowMenu
                                 e={e} p={p} canWrite={canWrite} me={meQ.data ?? null}
                                 paidVia={p.bank_account_id ? acctName.get(p.bank_account_id) ?? null : null}
@@ -1220,15 +1223,7 @@ export function PayrollTab() {
                     <div className="flex items-center justify-between gap-2">
                       {p ? (
                         <>
-                          {p.paid_status === "paid" ? (
-                            <Badge kind="success" dot>Paid</Badge>
-                          ) : p.paid_status === "partial" ? (
-                            <Badge kind="warning" dot title={`Partly paid — ${rupee(p.net - p.paid_amount)} still owed. Reconcile another bank line to clear the balance.`}>
-                              Partial · {rupee(p.paid_amount)}/{rupee(p.net)}
-                            </Badge>
-                          ) : (
-                            <Badge kind="warning" dot title="Payroll run — awaiting the bank debit to be reconciled">Awaiting reconcile</Badge>
-                          )}
+                          <SalaryStatusCell p={p} waitingLines={waitingLines} canWrite={canWrite} showAmounts />
                           <PayrollRowMenu
                             e={e} p={p} canWrite={canWrite} me={meQ.data ?? null}
                             paidVia={p.bank_account_id ? acctName.get(p.bank_account_id) ?? null : null}
@@ -1353,12 +1348,8 @@ function EmployeePayrollYearDialog({
                         <td className="px-3 py-2 text-right">
                           {!p ? (
                             <span className="text-xs text-ink-3">Not run</span>
-                          ) : p.paid_status === "paid" ? (
-                            <Badge kind="success" size="sm" dot>Paid</Badge>
-                          ) : p.paid_status === "partial" ? (
-                            <Badge kind="warning" size="sm" dot>Partial</Badge>
                           ) : (
-                            <Badge kind="warning" size="sm" dot>Unpaid</Badge>
+                            <SalaryStatusCell p={p} canWrite={false} size="sm" />
                           )}
                         </td>
                       </tr>

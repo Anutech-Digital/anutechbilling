@@ -29,11 +29,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
-import { rupee, formatDate } from "@/lib/utils";
+import { rupee, formatDate, toTitleCase } from "@/lib/utils";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import { useEmployees, useSalaryPayments } from "@/lib/queries/payroll";
 import { useBookSalaryLines, type SalaryGroupInput, type SalaryGroupResult } from "@/lib/queries/salary-from-bank";
-import { parseSalaryNarration, matchEmployee, titleCaseName, compactName, payeeKey, bestNameVariant, type SalaryNarration } from "@/lib/banking/salary-lines";
+import { parseSalaryNarration, matchEmployee, titleCaseName, compactName, payeeKey, bestNameVariant, alreadyInPayroll, type AlreadyInPayroll, type SalaryNarration } from "@/lib/banking/salary-lines";
 
 interface Props {
   open: boolean;
@@ -150,6 +150,23 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
     return monthly > 0 && l.txn.debit > monthly * 1.1 ? l.txn.debit - monthly : 0;
   };
 
+  /** R-1831: this line's month is already in payroll (lib/banking/salary-lines.ts → alreadyInPayroll). */
+  const alreadyInPayrollFor = (l: Line): AlreadyInPayroll | null => alreadyInPayroll({
+    choice: choice[l.txn.id] ?? "",
+    statementName: l.parsed.name,
+    period: period[l.txn.id] ?? l.parsed.period,
+    amount: l.txn.debit,
+    salaries,
+    employees,
+  });
+  const alreadyInPayrollText = (d: AlreadyInPayroll): string => {
+    const who = toTitleCase(nameOf(d.employeeId));
+    const month = monthLabel(d.period);
+    if (d.kind === "paid") return `Already in payroll — ${who}'s ${month} salary is paid. Skipped.`;
+    if (d.kind === "other_month") return `Already in payroll — ${who}'s ${month} salary (${rupee(d.remaining)}) is booked and not paid yet. Skipped: set the month to ${month} to link this line to it.`;
+    return `Already in payroll — ${who}'s ${month} salary is ${rupee(d.net)}. Skipped: pick ${who} as the employee to link this line to it.`;
+  };
+
   /** What booking this line would do — or why it cannot. */
   const planFor = (l: Line): { ok: boolean; text: string } => {
     const inc = createsRecord(l) ? incentiveOf(l) : 0;
@@ -161,6 +178,9 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
       const m = matchEmployee(l.parsed.name, employees);
       return { ok: false, text: m.kind === "ambiguous" ? "More than one employee has this name — pick one." : "No name on the line — pick the employee." };
     }
+    /* R-1831: never a second record for a month payroll already has. */
+    const dup = alreadyInPayrollFor(l);
+    if (dup) return { ok: false, text: alreadyInPayrollText(dup) };
     if (c === "create") {
       /* One employee per name, however many lines carry it: only the first line
          creates, the rest say they reuse it. */
@@ -170,8 +190,7 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
     }
     const rec = salaries.find((s) => s.employee_id === c && s.period === per);
     if (!rec) return { ok: true, text: `New ${monthLabel(per)} salary record for ${nameOf(c)}${split}` };
-    const remaining = rec.net - rec.paid_amount;
-    if (rec.paid_status === "paid" || remaining <= 0) return { ok: false, text: `${monthLabel(per)} salary is already paid — will not be touched.` };
+    const remaining = rec.net - rec.paid_amount; // a paid record was caught by alreadyInPayroll above
     if (l.txn.debit > remaining) return { ok: false, text: `${monthLabel(per)} record has only ${rupee(remaining)} left to pay.` };
     return { ok: true, text: `Reconcile to existing ${monthLabel(per)} record (${rupee(remaining)} left)` };
   };
@@ -179,6 +198,10 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
   /* A director's salary starts unticked: it is usually remuneration, not payroll. */
   const isOn = (l: Line) => (include[l.txn.id] ?? !l.parsed.director) && planFor(l).ok;
   const selected = lines.filter(isOn);
+  const skipped = lines.flatMap((l) => {
+    const dup = alreadyInPayrollFor(l);
+    return dup ? [{ l, dup }] : [];
+  });
   const selectedTotal = selected.reduce((s, l) => s + l.txn.debit, 0);
   const anyCreatesRecord = selected.some((l) => planFor(l).text.includes("New "));
 
@@ -246,6 +269,18 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
                   (monthly salary set to the amount paid — edit it later in{" "}
                   <Link href={"/accounting/payroll" as never} className="underline">Payroll</Link>).
                 </p>
+              )}
+
+              {/* R-1831: say up front which lines will not be booked because payroll has them. */}
+              {skipped.length > 0 && (
+                <div className="rounded-md border border-hairline bg-paper-2/60 px-3 py-2 text-xs text-ink-2">
+                  <p className="font-semibold text-ink">
+                    {skipped.length} line{skipped.length === 1 ? "" : "s"} will be skipped — already in payroll
+                  </p>
+                  <p className="mt-0.5">
+                    {skipped.map(({ l, dup }) => `${toTitleCase(nameOf(dup.employeeId))} · ${monthLabel(dup.period)} (${rupee(l.txn.debit)})`).join(" · ")}
+                  </p>
+                </div>
               )}
 
               <ul className="divide-y divide-hairline rounded-md border border-hairline">

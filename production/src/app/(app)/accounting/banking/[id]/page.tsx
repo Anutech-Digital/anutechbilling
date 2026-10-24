@@ -42,6 +42,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import { ImportStatementDialog } from "@/components/features/banking/import-statement-dialog";
 import { SalaryLinesDialog, salaryLinesOf } from "@/components/features/banking/salary-lines-dialog";
 import { StatementCheckCard } from "@/components/features/banking/statement-check-card";
+import { AutoReconcileResult } from "@/components/features/banking/auto-reconcile-result";
 import { BankImportsSection } from "@/components/features/banking/bank-imports-section";
 import { checkStatement } from "@/lib/banking/statement-check";
 import { ReconcileTransactionDialog } from "@/components/features/banking/reconcile-transaction-dialog";
@@ -362,6 +363,16 @@ export default function BankAccountDetailPage() {
           </div>
         )}
       </div>
+
+      {/* R-1831: every run ends with a result that stays — matched N, and why the rest were left. */}
+      {autoReconcile.isSuccess && autoReconcile.data && (
+        <AutoReconcileResult
+          summary={autoReconcile.data}
+          unmatchedShown={tab === "unmatched"}
+          onShowUnmatched={() => setTab("unmatched")}
+          onClose={() => autoReconcile.reset()}
+        />
+      )}
 
       {/* Search transactions */}
       <div className="mb-3 relative">
