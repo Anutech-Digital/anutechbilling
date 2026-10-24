@@ -7,7 +7,8 @@
  * read and change it (owner, manager, accountant — the RPCs check the same).
  *
  * Each current director shows "DSC expires in N days" and "KYC due 30 Jun <year>" (rules in
- * lib/company/directors.ts — R-1856's 3-yearly DIR-3 KYC). Reminders are R-1857's job.
+ * lib/company/directors.ts — R-1856's 3-yearly DIR-3 KYC). R-1857: the ROC calendar, Today and
+ * the reminder mail read this register; a new email / phone shows a "file DIR-3 KYC Web by …" note.
  * A director who left gets a cessation date and moves to "Former directors" — not deleted.
  * Email / phone arrive masked for a role without can_view_contact_details (R-1009).
  */
@@ -15,6 +16,8 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,10 +37,11 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useComplianceProfile } from "@/lib/compliance/profile";
 import {
   DESIGNATIONS, DESIGNATION_LABEL, showsDirectorsRegister, isActiveDirector, dscStatus, kycDue,
-  directorFormErrors, normaliseDirectorInput,
+  directorFormErrors, normaliseDirectorInput, contactChanged,
   type CompanyDirector, type Designation, type DirectorFormInput, type DirectorFormErrors, type DscStatus,
 } from "@/lib/company/directors";
 import { useCompanyDirectors, useSaveCompanyDirector, useDeleteCompanyDirector } from "@/lib/queries/company-directors";
+import { KYC_DETAILS_CHANGE_DAYS } from "@/lib/compliance/obligations";
 
 const REGISTER_ROLES = new Set(["owner", "manager", "accountant"]);
 
@@ -64,6 +68,7 @@ function DirectorDialog({ open, editing, directors, onClose }: {
   open: boolean; editing: CompanyDirector | null; directors: CompanyDirector[]; onClose: () => void;
 }) {
   const save = useSaveCompanyDirector();
+  const router = useRouter();
   const [form, setForm] = React.useState<DirectorFormInput>(EMPTY);
   const [errors, setErrors] = React.useState<DirectorFormErrors>({});
 
@@ -80,9 +85,19 @@ function DirectorDialog({ open, editing, directors, onClose }: {
     const e = directorFormErrors(form, directors, editing?.id ?? null, istToday());
     setErrors(e);
     if (Object.keys(e).length) return;
+    const input = normaliseDirectorInput(form);
     try {
-      await save.mutateAsync({ id: editing?.id ?? null, ...normaliseDirectorInput(form) });
+      await save.mutateAsync({ id: editing?.id ?? null, ...input });
       onClose();
+      /* R-1857 (Rule 12A(2)): a new personal mobile / email → DIR-3 KYC Web within 30 days. The
+         database recorded the day; the ROC calendar now has the row — say so, with the way there. */
+      if (contactChanged(editing, input)) {
+        const due = new Date(Date.parse(`${istToday()}T00:00:00Z`) + KYC_DETAILS_CHANGE_DAYS * 864e5).toISOString().slice(0, 10);
+        toast.info(`${input.name}'s contact changed — if it is the mobile / email registered with MCA, file DIR-3 KYC Web by ${formatDate(due)}.`, {
+          duration: 12_000,
+          action: { label: "Open ROC calendar", onClick: () => router.push("/compliance/roc") },
+        });
+      }
     } catch { /* the hook shows the error */ }
   }
 

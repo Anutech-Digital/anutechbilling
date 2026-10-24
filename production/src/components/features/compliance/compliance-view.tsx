@@ -28,6 +28,7 @@ import {
   type ComplianceCategory, type ComplianceRow, type ComplianceStatus,
 } from "@/lib/compliance/obligations";
 import { useComplianceProfile } from "@/lib/compliance/profile";
+import { useCompliancePeople } from "@/lib/compliance/people-query";
 import {
   useComplianceLog, toFiledMap, useMarkComplianceFiled, useUnmarkComplianceFiled, useTdsMonths,
 } from "@/lib/queries/compliance";
@@ -100,10 +101,12 @@ export function ComplianceView({
     () => (auditQ.data ? taxAuditStatus({ businessType: profile?.businessType ?? null, ...auditQ.data }) : null),
     [auditQ.data, profile?.businessType],
   );
-  const rowProfile = React.useMemo(
-    () => (taxAudit ? { businessType: null, gstFiling: null, ...profile, taxAudit } : profile),
-    [profile, taxAudit],
-  );
+  /* R-1857: each director (LLP: designated partner) gets their own DIR-3 KYC / DSC / details rows. */
+  const people = useCompliancePeople(profile?.businessType);
+  const rowProfile = React.useMemo(() => {
+    const p = taxAudit ? { businessType: null, gstFiling: null, ...profile, taxAudit } : profile;
+    return people?.length ? { businessType: null, gstFiling: null, ...p, people } : p;
+  }, [profile, taxAudit, people]);
   const rows = React.useMemo(
     () => buildComplianceRows(today, filedMap, cats, notApplicable, rowProfile),
     [today, filedMap, cats, notApplicable, rowProfile],
@@ -226,10 +229,17 @@ export function ComplianceView({
                               How to file
                             </Button>
                           )}
-                          <Button variant="ghost" icon="check" className="h-7 px-2.5 text-xs"
-                            onClick={() => setFiling(r)}>
-                            Mark filed
-                          </Button>
+                          {r.ob.doneBy ? (
+                            /* R-1857: a DSC row is settled by saving the new expiry in the register. */
+                            <Button asChild variant="ghost" icon="pencil" className="h-7 px-2.5 text-xs">
+                              <Link href={r.ob.doneBy.href as never}>{r.ob.doneBy.label}</Link>
+                            </Button>
+                          ) : (
+                            <Button variant="ghost" icon="check" className="h-7 px-2.5 text-xs"
+                              onClick={() => setFiling(r)}>
+                              Mark filed
+                            </Button>
+                          )}
                         </>
                       )}
                     </div>

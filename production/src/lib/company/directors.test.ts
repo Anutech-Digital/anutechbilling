@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import {
   showsDirectorsRegister, isActiveDirector, dscStatus, kycDue, directorFormErrors,
-  normaliseDirectorInput, DESIGNATION_LABEL, type DirectorFormInput,
+  normaliseDirectorInput, DESIGNATION_LABEL, contactChanged, type DirectorFormInput,
 } from "./directors";
 
 const FORM: DirectorFormInput = {
@@ -118,5 +118,20 @@ describe("normalising for save", () => {
   });
   it("keeps a masked value as the masked string (the database keeps the stored one)", () => {
     expect(normaliseDirectorInput({ ...FORM, email: "as••••@example.in" }).email).toBe("as••••@example.in");
+  });
+});
+
+describe("contactChanged (R-1857 — new email / phone → DIR-3 KYC Web in 30 days)", () => {
+  const before = { email: "asha@example.in", phone: "9810012345" };
+  it("a new email or a new phone is a change", () => {
+    expect(contactChanged(before, { email: "asha.verma@example.in", phone: "9810012345" })).toBe(true);
+    expect(contactChanged(before, { email: "asha@example.in", phone: "9899988877" })).toBe(true);
+  });
+  it("same values, email case, a masked value, a cleared value or a new director are not", () => {
+    expect(contactChanged(before, { email: "asha@example.in", phone: "9810012345" })).toBe(false);
+    expect(contactChanged(before, { email: "ASHA@example.in", phone: "9810012345" })).toBe(false);
+    expect(contactChanged(before, { email: "as••••@example.in", phone: "••••••2345" })).toBe(false);
+    expect(contactChanged(before, { email: null, phone: null })).toBe(false);
+    expect(contactChanged(null, { email: "x@example.in", phone: null })).toBe(false);
   });
 });

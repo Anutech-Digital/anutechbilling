@@ -117,6 +117,11 @@ export interface Obligation {
    * (a 30-day rung). Omitted → 15 / 7 days and the 15-7-3 ladder, as before.
    */
   remindDays?: number;
+  /**
+   * R-1857: the row is settled somewhere else, not by "Mark filed" (a DSC is settled by saving
+   * the new expiry in the directors register) — the calendar shows this link as its button.
+   */
+  doneBy?: { href: string; label: string };
   /** R-1857: false → no row today (a DSC far away, a ceased director, an old settled change). */
   visible?: (today: Date, inst: ComplianceInstance, filed: boolean) => boolean;
   /**
@@ -373,7 +378,7 @@ function personDscObligation(p: CompliancePerson & { dscExpiry: string }): Oblig
     remindDays: PERSON_REMIND_DAYS,
     penalty: "No ROC form (AOC-4, MGT-7, DIR-3 KYC…) can be signed without a valid DSC",
     applies: `${p.name}'s Digital Signature Certificate expires on ${longDate(expiry)}. Renew it before then, then save the new expiry date in Settings → Company → Directors.`,
-    dataHref: { href: "/settings/company", label: "Update the DSC expiry in the directors register" },
+    doneBy: { href: "/settings/company", label: "Update DSC expiry" },
     filingSteps: [
       "Apply for a new Class 3 DSC (individual) with a licensed Certifying Authority — PAN, Aadhaar and a video / OTP check.",
       "On MCA V3, register the new DSC against the DIN (My Workspace → Associate DSC).",
@@ -382,7 +387,7 @@ function personDscObligation(p: CompliancePerson & { dscExpiry: string }): Oblig
     visible: (t, inst, filed) => isActiveOn(p, t)
       && daysFrom(t, inst.dueDate) <= PERSON_REMIND_DAYS
       && !(filed && daysFrom(t, inst.dueDate) < 0),
-    next: () => ({ dueDate: expiry, periodKey: `dsc${expiry}`, periodLabel: `Expires ${longDate(expiry)}` }),
+    next: () => ({ dueDate: expiry, periodKey: `dsc${expiry}`, periodLabel: "Certificate expiry" }),
   };
 }
 

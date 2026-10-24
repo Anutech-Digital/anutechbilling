@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from information_schema.columns where table_schema='public' and table_name='company_directors' and column_name='kyc_details_changed_on')
 -- deploy-key: r1857directorkycchange
--- 20261024234500_r1857_director_kyc_change.sql
+-- 20261024235500_r1857_director_kyc_change.sql
 --
 -- R-1857 (epic R-1841, Phase 4 — compliance per person): when a director's mobile or email
 -- changes, DIR-3 KYC Web is due within 30 days.

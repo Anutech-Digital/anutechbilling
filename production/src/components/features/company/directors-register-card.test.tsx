@@ -24,6 +24,9 @@ vi.mock("@/lib/queries/company-directors", () => ({
   useDeleteCompanyDirector: () => ({ mutate: vi.fn() }),
 }));
 vi.mock("next/link", () => ({ default: ({ href, children, ...p }: { href: string; children: React.ReactNode }) => <a href={href} {...p}>{children}</a> }));
+const nav = vi.hoisted(() => ({ push: vi.fn(), info: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: nav.push }) }));
+vi.mock("sonner", () => ({ toast: { info: nav.info, success: vi.fn(), error: vi.fn() } }));
 
 import { DirectorsRegisterCard } from "./directors-register-card";
 
@@ -101,5 +104,22 @@ describe("DirectorsRegisterCard", () => {
     fireEvent.click(buttons[buttons.length - 1]);
     await vi.waitFor(() => expect(state.save).toHaveBeenCalled());
     expect(state.save.mock.calls[0][0]).toMatchObject({ id: null, name: "Asha Verma", din: "01234567", pan: "ABCPV1234K", dsc_expiry: "2027-03-31", designation: "director" });
+    expect(nav.info).not.toHaveBeenCalled();
+  });
+
+  it("R-1857: a new email → 'file DIR-3 KYC Web by 24 Nov 2026' with a button to the ROC calendar", async () => {
+    nav.info.mockReset();
+    state.directors = [A];
+    state.save.mockResolvedValue("d1");
+    render(<DirectorsRegisterCard />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit Asha Verma" }));
+    fireEvent.change(screen.getByLabelText(/Email/), { target: { value: "asha.verma@example.in" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save director" }));
+    await vi.waitFor(() => expect(nav.info).toHaveBeenCalledTimes(1));
+    const [msg, opts] = nav.info.mock.calls[0];
+    expect(msg).toMatch(/Asha Verma's contact changed .* file DIR-3 KYC Web by 24 Nov 2026/);
+    expect(opts.action.label).toBe("Open ROC calendar");
+    opts.action.onClick();
+    expect(nav.push).toHaveBeenCalledWith("/compliance/roc");
   });
 });

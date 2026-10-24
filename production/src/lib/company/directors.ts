@@ -13,7 +13,9 @@
  * by 30 June; directors whose KYC is up to date are next due 30 June 2028). Per director:
  * last KYC year + 3 → 30 June of that year. Without a last KYC year the Compliance Calendar's
  * common cycle is shown (read from obligationsFor, never a second copy of the year).
- * CA/Hitesh to confirm the per-director reading (R-1856 step). Reminders are R-1857's job.
+ * CA/Hitesh to confirm the per-director reading (R-1856 step). R-1857: the Compliance Calendar,
+ * Today and the reminder mail read this register (lib/compliance/people.ts) — one DIR-3 KYC row
+ * per director, DSC expiry 30 days ahead, and a new email / phone → DIR-3 KYC Web in 30 days.
  */
 import type { BusinessType } from "@/lib/compliance/obligations";
 import { personKycDueDate } from "@/lib/compliance/obligations";
@@ -187,6 +189,23 @@ export interface DirectorSaveInput {
   /** A masked value is sent as it is: save_company_director keeps the stored one. */
   email: string | null;
   phone: string | null;
+}
+
+/**
+ * R-1857: does this save give an existing director a NEW email or phone? Then DIR-3 KYC Web is due
+ * within 30 days (Rule 12A(2)) — the same test save_company_director makes when it records
+ * kyc_details_changed_on (migration 20261024235500): a masked value (kept as stored) or a cleared
+ * one is not a change; email case does not count.
+ */
+export function contactChanged(
+  before: Pick<CompanyDirector, "email" | "phone"> | null,
+  after: Pick<DirectorSaveInput, "email" | "phone">,
+): boolean {
+  if (!before) return false;
+  const email = after.email && !isMaskedContact(after.email) ? after.email.toLowerCase() : null;
+  const phone = after.phone && !isMaskedContact(after.phone) ? after.phone : null;
+  return (email !== null && email !== (before.email ?? "").toLowerCase())
+    || (phone !== null && phone !== before.phone);
 }
 
 /** Call only after directorFormErrors() is empty. */
