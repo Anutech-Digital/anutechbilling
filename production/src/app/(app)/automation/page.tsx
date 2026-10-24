@@ -24,6 +24,7 @@ import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -256,7 +257,7 @@ export default function AutomationPage() {
           <Skeleton className="h-16 w-full" />
         ) : policy.error ? (
           <p className="text-sm text-rose">
-            Could not read the automation settings — {(policy.error as Error).message}. Nothing
+            Could not read the automation settings. {loadErrorBody(policy.error)} Nothing
             has changed; reload to try again.
           </p>
         ) : (
@@ -362,7 +363,7 @@ export default function AutomationPage() {
           /* A read failure is NOT an empty log. "The app did nothing" and "we could not find
              out what the app did" look identical and mean opposite things. */
           <p className="p-4 text-sm text-rose">
-            Could not read the log — {(log.error as Error).message}. This does not mean nothing
+            Could not read the log. {loadErrorBody(log.error)} This does not mean nothing
             happened; it means we could not find out.
           </p>
         ) : (log.data?.rows ?? []).length === 0 ? (

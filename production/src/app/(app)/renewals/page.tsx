@@ -27,6 +27,7 @@ import { GeminiCard } from "@/components/shared/gemini-card";
 import { AiDraftButton } from "@/components/shared/ai-draft-button";
 import { VoiceNoteButton } from "@/components/shared/voice-note-button";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -623,7 +624,7 @@ export default function RenewalsPage() {
       <EmptyState
         icon="alert"
         title="Could not load renewals"
-        body={error.message}
+        body={loadErrorBody(error)}
         action={
           <Button variant="default" icon="refresh" onClick={() => void refetch()}>
             Retry

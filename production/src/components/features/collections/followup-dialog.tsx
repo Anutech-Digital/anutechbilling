@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { FormField } from "@/components/ui/label";
 import { Icon } from "@/components/ui/icon";
+import { describeError } from "@/lib/errors/toast-error";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useUserNames } from "@/lib/hooks/useUserNames";
 import { istToday } from "@/lib/dates/ist";
@@ -53,6 +54,12 @@ export interface FollowupDialogProps {
   amountDue?: number;
   /** R-1518: switch to the Remind dialog (AI-drafted reminder a person sends). Absent → no button. */
   onRemind?: () => void;
+}
+
+/** §24: the API's own sentence shows as written; database plumbing becomes plain words + next step. */
+function errorText(err: unknown): string {
+  const d = describeError(err);
+  return d.description ? `${d.message} ${d.description}` : d.message;
 }
 
 export function FollowupDialog({ open, onOpenChange, customerId, customerName, ownerId, items, stillOwes, payments, amountDue, onRemind }: FollowupDialogProps) {
@@ -190,7 +197,7 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
             <div role="alert" className="flex flex-wrap items-start gap-2 rounded-md border border-rose/40 bg-rose/5 px-3 py-2 text-sm">
               <Icon name="alert" size={16} className="mt-0.5 shrink-0 text-rose" />
               <span className="flex-1 min-w-0 text-ink">
-                <b>Not saved.</b> {serverError.message}
+                <b>Not saved.</b> {errorText(serverError.message)}
               </span>
               {serverError.status === 403 && canReassign === false && (
                 <Button type="button" size="sm" variant="ghost" onClick={() => { setValue("assignedTo", assigneeDefault ?? ""); setServerError(null); }}>

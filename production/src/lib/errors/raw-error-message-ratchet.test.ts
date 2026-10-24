@@ -39,8 +39,12 @@ function scan(root: string): { files: number; perFile: Record<string, number>; t
   return { files, perFile, total };
 }
 
-/** Measured 24 Oct 2026 (R-1656): 39 before batch 1; batch 1 (6 sites on the 8 money screens — payments and quotes were already clean) → 33. */
-const BASELINE = 33;
+/**
+ * Measured 24 Oct 2026 (R-1656): 39 before batch 1; batch 1 (6 sites on the 8 money screens — payments and quotes were already clean) → 33.
+ * R-1813 batch 2: 28 more sites → 5. The 5 left (banking rules, items, purchase orders, API keys, Zoho Books)
+ * were locked by R-1657 at the time — the next batch takes them.
+ */
+const BASELINE = 5;
 
 /** Batch 1 — the money screens. Each stays at zero. */
 const BATCH_1 = [
@@ -52,6 +56,37 @@ const BATCH_1 = [
   "app/(app)/payments/page.tsx",
   "app/(app)/quotes/page.tsx",
   "app/(app)/subscriptions/page.tsx",
+] as const;
+
+/** Batch 2 (R-1813) — customers, renewals, reports, marketing, automation, deals, MSME/TDS, dialogs. Each stays at zero. */
+const BATCH_2 = [
+  "app/(app)/activity/page.tsx",
+  "app/(app)/admin/feedback/page.tsx",
+  "app/(app)/automation/page.tsx",
+  "app/(app)/automation/scheduled-jobs.tsx",
+  "app/(app)/campaigns/page.tsx",
+  "app/(app)/customers/page.tsx",
+  "app/(app)/enquiries/page.tsx",
+  "app/(app)/marketing/campaigns/page.tsx",
+  "app/(app)/marketing/indiamart/page.tsx",
+  "app/(app)/marketing/landing-pages/page.tsx",
+  "app/(app)/marketing/links/page.tsx",
+  "app/(app)/marketing/page.tsx",
+  "app/(app)/marketing/reports/page.tsx",
+  "app/(app)/marketing/reviews/page.tsx",
+  "app/(app)/marketing/spend/page.tsx",
+  "app/(app)/marketing/templates/page.tsx",
+  "app/(app)/partners/page.tsx",
+  "app/(app)/purchases/inbox/page.tsx",
+  "app/(app)/renewals/page.tsx",
+  "app/(app)/reports/profit/page.tsx",
+  "app/(app)/reports/purchases/page.tsx",
+  "components/features/accounting/msme-payables-card.tsx",
+  "components/features/accounting/tds-26as-import.tsx",
+  "components/features/collections/followup-dialog.tsx",
+  "components/features/deals/deals-report-card.tsx",
+  "components/features/deals/deals-strip.tsx",
+  "components/features/invoices/fill-costs-dialog.tsx",
 ] as const;
 
 describe("R-1656 — the matcher", () => {
@@ -80,7 +115,7 @@ describe("R-1656 — raw error.message on the page can only go down", () => {
     ).toBeLessThanOrEqual(BASELINE);
   });
 
-  it.each(BATCH_1)("%s has none", (file) => {
+  it.each([...BATCH_1, ...BATCH_2])("%s has none", (file) => {
     expect(perFile[file] ?? 0).toBe(0);
   });
 });

@@ -46,7 +46,7 @@ import { CreateProjectQuoteDialog } from "@/components/features/projects/create-
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatStrip } from "@/components/shared/stat-strip";
-import { LoadErrorBanner } from "@/components/shared/load-error";
+import { LoadErrorBanner, loadErrorBody } from "@/components/shared/load-error";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -798,7 +798,7 @@ export default function CustomersPage() {
         <EmptyState
           icon="alert"
           title="Could not load companies"
-          body={error.message}
+          body={loadErrorBody(error)}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
         />
       )}

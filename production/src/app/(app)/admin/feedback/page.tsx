@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 
 import { Card } from "@/components/ui/card";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -739,7 +740,7 @@ function PlatformFeedbackList({
   if (error) {
     return (
       <Card className="p-4 text-[13px] text-ink-2">
-        <b className="text-ink">Could not load other workspaces.</b> {error.message}
+        <b className="text-ink">Could not load other workspaces.</b> {loadErrorBody(error)}
       </Card>
     );
   }

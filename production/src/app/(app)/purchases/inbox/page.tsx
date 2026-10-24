@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { rupee, formatDate } from "@/lib/utils";
 import {
   useInboundPurchases, useImportPurchase, useIgnorePurchase, type InboundPurchase,
@@ -52,7 +53,7 @@ export default function PurchaseInboxPage() {
       </div>
 
       {error && (
-        <EmptyState icon="alert" title="Could not load" body={error.message}
+        <EmptyState icon="alert" title="Could not load" body={loadErrorBody(error)}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>} />
       )}
 

@@ -12,6 +12,7 @@
 import * as React from "react";
 
 import { Card } from "@/components/ui/card";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
@@ -158,7 +159,7 @@ export default function TrackingLinksPage() {
         {links.isLoading ? (
           <div className="p-4 space-y-2">{[1, 2].map((i) => <Skeleton key={i} className="h-10" />)}</div>
         ) : links.error ? (
-          <p className="p-4 text-sm text-red-600">{(links.error as Error).message}</p>
+          <LoadErrorInline what="Saved links" error={links.error} onRetry={() => void links.refetch()} />
         ) : (links.data ?? []).length === 0 ? (
           <EmptyState icon="globe" title="No links yet" body="Create your first link above — for example, for your Facebook ad." />
         ) : (

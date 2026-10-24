@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { AddExpenseDialog } from "@/components/features/accounting/add-expense-dialog";
 import { rupee, cn, formatDate } from "@/lib/utils";
 import { AD_CHANNELS, isMarketingCategory } from "@/lib/marketing/ad-channels";
@@ -105,7 +106,7 @@ export default function MarketingSpendPage() {
         </div>
       ) : error ? (
         <Card className="py-2">
-          <EmptyState icon="alert" title="Could not load spend" body={(error as Error).message} />
+          <EmptyState icon="alert" title="Could not load spend" body={loadErrorBody(error)} />
         </Card>
       ) : (
         <>

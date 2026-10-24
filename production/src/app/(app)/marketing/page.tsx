@@ -15,7 +15,7 @@ import Link from "next/link";
 import type { Route } from "next";
 
 import { Card } from "@/components/ui/card";
-import { LoadErrorBanner } from "@/components/shared/load-error";
+import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -66,7 +66,7 @@ export default function MarketingHubPage() {
       <NavDirectory parentId="marketing-hub" />
 
       {tools.error ? (
-        <Card className="p-4 text-sm text-red-600">{(tools.error as Error).message}</Card>
+        <LoadError what="Marketing tools" error={tools.error} onRetry={() => void tools.refetch()} />
       ) : loading ? (
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-24" />)}</div>
       ) : (

@@ -34,6 +34,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { cn, formatDate, rupee } from "@/lib/utils";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { useUrlState } from "@/lib/hooks/use-url-state";
@@ -538,7 +539,7 @@ export default function EnquiriesPage() {
                 <EmptyState
                   icon="alert"
                   title="Could not load your enquiries"
-                  body={(error as Error).message}
+                  body={loadErrorBody(error)}
                   action={<Button size="sm" onClick={() => refetch()}>Try again</Button>}
                 />
               </div>

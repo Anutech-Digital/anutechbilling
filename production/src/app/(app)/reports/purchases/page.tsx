@@ -18,6 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Button } from "@/components/ui/button";
 import { StatStrip } from "@/components/shared/stat-strip";
 import { Icon } from "@/components/ui/icon";
@@ -238,7 +239,7 @@ export default function PurchasesReportPage() {
       )}
 
       {error && (
-        <EmptyState icon="alert" title="Could not load report" body={error.message}
+        <EmptyState icon="alert" title="Could not load report" body={loadErrorBody(error)}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>} />
       )}
 

@@ -14,6 +14,7 @@ import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -147,7 +148,7 @@ export function ScheduledJobs() {
     return (
       <Card className="mb-6 p-4">
         <p className="text-sm text-rose">
-          Could not read the scheduled jobs — {(q.error as Error).message}. Nothing has changed; reload to try again.
+          Could not read the scheduled jobs. {loadErrorBody(q.error)} Nothing has changed.
         </p>
       </Card>
     );

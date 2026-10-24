@@ -21,6 +21,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Button } from "@/components/ui/button";
 import { StatStrip } from "@/components/shared/stat-strip";
 import { rupee } from "@/lib/utils";
@@ -113,7 +114,7 @@ export default function ProfitByProductPage() {
       )}
 
       {error && (
-        <EmptyState icon="alert" title="Could not load report" body={error.message}
+        <EmptyState icon="alert" title="Could not load report" body={loadErrorBody(error)}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>} />
       )}
 
