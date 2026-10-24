@@ -232,6 +232,7 @@ MIGS=(
   "r1860sellmode|20261024204624_r1860_tenant_sell_mode.sql|resellersos_migration|exists(select 1 from pg_constraint where conname='tenants_sell_mode_check')"
   "r1850companydirectors|20261024205900_r1850_company_directors.sql|resellersos_migration|to_regclass('public.company_directors') is not null and to_regprocedure('public.save_company_director(uuid,text,text,text,text,date,date,date,integer,text,text)') is not null and to_regprocedure('public.delete_company_director(uuid)') is not null"
   "r1851sharecapital|20261024205930_r1851_share_capital.sql|resellersos_migration|to_regclass('public.company_share_capital') is not null and to_regclass('public.company_shareholders') is not null and to_regprocedure('public.save_share_capital(bigint,integer)') is not null and to_regprocedure('public.save_shareholder(uuid,text,text,bigint,date)') is not null and to_regprocedure('public.delete_shareholder(uuid)') is not null"
+  "r1867autovendorpayment|20261024211000_r1867_auto_vendor_payment.sql|resellersos_migration|to_regprocedure('public.bank_debit_vendor_guess(uuid)') is not null and to_regprocedure('public.bank_debit_vendor_auto_match(uuid)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.auto_reconcile_bank_account(uuid,uuid,integer)') and prosrc like '%R-1867%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
