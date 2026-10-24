@@ -32,6 +32,7 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/accounting/sale-documents.guard.test.ts", // R-1739: every invoices reader says if it counts sales
   "src/lib/queries/query-error-ratchet.test.ts", // R-1806/R-1807: a failed read shows an error, not ₹0 / empty
   "src/lib/errors/raw-error-message-ratchet.test.ts", // R-1656/R-1813: no raw Postgres/RPC text on screen
+  "src/lib/dates/server-dates-ist.test.ts", // R-1660: no server-side date formatted without timeZone (emails in UTC)
   // ── migration scans ──
   "tests/rls-initplan-migrations.test.ts",
   "src/lib/security/definer-hardening-holds.test.ts",
