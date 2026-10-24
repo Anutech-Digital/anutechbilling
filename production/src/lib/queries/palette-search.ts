@@ -14,6 +14,7 @@
  */
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import { searchableColumns } from "@/lib/contacts/search-columns";
 
 type Client = ReturnType<typeof createClient>;
 
@@ -102,11 +103,14 @@ function quotedIds(ids: readonly (string | null | undefined)[]): string[] {
 
 // ── The searches (pure over the client, so the request shape is unit-tested) ─────────
 
-export async function searchPaletteCustomers(db: Client, query: string, tenantId?: string | null): Promise<PaletteCustomer[]> {
+/** R-1821: `hideContacts` — a role that sees masked contacts does not search phone / email (the gateway refuses it). */
+export async function searchPaletteCustomers(
+  db: Client, query: string, tenantId?: string | null, hideContacts = false,
+): Promise<PaletteCustomer[]> {
   const terms = paletteTerms(query);
   if (terms.length === 0) return [];
   const { data, error } = await applyTerms(
-    db.from("customers").select(PALETTE_CUSTOMER_COLUMNS), PALETTE_CUSTOMER_SEARCH, terms, tenantId,
+    db.from("customers").select(PALETTE_CUSTOMER_COLUMNS), searchableColumns(PALETTE_CUSTOMER_SEARCH, hideContacts), terms, tenantId,
   ).order("name", { ascending: true }).limit(PALETTE_LIMIT);
   if (error) throw error;
   return (data ?? []) as unknown as PaletteCustomer[];
@@ -144,11 +148,14 @@ export async function searchPaletteSubscriptions(db: Client, query: string, tena
 
 /** People from the contact book (imported / added). Lead and company people are found
  *  through the Leads and Companies groups, which search their contact fields. */
-export async function searchPaletteContacts(db: Client, query: string, tenantId?: string | null): Promise<PaletteContact[]> {
+export async function searchPaletteContacts(
+  db: Client, query: string, tenantId?: string | null, hideContacts = false,
+): Promise<PaletteContact[]> {
   const terms = paletteTerms(query);
   if (terms.length === 0) return [];
   const { data, error } = await applyTerms(
-    db.from("contacts").select(PALETTE_CONTACT_COLUMNS).neq("source", "enquiry"), PALETTE_CONTACT_SEARCH, terms, tenantId,
+    db.from("contacts").select(PALETTE_CONTACT_COLUMNS).neq("source", "enquiry"),
+    searchableColumns(PALETTE_CONTACT_SEARCH, hideContacts), terms, tenantId,
   ).order("full_name", { ascending: true }).limit(PALETTE_LIMIT);
   if (error) throw error;
   return (data ?? []) as unknown as PaletteContact[];
@@ -259,14 +266,15 @@ export interface PaletteGroupsOn {
  * while nothing is typed, and for a group this role may not open. `fetching` is true while
  * any group is still answering — the palette shows "Searching…" then, never "No results".
  */
-export function usePaletteSearch(query: string, open: boolean, on: PaletteGroupsOn, tenantId?: string | null) {
+/** R-1821: `hideContacts` (contactSearchHidden(role)) — Companies and Contacts skip phone / email. */
+export function usePaletteSearch(query: string, open: boolean, on: PaletteGroupsOn, tenantId?: string | null, hideContacts = false) {
   const q = query.trim();
   const live = open && q.length > 0;
   const base = { staleTime: 30_000, placeholderData: keepPreviousData } as const;
   const tid = tenantId ?? null;
 
-  const customers = useQuery({ ...base, queryKey: ["palette", "customers", tid, q], enabled: live && (on.companies || on.payments),
-    queryFn: () => searchPaletteCustomers(createClient(), q, tid) });
+  const customers = useQuery({ ...base, queryKey: ["palette", "customers", tid, q, hideContacts], enabled: live && (on.companies || on.payments),
+    queryFn: () => searchPaletteCustomers(createClient(), q, tid, hideContacts) });
   const quotes = useQuery({ ...base, queryKey: ["palette", "quotes", tid, q], enabled: live && on.quotes,
     queryFn: () => searchPaletteQuotes(createClient(), q, tid) });
   /* Also for payments (R-1639): an invoice number typed finds that invoice's payments. */
@@ -274,8 +282,8 @@ export function usePaletteSearch(query: string, open: boolean, on: PaletteGroups
     queryFn: () => searchPaletteInvoices(createClient(), q, tid) });
   const subscriptions = useQuery({ ...base, queryKey: ["palette", "subscriptions", tid, q], enabled: live && on.subscriptions,
     queryFn: () => searchPaletteSubscriptions(createClient(), q, tid) });
-  const contacts = useQuery({ ...base, queryKey: ["palette", "contacts", tid, q], enabled: live && on.contacts,
-    queryFn: () => searchPaletteContacts(createClient(), q, tid) });
+  const contacts = useQuery({ ...base, queryKey: ["palette", "contacts", tid, q, hideContacts], enabled: live && on.contacts,
+    queryFn: () => searchPaletteContacts(createClient(), q, tid, hideContacts) });
   const customerIds = live && !customers.isPlaceholderData ? (customers.data ?? []).map((c) => c.id) : [];
   const invoiceHits = live && !invoices.isPlaceholderData ? (invoices.data ?? []) : [];
   const invoiceKey = invoiceHits.map((i) => i.id).join(",");

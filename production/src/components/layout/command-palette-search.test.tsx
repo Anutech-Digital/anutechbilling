@@ -56,9 +56,10 @@ describe("CommandPalette (R-1121)", () => {
     vi.useFakeTimers();
     render(<CommandPalette open onOpenChange={() => {}} />);
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "ac" } });
-    expect(search).not.toHaveBeenCalledWith("ac", true, expect.anything(), "t1");
+    expect(search).not.toHaveBeenCalledWith("ac", true, expect.anything(), "t1", expect.any(Boolean));
     act(() => { vi.advanceTimersByTime(250); });
-    expect(search).toHaveBeenLastCalledWith("ac", true, expect.anything(), "t1");
+    /* 5th: R-1821 hideContacts (a role that sees masked contacts skips phone / email). */
+    expect(search).toHaveBeenLastCalledWith("ac", true, expect.anything(), "t1", expect.any(Boolean));
   });
 
   it("while the server is answering it says Searching…, never No results", () => {

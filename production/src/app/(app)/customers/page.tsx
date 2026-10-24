@@ -63,6 +63,7 @@ import { Icon } from "@/components/ui/icon";
 import { rupee, cn, cleanDisplayName, phoneSuffixOf } from "@/lib/utils";
 import { missingInvoiceState } from "@/lib/gst/gstin-state";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { contactSearchHidden } from "@/lib/contacts/search-columns";
 import { canWriteSales } from "@/lib/nav";
 import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
@@ -285,7 +286,8 @@ export default function CustomersPage() {
   );
   const mode = customerListMode({ view, sortKey: sort.key, sortDir: sort.dir, contactIds });
   const paged = useCustomersPaged(
-    { search: serverSearch, archived: showArchived, contactIds },
+    /* R-1821: a role that sees masked contacts searches without phone / email. */
+    { search: serverSearch, archived: showArchived, contactIds, hideContacts: contactSearchHidden(myRole) },
     { enabled: mode === "server" },
   );
   const full = useCustomers({ enabled: mode === "full" });

@@ -34,6 +34,7 @@ import { rupee, cn } from "@/lib/utils";
 // the server for a few matching rows (palette-search.ts). Leads have their own server search.
 import { useLeadSearch } from "@/lib/queries/leads";
 import { usePaletteSearch } from "@/lib/queries/palette-search";
+import { contactSearchHidden } from "@/lib/contacts/search-columns";
 import { formatDate } from "@/lib/utils";
 import {
   customerKeywords, companyPaletteMeta, leadKeywords, quoteKeywords,
@@ -179,6 +180,8 @@ export function CommandPalette({
       subscriptions: allowed.subscriptions || allowed.seats, payments: allowed.payments, contacts: contactsOn,
     },
     me?.tenantId,
+    /* R-1821: a role that sees masked contacts does not search by phone / email. */
+    contactSearchHidden(role),
   );
   const { customers, quotes, invoices, subscriptions, payments } = found;
 

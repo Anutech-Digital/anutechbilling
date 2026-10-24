@@ -38,6 +38,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { fetchAllRowsIn, type PageQuery } from "@/lib/ops/fetch-all";
 import { ORDERS_PAGE, fetchOrderLeadsPage, fetchMonthOrderLeads } from "./order-query";
+import { contactSearchHidden } from "@/lib/contacts/search-columns";
 import Link from "next/link";
 import { invoiceHref } from "./invoice-links";
 import { orderPaymentView, paymentByLead, type OrderPayment, type QuotePaymentRow } from "./order-payment";
@@ -642,8 +643,10 @@ export default function OnlineOrdersPage() {
   const [loadError, setLoadError] = React.useState(false);
   const { data: me, isLoading: meLoading } = useCurrentUser();
   const tenantId = me?.tenantId ?? null;
+  /* R-1821: a role that sees masked contacts searches without the email column. */
+  const hideContacts = contactSearchHidden(me?.role);
 
-  /* R-1637: the search runs in the database (order-query.ts) a moment after the last key,
+  /* R-1637:the search runs in the database (order-query.ts) a moment after the last key,
      and the list grows ORDERS_PAGE at a time. "Load more" belongs to the search it was
      pressed on — a new search starts again at one page. */
   const [serverSearch, setServerSearch] = React.useState(() => search.trim());
@@ -662,7 +665,7 @@ export default function OnlineOrdersPage() {
     const supabase = createClient();
     let leads: LeadRow[];
     try {
-      const page = await fetchOrderLeadsPage<LeadRow>(supabase, { tenantId, search: serverSearch, limit });
+      const page = await fetchOrderLeadsPage<LeadRow>(supabase, { tenantId, search: serverSearch, limit, hideContacts });
       leads = page.rows;
       if (signal?.cancelled) return;
       setTotal(page.total);
@@ -681,7 +684,7 @@ export default function OnlineOrdersPage() {
     setOrders(next);
     setLoading(false);
     setLoadingMore(false);
-  }, [tenantId, serverSearch, limit]);
+  }, [tenantId, serverSearch, limit, hideContacts]);
 
   React.useEffect(() => {
     if (meLoading) return;

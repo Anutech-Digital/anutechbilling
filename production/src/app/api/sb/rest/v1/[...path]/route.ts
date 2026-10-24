@@ -14,7 +14,9 @@ import {
   rowsFromContentRange, selectHasEmbeds,
 } from "@/server/postgrest/gateway-limits";
 import { BodyTooLargeError, bodyTooLargeJson, readBodyCapped } from "@/server/postgrest/body-limit";
-import { maskContactsInBody, mustMaskContacts, stripMaskedContactWrites, touchesContactTables } from "@/server/postgrest/contact-mask";
+import {
+  maskContactsInBody, maskedQueryRefusal, mustMaskContacts, stripMaskedContactWrites, touchesContactTables,
+} from "@/server/postgrest/contact-mask";
 import { getCatalog } from "@/server/postgrest/catalog";
 
 export const dynamic = "force-dynamic";
@@ -58,6 +60,17 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
         }
       }
     }
+    /* R-1821: a masked role may not ASK about a hidden value either — a filter, order or cast on
+       a phone / email column (contact_phone=like.*987*, order=contact_phone) told it the number
+       digit by digit. Refused with a plain message; owner / manager never get here. */
+    const cat = maskContacts ? await getCatalog().catch(() => undefined) : undefined;
+    if (maskContacts) {
+      const why = maskedQueryRefusal(joined, req.nextUrl.searchParams, body, cat);
+      if (why) {
+        return NextResponse.json({ code: "PGRST_MASKED", details: null, hint: null, message: why },
+          { status: 400, headers: { "Cache-Control": "no-store" } });
+      }
+    }
     /* R-1009: a masked value sent back (an edit form opened with "••••3210") is dropped, so it
        can never overwrite the real number. */
     if (maskContacts && body) body = stripMaskedContactWrites(joined, body);
@@ -69,7 +82,6 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       body,
     }, identity);
     if (maskContacts && req.method !== "HEAD" && res.body) {
-      const cat = await getCatalog().catch(() => undefined);
       if (touchesContactTables(joined, req.nextUrl.searchParams, cat)) {
         const text = await res.text();
         const headers = new Headers(res.headers);

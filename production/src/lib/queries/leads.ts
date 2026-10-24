@@ -20,6 +20,7 @@ import type { Json, Lead, Database } from "@/lib/supabase/database.types";
 import { flattenPages } from "@/lib/queries/keyset";
 import { fetchAllRows, fetchAllRowsIn, idsKey } from "@/lib/ops/fetch-all";
 import { istToday } from "@/lib/dates/ist";
+import { isMaskedContact } from "@/lib/auth/roles";
 import {
   LEAD_LIST_COLUMNS, toLeadCountsFilters, toListLeadsFilters,
   type LeadCounts, type LeadListCursor, type LeadListFilters, type LeadListPage, type LeadListRow,
@@ -930,8 +931,10 @@ export function useLeadsForPerson(args: {
   phones?: readonly string[];
 }) {
   const contactId = args.contactId ?? null;
-  const emails = (args.emails ?? []).map((e) => e.trim().toLowerCase()).filter(Boolean);
-  const phones = (args.phones ?? []).map((p) => p.trim()).filter(Boolean);
+  /* R-1821: a masked value ("ra•••@shop.in" — the role sees contacts masked) matches nothing,
+     and the gateway refuses a filter on a contact column from that role — so it is not asked. */
+  const emails = (args.emails ?? []).map((e) => e.trim().toLowerCase()).filter((e) => e && !isMaskedContact(e));
+  const phones = (args.phones ?? []).map((p) => p.trim()).filter((p) => p && !isMaskedContact(p));
 
   return useQuery({
     queryKey: ["leads-for-person", contactId, emails, phones],

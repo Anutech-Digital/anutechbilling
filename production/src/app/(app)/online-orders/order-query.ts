@@ -13,6 +13,7 @@
  */
 import { WEBSITE_ORDER_FILTER } from "@/lib/online-orders/sources";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { searchableColumns } from "@/lib/contacts/search-columns";
 import { istDayStartUtc, istMonth, monthBounds } from "@/lib/dates/ist";
 import type { createClient } from "@/lib/supabase/client";
 
@@ -33,11 +34,14 @@ const SEARCH_COLUMNS = ["company", "contact_email", "contact_name", "domain", "n
  * characters are dropped (same rule as the Ctrl+K search). An order number is shown as
  * "ORD-0042" for lead L-0042, so a typed "ORD-" prefix is dropped for the id match.
  */
-export function orderSearchOr(search: string): string | null {
+export function orderSearchOr(search: string, hideContacts = false): string | null {
   const s = search.toLowerCase().replace(/[%*"\\]/g, "").trim();
   if (!s) return null;
   const id = s.replace(/^ord-?/, "") || s;
-  return [...SEARCH_COLUMNS.map((c) => `${c}.ilike."%${s}%"`), `id.ilike."%${id}%"`].join(",");
+  /* R-1821: a role that sees masked contacts does not search the email (the gateway refuses
+     a filter on it — searching the real value would reveal it). */
+  const cols = searchableColumns(SEARCH_COLUMNS, hideContacts);
+  return [...cols.map((c) => `${c}.ilike."%${s}%"`), `id.ilike."%${id}%"`].join(",");
 }
 
 /** The IST calendar month `now` falls in, as UTC instants: created_at >= from and < to. */
@@ -49,12 +53,12 @@ export function monthCreatedRange(now: Date = new Date()): { from: string; to: s
 /** One page of the list: the newest `limit` website orders matching the search, and how many match in all. */
 export async function fetchOrderLeadsPage<T>(
   db: Client,
-  opts: { tenantId: string | null | undefined; search: string; limit: number },
+  opts: { tenantId: string | null | undefined; search: string; limit: number; hideContacts?: boolean },
 ): Promise<{ rows: T[]; total: number | null }> {
   let q = db.from("leads").select(LEAD_ORDER_COLUMNS, { count: "exact" });
   if (opts.tenantId) q = q.eq("tenant_id", opts.tenantId);
   q = q.or(WEBSITE_ORDER_FILTER);
-  const search = orderSearchOr(opts.search);
+  const search = orderSearchOr(opts.search, opts.hideContacts);
   if (search) q = q.or(search);
   const { data, error, count } = await q
     .order("created_at", { ascending: false })
