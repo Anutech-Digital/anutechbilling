@@ -61,6 +61,7 @@ import { AddVendorBillDialog, BillReadWarnings, type VendorBillPrefill } from "@
 import { expenseCategoryError } from "@/lib/accounting/expense-category";
 import { istToday } from "@/lib/dates/ist";
 import { useEmployeeAdvances, EMPLOYEE_ADVANCE_METHOD } from "@/lib/queries/advances";
+import { OwnerPayCautionBox } from "@/components/features/accounting/owner-pay-caution";
 import { lastUsedCategory, moreNeeded } from "@/app/(app)/accounting/expenses/expense-form";
 import { buildExpenseNote, lineCategoryFromBill, paidFromBill, rcmSuggested } from "@/app/(app)/accounting/expenses/bill-autofill";
 
@@ -1361,6 +1362,16 @@ export function AddExpenseDialog({
                 </p>
               )}
             </FormField>
+          )}
+
+          {/* R-1846: a proprietor's / partner's own "salary" is drawings, not an expense — caution +
+              one click to record it as drawings instead. Never blocks. New expenses only. */}
+          {!isEdit && (
+            <OwnerPayCautionBox
+              category={watch("category")} payee={vendorNameWatch} text={`${noteText} ${watch("notes") ?? ""}`.trim()}
+              amount={Number(watch("amount")) || 0} method={watch("payment_method")}
+              bankAccountId={bankAccountId} pettyCashAccountId={pettyCashAccountId}
+              date={watch("expense_date") || today} today={today} onRecorded={onClose} />
           )}
 
           {!isEdit && (

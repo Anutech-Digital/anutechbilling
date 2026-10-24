@@ -58,6 +58,10 @@ import {
 } from "@/lib/queries/payroll";
 import { useOwnerSetConsent, useMarkAttendanceReviewed } from "@/lib/queries/my-attendance";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
+import { useComplianceProfile } from "@/lib/compliance/profile";
+import { useFirmPartners } from "@/lib/queries/partners";
+import { showsPartnersRegister } from "@/lib/accounting/partners";
+import { employeeOwnerCaution } from "@/lib/accounting/owner-salary-guard";
 import { buildCorrection, isoToIstHhmm } from "@/lib/attendance/ist-time";
 import { leaveDaysInMonth, presentByDate, presentSummary, suggestedLopDays } from "@/lib/attendance/lop";
 import { DEFAULT_SHIFT, dayStatus, formatGap } from "@/lib/attendance/shift";
@@ -423,6 +427,11 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [email, setEmail] = React.useState(employee?.email ?? "");
   const [phone, setPhone] = React.useState(employee?.phone ?? "");
   const [designation, setDesignation] = React.useState(employee?.designation ?? "");
+  /* R-1846: the proprietor / a partner added as staff — their pay is drawings, not salary. Caution only. */
+  const router = useRouter();
+  const businessType = useComplianceProfile().data?.businessType ?? null;
+  const firmPartners = useFirmPartners(showsPartnersRegister(businessType));
+  const ownerCaution = employeeOwnerCaution({ businessType, name, designation, partners: firmPartners.data ?? [] });
   const [dob, setDob] = React.useState(employee?.date_of_birth ?? "");
   const [address, setAddress] = React.useState(employee?.address ?? "");
   const [ecName, setEcName] = React.useState(employee?.emergency_contact_name ?? "");
@@ -552,6 +561,15 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                 <Field htmlFor="payroll-designation" label="Designation">
                   <Input id="payroll-designation" value={designation} onChange={(e) => setDesignation(e.target.value)} placeholder="e.g. Sales Executive" />
                 </Field>
+                {ownerCaution && (
+                  <div role="status" data-testid="owner-pay-caution" className="sm:col-span-2 rounded-md border border-amber/50 bg-amber-soft px-3 py-2.5 text-xs text-ink-2 space-y-2">
+                    <p className="font-semibold text-amber-ink">{ownerCaution.title}</p>
+                    <p className="leading-relaxed">{ownerCaution.body}</p>
+                    <Button type="button" size="sm" onClick={() => { onClose(); router.push("/accounting/balance-sheet#drawings" as never); }}>
+                      Record drawings on the Balance Sheet
+                    </Button>
+                  </div>
+                )}
                 <Field htmlFor="payroll-date-of-birth" label="Date of birth">
                   <Input id="payroll-date-of-birth" type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
                 </Field>
