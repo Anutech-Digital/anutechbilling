@@ -66,6 +66,14 @@ drop policy if exists tenant_ai_limits_select on public.tenant_ai_limits;
 create policy tenant_ai_limits_select on public.tenant_ai_limits
   for select to authenticated using (tenant_id = public.current_tenant_id());
 
+-- Cloud SQL has no BYPASSRLS: the server (service_role) needs its own policy (R-450).
+drop policy if exists zzz_service_role_all on public.ai_usage_monthly;
+create policy zzz_service_role_all on public.ai_usage_monthly
+  for all to service_role using (true) with check (true);
+drop policy if exists zzz_service_role_all on public.tenant_ai_limits;
+create policy zzz_service_role_all on public.tenant_ai_limits
+  for all to service_role using (true) with check (true);
+
 revoke all on public.ai_usage_monthly from public, anon, authenticated;
 revoke all on public.tenant_ai_limits from public, anon, authenticated;
 grant select on public.ai_usage_monthly to authenticated;
