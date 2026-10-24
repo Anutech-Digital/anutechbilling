@@ -45,6 +45,9 @@ import { createClient } from "@/lib/supabase/client";
 import type { Item, PartnerCatalogRow, TenantWithParent } from "@/lib/supabase/database.types";
 import { newestFirst } from "@/lib/sort/newest-first";
 import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
+import { DEFAULT_SELL_MODE } from "@/lib/sell-mode";
+import { useSellMode } from "@/lib/queries/sell-mode";
+import { defaultCatalogType } from "@/components/features/dashboard/sell-mode-dashboard";
 
 const VENDOR_TABS: TabBarItem[] = [
   { id: "all",       label: "All" },
@@ -117,7 +120,9 @@ export default function ItemsPage() {
      catalog — one page, three addresses; the menu row "Products" opens /items (R-384) and the tab keeps the URL in step. */
   const pathname = usePathname();
   const router = useRouter();
-  const catalogType: "subscription" | "one_time" = pathname?.startsWith("/items/products") ? "one_time" : "subscription";
+  /* R-1862: bare /items opens the tab for "What do you sell?" — One-time for a one-time business. */
+  const { data: sell } = useSellMode();
+  const catalogType = defaultCatalogType(pathname, sell?.mode ?? DEFAULT_SELL_MODE);
   const setCatalogType = (v: "subscription" | "one_time") => router.replace(v === "one_time" ? "/items/products" : "/items/subscriptions");
   const [vendor, setVendor] = React.useState("all");
   const [kind,   setKind]   = React.useState("all");
