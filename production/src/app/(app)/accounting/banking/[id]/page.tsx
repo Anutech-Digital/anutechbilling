@@ -349,7 +349,12 @@ export default function BankAccountDetailPage() {
               onClick={() => autoReconcile.mutate(account.id)}
               title="Auto-match every unmatched line to its expense / salary / payment where the match is unambiguous"
             >
-              {autoReconcile.isPending ? "Matching…" : `Auto-reconcile (${counts.unmatched})`}
+              {/* R-1657: runs on the server in chunks of 500 — show how far a big account has got. */}
+              {autoReconcile.isPending
+                ? (autoReconcile.progress?.checked
+                    ? `Matching… ${autoReconcile.progress.checked} of ${counts.unmatched} checked`
+                    : "Matching…")
+                : `Auto-reconcile (${counts.unmatched})`}
             </Button>
           </div>
         )}

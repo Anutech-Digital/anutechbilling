@@ -14493,6 +14493,10 @@ export type Database = {
       approve_payment_run: { Args: { p_run_id: string }; Returns: undefined }
       audit_service_actor: { Args: never; Returns: string }
       auto_backup_if_stale: { Args: never; Returns: Json }
+      auto_reconcile_bank_account: {
+        Args: { p_account_id: string; p_after?: string; p_limit?: number }
+        Returns: Json
+      }
       backup_all_tenants: { Args: { p_label?: string }; Returns: Json }
       backup_tenant: {
         Args: { p_label?: string; p_tenant: string }

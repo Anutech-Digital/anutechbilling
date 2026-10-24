@@ -14,6 +14,7 @@
  */
 "use client";
 
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { createClient } from "@/lib/supabase/client";
@@ -882,95 +883,96 @@ export function useReconcileSalaryAdvanceSplit() {
   });
 }
 
-/** Reconcile input shape — shared by the single-match hook and auto-reconcile. */
-type ReconcileInput = {
-  transactionId: string;
-  matchedToType: "payment" | "project" | "expense" | "vendor_bill" | "transfer" | "salary" | "split" | "manual" | null;
-  matchedToId:   string | null;
-  confidence?:   "exact" | "high" | "low" | "manual";
-};
+/** Lines per auto_reconcile_bank_account call. An account up to this size is ONE request. */
+export const AUTO_RECONCILE_CHUNK = 500;
 
-/** Core reconcile write — one call to the `reconcile_bank_txn` RPC, which in a
- *  single transaction sets the match on the bank line AND keeps the reverse
- *  links (project_payments.bank_txn_id, expenses.reconciled_txn_id) + the
- *  statutory / balance-sheet reversals in sync. This is genuinely the single
- *  source of truth: both the manual dialog (useReconcileTransaction) and the
- *  batch auto-reconcile below call THIS, so they can never drift apart — and
- *  because it is one transaction, a failure part-way can no longer leave a
- *  matched line with an unset reverse link (the old chained-writes hazard,
- *  CLAUDE.md §17b). matched_by is auth.uid() set server-side; salary paid_amount
- *  is handled by a DB trigger on the update, so no extra client work is needed. */
-async function applyReconcile(
-  supabase: ReturnType<typeof createClient>,
-  input: ReconcileInput,
-): Promise<BankTransactionRow> {
-  const { data, error } = await supabase.rpc("reconcile_bank_txn", {
-    p_txn_id:           input.transactionId,
-    p_matched_to_type:  input.matchedToType,
-    p_matched_to_id:    input.matchedToId,
-    p_match_confidence: input.confidence ?? "manual",
-  });
-  if (error) throw error;
-  return data as BankTransactionRow;
+/** What one auto-reconcile run (or one chunk of it) did. `review` = the four reasons added up. */
+export type AutoReconcileSummary = {
+  checked: number;
+  reconciled: number;
+  review: number;
+  no_match: number;
+  low_confidence: number;
+  ambiguous: number;
+  failed: number;
+};
+type AutoReconcileChunk = AutoReconcileSummary & { last_id: string | null; done: boolean };
+
+const SUMMARY_KEYS = ["checked", "reconciled", "review", "no_match", "low_confidence", "ambiguous", "failed"] as const;
+
+/** The toast after a run: matched N, left M — and why each was left, so the owner knows what to open. */
+export function autoReconcileSummary(s: AutoReconcileSummary): { title: string; description?: string } {
+  if (s.reconciled === 0 && s.review === 0) return { title: "All already reconciled" };
+  const title = s.reconciled === 0
+    ? `No sure match found · ${s.review} left for you to check`
+    : s.review === 0
+      ? `${s.reconciled} matched`
+      : `${s.reconciled} matched · ${s.review} left for you to check`;
+  if (s.review === 0) return { title };
+  const why = [
+    s.ambiguous > 0 && `${s.ambiguous} with two equal matches`,
+    s.no_match > 0 && `${s.no_match} with no match`,
+    s.low_confidence > 0 && `${s.low_confidence} with only a weak match`,
+    s.failed > 0 && `${s.failed} could not be saved`,
+  ].filter(Boolean).join(" · ");
+  return { title, description: `Left: ${why}. Open Unmatched to finish them.` };
 }
 
 /**
- * Auto-reconcile — for every UNMATCHED line in the account, ask the server for
- * match suggestions and auto-apply ONLY an UNAMBIGUOUS 'exact' one (a single
- * exact candidate — if two records share the amount, it's left for manual review
- * so we never guess wrong on money). Reuses applyReconcile, so the links + salary
- * trigger fire exactly as in the manual flow. Returns how many were reconciled vs
- * left for review.
+ * Auto-reconcile — R-1657 (24 Oct 2026): runs on the SERVER. Was a browser loop that made two
+ * calls per unmatched line (suggest + reconcile); a thousand lines were two thousand round
+ * trips and closing the tab left the job half done. Now auto_reconcile_bank_account (migration
+ * 20261024001702) does the loop, AUTO_RECONCILE_CHUNK lines per call: an account up to that size
+ * is one request, a bigger one continues after the last line of each chunk (`progress` shows
+ * how far). The match rule is unchanged and lives only in SQL now: apply the top suggestion
+ * only when it is 'exact'/'high' and no second one shares its confidence, through
+ * reconcile_bank_txn (the same atomic write as the manual dialog, CLAUDE.md §17b). Stopping
+ * part-way is safe — earlier chunks stay matched, and a re-run reads only unmatched lines.
  */
 export function useAutoReconcile() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (accountId: string): Promise<{ reconciled: number; review: number }> => {
+  const [progress, setProgress] = useState<{ checked: number } | null>(null);
+  const mutation = useMutation({
+    mutationFn: async (accountId: string): Promise<AutoReconcileSummary> => {
       const supabase = createClient();
-      /* R-1509: every unmatched line, not the first 1000 — read in full before any
-         reconcile, so the pages do not shift under the writes. */
-      const txns = await fetchAllRows<{ id: string }>((from, to) => supabase
-        .from("bank_transactions")
-        .select("id")
-        .eq("bank_account_id", accountId)
-        .is("matched_to_id", null)
-        .order("id", { ascending: true })
-        .range(from, to));
-
-      let reconciled = 0, review = 0;
-      for (const t of txns) {
-        const { data: sugg } = await supabase.rpc("suggest_bank_transaction_matches", { p_bank_txn_id: t.id });
-        const list = (sugg ?? []) as MatchSuggestion[];
-        const top = list[0];
-        // Auto-apply only a CONFIDENT ('exact' or 'high') and UNAMBIGUOUS match —
-        // i.e. no second candidate sharing the top confidence. Two records with
-        // the same score (e.g. two months' salary of equal amount) are left for
-        // manual review so we never guess wrong on money. Everything applied is
-        // reversible via Un-reconcile.
-        const conf = top?.match_confidence;
-        const confident = conf === "exact" || conf === "high";
-        const unambiguous = list.length === 1 || list[1]?.match_confidence !== conf;
-        if (top && confident && unambiguous) {
-          try {
-            await applyReconcile(supabase, { transactionId: t.id, matchedToType: top.match_type, matchedToId: top.match_id, confidence: "high" });
-            reconciled++;
-          } catch { review++; }
-        } else {
-          review++;
+      const total: AutoReconcileSummary = { checked: 0, reconciled: 0, review: 0, no_match: 0, low_confidence: 0, ambiguous: 0, failed: 0 };
+      let after: string | null = null;
+      setProgress({ checked: 0 });
+      try {
+        for (;;) {
+          const { data, error } = await supabase.rpc("auto_reconcile_bank_account", {
+            p_account_id: accountId,
+            p_limit: AUTO_RECONCILE_CHUNK,
+            ...(after ? { p_after: after } : {}), // none = from the first line
+          });
+          if (error) throw error;
+          const c = data as unknown as AutoReconcileChunk;
+          for (const k of SUMMARY_KEYS) total[k] += Number(c[k] ?? 0);
+          setProgress({ checked: total.checked });
+          if (c.done || !c.last_id) break;
+          after = c.last_id;
         }
+      } finally {
+        setProgress(null);
       }
-      return { reconciled, review };
+      return total;
     },
-    onSuccess: ({ reconciled, review }) => {
+    onSuccess: (s) => {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["salary-payments"] });
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
-      if (reconciled === 0) toast.info(review > 0 ? `No exact match found — ${review} for manual review` : "All already reconciled");
-      else toast.success(`${reconciled} auto-reconciled${review > 0 ? ` · ${review} for manual review` : ""}`);
+      const { title, description } = autoReconcileSummary(s);
+      if (s.reconciled === 0) toast.info(title, { description });
+      else toast.success(title, { description });
     },
-    onError: (err) => toastError(err),
+    onError: (err) => {
+      // Lines matched by earlier chunks stay matched — refresh the list so they show.
+      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+      toastError(err);
+    },
   });
+  return { ...mutation, progress };
 }
 
 export function useReconcileTransaction() {
@@ -984,8 +986,8 @@ export function useReconcileTransaction() {
     }) => {
       const supabase = createClient();
       // One atomic RPC does the bank-line match, both reverse links, and the
-      // balance-sheet / statutory reversals — the SAME source of truth as the
-      // batch path (applyReconcile). See reconcile_bank_txn (migration
+      // balance-sheet / statutory reversals — the SAME write the server-side
+      // auto-reconcile (auto_reconcile_bank_account, R-1657) uses. See reconcile_bank_txn (migration
       // 20260901160000) and CLAUDE.md §17b. matched_by is set server-side.
       const { data, error } = await supabase.rpc("reconcile_bank_txn", {
         p_txn_id:           input.transactionId,
