@@ -67,6 +67,7 @@ import { AddCustomerForm } from "@/components/features/customers/add-customer-fo
 import { ProjectPaymentSection } from "@/components/features/banking/project-payment-section";
 import { CreditPayForSection } from "@/components/features/banking/credit-pay-for-section";
 import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-section";
+import { EmiRepaymentSection } from "@/components/features/banking/emi-repayment-section";
 import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
 import { IncentiveFromBankSection } from "@/components/features/banking/incentive-from-bank-section";
 import { useComplianceProfile } from "@/lib/compliance/profile";
@@ -737,6 +738,12 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 onDone={() => onOpenChange(false)}
               />
             ))}
+
+            {/* R-1864: an EMI / loan repayment — matched to the loan's instalment and split into
+                principal (reduces the loan) + interest (P&L); opens itself when the line looks like one. */}
+            {!isCredit && !payForDone && (
+              <EmiRepaymentSection transaction={transaction} onDone={() => onOpenChange(false)} />
+            )}
 
             {/* R-1866: money to a vendor — "This payment is for:" its open bills (several, part,
                 net of TDS), a bill recorded on the spot, an advance, a bank charge. One transaction.
