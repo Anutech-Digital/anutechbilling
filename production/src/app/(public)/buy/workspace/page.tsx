@@ -29,6 +29,8 @@ import { BuyWorkspaceClient, type CatalogItem } from "./buy-workspace-client";
 import { parseBuyParams } from "@/lib/checkout/buy-link";
 import { isPublicPriceHidden } from "@/lib/catalog/public-price-policy";
 import { simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
+import { checkoutPaymentMode } from "@/lib/checkout/checkout-payment-mode";
+import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { PARTNER_LINE } from "@/site/lib/config";
 import { websiteTenantId } from "@/lib/website-tenant";
 
@@ -95,7 +97,7 @@ function publicBuyRow(row: CatalogItem): CatalogItem {
  * in simulation mode (lead → quote → record_payment pipeline + emails,
  * no Razorpay widget). Lets us ship the buy flow safely before KYC.
  */
-async function isRazorpayConfigured(): Promise<boolean> {
+async function isRazorpayConfigured(): Promise<{ configured: boolean; keyId: string }> {
   const BUY_PAGE_TENANT_ID = websiteTenantId();
   // Per-tenant first
   if (BUY_PAGE_TENANT_ID) try {
@@ -106,7 +108,10 @@ async function isRazorpayConfigured(): Promise<boolean> {
       .eq("tenant_id", BUY_PAGE_TENANT_ID)
       .abortSignal(AbortSignal.timeout(READ_TIMEOUT_MS))
       .maybeSingle();
-    if (data?.razorpay_key_id && data.razorpay_key_secret) return true;
+    /* R-1769: the key id decides live vs test (simulation), so read it unsealed — the same
+       way the order route does. */
+    const secrets = decryptTenantSecrets(data);
+    if (secrets?.razorpay_key_id && secrets.razorpay_key_secret) return { configured: true, keyId: secrets.razorpay_key_id };
   } catch { /* fall through to env */ }
 
   const keyId =
@@ -114,7 +119,7 @@ async function isRazorpayConfigured(): Promise<boolean> {
     process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID?.trim() ||
     "";
   const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim() || "";
-  return Boolean(keyId) && Boolean(keySecret);
+  return { configured: Boolean(keyId) && Boolean(keySecret), keyId };
 }
 
 export default async function BuyWorkspacePage(props: {
@@ -123,7 +128,7 @@ export default async function BuyWorkspacePage(props: {
 }) {
   const pick = parseBuyParams(await props.searchParams);
   // Both reads at once (R-027) — each is capped, so the page waits at most ~3 s, not the sum.
-  const [catalogItems, configured] = await Promise.all([fetchGoogleWorkspaceItems(), isRazorpayConfigured()]);
+  const [catalogItems, { configured, keyId }] = await Promise.all([fetchGoogleWorkspaceItems(), isRazorpayConfigured()]);
   // Live when Razorpay is fully configured. When it isn't:
   //  · non-prod (or ALLOW_SIMULATED_CHECKOUT=1) → "simulation": Buy now stays
   //    visible for Pardeep to walk the full pipeline, clearly TEST-MODE banded.
@@ -131,12 +136,11 @@ export default async function BuyWorkspacePage(props: {
   //    so a REAL customer never sees a "Simulate payment" button on a public
   //    storefront before Razorpay go-live. They get "Get a GST quote" instead.
   // R-079: never on a production deployment, whatever ALLOW_SIMULATED_CHECKOUT says — same gate as the route.
-  const allowSim = simulatedPaymentAllowed();
-  const paymentMode: "live" | "simulation" | "disabled" = configured
-    ? "live"
-    : allowSim
-      ? "simulation"
-      : "disabled";
+  // R-1769: the same rule as the cart checkout — a laptop simulates even with Razorpay TEST keys.
+  const paymentMode = checkoutPaymentMode({
+    razorpayConfigured: configured,
+    simulationAllowed: simulatedPaymentAllowed({ razorpayKeyId: keyId }),
+  });
   return (
     <BuyWorkspaceClient
       catalogItems={catalogItems}
