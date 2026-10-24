@@ -30,6 +30,7 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/quotes/discount-copies-ratchet.test.ts", // R-1133: no new hand-written quote discount
   "tests/ops/gen-api-doc.test.ts", // R-1665: docs/API.md regenerated when a route changes
   "src/lib/accounting/sale-documents.guard.test.ts", // R-1739: every invoices reader says if it counts sales
+  "src/lib/queries/query-error-ratchet.test.ts", // R-1806/R-1807: a failed read shows an error, not ₹0 / empty
   // ── migration scans ──
   "tests/rls-initplan-migrations.test.ts",
   "src/lib/security/definer-hardening-holds.test.ts",
