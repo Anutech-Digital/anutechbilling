@@ -50,7 +50,7 @@ import { COMPANY } from "@/site/lib/config";
 import { AfterYouPay } from "@/site/components/checkout/AfterYouPay";
 import { TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { Field, TermsCheckbox, TERMS_NUDGE_ID } from "./fields";
-import { usePaymentMode } from "./payment-mode";
+import { usePaymentMode, useRazorpayTestOffered } from "./payment-mode";
 import { payButtonLabel } from "@/lib/checkout/checkout-payment-mode";
 import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
@@ -98,6 +98,10 @@ export default function CheckoutPage() {
   /* R-1502: live (Razorpay), simulation (a laptop with no keys) or disabled (no keys on a
      deployment) — read on the server by layout.tsx. */
   const paymentMode = usePaymentMode();
+  /* R-1769: a laptop with Razorpay TEST keys still simulates by default; the real test
+     window is a second, smaller choice. Never offered on a deployment. */
+  const razorpayTest = useRazorpayTestOffered();
+  const [viaRazorpayTest, setViaRazorpayTest] = useState(false);
 
   const [step, setStep] = useState<"details" | "payment">("details");
   const [name, setName] = useState("");
@@ -341,7 +345,7 @@ export default function CheckoutPage() {
     quoteId?: string; totalRupees?: number;
   }
 
-  async function placeOrder() {
+  async function placeOrder(useRazorpayTest = viaRazorpayTest) {
     if (!agreed || paying) return;
     setPriceCheck(null);
     setPaying(true);
@@ -369,7 +373,7 @@ export default function CheckoutPage() {
             : undefined,
           /* R-1502: with no Razorpay keys on a laptop the server takes only a simulated
              payment — without this every hosting/domain order stopped at "not set up yet". */
-          simulate: paymentMode === "simulation",
+          simulate: paymentMode === "simulation" && !useRazorpayTest,
         }),
       });
       const json = (await res.json().catch(() => ({}))) as {
@@ -778,7 +782,7 @@ export default function CheckoutPage() {
               />
               {paymentMode === "simulation" && (
                 <div role="note" style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1E3A8A", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
-                  <strong>Test mode</strong> — Razorpay is not set up on this computer. No money is taken: the order,
+                  <strong>Test mode</strong> — this is a test computer, not the live site. No money is taken: the order,
                   the GST invoice and the setup request are recorded as a test, and you go to the order page.
                 </div>
               )}
@@ -802,10 +806,20 @@ export default function CheckoutPage() {
                   cursor: agreed && !paying ? "pointer" : "not-allowed",
                 }}
                 disabled={paying}
-                onClick={() => { if (!agreed) { setAgreeNudge(true); return; } void placeOrder(); }}
+                onClick={() => { if (!agreed) { setAgreeNudge(true); return; } setViaRazorpayTest(false); void placeOrder(false); }}
               >
                 {paying ? "Starting secure payment…" : payButtonLabel(paymentMode, rupee(t.payable))}
               </button>
+              {paymentMode === "simulation" && razorpayTest && (
+                <button
+                  type="button"
+                  disabled={paying}
+                  onClick={() => { if (!agreed) { setAgreeNudge(true); return; } setViaRazorpayTest(true); void placeOrder(true); }}
+                  style={{ background: "none", border: "none", color: "var(--primary)", fontSize: 14, cursor: paying ? "not-allowed" : "pointer", marginTop: 10, width: "100%" }}
+                >
+                  Open the Razorpay test window instead
+                </button>
+              )}
               </>
               )}
               <button

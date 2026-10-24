@@ -614,7 +614,9 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
     if (!razorpayConfigured && !isSimulation) {
       return NextResponse.json({ error: "Online payment isn't set up yet. Please use 'Get a quote'." }, { status: 503 });
     }
-    if (razorpayConfigured && isSimulation) {
+    /* R-1769: TEST keys on a laptop no longer block a simulated payment — simulationAllowed
+       (R-079) is still false on every deployment and with a live key, so those refuse here. */
+    if (razorpayConfigured && isSimulation && !simulationAllowed) {
       return NextResponse.json({ error: "Simulation is disabled in live mode." }, { status: 400 });
     }
     if (isSimulation && !simulationAllowed) {

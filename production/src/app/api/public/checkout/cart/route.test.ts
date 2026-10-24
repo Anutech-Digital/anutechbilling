@@ -490,6 +490,34 @@ describe("R-079 — place of supply on the lead, and the live-site guards", () =
     expect(rpc).not.toHaveBeenCalledWith("record_payment", expect.anything());
   });
 
+  /* R-1769: .env.local carries an rzp_test_ key pair. A laptop server that reads it must still
+     take a simulated payment (Pawan's walk stopped at Razorpay "Authentication failed"), and a
+     deployment or a LIVE key must still refuse one. */
+  it("R-1769: TEST Razorpay keys on a laptop — a simulated payment is still recorded", async () => {
+    Object.assign(process.env, { RAZORPAY_KEY_ID: "rzp_test_r1769", RAZORPAY_KEY_SECRET: "test-secret" });
+    const res = await POST(req({ address, lines: [domainLine] }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ success: true, simulated: true });
+    expect(rpc).toHaveBeenCalledWith("record_payment", expect.anything());
+  });
+
+  it("R-1769: TEST keys on a deployment (Cloud Run) — simulation refused, nothing saved", async () => {
+    Object.assign(process.env, { RAZORPAY_KEY_ID: "rzp_test_r1769", RAZORPAY_KEY_SECRET: "test-secret", K_SERVICE: "anutech-staging" });
+    const res = await POST(req({ address, lines: [domainLine] }));
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(lead()).toBeUndefined();
+    expect(quote()).toBeUndefined();
+    expect(rpc).not.toHaveBeenCalledWith("record_payment", expect.anything());
+  });
+
+  it("R-1769: a LIVE key on a laptop — simulation refused, nothing saved", async () => {
+    Object.assign(process.env, { RAZORPAY_KEY_ID: "rzp_live_r1769", RAZORPAY_KEY_SECRET: "live-secret" });
+    const res = await POST(req({ address, lines: [domainLine] }));
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(lead()).toBeUndefined();
+    expect(rpc).not.toHaveBeenCalledWith("record_payment", expect.anything());
+  });
+
   it("production without BUY_PAGE_TENANT_ID refuses in words instead of using the hard-coded tenant", async () => {
     Object.assign(process.env, { NODE_ENV: "production" });
     delete process.env.BUY_PAGE_TENANT_ID;

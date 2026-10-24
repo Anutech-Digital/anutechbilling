@@ -7,9 +7,15 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
 import { loadCheckoutRazorpayKeys } from "./razorpay-keys.server";
 import { buyPageTenantIdOrEmpty, simulatedPaymentAllowed } from "./live-guards";
-import { checkoutPaymentMode, type CheckoutPaymentMode } from "./checkout-payment-mode";
+import { checkoutPaymentMode, razorpayTestOffered, type CheckoutPaymentMode } from "./checkout-payment-mode";
 
-export async function loadCheckoutPaymentMode(): Promise<CheckoutPaymentMode> {
+export interface CheckoutPaymentSetup {
+  mode: CheckoutPaymentMode;
+  /** R-1769: a laptop with Razorpay TEST keys — the real test window is a second choice. */
+  razorpayTest: boolean;
+}
+
+export async function loadCheckoutPaymentSetup(): Promise<CheckoutPaymentSetup> {
   let keyId = "";
   let configured = false;
   try {
@@ -20,7 +26,12 @@ export async function loadCheckoutPaymentMode(): Promise<CheckoutPaymentMode> {
   } catch {
     /* A failed read must not hide the Pay button: "live" lets the order route give its own
        answer, exactly as before this card. */
-    return "live";
+    return { mode: "live", razorpayTest: false };
   }
-  return checkoutPaymentMode({ razorpayConfigured: configured, simulationAllowed: simulatedPaymentAllowed({ razorpayKeyId: keyId }) });
+  const opts = { razorpayConfigured: configured, simulationAllowed: simulatedPaymentAllowed({ razorpayKeyId: keyId }) };
+  return { mode: checkoutPaymentMode(opts), razorpayTest: razorpayTestOffered(opts) };
+}
+
+export async function loadCheckoutPaymentMode(): Promise<CheckoutPaymentMode> {
+  return (await loadCheckoutPaymentSetup()).mode;
 }
