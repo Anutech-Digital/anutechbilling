@@ -151,7 +151,7 @@ export function pushTurnFree(turn, now) {
   return !turn || now - turn.at > PUSH_TURN_STALE_MS;
 }
 
-function sh(cmd) { return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+function sh(cmd, env) { return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...(env ? { env } : {}) }); }
 
 /**
  * R-1814: the line a waiting worker prints. It used to start with the OTHER card ("… R-1813 push kar
@@ -205,6 +205,7 @@ async function withTurn(name, card, doing, fn) {
 /**
  * One type-check at a time (6 Oct night): each tsc of this repo takes ~2.6 GB; two or three at
  * once starved the local app on a 24 GB machine. Capping tsc's heap would just crash it.
+ * (R-1827: the heap now has to go UP, not down — see TSC_HEAP_FLAG.)
  */
 /**
  * R-1592 (18 Oct 2026): `next typegen` first — it writes .next/types (typedRoutes: the Route union
@@ -215,11 +216,23 @@ async function withTurn(name, card, doing, fn) {
  */
 export const TSC_STEPS = ["npx next typegen", "npx tsc --noEmit -p ."];
 
+/**
+ * R-1827 (24 Oct 2026): after R-1791 tsc no longer fits Node's default ~4 GB heap — the push gate
+ * died out of memory and workers re-ran it by hand with NODE_OPTIONS=--max-old-space-size=8192,
+ * the same heap CI's typecheck step uses (.github/workflows/ci.yml). Every TSC_STEPS child gets it,
+ * merged with any NODE_OPTIONS already set (an existing heap flag is replaced, not doubled).
+ */
+export const TSC_HEAP_FLAG = "--max-old-space-size=8192";
+export function tscEnv(env = process.env) {
+  const kept = String(env.NODE_OPTIONS ?? "").split(/\s+/).filter((o) => o && !o.startsWith("--max-old-space-size"));
+  return { ...env, NODE_OPTIONS: [...kept, TSC_HEAP_FLAG].join(" ") };
+}
+
 function tscWithTurn(card) {
   return withTurn("heavy", card, "type-check kar raha hai", async () => {
     for (const step of TSC_STEPS) {
       const t0 = Date.now();
-      try { sh(step); }
+      try { sh(step, tscEnv()); }
       catch (e) { console.error(`✗ ${step} fail:\n` + String(e.stdout ?? "").slice(0, 2000) + String(e.stderr ?? "").slice(-800)); return false; }
       console.log(`  ${step}: ${((Date.now() - t0) / 1000).toFixed(1)} s`);
     }

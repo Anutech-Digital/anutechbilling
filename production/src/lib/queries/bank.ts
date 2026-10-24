@@ -900,22 +900,48 @@ type AutoReconcileChunk = AutoReconcileSummary & { last_id: string | null; done:
 
 const SUMMARY_KEYS = ["checked", "reconciled", "review", "no_match", "low_confidence", "ambiguous", "failed"] as const;
 
-/** The toast after a run: matched N, left M — and why each was left, so the owner knows what to open. */
-export function autoReconcileSummary(s: AutoReconcileSummary): { title: string; description?: string } {
-  if (s.reconciled === 0 && s.review === 0) return { title: "All already reconciled" };
-  const title = s.reconciled === 0
-    ? `No sure match found · ${s.review} left for you to check`
-    : s.review === 0
-      ? `${s.reconciled} matched`
-      : `${s.reconciled} matched · ${s.review} left for you to check`;
-  if (s.review === 0) return { title };
+/** What a run did, in words — shown on the bank page after EVERY run (R-1831). */
+export type AutoReconcileOutcome = {
+  tone: "success" | "info" | "warning";
+  title: string;
+  description?: string;
+  /** Lines are left for the owner — offer "Show unmatched lines". */
+  showUnmatched: boolean;
+};
+
+const nLines = (n: number) => `${n.toLocaleString("en-IN")} line${n === 1 ? "" : "s"}`;
+
+/**
+ * The result after a run: matched N, left M — and, in plain words, why each was left and what
+ * to do. R-1831 (staging 24 Oct): 1,414 lines, 0 matched, all "no match" — the old toast said
+ * "No sure match found" for a few seconds and vanished; it looked like nothing had happened.
+ * "No match" means the books have no payment / expense / salary record for the line, so the
+ * fix is to add those records — running again changes nothing until then.
+ */
+export function autoReconcileSummary(s: AutoReconcileSummary): AutoReconcileOutcome {
+  if (s.reconciled === 0 && s.review === 0) {
+    return { tone: "success", title: "Nothing to match — every line is already reconciled", showUnmatched: false };
+  }
+  const onlyNoMatch = s.review > 0 && s.no_match === s.review;
+  if (s.reconciled === 0 && onlyNoMatch) {
+    return {
+      tone: "info",
+      title: "0 matched",
+      description: `None of these ${nLines(s.no_match)} has a payment, expense or salary record in the books yet. Add or import those records first, then run Auto-reconcile again — or open a line and book it from Reconcile.`,
+      showUnmatched: true,
+    };
+  }
+  const title = s.review === 0
+    ? `${s.reconciled.toLocaleString("en-IN")} matched — every line is reconciled`
+    : `${s.reconciled.toLocaleString("en-IN")} matched · ${nLines(s.review)} left for you`;
+  if (s.review === 0) return { tone: "success", title, showUnmatched: false };
   const why = [
-    s.ambiguous > 0 && `${s.ambiguous} with two equal matches`,
-    s.no_match > 0 && `${s.no_match} with no match`,
-    s.low_confidence > 0 && `${s.low_confidence} with only a weak match`,
-    s.failed > 0 && `${s.failed} could not be saved`,
-  ].filter(Boolean).join(" · ");
-  return { title, description: `Left: ${why}. Open Unmatched to finish them.` };
+    s.ambiguous > 0 && `${nLines(s.ambiguous)} ${s.ambiguous === 1 ? "fits" : "fit"} two records equally — open each and pick one.`,
+    s.low_confidence > 0 && `${nLines(s.low_confidence)} ${s.low_confidence === 1 ? "has" : "have"} only a weak match — open each and confirm it.`,
+    s.no_match > 0 && `${nLines(s.no_match)} ${s.no_match === 1 ? "has" : "have"} no payment, expense or salary record in the books yet — add or import those records, then run again.`,
+    s.failed > 0 && `${nLines(s.failed)} could not be saved — run again.`,
+  ].filter(Boolean).join(" ");
+  return { tone: s.reconciled === 0 ? "warning" : "info", title, description: why, showUnmatched: true };
 }
 
 /**
@@ -957,14 +983,14 @@ export function useAutoReconcile() {
       }
       return total;
     },
-    onSuccess: (s) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["salary-payments"] });
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
-      const { title, description } = autoReconcileSummary(s);
-      if (s.reconciled === 0) toast.info(title, { description });
-      else toast.success(title, { description });
+      /* R-1831: no toast — a toast vanished in seconds and a 0-match run looked like nothing
+         happened. The page shows autoReconcileSummary(data) in a panel that stays
+         (components/features/banking/auto-reconcile-result.tsx). */
     },
     onError: (err) => {
       // Lines matched by earlier chunks stay matched — refresh the list so they show.

@@ -23,6 +23,7 @@ const ROOT = join(__dirname, "..", "..", "..");
 const SQL_SALE = new Set([
   "report_pnl",            // revenue + output GST
   "report_pnl_monthly",    // revenue trend
+  "report_pnl_revenue_by_product", // R-1835: revenue split by what was sold (same rows as report_pnl)
   "report_balance_sheet",  // gst_output (receivables keep the open balance)
   "report_day_book",       // Sales vouchers
   "report_party_ledger",   // 'Opening balance' for opening_balance, not a Sales voucher

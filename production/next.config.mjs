@@ -115,6 +115,10 @@ const nextConfig = {
     return [
       { source: "/vendor-portal", destination: "/accounting/vendors", permanent: false },
       { source: "/vendor-portal/:path*", destination: "/accounting/vendors", permanent: false },
+      /* R-1827 (24 Oct 2026): /google-workspace had no page (404 on staging) — the Google Workspace
+         page is /lp/google-workspace. Exact path only, so /google-workspace/pricing keeps its own page.
+         Runs before middleware: on reselleros.anutech.in the /lp path then 301s on to anutech.in. */
+      { source: "/google-workspace", destination: "/lp/google-workspace", permanent: true },
     ];
   },
   async headers() {

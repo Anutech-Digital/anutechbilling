@@ -42,6 +42,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import { ImportStatementDialog } from "@/components/features/banking/import-statement-dialog";
 import { SalaryLinesDialog, salaryLinesOf } from "@/components/features/banking/salary-lines-dialog";
 import { StatementCheckCard } from "@/components/features/banking/statement-check-card";
+import { AutoReconcileResult } from "@/components/features/banking/auto-reconcile-result";
 import { BankImportsSection } from "@/components/features/banking/bank-imports-section";
 import { checkStatement } from "@/lib/banking/statement-check";
 import { ReconcileTransactionDialog } from "@/components/features/banking/reconcile-transaction-dialog";
@@ -277,7 +278,8 @@ export default function BankAccountDetailPage() {
               {rupee(bankBalance)}
             </p>
             <p className="text-xs text-ink-3 mt-0.5">
-              {statementCheck && Math.abs(statementCheck.difference) > 1
+              {/* R-1829: red only for a real gap — a few rupees of paise rounding is not one. */}
+              {statementCheck?.verdict === "off"
                 ? <span className="text-rose">Statement says {rupee(statementCheck.statementBalance)}</span>
                 : "Per imported statement"}
             </p>
@@ -287,7 +289,9 @@ export default function BankAccountDetailPage() {
             <p className={`font-serif text-2xl mt-1 ${appBalance >= 0 ? "text-ink" : "text-rose"}`}>
               {rupee(appBalance)}
             </p>
-            <p className="text-xs text-ink-3 mt-0.5">Reconciled in your books</p>
+            <p className="text-xs text-ink-3 mt-0.5">
+              {counts.unmatched > 0 ? "Bank balance minus lines not yet reconciled" : "Reconciled in your books"}
+            </p>
           </div>
           <div>
             <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Opening balance</p>
@@ -359,6 +363,16 @@ export default function BankAccountDetailPage() {
           </div>
         )}
       </div>
+
+      {/* R-1831: every run ends with a result that stays — matched N, and why the rest were left. */}
+      {autoReconcile.isSuccess && autoReconcile.data && (
+        <AutoReconcileResult
+          summary={autoReconcile.data}
+          unmatchedShown={tab === "unmatched"}
+          onShowUnmatched={() => setTab("unmatched")}
+          onClose={() => autoReconcile.reset()}
+        />
+      )}
 
       {/* Search transactions */}
       <div className="mb-3 relative">

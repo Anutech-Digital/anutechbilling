@@ -18,6 +18,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { rupee } from "@/lib/utils";
 import { PAYMENT_METHODS, useMarkExpensePaid, type Expense } from "@/lib/queries/expenses";
 import { useBankAccounts } from "@/lib/queries/bank";
+import { defaultCashAccountId } from "@/lib/payments/deposit-accounts";
 import { istToday } from "@/lib/dates/ist";
 
 export function MarkPaidDialog({ expense, onClose }: { expense: Expense; onClose: () => void }) {
@@ -27,7 +28,10 @@ export function MarkPaidDialog({ expense, onClose }: { expense: Expense; onClose
   const [method, setMethod] = React.useState<string>(expense.payment_method ?? "bank_transfer");
   const { data: bankAccounts } = useBankAccounts();
   const cashAccounts = (bankAccounts ?? []).filter((a) => a.account_type === "cash");
-  const [pettyCashAccountId, setPettyCashAccountId] = React.useState<string>("");
+  /* R-1834: Cash starts on the company's Petty Cash; null = not touched → that default,
+     "" = "Don't deduct from petty cash". */
+  const [pettyCashPick, setPettyCashAccountId] = React.useState<string | null>(null);
+  const pettyCashAccountId = pettyCashPick ?? defaultCashAccountId(bankAccounts);
 
   async function submit() {
     await markPaid.mutateAsync({

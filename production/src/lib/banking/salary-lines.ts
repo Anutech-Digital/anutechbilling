@@ -186,3 +186,79 @@ export function bestNameVariant(names: readonly string[]): string {
   })[0];
   return titleCaseName(best.replace(/\s+/g, " "));
 }
+
+/* ─── ALREADY IN PAYROLL (R-1831, 24 Oct 2026) ───────────────────────────────
+   "Salary lines" creates a salary record for a bank line that has none. It must never record
+   a month payroll already has. The same employee + month is caught by the record lookup (and
+   by the unique (employee, period) key); these are the ways a SECOND record could still slip in:
+     • the line's month is a guess ("month assumed") one month off from a record payroll has
+       booked and not seen paid — e.g. May booked, the line read as June;
+     • the statement spells the name so the employee is not recognised ("MANOJ KUMAR S" vs
+       "Manoj") and the screen offers to CREATE a new employee — with May's salary again.
+   Such a line is skipped, and says which record it belongs to. */
+
+export type PayrollRecordLite = {
+  employee_id: string; period: string; net: number; paid_amount: number; paid_status: string;
+};
+
+export type AlreadyInPayroll =
+  /** That employee's salary for that month is fully paid already. */
+  | { kind: "paid"; employeeId: string; period: string }
+  /** Booked for the month before/after, not paid, same amount — the line is probably that salary. */
+  | { kind: "other_month"; employeeId: string; period: string; remaining: number }
+  /** A new name, but an existing employee sharing a name has this month's salary of this amount. */
+  | { kind: "other_employee"; employeeId: string; period: string; net: number };
+
+function shiftPeriod(period: string, by: number): string {
+  const [y, m] = period.split("-").map(Number);
+  const t = y * 12 + (m - 1) + by;
+  return `${Math.floor(t / 12)}-${pad2((t % 12) + 1)}`;
+}
+
+/** Whole rupees, ±1 for paise rounding on the statement. */
+const sameAmount = (a: number, b: number) => Math.abs(Math.round(a) - Math.round(b)) <= 1;
+
+const nameWords = (s: string) => norm(s).split(" ").filter((w) => w.length >= 3);
+
+export function alreadyInPayroll(input: {
+  /** Employee id the line is set to, or "create" for a new employee ("" = not chosen). */
+  choice: string;
+  statementName: string | null;
+  period: string;
+  amount: number;
+  salaries: readonly PayrollRecordLite[];
+  employees: ReadonlyArray<{ id: string; name: string }>;
+}): AlreadyInPayroll | null {
+  const { choice, period, amount, salaries } = input;
+  if (!choice) return null;
+
+  if (choice !== "create") {
+    const rec = salaries.find((s) => s.employee_id === choice && s.period === period);
+    if (rec) {
+      return rec.paid_status === "paid" || rec.net - rec.paid_amount <= 0
+        ? { kind: "paid", employeeId: choice, period }
+        : null; // an open record of this month: the line links to it, no second record
+    }
+    for (const by of [-1, 1]) {
+      const near = salaries.find((s) => s.employee_id === choice && s.period === shiftPeriod(period, by));
+      if (!near || near.paid_status === "paid") continue;
+      const remaining = near.net - near.paid_amount;
+      if (remaining > 0 && sameAmount(remaining, amount)) {
+        return { kind: "other_month", employeeId: choice, period: near.period, remaining };
+      }
+    }
+    return null;
+  }
+
+  /* A new employee from the statement name: is this someone payroll already pays this month? */
+  const words = new Set(nameWords(input.statementName ?? ""));
+  if (words.size === 0) return null;
+  for (const e of input.employees) {
+    if (!nameWords(e.name).some((w) => words.has(w))) continue;
+    const rec = salaries.find((s) => s.employee_id === e.id && s.period === period);
+    if (rec && (sameAmount(rec.net, amount) || sameAmount(rec.net - rec.paid_amount, amount))) {
+      return { kind: "other_employee", employeeId: e.id, period, net: rec.net };
+    }
+  }
+  return null;
+}
