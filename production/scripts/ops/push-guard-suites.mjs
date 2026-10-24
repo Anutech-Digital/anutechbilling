@@ -31,6 +31,7 @@ export const PUSH_GUARD_SUITES = [
   "tests/ops/gen-api-doc.test.ts", // R-1665: docs/API.md regenerated when a route changes
   "src/lib/accounting/sale-documents.guard.test.ts", // R-1739: every invoices reader says if it counts sales
   "src/lib/queries/query-error-ratchet.test.ts", // R-1806/R-1807: a failed read shows an error, not ₹0 / empty
+  "src/lib/errors/raw-error-message-ratchet.test.ts", // R-1656/R-1813: no raw Postgres/RPC text on screen
   // ── migration scans ──
   "tests/rls-initplan-migrations.test.ts",
   "src/lib/security/definer-hardening-holds.test.ts",
