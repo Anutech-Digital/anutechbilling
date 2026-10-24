@@ -133,8 +133,7 @@ export default function ImportContactsDialog({ open, onOpenChange }: Props) {
         (json.duplicates > 0 ? ` · ${json.duplicates} duplicates skipped` : "") +
         (json.skipped > 0    ? ` · ${json.skipped} invalid skipped` : "")
       );
-      qc.invalidateQueries({ queryKey: ["imported_contacts"] });
-      qc.invalidateQueries({ queryKey: ["contacts-merged"] });
+      qc.invalidateQueries({ queryKey: ["contacts", "all"] });
       reset();
       onOpenChange(false);
     } catch (err) {
@@ -234,6 +233,7 @@ export default function ImportContactsDialog({ open, onOpenChange }: Props) {
                     return (
                       <tr
                         key={r.rowIndex}
+                        data-keyboard-route="inner-control"
                         onClick={() => toggle(r.rowIndex)}
                         className={`border-t border-hairline cursor-pointer ${isSel ? "bg-amber-soft/40" : "hover:bg-paper-2/40"}`}
                       >

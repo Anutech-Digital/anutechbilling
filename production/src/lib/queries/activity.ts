@@ -2,7 +2,8 @@
  * Activity Log — "who did what" trail (migration 0222).
  *
  * Read-only for owners/managers. Rows are written by DB triggers (human actions
- * only) + the log_activity RPC (login). We join the acting user for a name.
+ * only) + the server's sign-in record (R-1010, src/server/auth/login-log.ts). We join the
+ * acting user for a name.
  */
 "use client";
 
@@ -44,13 +45,17 @@ export function useActivityLog(opts?: { userId?: string; limit?: number }) {
   });
 }
 
-/** Fire-and-forget: record a session login (once per browser session). */
+/**
+ * Fire-and-forget: ask the SERVER to record this sign-in (once per browser session).
+ * R-1010: the browser no longer writes the row — POST /api/auth/login-event reads the user,
+ * sign-in time, IP and device on the server (with Auth.js it was already recorded at sign-in),
+ * and the database ignores log_activity('login') from a browser.
+ */
 export async function logLoginOnce() {
   if (typeof window === "undefined") return;
   try {
     if (sessionStorage.getItem("ros_login_logged")) return;
     sessionStorage.setItem("ros_login_logged", "1");
-    const supabase = createClient();
-    await supabase.rpc("log_activity", { p_action: "login", p_entity: "session" });
+    await fetch("/api/auth/login-event", { method: "POST", credentials: "same-origin" });
   } catch { /* non-critical */ }
 }

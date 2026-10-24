@@ -33,6 +33,7 @@ import {
 } from "@/lib/queries/compliance";
 import { noTdsDeductedPredicate, TDS_DEPOSIT_KEY } from "@/lib/compliance/tds-not-applicable";
 import { istToday } from "@/lib/dates/ist";
+import { RevisedInvoiceCard } from "./revised-invoice-card";
 
 const STATUS_META: Record<ComplianceStatus, { label: string; cls: string; icon: string }> = {
   overdue:  { label: "Overdue",  cls: "bg-rose/10 text-rose",          icon: "alert" },
@@ -127,6 +128,10 @@ export function ComplianceView({
           )}
         </p>
       </div>
+
+      {/* R-1531: Bills of Supply issued after the registration effective date → revised tax
+          invoices within a month of the certificate. Renders nothing when there are none. */}
+      {(!fixedCategories || fixedCategories.includes("gst")) && <RevisedInvoiceCard />}
 
       {/* KPI strip */}
       <div className="grid grid-cols-3 gap-2 mb-4">

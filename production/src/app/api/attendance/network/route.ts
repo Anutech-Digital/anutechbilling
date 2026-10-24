@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
   } else if (action === "set_retention") {
     const v = Number(body?.value);
     if (!Number.isFinite(v) || v < 30 || v > 3650) {
-      return NextResponse.json({ error: "Retention 30–3650 din ke beech hona chahiye" }, { status: 400 });
+      return NextResponse.json({ error: "Retention must be between 30 and 3650 days" }, { status: 400 });
     }
     retentionDays = Math.round(v);
   } else if (action === "require_face_match") {

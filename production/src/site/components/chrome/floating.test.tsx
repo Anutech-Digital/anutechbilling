@@ -3,46 +3,43 @@
 // R-464 (10 Oct 2026): at 390px the floating "AI sales agent" launcher and "WhatsApp us" pill
 // covered the homepage form ("Tell us what to automate"), its Name field included, and
 // WhatsApp showed twice (hero button + floating pill). Rule: below 980px only ONE floating
-// action (the AI launcher), and it steps aside while a [data-avoid-floating] block is on
-// screen. Desktop unchanged.
+// action, and it steps aside while a [data-avoid-floating] block is on screen.
+// R-1498 (17 Oct 2026): desktop too floats ONE launcher; WhatsApp lives in its menu.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import * as React from "react";
 import { render, cleanup, screen, act } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/" }));
 
-import { floatingButtons } from "./floating";
-import { WhatsAppButton } from "./Chrome";
+import { floatingLauncher } from "./floating";
 import { AgentChat } from "@/site/components/agent/AgentChat";
 
-describe("floatingButtons (pure rule)", () => {
-  const base = { pathname: "/", isMobile: false, avoidOnScreen: false, whatsappReady: true };
+const LAUNCHER = /^Talk to us/;
 
-  it("desktop keeps both floating buttons, form or not", () => {
-    expect(floatingButtons(base)).toEqual({ agent: true, whatsapp: true });
-    expect(floatingButtons({ ...base, avoidOnScreen: true })).toEqual({ agent: true, whatsapp: true });
+describe("floatingLauncher (pure rule)", () => {
+  const base = { pathname: "/", isMobile: false, avoidOnScreen: false };
+
+  it("desktop always shows the one launcher, form or not", () => {
+    expect(floatingLauncher(base)).toBe(true);
+    expect(floatingLauncher({ ...base, avoidOnScreen: true })).toBe(true);
   });
 
-  it("desktop without the real WhatsApp number shows only the agent", () => {
-    expect(floatingButtons({ ...base, whatsappReady: false })).toEqual({ agent: true, whatsapp: false });
-  });
-
-  it("a phone floats ONE action — never the WhatsApp pill", () => {
-    expect(floatingButtons({ ...base, isMobile: true })).toEqual({ agent: true, whatsapp: false });
+  it("a phone shows it too", () => {
+    expect(floatingLauncher({ ...base, isMobile: true })).toBe(true);
   });
 
   it("on a phone the launcher steps aside while the form is on screen", () => {
-    expect(floatingButtons({ ...base, isMobile: true, avoidOnScreen: true })).toEqual({ agent: false, whatsapp: false });
+    expect(floatingLauncher({ ...base, isMobile: true, avoidOnScreen: true })).toBe(false);
   });
 
-  it("…but not while its chat panel is open (the visitor must be able to close it)", () => {
-    expect(floatingButtons({ ...base, isMobile: true, avoidOnScreen: true, chatOpen: true }).agent).toBe(true);
+  it("…but not while its menu or chat panel is open (the visitor must be able to close it)", () => {
+    expect(floatingLauncher({ ...base, isMobile: true, avoidOnScreen: true, chatOpen: true })).toBe(true);
   });
 
   it("nothing floats on /checkout and /done, any width", () => {
     for (const isMobile of [true, false]) {
-      expect(floatingButtons({ ...base, isMobile, pathname: "/checkout" })).toEqual({ agent: false, whatsapp: false });
-      expect(floatingButtons({ ...base, isMobile, pathname: "/done" })).toEqual({ agent: false, whatsapp: false });
+      expect(floatingLauncher({ ...base, isMobile, pathname: "/checkout" })).toBe(false);
+      expect(floatingLauncher({ ...base, isMobile, pathname: "/done" })).toBe(false);
     }
   });
 });
@@ -82,7 +79,6 @@ function Page() {
       <div data-avoid-floating="">
         <form aria-label="Tell us what to automate"><input aria-label="Name" /></form>
       </div>
-      <WhatsAppButton />
       <AgentChat />
     </>
   );
@@ -94,26 +90,59 @@ function formScrolls(onScreen: boolean) {
   });
 }
 
-describe("floating buttons on the homepage (R-464)", () => {
-  it("390px: no WhatsApp pill, and the AI launcher hides while the form is on screen", () => {
+describe("floating launcher on the homepage (R-464)", () => {
+  it("390px: no WhatsApp pill, and the launcher hides while the form is on screen", () => {
     setViewport(true);
     render(<Page />);
     expect(screen.queryByRole("link", { name: "WhatsApp us" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Talk to our live AI sales agent" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: LAUNCHER })).toBeTruthy();
     expect(observed.length).toBeGreaterThan(0);
 
     formScrolls(true);
-    expect(screen.queryByRole("button", { name: "Talk to our live AI sales agent" })).toBeNull();
+    expect(screen.queryByRole("button", { name: LAUNCHER })).toBeNull();
 
     formScrolls(false);
-    expect(screen.getByRole("button", { name: "Talk to our live AI sales agent" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: LAUNCHER })).toBeTruthy();
   });
 
-  it("desktop: both buttons stay, form on screen or not", () => {
+  it("desktop: the one launcher stays, form on screen or not, and no floating WhatsApp pill", () => {
     setViewport(false);
     render(<Page />);
     formScrolls(true);
-    expect(screen.getAllByRole("link", { name: "WhatsApp us" })).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Talk to our live AI sales agent" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "WhatsApp us" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: LAUNCHER })).toHaveLength(1);
+  });
+});
+
+/* R-1495 galat (Pawan, 17 Oct, phone): the AI launcher sat over the Workspace plan cards'
+   buttons. The hook scanned for [data-avoid-floating] once per route, when the layout's
+   pathname changed — a page whose content arrives after that (client navigation, streamed
+   server page, a remount) was never watched, so the launcher never stepped aside. */
+describe("launcher steps aside for blocks that render after it (R-1495)", () => {
+  function LatePage({ show }: { show: boolean }) {
+    return (
+      <>
+        {show && (
+          <div data-avoid-floating="" className="wp-cards">
+            <a href="/buy">Buy now</a>
+          </div>
+        )}
+        <AgentChat />
+      </>
+    );
+  }
+
+  it("390px: plan cards that appear after mount are still watched", async () => {
+    setViewport(true);
+    const { rerender } = render(<LatePage show={false} />);
+    expect(observed.length).toBe(0);
+
+    rerender(<LatePage show={true} />);
+    // MutationObserver callbacks are microtasks; let them (and any frame) run.
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    expect(observed.some((el) => el.classList.contains("wp-cards"))).toBe(true);
+
+    formScrolls(true);
+    expect(screen.queryByRole("button", { name: LAUNCHER })).toBeNull();
   });
 });

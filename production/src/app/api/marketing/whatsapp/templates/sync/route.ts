@@ -40,7 +40,7 @@ export const POST = withRoute({
 }, async ({ tenantId, user }) => {
   const creds = await resolveWhatsAppCreds(tenantId);
   if (!creds?.businessAccountId) {
-    return NextResponse.json({ ok: false, error: "WhatsApp connect nahi hai, ya Business Account ID nahi bhara — Settings mein jodo.", code: "not_configured" }, { status: 409 });
+    return NextResponse.json({ ok: false, error: "WhatsApp is not connected, or the Business Account ID is missing — add it in Settings.", code: "not_configured" }, { status: 409 });
   }
 
   const found: MetaTemplate[] = [];
@@ -51,7 +51,7 @@ export const POST = withRoute({
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
       // Meta ka apna jawab (upstream) — DB text nahi; 502 kyunki upstream ne mana kiya.
-      throw new RouteError(502, `Meta ne mana kiya: ${j?.error?.message ?? res.status}`);
+      throw new RouteError(502, `Meta refused: ${j?.error?.message ?? res.status}`);
     }
     found.push(...((j.data ?? []) as MetaTemplate[]));
     url = j.paging?.next ?? null;
@@ -78,7 +78,7 @@ export const POST = withRoute({
       await db.from("whatsapp_templates").insert({
         tenant_id: tenantId, name: t.name, language: t.language, category, body, status, meta_id: t.id,
         param_map: Array.from({ length: n }, (_, i) => GUESS[i] ?? "first_name"),
-        notes: n > 0 ? "Meta se aaya — har {{n}} ka field check karo" : null,
+        notes: n > 0 ? "From Meta — check the field for each {{n}}" : null,
         created_by: user.id,
       });
       added++;

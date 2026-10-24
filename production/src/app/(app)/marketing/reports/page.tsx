@@ -31,10 +31,12 @@ import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { rupee, cn } from "@/lib/utils";
 import { recommendationFor, type ChannelStat } from "@/lib/marketing/channel-economics";
 import { sourceLabel } from "@/lib/leads/lead-sources";
 import { useMarketingReport, channelsToCsv, type RangeKey } from "@/lib/queries/marketing";
+import { logExport } from "@/lib/export-log";
 
 const RANGES: TabBarItem[] = [
   { id: "this_month",   label: "This month" },
@@ -56,6 +58,7 @@ export default function MarketingReportsPage() {
     a.download = `marketing-channels-${data.range.start}-to-${data.range.end}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+    void logExport({ what: "marketing-channels", rowCount: Math.max(0, csv.split("\n").length - 1), format: "csv" });
   };
 
   return (
@@ -84,7 +87,7 @@ export default function MarketingReportsPage() {
         </div>
       ) : error ? (
         <Card className="py-2">
-          <EmptyState icon="alert" title="Could not load the report" body={(error as Error).message} />
+          <EmptyState icon="alert" title="Could not load the report" body={loadErrorBody(error)} />
         </Card>
       ) : !data ? null : (
         <>

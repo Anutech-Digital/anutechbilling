@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 import Link from "@/site/components/ui/SiteLink";
 import { SectionHead } from "@/site/components/ui/bits";
-import { TLDS, CERTS, MAIL_RATES } from "@/site/lib/data/catalog";
-import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
+import { CERTS, MAIL_RATES } from "@/site/lib/data/catalog";
+import { bookCerts, bookMailRates } from "@/lib/catalog/catalog-prices";
+import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
+import { websiteTenantId } from "@/lib/website-tenant";
 import { fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
 import { buildRateCard } from "@/site/lib/rate-card";
+import { getSiteTldPrices } from "@/site/lib/live-tld-pricing";
 
 /**
  * /rates — every customer price on one page (R-075, 1 Oct 2026).
@@ -20,17 +23,21 @@ export const metadata: Metadata = {
     "Anutech Digital's full rate card in rupees: domain register, renew and transfer prices, web hosting, business email and SSL. All prices exclusive of 18% GST.",
 };
 
-/* The live Workspace prices revalidate every 10 minutes, same as /email. */
-export const revalidate = 600;
+/* R-1797: every 60 s, like /hosting and /ssl — the price-book rows (hosting, mailbox, SSL)
+   follow an Items page edit within a minute. Workspace and domain prices keep their own
+   10-minute caches (live-catalog.ts, live-tld-pricing.ts). */
+export const revalidate = 60;
 
 export default async function RatesPage() {
-  const live = await fetchLiveWorkspace();
+  /* R-1599: domain rows are the live registry prices the checkout charges, never TLDS. */
+  /* R-1786: hosting and SSL rows from the price book (items rows with CATALOG_FROM_DB on). */
+  const [live, tlds, book] = await Promise.all([fetchLiveWorkspace(), getSiteTldPrices(), getPriceBook(websiteTenantId())]);
   const sections = buildRateCard({
-    tlds: TLDS,
-    hosting: HOSTING_TIERS,
+    tlds,
+    hosting: book.tiers,
     editions: mergeEditions(live),
-    mailRates: MAIL_RATES,
-    certs: CERTS,
+    mailRates: bookMailRates(book, MAIL_RATES), // R-1797: Anutech Mail from the book
+    certs: bookCerts(book, CERTS),
   });
 
   return (
@@ -61,16 +68,17 @@ export default async function RatesPage() {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 15 }}>
                 <thead>
                   <tr style={{ borderBottom: "2px solid var(--dark)", textAlign: "left" }}>
-                    <th scope="col" style={{ padding: "10px 12px 10px 0" }}>{s.id === "domains" ? "Extension" : "Plan"}</th>
-                    {s.columns.map((c) => (
-                      <th key={c} scope="col" style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>{c}</th>
+                    {/* R-1507: the outer columns sit 16px inside the box border (same as table.rates), never 0. */}
+                    <th scope="col" style={{ padding: "10px 12px 10px 16px" }}>{s.id === "domains" ? "Extension" : "Plan"}</th>
+                    {s.columns.map((c, ci) => (
+                      <th key={c} scope="col" style={{ padding: ci === s.columns.length - 1 ? "10px 16px 10px 12px" : "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>{c}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {s.rows.map((r) => (
                     <tr key={r.name} style={{ borderBottom: "1px solid var(--line, rgba(0,0,0,.1))" }}>
-                      <th scope="row" style={{ padding: "12px 12px 12px 0", textAlign: "left", fontWeight: 600 }}>
+                      <th scope="row" style={{ padding: "12px 12px 12px 16px", textAlign: "left", fontWeight: 600 }}>
                         <span className={s.id === "domains" ? "mono" : undefined}>{r.name}</span>
                         <span className="meta" style={{ display: "block", fontWeight: 400 }}>{r.note}</span>
                       </th>
@@ -78,7 +86,7 @@ export default async function RatesPage() {
                         <td
                           key={ci}
                           colSpan={ci === r.cells.length - 1 ? s.columns.length - r.cells.length + 1 : 1}
-                          style={{ padding: "12px", textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}
+                          style={{ padding: ci === r.cells.length - 1 ? "12px 16px 12px 12px" : "12px", textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}
                         >
                           {c}
                         </td>

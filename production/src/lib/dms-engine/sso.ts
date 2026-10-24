@@ -11,6 +11,12 @@
  * assert a role would turn this shared secret into a privilege-escalation
  * primitive against the other application.
  *
+ * R-1771 (22 Oct 2026): it may also carry `billing_customer_id` — the ResellerOS
+ * customer the signed-in person is a customer login of (the id /api/v1 answers
+ * to). It is a link hint, not a grant: DMS still signs in by email and decides
+ * permissions itself; it only records which ResellerOS customer that user is.
+ * The caller must derive it from the session user, never from the request.
+ *
  * ─── SHORT, SINGLE-USE, AND ITS OWN SECRET ───────────────────────────────────
  * The token travels in a URL, so it will land in browser history and proxy
  * logs. It lasts 60 seconds, carries a random `jti` that DMS burns on first
@@ -72,7 +78,7 @@ export function isSsoConfigured(): boolean {
  */
 export function buildSsoUrl(
   email: string,
-  opts: { next?: string; sourceUserId?: string } = {}
+  opts: { next?: string; sourceUserId?: string; billingCustomerId?: string } = {}
 ): string | null {
   if (!isSsoConfigured()) return null;
 
@@ -91,6 +97,9 @@ export function buildSsoUrl(
       jti: crypto.randomBytes(16).toString("hex"),
       // For log correlation on the far side only. DMS never authorises on it.
       ...(opts.sourceUserId ? { sub: opts.sourceUserId } : {}),
+      // R-1771: which ResellerOS customer this login belongs to, so DMS links its
+      // user by ID instead of only by email. Absent for staff and when unsure.
+      ...(opts.billingCustomerId ? { billing_customer_id: opts.billingCustomerId } : {}),
       // `iat` is not decoration: DMS verifies with `maxAge`, which is measured
       // from this claim. Omit it and the far side rejects every token.
       iat: nowSeconds,

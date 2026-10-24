@@ -16,8 +16,10 @@ import { captureFromRequest } from "@/lib/marketing/utm";
 import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { sendInternalEmail } from "@/lib/messaging";
+import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
 
-const BUY_PAGE_TENANT_ID = process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: the website tenant is read per request (websiteTenantId) — outside production an unset
+   BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
 
 const schema = z.object({
@@ -36,6 +38,8 @@ const schema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) return NextResponse.json(websiteTenantMissingBody(), { status: 503 });
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const bot = await turnstileRefusal(request.headers, body);
   if (bot) return bot;

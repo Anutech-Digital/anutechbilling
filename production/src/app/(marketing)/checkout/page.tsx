@@ -6,17 +6,27 @@
  *
  * Real payment (2 Sep 2026): "Pay" now calls /api/public/checkout/cart — which re-prices
  * every line SERVER-SIDE from its SKU (the client price is never trusted), creates a draft
- * quote, and returns a Razorpay order. The Razorpay widget opens; on success the webhook
+ * quote, and returns a Razorpay order. The Razorpay widget opens; on success our server confirms
+ * the payment (R-1596: /api/public/checkout/verify — or the webhook, whichever is first) and
  * flips the quote to paid, creates the customer/subscription/invoice and queues provisioning.
  * A line with no server-priceable SKU is refused with a clear message (request a quote).
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { rupee, cycleLabel } from "@/site/lib/money";
-import { missingCheckoutDetails, missingDetailsMessage, gstinProblem, normalizeGstinInput } from "@/site/lib/checkout-details";
+import { rupee } from "@/site/lib/money";
+import { lineRenewalText } from "@/site/lib/renewal-line";
+import { missingCheckoutDetails, missingCheckoutFields, missingDetailsMessage, gstinProblem, normalizeGstinInput, type CheckoutFieldKey } from "@/site/lib/checkout-details";
+
+/* R-1113: the box each missing item points at — the first one gets focus on Continue. */
+const FIELD_ID: Record<CheckoutFieldKey, string> = {
+  name: "checkout-name", email: "checkout-email", phone: "checkout-phone", domain: "checkout-domain",
+  state: "checkout-state", gstin: "checkout-gstin", address: "checkout-address",
+};
 import { stateCodeFromGstin, gstinContradictsState } from "@/lib/gst/gstin-state";
 import { BUY_A_DOMAIN_HREF } from "@/lib/checkout/hosting-domain";
+import { FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
+import { BundleNote, LinePrice } from "@/site/components/cart/LinePrice";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 
@@ -27,15 +37,22 @@ const STATE_OPTIONS = Object.entries(GST_STATE_BY_CODE)
   .sort((a, b) => a[1].localeCompare(b[1]));
 import { razorpayContact } from "@/lib/checkout/razorpay-contact";
 import { BusyPanel } from "@/components/ui/busy-panel";
+import { confirmPayment, fromRazorpayHandler, savePayment } from "@/lib/checkout/confirm-payment";
+import { SIMULATED_KEY } from "../done/done-view";
 import { CheckoutNotice } from "@/site/components/cart/CheckoutNotice";
 import { settlePageScroll } from "@/lib/ui/scroll-lock";
 import { checkoutProblem, actionLabel, type ProblemAction, type ProblemFlags } from "@/site/lib/checkout-problem";
 import { paidHostingLine } from "@/site/lib/hosting-cart-line";
+import { tierWithPrices } from "@/site/lib/cart-reprice";
+import { PriceChangeNotice } from "@/site/components/cart/PriceChangeNotice";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { COMPANY } from "@/site/lib/config";
 import { AfterYouPay } from "@/site/components/checkout/AfterYouPay";
 import { TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { Field, TermsCheckbox, TERMS_NUDGE_ID } from "./fields";
+import { usePaymentMode } from "./payment-mode";
+import { payButtonLabel } from "@/lib/checkout/checkout-payment-mode";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 /* 30 Sep 2026: the choice was never sent anywhere, so every option opened the same Razorpay
    window, and "Bank transfer — NEFT/RTGS, activated on credit" was not a path this checkout
@@ -78,7 +95,9 @@ function loadRazorpay(): Promise<RzpCtor> {
 export default function CheckoutPage() {
   const cart = useCart();
   const router = useRouter();
-  const t = cart.totals;
+  /* R-1502: live (Razorpay), simulation (a laptop with no keys) or disabled (no keys on a
+     deployment) — read on the server by layout.tsx. */
+  const paymentMode = usePaymentMode();
 
   const [step, setStep] = useState<"details" | "payment">("details");
   const [name, setName] = useState("");
@@ -103,6 +122,8 @@ export default function CheckoutPage() {
   /* True while the server prepares a PAID order, until Razorpay's own window opens — the
      progress panel must not keep counting behind Razorpay (30 Sep 2026). */
   const [preparingPayment, setPreparingPayment] = useState(false);
+  /* R-1596: true while our server confirms a payment Razorpay just took, before /done. */
+  const [confirmingPayment, setConfirmingPayment] = useState(false);
   /* What stopped the order or the trial, shown as a pop-up with the ways to fix it
      (1 Oct 2026, Pawan: a red line above the button "looks flimsy" for this). */
   const [problem, setProblem] = useState<{ during: "trial" | "order" | "payment"; message: string; flags: ProblemFlags } | null>(null);
@@ -125,6 +146,9 @@ export default function CheckoutPage() {
   /* Paid hosting plans in cart order. Each is its own account on its own domain. */
   const hostingLines = cart.lines.filter((l) => (l.sku || "").startsWith("hosting:"));
   const typedFor = (key: string, i: number) => (i === 0 ? domain : planDomain[key] ?? "");
+  /* R-1601: priced with the domain typed for each plan, as the server will price it — which
+     domain is free with yearly hosting depends on the domain the plan is set up on. */
+  const t = cart.totalsFor(hostingLines.map((l, i) => typedFor(l.key, i)));
   /* Two of the same plan (two websites on Starter) read "Starter hosting · 1" and "· 2", so
      each domain box and each message says which one it means (R-032). */
   const planName = (i: number) => {
@@ -189,6 +213,39 @@ export default function CheckoutPage() {
     } catch { /* ignore */ }
   }, [name, company, email, gstin, phone, domain, planDomain, addrLine1, addrCity, stateCode, addrPin]);
 
+  /* R-1113: the payment step has its own history entry (?step=payment, through Next's native
+     pushState support), so a phone's Back returns to the details step instead of leaving the
+     checkout. A reload with ?step=payment starts at the details again, without the stale entry. */
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("step") === "payment") {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+    const onPop = () => setStep(new URLSearchParams(window.location.search).get("step") === "payment" ? "payment" : "details");
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  /* R-1113: every step change opens the new step at the top (on a phone step 2 opened
+     mid-page), and going to payment adds the history entry the Back button returns through. */
+  const firstStep = useRef(true);
+  useEffect(() => {
+    if (firstStep.current) { firstStep.current = false; return; }
+    const inUrl = new URLSearchParams(window.location.search).get("step") === "payment";
+    if (step === "payment" && !inUrl) window.history.pushState(null, "", "?step=payment");
+    window.scrollTo(0, 0);
+  }, [step]);
+
+  /* R-1502: before the saved cart is read, say so — not "The cart is empty". */
+  if (!cart.loaded) {
+    return (
+      <section className="section rise">
+        <div className="wrap" style={{ maxWidth: 640 }}>
+          <h1 className="h1-narrow" style={{ marginBottom: 16 }}>Checkout</h1>
+          <p className="body-lg" role="status" style={{ color: "var(--text-muted)" }}>Loading your cart…</p>
+        </div>
+      </section>
+    );
+  }
+
   if (cart.lines.length === 0) {
     return (
       <section className="section rise">
@@ -209,13 +266,34 @@ export default function CheckoutPage() {
     address: { line1: addrLine1, city: addrCity, state: GST_STATE_BY_CODE[stateCode] ?? "", pin: addrPin },
   });
   const missingMsg = missingDetailsMessage(missing);
+  /* R-1113: the same check, as boxes — each is marked once Continue was pressed. */
+  const missingFields = missingCheckoutFields({
+    name, email, phone, domain, plans, hasHosting: hasHosting || hasTrial, hasDomain,
+    needsState: !isTrialCart, stateCode, gstin,
+    address: { line1: addrLine1, city: addrCity, state: GST_STATE_BY_CODE[stateCode] ?? "", pin: addrPin },
+  });
+  const bad = (f: CheckoutFieldKey) => showMissing && missingFields.includes(f);
   const detailsOk = missing.length === 0 && !trialMixed;
-  /** Go on only when the details are complete; otherwise show what is missing. */
+  /** R-1113: bring a box into view and put the cursor in it (after the marks render). */
+  function focusField(f: CheckoutFieldKey | undefined) {
+    if (!f) return;
+    window.setTimeout(() => {
+      const el = document.getElementById(FIELD_ID[f]);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      (el as HTMLInputElement | null)?.focus({ preventScroll: true });
+    }, 50);
+  }
+  /** Go on only when the details are complete; otherwise mark what is missing and focus the first. */
   function proceed(next: () => void) {
     if (trialMixed) return;
     if (hostingWarning) return; // the amber alert above the button says why and links back to the cart
-    if (!detailsOk) { setShowMissing(true); return; }
+    if (!detailsOk) { setShowMissing(true); focusField(missingFields[0]); return; }
     next();
+  }
+  /** R-1113: "← Back to details" goes back through the history entry when there is one. */
+  function backToDetails() {
+    if (new URLSearchParams(window.location.search).get("step") === "payment") { window.history.back(); return; } // popstate sets the step
+    setStep("details");
   }
 
   /** The trial path: no payment, no quote — the server starts the trial and we show the done page. */
@@ -247,6 +325,7 @@ export default function CheckoutPage() {
         // Whether the confirmation link really left — the done page must not claim it did.
         window.sessionStorage.setItem("anutech.trial.sent", json.confirmationSent === false ? "0" : "1");
         window.sessionStorage.removeItem("anutech.order");
+        window.sessionStorage.removeItem(SIMULATED_KEY);
       } catch { /* done page falls back */ }
       cart.clear();
       router.push("/done" as never);
@@ -288,6 +367,9 @@ export default function CheckoutPage() {
           address: hasDomain
             ? { line1: addrLine1.trim(), city: addrCity.trim(), state: GST_STATE_BY_CODE[stateCode] ?? "", zipcode: addrPin.trim(), country: "IN" }
             : undefined,
+          /* R-1502: with no Razorpay keys on a laptop the server takes only a simulated
+             payment — without this every hosting/domain order stopped at "not set up yet". */
+          simulate: paymentMode === "simulation",
         }),
       });
       const json = (await res.json().catch(() => ({}))) as {
@@ -303,7 +385,9 @@ export default function CheckoutPage() {
       }
 
       if (json.simulated) {
-        try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", json.quoteId || ""); } catch { /* default shown */ }
+        /* R-1111: the server recorded this simulated order, so /done may say "received" for it. */
+        try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", json.quoteId || ""); window.sessionStorage.setItem(SIMULATED_KEY, json.quoteId || ""); } catch { /* default shown */ }
+        savePayment(null); // a simulated order was recorded by the server already
         cart.clear();
         router.push("/done" as never);
         return;
@@ -360,10 +444,20 @@ export default function CheckoutPage() {
         /* The storefront blue (site.css --primary), so the payment window matches the shop
            around it (3 Oct 2026). It was the staff app's orange. */
         theme: { color: "#1668E3" },
-        handler: () => {
-          try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", order.quoteId || ""); } catch { /* default */ }
-          cart.clear();
+        /* R-1596: the payment is confirmed on OUR server before /done, not left to the webhook
+           alone. /done shows the answer (and asks again while it is still confirming). */
+        handler: async (resp: unknown) => {
+          try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.removeItem(SIMULATED_KEY); window.sessionStorage.setItem("anutech.order", order.quoteId || ""); } catch { /* default */ }
           afterRazorpay();
+          const returned = fromRazorpayHandler(resp);
+          if (returned) {
+            setConfirmingPayment(true);
+            const answer = await confirmPayment(returned);
+            savePayment({ ...returned, state: answer.state });
+          } else {
+            savePayment(null);
+          }
+          cart.clear();
           router.push("/done" as never);
         },
         modal: { ondismiss: () => { setPaying(false); afterRazorpay(); }, escape: true },
@@ -385,7 +479,10 @@ export default function CheckoutPage() {
      "Buy Starter" puts in the cart. */
   const trialLine = cart.lines.find((l) => (l.sku || "").startsWith("hosting-trial:"));
   const trialYearly = trialLine?.cycle !== "monthly";
-  const paidTier = HOSTING_TIERS.find((p) => p.name === TRIAL_PLAN_NAME);
+  /* R-1797: at the price book's price (CATALOG_FROM_DB on), the same figure checkout charges —
+     not the code tier. Before the book is read (or with the flag off) it is the code tier. */
+  const codeTier = HOSTING_TIERS.find((p) => p.name === TRIAL_PLAN_NAME);
+  const paidTier = codeTier ? tierWithPrices(codeTier, cart.prices) : undefined;
   const paidPrice = paidTier
     ? `${rupee(Math.round(trialYearly ? paidTier.yearlyTotal : paidTier.monthly))}/${trialYearly ? "year" : "month"} + GST`
     : undefined;
@@ -455,14 +552,16 @@ export default function CheckoutPage() {
               ? "Your details — no card needed, nothing is charged"
               : step === "details" ? "Step 1 of 2 — who the invoice is for" : "Step 2 of 2 — how you would like to pay"}
           </p>
+          {/* R-1797: a saved line moved to today's price — the summary already shows it. */}
+          <PriceChangeNotice changes={cart.priceChanges} />
 
           {step === "details" ? (
             <div style={{ maxWidth: 460 }}>
               {/* Required first, optional last (owner, 30 Sep 2026): a buyer fills top to
                   bottom and can stop at the "Optional" line. */}
-              <Field label="YOUR NAME" value={name} onChange={setName} autoComplete="name" />
-              <Field id="checkout-email" label="EMAIL — THE GST INVOICE GOES HERE" value={email} onChange={setEmail} type="email" autoComplete="email" inputMode="email" />
-              <Field label="MOBILE" value={phone} onChange={setPhone} type="tel" autoComplete="tel" inputMode="tel" />
+              <Field id="checkout-name" label="YOUR NAME" value={name} onChange={setName} autoComplete="name" invalid={bad("name")} />
+              <Field id="checkout-email" label="EMAIL — THE GST INVOICE GOES HERE" value={email} onChange={setEmail} type="email" autoComplete="email" inputMode="email" invalid={bad("email")} />
+              <Field id="checkout-phone" label="MOBILE" value={phone} onChange={setPhone} type="tel" autoComplete="tel" inputMode="tel" invalid={bad("phone")} />
               {(hasHosting || hasTrial) && (
                 <>
                   {hostingLines.length > 1 ? (
@@ -475,10 +574,11 @@ export default function CheckoutPage() {
                         value={typedFor(l.key, i)}
                         onChange={(v) => (i === 0 ? setDomain(v) : setPlanDomain((m) => ({ ...m, [l.key]: v })))}
                         mono
+                        invalid={bad("domain")}
                       />
                     ))
                   ) : (
-                    <Field id="checkout-domain" label="DOMAIN FOR YOUR HOSTING (e.g. yourcompany.in)" value={domain} onChange={setDomain} mono />
+                    <Field id="checkout-domain" label="DOMAIN FOR YOUR HOSTING (e.g. yourcompany.in)" value={domain} onChange={setDomain} mono invalid={bad("domain")} />
                   )}
                   {/* Required for hosting and the trial alike (owner, 30 Sep 2026), so a buyer
                       without one is shown where to get one rather than left stuck. */}
@@ -490,7 +590,7 @@ export default function CheckoutPage() {
                       </a>
                       {hasTrial
                         ? " — then come back and start your free trial."
-                        : " — the domain is free with yearly hosting."}
+                        : ` — a ${FREE_DOMAIN_TLDS_LABEL} domain is free for the first year with yearly hosting.`}
                     </p>
                   )}
                 </>
@@ -505,7 +605,8 @@ export default function CheckoutPage() {
                     autoComplete="address-level1"
                     value={stateCode}
                     onChange={(e) => setStateCode(e.target.value)}
-                    style={{ width: "100%", border: "1px solid var(--border-strong)", borderRadius: 6, padding: "11px 12px", fontSize: 15, fontFamily: "inherit", background: "#fff" }}
+                    aria-invalid={bad("state") || undefined}
+                    style={{ width: "100%", border: `1px solid ${bad("state") ? "#DC2626" : "var(--border-strong)"}`, borderRadius: 6, padding: "11px 12px", fontSize: 15, fontFamily: "inherit", background: "#fff" }}
                   >
                     <option value="">Choose your state</option>
                     {STATE_OPTIONS.map(([code, nameOf]) => <option key={code} value={code}>{nameOf}</option>)}
@@ -523,9 +624,9 @@ export default function CheckoutPage() {
                   <p className="meta" style={{ margin: "6px 0 2px" }}>
                     The domain is registered in your name, so the registry needs the owner&apos;s postal address.
                   </p>
-                  <Field label="ADDRESS" value={addrLine1} onChange={setAddrLine1} autoComplete="street-address" />
-                  <Field label="CITY" value={addrCity} onChange={setAddrCity} autoComplete="address-level2" />
-                  <Field label="PIN CODE" value={addrPin} onChange={setAddrPin} mono autoComplete="postal-code" inputMode="numeric" />
+                  <Field id="checkout-address" label="ADDRESS" value={addrLine1} onChange={setAddrLine1} autoComplete="street-address" invalid={bad("address") && addrLine1.trim().length < 3} />
+                  <Field label="CITY" value={addrCity} onChange={setAddrCity} autoComplete="address-level2" invalid={bad("address") && addrCity.trim().length < 2} />
+                  <Field label="PIN CODE" value={addrPin} onChange={setAddrPin} mono autoComplete="postal-code" inputMode="numeric" invalid={bad("address") && !/^\d{6}$/.test(addrPin.trim())} />
                 </>
               )}
 
@@ -534,6 +635,7 @@ export default function CheckoutPage() {
               </div>
               <Field label="COMPANY / BUSINESS NAME — YOUR NAME IS USED IF BLANK" value={company} onChange={setCompany} autoComplete="organization" />
               <Field
+                id="checkout-gstin"
                 label="GSTIN — FOR INPUT CREDIT"
                 value={gstin}
                 onChange={(v) => setGstin(normalizeGstinInput(v))}
@@ -587,7 +689,7 @@ export default function CheckoutPage() {
                     </div>
                   ) : (
                   <button className="btn btn-primary" style={{ width: "100%", marginTop: 8 }} disabled={paying || trialMixed} onClick={() => proceed(() => void startTrial())}>
-                    {paying ? "Starting your trial…" : "Start my 15-day free trial"}
+                    {paying ? "Starting your trial…" : `Start my ${HOSTING_TRIAL_DAYS}-day free trial`}
                   </button>
                   )}
                   <p className="meta" style={{ marginTop: 10 }}>
@@ -635,8 +737,12 @@ export default function CheckoutPage() {
 
               {priceCheck && (
                 <div role="alert" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
-                  The total has changed from {rupee(priceCheck.shown)} to <strong>{rupee(priceCheck.server)}</strong> — usually because a
-                  domain&apos;s registry price moved since you added it. Nothing has been charged.
+                  {/* R-1601: not "the registry price moved" — the cart now prices the yearly-hosting
+                      bundle as the server does, so what is left is any re-check: a domain's live
+                      price, or which domain the hosting is set up on (only that one is free). */}
+                  The total has changed from {rupee(priceCheck.shown)} to <strong>{rupee(priceCheck.server)}</strong> after
+                  our server re-checked every price — a domain&apos;s live registry price, or which domain is free
+                  with yearly hosting (only the one your hosting is set up on). Nothing has been charged.
                   <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
                     <button type="button" className="btn btn-primary btn-sm" onClick={() => void openPayment(priceCheck.order)}>
                       Pay {rupee(priceCheck.server)}
@@ -664,6 +770,28 @@ export default function CheckoutPage() {
                   "Opening the Razorpay payment window",
                 ]}
               />
+              <BusyPanel
+                active={confirmingPayment}
+                variant="modal"
+                title="Confirming your payment"
+                steps={["Checking the payment with Razorpay", "Recording your order", "Issuing your GST invoice"]}
+              />
+              {paymentMode === "simulation" && (
+                <div role="note" style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1E3A8A", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
+                  <strong>Test mode</strong> — Razorpay is not set up on this computer. No money is taken: the order,
+                  the GST invoice and the setup request are recorded as a test, and you go to the order page.
+                </div>
+              )}
+              {paymentMode === "disabled" ? (
+                <div role="alert" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
+                  Online payment is not switched on for this site yet, so this order cannot be paid here.
+                  Ask for a quote and we will send a GST invoice with a payment link.
+                  <div style={{ marginTop: 10 }}>
+                    <a href="/quote" className="btn btn-primary btn-sm">Get a quote</a>
+                  </div>
+                </div>
+              ) : (
+              <>
               {/* Not disabled until the box is ticked: a press says why (29 Sep 2026). */}
               <button
                 className="btn"
@@ -676,10 +804,12 @@ export default function CheckoutPage() {
                 disabled={paying}
                 onClick={() => { if (!agreed) { setAgreeNudge(true); return; } void placeOrder(); }}
               >
-                {paying ? "Starting secure payment…" : `Pay ${rupee(t.payable)}`}
+                {paying ? "Starting secure payment…" : payButtonLabel(paymentMode, rupee(t.payable))}
               </button>
+              </>
+              )}
               <button
-                onClick={() => setStep("details")}
+                onClick={backToDetails}
                 style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 14, cursor: "pointer", marginTop: 12 }}
               >
                 ← Back to details
@@ -690,13 +820,15 @@ export default function CheckoutPage() {
 
         {/* Sticky — payment method chunte waqt total nazron me rahe. */}
         <aside className="card" style={{ position: "sticky", top: 84 }}>
-          {cart.lines.map((l) => (
-            <div key={l.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border-hairline)" }}>
+          {t.priced.map((p) => (
+            <div key={p.line.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border-hairline)" }}>
               <div>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>{l.label} × {l.qty}</div>
-                <div className="meta" style={{ fontSize: 12 }}>{cycleLabel(l.cycle)}</div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{p.line.label} × {p.line.qty}</div>
+                {/* R-1628: the renewal per year incl. GST — the figure /domains promises here. */}
+                <div className="meta" style={{ fontSize: 12 }}>{lineRenewalText(p.line, cart.domainRenewals ?? {})}</div>
+                <BundleNote p={p} />
               </div>
-              <span style={{ fontSize: 14, fontWeight: 600 }}>{rupee(l.unitPrice * l.qty)}</span>
+              <LinePrice p={p} size={14} />
             </div>
           ))}
           <div style={{ paddingTop: 10 }}>

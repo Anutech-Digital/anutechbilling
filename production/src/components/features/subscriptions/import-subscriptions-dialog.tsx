@@ -48,6 +48,8 @@ import { useItems } from "@/lib/queries/items";
 import { attachPrimaryContact } from "@/lib/contacts/attach";
 import { withStateCode } from "@/lib/gst/gstin-state";
 import { cn, rupee, formatDate } from "@/lib/utils";
+import { utcDateISO } from "@/lib/dates/ist";
+import { textDateISO } from "./google-subs-parse";
 
 interface ParsedSub {
   rowNum: number;
@@ -493,7 +495,7 @@ function toISODate(v: string): string | null {
   const n = Number(s);
   if (Number.isFinite(n) && n > 20000 && n < 80000) {
     const ms = Date.UTC(1899, 11, 30) + Math.round(n) * 86400000;
-    return new Date(ms).toISOString().slice(0, 10);
+    return utcDateISO(new Date(ms));   // built from UTC parts — no zone shift
   }
 
   // Strip any time component, then split d/m/y on -, / or .
@@ -508,9 +510,8 @@ function toISODate(v: string): string | null {
     if (!isNaN(new Date(`${iso}T00:00:00Z`).getTime())) return iso;
   }
 
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
-  return null;
+  // "November 27, 2026" etc. — R-1652: the day the text names, never via toISOString (IST: a day early).
+  return textDateISO(s);
 }
 
 function vendorFor(plan: string): ParsedSub["vendor"] {

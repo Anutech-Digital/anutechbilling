@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
+import { countJsonRows, logExport } from "@/lib/export-log";
 
 const KEY = ["tenant_backups"] as const;
 
@@ -71,7 +72,7 @@ export function useRestoreBackup() {
     },
     onSuccess: (res) => {
       qc.invalidateQueries(); // every screen's data just changed
-      toast.success(`Restore ho gaya — ${res.restored_tables} tables wapas is point par. (Pehle wala data "Before restore" point me safe hai.)`);
+      toast.success(`Restored — ${res.restored_tables} tables are back at this point. (Your earlier data is safe in the "Before restore" point.)`);
     },
     onError: (err) => toastError(err),
   });
@@ -104,7 +105,7 @@ export function useDeleteBackup() {
 export async function downloadBackup(id: string, createdAt: string): Promise<void> {
   const supabase = createClient();
   const { data, error } = await supabase.rpc("get_tenant_backup", { p_id: id });
-  if (error || data == null) { toast.error("Backup download fail — dobara try karo."); return; }
+  if (error || data == null) { toast.error("Backup download failed — try again."); return; }
   const stamp = createdAt.slice(0, 10);
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -115,4 +116,5 @@ export async function downloadBackup(id: string, createdAt: string): Promise<voi
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  void logExport({ what: "full-backup", rowCount: countJsonRows(data), format: "json" });
 }

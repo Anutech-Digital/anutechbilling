@@ -187,15 +187,18 @@ async function handle(req: Request) {
       // its "Deposit TDS" reminder is not sent. If the TDS read fails, every
       // month counts as before — a stray reminder beats a missed deadline.
       const lookback = tdsLookbackFrom(today);
-      const [tdsSal, tdsExp] = await Promise.all([
+      const [tdsSal, tdsExp, tdsComm] = await Promise.all([
         supabase.from("salary_payments").select("period, tds")
           .eq("tenant_id", tenant.id).gte("period", lookback.slice(0, 7)).gt("tds", 0),
         supabase.from("expenses").select("expense_date, tds_amount")
           .eq("tenant_id", tenant.id).gte("expense_date", lookback).gt("tds_amount", 0),
+        // R-1580: TDS on partner commissions (194H) is a deposit too.
+        supabase.from("referral_commissions").select("earned_date, tds_amount, status")
+          .eq("tenant_id", tenant.id).gte("earned_date", lookback).gt("tds_amount", 0).neq("status", "cancelled"),
       ]);
-      const notApplicable = tdsSal.error || tdsExp.error
+      const notApplicable = tdsSal.error || tdsExp.error || tdsComm.error
         ? undefined
-        : noTdsDeductedPredicate(tdsMonthsFrom(tdsSal.data, tdsExp.data), today);
+        : noTdsDeductedPredicate(tdsMonthsFrom(tdsSal.data, tdsExp.data, tdsComm.data), today);
 
       const rows = buildComplianceRows(today, filed, undefined, notApplicable, profileFromRow(tenant, null));
       // A rung counts as done for the tenant only once EVERY recipient has it —

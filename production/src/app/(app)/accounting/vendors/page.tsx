@@ -19,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { FAB } from "@/components/ui/fab";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -44,6 +45,9 @@ import { IFSC_RE, ACCOUNT_RE, UPI_RE, cleanAccountNo, cleanIfsc } from "@/lib/pa
 import { panFromGstin, isPan, deducteeTypeFromPan, DEDUCTEE_LABEL } from "@/lib/accounting/tds-deductor";
 import { UDYAM_RE } from "@/lib/accounting/msme";
 import { toast } from "sonner";
+import type { Route } from "next";
+import { recordBillHref } from "../bills/add-from-url";
+import { isCarryOverClick, clearStraySelection } from "./vendor-popup";
 
 const VENDOR_SUPPLIED_PRODUCTS = [
   "Google Workspace & GCP",
@@ -76,7 +80,8 @@ function vendorRegion(gstin: string | null | undefined): string | null {
 }
 
 export default function VendorsPage() {
-  const { data: vendors, isLoading } = useVendors();
+  const vendorsQ = useVendors();
+  const { data: vendors, isLoading } = vendorsQ;
   /* R-287: search in the URL, so Back / reload keeps the filtered vendor list. */
   const [search, setSearch] = useUrlState("q");
   const [addOpen, setAddOpen] = React.useState(false);
@@ -137,6 +142,9 @@ export default function VendorsPage() {
 
       {isLoading ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
+      ) : vendorsQ.isError ? (
+        /* R-1807: a failed read is not "No vendors yet" (§24). */
+        <LoadError what="Vendors" error={vendorsQ.error} onRetry={() => void vendorsQ.refetch()} />
       ) : (vendors ?? []).length === 0 ? (
         <Card className="py-2">
           <EmptyState
@@ -294,7 +302,7 @@ function VendorActions({
   onView: () => void; onEdit: () => void; onDelete: () => void;
 }) {
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="h-8 w-8 p-0 border-0" aria-label="Vendor options">
           <Icon name="more_horizontal" size={16} />
@@ -375,8 +383,8 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
   const submit = async () => {
     if (!name.trim()) return;
     if (udyamBad) {
-      toast.error("Udyam number sahi nahi hai", {
-        description: "Format UDYAM-SS-00-0000000 hota hai (jaise UDYAM-DL-01-0012345). Vendor ke Udyam certificate se dekh kar bharein, ya khaali chhod dein.",
+      toast.error("Invalid Udyam number", {
+        description: "The format is UDYAM-SS-00-0000000 (e.g. UDYAM-DL-01-0012345). Copy it from the vendor's Udyam certificate, or leave it empty.",
       });
       return;
     }
@@ -408,7 +416,7 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="md:!max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="md:!max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{vendor ? "Edit vendor" : "Add vendor"}</DialogTitle>
           <DialogDescription>Supplier details & product portfolio — select what products this vendor supplies.</DialogDescription>
@@ -424,16 +432,16 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
           </div>
           {/* PAN decides the TDS rate (194C 1% for an individual, 2% for a company) and, when
               missing, forces 20% u/s 206AA — so it is asked for here, not guessed at 26Q time. */}
-          <FormField htmlFor="vendors-pan-for-tds-26q" label="PAN (for TDS / 26Q)" hint={pan && !isPan(pan) ? "10 characters, e.g. ABCDE1234F" : deducteeTypeFromPan(pan) ? `${DEDUCTEE_LABEL[deducteeTypeFromPan(pan)!]} — TDS rate isi se tay hota hai` : "Bina PAN ke TDS 20% kaatna padta hai (s.206AA)"}>
+          <FormField htmlFor="vendors-pan-for-tds-26q" label="PAN (for TDS / 26Q)" hint={pan && !isPan(pan) ? "10 characters, e.g. ABCDE1234F" : deducteeTypeFromPan(pan) ? `${DEDUCTEE_LABEL[deducteeTypeFromPan(pan)!]} — this sets the TDS rate` : "Without a PAN, TDS must be deducted at 20% (s.206AA)"}>
             <Input id="vendors-pan-for-tds-26q" value={pan} onChange={(e) => setPan(e.target.value.toUpperCase())} placeholder="ABCDE1234F" maxLength={10} className="font-mono uppercase" />
           </FormField>
           {/* MSME: micro/small vendor ka bill 45 din (likhit agreement na ho to 15) me na chuke
               to s.43B(h) us saal deduction rok deta hai. Udyam bharne se Aging page flag karta hai. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <FormField htmlFor="vendors-udyam" label="Udyam no. (MSME, optional)" hint={udyamBad ? "Format: UDYAM-SS-00-0000000" : "MSME vendor ho to — 45-din payment rule track hota hai"}>
+            <FormField htmlFor="vendors-udyam" label="Udyam no. (MSME, optional)" hint={udyamBad ? "Format: UDYAM-SS-00-0000000" : "For MSME vendors — the 45-day payment rule is tracked"}>
               <Input id="vendors-udyam" value={udyam} onChange={(e) => setUdyam(e.target.value.toUpperCase())} placeholder="UDYAM-DL-01-0012345" maxLength={19} className="font-mono uppercase" />
             </FormField>
-            <FormField htmlFor="vendors-msme-category" label="MSME category" hint={msmeCategory === "medium" ? "Medium par 43B(h) nahi lagta" : "Udyam certificate par likha hota hai"}>
+            <FormField htmlFor="vendors-msme-category" label="MSME category" hint={msmeCategory === "medium" ? "43B(h) does not apply to medium enterprises" : "As printed on the Udyam certificate"}>
               <Select value={msmeCategory || "none"} onValueChange={(v) => setMsmeCategory(v === "none" ? "" : (v as "micro" | "small" | "medium"))} disabled={!udyam.trim()}>
                 <SelectTrigger id="vendors-msme-category"><SelectValue placeholder="—" /></SelectTrigger>
                 <SelectContent>
@@ -499,7 +507,7 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
             <p className="text-xs text-ink-3">Select products this vendor offers so you can buy & source licenses from them.</p>
           </div>
 
-          {/* R-177: three across in a 512px dialog cut the placeholders ("e.g. +91 987…") — two across,
+          {/* R-177: three across in the old 512px dialog (R-1408 widened it to 768px) cut the placeholders ("e.g. +91 987…") — two across,
               email on its own full-width line. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormField htmlFor="vendors-contact-name" label="Contact name"><Input id="vendors-contact-name" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="e.g. Rahul Sharma" /></FormField>
@@ -554,11 +562,17 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
   const [detailBill, setDetailBill] = React.useState<VendorBill | null>(null);
   const [detailExpense, setDetailExpense] = React.useState<ExpenseRow | null>(null);
   const prods = parseSuppliedProducts(vendor.notes);
+  /* R-1511: the click that opened this popup must not leave the header half-selected. */
+  const openedAt = React.useRef(Date.now());
+  React.useEffect(() => { openedAt.current = Date.now(); clearStraySelection(); }, []);
 
   return (
     <>
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="md:!max-w-lg">
+      <DialogContent
+        className="md:!max-w-lg"
+        onMouseDownCapture={(e) => { if (isCarryOverClick(e.detail, Date.now() - openedAt.current)) e.preventDefault(); }}
+      >
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-2">
             {vendor.name}
@@ -600,7 +614,12 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
           {isLoading ? (
             <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-12" />)}</div>
           ) : (bills ?? []).length === 0 && (vExpenses ?? []).length === 0 ? (
-            <p className="py-6 text-center text-sm text-ink-3">No bills or expenses for this vendor yet.</p>
+            <div className="py-6 text-center space-y-3">
+              <p className="text-sm text-ink-3">No bills or expenses for this vendor yet.</p>
+              <Button asChild variant="primary" icon="receipt" size="sm">
+                <Link href={recordBillHref(vendor.id)}>Record a bill</Link>
+              </Button>
+            </div>
           ) : (
           <>
             {(bills ?? []).length > 0 && (
@@ -663,11 +682,16 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
           )}
         </div>
 
-        <DialogFooter className="flex-col sm:flex-row gap-2">
-          <Button asChild variant="primary" icon="cart" className="w-full sm:w-auto font-bold">
-            <Link href={"/purchase-orders" as never}>🛒 Buy Products from {vendor.name}</Link>
-          </Button>
+        <DialogFooter className="gap-2">
+          {/* R-1511: recording the vendor's bill is the everyday job → primary; buying is a
+              purchase order (a different flow) → secondary, named for what it does. */}
           <Button variant="ghost" icon="edit" onClick={onEdit}>Edit vendor</Button>
+          <Button asChild variant="default" icon="cart" className="w-full sm:w-auto">
+            <Link href={"/purchase-orders" as Route}>Raise purchase order</Link>
+          </Button>
+          <Button asChild variant="primary" icon="receipt" className="w-full sm:w-auto">
+            <Link href={recordBillHref(vendor.id)}>Record a bill</Link>
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -171,6 +171,31 @@
   .anutech-site [data-grid] { grid-template-columns: 1fr !important; }
 }
 
+/* R-1811 (24 Oct 2026): /hosting, /domains and /email (HomeV2) size their grids from a `w` state
+   that starts at 1200 and is measured only after hydration, so the server HTML — what a phone
+   paints first, and all it ever paints when JS is slow or fails — was the desktop layout: the
+   /hosting "honest numbers" card sat in a second column, cut off at the right edge. Hosting and
+   domains grids that are one column on a phone carry `data-grid-phone` (their own 760px `mob`
+   line); HomeV2's carry `data-grid` / `data-grid-2up` (its 980px line). The footer's columns
+   moved here from styled-jsx for the same reason (styled-jsx reaches the page only after
+   hydration). Guarded by src/site/phone-width.test.ts. */
+@media (max-width: 759px) {
+  .anutech-site [data-grid-phone] { grid-template-columns: minmax(0, 1fr) !important; }
+}
+/* Two-up below the 980px line (the /email stat rows), where the desktop row has four. */
+@media (max-width: 979px) {
+  .anutech-site [data-grid-2up] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+/* R-1815 (24 Oct 2026): HomeV2 (/email) sections keep their 48px desktop gutter in inline
+   styles; on a phone CLAUDE.md §20 asks for 16px, so the side padding shrinks here (pre-JS too). */
+@media (max-width: 639px) {
+  .anutech-site [data-gutter] { padding-left: 16px !important; padding-right: 16px !important; }
+}
+.anutech-site .footer-grid { display: grid; grid-template-columns: 1.5fr repeat(5, minmax(0, 1fr)); gap: 28px; }
+@media (max-width: 979px) {
+  .anutech-site .footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .anutech-site .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 .anutech-site .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
 .anutech-site .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
@@ -178,6 +203,15 @@
 /* Six menus since R-155 (Custom software first): between the 980px breakpoint and a full
    1200px row the items tighten so the header never overflows. */
 @media (min-width: 980px) and (max-width: 1199px) {
-  .anutech-site .nav-item { padding-left: 5px !important; padding-right: 5px !important; font-size: 13.5px !important; }
+  .anutech-site .nav-item { padding-left: 4px !important; padding-right: 4px !important; font-size: 13px !important; }
   .anutech-site .nav-why { display: none !important; } /* also under Custom software */
+}
+
+/* R-1495 (Pawan, 17 Oct): the header row (logo, menus, Cart, Customer login) is ~47px wider than
+   the 1180px .wrap leaves inside its 48px padding, so below ~1300px "Customer login" ran past the
+   screen edge and the page scrolled sideways (measured: +46px at 1000 and 1200, +6px at 1280).
+   Up to 1299px the row's gaps and side padding shrink. Measured after: no sideways scroll at
+   980 / 1000 / 1100 / 1199 / 1200 / 1280 / 1440. */
+@media (min-width: 980px) and (max-width: 1299px) {
+  .anutech-site .hdr-row { gap: 12px !important; padding-left: 24px; padding-right: 24px; }
 }

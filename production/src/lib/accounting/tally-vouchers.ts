@@ -23,6 +23,7 @@
 import { gstSplit } from "@/lib/gst/gstr1";
 import { tallyDate, xmlEscape } from "./ledger-export";
 import { toIstDate } from "@/lib/dates/ist";
+import { cashReceived } from "@/lib/payments/cash-received";
 
 export interface TallyLedgerNames {
   sales: string;
@@ -189,6 +190,8 @@ export function salesFromInvoices(rows: readonly InvoiceForTally[], from: string
 
 export interface PaymentForTally {
   id: string; receipt_voucher_no: string | null; customer_id: string | null; amount: number | null;
+  /** R-1565: advance credit applied — no money moved, so no Receipt voucher for that part. */
+  credit_applied?: number | null;
   received_at: string | null; method: string | null; reference: string | null;
 }
 
@@ -201,11 +204,13 @@ export function receiptsFromPayments(
   for (const p of rows) {
     const day = p.received_at ? istDay(p.received_at) : null;
     if (!inPeriod(day, from, to)) continue;
+    const cash = cashReceived({ amount: p.amount ?? 0, credit_applied: p.credit_applied });
+    if (cash <= 0) continue;   // paid wholly from advance credit: no money moved
     const party = p.customer_id ? customerName.get(p.customer_id) : undefined;
     if (!party) { skipped.push({ id: p.id, reason: "payment is not linked to a customer" }); continue; }
     receipts.push({
       date: day!, number: p.receipt_voucher_no ?? p.id, party,
-      amount: p.amount ?? 0,
+      amount: cash,
       narration: [p.receipt_voucher_no ?? p.id, p.method, p.reference].filter(Boolean).join(" · "),
     });
   }

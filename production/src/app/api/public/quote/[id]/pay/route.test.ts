@@ -9,17 +9,23 @@ import { NextRequest } from "next/server";
 const db = vi.hoisted(() => ({
   quote: null as Record<string, unknown> | null,
   secrets: {} as Record<string, unknown> | null,
+  /* R-1569: the payments already on the quote — the order charges what is still due. */
+  payments: [] as Record<string, unknown>[],
   rpc: vi.fn(),
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createAdminClient: () => ({
-    from: (table: string) => ({
-      select: () => ({
-        eq: () => ({
-          maybeSingle: async () => ({ data: table === "quotes" ? db.quote : db.secrets, error: null }),
-        }),
-      }),
-    }),
+    from: (table: string) => {
+      const filters: [string, unknown][] = [];
+      const chain: Record<string, unknown> = {
+        select: () => chain,
+        eq: (c: string, v: unknown) => { filters.push([c, v]); return chain; },
+        maybeSingle: async () => ({ data: table === "quotes" ? db.quote : db.secrets, error: null }),
+        then: (ok: (v: unknown) => unknown) =>
+          ok({ data: table === "payments" ? db.payments.filter((r) => filters.every(([c, v]) => r[c] === v)) : [], error: null }),
+      };
+      return chain;
+    },
     rpc: db.rpc,
   }),
 }));
@@ -45,6 +51,7 @@ const ENV = { ...process.env };
 beforeEach(() => {
   db.quote = baseQuote();
   db.secrets = { razorpay_key_id: "rzp_test_k", razorpay_key_secret: "s", razorpay_mode: "test" };
+  db.payments = [];
   db.rpc.mockReset().mockResolvedValue({ error: null });
   rzp.create.mockReset().mockResolvedValue({ id: "order_T1" });
 });
@@ -112,5 +119,50 @@ describe("the order", () => {
     } else {
       expect(body.orderId).toBe("order_T1");
     }
+  });
+});
+
+/* R-1569 (audit 18 Oct): quote-order.ts:150 charged `quote.amount` on a PART-PAID quote — ₹20,000
+   of ₹50,000 already in, the link took ₹50,000 again and the extra became credit. The order is
+   now the amount still DUE: quote total − payments received (a TDS settlement is part of the
+   payment's amount, so it counts). Refunded payments are not money in hand. */
+describe("R-1569 — a part-paid quote charges only what is still due", () => {
+  const paid = (amount: number, status = "received") =>
+    ({ tenant_id: "t-1", quote_id: "Q-T-0001", amount, status });
+
+  it("₹708 quote with ₹400 already received → the order is ₹308", async () => {
+    db.quote = { ...baseQuote(), status: "accepted", payment_status: "partial" };
+    db.payments = [paid(400)];
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ amount: 30800, amountRupees: 308, quoteTotal: 708, alreadyPaid: 400 });
+    expect(rzp.create.mock.calls[0][0]).toMatchObject({ amount: 30800, notes: { quoteTotal: "708", alreadyPaid: "400" } });
+  });
+
+  it("a refunded payment is not counted as paid", async () => {
+    db.quote = { ...baseQuote(), status: "accepted", payment_status: "partial" };
+    db.payments = [paid(400, "refunded"), paid(100)];
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(rzp.create.mock.calls[0][0]).toMatchObject({ amount: 60800 });
+  });
+
+  it("nothing left to pay (payments cover the total) → 409 with a next step, no order", async () => {
+    db.quote = { ...baseQuote(), status: "accepted", payment_status: "partial" };
+    db.payments = [paid(500), paid(208)];
+    const res = await call();
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toMatch(/already paid in full/i);
+    expect(body.nextStep).toMatch(/receipt/i);
+    expect(rzp.create).not.toHaveBeenCalled();
+  });
+
+  it("a quote replaced by another (superseded_by) is refused and names the new quote", async () => {
+    db.quote = { ...baseQuote(), status: "accepted", superseded_by: "Q-T-0009" };
+    const res = await call();
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("Q-T-0009");
+    expect(rzp.create).not.toHaveBeenCalled();
   });
 });

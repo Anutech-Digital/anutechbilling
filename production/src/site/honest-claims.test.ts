@@ -23,7 +23,8 @@ describe("public site claims", () => {
     for (const f of FILES) expect(read(f), f).not.toMatch(/11[ -]min|11 minutes|eleven[ -]minute/i);
   });
   it("one hosting 'from' price everywhere — the /hosting Starter yearly rate", () => {
-    expect(HOSTING_FROM_MO).toBe(`₹${Math.min(...HOSTING_TIERS.map((t) => t.yearlyMo))}`);
+    // Whole rupees (R-1465): ₹50, not ₹49.99.
+    expect(HOSTING_FROM_MO).toBe(`₹${Math.round(Math.min(...HOSTING_TIERS.map((t) => t.yearlyMo)))}`);
     for (const f of ["lib/data/copy.ts", "components/chrome/Header.tsx"]) {
       expect(read(f), f).toContain(`from ${HOSTING_FROM_MO}/mo`);
       expect(read(f), f).not.toContain("₹159/mo");

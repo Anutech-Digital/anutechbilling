@@ -13,7 +13,7 @@
  */
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
+import { authorizeAgent } from "@/lib/security/agent-token";
 import { AI_CHECKER_NAME } from "./checker-name";
 
 export const dynamic = "force-dynamic";
@@ -22,12 +22,8 @@ export const runtime = "nodejs";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: Request) {
-  const expected = process.env.AGENT_QUEUE_TOKEN?.trim();
-  if (!expected) return NextResponse.json({ error: "agent queue not configured" }, { status: 503 });
-  const provided = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-  if (!timingSafeEqualStr(provided, expected)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = authorizeAgent(req);
+  if (!auth.ok) return auth.response;
 
   let id: unknown;
   try { ({ id } = await req.json()); } catch { /* falls through to the check below */ }
@@ -41,6 +37,7 @@ export async function POST(req: Request) {
     .from("feedback")
     .update({ checked_at: now, checked_by_name: AI_CHECKER_NAME, updated_at: now })
     .eq("id", id)
+    .in("tenant_id", auth.tenantIds)   // R-739: only a scoped workspace's report
     .eq("status", "fixed")
     .is("checked_at", null)
     .select("id");

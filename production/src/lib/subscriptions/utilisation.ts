@@ -1,3 +1,4 @@
+// Not wired yet — R-1608 (built, kept for later)
 /**
  * Seat utilisation and the churn risk it implies.
  *

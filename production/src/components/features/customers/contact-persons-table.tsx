@@ -94,7 +94,7 @@ export function ContactPersonsTable({ fields, register, onMakePrimary, onRemove 
                   <input id={id("mobile")} className={cellInput} type="tel" inputMode="tel" placeholder="e.g. +91 98765 43210" aria-label="Mobile" autoComplete="off" {...register(`contact_persons.${i}.mobile`)} />
                 </td>
                 <td className="absolute right-1.5 top-1.5 md:static md:table-cell md:text-center">
-                  <DropdownMenu>
+                  <DropdownMenu modal={false}>
                     <DropdownMenuTrigger asChild>
                       <button
                         type="button"

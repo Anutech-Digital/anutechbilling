@@ -1,10 +1,12 @@
 /**
- * Support KB, status services, demo client-area data and the legal drafts — from the handoff.
+ * Support KB, demo client-area data and the legal drafts — from the handoff.
  *
  * The legal blocks are marked on-page as counsel-review drafts, exactly as the handoff wrote
  * them ("Placeholder draft — have your counsel review before publishing"). Do not quietly
  * drop that sentence: it is the difference between a draft and a representation.
  */
+import { DATA_LOCATION } from "../config";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 export const KB_ARTICLES = [
   { title: "How to point your domain at our nameservers", cat: "DOMAINS" },
@@ -27,22 +29,8 @@ export const SUPPORT_CHANNELS = [
   { title: "Renewals", body: "We email you before anything expires. Renew from the client area, or reply to the reminder." },
 ] as const;
 
-export interface StatusService {
-  name: string;
-  note: string;
-  uptime: string;
-  /** Indexes (0–29) of degraded 3-day bars. */
-  bad: readonly number[];
-}
-
-export const STATUS_SERVICES: readonly StatusService[] = [
-  { name: "Shared hosting · Mumbai", note: "LiteSpeed cluster", uptime: "99.98%", bad: [] },
-  { name: "Shared hosting · Bengaluru", note: "LiteSpeed cluster", uptime: "99.99%", bad: [] },
-  { name: "Anutech Mail", note: "IMAP, SMTP, webmail", uptime: "99.96%", bad: [17] },
-  { name: "Anycast DNS", note: "Authoritative resolution", uptime: "100%", bad: [] },
-  { name: "Client area & billing", note: "Panel and invoices", uptime: "99.93%", bad: [4, 22] },
-  { name: "Domain registry API", note: "Register, renew, transfer", uptime: "99.97%", bad: [28] },
-] as const;
+/* R-1503: the hand-written status list (uptime %, 90-day bars) is gone — /status now shows
+   live checks (src/app/(marketing)/status/checks.ts). Nothing records uptime history yet. */
 
 /* ── Demo client area (explicitly demo data in the handoff) ────────────────── */
 
@@ -69,7 +57,7 @@ export const DASH_INVOICES = [
 ] as const;
 
 export const DASH_TICKETS = [
-  { subject: "Move nirvaanclinics.co.in to the Bengaluru node", meta: "WhatsApp · replied 14 minutes ago" },
+  { subject: "Move nirvaanclinics.co.in to a bigger hosting plan", meta: "WhatsApp · replied 14 minutes ago" },
   { subject: "Add 6 mailboxes for the new sales team", meta: "Email · awaiting your confirmation" },
 ] as const;
 
@@ -84,7 +72,7 @@ export interface LegalPage {
 
 export const LEGAL: Readonly<Record<"terms" | "privacy" | "refund", LegalPage>> = {
   terms: {
-    title: "Terms and conditions",
+    title: "Anutech Digital terms and conditions",
     updated: "Last updated 30 September 2026",
     intro: "These terms govern services bought from Anutech Digital Pvt Ltd, Rohini, Delhi (GSTIN 07ABDCA0298H1ZP). Placeholder draft — have your counsel review before publishing.",
     blocks: [
@@ -92,7 +80,7 @@ export const LEGAL: Readonly<Record<"terms" | "privacy" | "refund", LegalPage>> 
       { h: "Pricing and taxes", p: "Prices published on this site are in Indian rupees and exclusive of GST at 18% unless a page states otherwise. First-year and renewal prices are shown together; we give thirty days written notice before changing a renewal price on an active subscription." },
       { h: "Payment and activation", p: "Orders are paid online through Razorpay (UPI, netbanking, cards and wallets) and set up once the payment is confirmed. Licence orders are subject to vendor provisioning timelines. A GST tax invoice is issued in your name for every paid order." },
       { h: "Hosting and domains", p: "Every hosting plan is attached to a domain you own or buy from us. Domains are registered in your name, with the owner details you give at checkout, and those details must be accurate: the registry can suspend a domain whose owner details are false." },
-      { h: "Free hosting trial", p: "The Starter hosting plan can be tried free for 15 days, once per customer. No card is taken, so nothing is charged when the trial ends." },
+      { h: "Free hosting trial", p: `The Starter hosting plan can be tried free for ${HOSTING_TRIAL_DAYS} days, once per customer. No card is taken, so nothing is charged when the trial ends.` },
       { h: "Renewals and expiry", p: "We send renewal reminders by email from thirty days before expiry. Auto-renew is configurable per subscription. Domains that lapse enter the registry redemption period, and redemption fees set by the registry apply." },
       { h: "Support", p: "Support is provided by email at support@anutech.in, Monday to Saturday, 10:00 to 19:00 IST. Our target is a first reply inside four working hours." },
       { h: "Uptime and credits", p: "Hosting carries a 99.9% monthly uptime commitment. Where a calendar month falls below it, we credit the affected month to your account without you having to ask." },
@@ -102,14 +90,14 @@ export const LEGAL: Readonly<Record<"terms" | "privacy" | "refund", LegalPage>> 
     ],
   },
   privacy: {
-    title: "Privacy policy",
-    updated: "Last updated 30 September 2026",
+    title: "Anutech Digital privacy policy",
+    updated: "Last updated 19 October 2026", // R-1600: "Where data lives" corrected
     intro: "How Anutech Digital Pvt Ltd handles personal data, aligned to the Digital Personal Data Protection Act, 2023. Placeholder draft — have your counsel review before publishing.",
     blocks: [
       { h: "What we collect", p: "Contact details you give us (name, company, email, mobile), billing details including GSTIN, records of quotes, orders and invoices, support conversations, and basic technical logs needed to operate the service." },
       { h: "Why we collect it", p: "To supply and support what you bought, to raise GST-compliant invoices, to notify you about renewals and outages, and to meet statutory record-keeping obligations. We do not sell personal data." },
       { h: "Consent and choice", p: "Analytics and marketing cookies are set only if you accept them. You can decline and continue to use the site, and you can withdraw consent at any time by writing to us." },
-      { h: "Where data lives", p: "Customer records are held on Indian infrastructure. ResellerOS runs on Google Cloud in the Mumbai region. Vendor subscriptions are provisioned on the vendor's own platform under their policies." },
+      { h: "Where data lives", p: `Customer records are held in ResellerOS, our own system, which runs on ${DATA_LOCATION.label}, so they are stored outside India. Vendor subscriptions are provisioned on the vendor's own platform under their policies.` },
       { h: "Sharing", p: "We share data only with the vendor whose product you bought, with payment processors to collect payment, and where compelled by law. Each processor is bound by contract to purpose limitation." },
       { h: "Retention", p: "Invoices and tax records are retained as long as GST law requires. Other personal data is deleted within ninety days of a valid deletion request or of the account closing, whichever is later." },
       { h: "Your rights", p: "You may ask for access to your data, correction of it, or its deletion, and you may nominate another person to exercise these rights on your behalf. Write to us and we respond inside thirty days." },

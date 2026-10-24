@@ -25,6 +25,9 @@
 /** /login?error= values this callback can produce (the login page explains each). */
 export const LINK_CONFLICT_ERROR = "account_link_conflict";
 export const EMAIL_UNVERIFIED_ERROR = "email_unverified";
+/** R-733: the invite for this address expired / was already used (texts: lib/auth/invite-accept.ts). */
+export const INVITE_EXPIRED_ERROR = "invite_expired";
+export const INVITE_USED_ERROR = "invite_used";
 
 export const LINK_CONFLICT_MESSAGE =
   "This email already has an account, but this Google sign-in is not linked to it. Sign in with your email and password, or ask your workspace owner to contact support. Nothing in your account was changed.";

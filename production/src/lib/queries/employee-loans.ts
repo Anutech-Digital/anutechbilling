@@ -11,6 +11,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 
@@ -56,33 +57,40 @@ export type LoanRepaymentRow = {
   expense_category: string | null;
 };
 
-/** All loans for the tenant with computed repaid / outstanding. */
+/**
+ * All loans for the tenant with computed repaid / outstanding. R-1582: both reads page past
+ * the gateway's 1000-row cap — a repayment dropped at the cap made the loan's outstanding
+ * bigger than it is.
+ */
+export async function fetchEmployeeLoans(supabase: ReturnType<typeof createClient>): Promise<EmployeeLoan[]> {
+  const loans = await fetchAllRows((from, to) => supabase
+    .from("employee_loans")
+    .select("id, tenant_id, employee_name, principal, disbursed_on, bank_account_id, kind, notes, status, created_at")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: true })
+    .range(from, to));
+
+  const reps = await fetchAllRows((from, to) => supabase
+    .from("employee_loan_repayments")
+    .select("loan_id, amount")
+    .order("id", { ascending: true })
+    .range(from, to));
+
+  const paidByLoan = new Map<string, number>();
+  for (const r of reps) {
+    paidByLoan.set(r.loan_id, (paidByLoan.get(r.loan_id) ?? 0) + (r.amount ?? 0));
+  }
+
+  return loans.map((l) => {
+    const repaid = paidByLoan.get(l.id) ?? 0;
+    return { ...(l as EmployeeLoanRow), repaid, outstanding: (l.principal ?? 0) - repaid };
+  });
+}
+
 export function useEmployeeLoans() {
   return useQuery({
     queryKey: ["employee-loans"],
-    queryFn: async (): Promise<EmployeeLoan[]> => {
-      const supabase = createClient();
-      const { data: loans, error } = await supabase
-        .from("employee_loans")
-        .select("id, tenant_id, employee_name, principal, disbursed_on, bank_account_id, kind, notes, status, created_at")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-
-      const { data: reps, error: repErr } = await supabase
-        .from("employee_loan_repayments")
-        .select("loan_id, amount");
-      if (repErr) throw repErr;
-
-      const paidByLoan = new Map<string, number>();
-      for (const r of reps ?? []) {
-        paidByLoan.set(r.loan_id, (paidByLoan.get(r.loan_id) ?? 0) + (r.amount ?? 0));
-      }
-
-      return (loans ?? []).map((l) => {
-        const repaid = paidByLoan.get(l.id) ?? 0;
-        return { ...(l as EmployeeLoanRow), repaid, outstanding: (l.principal ?? 0) - repaid };
-      });
-    },
+    queryFn: (): Promise<EmployeeLoan[]> => fetchEmployeeLoans(createClient()),
     staleTime: 30_000,
   });
 }
@@ -94,24 +102,24 @@ export function useLoanRepayments(loanId: string | undefined) {
     enabled: Boolean(loanId),
     queryFn: async (): Promise<LoanRepaymentRow[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      // R-1582: one loan's history can pass a page (an advance spent in many small parts).
+      const data = await fetchAllRows((from, to) => supabase
         .from("employee_loan_repayments")
         .select("id, loan_id, amount, repaid_on, method, bank_account_id, expense_id, notes, created_at")
         .eq("loan_id", loanId!)
-        .order("repaid_on", { ascending: true });
-      if (error) throw error;
+        .order("repaid_on", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to));
 
-      const rows = (data ?? []) as Omit<LoanRepaymentRow, "expense_category">[];
+      const rows = data as Omit<LoanRepaymentRow, "expense_category">[];
 
       // Join the category from the linked expense (spent portions of an advance).
       const expenseIds = rows.map((r) => r.expense_id).filter((v): v is string => Boolean(v));
       const catById = new Map<string, string>();
-      if (expenseIds.length) {
-        const { data: exps, error: expErr } = await supabase
-          .from("expenses").select("id, category").in("id", expenseIds);
-        if (expErr) throw expErr;
-        for (const e of exps ?? []) if (e.category) catById.set(e.id, e.category);
-      }
+      const exps = await fetchAllRowsIn(expenseIds, (run, from, to) => supabase
+        .from("expenses").select("id, category").in("id", run)
+        .order("id", { ascending: true }).range(from, to));
+      for (const e of exps) if (e.category) catById.set(e.id, e.category);
 
       return rows.map((r) => ({
         ...r,

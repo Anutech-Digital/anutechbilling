@@ -51,7 +51,8 @@ import {
 } from "@/lib/accounting/money-inbox";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { SALARY_ROLES, type UserRole } from "@/lib/nav";
+import { SALARY_ROLES, canOpenRoute, type UserRole } from "@/lib/nav";
+import { reportLinksFor } from "@/lib/accounting/overview-links";
 
 type Tone = "emerald" | "rose" | "amber" | "indigo" | "ink";
 
@@ -134,13 +135,16 @@ export default function AccountingOverviewPage() {
        Expenses is not loans or salary), so the tile opens its own breakdown — headline =
        tile total, one line per part, each linking to the page that holds it (same lines
        and links as the Balance Sheet). */
-  const owedLines: BreakdownLine[] = a ? [
+  /* R-1648: a part whose page this role cannot open (billing: Employee loans, Payroll) is
+     still a figure in the breakdown, but not a link that would bounce them home. */
+  const openable = (lines: BreakdownLine[]) => lines.map((l) => (l.href && canOpenRoute(me?.role, l.href) ? l : { ...l, href: undefined }));
+  const owedLines: BreakdownLine[] = a ? openable([
     { label: "Unpaid invoices", amount: a.receivables, href: "/invoices" },
     { label: "Project sales, unpaid", amount: a.projectReceivable, href: "/invoices" },
     { label: "TDS receivable", amount: a.tdsReceivable, href: "/accounting/tds-receivable" },
     { label: "Employee loans / advances", amount: a.employeeLoans, href: "/accounting/loans" },
-  ] : [];
-  const oweLines: BreakdownLine[] = a ? [
+  ]) : [];
+  const oweLines: BreakdownLine[] = a ? openable([
     { label: "Unpaid vendor bills", amount: a.payables, href: "/accounting/bills" },
     { label: "Salary payable", amount: a.salaryPayable, href: "/accounting/payroll" },
     { label: "Statutory dues (TDS, PF, ESI)", amount: a.salaryDuesPayable, href: "/accounting/payroll" },
@@ -148,7 +152,7 @@ export default function AccountingOverviewPage() {
     { label: "Credit cards", amount: a.creditCardPayable, href: "/accounting/banking" },
     { label: "EMI / asset loans", amount: a.emiLoansPayable, href: "/accounting/assets" },
     { label: "Bank / business loans", amount: a.businessLoansPayable, href: "/accounting/business-loans" },
-  ] : [];
+  ]) : [];
 
   /* The two alerts the four folders genuinely do NOT cover, kept as a thin strip above
      them rather than folded in:
@@ -243,19 +247,9 @@ export default function AccountingOverviewPage() {
       {/* Jump to — the hub */}
       <h2 className="text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-2">Reports &amp; ledgers</h2>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        <JumpCard href="/accounting/pnl" icon="trending_up" title="P&L Report" sub="Revenue − costs = profit" />
-        <JumpCard href="/accounting/balance-sheet" icon="layout" title="Balance Sheet" sub="What you own vs owe" />
-        <JumpCard href="/accounting/cash-flow" icon="rupee" title="Cash Flow" sub="Real money in vs out" />
-        <JumpCard href="/accounting/banking" icon="rupee" title="Banking" sub="Accounts + reconcile" />
-        <JumpCard href="/accounting/gst" icon="file" title="GST Reports" sub="Output − input + filing" />
-        <JumpCard href="/accounting/profitability" icon="users" title="Customer Margin" sub="Profit per customer" />
-        <JumpCard href="/accounting/aging" icon="clock" title="Customer Aging" sub="Who owes, how old" />
-        <JumpCard href="/accounting/ledger" icon="file" title="Ledger (Khata)" sub="One party · Dr/Cr statement" />
-        <JumpCard href="/accounting/tds-receivable" icon="rupee" title="TDS Receivable" sub="TDS credits to claim" />
-        <JumpCard href="/accounting/assets" icon="cart" title="Assets & EMIs" sub="Fixed assets + loans" />
-        <JumpCard href="/accounting/business-loans" icon="rupee" title="Business Loans" sub="Borrowings + EMIs" />
-        <JumpCard href="/accounting/advances" icon="wallet" title="Employee Advances" sub="Petty cash + expense claims" />
-        <JumpCard href="/accounting/saas-metrics" icon="sparkles" title="SaaS Metrics" sub="MRR · churn · LTV" />
+        {/* R-1648: only the pages this role can open — the route guard's own rule (nav.ts
+            isRouteAllowed via canOpenRoute), so a card never bounces anyone home. */}
+        {reportLinksFor(me?.role).map((l) => <JumpCard key={l.href} {...l} />)}
       </div>
     </div>
   );
@@ -332,7 +326,7 @@ function toneText(t: Tone) {
   return t === "rose" ? "text-rose" : t === "amber" ? "text-amber-ink" : t === "indigo" ? "text-indigo" : t === "emerald" ? "text-emerald" : "text-ink-2";
 }
 
-type BreakdownLine = { label: string; amount: number; href: string };
+type BreakdownLine = { label: string; amount: number; href?: string };
 
 /**
  * A hero tile. With `href` it is a link; with `breakdown` it opens a panel whose headline is
@@ -376,13 +370,20 @@ function HeroKpi({ label, value, tone, hint, href, breakdown, loading }: {
           <ul className="py-1">
             {lines.map((l) => (
               <li key={l.label}>
-                <Link href={l.href as Route}
-                  className="flex items-center justify-between gap-3 px-4 py-2 text-[13px] hover:bg-paper-2/60 focus-visible:bg-paper-2/60 focus-visible:outline-none">
-                  <span className="text-ink-2 min-w-0">{l.label}</span>
-                  <span className="flex items-center gap-1 font-mono tabular-nums text-ink shrink-0">
-                    {rupee(l.amount)} <Icon name="arrow_right" size={12} className="text-ink-3" />
-                  </span>
-                </Link>
+                {l.href ? (
+                  <Link href={l.href as Route}
+                    className="flex items-center justify-between gap-3 px-4 py-2 text-[13px] hover:bg-paper-2/60 focus-visible:bg-paper-2/60 focus-visible:outline-none">
+                    <span className="text-ink-2 min-w-0">{l.label}</span>
+                    <span className="flex items-center gap-1 font-mono tabular-nums text-ink shrink-0">
+                      {rupee(l.amount)} <Icon name="arrow_right" size={12} className="text-ink-3" />
+                    </span>
+                  </Link>
+                ) : (
+                  <div className="flex items-center justify-between gap-3 px-4 py-2 text-[13px]">
+                    <span className="text-ink-2 min-w-0">{l.label}</span>
+                    <span className="font-mono tabular-nums text-ink shrink-0 pr-4">{rupee(l.amount)}</span>
+                  </div>
+                )}
               </li>
             ))}
           </ul>

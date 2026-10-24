@@ -90,3 +90,25 @@ describe("the financial year comes from the document, not the clock", () => {
     expect(body).not.toMatch(/\bcurrent_date\b/);
   });
 });
+
+describe("R-1617 — past 9999 the number grows, it is never cut", () => {
+  /* lpad(n, 4, '0') TRUNCATES in Postgres: #10000 printed as "…-1000", the same string as
+     the real #1000, and the 10,000th document of a year was a duplicate primary key. The
+     SQL now pads to AT LEAST 4 and refuses (does not cut) a number over 16 characters.
+     Same worked examples as supabase/tests/r1617_document_number_past_9999.test.sql. */
+  const R1617 = readFileSync(
+    "supabase/migrations/20261019001426_r1617_document_number_no_truncate.sql", "utf8");
+
+  it("the TS predictor never cuts either", () => {
+    expect(formatDocumentNumber(S({ prefix: "RV", docCode: "ABCD" }), 9999)).toBe("RV-ABCD-27-9999");
+    expect(formatDocumentNumber(S({ prefix: "RV", docCode: "ABCD" }), 10000)).toBe("RV-ABCD-27-10000");
+    expect(formatDocumentNumber(S({ docCode: "ABC" }), 10000)).toBe("INV-ABC-27-10000");
+  });
+
+  it("the SQL pads only when shorter than 4, and refuses over 16", () => {
+    const code = R1617.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*--.*$/gm, "");
+    expect(code).toMatch(/if length\(v_\w+\) < 4 then/);
+    expect(code).toContain("if length(v_number) > 16 then");
+    expect(code).toContain("raise exception");
+  });
+});

@@ -25,7 +25,23 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { z } from "zod";
 import { Sentry } from "@/lib/sentry";
 import { createClient } from "@/lib/supabase/server";
-import type { UserRole } from "@/lib/auth/roles";
+import { can, isUserRole, type Permissions, type UserRole } from "@/lib/auth/roles";
+import { isRouteAllowed } from "@/lib/nav";
+
+/**
+ * R-1470: may this role open at least one of these app pages? Same rule as middleware's page
+ * guard (nav.ts menu roles + ROUTE_DENY), so an API behind a page admits exactly the roles that
+ * see that page — a sales login cannot call the bank-statement API from the browser console.
+ * A missing or unknown role answers false (fail closed; canOpenRoute's "still loading → true"
+ * is a UI rule, not a guard).
+ */
+export function mayOpenPage(role: string | null | undefined, pages: readonly string[]): boolean {
+  if (!isUserRole(role)) return false;
+  return pages.some((p) => isRouteAllowed(role, p));
+}
+
+/** The 403 text for a failed role gate (§24: what happened + whom to ask). */
+export const ROLE_GATE_ERROR = "Your role is not allowed to do this — ask the workspace owner.";
 
 /** Author ka chuna hua status + wo message jo user ko dikhana safe hai. */
 export class RouteError extends Error {
@@ -72,6 +88,11 @@ type Options<S extends z.ZodTypeAny | undefined> = {
   input?: S;
   /** Sirf ye roles. Na do to koi bhi signed-in workspace member. */
   roles?: readonly UserRole[];
+  /** R-732: ya PERMISSIONS table ka ek sawaal — can(role, permission) false ho to 403. `roles` ke saath bhi de sakte ho (dono lagte hain). */
+  permission?: keyof Permissions;
+  /** R-1470: un pages ki list jinke peeche ye API hai — caller in me se koi ek page khol sakta ho
+   *  (mayOpenPage), warna 403. `roles` / `permission` ke saath bhi de sakte ho (sab lagte hain). */
+  pages?: readonly string[];
   /** 403 par dikhne wala "ab kya karo" (role check fail hone par). */
   roleHint?: string;
 };
@@ -115,24 +136,30 @@ export function withRoute<S extends z.ZodTypeAny | undefined = undefined>(opts: 
     try {
       const supabase = createClient();
       const { data: auth } = await supabase.auth.getUser();
-      if (!auth?.user) return fail(401, "Aap signed in nahi hain — dobara login karke try kariye.");
+      if (!auth?.user) return fail(401, "You are not signed in — sign in again and try again.");
 
       const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", auth.user.id).maybeSingle();
       if (!me?.tenant_id) {
-        return fail(403, "Aapka account kisi workspace se juda nahi hai — workspace owner se invite maangiye.");
+        return fail(403, "Your account is not linked to any workspace — ask the workspace owner for an invite.");
       }
       const role: UserRole = me.role;
       if (opts.roles && !opts.roles.includes(role)) {
-        return fail(403, opts.roleHint ?? `Ye kaam sirf ${opts.roles.join(" / ")} kar sakte hain — unse kahiye.`);
+        return fail(403, opts.roleHint ?? `Only ${opts.roles.join(" / ")} can do this — ask them.`);
+      }
+      if (opts.permission && !can(role, opts.permission)) {
+        return fail(403, opts.roleHint ?? ROLE_GATE_ERROR);
+      }
+      if (opts.pages && !mayOpenPage(role, opts.pages)) {
+        return fail(403, opts.roleHint ?? ROLE_GATE_ERROR);
       }
 
       let input: unknown = undefined;
       if (opts.input) {
         const raw = await readInput(req);
-        if (!raw.ok) return fail(400, "Request ka data padha nahi gaya (JSON galat hai) — page refresh karke dobara try kariye.");
+        if (!raw.ok) return fail(400, "Could not read the request data (invalid JSON) — refresh the page and try again.");
         const parsed = opts.input.safeParse(raw.value);
         if (!parsed.success) {
-          return fail(400, parsed.error.issues.map((i) => i.message).join(", ") || "Kuch fields galat hain — form check kariye.");
+          return fail(400, parsed.error.issues.map((i) => i.message).join(", ") || "Some fields are not valid — check the form.");
         }
         input = parsed.data;
       }
@@ -170,5 +197,5 @@ export function errorResponse(tag: string, method: string, e: unknown): Response
   const msg = e instanceof Error ? e.message : String(e);
   console.error(`${tag} ${method} failed (${ref}): ${msg}`);
   Sentry.captureException(e, { tags: { route: tag, ref } });
-  return fail(500, `Server par kuch galat ho gaya — thodi der baad dobara try kariye. Baar-baar ho to support ko ye ref bataiye: ${ref}`, ref);
+  return fail(500, `Something went wrong on the server — try again in a little while. If it keeps happening, give support this ref: ${ref}`, ref);
 }

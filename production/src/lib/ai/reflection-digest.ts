@@ -66,28 +66,28 @@ export function reflectionEmail(
   if (speaking.length === 0) return null;
 
   const lines: string[] = [
-    `Pichhle ${windowHours} ghante me app ne kya seekha.`,
+    `What the app learned in the last ${windowHours} hours.`,
     "",
   ];
 
   for (const r of speaking) {
     lines.push(`── ${who(r)} ──`);
-    lines.push(`${r.leadsSeen} lead par customer ka sandesh aaya.`);
+    lines.push(`${r.leadsSeen} leads got a message from the customer.`);
 
     if (r.topStall) {
       lines.push(
-        `Sabse badi rukavat: ${r.topStall}` +
-          (r.stalledCount ? ` — ${r.stalledCount} lead ispar atke.` : "."),
+        `Biggest blocker: ${r.topStall}` +
+          (r.stalledCount ? ` — ${r.stalledCount} leads stuck on it.` : "."),
       );
     } else if (r.withheld) {
       /* The floor's own sentence, not a paraphrase — it explains itself better than a
          summary of it would, and a reader who sees it twice learns the rule. */
-      lines.push(`Ranking nahi di gayi: ${r.withheld}`);
+      lines.push(`Ranking withheld: ${r.withheld}`);
     }
 
     if (r.topBlock) {
       lines.push(
-        `AI ko sabse zyada kis cheez ne roka (${r.topBlock.count} baar):`,
+        `What blocked the AI most often (${r.topBlock.count} times):`,
         `  ${r.topBlock.reason}`,
       );
     }
@@ -95,7 +95,7 @@ export function reflectionEmail(
     const accepted = r.acceptedByBand ?? [];
     if (accepted.length > 0) {
       lines.push(
-        "Kaunse seat-band me haan hui: " +
+        "Seat bands where customers said yes: " +
           accepted.map((a) => `${a.band} (${a.accepted})`).join(", "),
       );
     }
@@ -103,18 +103,18 @@ export function reflectionEmail(
   }
 
   lines.push(
-    "Ye note sirf ginti hai — koi model nahi chala, aur ye kisi prompt me nahi likha jata.",
-    "Jis din kuch kehne layak na ho, ye mail aata hi nahi.",
+    "This note is only a count — no model ran, and it is not written into any prompt.",
+    "On a day with nothing worth saying, this mail is not sent.",
   );
 
   /* The subject carries the finding, because a subject that says "Daily reflection" makes
      the reader open the mail to learn whether it was worth opening. */
   const first = speaking[0];
   const headline = first.topStall
-    ? `sabse badi rukavat: ${first.topStall}`
+    ? `biggest blocker: ${first.topStall}`
     : first.topBlock
-      ? `AI ko roka gaya: ${first.topBlock.reason}`
-      : "kuch seat-band me haan hui";
+      ? `AI was blocked: ${first.topBlock.reason}`
+      : "customers said yes in some seat bands";
 
   return {
     subject: `ResellerOS — ${headline.slice(0, 70)}`,

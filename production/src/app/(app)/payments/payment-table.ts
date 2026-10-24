@@ -13,7 +13,7 @@ import { paymentMethodLabel } from "./method-label";
 
 /** The fields of a payment the list sorts on. */
 export interface PaymentSortRow {
-  quote_id: string;
+  quote_id: string | null;
   received_at: string | null;
   amount: number;
   method: string;

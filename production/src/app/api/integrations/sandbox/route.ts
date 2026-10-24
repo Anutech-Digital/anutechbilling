@@ -12,14 +12,23 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { sandboxBaseProblem, SANDBOX_DEFAULT_BASE } from "@/lib/net/safe-fetch";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
 
+/* R-735: the base URL receives the tenant's key + secret (api/gstin/verify), so only Sandbox's
+   own https hosts are saved — never an internal or metadata address (SSRF). */
 const saveSchema = z.object({
   api_key:    z.string().trim().min(1, "API key required").max(200),
   api_secret: z.string().trim().min(1, "Secret required").max(400),
-  api_base:   z.string().trim().url().optional(),
+  api_base:   z.string().trim().max(200)
+    .superRefine((v, ctx) => {
+      const problem = v ? sandboxBaseProblem(v) : null; // empty = the default
+      if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+    })
+    .transform((v) => v.replace(/\/+$/, ""))
+    .optional(),
 });
 
 /** Show only the trailing 4 chars + leading 4 + middle dots — never the
@@ -78,7 +87,7 @@ export async function GET() {
     api_key_mask: r.isOwner ? mask(data?.sandbox_api_key) : null,
     api_secret_mask: r.isOwner ? mask(data?.sandbox_api_secret) : null,
     can_manage:   r.isOwner,
-    api_base:     data?.sandbox_api_base ?? "https://api.sandbox.co.in",
+    api_base:     data?.sandbox_api_base ?? SANDBOX_DEFAULT_BASE,
     updated_at:   data?.updated_at ?? null,
   });
 }
@@ -106,7 +115,7 @@ export async function POST(req: NextRequest) {
       tenant_id:           r.tenantId,
       sandbox_api_key:     api_key,
       sandbox_api_secret:  api_secret,
-      sandbox_api_base:    api_base ?? "https://api.sandbox.co.in",
+      sandbox_api_base:    api_base || SANDBOX_DEFAULT_BASE,
     }, { onConflict: "tenant_id" });
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

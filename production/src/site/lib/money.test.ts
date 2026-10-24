@@ -90,7 +90,7 @@ describe("coupon aur domain (R-225)", () => {
     const t = cartTotals([line({ unitPrice: 799, sku: "domain:in", domain: "acme.in", cycle: "yearly" })], 0.10);
     expect(t.discount).toBe(0);
     expect(t.discountRate).toBe(0);
-    expect(t.payable).toBeCloseTo(799 * 1.18);
+    expect(t.payable).toBe(943); // R-1108: round(799 × 1.18), what the server charges
   });
 
   it("workspace line par coupon pehle jaisa — gross ka 10%", () => {
@@ -104,23 +104,93 @@ describe("coupon aur domain (R-225)", () => {
     const t = cartTotals(
       [
         line({ unitPrice: 2999, sku: "hosting:standard", cycle: "yearly" }),
-        line({ unitPrice: 799, sku: "domain:in", domain: "acme.in", cycle: "yearly" }),
+        // .ai: never the free domain (R-1595), so it stays a PAID domain next to the plan.
+        line({ unitPrice: 7999, sku: "domain:ai", domain: "acme.ai", cycle: "yearly" }),
       ],
       0.10,
     );
-    // 2999 → 2699 (whole rupees per unit), domain 799 untouched.
+    // 2999 → 2699 (whole rupees per unit), domain 7999 untouched.
     expect(t.discount).toBe(300);
-    expect(t.subtotal).toBe(2699 + 799);
+    expect(t.subtotal).toBe(2699 + 7999);
   });
 
-  it("₹0 bundle domain ke saath coupon pehle jaisa poore gross par", () => {
+  it("bundle domain (yearly hosting ke saath ₹0) ke saath coupon pehle jaisa poore gross par", () => {
     const t = cartTotals(
       [
         line({ unitPrice: 2999, sku: "hosting:standard", cycle: "yearly" }),
-        line({ unitPrice: 0, sku: "domain:in", domain: "acme.in", cycle: "yearly" }),
+        line({ unitPrice: 799, sku: "domain:in", domain: "acme.in", cycle: "yearly" }),
       ],
       0.15,
     );
-    expect(t.discount).toBeCloseTo(2999 * 0.15);
+    // R-1108: whole rupees, as the server stores it — subtotal round(2999 × 0.85) = 2549.
+    expect(t.discount).toBe(450);
+    expect(t.subtotal).toBe(2549);
+  });
+});
+
+/* R-1108 (23 Oct 2026): the rows a buyer reads must add up, and the payable must be what the
+   server charges (lib/checkout/cart-coupon.ts subtotal = round(...); cart-checkout.ts amount =
+   round(subtotal × 1.18)). Rs 899 at 20% read 719 + 129 = 849 while the server charged 848. */
+describe("R-1108 shown totals add up and equal the server's charge", () => {
+  it("Rs 899 at 20% off reads 719 + 129 = 848 (server: round(719 × 1.18) = 848)", () => {
+    const t = cartTotals([line({ unitPrice: 899 })], 0.2);
+    expect([t.subtotal, t.gst, t.payable]).toEqual([719, 129, 848]);
+    expect(t.discount).toBe(180);
+  });
+  it("grid: whole rupees, gross − discount = subtotal, subtotal + gst = payable = round(subtotal × 1.18)", () => {
+    for (const price of [99, 149, 270, 499, 799, 899, 1299, 2399, 4999]) {
+      for (const qty of [1, 3, 7]) {
+        for (const rate of [0, 0.05, 0.1, 0.15, 0.2, 0.25]) {
+          const t = cartTotals([line({ unitPrice: price, qty })], rate);
+          for (const v of [t.discount, t.subtotal, t.gst, t.payable]) expect(Number.isInteger(v)).toBe(true);
+          expect(t.gross - t.discount).toBe(t.subtotal);
+          expect(t.subtotal + t.gst).toBe(t.payable);
+          expect(t.payable).toBe(Math.round(t.subtotal * 1.18));
+        }
+      }
+    }
+  });
+});
+
+/* R-1601: kaunsa domain/mailbox free hai, har render par lines se — server ka hi niyam
+   (lib/checkout/hosting-bundle.ts). unitPrice wahi rehta hai; daam priced[] me nikalta hai. */
+describe("yearly hosting bundle cart me (R-1601)", () => {
+  const hosting = (cycle: "yearly" | "monthly" = "yearly") => line({ key: "h", unitPrice: 2999, sku: "hosting:standard", cycle });
+  const dom = (d: string, over: Partial<CartLine> = {}) =>
+    line({ key: d, unitPrice: 799, sku: `domain:${d.slice(d.indexOf(".") + 1)}`, domain: d, cycle: "yearly", yearPrices: { "1": 799, "2": 1598 }, ...over });
+
+  it("domain pehle, hosting baad me — domain ₹0 aur note", () => {
+    const t = cartTotals([dom("acme.in"), hosting()], 0);
+    expect(t.priced[0]).toMatchObject({ price: 0, total: 0, freeNote: "Free with yearly hosting" });
+    expect(t.priced[0].line.unitPrice).toBe(799); // the line keeps its own price
+    expect(t.gross).toBe(2999);
+  });
+
+  it("hosting hatao — domain ka daam wapas", () => {
+    const t = cartTotals([dom("acme.in")], 0);
+    expect(t.priced[0]).toMatchObject({ price: 799, total: 799, freeNote: null });
+  });
+
+  it("monthly plan kuch free nahi karta", () => {
+    expect(cartTotals([dom("acme.in"), hosting("monthly")], 0).priced[0].total).toBe(799);
+  });
+
+  it(".ai kabhi free nahi", () => {
+    expect(cartTotals([dom("acme.ai", { unitPrice: 7999, yearPrices: { "1": 7999 } }), hosting()], 0).priced[0].total).toBe(7999);
+  });
+
+  it("checkout par plan apne domain par — cart wala domain poora daam", () => {
+    expect(cartTotals([hosting(), dom("new.in")], 0, ["mine.com"]).priced[1].total).toBe(799);
+    expect(cartTotals([hosting(), dom("new.in")], 0, ["new.in"]).priced[1].total).toBe(0);
+  });
+
+  it("2 saal ka domain: sirf pehla saal free", () => {
+    const t = cartTotals([dom("acme.in", { years: 2, unitPrice: 1598 }), hosting()], 0);
+    expect(t.priced[0]).toMatchObject({ price: 799, freeNote: "1st year free with yearly hosting" });
+  });
+
+  it("10 mailbox + 1 yearly plan: 1 free, 9 ka daam", () => {
+    const t = cartTotals([hosting(), line({ key: "m", unitPrice: 948, qty: 10, sku: "mailbox:anutech", cycle: "yearly" })], 0);
+    expect(t.priced[1]).toMatchObject({ freeQty: 1, total: 9 * 948, freeNote: "1 of 10 free with yearly hosting" });
   });
 });

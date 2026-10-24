@@ -10,10 +10,16 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { verifyPdfToken } from "@/lib/pdf/pdf-token";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { buildQuotePdfProps, type TenantPdfInfo } from "@/lib/pdf/build-props";
-import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
-import { quoteAmountDue } from "@/lib/payments/amount-due";
+import { quotePayQr, type QuotePayQrTenant } from "@/lib/pdf/quote-pay-qr";
+import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import type { Quote, Customer } from "@/lib/supabase/database.types";
 import { readTenantUdyam } from "@/lib/compliance/udyam";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { parseQuoteTemplate, proformaBank, quoteTemplateFileName } from "@/lib/pdf/quote-template";
+import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
+import { trustedOrigin } from "@/lib/app-url";
+import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
+import { loadRenewedSubscriptionDomain } from "@/lib/quotes/line-period-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,7 +41,11 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
   }
 
   const q = quote as Quote;
-  const [{ data: customer }, { data: lead }, { data: tenant }, udyamNumber] = await Promise.all([
+  /* R-1669: this link is a customer copy. A quote still waiting for (or refused) discount /
+     margin approval is not rendered — the button is disabled too, but a link can be shared. */
+  const block = customerCopyBlock(q);
+  if (block) return deny(409, `This quote needs approval before it can go to the customer. ${block.reason} ${block.nextStep}`);
+  const [{ data: customer }, { data: lead }, { data: tenant }, udyamNumber, gstRegistration] = await Promise.all([
     q.customer_id
       ? admin.from("customers").select("*").eq("id", q.customer_id).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -46,6 +56,8 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
     admin.from("tenants").select("name, gstin, email, phone, address, state, state_code, upi_vpa, upi_payee_name, logo_url, remit_bank_name, remit_account_name, remit_account_number, remit_ifsc, remit_branch").eq("id", q.tenant_id).maybeSingle(),
     /* R-368: read on its own — never fails the PDF, null before its migration. */
     readTenantUdyam(admin, q.tenant_id),
+    /* R-1532: Bill of Supply business → "No GST — Bill of Supply" on a 0% quote. */
+    readTenantGstRegistration(admin, q.tenant_id),
   ]);
 
   /* Fetched here, not inside the renderer: `logoDataUri` carries a 4s deadline and swallows
@@ -54,43 +66,53 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
 
   const props = buildQuotePdfProps({
     logoDataUri: logo,
+    gstRegistration,
+    /* R-1764: a renewal quote's "Domain:" comes from the subscription it renews. */
+    subscriptionDomain: await loadRenewedSubscriptionDomain(admin, q),
     quote:    q,
     customer: (customer as Customer) ?? null,
     lead,
     tenant:   tenant ? { ...(tenant as TenantPdfInfo), udyam_number: udyamNumber } : {
       name: q.customer_name, gstin: null, email: null, phone: null, address: null,
       state: null, state_code: null, logo_url: null, upi_vpa: null,
-      /* A quote PDF prints no bank block (R-038 is the invoice footer), but the shared
-         TenantPdfInfo is what forces every caller to think about these — see its
-         comment. Nulls here, not an omission. */
+      /* No tenant row → no bank details to print (a Proforma's bank block, R-1523, is then
+         simply left out). Nulls here, not an omission — see TenantPdfInfo's comment. */
       remit_bank_name: null, remit_account_name: null, remit_account_number: null,
       remit_ifsc: null, remit_branch: null, udyam_number: udyamNumber,
     },
   });
 
-  // Scan-to-pay. quoteAmountDue() decides whether this quote can be collected at
-  // all — it refuses a non-INR quote (UPI settles only in rupees) and refuses one
-  // already invoiced (the invoice owns that ask, at its own balance).
-  const t = tenant as { name?: string; upi_vpa?: string | null; upi_payee_name?: string | null } | null;
-  const upi = await buildQuoteUpiQr({
-    vpa:       t?.upi_vpa,
-    payeeName: t?.upi_payee_name ?? t?.name,
-    quoteId:   q.id,
-    amountDue: quoteAmountDue(q),
+  // Scan-to-pay. R-1613: the QR asks for exactly what the online Pay button charges —
+  // readQuoteDueNow (total − money received, instalment 1 on a split quote). No QR on a
+  // non-INR quote (UPI settles only in rupees), a paid one, or one already invoiced (the
+  // invoice owns that ask, at its own balance). R-1694: one shared rule (quotePayQr) so the
+  // staff preview shows the same QR the customer's PDF carries.
+  const upi = await quotePayQr({
+    tenant:  tenant as QuotePayQrTenant | null,
+    quoteId: q.id,
+    due:     await readQuoteDueNow(admin, q),
   });
+
+  /* R-1523: ?template=proforma → the same quote as a "Proforma Invoice" (quote number, no GST
+     series — §17a). Chosen per download; nothing is stored on the quote. */
+  const template = parseQuoteTemplate(req.nextUrl.searchParams.get("template"));
+  const payLinkUrl = q.public_token ? quoteAcceptUrl(trustedOrigin(req.headers), q.id, q.public_token) : null;
 
   const { renderToBuffer } = await import("@react-pdf/renderer");
   const { QuotePDF } = await import("@/lib/pdf/QuotePDF");
   const buffer = await renderToBuffer(
     createElement(QuotePDF, {
       ...props, upiQrDataUrl: upi?.dataUrl ?? null, upiVpa: upi?.vpa ?? null,
+      template,
+      bank: template === "proforma" ? proformaBank(tenant as Parameters<typeof proformaBank>[0]) : null,
+      payLinkUrl,
     }) as unknown as Parameters<typeof renderToBuffer>[0],
   );
 
   return new Response(new Uint8Array(buffer), {
     headers: {
       "content-type": "application/pdf",
-      "content-disposition": `inline; filename="${id}.pdf"`,
+      "content-disposition": `inline; filename="${template === "proforma" ? quoteTemplateFileName(template, id) : `${id}.pdf`}"`,
       "cache-control": "private, max-age=300",
     },
   });

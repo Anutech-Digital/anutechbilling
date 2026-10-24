@@ -77,7 +77,7 @@ export function LeadActivityTab({ lead, noteDraft, setNoteDraft, logActivity, ca
                     "shrink-0 rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors",
                     noteDraft.trim()
                       ? "border-hairline-strong bg-paper text-ink-2 hover:bg-paper-2"
-                      : "cursor-not-allowed border-hairline text-ink-4",
+                      : "cursor-not-allowed border-hairline disabled:text-ink-4",
                   )}
                 >
                   Save
@@ -136,7 +136,7 @@ export function LeadActivityTab({ lead, noteDraft, setNoteDraft, logActivity, ca
                     "inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-md border bg-paper text-xs font-semibold transition-colors",
                     lead.contact_phone
                       ? "border-hairline text-ink-2 hover:bg-paper-2"
-                      : "cursor-not-allowed border-hairline text-ink-4 opacity-50",
+                      : "cursor-not-allowed border-hairline disabled:text-ink-4 opacity-50",
                   )}
                 >
                   <Icon name="mobile" size={13} /> No answer
@@ -230,7 +230,7 @@ export function LeadActivityTab({ lead, noteDraft, setNoteDraft, logActivity, ca
                         </div>
                       </div>
                       {e.href && (
-                        <Icon name="chevron-right" size={14} className="mt-1 shrink-0 text-ink-4 transition-colors group-hover:text-amber-ink" />
+                        <Icon name="chevron-right" size={14} className="mt-1 shrink-0 text-ink-3 transition-colors group-hover:text-amber-ink" />
                       )}
                     </>
                   );

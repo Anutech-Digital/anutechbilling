@@ -63,8 +63,8 @@ export function CallLogDialog({ companyName, initialNote = "", onClose, onSave }
         <DialogHeader>
           <DialogTitle>Log call — {companyName}</DialogTitle>
           <DialogDescription>
-            Kya baat hui? Bolkar ya likhkar darj kariye. Khaali chhod dein to bhi call darj
-            ho jayegi.
+            What was discussed? Speak or type a note. If you leave it empty, the call is
+            still logged.
           </DialogDescription>
         </DialogHeader>
 
@@ -147,8 +147,8 @@ export function CallLogDialog({ companyName, initialNote = "", onClose, onSave }
                   aria-pressed={dictation.lang === code}
                   onClick={() => dictation.setLang(code)}
                   title={code === "en-IN"
-                    ? "Types in Roman script (20 seats chahiye)"
-                    : "Types in Devanagari (20 सीट्स चाहिए)"}
+                    ? "Types in Roman script (English letters)"
+                    : "Types in Devanagari script (Hindi letters)"}
                   className={cn(
                     "rounded px-1.5 py-0.5 font-semibold",
                     dictation.lang === code ? "bg-ink text-paper" : "hover:bg-paper-2",

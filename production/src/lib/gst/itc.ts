@@ -18,8 +18,8 @@
 
 /** Expense categories whose GST is blocked under s.17(5), with the reason shown. */
 export const ITC_BLOCKED_CATEGORIES: Readonly<Record<string, string>> = {
-  "Staff Welfare":      "s.17(5)(b) — khana-peena, staff ka health / club: credit nahi milta",
-  "Business Promotion": "s.17(5)(h) — gift aur free samples: credit nahi milta",
+  "Staff Welfare":      "s.17(5)(b) — food and beverages, staff health / club: no credit",
+  "Business Promotion": "s.17(5)(h) — gifts and free samples: no credit",
 };
 
 export interface ItcInput {
@@ -49,8 +49,8 @@ export function isGstin(v: string | null | undefined): boolean {
 
 export function itcEligibility(e: ItcInput): ItcVerdict {
   if (!((e.gst_paid ?? 0) > 0)) return { eligible: false, reason: null };
-  if (e.bill_type !== "gst") return { eligible: false, reason: "GST tax invoice nahi (kaccha / bina bill) — credit nahi" };
-  if (!isGstin(e.vendorGstin)) return { eligible: false, reason: "Vendor ka GSTIN nahi — GSTR-2B mein match nahi hoga" };
+  if (e.bill_type !== "gst") return { eligible: false, reason: "Not a GST tax invoice (kaccha / no bill) — no credit" };
+  if (!isGstin(e.vendorGstin)) return { eligible: false, reason: "Vendor has no GSTIN — it will not match in GSTR-2B" };
   const blocked = ITC_BLOCKED_CATEGORIES[(e.category ?? "").trim()];
   if (blocked) return { eligible: false, reason: blocked };
   return { eligible: true, reason: null };

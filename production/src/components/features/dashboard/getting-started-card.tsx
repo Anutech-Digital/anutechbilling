@@ -26,8 +26,9 @@
  * email, nobody invited. Those rows were added HERE, above the first-sale steps, rather than
  * in a second card. Each is judged from saved data in setup-checklist.ts (pure, unit-tested)
  * and links to the exact settings spot. The company row is now address + state — saved
- * facts — not the wizard's `setup_completed_at` stamp. Setup rows are shown to owner and
- * manager only: it is their job, and other roles cannot open those settings.
+ * facts — not the wizard's `setup_completed_at` stamp. Setup rows are shown to the owner only
+ * (R-1129: the company save is owner-only in the database); a manager sees one "ask the owner"
+ * line, and other roles cannot open those settings.
  *
  * ─── WHY THE FIRST-SALE STEPS STAY ──────────────────────────────────────────
  * A quote that nobody paid proves the app can draft, not that the money-spine works, and
@@ -86,11 +87,15 @@ export function GettingStartedCard({
   const role = me?.role ?? null;
   if (!ready || setupLoading(setup)) return null;
 
-  /* Owner and manager run setup. While the role loads, keep the owner view (R-134). */
-  const showSetup = role === null || role === "owner" || role === "manager";
+  /* R-1129: only the owner runs setup — the company save is owner-only in the database
+     (tenants_self_update), so a manager sent here got a raw error. While the role loads,
+     keep the owner view (R-134). A manager gets one line to ask the owner instead. */
+  const showSetup = role === null || role === "owner";
+  const allSetup = buildSetupSteps(setup);
   const setupSteps: Step[] = showSetup
-    ? buildSetupSteps(setup).map((s) => ({ ...s, group: "setup" as const }))
+    ? allSetup.map((s) => ({ ...s, group: "setup" as const }))
     : [];
+  const askOwner = role === "manager" && allSetup.some((s) => !s.done);
   const saleSteps: Step[] = [
     { id: "customer", group: "sale", label: "Add your first customer",   hint: "Or import from CSV — takes a minute.",                         href: "/customers",  cta: "Add customer", done: hasCustomer },
     { id: "catalog",  group: "sale", label: "Load your price list",      hint: "One click seeds 7 products + 8 add-ons — edit rates anytime.", href: "/items",      cta: "Load catalog", done: hasCatalog },
@@ -129,7 +134,7 @@ export function GettingStartedCard({
           </h2>
           <p className="text-[12px] text-ink-3 mt-0.5">
             {doneCount} of {steps.length} done.
-            {setupLeft > 0 ? ` ${setupLeft} left before you can bill.` : " Ready to bill."}
+            {setupLeft > 0 ? ` ${setupLeft} left before you can bill.` : askOwner ? "" : " Ready to bill."}
           </p>
         </div>
         <span className="font-serif text-2xl text-amber tabular-nums shrink-0">{pct}%</span>
@@ -139,6 +144,13 @@ export function GettingStartedCard({
       <div className="h-1.5 w-full rounded-full bg-paper-2 overflow-hidden mb-4">
         <div className="h-full bg-amber transition-all" style={{ width: `${pct}%` }} />
       </div>
+
+      {askOwner && (
+        <p className="mb-3 flex items-start gap-2 rounded-lg border border-hairline bg-paper px-3 py-2.5 text-xs text-ink-2">
+          <Icon name="info" size={14} className="mt-0.5 shrink-0 text-ink-3" />
+          <span>Only the owner can finish setup (company details, invoice numbering, bank, email). Ask the workspace owner to complete it from their dashboard.</span>
+        </p>
+      )}
 
       <div className="space-y-4">
         {groups.map(({ g, rows }) => (

@@ -74,7 +74,7 @@ export function Money({
       className={cn(
         "tabular-nums tracking-tight",
         SIZE[size],
-        missing ? "text-ink-4" : TONE[effectiveTone],
+        missing ? "text-ink-3" : TONE[effectiveTone],
         className,
       )}
       // The full figure stays reachable when the display is compacted.

@@ -22,9 +22,11 @@
  */
 import { istMonth, istToday, monthBounds, toIstDate, istDayStartUtc } from "@/lib/dates/ist";
 import { invoiceBucket, type OverdueInvoice } from "@/lib/invoices/overdue";
+import { invoiceIsSale } from "@/lib/accounting/sale-documents";
 import { invoiceBalance, invoiceInFocus } from "@/lib/invoices/kpis";
 import { folderCounts, folderMrr, type FolderRow } from "@/lib/subscriptions/folders";
 import { captureChannel } from "@/lib/leads/capture-channel";
+import { cashReceived } from "@/lib/payments/cash-received";
 
 // ─── Month helpers ───────────────────────────────────────────────────────────
 
@@ -78,6 +80,8 @@ export function trialsStartedInMonth(
 export interface MoneyInvoice extends OverdueInvoice {
   invoice_date: string | null;
   net_payable?: number | null;
+  /** R-1739: absent = our sale. An invoice imported from Zoho Books is owed, never "invoiced this month". */
+  document_kind?: string | null;
 }
 
 export interface CountValue { count: number; value: number }
@@ -104,7 +108,7 @@ export function invoiceMoney(invoices: readonly MoneyInvoice[], now: Date = new 
   };
   for (const inv of invoices) {
     if (NOT_A_BILL.has(inv.status)) continue;
-    if (inIstMonth(inv.invoice_date, now)) {
+    if (inIstMonth(inv.invoice_date, now) && invoiceIsSale(inv.document_kind)) {
       out.invoicedThisMonth.count++;
       out.invoicedThisMonth.value += inv.amount;
     }
@@ -127,12 +131,14 @@ export function invoiceMoney(invoices: readonly MoneyInvoice[], now: Date = new 
  * `payments.received_at` is an instant (read in IST); `project_payments.received_at` is a date.
  */
 export function collectedInMonth(
-  payments: readonly { status: string; amount: number; received_at: string }[],
+  payments: readonly { status: string; amount: number; credit_applied?: number | null; received_at: string }[],
   projectPayments: readonly { amount: number; received_at: string }[],
   now: Date = new Date(),
 ): number {
   let sum = 0;
-  for (const p of payments) if (p.status === "received" && inIstMonth(p.received_at, now)) sum += p.amount;
+  /* R-1565: only the money that came in — advance credit applied to a payment was already
+     collected on the payment that created the credit (lib/payments/cash-received.ts). */
+  for (const p of payments) if (p.status === "received" && inIstMonth(p.received_at, now)) sum += cashReceived(p);
   for (const p of projectPayments) if (inIstMonth(p.received_at, now)) sum += p.amount;
   return sum;
 }

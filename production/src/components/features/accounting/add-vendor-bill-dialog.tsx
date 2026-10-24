@@ -35,10 +35,14 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { useCreateVendorBill, uploadBillAttachment, VENDOR_BILL_CATEGORIES } from "@/lib/queries/vendor-bills";
+import { useCreateVendorBill, useOwnStateCode, uploadBillAttachment, VENDOR_BILL_CATEGORIES } from "@/lib/queries/vendor-bills";
+import { BILL_DOCUMENT_TYPES, BILL_DOCUMENT_TYPE_LABEL, billItcEligibility, isBillDocumentType, type BillDocumentType } from "@/lib/gst/bill-itc";
 import { useVendors, ensureVendor } from "@/lib/queries/vendors";
 import { istToday } from "@/lib/dates/ist";
 import { rupee } from "@/lib/utils";
+import { fillLineQty } from "@/app/api/ai/extract-bill/sanitize";
+import { buyerConfirmedNote, buyerWarningText, isBuyerMismatch, type BuyerMismatch } from "@/app/api/ai/extract-bill/buyer-check";
+import { useConfirm } from "@/components/providers/confirm-provider";
 
 const schema = z.object({
   vendor_name:  z.string().min(2, "Vendor name required"),
@@ -79,7 +83,37 @@ export interface VendorBillPrefill {
   igst?:         number | null;
   total?:        number | null;
   category_guess?: string | null;
+  /** R-1510 reader: "tax_invoice" | "proforma" | "other". R-1576 saves it on the bill. */
+  document_type?: string | null;
   line_items?:   Array<{ description?: string; qty?: number | null; unit_price?: number | null; amount?: number | null }>;
+  /** R-1767: the extract-bill route's answer — the bill is addressed to another company. */
+  buyer_mismatch?: BuyerMismatch | null;
+  /** R-1767 addition: the bill already uploaded in Add expense — attached on save, never re-read. */
+  file?: File | null;
+}
+
+/**
+ * R-1767 — the red "addressed to another company" line and the proforma line, shown on the AI
+ * preview of BOTH bill dialogs (Add expense, Add COGS Bill) so the two never word it differently.
+ */
+export function BillReadWarnings({ buyer, proforma }: { buyer: BuyerMismatch | null; proforma: boolean }) {
+  if (!buyer && !proforma) return null;
+  return (
+    <div className="mb-2 space-y-1.5">
+      {buyer && (
+        <div role="alert" className="flex items-start gap-1.5 rounded-md bg-rose-soft/40 px-2.5 py-2 text-xs text-rose">
+          <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
+          <span>{buyerWarningText(buyer)}</span>
+        </div>
+      )}
+      {proforma && (
+        <div role="status" className="flex items-start gap-1.5 rounded-md bg-amber-soft/60 px-2.5 py-2 text-xs text-amber-ink">
+          <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
+          <span>This is a proforma, not a tax invoice — no GST input credit. Save it when the tax invoice comes, or save it without credit.</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -102,6 +136,9 @@ export function AddVendorBillDialog({
 }) {
   const create = useCreateVendorBill();
   const today  = istToday();
+  const confirm = useConfirm();
+  /* R-1767: the bill is addressed to another company → red line + a confirm before Save. */
+  const [aiBuyer, setAiBuyer] = React.useState<BuyerMismatch | null>(null);
 
   // Vendor master autocomplete — pick an existing supplier (fills GSTIN +
   // category) or type a new name (auto-added to Vendors on save).
@@ -127,6 +164,13 @@ export function AddVendorBillDialog({
   const [fxRate, setFxRate]     = React.useState("");        // string for the input; "" until entered
   const [fxError, setFxError]   = React.useState<string | null>(null);
   const isForeign = currency !== "INR";
+
+  // R-1576: what kind of document this is — only a TAX INVOICE gives GST input credit.
+  // Saved on the bill; the GST page, 3B, P&L and Balance Sheet read it (lib/gst/bill-itc.ts).
+  const [docType, setDocType] = React.useState<BillDocumentType>("tax_invoice");
+  // Second press of Save on a bill whose GST gives no credit = "yes, save it as cost".
+  const [noCreditOk, setNoCreditOk] = React.useState(false);
+  const { data: ownStateCode } = useOwnStateCode();
   const rate = isForeign ? Number(fxRate || 0) : 1;
 
   // Line items (products/services on the bill) — amounts stay in the bill's own
@@ -139,7 +183,7 @@ export function AddVendorBillDialog({
     setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
 
   async function handleBillFile(file: File) {
-    setAiError(null); setAiNote(null);
+    setAiError(null); setAiNote(null); setAiBuyer(null);
     if (file.size > 8 * 1024 * 1024) { setAiError("File is too big (max 8 MB) — try a smaller photo."); return; }
     setAttachFile(file);   // keep it — attaches to the bill on save
     setReading(true);
@@ -158,6 +202,8 @@ export function AddVendorBillDialog({
       const json = await res.json();
       if (!res.ok) { setAiError(json.error ?? "Couldn't read the bill."); return; }
       const f = json.fields as Record<string, string | number | null>;
+      const bm = (f as Record<string, unknown>).buyer_mismatch;
+      setAiBuyer(isBuyerMismatch(bm) ? bm : null);
       // Prefill — only overwrite what the AI actually found.
       if (f.vendor_name)  setValue("vendor_name",  String(f.vendor_name));
       if (f.vendor_gstin) setValue("vendor_gstin", String(f.vendor_gstin));
@@ -178,19 +224,27 @@ export function AddVendorBillDialog({
       const items = Array.isArray((f as Record<string, unknown>).line_items)
         ? ((f as Record<string, unknown>).line_items as Array<Record<string, unknown>>)
         : [];
-      setLines(items.map((it) => ({
+      setLines(items.map((it) => fillLineQty({
         description: String(it.description ?? ""),
         qty:         it.qty        != null ? String(it.qty)        : "",
         unit_price:  it.unit_price != null ? String(it.unit_price) : "",
         amount:      it.amount     != null ? String(it.amount)     : "",
       })));
+      /* R-1576: the reader's document type is saved on the bill (R-1510 only warned). */
+      const readType = (f as Record<string, unknown>).document_type;
+      if (isBillDocumentType(readType)) setDocType(readType);
+      /* R-1510: a Proforma is a request for payment, not a GST tax invoice — no input
+         credit can be claimed on it. Say so; the bill is still saved as typed. */
+      const proformaWarn = (f as Record<string, unknown>).document_type === "proforma"
+        ? " ⚠ This is a PROFORMA, not a tax invoice — no GST input credit can be claimed on it; ask the vendor for the tax invoice."
+        : "";
       setAiNote(
-        cur !== "INR"
-          ? `AI ne bhar diya · bill ${cur} me hai — neeche exchange rate (₹/${cur}) daalo taaki books ₹ me sahi rahein. 📎 "${file.name}" attach ho jayega.`
-          : `AI ne bhar diya · 📎 "${file.name}" bill ke saath attach ho jayega — amounts bill se milaa ke Save karo.`,
+        (cur !== "INR"
+          ? `Filled by AI · the bill is in ${cur} — enter the exchange rate (₹/${cur}) below so the books are right in ₹. 📎 "${file.name}" will be attached.`
+          : `Filled by AI · 📎 "${file.name}" will be attached to the bill — check the amounts against the bill, then Save.`) + proformaWarn,
       );
     } catch {
-      setAiError("Upload failed — try again, ya fields haath se bhar do.");
+      setAiError("Upload failed — try again, or fill in the fields by hand.");
     } finally {
       setReading(false);
     }
@@ -234,12 +288,23 @@ export function AddVendorBillDialog({
       setValue("category", String(prefill.category_guess));
     }
 
+    if (isBillDocumentType(prefill.document_type)) setDocType(prefill.document_type);
+    /* R-1767 */
+    setAiBuyer(isBuyerMismatch(prefill.buyer_mismatch) ? prefill.buyer_mismatch : null);
+    if (prefill.file) {
+      setAttachFile(prefill.file);
+      setAiNote(`Filled from the bill read in Add expense · 📎 "${prefill.file.name}" will be attached to the bill — check the amounts against the bill, then Save.`
+        + (prefill.document_type === "proforma"
+          ? " ⚠ This is a PROFORMA, not a tax invoice — no GST input credit can be claimed on it; ask the vendor for the tax invoice."
+          : ""));
+    }
+
     const cur = String(prefill.currency ?? "INR") || "INR";
     setCurrency(cur);
     if (cur !== "INR") setFxRate("");   // force the operator to enter today's rate
 
     if (Array.isArray(prefill.line_items)) {
-      setLines(prefill.line_items.map((it) => ({
+      setLines(prefill.line_items.map((it) => fillLineQty({
         description: String(it.description ?? ""),
         qty:         it.qty        != null ? String(it.qty)        : "",
         unit_price:  it.unit_price != null ? String(it.unit_price) : "",
@@ -253,6 +318,18 @@ export function AddVendorBillDialog({
   const sgst     = Number(watch("sgst")     || 0);
   const igst     = Number(watch("igst")     || 0);
   const computedTotal = subtotal + cgst + sgst + igst;
+
+  /* R-1576 (§24): say BEFORE saving whether this bill's GST will be input credit, and why not. */
+  const vendorGstinNow = watch("vendor_gstin");
+  const categoryNow = watch("category");
+  const itc = billItcEligibility({
+    document_type: docType, vendor_gstin: vendorGstinNow, category: categoryNow,
+    cgst, sgst, igst, ownStateCode: ownStateCode ?? null,
+  });
+  const gstOnBill = cgst + sgst + igst;
+  const noCredit = gstOnBill > 0 && !itc.eligible;
+  /* Any change to what decides the credit asks again. */
+  React.useEffect(() => { setNoCreditOk(false); }, [docType, vendorGstinNow, categoryNow, cgst, sgst, igst]);
 
   // Quick-fill: pretend the user typed only subtotal — auto-derive intra/inter
   function applyGST18Intra() {
@@ -280,12 +357,29 @@ export function AddVendorBillDialog({
       return;
     }
     setFxError(null);
+    /* R-1576: GST that gives no credit becomes cost — ask once, plainly, before saving. */
+    if (noCredit && !noCreditOk) { setNoCreditOk(true); return; }
+    /* R-1767: another company's bill never enters our books without a clear yes — the yes is
+       written into the bill's notes. */
+    let buyerNote: string | null = null;
+    if (aiBuyer) {
+      const ok = await confirm({
+        title: `Did ${aiBuyer.own_name} really pay this bill?`,
+        body: buyerWarningText(aiBuyer),
+        danger: true,
+        confirmLabel: `Yes, ${aiBuyer.own_name} paid it`,
+        cancelLabel: "No, don't save",
+      });
+      if (!ok) return;
+      buyerNote = buyerConfirmedNote(aiBuyer);
+    }
     // Convert the bill's own-currency amounts to ₹ for the books (rate = 1 for INR).
     const inr = (n: number) => Math.round(n * rate);
 
     // Line items — keep amounts in the bill's OWN currency (faithful to the
     // document); drop blank rows.
     const line_items = lines
+      .map(fillLineQty)   // R-1510: a line typed with only an amount saves as 1 × amount
       .map((l) => ({
         name:   l.description.trim(),
         qty:    l.qty ? Number(l.qty) : undefined,
@@ -303,7 +397,7 @@ export function AddVendorBillDialog({
     const fxNote = isForeign
       ? `Foreign bill: ${currency} ${values.total.toLocaleString("en-US")} @ ₹${rate}/${currency} = ₹${inr(values.total).toLocaleString("en-IN")}.`
       : "";
-    const notes = [fxNote, values.notes?.trim()].filter(Boolean).join(" ") || null;
+    const notes = [fxNote, values.notes?.trim(), buyerNote].filter(Boolean).join(" ") || null;
 
     // Link to the vendors master — reuse the picked vendor, else find-or-create
     // one from the typed name (keeps the master clean + dedup'd).
@@ -334,6 +428,7 @@ export function AddVendorBillDialog({
       total:        inr(values.total),
       notes,
       status:       "unpaid",
+      document_type: docType,
       line_items,
     });
     // Told AFTER the write succeeded, so a caller linking its own record to this
@@ -367,8 +462,8 @@ export function AddVendorBillDialog({
               <div className="flex items-center gap-2 min-w-0">
                 <Icon name="sparkles" size={18} className="text-amber-ink shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-ink">Bill upload karo — AI khud bhar dega</p>
-                  <p className="text-xs text-ink-3">Photo (JPG/PNG) ya PDF · fields nikaal ke form bhar dega, aap check karke Save karo</p>
+                  <p className="text-sm font-medium text-ink">Upload the bill — AI fills in the form</p>
+                  <p className="text-xs text-ink-3">Photo (JPG/PNG) or PDF · AI reads the fields and fills the form; check it, then Save</p>
                 </div>
               </div>
               <Button type="button" variant="primary" size="sm" icon="upload" loading={reading} onClick={() => fileRef.current?.click()}>
@@ -376,6 +471,7 @@ export function AddVendorBillDialog({
               </Button>
               <input
                 ref={fileRef}
+                id="vendor-bill-file"
                 type="file"
                 accept="image/*,application/pdf"
                 className="hidden"
@@ -392,9 +488,10 @@ export function AddVendorBillDialog({
                 <Icon name="alert" size={12} /> {aiError}
               </p>
             )}
+            {aiBuyer && <div className="mt-2"><BillReadWarnings buyer={aiBuyer} proforma={false} /></div>}
             {attachFile && !aiNote && (
               <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-2">
-                <Icon name="file" size={12} /> {attachFile.name} — bill ke saath attach hoga
+                <Icon name="file" size={12} /> {attachFile.name} — will be attached to the bill
               </p>
             )}
           </div>
@@ -495,6 +592,22 @@ export function AddVendorBillDialog({
             </p>
           </FormField>
 
+          <FormField label="Document type" required htmlFor="document_type">
+            <Select value={docType} onValueChange={(v) => { if (isBillDocumentType(v)) setDocType(v); }}>
+              <SelectTrigger id="document_type">
+                <SelectValue placeholder="Select document type" />
+              </SelectTrigger>
+              <SelectContent>
+                {BILL_DOCUMENT_TYPES.map((t) => (
+                  <SelectItem key={t} value={t}>{BILL_DOCUMENT_TYPE_LABEL[t]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-ink-3 mt-1">
+              Check the title printed on the bill — GST input credit is available only on a <b>Tax Invoice</b>.
+            </p>
+          </FormField>
+
           {/* Line items — products/services on the bill (auto-filled from AI). */}
           <div className="p-3 rounded-lg border border-hairline bg-paper-2/30">
             <div className="flex items-center justify-between mb-2">
@@ -506,29 +619,41 @@ export function AddVendorBillDialog({
             {lines.length === 0 ? (
               <p className="text-xs text-ink-3">No items yet — upload a bill to auto-fill, or add rows manually.</p>
             ) : (
-              <div className="space-y-2">
-                <div className="hidden sm:grid grid-cols-12 gap-2 text-3xs uppercase tracking-wider text-ink-3">
-                  <span className="col-span-5">Description</span>
-                  <span className="col-span-2 text-right">Qty</span>
-                  <span className="col-span-2 text-right">Unit price</span>
-                  <span className="col-span-2 text-right">Amount</span>
-                  <span className="col-span-1" />
-                </div>
+              /* R-1510: the description gets the FULL width of its own row and wraps, so a
+                 long name like "Google Workspace ( 1 September - 30 September , 2026 )"
+                 is readable on desktop and phone (it was cut off in a 5/12 column). */
+              <div className="space-y-3">
                 {lines.map((l, i) => (
-                  <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                    <Input aria-label="Item description" wrapperClassName="col-span-12 sm:col-span-5" placeholder="e.g. Team plan - Premium"
-                      value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
-                    <Input aria-label="Qty" wrapperClassName="col-span-3 sm:col-span-2" className="text-right" type="number" min={0} step="any" placeholder="Qty"
-                      value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} />
-                    <Input aria-label="Unit" wrapperClassName="col-span-3 sm:col-span-2" className="text-right" type="number" step="any" placeholder="Unit"
-                      value={l.unit_price} onChange={(e) => setLine(i, { unit_price: e.target.value })} />
-                    {/* Amount allows negatives — credit / unused-time lines are refunds. */}
-                    <Input aria-label="Amount" wrapperClassName="col-span-3 sm:col-span-2" className="text-right" type="number" step="any" placeholder="Amount"
-                      value={l.amount} onChange={(e) => setLine(i, { amount: e.target.value })} />
-                    <button type="button" onClick={() => removeLine(i)} aria-label="Remove item"
-                      className="col-span-3 sm:col-span-1 justify-self-center text-ink-3 hover:text-rose">
-                      <Icon name="x" size={14} />
-                    </button>
+                  <div key={i} className="space-y-1.5 border-b border-hairline pb-3 last:border-b-0 last:pb-0">
+                    <div className="flex items-start gap-2">
+                      <Textarea aria-label="Item description" rows={1} autoGrow maxRows={4} placeholder="e.g. Team plan - Premium"
+                        title={l.description || undefined}
+                        value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
+                      <button type="button" onClick={() => removeLine(i)} aria-label="Remove item"
+                        className="mt-2 shrink-0 text-ink-3 hover:text-rose">
+                        <Icon name="x" size={14} />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 pr-6">
+                      <label className="block">
+                        <span className="text-3xs uppercase tracking-wider text-ink-3">Qty</span>
+                        <Input aria-label="Qty" className="text-right" type="number" min={0} step="any" placeholder="1"
+                          value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} />
+                      </label>
+                      <label className="block">
+                        <span className="text-3xs uppercase tracking-wider text-ink-3">Unit price</span>
+                        <Input aria-label="Unit price" className="text-right" type="number" step="any" placeholder="Unit"
+                          value={l.unit_price} onChange={(e) => setLine(i, { unit_price: e.target.value })} />
+                      </label>
+                      {/* Amount allows negatives — credit / unused-time lines are refunds.
+                          Leaving it with no qty fills Qty 1 × this amount (R-1510). */}
+                      <label className="block">
+                        <span className="text-3xs uppercase tracking-wider text-ink-3">Amount</span>
+                        <Input aria-label="Amount" className="text-right" type="number" step="any" placeholder="Amount"
+                          value={l.amount} onChange={(e) => setLine(i, { amount: e.target.value })}
+                          onBlur={() => setLines((ls) => ls.map((x, idx) => (idx === i ? fillLineQty(x) : x)))} />
+                      </label>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -576,6 +701,16 @@ export function AddVendorBillDialog({
                 Inter-state GST 18% (IGST 18)
               </button>
             </div>
+            {gstOnBill > 0 && (
+              <p role="status" className={`mt-3 flex items-start gap-1.5 text-xs ${itc.eligible ? "text-emerald" : "text-rose"}`}>
+                <Icon name={itc.eligible ? "check_circle" : "alert"} size={12} className="mt-0.5 shrink-0" />
+                <span>
+                  {itc.eligible
+                    ? "ITC available — this goes to GST input credit (GST Report, GSTR-3B 4(A))."
+                    : <>ITC not available — {itc.reason}. This GST is added to cost (P&amp;L), not to Input GST.</>}
+                </span>
+              </p>
+            )}
           </div>
 
           <FormField label={`Total (${isForeign ? currency : "₹"}) incl GST`} required htmlFor="total">
@@ -598,10 +733,17 @@ export function AddVendorBillDialog({
             <Textarea id="notes" rows={2} placeholder="Reference, period, comments…" {...register("notes")} />
           </FormField>
 
+          {noCredit && noCreditOk && (
+            <p role="alert" className="rounded-md bg-rose-soft/40 p-2.5 text-xs text-rose">
+              No credit is available for this bill's GST ({isForeign ? `${currency} ` : "₹"}{gstOnBill.toLocaleString("en-IN")}) — {itc.reason}.
+              It is added to cost. To save anyway, click &quot;Save — GST as cost&quot;; otherwise ask the vendor for a tax invoice.
+            </p>
+          )}
+
           <DialogFooter>
             <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
             <Button type="submit" variant="primary" loading={isSubmitting}>
-              Save bill
+              {noCredit && noCreditOk ? "Save — GST as cost" : "Save bill"}
             </Button>
           </DialogFooter>
         </form>

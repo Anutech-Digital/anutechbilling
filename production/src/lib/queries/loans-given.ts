@@ -15,6 +15,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Tables } from "@/lib/supabase/database.generated";
 import {
   loanPosition, loanSchedule, nextDue, overdueAmount,
@@ -71,25 +72,29 @@ export function useLoansGiven(enabled = true) {
   return useQuery({
     queryKey: ["loans-given"],
     enabled,
-    queryFn: async (): Promise<LoanGiven[]> => {
-      const supabase = createClient();
-      const { data: loans, error } = await supabase
-        .from("loans_given").select("*").order("given_on", { ascending: false }).order("id");
-      if (error) throw error;
-      const { data: reps, error: rErr } = await supabase
-        .from("loan_repayments").select("*").order("repaid_on", { ascending: true }).order("id");
-      if (rErr) throw rErr;
-      const byLoan = new Map<string, LoanRepaymentRow[]>();
-      for (const r of reps ?? []) {
-        const list = byLoan.get(r.loan_id) ?? [];
-        list.push(r);
-        byLoan.set(r.loan_id, list);
-      }
-      const today = istToday();
-      return (loans ?? []).map((l) => buildLoan(l, byLoan.get(l.id) ?? [], today));
-    },
+    queryFn: (): Promise<LoanGiven[]> => fetchLoansGiven(createClient()),
     staleTime: 30_000,
   });
+}
+
+/**
+ * Every loan and every repayment. R-1519: both paged — monthly EMIs across loans pass 1000
+ * repayments, and a repayment past the 1000th was missing from "principal repaid", so a
+ * loan showed more still owed than it was.
+ */
+export async function fetchLoansGiven(supabase: ReturnType<typeof createClient>): Promise<LoanGiven[]> {
+  const loans = await fetchAllRows<LoanGivenRow>((from, to) => supabase
+    .from("loans_given").select("*").order("given_on", { ascending: false }).order("id").range(from, to));
+  const reps = await fetchAllRows<LoanRepaymentRow>((from, to) => supabase
+    .from("loan_repayments").select("*").order("repaid_on", { ascending: true }).order("id").range(from, to));
+  const byLoan = new Map<string, LoanRepaymentRow[]>();
+  for (const r of reps) {
+    const list = byLoan.get(r.loan_id) ?? [];
+    list.push(r);
+    byLoan.set(r.loan_id, list);
+  }
+  const today = istToday();
+  return loans.map((l) => buildLoan(l, byLoan.get(l.id) ?? [], today));
 }
 
 function invalidate(qc: ReturnType<typeof useQueryClient>) {

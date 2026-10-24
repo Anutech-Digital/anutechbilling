@@ -31,7 +31,8 @@ import { nationalHolidaysForYear, FIXED_NATIONAL_HOLIDAYS, indiaPublicHolidaysFo
 import { computeEsi, isEsiEligible, esiStickyCovered, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
 import { computePf, pfWage, pfWageCeiling, PF_EMPLOYER_RATE } from "@/lib/payroll/pf";
 import { estimateMonthlyTds } from "@/lib/payroll/income-tax";
-import { calculateCtcBreakdown } from "@/lib/payroll/ctc";
+import { calculateCtcBreakdown, ctcFromEmployee } from "@/lib/payroll/ctc";
+import { computePt } from "@/lib/payroll/pt";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useEmployeeLoans } from "@/lib/queries/employee-loans";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -56,7 +57,7 @@ import {
 import { useOwnerSetConsent, useMarkAttendanceReviewed } from "@/lib/queries/my-attendance";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import { buildCorrection, isoToIstHhmm } from "@/lib/attendance/ist-time";
-import { presentSummary, suggestedLopDays } from "@/lib/attendance/lop";
+import { leaveDaysInMonth, presentByDate, presentSummary, suggestedLopDays } from "@/lib/attendance/lop";
 import { DEFAULT_SHIFT, dayStatus, formatGap } from "@/lib/attendance/shift";
 import { useShiftRules } from "@/lib/queries/attendance-shift";
 import { Switch } from "@/components/ui/switch";
@@ -69,7 +70,7 @@ import { EmployeeDetailDrawer } from "@/components/features/payroll/employee-det
 import { OfferLetterDialog } from "@/components/features/payroll/offer-letter-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { SalaryBreakdownDialog } from "@/components/features/accounting/salary-breakdown-dialog";
-import { istToday as todayISO, istMonth as currentPeriod, monthBounds, addDaysISO, fyBounds, utcDateISO } from "@/lib/dates/ist";
+import { istToday as todayISO, istMonth as currentPeriod, monthBounds, addDaysISO, fyBounds, utcDateISO, formatMonthLabel, fyStartYear } from "@/lib/dates/ist";
 
 /** Previous month (YYYY-MM) — payroll is usually run for the month just ended. */
 function prevPeriod(): string {
@@ -161,10 +162,10 @@ export function PayrollScreen() {
               <b className="text-ink">{rupee(dues.data!.payable)}</b> statutory dues withheld (TDS/PF/ESI) — pending payment to govt.
               {dues.data!.payableByKind ? (
                 <span className="block text-xs text-ink-3 mt-0.5">
-                  TDS {rupee(dues.data!.payableByKind.tds)}{dues.data!.tdsVendor > 0 ? ` (salary ${rupee(dues.data!.tdsSalary)} + vendor 26Q ${rupee(dues.data!.tdsVendor)}, challans ke baad)` : ""} · PF {rupee(dues.data!.payableByKind.pf)} · ESI {rupee(dues.data!.payableByKind.esi)}
+                  TDS {rupee(dues.data!.payableByKind.tds)}{dues.data!.tdsVendor > 0 ? ` (salary ${rupee(dues.data!.tdsSalary)} + vendor 26Q ${rupee(dues.data!.tdsVendor)}, after challans)` : ""} · PF {rupee(dues.data!.payableByKind.pf)} · ESI {rupee(dues.data!.payableByKind.esi)}
                 </span>
               ) : (
-                <span className="block text-xs text-ink-3 mt-0.5">Kuch challans &ldquo;Mixed&rdquo; book hue hain, isliye TDS/PF/ESI alag-alag nahi dikh sakte.</span>
+                <span className="block text-xs text-ink-3 mt-0.5">Some challans are booked as &ldquo;Mixed&rdquo;, so TDS / PF / ESI cannot be shown separately.</span>
               )}
             </div>
             {canWrite && <Button variant="outline" size="sm" onClick={() => setPayDuesOpen(true)}>Record statutory payment</Button>}
@@ -360,7 +361,7 @@ function EmployeeRowMenu({ e, canWrite, onView, onOffer, onEdit, onDelete }: {
   onDelete: (e: Employee) => void;
 }) {
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -438,8 +439,10 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [empTab, setEmpTab] = React.useState<"basic" | "ctc" | "statutory">("basic");
 
   // CTC Calculator State & Overrides
+  /* R-1585: an existing employee's CTC = their gross + employer PF/ESI + gratuity
+     (ctcFromEmployee) — monthly gross × 12 is the gross, not the CTC. */
   const [annualCtc, setAnnualCtc] = React.useState<string>(
-    employee?.monthly_gross ? String(employee.monthly_gross * 12) : "600000"
+    employee?.monthly_gross ? String(ctcFromEmployee(employee).annualCtc) : "600000"
   );
   const [isMetro, setIsMetro] = React.useState(false);
   const [basicPct, setBasicPct] = React.useState<number>(0.5);
@@ -448,13 +451,15 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [customConveyance, setCustomConveyance] = React.useState<string>("1600");
   const [customMedical, setCustomMedical] = React.useState<string>("1250");
   const [customSpecial, setCustomSpecial] = React.useState<string>("");
-  const [customPt, setCustomPt] = React.useState<string>("200");
+  const [customPt, setCustomPt] = React.useState<string>(""); // empty = PT slab from lib/payroll/pt.ts
   const [capPfCeiling, setCapPfCeiling] = React.useState<boolean>(true);
   const [includeGratuity, setIncludeGratuity] = React.useState<boolean>(true);
   const [showCustomControls, setShowCustomControls] = React.useState<boolean>(false);
 
   const ctcBreakdown = React.useMemo(() => {
-    const val = Number(annualCtc) || (Number(gross) > 0 ? Number(gross) * 12 : 600000);
+    const val = Number(annualCtc) || (Number(gross) > 0
+      ? ctcFromEmployee({ monthly_gross: Number(gross), basic_monthly: basicMonthly !== "" ? Number(basicMonthly) : null, da_monthly: Number(daMonthly) || 0, pf_applicable: pfApplicable, esi_applicable: esiApplicable }).annualCtc
+      : 600000);
     return calculateCtcBreakdown(val, {
       isMetro,
       basicPct,
@@ -467,7 +472,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
       capPfWageCeiling: capPfCeiling,
       includeGratuity,
     });
-  }, [annualCtc, gross, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt, capPfCeiling, includeGratuity]);
+  }, [annualCtc, gross, basicMonthly, daMonthly, pfApplicable, esiApplicable, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt, capPfCeiling, includeGratuity]);
   // For a NEW employee, suggest ESI coverage from the wage ceiling until the
   // user decides for themselves. Existing employees keep their saved value.
   React.useEffect(() => {
@@ -680,7 +685,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                           min={0}
                           value={customPt}
                           onChange={(e) => setCustomPt(e.target.value)}
-                          placeholder="200"
+                          placeholder={`Auto: ${rupee(computePt(ctcBreakdown.grossMonthly).monthly)} (PT slab)`}
                         />
                       </Field>
 
@@ -868,8 +873,8 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                 {pfApplicable && (
                   <div className="rounded-md border border-hairline p-3 space-y-2">
                     <p className="text-xs text-ink-2">
-                      <b className="text-ink">PF kis par lagega</b> — Basic + DA par (HRA / allowances par nahi), ceiling tak.
-                      {basicMonthly.trim() === "" && <span className="block text-amber-ink mt-0.5">Basic khaali hai → PF poore gross par lagega (purana tareeka). Bharoge to agli salary se sahi lagega.</span>}
+                      <b className="text-ink">What PF is charged on</b> — Basic + DA (not HRA / allowances), up to the ceiling.
+                      {basicMonthly.trim() === "" && <span className="block text-amber-ink mt-0.5">Basic is empty → PF is charged on the full gross (old method). Fill it in and the next salary uses the right base.</span>}
                     </p>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
@@ -882,7 +887,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                       </div>
                     </div>
                     {basicMonthly.trim() !== "" && (Number(basicMonthly) || 0) + (Number(daMonthly) || 0) > (Number(gross) || 0) && (
-                      <p className="text-xs text-rose">Basic + DA gross se zyada hai — check karo.</p>
+                      <p className="text-xs text-rose">Basic + DA is more than gross — please check.</p>
                     )}
                   </div>
                 )}
@@ -912,7 +917,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                 Active employee
               </label>
               {!active && (employee?.is_active ?? true) && (
-                <p className="text-xs text-amber-ink -mt-1">Inactive karne se pehle profile mein <b>Exit checklist</b> dekho — devices/logins wapas, advance settle, full &amp; final.</p>
+                <p className="text-xs text-amber-ink -mt-1">Before marking inactive, check the <b>Exit checklist</b> in the profile — devices / logins returned, advance settled, full &amp; final.</p>
               )}
             </section>
           )}
@@ -1021,19 +1026,19 @@ export function PayrollTab() {
       {/* Summary — full monthly cost vs what's been run this month */}
       <Card className="mb-4 p-4">
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-          <div>
+          <div className="min-w-0">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Estimated monthly cost</div>
-            <div className="font-serif text-2xl text-ink leading-tight mt-1">{rupee(estimatedMonthly)}</div>
+            <div className="font-serif text-xl sm:text-2xl text-ink leading-tight mt-1 tabular-nums break-words">{rupee(estimatedMonthly)}</div>
             <div className="text-xs text-ink-3 mt-0.5">All {employees.length} active employees&apos; gross</div>
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Run this month (net)</div>
-            <div className="font-serif text-2xl text-ink leading-tight mt-1">{rupee(totalNet)}</div>
+            <div className="font-serif text-xl sm:text-2xl text-ink leading-tight mt-1 tabular-nums break-words">{rupee(totalNet)}</div>
             <div className="text-xs text-ink-3 mt-0.5">{runCount} of {employees.length} paid</div>
           </div>
-          <div className="col-span-2 sm:col-span-1">
+          <div className="min-w-0 col-span-2 sm:col-span-1">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Still to run</div>
-            <div className={cn("font-serif text-2xl leading-tight mt-1", employees.length - runCount > 0 ? "text-amber-ink" : "text-emerald")}>
+            <div className={cn("font-serif text-xl sm:text-2xl leading-tight mt-1 tabular-nums", employees.length - runCount > 0 ? "text-amber-ink" : "text-emerald")}>
               {employees.length - runCount}
             </div>
             <div className="text-xs text-ink-3 mt-0.5">{employees.length - runCount > 0 ? "employees pending" : "everyone paid 🎉"}</div>
@@ -1098,7 +1103,7 @@ export function PayrollTab() {
                                 type="button"
                                 onClick={() => setBreakdownFor({ name: toTitleCase(e.name), p })}
                                 className="hover:text-amber-ink hover:underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded"
-                                title="Net kaise bana — click karo"
+                                title="How the net is worked out — click to see"
                               >
                                 {rupee(p.net)}
                               </button>
@@ -1198,7 +1203,7 @@ export function PayrollTab() {
                       </button>
                       <div className="font-serif text-xl leading-none shrink-0 text-ink">
                         {p ? (
-                          <button type="button" onClick={() => setBreakdownFor({ name: toTitleCase(e.name), p })} className="hover:text-amber-ink" title="Net kaise bana">
+                          <button type="button" onClick={() => setBreakdownFor({ name: toTitleCase(e.name), p })} className="hover:text-amber-ink" title="How the net is worked out">
                             {rupee(p.net)}
                           </button>
                         ) : e.monthly_gross > 0 ? rupee(e.monthly_gross) : <span className="text-ink-3">—</span>}
@@ -1284,8 +1289,7 @@ function EmployeePayrollYearDialog({
   const { data: history, isLoading } = useEmployeeSalaryHistory(employee.id);
 
   // Indian FY containing the anchor month (Apr→Mar).
-  const [ay, am] = anchorPeriod.split("-").map(Number);
-  const fyStart = am >= 4 ? ay : ay - 1;
+  const fyStart = fyStartYear(anchorPeriod);
   const months = Array.from({ length: 12 }, (_, i) => {
     const abs = 4 + i;                                   // 4..15
     const year = abs <= 12 ? fyStart : fyStart + 1;
@@ -1328,8 +1332,7 @@ function EmployeePayrollYearDialog({
                 <tbody className="divide-y divide-hairline">
                   {months.map((m) => {
                     const p = byPeriod.get(m.period);
-                    const label = new Date(m.year, m.month - 1, 1)
-                      .toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+                    const label = formatMonthLabel(m.period);
                     return (
                       <tr key={m.period} className="hover:bg-paper-2/40">
                         <td className="px-3 py-2">
@@ -1365,18 +1368,18 @@ function EmployeePayrollYearDialog({
               </table>
             </div>
 
-            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-md border border-hairline bg-paper-2/30 py-2">
+            <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2 text-center">
+              <div className="min-w-0 col-span-2 sm:col-span-1 rounded-md border border-hairline bg-paper-2/30 py-2">
                 <div className="text-3xs uppercase tracking-wider text-ink-3">Months run</div>
-                <div className="font-serif text-lg text-ink">{runCount}/12</div>
+                <div className="font-serif text-base sm:text-lg text-ink tabular-nums">{runCount}/12</div>
               </div>
-              <div className="rounded-md border border-hairline bg-paper-2/30 py-2">
+              <div className="min-w-0 rounded-md border border-hairline bg-paper-2/30 px-1 py-2">
                 <div className="text-3xs uppercase tracking-wider text-ink-3">Year net</div>
-                <div className="font-serif text-lg text-ink">{rupee(totalEarned)}</div>
+                <div className="font-serif text-base sm:text-lg text-ink tabular-nums break-words">{rupee(totalEarned)}</div>
               </div>
-              <div className="rounded-md border border-hairline bg-paper-2/30 py-2">
+              <div className="min-w-0 rounded-md border border-hairline bg-paper-2/30 px-1 py-2">
                 <div className="text-3xs uppercase tracking-wider text-ink-3">Cleared</div>
-                <div className="font-serif text-lg text-emerald">{rupee(totalCleared)}</div>
+                <div className="font-serif text-base sm:text-lg text-emerald tabular-nums break-words">{rupee(totalCleared)}</div>
               </div>
             </div>
           </>
@@ -1434,7 +1437,7 @@ function PayrollRowMenu({ e, p, canWrite, me, paidVia, onYear, onEdit, onUndo, o
   onYear: () => void; onEdit: () => void; onUndo: () => void; onReconcile?: () => void;
 }) {
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button type="button" aria-label={`More actions for ${toTitleCase(e.name)}`}
           className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2">
@@ -1595,17 +1598,23 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
     const holidaySet = new Set((holQ.data ?? []).map((h) => h.holiday_date));
     nationalHolidaysForYear(yy).forEach((d) => holidaySet.add(d));
     let expected = 0, sundays = 0, holidays = 0;
+    const countedDates = new Set<string>();
     for (const d = new Date(rangeStart); d <= rangeEnd; d.setUTCDate(d.getUTCDate() + 1)) {
       const iso = utcDateISO(d);
       if (d.getUTCDay() === 0) sundays++;            // weekly off — paid, never LOP
       else if (holidaySet.has(iso)) holidays++;      // Sunday/holiday clash counts once as Sunday
-      else expected++;                                // working day
+      else { expected++; countedDates.add(iso); }     // working day
     }
     // R-604: a half-day (Pardeep: "half day par salary kaatni hai") counts 0.5 present.
-    const { present, halfDays } = presentSummary(attQ.data ?? [], employee.id, shiftQ.data ?? DEFAULT_SHIFT);
-    const monthLeaves = (leaveQ.data ?? []).filter((l) => l.employee_id === employee.id && l.from_date <= `${period}-31` && l.to_date >= `${period}-01`);
-    const paidLeave = monthLeaves.filter((l) => l.type !== "unpaid").reduce((s, l) => s + l.days, 0);
-    const unpaidLeave = monthLeaves.filter((l) => l.type === "unpaid").reduce((s, l) => s + l.days, 0);
+    const rules = shiftQ.data ?? DEFAULT_SHIFT;
+    const { present, halfDays } = presentSummary(attQ.data ?? [], employee.id, rules);
+    // R-780: only the leave's working days inside this month, never on a present day, never twice.
+    const isWorkingDate = (iso: string) => new Date(`${iso}T00:00:00Z`).getUTCDay() !== 0
+      && !holidaySet.has(iso) && !nationalHolidaysForYear(Number(iso.slice(0, 4))).includes(iso);
+    const { paidLeave, unpaidLeave } = leaveDaysInMonth({
+      leaves: leaveQ.data ?? [], employeeId: employee.id, countedDates, isWorkingDate,
+      presentByDate: presentByDate(attQ.data ?? [], employee.id, rules),
+    });
     const { absent, lopDays } = suggestedLopDays({ expected, present, paidLeave, unpaidLeave });
     return { present, halfDays, absent, unpaidLeave, lopDays, workingDays: expected, sundays, holidays };
   }, [period, employee, attQ.data, leaveQ.data, holQ.data, shiftQ.data]);
@@ -1773,11 +1782,11 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
                   <span className="font-mono text-ink font-semibold">{rupee(esiN + esiEmployerN)}</span>
                 </div>
                 {esiSticky && esiWage > ESI_WAGE_CEILING && (
-                  <div className="text-amber-ink">Wage {rupee(ESI_WAGE_CEILING)} se upar hai, par is contribution period mein pehle se cover the — period khatam hone tak ESI lagega.</div>
+                  <div className="text-amber-ink">Wage is above {rupee(ESI_WAGE_CEILING)}, but the employee was already covered in this contribution period — ESI applies until the period ends.</div>
                 )}
               </div>
             ) : (
-              <p className="text-xs text-ink-3">ESI not applicable — gross above the {rupee(ESI_WAGE_CEILING)} ceiling (or turned off for this employee).{employee.esi_applicable && esiWage > ESI_WAGE_CEILING ? " Agar is contribution period (Apr–Sep / Oct–Mar) ke pehle mahine mein cover the to ESI chalta rehta — is employee ki us period ki koi payslip ESI ke saath nahi mili." : ""}</p>
+              <p className="text-xs text-ink-3">ESI not applicable — gross above the {rupee(ESI_WAGE_CEILING)} ceiling (or turned off for this employee).{employee.esi_applicable && esiWage > ESI_WAGE_CEILING ? " If the employee was covered in the first month of this contribution period (Apr–Sep / Oct–Mar), ESI would continue — no payslip with ESI was found for this employee in that period." : ""}</p>
             )}
             {employee.pf_applicable && (
               <div className="rounded bg-paper-2/50 px-2.5 py-2 text-xs text-ink-2 space-y-0.5">
@@ -1799,8 +1808,8 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
             <Input id="payroll-pay-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             {/* Accrual (migration 20260927170000): the cost sits in the salary month, the cash on the pay date. */}
             <p className="mt-1 text-xs text-ink-3">
-              Kharcha <b>{period}</b> ke mahine mein book hoga{date.slice(0, 7) !== period ? ` (${period} ki aakhri tareekh par)` : ""}; bank se paisa {date ? formatDate(date) : "pay date"} ko niklega.
-              {date.slice(0, 7) !== period && " Agar wo mahina books-lock hai to pehle lock hatao."}
+              The expense is booked in <b>{period}</b>{date.slice(0, 7) !== period ? ` (on the last day of ${period})` : ""}; the money leaves the bank on {date ? formatDate(date) : "the pay date"}.
+              {date.slice(0, 7) !== period && " If that month is locked, remove the books lock first."}
             </p>
           </div>
 
@@ -2010,9 +2019,8 @@ function LeaveDialog({ employees, onClose }: { employees: Employee[]; onClose: (
 
   // Paid-leave used in the leave-year (Indian FY, Apr–Mar) of the 'from' date.
   const fy = React.useMemo(() => {
-    const [y, m] = from.split("-").map(Number);
-    const sy = m >= 4 ? y : y - 1;
-    return { start: `${sy}-04-01`, end: `${sy + 1}-03-31` };
+    const { start, end } = fyBounds(from);
+    return { start, end };
   }, [from]);
   // Prorated for mid-year joiners, against the leave entry's own FY.
   const allowance = emp ? effectiveLeaveAllowance(emp, fy.start) : 0;
@@ -2217,7 +2225,7 @@ function NetworkCard() {
             Selfies kept for
           </div>
           <p className="text-xs text-ink-3 mt-0.5 max-w-xl">
-            Puraani selfies is period ke baad apne-aap delete ho jaati hain (privacy / DPDP). Employee exit pe bhi delete.
+            Older selfies are deleted automatically after this period (privacy / DPDP), and also when an employee exits.
           </p>
         </div>
         <select aria-label="Selfie retention period"
@@ -2241,8 +2249,8 @@ function NetworkCard() {
           </div>
           <p className="text-xs text-ink-3 mt-0.5 max-w-xl">
             {d?.requireFaceMatch
-              ? "Self check-in selfie ko employee ke enrolled face se match kiya jaata hai. Bina certified face-provider ke, mismatch/undecided owner review me aata hai (koi auto-reject nahi)."
-              : "OFF. Turn on to match each self check-in selfie against an enrolled face. Employees ko pehle 'My Attendance' pe apna face enroll karna hoga. (Certified provider env se connect hota hai — warna review-only.)"}
+              ? "Each self check-in selfie is matched against the employee's enrolled face. Without a certified face provider, mismatches / undecided ones go to owner review (no auto-reject)."
+              : "OFF. Turn on to match each self check-in selfie against an enrolled face. Employees must first enroll their face in 'My Attendance'. (A certified provider is connected through env settings — otherwise review-only.)"}
           </p>
         </div>
         <Button
@@ -2303,7 +2311,7 @@ export function AttendanceTab() {
         </div>
         <Card className="mb-4 p-4">
           <div className="text-2xs uppercase tracking-wider text-ink-3 font-semibold">Attendance register</div>
-          <div className="font-serif text-2xl text-ink leading-tight mt-1">{toTitleCase(focusEmp.name)}</div>
+          <div className="font-serif text-xl sm:text-2xl text-ink leading-tight mt-1 break-words">{toTitleCase(focusEmp.name)}</div>
           {focusEmp.designation && <div className="text-xs text-ink-3 mt-0.5">{focusEmp.designation}</div>}
         </Card>
         {attQ.isLoading
@@ -2443,7 +2451,7 @@ function AttendanceRegister({ period, employees, attendance }: { period: string;
   if (!yy || !mm) return null;
   const days = new Date(yy, mm, 0).getDate();          // last day of this month
   const today = todayISO();
-  const monthLabel = new Date(yy, mm - 1, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+  const monthLabel = formatMonthLabel(period, { month: "long" });
   const dayList = Array.from({ length: days }, (_, i) => i + 1);
   const dateFor = (d: number) => `${period}-${String(d).padStart(2, "0")}`;
 
@@ -2705,7 +2713,7 @@ function ReviewQueue({
       <div className="px-4 py-3 border-b border-hairline bg-amber-soft/30 flex items-center gap-2">
         <Icon name="alert" size={14} className="text-amber-ink" />
         <span className="text-sm font-semibold text-ink">Needs review · {rows.length}</span>
-        <span className="text-xs text-ink-3">Self check-ins jinme kuch anokha laga — dekh ke clear karo.</span>
+        <span className="text-xs text-ink-3">Self check-ins that looked unusual — review and clear them.</span>
       </div>
       <ul className="divide-y divide-hairline">
         {rows.map((a) => (
@@ -2826,7 +2834,7 @@ function PayDuesDialog({ payable, onClose }: { payable: number; onClose: () => v
           {/* Challan details — the 26Q / ECR quotes them; the payable can then be read month-wise. */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label htmlFor="payroll-kis-mahine-ka" className="block text-xs font-medium text-ink-2 mb-1">Kis mahine ka</label>
+              <label htmlFor="payroll-kis-mahine-ka" className="block text-xs font-medium text-ink-2 mb-1">For month</label>
               <Input id="payroll-kis-mahine-ka" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} aria-label="Period the challan paid for" />
             </div>
             <div>

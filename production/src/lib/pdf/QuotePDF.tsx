@@ -24,29 +24,35 @@ import {
   View,
   Text,
   Image,
+  Link,
   StyleSheet,
 } from "@react-pdf/renderer";
 import { formatDate } from "@/lib/utils";
 import { pdfRupee, pdfSafeMoney } from "./pdf-money";
 import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import { pdfText } from "./pdf-text";
-import { lineDomainNote } from "./invoice-display";
+import { lineDetailNotes } from "./invoice-display";
 import { isForeignCurrency, formatForeign } from "@/lib/currency";
-import { splitIntraStateTax } from "@/lib/gst/tax-split";
+import { foreignQuoteFigures } from "@/lib/quotes/foreign-totals";
 import type { QuoteLineItem, LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
 import {
   cycleInvoicesPerYear, cycleUnitLabel, cycleScheduleLabel, cycleFromLegacyCommitment,
 } from "@/lib/quotes/billing";
-import { lineIsPerInvoice, perInvoiceDivisor, annualContractValue } from "./invoice-divisor";
-import { quoteInstalmentPlan } from "@/lib/billing/instalments";
+import { lineIsPerInvoice, perInvoiceDivisor } from "./invoice-divisor";
+import { quotePerPeriodFigures } from "@/lib/quotes/per-period-figures";
 import { isRenderableLogo } from "./logo";
 import { quoteDocumentLabel } from "./quote-document-kind";
+import { PROFORMA_NOTICE, PROFORMA_TITLE, type QuoteTemplate, type ProformaBank } from "./quote-template";
 import { includedSupportLine, type IncludedSupportLine } from "./quote-support-line";
 
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
 import { udyamPdfLine } from "@/lib/compliance/udyam";
-import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
+import { ONE_TIME_SCHEDULE, type LinePeriodContext } from "@/lib/quotes/service-period";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
+import { quotePaymentTermsLine } from "./payment-terms";
+import {
+  billOfSupplyCustomerLine, billOfSupplyPlaceLabel, PROFORMA_NOTICE_BILL_OF_SUPPLY, type BillOfSupplyStatus,
+} from "@/lib/quotes/bill-of-supply";
 
 /* Styles ke BANNE se pehle. `StyleSheet.create` ab hi chal jata hai, aur `PDF_FONT`
    ek `let` hai — baad me register karne par style purani value pakde rehti. */
@@ -106,6 +112,9 @@ export interface QuotePDFProps {
   placeOfSupply?: string | null;
   /** Export supply (recipient outside India) → zero-rated under LUT, no GST. */
   isExport?:     boolean;
+  /** R-1532: the business issues a Bill of Supply and the quote carries no GST → one
+   *  "No GST — Bill of Supply" line, never CGST/SGST/IGST rows (lib/quotes/bill-of-supply). */
+  billOfSupply?: BillOfSupplyStatus | null;
   /** Billing currency + rate — foreign → the whole quote shows in that currency. */
   currency?:     string | null;
   exchangeRate?: number | null;
@@ -128,6 +137,9 @@ export interface QuotePDFProps {
   /** R-811: "3-month extension" / "1-year extension" (extensionTitle()) — the stamp names the
    *  extension instead of a bare RENEWAL. Null/absent on any other quote. */
   extensionTitle?: string | null;
+  /** R-1764: each subscription line's "Domain:" and "Subscription period:" lines
+   *  (quoteLinePeriodContext / loadQuotePeriodContext). Absent → neither line. */
+  periodContext?: LinePeriodContext | null;
   /** When true, renders "Renewal Quotation" label + visible "RENEWAL" stamp.
    *  Set by lib/renewals/create-renewal-quote.ts on the source quote. */
   isRenewal?:    boolean;
@@ -141,12 +153,27 @@ export interface QuotePDFProps {
    * reason `upiQrDataUrl` is the caller's call).
    */
   isPaid?:       boolean;
+  /**
+   * R-1670 (3): quotes.payment_terms_days — the invoice raised from this quote is due that many
+   * days after the invoice date. Null / absent → the invoice default (30, generate_invoice).
+   */
+  paymentTermsDays?: number | null;
   /** Scan-to-pay QR as a PNG data-URL, from buildQuoteUpiQr(). Null → no block.
    *  The decision of WHETHER to offer a QR belongs to the caller, not here: it
    *  depends on currency and payment status, which this component doesn't see. */
   upiQrDataUrl?: string | null;
   /** Printed under the QR so a payer whose camera struggles can type it. */
   upiVpa?:       string | null;
+  /**
+   * R-1523. "quotation" (default) or "proforma". A Proforma keeps the QUOTE's own number
+   * ("Proforma No.") — never the GST invoice series (§17a) — and says it is not a tax invoice.
+   * Ignored on a paid quote: that sheet is already the record of a paid order.
+   */
+  template?:     QuoteTemplate;
+  /** R-1523. Bank block (tenant remit_* fields, via proformaBank()) — printed on a Proforma only. */
+  bank?:         ProformaBank | null;
+  /** R-1523. The customer's online review/accept/pay page — printed as a link while money is due. */
+  payLinkUrl?:   string | null;
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────
@@ -405,6 +432,12 @@ const s = StyleSheet.create({
     borderTopColor: COLORS.hairline,
   },
   upiQr:    { width: 78, height: 78, marginRight: 10 },
+  bankBox:  { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: COLORS.hairline },
+  payLink:  { color: COLORS.amber, textDecoration: "underline" },
+  proformaNotice: {
+    fontSize: 9, fontFamily: PDF_FONT_BOLD, color: COLORS.amber,
+    marginTop: -8, marginBottom: 12,
+  },
   upiText:  { flex: 1 },
   upiTitle: { fontSize: 10, fontFamily: PDF_FONT_BOLD, color: COLORS.ink2, marginBottom: 2 },
   upiSub:   { fontSize: 8, color: COLORS.ink3, lineHeight: 1.4 },
@@ -429,10 +462,13 @@ export function QuotePDF(props: QuotePDFProps) {
     quoteId, customerName, contactName, contactEmail, contactPhone, customerState, customerGstin,
     createdDate, expiresDate, validityDays,
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
-    interState, placeOfSupply, isExport = false, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, termsConditions, isRenewal,
-    isPaid = false, oneTime = false, extensionTitle = null,
-    upiQrDataUrl, upiVpa,
+    interState, placeOfSupply, isExport = false, billOfSupply = null, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, termsConditions, isRenewal,
+    isPaid = false, paymentTermsDays = null, oneTime = false, extensionTitle = null, periodContext = null,
+    upiQrDataUrl, upiVpa, template = "quotation", bank = null, payLinkUrl = null,
   } = props;
+  /* R-1523: a paid quote stays a "Paid order" — a Proforma asks for money that is already in. */
+  const proforma = template === "proforma" && !isPaid;
+  const docLabel = proforma ? PROFORMA_TITLE : quoteDocumentLabel({ paid: isPaid, isRenewal });
   /* R-813: a customer document — never the staff-only audit part of the notes. */
   const notes = customerQuoteNotes(props.notes, lineItems);
   const includedSupport = props.includedSupport !== undefined
@@ -500,41 +536,32 @@ export function QuotePDF(props: QuotePDFProps) {
   // printed lines + totals agree (qty × rate == amount, Σ lines == total). For a
   // domestic ₹ quote, keep the canonical stored figures untouched (no rounding
   // drift vs the saved amount). Discounting is quote-level; per-line is legacy/0.
-  const dLineAnnual = lineItems.map((l) => dRound(l.qty * toDisp(l.rate)));
-  const dSubtotal = isForeign ? dRound(dLineAnnual.reduce((s, v) => s + v, 0)) : subtotal;
-  const dDiscount = isForeign ? dRound(dSubtotal * (discountPct / 100))        : discount;
-  const dTaxable  = isForeign ? dRound(dSubtotal - dDiscount)                  : taxable;
-  const dTax      = isForeign ? dRound(dTaxable * (taxRate / 100))             : tax;
-  const dTotal    = isForeign ? dRound(dTaxable + dTax)                        : total;
-  /* R-212: CGST/SGST from lib/gst/tax-split — the split the preview and the email print.
-     A foreign quote's tax is in cents, so it is split as a whole number of cents: the helper
-     keeps a whole-unit tax in whole-unit heads (right for ₹, where every quote tax is whole
-     rupees), which would print $7.00 as $4.00 + $3.00. Integer cents also avoid the float
-     trap of the old `dRound(dTax / 2)` ($9.95 / 2 → $4.97, the odd cent going to SGST). */
-  const intra = isForeign
-    ? (({ cgst, sgst }) => ({ cgst: cgst / 100, sgst: sgst / 100 }))(splitIntraStateTax(Math.round(dTax * 100)))
-    : splitIntraStateTax(dTax);
-
-  /* R-527: per-instalment figures by ONE rounding rule — the instalment invoice's own
-     (taxable + round(taxable × GST%)), from lib/billing/instalments.ts, the plan the editor,
-     customer page and payment sheet read. "Per invoice" was the year's total ÷ 4 (₹7,647 on
-     Q-FBB9-27-0020) beside CGST/SGST of the year's tax ÷ 4 that summed to ₹7,646. ₹ quotes on
-     an annual commitment only; flex and foreign keep their own figures. */
-  const splitPlan = !isForeign && perInvoice && !noYearlyCommitment
-    ? quoteInstalmentPlan({
-        cycle: effectiveCycle, termTaxable: dTaxable, termGross: dTotal,
-        taxRate: isExport ? 0 : taxRate, lineCommitment: firstCommitment ?? null, termStart: "2000-01-01",
-      })
-    : null;
-  const firstInst = splitPlan?.lines[0] ?? null;
-  const fmtInst = (v: number) => `${fmtC(v)}${billingUnit}`;
-  const instHeads = firstInst ? splitIntraStateTax(firstInst.tax) : null;
+  /* R-1677: the foreign rule lives in lib/quotes/foreign-totals — the accept page, builder,
+     staff preview and invoice total a foreign quote with the same function. */
+  const fFig      = isForeign ? foreignQuoteFigures({ lines: lineItems, fx: fxRate, discountPct, taxRate }) : null;
+  const dSubtotal = fFig ? fFig.subtotal : subtotal;
+  const dDiscount = fFig ? fFig.discount : discount;
+  const dTaxable  = fFig ? fFig.taxable  : taxable;
+  const dTax      = fFig ? fFig.tax      : tax;
+  const dTotal    = fFig ? fFig.total    : total;
+  /* R-212 / R-527 / R-1570: every per-invoice TOTAL (subtotal, taxable, CGST/SGST or IGST,
+     the invoice figure and the year) comes from lib/quotes/per-period-figures — the same
+     function the covering email prints from, so the letter and this attachment cannot differ.
+     It keeps the rules that lived here: a ₹ quote on an annual commitment prints its first
+     instalment by the instalment invoice's own rounding (lib/billing/instalments); flex divides
+     by nothing; foreign divides at 2dp and splits its tax as whole cents. */
+  const pp = quotePerPeriodFigures({
+    cycle: effectiveCycle, lineCommitment: firstCommitment,
+    subtotal: dSubtotal, discount: dDiscount, taxable: dTaxable, tax: dTax, total: dTotal,
+    taxRate: isExport ? 0 : taxRate, foreign: isForeign,
+  });
+  const fmtPer = (v: number) => (perInvoice ? `${fmtC(v)}${billingUnit}` : fmtC(v));
 
   return (
     <Document
-      title={`${isPaid ? "Paid order" : "Quote"} ${quoteId}`}
+      title={`${proforma ? PROFORMA_TITLE : isPaid ? "Paid order" : "Quote"} ${quoteId}`}
       author={tenantName}
-      subject={`${quoteDocumentLabel({ paid: isPaid, isRenewal })} ${quoteId} for ${customerName}`}
+      subject={`${docLabel} ${quoteId} for ${customerName}`}
     >
       <Page size="A4" style={s.page}>
 
@@ -563,13 +590,14 @@ export function QuotePDF(props: QuotePDFProps) {
             </View>
           </View>
           <View style={s.quoteMetaBlock}>
-            <Text style={s.quoteLabel}>{quoteDocumentLabel({ paid: isPaid, isRenewal })}</Text>
-            <Text style={s.quoteId}>{quoteId}</Text>
+            <Text style={s.quoteLabel}>{docLabel}</Text>
+            {/* R-1523: the Proforma number IS the quote number — no new series (§17a). */}
+            <Text style={s.quoteId}>{proforma ? `Proforma No. ${quoteId}` : quoteId}</Text>
             <Text style={s.quoteDate}>Dated: {formatDate(created)}</Text>
             {/* R-034: an expiry on a document the customer has already paid reads as
                 "you still have to act". Only an open offer has a validity window. */}
             {!isPaid && (
-              <Text style={s.quoteDate}>Valid until: {formatDate(expires)}</Text>
+              <Text style={s.quoteDate}>Valid until: {formatDate(expires)}{proforma ? " · Payment due by this date" : ""}</Text>
             )}
             {extensionTitle ? (
               <Text style={s.renewalStamp}>{extensionTitle.toUpperCase()}</Text>
@@ -578,6 +606,11 @@ export function QuotePDF(props: QuotePDFProps) {
             )}
           </View>
         </View>
+
+        {/* R-1523: the line that keeps a Proforma from being taken for a tax invoice. */}
+        {proforma && (
+          <Text style={s.proformaNotice}>{billOfSupply ? PROFORMA_NOTICE_BILL_OF_SUPPLY : PROFORMA_NOTICE}</Text>
+        )}
 
         {/* ── Bill to + Meta ──────────────────────────────────────── */}
         <View style={s.twoCol}>
@@ -605,6 +638,8 @@ export function QuotePDF(props: QuotePDFProps) {
             <Text style={s.metaValue}>
               {isExport
                 ? "Export · zero-rated under LUT (no GST)"
+                : billOfSupply
+                ? billOfSupplyPlaceLabel(placeOfSupply)
                 : placeOfSupply || (interState ? "Inter-state (IGST applies)" : "Intra-state (CGST + SGST)")}
             </Text>
             {lineItems.length > 0 && firstCommitment && (
@@ -654,12 +689,14 @@ export function QuotePDF(props: QuotePDFProps) {
               /* R-495: list price, discount (₹ and %) and final rate — only when the line
                  carries a list price above its rate; never invented. */
               const breakdown   = linePriceBreakdown(line, toDisp);
+              /* R-1764: "Domain: x" + "Subscription period: 1 Year (dd/mm/yyyy – dd/mm/yyyy)". */
+              const detailNotes = lineDetailNotes(line, periodContext);
               return (
                 <View key={line.id} style={s.tr} wrap={false}>
                   <View style={s.tdDesc}>
                     <Text style={s.lineName}>{pdfText(line.name)}</Text>
                     {/* Which website the line is for (3 Oct 2026; invoice-display.ts). */}
-                    {lineDomainNote(line) && <Text style={s.lineMeta}>{pdfText(lineDomainNote(line) ?? "")}</Text>}
+                    {detailNotes.map((n) => <Text key={n} style={s.lineMeta}>{pdfText(n)}</Text>)}
                     {/* R-156: a multi-year domain line's rate is the whole term, not a year. */}
                     {(line.years ?? 1) > 1 ? (
                       <Text style={s.lineMeta}>Registration for {line.years} years, paid now · HSN 998313</Text>
@@ -713,37 +750,41 @@ export function QuotePDF(props: QuotePDFProps) {
                 <Text style={s.totalLabel}>
                   {perInvoice ? "Subtotal (per invoice)" : "Subtotal"}
                 </Text>
-                <Text style={s.totalValue}>{fmtInv(dSubtotal)}</Text>
+                <Text style={s.totalValue}>{fmtPer(pp.subtotal)}</Text>
               </View>
               {discountPct > 0 && (
                 <View style={s.totalRow}>
                   <Text style={s.totalLabel}>Discount ({discountPct}%)</Text>
-                  <Text style={s.totalValueAccent}>-{fmtInv(dDiscount)}</Text>
+                  <Text style={s.totalValueAccent}>-{fmtPer(pp.discount)}</Text>
                 </View>
               )}
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>Taxable amount</Text>
-                <Text style={s.totalValue}>{firstInst ? fmtInst(firstInst.taxable) : fmtInv(dTaxable)}</Text>
+                <Text style={s.totalValue}>{fmtPer(pp.taxable)}</Text>
               </View>
               {isExport ? (
                 <View style={s.totalRow}>
                   <Text style={s.totalLabel}>Export — zero-rated (LUT), no GST</Text>
                   <Text style={s.totalValue}>{fmtC(0)}</Text>
                 </View>
+              ) : billOfSupply ? (
+                <View style={s.totalRow}>
+                  <Text style={[s.totalLabel, { flex: 1 }]}>{billOfSupplyCustomerLine(billOfSupply)}</Text>
+                </View>
               ) : interState ? (
                 <View style={s.totalRow}>
                   <Text style={s.totalLabel}>IGST ({taxRate}%)</Text>
-                  <Text style={s.totalValue}>{firstInst ? fmtInst(firstInst.tax) : fmtInv(dTax)}</Text>
+                  <Text style={s.totalValue}>{fmtPer(pp.tax)}</Text>
                 </View>
               ) : (
                 <>
                   <View style={s.totalRow}>
                     <Text style={s.totalLabel}>CGST ({taxRate / 2}%)</Text>
-                    <Text style={s.totalValue}>{instHeads ? fmtInst(instHeads.cgst) : fmtInv(intra.cgst)}</Text>
+                    <Text style={s.totalValue}>{fmtPer(pp.cgst)}</Text>
                   </View>
                   <View style={s.totalRow}>
                     <Text style={s.totalLabel}>SGST ({taxRate / 2}%)</Text>
-                    <Text style={s.totalValue}>{instHeads ? fmtInst(instHeads.sgst) : fmtInv(intra.sgst)}</Text>
+                    <Text style={s.totalValue}>{fmtPer(pp.sgst)}</Text>
                   </View>
                 </>
               )}
@@ -755,11 +796,7 @@ export function QuotePDF(props: QuotePDFProps) {
                       : "Grand total"}
                   </Text>
                   <Text style={s.grandValue}>
-                    {firstInst
-                      ? fmtInst(firstInst.gross)
-                      : perInvoice
-                      ? `${fmtC(dRound(dTotal / invoiceDivisor))}${billingUnit}`
-                      : fmtC(dTotal)}
+                    {fmtPer(pp.gross)}
                   </Text>
                 </View>
                 {perInvoice && (
@@ -786,10 +823,9 @@ export function QuotePDF(props: QuotePDFProps) {
                     <View style={s.perInvoiceRow}>
                       <Text>Annual contract value</Text>
                       {/* The mirror of the divisor above: on an annual commitment billed
-                          monthly, `dTotal` IS the year. `annualContractValue` keeps the two
-                          in step, and its tests keep the flex branch honest even though this
-                          document no longer renders it. */}
-                      <Text>{splitPlan ? fmtC(splitPlan.instalmentsGross) : fmtC(annualContractValue(dTotal, billingN, firstCommitment))}/yr</Text>
+                          monthly, `dTotal` IS the year (the sum of instalments on a ₹ quote).
+                          per-period-figures uses `annualContractValue` for the rest. */}
+                      <Text>{fmtC(pp.yearTotal)}/yr</Text>
                     </View>
                   )
                 )}
@@ -847,12 +883,13 @@ export function QuotePDF(props: QuotePDFProps) {
           {!isPaid && (
             <Text style={s.footerLine}>
               <Text style={s.footerBold}>Payment terms: </Text>
-              Net 7 days from acceptance. UPI / NEFT / Razorpay accepted.
+              {/* R-1670 (3): the quote's own terms (what its invoice will be due on), not "Net 7". */}
+              {quotePaymentTermsLine(paymentTermsDays)} UPI / NEFT / Razorpay accepted.
             </Text>
           )}
           {!isPaid && (
             <Text style={s.footerLine}>
-              <Text style={s.footerBold}>Quote validity: </Text>
+              <Text style={s.footerBold}>{proforma ? "Validity: " : "Quote validity: "}</Text>
               {validityDays} days from issue date.
             </Text>
           )}
@@ -864,6 +901,24 @@ export function QuotePDF(props: QuotePDFProps) {
               seller answers it with a Receipt Voucher under CGST §31(3)(d).
               Calling it a payment here would set up the wrong expectation about
               which document the customer gets back. */}
+          {/* R-1523: a Proforma asks for the money, so it says where to send it. */}
+          {proforma && bank ? (
+            <View style={s.bankBox}>
+              <Text style={s.upiTitle}>Bank details for payment</Text>
+              {bank.accountName ? <Text style={s.upiSub}>Account name: {pdfText(bank.accountName)}</Text> : null}
+              {bank.bankName ? <Text style={s.upiSub}>Bank: {pdfText(bank.bankName)}</Text> : null}
+              <Text style={s.upiSub}>Account no.: {bank.accountNumber}</Text>
+              {bank.ifsc ? <Text style={s.upiSub}>IFSC: {bank.ifsc}</Text> : null}
+              {bank.branch ? <Text style={s.upiSub}>Branch: {pdfText(bank.branch)}</Text> : null}
+              <Text style={s.upiSub}>Please quote {quoteId} as the payment reference.</Text>
+            </View>
+          ) : null}
+          {!isPaid && payLinkUrl ? (
+            <Text style={s.footerLine}>
+              <Text style={s.footerBold}>Review, accept &amp; pay online: </Text>
+              <Link src={payLinkUrl} style={s.payLink}>{payLinkUrl}</Link>
+            </Text>
+          ) : null}
           {upiQrDataUrl ? (
             <View style={s.upiRow}>
               <Image src={upiQrDataUrl} style={s.upiQr} />
@@ -875,7 +930,7 @@ export function QuotePDF(props: QuotePDFProps) {
                 {upiVpa ? <Text style={s.upiVpa}>{upiVpa}</Text> : null}
                 <Text style={s.upiSub}>
                   Amount and quote number are pre-filled. You&apos;ll receive a receipt
-                  voucher, and a GST tax invoice when the order is provisioned.
+                  voucher, and {billOfSupply ? "a Bill of Supply" : "a GST tax invoice"} when the order is provisioned.
                 </Text>
               </View>
             </View>

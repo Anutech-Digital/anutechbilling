@@ -16,6 +16,7 @@ import { loadSalesCatalog } from "@/lib/ai/sales-agent.server";
 import { dispatchTelecall } from "@/lib/ai/actions/telecall-dispatcher";
 import { loadLeadSubject } from "@/lib/telecall/subject.server";
 import { listBolnaAgents, missingTelecallEnv, resolveTelecallProvider } from "@/lib/telecall/provider";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,13 +28,15 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   if (!user) return NextResponse.json({ error: "Please sign in again." }, { status: 401 });
 
   const { data: me } = await supabase
-    .from("users").select("tenant_id, full_name").eq("id", user.id).maybeSingle();
+    .from("users").select("tenant_id, full_name, role").eq("id", user.id).maybeSingle();
   if (!me?.tenant_id) {
     return NextResponse.json(
       { error: "Your account is not linked to a workspace yet — an owner can claim it on the Team page." },
       { status: 403 },
     );
   }
+  /* R-1776 (R-732 ratchet): only a role that may open Leads may dial one. */
+  if (!mayOpenPage(me.role, ["/leads"])) return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
 
   /* Through the user's own client: RLS decides whether this person may see — and so call — it. */
   const { data: visible } = await supabase

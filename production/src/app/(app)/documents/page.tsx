@@ -157,7 +157,11 @@ function DocRow({ doc, onOpen, onDelete }: { doc: DocumentRow; onOpen: () => voi
       </button>
       {exp === "expired" && <Badge kind="danger" size="sm" dot>Expired</Badge>}
       {exp === "soon"    && <Badge kind="warning" size="sm" dot>Expiring soon</Badge>}
-      <DropdownMenu>
+      {/* modal={false} (R-1418): "View / download" opens the preview dialog straight from this
+          menu. As a modal menu it kept its own focus trap and body `pointer-events: none` while
+          the dialog trapped focus too — the two traps fought (stack overflow) and the page froze
+          after previewing an image. Same trap as R-457 on the leads bulk bar. */}
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <button type="button" aria-label="Actions" className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2">
             <Icon name="more_h" size={18} />

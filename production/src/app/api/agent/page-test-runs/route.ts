@@ -13,7 +13,7 @@
  */
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
+import { authorizeAgent, AGENT_SCOPE_ENV } from "@/lib/security/agent-token";
 import { parsePageTestRunBody, isMissingTable } from "@/lib/ai/page-test-runs";
 
 export const dynamic = "force-dynamic";
@@ -29,18 +29,22 @@ interface RunInserter {
 }
 
 export async function POST(req: Request) {
-  const expected = process.env.AGENT_QUEUE_TOKEN?.trim();
-  if (!expected) return NextResponse.json({ error: "agent queue not configured" }, { status: 503 });
-  const provided = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-  if (!timingSafeEqualStr(provided, expected)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = authorizeAgent(req);
+  if (!auth.ok) return auth.response;
 
   let raw: unknown = null;
   try { raw = await req.json(); } catch { /* falls through to the check below */ }
   const parsed = parsePageTestRunBody(raw);
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
   const { tenantId, pagePath, buildSha, runBy, results } = parsed.value;
+
+  /* R-739: the caller's tenantId was taken on trust — now only a workspace the token is scoped to. */
+  if (!auth.tenantIds.includes(tenantId)) {
+    return NextResponse.json(
+      { error: `The agent token is not allowed to write test results for workspace ${tenantId}. Add that workspace id to ${AGENT_SCOPE_ENV} on this deployment, or send the run for a workspace it already covers.` },
+      { status: 403 },
+    );
+  }
 
   const now = new Date().toISOString();
   const admin = createAdminClient() as unknown as RunInserter;

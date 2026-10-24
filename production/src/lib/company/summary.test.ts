@@ -99,6 +99,20 @@ describe("collectedInMonth", () => {
       NOW,
     )).toBe(1100);
   });
+
+  /* R-1565: ₹10,000 came in as an advance in September (it is the customer's credit now).
+     In October that credit pays a ₹10,000 quote: record_desk_payment writes a payments row of
+     amount 10,000 with credit_applied 10,000. No money arrived in October — "Collected this
+     month" must not count it again. */
+  it("advance credit applied to a payment is not money collected (R-1565)", () => {
+    const pays = [
+      { status: "received", amount: 10_000, credit_applied: 0, received_at: "2026-09-10T05:00:00Z" },      // Sept advance
+      { status: "received", amount: 10_000, credit_applied: 10_000, received_at: "2026-10-05T05:00:00Z" }, // Oct: all credit
+      { status: "received", amount: 6_000, credit_applied: 4_000, received_at: "2026-10-06T05:00:00Z" },   // Oct: ₹2,000 cash + ₹4,000 credit
+    ];
+    expect(collectedInMonth(pays, [], NOW)).toBe(2_000);
+    expect(collectedInMonth(pays, [], new Date("2026-09-20T06:00:00Z"))).toBe(10_000);
+  });
 });
 
 describe("customers & ops", () => {

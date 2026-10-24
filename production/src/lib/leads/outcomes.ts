@@ -224,7 +224,7 @@ function baseOutcome(
          nahi pata chalti. Isliye ye chip us ghatna ko darj karta hai, andaza nahi lagata. */
       return withStage(advanceStage(lead.stage, "demo"), {
         patch: null,
-        activity: { kind: "note", detail: "Demo ho gaya" },
+        activity: { kind: "note", detail: "Demo done" },
         navigate: null,
         toast: `${who} · demo logged`,
         undoable: false,
@@ -233,7 +233,7 @@ function baseOutcome(
     case "trial_started":
       return withStage(advanceStage(lead.stage, "trial"), {
         patch: null,
-        activity: { kind: "note", detail: "Trial shuru hua" },
+        activity: { kind: "note", detail: "Trial started" },
         navigate: null,
         toast: `${who} · trial started`,
         undoable: false,
@@ -256,7 +256,7 @@ function baseOutcome(
          Won deal yahan se Lost nahi hoti; wo alag faisla hai. */
       return withStage(markLost(lead.stage), {
         patch: null,
-        activity: { kind: "stage", detail: "Lost mark kiya gaya" },
+        activity: { kind: "stage", detail: "Marked as lost" },
         navigate: null,
         toast: `${who} · Lost`,
         undoable: false,
@@ -304,7 +304,7 @@ export const OUTCOME_CHIPS: ReadonlyArray<{
      HUA. Wahan "Call log" likhna us farak ko mita deta — dono call hi log hain. Button
      ek KAAM ka naam hai, record ek NATEEJE ka; ye ek jaise hone bhi nahi chahiye. */
   { id: "talked",        label: "Log call",      icon: "mobile", tone: "amber",
-    hint: "Insaan se baat ho gayi — call record hoga. Lead pehli baar Contacted par jayegi; uske baad sirf call darj hota hai.",
+    hint: "You spoke to a person — the call is logged. The first time, the lead moves to Contacted; after that only the call is recorded.",
     needsPhone: true, showsAt: ["new", "contact", "demo", "trial", "quote"] },
   { id: "no_answer",     label: "No answer",    icon: "mobile", tone: "default",
     hint: "Log the attempt and bring this lead back tomorrow. Stage is not changed — ringing a phone is not contact.",

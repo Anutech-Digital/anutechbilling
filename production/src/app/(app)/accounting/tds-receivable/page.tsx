@@ -42,6 +42,8 @@ import { Tds26asImport } from "@/components/features/accounting/tds-26as-import"
 import { istToday } from "@/lib/dates/ist";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenRoute } from "@/lib/nav";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 
 // ────────────────────────────────────────────────────────────────
 // Status color mapping
@@ -265,8 +267,8 @@ export default function TdsReceivablePage() {
                 {rows.map((r) => (
                   <tr
                     key={r.id}
-                    className="hover:bg-paper-2/40 cursor-pointer"
-                    onClick={() => setSelected(r)}
+                    className={`hover:bg-paper-2/40 cursor-pointer ${ROW_FOCUS_RING}`}
+                    {...rowActivation(() => setSelected(r))}
                   >
                     <td className="px-4 py-3 text-ink-2">{formatDate(r.payment_received_date)}</td>
                     <td className="px-4 py-3">
@@ -281,8 +283,17 @@ export default function TdsReceivablePage() {
                       <Badge color={STATUS_COLOR[r.status]}>{TDS_STATUS_LABEL[r.status]}</Badge>
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">
+                      {/* R-1670 (1): the invoice — also for an entry recorded on the quote before
+                          the invoice existed (useTdsReceivables fills it) — and it opens. */}
                       {r.invoice_id ? (
-                        <span className="text-amber-ink">{r.invoice_id}</span>
+                        <Link
+                          href={invoiceHref(r.invoice_id)}
+                          className="text-amber-ink hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
+                          {r.invoice_id}
+                        </Link>
                       ) : (
                         <span className="text-ink-3">—</span>
                       )}

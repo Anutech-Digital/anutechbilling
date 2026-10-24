@@ -95,7 +95,7 @@ export async function runIndiamartPull(opts: {
           continue;
         }
         throw new Error(parsed.kind === "auth"
-          ? `IndiaMART rejected the CRM key (${parsed.message}). Owner: Marketing Hub → IndiaMART leads (/marketing/indiamart) par key dobara save karo.`
+          ? `IndiaMART rejected the CRM key (${parsed.message}). Owner: Marketing Hub → IndiaMART leads (/marketing/indiamart) — save the key again.`
           : `IndiaMART error: ${parsed.message}`);
       }
 

@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { toastError } from "@/lib/errors/toast-error";
 import type { BankTransactionRow } from "@/lib/queries/bank";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 
 /** The receipt note useBookCreditAsInvoice writes — how a sale raised FROM a bank line is recognised. */
 export const BANK_RECEIPT_NOTE = "Reconciled from bank receipt";
@@ -34,12 +35,15 @@ export function useUnreconcileImpact(txn: BankTransactionRow | null) {
 
       if (txn.matched_to_type === "payment") {
         const { data: pay, error } = await supabase
-          .from("payments").select("id, amount, notes, quote_id").eq("id", txn.matched_to_id).maybeSingle();
+          .from("payments").select("id, amount, notes, quote_id, invoice_id").eq("id", txn.matched_to_id).maybeSingle();
         if (error) throw error;
         if (!pay) return { kind: "other" };
-        const { data: q } = await supabase.from("quotes").select("invoice_id").eq("id", pay.quote_id).maybeSingle();
-        const invoiceId = q?.invoice_id ?? null;
-        return pay.notes === BANK_RECEIPT_NOTE
+        /* R-1739: a payment on an imported Zoho invoice carries the invoice, not a quote. */
+        const { data: q } = pay.quote_id
+          ? await supabase.from("quotes").select("invoice_id").eq("id", pay.quote_id).maybeSingle()
+          : { data: null };
+        const invoiceId = q?.invoice_id ?? pay.invoice_id ?? null;
+        return pay.notes === BANK_RECEIPT_NOTE && pay.quote_id
           ? { kind: "bank-sale", amount: pay.amount, invoiceId, quoteId: pay.quote_id }
           : { kind: "receipt", amount: pay.amount, invoiceId };
       }
@@ -79,13 +83,15 @@ export function useUnreconcileBankTxn() {
       return data as { invoice_voided: string | null; invoice_credited: string | null; credit_note_id: string | null; receipt_removed: string | null };
     },
     onSuccess: (res) => {
-      for (const k of ["bank_transactions", "bank_accounts", "invoices", "quotes", "payments", "customers", "aging",
+      for (const k of ["bank_transactions", "bank_accounts",
                        "salary-payments", "expenses", "balance-sheet", "tax-payments", "project_sales", "accounting", "itr-pack"]) {
         qc.invalidateQueries({ queryKey: [k] });
       }
+      /* R-1634: a receipt removed / invoice credited changes what the customer owes. */
+      invalidateReceivables(qc);
       toast.success(
-        res?.invoice_credited ? `Un-reconciled · invoice ${res.invoice_credited} par credit note ${res.credit_note_id ?? ""} ban gaya, receipt hata di`
-        : res?.invoice_voided ? `Un-reconciled · draft invoice ${res.invoice_voided} void, receipt hata di`
+        res?.invoice_credited ? `Un-reconciled · credit note ${res.credit_note_id ?? ""} raised on invoice ${res.invoice_credited}, receipt removed`
+        : res?.invoice_voided ? `Un-reconciled · draft invoice ${res.invoice_voided} voided, receipt removed`
         : "Un-reconciled",
       );
     },

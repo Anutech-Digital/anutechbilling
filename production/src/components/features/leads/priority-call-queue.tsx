@@ -43,7 +43,6 @@
 import * as React from "react";
 import Link from "next/link";
 import type { Route } from "next";
-import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
@@ -54,6 +53,7 @@ import { OutcomeChips } from "./outcome-chips";
 import type { LeadOutcome } from "@/lib/leads/outcomes";
 import type { LeadListRow } from "@/lib/leads/list-page";
 import { leadTitle } from "@/lib/leads/display-name";
+import { followRevealed, isMaskedContact } from "@/lib/contacts/reveal-client";
 
 /** Remembered per browser, not per user — it is a layout preference, not a setting. */
 const STORAGE_KEY = "ros_call_queue_open";
@@ -79,7 +79,11 @@ function QueueRow({
   const { lead, heat, daysOverdue } = entry;
   const badge = heatBadge(heat.band);
   const late  = overdueLabel(daysOverdue);
-  const num   = dialable(lead.contact_phone);
+  /* R-1009: a masked phone ("••••••3210", a role without can_view_contact_details) is still a
+     phone — the buttons stay, and fetch the real number (logged) when tapped. */
+  const masked = isMaskedContact(lead.contact_phone);
+  const num   = masked ? "" : dialable(lead.contact_phone);
+  const ref   = { table: "leads" as const, id: lead.id, field: "contact_phone" };
   const waMsg = queueWhatsAppMessage(lead, tenantName);
 
   return (
@@ -115,11 +119,28 @@ function QueueRow({
 
         {/* The two big ones. Anchors, so the OS handles them — and so a long-press
             gives the rep "copy number" for free. */}
+        {/* R-1426 (Pawan, 12 Oct 2026, on /deals): a number that cannot be dialled ("NA",
+            five digits) used to keep both buttons and answer a tap with an error toast. A
+            button that can only fail is a mystery button (CLAUDE.md §24) — so the row offers
+            the one thing that helps instead: open the lead and add the number. */}
+        {num === null ? (
+          <button
+            type="button"
+            onClick={() => onOpen(lead)}
+            title={`No usable phone number on this lead${lead.contact_phone ? ` ("${lead.contact_phone}")` : ""} — open it and add a 10-digit number to call or WhatsApp.`}
+            className={cn(
+              "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 text-xs font-bold",
+              "border-hairline-strong text-ink-2 hover:bg-paper-2",
+            )}
+          >
+            <Icon name="edit" size={14} /> Add phone number
+          </button>
+        ) : (
         <div className="flex items-center gap-2">
           <a
-            href={`tel:${num ?? ""}`}
+            href={`tel:${num}`}
             onClick={(e) => {
-              if (!num) { e.preventDefault(); toast.error(`${leadTitle(lead).label} has no usable phone number.`, { description: "Open the lead and add a 10-digit number, then call." }); return; }
+              followRevealed(e, lead.contact_phone, ref, "call", (real) => { const d = dialable(real); return d ? `tel:${d}` : null; });
               onLogCall(lead);
             }}
             className={cn(
@@ -130,11 +151,14 @@ function QueueRow({
             <Icon name="mobile" size={14} /> Call now
           </a>
           <a
-            href={num ? `https://wa.me/${num}?text=${encodeURIComponent(waMsg)}` : "#"}
+            href={`https://wa.me/${num}?text=${encodeURIComponent(waMsg)}`}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => {
-              if (!num) { e.preventDefault(); toast.error(`${leadTitle(lead).label} has no usable phone number.`, { description: "Open the lead and add a 10-digit number, then message on WhatsApp." }); return; }
+              followRevealed(e, lead.contact_phone, ref, "whatsapp", (real) => {
+                const d = dialable(real);
+                return d ? `https://wa.me/${d}?text=${encodeURIComponent(waMsg)}` : null;
+              }, true);
               onLogWhatsApp(lead);
             }}
             title={waMsg}
@@ -146,6 +170,7 @@ function QueueRow({
             <Icon name="whatsapp" size={14} /> WhatsApp
           </a>
         </div>
+        )}
       </div>
 
       {/* Record the outcome without leaving the bar — the whole point of a call list. */}

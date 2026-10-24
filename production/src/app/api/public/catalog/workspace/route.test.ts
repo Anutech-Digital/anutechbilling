@@ -19,6 +19,9 @@ vi.mock("@/lib/supabase/server", () => ({
 
 import { GET } from "./route";
 import { forgetForTests, MAX_STALE_MS, READ_BUDGET_MS } from "./last-good";
+/* R-1499: outside production the website tenant is never implied any more — name it, as a
+   deployment does. (The fixture is the same id the routes used to fall back to.) */
+process.env.BUY_PAGE_TENANT_ID ||= "fbb976f1-9090-4f10-9726-0901bd144e42";
 
 const row = { name: "Google Workspace Business Starter", msrp: 3240, vendor: "google", prices: { annual: 270, monthly: 325 } };
 const good = () => Promise.resolve({ data: [row], error: null });

@@ -8,8 +8,9 @@
  *
  * R-224 (7 Oct 2026): hosting used to come from the old HOSTING_PLANS placeholder
  * (Starter ₹159/199, Business ₹359 and a ₹799 third plan — ~3× /hosting, one that does
- * not exist). Hosting rates are paise-precise (₹49.99), so `quoteInr` prints them the
- * way /rates does. `monthly: null` = no flexible tier (a live GW edition can be annual
+ * not exist). R-1465 (16 Oct 2026): the catalogue rate keeps its paise (₹49.99) but the
+ * site never prints them — `quoteInr` is the site's one whole-rupee formatter, and a line's
+ * amount is rounded to whole rupees the way checkout charges it. `monthly: null` = no flexible tier (a live GW edition can be annual
  * only) — the builder must not quote it under "Flexible monthly".
  *
  * `annual` / `monthly` are ₹ per `per`-unit per period. Domain / SSL / onsite
@@ -17,10 +18,13 @@
  * `domainField` that selects the reg / renew / transfer column of the chosen
  * extension, so the rate follows the TLD the customer picks.
  */
-import { LICENCE_EDITIONS, TLDS, type Tld } from "./catalog";
+import { CERTS, LICENCE_EDITIONS, TLDS, type Tld } from "./catalog";
 import { PLUS_EDITION } from "@/lib/catalog/public-price-policy";
-import { HOSTING_TIERS } from "./hosting-landing-v2";
+import { HOSTING_TIERS, type HostingTier } from "./hosting-landing-v2";
+import { SSL_SKU_BY_CERT } from "@/lib/catalog/catalog-prices";
 import { SLA } from "../config";
+import { rupee } from "../money";
+import { gstBreakup } from "@/lib/quotes/amounts";
 import type { MergedEdition } from "../live-catalog";
 
 export interface QuoteProduct {
@@ -74,7 +78,7 @@ editions.splice(plusAt > 0 ? plusAt : editions.length, 0, {
 const domains: QuoteProduct[] = [
   { name: "Domain registration", label: "Domain registration", vendor: "Domains", tags: "domain registration register new name in com net org dns whois", note: "A new name on the extension you pick — first year.", annual: 0, monthly: 0, per: "domain", cycle: "yr", domain: true, domainField: "reg" },
   { name: "Domain renewal", label: "Domain renewal", vendor: "Domains", tags: "domain renewal renew expiry extend keep", note: "Extend an existing name by one year.", annual: 0, monthly: 0, per: "domain", cycle: "yr", domain: true, domainField: "renew" },
-  { name: "Domain transfer", label: "Domain transfer in", vendor: "Domains", tags: "domain transfer move switch registrar epp code", note: "Move a name to us — no fee, adds a year.", annual: 0, monthly: 0, per: "domain", cycle: "yr", domain: true, domainField: "transfer" },
+  { name: "Domain transfer", label: "Domain transfer in", vendor: "Domains", tags: "domain transfer move switch registrar epp code", note: "Move a name to us — the transfer price includes 1 year renewal.", annual: 0, monthly: 0, per: "domain", cycle: "yr", domain: true, domainField: "transfer" },
 ];
 
 /* Same tiers, names and ₹ as /hosting and /rates: billed yearly → annual, billed monthly → flexible. */
@@ -85,9 +89,28 @@ const hosting: QuoteProduct[] = HOSTING_TIERS.map((h) => ({
   annual: h.yearlyMo, monthly: h.monthly, per: "site", cycle: "mo",
 }));
 
+/* R-1504: SSL rates are the ones /ssl prints (CERTS.addPrice) — never typed a second time. A
+   certificate with no fixed price on /ssl (OV / EV, "Talk to us") is quoted as price on request. */
+const SSL_CATEGORY = "SSL & security";
+type SslLineInfo = Pick<QuoteProduct, "name" | "label" | "tags" | "note">;
+const sslLine = (certName: string, p: SslLineInfo): QuoteProduct => {
+  const price = CERTS.find((c) => c.name === certName)?.addPrice ?? null;
+  return {
+    ...p, vendor: SSL_CATEGORY, per: "certificate", cycle: "yr", annual: price ?? 0, monthly: price ?? 0,
+    ...(price === null ? { priceOnRequest: true } : {}),
+  };
+};
+/** /ssl card name → the quote line its "Get a quote" button opens on. Free DV is not sold. */
+const CERT_QUOTE_LINE: Readonly<Record<string, string>> = {
+  "Positive SSL": "SSL Positive",
+  Wildcard: "SSL Wildcard",
+  "OV / EV": "SSL OV/EV",
+};
+
 const ssl: QuoteProduct[] = [
-  { name: "SSL Positive", label: "Positive SSL — DV", vendor: "SSL & security", tags: "ssl certificate https dv secure padlock", note: `Single domain · active ${SLA.sslLive}.`, annual: 899, monthly: 899, per: "certificate", cycle: "yr" },
-  { name: "SSL Wildcard", label: "Wildcard SSL — DV", vendor: "SSL & security", tags: "ssl certificate https wildcard subdomains secure", note: "Unlimited subdomains on one domain.", annual: 4499, monthly: 4499, per: "certificate", cycle: "yr" },
+  sslLine("Positive SSL", { name: "SSL Positive", label: "Positive SSL — DV", tags: "ssl certificate https dv secure padlock", note: `Single domain · active ${SLA.sslLive}.` }),
+  sslLine("Wildcard", { name: "SSL Wildcard", label: "Wildcard SSL — DV", tags: "ssl certificate https wildcard subdomains secure", note: "Unlimited subdomains on one domain." }),
+  sslLine("OV / EV", { name: "SSL OV/EV", label: "OV / EV SSL — organisation validated", tags: "ssl certificate https ov ev organisation extended validation company name vetting", note: "Company name on the certificate · the CA vets your documents, we handle them." }),
 ];
 
 const support: QuoteProduct[] = [
@@ -101,6 +124,34 @@ export const QUOTE_PRODUCTS: readonly QuoteProduct[] = [...editions, ...domains,
 
 /** Category order for the filter, with live counts. */
 export const QUOTE_CATEGORIES: readonly string[] = ["Google Workspace", "Microsoft 365", "Zoho Workplace", "Domains", "Web hosting", "SSL & security", "Support"];
+
+/**
+ * R-1504: what /quote opens on. `?product=ssl` (from /ssl) opens the SSL category with
+ * `?ed=<SSL line>` picked, else Positive SSL; `?ed=` alone keeps the calculator hand-off.
+ * Anything unknown returns {} — the page's own default (Workspace Starter, all plans).
+ */
+const PRODUCT_PARAM: Readonly<Record<string, { cat: string; line: string }>> = {
+  ssl: { cat: SSL_CATEGORY, line: "SSL Positive" },
+};
+export function quotePrefill(
+  params: { get(key: string): string | null },
+  known: ReadonlyMap<string, { vendor: string }>,
+): { ed?: string; cat?: string } {
+  const ed = params.get("ed") ?? params.get("edition");
+  const key = (params.get("product") ?? "").trim().toLowerCase();
+  const product = Object.hasOwn(PRODUCT_PARAM, key) ? PRODUCT_PARAM[key] : undefined;
+  if (product) {
+    const line = ed && known.get(ed)?.vendor === product.cat ? ed : product.line;
+    return known.has(line) ? { ed: line, cat: product.cat } : { cat: product.cat };
+  }
+  return ed && known.has(ed) ? { ed } : {};
+}
+
+/** The /quote link for an /ssl certificate card, or null for one that is not sold (Free DV). */
+export function sslQuoteHref(certName: string): string | null {
+  const line = Object.hasOwn(CERT_QUOTE_LINE, certName) ? CERT_QUOTE_LINE[certName] : undefined;
+  return line ? `/quote?${new URLSearchParams({ product: "ssl", ed: line })}` : null;
+}
 
 /** The extensions the domain picker offers — real reg/renew/transfer from TLDS. */
 export const QUOTE_TLDS: readonly Tld[] = TLDS;
@@ -121,13 +172,113 @@ export function withLiveEditions(products: readonly QuoteProduct[], editions: re
   });
 }
 
+/** The price-book figures /quote needs (lib/catalog/catalog-prices PriceBook: tiers + ssl). */
+export interface QuoteBookPrices {
+  tiers: readonly HostingTier[];
+  /** SKU (SSL-POSITIVE-YR…) → ₹ ex-GST per year. */
+  ssl: Readonly<Record<string, number>>;
+}
+
+/**
+ * R-1797: hosting and SSL lines at the price book's figures (items rows with CATALOG_FROM_DB
+ * on), so the estimate is what /hosting, /ssl and checkout say. A product the book does not
+ * price, or prices at ₹0, keeps its code figure; a price-on-request line stays on request.
+ * No book, or the code book → the same products, unchanged.
+ */
+export function withPriceBook(products: readonly QuoteProduct[], book: QuoteBookPrices | undefined): QuoteProduct[] {
+  if (!book) return [...products];
+  const sslSku = new Map(Object.entries(CERT_QUOTE_LINE).map(([cert, line]) => [line, SSL_SKU_BY_CERT[cert]]));
+  return products.map((p) => {
+    if (p.priceOnRequest) return p;
+    if (p.vendor === "Web hosting") {
+      const t = book.tiers.find((x) => `Hosting ${x.name}` === p.name);
+      if (!t || !(t.yearlyMo > 0) || !(t.monthly > 0)) return p;
+      return t.yearlyMo === p.annual && t.monthly === p.monthly ? p : { ...p, annual: t.yearlyMo, monthly: t.monthly };
+    }
+    const sku = sslSku.get(p.name);
+    const price = sku ? book.ssl[sku] : undefined;
+    if (!price || price <= 0 || price === p.annual) return p;
+    return { ...p, annual: Math.round(price), monthly: Math.round(price) };
+  });
+}
+
 /** ₹/unit for the term, or null when the product is not sold on that term. */
 export function quoteRate(p: QuoteProduct, term: "annual" | "monthly"): number | null {
   return term === "annual" ? p.annual : p.monthly;
 }
 
-/** ₹ the way /rates prints it: whole rupees plain, paise to 2 places (₹49.99, ₹1,080). */
-export function quoteInr(n: number): string {
-  const r = Math.round(n * 100) / 100;
-  return "₹" + (Number.isInteger(r) ? r.toLocaleString("en-IN") : r.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+/** ₹ the way every site page prints it (R-1465): whole rupees (₹50, ₹1,080), never paise. */
+export const quoteInr: (n: number) => string = rupee;
+
+/**
+ * One unit's price for one billing period, whole rupees — rate × months rounded once, exactly
+ * as checkout prices a hosting site (hostingRate: Math.round of the cycle total,
+ * lib/checkout/hosting-prices.ts). ₹49.99 × 12 = ₹600 a site.
+ */
+export function quoteUnitAmount(rate: number, months: number): number {
+  return Math.round(rate * months);
+}
+
+/**
+ * One quote line's amount, whole rupees — the unit's period price × qty.
+ *
+ * R-1482 (17 Oct 2026): this used to round rate × qty × months once, so 7 Starter sites a year
+ * came to ₹4,199 (49.99 × 84) while checkout charges ₹600 a site — ₹4,200. Rounding per unit
+ * then multiplying is what checkout does, so the quote line now equals it for any count.
+ * Display only: /quote sends an enquiry, never an amount; the team prices the real quotation.
+ */
+export function quoteLineAmount(rate: number, qty: number, months: number): number {
+  return quoteUnitAmount(rate, months) * qty;
+}
+
+/** A line as the renewal sees it: `rate` = the term's rate, `renewRate` = what a yearly item renews at. */
+export interface QuoteRenewalLine {
+  cycle: QuoteProduct["cycle"];
+  qty: number;
+  rate: number;
+  /** Domains: the extension's renewal price, not its registration/transfer price (R-1484). */
+  renewRate: number;
+}
+
+export interface QuoteRenewal {
+  /** Flexible monthly: one month's invoice incl. GST. Null on an annual commitment. */
+  perMonth: number | null;
+  /** Flexible monthly: the yearly items (domain, SSL…) once a year, incl. GST. 0 on annual. */
+  yearlyOnce: number;
+  /** What a year costs at today's rates, incl. GST. Monthly: perMonth × 12 + yearlyOnce. */
+  perYear: number;
+}
+
+/**
+ * The "Renews ₹X/yr" line on /quote (R-1483, 17 Oct 2026).
+ *
+ * Flexible monthly is billed as twelve monthly invoices, each with its own GST — so a year is
+ * the month's payable × 12, not one year-long line rounded once. Pawan's basket (GW Starter × 3
+ * + Hosting Starter × 7) paid ₹1,977 a month but "renewed" at ₹23,716 a year; ₹1,977 × 12 is
+ * ₹23,724. Yearly items (domain, SSL, onsite) renew once a year at their renewal rate.
+ * An annual commitment is one invoice: monthly-cycle lines × 12 per unit plus yearly items, one GST.
+ */
+/**
+ * The renewal line as words, WITH its GST basis (R-1629, 24 Oct 2026). quoteRenewal's numbers
+ * include GST; the page said so but the printed/PDF quote and the email did not — next to
+ * "GST 18% billed separately", so a buyer would add 18% again. Every place that shows the
+ * renewal (page, print, email) uses this one helper.
+ */
+export function quoteRenewalText(r: QuoteRenewal): string {
+  const price = r.perMonth === null
+    ? `${quoteInr(r.perYear)}/yr`
+    : `${quoteInr(r.perMonth)}/mo × 12${r.yearlyOnce > 0 ? ` + ${quoteInr(r.yearlyOnce)} yearly items` : ""} = ${quoteInr(r.perYear)}/yr`;
+  return `Renews ${price} incl. 18% GST`;
+}
+
+export function quoteRenewal(lines: readonly QuoteRenewalLine[], term: "annual" | "monthly"): QuoteRenewal {
+  const yearlyItems = lines.filter((l) => l.cycle === "yr").reduce((n, l) => n + quoteLineAmount(l.renewRate, l.qty, 1), 0);
+  const moLines = lines.filter((l) => l.cycle === "mo");
+  if (term === "annual") {
+    const taxable = moLines.reduce((n, l) => n + quoteLineAmount(l.rate, l.qty, 12), 0) + yearlyItems;
+    return { perMonth: null, yearlyOnce: 0, perYear: gstBreakup(taxable).total };
+  }
+  const perMonth = gstBreakup(moLines.reduce((n, l) => n + quoteLineAmount(l.rate, l.qty, 1), 0)).total;
+  const yearlyOnce = yearlyItems > 0 ? gstBreakup(yearlyItems).total : 0;
+  return { perMonth, yearlyOnce, perYear: perMonth * 12 + yearlyOnce };
 }

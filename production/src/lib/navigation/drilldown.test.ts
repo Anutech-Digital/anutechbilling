@@ -115,6 +115,7 @@ describe("no dead drill-downs", () => {
       "app/(app)/dashboard/page.tsx",
       "components/features/deals/deals-strip.tsx",
       "components/features/dashboard/company-section.tsx",
+      "lib/hooks/nav-badge-views.ts",   // R-1541: the sidebar badges open these views
     ].map(read).join("\n");
     for (const name of Object.keys(DRILL) as DrillName[]) {
       expect(files, name).toContain(`drillHref("${name}")`);
@@ -163,7 +164,8 @@ describe("invoice money tiles: tile, list and dashboard agree", () => {
   it("the invoices page filters by the tile's predicate and shows the banner", () => {
     const page = read("app/(app)/invoices/page.tsx");
     expect(page).toMatch(/useUrlChoice<InvoiceFocus>\("focus", INVOICE_FOCI, ""\)/);
-    expect(page).toMatch(/if \(focus && !invoiceInFocus\(i, focus\)\) return false;/);
+    /* R-1709: the same note totals the tile summed with (credit-note settled = Credited, not paid). */
+    expect(page).toMatch(/if \(focus && !invoiceInFocus\(i, focus, undefined, noteTotals\)\) return false;/);
     expect(page).toMatch(/onClick=\{\(\) => focusOn\("unpaid"\)\}/);
     expect(page).toMatch(/onClick=\{\(\) => focusOn\("paid-month"\)\}/);
     expect(page).toMatch(/<FocusBanner/);
@@ -176,7 +178,8 @@ describe("quotes tiles: tile and list agree, and the nudge button is honest", ()
     const { QUOTE_FOCUS } = await import("./drilldown");
     expect([...QUOTE_FOCUS]).toEqual([...QUOTE_FOCI]);
   });
-  it("review = sent + viewed; accepted includes invoiced", async () => {
+  /* R-1713: the Accepted tile = the Accepted TAB (an invoiced quote with money due lives in Awaiting payment). */
+  it("review = sent + viewed; accepted = the Accepted tab", async () => {
     const { quoteInFocus, focusValue } = await import("@/lib/quotes/focus");
     const qs = [
       { status: "sent", amount: 10 }, { status: "viewed", amount: 20 }, { status: "draft", amount: 99 },
@@ -184,7 +187,7 @@ describe("quotes tiles: tile and list agree, and the nudge button is honest", ()
     ];
     expect(qs.filter((q) => quoteInFocus(q, "review")).length).toBe(2);
     expect(focusValue(qs, "review")).toBe(30);
-    expect(focusValue(qs, "accepted")).toBe(12);
+    expect(focusValue(qs, "accepted")).toBe(7);
   });
   it("the page uses the predicates and no longer claims a nudge it never sent", () => {
     const page = read("app/(app)/quotes/page.tsx");
@@ -284,7 +287,8 @@ describe("aging, expenses and the prepaid form", () => {
     const page = read("app/(app)/accounting/aging/page.tsx");
     expect(page).toMatch(/const owed = invoiceBalance\(/);
     expect(page).not.toMatch(/const owed = inv\.net_payable \?\? inv\.amount/);
-    expect(page).toMatch(/paid_amount, status, invoice_date/);
+    // R-1586: the paged read lives next to the page (aging/read.ts).
+    expect(read("app/(app)/accounting/aging/read.ts")).toMatch(/paid_amount, status, invoice_date/);
     expect(page).toMatch(/rows   = bucket \? allRows\.filter\(\(r\) => r\.buckets\[bucket\] > 0\) : allRows/);
   });
   it("expenses Top category opens that category; prepaid form points staff advances away", () => {

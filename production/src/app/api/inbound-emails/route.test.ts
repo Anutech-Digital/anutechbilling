@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   calls: [] as { method: string; args: unknown[] }[],
   rows: [] as Record<string, unknown>[],
   user: { id: "U1" } as { id: string } | null,
+  role: "sales" as string | null,
 }));
 
 vi.mock("@/lib/supabase/server", () => {
@@ -34,7 +35,7 @@ vi.mock("@/lib/supabase/server", () => {
     createAdminClient: () => ({ from: () => listBuilder() }),
     createClient: () => ({
       auth: { getUser: async () => ({ data: { user: state.user } }) },
-      from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { tenant_id: "T1" } }) }) }) }),
+      from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { tenant_id: "T1", role: state.role } }) }) }) }),
     }),
   };
 });
@@ -53,6 +54,7 @@ beforeEach(() => {
   state.calls = [];
   state.rows = [];
   state.user = { id: "U1" };
+  state.role = "sales";
 });
 
 describe("GET /api/inbound-emails — pages", () => {
@@ -114,5 +116,27 @@ describe("GET /api/inbound-emails — pages", () => {
   it("still refuses a signed-out caller", async () => {
     state.user = null;
     expect((await GET(req())).status).toBe(401);
+  });
+});
+
+/* R-1553 (18 Oct 2026): the GET checked only the workspace, then read every customer email of
+   the tenant through the admin client — so a support or delivery login (no Enquiries, no Leads
+   in its menu) could read the inbox from the browser console. The write routes beside it
+   already asked mayOpenPage(["/enquiries", "/leads"]) (R-1470); the read asks the same now. */
+describe("GET /api/inbound-emails — only roles that can open Enquiries or Leads (R-1553)", () => {
+  it.each(["billing", "accountant", "support", "delivery", "partner_agent", null])(
+    "%s → 403, and no email is read", async (role) => {
+      state.role = role;
+      state.rows = [mail(1)];
+      const res = await GET(req());
+      expect(res.status).toBe(403);
+      expect(calls("limit")).toHaveLength(0);
+    },
+  );
+
+  it.each(["owner", "manager", "sales", "sales_senior"])("%s still reads the inbox", async (role) => {
+    state.role = role;
+    state.rows = [mail(1)];
+    expect((await GET(req())).status).toBe(200);
   });
 });

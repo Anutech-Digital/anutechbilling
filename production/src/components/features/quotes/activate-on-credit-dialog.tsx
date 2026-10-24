@@ -12,6 +12,7 @@
 
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
@@ -93,7 +94,7 @@ export function ActivateOnCreditDialog({ open, onOpenChange, quote, customer, ro
         qc.invalidateQueries({ queryKey: ["subscriptions"] }),
         qc.invalidateQueries({ queryKey: ["tasks"] }),
         qc.invalidateQueries({ queryKey: ["credit"] }),
-        qc.invalidateQueries({ queryKey: ["aging"] }),
+        qc.invalidateQueries({ queryKey: queryKeys.aging() }),
       ]);
       if (res.alreadyActive) {
         toast.info("This quote was already active on credit — nothing new was created.");

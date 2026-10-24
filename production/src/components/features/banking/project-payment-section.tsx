@@ -120,25 +120,25 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
             onClick={() => setMode(m)}
             className={`rounded px-2.5 py-1 ${mode === m ? "bg-ink text-paper" : "text-ink-2 hover:bg-paper-2"}`}
           >
-            {m === "existing" ? "Existing project" : "＋ Naya project"}
+            {m === "existing" ? "Existing project" : "＋ New project"}
           </button>
         ))}
       </div>
 
       {mode === "existing" ? (
         isLoading ? (
-          <p className="text-xs text-ink-3">Projects load ho rahe hain…</p>
+          <p className="text-xs text-ink-3">Loading projects…</p>
         ) : (projects ?? []).length === 0 ? (
-          <p className="text-xs text-ink-3">Koi open project nahi hai — &quot;Naya project&quot; chuno.</p>
+          <p className="text-xs text-ink-3">No open projects — choose &quot;New project&quot;.</p>
         ) : (
           <>
             <select value={projectId} onChange={(e) => pickProject(e.target.value)} aria-label="Project" className={selectCls}>
-              <option value="" disabled>Kis project ka payment hai? Project chuno…</option>
+              <option value="" disabled>Which project is this payment for? Select a project…</option>
               {(projects ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.title} · {p.customerName} · {p.milestones.length > 0
-                    ? `baaki ${rupee(p.milestones.reduce((s, m) => s + m.remaining, 0))}`
-                    : p.paid > 0 ? `poora paid (${rupee(p.paid)})` : "koi milestone nahi"}
+                    ? `balance ${rupee(p.milestones.reduce((s, m) => s + m.remaining, 0))}`
+                    : p.paid > 0 ? `fully paid (${rupee(p.paid)})` : "no milestones"}
                 </option>
               ))}
             </select>
@@ -146,31 +146,31 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
               <select value={milestoneId} onChange={(e) => setMilestoneId(e.target.value)} aria-label="Milestone" className={selectCls}>
                 {project.milestones.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.seq}. {m.label} · baaki {rupee(m.remaining)}{m.invoiceId ? ` · invoice ${m.invoiceId}` : ""}
+                    {m.seq}. {m.label} · balance {rupee(m.remaining)}{m.invoiceId ? ` · invoice ${m.invoiceId}` : ""}
                   </option>
                 ))}
-                <option value={NEW_MILESTONE}>＋ Nayi milestone — ye {rupee(settled)} alag payment hai</option>
+                <option value={NEW_MILESTONE}>＋ New milestone — this {rupee(settled)} is a separate payment</option>
               </select>
             )}
             {addingMilestone && project && (
               <>
-                <Input value={newMsLabel} onChange={(e) => setNewMsLabel(e.target.value)} placeholder="Milestone ka naam (e.g. Phase 2)" aria-label="New milestone name" />
+                <Input value={newMsLabel} onChange={(e) => setNewMsLabel(e.target.value)} placeholder="Milestone name (e.g. Phase 2)" aria-label="New milestone name" />
                 <p className="text-xs text-amber-ink">
-                  {project.milestones.length === 0 && project.paid > 0 ? "Is project ka poora payment ho chuka hai. " : ""}
-                  Ye {rupee(settled)} ek nayi milestone ki tarah judega aur project ki value {rupee(project.total)} → {rupee(project.total + settled)} ho jayegi.
-                  Agar ye alag kaam hai to &quot;Naya project&quot; chuno.
+                  {project.milestones.length === 0 && project.paid > 0 ? "This project is already fully paid. " : ""}
+                  This {rupee(settled)} is added as a new milestone and the project value goes from {rupee(project.total)} to {rupee(project.total + settled)}.
+                  If this is separate work, choose &quot;New project&quot;.
                 </p>
               </>
             )}
             {milestone && settled !== milestone.remaining && (
               <p className="text-xs text-amber-ink">
-                Is milestone ka {rupee(milestone.remaining)} baaki hai, ye payment {rupee(settled)} chukata hai{tds ? " (bank + TDS)" : ""} —
+                This milestone has {rupee(milestone.remaining)} due; this payment settles {rupee(settled)}{tds ? " (bank + TDS)" : ""} —
                 {settled < milestone.remaining
                   ? (raiseInvoice && milestone.paid === 0 && !milestone.invoiceId
-                      ? ` is payment ki alag milestone (${amountInIndianWords(settled)}) banegi aur invoice sirf utne ka; baaki ${amountInIndianWords(milestone.remaining - settled)} "${milestone.label}" mein rahega.`
-                      : " ye part payment ki tarah record hoga.")
-                  : " milestone se zyada hai, milestone check kar lo."}
-                {!tds && milestone.remaining > net && " Agar customer ne TDS kaata hai to neeche \"TDS kata hai?\" tick karo."}
+                      ? ` a separate milestone (${amountInIndianWords(settled)}) is created for this payment and invoiced for that amount only; the remaining ${amountInIndianWords(milestone.remaining - settled)} stays in "${milestone.label}".`
+                      : " it is recorded as a part payment.")
+                  : " more than the milestone — check the milestone."}
+                {!tds && milestone.remaining > net && " If the customer deducted TDS, tick \"TDS deducted?\" below."}
               </p>
             )}
           </>
@@ -186,8 +186,8 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
             aria-label="Customer"
             className={selectCls}
           >
-            <option value="" disabled>Customer chuno…</option>
-            <option value={NEW_CUSTOMER}>＋ Naya customer banao</option>
+            <option value="" disabled>Select a customer…</option>
+            <option value={NEW_CUSTOMER}>＋ New customer</option>
             {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           {/* This customer already has an open project — the usual case is an instalment on
@@ -196,8 +196,8 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
           {customerProjects.length > 0 && (
             <div className="rounded-md border border-amber/50 bg-amber-soft/30 p-2.5 text-xs text-ink-2 space-y-1.5">
               <p>
-                <b>{customerName}</b> ka project pehle se khula hai. Agar ye paisa usi ki kist hai to naya project mat banao —
-                existing project chuno.
+                <b>{customerName}</b> already has an open project. If this payment is an instalment of it, do not create a new project —
+                choose the existing project.
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {customerProjects.map((p) => (
@@ -208,32 +208,32 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
               </div>
             </div>
           )}
-          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Project ka naam (e.g. Accounting software)" aria-label="Project name" />
+          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Project name (e.g. Accounting software)" aria-label="Project name" />
           <label className="block text-xs text-ink-3">
-            Project ki total value ₹ (GST ke saath) — sirf ye payment hai to jaisa hai waisa chhod do
+            Project total value ₹ (incl. GST) — if this payment is the whole project, leave it as is
             <Input value={total} onChange={(e) => { setTotal(e.target.value); setTotalEdited(true); }} type="number" min={0} className="mt-1" aria-label="Project total value" />
           </label>
           {totalNum > 0 && (
             <p className="text-xs text-ink-3">
-              = <b className="text-ink">{amountInIndianWords(totalNum)}</b> (GST ke saath)
+              = <b className="text-ink">{amountInIndianWords(totalNum)}</b> (incl. GST)
             </p>
           )}
           {/* The total defaults to this one payment — right for a one-payment job, wrong for the
               first instalment of a bigger contract, which is how a ₹50L deal became a ₹5L project. */}
           {totalNum === settled && (
             <p className="text-xs text-amber-ink">
-              Abhi poori deal ki value = sirf ye payment ({amountInIndianWords(settled)}). Agar ye badi deal ki pehli kist hai to
-              upar <b>poori value</b> daalo — baaki milestone apne-aap ban jaayegi.
+              The deal value now equals just this payment ({amountInIndianWords(settled)}). If this is the first instalment of a bigger deal,
+              enter the <b>full value</b> above — the remaining milestone is created automatically.
             </p>
           )}
           {split.length > 0 && totalNum >= settled && (
             <p className="text-xs text-ink-3">
-              Milestones: {split.map((m) => `${m.label} ${rupee(m.total_amount)}`).join(" + ")} (GST 18% ke saath) — ye {rupee(settled)} pehli milestone mein jayega.
-              Baad mein project page par milestones badal sakte ho.
+              Milestones: {split.map((m) => `${m.label} ${rupee(m.total_amount)}`).join(" + ")} (incl. 18% GST) — this {rupee(settled)} goes to the first milestone.
+              You can change milestones later on the project page.
             </p>
           )}
           {totalNum > 0 && totalNum < settled && (
-            <p className="text-xs text-rose">Total value is payment ({rupee(settled)}) se kam nahi ho sakti.</p>
+            <p className="text-xs text-rose">Total value cannot be less than this payment ({rupee(settled)}).</p>
           )}
         </>
       )}
@@ -242,7 +242,7 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
       <div className="rounded-md border border-hairline bg-paper p-2.5 space-y-2">
         <label className="flex items-start gap-2 text-xs text-ink-2">
           <input type="checkbox" checked={tdsOn} onChange={(e) => setTdsOn(e.target.checked)} className="mt-0.5" />
-          <span><b>TDS kata hai?</b> Customer ne TDS kaat kar {rupee(net)} bheja</span>
+          <span><b>TDS deducted?</b> The customer deducted TDS and sent {rupee(net)}</span>
         </label>
         {tdsOn && tds && (
           <>
@@ -250,14 +250,14 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
               {TDS_SECTIONS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
             </select>
             <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs tabular-nums">
-              <span className="text-ink-3">Kaam ki value (taxable)</span><span className="text-right text-ink">{rupee(tds.taxable)}</span>
+              <span className="text-ink-3">Value of work (taxable)</span><span className="text-right text-ink">{rupee(tds.taxable)}</span>
               <span className="text-ink-3">+ GST {gstRate}%</span><span className="text-right text-ink">{rupee(tds.gst)}</span>
               <span className="text-ink-3 font-semibold">= Invoice</span><span className="text-right text-ink font-semibold">{rupee(tds.gross)}</span>
               <span className="text-ink-3">− TDS {tdsSection.ratePct}% on {rupee(tds.taxable)}</span><span className="text-right text-rose">− {rupee(tds.tds)}</span>
-              <span className="text-ink-3">= Bank mein aaya</span><span className="text-right text-emerald">{rupee(tds.net)}</span>
+              <span className="text-ink-3">= Received in bank</span><span className="text-right text-emerald">{rupee(tds.net)}</span>
             </div>
             <p className="text-xs text-ink-3">
-              {rupee(tds.tds)} TDS Receivable mein jayega (Form 16A pending) — ITR mein claim hoga.
+              {rupee(tds.tds)} goes to TDS Receivable (Form 16A pending) — claimed in the ITR.
             </p>
           </>
         )}
@@ -266,14 +266,14 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
       <label className="flex items-start gap-2 text-xs text-ink-2 pt-1">
         <input type="checkbox" checked={raiseInvoice} onChange={(e) => setRaiseInvoice(e.target.checked)} className="mt-0.5" />
         <span>
-          Is milestone ki tax invoice bhi bana do
-          {mode === "existing" && milestone?.invoiceId ? ` (invoice ${milestone.invoiceId} pehle se hai — nayi nahi banegi)` : ""}
+          Also create the tax invoice for this milestone
+          {mode === "existing" && milestone?.invoiceId ? ` (invoice ${milestone.invoiceId} already exists — no new one is created)` : ""}
         </span>
       </label>
 
       <div className="flex gap-2 pt-1">
         <Button size="sm" variant="primary" icon="check" loading={book.isPending} disabled={!canSubmit} onClick={submit}>
-          Project payment record karo &amp; reconcile
+          Record project payment &amp; reconcile
         </Button>
         <Button size="sm" variant="default" onClick={onCancel}>Cancel</Button>
       </div>

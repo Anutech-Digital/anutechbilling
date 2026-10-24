@@ -13,7 +13,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 vi.mock("@/lib/platform", () => ({ isPlatformAdmin: () => false }));
 
-import { PATCH } from "./route";
+import { GET, PATCH } from "./route";
 
 const call = (body: Record<string, unknown>) =>
   PATCH(new Request("http://x/api/support/tickets", { method: "PATCH", body: JSON.stringify(body), headers: { "content-type": "application/json" } }));
@@ -71,5 +71,40 @@ describe("support ticket PATCH roles (R-880)", () => {
   });
   it("signed out → 401", async () => {
     expect((await call({ id: "t-1", status: "closed" })).status).toBe(401);
+  });
+});
+
+/**
+ * R-1487: GET — a support user of one company never receives another company's ticket.
+ * The "across all workspaces" view is only for a platform admin (isPlatformAdmin, mocked
+ * false here). RLS (support_tickets_select_own_tenant) is the database wall; this is the
+ * app wall, and it fails closed when the caller has no workspace.
+ */
+describe("support ticket GET is tenant-scoped (R-1487)", () => {
+  const list = () => GET(new Request("http://x/api/support/tickets?scope=all&status=all"));
+
+  it("company B's support user sees only B's ticket, never A's", async () => {
+    signInAs(h.db, "support", TENANT_B);
+    const res = await list();
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { tickets: { id: string; tenant_id: string }[]; crossTenant: boolean };
+    expect(json.tickets.map((t) => t.id)).toEqual(["t-B"]);
+    expect(json.tickets.every((t) => t.tenant_id === TENANT_B)).toBe(true);
+    expect(json.crossTenant).toBe(false);
+  });
+  it("company A's support user does not see B's ticket", async () => {
+    signInAs(h.db, "support", TENANT_A);
+    const json = (await (await list()).json()) as { tickets: { id: string }[] };
+    expect(json.tickets.map((t) => t.id).sort()).toEqual(["t-1", "t-2"]);
+  });
+  it("a user with no workspace gets 403 and no tickets (fail closed)", async () => {
+    signInAs(h.db, "support", TENANT_A);
+    h.db.tables.users = [{ id: "u-support", tenant_id: null, role: "support" }];
+    const res = await list();
+    expect(res.status).toBe(403);
+    expect((await res.json()) as Record<string, unknown>).not.toHaveProperty("tickets");
+  });
+  it("signed out → 401", async () => {
+    expect((await list()).status).toBe(401);
   });
 });

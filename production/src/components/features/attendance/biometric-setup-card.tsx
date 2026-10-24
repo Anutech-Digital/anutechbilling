@@ -48,9 +48,9 @@ export function BiometricSetupCard({ employees }: { employees: Emp[] }) {
       {open && (
         <div className="mt-3 space-y-4">
           <p className="text-[12px] text-ink-2">
-            Aapki Hikvision jaisi LAN fingerprint machine ka data yahan laane ke liye office ke computer par ek chhota
-            <b> bridge</b> chalega jo machine se punches padh ke neeche wale URL par bhejta rahega. Neeche har employee ko
-            uska machine user-number map karo.
+            To bring data from your LAN fingerprint machine (such as Hikvision) here, a small
+            <b> bridge</b> runs on an office computer; it reads punches from the machine and keeps sending them to the URL below. Below, map each employee
+            to their machine user number.
           </p>
 
           {/* Connection details for the bridge */}
@@ -68,11 +68,11 @@ export function BiometricSetupCard({ employees }: { employees: Emp[] }) {
               <Button variant="default" className="h-8 px-2 text-xs" icon="copy" onClick={() => copy(key, "Key")} disabled={!key}>Copy</Button>
               <Button variant="ghost" className="h-8 px-2 text-xs" icon="refresh" loading={regen.isPending}
                 onClick={async () => {
-                  if (await confirm({ title: "Generate a new key?", body: "Purani key band ho jaayegi — bridge me nayi key daalni padegi.", danger: true, confirmLabel: "Regenerate" }))
+                  if (await confirm({ title: "Generate a new key?", body: "The old key will stop working — you will need to enter the new key in the bridge.", danger: true, confirmLabel: "Regenerate" }))
                     regen.mutate(ingest.data?.tenantId ?? "");
                 }}>New</Button>
             </div>
-            <p className="text-xs text-ink-3">Ye key secret hai — sirf bridge me daalo, kisi ko share mat karo.</p>
+            <p className="text-xs text-ink-3">This key is secret — enter it only in the bridge and do not share it with anyone.</p>
           </div>
 
           {/* Employee → device user number mapping */}
@@ -98,7 +98,7 @@ export function BiometricSetupCard({ employees }: { employees: Emp[] }) {
               ))}
               {employees.length === 0 && <li className="px-3 py-4 text-[12px] text-ink-3 text-center">No active employees.</li>}
             </ul>
-            <p className="text-xs text-ink-3 mt-1">Machine me har employee ka jo user-ID (number) hai wahi yahan daalo. Blur/tab par apne aap save ho jaata hai.</p>
+            <p className="text-xs text-ink-3 mt-1">Enter each employee's user ID (number) exactly as it is in the machine. It saves automatically when you leave the field or press Tab.</p>
           </div>
         </div>
       )}

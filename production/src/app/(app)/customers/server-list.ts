@@ -126,3 +126,14 @@ export function customerListMode(o: {
   if (o.contactIds && o.contactIds.length > CONTACT_MATCH_ID_CAP) return "full";
   return "server";
 }
+
+/**
+ * R-1720 — the search box's first value from the page URL. `?q=` is the app-wide way to
+ * open a list already searched (as /invoices?q= does); `?contact=` comes from the
+ * "Serves N customers" chip on a contact. Both seed the same box, so there is still one
+ * filter; `q` wins if both are present.
+ */
+export function customerSearchFromUrl(search: string): string {
+  const p = new URLSearchParams(search);
+  return p.get("q") ?? p.get("contact") ?? "";
+}

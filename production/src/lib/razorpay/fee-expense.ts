@@ -72,7 +72,8 @@ export function paymentFeeView(p: PaymentFeeFields | null | undefined): PaymentF
 export interface FeeExpensePayment extends PaymentFeeFields {
   id: string;
   tenant_id: string;
-  quote_id: string;
+  /** R-1739: null only on a payment against an imported Zoho invoice (never a Razorpay one). */
+  quote_id: string | null;
   reference: string | null;
   /** timestamptz — the expense date is its IST calendar day. */
   received_at: string;
@@ -159,7 +160,7 @@ export function gatewayFeeExpense(
     paid: true,
     paid_date: day,
     payment_method: "razorpay",
-    description: `Razorpay fee on ${ref} (quote ${payment.quote_id})`,
+    description: `Razorpay fee on ${ref} (${payment.quote_id ? `quote ${payment.quote_id}` : "no quote"})`,
     notes:
       `Booked automatically from the payment (R-045): fee ₹${view.fee} incl. GST ₹${view.gst}, ` +
       `deducted by Razorpay from the settlement; ₹${view.net} of ₹${payment.amount} reached the bank. ` +

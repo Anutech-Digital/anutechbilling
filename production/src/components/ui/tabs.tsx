@@ -61,7 +61,7 @@ const TabsTrigger = React.forwardRef<
       "relative inline-flex items-center gap-2 px-3 py-2 text-sm font-medium",
       "text-ink-3 hover:text-ink transition-colors",
       "border-b-2 border-transparent -mb-px",
-      "data-[state=active]:text-ink data-[state=active]:border-amber",
+      "data-[state=active]:text-ink data-[state=active]:border-amber data-[state=active]:font-semibold",
       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2 rounded-t-md",
       "disabled:opacity-50",
       className
@@ -137,7 +137,7 @@ function TabBar({ value, onChange, items, className }: TabBarProps) {
       {/* Natural width of the row, never seen — only measured. */}
       <div ref={measureRef} aria-hidden className="invisible pointer-events-none absolute left-0 top-0 h-0 overflow-hidden inline-flex gap-1 whitespace-nowrap">
         {items.map((item) => (
-          <span key={item.id} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium">
+          <span key={item.id} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold">
             {item.dot && <span className="w-1.5 h-1.5" />}
             <span>{item.label}</span>
             {item.count !== undefined && <span className="ml-0.5 text-xs px-1.5 py-0.5">{item.count}</span>}
@@ -176,12 +176,14 @@ function TabBar({ value, onChange, items, className }: TabBarProps) {
             disabled={item.disabled}
             onClick={() => onChange(item.id)}
             className={cn(
-              "relative inline-flex items-center gap-2 px-3 py-2 text-sm font-medium whitespace-nowrap",
-              "transition-colors border-b-2 -mb-px",
+              /* R-1410: no -mb-px here — the row is overflow-y-hidden, which clipped half of
+                 the 2px underline. Active = semibold ink + full amber underline. */
+              "relative inline-flex items-center gap-2 px-3 py-2 text-sm whitespace-nowrap",
+              "transition-colors border-b-2",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2 rounded-t-md",
               active
-                ? "text-ink border-amber"
-                : "text-ink-3 hover:text-ink border-transparent",
+                ? "font-semibold text-ink border-amber"
+                : "font-medium text-ink-3 hover:text-ink border-transparent",
               item.disabled && "opacity-50 cursor-not-allowed"
             )}
           >

@@ -13,12 +13,33 @@
 --      (Workspace + support: the support line stays NULL, as before).
 --   E  activate_quote_on_credit follows the same rule (case B on credit).
 --   F  Money unchanged: MRR per line = line amount / 12.
+--
+-- R-1616 (19 Oct 2026): every block's tenant has its OWN 4-character doc_code (R8A9…R8E9).
+-- next_document_number keeps only the first 4 characters, so R829A…R829E all numbered their
+-- purchase orders PO-R829-27-0001. Run block by block that was hidden by each rollback; run
+-- in one transaction (a migration proof: apply + test + one rollback) block B hit
+-- purchase_orders_pkey. Test setup, not a record_payment bug.
 
 -- ── A: two different domains ───────────────────────────────────────────────
 begin;
+
+-- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
-  values ('dddddddd-0000-0000-0000-000000829a01','R829 A','r829a@example.in','07','R829A');
+  values ('dddddddd-0000-0000-0000-000000829a01','R829 A','r829a@example.in','07','R8A9');
 insert into public.customers (id, tenant_id, name)
   values ('cccccccc-0000-0000-0000-000000829a01','dddddddd-0000-0000-0000-000000829a01','Two Domains Co');
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, status, payment_status, domain, line_items)
@@ -40,9 +61,24 @@ rollback;
 
 -- ── B: same domain on two different plans ──────────────────────────────────
 begin;
+
+-- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
-  values ('dddddddd-0000-0000-0000-000000829b01','R829 B','r829b@example.in','07','R829B');
+  values ('dddddddd-0000-0000-0000-000000829b01','R829 B','r829b@example.in','07','R8B9');
 insert into public.customers (id, tenant_id, name)
   values ('cccccccc-0000-0000-0000-000000829b01','dddddddd-0000-0000-0000-000000829b01','Mixed Licences Co');
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, status, payment_status, domain, line_items)
@@ -68,9 +104,24 @@ rollback;
 
 -- ── C: same plan twice, same domain -> conflict reported ───────────────────
 begin;
+
+-- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
-  values ('dddddddd-0000-0000-0000-000000829c01','R829 C','r829c@example.in','07','R829C');
+  values ('dddddddd-0000-0000-0000-000000829c01','R829 C','r829c@example.in','07','R8C9');
 insert into public.quotes (id, tenant_id, customer_name, amount, status, payment_status, line_items)
   values ('Q-R829-C','dddddddd-0000-0000-0000-000000829c01','Dup Plan Co',17500,'accepted','awaiting',
           '[{"name":"Google Workspace Business Starter","qty":5,"rate":1800,"commitment":"annual_yearly","domain":"dup829.in"},
@@ -92,9 +143,24 @@ rollback;
 
 -- ── D: borrowed quote domain still goes on one subscription only ────────────
 begin;
+
+-- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
-  values ('dddddddd-0000-0000-0000-000000829d01','R829 D','r829d@example.in','07','R829D');
+  values ('dddddddd-0000-0000-0000-000000829d01','R829 D','r829d@example.in','07','R8D9');
 insert into public.quotes (id, tenant_id, customer_name, amount, status, payment_status, domain, line_items)
   values ('Q-R829-D','dddddddd-0000-0000-0000-000000829d01','Support Co',30000,'accepted','awaiting','support829.in',
           '[{"name":"Google Workspace Business Starter","qty":10,"rate":1800,"commitment":"annual_yearly"},
@@ -113,9 +179,24 @@ rollback;
 
 -- ── E: activate on credit, same domain on two plans ────────────────────────
 begin;
+
+-- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
 select set_config('request.jwt.claims', '', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
-  values ('dddddddd-0000-0000-0000-000000829e01','R829 E','r829e@example.in','07','R829E');
+  values ('dddddddd-0000-0000-0000-000000829e01','R829 E','r829e@example.in','07','R8E9');
 insert into auth.users (id, email) values ('aaaaaaaa-0000-0000-0000-000000829e01','owner829@example.in');
 insert into public.users (id, tenant_id, email, full_name, role, created_at) values
   ('aaaaaaaa-0000-0000-0000-000000829e01','dddddddd-0000-0000-0000-000000829e01','owner829@example.in','Owner 829','owner', now() - interval '1 day');

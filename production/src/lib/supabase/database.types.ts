@@ -16,6 +16,7 @@
  * Check it is current (needs local docker):   node scripts/check-db-types.mjs
  */
 import type { Database as GeneratedDatabase } from "./database.generated";
+import type { CustomerGstTreatment } from "@/lib/gst/customer-gst-treatment";
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -323,6 +324,11 @@ export type QuoteLineItem = {
   list_rate?: number;
   cost: number;          // ₹ per seat wholesale, same unit as `rate` (for margin calc)
   commitment?: LineCommitment;  // billing/commitment tier (default "annual_yearly")
+  /** R-1688: a One-time line (migration, setup) — charged once, NEVER a subscription. The builder
+   *  writes it on every line saved with no commitment (lib/quotes/line-commit-choice.ts
+   *  markOneTimeLines); the line still has no `commitment`, so pricing stays price × qty (R-1668).
+   *  The database's quote_line_is_subscription() reads it on every filing path. */
+  one_time?: boolean;
   /** Service start date (YYYY-MM-DD). Blank ⇒ subscription starts on payment date.
    *  When set, record_payment uses it as the subscription start (renewal = start + term). */
   start_date?: string;
@@ -896,6 +902,8 @@ type ColumnPatches = {
     contact_persons: ContactPerson[];
     shipping_address: ShippingAddress | null;
     gstin_verification: GstinVerification | null;
+    /** R-1736: CHECK constraint; never null in practice (a trigger fills it). */
+    gst_treatment: CustomerGstTreatment | null;
   };
   items: {
     kind: "main" | "addon";
@@ -931,6 +939,8 @@ type ColumnPatches = {
   invoices: {
     adjusted_advances: InvoiceAdvanceAdjustment[];
     line_items: QuoteLineItem[] | null;
+    /** R-1736: frozen at issue; NULL = issued before R-1736. */
+    gst_treatment: CustomerGstTreatment | null;
   };
   payments: {
     method: PaymentMethod;
@@ -1216,6 +1226,8 @@ type ArgNullable = {
   record_payment_with_tds: "p_notes" | "p_tds_section" | "p_tds_rate_pct" | "p_customer_tan" | "p_invoice_id" | "p_fiscal_year";
   record_desk_payment: "p_notes" | "p_credit_customer_id" | "p_received_on" | "p_bank_account_id" | "p_tds_section" | "p_tds_rate_pct" | "p_customer_tan" | "p_invoice_id" | "p_fiscal_year";
   record_account_transfer: "p_note";
+  record_multi_invoice_payment: "p_bank_account_id" | "p_notes";
+  record_instalment_payment: "p_notes" | "p_credit_customer_id" | "p_received_on" | "p_bank_account_id" | "p_tds_section" | "p_tds_rate_pct" | "p_customer_tan" | "p_fiscal_year";
   create_project_sale: "p_customer_id" | "p_description";
   record_project_payment: "p_method" | "p_reference" | "p_bank_txn_id";
   create_project_quote: "p_customer_id" | "p_description";
@@ -1355,6 +1367,18 @@ type FunctionReturnPatches = {
             credits_closed:     number;
             gateway_refunded:   boolean;
           };
+  /** R-1574: the renewal quote made AND linked in one transaction — or the one the subscription
+   *  already has (created false; relinked true when its lost link was written back). */
+  create_renewal_quote: {
+            quote_id:     string;
+            created:      boolean;
+            relinked:     boolean;
+            amount:       number;
+            subtotal:     number;
+            discount_pct: number;
+            tax_rate:     number;
+            line_items:   QuoteLineItem[];
+          };
   record_payment: {
             payment_id:           string;
             receipt_voucher_no:   string | null;
@@ -1372,6 +1396,8 @@ type FunctionReturnPatches = {
             is_renewal_quote:        boolean;
             /** Added in migration 0010. True when this payment fully covered a renewal quote and the linked subscription was advanced 1 year. */
             renewal_rolled_forward:  boolean;
+            /** R-1574: renewed through quotes.renewal_subscription_id because the subscription no longer pointed at this quote. Absent on replay. */
+            renewal_link_lost?:      boolean;
             /** True when the same (quote, reference) was already recorded — idempotent replay; no new row inserted. */
             idempotent_replay?:      boolean;
             already_recorded?:       boolean;
@@ -1423,6 +1449,66 @@ type FunctionReturnPatches = {
             overpaid_credit?:        number;
             credit_applied:          number;
             tagged:                  boolean;
+          };
+  /** R-1564: a payment on a subscription instalment invoice — record_desk_payment on the
+   *  subscription's quote, applied to THIS invoice (then other open instalments, oldest first;
+   *  the rest waits for the next instalment) in one transaction. */
+  record_instalment_payment: {
+            payment_id:           string;
+            receipt_voucher_no:   string | null;
+            customer_id:          string | null;
+            total_received:       number;
+            expected:             number;
+            outstanding:          number;
+            is_first_payment:     boolean;
+            is_fully_paid:        boolean;
+            converted_now:        boolean;
+            subscription_created: boolean;
+            has_existing_invoice: boolean;
+            is_renewal_quote:        boolean;
+            renewal_rolled_forward:  boolean;
+            idempotent_replay?:      boolean;
+            already_recorded?:       boolean;
+            tds_saved?:              boolean;
+            overpaid_credit?:        number;
+            credit_applied:          number;
+            tagged:                  boolean;
+            instalment:              true;
+            invoice_id:              string;
+            quote_id:                string;
+            applied:                 number;
+            /** THIS instalment invoice is now paid in full. */
+            invoice_paid:            boolean;
+            invoice_due_after?:      number;
+            also_applied:            Array<{ invoice_id: string; applied: number; invoice_paid: boolean }>;
+            /** Received but not applied — the next instalment raised takes it as credit. */
+            advance_left:            number;
+          };
+  /** R-1525: one receipt over several invoices of one customer (record_desk_payment per line). */
+  record_multi_invoice_payment: {
+            idempotent_replay:  boolean;
+            already_recorded:   boolean;
+            received:           number;
+            allocated:          number;
+            excess_credit:      number;
+            credit_invoice_id:  string | null;
+            lines: Array<{
+              invoice_id:   string;
+              quote_id:     string;
+              payment_id:   string;
+              amount:       number;
+              tds_amount?:  number;
+              invoice_paid: boolean | null;
+            }>;
+          };
+  /** R-1527: several accepted, unpaid quotes of one customer → ONE new quote. */
+  combine_quotes: {
+            quote_id:      string;
+            combined:      string[];
+            subtotal:      number;
+            tax:           number;
+            amount:        number;
+            sum_of_quotes: number;
           };
   suggest_bank_transaction_matches: BankMatchSuggestionRow[];
   book_bank_txn_as_vendor_bill: { bill_id: string; replaced_synthetic: string | null; amount: number };

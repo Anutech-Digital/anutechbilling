@@ -28,7 +28,7 @@
  * remains the only thing that allocates, so the predicted number is a PREDICTION —
  * a concurrent issue can take it first, and `predictedIsCertain` says as much.
  */
-import { rupee } from "@/lib/utils";
+import { rupee, formatDate } from "@/lib/utils";
 import {
   formatDocumentNumber, seriesGap,
   type Consequence, type SeriesState,
@@ -49,6 +49,16 @@ export interface QuoteToInvoice {
    * the quote's customer, not on the quote.
    */
   customerGstin?: string | null;
+  /* ── R-1633: facts the one-click paths (quote page, project milestone) show. Each is
+     optional; left out, nothing is said about it (the /invoices list passes none). ── */
+  /** The GST inside `amount`, whole rupees — "₹1,18,000 including ₹18,000 GST". */
+  taxAmount?: number | null;
+  /** The date the document will carry (IST today), "YYYY-MM-DD". */
+  invoiceDate?: string;
+  /** A fixed due date (a project milestone's own), replacing the payment-terms line. */
+  dueDate?: string | null;
+  /** The company is not GST-registered (R-1529): a Bill of Supply from the BOS- series. */
+  billOfSupply?: boolean;
 }
 
 
@@ -74,18 +84,41 @@ export function issueConsequences(args: {
   const out: Consequence[] = [];
 
   const next = (series?.lastNumber ?? 0) + 1;
-  const predictedNumber = series
-    ? formatDocumentNumber(series, next)
-    : `${quote.id} → the first invoice of this financial year`;
+  /* R-1633: a business that is not GST-registered issues a Bill of Supply from its own
+     BOS- series (R-1529, next_document_number). The INV counter says nothing about that
+     series, so no number is predicted — the series is named instead. */
+  const bos = quote.billOfSupply === true;
+  const predictedNumber = bos
+    ? "Bill of Supply"
+    : series
+      ? formatDocumentNumber(series, next)
+      : `${quote.id} → the first invoice of this financial year`;
 
   /* Most consequential first, because this is read in a hurry. The two facts that
      were not on screen at all before are the two at the top. */
   out.push({
     tone: "fact",
-    text: series
-      ? `Takes invoice number ${predictedNumber}. That number is used up either way — deleting the invoice later retires it rather than freeing it.`
-      : `This is the first invoice of the financial year for this business, so it opens the series.`,
+    text: bos
+      ? "Issued as a Bill of Supply (your company is not GST-registered), with the next BOS- number. That number is used up either way — deleting it later retires it rather than freeing it."
+      : series
+        ? `Takes invoice number ${predictedNumber}. That number is used up either way — deleting the invoice later retires it rather than freeing it.`
+        : `This is the first invoice of the financial year for this business, so it opens the series.`,
   });
+
+  if (quote.invoiceDate) {
+    out.push({
+      tone: "fact",
+      text: `Dated ${formatDate(quote.invoiceDate)} (today). The date cannot be changed afterwards.`,
+    });
+  }
+
+  const gstin = quote.customerGstin?.trim();
+  if (gstin) {
+    out.push({
+      tone: "fact",
+      text: `Billed to ${quote.customerName || "this customer"}, GSTIN ${gstin} — check it: the buyer's input credit depends on it.`,
+    });
+  }
 
   out.push({
     tone: "fact",
@@ -95,7 +128,7 @@ export function issueConsequences(args: {
   if (quote.amount !== null && quote.amount > 0) {
     out.push({
       tone: "fact",
-      text: `${rupee(quote.amount)} becomes payable${quote.customerName ? ` by ${quote.customerName}` : ""}, on a document you cannot alter afterwards.`,
+      text: `${rupee(quote.amount)}${quote.taxAmount != null && quote.taxAmount > 0 ? ` including ${rupee(quote.taxAmount)} GST` : ""} becomes payable${quote.customerName ? ` by ${quote.customerName}` : ""}, on a document you cannot alter afterwards.`,
     });
   } else {
     /* generate_invoice refuses a ₹0 quote (#26), so this is a block, not a caveat. */
@@ -108,7 +141,9 @@ export function issueConsequences(args: {
   /* Payment terms. The net-30 fallback landed on 22 Aug 2026; before it, a quote with
      no terms produced an invoice due the day it was issued, and the dunning cron began
      chasing the next morning. Worth stating which of the two applies. */
-  if (quote.paymentTermsDays === null) {
+  if (quote.dueDate) {
+    out.push({ tone: "fact", text: `Falls due on ${formatDate(quote.dueDate)}.` });
+  } else if (quote.paymentTermsDays === null) {
     out.push({
       tone: "fact",
       text: "The quote carries no payment terms, so the invoice falls due 30 days from today.",
@@ -156,12 +191,12 @@ export function issueConsequences(args: {
 
   /* The series-gap alarm, from the shared helper — the receipt-voucher and quote
      counters have the same holes, so the wording lives in one place. */
-  const gap = seriesGap(series, "invoice");
+  const gap = bos ? null : seriesGap(series, "invoice");
   if (gap) out.push(gap);
 
   return {
     predictedNumber,
-    predictedIsCertain: series !== null,
+    predictedIsCertain: !bos && series !== null,
     consequences: out,
   };
 }

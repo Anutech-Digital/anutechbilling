@@ -99,7 +99,8 @@ describe("expenseCategoryError — sandesh khud ek raasta ho", () => {
     ] as const) {
       const msg = expenseCategoryError(o)!;
       expect(msg.length).toBeGreaterThan(30);
-      expect(msg).toMatch(/chuniye/);
+      expect(msg).toMatch(/^Choose a category/);
+      expect(msg).not.toMatch(/chuniye|kharcha|khaane|nahi/);
     }
   });
 

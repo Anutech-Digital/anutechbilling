@@ -15,11 +15,13 @@
  * Two paths, in this order (unchanged from the route this was lifted out of):
  *   1. DIRECT — ResellerClub itself, when its credentials are on this server
  *      (the whitelisted static IP).
- *   2. ENGINE — the domains platform's public API, when they are not (every
- *      local dev machine).
+ *   2. TEST — R-1769: on a laptop with neither (a simulated payment is allowed and no
+ *      platform is configured), a fixed TEST price list; every row says `testPrice`.
+ *   3. ENGINE — the domains platform's public API, when they are not.
  */
 import { DOMAIN_AVAILABILITY_API } from "@/site/lib/config";
 import { rcConfigured, rcAvailability, rcTldPricing } from "@/lib/resellerclub";
+import { testDomainPricesActive, testLookup } from "./test-prices";
 
 export interface LiveDomain {
   domain: string;
@@ -36,6 +38,8 @@ export interface LiveDomain {
    * sold for one year. Never extrapolated from the 1-year price.
    */
   prices?: Record<string, number>;
+  /** R-1769: true when the price came from the laptop-only TEST price list (test-prices.ts). */
+  testPrice?: boolean;
 }
 
 /** The terms a customer can pick (R-156). Ten is the registry's ceiling; these are the common ones. */
@@ -58,7 +62,7 @@ export function cleanTermPrices(raw: unknown, oneYear: number): Record<string, n
 }
 
 export type LiveLookup =
-  | { ok: true; base: string; domains: LiveDomain[]; source: "resellerclub" | "engine" }
+  | { ok: true; base: string; domains: LiveDomain[]; source: "resellerclub" | "engine" | "test" }
   | { ok: false };
 
 export const DEFAULT_TLDS = ["in", "com", "co.in", "org", "net"];
@@ -99,6 +103,9 @@ export async function lookupDomains(name: string, tlds: readonly string[]): Prom
       .filter((d): d is LiveDomain => d !== null);
     return { ok: true, base, domains, source: "resellerclub" };
   }
+
+  /* R-1769: never on a deployment or with a live key — testDomainPricesActive says when. */
+  if (testDomainPricesActive({ rcConfigured: false })) return testLookup(base, list);
 
   const url = new URL(DOMAIN_AVAILABILITY_API);
   url.searchParams.set("name", base);

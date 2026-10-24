@@ -26,7 +26,7 @@ import { denyTermsRe } from "@/test/deny-terms";
 
 const order: ThanksOrder = {
   quoteId: "Q-ADPL-2026-27-0048", customerName: "Asha Co", tierName: "Business Starter",
-  seats: 5, amount: 3186, paymentStatus: "received", paymentDate: "2026-09-29",
+  seats: 5, amount: 3186, paymentStatus: "received", paymentState: "paid", amountReceived: 3186, paymentDate: "2026-09-29",
 };
 
 const hrefs = (c: HTMLElement) => [...c.querySelectorAll("a")].map((a) => a.getAttribute("href") ?? "");

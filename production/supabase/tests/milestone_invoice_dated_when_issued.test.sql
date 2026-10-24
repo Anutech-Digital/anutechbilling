@@ -12,7 +12,25 @@
 --   3. `due_date` never lands before the invoice date.
 --
 -- The fixture owns its data (L11) and rolls back.
+-- R-1616 (19 Oct 2026): "today" is public.ist_today(), the day raise_project_milestone_invoice
+-- stamps (R-1581: a document day is the IST day). It used current_date (UTC in the DB),
+-- so the test failed every night between 00:00 and 05:30 IST.
 begin;
+
+-- R-1643 / R-1803: issuing a Tax Invoice (also instalment + project invoices) needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
 
 insert into public.tenants (id, name, email)
 values ('dd000003-0000-4000-8000-000000000003', 'R003 Test Tenant', 'r003@test.invalid')
@@ -61,8 +79,8 @@ begin
   if v_d2 < v_d1 then
     raise exception 'FAIL 1: % is dated % but the earlier % is dated % — a higher number with an earlier date', v_second, v_d2, v_first, v_d1;
   end if;
-  if v_d1 <> current_date or v_d2 <> current_date then
-    raise exception 'FAIL 1b: invoices are dated % and %, not today (%) — something is still dating them from the payment', v_d1, v_d2, current_date;
+  if v_d1 <> public.ist_today() or v_d2 <> public.ist_today() then
+    raise exception 'FAIL 1b: invoices are dated % and %, not today IST (%) — something is still dating them from the payment', v_d1, v_d2, public.ist_today();
   end if;
 
   -- 2. The money keeps its own date. This is the half a blunter fix would have lost.

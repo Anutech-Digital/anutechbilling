@@ -16,6 +16,7 @@
  *     it later would not renumber anything, but the series would switch shape mid-year.
  */
 import { effectiveDocCode } from "@/lib/actions/consequence";
+import { fyStartYear } from "@/lib/dates/ist";
 
 export const INVOICE_CODE_RE = /^[A-Z]{2,4}$/;
 
@@ -57,10 +58,7 @@ export function suggestInvoiceCode(companyName: string | null | undefined): stri
 
 /** Indian financial year that `now` falls in, IST, as its end year "27" for FY 2026-27. */
 export function fyEndYear(now: Date): string {
-  const ist = new Date(now.getTime() + 330 * 60_000);
-  const y = ist.getUTCFullYear();
-  const end = ist.getUTCMonth() >= 3 ? y + 1 : y; // April (3) starts the new FY
-  return String(end % 100).padStart(2, "0");
+  return String((fyStartYear(now) + 1) % 100).padStart(2, "0");   // fyStartYear reads a Date in IST
 }
 
 /** "INV-SHRM-27-0001" — same shape as next_document_number() (R-015). */

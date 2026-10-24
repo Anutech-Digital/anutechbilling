@@ -14,6 +14,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import type { Expense } from "@/lib/queries/expenses";
@@ -54,7 +55,8 @@ function refresh(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["expenses"] });
   qc.invalidateQueries({ queryKey: ["prepaid_advances"] });
   qc.invalidateQueries({ queryKey: ["balance-sheet"] });
-  qc.invalidateQueries({ queryKey: ["bank"] });
+  qc.invalidateQueries({ queryKey: queryKeys.bankAccounts() });
+  qc.invalidateQueries({ queryKey: queryKeys.bankTransactions() });
 }
 
 export function useEmployeeAdvances() {

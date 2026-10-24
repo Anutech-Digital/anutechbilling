@@ -7,8 +7,10 @@
  *
  * Provider abstraction:
  *   1. If process.env.SANDBOX_API_KEY is set → call Sandbox.co.in
- *   2. Otherwise → return a deterministic mock so the UI is testable
- *      without an upstream account.
+ *   2. Otherwise, on a laptop / in tests → a deterministic mock so the UI is
+ *      testable without an upstream account.
+ *   3. Otherwise, on staging/live (R-1734) → { ok:false, code:"provider_not_configured" }:
+ *      no mock company, nothing saved, nothing for the form to fill.
  *
  * Caching:
  *   On success we persist the normalised payload + a verified_at timestamp
@@ -22,9 +24,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { isValidGstin }      from "@/lib/utils";
 import { mockGstinVerification } from "@/lib/gst/mock-gstin";
+import { gstinMockAllowed, GSTIN_NOT_SET_UP_ERROR, GSTIN_NOT_SET_UP_CODE } from "./mock-allowed";
 import type { GstinVerification } from "@/lib/supabase/database.types";
+import { safeFetch, UnsafeUrlError, SANDBOX_HOSTS } from "@/lib/net/safe-fetch";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -53,6 +58,13 @@ const schema = z.object({
 // ──────────────────────────────────────────────────────────────────────
 interface SandboxCreds { apiKey: string; apiSecret: string; baseUrl: string }
 
+/* R-735: the key + secret go only to Sandbox's own https hosts — a base URL saved before the
+   allowlist (or set in env) that points elsewhere is refused before anything is sent. */
+const SANDBOX_FETCH = { allowHosts: SANDBOX_HOSTS, maxRedirects: 0 } as const;
+const SANDBOX_BASE_REFUSED =
+  "GSTIN check stopped: the Sandbox API base URL saved for this company is not a Sandbox address, so your keys were not sent. "
+  + "Open Settings → Integrations → Sandbox, clear the base URL (or set https://api.sandbox.co.in) and Save, then verify again.";
+
 interface CachedToken { token: string; expiresAt: number }
 const sandboxTokenCache = new Map<string, CachedToken>();
 
@@ -60,7 +72,7 @@ async function sandboxAuthenticate(creds: SandboxCreds): Promise<string> {
   const cached = sandboxTokenCache.get(creds.apiKey);
   if (cached && cached.expiresAt - 5 * 60_000 > Date.now()) return cached.token;
 
-  const res = await fetch(`${creds.baseUrl}/authenticate`, {
+  const res = await safeFetch(`${creds.baseUrl}/authenticate`, {
     method:  "POST",
     headers: {
       "x-api-key":     creds.apiKey,
@@ -69,7 +81,7 @@ async function sandboxAuthenticate(creds: SandboxCreds): Promise<string> {
       "accept":        "application/json",
     },
     signal: AbortSignal.timeout(8000),
-  });
+  }, SANDBOX_FETCH);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Sandbox auth ${res.status}: ${text.slice(0, 200)}`);
@@ -96,7 +108,7 @@ async function sandboxAuthenticate(creds: SandboxCreds): Promise<string> {
 async function verifyViaSandbox(gstin: string, creds: SandboxCreds): Promise<GstinVerification> {
   const token = await sandboxAuthenticate(creds);
   const url   = `${creds.baseUrl}/gst/compliance/public/gstin/search`;
-  const res = await fetch(url, {
+  const res = await safeFetch(url, {
     method:  "POST",
     headers: {
       "x-api-key":     creds.apiKey,
@@ -107,7 +119,7 @@ async function verifyViaSandbox(gstin: string, creds: SandboxCreds): Promise<Gst
     },
     body: JSON.stringify({ gstin }),
     signal: AbortSignal.timeout(8000),
-  });
+  }, SANDBOX_FETCH);
   if (!res.ok) {
     // Token might have rotated server-side — invalidate cache so the next
     // attempt re-authenticates fresh.
@@ -271,7 +283,13 @@ export async function POST(req: NextRequest) {
   }
   const admin = createAdminClientFor(authData.user.id);
   const { data: me } = await supabase
-    .from("users").select("tenant_id").eq("id", authData.user.id).single();
+    .from("users").select("tenant_id, role").eq("id", authData.user.id).single();
+  /* R-1470: the Verify GSTIN card sits on the customer forms (Companies, and the add-customer
+     sheet on Quotes, Projects and Banking), Vendors and Settings — only roles that open one of
+     them, checked before the tenant's provider key is read or a paid lookup is made. */
+  if (!mayOpenPage(me?.role, ["/customers", "/quotes", "/projects", "/accounting/banking", "/accounting/vendors", "/settings"])) {
+    return NextResponse.json({ ok: false, error: ROLE_GATE_ERROR }, { status: 403 });
+  }
 
   // Resolve credentials: tenant_secrets → process.env → mock.
   let creds: SandboxCreds | null = null;
@@ -298,12 +316,22 @@ export async function POST(req: NextRequest) {
   }
   const providerConfigured = creds !== null;
 
+  /* R-1734: the mock's invented legal name and address filled real customers' forms on a
+     deployed server. There, no provider = say so; never mock, never persist. 200 so the
+     client shows it as a normal message (it reads json.ok), not a server error. */
+  if (!providerConfigured && !gstinMockAllowed()) {
+    return NextResponse.json({ ok: false, code: GSTIN_NOT_SET_UP_CODE, error: GSTIN_NOT_SET_UP_ERROR });
+  }
+
   let verification: GstinVerification;
   try {
     verification = providerConfigured ? await verifyViaSandbox(gstin, creds!) : mockVerify(gstin);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[/api/gstin/verify] provider failed:", msg);
+    if (e instanceof UnsafeUrlError) {
+      return NextResponse.json({ ok: false, code: "sandbox_base_refused", error: SANDBOX_BASE_REFUSED }, { status: 400 });
+    }
     return NextResponse.json(
       { ok: false, error: "Could not reach GSTIN provider. Try again in a few seconds." },
       { status: 502 },

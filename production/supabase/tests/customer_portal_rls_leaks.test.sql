@@ -13,8 +13,9 @@
 --      returns own non-draft quotes only, with no cost column and no line_items[].cost.
 --   3. subscriptions: no direct row (write_off_reason unreachable); portal_my_subscriptions()
 --      returns own rows with the basic fields.
---   4. Own invoices, payments and own customer row are STILL readable (payments/customer via the
---      R-398 readers portal_my_payments / portal_my_customer); another customer's are not.
+--   4. Own payments and own customer row are STILL readable (via the R-398 readers
+--      portal_my_payments / portal_my_customer); another customer's are not. Invoices: the
+--      customer reads NONE directly, own included (R-1672 — see section 4 below).
 --   5. Two links + no selection → current_customer_id() is NULL and nothing is readable; a
 --      server claim selecting one of the user's OWN customers works; a claim naming a customer the
 --      user is not linked to is ignored.
@@ -129,11 +130,14 @@ begin
     raise exception 'SETUP FAIL: current_customer_id() = %, expected Cust A', public.current_customer_id();
   end if;
 
-  -- 4 first: the positive control. If this reads 0, the "0 rows" checks below prove nothing.
+  -- 4. R-1672: R-728 (migration 20261019013050) dropped invoices_select_own_customer on purpose —
+  -- since R-487 an invoice row carries line_items[].cost (our purchase cost), so a portal login
+  -- must not read the invoices table directly. Customer invoice reads go through the R-845
+  -- definer reader (not built yet). So: 0 invoices directly, own included, never another's.
   select count(*) into v_n from public.invoices where id in ('INV-R395-A', 'INV-R395-B');
-  if v_n <> 1 then raise exception 'FAIL 4: customer sees % of the 2 invoices, expected only their own 1', v_n; end if;
-  select count(*) into v_n from public.invoices where id = 'INV-R395-A';
-  if v_n <> 1 then raise exception 'FAIL 4: customer cannot read their own invoice'; end if;
+  if v_n <> 0 then raise exception 'FAIL 4: customer reads % invoice row(s) directly (line_items cost exposed), expected 0', v_n; end if;
+  -- The positive controls (the "0 rows" checks below prove nothing if impersonation failed) are
+  -- now the readers just below: portal_my_payments / portal_my_customer return the own row.
   -- R-398 (20261007235000): payments + own customer row moved behind portal_my_payments() /
   -- portal_my_customer(); direct reads give nothing (covered in customer_portal_rls_payments_self).
   select count(*) into v_n from public.portal_my_payments() where quote_id in ('Q-R395-A', 'Q-R395-B');
@@ -222,8 +226,10 @@ begin
   if public.current_customer_id() is distinct from 'cccccccc-0000-0000-0000-000000395c0b'::uuid then
     raise exception 'FAIL 5b: selected customer B not honoured (got %)', public.current_customer_id();
   end if;
-  select count(*), min(id) into v_n, v_id from public.invoices where id in ('INV-R395-A', 'INV-R395-B');
-  if v_n <> 1 or v_id <> 'INV-R395-B' then raise exception 'FAIL 5b: with B selected saw % invoice(s) (%)', v_n, v_id; end if;
+  -- R-1672: no direct invoice read for any customer (R-728); the selection is proven by the
+  -- quotes reader just below.
+  select count(*) into v_n from public.invoices where id in ('INV-R395-A', 'INV-R395-B');
+  if v_n <> 0 then raise exception 'FAIL 5b: with B selected still reads % invoice(s) directly, expected 0', v_n; end if;
   select count(*), min(id) into v_n, v_id from public.portal_my_quotes();
   if v_n <> 1 or v_id <> 'Q-R395-B' then raise exception 'FAIL 5b: with B selected saw % quote(s) (%)', v_n, v_id; end if;
 end $$;

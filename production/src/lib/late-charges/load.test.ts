@@ -14,6 +14,8 @@ function fakeDb(tables: Record<string, Row[]>): SupabaseClient {
       in: (c: string, vs: unknown[]) => { rows = rows.filter((r) => vs.includes(r[c])); return q; },
       gte: (c: string, v: string) => { rows = rows.filter((r) => typeof r[c] === "string" && (r[c] as string) >= v); return q; },
       not: (c: string) => { rows = rows.filter((r) => r[c] !== null && r[c] !== undefined); return q; },
+      /* R-1635: `.is("written_off_at", null)` — an absent column reads as null. */
+      is: (c: string, v: null) => { rows = rows.filter((r) => (r[c] ?? null) === v); return q; },
       order: () => q,
       limit: () => q,
       range: (a: number, b: number) => Promise.resolve({ data: rows.slice(a, b + 1), error: null }),

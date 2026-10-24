@@ -48,6 +48,9 @@ interface AddLineItemDialogProps {
   /** For a USD quote: "international" = use the item's catalog USD price (fall
    *  back to ₹-converted); "india" = always the ₹ price converted at the rate. */
   pricingBasis?: "international" | "india";
+  /** R-1765: what the search box holds when the dialog opens — the lead's plan when it
+   *  matched no Items row, so the picker starts on it. */
+  initialSearch?: string;
 }
 
 const customSchema = z.object({
@@ -61,7 +64,7 @@ const customSchema = z.object({
 });
 type CustomData = z.infer<typeof customSchema>;
 
-export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchangeRate, pricingBasis = "international" }: AddLineItemDialogProps) {
+export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchangeRate, pricingBasis = "international", initialSearch }: AddLineItemDialogProps) {
   const isUsd = (currency ?? "INR").toUpperCase() === "USD";
   // A usable rate (> 1). Below that we can't convert ₹ → foreign meaningfully.
   const fx = exchangeRate && exchangeRate > 1 ? exchangeRate : null;
@@ -107,8 +110,10 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
       reset();
       setSearch("");
       setTab("catalog");
+    } else if (initialSearch) {
+      setSearch(initialSearch);
     }
-  }, [open, reset]);
+  }, [open, reset, initialSearch]);
 
   const addFromCatalog = (it: Item) => {
     // Catalog stores prices as ₹/seat/MONTH. QuoteLineItem.rate/cost must be

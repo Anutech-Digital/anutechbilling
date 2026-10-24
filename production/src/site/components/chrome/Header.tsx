@@ -14,11 +14,12 @@
 import Image from "next/image";
 import Link from "@/site/components/ui/SiteLink";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useCart } from "@/site/components/cart/CartProvider";
 import { CLIENT_AREA_URL, SLA } from "@/site/lib/config";
 import { LICENCE_EDITIONS } from "@/site/lib/data/catalog";
-import { DOMAIN_TEASER } from "@/site/lib/data/domain-teaser";
+import { DOMAIN_TEASER_NO_PRICE, teaserTag, type DomainTeaser } from "@/site/lib/data/domain-teaser";
+import { HOSTING_DESCRIPTION } from "@/site/lib/data/hosting-copy";
 import { emailFromRate } from "@/site/lib/live-catalog";
 
 interface MenuItem { label: string; note: string; href: string }
@@ -33,6 +34,10 @@ interface Menu {
    figure the home page shows — emailFromRate over the live editions, which the marketing
    layout reads from the catalogue and passes in. This marker is swapped at render. */
 const EMAIL_FROM_NOTE = "@email-from";
+/* R-1599: the domain teaser is the live .in price the layout reads (getSiteTldPrices) —
+   swapped in at render like the email one; with no live price it carries no number. */
+const DOMAIN_NOTE = "@domain-teaser";
+const domainPromo = (t: DomainTeaser): Menu["promo"] => ({ tag: teaserTag(t), title: "Your name, in rupees", body: `${t.line}. 500+ extensions, each with its renewal price printed beside it.`, cta: "Search a domain", href: "/domains" });
 
 const MENUS: readonly Menu[] = [
   {
@@ -57,22 +62,21 @@ const MENUS: readonly Menu[] = [
       [
         { label: "Search a domain", note: "Live availability, ₹ prices", href: "/domains" },
         { label: "Rate card", note: "Register, renew, transfer — one row", href: "/domains#rates" },
-        { label: "Transfer in", note: "We pull auth codes for you", href: "/domains#rates" },
+        { label: "Questions", note: "Straight answers before you buy", href: "/domains#faq" },
       ],
       [
         { label: "All prices", note: "Every rate on one page", href: "/rates" },
-        { label: "WHOIS privacy", note: "Free where the registry permits", href: "/domains#included" },
-        { label: "Bulk operations", note: "Whole portfolios in one action", href: "/domains#included" },
+        { label: "Included free", note: "WHOIS privacy, DNS, theft lock", href: "/domains#included" },
       ],
     ],
-    promo: { tag: `${DOMAIN_TEASER.tld} FROM ${DOMAIN_TEASER.from}/YR`.toUpperCase(), title: "Your name, in rupees", body: `${DOMAIN_TEASER.line}. 500+ extensions, each with its renewal price printed beside it.`, cta: "Search a domain", href: "/domains" },
+    promo: domainPromo(DOMAIN_TEASER_NO_PRICE),
   },
   {
     label: "Hosting", href: "/hosting",
     cols: [
       [
-        { label: "Shared hosting", note: "cPanel on NVMe, from ₹49.99/mo", href: "/hosting" },
-        { label: "Full specification", note: "All 14 rows, nothing hidden", href: "/hosting#specs" },
+        { label: "Shared hosting", note: "cPanel on NVMe, from ₹50/mo", href: "/hosting" },
+        { label: "Full specification", note: "Storage, sites, bandwidth per plan", href: "/hosting#specs" },
         { label: "Migration desk", note: "Free, done by us", href: "/contact" },
       ],
       [
@@ -81,7 +85,7 @@ const MENUS: readonly Menu[] = [
         { label: "SSL & security", note: "Free DV on every site", href: "/ssl" },
       ],
     ],
-    promo: { tag: "99.9% SLA, CREDITED", title: "Mumbai and Bengaluru, LiteSpeed on NVMe", body: "If a month falls under the SLA we credit it without being asked.", cta: "See hosting plans", href: "/hosting" },
+    promo: { tag: "99.9% SLA, CREDITED", title: HOSTING_DESCRIPTION, body: "If a month falls under the SLA we credit it without being asked.", cta: "See hosting plans", href: "/hosting" },
   },
   {
     label: "Email & security", href: "/email",
@@ -103,14 +107,13 @@ const MENUS: readonly Menu[] = [
     label: "ResellerOS", href: "/reselleros",
     cols: [
       [
-        { label: "Subscription management", note: "Seats, terms, pro-rata, MRR", href: "/reselleros" },
-        { label: "Pipeline & quotes", note: "Lead → quote → invoice, no re-typing", href: "/reselleros" },
-        { label: "See features", note: "Everything it does, one page", href: "/reselleros#features" },
+        { label: "Overview", note: "Software for Indian cloud resellers", href: "/reselleros" },
+        { label: "What you get", note: "Subscriptions, GST invoices, renewals", href: "/reselleros#features" },
+        { label: "Who it is for", note: "GW, M365, Zoho and hosting resellers", href: "/reselleros#who" },
       ],
       [
-        { label: "Renewals on autopilot", note: "T-30 / T-15 / T-7 / T-0 cadence", href: "/reselleros" },
-        { label: "Bank reconciliation", note: "7 Indian bank parsers, Setu AA", href: "/reselleros" },
-        { label: "GST & TDS", note: "HSN 998313, CGST §31, 26AS", href: "/reselleros" },
+        { label: "Start in three steps", note: "Workspace, import a CSV, first quote", href: "/reselleros#steps" },
+        { label: "Pricing", note: "Free during beta, no card", href: "/reselleros#pricing" },
       ],
     ],
     promo: { tag: "FREE DURING BETA", title: "Run your first GST invoice in 10 minutes", body: "Create your workspace, import customers by CSV, send a GST quote. No card needed.", cta: "Get started free", href: "/reselleros", os: true },
@@ -125,7 +128,6 @@ const MENUS: readonly Menu[] = [
       ],
       [
         { label: "GW / M365 / Zoho resellers", note: "Built by one, in Delhi", href: "/reselleros" },
-        { label: "White label", note: "Your brand on the invoice", href: "/reseller" },
         { label: "Why us", note: "Us vs the usual way", href: "/why-us" },
       ],
     ],
@@ -136,8 +138,8 @@ const MENUS: readonly Menu[] = [
 const MOBILE_PAGES = [
   { label: "Home", note: "Everything Anutech does", href: "/" },
   { label: "Custom software", note: "Office automation, built for you", href: "/#software" },
-  { label: "Domains", note: DOMAIN_TEASER.line, href: "/domains" },
-  { label: "Hosting", note: "cPanel on NVMe, from ₹49.99/mo", href: "/hosting" },
+  { label: "Domains", note: DOMAIN_NOTE, href: "/domains" },
+  { label: "Hosting", note: "cPanel on NVMe, from ₹50/mo", href: "/hosting" },
   { label: "Business email", note: EMAIL_FROM_NOTE, href: "/email" },
   { label: "Compare editions", note: "GW, M365 and Zoho side by side", href: "/email/compare-editions" },
   { label: "Google Workspace pricing", note: "Every plan in INR + GST", href: "/google-workspace/pricing" },
@@ -153,11 +155,18 @@ const MOBILE_PAGES = [
 /**
  * @param emailFrom ₹/mo for the "Mailboxes from" teaser — live (layout reads the catalogue);
  *   without it, the typed fallback editions decide, never a figure written here.
+ * @param domainTeaser the live .in teaser (layout: getSiteTldPrices); without it, no number.
  */
-export function Header({ emailFrom }: { emailFrom?: number } = {}) {
+export function Header({ emailFrom, domainTeaser = DOMAIN_TEASER_NO_PRICE }: { emailFrom?: number; domainTeaser?: DomainTeaser } = {}) {
   const fromRs = emailFrom ?? emailFromRate(LICENCE_EDITIONS);
   const noteOf = (note: string) =>
-    note === EMAIL_FROM_NOTE ? `Mailboxes from ₹${Math.round(fromRs).toLocaleString("en-IN")}/mo` : note;
+    note === EMAIL_FROM_NOTE ? `Mailboxes from ₹${Math.round(fromRs).toLocaleString("en-IN")}/mo`
+    : note === DOMAIN_NOTE ? domainTeaser.line
+    : note;
+  const menus = useMemo(
+    () => MENUS.map((m) => (m.label === "Domains" ? { ...m, promo: domainPromo(domainTeaser) } : m)),
+    [domainTeaser],
+  );
   const [open, setOpen] = useState<string | null>(null);
   const [mobile, setMobile] = useState(false);
   const pathname = usePathname();
@@ -170,7 +179,7 @@ export function Header({ emailFrom }: { emailFrom?: number } = {}) {
     setMobile(false);
   }, [pathname]);
 
-  const active = MENUS.find((m) => m.label === open) ?? null;
+  const active = menus.find((m) => m.label === open) ?? null;
 
   /* /domains and /hosting are the "orange" editorial sections. On them the chrome
      picks up the brand accent (ink + amber) instead of the services blue, so the
@@ -185,7 +194,7 @@ export function Header({ emailFrom }: { emailFrom?: number } = {}) {
       onMouseLeave={() => setOpen(null)}
       style={{ position: "sticky", top: 0, zIndex: 80, background: "#fff", borderBottom: "1px solid var(--border-light)" }}
     >
-      <div className="wrap" style={{ height: 68, display: "flex", alignItems: "center", gap: 26 }}>
+      <div className="wrap hdr-row" style={{ height: 68, display: "flex", alignItems: "center", gap: 26 }}>
         {/* R-465: plain "/". On anutech.in the company home no longer bounces a signed-in
             user to the app (R-520), so the old "?preview=1" bypass is not needed there. */}
         <Link href="/" style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }} aria-label="Anutech Digital home">
@@ -194,7 +203,7 @@ export function Header({ emailFrom }: { emailFrom?: number } = {}) {
         </Link>
 
         <nav className="hide-mobile" style={{ display: "flex", gap: 4, flex: 1 }} aria-label="Main">
-          {MENUS.map((m) => {
+          {menus.map((m) => {
             /* Exact segment match, not startsWith: "/reselleros".startsWith("/reseller") is
                true, and the first render of the ResellerOS page lit up Wholesale too. */
             const isActive = pathname === m.href || pathname.startsWith(m.href + "/");

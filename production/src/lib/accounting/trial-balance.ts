@@ -61,6 +61,9 @@ export interface TrialBalance {
   fyLabel: string;
 }
 
+export const LICENCE_ESTIMATE_HEAD = "Licence cost — estimated, not yet billed";
+export const LICENCE_PROVISION_HEAD = "Licence cost provision (estimate, not yet billed)";
+
 export function buildTrialBalance(args: {
   bs: BalanceSheetAuto;
   /** FY start → as-of ka P&L. */
@@ -68,8 +71,21 @@ export function buildTrialBalance(args: {
   items: readonly BalanceSheetItem[];
   /** CA ke opening balances (owner ne bhare). null / undefined = nahi bhare — Difference jaisa tha. */
   opening?: OpeningBalances | null;
+  /**
+   * R-1646: the licence-cost provision as at today — the Balance Sheet's figure (the estimated,
+   * not-yet-billed licence cost inside the profit it carries; balance-sheet-totals.ts licenceProvisionOf).
+   * Not given → this FY's estimate, so the expense head always has its other side.
+   */
+  licenceProvision?: number | null;
 }): TrialBalance {
   const { bs, pnl, items, opening } = args;
+  /* R-1646: the P&L and the Balance Sheet count the licence cost estimated from the
+     subscription book (no vendor bill yet) as cost; the TB booked only the billed part, so its
+     income − expenses was higher by the whole estimate. One rule now: the estimate is cost
+     everywhere, on its own marked head, against a provision. Unknown cost (model.netProfit
+     null) has no estimate. */
+  const estimatedLicence = pnl.model?.netProfit == null ? 0 : (pnl.model.estimatedLicenceCogs ?? 0);
+  const licenceProvision = args.licenceProvision ?? estimatedLicence;
   const rows: TbRow[] = [];
 
   /* natural = jis column me positive balance baithta hai. */
@@ -93,7 +109,15 @@ export function buildTrialBalance(args: {
   put("Assets", "Loans & advances to employees", bs.employeeLoans, "debit", "Employee loans − repayments");
   put("Assets", "Loans given (outside parties)", bs.loansGiven ?? 0, "debit", "Loans given − principal repaid");
   put("Assets", "Prepaid / vendor advances", bs.prepaidAdvances, "debit", "Advances paid − consumed");
-  put("Assets", "Fixed assets (WDV)", bs.fixedAssets, "debit", "Asset register at written-down value");
+  /* R-1578: cost Dr + accumulated depreciation Cr (the depreciation the P&L has charged), so the
+     year's Depreciation expense below has its other side. Older callers (no split) → one net line. */
+  if (bs.fixedAssetsCost != null && bs.accumulatedDepreciation != null) {
+    put("Assets", "Fixed assets (at cost)", bs.fixedAssetsCost, "debit", "Asset register at cost + EMI purchases not yet registered");
+    put("Assets", "Less: accumulated depreciation", -bs.accumulatedDepreciation, "debit",
+      "Depreciation charged on the assets still held, up to today (Income-tax WDV rates)");
+  } else {
+    put("Assets", "Fixed assets (WDV)", bs.fixedAssets, "debit", "Asset register at written-down value");
+  }
   put("Assets", `Advance income tax (${bs.fyLabel})`, bs.advanceTaxPaid, "debit", "Advance + self-assessment tax paid");
   for (const it of items.filter((i) => i.section === "asset")) put("Assets", it.label, it.amount, "debit", "Balance sheet — manual line");
 
@@ -106,9 +130,14 @@ export function buildTrialBalance(args: {
   put("Liabilities", "Reimbursements payable", bs.reimbursementsPayable, "credit", "Paid from someone's own pocket, not yet repaid");
   put("Liabilities", "Expenses payable", bs.expensesPayable, "credit", "Expenses marked unpaid (amount − TDS), no bank line matched");
   put("Liabilities", "Salary deductions held (other)", bs.salaryOtherDeductions, "credit", "\"Other\" deductions withheld from salary");
+  /* R-1580: commission P&L me gross; Cr = abhi na diya net (yahan) + 194H TDS (statutory dues). */
+  put("Liabilities", "Commission payable (partners)", bs.commissionsPayable ?? 0, "credit",
+    "Partner commission earned, not yet paid (net of TDS — the TDS is in statutory dues)");
   put("Liabilities", "Credit card payable", bs.creditCardPayable, "credit", "Company cards: amount owed");
   put("Liabilities", "EMI / asset loans", bs.emiLoansPayable, "credit", "Financed − principal repaid");
   put("Liabilities", "Business loans", bs.businessLoansPayable, "credit", "Borrowed − principal repaid");
+  put("Liabilities", LICENCE_PROVISION_HEAD, licenceProvision, "credit",
+    "Licence cost estimated from your subscription book, no vendor bill entered yet — same figure as the Balance Sheet");
   put("Liabilities", bs.gstPayable >= 0 ? "GST payable" : "GST input credit carried forward", bs.gstPayable, "credit",
     "Output GST − eligible ITC − GST paid (cumulative, estimate before filing)");
   for (const it of items.filter((i) => i.section === "liability")) put("Liabilities", it.label, it.amount, "credit", "Balance sheet — manual line");
@@ -118,11 +147,16 @@ export function buildTrialBalance(args: {
     put("Equity", "Owner's capital (opening, from CA)", opening.ownerCapital ?? 0, "credit", `Opening balances as at ${opening.asOf}`);
     put("Equity", "Retained earnings b/f (from CA)", opening.retainedEarnings ?? 0, "credit", `Earlier years' profit as at ${opening.asOf}`);
   }
+  /* R-1739: the Cr side of the open balances imported from Zoho Books (their Dr is in Trade receivables). */
+  put("Equity", "Opening Balance Adjustments", bs.openingBalanceAdjustments ?? 0, "credit",
+    "Balance due on invoices imported from Zoho Books, as imported (account name to confirm with your CA)");
   for (const it of items.filter((i) => i.section === "equity")) put("Equity", it.label, it.amount, "credit", "Balance sheet — manual line");
 
   // ── Income / Expenses (FY to date) ──
   put("Income", "Sales (net of credit / debit notes)", pnl.revenue, "credit", `Taxable value of invoices, ${bs.fyLabel} to date`);
   put("Expenses", "Cost of goods — vendor bills", pnl.cogs, "debit", "COGS-* vendor bills (pre-GST)");
+  put("Expenses", LICENCE_ESTIMATE_HEAD, estimatedLicence, "debit",
+    `Estimate — subscription book's wholesale rates, ${bs.fyLabel} to date, for vendors with no bill; the P&L counts the same`);
   const grossExpenses = pnl.expensesByCategory.reduce((s, c) => s + c.total, 0);
   for (const c of [...pnl.expensesByCategory].sort((a, b) => a.category.localeCompare(b.category))) {
     put("Expenses", c.category, c.total, "debit", `${c.count} expense${c.count === 1 ? "" : "s"} (GST-inclusive)`);
@@ -131,6 +165,8 @@ export function buildTrialBalance(args: {
   put("Expenses", "Less: ITC inside the expenses above", -(grossExpenses - pnl.expenses), "debit",
     "Claimable GST on expenses — already reduces GST payable");
   put("Expenses", "Referral / partner commissions", pnl.commissions, "debit", "Gross commission earned by partners");
+  put("Expenses", "Depreciation", pnl.depreciation ?? 0, "debit",
+    `Asset register, ${bs.fyLabel} to date (Income-tax WDV rates; an expense turned into an asset is here, not above)`);
 
   const dr = rows.reduce((s, r) => s + r.debit, 0);
   const cr = rows.reduce((s, r) => s + r.credit, 0);

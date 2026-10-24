@@ -21,7 +21,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
+import type { Database } from "@/lib/supabase/database.types";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { csvEscape } from "@/lib/csv";
 import {
   channelReport, type ChannelReport, type ChannelLeadInput, type ChannelSpendInput,
 } from "@/lib/marketing/channel-economics";
@@ -106,20 +110,36 @@ export function useMarketingReport(rangeKey: RangeKey = "ytd") {
 
   return useQuery({
     queryKey: ["marketing-report", rangeKey],
-    queryFn: async (): Promise<MarketingReport> => {
-      const supabase = createClient();
+    queryFn: () => fetchMarketingReport(createClient(), range),
+    staleTime: 60_000,
+  });
+}
+
+/** A paged read as `{ data, error }` — for the reads whose failure is a stated gap, not a crash. */
+async function settle<T>(read: Promise<T[]>): Promise<{ data: T[] | null; error: unknown }> {
+  try { return { data: await read, error: null }; } catch (error) { return { data: null, error }; }
+}
+
+/**
+ * The marketing report for `range`. R-1588: every list read is paged past the gateway's
+ * 1000-row cap (fetchAllRows, order ending on a unique column) — a year of leads, expenses,
+ * ad-spend days or payments read in one request silently stopped at the first 1000, so
+ * spend, collected and the funnel counts were short. No number is computed differently.
+ */
+export async function fetchMarketingReport(supabase: SupabaseClient<Database>, range: DateRange): Promise<MarketingReport> {
       const gaps: string[] = [];
 
       // ── Leads (attribution substrate) ────────────────────────────────────
       // `utm_source` is preferred when present (migration 0232 onward); the
       // form's own `source` tag is the fallback, which is all 61 existing leads
       // have. Selected together so both generations of lead work.
-      const leadsQ = await supabase
+      const leadsQ = { data: await fetchAllRows((from, to) => supabase
         .from("leads")
         .select("id, project_id, source, stage, value, created_at, utm_source, utm_medium, utm_campaign, referrer_url")
         .gte("created_at", range.start)
-        .lt("created_at", range.end);
-      if (leadsQ.error) throw leadsQ.error;
+        .lt("created_at", range.end)
+        .order("id", { ascending: true })
+        .range(from, to)) };
 
       /* The comment above said utm_source was preferred; the code read `source` alone, so a
          lead from a Facebook tracking link counted as "enquiry-form" (the form's own tag)
@@ -139,11 +159,13 @@ export function useMarketingReport(rangeKey: RangeKey = "ytd") {
       // accountant reconciles against the bank, so CAC can never disagree with
       // the accounts. See migration 0232's header for the full argument.
       let spend: ChannelSpendInput[] = [];
-      const spendQ = await supabase
+      const spendQ = await settle(fetchAllRows((from, to) => supabase
         .from("expenses")
         .select("channel, amount, expense_date, category, vendor_name")
         .gte("expense_date", range.start)
-        .lt("expense_date", range.end);
+        .lt("expense_date", range.end)
+        .order("id", { ascending: true })
+        .range(from, to)));
 
       if (spendQ.error) {
         gaps.push(
@@ -177,7 +199,11 @@ export function useMarketingReport(rangeKey: RangeKey = "ytd") {
       {
         const [{ data: accs }, { data: daily }] = await Promise.all([
           supabase.from("ad_accounts").select("id, platform"),
-          supabase.from("ad_spend_daily").select("ad_account_id, spend").gte("day", range.start).lt("day", range.end),
+          // Primary key (ad_account_id, day, campaign_id) is the total order.
+          settle(fetchAllRows((from, to) => supabase.from("ad_spend_daily").select("ad_account_id, spend")
+            .gte("day", range.start).lt("day", range.end)
+            .order("ad_account_id", { ascending: true }).order("day", { ascending: true }).order("campaign_id", { ascending: true })
+            .range(from, to))),
         ]);
         const platformOf = new Map((accs ?? []).map((a) => [a.id, a.platform as string]));
         const reported = new Map<string, number>();
@@ -186,29 +212,31 @@ export function useMarketingReport(rangeKey: RangeKey = "ytd") {
           const booked = spend.filter((x) => x.channel === p).reduce((a, x) => a + x.rupees, 0);
           const label = p === "google-ads" ? "Google Ads" : "Meta Ads";
           if (plat > 0 && (booked === 0 || Math.abs(booked - plat) / plat > 0.25)) {
-            gaps.push(`${label} ne is range mein ₹${Math.round(plat).toLocaleString("en-IN")} kharcha report kiya, books mein ₹${Math.round(booked).toLocaleString("en-IN")} tagged hai — CAC books se hai; farq Ad accounts (live) page par mahine-wise dekho.`);
+            gaps.push(`${label} reported ₹${Math.round(plat).toLocaleString("en-IN")} spend in this range, books have ₹${Math.round(booked).toLocaleString("en-IN")} tagged — CAC uses the books; see the difference month by month on the Ad accounts (live) page.`);
           }
         }
       }
       // ── Revenue actually collected, and the monthly series ───────────────
-      const payQ = await supabase
+      const payQ = { data: await fetchAllRows((from, to) => supabase
         .from("payments")
         .select("amount, received_at, status")
         .eq("status", "received")
         .gte("received_at", range.start)
-        .lt("received_at", range.end);
-      if (payQ.error) throw payQ.error;
+        .lt("received_at", range.end)
+        .order("id", { ascending: true })
+        .range(from, to)) };
 
       /* Project (custom software) receipts live in `project_payments`, not `payments` —
          reading only the latter showed ₹0 collected while a ₹59L project was being paid
          (Pardeep, 26 Sep 2026). TDS rows count: the customer paid that part to the
          government on our behalf, and it is ours as a 26AS credit. */
-      const projQ = await supabase
+      const projQ = { data: await fetchAllRows((from, to) => supabase
         .from("project_payments")
         .select("amount, received_at, project_id")
         .gte("received_at", range.start)
-        .lt("received_at", range.end);
-      if (projQ.error) throw projQ.error;
+        .lt("received_at", range.end)
+        .order("id", { ascending: true })
+        .range(from, to)) };
 
       const receipts = [
         ...(payQ.data ?? []).map((p) => ({ amount: p.amount ?? 0, received_at: p.received_at })),
@@ -243,23 +271,25 @@ export function useMarketingReport(rangeKey: RangeKey = "ytd") {
       }
 
       // ── Funnel ───────────────────────────────────────────────────────────
-      const quotesQ = await supabase
+      const quotesQ = { data: await fetchAllRows((from, to) => supabase
         .from("quotes")
         .select("id, created_at")
         .gte("created_at", range.start)
-        .lt("created_at", range.end);
-      if (quotesQ.error) throw quotesQ.error;
+        .lt("created_at", range.end)
+        .order("id", { ascending: true })
+        .range(from, to)) };
 
       /* A project quotation lives on `project_sales`, not `quotes` — counting only the latter
          showed a won ₹59L software deal as 0 quotes and 0 deals (Pardeep, 26 Sep 2026).
          Anything past draft was sent to the customer, including one later cancelled. */
-      const projQuotesQ = await supabase
+      const projQuotesQ = { data: await fetchAllRows((from, to) => supabase
         .from("project_sales")
         .select("id, status, created_at")
         .neq("status", "draft")
         .gte("created_at", range.start)
-        .lt("created_at", range.end);
-      if (projQuotesQ.error) throw projQuotesQ.error;
+        .lt("created_at", range.end)
+        .order("id", { ascending: true })
+        .range(from, to)) };
 
       const leadCount = leads.length;
       const quoteCount = (quotesQ.data ?? []).length + (projQuotesQ.data ?? []).length;
@@ -304,17 +334,11 @@ export function useMarketingReport(rangeKey: RangeKey = "ytd") {
         projectCollected,
         gaps,
       };
-    },
-    staleTime: 60_000,
-  });
 }
 
 /** CSV for the channel leaderboard. Kept here so the page stays presentational. */
 export function channelsToCsv(report: ChannelReport, range: DateRange): string {
-  const esc = (v: unknown) => {
-    const s = v === null || v === undefined ? "" : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
+  const esc = (v: string | null | undefined) => csvEscape(v); // R-734: formula-safe
   const pct = (v: number | null) => (v === null ? "" : (v * 100).toFixed(1));
 
   const lines: string[] = [];
@@ -362,15 +386,17 @@ export function useMarketingSpend(rangeKey: RangeKey = "ytd") {
       const supabase = createClient();
       /* Same test as the ROAS page (`isMarketingCategory`): market / advert / ads. Filtered
          in the database so a year of rent and salaries is not shipped to the browser. */
-      const { data, error } = await supabase
+      /* R-1588: paged — a year of marketing expenses past 1000 rows was cut silently. */
+      const data = await fetchAllRows((from, to) => supabase
         .from("expenses")
         .select("*")
         .or("category.ilike.*market*,category.ilike.*advert*,category.ilike.*ads*")
         .gte("expense_date", range.start)
         .lt("expense_date", range.end)
-        .order("expense_date", { ascending: false });
-      if (error) throw error;
-      return { range, rows: ((data ?? []) as Expense[]).filter((r) => isMarketingCategory(r.category)) };
+        .order("expense_date", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to));
+      return { range, rows: (data as Expense[]).filter((r) => isMarketingCategory(r.category)) };
     },
     staleTime: 30_000,
   });

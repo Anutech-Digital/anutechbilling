@@ -61,16 +61,16 @@ export function VaultLoadError({ error, onRetry }: { error: unknown; onRetry?: (
     <Card className="p-6">
       <EmptyState
         icon="alert"
-        title={sessionGone ? "Aapka session khatam ho gaya" : d.message}
+        title={sessionGone ? "Your session has expired" : d.message}
         body={
           sessionGone
-            ? "Vault sirf aapke apne login se khulta hai. Dobara login karo — kuch bhi gaya nahi hai."
+            ? "The vault opens only with your own login. Sign in again — nothing has been lost."
             : d.description
         }
         action={
           sessionGone ? (
             <Button asChild variant="primary" icon="logout">
-              <Link href="/login">Dobara login karo</Link>
+              <Link href="/login">Sign in again</Link>
             </Button>
           ) : onRetry ? (
             <Button variant="primary" icon="refresh" onClick={onRetry}>

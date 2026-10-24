@@ -38,11 +38,11 @@ export async function GET() {
     lastSyncedAt: lastSynced,
     lastError: tok?.last_error ?? (locs ?? []).find((l) => l.last_error)?.last_error ?? null,
     reason: !googleOAuthCreds()
-      ? "Google OAuth keys env mein nahi hain."
+      ? "Google OAuth keys are not set in env."
       : !hasToken
-        ? "Koi Google account connected nahi hai."
+        ? "No Google account is connected."
         : !canSync
-          ? "Google account juda hai par Business Profile ki permission nahi mili. Connect karo aur \"Manage your business listings\" tick rehne do."
+          ? "Google account is connected but Business Profile permission was not granted. Connect again and keep \"Manage your business listings\" ticked."
           : "Ready.",
   });
 }

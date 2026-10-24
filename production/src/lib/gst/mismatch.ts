@@ -35,7 +35,7 @@
  */
 import { validateGstin } from "@/lib/utils";
 import { stateCodeFromGstin, gstinContradictsState } from "./gstin-state";
-import { isInterStateSupply, isExportSupply } from "./place-of-supply";
+import { isInterStateSupply, isExportSupply, treatmentIsAlwaysInterState } from "./place-of-supply";
 import { SAAS_GST_RATE } from "./hsn";
 
 export type GstIssueCode =
@@ -79,12 +79,16 @@ export interface InvoiceGstFacts {
   taxRate: number;
   /** What the invoice actually claims: true = IGST, false = CGST + SGST. */
   interState: boolean;
+  /** R-1736: the GST treatment frozen on the invoice (null = issued before R-1736). */
+  gstTreatment?: string | null;
 }
 
 export interface PartyGstFacts {
   stateCode?: string | null;
   gstin?: string | null;
   country?: string | null;
+  /** R-1736: customers.gst_treatment. */
+  gstTreatment?: string | null;
 }
 
 /** Rounding slack, in rupees. GST is computed in whole rupees in this schema (§13). */
@@ -181,16 +185,22 @@ export function auditInvoiceGst(
         amountAtRisk: tax || null,
       });
     } else if (sellerState) {
-      const shouldBeInterState = isInterStateSupply(buyerState, sellerState);
+      /* R-1736: an SEZ invoice is IGST in any state — the treatment it was issued under
+         (frozen), else today's customer treatment for an older invoice. */
+      const treatment = invoice.gstTreatment ?? customer.gstTreatment;
+      const sez = treatmentIsAlwaysInterState(treatment);
+      const shouldBeInterState = isInterStateSupply(buyerState, sellerState, { treatment });
       if (shouldBeInterState !== invoice.interState) {
         issues.push({
           code: "wrong_head",
           severity: "critical",
-          headline: shouldBeInterState
-            ? "Charged as CGST + SGST, but the customer is in another state."
-            : "Charged as IGST, but the customer is in the same state as you.",
+          headline: sez
+            ? "Charged as CGST + SGST, but the customer is an SEZ unit — a supply to an SEZ is always IGST."
+            : shouldBeInterState
+              ? "Charged as CGST + SGST, but the customer is in another state."
+              : "Charged as IGST, but the customer is in the same state as you.",
           detail:
-            `Buyer state ${buyerState}, seller state ${sellerState}: this should be ` +
+            `${sez ? "SEZ customer, " : ""}Buyer state ${buyerState}, seller state ${sellerState}: this should be ` +
             `${shouldBeInterState ? "IGST" : "CGST + SGST"}. The invoice says otherwise. ` +
             `The buyer cannot claim a credit under the wrong head, and the correct head is ` +
             `still owed — this needs a credit note and a fresh invoice.`,

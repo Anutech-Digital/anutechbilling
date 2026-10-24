@@ -3,7 +3,8 @@
  *
  * Platform Admins see ALL tickets and bug reports across all reseller workspaces
  * (including Ranjeet Raj, Pawan, Sales, Hitesh bug reports).
- * regular users see their tenant's tickets.
+ * regular users see their tenant's tickets only (API tenant filter + RLS) — R-1487: the
+ * "across all workspaces" subtitle is shown only to a platform admin (desk-copy.ts).
  */
 "use client";
 
@@ -24,6 +25,7 @@ import { formatDate } from "@/lib/utils";
 import { supportTier, slaState, type SupportTierId } from "@/lib/support/tiers";
 import { EntitlementCard } from "@/components/features/support/entitlement-card";
 import { AgentToolingPanel } from "@/components/features/support/agent-tooling-panel";
+import { supportDeskSubtitle } from "./desk-copy";
 
 /**
  * What plan bought this ticket, and how the clock is doing.
@@ -85,7 +87,7 @@ const STATUSES: ("all" | SupportTicketStatus)[] = ["all", "open", "in_progress",
 function useTickets(scope: ViewScope, statusFilter: "all" | SupportTicketStatus) {
   return useQuery({
     queryKey: ["support_tickets", scope, statusFilter],
-    queryFn: async (): Promise<{ tickets: SupportTicketRow[]; counts: Record<string, number>; scopeCounts: Record<string, number> }> => {
+    queryFn: async (): Promise<{ tickets: SupportTicketRow[]; counts: Record<string, number>; scopeCounts: Record<string, number>; crossTenant?: boolean }> => {
       const res = await fetch(`/api/support/tickets?scope=${scope}&status=${statusFilter}`);
       if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? "Failed to load tickets");
       return res.json();
@@ -209,7 +211,7 @@ export default function SupportPage() {
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Engage & Feedback Inbox</p>
           <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Support & Feedback Desk</h1>
           <p className="text-sm text-ink-3 mt-1">
-            Manage feedback and support queries from Tenants / Customers + internal employee bug reports across all workspaces.
+            {supportDeskSubtitle(data?.crossTenant)}
           </p>
         </div>
 

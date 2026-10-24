@@ -140,7 +140,7 @@ export default function PersonalBankingPage() {
         maturity_date: form.maturity_date || null,
         notes: form.notes.trim() || null,
       });
-      toast.success(form.id ? "Account update ho gaya." : "Account add ho gaya.");
+      toast.success(form.id ? "Account updated." : "Account added.");
       setOpen(false);
     } catch {
       /* the hook already surfaced the reason */
@@ -149,14 +149,14 @@ export default function PersonalBankingPage() {
 
   const handleDelete = async (a: PersonalAccount) => {
     const ok = await confirm({
-      title: `"${a.label}" hata dein?`,
-      body: "Is account se judi entries reh jayengi, par unka account link hat jayega.",
-      confirmLabel: "Hata do",
+      title: `Remove "${a.label}"?`,
+      body: "Entries linked to this account will stay, but their link to this account will be removed.",
+      confirmLabel: "Remove",
       danger: true,
     });
     if (!ok) return;
     await del.mutateAsync(a.id);
-    toast.success("Account hata diya.");
+    toast.success("Account removed.");
   };
 
   const rows = data ?? [];
@@ -174,11 +174,11 @@ export default function PersonalBankingPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-ink-3">
-          Aapke apne bank account, card aur deposit. Company ke bank accounts alag hain.
+          Your own bank accounts, cards and deposits. Company bank accounts are kept separately.
         </p>
         <Button variant="primary" onClick={openNew} className="flex-shrink-0">
           <Icon name="plus" size={14} className="mr-1.5" />
-          Account add karo
+          Add account
         </Button>
       </div>
 
@@ -190,9 +190,9 @@ export default function PersonalBankingPage() {
         <Card className="p-6">
           <EmptyState
             icon="wallet"
-            title="Abhi koi account nahi"
-            body="Apna savings account, credit card ya FD add karo. Ye sirf aapko dikhega."
-            action={<Button onClick={openNew}>Pehla account add karo</Button>}
+            title="No accounts yet"
+            body="Add your savings account, credit card or FD. Only you can see this."
+            action={<Button onClick={openNew}>Add first account</Button>}
           />
         </Card>
       )}
@@ -201,11 +201,11 @@ export default function PersonalBankingPage() {
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Kul jama</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-3">Total balance</p>
               <div className="mt-0.5"><Money amount={assetTotal} size="display" /></div>
             </Card>
             <Card className="p-4">
-              <p className="text-2xs uppercase tracking-wide text-ink-4">Card par bakaya</p>
+              <p className="text-2xs uppercase tracking-wide text-ink-3">Owed on cards</p>
               <div className="mt-0.5">
                 <Money amount={debtTotal} size="display" tone={debtTotal > 0 ? "negative" : "default"} autoNegative={false} />
               </div>
@@ -213,9 +213,9 @@ export default function PersonalBankingPage() {
           </div>
 
           {[
-            { title: "Jama (assets)", list: assets },
-            { title: "Bakaya (cards)", list: debts },
-            { title: "Band ho chuke", list: closed },
+            { title: "Assets", list: assets },
+            { title: "Owed (cards)", list: debts },
+            { title: "Closed", list: closed },
           ].filter((g) => g.list.length > 0).map((group) => (
             <Card key={group.title} className="p-0 overflow-hidden">
               <div className="px-4 py-2.5 border-b border-hairline bg-paper-2">
@@ -228,7 +228,7 @@ export default function PersonalBankingPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-medium text-ink">{a.label}</span>
                         <Badge kind="muted" size="sm">{ACCOUNT_KIND_LABEL[a.kind]}</Badge>
-                        {!a.is_active && <Badge kind="muted" size="sm">band</Badge>}
+                        {!a.is_active && <Badge kind="muted" size="sm">closed</Badge>}
                       </div>
                       <p className="text-xs text-ink-3 mt-0.5">
                         {a.institution || "—"}
@@ -245,7 +245,7 @@ export default function PersonalBankingPage() {
                         autoNegative={false}
                       />
                       {a.credit_limit !== null && a.credit_limit > 0 && (
-                        <p className="text-3xs text-ink-4 mt-0.5">limit ₹{a.credit_limit.toLocaleString("en-IN")}</p>
+                        <p className="text-3xs text-ink-3 mt-0.5">limit ₹{a.credit_limit.toLocaleString("en-IN")}</p>
                       )}
                     </div>
                     <div className="flex gap-1 flex-shrink-0">
@@ -267,16 +267,16 @@ export default function PersonalBankingPage() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[520px]">
           <DialogHeader>
-            <DialogTitle>{form.id ? "Account edit karo" : "Naya account"}</DialogTitle>
+            <DialogTitle>{form.id ? "Edit account" : "New account"}</DialogTitle>
             <DialogDescription className="text-xs">
-              Poora account number kabhi mat likho — sirf aakhri 4 digit.
+              Never enter the full account number — only the last 4 digits.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="vb-type" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Type</label>
+                <label htmlFor="vb-type" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Type</label>
                 <Select value={form.kind} onValueChange={(v) => setForm((f) => ({ ...f, kind: v as AccountKind }))}>
                   <SelectTrigger id="vb-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -287,8 +287,8 @@ export default function PersonalBankingPage() {
                 </Select>
               </div>
               <div>
-                <label htmlFor="vb-balance" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">
-                  {isCard ? "Bakaya (₹)" : "Balance (₹)"}
+                <label htmlFor="vb-balance" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">
+                  {isCard ? "Owed (₹)" : "Balance (₹)"}
                 </label>
                 <Input id="vb-balance"
                   value={form.balance}
@@ -300,7 +300,7 @@ export default function PersonalBankingPage() {
             </div>
 
             <div>
-              <label htmlFor="vb-name" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Naam</label>
+              <label htmlFor="vb-name" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Name</label>
               <Input id="vb-name"
                 value={form.label}
                 onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
@@ -310,7 +310,7 @@ export default function PersonalBankingPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="vb-bank" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Bank</label>
+                <label htmlFor="vb-bank" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Bank</label>
                 <Input id="vb-bank"
                   value={form.institution}
                   onChange={(e) => setForm((f) => ({ ...f, institution: e.target.value }))}
@@ -318,7 +318,7 @@ export default function PersonalBankingPage() {
                 />
               </div>
               <div>
-                <label htmlFor="vb-last4" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Aakhri 4 digit</label>
+                <label htmlFor="vb-last4" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Last 4 digits</label>
                 <Input id="vb-last4"
                   value={form.account_last4}
                   onChange={(e) => setForm((f) => ({ ...f, account_last4: e.target.value.replace(/\D/g, "").slice(0, 4) }))}
@@ -331,7 +331,7 @@ export default function PersonalBankingPage() {
 
             {isCard && (
               <div>
-                <label htmlFor="vb-credit-limit" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Credit limit (₹)</label>
+                <label htmlFor="vb-credit-limit" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Credit limit (₹)</label>
                 <Input id="vb-credit-limit"
                   value={form.credit_limit}
                   onChange={(e) => setForm((f) => ({ ...f, credit_limit: e.target.value }))}
@@ -344,7 +344,7 @@ export default function PersonalBankingPage() {
             {isDeposit && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label htmlFor="vb-interest" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Interest %</label>
+                  <label htmlFor="vb-interest" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Interest %</label>
                   <Input id="vb-interest"
                     value={form.interest_rate}
                     onChange={(e) => setForm((f) => ({ ...f, interest_rate: e.target.value }))}
@@ -353,7 +353,7 @@ export default function PersonalBankingPage() {
                   />
                 </div>
                 <div>
-                  <label htmlFor="vb-maturity" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Maturity</label>
+                  <label htmlFor="vb-maturity" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Maturity</label>
                   <Input id="vb-maturity"
                     type="date"
                     value={form.maturity_date}
@@ -364,7 +364,7 @@ export default function PersonalBankingPage() {
             )}
 
             <div>
-              <label htmlFor="vb-note" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Note</label>
+              <label htmlFor="vb-note" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Note</label>
               <Input id="vb-note"
                 value={form.notes}
                 onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}

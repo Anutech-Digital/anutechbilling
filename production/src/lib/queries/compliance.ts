@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { ComplianceLogRow } from "@/lib/supabase/database.types";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { tdsLookbackFrom, tdsMonthsFrom } from "@/lib/compliance/tds-not-applicable";
@@ -21,12 +22,13 @@ export function useComplianceLog() {
     queryKey: KEY,
     queryFn: async (): Promise<ComplianceLogRow[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      // R-1582: paged — ~20 filings a month pass 1000 rows in four years.
+      return (await fetchAllRows((from, to) => supabase
         .from("compliance_log")
         .select("*")
-        .order("due_date", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as ComplianceLogRow[];
+        .order("due_date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to))) as ComplianceLogRow[];
     },
   });
 }
@@ -36,7 +38,8 @@ const SALARY_READ_ROLES = new Set(["owner", "manager", "accountant"]);
 
 /**
  * R-181 — months (YYYY-MM) in the recent past in which ANY TDS was deducted:
- * salary TDS (salary_payments.period) + vendor TDS (expenses.expense_date).
+ * salary TDS (salary_payments.period) + vendor TDS (expenses.expense_date) + partner
+ * commission TDS (referral_commissions.earned_date, R-1580).
  * The Compliance page uses it to show "Deposit TDS" as N/A for a month with none.
  *
  * Returns `null` (→ every month counts, the old behaviour) whenever the answer
@@ -52,16 +55,29 @@ export function useTdsMonths(today: Date) {
     enabled: me.isSuccess,
     queryFn: async (): Promise<Set<string> | null> => {
       if (!role || !SALARY_READ_ROLES.has(role)) return null;
-      const supabase = createClient();
-      const [sal, exp] = await Promise.all([
-        supabase.from("salary_payments").select("period, tds").gte("period", from.slice(0, 7)).gt("tds", 0),
-        supabase.from("expenses").select("expense_date, tds_amount").gte("expense_date", from).gt("tds_amount", 0),
-      ]);
-      if (sal.error) throw sal.error;
-      if (exp.error) throw exp.error;
-      return tdsMonthsFrom(sal.data, exp.data);
+      return fetchTdsMonths(createClient(), from);
     },
   });
+}
+
+/**
+ * The months with any TDS since `from`. R-1582: both reads page past the gateway's 1000-row
+ * cap — a month whose TDS rows sat past the cap showed "Deposit TDS" as N/A.
+ */
+export async function fetchTdsMonths(supabase: ReturnType<typeof createClient>, from: string): Promise<Set<string>> {
+  const [sal, exp, comm] = await Promise.all([
+    fetchAllRows((f, t) => supabase.from("salary_payments").select("period, tds")
+      .gte("period", from.slice(0, 7)).gt("tds", 0)
+      .order("id", { ascending: true }).range(f, t)),
+    fetchAllRows((f, t) => supabase.from("expenses").select("expense_date, tds_amount")
+      .gte("expense_date", from).gt("tds_amount", 0)
+      .order("id", { ascending: true }).range(f, t)),
+    /* R-1580: TDS on partner commissions (194H) — a month with only that TDS still has a deposit. */
+    fetchAllRows((f, t) => supabase.from("referral_commissions").select("earned_date, tds_amount, status")
+      .gte("earned_date", from).gt("tds_amount", 0).neq("status", "cancelled")
+      .order("id", { ascending: true }).range(f, t)),
+  ]);
+  return tdsMonthsFrom(sal, exp, comm);
 }
 
 /** filed-map keyed by `${obligation_key}|${period_key}` → filed_date. */

@@ -37,6 +37,17 @@ describe("R-072 — which keys the form asks about", () => {
   });
 });
 
+describe("R-1821: a masked role gets matched_on 'possible' from the gateway", () => {
+  it("the warning says 'possible duplicate' without naming the matched contact", () => {
+    const w = duplicateWarning({
+      id: "L-1", company: "Acme", contact_name: null, stage: "new", is_junk: false,
+      owner_id: null, owner_name: null, matched_on: ["possible"], created_at: "2026-10-24T00:00:00Z",
+    });
+    expect(w.matched).toMatch(/^Possible duplicate/);
+    expect(w.matched).not.toMatch(/phone|email/i);
+  });
+});
+
 describe("the warning", () => {
   it('says "Ye pehle se hai: <company> (stage, owner)" and what matched', () => {
     const w = duplicateWarning(dup({ matched_on: ["gstin", "email"] }));

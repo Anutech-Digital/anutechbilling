@@ -16,7 +16,7 @@ import type { UserRole } from "@/lib/auth/roles";
 
 export interface NotifyInput {
   tenantId: string;
-  kind: "payment.received" | "payment.refunded" | "quote.accepted" | "lead.created" | "ticket.created"
+  kind: "payment.received" | "payment.refunded" | "quote.accepted" | "quote.expired" | "lead.created" | "ticket.created"
     | "marketing.budget";
   title: string;
   body?: string;

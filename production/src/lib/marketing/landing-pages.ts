@@ -6,6 +6,8 @@
  * (/lp/google-workspace now forwards to the Starter page), or the team cannot find, copy or check it.
  * Leads are matched by `leads.landing_page_url`, which stores the path + utm params only.
  */
+import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
+
 export interface AdLandingPage {
   /** Path on the public site, e.g. "/lp/google-workspace". Leads are matched on it. */
   path: string;
@@ -42,7 +44,7 @@ export const AD_LANDING_PAGES: readonly AdLandingPage[] = [
     path: "/lp/google-workspace-business-standard-1",
     title: "Google Workspace Business Standard — Google Ads Landing Page 1",
     product: "Google Workspace Business Standard",
-    offer: "Free setup and email migration + 14-day free trial (no first-year discount)",
+    offer: `Free setup and email migration + ${WORKSPACE_TRIAL_DAYS}-day free trial (no first-year discount)`,
     captures: "Call-back form (name + mobile), Free trial / Buy enquiry, WhatsApp",
     addedOn: "2026-10-04",
   },
@@ -50,7 +52,7 @@ export const AD_LANDING_PAGES: readonly AdLandingPage[] = [
     path: "/lp/google-workspace-business-plus-1",
     title: "Google Workspace Business Plus — Google Ads Landing Page 1",
     product: "Google Workspace Business Plus",
-    offer: "Free setup and email migration + 14-day free trial (no first-year discount)",
+    offer: `Free setup and email migration + ${WORKSPACE_TRIAL_DAYS}-day free trial (no first-year discount)`,
     captures: "Call-back form (name + mobile), Free trial / Buy enquiry, WhatsApp",
     addedOn: "2026-10-04",
   },

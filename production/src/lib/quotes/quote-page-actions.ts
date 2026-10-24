@@ -57,12 +57,17 @@ export interface RejectLeadOffer {
 export function rejectLeadOffer(input: {
   quoteId: string;
   lead: { stage: string | null } | null | undefined;
-  leadQuotes: readonly { id: string; status: string; superseded_by?: string | null }[];
+  /** null = the lead's quotes failed to load or have not answered yet (R-1807). */
+  leadQuotes: readonly { id: string; status: string; superseded_by?: string | null }[] | null;
 }): RejectLeadOffer {
   if (!input.lead) return { offer: false, note: null };
   const stage = (input.lead.stage ?? "").toLowerCase();
   if (stage === "lost") return { offer: false, note: "The lead is already Lost." };
   if (stage === "won") return { offer: false, note: "The lead is Won, so it stays as it is." };
+  /* R-1807: with the list unknown, another open quote may exist — never guess "last one". */
+  if (input.leadQuotes === null) {
+    return { offer: false, note: "The lead's other quotes didn't load, so the lead stays as it is. Mark it Lost on the lead if needed." };
+  }
   const otherOpen = input.leadQuotes.filter(
     (q) => q.id !== input.quoteId && !q.superseded_by
       && (q.status === "draft" || q.status === "sent" || q.status === "viewed"),
@@ -93,11 +98,36 @@ export function lostActivityDetail(quoteId: string, code: string, note: string |
  */
 export function acceptHint(q: {
   is_renewal?: boolean | null; is_add_seats?: boolean | null; is_extension?: boolean | null;
-  customer_id?: string | null;
+  customer_id?: string | null; lead_id: string | null;
 }): string {
   if (q.is_renewal) return "Mark accepted when the customer agrees. Their subscription is renewed when the payment is recorded.";
   /* R-821 (10 Oct 2026): an add-seats or extension quote is always for an existing
      customer, even on a row with no customer_id — it still said "convert the lead". */
   if (q.customer_id || q.is_add_seats || q.is_extension) return "Mark accepted when the customer agrees.";
-  return "Customer accepted? Mark accepted to convert the lead into a customer.";
+  if (q.lead_id) return "Customer accepted? Mark accepted to convert the lead into a customer.";
+  /* R-1706: a typed prospect (no lead, no customer). accept_quote now creates the customer from
+     the quote's name and place of supply — there is no lead to convert. Same words as the toast. */
+  return "Customer accepted? Mark accepted to create their customer record.";
+}
+
+/**
+ * R-1706 — before "Invoice now": does the quote have a customer to bill?
+ *  - yes → issue it.
+ *  - no, and the quote is ACCEPTED → it was accepted before accept_quote created customers for
+ *    prospects (R-1706). Accepting again creates the customer from the quote (idempotent), then
+ *    the invoice is issued — instead of generate_invoice naming a customer that does not exist.
+ *  - no, not accepted → say the real next step.
+ */
+export type InvoiceCustomerStep =
+  | { kind: "ready" }
+  | { kind: "accept_first" }
+  | { kind: "refuse"; message: string };
+
+export function customerBeforeInvoice(q: { customer_id: string | null; status: string | null }): InvoiceCustomerStep {
+  if (q.customer_id) return { kind: "ready" };
+  if (q.status === "accepted") return { kind: "accept_first" };
+  return {
+    kind: "refuse",
+    message: "This quote has no customer yet. Mark it accepted first — that creates the customer record — then issue the invoice.",
+  };
 }

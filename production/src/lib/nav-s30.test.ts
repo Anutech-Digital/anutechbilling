@@ -127,7 +127,15 @@ const R1003_BILLING_REMOVED = [
   "/accounting/payroll", "/accounting/salary-register", "/accounting/loans", "/accounting/employees",
   "/accounting/attendance", "/accounting/leave", "/accounting/esi-register",
 ];
+/** R-1516 (17 Oct 2026): Payment Follow-up — a new page for owner / manager / billing / accountant /
+ *  sales (sales_senior sees what sales sees); RLS scopes sales to its own customers' money. */
+const ADDED_17OCT_COLLECTIONS = ["/collections"];
+const COLLECTIONS_ROLES = ["owner", "manager", "billing", "accountant", "sales", "sales_senior"];
 const ADDED_11OCT_ACCOUNTANT = ["/accounting/loans", "/accounting/employees", "/accounting/attendance", "/accounting/leave"];
+/** R-1127 (16 Oct 2026): same reason as R-138 — these read salaries/employees, which RLS hides
+ *  from billing, so salary and PF/ESI/TDS rows showed Rs 0 (Pardeep's call: take them away). */
+const R1127_BILLING_REMOVED = ["/accounting/trial-balance", "/accounting/close", "/accounting/cash-flow"];
+const REMOVED_3OCT: Record<string, string[]> = { billing: ["/accounting/balance-sheet", ...R1003_BILLING_REMOVED, ...R1127_BILLING_REMOVED] };
 /** R-1663 (19 Oct 2026): Cold Calling — a new page under Marketing Hub for owner, manager and sales
  *  (RLS on cold_call_* checks the same four roles). */
 const ADDED_19OCT_COLD_CALLING = ["/marketing/cold-calling"];
@@ -140,7 +148,6 @@ const ADDED_23OCT_MARKETING_ROLE = [
   "/marketing/ads", "/marketing/landing-pages", "/marketing/links", "/lead-gen",
   "/marketing/google-business", "/marketing/reviews", "/online-promos",
 ];
-const REMOVED_3OCT: Record<string, string[]> = { billing: ["/accounting/balance-sheet", ...R1003_BILLING_REMOVED] };
 const removedFor = (role: string) => REMOVED_3OCT[role] ?? [];
 const addedFor = (role: string) => [
   ...(role === "owner" || role === "manager" ? ADDED_3OCT_OM : []),
@@ -160,6 +167,7 @@ const addedFor = (role: string) => [
   ...(BOOKS_ROLES.includes(role) ? ADDED_FOR_BOOKS : []),
   ...(role === "owner" || role === "accountant" ? ADDED_10OCT_OWNER_ACCOUNTANT : []),
   ...(role === "accountant" ? ADDED_11OCT_ACCOUNTANT : []),
+  ...(COLLECTIONS_ROLES.includes(role) ? ADDED_17OCT_COLLECTIONS : []),
   ...(["owner", "manager", "sales", "sales_senior"].includes(role) ? ADDED_19OCT_COLD_CALLING : []),
   ...(role === "marketing" ? ADDED_23OCT_MARKETING_ROLE : []),
   ...(["owner", "marketing", "billing", "accountant"].includes(role) ? ADDED_23OCT_BUDGET : []),

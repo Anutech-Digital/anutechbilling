@@ -16,6 +16,7 @@
 import type { Lead } from "@/lib/supabase/database.types";
 import { rowStageOptions } from "@/lib/leads/stage-options";
 import { STAGE_LABEL } from "@/lib/leads/stage-meta";
+import { toIstDate } from "@/lib/dates/ist";
 
 type Stage = Lead["stage"];
 
@@ -42,6 +43,20 @@ export function closeDateShort(iso: string): string {
   const [, m, d] = iso.split("-").map(Number);
   if (!m || !d) return iso;
   return `${d} ${MONTHS[m - 1]}`;
+}
+
+/**
+ * R-1477: the IST date a Won deal was won — null for any other stage. A Won deal's
+ * `expected_close_date` is only the forecast it carried (often still in the future), so the
+ * card and detail page show this instead. `stage_changed_at` is set by trigger on every stage
+ * move; deals won before that column existed fall back to `updated_at`.
+ */
+export function wonOnDate(
+  l: Pick<Lead, "stage" | "stage_changed_at" | "updated_at">,
+): string | null {
+  if (l.stage !== "won") return null;
+  const at = l.stage_changed_at ?? l.updated_at;
+  return at ? toIstDate(at) : null;
 }
 
 /** An OPEN deal whose expected close date is before today (IST). Won / lost are finished. */
@@ -115,11 +130,14 @@ export function checkBoardMove(
   if (lead.stage === to) return { ok: true };
   const name = lead.company?.trim() || "This lead";
 
-  if (lead.stage === "won") {
+  /* R-1762: a Won deal may go to Lost (the customer backed out) — the money check and the
+     lost reason follow in useChangeLeadStage, and the database refuses it with money behind it.
+     Any other move out of Won is not a board move: a mistaken accept is undone on the quote. */
+  if (lead.stage === "won" && to !== "lost") {
     return {
       ok: false,
       title: `${name} is already won`,
-      description: "Money is recorded against it — a payment, an invoice and a subscription. Raise a credit note on the invoice instead.",
+      description: "Accepted by mistake? Open the quote → Reopen. Customer backed out? Use Mark lost.",
     };
   }
 
@@ -151,6 +169,30 @@ export function checkBoardMove(
     }
   }
   return { ok: true };
+}
+
+// ── Leaving Won (R-1762) ────────────────────────────────────────────────────
+
+/** The refusal when a Won deal has money behind it — the same words the database raises
+ *  (migration 20261022120019_r1762_won_deal_undo, trigger trg_r1762_won_exit_guard). */
+export function wonMoneyRefusal(company: string | null | undefined): string {
+  const name = company?.trim() || "This deal";
+  return `${name} has a payment or invoice — refund or credit-note it first, then mark it lost.`;
+}
+
+/**
+ * May a deal leave Won? Only when none of its quotes has a received payment, a live invoice or a
+ * subscription (`hasMoney`, from the lead_has_money RPC). Deals that are not Won pass.
+ */
+export function checkWonExit(
+  lead: Pick<Lead, "stage" | "company">, to: Stage, hasMoney: boolean,
+): MoveVerdict {
+  if (lead.stage !== "won" || to === "won" || !hasMoney) return { ok: true };
+  return {
+    ok: false,
+    title: `Can't mark ${lead.company?.trim() || "this deal"} ${STAGE_LABEL[to]}`,
+    description: wonMoneyRefusal(lead.company),
+  };
 }
 
 // ── Deal value from seats × price ───────────────────────────────────────────

@@ -154,7 +154,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
       .replace(/\{\{name\}\}/g, "Ramesh")
       .replace(/\{\{company\}\}/g, "Acme Pvt Ltd")
       .replace(/\{\{sender\}\}/g, "Anutech Digital")
-      .replace(/\{\{pitch\}\}/g, "Aapki clinic abhi Gmail par hai — apne domain ka email (info@aapkiclinic.in) patients ka bharosa badhata hai.")
+      .replace(/\{\{pitch\}\}/g, "Your clinic is still on Gmail — an email on your own domain (info@yourclinic.in) builds patients' trust.")
       .replace(/\{\{offer_code\}\}/g, offerEnabled ? (offerCode || "SAMPLE") : "SAMPLE")
       .replace(/\{\{discount\}\}/g, offerEnabled ? String(offerDiscount || "10") : "10")
       .replace(/\{\{expires\}\}/g, offerEnabled ? new Date(offerExpires).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "31 May 2026");
@@ -502,7 +502,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
           )}
 
           <p className="text-xs text-ink-3">
-            Variables: <code>{`{{name}}`}</code> · <code>{`{{company}}`}</code> · <code>{`{{sender}}`}</code> · <code>{`{{pitch}}`}</code> <span title="AI Lead Finder ki us company ke liye likhi ek line. Doosri leads ke liye khaali rehti hai.">(sirf AI Lead Finder leads)</span>
+            Variables: <code>{`{{name}}`}</code> · <code>{`{{company}}`}</code> · <code>{`{{sender}}`}</code> · <code>{`{{pitch}}`}</code> <span title="A line AI Lead Finder wrote for that company. Empty for other leads.">(AI Lead Finder leads only)</span>
             {offerEnabled && (
               <> · <code>{`{{offer_code}}`}</code> · <code>{`{{discount}}`}</code> · <code>{`{{expires}}`}</code></>
             )}

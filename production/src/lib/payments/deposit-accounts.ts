@@ -64,6 +64,41 @@ export function defaultDepositAccountId(
   return pool.length === 1 ? pool[0].id : "";
 }
 
+/**
+ * R-1730 — the account "Received in" opens on, in EVERY Record payment sheet (quote, dues row,
+ * several invoices, imported Zoho invoice). Owner, 21 Oct: it opened on "Not sure yet" although
+ * the usual account was obvious.
+ *   1. one account fits the method → that one (defaultDepositAccountId above);
+ *   2. else the account this company usually receives into: the one most of its recent tagged
+ *      payments went to (`recentTags` = bank_account_id of its latest payments), counted only
+ *      among accounts that fit the method — a strict winner, never a tie;
+ *   3. else "" (Not sure yet) — 2+ accounts and none is usual; a wrong tag is worse than none.
+ * bank_accounts has no "default account" column, so usage is the only notion of usual.
+ */
+export function usualDepositAccountId(
+  accounts: ReadonlyArray<DepositAccount> | null | undefined,
+  method: PaymentMethod | string,
+  recentTags: ReadonlyArray<string | null | undefined> | null | undefined,
+): string {
+  if (method === "other") return "";
+  const only = defaultDepositAccountId(accounts, method);
+  if (only) return only;
+  const usable = depositAccounts(accounts);
+  const pool = new Set(
+    (method === "cash" ? usable.filter((a) => a.account_type === "cash") : usable.filter((a) => a.account_type !== "cash"))
+      .map((a) => a.id),
+  );
+  const counts = new Map<string, number>();
+  for (const id of recentTags ?? []) if (id && pool.has(id)) counts.set(id, (counts.get(id) ?? 0) + 1);
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  if (ranked.length === 0) return "";
+  if (ranked.length > 1 && ranked[1][1] === ranked[0][1]) return "";
+  return ranked[0][0];
+}
+
+/** One default method for every Record payment sheet (R-1730). */
+export const DEFAULT_PAYMENT_METHOD: PaymentMethod = "upi";
+
 /** True only for a real bank_accounts id — never a made-up one like "hdfc_primary". */
 export function isBankAccountId(id: string | null | undefined): id is string {
   return typeof id === "string"

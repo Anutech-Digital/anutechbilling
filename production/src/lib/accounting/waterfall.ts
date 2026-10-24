@@ -20,6 +20,9 @@
  * floating steps.
  */
 
+import { isEstimatedBasis, type CogsBasis } from "./pnl";
+import { netFigure } from "./net-figure";
+
 export interface WaterfallInput {
   key: string;
   label: string;
@@ -178,7 +181,7 @@ export function hundredRupeeSplit(p: {
 export function pnlWaterfall(p: {
   revenue: number;
   cogs: number;
-  cogsBasis: "billed" | "estimated" | "unknown";
+  cogsBasis: CogsBasis;
   grossMargin: number | null;
   expenses: number;
   netProfit: number | null;
@@ -189,11 +192,15 @@ export function pnlWaterfall(p: {
     { key: "revenue", label: "Revenue", delta: p.revenue, hint: "Invoiced to customers" },
     {
       key: "cogs", label: "Licence cost", delta: -p.cogs,
-      hint: p.cogsBasis === "estimated" ? "Estimated from wholesale rates" : "Paid to vendors",
-      estimated: p.cogsBasis === "estimated",
+      hint: p.cogsBasis === "estimated" ? "Estimated from wholesale rates" : p.cogsBasis === "mixed" ? "Vendor bills + estimate for vendors with no bill" : "Paid to vendors",
+      estimated: isEstimatedBasis(p.cogsBasis),
     },
     { key: "gross", label: "Gross margin", delta: 0, isTotal: true, hint: "What resale earns" },
     { key: "opex", label: "Running costs", delta: -p.expenses, hint: "Salaries, hosting, office" },
-    { key: "net", label: "Net profit", delta: 0, isTotal: true, hint: "What the business kept" },
+    // R-1486: a loss month names this bar "Net loss" (the bar text carries the minus).
+    {
+      key: "net", label: netFigure(p.netProfit).label, delta: 0, isTotal: true,
+      hint: p.netProfit < 0 ? "What the business lost" : "What the business kept",
+    },
   ];
 }

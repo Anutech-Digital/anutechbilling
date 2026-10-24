@@ -12,6 +12,7 @@ import * as React from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { rupee } from "@/lib/utils";
+import { formatMonthLabel } from "@/lib/dates/ist";
 import { downloadCSV } from "@/lib/csv";
 import type { ExpenseReport } from "@/lib/accounting/expense-report";
 
@@ -24,10 +25,7 @@ interface Props {
   movedToCogs?: number;
 }
 
-const monthLabel = (ym: string) => {
-  const [y, m] = ym.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
-};
+const monthLabel = (ym: string) => formatMonthLabel(ym, { year: "2-digit" });
 
 export function ExpenseReportCard({ report, periodLabel, fileStem, onCategory, movedToCogs = 0 }: Props) {
   const [showAllVendors, setShowAllVendors] = React.useState(false);

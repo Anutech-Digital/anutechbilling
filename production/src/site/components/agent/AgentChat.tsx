@@ -1,7 +1,8 @@
 "use client";
 /**
- * "Talk to our live AI sales agent" — the launcher sits directly ABOVE the WhatsApp pill
- * (Pardeep: "company ke main home page par WhatsApp us ke upar lagao"), and the panel is
+ * "Talk to us" — the website's ONE floating launcher. R-1498 (17 Oct 2026, Pawan): it used to
+ * sit above a separate WhatsApp pill and the two covered content; now pressing it opens a small
+ * menu with "Chat with our AI sales agent" and "WhatsApp us" (same wa.me link). The panel is
  * a small chat whose answers come from the app's public agent — live catalogue prices,
  * guarded server-side (production/src/lib/ai/public-sales-chat.ts holds the rules).
  *
@@ -16,9 +17,10 @@
 import Link from "@/site/components/ui/SiteLink";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { WHATSAPP_URL } from "@/site/lib/config";
+import { WHATSAPP_URL, WHATSAPP_READY } from "@/site/lib/config";
 import { hideFloatingOn } from "@/site/components/chrome/Chrome";
-import { floatingButtons, useAvoidFloating, useIsMobile } from "@/site/components/chrome/floating";
+import { floatingLauncher, useAvoidFloating, useIsMobile } from "@/site/components/chrome/floating";
+import { useTurnstile } from "@/components/shared/turnstile";
 
 interface Msg {
   role: "user" | "assistant";
@@ -72,6 +74,7 @@ export function AgentChat() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const ts = useTurnstile(); // R-737: renders nothing until NEXT_PUBLIC_TURNSTILE_SITE_KEY is in the build
   /* Ek chat, ek lead — server ko har request me batate hain ki lead ban chuki, taaki
      model dobara lead field bhare to bhi doosri row na bane. */
   const [leadCaptured, setLeadCaptured] = useState(false);
@@ -97,6 +100,38 @@ export function AgentChat() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [msgs, busy]);
 
+  /* R-1498: ek hi floating launcher — dabane par chhota menu (AI chat + WhatsApp). Menu khulte
+     hi pehla item focus; Escape / bahar click band karta hai, Escape focus launcher par lautata hai. */
+  const [menuOpen, setMenuOpen] = useState(false);
+  const launcherRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const firstItemRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    firstItemRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setMenuOpen(false);
+      launcherRef.current?.focus();
+    };
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node | null;
+      if (t && (menuRef.current?.contains(t) || launcherRef.current?.contains(t))) return;
+      setMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [menuOpen]);
+  const onLauncher = () => {
+    // Chat khuli ho to launcher use band karta hai (pehle jaisa); warna menu khole/band kare.
+    if (open) { setOpen(false); return; }
+    setMenuOpen((v) => !v);
+  };
+
   const send = async () => {
     const text = input.trim();
     if (!text || busy) return;
@@ -108,7 +143,8 @@ export function AgentChat() {
     try {
       const res = await fetch("/api/agent", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        /* R-737: the bot-check token (none until the site key is in the build); one per message. */
+        headers: { "Content-Type": "application/json", ...ts.headers },
         /* The greeting is presentation, not conversation — the agent should not have to
            account for words the model never said. Only real turns travel. */
         body: JSON.stringify({
@@ -116,6 +152,21 @@ export function AgentChat() {
           leadAlreadyCaptured: leadCaptured,
         }),
       });
+      /* R-1549: too many messages from this visitor — the server says how long to wait; show that,
+         not the generic "couldn't answer". */
+      if (res.status === 429) {
+        const limited = (await res.json().catch(() => ({}))) as { reply?: string };
+        setFailed(true);
+        setMsgs((cur) => [...cur, { role: "assistant", text: limited.reply || "You have sent too many messages in a short time. Please wait a few minutes and send it again — or use the Get a quote page." }]);
+        return;
+      }
+      /* R-737: the bot check refused — its message says what to do (reload, or WhatsApp). */
+      if (res.status === 403) {
+        const refused = (await res.json().catch(() => ({}))) as { error?: string };
+        setFailed(true);
+        setMsgs((cur) => [...cur, { role: "assistant", text: refused.error || "We could not verify this message came from a person. Reload the page and send it again — or WhatsApp us." }]);
+        return;
+      }
       if (!res.ok) throw new Error(String(res.status));
       const data = (await res.json()) as { reply?: string; suggestQuote?: Msg["suggestQuote"]; leadCreated?: { quoteId: string | null } | null };
       if (!data.reply) throw new Error("empty");
@@ -129,26 +180,31 @@ export function AgentChat() {
       ]);
     } finally {
       setBusy(false);
+      ts.reset(); // a token works once — the next message gets a fresh one
     }
   };
 
   /* R-230: /checkout aur /done par kuch float nahi karta — phone par launcher Pay button dhak
      deta tha. Saare hooks upar chal chuke, isliye yahan return safe hai. */
   if (hideFloatingOn(pathname)) return null;
-  const showLauncher = floatingButtons({ pathname, isMobile, avoidOnScreen, whatsappReady: false, chatOpen: open }).agent;
+  const showLauncher = floatingLauncher({ pathname, isMobile, avoidOnScreen, chatOpen: open || menuOpen });
+  const launcherName = WHATSAPP_READY ? "Talk to us: AI sales agent or WhatsApp" : "Talk to us: AI sales agent";
 
   return (
     <>
-      {/* Launcher — fixed, WhatsApp pill (bottom 22) ke THEEK UPAR. R-230: 980px se neeche
-          poori text wali pill ki jagah 48px gol icon (naam aria-label me), taaki phone par
-          page ka neeche wala hissa na dhake. Position/size class me — inline style media
-          query ko jeet leta. R-464: phone par WhatsApp pill float nahi karti, to launcher
-          neeche (bottom 16) aata hai, aur form screen par ho to chhup jaata hai. */}
+      {/* R-1498: EK hi floating launcher (pehle AI launcher + WhatsApp pill ek ke upar ek the).
+          R-230: 980px se neeche poori text wali pill ki jagah 48px gol icon (naam aria-label
+          me). Position/size class me — inline style media query ko jeet leta. R-464/R-1495:
+          phone par form / plan cards screen par hon to launcher chhup jaata hai. zIndex 90 —
+          consent banner (95) ke neeche hi rehta hai. */}
       {showLauncher && (
       <button
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-label="Talk to our live AI sales agent"
+        ref={launcherRef}
+        type="button"
+        onClick={onLauncher}
+        aria-expanded={menuOpen || open}
+        aria-controls={menuOpen ? "agent-launcher-menu" : undefined}
+        aria-label={launcherName}
         className="agent-launcher"
         style={{
           position: "fixed", zIndex: 90,
@@ -162,9 +218,9 @@ export function AgentChat() {
         <svg aria-hidden className="agent-launcher-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
-        <span className="agent-launcher-text">Talk to our live AI sales agent</span>
+        <span className="agent-launcher-text">Talk to us</span>
         <style jsx>{`
-          .agent-launcher { right: 22px; bottom: 78px; padding: 12px 18px; }
+          .agent-launcher { right: 22px; bottom: 22px; min-height: 44px; padding: 12px 18px; }
           .agent-launcher-icon { display: none; }
           @media (max-width: 979px) {
             .agent-launcher { width: 48px; height: 48px; padding: 0; right: 16px; bottom: 16px; }
@@ -175,12 +231,63 @@ export function AgentChat() {
       </button>
       )}
 
+      {/* R-1498: launcher ka menu — dono kaam yahin. Har item 44px uncha (touch target). */}
+      {showLauncher && menuOpen && (
+        <div
+          ref={menuRef}
+          id="agent-launcher-menu"
+          className="agent-launcher-menu"
+          style={{
+            position: "fixed", zIndex: 91, minWidth: 248, maxWidth: "calc(100vw - 32px)",
+            background: "var(--tint-2)", border: "1px solid var(--border)", borderRadius: 12,
+            boxShadow: "var(--shadow-menu)", padding: 6, display: "flex", flexDirection: "column", gap: 2,
+            animation: "wDrop .16s ease",
+          }}
+        >
+          <button
+            ref={firstItemRef}
+            type="button"
+            className="agent-menu-item"
+            onClick={() => { setMenuOpen(false); setOpen(true); }}
+          >
+            <span aria-hidden style={{ width: 8, height: 8, borderRadius: 999, background: "var(--primary)" }} />
+            Chat with our AI sales agent
+          </button>
+          {WHATSAPP_READY && (
+            <a
+              href={WHATSAPP_URL}
+              target="_blank"
+              rel="noopener"
+              className="agent-menu-item"
+              onClick={() => setMenuOpen(false)}
+            >
+              <span aria-hidden style={{ width: 8, height: 8, borderRadius: 999, background: "var(--bar-ok)" }} />
+              WhatsApp us
+            </a>
+          )}
+          <style jsx>{`
+            .agent-launcher-menu { right: 22px; bottom: 76px; }
+            .agent-menu-item {
+              display: flex; align-items: center; gap: 10px; min-height: 44px; width: 100%;
+              padding: 10px 12px; border: none; border-radius: 8px; background: transparent;
+              color: var(--text); font: inherit; font-size: 14px; font-weight: 600;
+              text-align: left; cursor: pointer;
+            }
+            .agent-menu-item:hover { background: var(--tint); color: var(--primary); }
+            .agent-menu-item:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+            @media (max-width: 979px) {
+              .agent-launcher-menu { right: 16px; bottom: 72px; }
+            }
+          `}</style>
+        </div>
+      )}
+
       {open && (
         <div
           role="dialog"
           aria-label="AI sales agent chat"
           style={{
-            position: "fixed", right: 22, bottom: 132, zIndex: 96,
+            position: "fixed", right: 22, bottom: 80, zIndex: 96,
             width: 360, maxWidth: "92vw", height: 460, maxHeight: "70vh",
             background: "#fff", border: "1px solid var(--border)", borderRadius: 12,
             boxShadow: "var(--shadow-menu)", display: "flex", flexDirection: "column",
@@ -250,6 +357,7 @@ export function AgentChat() {
             )}
           </div>
 
+          {ts.widget && <div style={{ padding: "0 12px" }}>{ts.widget}</div>}
           <form
             onSubmit={(e) => { e.preventDefault(); void send(); }}
             style={{ display: "flex", gap: 8, padding: 12, borderTop: "1px solid var(--border-light)" }}

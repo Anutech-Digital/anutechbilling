@@ -1,5 +1,7 @@
 # ResellerOS — Project Tracker
 
+> **STALE — 29 May 2026 tak ka (stamped 19 Oct 2026, R-1609). Asli: team board (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n) + code.** Ye file sirf history hai — isse status, counts ya "kya bacha hai" mat padho.
+
 > **Single source of truth** for what's shipped, what's in flight, and what's next.
 > Mark items `[x]` when done. Add new items as `[ ]`.
 > Last refreshed: **2026-05-29**

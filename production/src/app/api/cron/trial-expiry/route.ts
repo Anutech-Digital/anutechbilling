@@ -27,6 +27,7 @@ import { resolveOwnerAlert, type TenantContact } from "@/lib/email/owner-alert";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed, isCronDryRun, noteWouldSend } from "@/lib/automation/cron-gate";
+import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -248,7 +249,7 @@ ${sellerPhone ? `Prefer to talk? WhatsApp ${contactWho} on ${sellerPhone}.\n\n` 
             text:
 `Hi ${(lead.contact_name ?? "").split(" ")[0] || "there"},
 
-Your 14-day Google Workspace trial on ${lead.domain ?? "your domain"} ended ${daysPast === 0 ? "today" : `${daysPast} days ago`}.
+Your ${WORKSPACE_TRIAL_DAYS}-day Google Workspace trial on ${lead.domain ?? "your domain"} ended ${daysPast === 0 ? "today" : `${daysPast} days ago`}.
 
 We hope it gave you a real feel for how it would work day-to-day. We'd love to
 know how it went — and if you'd like to convert to a paid plan, we can pick up

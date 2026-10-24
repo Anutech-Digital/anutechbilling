@@ -1,7 +1,6 @@
 "use client";
 /**
- * Which floating buttons (AI sales agent launcher, WhatsApp pill) the website shows, and when
- * they step aside.
+ * When the website's one floating launcher shows, and when it steps aside.
  *
  * R-230 (6 Oct 2026): nothing floats on /checkout and /done — the page is the whole task.
  * R-464 (10 Oct 2026): at 390px the AI launcher and the WhatsApp pill covered the homepage
@@ -9,7 +8,9 @@
  * hero's own "WhatsApp us" button plus the floating pill). Below 980px the site now floats ONE
  * action — the AI launcher (its panel still offers "WhatsApp us instead") — and that launcher
  * steps aside while any element marked `data-avoid-floating` (the form) is on screen.
- * Desktop is unchanged.
+ * R-1498 (17 Oct 2026, Pawan on staging): on desktop the AI launcher and the WhatsApp pill still
+ * stacked bottom-right and covered content. Now every width floats ONE launcher; pressing it
+ * opens a small menu with "Chat with our AI sales agent" and "WhatsApp us" (AgentChat.tsx).
  */
 import { useEffect, useState } from "react";
 
@@ -30,22 +31,17 @@ export type FloatingInput = {
   isMobile: boolean;
   /** An element marked `data-avoid-floating` is (even partly) on screen. */
   avoidOnScreen: boolean;
-  /** The real WhatsApp number is configured (WHATSAPP_READY). */
-  whatsappReady: boolean;
-  /** The AI chat panel is open — its launcher then stays, so the visitor can close it. */
+  /** The launcher's menu or the AI chat panel is open — the launcher then stays, so the
+   *  visitor can close it. */
   chatOpen?: boolean;
 };
 
-export type FloatingButtons = { agent: boolean; whatsapp: boolean };
-
-/** Pure rule: which floating buttons to show. */
-export function floatingButtons(i: FloatingInput): FloatingButtons {
-  if (hideFloatingOn(i.pathname)) return { agent: false, whatsapp: false };
-  if (i.isMobile) {
-    // One floating action on a phone; it steps aside while the form is on screen.
-    return { agent: !i.avoidOnScreen || Boolean(i.chatOpen), whatsapp: false };
-  }
-  return { agent: true, whatsapp: i.whatsappReady };
+/** Pure rule: does the ONE floating launcher (AI chat + WhatsApp menu) show? */
+export function floatingLauncher(i: FloatingInput): boolean {
+  if (hideFloatingOn(i.pathname)) return false;
+  // On a phone it steps aside while the form / plan cards are on screen (R-464, R-1495).
+  if (i.isMobile) return !i.avoidOnScreen || Boolean(i.chatOpen);
+  return true;
 }
 
 /** True below 980px. False on the server and before mount (desktop = the old behaviour). */
@@ -64,16 +60,18 @@ export function useIsMobile(): boolean {
 
 /**
  * True while any `[data-avoid-floating]` element is on screen. Re-scans on every route change
- * (the chrome lives in the layout, so it outlives the page that holds the form).
+ * (the chrome lives in the layout, so it outlives the page that holds the form) AND whenever
+ * the page's DOM changes — R-1495 (Pawan, 17 Oct, phone): a page whose content arrives after
+ * the pathname changes (client navigation, a streamed server page, a remount) was never
+ * watched, so the launcher sat over the Workspace plan cards' buttons.
  */
 export function useAvoidFloating(pathname: string | null | undefined): boolean {
   const [onScreen, setOnScreen] = useState(false);
   useEffect(() => {
     setOnScreen(false);
     if (typeof IntersectionObserver === "undefined") return;
-    const els = Array.from(document.querySelectorAll(`[${AVOID_FLOATING_ATTR}]`));
-    if (els.length === 0) return;
     const visible = new Set<Element>();
+    const watched = new Set<Element>();
     const io = new IntersectionObserver((entries) => {
       for (const e of entries) {
         if (e.isIntersecting) visible.add(e.target);
@@ -81,8 +79,27 @@ export function useAvoidFloating(pathname: string | null | undefined): boolean {
       }
       setOnScreen(visible.size > 0);
     });
-    els.forEach((el) => io.observe(el));
-    return () => io.disconnect();
+    const scan = () => {
+      const now = new Set(document.querySelectorAll(`[${AVOID_FLOATING_ATTR}]`));
+      let dropped = false;
+      for (const el of watched) {
+        if (now.has(el)) continue;
+        io.unobserve(el);
+        watched.delete(el);
+        if (visible.delete(el)) dropped = true;
+      }
+      for (const el of now) {
+        if (watched.has(el)) continue;
+        watched.add(el);
+        io.observe(el);
+      }
+      if (dropped) setOnScreen(visible.size > 0);
+    };
+    scan();
+    if (typeof MutationObserver === "undefined") return () => io.disconnect();
+    const mo = new MutationObserver(scan);
+    mo.observe(document.body, { childList: true, subtree: true });
+    return () => { mo.disconnect(); io.disconnect(); };
   }, [pathname]);
   return onScreen;
 }

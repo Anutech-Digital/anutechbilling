@@ -44,7 +44,8 @@ import {
   type VendorBill,
 } from "@/lib/queries/vendor-bills";
 import { useBankAccounts } from "@/lib/queries/bank";
-import { AddVendorBillDialog } from "@/components/features/accounting/add-vendor-bill-dialog";
+import { AddVendorBillDialog, type VendorBillPrefill } from "@/components/features/accounting/add-vendor-bill-dialog";
+import { useVendors } from "@/lib/queries/vendors";
 import { InboundBillsQueue } from "@/components/features/accounting/inbound-bills-queue";
 import { BillDetailDialog } from "@/components/features/accounting/bill-detail-dialog";
 import { DocViewerDialog } from "@/components/features/documents/doc-viewer-dialog";
@@ -52,6 +53,7 @@ import { useConfirm } from "@/components/providers/confirm-provider";
 import { istToday, fyBounds } from "@/lib/dates/ist";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { BILL_SORT, billOutstanding, filterBills, readBillsView, type BillStatusFilter } from "./bills-table";
+import { useAddBillFromUrl } from "./add-from-url";
 
 /** Current financial year (Apr 1 → today), IST-safe, in YYYY-MM-DD. Defaulting
  *  to the FY (not just this month) so a freshly-added bill dated in an earlier
@@ -76,6 +78,15 @@ export default function VendorBillsPage() {
   /* R-118: in the URL, so the Outstanding tile (and a link) can open the owed bills. */
   const [statusFilter, setStatusFilter] = useUrlChoice<BillStatusFilter>("status", BILL_STATUSES, "");
   const [addOpen, setAddOpen] = React.useState(false);
+  /* R-1511: "Record a bill" on a vendor lands here with ?add=1&vendor=<id> — open Add Bill
+     with that vendor filled in. Manual "Add Bill" opens it empty (prefill cleared on close). */
+  const [addPrefill, setAddPrefill] = React.useState<VendorBillPrefill | undefined>(undefined);
+  const vendorsQ = useVendors();
+  const openAddFromUrl = React.useCallback((prefill: VendorBillPrefill | undefined) => {
+    setAddPrefill(prefill);
+    setAddOpen(true);
+  }, []);
+  useAddBillFromUrl(vendorsQ.data, vendorsQ.isLoading, openAddFromUrl);
   const [payBill, setPayBill] = React.useState<VendorBill | null>(null);
   const [detailBill, setDetailBill] = React.useState<VendorBill | null>(null);
 
@@ -100,7 +111,13 @@ export default function VendorBillsPage() {
     [range, statusFilter, search],
   );
   const deleteBill = React.useCallback(async (b: VendorBill) => {
-    if (await confirm({ title: `Delete bill ${b.bill_no || b.id}?`, danger: true, confirmLabel: "Delete" })) del.mutate(b.id);
+    if (await confirm({
+      title: `Delete bill ${b.bill_no || b.id}?`,
+      /* R-1577: say what changes; a paid / bank-matched bill or one in a payment run is refused with the next step. */
+      body: "This bill and its payable are removed from the books. If its payment is matched to a bank line or it is in a payment run, it cannot be deleted — the app tells you what to do first.",
+      danger: true,
+      confirmLabel: "Delete",
+    })) del.mutate(b.id);
   }, [confirm, del]);
 
   const columns = React.useMemo<DataTableColumn<VendorBill>[]>(() => [
@@ -266,7 +283,7 @@ export default function VendorBillsPage() {
       <FAB icon="plus" label="Bill" onClick={() => setAddOpen(true)} ariaLabel="Add Bill" />
 
       {/* Add dialog */}
-      {addOpen && <AddVendorBillDialog onClose={() => setAddOpen(false)} />}
+      {addOpen && <AddVendorBillDialog prefill={addPrefill} onClose={() => { setAddOpen(false); setAddPrefill(undefined); }} />}
       {payBill && <PayBillDialog bill={payBill} onClose={() => setPayBill(null)} />}
       {detailBill && <BillDetailDialog bill={detailBill} onClose={() => setDetailBill(null)} />}
     </div>
@@ -383,7 +400,7 @@ function BillActions({ bill, onPay, onDelete }: { bill: VendorBill; onPay: () =>
       {bill.status !== "paid" && outstanding > 0 && (
         <Button size="sm" variant="primary" icon="rupee" onClick={onPay}>Pay</Button>
       )}
-      <DropdownMenu>
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <button type="button" aria-label="Actions" className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2">
             <Icon name="more_h" size={18} />
@@ -473,7 +490,7 @@ function PayBillDialog({ bill, onClose }: { bill: VendorBill; onClose: () => voi
               <Input id="bills-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </FormField>
           </div>
-          {tooMuch && <p className="text-xs text-rose">Outstanding {rupee(outstanding)} se zyada nahi.</p>}
+          {tooMuch && <p className="text-xs text-rose">Cannot be more than the outstanding {rupee(outstanding)}.</p>}
           <FormField htmlFor="bills-pay-from" label="Pay from">
             <select id="bills-pay-from" value={accountId} onChange={(e) => setAccountId(e.target.value)} className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber">
               {accounts.length === 0 && <option value="">No accounts — add one in Banking</option>}

@@ -19,6 +19,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
 import { WhatsAppNotConfiguredError } from "./send-failure";
+import { guardPhoneRecipient, PHONE_ALLOWLIST_ENV } from "@/lib/email/staging-allowlist";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import type {
   WhatsAppMessageStatus,
@@ -114,6 +115,18 @@ export async function sendWhatsApp(opts: {
     customerId?: string | null;
   };
 }): Promise<WhatsAppSendResult> {
+  /* R-1403: staging messages only numbers on STAGING_PHONE_ALLOWLIST — checked before creds,
+     upload or the outbox row, so a blocked number never reaches Meta. Logged masked. Live: off. */
+  const guard = guardPhoneRecipient(opts.to);
+  if (!guard.allowed) {
+    console.warn(`[sendWhatsApp] dropped ${guard.reason}: to=${guard.masked} — nothing sent`);
+    return {
+      wamid: null,
+      status: "failed",
+      raw: { error: `Not sent — staging sends WhatsApp only to numbers on ${PHONE_ALLOWLIST_ENV}.`, reason: guard.reason },
+    };
+  }
+
   const creds = await resolveWhatsAppCreds(opts.tenantId);
   if (!creds) {
     throw new WhatsAppNotConfiguredError("WhatsApp credentials are not configured for this workspace. Settings → Integrations → WhatsApp Business.");

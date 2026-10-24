@@ -39,6 +39,7 @@ const ENV = { ...process.env };
 beforeEach(() => {
   db.inserts = []; db.error = null;
   process.env.AGENT_QUEUE_TOKEN = "q-token";
+  process.env.AGENT_QUEUE_TENANT_IDS = T;   // R-739: the token is scoped to this workspace
 });
 afterEach(() => { process.env = { ...ENV }; });
 
@@ -53,6 +54,13 @@ describe("POST /api/agent/page-test-runs", () => {
     expect((await call(BODY, null)).status).toBe(401);
     expect((await call(BODY, "guess")).status).toBe(401);
     expect((await call(BODY, "q-token-longer")).status).toBe(401);
+    expect(db.inserts).toHaveLength(0);
+  });
+
+  it("R-739: refuses a workspace the token is not scoped to, saying how to allow it", async () => {
+    const r = await call({ ...BODY, tenantId: "0b0e1c4e-2f43-4d3a-9d0e-5d6a3b2c1f00" });
+    expect(r.status).toBe(403);
+    expect((await r.json()).error).toMatch(/AGENT_QUEUE_TENANT_IDS/);
     expect(db.inserts).toHaveLength(0);
   });
 

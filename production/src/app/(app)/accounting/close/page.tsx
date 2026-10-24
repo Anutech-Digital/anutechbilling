@@ -16,9 +16,8 @@ import { LoadError } from "@/components/shared/load-error";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { COPY } from "@/lib/copy";
 import { useMonthClose, useSetManualCheck } from "@/lib/queries/month-close";
-import { useUpdateTenant } from "@/lib/queries/tenant";
+import { booksLockRights, useSetBooksLock } from "@/components/features/accounting/books-lock-card";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { useQueryClient } from "@tanstack/react-query";
 import { formatDate, cn } from "@/lib/utils";
 import type { CloseStep } from "@/lib/accounting/month-close";
 import { addDaysISO, istMonth, monthBounds } from "@/lib/dates/ist";
@@ -43,11 +42,11 @@ export default function MonthClosePage() {
   const [period, setPeriod] = React.useState(prevPeriod());
   const { data, isLoading, isError, refetch } = useMonthClose(period);
   const tick = useSetManualCheck();
-  const update = useUpdateTenant();
+  const update = useSetBooksLock();
   const confirm = useConfirm();
-  const qc = useQueryClient();
   const { data: me } = useCurrentUser();
-  const isOwner = me?.role === "owner";
+  /* R-1132: the accountant who works this list may lock too; set_books_lock() decides. */
+  const rights = booksLockRights(me?.role, data?.facts.booksLockedUntil ?? null);
   const close = data?.close;
 
   async function lock() {
@@ -58,9 +57,7 @@ export default function MonthClosePage() {
       confirmLabel: "Yes, lock", cancelLabel: COPY.cancel,
     });
     if (!ok) return;
-    await update.mutateAsync({ books_locked_until: data.facts.monthEnd });
-    qc.invalidateQueries({ queryKey: ["month-close", period] });
-    qc.invalidateQueries({ queryKey: ["books-lock"] });
+    update.mutate(data.facts.monthEnd);
   }
 
   return (
@@ -97,9 +94,9 @@ export default function MonthClosePage() {
                 </div>
               </div>
               {!close.locked && (
-                isOwner
+                rights.canLock
                   ? <Button variant="primary" disabled={!close.readyToLock || update.isPending} loading={update.isPending} onClick={lock} icon="lock">Lock books up to {formatDate(data.facts.monthEnd)}</Button>
-                  : <span className="text-xs text-ink-3">Only the owner can lock</span>
+                  : <span className="text-xs text-ink-3">Only the owner or accountant can lock. Tell them when every step is done.</span>
               )}
             </div>
             <div className="mt-3 h-1.5 rounded-full bg-paper-2 overflow-hidden">

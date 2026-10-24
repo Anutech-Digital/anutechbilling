@@ -32,6 +32,8 @@ import { extensionQuoteExpiry } from "@/lib/quotes/quote-validity";
 import { composeQuoteNotes } from "@/lib/quotes/customer-notes";
 import { addDaysISO } from "@/lib/billing/schedule";
 import { followingTermStart } from "@/lib/billing/subscription-schedule";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteStartTaxRate } from "@/lib/quotes/bill-of-supply";
 import {
   extensionCharge, extensionLabel, extensionLengthError, extensionMonths, extensionRenewalDate,
   type ExtensionLength,
@@ -164,7 +166,9 @@ export async function createExtensionQuote(
 
   /* Build line item. R-834: the charge is built FROM the line — whole-rupee rate per seat
      × seats = subtotal, so rate × qty on every screen equals the subtotal (extension-term.ts). */
-  const charge       = extensionCharge({ seats: input.seats, mrr: input.mrr, len });
+  /* R-1532: a Bill of Supply business (not GST-registered / composition) charges no GST. */
+  const taxRatePct   = quoteStartTaxRate(await readTenantGstRegistration(input.supabase, input.tenantId));
+  const charge       = extensionCharge({ seats: input.seats, mrr: input.mrr, len, taxRatePct });
   const annualAmount = charge.subtotal;   // ex-GST subtotal = perSeat × seats
   const grossAnnual  = charge.total;      // GST-inclusive payable
   const perSeatRate  = charge.perSeat;
@@ -205,7 +209,7 @@ export async function createExtensionQuote(
     subtotal:         annualAmount,
     total_cost:       Math.round(annualAmount * 0.83),
     discount_pct:     0,
-    tax_rate:         18,
+    tax_rate:         taxRatePct,
     is_renewal:       true,    // drives record_payment roll-forward
     is_extension:     true,    // display flag — UI shows "Extension" not "Renewal"
     extension_months: months,

@@ -240,9 +240,15 @@ export function parsePersonSearch(text: string | null | undefined, company: stri
   return { name: name.slice(0, 80), role: typeof o.role === "string" && o.role.trim() ? o.role.trim().slice(0, 60) : null, source_url: src.slice(0, 500) };
 }
 
+/** Task-note line labels. Tasks written before 22 Oct 2026 carry the old Hinglish labels, so code that
+ * finds these lines on a saved task matches both (lead-finder.server.ts fillLead;
+ * the old labels live in legacy-task-labels.ts). */
+export const WHO_TO_ASK = "Who to ask for";
+export const NAME_UNKNOWN = "Name unknown";
+
 /** Receptionist line for a call when we do not know whom to ask for. */
 export const ASK_FOR_OWNER =
-  "Naam nahi pata — receptionist se poochho: \"Namaste, main Anutech se bol raha hoon. Aapke office ke email aur website ke baare mein owner ya director se 2 minute baat karni thi — unka naam bata denge?\" Naam mile to lead mein daal do.";
+  `${NAME_UNKNOWN} — ask the receptionist: "Hello, I am calling from Anutech. I wanted 2 minutes with the owner or director about your office email and website — could you tell me their name?" Once you get the name, add it to the lead.`;
 
 /* ── Team pages (29 Sep 2026) ─────────────────────────────────────────────────
  * Most names turned out to be on the firm's own team page, under a different path on every

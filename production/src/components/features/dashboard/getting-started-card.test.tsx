@@ -164,3 +164,22 @@ describe("R-253 billing gets no button that bounces it to /invoices", () => {
     expect(screen.getAllByRole("link")).toHaveLength(10);
   });
 });
+
+describe("R-1129 setup is the owner's job (company save is owner-only in the database)", () => {
+  it("manager gets no setup rows and no settings link — a note to ask the owner instead", () => {
+    mockRole = "manager";
+    render(<GettingStartedCard {...props} />);
+    for (const l of SETUP_LABELS) expect(screen.queryByText(l)).toBeNull();
+    const hrefs = screen.getAllByRole("link").map((a) => a.getAttribute("href") ?? "");
+    expect(hrefs.some((h) => h.startsWith("/settings") || h.startsWith("/setup"))).toBe(false);
+    expect(screen.getByText(/Only the owner can finish setup/)).toBeDefined();
+    expect(screen.queryByText(/left before you can bill/)).toBeNull();
+    expect(screen.queryByText(/Ready to bill/)).toBeNull(); // not ready: the owner still has setup to do
+  });
+
+  it("manager sees no owner note once setup is done", () => {
+    mockRole = "manager";
+    render(<GettingStartedCard {...props} setup={doneSetup} />);
+    expect(screen.queryByText(/Only the owner can finish setup/)).toBeNull();
+  });
+});

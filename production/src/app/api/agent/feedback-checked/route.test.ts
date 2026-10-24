@@ -9,6 +9,7 @@ const db = vi.hoisted(() => ({
   updates: [] as Array<Record<string, unknown>>,
   eqs: [] as Array<[string, unknown]>,
   iss: [] as Array<[string, unknown]>,
+  ins: [] as Array<[string, unknown]>,
   matched: true,
   error: null as null | { message: string },
 }));
@@ -21,6 +22,7 @@ vi.mock("@/lib/supabase/server", () => ({
         update(v: Record<string, unknown>) { db.updates.push(v); return q; },
         eq(c: string, v: unknown) { db.eqs.push([c, v]); return q; },
         is(c: string, v: unknown) { db.iss.push([c, v]); return q; },
+        in(c: string, v: unknown) { db.ins.push([c, v]); return q; },
         select() {
           return Promise.resolve({ data: db.error ? null : db.matched ? [{ id: "x" }] : [], error: db.error });
         },
@@ -34,6 +36,8 @@ import { POST } from "./route";
 import { AI_CHECKER_NAME } from "./checker-name";
 
 const ID = "93b38539-0a9b-4942-bb33-3daa6cff97df";
+/** R-739: the workspaces this token may touch. */
+const SCOPE = "fbb976f1-9090-4f10-9726-0901bd144e42";
 const call = (body: unknown, token: string | null = "q-token") =>
   POST(new Request("https://example.invalid/api/agent/feedback-checked", {
     method: "POST",
@@ -43,8 +47,9 @@ const call = (body: unknown, token: string | null = "q-token") =>
 const ENV = { ...process.env };
 
 beforeEach(() => {
-  db.updates = []; db.eqs = []; db.iss = []; db.matched = true; db.error = null;
+  db.updates = []; db.eqs = []; db.iss = []; db.ins = []; db.matched = true; db.error = null;
   process.env.AGENT_QUEUE_TOKEN = "q-token";
+  process.env.AGENT_QUEUE_TENANT_IDS = SCOPE;
 });
 afterEach(() => { process.env = { ...ENV }; });
 
@@ -71,6 +76,8 @@ describe("POST /api/agent/feedback-checked", () => {
     const r = await call({ id: ID });
     expect(r.status).toBe(200);
     expect(db.eqs).toEqual([["id", ID], ["status", "fixed"]]);
+    /* R-739: only a report from a workspace the token is scoped to. */
+    expect(db.ins).toEqual([["tenant_id", [SCOPE]]]);
     expect(db.iss).toEqual([["checked_at", null]]);
     expect(Object.keys(db.updates[0]).sort()).toEqual(["checked_at", "checked_by_name", "updated_at"]);
     expect(db.updates[0].checked_by_name).toBe(AI_CHECKER_NAME);

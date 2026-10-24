@@ -14,6 +14,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -40,11 +41,16 @@ export async function POST(req: Request) {
   }
   const { data: me } = await userClient
     .from("users")
-    .select("tenant_id")
+    .select("tenant_id, role")
     .eq("id", authData.user.id)
     .single();
   if (!me?.tenant_id) {
     return NextResponse.json({ error: "user not linked to a tenant" }, { status: 403 });
+  }
+  /* R-1470: a bulk import writes many leads at once — ACTION_ROLES contacts.import (owner,
+     manager), the same roles that see "Import from Google" on Leads (hidden from sales). */
+  if (!mayDo(me.role, "contacts.import")) {
+    return NextResponse.json({ error: forbiddenMessage("contacts.import") }, { status: 403 });
   }
 
   let body: unknown;

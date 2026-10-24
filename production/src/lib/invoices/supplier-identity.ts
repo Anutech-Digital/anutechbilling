@@ -44,10 +44,12 @@
  * and the state + code that determine place of supply.
  */
 import type { CurrentUserInfo } from "@/lib/hooks/useCurrentUser";
+import { isBillOfSupply, supplierGstStatusOf, type DocumentKindFields } from "./document-kind";
 
 export interface SupplierIdentity {
   name:      string;
-  gstin:     string;
+  /** null only on an unregistered supplier's Bill of Supply (R-1529) — it has no GSTIN. */
+  gstin:     string | null;
   address:   string;
   state:     string;
   stateCode: string;
@@ -81,6 +83,13 @@ const REQUIRED: MissingField[] = [
     why: "Printed beside the state code, and the two must agree." },
 ];
 
+/* R-1529 — a Bill of Supply (CGST Rule 49). The supplier's GSTIN is required only "if
+   registered": an unregistered business has none, so asking for it would block the one
+   document it is allowed to issue. A composition taxable person IS registered and keeps it.
+   Name, address and state stay required — Rule 49 asks for them on every bill. */
+const BOS_GSTIN_WHY =
+  "A composition taxable person is registered — the Bill of Supply must carry your GSTIN (Rule 49).";
+
 /** Blank, whitespace and the string "null" all mean absent. */
 function present(v: string | null | undefined): v is string {
   return typeof v === "string" && v.trim().length > 0 && v.trim().toLowerCase() !== "null";
@@ -96,8 +105,16 @@ function present(v: string | null | undefined): v is string {
  */
 export function supplierIdentity(
   me: CurrentUserInfo | null | undefined,
+  /** R-1529: the issued document. A Bill of Supply from an unregistered supplier needs no GSTIN. */
+  doc?: DocumentKindFields | null,
 ): SupplierIdentityResult {
-  if (!me) return { ok: false, missing: REQUIRED, hasSession: false };
+  const bos = isBillOfSupply(doc);
+  const gstinOptional = bos && supplierGstStatusOf(doc) !== "composition";
+  const required = bos
+    ? REQUIRED.filter((r) => !(gstinOptional && r.field === "gstin"))
+        .map((r) => (r.field === "gstin" ? { ...r, why: BOS_GSTIN_WHY } : r))
+    : REQUIRED;
+  if (!me) return { ok: false, missing: required, hasSession: false };
 
   const candidate = {
     name:      me.tenantName,
@@ -107,7 +124,7 @@ export function supplierIdentity(
     stateCode: me.tenantStateCode,
   };
 
-  const missing = REQUIRED.filter((r) => {
+  const missing = required.filter((r) => {
     const v = candidate[r.field as keyof typeof candidate];
     return !present(v);
   });
@@ -117,7 +134,7 @@ export function supplierIdentity(
     ok: true,
     supplier: {
       name:      candidate.name.trim(),
-      gstin:     candidate.gstin!.trim().toUpperCase(),
+      gstin:     present(candidate.gstin) ? candidate.gstin.trim().toUpperCase() : null,
       address:   candidate.address!.trim(),
       state:     candidate.state!.trim(),
       stateCode: candidate.stateCode!.trim(),
@@ -131,13 +148,17 @@ export function supplierIdentity(
  * One line for the operator. §24: what happened, why, what to do — the caller adds
  * the button to /settings.
  */
-export function supplierIdentityMessage(r: SupplierIdentityResult): string | null {
+export function supplierIdentityMessage(
+  r: SupplierIdentityResult,
+  doc?: DocumentKindFields | null,
+): string | null {
   if (r.ok) return null;
   if (!r.hasSession) {
     return "Loading your business details — an invoice cannot be prepared until they arrive.";
   }
   const names = r.missing.map((m) => m.label).join(", ");
-  return `Your business is missing ${names}. A tax invoice cannot be issued without ${
+  const what = isBillOfSupply(doc) ? "A bill of supply" : "A tax invoice";
+  return `Your business is missing ${names}. ${what} cannot be issued without ${
     r.missing.length === 1 ? "it" : "them"
   } — add ${r.missing.length === 1 ? "it" : "them"} in Settings first.`;
 }

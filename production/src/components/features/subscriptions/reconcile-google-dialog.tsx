@@ -26,8 +26,10 @@ import { Badge } from "@/components/ui/badge";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { useItems } from "@/lib/queries/items";
 import { buildPlanPriceIndex, planKey } from "@/lib/subscriptions/plan-match";
+import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { createClient } from "@/lib/supabase/client";
 import { rupee, cn } from "@/lib/utils";
+import { downloadCSV } from "@/lib/csv";
 import { PORTALS } from "@/components/shared/portal-dock";
 
 type Bucket = "only_google" | "matched" | "only_app" | "suspended";
@@ -97,7 +99,8 @@ export function ReconcileGoogleDialog({ open, onOpenChange, onAddMissing }: Prop
      note in lib/subscriptions/plan-match.ts. */
   const priceIndex = React.useMemo(
     () => buildPlanPriceIndex((items ?? []).map((it) => ({
-      name: it.name, vendor: it.vendor, msrpPerSeatMonth: it.msrp,
+      /* R-1704: the R-205 Workspace list-price floor, the same rule as the quote builder. */
+      name: it.name, vendor: it.vendor, msrpPerSeatMonth: floorWorkspaceRow(it).msrp,
     }))),
     [items],
   );
@@ -126,16 +129,12 @@ export function ReconcileGoogleDialog({ open, onOpenChange, onAddMissing }: Prop
   function downloadBucket() {
     if (!report) return;
     const rows = report.buckets[bucket];
-    const cols = ["domain", "sku", "seats", "status", "renewal", "est_mrr"] as const;
-    const esc = (v: unknown) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const lines = [cols.join(",")];
-    for (const r of rows) lines.push([r.domain, r.sku, r.seats, r.status, r.renewal, r.estMrr ?? ""].map(esc).join(","));
-    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `reconcile-${bucket}.csv`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    /* R-1795: the shared downloadCSV — csvEscape on every cell (R-734) and an export_log row (R-1006). */
+    downloadCSV(
+      `reconcile-${bucket}.csv`,
+      ["domain", "sku", "seats", "status", "renewal", "est_mrr"],
+      rows.map((r) => [r.domain, r.sku, r.seats, r.status, r.renewal, r.estMrr ?? ""]),
+    );
     toast.success(`Downloaded ${rows.length} row${rows.length === 1 ? "" : "s"}`);
   }
 

@@ -22,23 +22,33 @@
 import { NextResponse } from "next/server";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import {
   triggersForTerm,
   decideCadence,
+  renewalIsSettled,
+  firstReminderDaysOut,
+  effectiveGraceDays,
+  serviceStopDate,
   type CadenceTone,
 } from "@/lib/renewals/cadence";
+import { readGraceOverrides } from "@/lib/renewals/grace-overrides";
+import { formatIstDate } from "@/lib/dates/ist";
 import { renderTemplate } from "@/lib/renewals/templates";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { isEmailConfigured } from "@/lib/email/send";
 import { sendCustomerEmail } from "@/lib/messaging";
 import { renderQuotePDF } from "@/lib/pdf";
+import { loadQuotePeriodContextById } from "@/lib/quotes/line-period-context";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -65,11 +75,16 @@ export async function POST(req: Request) {
   // Resolve tenant_id from auth user
   const { data: me, error: meErr } = await userClient
     .from("users")
-    .select("tenant_id")
+    .select("tenant_id, role")
     .eq("id", authData.user.id)
     .single();
   if (meErr || !me) {
     return NextResponse.json({ error: "user not linked to a tenant" }, { status: 403 });
+  }
+  /* R-1470: "Send now" lives on Renewals and Subscriptions — only roles that open one of them
+     (owner, manager, billing, support). Checked before the subscription is read or mailed. */
+  if (!mayOpenPage(me.role, ["/renewals", "/subscriptions"])) {
+    return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   }
 
   // Admin client for the cross-table reads/writes (RLS would already protect,
@@ -101,9 +116,17 @@ export async function POST(req: Request) {
   if (splitReason) {
     return NextResponse.json({ error: splitReason, code: "split_billed" }, { status: 400 });
   }
-  if (sub.renewal_state === "suspended" || sub.renewal_state === "renewed") {
+  if (sub.renewal_state === "suspended") {
     return NextResponse.json(
-      { error: `cannot send — subscription is ${sub.renewal_state}` },
+      { error: "This subscription is suspended — reactivate it before sending a renewal reminder." },
+      { status: 400 }
+    );
+  }
+  /* R-1562: 'renewed' blocks only while the NEW term's first reminder is still ahead. The
+     bare-state check blocked every term after the first paid one, for good. */
+  if (renewalIsSettled(sub.renewal_state, sub.renewal_date, sub.term_months)) {
+    return NextResponse.json(
+      { error: `Already renewed — the next term's reminders open ${firstReminderDaysOut(sub.term_months)} days before ${sub.renewal_date}.` },
       { status: 400 }
     );
   }
@@ -126,15 +149,24 @@ export async function POST(req: Request) {
   const { data: customer } = sub.customer_id
     ? await supabase
         .from("customers")
-        .select("name, contact_name, contact_email, gstin, contact_phone, state_code")
+        .select("name, contact_name, contact_email, gstin, contact_phone, state_code, gst_treatment")
         .eq("id", sub.customer_id)
         .single()
     : { data: null };
 
+  /* R-1621: the same grace the nightly run uses — trusted customer, company, "+N days". */
+  const overrides = await readGraceOverrides(supabase, [sub.id], [sub.customer_id]);
+  const graceDays = effectiveGraceDays({
+    tenantGraceDays:  tenant.grace_period_days,
+    trustedGraceDays: sub.customer_id ? overrides.trustedByCustomer.get(sub.customer_id) ?? null : null,
+    renewalDate:      sub.renewal_date,
+    graceUntil:       overrides.bySubscription.get(sub.id)?.graceUntil ?? null,
+  });
+
   // ── Decide cadence; if off-trigger, pick closest tone ───────────
   const decision = decideCadence({
     renewalDate:  sub.renewal_date,
-    graceDays:    tenant.grace_period_days ?? 0,
+    graceDays,
     currentState: (sub.renewal_state ?? "pending") as never,
     /* The cron passes this and this route did not, so a monthly subscription force-sent
        from the screen was judged against the ANNUAL ladder while the same subscription in
@@ -173,19 +205,25 @@ export async function POST(req: Request) {
     mrr:             sub.mrr ?? 0,
     termMonths:      sub.term_months ?? null,
     renewalDate:     sub.renewal_date,
-    graceDays:       tenant.grace_period_days ?? 0,
+    graceDays,
     existingQuoteId: sub.renewal_quote_id,
   });
-  const renewalQuoteId = quoteResult?.quoteId ?? null;
-  const renewalQuote = quoteResult
-    ? {
-        amount:       quoteResult.amount,
-        subtotal:     quoteResult.subtotal,
-        discount_pct: quoteResult.discountPct,
-        tax_rate:     quoteResult.taxRate,
-      }
-    : null;
-  const lineItems: QuoteLineItem[] = quoteResult?.lineItems ?? [];
+  /* R-1571: no quote → no email. This went out with an amount made up as mrr × 12 (12x
+     wrong on a monthly term, 144x where mrr held a yearly figure) and no accept link. */
+  if (!quoteResult) {
+    return NextResponse.json(
+      { error: "The renewal quote could not be built, so no reminder was sent. Check the subscription's price against the catalogue (the price check refuses a figure far off the catalogue), then try again." },
+      { status: 422 }
+    );
+  }
+  const renewalQuoteId = quoteResult.quoteId;
+  const renewalQuote = {
+    amount:       quoteResult.amount,
+    subtotal:     quoteResult.subtotal,
+    discount_pct: quoteResult.discountPct,
+    tax_rate:     quoteResult.taxRate,
+  };
+  const lineItems: QuoteLineItem[] = quoteResult.lineItems ?? [];
 
   // Public accept-link token (SEC-1) — the link needs the quote's opaque token.
   let renewalToken: string | null = null;
@@ -228,12 +266,12 @@ export async function POST(req: Request) {
     tenantPhone:     tenant.phone,
     planName:        sub.plan,
     seats:           sub.seats,
-    amount:          renewalQuote?.amount ?? (sub.mrr ?? 0) * 12,
-    renewalDate:     new Date(sub.renewal_date).toLocaleDateString("en-IN", {
-      day: "numeric", month: "short", year: "numeric",
-    }),
+    amount:          renewalQuote.amount,
+    renewalDate:     formatIstDate(sub.renewal_date),
     daysUntil:       Math.abs(decision.daysUntilRenewal),
-    graceDays:       tenant.grace_period_days ?? 0,
+    graceDays,
+    /* R-1621: the exact IST day the service stops if still unpaid. */
+    stopDate:        formatIstDate(serviceStopDate(sub.renewal_date, graceDays)),
     acceptLink:      renewalQuoteId && renewalToken
       /* `?? undefined` because quoteAcceptUrl now returns null when NEXT_PUBLIC_APP_URL is
          missing or has no scheme. NO LINK is the right outcome there — the template omits
@@ -246,7 +284,7 @@ export async function POST(req: Request) {
 
   // ── PDF attachment ──────────────────────────────────────────────
   let attachments: { filename: string; content: Buffer; contentType: string }[] | undefined;
-  if (renewalQuote && lineItems.length > 0) {
+  if (lineItems.length > 0) {
     try {
       const blob = await renderQuotePDF({
         tenantLogo:    await logoDataUri((tenant as { logo_url?: string | null }).logo_url),
@@ -255,7 +293,7 @@ export async function POST(req: Request) {
         tenantEmail:   tenant.email,
         tenantPhone:   tenant.phone,
         tenantAddress: tenant.address,
-        quoteId:       renewalQuoteId!,
+        quoteId:       renewalQuoteId,
         customerName:  sub.customer_name,
         contactName:   customer?.contact_name ?? null,
         contactEmail:  customer?.contact_email ?? null,
@@ -266,12 +304,16 @@ export async function POST(req: Request) {
         discount:      0,
         taxable:       renewalQuote.subtotal ?? renewalQuote.amount,
         taxRate:       renewalQuote.tax_rate ?? 18,
+        /* R-1532: Bill of Supply business → "No GST — Bill of Supply" on a 0% quote. */
+        billOfSupply:  quoteDocBillOfSupply(await readTenantGstRegistration(supabase, sub.tenant_id), renewalQuote.tax_rate ?? 18),
         tax:           quoteDisplayTax(renewalQuote.subtotal ?? renewalQuote.amount, renewalQuote.tax_rate ?? 18, renewalQuote.amount), // R-804
         total:         renewalQuote.amount,
-        interState:    isInterStateSupply(customer?.state_code, tenant.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant.gstin }),
+        interState:    isInterStateSupply(customer?.state_code, tenant.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant.gstin, treatment: customer?.gst_treatment }),
         validityDays:  30,
         notes:         "Renewal quote. Reply or call us with any questions.",
         isRenewal:     true,
+        /* R-1764: "Domain:" / "Subscription period:" — the next term this quote buys. */
+        periodContext: await loadQuotePeriodContextById(supabase, sub.tenant_id, renewalQuoteId),
       });
       const arrBuf = await blob.arrayBuffer();
       attachments = [{

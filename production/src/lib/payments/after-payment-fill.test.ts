@@ -1,6 +1,6 @@
 /* R-447 + R-407 — blanks the Record payment sheet fills after the payment is saved. */
 import { describe, it, expect, vi } from "vitest";
-import { fillCustomerStateFromQuote, saveDomainAfterPayment } from "./after-payment-fill";
+import { domainSetupLine, fillCustomerStateFromQuote, saveDomainAfterPayment, stampPaymentDomain } from "./after-payment-fill";
 
 type Rows = Record<string, Record<string, unknown> | null>;
 
@@ -70,5 +70,53 @@ describe("saveDomainAfterPayment (R-407)", () => {
     const f = fake({ quotes: { customer_id: null } });
     await saveDomainAfterPayment(f.client, { quoteId: "Q1", domain: "acme.com" });
     expect(f.updates.map((u) => u.table)).toEqual(["provisioning_tasks"]);
+  });
+});
+
+/* R-1730 — the domain left the Record payment sheet; the same writes now run from one function,
+   called by the sheet (with the domain the page knew) and by the quote's Setting up card. */
+describe("stampPaymentDomain (R-1730)", () => {
+  function fakeWithSubs(subs: Array<{ id: string; vendor: string | null; domain: string | null }>) {
+    const updates: Array<{ table: string; patch: unknown; filters: string[] }> = [];
+    const from = vi.fn((table: string) => {
+      const filters: string[] = [];
+      let patch: unknown = null;
+      const q: Record<string, unknown> = {};
+      q.select = () => (patch ? Promise.resolve({ data: [{ id: "x" }], error: null }) : q);
+      q.eq = (c: string, v: unknown) => { filters.push(`${c}=${String(v)}`); return q; };
+      q.is = (c: string, v: unknown) => { filters.push(`${c} is ${String(v)}`); return q; };
+      q.or = (f: string) => { filters.push(f); return q; };
+      q.order = async () => ({ data: table === "subscriptions" ? subs : [], error: null });
+      q.maybeSingle = async () => ({ data: table === "quotes" ? { customer_id: "c1" } : null, error: null });
+      q.update = (p: unknown) => { patch = p; updates.push({ table, patch: p, filters }); return q; };
+      return q;
+    });
+    return { client: { from } as never, updates };
+  }
+  it("Workspace + Support quote: ONE subscription takes the domain, then the customer and the task", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const f = fakeWithSubs([
+      { id: "s-support", vendor: "other", domain: null },
+      { id: "s-gws", vendor: "google", domain: null },
+    ]);
+    const r = await stampPaymentDomain(f.client, { quoteId: "Q1", domain: "acme.com" });
+    expect(r).toEqual({ subscription: true, customer: true, task: true });
+    const subWrites = f.updates.filter((u) => u.table === "subscriptions");
+    expect(subWrites).toHaveLength(1);
+    expect(subWrites[0].filters).toContain("domain is null"); // never overwrites
+    expect(f.updates.map((u) => u.table)).toEqual(["subscriptions", "customers", "provisioning_tasks"]);
+  });
+  it("no domain → nothing written", async () => {
+    const f = fakeWithSubs([{ id: "s1", vendor: "google", domain: null }]);
+    expect(await stampPaymentDomain(f.client, { quoteId: "Q1", domain: "  " })).toEqual({ subscription: false, customer: false, task: false });
+    expect(f.updates).toEqual([]);
+  });
+});
+
+describe("domainSetupLine (R-1730)", () => {
+  it("fully paid → the quote's Setting up card; part paid → Subscriptions; domain known → nothing", () => {
+    expect(domainSetupLine({ domainToSetUp: true, isFullyPaid: true })).toBe("Next: add the customer's domain on the quote's Setting up card.");
+    expect(domainSetupLine({ domainToSetUp: true, isFullyPaid: false })).toBe("Next: add the customer's domain in Subscriptions → Add domain.");
+    expect(domainSetupLine({ domainToSetUp: false, isFullyPaid: true })).toBeNull();
   });
 });

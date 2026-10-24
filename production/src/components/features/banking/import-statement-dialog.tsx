@@ -1,10 +1,13 @@
 /**
- * ImportStatementDialog — paste / upload a bank statement CSV.
+ * ImportStatementDialog — paste / upload a bank statement.
  *
- * Accepts: CSV pasted text, or .csv / .xlsx file upload (file is read in
- * the browser via FileReader). Tries to auto-detect the column mapping
- * from the header row. Supports the column layouts used by HDFC, ICICI,
- * SBI, Axis, Kotak, IndusInd — which all use slightly different names.
+ * Accepts: CSV pasted text; a .csv / .txt file; an Excel .xls / .xlsx file
+ * (first sheet, read in the browser with SheetJS loaded only then — R-1512 —
+ * and turned into the same CSV text); or a PDF / photo (read by AI on the
+ * server). Parsing lives in lib/banking/statement-parse.ts: it finds the real
+ * header row below the bank's info rows and auto-detects the column mapping.
+ * Supports the column layouts used by HDFC, ICICI, SBI, Axis, Kotak,
+ * IndusInd — which all use slightly different names.
  *
  * Phase 1 limitation: the operator may need to nudge the mapping if
  * their bank's header text is unusual. A "Sample row preview" pane
@@ -30,12 +33,28 @@ import { Icon } from "@/components/ui/icon";
 import {
   useImportBankTransactions,
   useExistingTxnKeys,
-  bankTxnKeys,
+  planBankImport,
   useBankAccount,
   useUpdateBankAccount,
 } from "@/lib/queries/bank";
+import { importBadge } from "./import-badge";
 import { openingBalanceFromStatement, fyStartFor } from "@/lib/banking/opening-balance";
-import { isEncryptedPdf } from "@/lib/banking/pdf-check";
+import { isEncryptedPdf, pdfPageCount } from "@/lib/banking/pdf-check";
+import {
+  readStatementInChunks,
+  chunkResultFrom,
+  pagesLabel,
+  STATEMENT_CHUNK_PAGES,
+  type ChunkProgress,
+  type PageRange,
+} from "@/lib/banking/statement-chunks";
+import {
+  checkPreview,
+  importBlocked,
+  rereadBrokenPages,
+  type RowCountIssue,
+} from "@/lib/banking/statement-verify";
+import { StatementChainBlock } from "./statement-chain-block";
 import { fixStatementDates } from "@/lib/banking/statement-dates";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { useTxnCategoryRules, useCreateTxnCategoryRule } from "@/lib/queries/txn-category-rules";
@@ -44,7 +63,10 @@ import { directionOf } from "@/lib/banking/categorise";
 import { EXPENSE_CATEGORIES, suggestCategory } from "@/lib/queries/expenses";
 import { suggestForLine } from "@/lib/banking/categorise";
 import { rupee, formatDate } from "@/lib/utils";
-import { toIstDate } from "@/lib/dates/ist";
+import { parseStatement, rowsToCsv, type ParsedRow, type ParseResult } from "@/lib/banking/statement-parse";
+// Only the small reader module — SheetJS itself is `await import("xlsx")` inside excelToRows,
+// a separate chunk fetched when an Excel file is picked (R-1512).
+import { excelToRows, isExcelFile } from "@/lib/banking/statement-xlsx";
 
 interface Props {
   open: boolean;
@@ -52,133 +74,27 @@ interface Props {
   accountId: string;
 }
 
-type ParsedRow = {
-  txn_date:      string;       // ISO YYYY-MM-DD
-  description:   string;
-  debit:         number;       // ₹ integer
-  credit:        number;       // ₹ integer
-  balance_after: number | null;
-  reference:     string | null;
+/** A preview row may carry the PDF pages it was read from (R-1693) — never sent to the database. */
+type PreviewRow = ParsedRow & { page?: PageRange };
+type Preview = {
+  rows: PreviewRow[];
+  skipped: number;
+  warnings: string[];
+  /** R-1693: pages where the AI wrote fewer lines than it counted. */
+  rowCountIssues?: RowCountIssue[];
+  /** R-1693: what was re-read page by page, if anything. */
+  rereadNote?: string | null;
 };
 
-// Common header aliases across Indian banks. Each canonical key maps to
-// possible header names we'll match (lowercase, trimmed).
-const HEADER_ALIASES: Record<keyof ParsedRow, string[]> = {
-  txn_date:      ["date", "txn date", "transaction date", "value date", "post date", "tran date"],
-  description:   ["description", "narration", "particulars", "details", "remarks", "transaction details"],
-  debit:         ["debit", "withdrawal", "withdrawal amt", "withdrawal (dr)", "amount (debit)", "debit (rs.)", "debit amount"],
-  credit:        ["credit", "deposit", "deposit amt", "deposit (cr)", "amount (credit)", "credit (rs.)", "credit amount"],
-  balance_after: ["balance", "closing balance", "running balance", "available balance"],
-  reference:     ["ref no", "ref no./cheque no", "reference no", "chq./ref. no.", "ref.no./cheque no", "utr no"],
-};
-
-// ─── CSV parsing ───────────────────────────────────────────────────────────
-// Naive but reliable for bank statements (no embedded commas in amounts;
-// quoted fields handled). For complex CSV use papaparse later if needed.
-function parseCSV(text: string): string[][] {
-  const rows: string[][] = [];
-  let cur: string[] = [];
-  let buf = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    const next = text[i + 1];
-    if (ch === '"' && inQuotes && next === '"') { buf += '"'; i++; continue; }
-    if (ch === '"')              { inQuotes = !inQuotes; continue; }
-    if (ch === "," && !inQuotes) { cur.push(buf); buf = ""; continue; }
-    if ((ch === "\n" || ch === "\r") && !inQuotes) {
-      if (ch === "\r" && next === "\n") i++;
-      cur.push(buf);
-      // Only push non-empty rows
-      if (cur.some((c) => c.trim().length > 0)) rows.push(cur);
-      cur = []; buf = "";
-      continue;
-    }
-    buf += ch;
-  }
-  if (buf || cur.length) {
-    cur.push(buf);
-    if (cur.some((c) => c.trim().length > 0)) rows.push(cur);
-  }
-  return rows;
-}
-
-/** Heuristic date parser — handles DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD. */
-function parseDate(input: string): string | null {
-  const s = input.trim();
-  if (!s) return null;
-  // YYYY-MM-DD already
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  // DD/MM/YYYY or DD-MM-YYYY (Indian convention)
-  const m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
-  if (m) {
-    const dd = m[1].padStart(2, "0");
-    const mm = m[2].padStart(2, "0");
-    let yy = m[3];
-    if (yy.length === 2) yy = (parseInt(yy, 10) > 50 ? "19" : "20") + yy;
-    return `${yy}-${mm}-${dd}`;
-  }
-  // Try Date.parse fallback
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) return toIstDate(d);   // "28 Sep 2026" = local midnight; UTC slice din peeche le jata
-  return null;
-}
-
-/** Strip commas / spaces / ₹ from amount string, return integer rupees. */
-function parseAmount(input: string | undefined): number {
-  if (!input) return 0;
-  const cleaned = input.replace(/[₹,\s]/g, "").replace(/[Cc][Rr]$/, "").replace(/[Dd][Rr]$/, "");
-  const n = parseFloat(cleaned);
-  return isNaN(n) ? 0 : Math.round(n);
-}
-
-/**
- * Normalise a header cell so HDFC's "Withdrawal Amt." matches the alias
- * "withdrawal amt", ICICI's "Chq.No./Ref.No." matches "chq./ref. no.", etc.
- * Strips dots, parens, slashes, extra whitespace — collapses to a single
- * lowercase token sequence.
- */
-function normaliseHeader(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[.()/]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Given a parsed CSV (header + data rows), figure out which column index
- * holds which field. Returns null when the basic Date/Debit/Credit columns
- * can't be detected.
- */
-function detectColumns(headerRow: string[]): Record<keyof ParsedRow, number> | null {
-  const normalised = headerRow.map(normaliseHeader);
-  const map: Partial<Record<keyof ParsedRow, number>> = {};
-
-  for (const [field, aliases] of Object.entries(HEADER_ALIASES) as Array<[keyof ParsedRow, string[]]>) {
-    const normAliases = aliases.map(normaliseHeader);
-    for (let i = 0; i < normalised.length; i++) {
-      // Match either exact or prefix (covers "withdrawal amt" ↔ "withdrawal amt rs")
-      if (normAliases.some((a) => normalised[i] === a || normalised[i].startsWith(a + " "))) {
-        map[field] = i;
-        break;
-      }
-    }
-  }
-  if (map.txn_date == null || map.description == null) return null;
-  if (map.debit == null && map.credit == null) return null;
-  return {
-    txn_date:      map.txn_date,
-    description:   map.description,
-    debit:         map.debit ?? -1,
-    credit:        map.credit ?? -1,
-    balance_after: map.balance_after ?? -1,
-    reference:     map.reference ?? -1,
-  };
-}
-
-type ParseResult = { rows: ParsedRow[]; skipped: number; warnings: string[] };
+/** Exactly the columns of a bank line — the preview's page tag stays behind. */
+const toLine = (r: PreviewRow): ParsedRow => ({
+  txn_date: r.txn_date,
+  description: r.description,
+  debit: r.debit,
+  credit: r.credit,
+  balance_after: r.balance_after,
+  reference: r.reference,
+});
 
 /**
  * Last gate before the preview (CSV and AI alike): every date must be a real calendar
@@ -186,7 +102,7 @@ type ParseResult = { rows: ParsedRow[]; skipped: number; warnings: string[] };
  * day-first — and said out loud; a date impossible either way skips its row, counted.
  * Without this one bad date ("2026-21-08") failed the whole import in Postgres.
  */
-function withRealDates(p: ParseResult, serverSwapped = 0): ParseResult {
+function withRealDates(p: Preview | ParseResult, serverSwapped = 0): Preview {
   const fix = fixStatementDates(p.rows.map((r) => r.txn_date), localDateISO(new Date(Date.now() + 86_400_000)));   // +1 day: server clock may be UTC
   const rows = p.rows.flatMap((r, i) => (fix.dates[i] ? [{ ...r, txn_date: fix.dates[i]! }] : []));
   const dropped = p.rows.length - rows.length;
@@ -195,70 +111,31 @@ function withRealDates(p: ParseResult, serverSwapped = 0): ParseResult {
   if (fix.swappedAll) warnings.push(`The dates were in day-first order — all ${fix.swapped} were flipped. Check a few dates in the preview before importing.`);
   else if (swapped > 0) warnings.push(`${swapped} date${swapped === 1 ? " had its" : "s had their"} day and month swapped and ${swapped === 1 ? "was" : "were"} corrected — check ${swapped === 1 ? "it" : "them"} in the preview.`);
   if (dropped > 0) warnings.push(`${dropped} row${dropped === 1 ? "" : "s"} had an impossible date and ${dropped === 1 ? "was" : "were"} skipped.`);
-  return { rows, skipped: p.skipped + dropped, warnings };
+  return { ...p, rows, skipped: p.skipped + dropped, warnings };
 }
 
-function parseStatement(text: string): ParseResult {
-  const raw = parseCSV(text);
-  if (raw.length === 0) return { rows: [], skipped: 0, warnings: ["Empty file"] };
-
-  // Find the first row that looks like a header. Bank statements can have a
-  // LONG preamble (HDFC often runs 20-30 lines of bank name, address, account
-  // details, statement period and opening balance before the table), so scan
-  // the whole file — a data row won't match the date+description+amount header
-  // aliases, so there's no false-positive risk.
-  let headerIdx = -1;
-  let mapping: ReturnType<typeof detectColumns> | null = null;
-  for (let i = 0; i < raw.length; i++) {
-    const m = detectColumns(raw[i]);
-    if (m) { headerIdx = i; mapping = m; break; }
-  }
-  if (headerIdx < 0 || !mapping) {
-    return { rows: [], skipped: raw.length, warnings: [
-      "Couldn't auto-detect column layout. Expected headers like Date, Description, Debit, Credit (or Withdrawal, Deposit).",
-    ] };
-  }
-
-  const out: ParsedRow[] = [];
-  let skipped = 0;
-  for (let i = headerIdx + 1; i < raw.length; i++) {
-    const r = raw[i];
-    const date = parseDate(r[mapping.txn_date] ?? "");
-    if (!date) { skipped++; continue; }
-    // Coerce to non-negative integers — a stray minus sign or a decimal would
-    // otherwise break the integer column or the debit-xor-credit rule.
-    const debit  = Math.max(0, mapping.debit  >= 0 ? parseAmount(r[mapping.debit])  : 0);
-    const credit = Math.max(0, mapping.credit >= 0 ? parseAmount(r[mapping.credit]) : 0);
-    if (debit === 0 && credit === 0) { skipped++; continue; }
-    // A bank line is debit XOR credit. If a row genuinely has both populated
-    // (a mis-aligned column / reversal line), we can't tell which figure is
-    // right — skip it rather than invent a number or fail the whole batch.
-    if (debit > 0 && credit > 0) { skipped++; continue; }
-    out.push({
-      txn_date:      date,
-      description:   (r[mapping.description] ?? "").trim() || "(no description)",
-      debit, credit,
-      balance_after: mapping.balance_after >= 0 ? parseAmount(r[mapping.balance_after]) || null : null,
-      reference:     mapping.reference     >= 0 ? (r[mapping.reference]?.trim() || null)        : null,
-    });
-  }
-
-  return { rows: out, skipped, warnings: [] };
-}
+/** R-1623: where an import came from (bank_import_batches.source). */
+type ImportOrigin = "pdf" | "csv" | "xlsx" | "paste" | "image";
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) {
   const [csvText, setCsvText] = React.useState("");
-  const [parsed, setParsed]   = React.useState<{ rows: ParsedRow[]; skipped: number; warnings: string[] } | null>(null);
+  const [parsed, setParsed]   = React.useState<Preview | null>(null);
   // "csv" = parsed from pasted/CSV text; "ai" = read from a PDF/photo via Gemini.
   const [mode, setMode]       = React.useState<"csv" | "ai">("csv");
   const [reading, setReading] = React.useState(false);
   const [readMsgIdx, setReadMsgIdx] = React.useState(0);
+  /* R-1690: real progress while a long PDF is read a few pages per call. null = one call. */
+  const [chunkProgress, setChunkProgress] = React.useState<ChunkProgress | null>(null);
+  /* R-1693: pages being read again one at a time because the balance chain broke. */
+  const [rereadProgress, setRereadProgress] = React.useState<{ done: number; total: number; reading: number[] } | null>(null);
   const importMut = useImportBankTransactions();
+  /* R-1623: which file (and kind) this import came from — the account's Imports list shows it. */
+  const [origin, setOrigin] = React.useState<{ name: string | null; source: ImportOrigin } | null>(null);
 
   // Rotating status while the AI reads — so a multi-second read never looks stuck.
-  const READ_MSGS = ["PDF khol rahe hai…", "Transactions dhoondh rahe hai…", "Rows nikaal rahe hai…", "Amounts check kar rahe hai…", "Almost done…"];
+  const READ_MSGS = ["Opening the file…", "Finding transactions…", "Extracting rows…", "Checking amounts…", "Almost done…"];
   React.useEffect(() => {
     if (!reading) { setReadMsgIdx(0); return; }
     const t = setInterval(() => setReadMsgIdx((i) => Math.min(i + 1, READ_MSGS.length - 1)), 1600);
@@ -287,7 +164,16 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
      cannot silently discard a choice somebody made, and so "set to no category" stays
      distinguishable from "never touched". */
   const [override, setOverride] = React.useState<Record<number, string>>({});
-  React.useEffect(() => { setOverride({}); setRuleDone({}); }, [parsed]);
+  /* R-1693: does the preview hold every line? The bank's running balance must chain from
+     line to line (lib/banking/statement-verify.ts). Lines missing → Import waits for an
+     explicit tick. Same check for CSV / Excel as for a PDF. */
+  const [ackIncomplete, setAckIncomplete] = React.useState(false);
+  const chainCheck = React.useMemo(
+    () => (parsed && parsed.rows.length > 0 ? checkPreview(parsed.rows, parsed.rowCountIssues ?? []) : null),
+    [parsed],
+  );
+  const blocked = importBlocked(chainCheck, ackIncomplete);
+  React.useEffect(() => { setOverride({}); setRuleDone({}); setAckIncomplete(false); }, [parsed]);
 
   const categoryFor = (i: number): string | null =>
     override[i] !== undefined ? (override[i] || null) : (suggestions[i]?.category ?? null);
@@ -323,15 +209,26 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   );
   const excludedCount = parsed ? parsed.rows.filter(isExcluded).length : 0;
 
-  // How many parsed rows are already in the books (will be skipped on import).
-  const dupCount = React.useMemo(() => {
-    if (!parsed || !existingKeys) return 0;
-    return parsed.rows.filter((r) => !isExcluded(r) && bankTxnKeys(r).some((k) => existingKeys.has(k))).length;
+  /* How many parsed rows are already in the books (will be skipped on import) — the same
+     function the import itself runs (planBankImport, R-1691), so the count shown here is
+     the count skipped. R-1644: it counts — each stored line accounts for one line here, and
+     lines of this upload are never matched to each other. The skipped lines are listed and
+     the owner can take them anyway — never dropped silently. */
+  const plan = React.useMemo(() => {
+    if (!parsed) return null;
+    const rows = parsed.rows.filter((r) => !isExcluded(r));
+    if (!existingKeys) return { duplicates: 0, freshCount: rows.length, skipped: [] as ParsedRow[] };
+    const p = planBankImport(rows, existingKeys);
+    return { duplicates: p.duplicates, freshCount: p.fresh.length, skipped: p.skipped };
   }, [parsed, existingKeys, isExcluded]);
-  const freshCount = (parsed?.rows.length ?? 0) - excludedCount - dupCount;
+  const [importSkipped, setImportSkipped] = React.useState(false);
+  React.useEffect(() => { setImportSkipped(false); }, [parsed]);
+  const dupCount = importSkipped ? 0 : (plan?.duplicates ?? 0);
+  const skippedLines = plan?.skipped ?? [];
+  const freshCount = (plan?.freshCount ?? 0) + (importSkipped ? skippedLines.length : 0);
 
   React.useEffect(() => {
-    if (!open) { setCsvText(""); setParsed(null); setMode("csv"); setReading(false); }
+    if (!open) { setCsvText(""); setParsed(null); setMode("csv"); setReading(false); setOrigin(null); }
   }, [open]);
 
   // Re-parse the textarea (CSV mode only — don't clobber an AI/PDF result).
@@ -345,7 +242,9 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   const readPdf = async (file: File) => {
     /* A password-protected PDF (bank e-statements usually are) cannot be read by the AI —
        it fails with a bare 400. Say so before uploading it, and say what works instead. */
-    if (/pdf/i.test(file.type) && isEncryptedPdf(new Uint8Array(await file.arrayBuffer()))) {
+    const isPdf = /pdf/i.test(file.type);
+    const bytes = isPdf ? new Uint8Array(await file.arrayBuffer()) : null;
+    if (bytes && isEncryptedPdf(bytes)) {
       toast.error("This PDF is password-protected, so it can't be read.", {
         description: "Download the statement as CSV / \"Delimited\" (.txt) from net banking — or open the PDF with its password, Print → Save as PDF, and upload that copy.",
         duration: 12000,
@@ -362,6 +261,67 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
         r.onerror = () => reject(new Error("read failed"));
         r.readAsDataURL(file);
       });
+
+      /* R-1690: a PDF longer than one chunk is read a few pages per call. In one call a
+         month of entries timed out at 60 s on both models, every time (staging, 19 Oct). */
+      const pageCount = bytes ? await pdfPageCount(bytes) : null;
+      if (pageCount && pageCount > STATEMENT_CHUNK_PAGES) {
+        setChunkProgress({ pagesDone: 0, pageCount, reading: [] });
+        const out = await readStatementInChunks<ParsedRow>({
+          pageCount,
+          onProgress: setChunkProgress,
+          readChunk: async (pages) => {
+            const res = await fetch("/api/ai/extract-statement", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ fileBase64: base64, mimeType: file.type, pages: { ...pages, total: pageCount } }),
+            });
+            return chunkResultFrom<ParsedRow>(res.ok, await res.json().catch(() => null));
+          },
+        });
+        if (out.allFailed) {
+          toastError(out.failed[0]?.error, {
+            fallback: "Couldn't read the statement.",
+            description: "Nothing was imported. Download the statement as CSV / Excel from net banking and upload that instead.",
+          });
+          setParsed(null);
+          return;
+        }
+        /* R-1693: every chunk can come back 200 with lines simply left out. Check the
+           running-balance chain now; where it breaks, read those pages again one at a time. */
+        setChunkProgress(null);
+        const checked = await rereadBrokenPages<ParsedRow>({
+          chunks: out.chunks,
+          today: localDateISO(new Date(Date.now() + 86_400_000)),   // +1 day, as withRealDates
+          onProgress: setRereadProgress,
+          readPage: async (page) => {
+            const res = await fetch("/api/ai/extract-statement", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ fileBase64: base64, mimeType: file.type, pages: { from: page, to: page, total: pageCount } }),
+            });
+            return chunkResultFrom<ParsedRow>(res.ok, await res.json().catch(() => null));
+          },
+        });
+        if (checked.failed.length > 0) {
+          toast.warning(`Page ${checked.failed.map(pagesLabel).join(", ")} could not be read — the other rows are in the preview.`, {
+            description: "Read the preview warning before importing: entries from those pages must be imported separately (CSV / a smaller PDF).",
+            duration: 12000,
+          });
+        }
+        setParsed(withRealDates({
+          rows: checked.rows,
+          skipped: checked.skipped,
+          warnings: [
+            ...checked.warnings,
+            ...(checked.rows.length === 0 ? ["The AI found no transactions in this file — download the statement as CSV and use that instead."] : []),
+          ],
+          rowCountIssues: checked.rowCountIssues,
+          rereadNote: checked.note,
+        }));
+        return;
+      }
+
       const res = await fetch("/api/ai/extract-statement", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -376,16 +336,24 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
         setParsed(null);
         return;
       }
+      /* R-1693: one call reads the whole file, so its rows are tagged with all its pages and
+         the model's own count is compared with what it wrote (no re-read on this path). */
+      const whole: PageRange = { from: 1, to: pageCount ?? 1 };
+      const counted = typeof json.rowCount === "number" ? json.rowCount : null;
+      const returned = typeof json.rowsReturned === "number" ? json.rowsReturned : (json.rows ?? []).length;
       setParsed(withRealDates({
-        rows: (json.rows ?? []) as ParsedRow[],
+        rows: ((json.rows ?? []) as ParsedRow[]).map((r) => ({ ...r, page: whole })),
         skipped: json.skipped ?? 0,
         warnings: (json.rows ?? []).length === 0 ? ["The AI found no transactions in this file — download the statement as CSV and use that instead."] : [],
+        rowCountIssues: counted !== null && returned < counted ? [{ pages: whole, counted, returned }] : [],
       }, Number(json.datesSwapped) || 0));
     } catch {
       toast.error("Upload failed.", { description: "Nothing was imported. Check your connection and try again — or paste the CSV instead." });
       setParsed(null);
     } finally {
       setReading(false);
+      setChunkProgress(null);
+      setRereadProgress(null);
     }
   };
 
@@ -397,15 +365,47 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       toast.error("File too large (over 8 MB).", { description: "Download a shorter date range, or paste the CSV text instead." });
       return;
     }
+    /* Excel (.xls / .xlsx) → first sheet's rows → the same CSV text the textarea parses,
+       so the header auto-detect, preview and import are exactly the CSV path (R-1512). */
+    if (isExcelFile(file)) {
+      setReading(true);
+      try {
+        const rows = await excelToRows(await file.arrayBuffer());
+        if (rows.length === 0) {
+          toast.error("This Excel file has no rows on its first sheet.", { description: "Open it in Excel, check the statement is on the first sheet, and upload again — or download the CSV instead." });
+          return;
+        }
+        setMode("csv");
+        setOrigin({ name: file.name, source: "xlsx" });
+        setCsvText(rowsToCsv(rows));
+      } catch {
+        toast.error("Couldn't read this Excel file.", {
+          description: "If it is password-protected, open it in Excel and Save As without a password — or download the statement as CSV / \"Delimited\" (.txt) from net banking.",
+          duration: 12000,
+        });
+      } finally {
+        setReading(false);
+      }
+      return;
+    }
     // PDF / image → AI reader; CSV / text → parse in the browser.
-    if (/pdf|image/i.test(file.type)) { await readPdf(file); return; }
+    if (/pdf|image/i.test(file.type)) {
+      setOrigin({ name: file.name, source: /pdf/i.test(file.type) ? "pdf" : "image" });
+      await readPdf(file);
+      return;
+    }
     setMode("csv");
+    setOrigin({ name: file.name, source: "csv" });
     setCsvText(await file.text());
   };
 
   const handleImport = async () => {
     if (!parsed || parsed.rows.length === 0) {
       toast.error("Nothing to import yet.", { description: "Upload the statement file or paste its CSV text above first." });
+      return;
+    }
+    if (blocked) {
+      toast.error("Some statement lines are missing from the preview.", { description: "Read the red box in the preview — import a CSV / Excel file instead, or tick the box to import the incomplete statement knowingly." });
       return;
     }
     try {
@@ -416,13 +416,16 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       if (freshCount > 0) {
         await importMut.mutateAsync({
           accountId,
+          fileName: origin?.name ?? null,
+          source: origin?.source ?? "paste",
+          importSkipped,
           rows: parsed.rows.flatMap((r, i) => {
             if (isExcluded(r)) return [];
             const category = categoryFor(i);
-            if (!category) return [r];
+            if (!category) return [toLine(r)];
             const touched = override[i] !== undefined;
             return [{
-              ...r,
+              ...toLine(r),
               category,
               category_source: touched ? ("manual" as const) : ("rule" as const),
               category_confidence: 100,
@@ -453,35 +456,76 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
         <SheetHeader>
           <SheetTitle>Import bank statement</SheetTitle>
           <SheetDescription>
-            Upload a <b>PDF</b> statement or a <b>.csv</b> file (or paste the text
-            below). PDF ko AI padh ke rows nikaal deta hai; CSV auto-detect hoti
-            hai (Date / Description / Debit / Credit). Aap import se pehle preview
-            check karo.
+            Upload a <b>PDF</b> statement, an <b>Excel</b> (.xls / .xlsx) or a <b>.csv</b> file (or paste
+            the text below). AI reads the PDF and extracts the rows; Excel and CSV columns are
+            detected automatically (Date / Description / Debit / Credit). Check the preview
+            before importing.
           </SheetDescription>
         </SheetHeader>
 
         <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
-          {/* File upload — PDF/photo (AI) or CSV. Shows a live progress state
+          {/* File upload — PDF/photo (AI), Excel or CSV. Shows a live progress state
               while the AI reads, so a multi-second read never looks frozen. */}
           <div className="rounded-md border border-dashed border-hairline-strong bg-paper-2/30 p-4">
             <style>{"@keyframes ros-loadbar{0%{transform:translateX(-100%)}100%{transform:translateX(320%)}}"}</style>
             {reading ? (
               <div className="flex flex-col items-center text-center gap-3 py-1">
                 <Icon name="sparkles" size={22} className="text-amber-ink animate-pulse" />
-                <span className="text-sm font-medium text-ink">{READ_MSGS[readMsgIdx]}</span>
-                <div className="w-44 h-1.5 rounded-full bg-hairline overflow-hidden">
-                  <div className="h-full w-1/3 rounded-full bg-amber" style={{ animation: "ros-loadbar 1.1s ease-in-out infinite" }} />
-                </div>
-                <span className="text-xs text-ink-3">Bade statement mein thoda zyada waqt lag sakta hai — ruko mat 😊</span>
+                {rereadProgress ? (
+                  /* R-1693: the balance chain broke — those pages are read again, one at a time. */
+                  <>
+                    <span className="text-sm font-medium text-ink" role="status" aria-live="polite">
+                      {rereadProgress.reading.length > 0
+                        ? `Balance chain broke — re-reading page ${rereadProgress.reading.join(", ")}…`
+                        : "Checking the balance chain…"}
+                    </span>
+                    <span className="text-xs text-ink-3 tabular-nums">
+                      {rereadProgress.done} / {rereadProgress.total} pages re-read — looking for missing lines
+                    </span>
+                  </>
+                ) : chunkProgress ? (
+                  /* R-1690: a long PDF, a few pages per call — real numbers, not a rotating line. */
+                  <>
+                    <span className="text-sm font-medium text-ink" role="status" aria-live="polite">
+                      {chunkProgress.reading.length > 0
+                        ? `Page ${chunkProgress.reading[0].from}–${chunkProgress.reading[chunkProgress.reading.length - 1].to} of ${chunkProgress.pageCount}…`
+                        : `Reading a ${chunkProgress.pageCount}-page statement…`}
+                    </span>
+                    <div
+                      className="w-44 h-1.5 rounded-full bg-hairline overflow-hidden"
+                      role="progressbar"
+                      aria-label="Statement pages read"
+                      aria-valuemin={0}
+                      aria-valuemax={chunkProgress.pageCount}
+                      aria-valuenow={chunkProgress.pagesDone}
+                    >
+                      <div
+                        className="h-full rounded-full bg-amber transition-[width] duration-500"
+                        style={{ width: `${Math.max(4, Math.round((chunkProgress.pagesDone / chunkProgress.pageCount) * 100))}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-ink-3 tabular-nums">
+                      {chunkProgress.pagesDone} / {chunkProgress.pageCount} pages done — a long statement is read in parts
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-sm font-medium text-ink">{READ_MSGS[readMsgIdx]}</span>
+                    <div className="w-44 h-1.5 rounded-full bg-hairline overflow-hidden">
+                      <div className="h-full w-1/3 rounded-full bg-amber" style={{ animation: "ros-loadbar 1.1s ease-in-out infinite" }} />
+                    </div>
+                    <span className="text-xs text-ink-3">A large statement can take a little longer — please wait.</span>
+                  </>
+                )}
               </div>
             ) : (
               <label className="cursor-pointer flex flex-col items-center text-center gap-2">
                 <Icon name="upload" size={20} className="text-ink-3" />
-                <span className="text-sm font-medium">Choose file — PDF / CSV</span>
-                <span className="text-xs text-ink-3">Bank statement PDF (AI reads it) · ya .csv / .txt (HDFC &quot;Delimited&quot;) · up to 8 MB</span>
+                <span className="text-sm font-medium">Choose file — PDF / Excel / CSV</span>
+                <span className="text-xs text-ink-3">Bank statement PDF (AI reads it) · Excel .xls / .xlsx · or .csv / .txt (HDFC &quot;Delimited&quot;) · up to 8 MB</span>
                 <input
                   type="file"
-                  accept=".csv,.txt,text/csv,text/plain,application/pdf,image/*"
+                  accept=".csv,.txt,.xls,.xlsx,text/csv,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf,image/*"
                   className="hidden"
                   onChange={onFileChange}
                 />
@@ -497,7 +541,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
               placeholder={"Date,Description,Debit,Credit,Balance\n28/05/2026,UPI/RAZORPAY/...,0,521088,..."}
               className="mt-1 w-full rounded-md border border-hairline bg-paper px-3 py-2 text-xs font-mono text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
               value={csvText}
-              onChange={(e) => { setMode("csv"); setCsvText(e.target.value); }}
+              onChange={(e) => { setMode("csv"); setOrigin((o) => (o && o.source !== "pdf" && o.source !== "image" ? o : { name: null, source: "paste" })); setCsvText(e.target.value); }}
             />
           </div>
 
@@ -506,14 +550,21 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
             <div className="rounded-md border border-hairline bg-paper-2/30 p-3">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm font-semibold">Parse summary</p>
-                {parsed.rows.length > 0 ? (
-                  <Badge kind="success" dot size="sm">
-                    {parsed.rows.length} ready to import
-                  </Badge>
-                ) : (
-                  <Badge kind="danger" dot size="sm">Couldn&apos;t parse</Badge>
-                )}
+                {/* R-1692: what Import will add (the same plan), not every parsed line. */}
+                {(() => {
+                  const b = importBadge({ parsedCount: parsed.rows.length, freshCount });
+                  return <Badge kind={b.kind} dot size="sm">{b.text}</Badge>;
+                })()}
               </div>
+              {chainCheck && (
+                <StatementChainBlock
+                  check={chainCheck}
+                  source={mode === "ai" ? "ai" : "csv"}
+                  ack={ackIncomplete}
+                  onAck={setAckIncomplete}
+                  note={parsed.rereadNote}
+                />
+              )}
               {parsed.warnings.length > 0 && (
                 <ul className="text-xs text-rose space-y-0.5 mb-2">
                   {parsed.warnings.map((w, i) => <li key={i}>• {w}</li>)}
@@ -524,11 +575,30 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                   Skipped {parsed.skipped} row{parsed.skipped === 1 ? "" : "s"} (missing date or both amounts zero — usually opening-balance / sub-total lines)
                 </p>
               )}
-              {dupCount > 0 && (
-                <p className="text-xs text-amber-ink mb-2 flex items-start gap-1.5">
-                  <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
-                  {dupCount} line{dupCount === 1 ? "" : "s"} pehle se books me hain — ye <b>skip</b> ho jaayengi{freshCount > 0 ? ` (sirf ${freshCount} nayi import hongi)` : " (kuch naya nahi)"}.
-                </p>
+              {skippedLines.length > 0 && (
+                <div className="text-xs text-amber-ink mb-2 rounded-md border border-amber/40 bg-amber-soft/20 p-2">
+                  <p className="flex items-start gap-1.5">
+                    <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
+                    <span>
+                      {importSkipped
+                        ? <>{skippedLines.length} line{skippedLines.length === 1 ? "" : "s"} that look already imported will be imported <b>again</b>.</>
+                        : <>{skippedLines.length} line{skippedLines.length === 1 ? "" : "s"} skipped as already imported{freshCount > 0 ? ` (only ${freshCount} new will be imported)` : " (nothing new)"}:</>}
+                    </span>
+                  </p>
+                  {/* R-1644: say WHICH lines — two equal ₹500 payments on one day are two payments. */}
+                  <ul className="mt-1 ml-5 space-y-0.5 text-ink-2 max-h-24 overflow-y-auto">
+                    {skippedLines.map((r, i) => (
+                      <li key={i} className="truncate">
+                        {formatDate(r.txn_date)} · {r.debit ? `${rupee(r.debit)} out` : `${rupee(r.credit ?? 0)} in`} · {r.description ?? "—"}
+                      </li>
+                    ))}
+                  </ul>
+                  <label className="mt-1.5 ml-5 flex items-center gap-2 cursor-pointer text-ink-2">
+                    <input type="checkbox" className="accent-amber" checked={importSkipped}
+                      onChange={(e) => setImportSkipped(e.target.checked)} />
+                    Import these anyway — they are real, separate transactions
+                  </label>
+                </div>
               )}
               {parsed.rows.length > 0 && (
                 <div className="overflow-x-auto">
@@ -719,9 +789,9 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           )}
 
           <div className="rounded-md bg-indigo-50 border border-indigo/20 px-3 py-2 text-xs text-indigo-ink">
-            <b>Tip:</b> Net banking se statement <b>PDF</b> ya <b>CSV</b> dono chalti hai —
-            PDF ko AI padh leta hai, CSV auto-detect hoti hai (HDFC, ICICI, SBI, Axis,
-            Kotak, IndusInd, Yes Bank). Import se pehle preview zaroor check karo.
+            <b>Tip:</b> Download the statement from net banking as <b>PDF</b>, <b>Excel</b> or <b>CSV</b> — all work.
+            AI reads the PDF; Excel and CSV are detected automatically (HDFC, ICICI, SBI, Axis,
+            Kotak, IndusInd, Yes Bank). Always check the preview before importing.
           </div>
         </div>
 
@@ -732,14 +802,15 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           <Button
             variant="primary"
             icon="upload"
-            disabled={freshCount === 0 && !openingOn}
+            disabled={(freshCount === 0 && !openingOn) || blocked}
+            title={blocked ? "Some statement lines are missing — see the red box in the preview" : undefined}
             loading={importMut.isPending || updateAccount.isPending}
             onClick={handleImport}
           >
             {freshCount === 0 && openingOn
               ? "Set opening balance"
               : dupCount > 0 && freshCount === 0
-                ? "Sab pehle se hain"
+                ? "All already imported"
                 : `Import ${freshCount} row${freshCount === 1 ? "" : "s"}${openingOn ? " + opening balance" : ""}`}
           </Button>
         </SheetFooter>

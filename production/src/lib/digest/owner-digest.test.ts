@@ -30,6 +30,16 @@ describe("R-220 owner digest — the four numbers", () => {
     expect(d.moneyIn).toEqual({ count: 3, value: 267700 });
   });
 
+  it("R-1565: advance credit applied is not money in; a payment paid wholly by credit is not counted", () => {
+    const d = buildOwnerDigest(input({
+      payments: [
+        { status: "received", amount: 6000, credit_applied: 4000, received_at: "2026-10-06T06:00:00Z" },
+        { status: "received", amount: 3000, credit_applied: 3000, received_at: "2026-10-06T07:00:00Z" },
+      ],
+    }));
+    expect(d.moneyIn).toEqual({ count: 1, value: 2000 });
+  });
+
   it("overdue = past due with balance left, net of advances and receipts", () => {
     const d = buildOwnerDigest(input({
       invoices: [

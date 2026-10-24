@@ -21,6 +21,9 @@ const recordTrialInDms = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/dms-engine/trials", () => ({ checkTrialHistory, recordTrialInDms }));
 
 import { startHostingTrial, likeEscape, quoteForOr, repeatTrialsAllowed } from "./start-trial";
+/* R-1499: outside production the website tenant is never implied any more — name it, as a
+   deployment does. (The fixture is the same id the routes used to fall back to.) */
+process.env.BUY_PAGE_TENANT_ID ||= "fbb976f1-9090-4f10-9726-0901bd144e42";
 
 type Admin = Parameters<typeof startHostingTrial>[0];
 

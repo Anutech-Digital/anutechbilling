@@ -16,6 +16,8 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { domainOffer } from "@/site/components/domains/domain-offer";
+import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 
 const ROOT = join(process.cwd(), "src/site");
 
@@ -68,6 +70,8 @@ describe("site cart lines are chargeable", () => {
         for (const o of objects) {
           // The paid-hosting builder (lib/hosting-cart-line.ts) carries the sku itself — pinned below.
           if (/^cart\.add\(paidHostingLine\(/.test(o)) continue;
+          // The /domains result adds the lines domainOffer built (R-1772) — pinned below.
+          if (f.rel === "components/domains/DomainLanding.tsx" && o === "cart.add(line)") continue;
           expect(o, `no sku in:\n${o}`).toMatch(/\bsku\s*:/);
           if (/sku\s*:\s*`domain:/.test(o)) expect(o, `domain line without its name:\n${o}`).toMatch(/\bdomain\s*:/);
           expect(o).not.toMatch(/your(name|business)/i);
@@ -79,6 +83,16 @@ describe("site cart lines are chargeable", () => {
   it("the paid-hosting builder the hosting page and the checkout pop-up share carries the hosting sku", () => {
     const src = readFileSync(join(ROOT, "lib/hosting-cart-line.ts"), "utf8");
     expect(src).toContain("sku: `hosting:${p.name.toLowerCase()}`");
+  });
+
+  it("the /domains offer builder (R-1772): every line carries a sku, the domain line its name", () => {
+    const tier = HOSTING_TIERS[0];
+    for (const hostingOn of [true, false]) {
+      const { lines } = domainOffer({ domain: "acme.in", tld: ".in", domainReg: 649, domainRenew: null, hostingOn, tier, yearly: true, mailOn: true });
+      expect(lines.length).toBeGreaterThan(0);
+      for (const l of lines) expect(l.sku, l.label).toBeTruthy();
+      for (const l of lines.filter((x) => x.sku?.startsWith("domain:"))) expect(l.domain).toBe("acme.in");
+    }
   });
 
   it("the two old components with SKU-less adds stay deleted, and nothing imports them", () => {

@@ -161,6 +161,66 @@ function savePanelSize(s: PanelSize) {
 }
 const viewport = () => (typeof window === "undefined" ? { w: 1280, h: 800 } : { w: window.innerWidth, h: window.innerHeight });
 
+/* R-1447 (Abhishek, staging: the panel covers the screen underneath while reporting): on a
+   desktop the panel can be moved — drag its header (or Tab to the grip and use the arrow keys).
+   The spot is kept in this browser; "Dock" puts it back on the right edge. A phone does not
+   drag — it picks a Left / Right edge instead (R-1467, below). */
+export interface PanelPos { x: number; y: number }
+const PANEL_POS_KEY = "reselleros.aiHelp.pos";
+/** Below this window width the panel is the phone sheet (Tailwind md). */
+const PANEL_DESKTOP_MIN_W = 768;
+/** md:top-16 — where the docked panel starts. */
+const PANEL_DOCK_TOP = 64;
+
+/** Where a docked panel of this size sits: right edge, under the top bar. */
+export const dockedPanelPos = (s: PanelSize, vp: { w: number }): PanelPos => ({ x: Math.max(0, vp.w - s.w), y: PANEL_DOCK_TOP });
+
+/** Keep the whole panel inside the window; a panel larger than the window sticks to the top-left. */
+export function clampPanelPos(p: PanelPos, s: PanelSize, vp: { w: number; h: number }): PanelPos {
+  const x = Number.isFinite(p.x) ? p.x : 0;
+  const y = Number.isFinite(p.y) ? p.y : 0;
+  return {
+    x: Math.round(Math.max(0, Math.min(vp.w - s.w, x))),
+    y: Math.round(Math.max(0, Math.min(vp.h - s.h, y))),
+  };
+}
+
+/** Position after dragging the header by (dx, dy) px. */
+export const dragPanelPos = (start: PanelPos, dx: number, dy: number, s: PanelSize, vp: { w: number; h: number }): PanelPos =>
+  clampPanelPos({ x: start.x + dx, y: start.y + dy }, s, vp);
+
+/** Arrow keys on the move grip: one PANEL_KEY_STEP per press. Null = not a move key. */
+export function keyMovePanel(p: PanelPos, key: string, s: PanelSize, vp: { w: number; h: number }): PanelPos | null {
+  const d = key === "ArrowLeft" ? [-1, 0] : key === "ArrowRight" ? [1, 0] : key === "ArrowUp" ? [0, -1] : key === "ArrowDown" ? [0, 1] : null;
+  return d ? clampPanelPos({ x: p.x + d[0] * PANEL_KEY_STEP, y: p.y + d[1] * PANEL_KEY_STEP }, s, vp) : null;
+}
+
+function readPanelPos(): PanelPos | null {
+  try {
+    const raw = window.localStorage.getItem(PANEL_POS_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as Partial<PanelPos>;
+    return typeof v.x === "number" && typeof v.y === "number" && Number.isFinite(v.x) && Number.isFinite(v.y) ? { x: v.x, y: v.y } : null;
+  } catch { return null; }
+}
+function savePanelPos(p: PanelPos | null) {
+  try {
+    if (p) window.localStorage.setItem(PANEL_POS_KEY, JSON.stringify(p));
+    else window.localStorage.removeItem(PANEL_POS_KEY);
+  } catch { /* private window — the spot just isn't remembered */ }
+}
+
+/* R-1467 (rest of R-1447): on a phone the panel is a side panel on the left or right edge —
+   a Left / Right toggle in its header, kept in this browser — so the page stays visible beside it. */
+export type PhoneSide = "left" | "right";
+const PHONE_SIDE_KEY = "reselleros.aiHelp.phoneSide";
+function readPhoneSide(): PhoneSide {
+  try { return window.localStorage.getItem(PHONE_SIDE_KEY) === "left" ? "left" : "right"; } catch { return "right"; }
+}
+function savePhoneSide(s: PhoneSide) {
+  try { window.localStorage.setItem(PHONE_SIDE_KEY, s); } catch { /* private window — the side just isn't remembered */ }
+}
+
 /** R-827: narrowest a dialog may be squeezed to beside the docked panel; below this the panel just overlays. */
 export const DIALOG_MIN_ROOM = 360;
 /** 1rem each side of a dialog that sits left of the panel. */
@@ -345,10 +405,61 @@ export function AiHelp() {
   }, [open]);
   const shownSize = clampPanelSize(size, viewport());
   const large = isLargePanel(shownSize);
+  /* R-1447: null = docked on the right (as before); a spot = moved by the person (desktop only). */
+  const [pos, setPos] = React.useState<PanelPos | null>(null);
+  React.useEffect(() => { const saved = readPanelPos(); if (saved) setPos(saved); }, []);
+  const isDesktop = viewport().w >= PANEL_DESKTOP_MIN_W;
+  const shownPos = pos && isDesktop ? clampPanelPos(pos, shownSize, viewport()) : null;
+  const moved = shownPos !== null;
+  const [phoneSide, setPhoneSide] = React.useState<PhoneSide>("right");
+  React.useEffect(() => { setPhoneSide(readPhoneSide()); }, []);
+  const choosePhoneSide = (s: PhoneSide) => { setPhoneSide(s); savePhoneSide(s); };
+  const move = React.useRef<{ x: number; y: number; start: PanelPos; last: PanelPos | null } | null>(null);
+  const startMove = (e: React.PointerEvent) => {
+    if (!isDesktop || e.button !== 0) return;
+    /* the header's own buttons stay buttons — only the grip and the bare header drag */
+    const ctl = (e.target as Element).closest("button,a,input,textarea,select");
+    if (ctl && !ctl.hasAttribute("data-drag")) return;
+    e.preventDefault();
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    move.current = { x: e.clientX, y: e.clientY, start: shownPos ?? dockedPanelPos(shownSize, viewport()), last: null };
+  };
+  const doMove = (e: React.PointerEvent) => {
+    const m = move.current;
+    if (!m) return;
+    const dx = e.clientX - m.x, dy = e.clientY - m.y;
+    if (!m.last && dx === 0 && dy === 0) return;
+    m.last = dragPanelPos(m.start, dx, dy, shownSize, viewport());
+    setPos(m.last);
+  };
+  const endMove = () => {
+    if (move.current?.last) savePanelPos(move.current.last);
+    move.current = null;
+  };
+  const onMoveKey = (e: React.KeyboardEvent) => {
+    const next = keyMovePanel(shownPos ?? dockedPanelPos(shownSize, viewport()), e.key, shownSize, viewport());
+    if (!next) return;
+    e.preventDefault();
+    setPos(next);
+    savePanelPos(next);
+  };
+  const gripRef = React.useRef<HTMLButtonElement>(null);
+  function dockPanel() {
+    setPos(null);
+    savePanelPos(null);
+    /* the Dock button turns disabled — keep keyboard focus in the header */
+    gripRef.current?.focus();
+  }
+  /* A moved panel's left edge is its own: widening from it moves the panel left, so the right edge stays put. */
+  function keepRightEdge(from: PanelPos, fromW: number, nextW: number) {
+    const p = clampPanelPos({ x: from.x + fromW - nextW, y: from.y }, { w: nextW, h: shownSize.h }, viewport());
+    setPos(p);
+    return p;
+  }
   /* R-827: the panel is docked on the right. On a desktop, dialogs centre in the space left of
      it (ui/dialog reads --ai-help-dock) and are never wider than that space (globals.css reads
      --ai-help-room under html[data-ai-help-docked]), so both are usable side by side. */
-  const dock = showing ? helpDock(shownSize.w, viewport().w) : null;
+  const dock = showing && !moved ? helpDock(shownSize.w, viewport().w) : null;
   const dockShift = dock?.shift ?? 0;
   const dockRoom = dock?.room ?? 0;
   React.useEffect(() => {
@@ -371,21 +482,23 @@ export function AiHelp() {
     setSize(next);
     savePanelSize(next);
   }
-  const drag = React.useRef<{ edge: ResizeEdge; x: number; y: number; start: PanelSize; last: PanelSize } | null>(null);
+  const drag = React.useRef<{ edge: ResizeEdge; x: number; y: number; start: PanelSize; last: PanelSize; startPos: PanelPos | null; lastPos: PanelPos | null } | null>(null);
   const startDrag = (edge: ResizeEdge) => (e: React.PointerEvent) => {
     e.preventDefault();
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
-    drag.current = { edge, x: e.clientX, y: e.clientY, start: shownSize, last: shownSize };
+    drag.current = { edge, x: e.clientX, y: e.clientY, start: shownSize, last: shownSize, startPos: shownPos, lastPos: shownPos };
   };
   const moveDrag = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d) return;
     d.last = dragResize(d.start, d.edge, e.clientX - d.x, e.clientY - d.y, viewport());
     setSize(d.last);
+    if (d.startPos && d.edge !== "bottom") d.lastPos = keepRightEdge(d.startPos, d.start.w, d.last.w);
   };
   const endDrag = () => {
     if (!drag.current) return;
     savePanelSize(drag.current.last);
+    if (drag.current.lastPos) savePanelPos(drag.current.lastPos);
     drag.current = null;
   };
   const onResizeKey = (e: React.KeyboardEvent) => {
@@ -394,6 +507,7 @@ export function AiHelp() {
     e.preventDefault();
     setSize(next);
     savePanelSize(next);
+    if (shownPos) savePanelPos(keepRightEdge(shownPos, shownSize.w, next.w));
   };
   /* R-352: this page's last browser test run. Read with the person's login (owner/manager by
      RLS); no table yet, no run or no access → nothing is shown. */
@@ -642,11 +756,15 @@ export function AiHelp() {
           role="dialog"
           aria-label="Help"
           data-size={large ? "large" : "normal"}
+          data-moved={moved ? "true" : "false"}
+          data-side={isDesktop ? undefined : phoneSide}
           hidden={minimized}
-          style={{ "--ai-w": `${shownSize.w}px`, "--ai-h": `${shownSize.h}px` } as React.CSSProperties}
+          style={{ "--ai-w": `${shownSize.w}px`, "--ai-h": `${shownSize.h}px`, ...(shownPos ? { "--ai-x": `${shownPos.x}px`, "--ai-y": `${shownPos.y}px` } : {}) } as React.CSSProperties}
           /* R-827: docked to the right edge (not floating over the middle) and above dialog
-             overlays (z-50), so a dialog and help can be used side by side. */
-          className={`fixed z-[65] inset-0 md:inset-auto md:right-0 md:top-16 md:w-[var(--ai-w)] md:h-[var(--ai-h)] ${minimized ? "hidden" : "flex"} flex-col md:rounded-l-2xl md:border-y md:border-l border-hairline bg-paper shadow-2xl overflow-hidden`}
+             overlays (z-50), so a dialog and help can be used side by side.
+             R-1447: once moved, it floats at the person's spot (desktop only).
+             R-1467: a phone gets a side panel on the chosen edge, the page visible beside it. */
+          className={`fixed z-[65] ${isDesktop ? "inset-0" : `inset-y-0 w-[88vw] max-w-sm ${phoneSide === "left" ? "left-0 border-r" : "right-0 border-l"}`} md:inset-auto ${moved ? "md:left-[var(--ai-x)] md:top-[var(--ai-y)] md:rounded-2xl md:border" : "md:right-0 md:top-16 md:rounded-l-2xl md:border-y md:border-l"} md:w-[var(--ai-w)] md:h-[var(--ai-h)] ${minimized ? "hidden" : "flex"} flex-col border-hairline bg-paper shadow-2xl overflow-hidden`}
         >
           {/* R-223: drag handles (desktop). The panel is pinned top-right, so its left and bottom edges move. */}
           {/* R-360: the left edge is also a keyboard control (Tab to it, ← / → / Home / End). */}
@@ -659,7 +777,16 @@ export function AiHelp() {
             className="hidden md:block absolute bottom-0 left-3 right-0 h-1.5 z-10 cursor-ns-resize touch-none hover:bg-amber/30" />
           <div aria-hidden="true" data-resize="corner" onPointerDown={startDrag("corner")} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
             className="hidden md:block absolute left-0 bottom-0 w-3 h-3 z-10 cursor-nesw-resize touch-none hover:bg-amber/40" />
-          <header className="flex items-center gap-2 px-4 py-3 border-b border-hairline bg-paper-2/60">
+          {/* R-1447: the header is the drag handle on a desktop; the grip is its keyboard twin. */}
+          <header onPointerDown={startMove} onPointerMove={doMove} onPointerUp={endMove} onPointerCancel={endMove}
+            className="flex items-center gap-2 px-4 py-3 border-b border-hairline bg-paper-2/60 md:cursor-move md:touch-none md:select-none">
+            <button ref={gripRef} type="button" data-drag="handle"
+              aria-label="Move help panel — drag the header, or use the arrow keys"
+              title="Drag to move — or Tab here and use the arrow keys"
+              onKeyDown={onMoveKey}
+              className="hidden md:inline-flex -ml-2 rounded p-0.5 text-ink-3 hover:text-ink cursor-move focus:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+              <Icon name="grip" size={14} />
+            </button>
             <Icon name="sparkles" size={16} className="text-amber-ink" />
             <div className="flex-1 min-w-0">
               <div className="text-sm font-semibold text-ink">Help</div>
@@ -673,6 +800,25 @@ export function AiHelp() {
               aria-label={large ? "Collapse panel to normal size" : "Expand panel"}
               title={large ? "Back to the normal size" : "Make the panel bigger — or drag its left or bottom edge"}
               onClick={toggleSize}>{large ? "Smaller" : "Expand"}</button>
+            {/* R-1447: back to the right edge — disabled while it is already there. */}
+            <button type="button" className="hidden md:inline rounded px-1 text-2xs text-ink-3 hover:text-ink disabled:opacity-40 disabled:hover:text-ink-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+              aria-label="Dock help panel back to the right edge"
+              title={moved ? "Put the panel back on the right edge" : "The panel is docked on the right — drag the header to move it"}
+              disabled={!moved}
+              onClick={dockPanel}>Dock</button>
+            {/* R-1467: phone only — which edge the side panel sits on. */}
+            {!isDesktop && (
+              <div role="group" aria-label="Help panel side" className="inline-flex rounded border border-hairline">
+                {(["left", "right"] as const).map((s) => (
+                  <button key={s} type="button" aria-pressed={phoneSide === s}
+                    aria-label={`Help panel on the ${s} side`}
+                    onClick={() => choosePhoneSide(s)}
+                    className={`px-1.5 min-h-8 text-2xs focus:outline-none focus-visible:ring-2 focus-visible:ring-amber ${phoneSide === s ? "bg-ink text-paper" : "text-ink-3 hover:text-ink"}`}>
+                    {s === "left" ? "Left" : "Right"}
+                  </button>
+                ))}
+              </div>
+            )}
             {/* R-827: fold to a small bar to work on the page; the chat is kept. Phone too. */}
             <button type="button" className="rounded px-1 min-h-8 text-2xs text-ink-3 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
               aria-label="Minimize help"

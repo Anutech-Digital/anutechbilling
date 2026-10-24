@@ -13,7 +13,7 @@ insert into public.customers (id, tenant_id, name)
   values ('aaaaaaaa-0000-0000-0000-0000000000c1', 'aaaaaaaa-0000-0000-0000-0000000000a1', 'Ren Cust');
 -- seed PO series high so the roll-forward's auto-PO doesn't hit the global PO-id collision
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('aaaaaaaa-0000-0000-0000-0000000000a1', 'purchase_order', public.indian_fiscal_year(current_date), 'PO', 990000);
+  values ('aaaaaaaa-0000-0000-0000-0000000000a1', 'purchase_order', public.indian_fiscal_year(current_date), 'PO', 9000);
 -- quote FIRST (subscription.renewal_quote_id FKs to it)
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, status, payment_status, line_items)
   values ('Q-REN-T', 'aaaaaaaa-0000-0000-0000-0000000000a1', 'aaaaaaaa-0000-0000-0000-0000000000c1', 'Ren Cust', 103680, 'sent', 'awaiting',

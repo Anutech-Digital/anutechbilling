@@ -56,8 +56,13 @@ export function recordPaymentConsequences(args: {
   payment: PaymentToRecord;
   /** The tenant's receipt_voucher counter. Null when this is the year's first. */
   receiptSeries: SeriesState | null;
+  /** R-1680: the quote already has its GST invoice, so this payment issues NO receipt voucher
+   *  (record_payment books it against the invoice). Null receiptSeries alone meant both "first of
+   *  the year" and "after the invoice", and the sheet said "Issues a GST receipt voucher" right
+   *  beside "No new receipt voucher — post-invoice payment". */
+  afterInvoice?: boolean;
 }): Consequence[] {
-  const { payment: p, receiptSeries } = args;
+  const { payment: p, receiptSeries, afterInvoice = false } = args;
   const out: Consequence[] = [];
 
   if (p.amount <= 0) {
@@ -71,7 +76,12 @@ export function recordPaymentConsequences(args: {
 
   /* The receipt voucher, first — it is the irreversible part and the one no screen has
      ever mentioned. */
-  if (receiptSeries) {
+  if (afterInvoice) {
+    out.push({
+      tone: "fact",
+      text: "No receipt voucher — the GST invoice already exists, so this payment is recorded against it.",
+    });
+  } else if (receiptSeries) {
     const next = formatDocumentNumber(receiptSeries, receiptSeries.lastNumber + 1);
     out.push({
       tone: "fact",

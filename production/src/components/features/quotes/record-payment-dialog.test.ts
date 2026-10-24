@@ -23,24 +23,32 @@ describe("record-payment-dialog wiring (R-379)", () => {
 });
 
 describe("record-payment-dialog wiring (R-404, R-407, R-447, R-444)", () => {
-  it("R-404: no hard-coded company name or made-up account ids; accounts come from useBankAccounts", () => {
+  it("R-404 / R-1730: no hard-coded company name or made-up account ids; accounts + default come from the shared Received in", () => {
     expect(src).not.toMatch(/Anutech/);
     expect(src).not.toMatch(/hdfc_primary|cash_box|icici_corp|razorpay_gateway|upi_hdfc|bank_hdfc/);
-    expect(src).toMatch(/useBankAccounts\(\)/);
-    expect(src).toMatch(/depositAccounts\(allBankAccounts\)/);
-    expect(src).toMatch(/defaultDepositAccountId\(receiveAccounts, method\)/);
-    expect(src).toMatch(/href="\/accounting\/banking"/);
+    expect(src).toMatch(/useReceivedInDefault\(open, method\)/);
+    expect(src).toMatch(/setBankAccountId\(tdsOnly \? "" : usualAccountId\)/);
+    expect(src).toMatch(/<ReceivedInField/);
+    const shared = fs.readFileSync(path.join(process.cwd(), "src/components/features/payments/payment-entry-fields.tsx"), "utf8");
+    expect(shared).toMatch(/useBankAccounts\(\)/);
+    expect(shared).toMatch(/depositAccounts\(allBankAccounts\)/);
+    expect(shared).toMatch(/href="\/accounting\/banking"/);
   });
   it("R-407: no unconditional 1-year promise; the subscription line follows the quote's lines", () => {
     expect(src).not.toMatch(/1-year subscription/);
     expect(src).toMatch(/lineItems\.some\(\(l\) => isSubscriptionLine\(l\)\)/);
     expect(src).toMatch(/\{makesSubscription === true && <li>/);
   });
-  it("R-407 / R-444 (1): domain is optional (no required star), shown only with a subscription, and saved", () => {
-    expect(src).not.toMatch(/label="[^"]*[Dd]omain[^"]*" required/);
+  it("R-1730 (was R-407 / R-444): no domain field; the known domain is still saved; none known → Set up pointer", () => {
+    expect(src).not.toMatch(/label="[^"]*[Dd]omain/);
+    expect(src).not.toMatch(/register\("domain"\)/);
     expect(src).toMatch(/const showDomain = askDomain && makesSubscription !== false;/);
-    expect(src).toMatch(/\{showDomain && \(/);
-    expect(src).toMatch(/await saveDomainAfterPayment\(supabase, \{ quoteId, domain: domainVal \}\)/);
+    /* nothing silently stops being saved: the domain the page knew still goes to the
+       subscription, the customer and the provisioning task after the payment… */
+    expect(src).toMatch(/if \(domainVal\) await stampPaymentDomain\(supabase, \{ quoteId, domain: domainVal \}\)/);
+    /* …and with none known the result toast says where to add it. */
+    expect(src).toMatch(/domainToSetUp:\s+showDomain && !domainVal/);
+    expect(src).toMatch(/domainSetupLine\(\{ domainToSetUp: res\.domainToSetUp, isFullyPaid: res\.isFullyPaid \}\)/);
   });
   it("R-407: a saved payment clears its reference and always closes the sheet", () => {
     const save = src.indexOf('setValue("reference", "");');

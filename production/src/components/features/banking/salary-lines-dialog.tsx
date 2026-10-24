@@ -319,7 +319,7 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
                                 className="text-xs text-amber-ink hover:underline"
                                 title="The transfer is more than this employee's monthly salary"
                               >
-                                {rupee(suggestedIncentive(l))} monthly salary se zyada — incentive/commission hai?
+                                {rupee(suggestedIncentive(l))} more than the monthly salary — incentive / commission?
                               </button>
                             )}
                             <input
@@ -347,13 +347,13 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
                           {l.parsed.director && (
                             isOn(l) ? (
                               <p className="mt-1 text-xs text-amber-ink leading-snug">
-                                Director ki payment payroll mein <b>staff salary</b> ki tarah jaayegi (Salaries, payslip, project salary ka pool).
-                                Agar ye Director&apos;s Remuneration hai to untick karo aur Reconcile se book karo — wahan category pehle se bhari aati hai.
+                                The director's payment goes to payroll as <b>staff salary</b> (Salaries, payslip, project salary pool).
+                                If this is Director&apos;s Remuneration, untick it and book it from Reconcile — the category is prefilled there.
                               </p>
                             ) : (
                               <p className="mt-1 text-xs text-ink-3 leading-snug">
-                                Director ki payment — isliye tick nahi hui. Ise line ke <b>Reconcile</b> se book karo (Expense → Director&apos;s Remuneration).
-                                Whole-time director ho aur payslip chahiye to hi yahan tick karo — aur saal bhar ek hi tareeka rakho.
+                                Director's payment — so it is not ticked. Book it from the line's <b>Reconcile</b> (Expense → Director&apos;s Remuneration).
+                                Tick it here only for a whole-time director who needs a payslip — and keep the same method all year.
                               </p>
                             )
                           )}

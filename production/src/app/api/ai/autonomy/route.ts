@@ -21,7 +21,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { AI_ACTIONS, autonomyChangeReason, type AiAction, type AutonomyMode } from "@/lib/ai/autonomy";
+import { AI_ACTIONS, autonomyChangeReason, visibleAiActions, type AiAction, type AiActionSpec, type AutonomyMode } from "@/lib/ai/autonomy";
 import { loadAutonomyPolicy, setAutonomy, logAiAction } from "@/lib/ai/autonomy.server";
 
 export const dynamic = "force-dynamic";
@@ -50,7 +50,8 @@ export async function GET() {
   return NextResponse.json({
     killSwitch: policy.killSwitch,
     canEdit:    me.role === "owner" || me.role === "manager",
-    actions: (Object.keys(AI_ACTIONS) as AiAction[]).map((id) => ({
+    /* R-1608: a dial whose code nobody calls yet (`notWired`) is not listed. */
+    actions: visibleAiActions().map((id) => ({
       id,
       label:    AI_ACTIONS[id].label,
       supports: AI_ACTIONS[id].supports,
@@ -118,7 +119,10 @@ export async function PUT(request: NextRequest) {
   if (!(action in AI_ACTIONS)) {
     return NextResponse.json({ error: `Unknown action "${body.action}".` }, { status: 400 });
   }
-  const spec = AI_ACTIONS[action];
+  const spec: AiActionSpec = AI_ACTIONS[action];
+  if (spec.notWired) {
+    return NextResponse.json({ error: `"${spec.label}" is not wired up yet, so there is nothing to switch.` }, { status: 400 });
+  }
   if (!(spec.supports as readonly string[]).includes(mode)) {
     /* Refused here rather than stored and reconciled later. resolveAutonomy would fall back
        and report it, but a setting the screen accepted and the engine ignores is worse than

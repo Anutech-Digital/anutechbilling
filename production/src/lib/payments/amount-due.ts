@@ -32,6 +32,8 @@ export interface InvoiceBalanceFields {
   net_payable?: number | null;
   paid_amount?: number | null;
   status?: string | null;
+  /** R-1635: set when the owner wrote the invoice off (bad debt) — nothing is owed any more. */
+  written_off_at?: string | null;
 }
 
 /**
@@ -46,6 +48,9 @@ export function invoiceAmountDue(inv: InvoiceBalanceFields): number {
   // showing the full ₹5,40,000).
   const status = (inv.status ?? "").toLowerCase();
   if (status === "paid" || status === "void") return 0;
+  /* R-1635: written off — the invoice stays issued (same status and money columns), but the
+     owner decided not to collect it, so no screen, cron or reminder asks for it. */
+  if (inv.written_off_at) return 0;
 
   const gross = num(inv.net_payable) ?? num(inv.amount);
   if (gross === null) return 0;   // unknown total → ask for nothing

@@ -8,10 +8,21 @@
  * phone is typed, the builder creates that lead and links the quote to it.
  */
 import { quoteRecipient } from "@/lib/quotes/send-quote-email";
+import { checkGstin, liveGstin } from "@/lib/forms/poka-yoke";
 
 export interface ProspectContact {
   email: string;
   phone: string;
+  /** R-1712: the prospect's GSTIN — saved on the lead, which becomes customers.gstin when they
+   *  accept or pay (accept_quote / record_payment copy v_lead.gstin). Optional: a person or an
+   *  unregistered business has none. */
+  gstin?: string;
+}
+
+/** R-1712: the GSTIN when it passes the checksum, upper-cased; null otherwise. */
+export function validProspectGstin(raw: string | null | undefined): string | null {
+  const v = liveGstin(raw ?? "");
+  return checkGstin(v).tone === "ok" ? v : null;
 }
 
 /** Both are optional; a value that is there must be usable. Null = fine. */
@@ -20,12 +31,16 @@ export function prospectContactProblem(c: ProspectContact): string | null {
   if (email && !quoteRecipient(email)) return "That email doesn't look right — check it or leave it empty.";
   const digits = c.phone.replace(/\D/g, "");
   if (c.phone.trim() && digits.length < 10) return "A phone number needs at least 10 digits.";
+  /* R-1712: the same checksum check as the customer and lead forms — a wrong GSTIN on a lead
+     becomes a wrong GSTIN on the customer and its tax invoice. */
+  const g = checkGstin(c.gstin ?? "");
+  if (g.tone === "typing" || g.tone === "error") return `GSTIN: ${g.message}`;
   return null;
 }
 
 /** True when the typed prospect has something worth saving as a lead. */
 export function hasProspectContact(c: ProspectContact): boolean {
-  return c.email.trim() !== "" || c.phone.trim() !== "";
+  return c.email.trim() !== "" || c.phone.trim() !== "" || validProspectGstin(c.gstin) !== null;
 }
 
 /** The lead row for a typed prospect (tenant and id are added by the caller). */
@@ -44,6 +59,7 @@ export function prospectLeadRow(input: {
     company: input.name.trim(),
     contact_email: input.contact.email.trim() || null,
     contact_phone: input.contact.phone.trim() || null,
+    gstin: validProspectGstin(input.contact.gstin),
     state_code: input.stateCode || null,
     state: input.stateCode ? input.stateName : null,
     country: input.country.trim() || "India",

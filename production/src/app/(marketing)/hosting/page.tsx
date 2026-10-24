@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import { HostingLanding } from "@/site/components/hosting/HostingLanding";
-import { HOSTING_TIERS, HOSTING_FAQS_V2 } from "@/site/lib/data/hosting-landing-v2";
+import { HOSTING_FAQS_V2, HOSTING_FROM_MO, hostingCharge, type HostingTier } from "@/site/lib/data/hosting-landing-v2";
+import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
+import { websiteTenantId } from "@/lib/website-tenant";
+import { rupee } from "@/site/lib/money";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 /**
  * /hosting — the conversion-focused hosting landing page (redesign, 2 Sep 2026).
@@ -26,12 +30,12 @@ const SITE_URL = "https://resellersos-njvk4nxhdq-el.a.run.app";
 const PAGE_URL = `${SITE_URL}/hosting`;
 
 export const metadata: Metadata = {
-  title: "Web hosting on Google Cloud — 15-day free trial, no credit card | Anutech Digital",
+  title: `Web hosting on Google Cloud — ${HOSTING_TRIAL_DAYS}-day free trial, no credit card`,
   description:
-    "cPanel web hosting on Google Cloud from Anutech Digital. Free SSL, daily backups, free migration and real-person support. Plans from ₹49.99/mo. Start a 15-day free trial — no credit card, GST invoice on every order.",
+    `cPanel web hosting on Google Cloud from Anutech Digital. Free SSL, daily backups, free migration and real-person support. Plans from ${HOSTING_FROM_MO}/mo. Start a ${HOSTING_TRIAL_DAYS}-day free trial — no credit card, GST invoice on every order.`,
   keywords: [
     "web hosting India", "cPanel hosting", "Google Cloud hosting", "free website migration",
-    "WordPress hosting India", "GST invoice hosting", "15-day free trial hosting", "Anutech Digital",
+    "WordPress hosting India", "GST invoice hosting", `${HOSTING_TRIAL_DAYS}-day free trial hosting`, "Anutech Digital",
   ],
   alternates: { canonical: PAGE_URL },
   robots: { index: true, follow: true },
@@ -39,19 +43,19 @@ export const metadata: Metadata = {
     type: "website",
     url: PAGE_URL,
     siteName: "Anutech Digital",
-    title: "Web hosting on Google Cloud — 15-day free trial, no credit card",
+    title: `Web hosting on Google Cloud — ${HOSTING_TRIAL_DAYS}-day free trial, no credit card`,
     description:
-      "cPanel web hosting on Google Cloud. Free SSL, daily backups, free migration, real-person support. Plans from ₹49.99/mo. 15-day free trial, no credit card.",
+      `cPanel web hosting on Google Cloud. Free SSL, daily backups, free migration, real-person support. Plans from ${HOSTING_FROM_MO}/mo. ${HOSTING_TRIAL_DAYS}-day free trial, no credit card.`,
   },
   twitter: {
     card: "summary_large_image",
-    title: "Web hosting on Google Cloud — 15-day free trial",
+    title: `Web hosting on Google Cloud — ${HOSTING_TRIAL_DAYS}-day free trial`,
     description: "cPanel hosting from Anutech Digital. Free migration, GST invoice, no-card trial.",
   },
 };
 
 /** JSON-LD built from the SAME real data the page renders — never a second copy. */
-function structuredData() {
+function structuredData(tiers: readonly HostingTier[]) {
   const organization = {
     "@type": "Organization",
     name: "Anutech Digital Pvt Ltd",
@@ -66,7 +70,8 @@ function structuredData() {
     makesOffer: "Web hosting, domain registration and Google Workspace for Indian businesses",
   };
 
-  const prices = HOSTING_TIERS.map((t) => t.yearlyTotal);
+  /* R-1465: the whole-rupee yearly figure checkout charges (₹600), not ₹599.88. */
+  const prices = tiers.map((t) => hostingCharge(t, true).exGst);
   const product = {
     "@type": "Product",
     name: "Web hosting on Google Cloud",
@@ -79,13 +84,13 @@ function structuredData() {
       priceCurrency: "INR",
       lowPrice: Math.min(...prices),
       highPrice: Math.max(...prices),
-      offerCount: HOSTING_TIERS.length,
-      offers: HOSTING_TIERS.map((t) => ({
+      offerCount: tiers.length,
+      offers: tiers.map((t) => ({
         "@type": "Offer",
         name: `${t.name} hosting (billed yearly)`,
         priceCurrency: "INR",
-        price: t.yearlyTotal,
-        description: `${t.storage} NVMe SSD storage, ${t.bandwidth} bandwidth, ${t.sites === "1" ? "1 website" : "multiple websites"}. Renews at ${t.yearlyMo}/mo — the same price.`,
+        price: hostingCharge(t, true).exGst,
+        description: `${t.storage} NVMe SSD storage, ${t.bandwidth} bandwidth, ${t.sites === "1" ? "1 website" : "multiple websites"}. Renews at ${rupee(t.yearlyMo)}/mo — the same price.`,
         availability: "https://schema.org/InStock",
         url: PAGE_URL,
       })),
@@ -104,14 +109,19 @@ function structuredData() {
   return { "@context": "https://schema.org", "@graph": [organization, product, faq] };
 }
 
-export default function HostingPage() {
+/* R-1786: with CATALOG_FROM_DB on, the plan prices are the `items` rows (60 s cache), so an
+   Items page edit reaches this page within a minute. With the flag off: the code prices. */
+export const revalidate = 60;
+
+export default async function HostingPage() {
+  const { tiers } = await getPriceBook(websiteTenantId());
   return (
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData()) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData(tiers)) }}
       />
-      <HostingLanding />
+      <HostingLanding tiers={tiers} />
     </>
   );
 }

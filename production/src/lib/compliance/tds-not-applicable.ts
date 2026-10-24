@@ -1,7 +1,7 @@
 /**
  * R-181 — a month with no TDS deducted has nothing to deposit.
  *
- * "Deposit TDS deducted" is due by the 7th for the TDS deducted LAST month. If the
+ * "Deposit TDS deducted" is due by the 7th (March: 30 April — R-1583, tds-due.ts) for the TDS deducted LAST month. If the
  * books show no TDS at all for that month (no salary TDS, no vendor TDS), there is
  * no challan to pay, so the period is not applicable — showing it red and
  * "overdue" only frightens the operator. Month-end Close already says the same
@@ -18,8 +18,24 @@ export const TDS_DEPOSIT_KEY = "tds_payment";
 
 import { istMonth, utcDateISO } from "@/lib/dates/ist";
 
-/** Months (YYYY-MM) in which any TDS was deducted — salary periods + expense dates. */
+/**
+ * Months (YYYY-MM) in which any TDS was deducted — salary periods + expense dates +
+ * R-1580: partner commissions (s.194H, deducted when credited → earned_date; a cancelled
+ * commission has nothing to deposit).
+ */
 export function tdsMonthsFrom(
+  salary: { period: string | null; tds: number | string | null }[] | null | undefined,
+  expenses: { expense_date: string | null; tds_amount: number | string | null }[] | null | undefined,
+  commissions?: { earned_date: string | null; tds_amount: number | string | null; status?: string | null }[] | null,
+): Set<string> {
+  const months = tdsMonthsOfSalaryAndExpenses(salary, expenses);
+  for (const c of commissions ?? []) {
+    if (c.status !== "cancelled" && c.earned_date && (Number(c.tds_amount) || 0) > 0) months.add(c.earned_date.slice(0, 7));
+  }
+  return months;
+}
+
+function tdsMonthsOfSalaryAndExpenses(
   salary: { period: string | null; tds: number | string | null }[] | null | undefined,
   expenses: { expense_date: string | null; tds_amount: number | string | null }[] | null | undefined,
 ): Set<string> {

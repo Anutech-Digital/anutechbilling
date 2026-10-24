@@ -18,9 +18,9 @@ describe("firstTouchTask", () => {
   it("phone → call task with number and pitch in notes", () => {
     const t = firstTouchTask(c, { phone: "+919876500001", email: "sales@etaco.test" });
     expect(t.kind).toBe("call");
-    expect(t.title).toBe("Call karo: Etaco IT");
+    expect(t.title).toBe("Call: Etaco IT");
     expect(t.notes).toContain("Phone: +919876500001");
-    expect(t.notes).toContain("Kya bolna hai: Workspace se trust badhega");
+    expect(t.notes).toContain("What to say: Workspace se trust badhega");
   });
   it("email only → email task", () => expect(firstTouchTask(c, { phone: null, email: "a@etaco.test" }).kind).toBe("email"));
 });
@@ -29,18 +29,18 @@ describe("firstTouchTask — contact person", () => {
   const c = { company: "CRC LLP", pitch: null, fit_reason: null, domain: "crcllp.in" };
   it("names the person to ask for", () =>
     expect(firstTouchTask(c, { phone: "+919812109103", email: null, person: { name: "Rahul Choudhary", role: "Managing Partner", from: "page" } }).notes)
-      .toContain("Kisse baat karni hai: Rahul Choudhary (Managing Partner)"));
+      .toContain("Who to ask for: Rahul Choudhary (Managing Partner)"));
   it("flags a name guessed from the email", () =>
     expect(firstTouchTask(c, { phone: null, email: "rahul.choudhary@crcllp.in", person: { name: "Rahul Choudhary", role: null, from: "email" } }).notes)
-      .toContain("naam email se andaza hai"));
+      .toContain("name guessed from the email"));
 });
 
 describe("firstTouchTask — no name known", () => {
   const c = { company: "PSL", pitch: null, fit_reason: null, domain: "psl.in" };
   it("a call without a name carries the receptionist line", () =>
-    expect(firstTouchTask(c, { phone: "01149991250", email: null, person: null }).notes).toContain("receptionist se poochho"));
+    expect(firstTouchTask(c, { phone: "01149991250", email: null, person: null }).notes).toContain("ask the receptionist"));
   it("an email task does not", () =>
     expect(firstTouchTask(c, { phone: null, email: "a@psl.in", person: null }).notes).not.toContain("receptionist"));
   it("a searched name is marked for confirmation", () =>
-    expect(firstTouchTask(c, { phone: "01149991250", email: null, person: { name: "Sameer Jain", role: "Founder", from: "search" } }).notes).toContain("call par confirm karo"));
+    expect(firstTouchTask(c, { phone: "01149991250", email: null, person: { name: "Sameer Jain", role: "Founder", from: "search" } }).notes).toContain("confirm on the call"));
 });

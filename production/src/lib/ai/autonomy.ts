@@ -50,17 +50,26 @@ export interface AiActionSpec {
    * silently rounding off.
    */
   supports: readonly AutonomyMode[];
+  /**
+   * R-1608 (19 Oct 2026): set when the code behind this dial exists but no page, route or cron
+   * calls it yet. The dial stays declared (so the code type-checks and the default is recorded),
+   * but /automation does not show it and the API refuses to change it: a control that controls
+   * nothing reads as a brake the operator does not have. Remove the flag when the caller ships.
+   */
+  notWired?: string;
 }
 
 export const AI_ACTIONS = {
   "public_chat.learn": {
     label: "Learn from website chat conversations",
-    /* The public agent distils ONE lesson from each finished conversation and feeds the
-       recent lessons back into its own prompt (lib/ai/public-sales-chat.ts). `auto`
-       because the lessons are advice-only, guarded, and never contain figures — and this
-       dial exists precisely so Pardeep can stop the loop with one click if it drifts. */
-    today: "auto",
-    supports: ["off", "auto"],
+    /* The public agent distils ONE lesson from each finished conversation; approved lessons
+       go back into its own prompt (lib/ai/public-chat-lessons.ts). R-727 (23 Oct 2026): `hold`,
+       and `auto` is no longer a mode it supports — the conversation comes from an anonymous
+       visitor, so a lesson could carry their instruction to every later visitor. Each lesson
+       waits on /automation for Use lesson / Discard. A stored "auto" is reported and falls
+       back to `hold` (resolveAutonomy). */
+    today: "hold",
+    supports: ["off", "hold"],
   },
   "lead.create": {
     label: "Create a lead from an inbound email",
@@ -146,6 +155,8 @@ export const AI_ACTIONS = {
        has made. */
     today: "hold",
     supports: ["off", "hold", "auto"],
+    /* R-1608: createAndSendPaymentLink (lib/payments/payment-link.server.ts) has no caller yet. */
+    notWired: "R-1608 — payment links are built but nothing sends one yet",
   },
   "agreement.esign.send": {
     label: "Send an agreement to a customer for digital signature",
@@ -255,6 +266,11 @@ export const AI_ACTIONS = {
 } as const satisfies Record<string, AiActionSpec>;
 
 export type AiAction = keyof typeof AI_ACTIONS;
+
+/** R-1608: the dials /automation shows — every action except those marked `notWired`. */
+export function visibleAiActions(): AiAction[] {
+  return (Object.keys(AI_ACTIONS) as AiAction[]).filter((id) => !(AI_ACTIONS[id] as AiActionSpec).notWired);
+}
 
 export interface AutonomyPolicy {
   /**

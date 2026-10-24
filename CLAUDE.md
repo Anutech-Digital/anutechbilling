@@ -9,8 +9,9 @@ The team list (board) is **https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n** �
 On the user's FIRST message of a session (even "hi"):
 1. Who you work for: ask once if unknown (Pardeep, Hitesh, Abhishek, Pawan) — the branch no longer tells you.
 2. `git fetch origin` and merge `origin/manager-pardeep`.
-3. Tell them in ≤6 lines of Hinglish: their card in `doing` (if any), the next card for them, and their `step` cards (`stepFor` = them, no `stepDoneAt`).
-4. Offer: "agla card lo?" — one question.
+3. Read every card with `kind: "handoff"` and `status: "list"` (e.g. R-1622, 19 Oct) FIRST — it says where the last session stopped (staging train, CI, open decisions) and which card comes next; follow its order, still within these rules. Mention it in one line.
+4. Tell them in ≤6 lines of Hinglish: their card in `doing` (if any), the next card for them, and their `step` cards (`stepFor` = them, no `stepDoneAt`).
+5. Offer: "agla card lo?" — one question.
 
 Card fields: `id`, `title`, `why`, `fix`, `doneWhen`, `where`, `files` (folders it touches), `priority` p0–p3, `rank` (1 = next), `status` = `list` → `doing` → `review` → `live` (merged, waits for Thursday deploy) / `done`; `goodFor` (who it suits — a preference, not a lock), `assignedTo` (pinned by Pardeep — a lock), `claimedBy`, `claimedAt`, `liveLog` [{at, text}] + `nowDoing` (live progress, see below), `finishedAt`, `commits`, `checked`, `howToCheck`; human steps: `step`, `stepFor`, `stepAfterDeploy`, `stepDoneAt`. A one-line card someone typed has `draft: true` — fill its fields before building it. Times only from `date -u`.
 

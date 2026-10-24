@@ -14,6 +14,10 @@ import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import type { ReferralPartnerRow, ReferralAgreementRow } from "@/lib/supabase/database.types";
+import { TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
+
+/** R-1583: s.194H default (2% since 1 Oct 2024) when the partner / agreement names no rate. */
+const TDS_194H_DEFAULT = TDS_SECTION_RATES["194H"].ratePct;
 
 export interface CreatePartnerInput {
   name:                  string;
@@ -120,7 +124,7 @@ export function useCreatePartner() {
           default_percent:      input.default_percent ?? 10,
           default_fixed_amount: input.default_fixed_amount ?? 0,
           deduct_tds:           input.deduct_tds ?? false,
-          tds_rate:             input.tds_rate ?? 2,
+          tds_rate:             input.tds_rate ?? TDS_194H_DEFAULT,
           notes:                input.notes ?? null,
           created_by:           me.userId,
         })
@@ -157,7 +161,7 @@ export function useCreateAgreement() {
           fixed_amount: input.basis === "fixed" ? (input.fixed_amount ?? 0) : null,
           scope:        input.scope,
           deduct_tds:   input.deduct_tds ?? false,
-          tds_rate:     input.tds_rate ?? 2,
+          tds_rate:     input.tds_rate ?? TDS_194H_DEFAULT,
           status:       "active",
           notes:        input.notes ?? null,
           created_by:   me.userId,

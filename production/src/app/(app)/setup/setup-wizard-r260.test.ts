@@ -30,7 +30,7 @@ describe("R-260 wizard moves", () => {
 });
 
 const empty: DoneInputs = {
-  gstin: null, gstinVerifiedAt: null, stateCode: null, upiVpa: null, remitAccountNumber: null,
+  gstin: null, gstinVerifiedAt: null, stateCode: null, address: null, upiVpa: null, remitAccountNumber: null,
   customerCount: 0, catalogCount: 0,
   razorpay: { configured: false, readiness: { state: "not_configured" } },
   whatsapp: { configured: false },
@@ -82,12 +82,26 @@ describe("R-260 Done checklist is data-backed", () => {
   it("tenant fields drive GSTIN / state / payment / customers / catalog", () => {
     const r = byId({
       ...empty, gstin: "07ABDCA0298H1ZP", gstinVerifiedAt: "2026-10-01T00:00:00Z", stateCode: "07",
+      address: "12 Nehru Place, New Delhi 110019",
       upiVpa: "shop@okhdfcbank", customerCount: 3, catalogCount: 7,
     });
     expect([r.gstin.status, r.invoice.status, r.payout.status, r.customers.status, r.catalog.status])
       .toEqual(["done", "done", "done", "done", "done"]);
     expect(r.customers.label).toBe("3 customers added");
     expect(byId({ ...empty, gstin: "07ABDCA0298H1ZP" }).gstin.status).toBe("pending");
+  });
+
+  /* R-1643: "GST invoices ready" only when a Tax Invoice can really be issued — generate_invoice
+     refuses without the company's GSTIN and address (and state). */
+  it("GST invoices are not 'ready' without the company's GSTIN and address", () => {
+    const noGstin = byId({ ...empty, stateCode: "07", address: "12 Nehru Place" }).invoice;
+    expect(noGstin.status).toBe("todo");
+    expect(noGstin.label).toMatch(/GSTIN/);
+    expect(noGstin.href).toBe("/settings?tab=company");
+    const noAddress = byId({ ...empty, stateCode: "07", gstin: "07ABDCA0298H1ZP" }).invoice;
+    expect(noAddress.status).toBe("todo");
+    expect(noAddress.label).toMatch(/address/);
+    expect(byId({ ...empty, stateCode: "07", gstin: "07ABDCA0298H1ZP", address: "12 Nehru Place" }).invoice.status).toBe("done");
   });
 
   it("Done screen no longer hard-codes statuses", () => {

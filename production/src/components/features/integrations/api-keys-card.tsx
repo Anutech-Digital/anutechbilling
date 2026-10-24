@@ -15,6 +15,7 @@ import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -86,7 +87,7 @@ export default function ApiKeysCard() {
   const [revealed, setRevealed] = React.useState<string | null>(null);
   const [editing, setEditing] = React.useState<{ id: string; scopes: ApiScope[] } | null>(null);
 
-  const { data: keys, isLoading, error } = useQuery({
+  const { data: keys, isLoading, error, refetch } = useQuery({
     queryKey: ["api-keys"],
     queryFn: async (): Promise<ApiKey[]> => {
       const res = await fetch("/api/settings/api-keys");
@@ -210,7 +211,7 @@ export default function ApiKeysCard() {
 
       {/* List */}
       {isLoading && <p className="text-sm text-ink-3">Loading…</p>}
-      {error && <p className="text-sm text-rose">{(error as Error).message}</p>}
+      {error && <LoadErrorInline what="API keys" error={error} onRetry={() => refetch()} />}
       {!isLoading && !error && active.length === 0 && (
         <p className="text-sm text-ink-3">No API keys yet. Create one to connect your support platform.</p>
       )}

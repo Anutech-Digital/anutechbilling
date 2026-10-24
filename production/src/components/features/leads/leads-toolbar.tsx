@@ -5,7 +5,7 @@
  * page; this only draws it.
  *
  * S40: every number here is a server count (lead_counts() — `pool`, `viewCounts`, …); the
- * toolbar no longer receives the lead list. Export CSV fetches the leads when pressed.
+ * toolbar no longer receives the lead list. Export CSV asks the server for the file (R-1801).
  */
 import * as React from "react";
 import { toast } from "sonner";
@@ -14,10 +14,8 @@ import { HIERARCHY_ENFORCED_IN_DATABASE } from "@/lib/team/enforcement";
 import type { TeamViewMode } from "@/lib/team/visibility";
 import type { useTeamTree } from "@/lib/queries/team-tree";
 import { LeadsSmartViews, type SmartView } from "@/components/features/leads/leads-smart-views";
-import { downloadCSV } from "@/lib/csv";
-import { LEADS_CSV_HEADERS, leadsCsvRows } from "@/lib/export/crm-csv";
-import { fetchLeadsForExport } from "@/lib/queries/leads";
-import { toastError } from "@/lib/errors/toast-error";
+import { downloadServerExport } from "@/lib/exports/download-server-export";
+import { mayExport } from "@/lib/exports/server-export";
 import { teamNoteCounts, type LeadCounts } from "@/lib/leads/list-page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,7 +34,6 @@ import type { Lead } from "@/lib/supabase/database.types";
 import type { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import type { SalesFolder } from "@/lib/leads/folders";
 import type { StageMeta } from "@/lib/leads/stage-meta";
-import { istToday } from "@/lib/dates/ist";
 import { UNASSIGNED } from "@/lib/leads/list-selectors";
 import { useTeamMembers } from "@/lib/queries/team";
 import { sourceFilterOptions, sourceLabel } from "@/lib/leads/lead-sources";
@@ -129,19 +126,18 @@ export function LeadsToolbar({
     return [...opts, ...missing];
   }, [pool.by_source, sourceFilter]);
   const [exporting, setExporting] = React.useState(false);
-  /* Data-portability (audit B7): saari leads, jaisi darj hain. Fetched on the click, in
-     pages — the export used to write whatever the page had loaded, which stopped at 1000. */
+  /* Data-portability (audit B7): saari leads, jaisi darj hain. R-1801: the file is built on
+     the server — POST /api/exports/leads checks the role (can_export_data), masks contacts,
+     writes export_log and signs the "Exported by …" footer — so the item shows only for a
+     role the route serves. Before, any role that saw /leads (sales, support…) could take the
+     whole contact book, and the file carried no trace of who took it. */
+  const canExport = mayExport("leads", currentUser?.role);
   const exportCsv = async () => {
     setExporting(true);
-    try {
-      const rows = await fetchLeadsForExport();
-      downloadCSV(`leads-${istToday()}.csv`, [...LEADS_CSV_HEADERS], leadsCsvRows(rows));
-      toast.success(`Exported ${rows.length} leads to CSV`);
-    } catch (err) {
-      toastError(err, { fallback: "Could not export the leads" });
-    } finally {
-      setExporting(false);
-    }
+    const r = await downloadServerExport("leads");
+    setExporting(false);
+    if (r.ok) toast.success(`Exported ${r.rows} lead${r.rows === 1 ? "" : "s"} to CSV`);
+    else toast.error("Could not export the leads", { description: r.error });
   };
   return (
     <>
@@ -187,7 +183,7 @@ export function LeadsToolbar({
         onFolder={(id) => selectFolder(id as typeof folder)}
       />
 
-      <div className="flex items-center gap-2 shrink-0 flex-wrap">
+      <div className="flex items-center gap-2 shrink-0 flex-wrap max-w-full">
         {/* View Switcher: Kanban vs List */}
         <div className="inline-flex rounded-md border border-hairline overflow-hidden">
           <button
@@ -231,7 +227,7 @@ export function LeadsToolbar({
         </div>
 
         {/* Filter Dropdown */}
-        <DropdownMenu>
+        <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button icon="filter" size="sm">
               Filter
@@ -352,7 +348,7 @@ export function LeadsToolbar({
         {/* R-420: Sort — one choice for the list and the Kanban, kept in the URL (?sort=).
             On a phone the button is the icon alone (plus a dot when it is not the default),
             so the row still fits 375px; the menu names every order. */}
-        <DropdownMenu>
+        <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button icon="sort" size="sm" aria-label={`Sort: ${LEAD_SORT_LABELS[leadSort]}`} title="Sort">
               <span className="hidden sm:inline">{LEAD_SORT_LABELS[leadSort]}</span>
@@ -377,7 +373,11 @@ export function LeadsToolbar({
         </DropdownMenu>
 
         {!isSales && (
-          <DropdownMenu>
+          /* R-1427: modal={false}, like R-457's bulk bar. Every item here opens a dialog. The menu
+             (react-menu) and the dialog (react-dialog) each carry their OWN copy of Radix's
+             dismissable layer, so a modal menu's body `pointer-events: none` was saved by the
+             dialog as the page's normal value and put back on Close — /leads froze until a reload. */
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button variant="default" size="sm" icon="more_h">More</Button>
             </DropdownMenuTrigger>
@@ -390,10 +390,12 @@ export function LeadsToolbar({
               <DropdownMenuItem className="gap-2 cursor-pointer" onSelect={() => setCsvImportOpen(true)}>
                 <Icon name="download" size={14} className="text-ink-3" /> Import CSV
               </DropdownMenuItem>
-              {/* Data-portability (audit B7): saari leads, jaisi darj hain. */}
+              {/* Data-portability (audit B7): saari leads, jaisi darj hain — R-1801: server-built, owner / manager only. */}
+              {canExport && (
               <DropdownMenuItem className="gap-2 cursor-pointer" disabled={exporting} onSelect={() => { void exportCsv(); }}>
                 <Icon name="upload" size={14} className="text-ink-3" /> {exporting ? "Exporting…" : "Export CSV"}
               </DropdownMenuItem>
+              )}
               <DropdownMenuItem className="gap-2 cursor-pointer" onSelect={() => setCampaignOpen(true)}>
                 <Icon name="send" size={14} className="text-ink-3" /> Send campaign
               </DropdownMenuItem>

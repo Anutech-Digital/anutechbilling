@@ -39,11 +39,18 @@ export async function GET(request: Request) {
   // 1. Fetch user's tenant ID if not platform admin
   let tenantId: string | null = null;
   if (!isAdmin) {
-    const { data: me } = await supabase.from("users").select("tenant_id").eq("id", user.id).single();
+    const { data: me } = await supabase.from("users").select("tenant_id").eq("id", user.id).maybeSingle();
     tenantId = me?.tenant_id ?? null;
+    /* R-1487: fail closed. Without a workspace there is nothing of theirs to list — never
+       fall through to an unfiltered query and leave RLS as the only wall. */
+    if (!tenantId) {
+      return NextResponse.json({ error: "Your account is not linked to a workspace yet." }, { status: 403 });
+    }
   }
 
-  // 2. Fetch all relevant tickets for evaluation & classification
+  // 2. Fetch all relevant tickets for evaluation & classification.
+  //    Only a platform admin (Anutech staff) reads across workspaces; everyone else is pinned
+  //    to their own tenant here AND by RLS (support_tickets_select_own_tenant).
   let q = client.from("support_tickets").select("*").order("created_at", { ascending: false });
 
   if (!isAdmin && tenantId) {
@@ -91,7 +98,8 @@ export async function GET(request: Request) {
     return true;
   });
 
-  return NextResponse.json({ tickets: filteredTickets, counts, scopeCounts });
+  // crossTenant (R-1487): tells the desk whether "across all workspaces" is true for this viewer.
+  return NextResponse.json({ tickets: filteredTickets, counts, scopeCounts, crossTenant: isAdmin });
 }
 
 /** R-880: the only values PATCH may write. Anything else is refused, not stored. */

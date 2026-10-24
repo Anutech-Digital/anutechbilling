@@ -21,15 +21,22 @@ import { geminiJson } from "./gemini";
 import type { ExtractedBill } from "@/app/api/ai/extract-bill/sanitize";
 
 export const BILL_PROMPT =
-  "You are reading a vendor/supplier tax invoice for a cloud reseller's books. The " +
+  "You are reading a vendor/supplier bill for a cloud reseller's books — a tax invoice, " +
+  "or a PROFORMA invoice / quotation from a reseller (the same layout, often only a " +
+  "'Description | Total' table with no qty or rate columns). The " +
   "supplier may be INDIAN (Google Cloud/Workspace, Microsoft, Zoho, etc.) billing in " +
   "rupees with GST (CGST+SGST or IGST), OR a FOREIGN online-service provider (e.g. " +
   "Anthropic, OpenAI, Google LLC) billing in USD/other currency — these carry an India " +
   "GST registration under state code 99 (OIDAR) and may show GST as a single line. " +
   "Extract and return ONLY JSON, no prose:\n" +
   "{\n" +
+  '  "document_type": string|null,      // "tax_invoice", "proforma" (Proforma / Pro-forma Invoice, quotation) or "other", from the document\'s own title\n' +
   '  "vendor_name": string|null,        // the SUPPLIER who issued the bill (the seller, NOT the buyer)\n' +
   '  "vendor_gstin": string|null,       // 15-char India GST/VAT registration of the supplier if printed\n' +
+  /* R-1767 (22 Oct 2026): a bill "Bill To" ANOTHER company was saved in ours with no warning —
+     the reader never read the buyer. The extract-bill route compares it with our own GSTIN/name. */
+  '  "buyer_name": string|null,         // the BUYER the bill is addressed to: the "Bill To" / "Billed To" / "Buyer" block. NEVER the seller\n' +
+  '  "buyer_gstin": string|null,        // 15-char GSTIN printed in that Bill To / Buyer block (null if none). NEVER the seller\'s GSTIN\n' +
   '  "bill_no": string|null,            // the invoice/bill number\n' +
   '  "bill_date": string|null,          // invoice/issue date as YYYY-MM-DD\n' +
   '  "currency": string|null,           // ISO code of the amounts on the bill: "INR", "USD", etc.\n' +
@@ -39,7 +46,8 @@ export const BILL_PROMPT =
   '  "igst": number|null,               // IGST or a single GST/tax amount (0 if not shown)\n' +
   '  "total": number|null,              // grand total INCLUDING tax, in the bill\'s currency\n' +
   '  "line_items": [                    // every product/service row on the bill (empty array if none)\n' +
-  '    { "description": string, "qty": number|null, "unit_price": number|null, "amount": number }\n' +
+  '    { "description": string, "qty": number|null, "unit_price": number|null, "amount": number, "category": string|null }\n' +
+  "      // category: this row's expense category, from the same list as expense_category below (null when unsure)\n" +
   "  ],\n" +
   '  "category_guess": string|null      // "COGS-Workspace" Google, "COGS-M365" Microsoft, "COGS-Zoho" Zoho, else "COGS-Other" or null\n' +
   /* ── Expense ki category BHI yahin se (30 Aug 2026) ─────────────────────────
@@ -65,13 +73,28 @@ export const BILL_PROMPT =
   '     Judge by WHAT THE THING IS, not by words in its marketing name: a "Travel Backpack" bought\n' +
   '     for the office is Office Supplies, not Travel. Travel means a journey actually taken.\n' +
   '     Use null when unsure. NEVER "Salaries".\n' +
+  /* R-1744 (22 Oct 2026, Pardeep: "GST bill do to AI sab bhare") — the short note, and
+     "Paid already" only when the bill itself says so. */
+  '  "item_short": string|null,         // 1-3 word name of the main thing bought, e.g. "Workspace", "EC2", "Office chair"\n' +
+  '  "paid_status": string|null,        // "paid" ONLY if the bill clearly says it is paid (PAID stamp, "Amount paid", receipt, balance 0); "unpaid" if it shows an amount due; else null\n' +
+  '  "payment_mode": string|null        // how it was paid as printed ("UPI", "Credit card", "Net banking", "Cash") — only when paid, else null\n' +
   "}\n" +
   "RULES: Keep amounts in the bill's OWN currency (do NOT convert). Keep decimals (e.g. 265.50). " +
   "Never invent a value — use null (or [] for line_items) if the bill does not clearly show it. " +
+  /* R-1510: a reseller's Proforma ("Google Workspace ( 1 September - 30 September ,
+     2026 )" | "562,110.28 INR") came back without the product name. Spell out the
+     2-column table, the full row text, and the number format, so the row survives. */
+  "line_items: one entry per charged row of the item table, even when the table has only " +
+  "a description and a total column (qty and unit_price null then). description is the FULL " +
+  "row text exactly as printed — product name plus any plan, period or date range, e.g. " +
+  "\"Google Workspace ( 1 September - 30 September , 2026 )\" — never shortened or dropped. " +
+  "Every amount is a plain JSON number: no thousands commas, no currency word or symbol — " +
+  "\"562,110.28 INR\" is 562110.28, \"₹5,62,110.28\" is 562110.28. " +
   "A single foreign 'GST - India' / 'VAT' line goes in igst. " +
   "CREDIT lines are NEGATIVE: a refund / 'unused time' / proration credit / discount row must have a NEGATIVE amount (and negative unit_price), e.g. -61.41 — never 0. " +
   "The line_items amounts must sum to the pre-tax subtotal (total minus tax), so keep signs correct. " +
-  "vendor_name is the SELLER, never the reseller/buyer.";
+  "vendor_name is the SELLER, never the reseller/buyer. buyer_name / buyer_gstin are the BUYER from " +
+  "the 'Bill To' / 'Billed To' / 'Buyer' block, never the seller's name or GSTIN; null when the bill shows no buyer.";
 
 /** Types Gemini vision can read. Anything else is refused before the call. */
 export const READABLE_BILL_MIME = /^(image\/(png|jpe?g|webp|heic|heif)|application\/pdf)$/i;

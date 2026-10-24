@@ -73,7 +73,7 @@ const ROUTES = [
   "src/app/api/payments/[id]/receipt/route.ts",
   "src/app/api/quotes/[id]/mark-accepted/route.ts",
   "src/app/api/quotes/[id]/recreate-subscription/route.ts",
-  "src/app/api/webhooks/razorpay/route.ts",
+  "src/app/api/webhooks/razorpay/webhook.server.ts",
 ] as const;
 
 describe("the five R-025 routes no longer return raw text", () => {
@@ -89,7 +89,7 @@ describe("the five R-025 routes no longer return raw text", () => {
   it("the razorpay webhook no longer ships a `detail` field at all", () => {
     /* It was a PUBLIC endpoint returning Postgres's text under `detail`. Anyone who can
        reach the URL could read our schema out of a failed event. */
-    const src = readFileSync("src/app/api/webhooks/razorpay/route.ts", "utf8");
+    const src = readFileSync("src/app/api/webhooks/razorpay/webhook.server.ts", "utf8");
     expect(src).not.toMatch(/detail:\s*\w*Err\.message/);
   });
 });

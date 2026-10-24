@@ -49,8 +49,8 @@ export function ProductFooter() {
         <nav className="flex flex-wrap gap-x-4 gap-y-2" aria-label="Footer">
           <Link href="/pricing" className="hover:text-ink">Pricing</Link>
           <Link href="/about" className="hover:text-ink">About</Link>
-          <Link href="/privacy" className="hover:text-ink">Privacy</Link>
-          <Link href="/terms" className="hover:text-ink">Terms</Link>
+          <Link href="/privacy" className="hover:text-ink">ResellerOS privacy</Link>
+          <Link href="/terms" className="hover:text-ink">ResellerOS terms</Link>
           {CUSTOMER_LOGIN_URL && (
             <a href={CUSTOMER_LOGIN_URL} className="hover:text-ink">{HOME.clientLoginCta}</a>
           )}

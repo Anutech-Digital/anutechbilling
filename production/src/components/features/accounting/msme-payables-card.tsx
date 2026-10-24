@@ -12,6 +12,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { rupee, formatDate } from "@/lib/utils";
 import { useMsmePayables } from "@/lib/queries/day-book";
 import { msmeSummary, MSME_LIMIT_DAYS, MSME_LIMIT_DAYS_NO_AGREEMENT } from "@/lib/accounting/msme";
@@ -28,8 +29,8 @@ export function MsmePayablesCard() {
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Payables · MSME</p>
           <h2 className="font-serif text-xl">MSME vendors — 45-day rule (s.43B(h))</h2>
           <p className="text-sm text-ink-3 mt-1 max-w-3xl">
-            Micro / small vendor ka bill {MSME_LIMIT_DAYS} din me (likhit agreement na ho to {MSME_LIMIT_DAYS_NO_AGREEMENT} din me)
-            na chuke to wo kharcha is saal ke profit se nahi ghatta — tax badh jaata hai. 31 March se pehle chukana zaroori.
+            A micro / small vendor's bill not paid within {MSME_LIMIT_DAYS} days ({MSME_LIMIT_DAYS_NO_AGREEMENT} days without a written agreement)
+            cannot be deducted from this year's profit — the tax goes up. Pay before 31 March.
           </p>
         </div>
         {rows.length > 0 && (
@@ -44,12 +45,12 @@ export function MsmePayablesCard() {
       {q.isLoading ? (
         <Skeleton className="h-20 w-full" />
       ) : q.error ? (
-        <p role="alert" className="text-sm text-rose">MSME payables load nahi hue: {(q.error as Error).message}</p>
+        <LoadErrorInline what="MSME payables" error={q.error} onRetry={() => void q.refetch()} />
       ) : rows.length === 0 ? (
         <p className="text-sm text-ink-3">
-          Kisi Udyam-registered vendor ka koi bakaya bill nahi. Agar aapke kuch vendors MSME hain aur unka Udyam number
-          nahi bhara, to wo yahan dikhenge hi nahi —{" "}
-          <Link href="/accounting/vendors" className="underline">Vendors</Link> me Udyam number aur category bharein.
+          No unpaid bills from Udyam-registered vendors. Vendors that are MSME but have no Udyam number
+          entered do not show here —{" "}
+          add the Udyam number and category under <Link href="/accounting/vendors" className="underline">Vendors</Link>.
         </p>
       ) : (
         <div className="overflow-x-auto">

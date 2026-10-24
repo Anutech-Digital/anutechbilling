@@ -11,6 +11,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { decideOwnerAction, deviceError, type DeviceStatus } from "@/lib/attendance/webauthn";
 import { getCaller } from "../_server";
+import { apiFailure } from "@/lib/errors/api-error";
 
 export async function POST(request: NextRequest) {
   const c = await getCaller();
@@ -53,7 +54,13 @@ export async function POST(request: NextRequest) {
     .update(patch)
     .eq("tenant_id", c.tenantId)
     .eq("id", device.id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 409 });
+  // R-1137: DB text is logged, the screen gets a fixed sentence + code.
+  if (error) {
+    return NextResponse.json(
+      apiFailure("DEVICE_UPDATE_FAILED", "Could not update this device — nothing was changed. Refresh the Devices list and try again.", error, "attendance/device/approve"),
+      { status: 409 },
+    );
+  }
 
   return NextResponse.json({ id: device.id, status: decision.status });
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { presentSummary, suggestedLopDays, type AttendanceDayRow } from "./lop";
+import { leaveDaysInMonth, presentByDate, presentSummary, suggestedLopDays, type AttendanceDayRow, type LeaveRow } from "./lop";
 import { DEFAULT_SHIFT } from "./shift";
 
 const ist = (date: string, hhmm: string) => new Date(`${date}T${hhmm}:00+05:30`).toISOString();
@@ -72,5 +72,85 @@ describe("payroll's attendance query uses the real month end (R-604 bug found in
     const src = readFileSync(join(process.cwd(), "src", "lib", "queries", "payroll.ts"), "utf8");
     expect(src).not.toMatch(/\.lte\("work_date",\s*`\$\{period\}-31`\)/);
     expect(src).toMatch(/monthBounds\(period\)/);
+  });
+});
+
+describe("R-780 leaveDaysInMonth — leave counts only its working days inside this month, never on a present day, never twice", () => {
+  const OCT_HOLIDAYS = new Set(["2026-10-02"]);
+  const isWorking = (holidays: ReadonlySet<string>) => (iso: string) =>
+    new Date(`${iso}T00:00:00Z`).getUTCDay() !== 0 && !holidays.has(iso);
+  const octDates = (holidays: ReadonlySet<string>) => {
+    const s = new Set<string>();
+    for (let d = 1; d <= 31; d++) {
+      const iso = `2026-10-${String(d).padStart(2, "0")}`;
+      if (isWorking(holidays)(iso)) s.add(iso);
+    }
+    return s;
+  };
+  const leave = (from: string, to: string, days: number, type = "casual", emp = "e1"): LeaveRow =>
+    ({ employee_id: emp, from_date: from, to_date: to, days, type });
+  const run = (leaves: LeaveRow[], present: Record<string, number> = {}, holidays: ReadonlySet<string> = OCT_HOLIDAYS) =>
+    leaveDaysInMonth({
+      leaves, employeeId: "e1", countedDates: octDates(holidays),
+      isWorkingDate: isWorking(holidays), presentByDate: new Map(Object.entries(present)),
+    });
+
+  it("28 Sep–3 Oct casual (5 working days) → October counts only 1 Oct and 3 Oct (2 Oct holiday)", () => {
+    expect(run([leave("2026-09-28", "2026-10-03", 5)])).toEqual({ paidLeave: 2, unpaidLeave: 0 });
+  });
+  it("same leave without the 2 Oct holiday → October counts its 3 days (1–3 Oct), not all 6", () => {
+    expect(run([leave("2026-09-28", "2026-10-03", 6)], {}, new Set())).toEqual({ paidLeave: 3, unpaidLeave: 0 });
+  });
+  it("a day marked present inside the leave is not counted as leave", () => {
+    expect(run([leave("2026-10-05", "2026-10-07", 3)], { "2026-10-06": 1 })).toEqual({ paidLeave: 2, unpaidLeave: 0 });
+  });
+  it("a half-day present + a full-day leave on that day → only the other half is leave", () => {
+    expect(run([leave("2026-10-05", "2026-10-05", 1, "unpaid")], { "2026-10-05": 0.5 })).toEqual({ paidLeave: 0, unpaidLeave: 0.5 });
+  });
+  it("two overlapping leave entries never count a day twice", () => {
+    expect(run([leave("2026-10-05", "2026-10-06", 2), leave("2026-10-06", "2026-10-07", 2)]))
+      .toEqual({ paidLeave: 3, unpaidLeave: 0 });
+  });
+  it("half-day leave counts 0.5", () => {
+    expect(run([leave("2026-10-08", "2026-10-08", 0.5)])).toEqual({ paidLeave: 0.5, unpaidLeave: 0 });
+  });
+  it("leave on a Sunday or holiday counts nothing", () => {
+    expect(run([leave("2026-10-04", "2026-10-04", 1), leave("2026-10-02", "2026-10-02", 1, "unpaid")]))
+      .toEqual({ paidLeave: 0, unpaidLeave: 0 });
+  });
+  it("a leave wholly inside the month on working days counts as before; unpaid stays unpaid; other employees ignored", () => {
+    expect(run([leave("2026-10-05", "2026-10-07", 3), leave("2026-10-12", "2026-10-13", 2, "unpaid"), leave("2026-10-14", "2026-10-14", 1, "casual", "e2")]))
+      .toEqual({ paidLeave: 3, unpaidLeave: 2 });
+  });
+  it("days payroll does not count yet (after today / before joining) are not counted", () => {
+    const r = leaveDaysInMonth({
+      leaves: [leave("2026-10-15", "2026-10-17", 3, "unpaid")], employeeId: "e1",
+      countedDates: new Set(["2026-10-15"]), isWorkingDate: isWorking(OCT_HOLIDAYS), presentByDate: new Map(),
+    });
+    expect(r).toEqual({ paidLeave: 0, unpaidLeave: 1 });
+  });
+  it("feeds suggestedLopDays: 26 working days, 23 present, leave 28 Sep–3 Oct → 1 absent, not 0", () => {
+    const { paidLeave, unpaidLeave } = run([leave("2026-09-28", "2026-10-03", 5)]);
+    expect(suggestedLopDays({ expected: 26, present: 23, paidLeave, unpaidLeave })).toEqual({ absent: 1, lopDays: 1 });
+  });
+});
+
+describe("presentByDate — the per-day present value leaveDaysInMonth needs", () => {
+  it("full day 1, short day 0.5, other employee and no check-in ignored", () => {
+    const m = presentByDate([
+      row("2026-10-05", "10:00", "18:00"), row("2026-10-06", "10:00", "12:00"),
+      row("2026-10-07", null, null), row("2026-10-08", "10:00", "18:00", "e2"),
+    ], "e1", DEFAULT_SHIFT);
+    expect([...m.entries()]).toEqual([["2026-10-05", 1], ["2026-10-06", 0.5]]);
+  });
+});
+
+describe("R-780 payroll screen uses leaveDaysInMonth, not the whole leave.days", () => {
+  it("no fixed `${period}-31` leave filter and no raw sum of l.days for the LOP suggestion", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(join(process.cwd(), "src", "app", "(app)", "accounting", "payroll", "screens.tsx"), "utf8");
+    expect(src).not.toMatch(/from_date <= `\$\{period\}-31`/);
+    expect(src).toMatch(/leaveDaysInMonth\(/);
   });
 });

@@ -20,6 +20,7 @@ import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { AGING_BUCKETS } from "@/lib/navigation/drilldown";
 import { invoiceBalance } from "@/lib/invoices/kpis";
 import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +31,7 @@ import { Icon } from "@/components/ui/icon";
 import { rupee } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { primaryContactsFor } from "@/lib/contacts/primary";
+import { readOpenInvoices } from "./read";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { MsmePayablesCard } from "@/components/features/accounting/msme-payables-card";
 import { OverduePauseCard } from "@/components/features/collections/overdue-pause-card";
@@ -68,7 +70,7 @@ function daysBetween(from: string, to: Date): number {
 
 function useAging() {
   return useQuery({
-    queryKey: ["accounting", "aging"],
+    queryKey: queryKeys.aging(),
     queryFn: async (): Promise<{ rows: CustomerAgingRow[]; totals: AgingTotals }> => {
       const supabase = createClient();
 
@@ -76,11 +78,8 @@ function useAging() {
       // We use `net_payable` when present (= amount − adjusted advances)
       // otherwise fall back to `amount`. Invoices already 'paid' or 'void'
       // are excluded.
-      const { data: invoices, error: invErr } = await supabase
-        .from("invoices")
-        .select("id, customer_id, customer_name, amount, net_payable, paid_amount, status, invoice_date, due_date")
-        .in("status", ["pending", "overdue"]);
-      if (invErr) throw invErr;
+      // R-1586: every open invoice, paged past the gateway's 1000-row cap.
+      const invoices = await readOpenInvoices(supabase);
 
       // Pull customer contact info so the row can offer WhatsApp / email.
       const customerIds = Array.from(
@@ -334,10 +333,10 @@ export default function AgingPage() {
               <li key={r.customerId ?? r.customerName}>
                 <Card className="p-4">
                   <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="font-medium text-ink leading-tight">{r.customerName}</div>
-                    <div className="font-serif text-xl text-ink leading-none">{rupee(r.total)}</div>
+                    <div className="min-w-0 break-words font-medium text-ink leading-tight">{r.customerName}</div>
+                    <div className="shrink-0 font-serif text-lg sm:text-xl text-ink leading-none tabular-nums whitespace-nowrap">{rupee(r.total)}</div>
                   </div>
-                  <div className="grid grid-cols-4 gap-1.5 text-xs mb-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs mb-3">
                     <Mini label="Current" value={r.buckets.current} />
                     <Mini label="31–60"   value={r.buckets.b30}    tone={r.buckets.b30   > 0 ? "amber" : undefined} />
                     <Mini label="61–90"   value={r.buckets.b60}    tone={r.buckets.b60   > 0 ? "amber" : undefined} />
@@ -408,9 +407,9 @@ function Mini({ label, value, tone }: { label: string; value: number; tone?: "am
                    : tone === "amber" ? "text-amber-ink"
                    : "text-ink-3";
   return (
-    <div className="rounded-md border border-hairline p-1.5 text-center bg-paper">
+    <div className="min-w-0 rounded-md border border-hairline p-1.5 text-center bg-paper">
       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold leading-none mb-0.5">{label}</div>
-      <div className={`font-mono leading-none ${colorClass}`}>{value > 0 ? rupee(value) : "—"}</div>
+      <div className={`font-mono leading-none tabular-nums break-words ${colorClass}`}>{value > 0 ? rupee(value) : "—"}</div>
     </div>
   );
 }
@@ -432,14 +431,14 @@ function KPI({
                    : "text-ink";
   const body = (<>
       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">{label}</div>
-      <div className={`font-serif ${big ? "text-2xl md:text-3xl" : "text-xl md:text-2xl"} ${colorClass} leading-tight`}>
+      <div className={`font-serif ${big ? "text-xl sm:text-2xl md:text-3xl" : "text-lg sm:text-xl md:text-2xl"} ${colorClass} leading-tight tabular-nums break-words`}>
         {value}
       </div>
 </>);
-  if (!onClick) return <Card className="p-3 md:p-4">{body}</Card>;
+  if (!onClick) return <Card className="min-w-0 p-3 md:p-4">{body}</Card>;
   return (
     <button type="button" onClick={onClick} aria-pressed={active ?? undefined}
-      className={`text-left rounded-lg border bg-paper p-3 md:p-4 transition-colors hover:border-amber/60 ${active ? "border-amber" : "border-hairline"}`}>
+      className={`min-w-0 text-left rounded-lg border bg-paper p-3 md:p-4 transition-colors hover:border-amber/60 ${active ? "border-amber" : "border-hairline"}`}>
       {body}
     </button>
   );

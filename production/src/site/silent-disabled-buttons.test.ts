@@ -40,8 +40,6 @@ const ALLOWED: Record<string, string> = {
     "Apply beside an empty coupon box",
   "src/site/components/agent/AgentChat.tsx|busy || !input.trim()":
     "Send beside an empty message box",
-  "src/site/components/email/LicenceCalculator.tsx|!monthlyAvailable":
-    "the line below says \"This edition is priced for annual commitment only\"",
   "src/site/components/ssl/CertCards.tsx|c.cta === \"Included\"":
     "the button's own label reads \"Included\"",
   "src/app/(marketing)/cart/page.tsx|locked":

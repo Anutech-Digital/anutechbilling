@@ -18,7 +18,7 @@ import { gaqlCampaignSpend, googleRowsFromSearchStream, type AdSpendRow, type Go
 type Admin = SupabaseClient<Database>;
 
 export const GOOGLE_ADS_SCOPE_MISSING_MESSAGE =
-  "Google ne Ads account padhne ki permission nahi di. Reconnect kariye aur \"Manage your AdWords campaigns\" tick rehne dijiye.";
+  "Google did not grant permission to read the Ads account. Click Reconnect and keep \"Manage your AdWords campaigns\" ticked.";
 
 export function googleAdsDeveloperToken(): string | null {
   return process.env.GOOGLE_ADS_DEVELOPER_TOKEN?.trim() || null;
@@ -28,12 +28,12 @@ const BASE = () => `https://googleads.googleapis.com/${apiVersion()}`;
 
 export function explainGoogleAdsError(status: number, body: string): string {
   if (/DEVELOPER_TOKEN_NOT_APPROVED|developer token is only approved for use with test accounts/i.test(body)) {
-    return "Google Ads developer token abhi sirf test accounts ke liye approved hai — API Center mein \"Basic access\" apply karo (Google 1–3 din leta hai).";
+    return "The Google Ads developer token is approved for test accounts only — apply for \"Basic access\" in the API Center (Google takes 1–3 days).";
   }
-  if (/DEVELOPER_TOKEN_INVALID|developer-token/i.test(body)) return "GOOGLE_ADS_DEVELOPER_TOKEN galat ya khaali hai — Google Ads manager account → Tools → API Center se lo.";
-  if (status === 404 && /version/i.test(body)) return `Google Ads API ${apiVersion()} retire ho gaya — env GOOGLE_ADS_API_VERSION mein nayi version daalo.`;
-  if (/PERMISSION_DENIED|USER_PERMISSION_DENIED/i.test(body)) return "Is Google login ke paas is Ads account par access nahi hai — jis email se ads.google.com khulta hai, usi se connect karo.";
-  if (status === 401) return "Google token expire/revoke ho gaya — Reconnect karo.";
+  if (/DEVELOPER_TOKEN_INVALID|developer-token/i.test(body)) return "GOOGLE_ADS_DEVELOPER_TOKEN is wrong or empty — get it from Google Ads manager account → Tools → API Center.";
+  if (status === 404 && /version/i.test(body)) return `Google Ads API ${apiVersion()} is retired — put the new version in env GOOGLE_ADS_API_VERSION.`;
+  if (/PERMISSION_DENIED|USER_PERMISSION_DENIED/i.test(body)) return "This Google login has no access to this Ads account — connect with the email that opens ads.google.com.";
+  if (status === 401) return "Google token expired or was revoked — click Reconnect.";
   return `Google Ads ne ${status} diya: ${body.slice(0, 200)}`;
 }
 
@@ -56,7 +56,7 @@ export async function getFreshGoogleAdsAccessToken(admin: Admin, userId: string)
 
 function headers(token: string, loginCustomerId?: string | null): Record<string, string> {
   const dev = googleAdsDeveloperToken();
-  if (!dev) throw new Error("GOOGLE_ADS_DEVELOPER_TOKEN env mein nahi hai.");
+  if (!dev) throw new Error("GOOGLE_ADS_DEVELOPER_TOKEN is not set in env.");
   const h: Record<string, string> = { authorization: `Bearer ${token}`, "developer-token": dev, "content-type": "application/json" };
   if (loginCustomerId) h["login-customer-id"] = loginCustomerId;
   return h;

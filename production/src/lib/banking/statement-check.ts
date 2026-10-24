@@ -117,9 +117,12 @@ export function checkStatement(lines: StatementLine[], openingBalance: number): 
       cur += net;   // no evidence for this day — take its lines as they are
       continue;
     }
-    const complete = bal.length === dayLines.length && thread(cur, dayLines).rest.length === 0;
-    if (complete) {
-      cur += net;
+    const threaded = bal.length === dayLines.length ? thread(cur, dayLines) : null;
+    if (threaded && threaded.rest.length === 0) {
+      /* Carry the bank's own figure forward, not cur + net. Amounts are whole rupees and
+         statements carry paise, so Σ(rounded amounts) drifts from the running balance —
+         ₹24 over 60 lines of ₹10.40 — and that drift read as "lines missing" (R-1693). */
+      cur = threaded.chained[threaded.chained.length - 1].balance_after as number;
       lastGood = d;
       continue;
     }

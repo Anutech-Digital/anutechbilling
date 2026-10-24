@@ -111,6 +111,9 @@ export function useTasks(bucket: TaskBucket = "all") {
  * tenant explicitly as well as by RLS.
  */
 export const DONE_TASKS_SHOWN = 100;
+/** Open = still to do. The /tasks read and nav_badges().tasks (R-1541, the Overdue count) use
+ *  this list; nav-badge-parity.test.ts holds the SQL to it. */
+export const TASK_OPEN_STATUSES = ["pending", "snoozed"] as const;
 
 export function useTaskList(tenantId: string | null | undefined) {
   return useQuery({
@@ -129,7 +132,7 @@ export async function fetchTaskList(supabase: TasksDb, tenantId: string): Promis
       .from("tasks")
       .select(TASK_SELECT)
       .eq("tenant_id", tenantId)
-      .in("status", ["pending", "snoozed"])
+      .in("status", [...TASK_OPEN_STATUSES])
       .order("due_at", { ascending: true })
       .order("id", { ascending: true })
       .range(from, to) as unknown as PromiseLike<PageResponse<TaskWithLink>>),
@@ -191,29 +194,6 @@ export function useTasksForLead(leadId: string | null | undefined) {
       if (error) throw error;
       return data ?? [];
     },
-  });
-}
-
-/**
- * "Today + overdue" count for the top-bar bell badge.
- * Cheap query — count(*) head-only.
- */
-export function useTaskCountDueOrOverdue() {
-  return useQuery({
-    queryKey: ["tasks", "count-due-or-overdue"],
-    queryFn: async (): Promise<number> => {
-      const supabase = createClient();
-      const { endISO } = todayBoundariesIST();
-      // pending AND due_at < endOfToday (covers both overdue + today)
-      const { count, error } = await supabase
-        .from("tasks")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "pending")
-        .lt("due_at", endISO);
-      if (error) throw error;
-      return count ?? 0;
-    },
-    staleTime: 30_000,
   });
 }
 

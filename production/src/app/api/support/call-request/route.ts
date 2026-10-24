@@ -21,6 +21,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { localDateISO } from "@/lib/leads/outcomes";
 import {
   supportTier, tierFromPlanName, liveCallAllowance, type SupportTierId,
@@ -41,12 +42,16 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: "Please sign in again." }, { status: 401 });
 
   const { data: me } = await supabase
-    .from("users").select("tenant_id, email").eq("id", user.id).maybeSingle();
+    .from("users").select("tenant_id, email, role").eq("id", user.id).maybeSingle();
   if (!me?.tenant_id) {
     return NextResponse.json({
       error: "Your account is not linked to a company yet.",
       nextStep: "Finish joining under Team settings, then try again.",
     }, { status: 403 });
+  }
+  /* R-1470: a live call is requested from a ticket on the Support Desk — only its roles. */
+  if (!mayOpenPage(me.role, ["/support"])) {
+    return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   }
 
   let raw: unknown;

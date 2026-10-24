@@ -41,7 +41,7 @@ describe("lead finder", () => {
     const strong = baselineScore(input({ mx: "none", site: site({ https: false, status: 200, note: "Sirf HTTP" }) }));
     expect(strong.score).toBe(80);
     expect(strong.product).toBe("workspace");
-    expect(strong.fit_reason).toMatch(/email hi nahi/);
+    expect(strong.fit_reason).toMatch(/no email on the domain/);
     const weak = baselineScore(input({ mx: "google" }));
     expect(weak.score).toBe(25);
     const web = baselineScore(input({ mx: "google", site: site({ https: false, status: null, note: "x" }) }));

@@ -7,7 +7,10 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
+import type { Database } from "@/lib/supabase/database.types";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { toastError } from "@/lib/errors/toast-error";
 import type { MetricRow } from "@/lib/marketing/gbp";
 
@@ -28,7 +31,7 @@ export function useGbpStatus() {
     queryKey: [...GBP_KEY, "status"],
     queryFn: async (): Promise<GbpStatus> => {
       const res = await fetch("/api/integrations/google-business");
-      if (!res.ok) throw new Error("Status load nahi hua");
+      if (!res.ok) throw new Error("Could not load status");
       return res.json();
     },
   });
@@ -77,16 +80,26 @@ export function useGbpReviews(locationId?: string | null) {
 export function useGbpMetrics(locationId?: string | null, fromDay?: string) {
   return useQuery({
     queryKey: [...GBP_KEY, "metrics", locationId ?? "all", fromDay ?? "all"],
-    queryFn: async (): Promise<MetricRow[]> => {
-      let q = createClient().from("gbp_metrics_daily").select("day, metric, value").order("day").limit(20000);
-      if (locationId) q = q.eq("location_id", locationId);
-      if (fromDay) q = q.gte("day", fromDay);
-      const { data, error } = await q;
-      if (error) throw error;
-      return (data ?? []) as MetricRow[];
-    },
+    queryFn: () => fetchGbpMetrics(createClient(), locationId, fromDay),
     staleTime: 60_000,
   });
+}
+
+/**
+ * R-1588: every stored metric row. The old `.limit(20000)` came back as 1000 rows (the
+ * gateway caps every answer) — a few listings x ~10 metrics x 90 days is past that, so the
+ * charts stopped early. Paged; the primary key (location_id, day, metric) after `day` makes
+ * the order total.
+ */
+export async function fetchGbpMetrics(supabase: SupabaseClient<Database>, locationId?: string | null, fromDay?: string): Promise<MetricRow[]> {
+  const data = await fetchAllRows((from, to) => {
+    let q = supabase.from("gbp_metrics_daily").select("day, metric, value");
+    if (locationId) q = q.eq("location_id", locationId);
+    if (fromDay) q = q.gte("day", fromDay);
+    return q.order("day", { ascending: true }).order("location_id", { ascending: true }).order("metric", { ascending: true })
+      .range(from, to);
+  });
+  return data as MetricRow[];
 }
 
 export interface GbpSyncRun { id: string; started_at: string; finished_at: string | null; trigger: string; locations: number; reviews: number; metric_rows: number; ok: boolean | null; error: string | null }
@@ -112,7 +125,7 @@ export function useGbpSync() {
     },
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: GBP_KEY });
-      if (r.errors?.length) toast.warning(`Sync hua, par: ${r.errors[0]}`);
+      if (r.errors?.length) toast.warning(`Synced, but: ${r.errors[0]}`);
       else toast.success(`Synced — ${r.locations} listing, ${r.reviews} reviews, ${r.metricRows} metric rows`);
     },
     onError: (e) => { qc.invalidateQueries({ queryKey: GBP_KEY }); toastError(e); },
@@ -128,7 +141,7 @@ export function useGbpReply() {
       if (!res.ok) throw new Error(body?.error ?? "Reply failed");
       return body;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: [...GBP_KEY, "reviews"] }); toast.success("Reply Google par chala gaya"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: [...GBP_KEY, "reviews"] }); toast.success("Reply posted on Google"); },
     onError: (e) => toastError(e),
   });
 }

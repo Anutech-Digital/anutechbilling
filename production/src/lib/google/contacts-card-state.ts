@@ -39,7 +39,7 @@ export type ContactsCardState =
 
 /** Fallback tab jab server ne wajah nahi bheji (purani row, ya sync se pehle ka token). */
 export const RECONSENT_FALLBACK_REASON =
-  "Contacts padhne ki permission nahi mili — Reconnect kariye aur Google ki screen par saare checkbox tick rehne dijiye.";
+  "Permission to read contacts was not granted — click Reconnect and keep all the checkboxes ticked on Google's screen.";
 
 export function contactsCardState(status: ContactsStatus | null | undefined): ContactsCardState {
   if (!status?.configured) return { kind: "unconfigured" };

@@ -15,6 +15,7 @@
  * it is invisible on a revenue chart.
  */
 import { vendorLabel, type VendorLine } from "./pnl";
+import { reportProfit, type PnLNumbers } from "./pnl-assemble";
 
 export interface ProfitSlice {
   vendor: string;
@@ -85,7 +86,7 @@ export interface MonthPoint {
   revenue: number;
   cogs: number;
   expenses: number;
-  /** revenue − cogs − expenses. */
+  /** revenue − cogs − expenses = the month's reportProfit() (R-1647). */
   netProfit: number;
   /**
    * Net margin as an integer percent, or null.
@@ -101,12 +102,6 @@ export interface MonthPoint {
   partial: boolean;
 }
 
-export interface MonthlyRow {
-  /** YYYY-MM-DD. */
-  date: string;
-  amount: number;
-}
-
 /** The twelve months of an Indian FY, Apr → Mar. */
 export function fyMonths(fyStartYear: number): { key: string; label: string }[] {
   const NAMES = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
@@ -117,58 +112,66 @@ export function fyMonths(fyStartYear: number): { key: string; label: string }[] 
   });
 }
 
+/** `2026-04` → `{ from: "2026-04-01", to: "2026-04-30" }` — the whole calendar month, the
+ *  same window the P&L page's "This month" button asks for. */
+export function monthRange(key: string): { from: string; to: string } {
+  const [y, m] = key.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { from: `${key}-01`, to: `${key}-${String(last).padStart(2, "0")}` };
+}
+
+/** The FY months up to and including the one `today` (YYYY-MM-DD, IST) falls in. Months after
+ *  today are left out entirely rather than plotted as zero — a line falling to the floor for
+ *  the rest of the year is a picture of a business that has stopped. */
+export function fyMonthsSoFar(fyStartYear: number, today: string): { key: string; label: string }[] {
+  const thisMonth = today.slice(0, 7);
+  return fyMonths(fyStartYear).filter((m) => m.key <= thisMonth);
+}
+
+/** What one month's point is read from — that month's own P&L (pnl-assemble.ts). */
+export type MonthPnl = Pick<PnLNumbers, "revenue" | "cogs" | "netProfit" | "model">;
+
 /**
- * Roll revenue and expenses into a twelve-month series.
+ * R-1647: the month-by-month series, each point THE P&L of that month — the same assemblePnl()
+ * and reportProfit() the headline uses for "This month", so a month on the chart and the page
+ * opened on that month state the same profit, and the months add up to the FY.
  *
- * `cogsRatio` is the subscription book's wholesale-to-price ratio — the same figure
- * buildPnl() uses when no vendor bills exist. Applying it per month keeps every point on
- * the chart consistent with the headline above it; deriving the monthly cost any other
- * way would give a trend line that disagrees with the waterfall.
+ * Before: one `report_pnl_monthly` sum of revenue and GST-inclusive expenses, with a licence
+ * cost ratio taken from whatever range the page showed (default "This month": ₹0 revenue on the
+ * 1st gave a ratio of 0, so a whole year without licence cost) and no commission, no
+ * depreciation, no input-credit or per-vendor bill rule.
  *
- * Months after `today` are omitted entirely rather than plotted as zero. A line falling to
- * the floor for the rest of the financial year is a picture of a business that has
- * stopped, and it is the first thing the eye goes to.
+ * Bars: cost of goods is the model's (licence + project delivery), or the billed figure when the
+ * licence cost is unknown — the same fallback reportProfit() takes — and `expenses` is the rest
+ * (operating expenses, commission, depreciation), so revenue − cogs − expenses is exactly the
+ * month's profit.
  */
-export function monthlySeries(args: {
+export function monthlySeriesFromPnl(args: {
   fyStartYear: number;
-  revenue: readonly MonthlyRow[];
-  expenses: readonly MonthlyRow[];
-  cogsRatio: number;
   /** YYYY-MM-DD, IST. */
   today: string;
+  /** Month key (`2026-04`) → that month's P&L. A month not in the map is plotted as empty. */
+  months: ReadonlyMap<string, MonthPnl>;
 }): MonthPoint[] {
-  const { fyStartYear, revenue, expenses, cogsRatio, today } = args;
+  const { fyStartYear, today, months } = args;
   const thisMonth = today.slice(0, 7);
-
-  const sumBy = (rows: readonly MonthlyRow[]) => {
-    const m = new Map<string, number>();
-    for (const r of rows) {
-      const k = r.date.slice(0, 7);
-      m.set(k, (m.get(k) ?? 0) + r.amount);
-    }
-    return m;
-  };
-  const rev = sumBy(revenue);
-  const exp = sumBy(expenses);
-
-  return fyMonths(fyStartYear)
-    .filter((m) => m.key <= thisMonth)
-    .map((m) => {
-      const r = rev.get(m.key) ?? 0;
-      const cogs = Math.round(r * cogsRatio);
-      const e = exp.get(m.key) ?? 0;
-      const netProfit = r - cogs - e;
-      return {
-        key: m.key,
-        label: m.label,
-        revenue: r,
-        cogs,
-        expenses: e,
-        netProfit,
-        marginPct: r > 0 ? Math.round((netProfit / r) * 100) : null,
-        partial: m.key === thisMonth,
-      };
-    });
+  return fyMonthsSoFar(fyStartYear, today).map((m) => {
+    const p = months.get(m.key);
+    const revenue = p ? p.model.revenue : 0;
+    const netProfit = p ? reportProfit(p) : 0;
+    const cogs = !p ? 0 : p.model.netProfit === null ? p.cogs : p.model.cogs;
+    const expenses = revenue - cogs - netProfit;
+    return {
+      key: m.key,
+      label: m.label,
+      revenue,
+      cogs,
+      expenses,
+      netProfit,
+      marginPct: revenue > 0 ? Math.round((netProfit / revenue) * 100) : null,
+      partial: m.key === thisMonth,
+    };
+  });
 }
 
 /** Best and worst months by net profit — the two a reader should be pointed at. */

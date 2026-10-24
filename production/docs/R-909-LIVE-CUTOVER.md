@@ -133,6 +133,22 @@ Alternative (not chosen): change the defaults in `cloudbuild.yaml` itself. The s
 would be safe, but it ties the switch to a code merge; the trigger route matches what staging did and rolls back by
 importing the saved YAML.
 
+### 2.5 Printed commands for 2.1–2.3 — `scripts/ops/live-env-commands.mjs` (R-1462)
+
+The names above are also kept as data in `scripts/ops/live-env-map.json` (env var → secret NAME or plain value;
+a vitest pins it to the tables of 2.1–2.3). The script only **prints** — it never runs gcloud and has no apply mode:
+
+```bash
+node scripts/ops/live-env-commands.mjs                 # plan: (a) --update-secrets line, (b) --update-env-vars line,
+                                                       #   (b2) SUPABASE_SERVICE_ROLE_KEY remove + re-add, (b3) --memory, (c) Google redirect URI checklist
+node scripts/ops/live-env-commands.mjs --env staging   # same for resellersos-staging (staging-* secret names)
+gcloud run services describe resellersos --region=asia-southeast1 --project=resellsubsos-prod --format=yaml > describe.yaml
+node scripts/ops/live-env-commands.mjs --diff describe.yaml   # names only: MISSING / PLAIN-but-secret / DIFFERENT secret / EXTRA; exit 0 when it matches
+```
+
+Paste the printed lines yourself (8.6); `r909-live-cutover.mjs run-env` makes the same change with `--run`. Delete
+`describe.yaml` afterwards — it holds the plain values (the script never prints them).
+
 ---
 
 ## 3. Google OAuth (Pardeep — Google Cloud console)
@@ -269,6 +285,30 @@ ai-reflection, attendance-reminders, compliance-reminders, trial-expiry, backup,
 
 ---
 
+## 6.5 Client tenant (R-1405) — the 20 Oct data is a CLIENT's, not Anutech's
+
+The first real data on live belongs to a client company, not to Anutech. Nothing in this runbook names the client:
+the repo is public (R-1429/R-1432), so the client's name and tenant id live only in config.
+
+- **Which tenant:** `CLIENT_TENANT_ID` (Secret Manager name `live-client-tenant-id`; value never in git, chat or the board).
+  The operator tenant stays `BUY_PAGE_TENANT_ID` (Anutech). The two are different rows in `public.tenants`.
+- **Who owns it:** the client's proprietor, with their OWN Google login (R-1402 — no shared `pardeep@` login, no
+  `pardeep@<client-domain>` as owner). Platform admin stays Anutech-only (`PLATFORM_ADMIN_EMAILS`, default = pardeep@anutech.in).
+- **Anutech staff in the client tenant:** none until R-1406 (owner-granted, time-limited, logged support access) exists.
+  Until then support happens over the client owner's shoulder, never with their login.
+- **Before cutover (8.0):** `select id, name, created_at from public.tenants` on the CLONE → confirm both tenant ids exist,
+  and record the client tenant's row counts (customers, contacts, invoices, payments, subscriptions, quotes, employees,
+  storage.objects) in `rowcounts.csv`. **After 8.9:** the same counts on live, byte-identical.
+- **Mail from the client tenant:** sender identity = the client's verified domain in Resend (not `onboarding@resend.dev`,
+  not anutech.in). Until it is verified, customer mail for that tenant stays OFF via R-897's per-job switch.
+- **Scheduler jobs that mail the client's customers** — renewals, invoice-dunning, billing, birthday-greetings,
+  trial-expiry, compliance-reminders — are re-enabled in 8.10 ONLY after the client owner says yes for each, on the
+  day. health-digest, backup, mrr-snapshot, attendance-*, gmail-inbox, ai-* are Anutech-internal and resume first.
+- **Decisions still open (board R-1405 / R-1402):** the client owner's login email; which Anutech people, if any, are
+  members of the client tenant; the client's sender domain.
+
+---
+
 ## 7. Deploy — how live gets the staging code
 
 - Triggers (`gcloud builds triggers list`, global): `resellersos-deploy-on-push` (repo Anutech-Digital/anutechbilling,
@@ -390,6 +430,7 @@ needs the stopped VM, so "rollback" = live back to today's unused state; the rea
 node scripts/ops/r909-live-cutover.mjs scheduler-resume --run
 gcloud scheduler jobs run resellersos-health-digest --location=asia-southeast1 --project=resellsubsos-prod
 ```
+✔ Resume in two steps (section 6.5): Anutech-internal jobs first; the six customer-mailing jobs (renewals, invoice-dunning, billing, birthday-greetings, trial-expiry, compliance-reminders) only with the client owner's yes for each.
 ✔ 15 × ENABLED; Cloud Run logs show `/api/cron/health-digest` 200 within a minute; gmail-inbox 200 on the next minute.
 ↩ `scheduler-pause --run` again.
 

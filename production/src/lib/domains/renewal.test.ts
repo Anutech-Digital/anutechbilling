@@ -56,9 +56,16 @@ describe("at the sale: one yearly subscription per paid domain", () => {
   });
 });
 
-/** A small fake of the admin client: records inserts/updates, answers the RPC. */
-function fakeDb(opts: { existingQuote?: unknown; country?: string | null } = {}) {
-  const calls = { rpc: 0, inserts: [] as Record<string, unknown>[], updates: [] as Record<string, unknown>[] };
+interface MadeArgs { p_subscription_id: string; p_tenant_id: string; p_quote: Record<string, unknown> & { line_items: unknown[] } }
+
+/** A small fake of the admin client: records inserts/updates, answers create_renewal_quote. */
+function fakeDb(opts: {
+  existingQuote?: unknown;
+  country?: string | null;
+  /** What create_renewal_quote answers instead of "made it" (another run first / an error). */
+  made?: { data: unknown; error: { message: string } | null };
+} = {}) {
+  const calls = { rpc: 0, made: [] as MadeArgs[], inserts: [] as Record<string, unknown>[], updates: [] as Record<string, unknown>[] };
   const q = (table: string) => {
     const chain: Record<string, unknown> = {};
     const self = () => chain;
@@ -72,7 +79,18 @@ function fakeDb(opts: { existingQuote?: unknown; country?: string | null } = {})
   };
   const db = {
     from: q,
-    rpc: vi.fn(async () => { calls.rpc += 1; return { data: "Q-DR-0001", error: null }; }),
+    rpc: vi.fn(async (fn: string, args: MadeArgs) => {
+      calls.rpc += 1;
+      if (fn !== "create_renewal_quote") return { data: null, error: { message: `unexpected rpc ${fn}` } };
+      calls.made.push(args);
+      if (opts.made) return opts.made;
+      const p = args.p_quote;
+      return {
+        data: { quote_id: "Q-DR-0001", created: true, relinked: false, amount: p.amount, subtotal: p.subtotal,
+                discount_pct: 0, tax_rate: p.tax_rate, line_items: p.line_items },
+        error: null,
+      };
+    }),
   };
   return { db: db as unknown as DomainRenewalQuoteInput["supabase"], calls };
 }
@@ -87,15 +105,15 @@ describe("the renewal quote is priced LIVE, at full price", () => {
     const { db, calls } = fakeDb();
     const r = await createDomainRenewalQuote({ ...base(db), price: async () => ({ ok: true, rupees: 899 }) });
     expect(r).toMatchObject({ quoteId: "Q-DR-0001", subtotal: 899, amount: 1061, taxRate: 18, created: true });
-    const quote = calls.inserts[0];
-    expect(quote).toMatchObject({ is_renewal: true, extension_months: 12, plan: DOMAIN_RENEWAL_PLAN, domain: "acme.in", amount: 1061 });
-    expect(calls.updates[0]).toEqual({ renewal_quote_id: "Q-DR-0001" });
+    const quote = calls.made[0].p_quote;
+    expect(quote).toMatchObject({ extension_months: 12, plan: DOMAIN_RENEWAL_PLAN, domain: "acme.in", amount: 1061 });
+    expect(calls.made[0]).toMatchObject({ p_subscription_id: "S1", p_tenant_id: "T" });
   });
 
   it("the quote line names no domain — provisioning would read one as a domain to REGISTER", async () => {
     const { db, calls } = fakeDb();
     await createDomainRenewalQuote({ ...base(db), price: async () => ({ ok: true, rupees: 899 }) });
-    const [line] = (calls.inserts[0].line_items as { domain?: string; commitment?: string }[]);
+    const [line] = (calls.made[0].p_quote.line_items as { domain?: string; commitment?: string }[]);
     expect(line.domain).toBeUndefined();
     expect(line.commitment).toBe("annual_yearly");
   });
@@ -103,7 +121,7 @@ describe("the renewal quote is priced LIVE, at full price", () => {
   it("the line keeps the subscription's own name, so paying it does not rename the subscription", async () => {
     const { db, calls } = fakeDb();
     await createDomainRenewalQuote({ ...base(db), price: async () => ({ ok: true, rupees: 899 }) });
-    const [line] = (calls.inserts[0].line_items as { name: string; description?: string }[]);
+    const [line] = (calls.made[0].p_quote.line_items as { name: string; description?: string }[]);
     const created = domainSubscriptionInsert({ tenantId: "T", customerId: "C", customerName: "Acme", row: { domain: "acme.in", mrr: 0 }, today: "2026-09-25" });
     expect(line.name).toBe(created.plan);
     expect(line.description).toBe("Renewal, 1 year");
@@ -131,5 +149,31 @@ describe("the renewal quote is priced LIVE, at full price", () => {
     expect(r).toMatchObject({ quoteId: "Q-OLD", amount: 1000, created: false });
     expect(price).not.toHaveBeenCalled();
     expect(calls.rpc).toBe(0);
+  });
+});
+
+describe("R-1574: made and linked in ONE call — never a quote insert + a separate link", () => {
+  it("the quote is made only through create_renewal_quote; no direct insert or link update", async () => {
+    const { db, calls } = fakeDb();
+    await createDomainRenewalQuote({ ...base(db), price: async () => ({ ok: true, rupees: 899 }) });
+    expect(calls.made).toHaveLength(1);
+    expect(calls.inserts).toHaveLength(0);
+    expect(calls.updates).toHaveLength(0);
+  });
+
+  it("another run made this term's quote first → that quote comes back, not the one priced now", async () => {
+    const theirs = { quote_id: "Q-THEIRS", created: false, relinked: false, amount: 1000, subtotal: 847, discount_pct: 0, tax_rate: 18, line_items: [] };
+    const { db } = fakeDb({ made: { data: theirs, error: null } });
+    const r = await createDomainRenewalQuote({ ...base(db), price: async () => ({ ok: true, rupees: 899 }) });
+    expect(r).toMatchObject({ quoteId: "Q-THEIRS", amount: 1000, subtotal: 847, created: false });
+  });
+
+  it("the RPC refuses → null (nothing half-made to clean up)", async () => {
+    const { db } = fakeDb({ made: { data: null, error: { message: "belongs to another company" } } });
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await createDomainRenewalQuote({ ...base(db), price: async () => ({ ok: true, rupees: 899 }) });
+    expect(r).toBeNull();
+    expect(err.mock.calls.flat().join(" ")).toContain("belongs to another company");
+    err.mockRestore();
   });
 });

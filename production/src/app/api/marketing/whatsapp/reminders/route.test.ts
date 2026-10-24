@@ -77,7 +77,7 @@ describe("role gate — the switch messages customers", () => {
     for (const [fn, m, body] of [[GET, "GET"], [PATCH, "PATCH", { enabled: true }], [PUT, "PUT", { kind: "invoice_due", template_name: "x", param_map: [] }], [DELETE, "DELETE", { kind: "invoice_due" }]] as const) {
       const res = await fn(req(m, body));
       expect(res.status, m).toBe(403);
-      expect((await res.json()).error).toMatch(/owner \/ manager/);
+      expect((await res.json()).error).toMatch(/owner or a manager/);
     }
     expect(state.calls).toEqual([]);
   });

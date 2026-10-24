@@ -14,13 +14,17 @@
  */
 "use client";
 
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { SAAS_HSN } from "@/lib/gst/hsn";
 import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
-import { usePaymentsByQuote, totalReceived } from "@/lib/queries/payments";
+import { usePaymentsByQuote, totalReceived, useInstalmentLink } from "@/lib/queries/payments";
+import { RecordSubscriptionPaymentContainer } from "./record-invoice-payment";
+import { invoiceReceiptsQuote, invoiceTdsMoney } from "./invoice-receipts";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { invoiceBucket } from "@/lib/invoices/overdue";
 import { invoiceStatusBadge } from "./invoice-status";
@@ -32,12 +36,19 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
 import { useCreditNotesByInvoice } from "@/lib/queries/credit-notes";
 import { useDebitNotesByInvoice } from "@/lib/queries/debit-notes";
+import { noteTotalsByInvoice } from "@/lib/invoices/note-totals";
 import { isCreditNoteLate, creditNoteDeadline } from "@/lib/gst/credit-note-deadline";
 import { TaxInvoiceDialog } from "@/components/features/quotes/tax-invoice-dialog";
+import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
 import { supplierIdentity, supplierIdentityMessage } from "@/lib/invoices/supplier-identity";
+import { documentTitle } from "@/lib/invoices/document-kind";
 import { invoiceDisplayAmounts } from "@/lib/invoices/display-amounts";
+import { invoiceFx } from "@/lib/pdf/build-props";
+import { isForeignCurrency, formatForeign } from "@/lib/currency";
+import { foreignDocConverter } from "@/lib/quotes/foreign-totals";
+import { matchTdsShortfall, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { invoiceLineItemsView } from "./invoice-line-items";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
@@ -51,6 +62,8 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { rupee, formatDate, cleanDisplayName } from "@/lib/utils";
 import type { Invoice, Payment } from "@/lib/supabase/database.types";
+import { IssueCreditNoteDialog } from "@/components/features/invoices/issue-credit-note-dialog";
+import { InvoiceSubscriptionCard } from "./invoice-subscription-card";
 
 export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const router = useRouter();
@@ -60,7 +73,14 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const [showPayments, setShowPayments] = React.useState(true);
 
   const { data: quote, isLoading: quoteLoading } = useQuoteByInvoiceId(invoice.id);
+  /* R-1764: the printed invoice says each subscription line's domain and period in the
+     quote's own words (the lines below are the quote's whenever a quote exists). */
+  const periodContext = useQuotePeriodContext(quote ?? null);
   const { data: payments } = usePaymentsByQuote(quote?.id);
+  /* R-1564: a subscription instalment has no quote of its own — Record payment goes through
+     its subscription's quote (record_instalment_payment), so the button shows for it too. */
+  const { data: instalment } = useInstalmentLink(invoice.quote_id ? null : invoice.id);
+  const canPay = !!quote?.id || !!instalment?.quoteId;
   const { data: customer } = useCustomer(invoice.customer_id ?? undefined);
   const { data: me } = useCurrentUser();
   const waSender = useWhatsAppSender();
@@ -70,8 +90,22 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   /* R-255: the accountant reads invoices — no Record payment, no WhatsApp reminder. */
   const canWrite = canWriteSales(me?.role);
   const moneyDue = canWrite && (bucket === "pending" || bucket === "overdue");
-  const statusBadge = invoiceStatusBadge(invoice);
+  /* R-1709: a paid invoice a credit note closed reads "Credited" — the same rule as the list. */
+  const { data: creditNotesForBadge } = useCreditNotesByInvoice(invoice.id);
+  const { data: debitNotesForBadge } = useDebitNotesByInvoice(invoice.id);
+  const invoiceNotes = creditNotesForBadge && debitNotesForBadge
+    ? noteTotalsByInvoice(creditNotesForBadge, debitNotesForBadge).get(invoice.id) ?? null
+    : undefined;
+  const statusBadge = invoiceStatusBadge(invoice, undefined, invoiceNotes);
   const [payOpen, setPayOpen] = React.useState(false);
+  /* R-1682: Credit note from the invoice itself, at every width. It lived only in the
+     invoices table's ⋯ menu, which shows from 1280px — on a laptop / tablet there was no way
+     to issue one (and so no way to refund after a cancel). */
+  const [cnOpen, setCnOpen] = React.useState(false);
+  const canCreditNote = canWrite && invoice.status !== "draft" && invoice.status !== "void";
+  /* R-1520: set by the TDS banner's "Record TDS" — opens Record payment in TDS mode. */
+  const [tdsOnly, setTdsOnly] = React.useState<{ section: string; ratePct: number } | null>(null);
+  const openPayment = () => { setTdsOnly(null); setPayOpen(true); };
   /* R-337: over ₹5 Cr turnover, a B2B invoice with no gst_irn gets a reminder. A warning
      only — the app does not generate IRNs yet (R-044). Unknown turnover shows nothing. */
   const { data: turnover } = useTurnoverBracket();
@@ -97,7 +131,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
      The rule now lives in lib/invoices/supplier-identity.ts with its own regression
      test: there is no safe default for "who is selling this", so an unknown identity
      is reported and the document is withheld. */
-  const identity = supplierIdentity(me);
+  /* R-1529: an unregistered supplier's Bill of Supply has no GSTIN — the invoice row says
+     which document this is, frozen at issue. */
+  const identity = supplierIdentity(me, invoice);
   const supplier = identity.ok ? identity.supplier : null;
 
   /* R-248: `?pdf=1` (from Record payment's "Generate invoice" / "View invoice" toast
@@ -135,6 +171,18 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
      receives was wrong in the same way. */
   const { subtotal, discount, taxable, taxRate, tax } = invoiceDisplayAmounts(invoice, quote);
   const total     = quote?.amount ?? invoice.amount;
+  /* R-1677: an export invoice billed in USD said only ₹32,400. Show the customer's amount and
+     the rate beside it — the same $ total the quote and the invoice PDF print. */
+  const fx = invoiceFx(invoice, quote ?? null);
+  const foreignTotal = isForeignCurrency(fx.currency) && fx.exchangeRate && fx.exchangeRate > 0
+    ? formatForeign(
+        foreignDocConverter({
+          lines: lineItems, fx: fx.exchangeRate, discountPct: quote?.discount_pct ?? 0,
+          taxRate: tax === 0 ? 0 : taxRate, inr: { subtotal, taxable, tax, total },
+        })(total),
+        fx.currency ?? "",
+      ) + ` @ ₹${fx.exchangeRate}/${fx.currency}`
+    : null;
 
   /* `supplier` is null until the identity is complete, so this cannot silently pick a
      side. `undefined` makes isInterStateSupply say "I don't know" instead of guessing —
@@ -142,9 +190,18 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const interState = isInterStateSupply(
     customer?.state_code,
     supplier?.stateCode,
-    { customerGstin: customer?.gstin, sellerGstin: supplier?.gstin },
+    /* R-1742: an SEZ buyer is IGST even in our own state — the treatment frozen at issue
+       first, the customer's for an invoice issued before R-1736. */
+    { customerGstin: customer?.gstin, sellerGstin: supplier?.gstin, treatment: invoice.gst_treatment ?? customer?.gst_treatment },
   );
   const receivedPayments = (payments ?? []).filter((p) => p.status === "received");
+  /* R-1520 TDS banner: the quote's total and receipts — or, R-1636, an instalment's own money. */
+  const tdsMoney = invoiceTdsMoney({
+    invoice,
+    source: invoiceReceiptsQuote(quote?.id, instalment),
+    quoteTotal: total,
+    quoteReceived: totalReceived(payments ?? []),
+  });
 
   return (
     <>
@@ -156,6 +213,19 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           <Icon name="chevron_left" size={14} /> All invoices
         </Link>
         <EinvoiceBanner notice={einvoiceNotice} className="mb-3" />
+        {/* R-1520: Partial invoice whose remaining due is exactly a common TDS (INV-A378:
+            ₹25,500 = 10% of ₹2,55,000) → say so, and one button to record it as TDS. */}
+        {/* R-1636: an instalment (no quote of its own) gets the banner too, on its own money. */}
+        {moneyDue && tdsMoney && (
+          <InvoiceTdsBanner
+            className="mb-3"
+            total={tdsMoney.total}
+            received={tdsMoney.received}
+            gstRatePct={taxRate}
+            preferredSection={customer?.tds_default_section ?? null}
+            onRecordTds={(m) => { setTdsOnly({ section: m.section, ratePct: m.ratePct }); setPayOpen(true); }}
+          />
+        )}
         <div className="rounded-lg border border-hairline bg-paper overflow-hidden">
           {/* R-202. On a 375px phone the three buttons used to sit in one shrink-0 row beside
               the invoice number, making the sheet 446px wide: PDF off-screen, sideways scroll,
@@ -175,10 +245,10 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
               </p>
             </div>
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0" data-invoice-actions>
-              {quote?.id && moneyDue && (
+              {canPay && moneyDue && (
                 /* R-237: record the payment HERE. Billing's only way used to be the quote
                    page, which middleware does not let billing open. */
-                <Button size="sm" variant="primary" icon="rupee" onClick={() => setPayOpen(true)}>
+                <Button size="sm" variant="primary" icon="rupee" onClick={openPayment}>
                   Record payment
                 </Button>
               )}
@@ -196,6 +266,11 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   }}
                 >
                   View quote
+                </Button>
+              )}
+              {canCreditNote && (
+                <Button size="sm" variant="outline" icon="receipt" onClick={() => setCnOpen(true)}>
+                  Credit note
                 </Button>
               )}
               {canWrite && (
@@ -217,8 +292,8 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                 icon="file"
                 onClick={() => {
                   if (!supplier) {
-                    const msg = supplierIdentityMessage(identity)!;
-                    toast.error("Can't issue this Tax Invoice yet", {
+                    const msg = supplierIdentityMessage(identity, invoice)!;
+                    toast.error(`Can't issue this ${documentTitle(invoice)} yet`, {
                       description: msg,
                       action: identity.ok || !identity.hasSession ? undefined : {
                         label: "Open Settings",
@@ -256,10 +331,24 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                     <div>
                       <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Total Amount</p>
                       <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(total)}</p>
+                      {foreignTotal && (
+                        <p className="text-2xs text-ink-3 tabular-nums mt-0.5" data-testid="invoice-foreign-total">{foreignTotal}</p>
+                      )}
                     </div>
                     <div>
                       <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Net Payable</p>
                       <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(invoice.net_payable ?? total)}</p>
+                    </div>
+                  </div>
+                  {/* R-1680: what is still owed sits next to the total (staging 19 Oct: no Balance due line). */}
+                  <div className="grid grid-cols-2 gap-3 pb-3 border-b border-hairline/60" data-testid="invoice-balance">
+                    <div>
+                      <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Paid</p>
+                      <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(Math.max(0, (invoice.net_payable ?? total) - invoiceAmountDue(invoice)))}</p>
+                    </div>
+                    <div>
+                      <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Balance due</p>
+                      <p className={`font-serif text-lg font-bold tabular-nums mt-0.5 ${invoiceAmountDue(invoice) > 0 ? "text-rose" : "text-emerald"}`}>{rupee(invoiceAmountDue(invoice))}</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-ink-2">
@@ -272,6 +361,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                 </div>
               )}
             </Card>
+
+            {/* R-1433: the subscription this invoice belongs to (by its quote or instalment). */}
+            <InvoiceSubscriptionCard invoiceId={invoice.id} quoteIds={[invoice.quote_id, quote?.id]} />
 
             {/* 🔽 Collapsible Panel 2: Line Items & HSN/SAC Breakdown */}
             <Card className="overflow-hidden">
@@ -360,7 +452,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   <InvoicePaymentsAccordion
                     inv={invoice}
                     /* R-238: no receipt yet → the next step is right here. */
-                    onRecordPayment={quote?.id && moneyDue ? () => setPayOpen(true) : undefined}
+                    onRecordPayment={canPay && moneyDue ? openPayment : undefined}
                   />
                 </div>
               )}
@@ -387,6 +479,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           onOpenChange={setPdfDialogOpen}
           invoice={invoice}
           lineItems={lineItems}
+          periodContext={periodContext}
           subtotal={subtotal}
           discountPct={quote?.discount_pct ?? 0}
           discount={discount}
@@ -413,6 +506,22 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
       )}
       {/* R-237: the same quote-keyed sheet the invoices list and the quote page use
           (record_payment flips this invoice to paid once the balance is covered). */}
+      {canCreditNote && (
+        <IssueCreditNoteDialog
+          open={cnOpen}
+          onOpenChange={setCnOpen}
+          invoiceId={invoice.id}
+          customerName={invoice.customer_name}
+          netPayable={invoice.net_payable ?? invoice.amount}
+          taxRate={invoice.tax_rate}
+          interState={invoice.inter_state}
+          isExport={(invoice.tax_rate ?? 18) === 0}
+          invoiceDate={invoice.invoice_date}
+        />
+      )}
+      {payOpen && !quote && instalment?.quoteId && (
+        <RecordSubscriptionPaymentContainer invoice={invoice} open={payOpen} onOpenChange={setPayOpen} tdsOnly={tdsOnly} />
+      )}
       {payOpen && quote && (
         <RecordPaymentDialog
           open={payOpen}
@@ -426,9 +535,53 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           customerId={invoice.customer_id ?? quote.customer_id}
           askDomain={!quote.is_one_off}
           defaultDomain={quote.domain ?? undefined}
+          tdsOnly={tdsOnly}
         />
       )}
     </>
+  );
+}
+
+/**
+ * R-1520 — "Baaki ₹25,500 = 10% TDS lagta hai". Shown on a part-paid invoice whose remaining
+ * due equals a common TDS of its pre-GST value (matchTdsShortfall, ±₹1). Nothing is saved
+ * here: "Record TDS" hands the match to Record payment, which the operator confirms.
+ */
+export function InvoiceTdsBanner({
+  total,
+  received,
+  gstRatePct,
+  preferredSection = null,
+  onRecordTds,
+  className = "",
+}: {
+  total: number;
+  received: number;
+  gstRatePct: number | null | undefined;
+  preferredSection?: string | null;
+  onRecordTds: (m: TdsShortfallMatch) => void;
+  className?: string;
+}) {
+  const match = matchTdsShortfall({ totalInclGst: total, received, gstRatePct, preferredSection });
+  if (!match) return null;
+  return (
+    <div
+      role="status"
+      data-testid="invoice-tds-banner"
+      className={`rounded-lg border border-amber/40 bg-amber-soft px-4 py-3 text-xs text-amber-ink flex flex-wrap items-center justify-between gap-2 ${className}`}
+    >
+      <span className="flex items-start gap-2 min-w-0">
+        <Icon name="info" size={14} className="shrink-0 mt-0.5" />
+        <span>
+          <b>Balance {rupee(match.shortfall)} — looks like {match.ratePct}% TDS</b>{" "}
+          ({match.section}, {match.ratePct}% of {rupee(match.base)}). If the customer deducted TDS,
+          record it as TDS — the invoice becomes Paid and the amount goes to TDS Receivable.
+        </span>
+      </span>
+      <Button size="sm" variant="outline" icon="rupee" onClick={() => onRecordTds(match)}>
+        Record TDS
+      </Button>
+    </div>
   );
 }
 
@@ -490,7 +643,10 @@ export function InvoicePaymentsAccordion({
   onRecordPayment?: () => void;
 }) {
   const { data: quote } = useQuoteByInvoiceId(inv.id);
-  const { data: payments, isLoading } = usePaymentsByQuote(quote?.id);
+  /* R-1636: an instalment has no quote of its own — its receipts are on its subscription's quote. */
+  const { data: instalment } = useInstalmentLink(inv.quote_id ? null : inv.id);
+  const source = invoiceReceiptsQuote(quote?.id, instalment);
+  const { data: payments, isLoading } = usePaymentsByQuote(source?.quoteId);
   // Project invoices have no parent quote — their receipts live in project_payments.
   const { data: projPays, isLoading: projLoading } = useProjectPaymentsByInvoice(inv.id);
   const { data: customer } = useCustomer(inv.customer_id ?? undefined);
@@ -498,7 +654,7 @@ export function InvoicePaymentsAccordion({
   const [receiptPayment, setReceiptPayment] = React.useState<Payment | null>(null);
 
   const received = (payments ?? []).filter((p) => p.status === "received");
-  const interState = isInterStateSupply(customer?.state_code, me?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: me?.tenantGstin });
+  const interState = isInterStateSupply(customer?.state_code, me?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: me?.tenantGstin, treatment: inv.gst_treatment ?? customer?.gst_treatment });
 
   if (isLoading || projLoading) return <div className="text-xs text-ink-3 italic">Loading receipts…</div>;
 
@@ -514,7 +670,7 @@ export function InvoicePaymentsAccordion({
             <li key={p.id} className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-paper px-3 py-2">
               <span className="flex items-center gap-2 min-w-0">
                 <Icon name="receipt" size={14} className="text-amber-ink shrink-0" />
-                <span className="text-xs text-ink capitalize">{p.method ?? "Payment"}{p.reference ? ` · ${p.reference}` : ""}</span>
+                <span className="text-xs text-ink">{p.method ? paymentMethodLabel(p.method) : "Payment"}{p.reference ? ` · ${p.reference}` : ""}</span>
                 {p.bank_txn_id && <span className="text-3xs text-emerald">· bank-reconciled</span>}
               </span>
               <span className="flex items-center gap-3 shrink-0">
@@ -544,8 +700,15 @@ export function InvoicePaymentsAccordion({
   return (
     <div>
       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-2">
-        Payment receipts ({received.length})
+        {source?.instalment ? "Receipts on this subscription" : "Payment receipts"} ({received.length})
       </div>
+      {source?.instalment && (
+        /* R-1636: these receipts are the subscription's; say how they reach THIS invoice. */
+        <p className="text-2xs text-ink-2 mb-2">
+          Paid on this invoice: <b className="tabular-nums">{rupee(Math.max(0, inv.amount - invoiceAmountDue(inv)))}</b> of{" "}
+          <span className="tabular-nums">{rupee(inv.amount)}</span>. A receipt goes to the oldest unpaid instalment first.
+        </p>
+      )}
       <ul className="space-y-1.5">
         {received.map((p) => (
           <li key={p.id}>
@@ -558,7 +721,7 @@ export function InvoicePaymentsAccordion({
               <span className="flex items-center gap-2 min-w-0">
                 <Icon name="receipt" size={14} className="text-amber-ink shrink-0" />
                 <span className="font-mono text-xs text-ink truncate">{p.receipt_voucher_no ?? "Receipt"}</span>
-                <span className="text-2xs text-ink-3 capitalize">· {p.method}</span>
+                <span className="text-2xs text-ink-3">· {paymentMethodLabel(p.method)}</span>
               </span>
               <span className="flex items-center gap-3 shrink-0">
                 <span className="tabular-nums text-sm font-medium text-ink">{rupee(p.amount)}</span>
@@ -586,8 +749,8 @@ export function InvoicePaymentsAccordion({
           tenantAddress={me.tenantAddress}
           tenantState={me.tenantState}
           interState={interState}
-          quoteId={quote?.id}
-          gstRate={quote?.tax_rate ?? 18}
+          quoteId={source?.quoteId}
+          gstRate={quote?.tax_rate ?? inv.tax_rate ?? 18}
         />
       )}
     </div>

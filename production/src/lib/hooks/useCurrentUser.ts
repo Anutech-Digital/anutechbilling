@@ -7,8 +7,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import type { GstinVerification } from "@/lib/supabase/database.types";
-import { isPlatformAdmin } from "@/lib/platform";
 import { mustChangePassword } from "@/lib/auth/must-change-password";
+
+/**
+ * R-730: the platform-admin allowlist is server-only now (it used to ship to the browser as
+ * NEXT_PUBLIC_PLATFORM_ADMIN_EMAILS). Ask the server about THIS user; any failure = not admin
+ * (fail closed — it only hides nav, the platform routes re-check on the server anyway).
+ */
+async function fetchIsPlatformAdmin(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/platform/whoami", { cache: "no-store" });
+    if (!res.ok) return false;
+    const body = (await res.json()) as { isPlatformAdmin?: unknown };
+    return body.isPlatformAdmin === true;
+  } catch {
+    return false;
+  }
+}
 
 export interface CurrentUserInfo {
   userId:        string;
@@ -142,6 +157,7 @@ export function useCurrentUser() {
 
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) return null;
+      const platformAdmin = fetchIsPlatformAdmin(); // in parallel with the profile read
 
       const { data: me, error } = await supabase
         .from("users")
@@ -174,7 +190,7 @@ export function useCurrentUser() {
       return {
         userId:          me.id,
         authEmail:       authData.user.email ?? "",
-        isPlatformAdmin: isPlatformAdmin(authData.user.email),
+        isPlatformAdmin: await platformAdmin,
         mustChangePassword: mustChangePassword(authData.user),
         fullName:        me.full_name,
         initials:        me.initials,

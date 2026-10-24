@@ -183,6 +183,13 @@ describe("row mapping", () => {
     expect(receiptsFromPayments([late], new Map([["c1", "A"]]), "2026-09-01", "2026-09-30").receipts).toHaveLength(0);
     expect(receiptsFromPayments([late], new Map([["c1", "A"]]), "2026-10-01", "2026-10-31").receipts[0].date).toBe("2026-10-01");
 
+    // R-1565: advance credit applied is not bank money — Receipt at the cash part, none when all credit
+    const credit = receiptsFromPayments([
+      { id: "p4", receipt_voucher_no: "RV-4", customer_id: "c1", amount: 6000, credit_applied: 4000, received_at: "2026-09-05T10:00:00Z", method: "upi", reference: null },
+      { id: "p5", receipt_voucher_no: "RV-5", customer_id: "c1", amount: 3000, credit_applied: 3000, received_at: "2026-09-06T10:00:00Z", method: "other", reference: null },
+    ], new Map([["c1", "Asha Traders"]]), "2026-09-01", "2026-09-30");
+    expect(credit.receipts).toEqual([expect.objectContaining({ number: "RV-4", amount: 2000 })]);
+
     const pay = paymentsFromBills([
       { id: "e1", vendor_name: "Google India", bill_no: "G1", amount: 1180, paid: true, paid_date: "2026-09-20", payment_method: "neft", category: "Licences" },
       { id: "e2", vendor_name: "Google India", bill_no: "G2", amount: 1180, paid: false, paid_date: null, payment_method: null, category: null },

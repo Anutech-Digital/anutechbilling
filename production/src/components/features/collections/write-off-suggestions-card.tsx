@@ -43,7 +43,7 @@ function useWriteOffRows() {
       const { data: invoices, error } = await supabase
         .from("invoices")
         .select("id, customer_name, amount, net_payable, paid_amount, status, due_date")
-        .in("status", ["pending", "overdue"])
+        .in("status", ["pending", "overdue"]).is("written_off_at", null)
         .lt("due_date", addDaysISO(today, -WRITE_OFF_AFTER_DAYS))
         .order("due_date", { ascending: true })
         .limit(500);

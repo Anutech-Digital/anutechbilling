@@ -63,8 +63,8 @@ describe("kehne ko kuch ho to bolta hai", () => {
     })])!;
     expect(m).toBeTruthy();
     expect(m.text).toContain("discount");
-    expect(m.text).toContain("4 baar");
-    expect(m.subject).toMatch(/roka/i);
+    expect(m.text).toContain("4 times");
+    expect(m.subject).toMatch(/blocked/i);
   });
 
   it("sirf haan-wale seat band ho tab bhi bolta hai", () => {
@@ -94,8 +94,8 @@ describe("mail khud padhne layak ho", () => {
   it("saaf likha hai ki ye ginti hai, model ka anumaan nahi", () => {
     /* Padhne wale ko pata hona chahiye ki ye kitna bharosemand hai. */
     const m = reflectionEmail([base({ topStall: "price", stalledCount: 5, withheld: "" })])!;
-    expect(m.text).toMatch(/ginti/i);
-    expect(m.text).toMatch(/prompt me nahi likha/i);
+    expect(m.text).toMatch(/only a count/i);
+    expect(m.text).toMatch(/not written into any prompt/i);
   });
 
   it("tenantName na ho to id ka tukda dikhata hai, khaali nahi", () => {

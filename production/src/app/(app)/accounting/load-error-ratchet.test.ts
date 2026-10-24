@@ -54,6 +54,7 @@ const R270_PAGES = [
   "pnl/page.tsx",
   "profitability/page.tsx",
   "tds-receivable/page.tsx",
+  "gst/page.tsx", // R-1581
 ];
 
 /** Not fixed yet — separate cards. Only ever remove from this list. */
@@ -61,17 +62,13 @@ const KNOWN_GAPS = [
   "advances/page.tsx",
   "banking/rules/page.tsx",
   "bill-payments/page.tsx",
-  "cash-flow/page.tsx",
   "day-book/page.tsx",
   "esi-register/page.tsx",
-  "gst/page.tsx",
   "loans/page.tsx",
   "prepaid/page.tsx",
   "reimbursements/page.tsx",
   "salary-register/page.tsx",
-  "saas-metrics/page.tsx",
   "tds-receivable/year-end/page.tsx",
-  "vendors/page.tsx",
 ];
 
 describe("accounting pages show an error state, not ₹0 (R-270)", () => {

@@ -15,8 +15,9 @@ import { istToday, addDaysISO } from "@/lib/dates/ist";
 import * as React from "react";
 import { convertRateForCommitment, isAnnualTier } from "@/lib/quotes/commitment-rate";
 import { quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
+import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
 import { isMixedTerm, ONE_TERM_MESSAGE } from "@/lib/quotes/single-term";
-import { storedLineRate, quoteTotalsDivisor, lineAmountSuffix } from "@/lib/quotes/line-rate-unit";
+import { storedLineRate, quoteTotalsDivisor, lineAmountSuffix, lineRateUnitSuffix } from "@/lib/quotes/line-rate-unit";
 import { perInvoiceDivisor } from "@/lib/pdf/invoice-divisor";
 import { useDraftGuard } from "@/lib/hooks/useDraftGuard";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
@@ -27,10 +28,10 @@ import { toastError } from "@/lib/errors/toast-error";
 import { canSend, requiredApproval } from "@/lib/quotes/approval";
 import { lineEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-economics";
 import {
-  sendQuoteEmail, quoteRecipient, saveAndSendPlan, saveAndSendLabel,
+  sendQuoteEmail, quoteRecipient, saveAndSendPlan,
   quoteEmailOutcome, quoteEmailErrorOutcome, markedSentOutcome, needsApprovalOutcome,
 } from "@/lib/quotes/send-quote-email";
-import { NUMBERING_FIX, COMPANY_STATE_FIX } from "@/lib/onboarding/setup-links";
+import { NUMBERING_FIX, COMPANY_STATE_FIX, companyStateFixFor } from "@/lib/onboarding/setup-links";
 
 /* A fixed, written sentence — not a raw error — so the R-300 toast guard can tell them apart. */
 const COMPANY_STATE_FIX_TITLE = COMPANY_STATE_FIX.message;
@@ -52,26 +53,31 @@ import { MarginPill, computeMargin } from "@/components/features/margin-pill";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { AddLineItemDialog } from "@/components/features/quotes/add-line-item-dialog";
 import { BulkDomainsDialog } from "@/components/features/quotes/bulk-domains-dialog";
-import { domainLineYears, isDomainPurchaseLine } from "@/lib/provisioning/products";
+import { domainLineYears } from "@/lib/provisioning/products";
 import { ViewDomainsDialog } from "@/components/features/quotes/view-domains-dialog";
 import { matchLeadToCustomer, matchNote } from "@/lib/quotes/match-customer";
 import { SUPPORT_TIERS, findSupportSku, isSupportSkuId } from "@/lib/support/tiers";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
 import { quoteContact } from "@/lib/quotes/quote-contact";
+import { addGstinHref, buyerGstinMissing, quoteBuyerGstin } from "@/lib/quotes/buyer-gstin";
+import { paletteMayOpen } from "@/components/layout/palette-access";
 import { useCustomers } from "@/lib/queries/customers";
 import { CustomerCombobox } from "@/components/features/customers/customer-combobox";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
 import { useCreateQuote, useQuote } from "@/lib/queries/quotes";
 import { useGenerateInvoice } from "@/lib/queries/invoices";
-import { useUpdateLead, useLeads, useCreateLead } from "@/lib/queries/leads";
-import { prospectContactProblem, hasProspectContact, prospectLeadRow } from "@/lib/quotes/prospect-contact";
+import { useUpdateLead, useQuoteLead, useCreateLead } from "@/lib/queries/leads";
+import { prospectContactProblem, hasProspectContact, prospectLeadRow, validProspectGstin } from "@/lib/quotes/prospect-contact";
+import { checkGstin, liveGstin, gstinState } from "@/lib/forms/poka-yoke";
 import { sameProductSubscriptions, sameProductNote } from "@/lib/quotes/same-product";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { isInterStateSupply, isExportSupply, placeOfSupplyLabel, supplyHead } from "@/lib/gst/place-of-supply";
+import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
+import { billOfSupplyStatus, billOfSupplyBuilderLine, quoteEffectiveTaxRate } from "@/lib/quotes/bill-of-supply";
+import { isInterStateSupply, isExportSupply, placeOfSupplyLabel, supplyHead, treatmentIsAlwaysInterState } from "@/lib/gst/place-of-supply";
 import { hsnSummary } from "@/lib/gst/hsn";
 import { Kbd } from "@/components/ui/kbd";
 import { shortcutText } from "@/lib/keyboard/shortcuts";
@@ -79,8 +85,8 @@ import { COUNTRIES } from "@/lib/gst/countries";
 import { BILLING_CURRENCIES, isForeignCurrency, formatForeign } from "@/lib/currency";
 import { fxStampFromQuote, manualFxStamp, type FxStamp } from "@/lib/fx/rate-source";
 import { addOrMergeLine } from "@/lib/quotes/line-items";
-import { lineFromCatalog, catalogYearlyPrice } from "@/lib/quotes/catalog-line";
-import { headlinePrice } from "@/lib/catalog/headline-price";
+import { lineFromCatalog, catalogYearlyPrice, catalogLineListRate } from "@/lib/quotes/catalog-line";
+import { foreignQuoteFigures } from "@/lib/quotes/foreign-totals";
 import { billingUnitOf, lineRateSuffix, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { suggestPlanProducts, productSupportSku, supplyStateMissing } from "@/lib/quotes/quote-assist";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
@@ -88,15 +94,18 @@ import { rupee, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { parseLineQty, parseLineRate, firstLineInputProblem, builderIsDirty } from "@/lib/quotes/line-input";
 import type { QuoteLineItem, LineCommitment, BillingCycle, Item } from "@/lib/supabase/database.types";
+import { LineMoreMenu, OptionalTag, dropSeatsAdjustable } from "./line-adjust-controls";
+import { optionalNeedsConfirm } from "@/lib/quotes/optional-line";
 import {
   BILLING_CYCLE_OPTIONS, cycleInvoicesPerYear, cycleUnitLabel,
 } from "@/lib/quotes/billing";
 import { slabPricing, nextSlabUpsell } from "@/lib/quotes/volume-tiers";
 import { lineCostUnknown, fillUnknownCosts } from "@/lib/quotes/line-cost";
 import { matchCatalogItemForPlan } from "@/lib/quotes/lead-plan-match";
-import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice } from "@/lib/quotes/line-commit-choice";
+import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice, markOneTimeLines } from "@/lib/quotes/line-commit-choice";
 import { leadLinePrice } from "./lead-line-commitment";
 import { quoteSeatCount } from "@/lib/quotes/seat-lines";
+import { isTermLine, lineForYears } from "./domain-term";
 import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
@@ -110,10 +119,6 @@ const NO_APPROVAL_ROW = {
   approved_discount_bps: null, approved_margin_bps: null, approval_rejection_reason: null,
 };
 
-/** R-156: show the term picker on a domain REGISTRATION line — by its name too, so it is there
- *  before the domain is typed (isDomainPurchaseLine needs the name filled in). */
-const isRegistrationLine = (l: QuoteLineItem) =>
-  !l.bulk && (isDomainPurchaseLine(l) || /\b(domain|registration)\b/i.test(l.name ?? ""));
 
 // Quote IDs are allocated at SAVE time via the central document-numbering RPC
 // (see migration 0004_document_series.sql) — this guarantees sequential per-tenant
@@ -137,7 +142,43 @@ const PLAN_PRICE_PER_SEAT_PM: Record<string, number> = {
   "Plus + Voice add-on":              1800,
 };
 
+/* ─── R-1497: HYDRATE AN EMPTY SHELL, THEN DRAW THE BUILDER ──────────────────────────
+   Staging threw React #418 ("server rendered HTML didn't match the client") on a hard load
+   of /quotes/new. The builder sits under <Suspense> (useSearchParams) and its chunk is big,
+   so the app shell (Sidebar/TopBar) hydrates FIRST and its useCurrentUser() call can land
+   in the shared React Query cache before the builder hydrates. React Query hands that cached
+   row to the builder's first browser render — the server never had it — so the "company
+   state missing" warning, the customer picker, the catalogue chips… come out as different
+   elements than the server sent. Any warm query (customers, items, leads) does the same,
+   including the ones child components read on their own (CustomerCombobox, pickers).
+
+   Gating each query inside the builder would miss those children, so the whole builder
+   waits for hydration instead. `useSyncExternalStore` answers `false` while hydrating
+   (getServerSnapshot) and `true` on every client render after it — so a client-side
+   navigation (no hydration) draws the builder at once with no flash; only a hard load shows
+   the same one-line placeholder the server sent for one frame. The server's builder HTML was
+   a data-less skeleton anyway (every query is pending on the server), so nothing useful is
+   lost. suppressHydrationWarning would only hide the warning on one element and leave the
+   tree regenerated — not used. */
+/** R-1675: one key for "what the catalogue lines are priced in" — currency, rate, USD basis. */
+function pricingBasisKey(currency: string | null | undefined, fx: number, basis: string): string {
+  return `${(currency ?? "INR").toUpperCase()}|${fx}|${basis}`;
+}
+
+const noopSubscribe = () => () => {};
+function useHydrated(): boolean {
+  return React.useSyncExternalStore(noopSubscribe, () => true, () => false);
+}
+
 export function QuoteBuilder() {
+  const hydrated = useHydrated();
+  if (!hydrated) {
+    return <div className="p-8 text-sm text-ink-3">Loading quote builder…</div>;
+  }
+  return <QuoteBuilderBody />;
+}
+
+function QuoteBuilderBody() {
   const router       = useRouter();
   const searchParams = useSearchParams();
   const pathname     = usePathname();
@@ -154,7 +195,24 @@ export function QuoteBuilder() {
     () => (allCatalog ?? []).filter((c) => c.item_type !== "one_time").map((c) => floorWorkspaceRow(c)),
     [allCatalog],
   );
+  /* R-1755: Main / Add-on of a line's catalogue item — a plan / seat line asks before it is
+     made optional (lib/quotes/optional-line.ts); unknown (custom, not loaded) asks too. */
+  const catalogKindOf = (itemId: string | undefined) =>
+    itemId ? (allCatalog ?? []).find((c) => c.id === itemId)?.kind : undefined;
+  /* R-156 / R-1445: the "Register for N years" picker — a domain registration line by its name
+     (R-1673 rule, there before the domain is typed) or any catalogue item of the Domain vendor
+     (named ".in", ".com", which had no picker: "nothing above 1 year", Pratik 16 Oct). */
+  const domainItemIds = React.useMemo(
+    () => new Set((allCatalog ?? []).filter((c) => c.vendor === "domain").map((c) => c.id)),
+    [allCatalog],
+  );
+  const isRegistrationLine = (l: QuoteLineItem) => isTermLine(l, domainItemIds);
   const { data: currentUser } = useCurrentUser();
+  /* R-1532: a business that is not GST-registered / under composition issues a Bill of
+     Supply — its quotes carry 0% GST, locked (R-1529's database refuses GST on the invoice). */
+  const gstRegistration = useGstRegistration();
+  const gstSaved        = gstRegistration.data?.saved ?? null;
+  const bosStatus       = billOfSupplyStatus(gstSaved);
   const createQuote     = useCreateQuote();
   const generateInvoice = useGenerateInvoice();
   const updateLead = useUpdateLead();
@@ -171,8 +229,8 @@ export function QuoteBuilder() {
   const leadId      = searchParams.get("leadId") || searchParams.get("lead");
   // The lead drawer "Send Quote" button supplies these chained params for
   // instant prefill without a network round-trip. We also support the
-  // shortcut form (`?lead=L-XXX` alone) by falling back to a useLeads()
-  // lookup below.
+  // shortcut form (`?lead=L-XXX` alone) by falling back to a by-id lead
+  // lookup below (useQuoteLead).
   const urlCompany  = searchParams.get("company");
   const urlPlan     = searchParams.get("plan");
   const urlSeats    = searchParams.get("seats");
@@ -206,8 +264,16 @@ export function QuoteBuilder() {
     if (isInvoiceMode) document.title = "New Invoice · ResellerOS";
   }, [isInvoiceMode]);
   const { data: sourceQuote } = useQuote(prefillFrom ?? undefined);
+  /* R-1764: the preview's "Domain:" / "Subscription period:" under each subscription line.
+     Editing a saved quote reads its own flags (a renewal's next term); a new quote or a copy
+     starts on the line's start date, else today. */
+  const editedQuotePeriod = useQuotePeriodContext(editOf ? sourceQuote : null);
+  const previewPeriodContext = React.useMemo(
+    () => editedQuotePeriod ?? { startFallback: istToday() },
+    [editedQuotePeriod],
+  );
 
-  // Look up the lead from the cached useLeads() query so the operator can
+  // Look up the lead by id (useQuoteLead) so the operator can
   // navigate to /quotes/new?lead=L-XXX with JUST the ID — we fill in the
   // rest from the lead row. This makes the URL bookmarkable / shareable
   // and unblocks the "type URL" workflow that was hitting "No customers yet".
@@ -230,12 +296,12 @@ export function QuoteBuilder() {
    *      source only when `editOf`), producing exactly the orphan quotes that started this
    *      whole investigation — a quote for a lead, attached to no lead.
    */
-  const { data: allLeads, isPending: leadsPending } = useLeads();
   const linkedLeadId = leadId ?? sourceQuote?.lead_id ?? null;
-  const leadFromQuery = React.useMemo(() => {
-    if (!linkedLeadId || !allLeads) return null;
-    return allLeads.find((l) => l.id === linkedLeadId) ?? null;
-  }, [linkedLeadId, allLeads]);
+  /* R-1536: just this lead, by id, only the columns read here — not every lead (useLeads()).
+     `isPending` stays true while it loads (and for a disabled query, but the one gate that
+     reads it, the prefill below, checks linkedLeadId first). */
+  const { data: leadRow, isPending: leadsPending } = useQuoteLead(linkedLeadId);
+  const leadFromQuery = linkedLeadId ? (leadRow ?? null) : null;
 
   // Effective lead fields — URL param wins, lead row fills in the rest.
   // Stays null until the lead has loaded OR all URL params are present.
@@ -274,7 +340,7 @@ export function QuoteBuilder() {
   React.useEffect(() => { if (leadGstinInit) setLeadGstin(leadGstinInit); }, [leadGstinInit]);
 
   // Sync local state when the lead loads asynchronously (initial mount the
-  // values are empty strings; once allLeads arrives they get populated).
+  // values are empty strings; once the lead row arrives they get populated).
   React.useEffect(() => { if (leadCompanyInit) setLeadCompany(leadCompanyInit); }, [leadCompanyInit]);
   React.useEffect(() => { if (leadContactInit) setLeadContact(leadContactInit); }, [leadContactInit]);
   React.useEffect(() => { if (leadPhoneInit)   setLeadPhone(leadPhoneInit);     }, [leadPhoneInit]);
@@ -304,6 +370,10 @@ export function QuoteBuilder() {
      (lib/quotes/prospect-contact.ts) — quotes have no contact columns of their own. */
   const [prospectEmail, setProspectEmail] = React.useState<string>("");
   const [prospectPhone, setProspectPhone] = React.useState<string>("");
+  /* R-1712: a business typed as a new prospect got a B2C invoice — the GSTIN was never asked.
+     Saved on the prospect's lead (leads.gstin), which accept / record_payment copy to the new
+     customer's customers.gstin — the field every invoice reads. */
+  const [prospectGstin, setProspectGstin] = React.useState<string>("");
   /** The lead made for a typed prospect on an earlier save of this screen — never two. */
   const prospectLeadRef = React.useRef<string | null>(null);
   // Customer-entry mode — a clean either/or toggle (was two inputs shown at once,
@@ -476,8 +546,18 @@ export function QuoteBuilder() {
   // converted at the rate. Per-quote choice; line rates stay hand-editable.
   const [usdPricingBasis, setUsdPricingBasis] = React.useState<"international" | "india">("international");
   // Round off the final foreign payable total (default on). Display-only — books stay ₹.
-  const [roundTotal, setRoundTotal] = React.useState(true);
+  /* R-1677: OFF by default — the customer is asked for the cent-exact total (accept page, PDF,
+     invoice: lib/quotes/foreign-totals). Whole dollars on by default made the builder say $338
+     for a $338.40 quote. Still display-only; books stay ₹. */
+  const [roundTotal, setRoundTotal] = React.useState(false);
 
+  /* R-1675: the pricing basis (currency | rate | USD basis) the lines of an in-place EDIT were
+     saved at. While the builder still sits on that basis, the lines are the saved quote — a
+     catalogue (re)load must not re-derive them. Staging Q-5F40-27-0091: a ₹10,627 rate (18%
+     under list) opened as the ₹12,960 catalogue price, because the catalogue answered after
+     the quote and this effect read the saved rate as the list price. Cleared the moment the
+     operator changes the basis, so a real currency / rate switch still re-prices. */
+  const savedBasisRef = React.useRef<string | null>(null);
   // Re-price catalog-linked lines when the billing currency / exchange rate changes,
   // so switching to USD uses each item's REAL USD price (books stay ₹ = USD × rate),
   // and switching back to INR restores the ₹ catalog price. Custom lines (no item_id)
@@ -486,33 +566,23 @@ export function QuoteBuilder() {
     if (!catalog || catalog.length === 0) return;
     const usdMode = (currency ?? "INR").toUpperCase() === "USD";
     const fx = exchangeRate && exchangeRate > 0 ? exchangeRate : 1;
+    if (savedBasisRef.current !== null) {
+      if (savedBasisRef.current === pricingBasisKey(currency, fx, usdPricingBasis)) return;
+      savedBasisRef.current = null;
+    }
     setLineItems((prev) => prev.map((l) => {
       if (!l.item_id || l.bulk) return l;
       const it = catalog.find((c) => c.id === l.item_id);
       if (!it) return l;
       /* R-369: "annualRate" is the line's STORED unit — the year on an annual line, one
          month on a flex ("monthly") line. ×12 on a flex line re-priced every saved flex
-         quote to twelve months the moment it was opened for editing. */
-      const lineCommitment = l.commitment ?? "annual_yearly";
-      let annualRate: number, annualCost: number;
+         quote to twelve months the moment it was opened for editing.
+         R-1668: and ONCE on a one-time line (no commitment) — never ×12. The arithmetic
+         lives in lib/quotes/catalog-line.ts (catalogLineListRate), tested there. */
       const usd = it.prices?.usd;
-      if (usdMode && usdPricingBasis === "international" && usd && usd.msrp > 0) {
-        annualRate = storedLineRate(usd.msrp * fx, lineCommitment);
-        annualCost = storedLineRate(usd.wholesale * fx, lineCommitment);
-      } else if (headlinePrice(it).unit === "yr" || unitYearMultiplier(billingUnitOf(it)) !== 12) {
-        /* A yearly-total plan (support "(Yearly)", msrp 0). msrp × 12 here re-priced it
-           to ₹0 the moment this effect re-ran (2 Oct 2026).
-           R-526: and any row priced per YEAR or ONCE (domain registration, migration) —
-           the tier branch below would ×12 it again every time the catalogue loads. */
-        const p = catalogYearlyPrice(it);
-        const perMonthLine = lineCommitment === "monthly";
-        annualRate = perMonthLine ? Math.round(p.rate / 12) : p.rate;
-        annualCost = perMonthLine ? Math.round(p.cost / 12) : p.cost;
-      } else {
-        const tier = it.prices?.[lineCommitment === "monthly" ? "monthly" : "annual"];
-        annualRate = storedLineRate(tier?.msrp ?? it.msrp, lineCommitment);
-        annualCost = storedLineRate(tier?.wholesale ?? it.wholesale, lineCommitment);
-      }
+      const useUsd = usdMode && usdPricingBasis === "international" && usd && usd.msrp > 0;
+      const { rate: annualRate, cost: annualCost } = catalogLineListRate(it, l.commitment,
+        useUsd ? { msrp: usd.msrp, wholesale: usd.wholesale, fx } : null);
       /* Keep the line's discount: a package (or a rep) priced it below list, and a
          currency switch must move the list price, not erase the discount (2 Oct 2026). */
       const listBefore = l.list_rate ?? l.rate;
@@ -555,9 +625,25 @@ export function QuoteBuilder() {
   // Whether the quote is linked to a lead is a separate question, answered by
   // isLeadMode where it matters: on save.
   const prefilledRef = React.useRef(false);
+  /* R-1765: the line whose qty is 1 only because the lead had no seat count — it carries a
+     hint until the qty is typed. And a lead plan that matched no Items row: no line, a message
+     over the empty table, and the item picker opens searching that plan. */
+  const [seatsGuessLineId, setSeatsGuessLineId] = React.useState<string | null>(null);
+  const [planNotInItems, setPlanNotInItems] = React.useState<string | null>(null);
   React.useEffect(() => {
     if (prefilledRef.current) return;
-    if (!leadCompany) return;
+    /* R-1675: Edit / Duplicate / Revise copy an existing quote — ITS saved lines are the
+       truth. The lead-plan prefill is for a NEW quote from a lead only. On those paths the
+       quote's lead_id loads the lead (linkedLeadId), which fills leadCompany/leadPlan/leadSeats,
+       and this effect used to replace the saved lines with a catalogue-priced line (₹10,627
+       discounted → ₹12,960 list on staging, Q-5F40-27-0091). `prefillFrom` is read from the
+       URL, so it is known before the quote, the lead or the catalogue answers — any order. */
+    if (prefillFrom) { prefilledRef.current = true; return; }
+    /* R-1765: a lead with no company is still a lead — a person or a small shop with just a
+       contact name (localhost L-MVJL9MN0, 22 Oct 2026). Company used to be required here, so
+       its plan never reached the quote. Any of company (URL or lead), plan, or a loaded lead
+       starts the prefill. */
+    if (!leadCompanyInit && !leadPlan && !(linkedLeadId && leadFromQuery)) return;
     /* Wait for the catalogue query to ANSWER — so we use the tenant's actual prices,
        not the hardcoded fallback map. R-388: this used to be `if (!catalog) return`, but
        `catalog` is `[]` while loading, never falsy — so on a reload (empty query cache)
@@ -572,9 +658,15 @@ export function QuoteBuilder() {
 
     prefilledRef.current = true;
 
-    const seatsNum = leadSeats ? parseInt(leadSeats, 10) : 0;
+    const leadSeatsNum = leadSeats ? parseInt(leadSeats, 10) : 0;
+    /* R-1765: blank / 0 seats on the lead → 1 seat, and the line says to check it. */
+    const seatsMissing = !(leadSeatsNum > 0);
+    const seatsNum = seatsMissing ? 1 : leadSeatsNum;
+    const leadName = leadQuoteName({
+      company: leadCompanyInit, contact_name: leadContactInit, contact_email: leadEmailInit, contact_phone: leadPhoneInit,
+    });
 
-    // 1. Find the matching catalog item — exact / substring / tier-keyword (lib/quotes/lead-plan-match.ts).
+    // 1. Find the matching catalog item — exact / substring / family-then-tier (lib/quotes/lead-plan-match.ts).
     const catalogItem = matchCatalogItemForPlan(catalog, leadPlan);
 
     let rate = 0;
@@ -595,18 +687,14 @@ export function QuoteBuilder() {
       }
     }
 
-    // 2. Fallback to the hardcoded plan map — tries exact then substring match too.
+    // 2. Fallback to the hardcoded plan map — the SAME family-then-tier matcher (R-1667),
+    //    so a bare tier word never borrows another product's price here either.
     if (!rate && leadPlan) {
-      const lpLower = leadPlan.toLowerCase();
-      let monthlyPPS = PLAN_PRICE_PER_SEAT_PM[leadPlan];
-      if (!monthlyPPS) {
-        // Try substring match against known plan names
-        const key = Object.keys(PLAN_PRICE_PER_SEAT_PM).find((k) => {
-          const kl = k.toLowerCase();
-          return kl.includes(lpLower) || lpLower.includes(kl);
-        });
-        if (key) monthlyPPS = PLAN_PRICE_PER_SEAT_PM[key];
-      }
+      const key = matchCatalogItemForPlan(
+        Object.keys(PLAN_PRICE_PER_SEAT_PM).map((k) => ({ name: k })),
+        leadPlan,
+      )?.name;
+      const monthlyPPS = key ? PLAN_PRICE_PER_SEAT_PM[key] : undefined;
       if (monthlyPPS) {
         rate = monthlyPPS * 12;
         /* Cost stays 0 — DELIBERATELY, and this is the important line in the block.
@@ -621,7 +709,7 @@ export function QuoteBuilder() {
       }
     }
 
-    if (leadPlan && seatsNum > 0 && rate > 0) {
+    if (leadPlan && rate > 0) {
       const lineId = `line-${Date.now()}`;
       /* R-388: no cost from the catalogue = UNKNOWN, not zero. Mark it so the backfill
          fills it the moment the catalogue can answer (until the user types one). */
@@ -642,6 +730,7 @@ export function QuoteBuilder() {
           start_date: todayISO,
         },
       ]);
+      if (seatsMissing) setSeatsGuessLineId(lineId);
       if (source === "catalog") {
         toast.success(
           `Pre-filled from catalog: ${seatsNum} × ${leadPlan} @ ₹${priced.rate}/seat/${priced.unit}${priced.unit === "mo" ? " (monthly, as on the lead)" : ""}`,
@@ -657,17 +746,22 @@ export function QuoteBuilder() {
           duration: 10_000,
         });
       }
+    } else if (leadPlan) {
+      /* R-1667: the plan did not match ONE catalogue item. The line stays empty on purpose —
+         a guessed item is a wrong price on a customer's quote. R-1765: said ON the page (not
+         only in a toast that fades), with the item picker one click away, searching the plan. */
+      setPlanNotInItems(leadPlan);
     } else {
-      toast.info(`Add line items for ${leadCompany}'s quote`);
+      toast.info(`Add line items for ${leadName}'s quote`);
     }
 
     // Pre-fill notes with friendly customer-facing message
     setNotes(
-      `Quote for ${leadCompany}\n` +
-      (leadContact ? `Attn: ${leadContact}\n` : "") +
+      `Quote for ${leadName}\n` +
+      (leadContactInit && leadContactInit !== leadName ? `Attn: ${leadContactInit}\n` : "") +
       `\nPricing valid for 30 days. Onboarding includes DNS, MX, SPF, DKIM, DMARC setup. Free training (2 sessions).`,
     );
-  }, [isLeadMode, leadCompany, leadPlan, leadSeats, leadContact, catalog, catalogPending, linkedLeadId, leadsPending, leadCycle]);
+  }, [prefillFrom, leadCompanyInit, leadContactInit, leadEmailInit, leadPhoneInit, leadFromQuery, leadPlan, leadSeats, catalog, catalogPending, linkedLeadId, leadsPending, leadCycle]);
 
   /* ── R-388: fill UNKNOWN costs when the catalogue arrives ───────────────────────
      The prefill above waits for the catalogue, but if that query failed (or a row
@@ -717,8 +811,10 @@ export function QuoteBuilder() {
     // Copy line items + financial settings
     if (Array.isArray(sourceQuote.line_items)) {
       // Clone with fresh IDs so React keys stay unique if source items get edited
+      /* R-1674: a NEW quote (Duplicate / Revise) does not inherit "customer can change
+         seats" — the builder no longer offers it. In-place Edit keeps the line as saved. */
       const items = (sourceQuote.line_items as QuoteLineItem[]).map((l, i) => ({
-        ...l,
+        ...(editOf ? l : dropSeatsAdjustable(l)),
         id: `line-${Date.now()}-${i}`,
         list_rate: l.list_rate ?? l.rate,
       }));
@@ -739,6 +835,14 @@ export function QuoteBuilder() {
        CGST+SGST on the tax invoice.
        Copying them is right for a duplicate too: a copy of a USD quote should be USD. */
     if (sourceQuote.currency)             setCurrency(sourceQuote.currency);
+    /* R-1675: an in-place Edit opens on the quote's own numbers — see savedBasisRef. */
+    if (editOf) {
+      savedBasisRef.current = pricingBasisKey(
+        sourceQuote.currency ?? "INR",
+        sourceQuote.exchange_rate != null && sourceQuote.exchange_rate > 0 ? sourceQuote.exchange_rate : 1,
+        "international",
+      );
+    }
     if (sourceQuote.exchange_rate != null && sourceQuote.exchange_rate > 0) {
       setExchangeRate(sourceQuote.exchange_rate);
       /* R-045: keep where that rate came from — an untouched Save must not relabel it. */
@@ -781,6 +885,13 @@ export function QuoteBuilder() {
     : customerId
       ? quoteContact(customer, leadFromQuery)
       : quoteContact({ contact_email: prospectEmail, contact_phone: prospectPhone });
+  /* R-1485: the buyer's GSTIN in the preview — lead mode: the (editable) lead GSTIN; a
+     customer: its own row only (quoteBuyerGstin). A typed prospect: the GSTIN typed here once it
+     passes the checksum (R-1712). */
+  const previewGstin = isLeadMode
+    ? quoteBuyerGstin(null, { gstin: leadGstin })
+    : customerId ? quoteBuyerGstin(customer ?? { gstin: null }) : validProspectGstin(prospectGstin);
+  const gstinMissing = !!customerId && buyerGstinMissing(customer);
   // Invoice mode: pre-fill the payment terms from the customer's default (0164).
   // Fires when a customer with a saved term is selected; a manual Terms change
   // still wins (this only re-runs if the selected customer's term changes).
@@ -801,7 +912,10 @@ export function QuoteBuilder() {
     /* A customer's GSTIN proves their state — 36 of 41 GSTIN customers had no
        state_code on file, so the GSTIN prefix is the fallback (2 Oct 2026). */
     : (customerId ? (customer?.state_code || stateCodeFromGstin(customer?.gstin) || null) : (prospectStateCode || null));
-  const interState = isInterStateSupply(buyerStateCode, currentUser?.tenantStateCode, { customerGstin: customerId ? customer?.gstin : null, sellerGstin: currentUser?.tenantGstin });
+  /* R-1736: the picked customer's GST treatment — an SEZ buyer is IGST even in our own state. */
+  const buyerTreatment = !isLeadMode && customerId ? (customer?.gst_treatment ?? null) : null;
+  const sezBuyer = treatmentIsAlwaysInterState(buyerTreatment);
+  const interState = isInterStateSupply(buyerStateCode, currentUser?.tenantStateCode, { customerGstin: customerId ? customer?.gstin : null, sellerGstin: currentUser?.tenantGstin, treatment: buyerTreatment });
 
   // Selling gross = the (negotiated) rate × qty. This is the actual revenue and
   // what gets billed / drives MRR — so it stays the subtotal.
@@ -832,13 +946,18 @@ export function QuoteBuilder() {
   // GST is added. Detected from the customer's country (foreign = export).
   // For a prospect/lead quote (no customer record yet) export can't be inferred
   // here — mark the customer as export once created. (Phase 1c: lead country.)
-  const isExport          = isExportSupply(isLeadMode ? leadCountry : (customer?.country ?? (!customerId ? prospectCountry : null)));
+  /* R-1677: the ONE country the export decision is made on — and the one the "Export (…)" lines
+     name. The totals block printed customer?.country even for a typed prospect, so a USD
+     prospect quote read "Export () → zero-rated". */
+  const supplyCountry     = isLeadMode ? leadCountry : (customer?.country ?? (!customerId ? prospectCountry : null));
+  const isExport          = isExportSupply(supplyCountry);
+  const exportCountryName = supplyCountry?.trim() || "outside India";
   /* R-376 (f): the preview names the state — "Haryana (06) · IGST", not "Inter-state". */
   /* R-431 (board R-406): the company's OWN state decides the head as much as the buyer's.
      Empty → isInterStateSupply() answered intra-state and this screen printed
      "✓ Intra-state → CGST + SGST" off that guess; payment was taken against it and the
      invoice later came out IGST. Read only once the user has loaded (no flash). */
-  const gstHead           = supplyHead({ isExport, buyerStateCode, sellerStateCode: currentUser?.tenantStateCode });
+  const gstHead           = supplyHead({ isExport, buyerStateCode, sellerStateCode: currentUser?.tenantStateCode, treatment: buyerTreatment });
   const sellerStateMissing = !!currentUser && gstHead.kind === "seller_state_missing";
   const placeOfSupply     = sellerStateMissing
     ? `${buyerStateCode && GST_STATE_BY_CODE[buyerStateCode] ? `${GST_STATE_BY_CODE[buyerStateCode]} (${buyerStateCode}) · ` : ""}GST head pending (company state not set)`
@@ -859,7 +978,7 @@ export function QuoteBuilder() {
     void fetchLatestFx("USD");
   }, [isExport, currency, duplicateOf, fetchLatestFx]);
 
-  const effectiveTaxRate  = isExport ? 0 : taxRate;
+  const effectiveTaxRate  = quoteEffectiveTaxRate({ saved: gstSaved, isExport, taxRate });
   const tax               = Math.round(taxable * (effectiveTaxRate / 100));
   const total             = taxable + tax;
   // Foreign-currency billing (books stay ₹). The whole builder renders in `currency`
@@ -906,12 +1025,13 @@ export function QuoteBuilder() {
   const toDisp = (inr: number) => (isUsdBill ? dRound(inr / fxRate) : inr);
   const fmtDispC = (v: number) => (isUsdBill ? formatForeign(v, currency ?? "USD") : rupee(v));
   const dispAmt  = (perSeatInr: number, qty: number, discPct = 0) => dRound(qty * toDisp(perSeatInr) * (1 - discPct / 100));
-  const dispGross    = isUsdBill ? dRound(lineItems.reduce((s, l) => s + dRound(l.qty * toDisp(l.rate)), 0)) : grossSubtotal;
-  const dispLineDisc = isUsdBill ? dRound(lineItems.reduce((s, l) => s + dRound(l.qty * toDisp(l.rate) * ((l.discount_pct ?? 0) / 100)), 0)) : lineDiscountTotal;
-  const dispSubtotal = isUsdBill ? dRound(dispGross - dispLineDisc) : subtotal;
+  /* R-1677: the foreign totals come from lib/quotes/foreign-totals — the same function the
+     accept page, preview, quote PDF and invoice use, so all of them show one total. */
+  const usdFig       = isUsdBill ? foreignQuoteFigures({ lines: lineItems, fx: fxRate, taxRate: effectiveTaxRate }) : null;
+  const dispSubtotal = usdFig ? usdFig.subtotal : subtotal;
   const dispTaxable  = dispSubtotal;
-  const dispTax      = isUsdBill ? dRound(dispTaxable * (effectiveTaxRate / 100)) : tax;
-  const dispTotal    = isUsdBill ? dRound(dispTaxable + dispTax) : total;
+  const dispTax      = usdFig ? usdFig.tax : tax;
+  const dispTotal    = usdFig ? usdFig.total : total;
   const dispListGross = isUsdBill ? dRound(lineItems.reduce((s, l) => s + dRound(l.qty * toDisp(l.list_rate ?? l.rate)), 0)) : listGross;
   const dispCustomerDiscount = Math.max(0, dRound(dispListGross - dispSubtotal));
   /* R-369: what the stored totals are divided by for one invoice — the PDF's own rule
@@ -964,6 +1084,24 @@ export function QuoteBuilder() {
       }, current),
     );
   };
+
+  /* One tap per product the lead is interested in — the rep used to open the catalogue and
+     search for what the lead already said (2 Oct 2026). Shown on the empty line table. */
+  const planChipRow = planChips.length > 0 ? (
+    <div className="flex flex-wrap justify-center gap-2 mb-4">
+      {planChips.map((it) => (
+        <button
+          key={it.id}
+          type="button"
+          onClick={() => addLine(lineFromCatalog(it, { qty: chipSeats ?? undefined }))}
+          className="inline-flex flex-col items-start rounded-lg border border-hairline bg-paper px-3 py-2 text-left hover:border-amber hover:bg-amber-soft/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+        >
+          <span className="text-sm font-medium text-ink">{it.name}</span>
+          <span className="text-2xs text-ink-3 tabular-nums">{rupee(catalogYearlyPrice(it).rate)}{lineRateSuffix(billingUnitOf(it))}</span>
+        </button>
+      ))}
+    </div>
+  ) : null;
 
   const updateQty = (id: string, qty: number) => {
     const nextQty = Math.max(1, qty);
@@ -1021,6 +1159,7 @@ export function QuoteBuilder() {
     });
   };
   const onQtyInput = (id: string, raw: string) => {
+    if (id === seatsGuessLineId) setSeatsGuessLineId(null);
     const r = parseLineQty(raw);
     setLineDraft(`${id}:qty`, raw, r.ok ? null : r.problem);
     if (r.ok) updateQty(id, r.value);
@@ -1050,22 +1189,42 @@ export function QuoteBuilder() {
   const updateDomain = (id: string, d: string) => {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, domain: d || null } : l)));
   };
-  /** R-156: a domain registration line's term. The register cron registers for exactly this. */
+  /** R-156: a domain registration line's term. The register cron registers for exactly this.
+   *  R-1445: the rate is the whole term's price, so it moves with the years (price x years);
+   *  the subscription filed from it renews after those years (trigger subscription_term_follows_line). */
   const updateYears = (id: string, years: number) => {
-    setLineItems((s) => s.map((l) => (l.id === id ? { ...l, years: years > 1 ? years : undefined } : l)));
+    setLineItems((s) => s.map((l) => (l.id === id ? lineForYears(l, years) : l)));
   };
-  /** What the customer may change on the public page. See LineAdjustControls. */
+  /** What the customer may change on the public page. See line-adjust-controls.tsx (LineMoreMenu). */
   const updateAdjustable = (id: string, patch: Partial<QuoteLineItem>) => {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   };
   const updateCommitment = (id: string, commitment: LineCommitment | null) => {
     /* R-389 (F4): "One-time" = no commitment — record_payment makes no subscription for it.
-       The rate is kept as typed: a one-time price has no per-month / per-year unit. */
+       A typed (custom) line keeps its rate: a one-time price has no per-month / per-year unit.
+       R-1668: a CATALOGUE line is re-priced to the catalogue price once per unit — it used to
+       keep its ×12 annual rate, so a ₹199 migration stayed ₹2,388 a seat on a One-time line. */
+    const usdFor = (it: (typeof catalog)[number]) => {
+      const usd = it.prices?.usd;
+      const fx = exchangeRate && exchangeRate > 0 ? exchangeRate : 1;
+      return (currency ?? "INR").toUpperCase() === "USD" && usdPricingBasis === "international" && usd && usd.msrp > 0
+        ? { msrp: usd.msrp, wholesale: usd.wholesale, fx }
+        : null;
+    };
     if (commitment === null) {
       setLineItems((s) => s.map((l) => {
         if (l.id !== id) return l;
         const { commitment: _was, ...oneTime } = l;
-        return oneTime;
+        const item = l.item_id && !l.bulk ? catalog.find((c) => c.id === l.item_id) : undefined;
+        if (!item) return oneTime;
+        const once = catalogLineListRate(item, null, usdFor(item));
+        if (once.rate <= 0) return oneTime;
+        return {
+          ...oneTime,
+          rate: once.rate,
+          list_rate: once.rate,
+          cost: costTypedRef.current.has(l.id) || once.cost <= 0 ? l.cost : once.cost,
+        };
       }));
       return;
     }
@@ -1077,6 +1236,18 @@ export function QuoteBuilder() {
         // If this line came from the catalog, recalc rate based on new commitment tier
         if (l.item_id && catalog) {
           const item = catalog.find((c) => c.id === l.item_id);
+          /* R-1668: from One-time (a once price) back to a term — price it from the catalogue
+             for that term. The unit conversion below reads a missing commitment as annual
+             and would leave ₹199 on an Annual line. */
+          if (item && !l.commitment && !l.bulk) {
+            const p = catalogLineListRate(item, commitment, usdFor(item));
+            if (p.rate > 0) {
+              return {
+                ...l, commitment, rate: p.rate, list_rate: p.rate,
+                cost: costTypedRef.current.has(l.id) || p.cost <= 0 ? l.cost : p.cost,
+              };
+            }
+          }
           // Map line commitment → underlying item price tier
           // "monthly" = monthly flex tier · others = annual tier (same price, only billing differs)
           const tierKey = commitment === "monthly" ? "monthly" : "annual";
@@ -1158,7 +1329,6 @@ export function QuoteBuilder() {
   ).allowed, [editOf, sourceQuote, lineItems]);
   const sendPlan = saveAndSendPlan({ recipient: sendRecipient, sendAllowed });
   const [emailing, setEmailing] = React.useState(false);
-  const sendLabel = saveAndSendLabel(sendPlan);
 
   /** Email an already-saved quote; on failure keep a "Try again" on the toast. */
   const emailSavedQuote = async (id: string, to: string): Promise<boolean> => {
@@ -1193,7 +1363,8 @@ export function QuoteBuilder() {
   // (open the email or WhatsApp dialog as soon as we land). The detail
   // page reads `?send=whatsapp` / `?send=email` from the URL.
   // "send-now" = the main "Save & send" button (R-408): save, then email right here.
-  const handleSubmit = async (status: "draft" | "sent", afterAction?: "email" | "whatsapp" | "send-now") => {
+  // "mark-sent" = Send ▾ → Save & mark sent (R-1726): saved as sent, no email, even when there is an address.
+  const handleSubmit = async (status: "draft" | "sent", afterAction?: "email" | "whatsapp" | "send-now" | "mark-sent") => {
     // In lead mode, customer is NOT required (lead = potential customer).
     // A real customer record gets created only after payment.
     // In customer mode, accept EITHER an existing customer pick OR a typed
@@ -1206,7 +1377,7 @@ export function QuoteBuilder() {
       return;
     }
     const typedProspect = !isLeadMode && !customerId && !isInvoiceMode;
-    const contactProblem = typedProspect ? prospectContactProblem({ email: prospectEmail, phone: prospectPhone }) : null;
+    const contactProblem = typedProspect ? prospectContactProblem({ email: prospectEmail, phone: prospectPhone, gstin: prospectGstin }) : null;
     if (contactProblem) {
       toast.error("Check the prospect's contact", { description: contactProblem });
       return;
@@ -1232,10 +1403,13 @@ export function QuoteBuilder() {
        quote went out "✓ Intra-state" and was paid against, then the invoice came out IGST.
        A draft may wait; anything that reaches the customer may not. */
     if (status === "sent" && sellerStateMissing) {
+      /* R-1428: owner → button to the Registered state field; anyone else → "ask the owner"
+         (Settings → Company is view-only for them). */
+      const fix = companyStateFixFor(currentUser?.role);
       toast.error(COMPANY_STATE_FIX_TITLE, {
-        description: `${COMPANY_STATE_FIX.description} You can still save this as a draft.`,
+        description: `${fix.description} You can still save this as a draft.`,
         duration: 15000,
-        action: { label: COMPANY_STATE_FIX.label, onClick: () => router.push(COMPANY_STATE_FIX.href as never) },
+        action: { label: fix.action.label, onClick: () => router.push(fix.action.href as never) },
       });
       return;
     }
@@ -1260,7 +1434,9 @@ export function QuoteBuilder() {
     /* R-408: when emailing (or held for approval) the row is saved as a DRAFT and the send
        route flips it to 'sent' only after the mail went — so a failed email never shows
        as sent. With no address it is saved as 'sent' and the toast says no email went. */
-    const plan = afterAction === "send-now" ? sendPlan : null;
+    const plan = afterAction === "send-now" ? sendPlan
+      : afterAction === "mark-sent" ? (sendPlan === "needs-approval" ? "needs-approval" : "mark-sent")
+      : null;
     const saveStatus: "draft" | "sent" = plan === "email" || plan === "needs-approval" ? "draft" : status;
 
     try {
@@ -1308,11 +1484,11 @@ export function QuoteBuilder() {
          linked to it — the contact then lives where Send, Record payment and the pipeline
          already read it. Made once per screen (the ref), never for a picked customer. */
       let prospectLeadId: string | null = prospectLeadRef.current;
-      if (typedProspect && !linkedLeadId && !prospectLeadId && hasProspectContact({ email: prospectEmail, phone: prospectPhone })) {
+      if (typedProspect && !linkedLeadId && !prospectLeadId && hasProspectContact({ email: prospectEmail, phone: prospectPhone, gstin: prospectGstin })) {
         const seats = quoteSeatCount(lineItems) ?? 0;
         const row = prospectLeadRow({
           name: resolvedCustomerName,
-          contact: { email: prospectEmail, phone: prospectPhone },
+          contact: { email: prospectEmail, phone: prospectPhone, gstin: prospectGstin },
           stateCode: prospectStateCode || null,
           stateName: prospectStateCode ? (GST_STATE_BY_CODE[prospectStateCode] ?? null) : null,
           country: prospectCountry,
@@ -1343,7 +1519,9 @@ export function QuoteBuilder() {
         // record_payment stamps this on the subscription it creates today; per-line
         // domains also live on each line_item for the coming multi-sub fan-out.
         domain:        (lineItems.find((l) => l.domain?.trim())?.domain ?? "").trim() || null,
-        line_items:    lineItems,
+        /* R-1688: One-time lines (no commitment) are saved with `one_time: true`, so no filing
+           path (Invoice now, pay later, paid first) ever makes them a subscription. */
+        line_items:    markOneTimeLines(lineItems),
         subtotal,
         total_cost:    totalCost,
         // Discount is baked into each line's rate (see totals) — nothing applied on top.
@@ -1465,7 +1643,10 @@ export function QuoteBuilder() {
 
       // Email failed: stay here — the toast's "Try again" and this button both retry.
       if (emailFailed) return;
-      if (plan === "mark-sent") {
+      if (plan === "mark-sent" && afterAction === "mark-sent" && sendRecipient) {
+        /* The owner chose not to email (sent it by hand) — say what happened, no warning. */
+        toast.success(`${quote.id} marked sent — nothing was emailed`);
+      } else if (plan === "mark-sent") {
         const out = markedSentOutcome(quote.id);
         toast.warning(out.title, { description: out.description, duration: 10000 });
       } else if (plan === "needs-approval") {
@@ -1473,7 +1654,7 @@ export function QuoteBuilder() {
         toast.warning(out.title, { description: out.description, duration: 10000 });
       }
 
-      const suffix = afterAction && afterAction !== "send-now" ? `?send=${afterAction}` : "";
+      const suffix = afterAction === "email" || afterAction === "whatsapp" ? `?send=${afterAction}` : "";
       router.push(`/quotes/${quote.id}${suffix}` as any);
     } catch {
       // toast in hook
@@ -1520,7 +1701,7 @@ export function QuoteBuilder() {
           <IconButton icon="arrow_left" aria-label="Back" onClick={() => router.back()} />
           <div>
             <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
-              {isInvoiceMode ? "Direct invoice · GST tax invoice" : "Quotation · Auto-generated"}
+              {isInvoiceMode ? (bosStatus ? "Direct invoice · Bill of Supply" : "Direct invoice · GST tax invoice") : "Quotation · Auto-generated"}
             </p>
             <h1 className="font-serif text-3xl md:text-4xl leading-tight">
               {isInvoiceMode
@@ -1600,8 +1781,8 @@ export function QuoteBuilder() {
                   <path d="M12 16v-4M12 8h.01" />
                 </svg>
                 <div>
-                  <b>Potential customer</b> — full customer record will be created
-                  automatically once payment is received.
+                  <b>Potential customer</b> — the customer record is created when they accept
+                  (or when their first payment is recorded).
                 </div>
               </div>
 
@@ -1713,7 +1894,7 @@ export function QuoteBuilder() {
                 </p>
               ) : sellerStateMissing ? (
                 <p className="text-2xs flex items-center gap-1 -mt-1"><CompanyStateFix /></p>
-              ) : leadStateCode && (
+              ) : leadStateCode && !bosStatus && (
                 <p className="text-2xs flex items-center gap-1 -mt-1">
                   {interState
                     ? <span className="text-amber-ink">⚠ Inter-state → IGST {taxRate}% will apply</span>
@@ -1810,7 +1991,7 @@ export function QuoteBuilder() {
                   onChange={(e) => setProspectName(e.target.value)}
                 />
                 <p className="text-3xs text-ink-3 mt-1">
-                  A new prospect who hasn&apos;t paid yet — we&apos;ll auto-create the customer record when they pay.
+                  A new prospect — the customer record is created when they accept (or when their first payment is recorded).
                 </p>
               </FormField>
               )}
@@ -1838,6 +2019,32 @@ export function QuoteBuilder() {
                       onChange={(e) => setProspectPhone(e.target.value)}
                     />
                   </FormField>
+                  {/* R-1712: GSTIN, checked as typed; a valid one sets the place of supply below. */}
+                  <FormField label="GSTIN" htmlFor="prospectGstin" className="sm:col-span-2">
+                    <Input
+                      id="prospectGstin"
+                      autoComplete="off"
+                      placeholder="27AAPFU0939F1ZV"
+                      className="font-mono uppercase"
+                      value={prospectGstin}
+                      onChange={(e) => {
+                        const v = liveGstin(e.target.value);
+                        setProspectGstin(v);
+                        const st = gstinState(v);
+                        if (st) setProspectStateCode(st.code);
+                      }}
+                    />
+                    {(() => {
+                      const g = checkGstin(prospectGstin);
+                      if (g.tone === "ok") return <p className="mt-1 text-3xs text-emerald">Valid GSTIN · {g.detail} — place of supply set from it.</p>;
+                      if (g.tone === "typing" || g.tone === "error") return <p role="alert" className="mt-1 text-3xs text-rose">{g.message}</p>;
+                      return (
+                        <p className="mt-1 text-3xs text-amber-ink">
+                          A registered business? Add its GSTIN — without it the tax invoice is B2C and they cannot claim the GST back. Leave it empty for a person.
+                        </p>
+                      );
+                    })()}
+                  </FormField>
                   {prospectContactProblem({ email: prospectEmail, phone: prospectPhone }) ? (
                     <p role="alert" className="sm:col-span-2 -mt-1 text-3xs text-rose">
                       {prospectContactProblem({ email: prospectEmail, phone: prospectPhone })}
@@ -1863,17 +2070,38 @@ export function QuoteBuilder() {
                     </div>
                     <div className="min-w-0">
                       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-0.5">GSTIN</div>
-                      <div className="text-sm text-ink-2 font-mono truncate">{customer?.gstin || "—"}</div>
+                      {/* R-1485: from the customer row; a business without one gets a quiet
+                          way to add it (only where this role may open the customer form). */}
+                      {gstinMissing && customerId ? (
+                        paletteMayOpen(currentUser?.role, addGstinHref(customerId)) ? (
+                          <Link
+                            href={addGstinHref(customerId) as never}
+                            className="text-sm text-ink-3 underline underline-offset-2 hover:text-amber-ink"
+                            data-testid="builder-add-gstin"
+                            /* A new tab, so the quote being built is not lost; coming back
+                               refetches the customer and the GSTIN appears here. */
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            GSTIN not on file — add it
+                            <span className="sr-only"> (opens in a new tab)</span>
+                          </Link>
+                        ) : (
+                          <div className="text-sm text-ink-3">GSTIN not on file</div>
+                        )
+                      ) : (
+                        <div className="text-sm text-ink-2 font-mono truncate" data-testid="builder-buyer-gstin">{previewGstin || "—"}</div>
+                      )}
                     </div>
                     <div className="min-w-0">
                       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-0.5">Place of supply</div>
                       <div className="text-sm text-ink-2 truncate">{customer?.state || "—"}</div>
                     </div>
                   </div>
-                  {customer && (
+                  {customer && !(bosStatus && !isExport) && (
                     <p className="text-2xs mt-2.5 pt-2.5 border-t border-hairline/70 flex items-center gap-1">
                       {isExport ? (
-                        <span className="text-indigo-ink">🌍 Export ({customer?.country}) → zero-rated under LUT, no GST</span>
+                        <span className="text-indigo-ink">🌍 Export ({exportCountryName}) → zero-rated under LUT, no GST</span>
                       ) : sellerStateMissing ? (
                         <CompanyStateFix />
                       ) : !buyerStateCode ? (
@@ -1887,7 +2115,7 @@ export function QuoteBuilder() {
                           ⚠ No state on this customer — add one to fix the GST head. The {taxRate}% total is the same either way.
                         </span>
                       ) : interState ? (
-                        <span className="text-amber-ink">⚠ Inter-state → IGST {taxRate}% will apply</span>
+                        <span className="text-amber-ink">{sezBuyer ? `⚠ SEZ customer → IGST ${taxRate}% (always, even in your state)` : `⚠ Inter-state → IGST ${taxRate}% will apply`}</span>
                       ) : (
                         <span className="text-emerald">✓ Intra-state → CGST + SGST split @ {taxRate}%</span>
                       )}
@@ -1929,6 +2157,9 @@ export function QuoteBuilder() {
                         <span className="text-indigo-ink">🌍 Export ({prospectCountry}) → zero-rated under LUT, no GST</span>
                       ) : sellerStateMissing ? (
                         <CompanyStateFix />
+                      ) : bosStatus ? (
+                        /* R-1532: no GST on a Bill of Supply — no head to choose. */
+                        null
                       ) : !prospectStateCode ? (
                         <span className="text-ink-3">Pick the customer&apos;s state so GST (CGST+SGST vs IGST) is correct.</span>
                       ) : !buyerStateCode ? (
@@ -1942,7 +2173,7 @@ export function QuoteBuilder() {
                           ⚠ No state on this customer — add one to fix the GST head. The {taxRate}% total is the same either way.
                         </span>
                       ) : interState ? (
-                        <span className="text-amber-ink">⚠ Inter-state → IGST {taxRate}% will apply</span>
+                        <span className="text-amber-ink">{sezBuyer ? `⚠ SEZ customer → IGST ${taxRate}% (always, even in your state)` : `⚠ Inter-state → IGST ${taxRate}% will apply`}</span>
                       ) : (
                         <span className="text-emerald">✓ Intra-state → CGST + SGST split @ {taxRate}%</span>
                       )}
@@ -2105,27 +2336,25 @@ export function QuoteBuilder() {
               </svg>
             </div>
             <div className="font-serif text-lg mb-1">No line items yet</div>
-            {planChips.length > 0 ? (
+            {planNotInItems ? (
               <>
-                {/* One tap per product the lead is interested in — the rep used to open
-                    the catalogue and search for what the lead already said (2 Oct 2026). */}
+                {/* R-1765: the lead's plan matched no Items row — say so here, and open the
+                    picker already searching that plan. Nothing was guessed. */}
+                <p role="status" className="text-sm text-ink-2 mb-4">
+                  The lead&apos;s plan &quot;{planNotInItems}&quot; is not in your Items — pick the item
+                </p>
+                {planChipRow}
+                <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
+                  Pick the item
+                </Button>
+              </>
+            ) : planChipRow ? (
+              <>
                 <p className="text-sm text-ink-3 mb-3">
                   {leadPlan ? <>Interested in <b className="text-ink">{leadPlan}</b>. </> : null}
                   Tap a plan to add it{chipSeats ? ` with ${chipSeats} seats` : ""}.
                 </p>
-                <div className="flex flex-wrap justify-center gap-2 mb-4">
-                  {planChips.map((it) => (
-                    <button
-                      key={it.id}
-                      type="button"
-                      onClick={() => addLine(lineFromCatalog(it, { qty: chipSeats ?? undefined }))}
-                      className="inline-flex flex-col items-start rounded-lg border border-hairline bg-paper px-3 py-2 text-left hover:border-amber hover:bg-amber-soft/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
-                    >
-                      <span className="text-sm font-medium text-ink">{it.name}</span>
-                      <span className="text-2xs text-ink-3 tabular-nums">{rupee(catalogYearlyPrice(it).rate)}{lineRateSuffix(billingUnitOf(it))}</span>
-                    </button>
-                  ))}
-                </div>
+                {planChipRow}
                 <Button variant="default" icon="plus" onClick={() => setAddOpen(true)}>
                   Something else
                 </Button>
@@ -2147,7 +2376,7 @@ export function QuoteBuilder() {
           <div className="md:hidden divide-y divide-hairline">
             {lineItems.map((line) => {
               const commitment  = line.commitment ?? "annual_yearly";
-              const unitLabel   = billingUnit;   // quote-level frequency (0161)
+              const unitLabel   = lineRateUnitSuffix(line, billingN, billingUnit);   // quote-level frequency (0161); R-1673: one-time line says so
               /* R-369: a flex line already IS one month; only an annual line is divided. */
               const lineDiv     = perInvoiceDivisor(billingN, commitment);
               const displayRate = Math.round(line.rate / lineDiv);
@@ -2159,7 +2388,7 @@ export function QuoteBuilder() {
                 <div key={line.id} className="p-3 space-y-2.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="font-medium text-sm text-ink">{line.name}</div>
+                      <div className="font-medium text-sm text-ink">{line.name}<OptionalTag line={line} /></div>
                       {line.bulk && line.domains && line.domains.length > 0 && (
                         <button
                           type="button"
@@ -2170,7 +2399,10 @@ export function QuoteBuilder() {
                         </button>
                       )}
                     </div>
-                    <IconButton icon="trash" aria-label="Remove line" size="sm" onClick={() => removeLine(line.id)} />
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <LineMoreMenu line={line} confirmOptional={optionalNeedsConfirm(line, catalogKindOf(line.item_id))} onChange={(p) => updateAdjustable(line.id, p)} />
+                      <IconButton icon="trash" aria-label="Remove line" size="sm" onClick={() => removeLine(line.id)} />
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <label className="block">
@@ -2190,6 +2422,9 @@ export function QuoteBuilder() {
                           />
                           {lineDrafts[`${line.id}:qty`] && (
                             <span role="alert" className="mt-0.5 block text-3xs text-rose">{lineDrafts[`${line.id}:qty`]!.problem}</span>
+                          )}
+                          {line.id === seatsGuessLineId && !lineDrafts[`${line.id}:qty`] && (
+                            <span className="mt-0.5 block text-3xs text-amber-ink">Seats not on the lead — check the quantity</span>
                           )}
                         </>
                       )}
@@ -2283,7 +2518,6 @@ export function QuoteBuilder() {
                         : <>Margin {lineMargin.marginPct}%</>}
                     </span>
                   </div>
-                  <LineAdjustControls line={line} onChange={(p) => updateAdjustable(line.id, p)} />
                     </div>
                   </details>
                   <div className="flex items-center justify-between border-t border-hairline pt-2">
@@ -2296,6 +2530,8 @@ export function QuoteBuilder() {
           </div>
 
           {/* Desktop / tablet table */}
+          {/* R-1673 (2): the editor scrolls inside its own box — it pushed the whole page sideways. */}
+          <div className="hidden md:block overflow-x-auto">
           <table className="hidden md:table w-full">
             <thead className="bg-paper-2 border-b border-hairline">
               <tr>
@@ -2304,7 +2540,7 @@ export function QuoteBuilder() {
                 <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider w-28">Qty</th>
                 <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider w-36">Rate</th>
                 <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider w-36">Amount</th>
-                <th className="w-12"></th>
+                <th className="w-20"><span className="sr-only">Line actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -2318,7 +2554,7 @@ export function QuoteBuilder() {
                 // line stores ₹/seat/YEAR and is divided by invoices-per-year; a flex
                 // ("monthly") line stores ₹/seat/MONTH, which already IS one invoice.
                 const commitment  = line.commitment ?? "annual_yearly";
-                const unitLabel   = billingUnit;   // quote-level frequency (0161)
+                const unitLabel   = lineRateUnitSuffix(line, billingN, billingUnit);   // quote-level frequency (0161); R-1673: one-time line says so
                 const lineDiv     = perInvoiceDivisor(billingN, commitment);
                 const displayRate = Math.round(line.rate / lineDiv);
                 const displayCost = Math.round(line.cost / lineDiv);
@@ -2337,7 +2573,7 @@ export function QuoteBuilder() {
                 return (
                   <tr key={line.id} className="border-b border-hairline last:border-0">
                     <td className="p-3">
-                      <div className="font-medium text-sm text-ink">{line.name}</div>
+                      <div className="font-medium text-sm text-ink">{line.name}<OptionalTag line={line} /></div>
                       {line.bulk && line.domains && line.domains.length > 0 && (
                         <button
                           type="button"
@@ -2370,7 +2606,6 @@ export function QuoteBuilder() {
                       </div>
                       <LineBandNote line={line} catalog={catalog} />
                       <LineSupportToggle line={line} catalog={catalog} lineItems={lineItems} onAdd={addLine} />
-                  <LineAdjustControls line={line} onChange={(p) => updateAdjustable(line.id, p)} />
                       {/* Discounting is quote-level only (see totals sidebar). Any
                           per-line discount stored on legacy/imported quotes is still
                           honoured in the totals below, but there is no per-line editor. */}
@@ -2456,6 +2691,9 @@ export function QuoteBuilder() {
                           {lineDrafts[`${line.id}:qty`] && (
                             <span role="alert" className="mt-0.5 block max-w-[10rem] text-3xs leading-snug text-rose">{lineDrafts[`${line.id}:qty`]!.problem}</span>
                           )}
+                          {line.id === seatsGuessLineId && !lineDrafts[`${line.id}:qty`] && (
+                            <span className="mt-0.5 ml-auto block max-w-[10rem] text-3xs leading-snug text-amber-ink">Seats not on the lead — check the quantity</span>
+                          )}
                         </>
                       )}
                     </td>
@@ -2506,18 +2744,23 @@ export function QuoteBuilder() {
                       )}
                     </td>
                     <td className="p-2 text-right">
-                      <IconButton
-                        icon="trash"
-                        aria-label="Remove line"
-                        size="sm"
-                        onClick={() => removeLine(line.id)}
-                      />
+                      <div className="flex items-center justify-end gap-0.5">
+                        {/* R-1754: "Make optional for customer" lives here, not on every line. */}
+                        <LineMoreMenu line={line} confirmOptional={optionalNeedsConfirm(line, catalogKindOf(line.item_id))} onChange={(p) => updateAdjustable(line.id, p)} />
+                        <IconButton
+                          icon="trash"
+                          aria-label="Remove line"
+                          size="sm"
+                          onClick={() => removeLine(line.id)}
+                        />
+                      </div>
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+          </div>
           </>
         )}
 
@@ -2574,7 +2817,12 @@ export function QuoteBuilder() {
               {isExport ? (
                 <div className="text-2xs text-indigo-ink flex items-start gap-1 py-1">
                   <span>🌍</span>
-                  <span>Export ({customer?.country}) → <b>zero-rated under LUT</b> · no GST (CGST/SGST/IGST) applies</span>
+                  <span>Export ({exportCountryName}) → <b>zero-rated under LUT</b> · no GST (CGST/SGST/IGST) applies</span>
+                </div>
+              ) : bosStatus ? (
+                /* R-1532: the one line that says why there is no GST on this quote. */
+                <div className="text-2xs text-ink-2 flex items-start gap-1 py-1" data-testid="bill-of-supply-line">
+                  <span>{billOfSupplyBuilderLine(bosStatus)}</span>
                 </div>
               ) : (
                 <div className="text-2xs text-ink-3 italic flex items-center gap-1 py-1">
@@ -2593,7 +2841,7 @@ export function QuoteBuilder() {
                     : !buyerStateCode
                     ? `Pick the customer's state to fix the GST head — the ${taxRate}% total is the same either way`
                     : interState
-                      ? `Different state → IGST applicable @ ${taxRate}%`
+                      ? (sezBuyer ? `SEZ customer → IGST applicable @ ${taxRate}%` : `Different state → IGST applicable @ ${taxRate}%`)
                       : `Same state → CGST + SGST split @ ${taxRate}%`}
                 </div>
               )}
@@ -2618,11 +2866,11 @@ export function QuoteBuilder() {
                       ) : (
                         <span>
                           Valid till{" "}
-                          <b className="tabular-nums">{formatDate(new Date(Date.now() + validityDays * 86400000))}</b>
+                          <b className="tabular-nums">{formatDate(addDaysISO(istToday(), validityDays)) /* R-1679: the date that is saved (IST) */}</b>
                         </span>
                       )}
                       <span className="text-ink-3" aria-hidden>·</span>
-                      <span>GST <b>{isExport ? "0% (export)" : `${taxRate}%`}</b></span>
+                      <span>GST <b>{isExport ? "0% (export)" : bosStatus ? "0% (Bill of Supply)" : `${taxRate}%`}</b></span>
                       <button
                         type="button"
                         onClick={() => setTermsOpen(true)}
@@ -2696,7 +2944,7 @@ export function QuoteBuilder() {
                         min={1}
                         max={365}
                         value={validityDays}
-                        onChange={(e) => setValidityDays(parseInt(e.target.value) || 30)}
+                        onChange={(e) => setValidityDays(Math.min(365, Math.max(1, parseInt(e.target.value) || 30)))} /* R-1679: never 0 or −1 days */
                         className="tabular-nums"
                       />
                     </FormField>
@@ -2704,7 +2952,7 @@ export function QuoteBuilder() {
                     <FormField label="Expires on" htmlFor="expires">
                       <Input
                         id="expires"
-                        value={formatDate(new Date(Date.now() + validityDays * 86400000))}
+                        value={formatDate(addDaysISO(istToday(), validityDays)) /* R-1679: the date that is saved (IST) */}
                         readOnly
                         className="bg-paper-2 cursor-default font-mono"
                       />
@@ -2721,9 +2969,10 @@ export function QuoteBuilder() {
                     suffix="%"
                     // Export supply is zero-rated under LUT — show 0% and lock the field
                     // so it never contradicts the "Export → no GST" badge above.
-                    value={isExport ? 0 : taxRate}
+                    value={isExport || bosStatus ? 0 : taxRate}
                     onChange={(e) => setTaxRate(parseInt(e.target.value) || 18)}
-                    disabled={isExport}
+                    /* R-1532: a Bill of Supply business cannot charge GST — locked at 0. */
+                    disabled={isExport || !!bosStatus}
                     /* The smart default, SAID OUT LOUD. The rate and the SAC are filled in
                        for the operator and always were — but nothing ever showed what would
                        be printed on the document their customer's accountant reads, and a
@@ -2735,8 +2984,10 @@ export function QuoteBuilder() {
                        knows. hsnSummary(null) says so instead. */
                     helper={isExport
                       ? "Export → zero-rated under LUT · no GST"
+                      : bosStatus
+                      ? "Bill of Supply → no GST. Your GST registration is set in Settings → Company."
                       : hsnSummary(buyerStateCode && !sellerStateMissing ? interState : null)}
-                    className={isExport ? "bg-paper-2 cursor-not-allowed" : undefined}
+                    className={isExport || bosStatus ? "bg-paper-2 cursor-not-allowed" : undefined}
                   />
                 </FormField>
                 <button
@@ -2762,7 +3013,7 @@ export function QuoteBuilder() {
 
               {/* R-431: an unknown head (company or customer state empty) is one GST line,
                   never a guessed CGST + SGST split. The amount is the same either way. */}
-              {isExport ? null : (sellerStateMissing || !buyerStateCode) ? (
+              {isExport || bosStatus ? null : (sellerStateMissing || !buyerStateCode) ? (
                 <TotalRow label={`GST (${taxRate}%)`} value={fmtTotalC(dispTax)} />
               ) : interState ? (
                 <TotalRow label={`IGST (${taxRate}%)`} value={fmtTotalC(dispTax)} />
@@ -2868,7 +3119,7 @@ export function QuoteBuilder() {
           {isInvoiceMode ? (
             /* Invoice mode — one-time/recurring choice + a single "Create invoice".
                On phones Preview moves into the More menu so the row stays one line. */
-            <div className="flex gap-2 flex-nowrap md:flex-wrap items-center shrink-0">
+            <div className="flex gap-2 flex-nowrap md:flex-wrap items-center shrink-0 md:shrink md:min-w-0 md:justify-end">
               <div className="inline-flex rounded-lg border border-hairline bg-paper-2/40 p-1 text-xs">
                 {[{ k: false, l: "One-time" }, { k: true, l: "Recurring" }].map((o) => (
                   <button
@@ -2887,7 +3138,7 @@ export function QuoteBuilder() {
               <Button icon="file" className="hidden md:inline-flex" onClick={openPreview}>
                 Preview
               </Button>
-              <DropdownMenu>
+              <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
                   <IconButton icon="more_h" aria-label="More actions" className="md:hidden border border-hairline" />
                 </DropdownMenuTrigger>
@@ -2909,33 +3160,15 @@ export function QuoteBuilder() {
               </Button>
             </div>
           ) : (
-          <div className="flex gap-2 flex-nowrap md:flex-wrap items-center shrink-0">
+          <div className="flex gap-2 flex-nowrap md:flex-wrap items-center shrink-0 md:shrink md:min-w-0 md:justify-end">
           <Button variant="ghost" icon="copy" className="hidden md:inline-flex" onClick={() => handleSubmit("draft")} loading={createQuote.isPending}>
             Save draft
           </Button>
           <Button icon="file" className="hidden md:inline-flex" onClick={openPreview}>
             Preview
           </Button>
-          <Button
-            icon="mail"
-            className="hidden md:inline-flex"
-            onClick={() => handleSubmit("sent", "email")}
-            loading={createQuote.isPending}
-            disabled={sendDisabled}
-          >
-            Send via email
-          </Button>
-          <Button
-            icon="whatsapp"
-            className="hidden md:inline-flex !text-[#25D366] !border-[#25D366] hover:!bg-[#25D366]/5"
-            onClick={() => handleSubmit("sent", "whatsapp")}
-            loading={createQuote.isPending}
-            disabled={sendDisabled}
-          >
-            Send via WhatsApp
-          </Button>
-          {/* Phone only: everything except the main button lives here. */}
-          <DropdownMenu>
+          {/* Phone only: Save draft and Preview live here; Send ▾ stays on the row. */}
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <IconButton
                 icon="more_h"
@@ -2951,12 +3184,37 @@ export function QuoteBuilder() {
               <DropdownMenuItem className="gap-2.5 py-2" onSelect={openPreview}>
                 <Icon name="file" size={15} /> Preview
               </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* R-1726: ONE send button — the three ways to send (email / WhatsApp / mark sent) are
+              its menu. Ctrl+Enter still runs the usual send (email when there is an address,
+              else mark sent) — the item it runs carries the shortcut hint. */}
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="primary"
+                icon="send"
+                data-send-menu
+                loading={createQuote.isPending || emailing}
+                disabled={sendDisabled}
+                title={sendPlan === "email" && sendRecipient ? `Ctrl+Enter emails the quote to ${sendRecipient}` : sendPlan === "mark-sent" ? "No customer email — Ctrl+Enter marks it sent without emailing" : undefined}
+              >
+                Send
+                <Icon name="chevron_down" size={14} className="ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="top" className="min-w-[15rem]">
               <DropdownMenuItem
                 className="gap-2.5 py-2"
                 disabled={sendDisabled}
-                onSelect={() => handleSubmit("sent", "email")}
+                onSelect={() => handleSubmit("sent", sendPlan === "mark-sent" ? "email" : "send-now")}
               >
-                <Icon name="mail" size={15} /> Send via email
+                <Icon name="mail" size={15} />
+                <span className="min-w-0 flex-1">
+                  Send via email
+                  {sendRecipient && <span className="block text-2xs text-ink-3 truncate">to {sendRecipient}</span>}
+                </span>
+                {sendPlan !== "mark-sent" && <Kbd keys={["Ctrl", "Enter"]} className="hidden sm:inline-flex" />}
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="gap-2.5 py-2"
@@ -2965,20 +3223,17 @@ export function QuoteBuilder() {
               >
                 <Icon name="whatsapp" size={15} className="text-[#25D366]" /> Send via WhatsApp
               </DropdownMenuItem>
+              <DropdownMenuItem
+                className="gap-2.5 py-2"
+                disabled={sendDisabled}
+                onSelect={() => handleSubmit("sent", sendPlan === "mark-sent" ? "send-now" : "mark-sent")}
+              >
+                <Icon name="check_circle" size={15} />
+                <span className="min-w-0 flex-1">Save &amp; mark sent</span>
+                {sendPlan === "mark-sent" && <Kbd keys={["Ctrl", "Enter"]} className="hidden sm:inline-flex" />}
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button
-            variant="primary"
-            icon="send"
-            onClick={() => handleSubmit("sent", "send-now")}
-            loading={createQuote.isPending || emailing}
-            disabled={sendDisabled}
-            title={sendPlan === "email" && sendRecipient ? `Saves and emails the quote to ${sendRecipient}` : sendPlan === "mark-sent" ? "No customer email — marks it sent without emailing" : undefined}
-          >
-            <span className="md:hidden">{sendLabel.short}</span>
-            <span className="hidden md:inline">{sendLabel.full}</span>
-            <Kbd keys={["Ctrl", "Enter"]} className="ml-1.5 hidden sm:inline-flex" />
-          </Button>
           </div>
           )}
         </div>
@@ -3040,7 +3295,10 @@ export function QuoteBuilder() {
       </Card>
 
       {/* Add item modal */}
-      <AddLineItemDialog open={addOpen} onOpenChange={setAddOpen} onAdd={addLine} currency={currency} exchangeRate={exchangeRate} pricingBasis={usdPricingBasis} />
+      <AddLineItemDialog
+        open={addOpen} onOpenChange={setAddOpen} onAdd={addLine} currency={currency} exchangeRate={exchangeRate} pricingBasis={usdPricingBasis}
+        initialSearch={planNotInItems && lineItems.length === 0 ? planNotInItems : undefined}
+      />
 
       {/* Solution packages — several catalogue products in one click */}
       <SolutionPackagePicker
@@ -3075,16 +3333,21 @@ export function QuoteBuilder() {
         tenantPhone={currentUser?.tenantPhone}
         tenantAddress={currentUser?.tenantAddress}
         quoteId={quoteId ?? "(pending)"}
+        /* R-1694: the PDF QR (shown once the quote is saved) or a "add UPI ID" hint. */
+        upiVpa={currentUser?.tenantUpiVpa ?? null}
+        payQrQuoteId={quoteId}
         customerName={isLeadMode ? (leadDisplayName || PLACEHOLDER_QUOTE_NAME) : (customer?.name ?? prospectName.trim() ?? "—")}
         contactName={previewContact.contactName}
         contactEmail={previewContact.contactEmail}
         contactPhone={previewContact.contactPhone}
+        customerGstin={previewGstin}
         lineItems={lineItems}
         subtotal={subtotal}
         discountPct={0}
         discount={0}
         taxable={taxable}
         taxRate={effectiveTaxRate}
+        billOfSupply={bosStatus}
         tax={tax}
         total={total}
         interState={interState}
@@ -3097,60 +3360,8 @@ export function QuoteBuilder() {
         validityDays={validityDays}
         notes={notes}
         isProspect={isLeadMode}
+        periodContext={previewPeriodContext}
       />
-    </div>
-  );
-}
-
-// ============================================================
-// LineAdjustControls — what the CUSTOMER may change on the public quote page.
-//
-// Off by default, and that default is the point: a quote where the buyer can edit
-// anything is an order form the seller has not seen. The reseller opts each line in,
-// and the server re-checks these flags before it prices anything, because the public
-// page has no session. See lib/quotes/configure.ts.
-// ============================================================
-function LineAdjustControls({ line, onChange }: {
-  line: QuoteLineItem;
-  onChange: (patch: Partial<QuoteLineItem>) => void;
-}) {
-  return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs">
-      <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Customer can</span>
-      <label className="inline-flex items-center gap-1 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={!!line.seats_adjustable}
-          onChange={(e) => onChange({ seats_adjustable: e.target.checked || undefined })}
-          className="h-3.5 w-3.5 accent-amber"
-        />
-        <span className="text-ink-2">change seats</span>
-      </label>
-      <label className="inline-flex items-center gap-1 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={!!line.optional}
-          onChange={(e) => onChange({
-            optional: e.target.checked || undefined,
-            // Un-ticking "optional" must clear the default too, or a line that is no
-            // longer optional keeps a flag that only means something for optional lines.
-            included_by_default: e.target.checked ? (line.included_by_default ?? false) : undefined,
-          })}
-          className="h-3.5 w-3.5 accent-amber"
-        />
-        <span className="text-ink-2">add / remove this</span>
-      </label>
-      {line.optional && (
-        <label className="inline-flex items-center gap-1 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={!!line.included_by_default}
-            onChange={(e) => onChange({ included_by_default: e.target.checked || undefined })}
-            className="h-3.5 w-3.5 accent-amber"
-          />
-          <span className="text-ink-3">ticked to start</span>
-        </label>
-      )}
     </div>
   );
 }
@@ -3246,14 +3457,19 @@ function LineSupportToggle({ line, catalog, lineItems, onAdd }: {
  * Inline (span) so it sits inside the existing status <p> lines.
  */
 function CompanyStateFix() {
+  /* R-1428: only the owner can set it — others are told to ask the owner. */
+  const { data: me } = useCurrentUser();
+  const isOwner = me?.role === "owner";
+  const fix = companyStateFixFor(me?.role);
   return (
     <span className="text-amber-ink" role="alert">
-      ⚠ {COMPANY_STATE_FIX.message} — GST can&apos;t choose CGST + SGST or IGST yet, so this quote can&apos;t be sent.{" "}
+      ⚠ {COMPANY_STATE_FIX.message} — GST can&apos;t choose CGST + SGST or IGST yet, so this quote can&apos;t be sent.
+      {isOwner ? " " : " Ask the owner to set it. "}
       <Link
-        href={COMPANY_STATE_FIX.href as never}
+        href={fix.action.href as never}
         className="font-semibold underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/40 rounded-sm"
       >
-        {COMPANY_STATE_FIX.label} →
+        {fix.action.label} →
       </Link>
     </span>
   );

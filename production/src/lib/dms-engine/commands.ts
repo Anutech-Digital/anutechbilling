@@ -21,6 +21,15 @@ const COMMAND_KEY = (process.env.DMS_ENGINE_COMMAND_KEY ?? "").trim();
 /** Prefix DMS puts on a refusal that means "wait for a person", not "broken". */
 export const HOLD_PREFIX = "[held]";
 
+/**
+ * R-1780: money and GST invoices come only from ResellerOS. Every command says
+ * so, and the hosting panel (anutech-hosting, was DMS) then only switches the
+ * service on — it never charges that hosting itself and raises no "no bill"
+ * flag (its lib/billing/billed-by.ts). Set here, at the one sender, so no
+ * caller can forget it or send another owner.
+ */
+export const BILLED_BY_RESELLEROS = "reselleros";
+
 export interface EngineCommand {
   commandId: string;
   command: string;
@@ -84,7 +93,7 @@ export async function sendEngineCommand(cmd: EngineCommand): Promise<CommandOutc
       method: "POST",
       cache: "no-store",
       headers: { "content-type": "application/json", accept: "application/json", "x-integration-key": COMMAND_KEY },
-      body: JSON.stringify(cmd),
+      body: JSON.stringify({ ...cmd, payload: { ...cmd.payload, billedBy: BILLED_BY_RESELLEROS } }),
       /* Generous: a registration is a registrar round trip. A timeout here does
          NOT mean it failed — the same commandId is sent again next run and the
          engine replays whatever happened. */

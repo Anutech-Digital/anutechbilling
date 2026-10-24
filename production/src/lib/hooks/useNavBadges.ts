@@ -16,9 +16,10 @@
  *     and supabase/tests/nav_badges.test.sql holds the two to each other.
  *
  * Badge ↔ page consistency (CRITICAL, Pardeep dogfood 2026-05-29): a badge must mirror
- * what the destination page renders, otherwise "Leads 14" opens an empty page. That is
- * why leads (stage new/contact — the pre-quote inbox) and deals (quote/demo/trial) are
- * separate buckets, and why the SQL was written as a line-for-line copy of these filters.
+ * what the destination page renders, otherwise "Leads 14" opens an empty page. R-1475
+ * (17 Oct 2026): leads and deals equal the "All leads" / "All deals" view each page opens
+ * on — the page's stages (lib/leads/page-scope.ts), no junk — so "Deals 4" no longer opens
+ * "All deals 7". lib/leads/nav-badge-page-match.test.ts holds the SQL to that rule.
  *
  * ─── Quotes waiting on YOUR approval ────────────────────────────────────────
  * The only count addressed to a person rather than to the tenant. Which tiers this role

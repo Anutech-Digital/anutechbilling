@@ -6,11 +6,11 @@
  */
 import { describe, it, expect } from "vitest";
 import { buildContactBook, isBlankRow, type BookSources } from "./book";
-import { contactKind } from "@/lib/queries/contacts";
+
 
 const T = "2026-10-01T00:00:00Z";
 const empty = (): BookSources => ({
-  leads: [], customers: [], vendors: [], partners: [], imported: [], employees: [], customerLinks: [],
+  leads: [], customers: [], vendors: [], partners: [], imported: [], employees: [], customerLinks: [], relationships: [],
 });
 const customer = (o: Partial<BookSources["customers"][number]> & { id: string; name: string }) => ({
   domain: null, contact_name: null, contact_title: null, contact_email: null, contact_phone: null,
@@ -18,7 +18,7 @@ const customer = (o: Partial<BookSources["customers"][number]> & { id: string; n
 });
 const person = (o: Partial<BookSources["imported"][number]> & { id: string }) => ({
   full_name: null, email: null, phone: null, company: null, title: null, source: "manual",
-  status: "pending", relationship: null, created_at: T, ...o,
+  status: "pending", customer_id: null, created_at: T, ...o,
 });
 
 describe("company rows on /contacts (R-535)", () => {
@@ -39,7 +39,7 @@ describe("company rows on /contacts (R-535)", () => {
     expect(row.domain).toBe("acme.com");
     expect(row.email).toBe("rajesh@acme.com");
     expect(row.phone).toBe("+91 98765 43210");
-    expect(contactKind(row)).toBe("customer");
+    expect(row.business).toBe("customer");
     // Still findable by the company name and the person (page searches title + companies).
     expect(row.companies).toContain("Acme Corp");
   });
@@ -94,7 +94,7 @@ describe("company rows on /contacts (R-535)", () => {
     src.vendors = [{ id: "v1", name: "Vend Ltd", contact_name: "Vik", contact_email: "vik@vend.in", contact_phone: null, created_at: T }];
     src.employees = [{ id: "e1", name: "Esha", email: "esha@us.in", phone: null, designation: "Ops", is_active: true, created_at: T }];
     src.partners = [{ id: "r1", name: "Ravi", email: "ravi@ref.in", phone: null, is_active: true, created_at: T }];
-    src.imported = [person({ id: "p1", full_name: "Pooja", email: "pooja@x.in", relationship: "personal" })];
+    src.imported = [person({ id: "p1", full_name: "Pooja", email: "pooja@x.in" })];
 
     const by = (id: string) => buildContactBook(src).find((c) => c.refId === id)!;
     expect(by("l1")).toMatchObject({ name: "Lena", company: "Lead Co", email: "lena@lead.co", source: "lead" });
@@ -138,8 +138,74 @@ describe("company rows on /contacts (R-535)", () => {
 
     const book = buildContactBook(src);
     const counts: Record<string, number> = { all: book.length };
-    for (const c of book) counts[contactKind(c)] = (counts[contactKind(c)] ?? 0) + 1;
-    expect(counts).toEqual({ all: 4, customer: 2, other: 1, vendor: 1 });
-    expect(book.filter((c) => contactKind(c) === "customer").every((c) => c.isCompany)).toBe(true);
+    for (const c of book) counts[c.business!] = (counts[c.business!] ?? 0) + 1;
+    expect(counts).toEqual({ all: 4, customer: 2, none: 1, vendor_partner: 1 });
+    expect(book.filter((c) => c.business === "customer").every((c) => c.isCompany)).toBe(true);
+  });
+});
+
+/* R-1740 — every book row says its Business side (from links, never by hand) and my
+   relationship with the person (from that person's contacts row). */
+describe("business + relationship on each row (R-1740)", () => {
+  const rels = (...r: Array<[string, string, string | null]>) =>
+    r.map(([id, relationship_type, closeness]) => ({ id, relationship_type, closeness }));
+
+  it("a lead's person carries the relationship saved on its anchor contact (lead.contact_id)", () => {
+    const src = empty();
+    src.leads = [{ id: "l1", company: "Rahul Traders", contact_name: "Rahul", contact_email: "rahul@x.in", contact_phone: null, stage: "new", created_at: T, contact_id: "C-RAHUL" }];
+    src.relationships = rels(["C-RAHUL", "friend", "close"]);
+    const [row] = buildContactBook(src);
+    expect(row).toMatchObject({ business: "lead", relationshipType: "friend", closeness: "close", relContactId: "C-RAHUL" });
+  });
+
+  it("a new cold lead with no relationship chosen is Unknown", () => {
+    const src = empty();
+    src.leads = [{ id: "l2", company: "Cold Co", contact_name: "Cold", contact_email: "cold@x.in", contact_phone: null, stage: "new", created_at: T, contact_id: "C-COLD" }];
+    src.relationships = rels(["C-COLD", "unknown", null]);
+    expect(buildContactBook(src)[0]).toMatchObject({ business: "lead", relationshipType: "unknown", closeness: null });
+  });
+
+  it("a company row shows its contact person's relationship and is Business = Customer", () => {
+    const src = empty();
+    src.customers = [customer({ id: "c1", name: "Acme", domain: "acme.com" })];
+    src.customerLinks = [{ customer_id: "c1", contact_id: "C-RAJ", is_primary: true, contacts: { full_name: "Rajesh", email: "rajesh@acme.com", phone: null } }];
+    src.relationships = rels(["C-RAJ", "relative", "close"]);
+    expect(buildContactBook(src)[0]).toMatchObject({ isCompany: true, business: "customer", relationshipType: "relative", closeness: "close" });
+  });
+
+  it("a standalone person linked to a customer is Customer; unlinked is None; vendors/partners are Vendor / Partner", () => {
+    const src = empty();
+    src.customers = [customer({ id: "c1", name: "Acme" })];
+    src.imported = [
+      person({ id: "p1", full_name: "Accounts Desk", email: "accounts@acme.com" }),
+      person({ id: "p2", full_name: "Pooja", email: "pooja@x.in" }),
+      person({ id: "p3", full_name: "Old Link", email: "old@acme.com", customer_id: "c1" }),
+    ];
+    src.customerLinks = [
+      { customer_id: "c1", contact_id: "C-RAJ", is_primary: true, contacts: { full_name: "Rajesh", email: "rajesh@acme.com", phone: null } },
+      { customer_id: "c1", contact_id: "p1", is_primary: false, contacts: { full_name: "Accounts Desk", email: "accounts@acme.com", phone: null } },
+    ];
+    src.vendors = [{ id: "v1", name: "Vend", contact_name: "Vik", contact_email: "vik@vend.in", contact_phone: null, created_at: T }];
+    src.partners = [{ id: "r1", name: "Ravi", email: "ravi@ref.in", phone: null, is_active: true, created_at: T }];
+    src.relationships = rels(["p2", "acquaintance", "weak"]);
+    const book = buildContactBook(src);
+    const by = (id: string) => book.find((c) => c.refId === id)!;
+    expect(by("p1").business).toBe("customer");
+    expect(by("p3").business).toBe("customer");
+    expect(by("p2")).toMatchObject({ business: "none", relationshipType: "acquaintance", closeness: "weak" });
+    expect(by("v1").business).toBe("vendor_partner");
+    expect(by("r1").business).toBe("vendor_partner");
+    // No contacts row behind a vendor → Unknown, never blank.
+    expect(by("v1").relationshipType).toBe("unknown");
+  });
+
+  it("a merged identity is Customer when any of its rows is a customer, and keeps the known relationship", () => {
+    const src = empty();
+    src.leads = [{ id: "l1", company: "Acme", contact_name: "Rajesh", contact_email: "rajesh@acme.com", contact_phone: null, stage: "won", created_at: "2026-10-05T00:00:00Z", contact_id: "C-L1" }];
+    src.imported = [person({ id: "p1", full_name: "Rajesh", email: "rajesh@acme.com", customer_id: "c9" })];
+    src.relationships = rels(["C-L1", "unknown", null], ["p1", "friend", "known"]);
+    const book = buildContactBook(src);
+    expect(book).toHaveLength(1);
+    expect(book[0]).toMatchObject({ source: "lead", business: "customer", relationshipType: "friend", closeness: "known", relContactId: "p1" });
   });
 });

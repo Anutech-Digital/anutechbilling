@@ -42,6 +42,7 @@ import { customerSetupSteps, leadOwnerNextSteps } from "@/lib/email/workspace-on
 import { loadLeadOwner } from "@/lib/email/lead-owner.server";
 import { buildLinesFromCatalog, type CatalogPriceRow } from "./pricing";
 import { PLUS_NOT_SOLD_ONLINE, isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
+import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 
 /* R-079: the hard-coded dev tenant only off production; "" (fails closed) when unset there. */
 const BUY_PAGE_TENANT_ID = buyPageTenantIdOrEmpty();
@@ -121,6 +122,9 @@ async function fetchCatalogPrice(
 export async function POST(request: NextRequest) {
   try {
     const body   = await request.json();
+    /* R-737: a script cannot open orders (lead + quote) — no-op until TURNSTILE_SECRET_KEY is set. */
+    const bot = await turnstileRefusalFor(request, body);
+    if (bot) return bot;
     const parsed = checkoutSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(

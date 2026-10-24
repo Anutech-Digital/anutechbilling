@@ -33,6 +33,8 @@ export interface DoneInputs {
   gstin: string | null | undefined;
   gstinVerifiedAt: string | null | undefined;
   stateCode: string | null | undefined;
+  /** R-1643: the company's registered address — printed on every Tax Invoice / Bill of Supply. */
+  address: string | null | undefined;
   upiVpa: string | null | undefined;
   remitAccountNumber: string | null | undefined;
   /** undefined = loading */
@@ -60,10 +62,20 @@ export function buildDoneChecklist(i: DoneInputs): ChecklistItem[] {
     items.push({ id: "gstin", label: "Add your GSTIN", status: "todo", note: "Needed on B2B tax invoices", href: COMPANY });
   }
 
-  // GST invoices need the company's state (IGST vs CGST+SGST).
-  items.push(has(i.stateCode)
-    ? { id: "invoice", label: "GST invoices ready", status: "done" }
-    : { id: "invoice", label: "Choose your state", status: "todo", note: "Decides IGST vs CGST + SGST", href: COMPANY });
+  // GST invoices need the company's state (IGST vs CGST+SGST) — and, R-1643, its GSTIN and
+  // address: generate_invoice refuses a Tax Invoice without them (CGST Rule 46).
+  if (!has(i.stateCode)) {
+    items.push({ id: "invoice", label: "Choose your state", status: "todo", note: "Decides IGST vs CGST + SGST", href: COMPANY });
+  } else if (!has(i.gstin) || !has(i.address)) {
+    const missing = !has(i.gstin) && !has(i.address) ? "GSTIN and address" : !has(i.gstin) ? "GSTIN" : "address";
+    items.push({
+      id: "invoice", label: `Add your company's ${missing}`, status: "todo",
+      note: "A GST Tax Invoice must show them. Not GST-registered? Choose Not registered there to issue Bills of Supply.",
+      href: COMPANY,
+    });
+  } else {
+    items.push({ id: "invoice", label: "GST invoices ready", status: "done" });
+  }
 
   // Getting paid — UPI QR or bank details on the invoice.
   items.push(has(i.upiVpa) || has(i.remitAccountNumber)

@@ -28,6 +28,8 @@ import { Avatar } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { FAB } from "@/components/ui/fab";
 import { KPI } from "@/components/shared/kpi";
+import { LoadError, LoadErrorInline } from "@/components/shared/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -37,6 +39,8 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { PendingJoinRequestsCard } from "@/components/features/team/pending-join-requests-card";
 import { ClaimColleagueCard } from "@/components/features/team/claim-colleague-card";
 import { INVITABLE_ROLES, ROLE_LABEL, type InvitableRole } from "@/lib/auth/roles";
+import { cn } from "@/lib/utils";
+import { teamAccess } from "./team-access";
 
 /* Role vocabulary comes from roles.ts, not from here. This file used to carry its
    own ROLES list and ROLE_LABEL map — a fourth description of roles alongside the
@@ -57,11 +61,16 @@ interface Invite { id: string; email: string; role: Role; created_at: string; }
 
 export default function TeamPage() {
   const { data: me } = useCurrentUser();
-  const isOwner = me?.role === "owner";
+  /* R-1651: one source — the same can(role, "can_manage_team") the invite API checks. */
+  const access = teamAccess(me?.role);
+  const canManage = access.canManage;
   const qc = useQueryClient();
   const [inviteOpen, setInviteOpen] = React.useState(false);
 
-  const { data: members = [] } = useQuery({
+  /* R-1533: loading, failed and empty are three different screens. These used to default to
+     `[]` and nothing read isLoading/isError, so a failed load printed "Members 0" and an
+     empty table — "my whole team is gone". */
+  const membersQ = useQuery({
     queryKey: ["team", "members"],
     queryFn: async () => {
       const supabase = createClient();
@@ -76,8 +85,11 @@ export default function TeamPage() {
       return (data ?? []) as Member[];
     },
   });
+  const members = React.useMemo(() => membersQ.data ?? [], [membersQ.data]);
+  /** A count is only a fact once the list has loaded — until then "—", never 0. */
+  const count = (n: number) => (membersQ.isSuccess ? n : "—");
 
-  const { data: invites = [] } = useQuery({
+  const invitesQ = useQuery({
     queryKey: ["team", "invites"],
     queryFn: async () => {
       const supabase = createClient();
@@ -89,8 +101,9 @@ export default function TeamPage() {
       if (error) throw error;
       return (data ?? []) as Invite[];
     },
-    enabled: isOwner,
+    enabled: canManage,
   });
+  const invites = React.useMemo(() => invitesQ.data ?? [], [invitesQ.data]);
 
   const removeInvite = useMutation({
     mutationFn: async (id: string) => {
@@ -138,34 +151,48 @@ export default function TeamPage() {
   const openInvites   = invites.filter((i) => !memberEmails.has(i.email.trim().toLowerCase()));
 
   return (
-    <div className="mx-auto max-w-[1500px] px-4 pb-20 pt-6 md:px-6 md:pt-7 lg:px-8">
+    <div className="mx-auto max-w-[1800px] px-4 pb-20 pt-6 md:px-6 md:pt-7 lg:px-8">
       <div className="mb-6 flex items-end justify-between gap-3 flex-wrap">
         <div>
           <p className="mb-0.5 text-xs font-medium uppercase tracking-widest text-ink-3">System</p>
           <h1 className="font-serif text-3xl text-ink md:text-4xl">Team</h1>
-          <p className="mt-1 text-sm text-ink-3">Invite teammates, assign roles, manage access</p>
+          <p className="mt-1 text-sm text-ink-3">{access.subtitle}</p>
         </div>
-        {isOwner && (
+        {canManage && (
           <Button variant="primary" icon="plus" onClick={() => setInviteOpen(true)}>Invite member</Button>
         )}
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KPI label="Members" value={members.length} icon="users" />
-        {/* openInvites, not invites — someone already inside is not pending. */}
-        <KPI label="Pending invites" value={openInvites.length} icon="mail" />
-        <KPI label="Owners" value={owners} icon="award" />
-        <KPI label="Active" value={members.filter((m) => m.is_active !== false).length} icon="check_circle" />
+      {access.note && (
+        <p className="mb-4 flex items-start gap-2 rounded-md border border-hairline bg-paper-2 px-3 py-2 text-sm text-ink-2">
+          <Icon name="info" size={15} className="mt-0.5 shrink-0 text-ink-3" />
+          {access.note}
+        </p>
+      )}
+
+      <div className={cn("mb-6 grid grid-cols-2 gap-3", access.showPending ? "md:grid-cols-4" : "md:grid-cols-3")}>
+        <KPI label="Members" value={count(members.length)} icon="users" />
+        {/* openInvites, not invites — someone already inside is not pending. R-1651: only
+            those who can read invites (RLS) see this; for anyone else it was a fake 0. */}
+        {access.showPending && (
+          <KPI label="Pending invites" value={invitesQ.isSuccess ? openInvites.length : "—"} icon="mail" />
+        )}
+        <KPI label="Owners" value={count(owners)} icon="award" />
+        <KPI label="Active" value={count(members.filter((m) => m.is_active !== false).length)} icon="check_circle" />
       </div>
+
+      {canManage && invitesQ.isError && !membersQ.isError && (
+        <LoadErrorInline what="Pending invites" error={invitesQ.error} onRetry={() => void invitesQ.refetch()} />
+      )}
 
       {/* People waiting on a decision, and people who fell outside the workspace
           entirely. Both are above the member table because both are states where
           somebody is currently locked out — the member list can wait. */}
-      <PendingJoinRequestsCard isOwner={isOwner} />
-      <ClaimColleagueCard isOwner={isOwner} />
+      <PendingJoinRequestsCard isOwner={canManage} />
+      <ClaimColleagueCard isOwner={canManage} />
 
       {/* Desktop / tablet — table (unchanged) */}
-      {isOwner && (
+      {canManage && (
         /* Says what "Reports to" does and — the part that matters — what it does not do.
            A reporting line that looks like a permission is how somebody concludes peer
            isolation is finished. The database wall is a separate, deliberate switch. */
@@ -182,6 +209,17 @@ export default function TeamPage() {
         </p>
       )}
 
+      {membersQ.isError && (
+        <LoadError what="Team members" error={membersQ.error} onRetry={() => void membersQ.refetch()} />
+      )}
+
+      {membersQ.isLoading && (
+        <Card className="p-4 space-y-3" data-testid="team-loading" aria-busy="true">
+          {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+        </Card>
+      )}
+
+      {membersQ.isSuccess && (<>
       <Card flush className="hidden md:block">
           <table className="w-full text-sm">
             <thead className="bg-paper-2 border-b border-hairline">
@@ -189,11 +227,11 @@ export default function TeamPage() {
                 <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Member</th>
                 <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Email</th>
                 <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Role</th>
-                {isOwner && <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Reports to</th>}
-                {isOwner && <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Deals access</th>}
-                {isOwner && <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3" title="New website, WhatsApp and IndiaMART leads are shared in turn between the ticked people">New leads</th>}
+                {canManage && <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Reports to</th>}
+                {canManage && <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Deals access</th>}
+                {canManage && <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3" title="New website, WhatsApp and IndiaMART leads are shared in turn between the ticked people">New leads</th>}
                 <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Status</th>
-                {isOwner && <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Password</th>}
+                {canManage && <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Password</th>}
               </tr>
             </thead>
             <tbody>
@@ -207,7 +245,7 @@ export default function TeamPage() {
                   </td>
                   <td className="p-3 font-mono text-xs text-ink-2">{m.email}</td>
                   <td className="p-3">
-                    {isOwner && m.id !== me?.userId ? (
+                    {canManage && m.id !== me?.userId ? (
                       <select
                         aria-label={`Role for ${m.full_name ?? m.email}`}
                         value={m.role}
@@ -220,7 +258,7 @@ export default function TeamPage() {
                       <Badge kind={ROLE_TONE[m.role] ?? "muted"}>{ROLE_LABEL[m.role] ?? m.role}</Badge>
                     )}
                   </td>
-                  {isOwner && (
+                  {canManage && (
                     <td className="p-3">
                       <select
                         aria-label={`Who ${m.full_name ?? m.email ?? "this member"} reports to`}
@@ -237,7 +275,7 @@ export default function TeamPage() {
                       </select>
                     </td>
                   )}
-                  {isOwner && (
+                  {canManage && (
                     <td className="p-3">
                       {m.role === "sales" ? (
                         <label className="inline-flex items-center gap-1.5 text-xs text-ink-2 cursor-pointer">
@@ -256,7 +294,7 @@ export default function TeamPage() {
                       )}
                     </td>
                   )}
-                  {isOwner && (
+                  {canManage && (
                     <td className="p-3">
                       <NewLeadsToggle member={m} onChange={(on) => updateMember.mutate({ id: m.id, patch: { gets_new_leads: on } })} />
                     </td>
@@ -267,7 +305,7 @@ export default function TeamPage() {
                       password for a moment, so it is offered only where the server allows it
                       (not another owner, not yourself), and the member must pick their own at
                       the next sign-in. The server re-checks all of it. */}
-                  {isOwner && (
+                  {canManage && (
                     <td className="p-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <SendResetLinkButton email={m.email} />
@@ -295,7 +333,7 @@ export default function TeamPage() {
                   </td>
                   <td className="p-3 font-mono text-xs text-ink-2">{inv.email}</td>
                   <td className="p-3"><Badge kind={ROLE_TONE[inv.role] ?? "muted"}>{ROLE_LABEL[inv.role] ?? inv.role}</Badge></td>
-                  {isOwner && <td className="p-3 text-2xs text-ink-3">—</td>}
+                  {canManage && <td className="p-3 text-2xs text-ink-3">—</td>}
                   <td className="p-3">
                     <div className="flex items-center justify-between gap-2">
                       {memberEmails.has(inv.email.trim().toLowerCase())
@@ -330,7 +368,7 @@ export default function TeamPage() {
                 </Badge>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-                {isOwner && m.id !== me?.userId ? (
+                {canManage && m.id !== me?.userId ? (
                   <select
                     aria-label={`Role for ${m.full_name ?? m.email}`}
                     value={m.role}
@@ -342,7 +380,7 @@ export default function TeamPage() {
                 ) : (
                   <Badge kind={ROLE_TONE[m.role] ?? "muted"}>{ROLE_LABEL[m.role] ?? m.role}</Badge>
                 )}
-                {isOwner && m.role === "sales" && (
+                {canManage && m.role === "sales" && (
                   <label className="inline-flex items-center gap-1.5 text-xs text-ink-2 cursor-pointer">
                     <input
                       type="checkbox"
@@ -353,14 +391,14 @@ export default function TeamPage() {
                     Can view deals
                   </label>
                 )}
-                {isOwner && (m.role === "owner" || m.role === "sales_senior") && (
+                {canManage && (m.role === "owner" || m.role === "sales_senior") && (
                   <span className="text-2xs text-emerald">Full deals access</span>
                 )}
-                {isOwner && (
+                {canManage && (
                   <NewLeadsToggle member={m} onChange={(on) => updateMember.mutate({ id: m.id, patch: { gets_new_leads: on } })} />
                 )}
               </div>
-              {isOwner && (
+              {canManage && (
                 <label className="mt-3 flex items-center gap-2 text-xs text-ink-2">
                   Reports to
                   <select
@@ -375,7 +413,7 @@ export default function TeamPage() {
                   </select>
                 </label>
               )}
-              {isOwner && (
+              {canManage && (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <SendResetLinkButton email={m.email} />
                   {canSetTempPassword(m, me?.userId) && (
@@ -389,7 +427,7 @@ export default function TeamPage() {
       </ul>
 
       {/* Mobile — pending invites (owner only), visually distinct from members */}
-      {isOwner && invites.length > 0 && (
+      {canManage && invites.length > 0 && (
         <ul className="md:hidden mt-2.5 space-y-2.5">
           {[...openInvites, ...staleInvites].map((inv) => (
             <li key={inv.id}>
@@ -425,13 +463,14 @@ export default function TeamPage() {
           ))}
         </ul>
       )}
+      </>)}
 
       <p className="mt-3 flex items-center gap-1.5 text-2xs text-ink-3">
         <Icon name="info" size={11} />
         An invited email joins this workspace the first time they sign in with Google — no new tenant is created.
       </p>
 
-      {isOwner && me && (
+      {canManage && me && (
         <InviteDialog
           open={inviteOpen}
           onOpenChange={setInviteOpen}
@@ -444,7 +483,7 @@ export default function TeamPage() {
       )}
 
       {/* Mobile FAB — primary list action (owner only) */}
-      {isOwner && (
+      {canManage && (
         <FAB icon="plus" label="Invite member" onClick={() => setInviteOpen(true)} ariaLabel="Invite member" />
       )}
     </div>

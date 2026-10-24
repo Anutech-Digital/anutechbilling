@@ -85,6 +85,8 @@ export async function createConsent(input: {
   fetch_window_from: string;    // ISO date
   fetch_window_to:   string;
   purpose?:          string;
+  /** R-879: signed state (lib/aa/consent-state.ts) the callback must get back. */
+  state:             string;
 }): Promise<CreateConsentResponse> {
   if (!isSetuConfigured()) {
     return mockCreateConsent(input);
@@ -94,7 +96,7 @@ export async function createConsent(input: {
     purpose:          input.purpose ?? "Reseller bookkeeping (101 — Wealth management)",
     fiTypes:          ["DEPOSIT"],
     fetchPeriod:      { from: input.fetch_window_from, to: input.fetch_window_to },
-    redirect_url:     REDIRECT_URL,
+    redirect_url:     withState(REDIRECT_URL, input.state),
     filter_ifsc:      input.bank_ifsc,
   };
   const res = await fetch(`${BASE_URL}/consents`, {
@@ -170,13 +172,18 @@ function setuHeaders(): HeadersInit {
 
 // ─── Mocks (mock mode — no Setu keys) ──────────────────────────────────────
 
-function mockCreateConsent(input: { vua: string }): CreateConsentResponse {
+/** R-879: the callback URL carrying the signed state back to us. */
+export function withState(url: string, state: string): string {
+  return `${url}${url.includes("?") ? "&" : "?"}state=${encodeURIComponent(state)}`;
+}
+
+function mockCreateConsent(input: { vua: string; state: string }): CreateConsentResponse {
   const id = `mock_handle_${Math.random().toString(36).slice(2, 10)}`;
   // In mock mode the "redirect URL" is our own simulate-approval page so
   // the operator can see the whole flow without leaving localhost.
   return {
     id,
-    url:    `/aa/simulate-approval?handle=${id}`,
+    url:    withState(`/aa/simulate-approval?handle=${id}`, input.state),
     status: "PENDING",
     vua:    input.vua,
     consent_expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),

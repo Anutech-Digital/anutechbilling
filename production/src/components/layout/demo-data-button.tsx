@@ -48,7 +48,7 @@ export function DemoDataButton() {
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger
         disabled={busy}
         className="shrink-0 inline-flex items-center gap-1 rounded border border-amber/60 text-ink text-3xs font-semibold px-1.5 sm:px-2 py-0.5 hover:bg-amber/10 disabled:opacity-60"

@@ -1,3 +1,4 @@
+// Not wired yet — R-1608 (built, kept for later)
 /**
  * Why a deal was lost — and routing that answer to the right KIND of fix.
  *

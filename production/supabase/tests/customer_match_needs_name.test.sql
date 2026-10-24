@@ -7,7 +7,7 @@
 begin;
 select set_config('request.jwt.claims','{"role":"service_role"}',true);
 insert into public.tenants (id,name,email,state_code,doc_code) values ('11110000-0000-0000-0000-0000000001d7','CM','cm@x.in','07','CMA1');
-insert into public.document_series (tenant_id,doc_type,fiscal_year,prefix,last_number) values ('11110000-0000-0000-0000-0000000001d7','purchase_order',public.indian_fiscal_year(current_date),'PO',990000);
+insert into public.document_series (tenant_id,doc_type,fiscal_year,prefix,last_number) values ('11110000-0000-0000-0000-0000000001d7','purchase_order',public.indian_fiscal_year(current_date),'PO', 9000);
 insert into public.customers (id,tenant_id,name,contact_email,gstin) values
   ('cccccccc-0000-0000-0000-0000000001d1','11110000-0000-0000-0000-0000000001d7','Omega Co','owner@x.in',null),
   ('cccccccc-0000-0000-0000-0000000001d2','11110000-0000-0000-0000-0000000001d7','Demo Co Pvt Ltd','acc@x.in','07AAACE1234F1Z5');

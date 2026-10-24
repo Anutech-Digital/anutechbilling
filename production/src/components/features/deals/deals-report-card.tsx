@@ -13,6 +13,7 @@ import type { Route } from "next";
 import { Card } from "@/components/ui/card";
 import { KPI } from "@/components/shared/kpi";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { useDealRows } from "@/lib/queries/deals";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import { dealReport, REPORT_WINDOW_DAYS } from "@/lib/deals/pipeline-summary";
@@ -22,7 +23,7 @@ import { rupee } from "@/lib/utils";
 
 export function DealsReportCard({ role }: { role: string | null | undefined }) {
   const allowed = canSeeDeals(role);
-  const { data, isLoading, error } = useDealRows(allowed);
+  const { data, isLoading, error, refetch } = useDealRows(allowed);
   const { data: members } = useTeamMembers();
   const report = React.useMemo(() => (data ? dealReport(data) : null), [data]);
   if (!allowed) return null;
@@ -49,7 +50,7 @@ export function DealsReportCard({ role }: { role: string | null | undefined }) {
       </div>
 
       {error ? (
-        <p className="text-sm text-rose-ink">Couldn't load deals — {(error as Error).message}</p>
+        <LoadErrorInline what="Deals" error={error} onRetry={() => void refetch()} />
       ) : isLoading || !report ? (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-24" />)}

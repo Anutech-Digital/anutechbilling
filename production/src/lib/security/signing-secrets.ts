@@ -42,6 +42,17 @@ export function legacyGraceActive(now: Date = new Date()): boolean {
 export function signingSecrets(now: Date = new Date()): SigningSecrets {
   const dedicated = process.env.PDF_SIGNING_SECRET?.trim() || "";
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || "";
+  /* R-739 (23 Oct 2026): production signs ONLY with the dedicated secret. The service-role key
+     is the database's full admin key; letting it double as the public links' signing key meant a
+     leak of either was a leak of both. Missing in production → refuse (fail closed), naming the
+     variable to set. Dev/test keep the fallback so a fresh checkout still works. Links signed
+     with the service-role key earlier still VERIFY through `legacy` until SIGNING_LEGACY_UNTIL. */
+  if (!dedicated && process.env.NODE_ENV === "production") {
+    throw new Error(
+      "PDF_SIGNING_SECRET is not set — PDF, expense-claim and bank-consent links cannot be signed or checked. " +
+        "Set PDF_SIGNING_SECRET on this deployment (docs/SECURITY-RUNBOOK.md); the service-role key no longer signs links in production.",
+    );
+  }
   /* Kabhi "" nahi (audit C6): khaali chaabi par HMAC = har token forgeable. Dono gayab to
      phat jao — bina chaabi band darwaza, khaali chaabi se khule darwaze se behtar. */
   const primary = dedicated || serviceRole;

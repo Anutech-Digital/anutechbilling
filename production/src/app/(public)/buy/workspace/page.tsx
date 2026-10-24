@@ -29,13 +29,15 @@ import { BuyWorkspaceClient, type CatalogItem } from "./buy-workspace-client";
 import { parseBuyParams } from "@/lib/checkout/buy-link";
 import { isPublicPriceHidden } from "@/lib/catalog/public-price-policy";
 import { simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
+import { PARTNER_LINE } from "@/site/lib/config";
+import { websiteTenantId } from "@/lib/website-tenant";
 
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: tenant read per call (websiteTenantId) — outside production an unset BUY_PAGE_TENANT_ID
+   shows nothing (and logs why), never the live tenant's data. */
 
 export const metadata: Metadata = {
   title: { absolute: "Buy Google Workspace · Anutech Digital" },
-  description: "Google Workspace pricing for India. Annual GST invoice, hand-held migration, Hindi + English support. Premier Partner since 2014.",
+  description: `Google Workspace pricing for India. Annual GST invoice, hand-held migration, Hindi + English support. ${PARTNER_LINE}.`,
 };
 
 // Don't cache for the SSR — Pardeep needs price/enablement edits in the
@@ -45,6 +47,11 @@ export const dynamic = "force-dynamic";
 const READ_TIMEOUT_MS = 3_000;
 
 async function fetchGoogleWorkspaceItems(): Promise<CatalogItem[]> {
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) {
+    console.error("[buy/workspace] BUY_PAGE_TENANT_ID is not set — set it in .env.local to your local workspace id (R-1499).");
+    return [];
+  }
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("items")
@@ -89,8 +96,9 @@ function publicBuyRow(row: CatalogItem): CatalogItem {
  * no Razorpay widget). Lets us ship the buy flow safely before KYC.
  */
 async function isRazorpayConfigured(): Promise<boolean> {
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
   // Per-tenant first
-  try {
+  if (BUY_PAGE_TENANT_ID) try {
     const admin = createAdminClient();
     const { data } = await admin
       .from("tenant_secrets")

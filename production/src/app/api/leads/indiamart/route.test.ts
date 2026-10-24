@@ -125,7 +125,7 @@ describe("GET", () => {
     state.role = "manager";
     const res = await GET(req("GET"));
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toMatch(/owner se kahiye/);
+    expect((await res.json()).error).toMatch(/Ask the owner/);
   });
 });
 

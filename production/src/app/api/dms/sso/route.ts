@@ -2,6 +2,27 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { buildSsoUrl, isSsoConfigured } from "@/lib/dms-engine/sso";
 import { dmsPanelUrl } from "@/lib/dms-engine/client";
+import { billingCustomerId } from "@/lib/api/v1-mappers";
+
+type SessionClient = ReturnType<typeof createClient>;
+
+/**
+ * R-1771: the ResellerOS customer the SESSION user is a customer login of, as the id
+ * /api/v1 answers to. Read through the caller's OWN session with `portal_my_customer()`,
+ * which resolves `current_customer_id()` from auth.uid() (and refuses an ambiguous login,
+ * R-395) — no service role, and no request input reaches it. Staff (no customer login) or
+ * a failed read → undefined, and the token simply carries no customer, as before.
+ */
+async function sessionBillingCustomerId(supabase: SessionClient): Promise<string | undefined> {
+  try {
+    const { data, error } = await supabase.rpc("portal_my_customer");
+    const rows = (data ?? []) as { id: string | null; customer_number: string | null }[];
+    if (error || rows.length !== 1 || !rows[0].id) return undefined;
+    return billingCustomerId({ id: rows[0].id, customer_number: rows[0].customer_number });
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * GET /api/dms/sso?next=/admin — sign the current user into DMS and send them
@@ -18,6 +39,10 @@ import { dmsPanelUrl } from "@/lib/dms-engine/client";
  * If an admin ever needs to open DMS *as* a customer, that is an impersonation
  * feature: it needs its own route, its own authorisation check, and its own
  * audit trail. It must not be a query parameter on this one.
+ *
+ * The same holds for the customer the token names (`billing_customer_id`,
+ * R-1771): it is read through the caller's own session (portal_my_customer(),
+ * keyed on auth.uid()), with no service role. No parameter chooses it.
  *
  * ─── WHAT THE TOKEN CANNOT DO ────────────────────────────────────────────────
  * It asserts identity only. DMS reads the role from its own user record,
@@ -66,6 +91,8 @@ export async function GET(request: NextRequest) {
   const ssoUrl = buildSsoUrl(email, {
     next: destination.path,
     sourceUserId: user.id,
+    // From the session user's own customer login, never from the request (R-1771).
+    billingCustomerId: await sessionBillingCustomerId(supabase),
   });
   if (!ssoUrl) {
     return NextResponse.json(

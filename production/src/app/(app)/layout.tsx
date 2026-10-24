@@ -19,6 +19,7 @@ import { ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { useGlobalKeys } from "@/lib/hooks/useKeyboard";
 import { MustChangePasswordGate } from "@/components/shared/must-change-password-gate";
 import { DemoBanner } from "@/components/layout/demo-banner";
+import { DeniedRouteToast } from "@/components/layout/denied-route-toast";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
@@ -66,6 +67,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Always-on-top Global Floating Bug Reporter (z-[9999]) */}
       <GlobalBugReporter />
+
+      {/* R-1810: a typed URL the role cannot open lands here with ?denied=… — say why.
+          Suspense: useSearchParams needs a boundary in a layout. */}
+      <React.Suspense fallback={null}>
+        <DeniedRouteToast />
+      </React.Suspense>
 
       {/* R-158: AI Help — ask about the app while testing; it drafts bug reports. */}
       <AiHelp />

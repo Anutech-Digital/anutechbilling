@@ -13,6 +13,7 @@
  *   • "Amount in words" line (Indian lakh/crore format) — common GST requirement
  *   • Two signature blocks at the bottom (customer + supplier)
  */
+import { paymentMethodLabel } from "@/lib/payments/method-label";
 import {
   Document,
   Page,
@@ -29,6 +30,8 @@ import type { Payment } from "@/lib/supabase/database.types";
 
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
+import { cashReceived } from "@/lib/payments/cash-received";
+import { receiptLine } from "@/lib/payments/receipt-line";
 
 /* Styles ke BANNE se pehle. `StyleSheet.create` ab hi chal jata hai, aur `PDF_FONT`
    ek `let` hai — baad me register karne par style purani value pakde rehti. */
@@ -70,6 +73,10 @@ export interface ReceiptVoucherPDFProps {
 
   /** R-523: "Received ₹A + TDS ₹B = ₹C" when the customer deducted TDS (receiptSplitLine). */
   splitLine?: string | null;
+
+  /** R-1747: the payment is on an invoice imported from Zoho Books (its number) — a plain
+   *  payment receipt against that opening balance: no advance wording, no GST split. */
+  openingInvoiceNumber?: string | null;
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────
@@ -319,11 +326,18 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
     gstRate = 18,
     quoteId,
     splitLine,
+    openingInvoiceNumber,
   } = props;
+  /* R-1747: one description for the screen and the PDF (lib/payments/receipt-line.ts). */
+  const line = receiptLine({ quoteId, openingInvoiceNumber });
 
+  /* R-1565: the money received on THIS voucher. Advance credit applied to the payment was
+     received (and receipted, with its GST) on an earlier voucher — not counted again. */
+  const received = cashReceived(payment);
+  const creditPart = payment.amount - received;
   // GST reverse-out from gross amount (Indian standard)
-  const taxable  = Math.round((payment.amount * 100) / (100 + gstRate));
-  const totalTax = payment.amount - taxable;
+  const taxable  = Math.round((received * 100) / (100 + gstRate));
+  const totalTax = received - taxable;
   /* R-046: the same shared split the invoice and GSTR-1 use. A receipt voucher is a GST
      document too (CGST 31(3)(d)), so its heads must be derived the same way. */
   const { cgst, sgst } = splitIntraStateTax(totalTax);
@@ -339,14 +353,14 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
     <Document
       title={`Receipt Voucher ${payment.receipt_voucher_no ?? payment.id}`}
       author={tenantName}
-      subject={`Receipt Voucher for advance received from ${customerName}`}
+      subject={line.advance ? `Receipt Voucher for advance received from ${customerName}` : `Receipt Voucher for payment received from ${customerName}`}
     >
       <Page size="A4" style={s.page}>
 
         {/* ── Title ───────────────────────────────────────────────── */}
         <View style={s.titleBar}>
           {isRenderableLogo(tenantLogo) && <Image src={tenantLogo} style={s.brandLogo} />}
-          <Text style={s.titleEyebrow}>GST-compliant advance receipt</Text>
+          <Text style={s.titleEyebrow}>{line.advance ? "GST-compliant advance receipt" : "Payment receipt"}</Text>
           <Text style={s.titleMain}>Receipt Voucher</Text>
           <Text style={s.titleId}>{payment.receipt_voucher_no ?? "(not numbered)"}</Text>
         </View>
@@ -382,8 +396,8 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
           </View>
           <View style={s.metaCell}>
             <Text style={s.metaLabel}>Payment method</Text>
-            <Text style={[s.metaValue, { textTransform: "capitalize" }]}>
-              {payment.method.replace("_", " ")}
+            <Text style={s.metaValue}>
+              {paymentMethodLabel(payment.method)}
             </Text>
           </View>
           <View style={s.metaCell}>
@@ -392,16 +406,23 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
               {payment.reference ?? "—"}
             </Text>
           </View>
-          {quoteId && (
+          {openingInvoiceNumber ? (
+            <View style={s.metaCell}>
+              <Text style={s.metaLabel}>Against invoice</Text>
+              <Text style={[s.metaValue, s.metaMono, { fontSize: 9 }]}>{openingInvoiceNumber}</Text>
+            </View>
+          ) : quoteId ? (
             <View style={s.metaCell}>
               <Text style={s.metaLabel}>Against quote</Text>
               <Text style={[s.metaValue, s.metaMono, { fontSize: 9 }]}>{quoteId}</Text>
             </View>
-          )}
+          ) : null}
+          {line.advance ? (
           <View style={s.metaCell}>
             <Text style={s.metaLabel}>Place of supply</Text>
             <Text style={s.metaValue}>{placeOfSupply}</Text>
           </View>
+          ) : null}
         </View>
 
         {/* ── Breakdown ───────────────────────────────────────────── */}
@@ -416,14 +437,14 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
           <View style={s.tableRow}>
             <View style={s.tdDesc}>
               <Text style={s.lineName}>
-                Advance received against {quoteId ? `quote ${quoteId}` : "service"}
+                {line.description}
               </Text>
-              <Text style={s.lineMeta}>HSN/SAC: 998313 · Reseller services</Text>
+              {line.advance ? <Text style={s.lineMeta}>HSN/SAC: 998313 · Reseller services</Text> : null}
             </View>
-            <Text style={s.tdAmt}>{pdfRupee(taxable)}</Text>
+            <Text style={s.tdAmt}>{pdfRupee(line.advance ? taxable : received)}</Text>
           </View>
 
-          {interState ? (
+          {!line.advance ? null : interState ? (
             <View style={s.tableRow}>
               <Text style={[s.tdDesc, s.taxLine]}>IGST @ {gstRate}%</Text>
               <Text style={[s.tdAmt, { fontFamily: PDF_FONT }]}>{pdfRupee(igst)}</Text>
@@ -443,8 +464,15 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
 
           <View style={s.totalRow}>
             <Text style={[s.tdDesc, s.totalLabel]}>Total amount received</Text>
-            <Text style={[s.tdAmt, s.totalAmount]}>{pdfRupee(payment.amount)}</Text>
+            <Text style={[s.tdAmt, s.totalAmount]}>{pdfRupee(received)}</Text>
           </View>
+          {creditPart > 0 ? (
+            <View style={s.tableRow}>
+              <Text style={[s.tdDesc, s.taxLine, { fontFamily: PDF_FONT }]}>
+                Also settled from advance credit received earlier: {pdfRupee(creditPart)}
+              </Text>
+            </View>
+          ) : null}
           {splitLine ? (
             <View style={s.tableRow}>
               <Text style={[s.tdDesc, s.taxLine, { fontFamily: PDF_FONT }]}>
@@ -457,10 +485,18 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
         {/* ── Amount in words ─────────────────────────────────────── */}
         <Text style={s.inWords}>
           <Text style={s.inWordsLabel}>Amount received (in words): </Text>
-          {amountInWords(payment.amount)} only.
+          {amountInWords(received)} only.
         </Text>
 
         {/* ── GST treatment notice ────────────────────────────────── */}
+        {!line.advance ? (
+        <View style={s.gstNotice}>
+          <Text style={s.gstNoticeBody}>
+            No GST on this receipt: invoice {openingInvoiceNumber} was issued earlier and its GST was
+            charged and reported on that invoice. This receipt records the payment against its open balance.
+          </Text>
+        </View>
+        ) : (
         <View style={s.gstNotice}>
           <Text style={s.gstNoticeTitle}>GST treatment of this advance</Text>
           <Text style={s.gstNoticeBody}>
@@ -470,6 +506,7 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
             and this receipt voucher will be adjusted against that invoice.
           </Text>
         </View>
+        )}
 
         {/* ── Notes ───────────────────────────────────────────────── */}
         {payment.notes && (

@@ -46,7 +46,8 @@ import {
 } from "@/lib/queries/balance-sheet";
 import type { BalanceSheetSection } from "@/lib/supabase/database.types";
 import { usePnL, BOOKS_START } from "@/lib/queries/pnl";
-import { balanceSheetTotals } from "@/lib/accounting/balance-sheet-totals";
+import { balanceSheetTotals, retainedProfitRange, licenceProvisionOf } from "@/lib/accounting/balance-sheet-totals";
+import { reportProfit } from "@/lib/accounting/pnl-assemble";
 import { istToday, addDaysISO } from "@/lib/dates/ist";
 import { fyOf } from "@/lib/accounting/ledger";
 import { fmtBS, parseWholeRupees } from "./format";
@@ -63,16 +64,16 @@ export default function BalanceSheetPage() {
     if (unexplained === null || unexplained === 0) return;
     const capital = unexplained > 0;
     const ok = await confirm({
-      title: capital ? `Owner's capital ${rupee(unexplained)} jodein?` : `Drawings ${rupee(-unexplained)} jodein?`,
+      title: capital ? `Add Owner's capital of ${rupee(unexplained)}?` : `Add Drawings of ${rupee(-unexplained)}?`,
       body: capital
-        ? "Assets books se zyada hain — matlab itna paisa business mein daala gaya jiski entry nahi thi (opening bank balance, khud ka paisa). Equity mein Owner's capital line banegi."
-        : "Liabilities books se zyada hain — matlab itna paisa business se nikala gaya jiski entry nahi thi. Equity mein Drawings (negative) line banegi. Agar ye koi kharcha ya loss hai jo books mein nahi, to pehle wo entry karo.",
-      confirmLabel: "Haan, line banao", cancelLabel: "Nahi",
+        ? "Assets are more than the books explain — this much money was put into the business without an entry (opening bank balance, your own money). An Owner's capital line is added under Equity."
+        : "Liabilities are more than the books explain — this much money was taken out of the business without an entry. A Drawings (negative) line is added under Equity. If it is an expense or loss missing from the books, record that entry first.",
+      confirmLabel: "Add line", cancelLabel: "Cancel",
     });
     if (!ok) return;
     await createItem.mutateAsync({
       section: "equity", label: capital ? "Owner's capital" : "Drawings", amount: unexplained,
-      notes: `Balance Sheet ke unexplained difference se ${today} ko banaya — cumulative P&L se bacha hua farq.`,
+      notes: `Created on ${today} from the Balance Sheet's unexplained difference — the gap left after cumulative P&L.`,
     });
   }
   const [addOpen, setAddOpen] = React.useState(false);
@@ -92,9 +93,6 @@ export default function BalanceSheetPage() {
   /* Totals + solvency ratios ek tested pure function me (lib/accounting/balance-sheet-totals.ts).
      R-179: "Received, not yet in bank" bhi asset hai, Cash & bank ke saath — warna bina bank
      account wale workspace me mila hua paisa sirf liability (advance) me dikhta tha. */
-  const {
-    gstCredit, gstPayable, totalAssets, totalLiab, netWorth, retained, currentRatio, debtToEquity,
-  } = balanceSheetTotals(auto, items ?? []);
   /* Retained earnings PER THE BOOKS — cumulative net profit from the P&L, all periods
      (27 Sep 2026). The plug above used to be shown AS retained earnings, which hid every
      missing entry inside a number that always looked right. Now the P&L figure is the
@@ -104,12 +102,20 @@ export default function BalanceSheetPage() {
      P&L nahi chalta (ek bekaar all-periods aggregation bachti hai). */
   const openingQ = useOpeningBalances();
   const opening: OpeningBalances | null = openingQ.data ?? null;
-  const profitFrom = opening ? addDaysISO(opening.asOf, 1) : BOOKS_START;
-  const profitRangeOpen = profitFrom <= today;
-  const cumulative = usePnL({ from: profitRangeOpen ? profitFrom : today, to: today }, openingQ.data !== undefined && profitRangeOpen);
+  const profitRange = retainedProfitRange(opening?.asOf ?? null, today, BOOKS_START);
+  const cumulative = usePnL({ from: profitRange.from, to: profitRange.to }, openingQ.data !== undefined && profitRange.open);
+  /* R-1646: one profit with the P&L and Trial Balance (reportProfit), and the licence cost it
+     estimates (no vendor bill yet) carried as a provision — not left in the unexplained gap. */
   const cumulativeProfit = openingQ.data === undefined ? null
-    : !profitRangeOpen ? 0
-    : cumulative.data ? (cumulative.data.model.netProfit ?? cumulative.data.netProfit) : null;
+    : !profitRange.open ? 0
+    : cumulative.data ? reportProfit(cumulative.data) : null;
+  const licenceProvision = !profitRange.open ? 0 : licenceProvisionOf(cumulative.data);
+  /* Totals + solvency ratios ek tested pure function me (lib/accounting/balance-sheet-totals.ts).
+     R-179: "Received, not yet in bank" bhi asset hai, Cash & bank ke saath — warna bina bank
+     account wale workspace me mila hua paisa sirf liability (advance) me dikhta tha. */
+  const {
+    gstCredit, gstPayable, totalAssets, totalLiab, netWorth, retained, currentRatio, debtToEquity,
+  } = balanceSheetTotals(auto, items ?? [], { licenceProvision });
   const openingEquity = (opening?.ownerCapital ?? 0) + (opening?.retainedEarnings ?? 0);
   const unexplained = cumulativeProfit === null ? null : retained - openingEquity - cumulativeProfit;
 
@@ -147,6 +153,8 @@ export default function BalanceSheetPage() {
         ["Reimbursements payable", auto.reimbursementsPayable ?? 0],
         ["Expenses payable", auto.expensesPayable ?? 0],
         ["Salary deductions held (other)", auto.salaryOtherDeductions ?? 0],
+        ["Commission payable (partners)", auto.commissionsPayable ?? 0],
+        ["Licence cost provision (estimate, no vendor bill yet)", licenceProvision ?? 0],
         ["Credit card payable", auto.creditCardPayable ?? 0],
         ["EMI loans payable", auto.emiLoansPayable ?? 0],
         ["Business loans payable", auto.businessLoansPayable ?? 0],
@@ -156,6 +164,7 @@ export default function BalanceSheetPage() {
         ["", ""],
         ["EQUITY", ""],
         ...manualEqRows.map((r): [string, number] => [r.label, r.amount]),
+        ...((auto.openingBalanceAdjustments ?? 0) !== 0 ? [["Opening Balance Adjustments (invoices imported from Zoho Books)", auto.openingBalanceAdjustments ?? 0] as [string, number]] : []),
         ...(opening ? [
           [`Owner's capital (opening, from CA, ${opening.asOf})`, opening.ownerCapital ?? 0] as [string, number],
           [`Retained earnings b/f (from CA, ${opening.asOf})`, opening.retainedEarnings ?? 0] as [string, number],
@@ -193,18 +202,18 @@ export default function BalanceSheetPage() {
       {/* Headline summary — Net worth reads FIRST (was buried at the very bottom
           after ~15 detail lines). Assets · Liabilities · Net worth up top. */}
       {!loading && !failed && (
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          <Card className="p-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+          <Card className="min-w-0 p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Total assets</div>
-            <div className="font-serif text-2xl mt-1 tabular-nums text-ink">{fmtBS(totalAssets, { compact: true })}</div>
+            <div className="font-serif text-xl sm:text-2xl mt-1 tabular-nums break-words text-ink">{fmtBS(totalAssets, { compact: true })}</div>
           </Card>
-          <Card className="p-4">
+          <Card className="min-w-0 p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Total liabilities</div>
-            <div className="font-serif text-2xl mt-1 tabular-nums text-ink">{fmtBS(totalLiab, { compact: true })}</div>
+            <div className="font-serif text-xl sm:text-2xl mt-1 tabular-nums break-words text-ink">{fmtBS(totalLiab, { compact: true })}</div>
           </Card>
-          <Card className="p-4">
+          <Card className="min-w-0 col-span-2 sm:col-span-1 p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Net worth</div>
-            <div className={`font-serif text-2xl mt-1 tabular-nums ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>{fmtBS(netWorth, { compact: true })}</div>
+            <div className={`font-serif text-xl sm:text-2xl mt-1 tabular-nums break-words ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>{fmtBS(netWorth, { compact: true })}</div>
           </Card>
         </div>
       )}
@@ -290,7 +299,9 @@ export default function BalanceSheetPage() {
                   <BSLine label="Prepaid / vendor advances" hint="paid, not yet consumed" amount={auto?.prepaidAdvances ?? 0} kind="auto" source="Prepaid" href="/accounting/prepaid" />
                 )}
                 {(auto?.fixedAssets ?? 0) > 0 && (
-                  <BSLine label="Fixed assets" hint="register at WDV (Income-tax rates) + EMI purchases not yet registered, at cost" amount={auto?.fixedAssets ?? 0} kind="auto" source="Assets & EMIs" href="/accounting/assets" />
+                  <BSLine label="Fixed assets" hint={auto?.fixedAssetsCost != null && auto.accumulatedDepreciation != null
+                    ? `net block: cost ${rupee(auto.fixedAssetsCost)} − depreciation ${rupee(auto.accumulatedDepreciation)} charged in the P&L (Income-tax WDV rates)`
+                    : "register at WDV (Income-tax rates) + EMI purchases not yet registered, at cost"} amount={auto?.fixedAssets ?? 0} kind="auto" source="Assets & EMIs" href="/accounting/assets" />
                 )}
                 {gstCredit > 0 && <BSLine label="GST input credit (ITC)" amount={gstCredit} kind="auto" source="GST Reports" href="/accounting/gst" />}
                 {(auto?.advanceTaxPaid ?? 0) > 0 && (
@@ -317,7 +328,7 @@ export default function BalanceSheetPage() {
                   <BSLine label="Salary payable" hint="payroll run, not yet paid out" amount={auto?.salaryPayable ?? 0} kind="auto" source="Payroll" href="/accounting/payroll" />
                 )}
                 {(auto?.salaryDuesPayable ?? 0) > 0 && (
-                  <BSLine label="Statutory dues payable" hint="TDS (salary + vendor), PF, ESI — not yet remitted" amount={auto?.salaryDuesPayable ?? 0} kind="auto" source="Payroll" href="/accounting/payroll" />
+                  <BSLine label="Statutory dues payable" hint="TDS (salary + vendor + partner commission), PF, ESI — not yet remitted" amount={auto?.salaryDuesPayable ?? 0} kind="auto" source="Payroll" href="/accounting/payroll" />
                 )}
                 {(auto?.reimbursementsPayable ?? 0) > 0 && (
                   <BSLine label="Reimbursements payable" hint="expenses paid from someone's own card, not yet repaid" amount={auto?.reimbursementsPayable ?? 0} kind="auto" source="Reimbursements" href="/accounting/reimbursements" />
@@ -328,8 +339,14 @@ export default function BalanceSheetPage() {
                 {(auto?.salaryOtherDeductions ?? 0) > 0 && (
                   <BSLine label="Salary deductions held" hint={'"other" deductions withheld from salary, owed onward or back'} amount={auto?.salaryOtherDeductions ?? 0} kind="auto" source="Payroll" href="/accounting/payroll" />
                 )}
+                {(auto?.commissionsPayable ?? 0) > 0 && (
+                  <BSLine label="Commission payable (partners)" hint="partner commission earned, not yet paid (after TDS)" amount={auto?.commissionsPayable ?? 0} kind="auto" source="Referrals" />
+                )}
+                {(licenceProvision ?? 0) > 0 && (
+                  <BSLine label="Licence cost provision (estimate)" hint="licence cost the P&L estimates from your wholesale rates — no vendor bill entered yet" amount={licenceProvision ?? 0} kind="auto" source="P&L" href="/accounting/pnl" />
+                )}
                 {(auto?.creditCardPayable ?? 0) > 0 && (
-                  <BSLine label="Credit card payable" hint="company credit cards ka owe / udhari" amount={auto?.creditCardPayable ?? 0} kind="auto" source="Banking" href="/accounting/banking" />
+                  <BSLine label="Credit card payable" hint="amount owed on company credit cards" amount={auto?.creditCardPayable ?? 0} kind="auto" source="Banking" href="/accounting/banking" />
                 )}
                 {(auto?.emiLoansPayable ?? 0) > 0 && (
                   <BSLine label="EMI / asset loans" hint="outstanding financing on purchases" amount={auto?.emiLoansPayable ?? 0} kind="auto" source="Assets & EMIs" href="/accounting/assets" />
@@ -362,6 +379,10 @@ export default function BalanceSheetPage() {
                     onEdit={setEditItem}
                     onDelete={async (r) => { if (await confirm({ title: "Remove line?", body: `Remove "${r.label}" from the balance sheet?`, confirmLabel: "Remove", danger: true })) del.mutate(r.id); }}
                   />
+                  {/* R-1739: Cr side of the balances imported from Zoho Books (their Dr is in receivables). */}
+                  {(auto?.openingBalanceAdjustments ?? 0) !== 0 && (
+                    <BSLine label="Opening Balance Adjustments" hint="balance due on invoices imported from Zoho Books, as imported — account name to confirm with your CA" amount={auto?.openingBalanceAdjustments ?? 0} kind="auto" source="Zoho import" href="/invoices" />
+                  )}
                   {opening && (opening.ownerCapital ?? 0) !== 0 && (
                     <BSLine label="Owner's capital (opening)" hint={`from your CA, as at ${formatDate(opening.asOf)}`} amount={opening.ownerCapital ?? 0} kind="manual" source="Opening balances" />
                   )}
@@ -409,9 +430,9 @@ export default function BalanceSheetPage() {
                       {unexplained !== null && unexplained !== 0 && (
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           <Button size="sm" variant="primary" loading={createItem.isPending} onClick={bookUnexplained}>
-                            {unexplained > 0 ? `Owner's capital ${rupee(unexplained)} jodo` : `Drawings ${rupee(-unexplained)} jodo`}
+                            {unexplained > 0 ? `Add Owner's capital ${rupee(unexplained)}` : `Add Drawings ${rupee(-unexplained)}`}
                           </Button>
-                          <span className="text-xs text-ink-3">Ek click — equity line ban jaayegi, farq zero. Baad mein Edit/Delete kar sakte ho.</span>
+                          <span className="text-xs text-ink-3">One click adds the equity line and the difference becomes zero. You can edit or delete it later.</span>
                         </div>
                       )}
                     </div>
@@ -436,7 +457,7 @@ export default function BalanceSheetPage() {
                 Balanced: <b>Assets {fmtBS(totalAssets)}</b> = <b>Liabilities + Equity {fmtBS(totalLiab + netWorth)}</b>
               </span>
             </div>
-            <span className={`font-serif text-2xl ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>
+            <span className={`font-serif text-xl sm:text-2xl tabular-nums break-words ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>
               Net worth {fmtBS(netWorth)}
             </span>
           </Card>

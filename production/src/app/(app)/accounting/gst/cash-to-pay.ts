@@ -30,12 +30,16 @@ export interface OutputRow {
   taxableValue: number;        // persisted (migration 0116), else reverse-derived
   gst:          number;        // total GST (persisted, else reverse-derived)
   taxRate:      number;        // GST rate %
+  /** R-1131: no stored rate and no tax figure to derive one from — filed at 0%, shown as "rate missing". */
+  rateMissing?: boolean;
   interState:   boolean;       // true → IGST; false → CGST + SGST
   docType:      "invoice" | "credit_note" | "debit_note";  // credit/debit notes net the output tax
   /** R-335: a credit note issued after its invoice's GST s.34 limit (30 Nov after that FY). Warning only. */
   lateCreditNote?: boolean;
   /** Per-line HSN/SAC share of the taxable value (catalogue item's `hsn`). See lib/gst/gstr1.ts. */
   lines?:       { hsn: string; description?: string; taxable: number }[];
+  /** R-1742: invoices.gst_treatment frozen at issue (a note takes its invoice's); null = before R-1736. */
+  gstTreatment?: string | null;
 }
 export interface InputRow {
   source:       "bill" | "expense";
@@ -77,6 +81,8 @@ export interface GstReport {
   advances:        Advance[];
   /** R-335: credit notes in this period issued after their invoice's s.34 time limit. */
   lateCreditNotes: number;
+  /** R-1131: documents + advances whose GST rate is missing (not stored, not derivable). */
+  rateMissingDocs?: number;
 }
 
 
@@ -87,6 +93,7 @@ export const toGstr1Doc = (r: OutputRow) => ({
   id: r.invoiceId, date: r.invoiceDate, docType: r.docType, customerName: r.customerName,
   customerGstin: r.customerGstin, customerStateCode: r.customerStateCode, customerState: r.customerState, customerCountry: r.customerCountry,
   amount: r.amount, taxableValue: r.taxableValue, gst: r.gst, taxRate: r.taxRate, interState: r.interState, lines: r.lines,
+  gstTreatment: r.gstTreatment ?? null,
 });
 
 /** The period's GSTR-3B worksheet (RCM, s.17(5) reversal, set-off, cash per head) from its report rows. */

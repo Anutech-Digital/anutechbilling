@@ -186,3 +186,34 @@ export function stateRequiredMessage(row: {
     ? `"${String(row.state).trim()}" is not a GST state name — pick the state from the list. The GST invoice needs it.`
     : "Choose the state — the GST invoice cannot be made without it (it decides CGST + SGST or IGST).";
 }
+
+/**
+ * R-1128 (19 Oct 2026) — the chosen state must be the state the GSTIN was issued in.
+ *
+ * The first two digits of a GSTIN ARE the GST state code (07 Delhi, 27 Maharashtra). The tenant's
+ * `state_code` is the seller's place of business on every invoice: it decides CGST+SGST vs IGST.
+ * Both screens used to let a chosen state win over the GSTIN, so "GSTIN 07… + Maharashtra" saved
+ * and every Delhi sale was split as if the seller sat in Mumbai — wrong tax head on each invoice,
+ * found only at GSTR-1 filing.
+ *
+ * Only a checksum-valid GSTIN is trusted (stateCodeFromGstin), so a half-typed one never blocks.
+ * Returns null when they agree or either side is unknown; otherwise the GSTIN's state (for the
+ * "Set state from GSTIN" button) and a §24 message: what is wrong, why it matters, what to do.
+ */
+export function companyGstinStateConflict(
+  chosenCode: string | null | undefined,
+  gstin: string | null | undefined,
+): { gstinCode: string; gstinState: string; message: string } | null {
+  const chosen = stateCodeFromName(chosenCode);
+  const gstinCode = stateCodeFromGstin(gstin);
+  if (!chosen || !gstinCode || chosen === gstinCode) return null;
+  const gstinState = GST_STATE_BY_CODE[gstinCode];
+  return {
+    gstinCode,
+    gstinState,
+    message:
+      `Your GSTIN starts with ${gstinCode}, which is ${gstinState}, but the state chosen is ` +
+      `${GST_STATE_BY_CODE[chosen]} (${chosen}). Every invoice would split CGST/SGST vs IGST wrongly. ` +
+      `Press "Set state from GSTIN" to use ${gstinState}, or correct the GSTIN.`,
+  };
+}

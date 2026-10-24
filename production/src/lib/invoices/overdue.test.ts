@@ -117,7 +117,7 @@ describe("/invoices no longer asks the column nobody writes", () => {
     expect(src).toContain("invoiceBucket");
     /* R-062/R-063: tab filter + counts go through invoiceChip, the KPI tiles through
        invoiceKpis — both of which decide overdue with invoiceIsOverdue. */
-    expect(src).toContain("invoiceChip(i)");
+    expect(src).toContain("invoiceChip(i, undefined, noteTotals)");   // R-1709: with note totals
     expect(src).toContain("invoiceChipCounts(");
     expect(src).toContain("invoiceKpis(");
     const kpis = readFileSync("src/lib/invoices/kpis.ts", "utf8");

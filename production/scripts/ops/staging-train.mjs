@@ -17,15 +17,27 @@
  * stop) → push only with --push. NEVER a force push: staging carries R-161 commits that
  * manager-pardeep lacks, so a force push would break staging.
  *
+ * R-1721 (21 Oct 2026): after --push it no longer trusts --db-done. It waits until staging's
+ * /api/version shows the merge commit (7 characters — 21 Oct an 8-char compare never matched),
+ * then reads /api/health/migrations: green "✓ Sab migrations DB par", or red "DB step chhoot
+ * gaya: <keys>" and exit 5. No MIGRATIONS_HEALTH_TOKEN here → a yellow line, never silence.
+ * (scripts/ops/migrations-health-check.mjs)
+ *
+ * R-1722 (24 Oct 2026): after a green --push, run the smoke check against staging —
+ * `SMOKE_EMAIL=… SMOKE_PASSWORD=… npm run smoke -- <staging URL>` (scripts/ops/smoke-check.mjs,
+ * docs/ARCHITECTURE.md §8): 17 real pages, logged in, exit 1 on any red page.
+ *
  * Exit 0 = ok (dry run done / pushed / nothing new). 1 = error or refused. 2 = merge conflict.
- * 3 = DB step needed. Run from production/.
+ * 3 = DB step needed. 4 = pushed, but the migration check could not run. 5 = pushed, and the
+ * staging DB is missing migrations. Run from production/.
  */
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, rmSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { REPO, REMOTE, BRANCH, WORKFLOW, ciDecision } from "./staging-gate.mjs";
+import { runCheck, colour, STAGING_URL } from "./migrations-health-check.mjs";
 
 export const STAGING = "staging";
 export const MIGRATIONS_DIR = "production/supabase/migrations";
@@ -147,8 +159,41 @@ export function mergeMessage(label, cards) {
   return `Staging train ${label}: ${cards.length ? cards.join(", ") : "no card ids"}`;
 }
 
-export function dbCommand(day) {
-  return `& "C:\\Program Files\\Git\\bin\\bash.exe" "/c/Users/mso50/new-reselleros/production/supabase/cloudsql/staging/deploy-db-${day}.sh"`;
+export const STAGING_SCRIPTS_DIR = "production/supabase/cloudsql/staging";
+
+/**
+ * R-1590 (18 Oct 2026): the staging DB script the manager actually runs. It used to be named
+ * after TODAY's IST date (deploy-db-2026-10-18.sh — never existed: gen-deploy-db writes one file
+ * per deploy date and keeps adding to it) under a path hard-coded to the main checkout. Now: the
+ * newest existing deploy-db-YYYY-MM-DD.sh, or null when there is none.
+ */
+export function newestDeployDb(names) {
+  const dated = names.filter((n) => /^deploy-db-\d{4}-\d{2}-\d{2}\.sh$/.test(n)).sort();
+  return dated.length ? dated[dated.length - 1] : null;
+}
+
+/** The PowerShell line that runs `scriptAbs` with Git Bash — path relative to `cwd`, the checkout the train runs in. */
+export function dbCommand(scriptAbs, cwd = process.cwd()) {
+  const rel = path.relative(cwd, scriptAbs).split(path.sep).join("/");
+  return `& "C:\\Program Files\\Git\\bin\\bash.exe" "${rel}"`;
+}
+
+/** DB-step lines for the newest staging deploy-db script under `root` (repo top), or a clear error. */
+export function dbStepLines(root, cwd = process.cwd(), list = (d) => (existsSync(d) ? readdirSync(d) : [])) {
+  const dir = path.join(root, ...STAGING_SCRIPTS_DIR.split("/"));
+  const name = newestDeployDb(list(dir));
+  if (!name) {
+    return [
+      `✗ ${STAGING_SCRIPTS_DIR} me koi deploy-db-<date>.sh nahi mila.`,
+      "  Pehle banao: node scripts/ops/gen-deploy-db.mjs --date <YYYY-MM-DD>",
+    ];
+  }
+  const date = name.slice("deploy-db-".length, -".sh".length);
+  return [
+    "PowerShell:",
+    `  ${dbCommand(path.join(dir, name), cwd)}`,
+    `(Naye migrations is file me hain? Jaancho: node scripts/ops/gen-deploy-db.mjs --date ${date} --check)`,
+  ];
 }
 
 /** Final Hinglish summary lines. */
@@ -163,7 +208,7 @@ export function summaryLines({ pick, cards, migrations, decision, merged, pushed
   else if (decision.action === "db-step") next = "Upar wala DB command chalao (Pardeep ki haan), phir `--db-done` ke saath train dobara.";
   else if (merged === null) next = "Error — upar ka message dekho, phir dobara.";
   else if (merged === false) next = "Merge CONFLICT — upar ki files theek karo (manager-pardeep par), phir dobara.";
-  else if (pushed) next = "Push ho gaya — Cloud Build staging bana raha hai; ~10 min baad staging URL par jaanch.";
+  else if (pushed) next = "Push ho gaya — upar ki migration line padho (hara = DB theek; laal = DB step chalao; peela = khud jaancho).";
   else next = "Merge saaf hai. Asli push ke liye `--push` ke saath dobara chalao.";
   lines.push(`Agla kadam: ${next}`);
   return lines;
@@ -213,7 +258,7 @@ function removeWorktree(root, dir) {
   }
 }
 
-function main() {
+async function main() {
   let args;
   try {
     args = parseArgs(process.argv.slice(2));
@@ -265,7 +310,7 @@ function main() {
   }
 
   const decision = decide({ pick, alreadyInStaging, migrations, dbDone: args.dbDone, push: args.push });
-  const { label, day } = istStamp();
+  const { label } = istStamp();
 
   if (decision.action === "refuse" || decision.action === "nothing") {
     console.log(decision.message);
@@ -278,7 +323,7 @@ function main() {
     for (const m of migrations) console.log(`  ${m}`);
   }
   if (decision.action === "db-step") {
-    console.log(`\n${decision.message}\nPowerShell:\n  ${dbCommand(day)}`);
+    console.log(`\n${decision.message}\n${dbStepLines(root).join("\n")}`);
     for (const l of summaryLines({ pick, cards, migrations, decision })) console.log(l);
     process.exit(decision.exitCode);
   }
@@ -288,6 +333,7 @@ function main() {
   rmSync(dir, { recursive: true, force: true }); // git worktree add wants a missing/empty path
   let merged = null; // null = merge not tried (error), false = conflict
   let pushed = false;
+  let pushedSha = null;
   let exitCode = 0;
   try {
     git(["worktree", "add", "-q", "--detach", dir, `${REMOTE}/${STAGING}`], { cwd: root });
@@ -312,6 +358,7 @@ function main() {
       console.log(`Push command (worktree me, HEAD = merge commit): git ${PUSH_ARGS.join(" ")}`);
       if (args.push) {
         /* Plain push — a non-fast-forward (staging moved meanwhile) is REFUSED by git, never forced. */
+        pushedSha = git(["rev-parse", "HEAD"], { cwd: dir }).trim();
         execFileSync("git", PUSH_ARGS, { cwd: dir, stdio: "inherit" });
         pushed = true;
         console.log("✓ staging par push ho gaya.");
@@ -325,10 +372,20 @@ function main() {
   } finally {
     removeWorktree(root, dir);
   }
+  if (pushed && pushedSha) {
+    /* R-1721: does staging's DB really have every migration this build carries? */
+    const v = await runCheck({ base: process.env.STAGING_URL || STAGING_URL, sha: pushedSha });
+    console.log(`
+${colour(v)}`);
+    if (v.exitCode && !exitCode) exitCode = v.exitCode;
+  }
   for (const l of summaryLines({ pick, cards, migrations, decision, merged, pushed })) console.log(l);
   process.exit(exitCode);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main();
+  main().catch((e) => {
+    console.error(`✗ ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  });
 }

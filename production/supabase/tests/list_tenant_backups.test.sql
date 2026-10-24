@@ -79,7 +79,8 @@ declare v int;
 begin
   select count(*) into v from public.list_tenant_backups();
   insert into r823_result (who, n, refused) values ('nobody', v, 'no');
-exception when insufficient_privilege then
+-- R-1556: no tenant (current_tenant_id() NULL) is refused with 28000 before the role gate.
+exception when insufficient_privilege or invalid_authorization_specification then
   insert into r823_result (who, n, refused) values ('nobody', 0, 'yes');
 end $$;
 reset role;

@@ -17,7 +17,7 @@ begin;
 select set_config('request.jwt.claims','{"role":"service_role"}',true);
 insert into public.tenants (id,name,email,state_code,doc_code) values ('11110000-0000-0000-0000-0000000000d1','DD1','dd1@x.in','07','DDA1');
 insert into public.customers (id,tenant_id,name,contact_email) values ('cccccccc-0000-0000-0000-0000000000d1','11110000-0000-0000-0000-0000000000d1','Existing Co','dup@x.in');
-insert into public.document_series (tenant_id,doc_type,fiscal_year,prefix,last_number) values ('11110000-0000-0000-0000-0000000000d1','purchase_order',public.indian_fiscal_year(current_date),'PO',990000);
+insert into public.document_series (tenant_id,doc_type,fiscal_year,prefix,last_number) values ('11110000-0000-0000-0000-0000000000d1','purchase_order',public.indian_fiscal_year(current_date),'PO', 9000);
 insert into public.leads (id,tenant_id,company,contact_email,stage,source,priority) values ('L-DD1','11110000-0000-0000-0000-0000000000d1','Existing Co Pvt. Ltd.','dup@x.in','new','manual','medium');
 insert into public.quotes (id,tenant_id,lead_id,customer_id,customer_name,amount,subtotal,tax_rate,status,payment_status,line_items) values ('Q-DD1','11110000-0000-0000-0000-0000000000d1','L-DD1',null,'Existing Co Pvt. Ltd.',122342,103680,18,'sent','awaiting','[{"name":"Google Workspace Standard","qty":10,"rate":10368,"commitment":"annual_yearly"}]'::jsonb);
 do $$ declare n int; qc uuid; begin
@@ -34,7 +34,7 @@ rollback;
 begin;
 select set_config('request.jwt.claims','{"role":"service_role"}',true);
 insert into public.tenants (id,name,email,state_code,doc_code) values ('11110000-0000-0000-0000-0000000000d2','DD2','dd2@x.in','07','DDA2');
-insert into public.document_series (tenant_id,doc_type,fiscal_year,prefix,last_number) values ('11110000-0000-0000-0000-0000000000d2','purchase_order',public.indian_fiscal_year(current_date),'PO',990000);
+insert into public.document_series (tenant_id,doc_type,fiscal_year,prefix,last_number) values ('11110000-0000-0000-0000-0000000000d2','purchase_order',public.indian_fiscal_year(current_date),'PO', 9000);
 insert into public.leads (id,tenant_id,company,contact_email,stage,source,priority) values ('L-DD2','11110000-0000-0000-0000-0000000000d2','Fresh Co','fresh@x.in','new','manual','medium');
 insert into public.quotes (id,tenant_id,lead_id,customer_id,customer_name,amount,subtotal,tax_rate,status,payment_status,line_items) values ('Q-DD2','11110000-0000-0000-0000-0000000000d2','L-DD2',null,'Fresh Co',122342,103680,18,'sent','awaiting','[{"name":"Google Workspace Standard","qty":10,"rate":10368,"commitment":"annual_yearly"}]'::jsonb);
 do $$ declare n int; m int; begin

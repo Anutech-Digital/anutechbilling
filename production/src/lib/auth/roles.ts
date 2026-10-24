@@ -141,10 +141,13 @@ export interface Permissions {
   can_reveal_vault: boolean;
   /** P&L, balance sheet, bank reconciliation — the books. */
   can_view_financials: boolean;
-  /** Invite, offboard, and change roles. */
+  /** Invite, offboard, and change roles. The ONE check for it — Team page and invite API (R-1651). */
   can_manage_team: boolean;
   /** API keys, integration secrets, tenant-wide configuration. */
   can_manage_secrets: boolean;
+  /** R-732: write to a lead or customer directly (a WhatsApp or an email sent from the app). Every
+   *  internal seller, support and money role has it; the partner agent (own referred leads only) does not. */
+  can_contact_customers: boolean;
 }
 
 /** The most restrictive possible answer — the base every role is built from. */
@@ -155,6 +158,7 @@ const NONE: Permissions = {
   can_view_financials:      false,
   can_manage_team:          false,
   can_manage_secrets:       false,
+  can_contact_customers:    false,
 };
 
 /**
@@ -170,13 +174,18 @@ export const PERMISSIONS: Record<UserRole, Permissions> = {
     can_view_financials:      true,
     can_manage_team:          true,
     can_manage_secrets:       true,
+    can_contact_customers:    true,
   },
   manager: {
     ...NONE,
     can_export_data:          true,
     can_view_contact_details: true,
     can_reveal_vault:         true,
-    can_manage_team:          true,
+    /* R-1651: false — inviting, role changes and offboarding are owner-only on the server
+       (api/team/invite, team_invites RLS). This said true while nothing read it, and the
+       Team page promised a manager an invite they could not send. */
+    can_manage_team:          false,
+    can_contact_customers:    true,
   },
   // Owns named corporate accounts, so needs the real contact details — but a
   // senior seller is also the likeliest person to leave with the book, which is
@@ -184,29 +193,34 @@ export const PERMISSIONS: Record<UserRole, Permissions> = {
   sales_senior: {
     ...NONE,
     can_view_contact_details: true,
+    can_contact_customers:    true,
   },
   // The tightest internal role: assigned leads and tasks only. Contact details
   // stay masked until an explicit call/email action, so a browse of the list
   // cannot become a copied phone book.
-  sales: { ...NONE },
+  sales: { ...NONE, can_contact_customers: true },
   billing: {
     ...NONE,
     can_view_contact_details: true,
     can_view_financials:      true,
+    can_contact_customers:    true,
   },
   // Can open the vault (needs to know an account exists) but never sees a
   // secret in clear text.
   delivery: {
     ...NONE,
     can_view_contact_details: true,
+    can_contact_customers:    true,
   },
   accountant: {
     ...NONE,
     can_view_financials: true,
+    can_contact_customers: true,
   },
   support: {
     ...NONE,
     can_view_contact_details: true,
+    can_contact_customers:    true,
   },
   // External-facing internal role: sees only its own referred leads and payouts
   // under /partners. No customer data, no export, nothing else.
@@ -252,6 +266,15 @@ export function maskContact(value: string | null | undefined): string {
   const digits = v.replace(/\D/g, "");
   if (digits.length < 5) return "•".repeat(v.length);
   return `${"•".repeat(digits.length - 4)}${digits.slice(-4)}`;
+}
+
+/**
+ * R-1009: is this a value maskContact() produced? The data gateway sends masked contacts to a
+ * role without can_view_contact_details, so a screen uses this to swap a dial / mail link for
+ * the "reveal on Call" path (lib/contacts/reveal-client.ts) instead of dialling "••••3210".
+ */
+export function isMaskedContact(value: string | null | undefined): boolean {
+  return typeof value === "string" && value.includes("•");
 }
 
 /**

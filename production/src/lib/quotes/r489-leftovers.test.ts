@@ -15,16 +15,16 @@ const read = (p: string) => readFileSync(join(SRC, p), "utf8");
 
 describe("R-468 (5) / R-453 (2): the Mark-accepted sentence fits the quote", () => {
   it("renewal, existing customer and lead each get their own words", () => {
-    expect(acceptHint({ is_renewal: true, customer_id: "C1" })).toContain("subscription is renewed");
-    expect(acceptHint({ is_renewal: false, customer_id: "C1" })).toBe("Mark accepted when the customer agrees.");
-    expect(acceptHint({ customer_id: null })).toContain("convert the lead into a customer");
+    expect(acceptHint({ is_renewal: true, customer_id: "C1", lead_id: null })).toContain("subscription is renewed");
+    expect(acceptHint({ is_renewal: false, customer_id: "C1", lead_id: null })).toBe("Mark accepted when the customer agrees.");
+    expect(acceptHint({ customer_id: null, lead_id: "L1" })).toContain("convert the lead into a customer");
   });
   it("R-821: add-seats / extension / renewal quotes never talk about converting a lead", () => {
     const existing = "Mark accepted when the customer agrees.";
-    expect(acceptHint({ is_add_seats: true, customer_id: null })).toBe(existing);
-    expect(acceptHint({ is_extension: true, customer_id: null })).toBe(existing);
-    expect(acceptHint({ is_renewal: true, customer_id: null })).toMatch(/^Mark accepted when the customer agrees\./);
-    expect(acceptHint({ is_add_seats: false, is_extension: false, customer_id: null })).toContain("convert the lead");
+    expect(acceptHint({ is_add_seats: true, customer_id: null, lead_id: null })).toBe(existing);
+    expect(acceptHint({ is_extension: true, customer_id: null, lead_id: null })).toBe(existing);
+    expect(acceptHint({ is_renewal: true, customer_id: null, lead_id: null })).toMatch(/^Mark accepted when the customer agrees\./);
+    expect(acceptHint({ is_add_seats: false, is_extension: false, customer_id: null, lead_id: "L1" })).toContain("convert the lead");
   });
   it("the quote page and the action bar use it", () => {
     expect(read("app/(app)/quotes/[id]/page.tsx")).toContain("{acceptHint(quote)}");
@@ -80,11 +80,16 @@ describe("R-457 leftovers", () => {
 });
 
 describe("R-468 (7): no button inside a button on customer Transactions", () => {
-  it("the phone card is a div with role=button", () => {
-    const src = read("components/features/customers/customer-profile.tsx");
-    const table = src.slice(src.indexOf("function RecordTable"));
-    expect(table).toMatch(/role=\{r\.onClick \? "button" : undefined\}/);
+  /* R-1521 (17 Oct 2026): RecordTable moved to customer-record-table.tsx, and a row now
+     carries a real <a> (RowLink) in its reference cell. Such a row must not be role=button
+     either — a link inside a button is the same nesting. role=button stays only for a row
+     that opens via onClick and has no address (so holds no link). */
+  it("the phone card is a div, role=button only when it holds no link", () => {
+    const src = read("components/features/customers/customer-record-table.tsx");
+    const table = src.slice(src.indexOf("export function RecordTable"));
+    expect(table).toMatch(/role=\{!r\.href && r\.onClick \? "button" : undefined\}/);
     expect(table.slice(0, table.indexOf("Desktop / tablet table"))).not.toMatch(/<button/);
+    expect(read("components/features/customers/customer-profile.tsx")).not.toMatch(/function RecordTable/);
   });
 });
 

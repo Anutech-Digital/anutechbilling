@@ -38,6 +38,8 @@ import {
   type TdsStatus,
 } from "@/lib/queries/tds-receivable";
 import { istToday } from "@/lib/dates/ist";
+import { logExport } from "@/lib/export-log";
+import { csvEscape } from "@/lib/csv";
 
 const STATUS_COLOR: Record<TdsStatus, "rose" | "emerald" | "amber" | "slate" | "indigo"> = {
   pending_cert:  "rose",
@@ -51,12 +53,6 @@ const STATUS_COLOR: Record<TdsStatus, "rose" | "emerald" | "amber" | "slate" | "
 // ────────────────────────────────────────────────────────────────
 // CSV utils (local — same pattern as /accounting/gst page)
 // ────────────────────────────────────────────────────────────────
-
-function csvEscape(s: unknown): string {
-  const v = String(s ?? "");
-  if (/[",\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
-  return v;
-}
 
 function downloadCSV(filename: string, headers: string[], rows: (string | number)[][]) {
   const lines = [
@@ -72,6 +68,7 @@ function downloadCSV(filename: string, headers: string[], rows: (string | number
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  void logExport({ what: filename, rowCount: rows.length, format: "csv" });
 }
 
 /**

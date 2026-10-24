@@ -10,6 +10,7 @@
 import * as React from "react";
 
 import { Card } from "@/components/ui/card";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -76,7 +77,7 @@ export default function ReviewsPage() {
         {customers.isLoading ? (
           <div className="p-4 space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-10" />)}</div>
         ) : customers.error ? (
-          <p className="p-4 text-sm text-red-600">{(customers.error as Error).message}</p>
+          <LoadErrorInline what="Customers" error={customers.error} onRetry={() => void customers.refetch()} />
         ) : list.length === 0 ? (
           <EmptyState icon="users" title="No customers" body="Change the filter, or add customers." />
         ) : (

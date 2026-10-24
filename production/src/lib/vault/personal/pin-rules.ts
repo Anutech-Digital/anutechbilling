@@ -80,10 +80,10 @@ export interface PinValidation {
 
 export function validateNewPin(pin: string): PinValidation {
   if (!isValidPinFormat(pin)) {
-    return { ok: false, error: `PIN exactly ${PIN_LENGTH} digits ka hona chahiye (0-9).` };
+    return { ok: false, error: `PIN must be exactly ${PIN_LENGTH} digits (0-9).` };
   }
   if (isWeakPin(pin)) {
-    return { ok: false, error: "Ye PIN andaza lagane me aasan hai (jaise 1234, 0000, 1212). Koi aur chuno." };
+    return { ok: false, error: "This PIN is too easy to guess (like 1234, 0000, 1212). Choose a different one." };
   }
   return { ok: true };
 }

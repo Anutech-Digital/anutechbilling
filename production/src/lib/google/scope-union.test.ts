@@ -103,7 +103,7 @@ describe("scopeLossMessage — §24: kya hua, kyun, ab kya", () => {
     const m = scopeLossMessage([CONTACTS_SCOPE]) ?? "";
     expect(m).toMatch(/Contacts/);
     expect(m).toMatch(/untick/i);          // kyun hua
-    expect(m).toMatch(/[Dd]obara connect/); // ab kya karein
+    expect(m).toMatch(/[Cc]onnect again/); // ab kya karein
   });
 
   it("dono khoye ho to dono ka naam", () => {

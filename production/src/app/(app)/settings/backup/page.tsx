@@ -12,7 +12,6 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Icon } from "@/components/ui/icon";
-import { Badge } from "@/components/ui/badge";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { toast } from "sonner";
 import { useBackups, useCreateBackup, useDeleteBackup, useRestoreBackup, downloadBackup, autoBackupIfStale, SNAPSHOT_RETENTION } from "@/lib/queries/backups";
@@ -22,6 +21,7 @@ import { IST_TZ } from "@/lib/dates/ist";
 import { ResetDataCard } from "@/components/features/settings/reset-data-card";
 import { LoadError } from "@/components/shared/load-error";
 import { backupListState } from "./backup-list-state";
+import { BackupRow, BACKUP_ROW_BUTTON } from "./backup-row";
 
 function humanSize(b: number): string {
   if (b < 1024) return `${b} B`;
@@ -46,11 +46,14 @@ export default function BackupPage() {
 
   // Auto restore point: once per app session, make a daily 'auto' snapshot if
   // the newest one is stale (>20h). Keeps ~15 points rolling with zero effort.
+  /* R-1542: Backup is an owner-only menu row; middleware bounces other roles, and the database
+     refuses them (R-1556). The page says so too instead of offering buttons that fail. */
+  const notOwner = me != null && me.role !== "owner";
   React.useEffect(() => {
-    if (autoRan.current) return;
+    if (autoRan.current || me?.role !== "owner") return;
     autoRan.current = true;
     autoBackupIfStale().then((created) => { if (created) qc.invalidateQueries({ queryKey: ["tenant_backups"] }); });
-  }, [qc]);
+  }, [qc, me?.role]);
 
   const rows = q.data ?? [];
   // R-823: a failed load must say so — never fall through to "No backups yet".
@@ -62,7 +65,7 @@ export default function BackupPage() {
       // Immediately hand the owner a downloaded copy of the fresh snapshot.
       setDownloadingId(res.id);
       await downloadBackup(res.id, res.created_at);
-      toast.success(`Backup ban gaya — ${res.table_count} tables, ${humanSize(res.bytes)}. Copy download ho gayi.`);
+      toast.success(`Backup created — ${res.table_count} tables, ${humanSize(res.bytes)}. A copy has been downloaded.`);
     } catch {
       /* create surfaces its own error toast */
     } finally {
@@ -76,19 +79,32 @@ export default function BackupPage() {
     finally { setDownloadingId(null); }
   }
 
+  if (notOwner) {
+    return (
+      <div className="p-4 md:p-6 lg:p-8 max-w-[1000px] mx-auto">
+        <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Settings</p>
+        <h1 className="font-serif text-3xl md:text-4xl tracking-tight mb-4">Backup &amp; Restore</h1>
+        <Card className="py-2">
+          <EmptyState icon="lock" title="Only the workspace owner can see backups"
+            body="A backup holds every table in the workspace, including salaries and connected-account tokens. Ask an owner to open this page." />
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1000px] mx-auto">
-      <div className="flex items-start justify-between gap-4 mb-3">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-4">
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Settings</p>
           <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Backup &amp; Restore</h1>
           <p className="text-sm text-ink-2 mt-1 max-w-2xl">
-            Har restore point tumhare poore data ka ek copy hai — customers, leads, quotes, invoices,
-            payments, expenses, sab kuch. Galat direction me chale gaye to kisi bhi purane point par
-            <b> wapas jaa sakte ho</b>. Restore points <b>apne aap roz</b> bhi bante hain (last {SNAPSHOT_RETENTION} rakhe jaate hain).
+            Each restore point is a copy of all your data — customers, leads, quotes, invoices,
+            payments, expenses, everything. If something goes wrong, you can
+            <b> go back to any earlier point</b>. Restore points are also made <b>automatically every day</b> (the last {SNAPSHOT_RETENTION} are kept).
           </p>
         </div>
-        <Button variant="primary" icon="download" loading={create.isPending || downloadingId != null} onClick={takeBackup} className="shrink-0">
+        <Button variant="primary" icon="download" loading={create.isPending || downloadingId != null} onClick={takeBackup} className="shrink-0 self-start h-11 md:h-9">
           Take backup now
         </Button>
       </div>
@@ -98,8 +114,8 @@ export default function BackupPage() {
         <div className="flex items-start gap-2 text-[12px] text-ink-2">
           <Icon name="info" size={14} className="text-indigo mt-0.5 shrink-0" />
           <div className="space-y-1">
-            <p><b>Backup lene par:</b> tumhare tenant ka saara data ek JSON file me download ho jaata hai (tumhare computer par). App ke andar bhi last {SNAPSHOT_RETENTION} backups save rehte hain — jab chaaho dobara download kar lo.</p>
-            <p className="text-ink-3">Note: ye tumhare apne data ka copy hai (kisi aur tenant ka nahi). Restore ke liye ye file surakshit rakho — zarurat padne par isi se data wapas laaya ja sakta hai.</p>
+            <p><b>When you take a backup:</b> all of your workspace's data downloads as one JSON file (to your computer). The last {SNAPSHOT_RETENTION} backups are also kept inside the app — download them again any time.</p>
+            <p className="text-ink-3">Note: this is a copy of your own data only (no other workspace's). Keep this file safe — if needed, your data can be brought back from it.</p>
           </div>
         </div>
       </Card>
@@ -123,41 +139,29 @@ export default function BackupPage() {
         <ul className="space-y-2">
           {rows.map((b) => (
             <li key={b.id}>
-              <Card className="p-3.5 flex items-center justify-between gap-3">
-                <div className="min-w-0 flex items-center gap-3">
-                  <span className="grid place-items-center h-9 w-9 rounded-lg bg-emerald/10 text-emerald shrink-0">
-                    <Icon name="check_circle" size={18} />
-                  </span>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[13px] font-medium text-ink truncate">{b.label || "Backup"}</span>
-                      <Badge kind={b.kind === "auto" ? "muted" : "info"} size="sm">{b.kind === "auto" ? "Auto" : "Manual"}</Badge>
-                    </div>
-                    <div className="text-2xs text-ink-3">{whenLabel(b.created_at)} · {b.table_count} tables · {humanSize(b.bytes)}</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button variant="primary" className="h-8 px-3 text-[12px]" icon="refresh"
+              <BackupRow label={b.label || "Backup"} kind={b.kind}
+                meta={`${whenLabel(b.created_at)} · ${b.table_count} tables · ${humanSize(b.bytes)}`}
+                actions={<>
+                  <Button variant="primary" className={BACKUP_ROW_BUTTON} icon="refresh"
                     loading={restore.isPending} disabled={restore.isPending}
                     onClick={async () => {
                       if (await confirm({
                         title: "Restore to this point?",
-                        body: `Tumhara data is point (${whenLabel(b.created_at)}) par wapas aa jayega — iske baad ke saare changes hat jayenge. Ghabrao mat: abhi ka data pehle ek "Before restore" point me apne aap save ho jayega, to ye undo ho sakta hai.`,
+                        body: `Your data will go back to this point (${whenLabel(b.created_at)}) — all changes made after it will be removed. Don't worry: your current data is first saved automatically as a "Before restore" point, so this can be undone.`,
                         danger: true, confirmLabel: "Restore now",
                       })) restore.mutate(b.id);
                     }}>
                     Restore
                   </Button>
-                  <Button variant="default" className="h-8 px-3 text-[12px]" icon="download"
+                  <Button variant="default" className={BACKUP_ROW_BUTTON} icon="download"
                     loading={downloadingId === b.id} onClick={() => onDownload(b.id, b.created_at)}>
                     Download
                   </Button>
-                  <Button variant="ghost" className="h-8 px-2 text-[12px]"
-                    onClick={async () => { if (await confirm({ title: "Delete this backup?", body: "Sirf ye stored copy hategi. Pehle download ki hui file tumhare paas rahegi.", danger: true, confirmLabel: "Delete" })) del.mutate(b.id); }}>
+                  <Button variant="ghost" className={BACKUP_ROW_BUTTON}
+                    onClick={async () => { if (await confirm({ title: "Delete this backup?", body: "Only this stored copy is removed. Any file you downloaded earlier stays with you.", danger: true, confirmLabel: "Delete" })) del.mutate(b.id); }}>
                     Delete
                   </Button>
-                </div>
-              </Card>
+                </>} />
             </li>
           ))}
         </ul>

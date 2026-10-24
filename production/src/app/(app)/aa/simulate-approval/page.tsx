@@ -21,12 +21,16 @@ function SimulateApprovalInner() {
   const router = useRouter();
   const params = useSearchParams();
   const handle = params?.get("handle") ?? "";
+  /* R-879: the signed state consent/init issued — the callback refuses without it. */
+  const state = params?.get("state") ?? "";
   const [submitting, setSubmitting] = React.useState<"approve" | "reject" | null>(null);
 
   const callback = (approved: boolean) => {
     setSubmitting(approved ? "approve" : "reject");
     // The callback API route handles the redirect back to the bank account page
-    router.push(`/api/aa/setu/callback?handle=${handle}&approved=${approved}` as Route);
+    router.push(
+      `/api/aa/setu/callback?handle=${encodeURIComponent(handle)}&approved=${approved}&state=${encodeURIComponent(state)}` as Route,
+    );
   };
 
   return (

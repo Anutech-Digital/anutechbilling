@@ -74,7 +74,7 @@ export default function AcademyPage() {
   const atRisk = list.filter((a) => (perfOf.get(a.id)?.alerts.length ?? 0) > 0 && a.status === "active");
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1400px] mx-auto space-y-6">
+    <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto space-y-6">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Team</p>

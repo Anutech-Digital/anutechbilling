@@ -1,5 +1,7 @@
 # ResellerOS — Product Requirements Document (V3)
 
+> **STALE — 29 May 2026 tak ka (stamped 19 Oct 2026, R-1609). Asli: team board (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n) + code.** Ye file sirf history hai — isse status, counts ya "kya bacha hai" mat padho.
+
 > **Version:** 3.0
 > **Date:** 2026-05-29
 > **Status:** Current state — reflects production codebase at commit `7e0bd49`

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { paymentOutcome, receiptSplit, receiptSplitLine, tdsByPayment, tdsRateMismatches } from "./tds-receipt";
+import { paymentOutcome, receiptSplit, receiptSplitLine, tdsBase, tdsByPayment, tdsRateMismatches } from "./tds-receipt";
 
 describe("R-523 receipt split — bank money and TDS shown apart", () => {
   it("the tester's receipt: ₹1,52,928 settled = ₹1,50,336 in bank + ₹2,592 TDS", () => {
@@ -83,5 +83,31 @@ describe("R-523 owner report — past entries whose rate does not fit the sectio
     const before = JSON.stringify(rows);
     tdsRateMismatches(rows);
     expect(JSON.stringify(rows)).toBe(before);
+  });
+});
+
+describe("R-1119 TDS base — strip the quote's own GST rate, not a fixed 18%", () => {
+  it("5% quote of ₹10,500 → ₹10,000 pre-GST", () => {
+    expect(tdsBase(10_500, 5)).toBe(10_000);
+  });
+  it("0% export quote of ₹10,000 → ₹10,000 (nothing to strip)", () => {
+    expect(tdsBase(10_000, 0)).toBe(10_000);
+  });
+  it("18% quote unchanged: ₹11,800 → ₹10,000", () => {
+    expect(tdsBase(11_800, 18)).toBe(10_000);
+  });
+  it("12% quote of ₹11,200 → ₹10,000", () => {
+    expect(tdsBase(11_200, 12)).toBe(10_000);
+  });
+  it("no rate on the quote (old rows) → 18%, as before", () => {
+    expect(tdsBase(11_800, null)).toBe(10_000);
+    expect(tdsBase(11_800, undefined)).toBe(10_000);
+  });
+  it("a nonsense rate (negative / NaN) falls back to 18%, never inflates the base", () => {
+    expect(tdsBase(11_800, -5)).toBe(10_000);
+    expect(tdsBase(11_800, Number.NaN)).toBe(10_000);
+  });
+  it("whole rupees, rounded once", () => {
+    expect(tdsBase(1_000, 18)).toBe(847);
   });
 });

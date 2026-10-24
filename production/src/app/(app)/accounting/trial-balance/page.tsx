@@ -15,13 +15,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { rupee, cn, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { fyOf } from "@/lib/accounting/ledger";
 import { useBalanceSheetAuto, useBalanceSheetItems, useOpeningBalances } from "@/lib/queries/balance-sheet";
-import { usePnL } from "@/lib/queries/pnl";
-import { buildTrialBalance, trialBalanceCsvRows, type TbGroup } from "@/lib/accounting/trial-balance";
+import { usePnL, BOOKS_START } from "@/lib/queries/pnl";
+import { buildTrialBalance, trialBalanceCsvRows, LICENCE_ESTIMATE_HEAD, type TbGroup } from "@/lib/accounting/trial-balance";
+import { retainedProfitRange, licenceProvisionOf } from "@/lib/accounting/balance-sheet-totals";
 
 const GROUPS: TbGroup[] = ["Assets", "Liabilities", "Equity", "Income", "Expenses", "Difference"];
 
@@ -33,13 +35,22 @@ export default function TrialBalancePage() {
   const itemsQ = useBalanceSheetItems();
   const pnlQ = usePnL({ from: fyStart, to: today });
   const openingQ = useOpeningBalances();
+  /* R-1646: the licence-cost provision is the Balance Sheet's — read from the same P&L range it
+     uses (same query, so a visit to one page serves the other). */
+  const profitRange = retainedProfitRange(openingQ.data?.asOf ?? null, today, BOOKS_START);
+  const retainedQ = usePnL({ from: profitRange.from, to: profitRange.to }, openingQ.data !== undefined && profitRange.open);
+  const licenceProvision = openingQ.data === undefined ? null : !profitRange.open ? 0 : licenceProvisionOf(retainedQ.data);
 
   const tb = React.useMemo(() => {
-    if (!bsQ.data || !pnlQ.data || !itemsQ.data || openingQ.data === undefined) return null;
-    return buildTrialBalance({ bs: bsQ.data, pnl: pnlQ.data, items: itemsQ.data, opening: openingQ.data });
-  }, [bsQ.data, pnlQ.data, itemsQ.data, openingQ.data]);
+    if (!bsQ.data || !pnlQ.data || !itemsQ.data || openingQ.data === undefined || licenceProvision === null) return null;
+    return buildTrialBalance({ bs: bsQ.data, pnl: pnlQ.data, items: itemsQ.data, opening: openingQ.data, licenceProvision });
+  }, [bsQ.data, pnlQ.data, itemsQ.data, openingQ.data, licenceProvision]);
+  const estimatedLicence = tb?.rows.find((r) => r.head === LICENCE_ESTIMATE_HEAD)?.debit ?? 0;
 
-  const error = bsQ.error ?? pnlQ.error ?? itemsQ.error ?? openingQ.error;
+  const error = bsQ.error ?? pnlQ.error ?? itemsQ.error ?? openingQ.error ?? retainedQ.error;
+  const retryFailed = () => {
+    for (const q of [bsQ, pnlQ, itemsQ, openingQ, retainedQ]) if (q.error) void q.refetch();
+  };
 
   const exportCsv = () => {
     if (!tb) return;
@@ -56,7 +67,11 @@ export default function TrialBalancePage() {
             As of {formatDate(today)}. Balance-sheet heads are today&apos;s balances; income and expense heads are{" "}
             {tb?.fyLabel ?? "this FY"} to date. Same numbers as the{" "}
             <Link href="/accounting/balance-sheet" className="underline">Balance Sheet</Link> and{" "}
-            <Link href="/accounting/pnl" className="underline">P&amp;L</Link>.
+            <Link href="/accounting/pnl" className="underline">P&amp;L</Link> — the same profit.
+            {estimatedLicence > 0 && (
+              <> Includes {rupee(estimatedLicence)} of licence cost <b>estimated</b> from your wholesale rates (no vendor bill yet),
+                on its own line with a provision — the P&amp;L and Balance Sheet count it the same way.</>
+            )}
           </p>
         </div>
         <Button size="sm" onClick={exportCsv} disabled={!tb}>
@@ -65,11 +80,7 @@ export default function TrialBalancePage() {
       </div>
 
       {error ? (
-        <Card className="p-4 border-rose/40 bg-rose-soft/30">
-          <p role="alert" className="text-sm text-ink-2">
-            Could not build the Trial Balance: {(error as Error).message}
-          </p>
-        </Card>
+        <Card><LoadErrorInline what="The Trial Balance" error={error} onRetry={retryFailed} /></Card>
       ) : !tb ? (
         <div className="space-y-2">{[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
       ) : (

@@ -7,6 +7,8 @@
  * Income tax is tied to the financial year it was paid FOR.
  */
 
+import { fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
+
 export type TaxPaymentLike = {
   kind: "gst" | "advance_tax" | "self_assessment_tax";
   amount: number;
@@ -16,13 +18,12 @@ export type TaxPaymentLike = {
 
 /** 2026 → "2026-27" */
 export function fyLabel(startYear: number): string {
-  return `${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
+  return fyLabelOfYear(startYear);
 }
 
 /** Start year of the Indian financial year an ISO date (or YYYY-MM) falls in. */
 export function fyStartYearOf(isoDateOrPeriod: string): number {
-  const [y, m] = isoDateOrPeriod.split("-").map(Number);
-  return m >= 4 ? y : y - 1;
+  return fyStartYear(isoDateOrPeriod);
 }
 
 /** GST paid for return months in [fromPeriod, toPeriod] (YYYY-MM, inclusive). */

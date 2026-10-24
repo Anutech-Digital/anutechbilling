@@ -177,3 +177,17 @@ describe("the summary an owner actually reads", () => {
     expect(s.byCode.place_of_supply_unknown).toBe(2);
   });
 });
+
+describe("R-1736: an SEZ customer is IGST in any state", () => {
+  it("flags CGST + SGST on a Delhi SEZ invoice of a Delhi seller, and says why", () => {
+    const issues = auditInvoiceGst(invoice({ interState: false, gstTreatment: "sez_with_payment" }), { stateCode: "07" }, SELLER);
+    expect(codes(issues)).toContain("wrong_head");
+    expect(issues[0].headline).toMatch(/SEZ/);
+  });
+  it("stays quiet on IGST for a Delhi SEZ (not 'IGST inside your own state')", () => {
+    expect(auditInvoiceGst(invoice({ interState: true }), { stateCode: "07", gstTreatment: "sez_without_payment" }, SELLER)).toEqual([]);
+  });
+  it("the frozen invoice treatment wins over today's customer treatment", () => {
+    expect(auditInvoiceGst(invoice({ interState: false, gstTreatment: "registered_regular" }), { stateCode: "07", gstTreatment: "sez_with_payment" }, SELLER)).toEqual([]);
+  });
+});

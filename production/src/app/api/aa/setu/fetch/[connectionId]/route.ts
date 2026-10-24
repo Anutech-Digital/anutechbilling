@@ -7,34 +7,48 @@
  * the connection row. Returns { inserted, skipped_existing }.
  */
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { withRoute } from "@/lib/api/with-route";
+import { MONEY_RECORD_ROLES } from "@/lib/auth/roles";
 import { requestFiData, fetchFiData } from "@/lib/aa/setu";
+import { refuseWithoutMfa } from "@/lib/aa/require-mfa";
+import { istToday, toIstDate } from "@/lib/dates/ist";
 
 export const runtime = "nodejs";
 
-export async function POST(
-  _req: Request,
-  { params }: { params: Promise<{ connectionId: string }> },
-) {
-  const { connectionId } = await params;
-  const supabase = await createClient();
+/* R-732: a bank-statement pull is a money action — the roles that may record money (R-718).
+   Before this the route did not even check for a sign-in; RLS alone bounded it. */
+export const POST = withRoute({
+  route: "api/aa/setu/fetch/[connectionId]",
+  roles: MONEY_RECORD_ROLES,
+  roleHint: "Only owner / manager / accountant / billing can fetch bank data.",
+}, async ({ supabase, params, tenantId }) => {
+  /* R-879: bank statements need the second sign-in step too (lib/aa/require-mfa.ts). */
+  const mfa = await refuseWithoutMfa(supabase);
+  if (mfa) return mfa;
 
+  const connectionId = params.connectionId;
+
+  /* R-879: tenant filter stated, not left to RLS alone. */
   const { data: conn, error: connErr } = await supabase
     .from("bank_aa_connections")
     .select("*")
     .eq("id", connectionId)
-    .single();
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
   if (connErr || !conn) {
-    return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+    return NextResponse.json(
+      { ok: false, error: "This bank connection was not found in this workspace — refresh the Banking page and click 'Fetch' again." },
+      { status: 404 },
+    );
   }
   if (conn.status !== "active") {
     return NextResponse.json({ error: `Connection status is ${conn.status} — must be active` }, { status: 400 });
   }
 
   // Request + fetch
-  const today    = new Date().toISOString().slice(0, 10);
+  const today    = istToday();   // R-1653: IST day, not the UTC one
   const fromDate: string = conn.last_fetch_at
-    ? new Date(conn.last_fetch_at).toISOString().slice(0, 10)
+    ? toIstDate(conn.last_fetch_at)
     : (conn.fetch_window_from ?? today);
 
   const session = await requestFiData({
@@ -107,4 +121,4 @@ export async function POST(
     skipped_existing: fiData.transactions.length - inserted,
     total_in_window:  fiData.transactions.length,
   });
-}
+});

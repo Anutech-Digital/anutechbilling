@@ -17,6 +17,21 @@
 
 begin;
 
+-- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
+
 insert into public.tenants (id, name, email, state_code) values
   ('aaaaaaaa-0000-0000-0000-0000000000a4', 'UNREC TEST A', 'ur-a@example.in', '07'),
   ('bbbbbbbb-0000-0000-0000-0000000000b4', 'UNREC TEST B', 'ur-b@example.in', '07');
@@ -93,6 +108,11 @@ do $$ declare inv text := (select v from s where k = 'inv:aaaaaaaa-0000-0000-000
     raise exception 'FAIL: receipt not removed'; end if;
   if (select payment_status::text from public.quotes where id = (select v from s where k = 'q:aaaaaaaa-0000-0000-0000-0000000b7001')) <> 'none' then
     raise exception 'FAIL: quote not reset'; end if;
+  /* R-1566: the reversal note takes the sale's money back — it must not also leave that
+     money with the customer as credit (issue_credit_note_core p_settle = false). */
+  if exists (select 1 from public.customer_credits
+              where tenant_id = 'aaaaaaaa-0000-0000-0000-0000000000a4' and status = 'open') then
+    raise exception 'FAIL: undo-sale left open customer credit for money that was taken back'; end if;
 end $$;
 
 -- 2. plain un-reconcile keeps the sale

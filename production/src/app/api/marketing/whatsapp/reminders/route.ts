@@ -28,7 +28,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const OM = ["owner", "manager"] as const;
-const ROLE_HINT = "WhatsApp reminders sirf owner / manager badal sakte hain — unse kahiye.";
+const ROLE_HINT = "Only the owner or a manager can change WhatsApp reminders — ask them.";
 const LOG_LIMIT = 20;
 
 export const GET = withRoute({ route: "api/marketing/whatsapp/reminders", roles: OM, roleHint: ROLE_HINT }, async ({ tenantId, user }) => {
@@ -43,10 +43,10 @@ export const GET = withRoute({ route: "api/marketing/whatsapp/reminders", roles:
     resolveWhatsAppCreds(tenantId).catch(() => null),
     loadAutonomyPolicy(tenantId),
   ]);
-  dbFail(s.error, "WhatsApp reminder settings load nahi hui — page refresh kariye.");
-  dbFail(m.error, "Reminder templates load nahi hue — page refresh kariye.");
-  dbFail(t.error, "WhatsApp templates load nahi hue — page refresh kariye.");
-  dbFail(l.error, "Reminder log load nahi hua — page refresh kariye.");
+  dbFail(s.error, "Could not load WhatsApp reminder settings — refresh the page.");
+  dbFail(m.error, "Could not load reminder templates — refresh the page.");
+  dbFail(t.error, "Could not load WhatsApp templates — refresh the page.");
+  dbFail(l.error, "Could not load the reminder log — refresh the page.");
 
   const enabled = s.data?.enabled === true;
   const connected = Boolean(creds);
@@ -90,7 +90,7 @@ export const GET = withRoute({ route: "api/marketing/whatsapp/reminders", roles:
 });
 
 const switchSchema = z.object({
-  enabled: z.boolean({ message: "enabled (true / false) chahiye." }),
+  enabled: z.boolean({ message: "enabled (true / false) is required." }),
 });
 
 export const PATCH = withRoute(
@@ -100,21 +100,21 @@ export const PATCH = withRoute(
       { tenant_id: tenantId, enabled: input.enabled, updated_by: user.id, updated_at: new Date().toISOString() },
       { onConflict: "tenant_id" },
     );
-    dbFail(error, "Switch save nahi hua — page refresh karke dobara try kariye.");
+    dbFail(error, "Switch was not saved — refresh the page and try again.");
     return { enabled: input.enabled };
   },
 );
 
-const kindSchema = z.string({ message: "Reminder kind chahiye." })
-  .refine((k): k is ReminderKind => isReminderKind(k), "Ye reminder kind nahi hai — page refresh kariye.");
+const kindSchema = z.string({ message: "Reminder kind is required." })
+  .refine((k): k is ReminderKind => isReminderKind(k), "This is not a reminder kind — refresh the page.");
 
 const mappingSchema = z.object({
   kind: kindSchema,
-  template_name: z.string({ message: "Template ka naam likho." }).trim().toLowerCase().min(1, "Template ka naam likho."),
-  language: z.string().trim().min(2, "Language likho (jaise en).").max(10, "Language 10 akshar tak.").default("en"),
+  template_name: z.string({ message: "Enter the template name." }).trim().toLowerCase().min(1, "Enter the template name."),
+  language: z.string().trim().min(2, "Enter the language (e.g. en).").max(10, "Language can be up to 10 characters.").default("en"),
   param_map: z.array(z.enum(Object.keys(REMINDER_PARAM_FIELDS) as [keyof typeof REMINDER_PARAM_FIELDS, ...(keyof typeof REMINDER_PARAM_FIELDS)[]], {
-    message: "Har {{n}} ke liye list me se ek field chuno.",
-  })).max(20, "20 se zyada {{n}} nahi ho sakte."),
+    message: "Pick a field from the list for each {{n}}.",
+  })).max(20, "There can be at most 20 {{n}}."),
   enabled: z.boolean().default(true),
 });
 
@@ -126,7 +126,7 @@ export const PUT = withRoute(
        ek bhi kam/zyada parameter wala send reject karta hai, aur wo failure cron me dikhta. */
     const { data: known, error: kErr } = await db.from("whatsapp_templates").select("body")
       .eq("tenant_id", tenantId).eq("name", input.template_name).eq("language", input.language).maybeSingle();
-    dbFail(kErr, "Template check nahi hua — dobara try kariye.");
+    dbFail(kErr, "Could not check the template — try again.");
 
     const problem = mappingProblem(input.template_name, input.language, input.param_map, known?.body ?? null);
     if (problem) throw new RouteError(400, problem);
@@ -138,7 +138,7 @@ export const PUT = withRoute(
       },
       { onConflict: "tenant_id,kind" },
     );
-    dbFail(error, "Template mapping save nahi hui — dobara try kariye.");
+    dbFail(error, "Template mapping was not saved — try again.");
     return { kind: input.kind };
   },
 );
@@ -150,7 +150,7 @@ export const DELETE = withRoute(
   async ({ input, tenantId, user }) => {
     const { error } = await createAdminClientFor(user.id).from("whatsapp_reminder_templates")
       .delete().eq("tenant_id", tenantId).eq("kind", input.kind);
-    dbFail(error, "Mapping hata nahi paaye — dobara try kariye.");
+    dbFail(error, "Could not remove the mapping — try again.");
     return { kind: input.kind };
   },
 );

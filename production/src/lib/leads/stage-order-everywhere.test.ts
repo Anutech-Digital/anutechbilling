@@ -11,7 +11,6 @@ const read = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
 
 const SCREENS = [
   "src/app/(app)/dashboard/page.tsx",
-  "src/components/features/leads/leads-insight-band.tsx",
   "src/components/features/leads/add-lead-form.tsx",
   // R-290: the last private copies.
   "src/components/features/leads/leads-bulk-bar.tsx",

@@ -3,8 +3,8 @@
  *
  * Honest positioning during beta: free for first 10 paying resellers,
  * tier structure shown for transparency about what's coming. Prices
- * are aspirational targets aligned with the 90-day plan (₹15K MRR at
- * 10 customers = ~₹1,500/customer/month average).
+ * are the planned launch prices (R-1631: the internal revenue target
+ * behind them stays out of the page and its metadata).
  *
  * No paywall switches enabled in product yet — tier names + features
  * here are forward-looking. Update PROJECT_TRACKER + this page together
@@ -12,7 +12,7 @@
  */
 import type { Metadata } from "next";
 import { PublicTopBar, PublicFooter } from "../_components/public-shell";
-import { SLA } from "@/site/lib/config";
+import { SLA, DATA_LOCATION } from "@/site/lib/config";
 import {
   PricingHero,
   BetaBanner,
@@ -23,9 +23,9 @@ import {
 } from "../_components/pricing-sections";
 
 export const metadata: Metadata = {
-  title: "Pricing — ResellerOS",
+  title: "Pricing",
   description:
-    "Free during beta. Starter / Growth / Pro tiers launch once we hit ₹15K MRR. All features included today.",
+    "ResellerOS is free during beta for the first 10 resellers, personally onboarded. See the Starter, Growth and Pro plans in rupees (plus 18% GST) — every feature is included today.",
 };
 
 export default function PricingPage() {
@@ -130,7 +130,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "What happens if I cancel?",
-    a: "You keep access until the end of the billing cycle, then your tenant goes read-only for 90 days (download anything you need). After that, data is permanently deleted per our DPDP Act 2023 retention policy.",
+    a: "You keep access until the end of the billing cycle, then your tenant goes read-only for 90 days (download anything you need). After that, data is permanently deleted as set out in the retention section of our privacy policy.",
   },
   {
     q: "Do you have a free forever plan?",
@@ -138,6 +138,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Is my data secure?",
-    a: "Postgres with row-level security (you only see your tenant&rsquo;s data). Daily backups. Hosted on Google Cloud Mumbai (asia-south1) for India data residency. DPDP Act 2023 compliant. See our privacy policy for details.",
+    // R-1600: region from DATA_LOCATION (the true one); no "India data residency" / "DPDP compliant" claim.
+    a: `Postgres with row-level security (you only see your tenant&rsquo;s data). Daily backups. Hosted on ${DATA_LOCATION.label} — ${DATA_LOCATION.database} and ${DATA_LOCATION.app}. See our privacy policy for where your data is stored and your rights.`,
   },
 ];

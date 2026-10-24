@@ -14,6 +14,8 @@ import { FormField } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { isValidGstin } from "@/lib/utils";
+import { describeError } from "@/lib/errors/toast-error";
+import { checkNewPassword } from "@/lib/auth/password-rules";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { GoogleAuthButton } from "@/components/features/auth/google-button";
 import { ResendVerification } from "@/components/features/auth/resend-verification";
@@ -27,7 +29,11 @@ const schema = z.object({
   ),
   fullName: z.string().min(2, "Your name is required"),
   email: z.string().email("Enter a valid email"),
-  password: z.string().min(8, "At least 8 characters"),
+  /* R-736: the same rules the server now applies (lib/auth/password-rules.ts), shown here first. */
+  password: z.string().superRefine((v, ctx) => {
+    const problem = checkNewPassword(v);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem.message });
+  }),
 });
 type FormData = z.infer<typeof schema>;
 
@@ -101,7 +107,13 @@ export default function SignupPage() {
 
     if (!res.ok || json.error) {
       ts.reset();
-      toast.error(json.error ?? "Signup failed. Please try again.");
+      // R-1137: raw DB text from the API is translated (describeError); the API's own
+      // sentences pass through. The why + next step go in the description / button.
+      const d = describeError(json.error ? { message: json.error } : null, "Signup failed.");
+      toast.error(d.message, {
+        description: d.description ?? "Nothing was created. Check the details above and press Create account again — or sign in if you already have an account.",
+        action: { label: "Sign in instead", onClick: () => { window.location.href = "/login"; } },
+      });
       return;
     }
 
@@ -316,7 +328,7 @@ export default function SignupPage() {
         </Button>
 
         <p className="text-2xs text-ink-3 text-center leading-relaxed">
-          By signing up you agree to our{" "}
+          By signing up you agree to the ResellerOS{" "}
           {/* Were href="#" until 1 Oct 2026 (R-047). ResellerOS's own documents: a reseller
               signing up agrees to the software's terms, not the Anutech shop's. A new tab, so
               the half-filled form is kept. */}

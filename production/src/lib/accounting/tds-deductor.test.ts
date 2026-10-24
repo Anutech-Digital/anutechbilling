@@ -26,7 +26,7 @@ describe("tdsDecision", () => {
     expect(d.applies).toBe(false);
     expect(d.tds).toBe(0);
     expect(d.headroom).toBe(35000);
-    expect(d.reason).toMatch(/TDS zaroori nahi/);
+    expect(d.reason).toMatch(/TDS not required/);
   });
 
   it("194C: a single payment over ₹30,000 bites even when the year is under ₹1L", () => {
@@ -35,7 +35,7 @@ describe("tdsDecision", () => {
     expect(d.ratePct).toBe(2);
     expect(d.tds).toBe(620);
     expect(d.catchUpBase).toBe(0);
-    expect(d.reason).toMatch(/ek payment/);
+    expect(d.reason).toMatch(/single payment/);
   });
 
   it("194C: individual / HUF contractor is 1%", () => {
@@ -50,7 +50,7 @@ describe("tdsDecision", () => {
     expect(d.tds).toBe(2000);
     expect(d.catchUpBase).toBe(40000);
     expect(d.catchUpTds).toBe(4000);
-    expect(d.reason).toMatch(/Pehle ke ₹40,000/);
+    expect(d.reason).toMatch(/earlier ₹40,000/);
   });
 
   it("no PAN → s.206AA 20% (higher of the two), 194Q 5%", () => {

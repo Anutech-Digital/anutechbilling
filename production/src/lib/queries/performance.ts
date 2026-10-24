@@ -13,7 +13,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
+import type { Database } from "@/lib/supabase/database.types";
+import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import {
   tallyKudos, badgesFor, type BadgeDef, type KudosRow,
@@ -75,10 +78,10 @@ export interface PerfNote { title: string; detail: string }
 export function roleFocus(role: string): { label: string; hint: string } {
   switch (role) {
     case "sales":
-    case "sales_senior": return { label: "Deals won + revenue", hint: "Leads close karna + paisa laana" };
-    case "accountant":   return { label: "Payments collected", hint: "Receivables collect karna" };
-    case "support":      return { label: "Tasks on-time", hint: "Tickets/tasks time pe" };
-    default:             return { label: "Overall results", hint: "Revenue, deals, tasks — sab" };
+    case "sales_senior": return { label: "Deals won + revenue", hint: "Closing leads + bringing in revenue" };
+    case "accountant":   return { label: "Payments collected", hint: "Collecting receivables" };
+    case "support":      return { label: "Tasks on-time", hint: "Tickets/tasks on time" };
+    default:             return { label: "Overall results", hint: "Revenue, deals, tasks — all of it" };
   }
 }
 
@@ -111,6 +114,58 @@ export function weekWindow(now: Date = new Date()): { start: string; end: string
   };
 }
 
+/** A paged read as `{ data, error }` — for the one read whose error is an answer (kudos before 0231). */
+async function settle<T>(read: Promise<T[]>): Promise<{ data: T[] | null; error: unknown }> {
+  try { return { data: await read, error: null }; } catch (error) { return { data: null, error }; }
+}
+
+/**
+ * R-1588: every row behind the scores, paged past the gateway's 1000-row cap. A busy month
+ * has well over 1000 activity_log rows; read in one request, the activity count (and every
+ * other count here) silently stopped at the first 1000. Each read ends its order on `id`.
+ */
+export async function fetchPerformanceInputs(supabase: SupabaseClient<Database>, start: string, end: string) {
+  const [leads, quotes, payments, tasks, users, att, act, kudosR] = await Promise.all([
+    fetchAllRows((from, to) => supabase.from("leads").select("owner_id, value, stage, updated_at")
+      .eq("stage", "won").gte("updated_at", start).lt("updated_at", end)
+      .order("id", { ascending: true }).range(from, to)),
+    fetchAllRows((from, to) => supabase.from("quotes").select("owner_id, created_at")
+      .gte("created_at", start).lt("created_at", end)
+      .order("id", { ascending: true }).range(from, to)),
+    fetchAllRows((from, to) => supabase.from("payments").select("recorded_by, amount, received_at, status, quote_id")
+      .eq("status", "received").gte("received_at", start).lt("received_at", end)
+      .order("id", { ascending: true }).range(from, to)),
+    fetchAllRows((from, to) => supabase.from("tasks").select("owner_id, status, due_at, completed_at")
+      .eq("status", "done").gte("completed_at", start).lt("completed_at", end)
+      .order("id", { ascending: true }).range(from, to)),
+    fetchAllRows((from, to) => supabase.from("users").select("id, employee_id")
+      .order("id", { ascending: true }).range(from, to)),
+    fetchAllRows((from, to) => supabase.from("attendance").select("employee_id, work_date, check_in")
+      .gte("work_date", start).lt("work_date", end)
+      .order("id", { ascending: true }).range(from, to)),
+    fetchAllRows((from, to) => supabase.from("activity_log").select("user_id, created_at")
+      .gte("created_at", start).lt("created_at", end)
+      .order("id", { ascending: true }).range(from, to)),
+    // Peer kudos. Arrives with migration 0231 — before that this errors, so
+    // the result is checked rather than spread, and the page still renders.
+    settle(fetchAllRows((from, to) => supabase.from("task_kudos").select("user_id, awarded_by, created_at")
+      .gte("created_at", start).lt("created_at", end)
+      .order("id", { ascending: true }).range(from, to))),
+  ]);
+  // Renewal quotes for the Renewal Guardian badge. Looked up by the quotes this period's
+  // payments settle, NOT by date: a payment inside this week can settle a quote raised
+  // months ago. Only membership is read, so this is the same answer as "every renewal
+  // quote" — without reading (and being cut at 1000 of) all of them.
+  const renewalQuotes = await fetchAllRowsIn(payments.map((p) => p.quote_id), (ids, from, to) =>
+    supabase.from("quotes").select("id").eq("is_renewal", true).in("id", ids)
+      .order("id", { ascending: true }).range(from, to));
+  return {
+    leadsR: { data: leads }, quotesR: { data: quotes }, paymentsR: { data: payments },
+    tasksR: { data: tasks }, usersR: { data: users }, attR: { data: att }, actR: { data: act },
+    kudosR, renewalQuotesR: { data: renewalQuotes },
+  };
+}
+
 /**
  * Per-member outcome scores.
  *
@@ -121,36 +176,15 @@ export function usePerformance(period: string, scope: PerfScope = "month") {
   const membersQ = useTeamMembers();
   const members = membersQ.data ?? [];
 
-  return useQuery({
+  const q = useQuery({
     queryKey: ["performance", period, scope, members.map((m) => m.id).join(",")],
     enabled: members.length > 0,
     queryFn: async (): Promise<PerfRow[]> => {
       const supabase = createClient();
       const { start, end } = scope === "week" ? weekWindow() : monthWindow(period);
 
-      const [leadsR, quotesR, paymentsR, tasksR, usersR, attR, actR, kudosR, renewalQuotesR] = await Promise.all([
-        supabase.from("leads").select("owner_id, value, stage, updated_at")
-          .eq("stage", "won").gte("updated_at", start).lt("updated_at", end),
-        supabase.from("quotes").select("owner_id, created_at")
-          .gte("created_at", start).lt("created_at", end),
-        supabase.from("payments").select("recorded_by, amount, received_at, status, quote_id")
-          .eq("status", "received").gte("received_at", start).lt("received_at", end),
-        supabase.from("tasks").select("owner_id, status, due_at, completed_at")
-          .eq("status", "done").gte("completed_at", start).lt("completed_at", end),
-        supabase.from("users").select("id, employee_id"),
-        supabase.from("attendance").select("employee_id, work_date, check_in")
-          .gte("work_date", start).lt("work_date", end),
-        supabase.from("activity_log").select("user_id, created_at")
-          .gte("created_at", start).lt("created_at", end),
-        // Peer kudos. Arrives with migration 0231 — before that this errors, so
-        // the result is checked rather than spread, and the page still renders.
-        supabase.from("task_kudos").select("user_id, awarded_by, created_at")
-          .gte("created_at", start).lt("created_at", end),
-        // Renewal quotes for the Renewal Guardian badge. Fetched by flag, NOT
-        // by date: a payment inside this week can settle a quote raised months
-        // ago, so filtering the quotes by window would miss most renewals.
-        supabase.from("quotes").select("id").eq("is_renewal", true),
-      ]);
+      const { leadsR, quotesR, paymentsR, tasksR, usersR, attR, actR, kudosR, renewalQuotesR } =
+        await fetchPerformanceInputs(supabase, start, end);
 
       // user → employee, then present-days per user (reliability).
       const empOf = new Map<string, string | null>((usersR.data ?? []).map((u) => [u.id, u.employee_id]));
@@ -234,4 +268,18 @@ export function usePerformance(period: string, scope: PerfScope = "month") {
     },
     staleTime: 30_000,
   });
+
+  /* R-1807: the scores wait on the team list. While that list loads, or when it FAILS, the
+     score query is disabled — neither loading nor an error — so the pages said "No team
+     members yet". Both states are carried here; Try again re-reads whichever failed. */
+  return {
+    data: q.data,
+    isLoading: membersQ.isLoading || q.isLoading,
+    isError: membersQ.isError || q.isError,
+    error: membersQ.isError ? membersQ.error : q.error,
+    refetch: () => {
+      if (membersQ.isError) void membersQ.refetch();
+      else void q.refetch();
+    },
+  };
 }

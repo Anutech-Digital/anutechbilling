@@ -20,7 +20,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { cn } from "@/lib/utils";
+import { cn, rupee } from "@/lib/utils";
 import {
   BUDGET_CHANNELS, canApproveBudget, canAskBudget, canPay, channelLabel, paymentProblem,
 } from "@/lib/marketing-budget/budget";
@@ -44,7 +44,7 @@ const PAY_STATUS: Record<BudgetPayment["status"], { label: string; kind: Kind }>
   cancelled: { label: "Cancelled", kind: "muted" },
 };
 
-const rs = (n: number) => `₹${n.toLocaleString("en-IN")}`;
+const rs = (n: number) => rupee(n);
 const monthLabel = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-IN", { month: "long", year: "numeric", timeZone: "UTC" });
 const dayLabel = (iso: string | null) => (iso ? new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "—");
 const todayIso = () => new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);

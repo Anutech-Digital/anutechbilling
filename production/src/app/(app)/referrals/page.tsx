@@ -243,7 +243,7 @@ function PartnerLink({ name, phone, code, counts }: {
 }) {
   const origin = (process.env.NEXT_PUBLIC_APP_URL?.trim() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/+$/, "");
   const url = origin ? buildTrackingUrl({ origin, path: "/enquiry", channel: "referral", medium: "partner", campaign: code }) : "";
-  const msg = `Namaste ${name.split(" ")[0]}, ye aapka referral link hai. Jise bhi business email / Google Workspace / Microsoft 365 ya software chahiye, unhe ye link bhejiye — enquiry aapke naam se aayegi: ${url}`;
+  const msg = `Hello ${name.split(" ")[0]}, here is your referral link. Send it to anyone who needs business email / Google Workspace / Microsoft 365 or software — the enquiry will come in under your name: ${url}`;
   const digits = (phone ?? "").replace(/\D/g, "");
   const wa = digits ? `https://wa.me/${digits.length === 10 ? "91" + digits : digits}?text=${encodeURIComponent(msg)}` : null;
   return (
@@ -254,9 +254,9 @@ function PartnerLink({ name, phone, code, counts }: {
       </div>
       <div className="flex gap-2">
         <Button variant="outline" size="sm" icon="copy" disabled={!url} onClick={async () => {
-          try { await navigator.clipboard.writeText(url); toast.success("Link copy ho gaya"); } catch { toast.error("Copy nahi hua"); }
+          try { await navigator.clipboard.writeText(url); toast.success("Link copied"); } catch { toast.error("Could not copy"); }
         }}>Copy link</Button>
-        {wa && <a href={wa} target="_blank" rel="noopener noreferrer"><Button variant="ghost" size="sm" icon="whatsapp">WhatsApp par bhejo</Button></a>}
+        {wa && <a href={wa} target="_blank" rel="noopener noreferrer"><Button variant="ghost" size="sm" icon="whatsapp">Send on WhatsApp</Button></a>}
       </div>
     </div>
   );

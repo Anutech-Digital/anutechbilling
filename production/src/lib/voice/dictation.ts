@@ -85,17 +85,17 @@ function plainMessage(code: string): string {
     case "service-not-allowed":
       /* Sabse aam. Aur ise theek karne ka raasta app ke andar hai hi nahi — wo browser
          ki setting hai, isliye sirf "nahi hua" kehna dead-end hai (CLAUDE.md §24). */
-      return "Mic ki ijazat nahi mili. Browser ke address bar me mic wale icon se ijazat dijiye.";
+      return "Microphone permission was not given. Allow it from the mic icon in the browser's address bar.";
     case "no-speech":
-      return "Kuch sunayi nahi diya. Dobara boliye.";
+      return "Didn't hear anything. Please speak again.";
     case "audio-capture":
-      return "Mic nahi mila. Dekh lijiye ki koi mic juda hua hai.";
+      return "No microphone found. Check that a mic is connected.";
     case "network":
-      return "Aawaz pehchanne ke liye internet chahiye — connection nahi mila.";
+      return "Voice typing needs internet — no connection found.";
     case "aborted":
       /* User ne khud roka. Ye khabar hai hi nahi. */
       return "";
     default:
-      return "Aawaz pehchani nahi ja saki. Type karke likh dijiye.";
+      return "Could not recognise your voice. Please type it instead.";
   }
 }

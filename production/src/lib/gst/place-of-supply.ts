@@ -1,5 +1,20 @@
 import { resolveStateCode } from "./gstin-state";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
+import type { CustomerGstTreatment } from "./customer-gst-treatment";
+
+/**
+ * R-1736 — THE one tax rule a customer's GST treatment adds: a supply to an SEZ unit or
+ * developer is INTER-STATE whatever the two states are (IGST Act §7(5)(b)), so it is IGST
+ * even when the SEZ sits in the seller's own state. Every other treatment keeps the state
+ * comparison. (Zero-rating SEZ-without-payment / exports under an LUT is Hitesh's pending
+ * decision — LUT_ZERO_RATING_PENDING in customer-gst-treatment.ts.)
+ *
+ * The SQL side applies the same rule in tg_invoice_snapshot_parties (migration
+ * ..._r1736_customer_gst_treatment), so every invoice path agrees with this.
+ */
+export function treatmentIsAlwaysInterState(treatment: CustomerGstTreatment | string | null | undefined): boolean {
+  return treatment === "sez_with_payment" || treatment === "sez_without_payment";
+}
 
 /**
  * Place-of-supply → GST head (CGST+SGST vs IGST)
@@ -39,8 +54,9 @@ import { GST_STATE_BY_CODE } from "@/lib/utils";
 export function isInterStateSupply(
   customerStateCode: string | null | undefined,
   sellerStateCode: string | null | undefined,
-  gstins?: { customerGstin?: string | null; sellerGstin?: string | null },
+  gstins?: { customerGstin?: string | null; sellerGstin?: string | null; treatment?: CustomerGstTreatment | string | null },
 ): boolean {
+  if (treatmentIsAlwaysInterState(gstins?.treatment)) return true;
   const buyer  = resolveStateCode({ stateCode: customerStateCode, gstin: gstins?.customerGstin });
   const seller = resolveStateCode({ stateCode: sellerStateCode,   gstin: gstins?.sellerGstin });
   // Compare numerically so "7" and "07" are one state — an entered code is
@@ -173,12 +189,14 @@ export function supplyHead(a: {
   isExport: boolean;
   buyerStateCode: string | null | undefined;
   sellerStateCode: string | null | undefined;
+  /** R-1736: an SEZ buyer is inter-state even in the seller's state. */
+  treatment?: CustomerGstTreatment | string | null;
 }): SupplyHead {
   if (a.isExport) return { kind: "export", known: true, interState: false };
   const seller = (a.sellerStateCode ?? "").trim();
   if (!seller) return { kind: "seller_state_missing", known: false, interState: false };
   const buyer = (a.buyerStateCode ?? "").trim();
   if (!buyer) return { kind: "buyer_state_missing", known: false, interState: false };
-  const inter = Number(buyer) !== Number(seller);
+  const inter = treatmentIsAlwaysInterState(a.treatment) || Number(buyer) !== Number(seller);
   return { kind: inter ? "inter_state" : "intra_state", known: true, interState: inter };
 }

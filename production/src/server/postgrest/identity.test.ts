@@ -23,7 +23,14 @@ describe("who a gateway request runs as", () => {
 
   test("a valid signed-in token → that user", () => {
     expect(identityFromHeaders(bearer(sign({ role: "authenticated", sub: USER })), { allowService: false }))
-      .toEqual({ mode: "user", userId: USER });
+      .toEqual({ mode: "user", userId: USER, aal: "aal1" });
+  });
+
+  test("the aal claim travels with the identity (R-731): aal2 only when the token says so", () => {
+    expect(identityFromHeaders(bearer(sign({ role: "authenticated", sub: USER, aal: "aal2" })), { allowService: false }))
+      .toEqual({ mode: "user", userId: USER, aal: "aal2" });
+    expect(identityFromHeaders(bearer(sign({ role: "authenticated", sub: USER, aal: "AAL2" })), { allowService: false }))
+      .toEqual({ mode: "user", userId: USER, aal: "aal1" });
   });
 
   test("the anon key → anon", () => {

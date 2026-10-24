@@ -121,7 +121,10 @@ export function customerCreditEligibility(
   customer: { name: string; allow_pay_later?: boolean | null } | null | undefined,
 ): CreditEligibility {
   if (!customer) {
-    return { ok: false, reason: "This quote has no customer yet. Accept it so the customer is created, then activate." };
+    /* R-1706: this menu only shows on an ACCEPTED quote, so "Accept it" was never the next step.
+       Mark accepted now creates the customer for a prospect; a quote with none was accepted before
+       that. Invoice now (accepts again → customer) or Record payment both create it. */
+    return { ok: false, reason: "This quote has no customer record yet, so pay later cannot be switched on. Use Invoice now or Record payment on this quote — either creates the customer." };
   }
   if (customer.allow_pay_later === false) {
     return {

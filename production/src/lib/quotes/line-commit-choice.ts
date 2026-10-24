@@ -7,7 +7,7 @@
  * A custom "Data migration" line on Q-FBB9-27-0013 read "Annual (1-yr)" while saved as
  * one-off. The select now has "One-time" and shows what is saved.
  */
-import type { LineCommitment } from "@/lib/supabase/database.types";
+import type { LineCommitment, QuoteLineItem } from "@/lib/supabase/database.types";
 
 export type CommitChoice = "one_time" | "monthly" | "annual";
 
@@ -28,4 +28,21 @@ export function commitmentForChoice(choice: string): LineCommitment | null {
   if (choice === "monthly") return "monthly";
   if (choice === "annual") return "annual_yearly";
   return null;
+}
+
+/**
+ * R-1688 (19 Oct 2026): the lines as the builder SAVES them — every line with no commitment (the
+ * select's "One-time") carries `one_time: true`, every line with a term carries no marker.
+ *
+ * A missing commitment alone is ambiguous in the database: older annual lines can lack one, so
+ * "Invoice now" and "pay later" filed a missing commitment as Annual (Q-F588-27-0024 filed its
+ * "T-M5 Email migration (one-time)" line as a ₹417-MRR subscription). The marker is what
+ * quote_line_is_subscription() reads to never file it. Prices are untouched (R-1668: × qty).
+ * Returns new objects; the caller's array is not changed.
+ */
+export function markOneTimeLines(lines: readonly QuoteLineItem[]): QuoteLineItem[] {
+  return lines.map((l) => {
+    const { one_time: _marker, ...rest } = l;
+    return rest.commitment ? rest : { ...rest, one_time: true };
+  });
 }

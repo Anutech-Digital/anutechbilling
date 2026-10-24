@@ -9,9 +9,13 @@
 import Link from "@/site/components/ui/SiteLink";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { rupee, cycleLabel, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
+import { rupee, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
+import { lineRenewalText } from "@/site/lib/renewal-line";
 import { DomainYears } from "@/site/components/cart/DomainYears";
+import { BundleNote, LinePrice } from "@/site/components/cart/LinePrice";
+import { PriceChangeNotice } from "@/site/components/cart/PriceChangeNotice";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 export default function CartPage() {
   const cart = useCart();
@@ -21,6 +25,8 @@ export default function CartPage() {
   const code = cart.coupon.trim().toUpperCase();
   // R-329: checked on the server — the code table is not in this page's JavaScript.
   const couponValid = cart.couponStatus === "valid";
+
+  if (!cart.loaded) return <CartLoading title="Your cart" />;
 
   if (cart.lines.length === 0) {
     return (
@@ -41,19 +47,22 @@ export default function CartPage() {
       <div className="wrap" style={{ display: "grid", gridTemplateColumns: "1.5fr .8fr", gap: 40, alignItems: "start" }} data-grid>
         <div>
           <h1 className="h1-narrow" style={{ marginBottom: 24 }}>Your cart</h1>
-          {cart.lines.map((l) => (
+          {/* R-1797: a saved line moved to today's price — say so, once, above the lines. */}
+          <PriceChangeNotice changes={cart.priceChanges} />
+          {t.priced.map((p) => { const l = p.line; return (
             <div key={l.key} style={{ display: "flex", gap: 16, padding: "18px 0", borderBottom: "1px solid var(--border-hairline)", flexWrap: "wrap" }}>
               <div style={{ flex: "1 1 240px" }}>
                 <div style={{ fontSize: 16, fontWeight: 700 }}>{l.label}</div>
                 <div className="meta" style={{ margin: "2px 0" }}>{l.detail}</div>
+                <BundleNote p={p} />
                 {!isTrialLine(l) && (
                   (l.years ?? 1) > 1
                     ? <div className="meta">{rupee(l.unitPrice)} for {l.years} years</div>
                     : <div className="meta">{l.qty} × {rupee(l.unitPrice)} per {l.unit}</div>
                 )}
-                <DomainYears line={l} />
+                <DomainYears line={l} firstYearFree={p.freeNote !== null} />
                 <div style={{ fontSize: 13, marginTop: 2, color: l.cycle === "monthly" ? "var(--primary)" : "var(--text-muted)" }}>
-                  {isTrialLine(l) ? `Free for 15 days · one trial per customer` : (l.years ?? 1) > 1 ? `Renews after ${l.years} years, then yearly` : cycleLabel(l.cycle)}
+                  {isTrialLine(l) ? `Free for ${HOSTING_TRIAL_DAYS} days · one trial per customer` : lineRenewalText(l, cart.domainRenewals ?? {})}
                 </div>
               </div>
               {/* Every line shows the quantity control; a single-unit line shows it LOCKED
@@ -72,8 +81,8 @@ export default function CartPage() {
                   </span>
                 );
               })()}
-              <div style={{ alignSelf: "center", fontSize: 17, fontWeight: 700, minWidth: 90, textAlign: "right" }}>
-                {rupee(l.unitPrice * l.qty)}
+              <div style={{ alignSelf: "center", fontWeight: 700, minWidth: 90, textAlign: "right" }}>
+                <LinePrice p={p} size={17} />
               </div>
               <button
                 onClick={() => cart.remove(l.key)}
@@ -82,7 +91,7 @@ export default function CartPage() {
                 Remove
               </button>
             </div>
-          ))}
+          ); })}
         </div>
 
         {/* Sticky, quote page ke estimate jaisa — lambi cart me total hamesha dikhe. */}
@@ -132,6 +141,18 @@ export default function CartPage() {
             Checkout
           </button>
         </aside>
+      </div>
+    </section>
+  );
+}
+
+/** R-1502: shown for the moment before the saved cart is read — never "Nothing in it yet". */
+function CartLoading({ title }: { title: string }) {
+  return (
+    <section className="section rise">
+      <div className="wrap" style={{ maxWidth: 720 }}>
+        <h1 className="h1-narrow" style={{ marginBottom: 24 }}>{title}</h1>
+        <p className="body-lg" role="status" style={{ color: "var(--text-muted)" }}>Loading your cart…</p>
       </div>
     </section>
   );

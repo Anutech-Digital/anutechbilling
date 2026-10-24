@@ -195,7 +195,7 @@ describe("boundaries", () => {
   test("the token minted after an Auth.js sign-in is the same user to the gateway AND the real PostgREST", async () => {
     const u = await newUser("mint");
     const { token } = mintSupabaseJwt({ userId: u.id, email: u.email, aal: "aal1" });
-    expect(identityFromHeaders(new Headers({ authorization: `Bearer ${token}` }), { allowService: false })).toEqual({ mode: "user", userId: u.id });
+    expect(identityFromHeaders(new Headers({ authorization: `Bearer ${token}` }), { allowService: false })).toEqual({ mode: "user", userId: u.id, aal: "aal1" }); // R-731: level travels with the identity
     const r = await fetch(`${process.env.POSTGREST_URL}/rpc/current_user_id`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}" });
     expect(await r.json()).toBe(u.id);
   });

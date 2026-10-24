@@ -11,6 +11,21 @@ export function invoiceHref(invoiceId: string): `/invoices/${string}` {
 }
 
 /**
+ * R-1640: where "New invoice" goes — the direct-invoice builder (the quote builder in invoice
+ * mode), the same place Ctrl+K "Create invoice" opens. Never the quotes list.
+ */
+export const NEW_INVOICE_HREF = "/quotes/new?invoice=1" as const;
+
+/**
+ * R-1640: the invoice generate_invoice just raised. Its number came back, so "Open invoice"
+ * opens that invoice; only a missing number falls back to the list.
+ */
+export function raisedInvoiceHref(invoiceId: string | null | undefined): `/invoices/${string}` | "/invoices" {
+  const id = invoiceId?.trim();
+  return id ? invoiceHref(id) : "/invoices";
+}
+
+/**
  * The old deep link was `/invoices?open=<id>`; links of that shape are already in
  * WhatsApp messages, emails, the command palette, quotes and payments. The list page sends
  * them here. Returns null when there is nothing to redirect (no or blank `open`).

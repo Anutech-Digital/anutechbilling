@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { describeError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { rupee } from "@/lib/utils";
 import {
@@ -25,6 +26,12 @@ const SOURCE_LABEL: Record<CostFillRow["source"], string> = {
   catalog: "From catalogue",
   missing: "Still missing",
 };
+
+/** §24: the RPC's owner-only guard shows as written; database plumbing becomes plain words + next step. */
+function errorText(err: unknown): string {
+  const d = describeError(err);
+  return d.description ? `${d.message} ${d.description}` : d.message;
+}
 
 export function FillCostsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const qc = useQueryClient();
@@ -64,7 +71,7 @@ export function FillCostsDialog({ open, onOpenChange }: { open: boolean; onOpenC
         {preview.isPending ? (
           <p className="text-[13px] text-ink-3">Working out what can be filled…</p>
         ) : preview.isError ? (
-          <p className="text-[13px] text-danger">{(preview.error as Error).message}</p>
+          <p role="alert" className="text-[13px] text-danger">{errorText(preview.error)}</p>
         ) : rows.length === 0 ? (
           <p className="text-[13px] text-ink-2">Every invoice line already has a cost.</p>
         ) : (

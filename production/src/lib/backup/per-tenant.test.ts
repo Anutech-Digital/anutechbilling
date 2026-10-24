@@ -177,6 +177,6 @@ describe("migration abhi nahi lagi — purane raaste par", () => {
 
   it("tenants hi padh na paye → throw (route 500 deta hai, chup nahi)", async () => {
     const { d } = deps({ listTenants: async () => ({ ok: false, message: "permission denied" }) });
-    await expect(runPerTenantBackup(d)).rejects.toThrow(/tenants padhe nahi/);
+    await expect(runPerTenantBackup(d)).rejects.toThrow(/could not read tenants/);
   });
 });

@@ -290,14 +290,14 @@ function AddReimbursementDialog({ onClose }: { onClose: () => void }) {
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {/* Who paid — employee picker with free-text fallback for non-staff. */}
-            <FormField htmlFor="reimbursements-kisne-pay-kiya" label="Kisne pay kiya" required>
+            <FormField htmlFor="reimbursements-kisne-pay-kiya" label="Paid by" required>
               <div className="relative">
                 <Input id="reimbursements-kisne-pay-kiya"
                   value={person}
                   onChange={(e) => { setPerson(e.target.value); setEmployeeId(null); setNameOpen(true); }}
                   onFocus={() => setNameOpen(true)}
                   onBlur={() => setTimeout(() => setNameOpen(false), 130)}
-                  placeholder={employees.length ? "Employee chuno ya naam likho" : "e.g. Ramesh"}
+                  placeholder={employees.length ? "Select an employee or type a name" : "e.g. Ramesh"}
                   autoFocus
                 />
                 {nameOpen && employees.length > 0 && (() => {
@@ -322,14 +322,14 @@ function AddReimbursementDialog({ onClose }: { onClose: () => void }) {
                 })()}
               </div>
               {employeeId
-                ? <p className="mt-1 text-xs text-emerald">✓ Employee — iski reimbursement track hogi</p>
-                : person.trim() ? <p className="mt-1 text-xs text-ink-3">Non-employee (director / dost ka card) — bhi theek hai</p> : null}
+                ? <p className="mt-1 text-xs text-emerald">✓ Employee — this reimbursement will be tracked</p>
+                : person.trim() ? <p className="mt-1 text-xs text-ink-3">Non-employee (director / a friend's card) — that is fine too</p> : null}
             </FormField>
             <FormField htmlFor="reimbursements-date" label="Date">
               <Input id="reimbursements-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </FormField>
           </div>
-          <FormField htmlFor="reimbursements-kis-cheez-ke-liye" label="Kis cheez ke liye" required>
+          <FormField htmlFor="reimbursements-kis-cheez-ke-liye" label="Purpose" required>
             <Input id="reimbursements-kis-cheez-ke-liye" value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. Client visit cab, office stationery" />
           </FormField>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

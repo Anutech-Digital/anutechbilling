@@ -275,6 +275,10 @@ export const ROUTE_DENY: Partial<Record<UserRole, string[]>> = {
     "/accounting/payroll", "/accounting/salary-register", "/accounting/loans",
     "/accounting/employees", "/accounting/attendance", "/accounting/leave",
     "/accounting/esi-register",
+    /* R-1127 (16 Oct 2026): same lie as the Balance Sheet — these read salary_payments /
+       employees, which RLS hides from billing, so salary + PF/ESI/TDS rows showed Rs 0.
+       Pardeep chose to take them away (menu rows are SALARY_ROLES too). */
+    "/accounting/trial-balance", "/accounting/close", "/accounting/cash-flow",
   ],
   /* R-544: Loans given is owner + accountant only; /accounting admits the manager by prefix. */
   manager: ["/accounting/loans-given"],
@@ -289,11 +293,44 @@ export const ROUTE_DENY: Partial<Record<UserRole, string[]>> = {
   ],
 };
 
-/** The route guard: allowed by the nav (prefix) and not denied for this role. */
+/**
+ * R-1542 (18 Oct 2026): app pages that sit under NO menu row, and the roles that may open
+ * them by URL. Every other page is decided by its menu row (nav-route-guard.test.ts fails
+ * when an (app) page is under neither). Kept to what each page did before: the protected
+ * ones here bounced every role but owner + manager; /platform, /products and /aa were not
+ * in middleware's list at all, so nothing gated them. /vendor-portal was here until R-1545
+ * (19 Oct 2026): its "not built yet" page is gone and next.config.mjs redirects the URL to
+ * /accounting/vendors.
+ */
+const OM_ONLY: UserRole[] = ["owner", "manager"];
+export const OFF_MENU_ROLES: Readonly<Record<string, UserRole[]>> = {
+  "/mobile": OM_ONLY,
+  "/setup": OM_ONLY,
+  "/attendance/kiosk": OM_ONLY,         // the office tablet runs signed in as the owner
+  "/platform": OM_ONLY,                 // founder-only; the API refuses anyone else anyway
+  "/products": OM_ONLY,                 // redirects to /items (Products row: owner + manager)
+  /* Mock bank-consent screen of the Banking statement pull — Banking's own roles. */
+  "/aa": ["owner", "manager", "billing", "accountant"],
+};
+
+/**
+ * The route guard — the SAME rule as the menu (R-1542, 18 Oct 2026). The most specific row
+ * whose href is `pathname` or a parent of it decides: the role may open the page only if
+ * that row is in its menu (filterNavForRole). Before, any row the role could see admitted
+ * every path under it, so the Companies row (billing/accountant) admitted Parent Accounts
+ * (an owner + manager child row), /reports admitted the Profit report, /settings admitted
+ * owner-only Backup. ROUTE_DENY still applies on top (sub-pages that are not menu rows).
+ */
 export function isRouteAllowed(role: UserRole, pathname: string, opts: NavFilterOpts = {}): boolean {
   const under = (a: string) => pathname === a || pathname.startsWith(a + "/");
   if ((ROUTE_DENY[role] ?? []).some(under)) return false;
-  return allowedRoutesForRole(role, opts).some(under);
+  const rows = flattenNav(APP_NAV).map((e) => e.item.href).filter(under);
+  const off = Object.keys(OFF_MENU_ROLES).filter(under);
+  const best = [...rows, ...off].sort((a, b) => b.length - a.length)[0];
+  if (!best) return false;
+  if (rows.includes(best)) return allowedRoutesForRole(role, opts).includes(best);
+  const visRole: UserRole = role === "sales_senior" ? "sales" : role;
+  return OFF_MENU_ROLES[best].includes(visRole);
 }
 
 /** Where each role lands by default (after login + on disallowed-route redirect). */
@@ -413,11 +450,11 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/attendance/kiosk": "Runs on the office kiosk device, not in a person's menu",
   "/platform": "Founder-only cross-tenant view; any other owner would be refused by the server",
   "/aa/simulate-approval": "Mock consent screen for the bank-statement (Account Aggregator) test flow",
-  "/vendor-portal": "Not built yet — the page says so",
   /* R-384 (7 Oct 2026, owner decision): one menu row "Products" (/items) instead of three. */
   "/items/subscriptions": "Subscriptions tab of Products (/items) — the menu row opens the page, the tab links here",
   "/items/products": "One-time products tab of Products (/items) — the menu row opens the page, the tab links here",
   "/products": "Redirects to Products (/items) for people who type the menu name as a URL (R-490)",
+  "/settings/company": "redirect to /settings (Company tab), R-1670",
 };
 
 export const APP_NAV: NavSection[] = [
@@ -437,6 +474,9 @@ export const APP_NAV: NavSection[] = [
       { id: "whatsapp",  href: "/whatsapp",        label: "WhatsApp Inbox",      icon: "whatsapp", roles: ["owner", "manager", "billing", "support", "delivery"] },
       { id: "support",   href: "/support",         label: "Support Desk",        icon: "ticket",   roles: ["owner", "manager", "billing", "support", "delivery"] },
       { id: "provisioning", href: "/provisioning", label: "Activation Queue", icon: "package", roles: ["owner", "manager", "support", "delivery"], hint: "Seats a customer has paid for that nobody has turned on yet." },
+      /* R-1516: a daily queue (who owes money, whom to chase today), shown in the Billing app (nav-apps.ts).
+         Sales sees only its own customers' money (RLS). Bill already holds 8 rows, the cap. */
+      { id: "collections", href: "/collections", label: "Payment Follow-up", icon: "phone", roles: [...SALES_READ, "sales"], crumbSection: "Billing", hint: "Who owes money, promises to pay, today's follow-ups" },
     ],
   },
   {
@@ -485,9 +525,9 @@ export const APP_NAV: NavSection[] = [
           { id: "marketing-roas",  href: "/marketing/reports", label: "ROAS & CAC",     icon: "chart",  roles: OMK, group: "Plan & spend" },
           { id: "campaigns",       href: "/campaigns",         label: "Email campaigns", icon: "mail",    roles: OM, group: "Campaigns" },
           { id: "email-templates", href: "/marketing/templates", label: "Email templates", icon: "file", roles: OM, group: "Campaigns" },
-          { id: "wa-broadcast",    href: "/marketing/whatsapp",  label: "WhatsApp broadcast", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Approved template se leads ko ek saath message" },
+          { id: "wa-broadcast",    href: "/marketing/whatsapp",  label: "WhatsApp broadcast", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Message many leads at once with an approved template" },
           /* S28: renewal / invoice reminders on WhatsApp — switch, template per kind, send log. */
-          { id: "wa-reminders",    href: "/marketing/whatsapp/reminders", label: "WhatsApp reminders", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Renewal aur invoice reminder WhatsApp par — ON/OFF, template, log" },
+          { id: "wa-reminders",    href: "/marketing/whatsapp/reminders", label: "WhatsApp reminders", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Renewal and invoice reminders on WhatsApp — ON/OFF, template, log" },
           { id: "ad-platforms",    href: "/marketing/ads",      label: "Ad accounts (live)", icon: "trending_up", roles: OMK, group: "Ads & tracking", hint: "Google Ads + Facebook spend by campaign, daily from Google/Meta" },
           { id: "ad-landing-pages", href: "/marketing/landing-pages", label: "Ads landing pages", icon: "layout", roles: OMK, group: "Ads & tracking", hint: "Ad final URL, phone preview, leads received" },
           { id: "marketing-links", href: "/marketing/links",   label: "Tracking links", icon: "globe",  roles: OMK, group: "Ads & tracking", hint: "A link per ad or post — the lead source is set automatically" },
@@ -621,7 +661,7 @@ export const APP_NAV: NavSection[] = [
          (in Reports) answers "who owes me, across everyone". The owner must see it — he is
          exactly the person a customer asks for a statement (nav.test.ts). */
       { id: "ledger",              href: "/accounting/ledger",        label: "Ledger (Khata)",      icon: "file", roles: BOOKS },
-      { id: "acc-close",           href: "/accounting/close",         label: "Month-end Close",     icon: "check", roles: BOOKS },
+      { id: "acc-close",           href: "/accounting/close",         label: "Month-end Close",     icon: "check", roles: SALARY_ROLES },
       {
         /* THE REPORTS DIRECTORY (S30). Every report is one click from this page, grouped.
            GST Reports, TDS Receivable and Customer Aging were once missing from the
@@ -631,9 +671,9 @@ export const APP_NAV: NavSection[] = [
         directory: [
           { id: "pnl",                 href: "/accounting/pnl",           label: "P&L Report",          icon: "trending_up", roles: BOOKS, group: "Financial statements" },
           { id: "balance-sheet",       href: "/accounting/balance-sheet", label: "Balance Sheet",       icon: "layout", roles: SALARY_ROLES, group: "Financial statements" },
-          { id: "cash-flow",           href: "/accounting/cash-flow",     label: "Cash Flow",           icon: "rupee", roles: BOOKS, group: "Financial statements" },
+          { id: "cash-flow",           href: "/accounting/cash-flow",     label: "Cash Flow",           icon: "rupee", roles: SALARY_ROLES, group: "Financial statements" },
           /* S33: CA sabse pehle yahi do maangta hai. */
-          { id: "trial-balance",       href: "/accounting/trial-balance", label: "Trial Balance",       icon: "file", roles: BOOKS, group: "Financial statements" },
+          { id: "trial-balance",       href: "/accounting/trial-balance", label: "Trial Balance",       icon: "file", roles: SALARY_ROLES, group: "Financial statements" },
           { id: "day-book",            href: "/accounting/day-book",      label: "Day Book",            icon: "calendar", roles: BOOKS, group: "Financial statements" },
           { id: "profitability",       href: "/accounting/profitability", label: "Customer Profitability", icon: "trending_up", roles: BOOKS, group: "Business" },
           { id: "profit-by-product",   href: "/reports/profit",           label: "Profit by Product",   icon: "chart", roles: OM, group: "Business" },
@@ -678,7 +718,7 @@ export const APP_NAV: NavSection[] = [
           { id: "assessments",     href: "/assessments",                label: "Assessments",            icon: "check", roles: OM },
           /* Apprentice Academy (R-149). Owner / manager in phase 1 (they are the mentors); the
              sidebar is at its row cap, so it sits here rather than as a new top-level row. */
-          { id: "academy",         href: "/academy",                    label: "Apprentice Academy",     icon: "award", roles: OM, hint: "Apprentices, training, tasks aur review" },
+          { id: "academy",         href: "/academy",                    label: "Apprentice Academy",     icon: "award", roles: OM, hint: "Apprentices, training, tasks and review" },
         ],
       },
       {
@@ -726,7 +766,7 @@ export const APP_NAV: NavSection[] = [
              UX / UI Insights since 5 Oct 2026 (R-158): it sat under "Help & Tutorial" at the
              bottom of the menu and Pardeep could not find it; the sidebar is at its row cap.
              Owner/manager: reports quote whatever the reporter typed, often a customer's name. */
-          { id: "feedback",  href: "/admin/feedback",   label: "Bug Reports & AI Fixes", icon: "bug", roles: OM, hint: "Har report — Report Bug aur AI Help se; sab tenants ek saath" },
+          { id: "feedback",  href: "/admin/feedback",   label: "Bug Reports & AI Fixes", icon: "bug", roles: OM, hint: "Every report — from Report Bug and AI Help; all tenants together" },
           /* R-263: the real numbers against the targets (first invoice, bug fix time, open bugs,
              money bugs). Next to Bug Reports — the reports are where its numbers come from. */
           { id: "quality",   href: "/quality",          label: "Quality Score",    icon: "target", roles: OM, hint: "Real numbers against our targets — first invoice, bug fixes, open bugs" },

@@ -32,8 +32,10 @@ describe("password-signup invite ko token se pehchanta hai, email se nahi", () =
     expect(guard).toBeLessThan(createUser);
   });
 
-  it("accepted_at ka update bhi token se scope hota hai", () => {
-    expect(signup).toMatch(/update\(\{ accepted_at[^}]*\}\)\s*\n?\s*\.eq\("token", inviteToken\)/);
+  it("accept bhi token se scope hota hai — R-733 se ek atomic RPC me", () => {
+    // R-733: accepted_at + users row ek transaction me (accept_team_invite), token ke saath.
+    expect(signup).toMatch(/rpc\("accept_team_invite",\s*\{[^}]*p_token:\s*inviteToken/);
+    expect(signup).not.toMatch(/update\(\{ accepted_at/);
   });
 
   it("invite-email me token wala signup-link jata hai", () => {

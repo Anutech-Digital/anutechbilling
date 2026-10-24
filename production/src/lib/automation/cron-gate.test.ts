@@ -126,6 +126,43 @@ describe("backup is ON by default (SAFETY_JOBS_DEFAULT_ON)", () => {
   });
 });
 
+describe("R-1552: a request without the cron bearer never reaches the route", () => {
+  const bare = (auth?: string) => new NextRequest("http://localhost/api/cron/invoice-dunning", auth ? { headers: { authorization: auth } } : {});
+
+  it("no bearer → 401 from the gate, route not called, nothing read or recorded", async () => {
+    const handler = vi.fn(async () => NextResponse.json({ ok: true }));
+    const res = await gatedCron("invoice-dunning", handler)(bare());
+    expect(res.status).toBe(401);
+    expect(handler).not.toHaveBeenCalled();
+    expect(h.cronTenants).not.toHaveBeenCalled();
+    expect(h.recordRun).not.toHaveBeenCalled();
+  });
+  it("wrong bearer → 401, route not called", async () => {
+    const handler = vi.fn(async () => NextResponse.json({ ok: true }));
+    expect((await gatedCron("invoice-dunning", handler)(bare("Bearer nope"))).status).toBe(401);
+    expect(handler).not.toHaveBeenCalled();
+  });
+  it("CRON_SECRET unset → 503 (fail closed), route not called", async () => {
+    delete process.env.CRON_SECRET;
+    const handler = vi.fn(async () => NextResponse.json({ ok: true }));
+    expect((await gatedCron("invoice-dunning", handler)(bare("Bearer "))).status).toBe(503);
+    expect(handler).not.toHaveBeenCalled();
+  });
+  it("withoutBearer: called inside a pass that allows NO company", async () => {
+    const handler = vi.fn(async () => NextResponse.json({ ok: true }));
+    const seen: unknown[] = [];
+    const own = vi.fn(async () => {
+      seen.push({ a: cronTenantAllowed(A), b: cronTenantAllowed(B), run: currentCronRun()?.job });
+      return NextResponse.json({ preview: true });
+    });
+    const res = await gatedCron("health-digest", handler, { withoutBearer: own })(bare());
+    expect(res.status).toBe(200);
+    expect(handler).not.toHaveBeenCalled();
+    expect(seen).toEqual([{ a: false, b: false, run: "health-digest" }]);
+    expect(h.recordRun).not.toHaveBeenCalled();
+  });
+});
+
 describe("summarise", () => {
   it("copies numbers only, never strings", () => {
     expect(summarise(200, { sent: 3, to: "x@y", errors: ["boom"] }, "live", [])).toBe("Ran: sent 3, errors 1");

@@ -41,6 +41,12 @@ describe("every outcome the callback can send has a clear message", () => {
     expect(gmailConnectMessage("connected_scopelost").kind).toBe("warn");
   });
 
+  it("R-1425: notconfigured is a calm warning naming who acts, not an error", () => {
+    const m = gmailConnectMessage("notconfigured");
+    expect(m.kind).toBe("warn");
+    expect(m.text).toMatch(/not available on this server yet/i);
+  });
+
   it("config problems say an admin must act, user problems say connect again", () => {
     expect(gmailConnectMessage("redirect_mismatch").text).toMatch(/admin/i);
     expect(gmailConnectMessage("client_rejected").text).toMatch(/admin/i);

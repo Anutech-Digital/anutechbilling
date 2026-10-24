@@ -15,15 +15,22 @@ import { quoteTokenMatches } from "@/lib/quotes/accept-token";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
 import { quoteUpiAmount } from "./upi-amount";
 import { acceptedPayNow } from "./accepted-pay";
+import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { signerNameDefault } from "./signer-default";
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
 import { QuoteAcceptView, type PublicQuote, type PublicLine } from "./quote-accept-view";
 import { extensionTitle, isOneTimeQuote, quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
+import { loadQuotePeriodContext } from "@/lib/quotes/line-period-context";
+import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import { QuoteReplaced, replacementHref } from "./replaced";
+import { shownQuoteStatus } from "@/lib/quotes/quote-expiry";
+import { notifyQuoteExpired } from "@/lib/notifications/quote-expired.server";
 import { isBotUserAgent } from "@/lib/quotes/quote-intent";
 import { maybeAlertHotLead, recordQuoteView } from "@/lib/quotes/quote-views.server";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 
 export const dynamic = "force-dynamic"; // never cache — quotes change state
 
@@ -66,7 +73,7 @@ export default async function QuoteAcceptPage(props: Props) {
     // payment_status / payment_amount / invoice_id are here for quoteAmountDue, which
     // refuses to build a UPI QR for money already settled or already asked for on an
     // invoice — two documents collecting the same amount is how a customer pays twice.
-    .select("id, status, tenant_id, public_token, customer_name, plan, subtotal, discount_pct, tax_rate, amount, expires_date, notes, line_items, billing_cycle, currency, exchange_rate, payment_status, payment_amount, invoice_id, hot_lead_alerted_at, customer_id, lead_id, prospect_state_code, prospect_country, is_add_seats, is_renewal, is_extension, is_one_off, extension_months")
+    .select("id, status, tenant_id, public_token, customer_name, plan, subtotal, discount_pct, tax_rate, amount, expires_date, notes, line_items, billing_cycle, currency, exchange_rate, payment_status, payment_amount, invoice_id, hot_lead_alerted_at, customer_id, lead_id, prospect_state_code, prospect_country, is_add_seats, is_renewal, is_extension, is_one_off, extension_months, created_date, domain, renewal_term_date, renewal_subscription_id")
     .eq("id", params.id)
     .maybeSingle();
 
@@ -134,6 +141,13 @@ export default async function QuoteAcceptPage(props: Props) {
      Not gated by the autonomy dial: this is the app talking to OUR OWN desk, the same
      exemption the SLA breach alert has and the same reason `compliance.send` was removed from
      the registry — the dial must never be able to silence what the app says to us. */
+  /* R-1679: a customer opening an EXPIRED quote is a customer who still wants it — sales hears. */
+  if (!isBotUserAgent(ua) && shownQuoteStatus(quote) === "expired") {
+    await notifyQuoteExpired({
+      admin: supabase, tenantId: quote.tenant_id, quoteId: quote.id,
+      customerName: quote.customer_name ?? "", event: "opened",
+    });
+  }
   if (!isBotUserAgent(ua)) {
     await maybeAlertHotLead({
       admin: supabase,
@@ -163,7 +177,9 @@ export default async function QuoteAcceptPage(props: Props) {
   // the display fields; cost/margin are dropped.
   const publicQuote: PublicQuote = {
     id: quote.id,
-    status: quote.status,
+    /* R-1679: a sent / viewed quote past its validity is shown as expired — the page then offers
+       "Request a fresh quote", never an Accept button the server would refuse (quote-expiry.ts). */
+    status: shownQuoteStatus(quote),
     customer_name: quote.customer_name,
     subtotal: quote.subtotal,
     discount_pct: quote.discount_pct,
@@ -195,8 +211,12 @@ export default async function QuoteAcceptPage(props: Props) {
     /* R-811: "3-month extension" from extension_months. */
     extension_title: extensionTitle({ isExtension: quote.is_extension, extensionMonths: quote.extension_months }),
   };
+  /* R-1764: "Domain:" / "Subscription period:" under each subscription line — the same helper
+     and inputs as the PDF and the tax invoice, so all three name the same dates. */
+  const periodContext = await loadQuotePeriodContext(supabase, quote);
   const lineItems: PublicLine[] = ((quote.line_items ?? []) as QuoteLineItem[]).map((l) => ({
     id: l.id, name: l.name, qty: l.qty, rate: l.rate, commitment: l.commitment,
+    detail_notes: lineDetailNotes(l, periodContext),
     /* R-495: the list price the line was priced from, so the customer sees list →
        discount → final. A selling price the reseller shows on the PDF anyway — not cost. */
     ...(typeof l.list_rate === "number" ? { list_rate: l.list_rate } : {}),
@@ -229,7 +249,11 @@ export default async function QuoteAcceptPage(props: Props) {
      customer pays twice). Null simply means the block does not render. */
   /* R-234: on a split-billed quote the QR asks for instalment 1 — the same figure the
      Pay button charges — not the whole term. See ./upi-amount.ts. */
-  const upiAmount = quoteUpiAmount(quote, lineItems[0]?.commitment ?? null);
+  /* R-1613: ONE figure for the Pay button, this QR and the accepted screen — what the pay
+     route will charge (lib/checkout/quote-order.ts readQuoteDueNow: total − money received,
+     or instalment 1 on a split quote; a foreign quote's figure in its own currency). */
+  const dueNow = await readQuoteDueNow(supabase, quote);
+  const upiAmount = quoteUpiAmount(dueNow);
   const upiQrImg = await buildQuoteUpiQr({
     vpa:        tenant?.upi_vpa,
     payeeName:  tenant?.upi_payee_name || tenant?.name,
@@ -241,8 +265,7 @@ export default async function QuoteAcceptPage(props: Props) {
   /* R-377: what the ACCEPTED screen offers to collect — the same figure the pay route
      charges, and only when this tenant has a way to be paid. See ./accepted-pay.ts. */
   const acceptedPay = acceptedPayNow({
-    quote,
-    firstCommitment: lineItems[0]?.commitment ?? null,
+    due: dueNow,
     payOnline,
     hasUpi: Boolean(upi),
   });
@@ -257,7 +280,7 @@ export default async function QuoteAcceptPage(props: Props) {
     quote.customer_id
       ? supabase
           .from("customers")
-          .select("gstin, state_code, country, contact_name, contact_first_name, contact_last_name")
+          .select("gstin, state_code, country, gst_treatment, contact_name, contact_first_name, contact_last_name")
           .eq("id", quote.customer_id)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -270,9 +293,11 @@ export default async function QuoteAcceptPage(props: Props) {
           .maybeSingle()
       : Promise.resolve({ data: null }),
   ]);
-  const { interState } = quotePlaceOfSupply({
+  const { interState, isExport } = quotePlaceOfSupply({
     customer: buyer, lead, quote, seller: { state_code: tenant?.state_code, gstin: tenant?.gstin },
   });
+  /* R-1532: a Bill of Supply seller's 0% quote — "No GST — Bill of Supply", no heads. */
+  const billOfSupply = isExport ? null : quoteDocBillOfSupply(await readTenantGstRegistration(supabase, quote.tenant_id), quote.tax_rate);
   const signerDefault = signerNameDefault({ customer: buyer, lead, company: quote.customer_name });
 
   /* R-376(b): "Support: Free — Included" — the same builder the preview and the PDF use,
@@ -292,7 +317,9 @@ export default async function QuoteAcceptPage(props: Props) {
       tenantAddress={tenant?.address ?? null}
       upiQr={upi}
       acceptedPay={acceptedPay}
+      dueNow={dueNow}
       interState={interState}
+      billOfSupply={billOfSupply}
       signerDefault={signerDefault}
       supportLine={supportLine ? { text: supportLine.text, detail: supportLine.detail } : null}
     />

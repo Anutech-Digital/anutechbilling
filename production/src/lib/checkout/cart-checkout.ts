@@ -45,10 +45,12 @@ import { captureFromRequest } from "@/lib/marketing/utm";
 import { z } from "zod";
 import Razorpay from "razorpay";
 import { createAdminClient } from "@/lib/supabase/server";
-import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
-import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
+import { loadCheckoutRazorpayKeys } from "./razorpay-keys.server";
 import { lookupDomains, splitDomain } from "@/lib/domains/live-lookup";
-import { MAILBOX_YR } from "@/site/lib/data/domains-landing";
+/* R-1786: hosting and mailbox prices come from the price book — the code prices with
+   CATALOG_FROM_DB off (today), the `items` rows with it on (missing row → code price, logged). */
+import { codePriceBook, type PriceBook } from "@/lib/catalog/catalog-prices";
+import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
 import { applyCartCoupon } from "./cart-coupon";
 import { normalisePhone, splitName, type Registrant } from "@/lib/provisioning/domain-registration";
 import { isTrialPlan, TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
@@ -56,7 +58,8 @@ import { startHostingTrial } from "@/lib/hosting/start-trial";
 import { trialsConfigured, TRIALS_PAUSED_MESSAGE } from "@/lib/dms-engine/trials";
 import { hostingLimitProblem } from "./hosting-limit";
 import { hostingDomain, planDomains, BUY_A_DOMAIN_HREF } from "./hosting-domain";
-import { hostingRate } from "./hosting-prices";
+import { hostingRateIn } from "./hosting-prices";
+import { bundleAllowance, FREE_DOMAIN_TLDS_LABEL } from "./hosting-bundle";
 import { buyPageTenantId, buyPageTenantIdOrEmpty, BuyPageTenantMissingError, simulatedPaymentAllowed } from "./live-guards";
 import { issueInvoiceForOnlinePayment } from "./online-invoice.server";
 import { resolveStateCode, stateCodeFromName } from "@/lib/gst/gstin-state";
@@ -67,8 +70,6 @@ import { GST_STATE_BY_CODE, isValidGstin } from "@/lib/utils";
    value at module load; it is "" in production when unset, so their lookups fail closed.
    runCartCheckout resolves the tenant per request and refuses with a clear error instead. */
 export const BUY_PAGE_TENANT_ID = buyPageTenantIdOrEmpty();
-const ENV_RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID?.trim() || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID?.trim() || "";
-const ENV_RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET?.trim() || "";
 
 const lineSchema = z.object({
   sku: z.string().min(1).max(60).optional(),
@@ -172,14 +173,16 @@ const newId = () => globalThis.crypto?.randomUUID() ?? Math.random().toString(36
  * Re-price one line from its sku against the server's OWN source of truth.
  * Returns null for anything we can't price server-side.
  *
- *   hosting:<tier>   → HOSTING_TIERS (whole rupees)
- *   domain:<tld>     → TLDS reg price. The ₹0 bundle is NOT applied here — it is
+ *   hosting:<tier>   → the price book's tiers (whole rupees; R-1786)
+ *   domain:<tld>     → null here; priced live per name in priceDomainLines() (R-1603: the
+ *                      old "TLDS reg price" note was stale). The ₹0 bundle is NOT applied here — it is
  *                      applied after the whole cart is priced, and ONLY when a
  *                      yearly hosting line is present. A client that sends ₹0 for
  *                      a bare domain still gets charged the real reg price.
- *   mailbox:anutech  → MAILBOX_YR. Same bundle rule as the domain.
+ *   mailbox:anutech  → the book's mailboxYearly (MAILBOX_YR with the flag off). One unit free
+ *                      per yearly plan (R-1595, hosting-bundle.ts).
  */
-function repriceLine(sku: string | undefined, cycle: string | undefined, qty: number): Repriced | null {
+function repriceLine(sku: string | undefined, cycle: string | undefined, qty: number, book: PriceBook = codePriceBook()): Repriced | null {
   if (!sku) return null;
   const s = sku.toLowerCase();
   const yearly = cycle !== "monthly";
@@ -187,9 +190,9 @@ function repriceLine(sku: string | undefined, cycle: string | undefined, qty: nu
   const h = /^hosting:(starter|standard|plus)$/.exec(s);
   if (h) {
     const tier = h[1];
-    const t = HOSTING_TIERS.find((x) => x.name.toLowerCase() === tier);
+    const t = book.tiers.find((x) => x.name.toLowerCase() === tier);
     // The one rate DMS also shows (lib/checkout/hosting-prices.ts, /api/public/hosting-prices).
-    const rate = t ? hostingRate(tier, yearly) : null;
+    const rate = t ? hostingRateIn(book.tiers, tier, yearly) : null;
     if (!t || rate === null) return null;
     // No `domain` on this line, on purpose: provisioning reads any line's `domain` as a
     // domain to REGISTER (lib/provisioning/products.ts). The subscription takes the
@@ -201,14 +204,15 @@ function repriceLine(sku: string | undefined, cycle: string | undefined, qty: nu
   if (/^domain:/.test(s)) return null;
 
   if (s === "mailbox:anutech") {
-    return { kind: "mailbox", yearly: true, line: { id: newId(), name: "Mailbox — Anutech Mail, 1 year", qty, rate: Math.round(MAILBOX_YR), cost: 0 } };
+    return { kind: "mailbox", yearly: true, line: { id: newId(), name: "Mailbox — Anutech Mail, 1 year", qty, rate: Math.round(book.mailboxYearly), cost: 0 } };
   }
 
   return null;
 }
 
 type DomainPricing =
-  | { ok: true; line: QuoteLine; firstYear: number }
+  /* testPrice: R-1769 — priced from the laptop-only TEST list (lib/domains/test-prices.ts). */
+  | { ok: true; line: QuoteLine; firstYear: number; testPrice: boolean }
   | { ok: false; reason: string };
 
 /**
@@ -290,9 +294,10 @@ async function priceDomainLines(
         ok: true,
         // The 1-year price, for the bundle: yearly hosting makes the FIRST year free only.
         firstYear: Math.round(hit.price),
+        testPrice: hit.testPrice === true,
         line: {
           id: newId(),
-          name: `Domain ${e.domain} — registration, ${e.years} year${e.years === 1 ? "" : "s"}`,
+          name: `Domain ${e.domain} — registration, ${e.years} year${e.years === 1 ? "" : "s"}${hit.testPrice ? " (TEST price)" : ""}`,
           qty: 1,
           // Whole rupees, like every other line (CLAUDE.md §13). The whole term, paid now.
           rate: term,
@@ -437,44 +442,35 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
     const items: QuoteLine[] = [];
     const unpriced: string[] = [];
     let hasHosting = false;
-    let hasYearlyHosting = false;
     let hostingTier: string | null = null;
-    const bundleEligible: QuoteLine[] = []; // domain + mailbox lines that go ₹0 with a yearly plan
+    const mailboxLines: QuoteLine[] = []; // R-1595: one unit free per yearly plan, the rest charged
     const firstYearOf = new Map<QuoteLine, number>(); // domain line → its 1-year price (R-156)
     const domainPricing = await priceDomainLines(lines);
+    const book = await getPriceBook(BUY_PAGE_TENANT_ID); // R-1786: one book for the whole cart
     const domainNames: string[] = [];
     const domainLineSet: QuoteLine[] = []; // every domain:* line, priced by priceDomainLines
     /* Each hosting line with what was typed for it, in cart order (one domain per plan). */
-    const hostingItems: { line: QuoteLine; typed: string | undefined }[] = [];
+    const hostingItems: { line: QuoteLine; typed: string | undefined; yearly: boolean }[] = [];
+    let testPriced = false; // R-1769: any domain line priced from the laptop-only TEST list
     for (const [idx, l] of lines.entries()) {
       const dp = domainPricing.get(idx);
       if (dp) {
         if (!dp.ok) { unpriced.push(dp.reason); continue; }
+        if (dp.testPrice) testPriced = true;
         items.push(dp.line);
         domainLineSet.push(dp.line); // R-225: a coupon never discounts it
-        bundleEligible.push(dp.line);
         firstYearOf.set(dp.line, dp.firstYear);
         if (dp.line.domain) domainNames.push(dp.line.domain);
         continue;
       }
-      const r = repriceLine(l.sku, l.cycle, l.qty);
+      const r = repriceLine(l.sku, l.cycle, l.qty, book);
       if (!r) { unpriced.push(l.label || l.sku || "an item"); continue; }
       items.push(r.line);
       if (r.kind === "hosting") {
-        hasHosting = true; if (r.yearly) hasYearlyHosting = true; hostingTier = hostingTier ?? r.tier ?? null;
-        hostingItems.push({ line: r.line, typed: l.hostingDomain ?? (hostingItems.length === 0 ? domain : undefined) });
+        hasHosting = true; hostingTier = hostingTier ?? r.tier ?? null;
+        hostingItems.push({ line: r.line, typed: l.hostingDomain ?? (hostingItems.length === 0 ? domain : undefined), yearly: r.yearly });
       }
-      if (r.kind === "domain" || r.kind === "mailbox") bundleEligible.push(r.line);
-    }
-    // THE bundle rule, enforced server-side: the domain (and its mailbox) are ₹0
-    // only when a YEARLY hosting line rides along. Otherwise they pay full reg —
-    // the client's ₹0 is never trusted. A bare domain, or a monthly plan, is charged.
-    if (hasYearlyHosting) {
-      for (const line of bundleEligible) {
-        const firstYear = firstYearOf.get(line);
-        // A domain: its first year is free, any further years are paid (R-156). A mailbox: ₹0.
-        line.rate = firstYear === undefined ? 0 : bundledDomainRate(line.rate, firstYear);
-      }
+      if (r.kind === "mailbox") mailboxLines.push(r.line);
     }
     if (unpriced.length) {
       return NextResponse.json(
@@ -538,7 +534,7 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
           {
             error:
               `Please add ${resolved.problems.join("; ")}. Nothing was charged. ` +
-              "Don't have a domain yet? Add one to this order — it is free with yearly hosting.",
+              `Don't have a domain yet? Add one to this order — a ${FREE_DOMAIN_TLDS_LABEL} domain is free for the first year with yearly hosting.`,
             next: BUY_A_DOMAIN_HREF,
             needDomain: true,
           },
@@ -556,6 +552,41 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
       cleanDomain = resolved.domains[0];
     }
 
+    /* THE bundle rule, enforced server-side (R-1595, lib/checkout/hosting-bundle.ts): each
+       YEARLY hosting line brings ONE domain's first year free — only the one it is set up on,
+       only when that is in the cart and its TLD is in FREE_DOMAIN_TLDS (Pardeep, 18 Oct) —
+       and ONE mailbox free. Everything
+       else is charged in full; the client's ₹0 is never trusted. Until R-1595 every domain and
+       every mailbox went ₹0 once any yearly plan was in the cart. */
+    const bundle = bundleAllowance(
+      hostingItems.map((h) => ({ yearly: h.yearly, domain: h.line.hostingDomain ?? null })),
+      domainLineSet.map((l) => l.domain ?? ""),
+      mailboxLines.reduce((n, l) => n + l.qty, 0),
+    );
+    const freeDomainNames: string[] = [];
+    domainLineSet.forEach((line, i) => {
+      const firstYear = firstYearOf.get(line);
+      if (!bundle.freeDomains.has(i) || firstYear === undefined) return;
+      // Its first year is free, any further years are paid (R-156).
+      line.rate = bundledDomainRate(line.rate, firstYear);
+      if (line.domain) freeDomainNames.push(line.domain);
+    });
+    let freeBoxesLeft = bundle.freeMailboxes;
+    for (const line of mailboxLines) {
+      if (freeBoxesLeft <= 0) break;
+      const free = Math.min(freeBoxesLeft, line.qty);
+      freeBoxesLeft -= free;
+      if (free === line.qty) { line.rate = 0; continue; }
+      // Part of the line is free: split it, so the bill shows the free one and the paid ones.
+      line.qty -= free;
+      items.splice(items.indexOf(line), 0, { ...line, id: newId(), name: `${line.name} (free with yearly hosting)`, qty: free, rate: 0 });
+    }
+    const bundleParts = [
+      freeDomainNames.length ? `${freeDomainNames.join(", ")} free` : null,
+      bundle.freeMailboxes ? `${bundle.freeMailboxes} mailbox${bundle.freeMailboxes === 1 ? "" : "es"} free` : null,
+    ].filter(Boolean);
+    const bundleNote = bundleParts.length ? `Bundle (yearly hosting): ${bundleParts.join("; ")}` : null;
+
     /* Coupon, exactly as the cart page shows it (cartTotals in site/lib/money):
        percent off the gross, before GST. Until 24 Sep 2026 the cart page applied
        ANUTECH10 / MIGRATE15 to the total it SHOWED while this route ignored them, so a
@@ -569,24 +600,12 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
     if (amount <= 0) return NextResponse.json({ error: "Nothing to pay for." }, { status: 400 });
 
     // ── Razorpay credentials (tenant_secrets → env) ────────────────────────
-    let rzKeyId = "", rzKeySecret = "", rzMode: "test" | "live" = "test";
+    // R-1596: one resolver, shared with checkout/verify, so a payment is verified with the key that made its order.
     const admin = createAdminClient();
-    {
-      const { data: rawSecrets } = await admin
-        .from("tenant_secrets")
-        .select("razorpay_key_id, razorpay_key_secret, razorpay_mode")
-        .eq("tenant_id", BUY_PAGE_TENANT_ID)
-        .maybeSingle();
-      // Sealed at rest (rosv1:…) — decrypt or Razorpay rejects the ciphertext.
-      const secrets = decryptTenantSecrets(rawSecrets);
-      if (secrets?.razorpay_key_id && secrets.razorpay_key_secret) {
-        rzKeyId = secrets.razorpay_key_id; rzKeySecret = secrets.razorpay_key_secret;
-        rzMode = secrets.razorpay_mode === "live" ? "live" : "test";
-      } else if (ENV_RAZORPAY_KEY_ID && ENV_RAZORPAY_KEY_SECRET) {
-        rzKeyId = ENV_RAZORPAY_KEY_ID; rzKeySecret = ENV_RAZORPAY_KEY_SECRET;
-        rzMode = ENV_RAZORPAY_KEY_ID.startsWith("rzp_live_") ? "live" : "test";
-      }
-    }
+    const rzKeys = await loadCheckoutRazorpayKeys(admin, BUY_PAGE_TENANT_ID);
+    const rzKeyId = rzKeys?.keyId ?? "";
+    const rzKeySecret = rzKeys?.keySecret ?? "";
+    const rzMode: "test" | "live" = rzKeys?.mode ?? "test";
     const razorpayConfigured = Boolean(rzKeyId) && Boolean(rzKeySecret);
     const isSimulation = simulate === true;
     /* R-079: never on a production deployment or with a live key — ALLOW_SIMULATED_CHECKOUT
@@ -600,6 +619,15 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
     }
     if (isSimulation && !simulationAllowed) {
       return NextResponse.json({ error: "Online payment isn't available yet. Please use 'Get a quote'." }, { status: 503 });
+    }
+    /* R-1769: a TEST price is only ever paid where a simulated payment is allowed. The lookup
+       already refuses the list on a deployment; this also covers a live key stored on the
+       tenant, which the lookup cannot see. Checked before any lead or quote is written. */
+    if (testPriced && !simulationAllowed) {
+      return NextResponse.json(
+        { error: "This server is showing TEST prices for domains, so the order can't be paid. Nothing was charged. Please use 'Get a quote'." },
+        { status: 503 },
+      );
     }
 
     // ── Link each hosting line to the tenant's hosting catalogue item ──────
@@ -644,6 +672,7 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
           : `Hosting domain: ${cleanDomain}`
         : null,
       domainNames.length ? `Domains to register: ${domainNames.join(", ")}` : null,
+      bundleNote,
       gstin ? `GSTIN: ${gstin}` : null,
       ...items.map((i) => `  • ${i.name} × ${i.qty} @ ₹${i.rate}`),
     ].filter(Boolean).join("\n");

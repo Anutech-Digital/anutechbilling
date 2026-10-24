@@ -136,3 +136,18 @@ describe("no quote — by conversation, then by stage", () => {
     expect(nextActionFor({ ...base, lead: lead({ stage: "contact" }) })!.target).toEqual({ kind: "send_quote" });
   });
 });
+
+/* R-1807: the quotes read failed (or has not answered yet) — "no quote" is not known, so
+   the drawer must not tell the rep to send the first one. */
+describe("the lead's quotes are unknown (R-1807)", () => {
+  it("never suggests Send quote", () => {
+    for (const stage of ["new", "contact", "demo", "trial", "won", "lost"] as const) {
+      const a = nextActionFor({ ...base, lead: lead({ stage, contact_phone: null }), activities: [{}], quotesUnknown: true });
+      expect(a?.target.kind, stage).not.toBe("send_quote");
+    }
+  });
+
+  it("still says Call / Reply when that does not depend on quotes", () => {
+    expect(nextActionFor({ ...base, lead: lead({ stage: "new" }), quotesUnknown: true })!.label).toBe("Call now · first contact");
+  });
+});

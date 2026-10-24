@@ -44,7 +44,7 @@ describe("a payment is never hidden by the quote's status", () => {
 
   it("leaves the plain workflow statuses alone", () => {
     expect(unifiedStatus(q({ status: "draft" })).label).toBe("Draft");
-    expect(unifiedStatus(q({ status: "sent" })).label).toBe("Out for review");
+    expect(unifiedStatus(q({ status: "sent" })).label).toBe("Sent");   // R-1713: the tab's word
     expect(unifiedStatus(q({ status: "viewed" })).label).toBe("Viewed");
     expect(unifiedStatus(q({ status: "rejected" })).label).toBe("Rejected");
     expect(unifiedStatus(q({ status: "expired" })).label).toBe("Expired");
@@ -72,9 +72,10 @@ describe("the cash note carries both halves for a part-paid quote", () => {
     expect(note?.text).toContain("₹10,00,000");
   });
 
-  it("shows only the due figure once an invoice exists", () => {
+  it("keeps both halves once an invoice exists (R-1710 — was '₹600 due' alone)", () => {
     const note = cashNote(q({ payment_status: "invoiced", amount: 1000, payment_amount: 400 }));
-    expect(note?.text).toBe("₹600 due");
+    expect(note?.text).toBe("₹400 paid · ₹600 left");
+    expect(cashNote(q({ payment_status: "invoiced", amount: 1000, payment_amount: 0 }))?.text).toBe("₹1,000 due");
   });
 
   it("says awaiting payment when nothing has arrived", () => {

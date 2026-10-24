@@ -159,7 +159,7 @@ export default function MyExpensesPage() {
           </div>
           <h3 className="font-serif text-lg">No Active Advance Found</h3>
           <p className="text-xs text-ink-3">
-            Aapke naam par abhi koi active advance money assigned nahi hai. Accounts team se advance money ke liye contact karein.
+            No active advance is assigned to you right now. Contact the accounts team for an advance.
           </p>
         </Card>
       )}
@@ -237,7 +237,7 @@ function RecordExpenseModal({ advance, open, onOpenChange }: { advance: Employee
     }
 
     if (parsedAmount > advance.remaining_balance) {
-      toast.warning(`Note: Amount (${rupee(parsedAmount)}) remaining advance (${rupee(advance.remaining_balance)}) se zyaada hai.`);
+      toast.warning(`Note: Amount (${rupee(parsedAmount)}) is more than the remaining advance (${rupee(advance.remaining_balance)}).`);
     }
 
     record.mutate(
@@ -270,7 +270,7 @@ function RecordExpenseModal({ advance, open, onOpenChange }: { advance: Employee
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4 py-2">
-          <FormField htmlFor="my-expenses-category-kharcha-kahan-huwa" label="Category (Kharcha Kahan Huwa)" required>
+          <FormField htmlFor="my-expenses-category-kharcha-kahan-huwa" label="Category (what was it spent on)" required>
             <Select value={category} onValueChange={setCategory}>
               <SelectTrigger id="my-expenses-category-kharcha-kahan-huwa" className="w-full h-11 text-sm">
                 <SelectValue />

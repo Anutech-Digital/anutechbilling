@@ -29,12 +29,18 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate, toWhatsAppDigits, GST_STATE_BY_CODE } from "@/lib/utils";
 import { isExportSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
-import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
+import { isForeignCurrency, formatForeign } from "@/lib/currency";
+import { foreignDocConverter } from "@/lib/quotes/foreign-totals";
 import { invoiceFx } from "@/lib/pdf/build-props";
 import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import type { Invoice, Payment, QuoteLineItem } from "@/lib/supabase/database.types";
 import { splitTaxHeads } from "@/lib/gst/tax-split";
 import { SAAS_HSN } from "@/lib/gst/hsn";
+import { lineDetailNotes } from "@/lib/pdf/invoice-display";
+import type { LinePeriodContext } from "@/lib/quotes/service-period";
+import { billOfSupplyDeclarations, billOfSupplyPlace, documentTitle, isBillOfSupply } from "@/lib/invoices/document-kind";
+import { advanceLinesWithTds, advanceMethodLabel } from "@/lib/accounting/tds-receipt";
+import { useTdsByPayments } from "@/lib/queries/tds-receivable";
 
 /** Display-shape for advance rows in the dialog — works for both frozen + live data */
 interface DisplayAdvance {
@@ -52,6 +58,8 @@ interface Props {
 
   /** Quote data — line items, discount, tax rate (so we can re-render the breakdown) */
   lineItems:    QuoteLineItem[];
+  /** R-1764: each subscription line's "Domain:" / "Subscription period:" (the quote's words). */
+  periodContext?: LinePeriodContext | null;
   subtotal:     number;
   discountPct:  number;
   discount:     number;
@@ -99,6 +107,7 @@ export function TaxInvoiceDialog({
   onOpenChange,
   invoice,
   lineItems,
+  periodContext = null,
   subtotal,
   discountPct,
   discount,
@@ -133,6 +142,11 @@ export function TaxInvoiceDialog({
   const { data: me } = useCurrentUser();
   const router = useRouter();
   const [downloadingPdf, setDownloadingPdf] = React.useState(false);
+
+  /* R-1529: Tax Invoice or Bill of Supply — frozen on the invoice row at issue. */
+  const bos          = isBillOfSupply(invoice);
+  const docTitle     = documentTitle(invoice);
+  const declarations = billOfSupplyDeclarations(invoice);
 
   // ── Immutable GST figures (CGST Sec 31 — an issued invoice cannot change) ──
   // Prefer the values FROZEN on the invoice row at generation (migration 0116)
@@ -185,7 +199,14 @@ export function TaxInvoiceDialog({
   const fxRate = exchangeRate ?? 1;
   // Export invoices display in the CLIENT's currency (USD…); books stay ₹, so the
   // INR equivalent is shown as a GST reference. `money()` renders in that currency.
-  const money = (inr: number) => (isForeign ? formatForeign(foreignEquivalent(inr, fxRate), currency ?? "") : rupee(inr));
+  /* R-1677: an invoice covering the quote's lines prints the SAME dollar total the quote, the
+     accept page and the PDF asked for (lib/quotes/foreign-totals) — ₹32,400 ÷ 95.7485 per
+     figure gave $338.39 beside the customer's $338.40. */
+  const toForeign = foreignDocConverter({
+    lines: lineItems, fx: fxRate, discountPct, taxRate: fTax === 0 ? 0 : fRate,
+    inr: { subtotal, taxable: fTaxable, tax: fTax, total: fTotal },
+  });
+  const money = (inr: number) => (isForeign ? formatForeign(toForeign(inr), currency ?? "") : rupee(inr));
 
   // ── Advance adjustment ────────────────────────────────────────────────
   // Prefer FROZEN snapshot from invoice itself (legally correct — once issued,
@@ -209,6 +230,13 @@ export function TaxInvoiceDialog({
       }));
 
   const advancesAdjusted = displayAdvances.reduce((s, a) => s + a.amount, 0);
+  /* R-1670 (2): an advance paid with TDS deducted shows the bank money + the TDS (same total),
+     on screen and in the downloaded PDF — not one gross "Bank transfer" the bank never saw. */
+  const { data: advanceTds = null } = useTdsByPayments(displayAdvances.map((a) => a.id), open);
+  const advanceLines = advanceLinesWithTds(
+    displayAdvances.map((a) => ({ payment_id: a.id, voucher_no: a.voucher_no, received_at: a.received_at, method: a.method, amount: a.amount })),
+    advanceTds,
+  );
   // Prefer frozen net_payable from invoice — guaranteed to match what was issued
   const netPayable       = invoice.net_payable ?? Math.max(0, fTotal - advancesAdjusted);
 
@@ -245,7 +273,7 @@ export function TaxInvoiceDialog({
         },
         razorpayConfigured,
       }),
-      invoice, lineItems, subtotal, discountPct, discount,
+      invoice, lineItems, periodContext, subtotal, discountPct, discount,
       taxable: fTaxable, taxRate: fRate, tax: fTax, total: fTotal, interState: fInter,
       customerGstin, customerEmail, customerAddress, customerState, customerCountry,
       currency, exchangeRate, fxSource, fxDate,
@@ -254,6 +282,8 @@ export function TaxInvoiceDialog({
       tenantLogo: await logoDataUri(me?.tenantLogoUrl),
       /* R-334: LUT ARN for the Rule 46 export endorsement — same source as the server PDF. */
       lutNumber: me?.tenantLutNumber ?? null,
+      /* R-1670 (2): the same TDS split the dialog shows. */
+      advanceTds,
     });
   }
 
@@ -264,11 +294,11 @@ export function TaxInvoiceDialog({
     const dueLine = invoice.due_date ? `\nDue date: ${formatDate(invoice.due_date)}` : "";
     const amountLabel = advancesAdjusted > 0 ? "Net payable" : "Amount";
     const message =
-      `Namaste ${invoice.customer_name},\n\n` +
-      `Aapka Tax Invoice ${invoice.id} taiyaar hai.\n` +
+      `Hello ${invoice.customer_name},\n\n` +
+      `Your ${docTitle} ${invoice.id} is ready.\n` +
       `${amountLabel}: ${money(netPayable)}${dueLine}\n\n` +
-      `PDF attach kar raha hoon. Koi sawaal ho to bataiyega.\n\n` +
-      `Dhanyavaad,\n${tenantName}`;
+      `I am attaching the PDF. Please let me know if you have any questions.\n\n` +
+      `Thank you,\n${tenantName}`;
     const digits = toWhatsAppDigits(customerPhone);
     if (!digits) {
       toast.error("No phone number for this customer", {
@@ -303,7 +333,7 @@ export function TaxInvoiceDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto p-0">
-        <DialogTitle className="sr-only">Tax Invoice · {invoice.id}</DialogTitle>
+        <DialogTitle className="sr-only">{docTitle} · {invoice.id}</DialogTitle>
 
         {/* Toolbar */}
         {/* R-187: on a phone the buttons used to sit on one line and push "Download PDF" off
@@ -313,7 +343,7 @@ export function TaxInvoiceDialog({
           <div className="flex flex-wrap items-center gap-2 min-w-0">
             <Icon name="receipt" size={16} className="text-ink-3" />
             <span className="text-sm font-semibold text-ink whitespace-nowrap">
-              Tax Invoice<span className="hidden sm:inline"> · GST-compliant</span>
+              {docTitle}<span className="hidden sm:inline">{bos ? " · No GST" : " · GST-compliant"}</span>
             </span>
             {advancesAdjusted > 0 && (
               <span className="text-3xs uppercase tracking-wider bg-emerald-soft text-emerald-ink px-2 py-0.5 rounded-full font-semibold">
@@ -353,7 +383,7 @@ export function TaxInvoiceDialog({
               icon="whatsapp"
               loading={sharing}
               onClick={shareOnWhatsApp}
-              title="WhatsApp par bhejein — PDF download hoga, chat me attach kar dein"
+              title="Send on WhatsApp — the PDF downloads so you can attach it in the chat"
             >
               Send on WhatsApp
             </Button>
@@ -402,23 +432,28 @@ export function TaxInvoiceDialog({
         </div>
 
         {/* PDF body */}
-        <div className="bg-paper p-10 print:p-0 font-sans text-ink">
+        {/* R-1654: p-4 on a phone (p-10 left ~295px for a 384px table, so Amount was cut off);
+            sm: and print keep the A4 look unchanged. The PDF is a separate react-pdf template. */}
+        <div className="bg-paper p-4 sm:p-10 print:p-0 font-sans text-ink">
 
           {/* Header */}
           <div className="text-center mb-4">
             <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold">
-              Original for recipient · GST-compliant
+              {bos ? "Original for recipient · No GST charged" : "Original for recipient · GST-compliant"}
             </p>
-            <h1 className="font-serif text-3xl mt-1">Tax Invoice</h1>
+            <h1 className="font-serif text-3xl mt-1">{docTitle}</h1>
             <p className="font-mono text-sm text-ink-2 mt-1">{invoice.id}</p>
             {invoice.gst_irn && (
               <p className="font-mono text-3xs text-ink-3 mt-0.5">IRN: {invoice.gst_irn}</p>
             )}
+            {declarations.map((line) => (
+              <p key={line} className="text-xs font-semibold text-ink-2 mt-1">{line}</p>
+            ))}
           </div>
 
           {/* Supplier + Recipient */}
-          <div className="grid grid-cols-2 gap-6 mb-6 border-y-2 border-ink py-4">
-            <div>
+          <div className="grid grid-cols-2 gap-3 sm:gap-6 mb-6 border-y-2 border-ink py-4 [overflow-wrap:anywhere]">
+            <div className="min-w-0">
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-1.5">From (Supplier)</p>
               <p className="font-serif text-lg leading-tight">{tenantName}</p>
               {tenantGstin && (
@@ -433,7 +468,7 @@ export function TaxInvoiceDialog({
               {tenantEmail && <p className="text-xs text-ink-3 font-mono">{tenantEmail}</p>}
               {tenantPhone && <p className="text-xs text-ink-3 font-mono">{tenantPhone}</p>}
             </div>
-            <div className="text-right">
+            <div className="min-w-0 text-right">
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-1.5">Bill To (Recipient)</p>
               <p className="font-serif text-lg leading-tight">{invoice.customer_name}</p>
               {customerGstin && (
@@ -446,7 +481,7 @@ export function TaxInvoiceDialog({
           </div>
 
           {/* Invoice meta */}
-          <div className="grid grid-cols-4 gap-4 mb-6 text-sm">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6 text-sm [overflow-wrap:anywhere]">
             <div>
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-0.5">Invoice No.</p>
               <p className="font-mono">{invoice.id}</p>
@@ -461,21 +496,22 @@ export function TaxInvoiceDialog({
             </div>
             <div>
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-0.5">Place of supply</p>
-              <p>{placeOfSupply}</p>
+              {/* R-1529: a Bill of Supply has no GST head to name — the state only. */}
+              <p>{bos && !isExport ? billOfSupplyPlace(invoice.pos_state_code, GST_STATE_BY_CODE, customerState) : placeOfSupply}</p>
             </div>
           </div>
 
           {/* Line items */}
-          <div className="border-2 border-ink rounded-md overflow-hidden mb-4">
+          <div className="border-2 border-ink rounded-md overflow-x-auto mb-4">
             <table className="w-full">
               <thead className="bg-paper-2 border-b border-ink">
                 <tr>
-                  <th className="text-left  p-2.5 text-3xs uppercase tracking-wider font-semibold w-8">#</th>
-                  <th className="text-left  p-2.5 text-3xs uppercase tracking-wider font-semibold">Description</th>
-                  <th className="text-left  p-2.5 text-3xs uppercase tracking-wider font-semibold w-20">HSN/SAC</th>
-                  <th className="text-right p-2.5 text-3xs uppercase tracking-wider font-semibold w-16">Qty</th>
-                  <th className="text-right p-2.5 text-3xs uppercase tracking-wider font-semibold w-24">Rate</th>
-                  <th className="text-right p-2.5 text-3xs uppercase tracking-wider font-semibold w-28">Amount (₹)</th>
+                  <th className="text-left  px-1 py-1.5 sm:p-2.5 text-3xs uppercase tracking-normal sm:tracking-wider font-semibold sm:w-8">#</th>
+                  <th className="text-left  px-1 py-1.5 sm:p-2.5 text-3xs uppercase tracking-normal sm:tracking-wider font-semibold">Description</th>
+                  <th className="text-left  px-1 py-1.5 sm:p-2.5 text-3xs uppercase tracking-normal sm:tracking-wider font-semibold sm:w-20">HSN/SAC</th>
+                  <th className="text-right px-1 py-1.5 sm:p-2.5 text-3xs uppercase tracking-normal sm:tracking-wider font-semibold sm:w-16">Qty</th>
+                  <th className="text-right px-1 py-1.5 sm:p-2.5 text-3xs uppercase tracking-normal sm:tracking-wider font-semibold sm:w-24">Rate</th>
+                  <th className="text-right px-1 py-1.5 sm:p-2.5 text-3xs uppercase tracking-normal sm:tracking-wider font-semibold sm:w-28">Amount (₹)</th>
                 </tr>
               </thead>
               <tbody>
@@ -495,9 +531,12 @@ export function TaxInvoiceDialog({
                 ) : (
                   lineItems.map((li, i) => (
                     <tr key={li.id} className="border-b border-hairline last:border-0">
-                      <td className="p-2.5 text-xs text-ink-3">{i + 1}</td>
-                      <td className="p-2.5 text-sm">
+                      <td className="px-1 py-1.5 sm:p-2.5 text-xs text-ink-3">{i + 1}</td>
+                      <td className="px-1 py-1.5 sm:p-2.5 text-sm [overflow-wrap:anywhere]">
                         <p className="font-medium">{li.name}</p>
+                        {lineDetailNotes(li, periodContext).map((n) => (
+                          <p key={n} className="text-2xs text-ink-3 mt-0.5 tabular-nums" data-testid="line-period">{n}</p>
+                        ))}
                         {li.description && (
                           <p className="text-2xs text-ink-3 mt-0.5">{li.description}</p>
                         )}
@@ -506,10 +545,10 @@ export function TaxInvoiceDialog({
                           the third copy of a value lib/gst/hsn.ts exists to hold one copy
                           of. A project line carries its own SAC (998314, IT design and
                           development); a SaaS line carries none and falls back here. */}
-                      <td className="p-2.5 font-mono text-2xs text-ink-2">{li.hsn ?? SAAS_HSN}</td>
-                      <td className="p-2.5 text-right tabular-nums text-sm">{li.qty}</td>
-                      <td className="p-2.5 text-right tabular-nums text-sm">{money(li.rate)}</td>
-                      <td className="p-2.5 text-right tabular-nums text-sm font-medium">
+                      <td className="px-1 py-1.5 sm:p-2.5 font-mono text-2xs text-ink-2">{li.hsn ?? SAAS_HSN}</td>
+                      <td className="px-1 py-1.5 sm:p-2.5 text-right tabular-nums text-sm">{li.qty}</td>
+                      <td className="px-1 py-1.5 sm:p-2.5 text-right tabular-nums text-sm">{money(li.rate)}</td>
+                      <td className="px-1 py-1.5 sm:p-2.5 text-right tabular-nums text-sm font-medium">
                         {money(li.qty * li.rate)}
                       </td>
                     </tr>
@@ -521,7 +560,7 @@ export function TaxInvoiceDialog({
 
           {/* Totals block — right-aligned */}
           <div className="flex justify-end mb-6">
-            <table className="w-80 text-sm">
+            <table className="w-full sm:w-80 text-sm">
               <tbody>
                 <tr>
                   <td className="py-1 text-ink-3">Subtotal</td>
@@ -534,10 +573,10 @@ export function TaxInvoiceDialog({
                   </tr>
                 )}
                 <tr className="border-t border-hairline">
-                  <td className="py-1 text-ink-3">Taxable value</td>
+                  <td className="py-1 text-ink-3">{bos ? "Value of supply" : "Taxable value"}</td>
                   <td className="py-1 text-right tabular-nums">{money(fTaxable)}</td>
                 </tr>
-                {isExport ? (
+                {bos ? null : isExport ? (
                   <tr>
                     <td className="py-1 text-ink-3">Export — zero-rated (LUT), no GST</td>
                     <td className="py-1 text-right tabular-nums">{money(0)}</td>
@@ -561,7 +600,7 @@ export function TaxInvoiceDialog({
                 )}
                 <tr className="border-t-2 border-ink">
                   <td className="py-2 font-semibold uppercase tracking-wider text-2xs">
-                    Invoice total
+                    {bos ? "Bill total" : "Invoice total"}
                   </td>
                   <td className="py-2 text-right">
                     <span className="font-serif text-xl tabular-nums">{money(fTotal)}</span>
@@ -587,20 +626,20 @@ export function TaxInvoiceDialog({
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-emerald/20">
-                    <th className="text-left  py-1.5 font-semibold text-ink-3 w-32">Voucher No.</th>
+                    <th className="text-left  py-1.5 font-semibold text-ink-3 sm:w-32">Voucher No.</th>
                     <th className="text-left  py-1.5 font-semibold text-ink-3">Received on</th>
-                    <th className="text-left  py-1.5 font-semibold text-ink-3 w-32">Method</th>
-                    <th className="text-right py-1.5 font-semibold text-ink-3 w-32">Amount</th>
+                    <th className="text-left  py-1.5 font-semibold text-ink-3 sm:w-32">Method</th>
+                    <th className="text-right py-1.5 font-semibold text-ink-3 sm:w-32">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {displayAdvances.map((a) => (
-                    <tr key={a.id} className="border-b border-emerald/10 last:border-0">
+                  {advanceLines.map((a) => (
+                    <tr key={a.key} className="border-b border-emerald/10 last:border-0">
                       <td className="py-1.5 font-mono text-2xs">
-                        {a.voucher_no ?? <span className="italic text-ink-3">(unnumbered)</span>}
+                        {a.voucherNo ?? (a.method === "tds" ? "" : <span className="italic text-ink-3">(unnumbered)</span>)}
                       </td>
-                      <td className="py-1.5 text-ink-2">{formatDate(a.received_at)}</td>
-                      <td className="py-1.5 text-ink-2 capitalize">{a.method.replace("_", " ")}</td>
+                      <td className="py-1.5 text-ink-2">{formatDate(a.receivedAt)}</td>
+                      <td className="py-1.5 text-ink-2">{advanceMethodLabel(a.method)}</td>
                       <td className="py-1.5 text-right tabular-nums">{money(a.amount)}</td>
                     </tr>
                   ))}
@@ -617,12 +656,12 @@ export function TaxInvoiceDialog({
 
           {/* Net payable */}
           <div className="flex justify-end mb-6">
-            <div className="w-80 border-2 border-ink rounded-md p-4 bg-paper-2">
+            <div className="w-full sm:w-80 border-2 border-ink rounded-md p-4 bg-paper-2">
               <div className="flex justify-between items-baseline">
                 <span className="text-2xs uppercase tracking-widest font-semibold text-ink-3">
                   {advancesAdjusted > 0 ? "Net payable" : "Amount due"}
                 </span>
-                <span className="font-serif text-3xl tabular-nums">{money(netPayable)}</span>
+                <span className="font-serif text-2xl sm:text-3xl tabular-nums">{money(netPayable)}</span>
               </div>
               {advancesAdjusted > 0 && netPayable === 0 && (
                 <p className="text-2xs text-emerald-ink mt-1.5 flex items-center gap-1">
@@ -648,7 +687,15 @@ export function TaxInvoiceDialog({
           <div className="rounded-md bg-amber-soft border border-amber/30 p-3 text-2xs text-amber-ink mb-6">
             <p className="font-semibold mb-1">📋 GST treatment</p>
             <p>
-              {isExport ? (
+              {bos ? (
+                <>
+                  This is a <b>Bill of Supply</b> (CGST Section 31(3)(c), Rule 49). The supplier
+                  is {invoice.supplier_gst_status === "composition"
+                    ? <>a <b>composition taxable person</b> and cannot collect tax on supplies</>
+                    : <>not registered under GST</>} — <b>no GST is charged</b> and no Input Tax
+                  Credit can be claimed on it.
+                </>
+              ) : isExport ? (
                 <>
                   <b>Export of service</b> to a recipient outside India ({customerCountry ?? "—"}) —
                   <b> zero-rated supply</b> made under a <b>Letter of Undertaking (LUT)</b> without

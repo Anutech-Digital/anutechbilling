@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { cn, rupee } from "@/lib/utils";
 import { useCreateCoupon } from "@/lib/queries/coupons";
 
 interface Props {
@@ -103,7 +103,7 @@ export default function CreateCouponDialog({ open, onOpenChange }: Props) {
   const previewLine =
     discountType === "percent"
       ? `${discountValue || 0}% off`
-      : `₹${Number(discountValue || 0).toLocaleString("en-IN")} off`;
+      : `${rupee(Number(discountValue || 0))} off`;
 
   const TIERS: { id: Tier; label: string }[] = [
     { id: "",            label: "Any tier"  },

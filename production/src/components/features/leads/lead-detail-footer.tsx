@@ -35,31 +35,31 @@ function AiCallButton({ leadId }: { leadId: string }) {
       });
       const body = (await res.json().catch(() => ({}))) as { ok?: boolean; detail?: string; error?: string };
       if (res.ok && body.ok) {
-        toast.success("AI call lag rahi hai", {
-          description: "Call khatam hone par baat-cheet aur sujhaav is lead ki Activity me aa jayega.",
+        toast.success("AI call is being placed", {
+          description: "When the call ends, the conversation and suggestions will appear in this lead's Activity.",
         });
       } else {
-        toast.error(body.error ?? "AI call nahi lagi", {
-          description: body.detail ?? "Thodi der baad dobara try karo, ya khud Call karo.",
+        toast.error(body.error ?? "AI call could not be placed", {
+          description: body.detail ?? "Try again in a little while, or call them yourself.",
         });
       }
     } catch {
-      toast.error("AI call nahi lagi", { description: "Internet ya server ki dikkat — dobara try karo." });
+      toast.error("AI call could not be placed", { description: "Network or server problem — try again." });
     } finally {
       setBusy(false);
     }
   };
   if (list.length < 2) {
     return (
-      <Button icon="sparkles" onClick={() => run(list[0]?.id)} loading={busy} title="AI voice agent (Bolna) is lead ko abhi call karega">
+      <Button icon="sparkles" onClick={() => run(list[0]?.id)} loading={busy} title="The AI voice agent (Bolna) will call this lead now">
         AI call
       </Button>
     );
   }
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
-        <Button icon="sparkles" loading={busy} title="Agent chuno — wo is lead ko abhi call karega">
+        <Button icon="sparkles" loading={busy} title="Pick an agent — it will call this lead now">
           AI call
         </Button>
       </DropdownMenuTrigger>
@@ -104,16 +104,22 @@ export interface LeadDetailFooterProps {
   deletePending: boolean;
   handleEmail: () => void;
   setWhatsOpen: (open: boolean) => void;
+  /** R-1009: dials the lead — through /api/contacts/reveal when this role sees a masked phone.
+   *  Without it the button dials contact_phone as it is. */
+  onCall?: () => void;
   latestQuote: Quote | undefined;
   hasQuotes: boolean;
+  /** R-1807: the lead's quotes failed to load (or have not answered yet). Neither "Send
+   *  quote" (no quote) nor "New quote / Revise" (has one) is known to be right — none shows. */
+  quotesUnknown?: boolean;
   nextAction: NextAction | null;
   handleSendQuote: () => void;
   handleReviseQuote: () => void;
 }
 
 export function LeadDetailFooter({
-  lead, onEdit, handleArchive, handleDelete, deletePending, handleEmail, setWhatsOpen,
-  latestQuote, hasQuotes, nextAction, handleSendQuote, handleReviseQuote,
+  lead, onEdit, handleArchive, handleDelete, deletePending, handleEmail, setWhatsOpen, onCall,
+  latestQuote, hasQuotes, quotesUnknown = false, nextAction, handleSendQuote, handleReviseQuote,
 }: LeadDetailFooterProps) {
   const router = useRouter();
   const hasSub = useCustomerHasSubscription(lead.customer_id, lead.stage === "won");
@@ -130,9 +136,10 @@ export function LeadDetailFooter({
               >
                 Edit
               </Button>
-              {/* R-459: it always marked the lead Lost — now it says so. Hidden where Lost
-                  is not a move (already lost, or won with money behind it). */}
-              {lead.stage !== "lost" && lead.stage !== "won" && (
+              {/* R-459: it always marked the lead Lost — now it says so. R-1762: shown on a
+                  Won deal too (the customer backed out); with money behind it the click is
+                  refused with the reason (useChangeLeadStage + the database). */}
+              {lead.stage !== "lost" && (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -166,7 +173,7 @@ export function LeadDetailFooter({
             {lead.contact_phone && (
               <Button
                 icon="mobile"
-                onClick={() => { window.location.href = `tel:${lead.contact_phone}`; }}
+                onClick={() => { if (onCall) onCall(); else window.location.href = `tel:${lead.contact_phone}`; }}
                 title="Native dialer"
               >
                 Call
@@ -241,13 +248,13 @@ export function LeadDetailFooter({
                 is not what causes the collision — being told to call is. When nextAction IS
                 already send-quote this renders nothing, so the two-primaries mistake cannot
                 come back through the very fix for its side effect. */}
-            {lead.stage !== "won" && lead.stage !== "lost" && !hasQuotes &&
+            {lead.stage !== "won" && lead.stage !== "lost" && !hasQuotes && !quotesUnknown &&
              nextAction?.target.kind !== "send_quote" && (
               <Button icon="send" onClick={handleSendQuote}>
                 Send quote
               </Button>
             )}
-            {lead.stage !== "won" && lead.stage !== "lost" && hasQuotes && latestQuote?.status !== "draft" && (
+            {lead.stage !== "won" && lead.stage !== "lost" && hasQuotes && !quotesUnknown && latestQuote?.status !== "draft" && (
               <>
                 <Button icon="send" onClick={handleSendQuote}>
                   New quote

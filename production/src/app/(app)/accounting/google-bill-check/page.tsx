@@ -14,6 +14,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { createClient } from "@/lib/supabase/client";
 import { downloadCSV } from "@/lib/csv";
 import { toast } from "sonner";
@@ -22,7 +23,8 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { AddFromBillDialog, createFromBill } from "@/components/features/reconcile/add-from-bill";
 import { useItems } from "@/lib/queries/items";
-import { parseGoogleBill, checkBill, expectedPartnerBill, nameFromDomain, draftFromBill, type SubLite, type CustomerLite, type RowStatus, type CheckRow } from "@/lib/reconcile/google-bill";
+import { parseGoogleBill, checkBill, expectedPartnerBill, nameFromDomain, draftFromBill, type RowStatus, type CheckRow } from "@/lib/reconcile/google-bill";
+import { fetchGoogleBillBooks } from "./books";
 
 const inr = (n: number) => rupee(n, { decimals: 2 });
 const STATUS: Record<RowStatus, { label: string; kind: "danger" | "warning" | "success" | "info" }> = {
@@ -42,7 +44,7 @@ const STATUS: Record<RowStatus, { label: string; kind: "danger" | "warning" | "s
 async function pdfToText(file: File): Promise<string> {
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
   let out = "";
   for (let p = 1; p <= pdf.numPages; p++) {
     const tc = await (await pdf.getPage(p)).getTextContent();
@@ -62,16 +64,8 @@ async function pdfToText(file: File): Promise<string> {
 function useBooks() {
   return useQuery({
     queryKey: ["google-bill-check", "books"],
-    queryFn: async () => {
-      const supabase = createClient();
-      const [subs, custs] = await Promise.all([
-        supabase.from("subscriptions").select("id, customer_id, customer_name, domain, vendor, status, seats, vendor_seats, mrr, plan").eq("vendor", "google").limit(5000),
-        supabase.from("customers").select("id, name, domain").not("domain", "is", null).limit(10000),
-      ]);
-      if (subs.error) throw new Error(subs.error.message);
-      if (custs.error) throw new Error(custs.error.message);
-      return { subs: (subs.data ?? []) as SubLite[], customers: (custs.data ?? []) as CustomerLite[] };
-    },
+    // R-1519: paged past the gateway's silent 1000-row cap (books.ts).
+    queryFn: () => fetchGoogleBillBooks(createClient()),
     staleTime: 60_000,
   });
 }
@@ -184,7 +178,7 @@ export default function GoogleBillCheckPage() {
   }
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1400px] mx-auto">
+    <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
       <div className="mb-5">
         <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Purchases</p>
         <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Google bill check</h1>
@@ -237,7 +231,11 @@ export default function GoogleBillCheckPage() {
         </Card>
       )}
 
-      {books.isError && <Card className="p-3 mb-4 text-sm text-rose">Could not load subscriptions: {(books.error as Error).message}</Card>}
+      {books.isError && (
+        <Card className="mb-4">
+          <LoadErrorInline what="Your subscriptions" error={books.error} onRetry={() => void books.refetch()} />
+        </Card>
+      )}
 
       {check && partner && (
         <>

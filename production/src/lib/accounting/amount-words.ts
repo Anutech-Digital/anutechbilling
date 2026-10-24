@@ -32,7 +32,7 @@ export function magnitudeWarning(entered: number, reference: number | null | und
   if (!reference || reference <= 0 || !entered || entered <= 0) return null;
   const ratio = entered / reference;
   if (ratio >= 5 || ratio <= 0.2) {
-    return `Ye ${amountInIndianWords(entered)} hai, jabki ${referenceLabel} ${amountInIndianWords(reference)} tha — ek zero kam/zyada to nahi?`;
+    return `This is ${amountInIndianWords(entered)}, while ${referenceLabel} was ${amountInIndianWords(reference)} — is a zero missing or extra?`;
   }
   return null;
 }

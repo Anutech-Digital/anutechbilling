@@ -53,6 +53,8 @@ const SECRET_EVIDENCE = new RegExp([
   "verifyMetaSignature", "createHmac", "timingSafeEqual", "secretMatches", "WEBHOOK_SECRET",
   "INBOUND_EMAIL_SECRET", "x-ingest-key", "verifyPdfToken", "quoteTokenMatches",
   "verifyClaimToken", "verifyUnsubscribe", "verifyTrialToken",
+  /* R-739: the AGENT_QUEUE_TOKEN check, now shared (lib/security/agent-token.ts). */
+  "authorizeAgent\\(",
 ].join("|"));
 
 const SIGNED_IN = /\.auth\.getUser\s*\(/;

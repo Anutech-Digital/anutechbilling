@@ -22,11 +22,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { verifyDraftMoney } from "@/lib/ai/money-guard";
 import { logAiDecision, formatGuardBlock } from "@/lib/ai/audit";
 import { rupee } from "@/lib/utils";
 import { stubDraft, type Draft } from "@/lib/ai/stub-draft";
+import { istToday } from "@/lib/dates/ist";
 
 const bodySchema = z
   .object({
@@ -150,7 +152,9 @@ export async function POST(request: NextRequest) {
 
   // Resolve the tenant's Gemini config (tenant key → env → stub). RLS scopes
   // the tenant_secrets read to this user's tenant.
-  const { data: me } = await supabase.from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+  const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
+  /* R-1470: only roles that open Renewals (Nudge) or the customer page (next best action) — before any read, AI call or spend. */
+  if (!mayOpenPage(me?.role, ["/renewals", "/customers"])) return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
 
   /* Who the draft is FROM. The stub's three email variants used to end
@@ -226,7 +230,7 @@ export async function POST(request: NextRequest) {
   const activePlan = (subs ?? []).find((s) => s.status === "active")?.plan ?? (subs ?? [])[0]?.plan ?? null;
   const planLabel = activePlan ? activePlan.replace(/^google-workspace-/, "Google Workspace ") : "your subscription";
   // Soonest upcoming renewal (fallback to the earliest on file) — for renewal nudges.
-  const today = new Date().toISOString().slice(0, 10);
+  const today = istToday();   // R-1653: IST day, not the UTC one
   const renewalDates = (subs ?? []).map((s) => s.renewal_date).filter(Boolean) as string[];
   const renewalDate = renewalDates.filter((d) => d >= today).sort()[0] ?? renewalDates.sort()[0] ?? null;
 

@@ -10,6 +10,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import type { Database } from "@/lib/supabase/database.types";
@@ -20,29 +21,29 @@ export type ClaimStatus = ExpenseClaimRow["status"];
 export type ExpenseClaim = ExpenseClaimRow & { employee_name: string };
 
 /** Claims for the tenant, newest first. Pass a status to filter. */
+/** Claims for the tenant, newest first. R-1582: paged past the gateway's 1000-row cap. */
+export async function fetchExpenseClaims(supabase: ReturnType<typeof createClient>, status?: ClaimStatus): Promise<ExpenseClaim[]> {
+  const rows = (await fetchAllRows((from, to) => {
+    let q = supabase
+      .from("expense_claims")
+      .select("*");
+    if (status) q = q.eq("status", status);
+    return q.order("created_at", { ascending: false }).order("id", { ascending: true }).range(from, to);
+  })) as ExpenseClaimRow[];
+
+  // Resolve employee names in one follow-up query (no reliance on embedding).
+  const empIds = Array.from(new Set(rows.map((r) => r.employee_id)));
+  const nameById = new Map<string, string>();
+  const emps = await fetchAllRowsIn(empIds, (run, from, to) => supabase.from("employees")
+    .select("id, name").in("id", run).order("id", { ascending: true }).range(from, to));
+  for (const e of emps) nameById.set(e.id, e.name);
+  return rows.map((r) => ({ ...r, employee_name: nameById.get(r.employee_id) ?? "Employee" }));
+}
+
 export function useExpenseClaims(status?: ClaimStatus) {
   return useQuery({
     queryKey: ["expense-claims", status ?? "all"],
-    queryFn: async (): Promise<ExpenseClaim[]> => {
-      const supabase = createClient();
-      let q = supabase
-        .from("expense_claims")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (status) q = q.eq("status", status);
-      const { data, error } = await q;
-      if (error) throw error;
-      const rows = (data ?? []) as ExpenseClaimRow[];
-
-      // Resolve employee names in one follow-up query (no reliance on embedding).
-      const empIds = Array.from(new Set(rows.map((r) => r.employee_id)));
-      const nameById = new Map<string, string>();
-      if (empIds.length) {
-        const { data: emps } = await supabase.from("employees").select("id, name").in("id", empIds);
-        for (const e of emps ?? []) nameById.set(e.id, e.name);
-      }
-      return rows.map((r) => ({ ...r, employee_name: nameById.get(r.employee_id) ?? "Employee" }));
-    },
+    queryFn: (): Promise<ExpenseClaim[]> => fetchExpenseClaims(createClient(), status),
     staleTime: 20_000,
   });
 }

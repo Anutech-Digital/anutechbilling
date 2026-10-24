@@ -346,6 +346,20 @@ describe("canWriteMoney (R-254: billing sees Payroll and Banking read-only)", ()
     }
   });
 
+  it("R-1127: billing cannot open Trial Balance / Month-end Close / Cash Flow (salary reads Rs0 for it); owner, manager, accountant still can", async () => {
+    const { isRouteAllowed } = await import("./nav");
+    const pages = ["/accounting/trial-balance", "/accounting/close", "/accounting/cash-flow"];
+    const billingHrefs = allowedRoutesForRole("billing");
+    for (const h of pages) {
+      expect(isRouteAllowed("billing", h), h).toBe(false);
+      expect(isRouteAllowed("billing", h + "/x"), h).toBe(false);
+      expect(billingHrefs, h).not.toContain(h);
+      for (const r of ["owner", "manager", "accountant"] as const) expect(isRouteAllowed(r, h), `${r} ${h}`).toBe(true);
+    }
+    // the rest of billing's books stay open
+    for (const h of ["/accounting", "/accounting/pnl", "/accounting/banking", "/accounting/ledger"]) expect(isRouteAllowed("billing", h), h).toBe(true);
+  });
+
   it("the database write rule in role hardening names the same roles", () => {
     const sql = fs.readFileSync(path.join(__dirname, "../../supabase/migrations/20260930175000_role_hardening.sql"), "utf8");
     expect(sql).toContain("current_user_has_role(''owner'', ''manager'', ''accountant'')");

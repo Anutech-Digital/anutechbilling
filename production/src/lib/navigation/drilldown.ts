@@ -19,7 +19,8 @@ export const LEAD_VIEWS = [
 export type LeadViewId = (typeof LEAD_VIEWS)[number];
 
 export const QUOTE_TABS = ["all", "draft", "sent", "viewed", "accepted", "awaiting", "invoiced", "rejected", "expired"] as const;
-export const INVOICE_TABS = ["all", "paid", "partial", "pending", "overdue", "draft", "void"] as const;
+/* R-1709: "credited" = settled by a credit note, not by money. */
+export const INVOICE_TABS = ["all", "paid", "credited", "partial", "pending", "overdue", "draft", "void"] as const;
 export const SUBSCRIPTION_TABS = ["all", "active", "expiring", "suspended", "ended", "trials"] as const;
 export const TASK_TABS = ["today", "overdue", "upcoming", "done", "all"] as const;
 export const RENEWAL_BUCKETS = ["urgent", "upcoming", "future", "risk"] as const;
@@ -43,6 +44,10 @@ export const SUB_FOCUS = ["", "active"] as const;
 export const QUOTE_FOCUS = ["", "pipeline", "review", "accepted", "partial", "to-invoice"] as const;
 /** /payments ?focus= (lib/payments/focus.ts). */
 export const PAYMENT_FOCUS = ["", "received-month"] as const;
+/** /quotes ?approvals=mine — the "waiting on your approval" filter (R-1541: the Quotes badge opens it). */
+export const QUOTE_APPROVALS = ["", "mine"] as const;
+/** /enquiries ?folder= (lib/inbound/folders.ts MAIL_FOLDERS). Kept in step by a test. */
+export const ENQUIRY_FOLDERS = ["inbox", "starred", "snoozed", "leads", "sent", "done", "spam"] as const;
 
 /** One drill-down: the page, the URL key it reads, and the value — checked by the tests. */
 export interface Drill { path: string; key: string; value: string }
@@ -61,6 +66,9 @@ export const DRILL = {
   /* Quotes */
   quotesDraft:      d("/quotes", "tab", "draft"),
   quotesAccepted:   d("/quotes", "tab", "accepted"),
+  /* R-1541: the Quotes and Payments Received sidebar badges. */
+  quotesMyApprovals: d("/quotes", "approvals", "mine"),
+  quotesToInvoice:  d("/quotes", "focus", "to-invoice"),
   /* Invoices */
   invoicesOverdue:  d("/invoices", "tab", "overdue"),
   invoicesUnpaid:   d("/invoices", "focus", "unpaid"),
@@ -68,9 +76,13 @@ export const DRILL = {
   subsExpiring:     d("/subscriptions", "tab", "expiring"),
   subsActive:       d("/subscriptions", "focus", "active"),
   renewalsUrgent:   d("/renewals", "bucket", "urgent"),
+  /* Companies — "Has receivables": the dashboard "to collect" figure's companies (R-1473). */
+  customersUnpaid:  d("/customers", "view", "unpaid"),
   /* Tasks */
   tasksOverdue:     d("/tasks", "tab", "overdue"),
   tasksToday:       d("/tasks", "tab", "today"),
+  /* Enquiries — the Inbox (R-1541: the sidebar badge counts its unread conversations). */
+  enquiriesInbox:   d("/enquiries", "folder", "inbox"),
 } as const satisfies Record<string, Drill>;
 
 export type DrillName = keyof typeof DRILL;
@@ -85,11 +97,12 @@ export function drillHref(name: DrillName): string {
 export const PAGE_CHOICES: Record<string, Record<string, readonly string[]>> = {
   "/leads":         { view: LEAD_VIEWS },
   "/deals":         { view: LEAD_VIEWS },
-  "/quotes":        { tab: QUOTE_TABS, focus: QUOTE_FOCUS },
+  "/quotes":        { tab: QUOTE_TABS, focus: QUOTE_FOCUS, approvals: QUOTE_APPROVALS },
   "/invoices":      { tab: INVOICE_TABS, focus: INVOICE_FOCUS },
   "/subscriptions": { tab: SUBSCRIPTION_TABS, focus: SUB_FOCUS },
   "/tasks":         { tab: TASK_TABS },
   "/renewals":      { bucket: RENEWAL_BUCKETS },
   "/customers":     { view: CUSTOMER_VIEWS },
   "/payments":      { tab: PAYMENT_TABS, focus: PAYMENT_FOCUS },
+  "/enquiries":     { folder: ENQUIRY_FOLDERS },
 };

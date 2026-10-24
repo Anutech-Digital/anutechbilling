@@ -17,6 +17,7 @@ import { apiNeedsMfaCode, MFA_API_REFUSAL } from "@/lib/auth/mfa-gate";
 import { clearLoginCookies, DEACTIVATED_ERROR, DEACTIVATED_MESSAGE } from "@/lib/auth/deactivated";
 import { AUTH_OUTAGE_HTML, AUTH_OUTAGE_MESSAGE, authOutageVerdict } from "@/lib/supabase/auth-outage";
 import { decideSite } from "@/site/lib/site-split";
+import { SITE_PREVIEW_COOKIE, SITE_PREVIEW_COOKIE_OPTIONS, sitePreviewCookieAction } from "@/site/lib/site-preview";
 import {
   DEMO_COOKIE, DEMO_REFUSAL, DEMO_REFUSAL_HEADER,
   demoCookieLive, demoEnabled, demoHomePath, demoRequestVerdict, isDemoVisitor,
@@ -90,6 +91,20 @@ const PROTECTED_PREFIXES = [
      it "logged in as the owner", so it always had a session. */
   "/vault",
   "/attendance",
+  /* R-1440 (16 Oct 2026): menu pages that were never added here, so the role guard below
+     never ran on them — a Sales user opened Referrals and the Activation Queue by URL.
+     middleware.role-gate.test.ts now walks every APP_NAV page for every role. */
+  "/referrals",
+  "/provisioning",
+  "/documents",
+  "/hosting-domains",
+  "/my-expenses",
+  "/collections",     // R-1516 Payment Follow-up
+  /* R-1542 (18 Oct 2026): (app) pages under no menu row that were never gated — nav.ts
+     OFF_MENU_ROLES says who opens them; nav-route-guard.test.ts checks every (app) page is here. */
+  "/platform",
+  "/products",
+  "/aa/",
   /* Onboarding fork for a signed-in person who has no workspace yet. It is
      PROTECTED (you must be authenticated to see it) but deliberately NOT in
      AUTH_PREFIXES below — those bounce a signed-in user to their role home,
@@ -146,7 +161,15 @@ export async function middleware(request: NextRequest) {
   if (site.action === "rewrite") {
     const url = request.nextUrl.clone();
     url.pathname = site.pathname;
-    return NextResponse.rewrite(url);
+    const rewritten = NextResponse.rewrite(url);
+    /* R-1508: the live product root ("/" on reselleros.anutech.in) is answered here, before the
+       session is read. A ?preview=1 visit remembers the website preview so the site's own Home
+       link does not bounce a signed-in tester to the dashboard. Harmless for a signed-out
+       visitor: the cookie only stops that bounce, and their next request clears it (below). */
+    if (request.nextUrl.searchParams.get("preview") === "1") {
+      rewritten.cookies.set(SITE_PREVIEW_COOKIE, "1", SITE_PREVIEW_COOKIE_OPTIONS);
+    }
+    return rewritten;
   }
 
   /* ─── Rate limit: unauthenticated public surface (audit A3, 1 Sep 2026) ────
@@ -225,6 +248,18 @@ export async function middleware(request: NextRequest) {
   }
   const { response, user, role, canViewDeals, needsMfa } = session;
   const isAuthed = !!user;
+
+  /* R-1508: website preview for a signed-in team member (site/lib/site-preview.ts). Opened with
+     ?preview=1 → remembered for this browser session, so "/" and /reselleros stop bouncing them
+     to the dashboard while they test the website. Signed out → the cookie is dropped. */
+  const previewCookie = sitePreviewCookieAction({
+    pathname,
+    previewParam: request.nextUrl.searchParams.get("preview"),
+    cookieValue: request.cookies.get(SITE_PREVIEW_COOKIE)?.value,
+    signedIn: isAuthed,
+  });
+  if (previewCookie === "set") response.cookies.set(SITE_PREVIEW_COOKIE, "1", SITE_PREVIEW_COOKIE_OPTIONS);
+  if (previewCookie === "clear") response.cookies.set(SITE_PREVIEW_COOKIE, "", { ...SITE_PREVIEW_COOKIE_OPTIONS, maxAge: 0 });
 
   /* ─── R-722: a deactivated member is signed out on their next request ─────────────
      Owner turned the member off (users.is_active = false) → their login cookies are cleared
@@ -362,16 +397,20 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Role-based route guard. Sales users only have /leads + /tasks in their
-  // nav; visiting any other protected route bounces them to their home.
-  // Owners + managers get the full app — no gate applied to them.
-  if (isAuthed && isProtected && role && role !== "owner" && role !== "manager") {
+  // Role-based route guard: a typed URL opens only what the role's menu has (nav.ts
+  // isRouteAllowed). R-1542 (18 Oct 2026): the manager is gated too — skipping it meant
+  // ROUTE_DENY.manager (Loans given) and the owner-only Backup row never ran. Only the owner
+  // skips it, and nav-route-guard.test.ts proves the owner may open every page anyway.
+  if (isAuthed && isProtected && role && role !== "owner") {
     const userRole = role as UserRole;
     const isAllowedPath = isRouteAllowed(userRole, pathname, { canViewDeals });
     if (!isAllowedPath) {
       const url = request.nextUrl.clone();
       url.pathname = ROLE_HOME[userRole];
-      url.searchParams.delete("next");
+      // R-1810: say which page was refused — the app shell shows "You don't have access to …"
+      // (components/layout/denied-route-toast.tsx). The refused page's own query is dropped.
+      url.search = "";
+      url.searchParams.set("denied", pathname);
       return NextResponse.redirect(url);
     }
   }

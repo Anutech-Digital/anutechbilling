@@ -18,13 +18,13 @@ export const metadata: Metadata = {
     template: "%s · ResellerOS",
   },
   description:
-    "The complete operating system for Indian cloud resellers. Sell Google Workspace, Microsoft 365, and Zoho with built-in GST invoicing, Razorpay payments, and Premier Partner escalation.",
+    "The complete operating system for Indian cloud resellers. Sell Google Workspace, Microsoft 365, and Zoho with built-in GST invoicing and Razorpay payments.",
+  // R-1602: no "Premier Partner" claim in site-wide metadata until proof is on file.
   keywords: [
     "Google Workspace reseller",
     "cloud reseller SaaS India",
     "GST e-invoice",
     "Razorpay billing",
-    "Premier Partner",
   ],
   /* 26 Aug 2026: live deploy ke baad ye chhoot pakdi gayi. Ye `<meta name="author">` HAR
      page par jaata hai — landing, privacy, terms, sab — aur wo purani entity ka naam le

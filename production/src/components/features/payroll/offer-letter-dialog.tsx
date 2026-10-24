@@ -159,7 +159,7 @@ export function OfferLetterDialog({
               </div>
             </div>
             <p className="text-center text-xs text-ink-3 mt-3 flex items-center justify-center gap-1">
-              <Icon name="info" size={11} /> Fields upar edit karo — preview turant badalta hai. Print / Save PDF se de do.
+              <Icon name="info" size={11} /> Edit the fields above — the preview updates instantly. Hand it over using Print / Save PDF.
             </p>
           </div>
         </div>

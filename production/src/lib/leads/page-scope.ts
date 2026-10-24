@@ -79,6 +79,20 @@ export function everythingCountForPage(
 }
 
 /**
+ * R-1475 — the sidebar badge for this page (Sales & Pipeline / Deals): every non-junk lead
+ * in a stage the page shows, i.e. exactly the "All leads" / "All deals" view the page opens
+ * on (everythingCountForPage with no search or filter). nav_badges() counts the same thing
+ * in SQL (migration 20261017085109); nav-badge-page-match.test.ts holds the two together.
+ * Before this the badge counted only the open stages, junk included — "Deals 4" opened
+ * "All deals 7" (Pawan, staging 16 Oct).
+ */
+export function navBadgeCount(
+  rows: readonly { stage: Lead["stage"]; is_junk: boolean }[], isDealsPage: boolean,
+): number {
+  return rows.filter((r) => !r.is_junk && stageShownOnPage(r.stage, isDealsPage)).length;
+}
+
+/**
  * R-070: the Kanban header totals the server can vouch for — lead_counts().stage_totals, or
  * undefined when the board is not showing the set the server counted:
  *   • a folder is picked, or the Junk view is on — the board then shows the list cut

@@ -94,7 +94,7 @@ export default function GoogleBusinessPage() {
   const exportCsv = () => downloadCSV(`google-business-${loc?.title ?? "listing"}-${cmp.from}-${cmp.to}.csv`, GBP_CSV_HEADERS, metricsCsvRows(rows.filter((r) => r.day >= cmp.from && r.day <= cmp.to)));
 
   return (
-    <div className="mx-auto max-w-[1400px] p-4 md:p-6 lg:p-8 space-y-5">
+    <div className="mx-auto max-w-[1800px] p-4 md:p-6 lg:p-8 space-y-5">
       <header className="flex items-end justify-between gap-3 flex-wrap">
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Marketing &amp; Advertising</p>

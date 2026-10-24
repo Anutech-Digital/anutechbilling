@@ -16,7 +16,7 @@
  */
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
+import { authorizeAgent } from "@/lib/security/agent-token";
 import type { Database } from "@/lib/supabase/database.types";
 import {
   AGENT_CARD_RE,
@@ -33,12 +33,8 @@ type FeedbackUpdate = Database["public"]["Tables"]["feedback"]["Update"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: Request) {
-  const expected = process.env.AGENT_QUEUE_TOKEN?.trim();
-  if (!expected) return NextResponse.json({ error: "agent queue not configured" }, { status: 503 });
-  const provided = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-  if (!timingSafeEqualStr(provided, expected)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const auth = authorizeAgent(req);
+  if (!auth.ok) return auth.response;
 
   let id: unknown;
   let card: unknown;
@@ -56,6 +52,7 @@ export async function POST(req: Request) {
     .from("feedback")
     .update(patch)
     .eq("id", id)
+    .in("tenant_id", auth.tenantIds)   // R-739: only a scoped workspace's report
     .in("status", ["open", "agent_queued"])
     .is("agent_claimed_at", null)
     .select("id");
@@ -68,7 +65,7 @@ export async function POST(req: Request) {
   if (data && data.length > 0) return NextResponse.json({ ok: true, id, card, claimed_at: now });
 
   /* Nothing matched: same card again is fine (retry); anything else is a real "no". */
-  const { data: row } = await admin.from("feedback").select("*").eq("id", id).maybeSingle();
+  const { data: row } = await admin.from("feedback").select("*").eq("id", id).in("tenant_id", auth.tenantIds).maybeSingle();
   const claim = agentClaim(row);
   if (claim && claim.card === card) {
     return NextResponse.json({ ok: true, id, card, claimed_at: claim.claimedAt, already: true });

@@ -20,13 +20,41 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { buildNotifications, type NotificationItem } from "./notification-items";
+import { buildNotifications, countUnread, notifReadStore, type NotificationItem } from "./notification-items";
 import { useTasks } from "@/lib/queries/tasks";
 import { useRecentLeads } from "@/lib/queries/leads";
 import { useCelebrations } from "@/lib/queries/contacts";
 import { useNotifications, useMarkNotificationRead, useMarkAllNotificationsRead } from "@/lib/queries/notifications";
 
-const READ_KEY = "ros_notif_read";
+/**
+ * R-1122: the list + unread count that BOTH the bell badge (topbar) and this panel show.
+ * Same sources, same shared read-state store, same countUnread — so they always agree and
+ * "Mark all read" clears the badge. react-query dedupes the reads between the two.
+ */
+export function useNotificationFeed() {
+  const { data: tasks, isLoading: tasksLoading } = useTasks("all");
+  /* Only the leads it shows: created in the last 7 days, 30 at most, five columns (S40).
+     This panel is mounted on every page and used to load every lead with select("*"). */
+  const { data: leads, isLoading: leadsLoading } = useRecentLeads();
+  const { data: celebrations, isLoading: celebrationsLoading } = useCelebrations(7);
+  /* Asli events — DB se (audit B4): payment/quote-accept/lead/ticket. Read-state
+     row par hai, har device par ek. */
+  const { data: dbNotifs, isLoading: notifsLoading } = useNotifications();
+
+  // Persisted read-state (localStorage) shared with the bell, so "Mark all read" sticks
+  // across refresh and the badge drops the same instant.
+  const readIds = React.useSyncExternalStore(
+    notifReadStore.subscribe, notifReadStore.getSnapshot, notifReadStore.getServerSnapshot,
+  );
+
+  const items = React.useMemo(
+    () => buildNotifications({ dbNotifs, tasks, leads, celebrations, readIds }),
+    [tasks, leads, celebrations, readIds, dbNotifs],
+  );
+  /* Pehli load par "You're all caught up" jhooth tha (R-247) — data aane tak skeleton. */
+  const loading = items.length === 0 && (tasksLoading || leadsLoading || notifsLoading || celebrationsLoading);
+  return { items, unreadCount: countUnread(items), loading };
+}
 
 export function NotificationPanel({
   open,
@@ -36,51 +64,18 @@ export function NotificationPanel({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
-  const { data: tasks, isLoading: tasksLoading } = useTasks("all");
-  /* Only the leads it shows: created in the last 7 days, 30 at most, five columns (S40).
-     This panel is mounted on every page and used to load every lead with select("*"). */
-  const { data: leads, isLoading: leadsLoading } = useRecentLeads();
-  const { data: celebrations, isLoading: celebrationsLoading } = useCelebrations(7);
-  /* Asli events — DB se (audit B4): payment/quote-accept/lead/ticket. Read-state
-     row par hai, har device par ek. */
-  const { data: dbNotifs, isLoading: notifsLoading } = useNotifications();
+  const { items, unreadCount, loading } = useNotificationFeed();
   const markDbRead = useMarkNotificationRead();
   const markDbAll  = useMarkAllNotificationsRead();
 
-  // Persisted read-state so "Mark all read" survives refresh.
-  const [readIds, setReadIds] = React.useState<Set<string>>(new Set());
-  React.useEffect(() => {
-    try {
-      const s = localStorage.getItem(READ_KEY);
-      if (s) setReadIds(new Set(JSON.parse(s) as string[]));
-    } catch { /* ignore */ }
-  }, []);
-  const persistRead = (next: Set<string>) => {
-    setReadIds(next);
-    try { localStorage.setItem(READ_KEY, JSON.stringify([...next])); } catch { /* ignore */ }
-  };
-
-  const items = React.useMemo(
-    () => buildNotifications({ dbNotifs, tasks, leads, celebrations, readIds }),
-    [tasks, leads, celebrations, readIds, dbNotifs],
-  );
-  /* Pehli load par "You're all caught up" jhooth tha (R-247) — data aane tak skeleton. */
-  const loading = items.length === 0 && (tasksLoading || leadsLoading || notifsLoading || celebrationsLoading);
-
-  const unreadCount = items.filter((n) => n.unread).length;
-
   const markAllRead = () => {
-    const next = new Set(readIds);
-    items.forEach((n) => next.add(n.id));
-    persistRead(next);
+    notifReadStore.markRead(items.map((n) => n.id));
     // DB events ka read_at bhi — warna doosre device par sab wapas unread.
     markDbAll.mutate();
   };
 
   const openItem = (n: NotificationItem) => {
-    const next = new Set(readIds);
-    next.add(n.id);
-    persistRead(next);
+    notifReadStore.markRead([n.id]);
     if (n.id.startsWith("db-")) markDbRead.mutate(n.id.slice(3));
     onOpenChange(false);
     router.push(n.link as never);
@@ -103,7 +98,8 @@ export function NotificationPanel({
                 : `All caught up · ${items.length} recent`}
             </SheetDescription>
           </div>
-          <div className="flex items-center gap-1">
+          {/* gap-3: "Mark all read" sat right against the × (Pawan, 16 Oct — R-1122). */}
+          <div className="flex items-center gap-3">
             <button
               onClick={markAllRead}
               disabled={unreadCount === 0}

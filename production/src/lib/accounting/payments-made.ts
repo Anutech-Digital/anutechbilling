@@ -9,6 +9,8 @@
  * accounts are not payments and are left out.
  */
 
+import { fyStartISO } from "@/lib/dates/ist";
+
 export type PaidGroup = "vendors" | "salaries" | "statutory" | "advances" | "other" | "unreconciled";
 
 export const GROUP_LABEL: Record<PaidGroup, string> = {
@@ -72,7 +74,7 @@ export interface PaidOutSummary {
   byGroup: { group: PaidGroup; label: string; amount: number; count: number }[];
 }
 
-const fyStart = (iso: string) => { const [y, m] = iso.slice(0, 7).split("-").map(Number); return `${m >= 4 ? y : y - 1}-04-01`; };
+const fyStart = (iso: string) => fyStartISO(iso.slice(0, 7));
 
 export function summarisePaidOut(lines: readonly PaidOutLine[], today: string): PaidOutSummary {
   const month = today.slice(0, 7), fy = fyStart(today);

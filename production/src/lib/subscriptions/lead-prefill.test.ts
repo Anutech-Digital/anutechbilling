@@ -13,6 +13,18 @@ describe("won deal → subscription form (R-073)", () => {
     });
     expect(p).not.toHaveProperty("price");
   });
+  it("R-1712: the lead's GSTIN and state travel to the new customer (upper-cased, trimmed)", () => {
+    const p = prefillFromLead({ id: "L4", company: "Acme", gstin: " 27aapfu0939f1zv ", state_code: "27" });
+    expect(p).toMatchObject({ gstin: "27AAPFU0939F1ZV", stateCode: "27" });
+    expect(prefillFromLead({ id: "L5", company: "X" })).toMatchObject({ gstin: "", stateCode: "" });
+  });
+  it("R-1712: the add-subscription form asks for a new customer's GSTIN and writes customers.gstin", () => {
+    const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "../../components/features/subscriptions/add-subscription-dialog.tsx"), "utf8") as string;
+    expect(src).toMatch(/id="newCustGstin"/);
+    expect(src).toMatch(/gstin: newGstinValid/);
+    const page = require("node:fs").readFileSync(require("node:path").join(__dirname, "../../app/(app)/subscriptions/page.tsx"), "utf8") as string;
+    expect(page).toMatch(/billing_cycle, gstin, state_code"\)/);
+  });
   it("a missing or zero seat count stays empty rather than becoming 0 seats", () => {
     expect(prefillFromLead({ id: "L2", company: "X", seats: 0 }).seats).toBeNull();
     expect(prefillFromLead({ id: "L3", company: "X" }).seats).toBeNull();

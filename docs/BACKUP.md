@@ -160,6 +160,23 @@ Schema definitions are captured **live from the database, not from git**, and th
 
 ---
 
+## Cloud SQL backup → real restore test (R-887, 16 Oct 2026)
+
+The 29 Sep rehearsal proved the **off-site JSON** restores. It never touched a **Cloud SQL backup file**. `production/scripts/ops/backup-restore-test.mjs` does exactly that: it restores the latest SUCCESSFUL backup of an instance into a brand-new temporary instance (`r887-restore-test-<yyyymmddhhmm>`), runs one read-only `count(*)` per key table (tenants, users, customers, invoices, payments, subscriptions, employees, activity_log) plus the migration-ledger tail, compares them with minimums (`--min=table=N`), and deletes the clone in a `finally` block. The source instance is only described and listed — never written.
+
+```bash
+cd production
+# Dry run (default): prints every gcloud/psql command it WOULD run + the cost note. Runs nothing.
+node scripts/ops/backup-restore-test.mjs --instance=resellersos-staging-db
+
+# Real run — creates a BILLABLE clone (Pardeep's haan first). Needs --run, your public IPv4 and the typed phrase.
+node scripts/ops/backup-restore-test.mjs --instance=resellersos-staging-db --client-ip=<your public IPv4> \
+     --run --confirm="RESTORE TEST resellersos-staging-db"
+# The live instance (resellersos-db) is refused unless --allow-live-source is added as well.
+```
+
+Guards: `--run` without the exact phrase `RESTORE TEST <instance>` creates nothing; the clone opens its public IP only to `--client-ip/32`, has no backups and no deletion protection; the delete never targets a name outside `r887-restore-test-*`; if the delete fails the script prints the exact `gcloud sql instances delete …` to run by hand. Cost: roughly ₹2–4 for a staging-tier clone, ₹8–16 for a live-tier one (30–60 min). Tests: `npx vitest run tests/ops/backup-restore-test.test.ts` (gcloud/psql mocked). Expected cadence: once before the 20 Oct cutover against the live instance's backup, then quarterly with the off-site rehearsal.
+
 ## 🔴 Restore rehearsal — attempted 2026-08-13, and it found a blocker BEFORE the rehearsal
 
 A live rehearsal needs somewhere to restore *into*: no Docker, no `psql`, no local Postgres on this machine, and `supabase start` needs Docker. So before asking anyone to install a stack, the cheaper question was asked first: **could a restore even work?**

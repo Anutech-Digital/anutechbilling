@@ -18,6 +18,8 @@
  * like profile-row.ts treats the compliance profile.
  */
 
+import { invoiceIsSale } from "@/lib/accounting/sale-documents";
+
 export type TurnoverBracket = "up_to_5cr" | "5_to_10cr" | "10cr_plus";
 
 export const TURNOVER_BRACKETS: TurnoverBracket[] = ["up_to_5cr", "5_to_10cr", "10cr_plus"];
@@ -144,6 +146,8 @@ export interface IrnAgeInvoice {
   gst_irn?: string | null;
   customer_gstin?: string | null;
   status?: string | null;
+  /** R-1739: an invoice imported from Zoho Books needs no IRN from us (absent = our sale). */
+  document_kind?: string | null;
 }
 
 /**
@@ -157,6 +161,7 @@ export function irnAgeingInvoices<T extends IrnAgeInvoice>(
 ): { ageing: T[]; pastLimit: number } {
   if (!irnDeadlineApplies(bracket)) return { ageing: [], pastLimit: 0 };
   const ageing = invoices.filter((i) =>
+    invoiceIsSale(i.document_kind) &&
     isB2B(i.customer_gstin) &&
     !(i.gst_irn && i.gst_irn.trim()) &&
     i.status !== "void" && i.status !== "draft" &&

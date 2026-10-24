@@ -10,6 +10,7 @@
  */
 import * as React from "react";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -41,14 +42,9 @@ export function LeadsStatusStates({
 }: LeadsStatusStatesProps) {
   return (
     <>
-      {/* Error */}
+      {/* Error — R-1535: plain words + Try again; the raw database text goes to the console. */}
       {error && (
-        <EmptyState
-          icon="alert"
-          title="Could not load leads"
-          body={error.message}
-          action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
-        />
+        <LoadError what={isDealsPage ? "Deals" : "Leads"} error={error} onRetry={() => void refetch()} />
       )}
 
       {/* Loading — R-433: only this page's columns (New + Contacted on /leads), so the
@@ -130,6 +126,17 @@ export function LeadsStatusStates({
       )}
     </>
   );
+}
+
+/** R-1535: what to do with /leads?lead=<id> once its read has settled. A failed read is
+ *  "error" — keep the id in the URL and offer Try again; only a read that SUCCEEDED with no
+ *  row is "not-found". It used to say "Lead <id> not found" and drop the id on any failure,
+ *  so a notification link on a bad connection told the rep the lead was gone. Pure. */
+export type DeepLinkOutcome = "wait" | "error" | "not-found" | "open";
+export function deepLinkOutcome(q: { isFetched: boolean; isError: boolean; data: unknown }): DeepLinkOutcome {
+  if (q.isError && !q.data) return "error";
+  if (!q.isFetched) return "wait";
+  return q.data ? "open" : "not-found";
 }
 
 /** R-432: what is narrowing the list right now — search, the Filter menu (stage, priority,

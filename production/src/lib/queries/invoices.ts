@@ -4,6 +4,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import type { SeriesState } from "@/lib/actions/consequence";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
@@ -13,17 +14,20 @@ import type { Invoice } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { lutMissingWarning } from "@/lib/gst/export-lut";
-import { COMPANY_STATE_FIX, isCompanyStateMissingError } from "@/lib/onboarding/setup-links";
+import { invoiceIssueFix } from "@/lib/onboarding/setup-links";
+import { customerBeforeInvoice } from "@/lib/quotes/quote-page-actions";
 
 /**
  * R-431 (board R-406): generate_invoice refuses when the company's own state is empty. The
  * toast used to vanish in ~4 s with no button; now it stays and opens Settings → Company.
  */
-function toastInvoiceIssueError(err: unknown): void {
-  if (isCompanyStateMissingError(err)) {
+export function toastInvoiceIssueError(err: unknown): void {
+  /* R-1643: the company's GSTIN / address refusal gets the same one-click fix. */
+  const fix = invoiceIssueFix(err);
+  if (fix) {
     toastError(err, {
       duration: 15000,
-      action: { label: COMPANY_STATE_FIX.label, onClick: () => window.location.assign(COMPANY_STATE_FIX.href) },
+      action: { label: fix.label, onClick: () => window.location.assign(fix.href) },
     });
     return;
   }
@@ -118,7 +122,7 @@ export function useQuotesAwaitingInvoice() {
 
       const firstAdvanceByQuote = new Map<string, string>();
       for (const p of payments ?? []) {
-        if (!firstAdvanceByQuote.has(p.quote_id)) {
+        if (p.quote_id && !firstAdvanceByQuote.has(p.quote_id)) {
           firstAdvanceByQuote.set(p.quote_id, p.received_at);
         }
       }
@@ -199,22 +203,36 @@ export function useGenerateInvoice() {
          why, and the next step. */
       const check = await supabase
         .from("quotes")
-        .select("subtotal, tax_rate, amount, discount_pct")
+        .select("subtotal, tax_rate, amount, discount_pct, customer_id, status")
         .eq("id", quoteId)
         .single();
       if (check.error) throw check.error;
       const { subtotal, tax_rate, amount, discount_pct } = check.data;
+
+      /* R-1706: no customer → generate_invoice used to say "<name> has no state on record …
+         Customers → <name> → Edit" about a customer that did not exist. A prospect quote accepted
+         before R-1706 has none: accepting again (same route and role check as Mark accepted)
+         creates it from the quote. Not yet accepted → say so. */
+      const step = customerBeforeInvoice({ customer_id: check.data.customer_id, status: check.data.status });
+      if (step.kind === "refuse") throw new Error(step.message);
+      if (step.kind === "accept_first") {
+        const res = await fetch(`/api/quotes/${encodeURIComponent(quoteId)}/mark-accepted`, { method: "POST" });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(body?.error ?? "This quote has no customer record yet and it could not be created. Reload the quote and try again.");
+        }
+      }
       // R-082: net of the quote's discount, as generate_invoice computes it.
       if (!isQuoteAmountConsistent(subtotal ?? 0, tax_rate ?? 0, amount ?? 0, discount_pct ?? 0)) {
         const taxable = taxableAfterDiscount(subtotal ?? 0, discount_pct ?? 0);
         const should = grossAmount(taxable, tax_rate ?? 0);
         throw new Error(
-          `Is quote ka total apne hi GST se mel nahi khata — invoice nahi ban sakti. `
-          + `Subtotal ₹${(subtotal ?? 0).toLocaleString("en-IN")}${discount_pct ? ` − ${discount_pct}% discount = ₹${taxable.toLocaleString("en-IN")}` : ""} par ${tax_rate ?? 0}% GST = `
-          + `₹${should.toLocaleString("en-IN")}, par quote me ₹${(amount ?? 0).toLocaleString("en-IN")} likha hai `
-          + `(₹${Math.abs(should - (amount ?? 0)).toLocaleString("en-IN")} ka farak). `
-          + `Invoice banne ke baad ye number badla nahi ja sakta. Pehle quote edit karke total theek karo — `
-          + `ya agar daam GST-sahit tay hua tha to tax rate theek karo — phir invoice banao.`,
+          `This quote's total does not match its own GST — the invoice cannot be created. `
+          + `Subtotal ₹${(subtotal ?? 0).toLocaleString("en-IN")}${discount_pct ? ` − ${discount_pct}% discount = ₹${taxable.toLocaleString("en-IN")}` : ""} at ${tax_rate ?? 0}% GST = `
+          + `₹${should.toLocaleString("en-IN")}, but the quote says ₹${(amount ?? 0).toLocaleString("en-IN")} `
+          + `(a difference of ₹${Math.abs(should - (amount ?? 0)).toLocaleString("en-IN")}). `
+          + `Once the invoice is created this number cannot be changed. First edit the quote and correct the total — `
+          + `or, if the price was agreed including GST, correct the tax rate — then create the invoice.`,
         );
       }
 
@@ -244,9 +262,10 @@ export function useGenerateInvoice() {
       /* R-334: a zero-rated export issued with no LUT on file — warn, never block. */
       const lutWarn = lutMissingWarning({ taxRate, lutNumber: me.data?.tenantLutNumber });
       if (lutWarn) toast.warning(lutWarn, { duration: 12_000 });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["nav-badges"] });
+      /* R-1686: "Invoice now (before payment)" files the subscription and its dues in the
+         same database call — the Subscriptions list and Payments → Subscription dues re-read;
+         R-1634: the new invoice is a due on /collections too. */
+      invalidateReceivables(qc);
       if (totalAdvances > 0 && netPayable > 0) {
         toast.success(
           `Invoice ${invoiceId} generated · ₹${totalAdvances.toLocaleString("en-IN")} advance adjusted · ₹${netPayable.toLocaleString("en-IN")} payable`,
@@ -297,11 +316,7 @@ export function useCreateDirectInvoice() {
       return row as { invoice_id: string; quote_id: string; net_payable: number; tax_rate: number };
     },
     onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["customers"] });
-      qc.invalidateQueries({ queryKey: ["aging"] });
-      qc.invalidateQueries({ queryKey: ["nav-badges"] });
+      invalidateReceivables(qc);   // R-1634: a new due — /collections and Aging too
       toast.success(
         `Invoice ${res.invoice_id} raised · ₹${res.net_payable.toLocaleString("en-IN")} due${res.tax_rate === 0 ? " · export (zero-rated)" : ""}`,
       );

@@ -263,3 +263,38 @@ export function publicApiLimit(pathname: string): { limit: number; windowMs: num
   // udaar par bounded.
   return { limit: 120, windowMs: 5 * 60_000 };
 }
+
+/* ─── R-1549 (19 Oct 2026): the website's own form and chat routes ───────────────────────────
+ * /api/enquiry and /api/agent are not under /api/public/, so the middleware never counted them,
+ * and since R-1598 they call the public handlers IN-PROCESS — the middleware never sees that
+ * call either. Before R-1598 they fetched the public routes server-to-server, which put every
+ * visitor in ONE bucket keyed by the server's own IP: one bot could stop the form for everyone.
+ * The count now happens in the route itself, per visitor IP (clientIp — the same right-most
+ * X-Forwarded-For entry the middleware trusts) and, where the form carries one, per email. */
+export const SITE_ENQUIRY_PER_IP = { limit: 10, windowMs: 10 * 60_000 } as const;
+export const SITE_ENQUIRY_PER_EMAIL = { limit: 5, windowMs: 60 * 60_000 } as const;
+export const SITE_AGENT_PER_IP = { limit: 30, windowMs: 5 * 60_000 } as const;
+
+/**
+ * Count one website form send ("enquiry", also a chat lead) or chat message ("agent") for this
+ * visitor. The IP is counted first; the email only when the IP passed, so a blocked IP does not
+ * also use up a real customer's per-email allowance.
+ */
+export async function siteVisitorLimit(
+  kind: "enquiry" | "agent",
+  headers: Headers,
+  email?: string | null,
+): Promise<RateLimitResult> {
+  const perIp = kind === "agent" ? SITE_AGENT_PER_IP : SITE_ENQUIRY_PER_IP;
+  const byIp = await rateLimitShared(`site-${kind}:ip:${clientIp(headers)}`, perIp);
+  if (!byIp.ok) return byIp;
+  const mail = (email ?? "").trim().toLowerCase();
+  if (!mail) return byIp;
+  return rateLimitShared(`site-${kind}:email:${mail}`, SITE_ENQUIRY_PER_EMAIL);
+}
+
+/** "about 7 minutes" — for a §24 message that says how long to wait. */
+export function waitPhrase(retryAfterSec: number): string {
+  const min = Math.max(1, Math.ceil(retryAfterSec / 60));
+  return `about ${min} minute${min === 1 ? "" : "s"}`;
+}

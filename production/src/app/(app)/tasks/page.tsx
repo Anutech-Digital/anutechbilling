@@ -23,7 +23,7 @@ import { useTaskList, TASK_SELECT, type TaskBucket, type TaskWithLink } from "@/
 import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import { TaskRow, taskLeadName } from "@/components/features/tasks/task-row";
 import { TaskQuickAdd } from "@/components/features/tasks/task-quick-add";
-import { groupTasks, type TaskGroup, type TaskGroupId } from "@/components/features/tasks/task-groups";
+import { groupTasks, taskTabCounts, type TaskGroup, type TaskGroupId } from "@/components/features/tasks/task-groups";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { Card } from "@/components/ui/card";
@@ -64,8 +64,27 @@ export default function TasksPage() {
     if (!taskParam || openedFor.current === taskParam || !linkedTask.isSuccess) return;
     openedFor.current = taskParam;
     if (linkedTask.data) setEditingTask(linkedTask.data);
-    else { toast.error("That task no longer exists."); setTaskParam(""); }
+    else {
+      toast.error("That task no longer exists.", {
+        description: "It was deleted, or it isn't shared with you. Showing all tasks.",
+      });
+      setTaskParam("");
+    }
   }, [taskParam, linkedTask.isSuccess, linkedTask.data, setTaskParam]);
+  /* R-1535: a FAILED read is not "no longer exists" — keep ?task= and offer Try again. */
+  const taskErrorShown = React.useRef<number | null>(null);
+  const { isError: linkedTaskFailed, error: linkedTaskError, errorUpdatedAt: linkedTaskErrorAt, refetch: refetchLinkedTask } = linkedTask;
+  React.useEffect(() => {
+    if (!taskParam || !linkedTaskFailed || taskErrorShown.current === linkedTaskErrorAt) return;
+    taskErrorShown.current = linkedTaskErrorAt;
+    // A failed READ: fixed words on screen, the raw text in the console (§11).
+    console.error("[tasks] ?task= read failed", linkedTaskError);
+    toast.error("This task couldn't be opened.", {
+      description: "The task was not removed — it just couldn't be loaded. Try again in a moment.",
+      action: { label: "Try again", onClick: () => void refetchLinkedTask() },
+      duration: 10_000,
+    });
+  }, [taskParam, linkedTaskFailed, linkedTaskError, linkedTaskErrorAt, refetchLinkedTask]);
   const closeEditing = React.useCallback(() => {
     setEditingTask(null);
     if (taskParam) setTaskParam("");
@@ -106,15 +125,15 @@ export default function TasksPage() {
     return () => window.clearInterval(id);
   }, []);
   const groups = React.useMemo(() => groupTasks(mineOrTheirs, now), [mineOrTheirs, now]);
-  const count = (id: TaskGroupId) => groups.find((g) => g.id === id)?.tasks.length ?? 0;
-  const openCount = count("overdue") + count("today") + count("upcoming") + count("nodate");
+  // R-1416: "All" counts what the All list shows — Done included.
+  const counts = taskTabCounts(groups);
 
   const tabs: TabBarItem[] = [
-    { id: "all",      label: "All",      count: openCount },
-    { id: "overdue",  label: "Overdue",  count: count("overdue"),  dot: "rose"    },
-    { id: "today",    label: "Today",    count: count("today"),    dot: "amber"   },
-    { id: "upcoming", label: "Upcoming", count: count("upcoming"), dot: "indigo"  },
-    { id: "done",     label: "Done",     count: count("done"),     dot: "emerald" },
+    { id: "all",      label: "All",      count: counts.all },
+    { id: "overdue",  label: "Overdue",  count: counts.overdue,  dot: "rose"    },
+    { id: "today",    label: "Today",    count: counts.today,    dot: "amber"   },
+    { id: "upcoming", label: "Upcoming", count: counts.upcoming, dot: "indigo"  },
+    { id: "done",     label: "Done",     count: counts.done,     dot: "emerald" },
   ];
 
   const shown: TaskGroup<TaskWithLink>[] = groups.filter(

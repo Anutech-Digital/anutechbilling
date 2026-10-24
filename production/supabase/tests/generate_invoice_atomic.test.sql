@@ -10,6 +10,21 @@
 
 -- ── 1) Full payment → invoice paid + idempotent double-call ──────────────────
 begin;
+
+-- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('eeeeeeee-0000-0000-0000-0000000000a1','GI FULL','gi1@example.in','07','GIA1');
@@ -20,7 +35,7 @@ insert into public.tenants (id, name, email, state_code, doc_code)
 insert into public.customers (id, tenant_id, name, state_code)
   values ('cccccccc-0000-0000-0000-0000000000a1','eeeeeeee-0000-0000-0000-0000000000a1','Cust GI Full','07');
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('eeeeeeee-0000-0000-0000-0000000000a1','purchase_order', public.indian_fiscal_year(current_date), 'PO', 990000),
+  values ('eeeeeeee-0000-0000-0000-0000000000a1','purchase_order', public.indian_fiscal_year(current_date), 'PO', 9000),
          ('eeeeeeee-0000-0000-0000-0000000000a1','invoice',        public.indian_fiscal_year(current_date), 'INV', 0);
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items)
   values ('Q-GI-FULL','eeeeeeee-0000-0000-0000-0000000000a1','cccccccc-0000-0000-0000-0000000000a1','Cust GI Full',122342,103680,18,'sent','awaiting',
@@ -62,13 +77,28 @@ rollback;
 
 -- ── 2) Partial payment → invoice pending, net_payable = balance ──────────────
 begin;
+
+-- R-1643: issuing a Tax Invoice needs the company's own GSTIN + address (supplier_invoice_problem).
+-- Every company this test creates gets both unless the test sets them itself (an unregistered
+-- one gets only the address). Rolled back with the test.
+create function pg_temp.r1643_fill_supplier() returns trigger language plpgsql as $r1643$
+begin
+  new.address := coalesce(nullif(btrim(coalesce(new.address, '')), ''), 'Test street, ' || coalesce(new.state, 'India'));
+  if new.gst_registration is distinct from 'unregistered' and nullif(btrim(coalesce(new.gstin, '')), '') is null then
+    new.gstin := lpad(coalesce(nullif(btrim(new.state_code), ''), '07'), 2, '0') || 'AAACT1643F1Z5';
+  end if;
+  return new;
+end $r1643$;
+create trigger zz_r1643_test_supplier before insert on public.tenants
+  for each row execute function pg_temp.r1643_fill_supplier();
+
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('eeeeeeee-0000-0000-0000-0000000000a2','GI PART','gi2@example.in','07','GIA2');
 insert into public.customers (id, tenant_id, name, state_code)
   values ('cccccccc-0000-0000-0000-0000000000a2','eeeeeeee-0000-0000-0000-0000000000a2','Cust GI Part','07');
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('eeeeeeee-0000-0000-0000-0000000000a2','purchase_order', public.indian_fiscal_year(current_date), 'PO', 990000),
+  values ('eeeeeeee-0000-0000-0000-0000000000a2','purchase_order', public.indian_fiscal_year(current_date), 'PO', 9000),
          ('eeeeeeee-0000-0000-0000-0000000000a2','invoice',        public.indian_fiscal_year(current_date), 'INV', 0);
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items)
   values ('Q-GI-PART','eeeeeeee-0000-0000-0000-0000000000a2','cccccccc-0000-0000-0000-0000000000a2','Cust GI Part',122342,103680,18,'sent','awaiting',

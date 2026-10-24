@@ -68,7 +68,7 @@ export function enquiryBadge(row: {
   /* Hinglish, deliberately, while the labels around it are English. Pardeep asked for
      this wording, and this is the one badge on the screen that is not a filing category
      but a piece of bad news somebody has to act on today. */
-  if (isBounce(row)) return { label: "Email nahi pahuncha", kind: "danger" };
+  if (isBounce(row)) return { label: "Email not delivered", kind: "danger" };
   return inboundStatusMeta(row.status);
 }
 

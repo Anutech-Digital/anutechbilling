@@ -91,9 +91,9 @@ export default function BusinessLoansPage() {
 
       {loans.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 md:gap-4 mb-5">
-          <KPI label="Dena baaki (outstanding)" value={rupee(totalOutstanding)} tone="rose" />
+          <KPI label="Outstanding" value={rupee(totalOutstanding)} tone="rose" />
           <KPI label="Active loans" value={String(activeCount)} />
-          <KPI label="Byaaj diya (total)" value={rupee(totalInterest)} />
+          <KPI label="Interest paid (total)" value={rupee(totalInterest)} />
         </div>
       )}
 
@@ -106,7 +106,7 @@ export default function BusinessLoansPage() {
           <EmptyState
             icon="rupee"
             title="No business loans yet"
-            body="Jab company bank/NBFC se loan le, yahan add karo — paisa bank me aayega aur outstanding Balance Sheet par dikhega."
+            body="When the company takes a loan from a bank / NBFC, add it here — the money comes into the bank and the outstanding shows on the Balance Sheet."
             action={<Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add a loan</Button>}
           />
         </Card>
@@ -170,7 +170,7 @@ export default function BusinessLoansPage() {
                     <div className="font-serif text-xl text-ink leading-none">{rupee(l.outstanding)}</div>
                   </div>
                   <div className="text-xs text-ink-3 mb-2">
-                    {formatDate(l.disbursed_on)} · {rupee(l.principal)} liya · {rupee(l.principalPaid)} chukaya · {l.emisPaid} EMI
+                    {formatDate(l.disbursed_on)} · {rupee(l.principal)} borrowed · {rupee(l.principalPaid)} repaid · {l.emisPaid} EMI
                   </div>
                   <div className="flex items-center justify-between">
                     <Badge kind={l.status === "closed" ? "success" : "warning"} dot>
@@ -200,9 +200,9 @@ export default function BusinessLoansPage() {
 function KPI({ label, value, tone }: { label: string; value: string; tone?: "rose" | "emerald" }) {
   const color = tone === "rose" ? "text-rose" : tone === "emerald" ? "text-emerald" : "text-ink";
   return (
-    <Card className="p-3 md:p-4">
+    <Card className="min-w-0 p-3 md:p-4">
       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">{label}</div>
-      <div className={`font-serif text-xl md:text-2xl ${color} leading-tight`}>{value}</div>
+      <div className={`font-serif text-lg sm:text-xl md:text-2xl ${color} leading-tight tabular-nums break-words`}>{value}</div>
     </Card>
   );
 }
@@ -213,7 +213,7 @@ function LoanActions({ onEmi, onHistory, onDelete }: {
   return (
     <div className="flex items-center gap-2">
       {onEmi && <Button size="sm" variant="primary" onClick={onEmi}>Pay EMI</Button>}
-      <DropdownMenu>
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
@@ -275,7 +275,7 @@ function AddLoanDialog({ onClose }: { onClose: () => void }) {
       <DialogContent className="md:!max-w-md">
         <DialogHeader>
           <DialogTitle>Add business loan</DialogTitle>
-          <DialogDescription>Company ne jo loan liya. Paisa neeche chune account me aa jayega.</DialogDescription>
+          <DialogDescription>A loan taken by the company. The money is received in the account selected below.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -305,7 +305,7 @@ function AddLoanDialog({ onClose }: { onClose: () => void }) {
               <Input id="business-loans-taken-on" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div>
               <label htmlFor="business-loans-interest-yr" className="block text-xs font-medium text-ink-2 mb-1">Interest %/yr</label>
               <Input id="business-loans-interest-yr" type="number" min={0} step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="10.5" />
@@ -314,12 +314,12 @@ function AddLoanDialog({ onClose }: { onClose: () => void }) {
               <label htmlFor="business-loans-tenure-mo" className="block text-xs font-medium text-ink-2 mb-1">Tenure (mo)</label>
               <Input id="business-loans-tenure-mo" type="number" min={1} value={tenure} onChange={(e) => setTenure(e.target.value)} placeholder="24" />
             </div>
-            <div>
-              <label htmlFor="business-loans-emi" className="block text-xs font-medium text-ink-2 mb-1">EMI (₹)</label>
+            <div className="col-span-2 sm:col-span-1">
+              <label htmlFor="business-loans-emi"className="block text-xs font-medium text-ink-2 mb-1">EMI (₹)</label>
               <Input id="business-loans-emi" type="number" min={0} value={emi} onChange={(e) => setEmi(e.target.value)} placeholder="e.g. 46000" />
             </div>
           </div>
-          <p className="text-xs text-ink-3">Interest %, tenure aur EMI optional hai — sirf reference ke liye. Zaroori hai: lender, amount, account.</p>
+          <p className="text-xs text-ink-3">Interest %, tenure and EMI are optional — for reference only. Required: lender, amount, account.</p>
         </div>
         <DialogFooter>
           <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
@@ -386,13 +386,13 @@ function PayEmiDialog({ loan, onClose }: { loan: BusinessLoan; onClose: () => vo
           {/* Live split so a layman sees exactly what happens */}
           <div className="rounded-md border border-hairline bg-paper-2/40 p-2.5 text-[12px]">
             {tooMuchInt ? (
-              <p className="text-rose">Interest EMI se zyada nahi ho sakta.</p>
+              <p className="text-rose">Interest cannot be more than the EMI.</p>
             ) : tooMuchPrin ? (
-              <p className="text-rose">Principal ({rupee(principal)}) outstanding {rupee(loan.outstanding)} se zyada hai.</p>
+              <p className="text-rose">Principal ({rupee(principal)}) is more than the outstanding {rupee(loan.outstanding)}.</p>
             ) : (
               <div className="flex items-center justify-between gap-2 text-ink-2">
-                <span>Loan ghatega (principal): <b className="text-ink">{rupee(Math.max(0, principal))}</b></span>
-                <span>Kharcha (interest): <b className="text-ink">{rupee(intAmt)}</b></span>
+                <span>Loan reduces by (principal): <b className="text-ink">{rupee(Math.max(0, principal))}</b></span>
+                <span>Expense (interest): <b className="text-ink">{rupee(intAmt)}</b></span>
               </div>
             )}
           </div>
@@ -415,7 +415,7 @@ function PayEmiDialog({ loan, onClose }: { loan: BusinessLoan; onClose: () => vo
             </div>
           </div>
           {loan.interest_rate ? (
-            <p className="text-xs text-ink-3">Interest apne-aap estimate kiya ({loan.interest_rate}%/yr par). Bank statement se sahi figure daal do.</p>
+            <p className="text-xs text-ink-3">Interest estimated automatically (at {loan.interest_rate}%/yr). Enter the exact figure from the bank statement.</p>
           ) : null}
         </div>
         <DialogFooter>
@@ -441,7 +441,7 @@ function HistoryDialog({ loan, onClose }: { loan: BusinessLoan; onClose: () => v
         <DialogHeader>
           <DialogTitle>EMI history — {loan.lender}</DialogTitle>
           <DialogDescription>
-            {rupee(loan.principal)} liya · {rupee(loan.principalPaid)} principal chukaya · {rupee(loan.interestPaid)} byaaj · {rupee(loan.outstanding)} baaki
+            {rupee(loan.principal)} borrowed · {rupee(loan.principalPaid)} principal repaid · {rupee(loan.interestPaid)} interest · {rupee(loan.outstanding)} outstanding
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
@@ -454,7 +454,7 @@ function HistoryDialog({ loan, onClose }: { loan: BusinessLoan; onClose: () => v
             </div>
           ) : rows.length === 0 ? (
             <div className="rounded-md border border-dashed border-hairline p-6 text-center text-xs text-ink-3">
-              Abhi tak koi EMI record nahi hui.
+              No EMI recorded yet.
             </div>
           ) : (
             rows.map((h) => (
@@ -469,7 +469,7 @@ function HistoryDialog({ loan, onClose }: { loan: BusinessLoan; onClose: () => v
                 </div>
                 <div className="shrink-0 text-right text-xs">
                   <div className="text-emerald">−{rupee(h.principal_part)} loan</div>
-                  <div className="text-ink-3">{rupee(h.interest_part)} byaaj</div>
+                  <div className="text-ink-3">{rupee(h.interest_part)} interest</div>
                 </div>
               </div>
             ))

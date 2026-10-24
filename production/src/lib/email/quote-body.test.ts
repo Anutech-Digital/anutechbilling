@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { quoteEmailBody, cycleUnitSuffix, indianDate } from "./quote-body";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
+import { quoteInstalmentPlan } from "@/lib/billing/instalments";
+import { rupee } from "@/lib/utils";
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Do baar Pardeep ne ye chitthi padhi, aur dono baar sahi kami batayi.
@@ -241,5 +243,29 @@ describe("adhoori jaankari par bhi chitthi theek rehti hai", () => {
     expect(thin).not.toContain("GSTIN");
     expect(thin).not.toContain("Place of supply");
     expect(thin).toContain("For Some Reseller");
+  });
+});
+
+/* R-1570 — "annual, billed monthly": the auto-quote stores the YEAR (annual_yearly line,
+   billing_cycle monthly). The letter printed the year's figures with "/month" beside them
+   and "PAYABLE EACH MONTH ₹57,348/month" — 12× too high. The PDF prints the first
+   instalment from lib/billing/instalments (QuotePDF.tsx: quoteInstalmentPlan → firstInst). */
+describe("R-1570 — saal ka commitment, mahine ka bill", () => {
+  const body = quoteEmailBody({
+    ...base, lineItems: ANNUAL, billingCycle: "monthly",
+    subtotal: 48_600, tax: 8_748, total: 57_348,
+  });
+  const pdfFirst = quoteInstalmentPlan({
+    cycle: "monthly", termTaxable: 48_600, termGross: 57_348, taxRate: 18,
+    lineCommitment: "annual_yearly", termStart: "2000-01-01",
+  })!.lines[0];
+
+  it("har mahine ki raqam PDF ke pehle instalment jitni — saal ki nahi", () => {
+    expect(body).not.toContain("₹57,348/month");
+    expect(body).toMatch(new RegExp(`PAYABLE EACH MONTH\\s+${rupee(pdfFirst.gross)}/month`));
+  });
+
+  it("saal ka kul alag line par, bina /month", () => {
+    expect(body).toMatch(/Annual total\s+₹57,348\b(?!\/)/);
   });
 });

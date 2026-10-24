@@ -11,6 +11,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import type { Database } from "@/lib/supabase/database.types";
@@ -29,29 +30,36 @@ export type EmiPurchase = EmiPurchaseRow & {
   emisPaid:      number;   // count of payments
 };
 
+/**
+ * Every EMI purchase with principal paid / outstanding. R-1582: both reads page past the
+ * gateway's 1000-row cap — an EMI dropped at the cap made the outstanding bigger than it is.
+ */
+export async function fetchEmiPurchases(supabase: ReturnType<typeof createClient>): Promise<EmiPurchase[]> {
+  const purchases = await fetchAllRows((from, to) => supabase
+    .from("emi_purchases").select("*")
+    .order("created_at", { ascending: false }).order("id", { ascending: true })
+    .range(from, to));
+  const pays = await fetchAllRows((from, to) => supabase
+    .from("emi_payments").select("purchase_id, principal_part")
+    .order("id", { ascending: true })
+    .range(from, to));
+
+  const paidByP = new Map<string, { prin: number; count: number }>();
+  for (const p of pays) {
+    const cur = paidByP.get(p.purchase_id) ?? { prin: 0, count: 0 };
+    cur.prin += p.principal_part ?? 0; cur.count += 1;
+    paidByP.set(p.purchase_id, cur);
+  }
+  return purchases.map((p) => {
+    const agg = paidByP.get(p.id) ?? { prin: 0, count: 0 };
+    return { ...(p as EmiPurchaseRow), principalPaid: agg.prin, outstanding: (p.financed ?? 0) - agg.prin, emisPaid: agg.count };
+  });
+}
+
 export function useEmiPurchases() {
   return useQuery({
     queryKey: ["emi-purchases"],
-    queryFn: async (): Promise<EmiPurchase[]> => {
-      const supabase = createClient();
-      const { data: purchases, error } = await supabase
-        .from("emi_purchases").select("*").order("created_at", { ascending: false });
-      if (error) throw error;
-      const { data: pays, error: pErr } = await supabase
-        .from("emi_payments").select("purchase_id, principal_part");
-      if (pErr) throw pErr;
-
-      const paidByP = new Map<string, { prin: number; count: number }>();
-      for (const p of pays ?? []) {
-        const cur = paidByP.get(p.purchase_id) ?? { prin: 0, count: 0 };
-        cur.prin += p.principal_part ?? 0; cur.count += 1;
-        paidByP.set(p.purchase_id, cur);
-      }
-      return (purchases ?? []).map((p) => {
-        const agg = paidByP.get(p.id) ?? { prin: 0, count: 0 };
-        return { ...(p as EmiPurchaseRow), principalPaid: agg.prin, outstanding: (p.financed ?? 0) - agg.prin, emisPaid: agg.count };
-      });
-    },
+    queryFn: (): Promise<EmiPurchase[]> => fetchEmiPurchases(createClient()),
     staleTime: 30_000,
   });
 }
@@ -62,10 +70,10 @@ export function useEmiPayments(purchaseId: string | undefined) {
     enabled: Boolean(purchaseId),
     queryFn: async (): Promise<EmiPaymentRow[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("emi_payments").select("*").eq("purchase_id", purchaseId!).order("paid_on", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as EmiPaymentRow[];
+      return (await fetchAllRows((from, to) => supabase
+        .from("emi_payments").select("*").eq("purchase_id", purchaseId!)
+        .order("paid_on", { ascending: true }).order("id", { ascending: true })
+        .range(from, to))) as EmiPaymentRow[];
     },
   });
 }

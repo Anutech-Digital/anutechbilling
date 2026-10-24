@@ -57,6 +57,9 @@ test.describe("W10 expense / purchase bill → GST input (accountant)", () => {
     await page.locator("#expense_date").fill(day);
     await page.locator("#description").fill(expenseNote);
     await page.locator("#amount").fill(String(expTotal));
+    // R-1729: Category starts empty and is required (it used to sit on "Hosting").
+    await page.locator("#category").click();
+    await page.getByRole("option", { name: "Software", exact: true }).click();
     await page.locator("#gst_paid").fill(String(expGst));
     await page.locator("#vendor_name").fill(E2E_VENDOR_NAME.slice(0, 10));
     await page.getByRole("button", { name: new RegExp(`${E2E_VENDOR_NAME}.*${E2E_VENDOR_GSTIN}`) }).click();

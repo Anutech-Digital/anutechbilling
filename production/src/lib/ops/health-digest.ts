@@ -154,18 +154,18 @@ export function digestText(d: Digest, appUrl: string): string {
       `${title}\n` + rows.slice(0, 8)
         .map((f) => `  ${String(f.count).padStart(3)} ×  ${ist(f.last)}  ${f.what}`)
         .join("\n")
-      + (rows.length > 8 ? `\n  (+ ${rows.length - 8} aur)` : "") + "\n\n";
+      + (rows.length > 8 ? `\n  (+ ${rows.length - 8} more)` : "") + "\n\n";
 
   return [
-    `ResellerOS — pichhle ${d.hours} ghante me kya bigda\n`,
+    `ResellerOS — what went wrong in the last ${d.hours} hours\n`,
     block("Server error (5xx):", d.serverErrors),
-    block("Refuse hui request (401) — ek hi path par lagatar = kuch toota hai:", d.refused),
-    block("App ne khud kya likha:", d.appErrors),
-    d.noise > 0 ? `(+ ${d.noise} aur line — stack/JSON dump ke tukde, gini gayi par dikhayi nahi)\n\n` : "",
+    block("Refused requests (401) — repeated on the same path = something is broken:", d.refused),
+    block("What the app logged itself:", d.appErrors),
+    d.noise > 0 ? `(+ ${d.noise} more line${d.noise === 1 ? "" : "s"} — pieces of stack/JSON dumps, counted but not shown)\n\n` : "",
     d.secretInUrl > 0
-      ? `⚠ Secret abhi bhi URL me aa raha hai — ${d.secretInUrl} baar. Bhejne wali script header par nahi aayi.\n\n`
+      ? `⚠ A secret is still coming in the URL — ${d.secretInUrl} times. The sending script has not moved to the header yet.\n\n`
       : "",
-    `Ginti "kitna" batati hai; "aakhri baar kab" batata hai ki abhi bhi ho raha hai ya nipat gaya.\n`,
+    `The count tells "how much"; the last time tells whether it is still happening or has stopped.\n`,
     `App: ${appUrl}\n`,
   ].join("");
 }

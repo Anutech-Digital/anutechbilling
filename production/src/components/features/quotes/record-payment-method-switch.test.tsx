@@ -86,7 +86,9 @@ describe("Record payment — switching the method re-checks the reference (R-819
     expect(await f.confirm()).toBe(true);                 // cash: blank allowed
 
     await f.switchTo("cheque");
-    expect(await f.confirm()).toBe(false);                // cheque: needs a real number
+    expect(await f.confirm()).toBe(true);                 // R-1444: blank allowed for every method
+    await act(async () => { f.result.current.setValue("reference", "abc"); });
+    expect(await f.confirm()).toBe(false);                // cheque: a typed one must be a real number
     expect(f.refError()).toMatch(/real UTR/);
     await act(async () => { f.result.current.setValue("reference", "004521 SBI"); });
     expect(await f.confirm()).toBe(true);

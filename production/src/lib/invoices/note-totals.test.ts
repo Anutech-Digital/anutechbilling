@@ -90,6 +90,8 @@ describe("invoices list wiring", () => {
     // invoice-detail.tsx (the list imports InvoiceNotesList from there).
     expect(page).not.toMatch(/useCreditNotesByInvoice\(/);
     const detail = readFileSync("src/app/(app)/invoices/invoice-detail.tsx", "utf8");
-    expect(detail.match(/useCreditNotesByInvoice\(/g)?.length).toBe(1);
+    /* 1 = the notes list; R-1709 adds 1 on the single-invoice page for its "Credited" badge
+       (same query key, so React Query serves both from one fetch). */
+    expect(detail.match(/useCreditNotesByInvoice\(/g)?.length).toBe(2);
   });
 });

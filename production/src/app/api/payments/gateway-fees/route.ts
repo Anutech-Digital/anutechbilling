@@ -10,6 +10,7 @@
  * (lib/razorpay/fee-expense), so pressing it twice books nothing new.
  */
 import { withRoute, dbFail } from "@/lib/api/with-route";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { bookGatewayFeeExpense, type FeeBookingResult } from "@/lib/razorpay/fee-expense.server";
 import { feeExpenseId } from "@/lib/razorpay/fee-expense";
 
@@ -26,16 +27,24 @@ export const POST = withRoute(
     roleHint: "Only Owner, Manager, Billing or Accountant can book Razorpay fees. Ask one of them.",
   },
   async ({ supabase, tenantId }) => {
-    const { data: pays, error } = await supabase
-      .from("payments")
-      .select("id")
-      .eq("tenant_id", tenantId)
-      .gt("gateway_fee", 0)
-      .order("received_at", { ascending: true })
-      .limit(5000);
-    dbFail(error, "Could not read payments. Refresh and try again.");
+    /* R-1588: every fee-carrying payment, paged. `.limit(5000)` came back as 1000 rows (the
+       gateway caps every answer), so once the oldest 1000 were booked, no newer fee was ever
+       offered for booking. `id` after `received_at` makes the order total. */
+    let pays: { id: string }[] = [];
+    try {
+      pays = await fetchAllRows<{ id: string }>((from, to) => supabase
+        .from("payments")
+        .select("id")
+        .eq("tenant_id", tenantId)
+        .gt("gateway_fee", 0)
+        .order("received_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to));
+    } catch (error) {
+      dbFail(error as Parameters<typeof dbFail>[0], "Could not read payments. Refresh and try again.");
+    }
 
-    const ids = ((pays ?? []) as { id: string }[]).map((p) => p.id);
+    const ids = pays.map((p) => p.id);
     const booked = new Set<string>();
     for (let i = 0; i < ids.length; i += 200) {
       const chunk = ids.slice(i, i + 200).map(feeExpenseId);

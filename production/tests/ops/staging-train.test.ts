@@ -1,3 +1,5 @@
+import path from "node:path";
+import { existsSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import {
   parseArgs,
@@ -10,6 +12,8 @@ import {
   istStamp,
   mergeMessage,
   dbCommand,
+  dbStepLines,
+  newestDeployDb,
   summaryLines,
   PUSH_ARGS,
   // @ts-expect-error — plain .mjs ops script, no types
@@ -138,12 +142,35 @@ describe("staging train — safety + text", () => {
     expect(PUSH_ARGS).toEqual(["push", "anutech", "HEAD:staging"]);
     expect(PUSH_ARGS.join(" ")).not.toMatch(/--force|-f\b|\+|deploy/);
   });
-  it("IST stamp and the deploy-db command use the IST date", () => {
+  it("IST stamp uses the IST date", () => {
     const s = istStamp(new Date("2026-10-07T20:00:00Z")); // 01:30 IST next day
     expect(s).toEqual({ label: "08 Oct 01:30 IST", day: "2026-10-08" });
-    expect(dbCommand(s.day)).toBe(
-      '& "C:\\Program Files\\Git\\bin\\bash.exe" "/c/Users/mso50/new-reselleros/production/supabase/cloudsql/staging/deploy-db-2026-10-08.sh"',
-    );
+  });
+  /* R-1590 (18 Oct 2026): the DB step printed deploy-db-<TODAY>.sh (never existed) under the main
+     checkout's hard-coded path; the real file is the newest one gen-deploy-db wrote. */
+  it("deploy-db: newest existing dated script, never today's date", () => {
+    expect(newestDeployDb(["Caddyfile", "deploy-db-2026-10-07.sh", "deploy-db-2026-09-30.sh", "r161-step1-roles.sh"])).toBe("deploy-db-2026-10-07.sh");
+    expect(newestDeployDb(["deploy-db-2026-10-07.sh.bak", "enable-staging-ai.sh"])).toBeNull();
+  });
+  it("deploy-db command is relative to the checkout the train runs in (worktree, not main)", () => {
+    const root = path.resolve("/w/tree");
+    const lines = dbStepLines(root, path.join(root, "production"), () => ["deploy-db-2026-10-07.sh", "deploy-db-2026-10-01.sh"]);
+    expect(lines[1].trim()).toBe('& "C:\\Program Files\\Git\\bin\\bash.exe" "supabase/cloudsql/staging/deploy-db-2026-10-07.sh"');
+    expect(lines.join("\n")).not.toMatch(/new-reselleros/);
+    expect(lines[2]).toMatch(/gen-deploy-db\.mjs --date 2026-10-07 --check/);
+    expect(dbCommand(path.join(root, "production", "x.sh"), root)).toMatch(/"production\/x\.sh"$/);
+  });
+  it("deploy-db: no script → a clear error, not a made-up file name", () => {
+    const lines = dbStepLines(path.resolve("/w/tree"), path.resolve("/w/tree/production"), () => ["Caddyfile"]);
+    expect(lines[0]).toMatch(/koi deploy-db-<date>\.sh nahi mila/);
+    expect(lines.join("\n")).not.toMatch(/PowerShell/);
+  });
+  it("deploy-db: the real repo has the file the train prints", () => {
+    const root = path.resolve(__dirname, "../../..");
+    const line = dbStepLines(root, path.join(root, "production"))[1].trim();
+    const rel = /"([^"]+\.sh)"$/.exec(line)?.[1] ?? "";
+    expect(rel).toMatch(/^supabase\/cloudsql\/staging\/deploy-db-\d{4}-\d{2}-\d{2}\.sh$/);
+    expect(existsSync(path.join(root, "production", rel))).toBe(true);
   });
   it("summary says the next step", () => {
     const dry = summaryLines({ pick: D, cards: ["R-386"], migrations: [], decision: { action: "merge-dry" }, merged: true, pushed: false });

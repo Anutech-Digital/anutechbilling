@@ -9,7 +9,7 @@
  * cannot sell it.
  *
  * The page's WORDS per plan (hero, benefits, includes, user limit, Free Gmail comparison)
- * moved to components/lp/lp-copy.ts in R-396, in English and Hinglish. Facts stay here.
+ * moved to components/lp/lp-copy.ts in R-396 (English only since R-1752). Facts stay here.
  */
 
 export type LpPlanKey = "starter" | "standard" | "plus" | "enterprise";

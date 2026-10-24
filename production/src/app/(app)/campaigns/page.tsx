@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { KPI } from "@/components/shared/kpi";
 import { Icon } from "@/components/ui/icon";
 import { FAB } from "@/components/ui/fab";
@@ -58,7 +59,7 @@ export default function CampaignsPage() {
   const successRate = reach > 0 ? Math.round((sent / reach) * 100) : 0;
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1500px] mx-auto">
+    <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
       <div className="flex items-end justify-between gap-3 flex-wrap mb-6">
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Engage</p>
@@ -83,7 +84,7 @@ export default function CampaignsPage() {
         <EmptyState
           icon="alert"
           title="Could not load campaigns"
-          body={error.message}
+          body={loadErrorBody(error)}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
         />
       )}

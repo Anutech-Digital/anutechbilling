@@ -15,6 +15,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { trustedOrigin } from "@/lib/app-url";
 import { createClient } from "@/lib/supabase/server";
 import { pdfDownloadUrl } from "@/lib/pdf/pdf-token";
+import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -23,8 +24,12 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
   // RLS: returns the row only when it belongs to the caller's workspace.
-  const { data: inv } = await supabase.from("invoices").select("id, tenant_id").eq("id", id).maybeSingle();
+  const { data: inv } = await supabase.from("invoices").select("id, tenant_id, document_kind").eq("id", id).maybeSingle();
   if (!inv) return NextResponse.json({ error: "Invoice not found." }, { status: 404 });
+  /* R-1739: an invoice imported from Zoho Books has no PDF here — Zoho issued it. */
+  if (isOpeningInvoice(inv)) {
+    return NextResponse.json({ error: "This invoice was imported from Zoho Books. Download its PDF from Zoho Books." }, { status: 409 });
+  }
 
   const origin = trustedOrigin(request.headers); // R-723
   return NextResponse.json({ url: pdfDownloadUrl(origin, "invoice", inv.id, inv.tenant_id, { ttlDays: 1 }) });

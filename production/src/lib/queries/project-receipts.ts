@@ -168,7 +168,7 @@ export function useBookBankCreditAsProjectPayment() {
         ]);
         const interState = isInterState(tenant?.state_code, cust?.state_code);
         if (interState === null) {
-          throw new Error("Customer ya aapki company ka state darj nahi hai — GST (IGST ya CGST+SGST) tay nahi ho sakta. Customer mein state bharo, phir dobara try karo.");
+          throw new Error("The state of the customer or your company is not recorded — GST (IGST or CGST+SGST) cannot be decided. Fill in the customer's state, then try again.");
         }
         /* Quotation first, then accepted: the money has arrived, so the customer has
            agreed — but the project keeps a real quote (its line item and customer link),

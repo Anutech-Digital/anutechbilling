@@ -47,7 +47,7 @@ export interface EcrFile {
 
 export function ecrLine(i: EcrInput): EcrLine | { skipped: string } {
   const uan = (i.uan ?? "").replace(/\s+/g, "");
-  if (!/^\d{12}$/.test(uan)) return { skipped: uan ? `UAN "${uan}" 12 ank ka nahi` : "UAN nahi (Employee → Statutory → PF number)" };
+  if (!/^\d{12}$/.test(uan)) return { skipped: uan ? `UAN "${uan}" is not 12 digits` : "No UAN (Employee → Statutory → PF number)" };
   const ceiling = pfWageCeiling(i.period);
   const earned = Math.max(0, Math.round(i.gross || 0) - Math.round(i.lopAmount ?? 0));
   const wageAssumed = i.pfWage === null || i.pfWage === undefined;

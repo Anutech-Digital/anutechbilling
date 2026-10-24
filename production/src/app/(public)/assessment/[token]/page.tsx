@@ -120,8 +120,8 @@ export default function TakeAssessmentPage() {
 
   async function submit() {
     if (!data) return;
-    if (!effectiveName) { setErr("Apna naam chuno / likho."); return; }
-    if (!allAnswered) { setErr("Sabhi questions ka jawab do."); return; }
+    if (!effectiveName) { setErr("Pick or type your name."); return; }
+    if (!allAnswered) { setErr("Answer all the questions."); return; }
     setErr(null); setSubmitting(true);
     // Freeze proctoring + settle any in-progress "away" span.
     doneRef.current = true;
@@ -159,8 +159,8 @@ export default function TakeAssessmentPage() {
           <div className="text-2xs uppercase tracking-wider text-ink-3 font-semibold">Your result</div>
           <div className="font-serif text-5xl mt-2" style={{ color: GRADE_COLOR[result.grade] }}>{result.grade}</div>
           <div className="text-2xl font-serif text-ink mt-1">{result.pct}%</div>
-          <div className="text-sm text-ink-2 mt-1">{result.score} / {result.total} correct · {mmss(elapsed)} liya</div>
-          <p className="text-[12px] text-ink-3 mt-4">Thanks, {effectiveName}! Aapka result save ho gaya.</p>
+          <div className="text-sm text-ink-2 mt-1">{result.score} / {result.total} correct · {mmss(elapsed)} taken</div>
+          <p className="text-[12px] text-ink-3 mt-4">Thanks, {effectiveName}! Your result has been saved.</p>
         </div>
       </Shell>
     );
@@ -173,7 +173,7 @@ export default function TakeAssessmentPage() {
           <div className="min-w-0">
             <h1 className="font-serif text-2xl text-ink">{data.title}</h1>
             {data.topic && <p className="text-sm text-ink-3 mt-0.5">{data.topic}</p>}
-            <p className="text-[12px] text-ink-3 mt-1">{data.questions.length} questions · har question ka ek sahi jawab.</p>
+            <p className="text-[12px] text-ink-3 mt-1">{data.questions.length} questions · each question has one correct answer.</p>
           </div>
           {/* Live timer */}
           <div className="shrink-0 text-right">
@@ -200,8 +200,8 @@ export default function TakeAssessmentPage() {
 
       {/* Transparency: candidate is told the test is monitored (honest by design). */}
       <div className="mb-4 rounded-md border border-amber/40 bg-amber-soft/40 px-3 py-2 text-2xs text-amber-ink">
-        Ye test timed + monitored hai — time, tab/window switch aur paste record hote hain. Kripya test isi tab me poora karein, kisi aur source (AI/Google) ki madad na lein.
-        {focusLost > 0 && <span className="block mt-1 font-medium">⚠ Aap {focusLost} baar test se bahar gaye — ye record ho gaya hai.</span>}
+        This test is timed and monitored — time, tab/window switches and pastes are recorded. Please finish the test in this tab and do not use any other source (AI/Google).
+        {focusLost > 0 && <span className="block mt-1 font-medium">⚠ You left the test {focusLost} time{focusLost === 1 ? "" : "s"} — this has been recorded.</span>}
       </div>
 
       {/* Who is taking */}
@@ -210,12 +210,12 @@ export default function TakeAssessmentPage() {
         {data.employees.length > 0 ? (
           <select id="assess-emp" value={empId} onChange={(e) => setEmpId(e.target.value)}
             className="w-full px-3 py-2 text-sm rounded-md border border-hairline bg-paper">
-            <option value="">— apna naam chuno —</option>
+            <option value="">— pick your name —</option>
             {data.employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         ) : null}
         {!empId && (
-          <input id="assess-name" aria-label="Apna naam" type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="ya apna naam likho"
+          <input id="assess-name" aria-label="Your name" type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="or type your name"
             className="mt-2 w-full px-3 py-2 text-sm rounded-md border border-hairline bg-paper" />
         )}
       </div>

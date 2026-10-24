@@ -35,7 +35,8 @@ interface CustomersBulkBarProps {
   count: number;
   /** Parent accounts to move the selection into. */
   groups: CustomerGroup[];
-  onExport: () => void;
+  /** R-1801: omitted for a role the export route refuses (can_export_data) — then no Export button. */
+  onExport?: () => void;
   onArchive: () => void;
   onReactivate: () => void;
   /** `null` detaches them from whatever group they are in. */
@@ -43,7 +44,7 @@ interface CustomersBulkBarProps {
   onDelete: () => void;
   onDeselectAll: () => void;
   busy?: boolean;
-  /** R-255: a view-only role (the accountant) gets Export and nothing that changes data. */
+  /** R-255: a view-only role (the accountant) gets nothing that changes data (and, R-1801, no Export: the contact book is can_export_data only). */
   readOnly?: boolean;
   /** R-885: delete_customer is owner / accountant only (Pardeep's role table). */
   canDelete?: boolean;
@@ -54,14 +55,17 @@ export function CustomersBulkBar({
 }: CustomersBulkBarProps) {
   return (
     <BulkActionBar count={count} noun="customer" onClear={onDeselectAll}>
-      {/* Read-only, so it comes first and needs no confirmation. */}
+      {/* Read-only, so it comes first and needs no confirmation. R-1801: only when the page
+          passes onExport — the server builds the file for can_export_data roles only. */}
+      {onExport && (
       <BulkBarButton icon="download" label="Export selected to CSV" onClick={onExport} disabled={busy}>
         Export
       </BulkBarButton>
+      )}
 
       {!readOnly && (<>
 
-      <DropdownMenu>
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <button
             type="button"

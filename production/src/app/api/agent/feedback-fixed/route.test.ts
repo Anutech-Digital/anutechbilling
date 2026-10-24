@@ -32,6 +32,8 @@ vi.mock("@/lib/supabase/server", () => ({
 import { POST } from "./route";
 
 const ID = "22a67769-5549-473b-960d-c2a04c42c2a7";
+/** R-739: the workspaces this token may touch. */
+const SCOPE = "fbb976f1-9090-4f10-9726-0901bd144e42";
 const call = (body: unknown, token: string | null = "q-token") =>
   POST(new Request("https://example.invalid/api/agent/feedback-fixed", {
     method: "POST",
@@ -43,6 +45,7 @@ const ENV = { ...process.env };
 beforeEach(() => {
   db.updates = []; db.eqs = []; db.ins = []; db.iss = []; db.matched = true;
   process.env.AGENT_QUEUE_TOKEN = "q-token";
+  process.env.AGENT_QUEUE_TENANT_IDS = SCOPE;
 });
 afterEach(() => { process.env = { ...ENV }; });
 
@@ -66,7 +69,8 @@ describe("POST /api/agent/feedback-fixed", () => {
     const r = await call({ id: ID, note: "AI ne theek kiya: R-199 (d17e5921) — staging par 5 PM ke baad" });
     expect(r.status).toBe(200);
     expect(db.eqs).toEqual([["id", ID]]);
-    expect(db.ins).toEqual([["status", ["open", "agent_queued", "fixed"]]]);
+    /* R-739: only a report from a workspace the token is scoped to. */
+    expect(db.ins).toEqual([["tenant_id", [SCOPE]], ["status", ["open", "agent_queued", "fixed"]]]);
     expect(db.iss).toEqual([["checked_at", null]]);
     expect(Object.keys(db.updates[0]).sort()).toEqual(["checked_at", "checked_by_name", "resolution_note", "resolved_at", "status", "updated_at"]);
     expect(db.updates[0].status).toBe("fixed");

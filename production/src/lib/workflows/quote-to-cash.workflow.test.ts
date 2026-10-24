@@ -60,6 +60,8 @@ const GWS: Item = {
   prices: { annual: { msrp: 270, wholesale: 110 }, slabs: SLABS },
   margin_pct: 0, is_active: true, is_partner_visible: false, partner_price: null,
   synced_from_partner_id: null, created_at: "2026-01-01T00:00:00Z",
+  /* R-1785 catalogue columns (unused by this test). */
+  sku: null, term_months: null, gst_rate: 18, fulfilment: null, engine_ref: null, price_source: "catalog", is_public: false,
 };
 const BACKUP: Item = { ...GWS, id: "item-backup", name: "Acronis Cyber Backup", vendor: "other", msrp: 150, wholesale: 90, prices: { annual: { msrp: 150, wholesale: 90 } } };
 const CATALOG = [GWS, BACKUP];

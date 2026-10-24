@@ -14,7 +14,7 @@ insert into public.tenants (id, name, email, state_code, doc_code)
 insert into public.customers (id, tenant_id, name)
   values ('cccccccc-0000-0000-0000-0000000000a1','dddddddd-0000-0000-0000-0000000000a1','Cust MRR');
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('dddddddd-0000-0000-0000-0000000000a1','purchase_order', public.indian_fiscal_year(current_date), 'PO', 990000);
+  values ('dddddddd-0000-0000-0000-0000000000a1','purchase_order', public.indian_fiscal_year(current_date), 'PO', 9000);
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items)
   values ('Q-MRR-NEW','dddddddd-0000-0000-0000-0000000000a1','cccccccc-0000-0000-0000-0000000000a1','Cust MRR',122342,103680,18,'sent','awaiting',
           '[{"name":"Google Workspace Standard","qty":10,"rate":10368,"commitment":"annual_yearly"}]'::jsonb);
@@ -36,7 +36,7 @@ insert into public.tenants (id, name, email, state_code, doc_code)
 insert into public.customers (id, tenant_id, name)
   values ('cccccccc-0000-0000-0000-0000000000a2','dddddddd-0000-0000-0000-0000000000a2','Cust MRR2');
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('dddddddd-0000-0000-0000-0000000000a2','purchase_order', public.indian_fiscal_year(current_date), 'PO', 990000);
+  values ('dddddddd-0000-0000-0000-0000000000a2','purchase_order', public.indian_fiscal_year(current_date), 'PO', 9000);
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items, extension_months)
   values ('Q-MRR-REN','dddddddd-0000-0000-0000-0000000000a2','cccccccc-0000-0000-0000-0000000000a2','Cust MRR2',122342,103680,18,'sent','awaiting',
           '[{"name":"Google Workspace Standard","qty":10,"rate":10368,"commitment":"annual_yearly"}]'::jsonb, 12);

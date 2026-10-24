@@ -19,10 +19,21 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/a11y/a11y-r303.test.ts",
   "src/lib/a11y/a11y-r309.test.ts",
   "src/lib/a11y/billing-screens-a11y.test.ts",
+  "src/lib/a11y/ink4-contrast-ratchet.test.ts", // R-1135: no real text in ink-4 (2.4:1)
   "src/lib/errors/toast-error-ratchet.test.ts",
+  "src/server/postgrest/contact-mask-columns.test.ts", // R-1820: every phone/email column of leads/customers/contacts/customer_groups is masked
   "src/app/(app)/accounting/load-error-ratchet.test.ts",
   "src/components/features/accounting/rupee-ratchet.test.ts",
+  "src/lib/accounting/rupee-hand-rolled-ratchet.test.ts", // R-1138: no new "₹" + toLocaleString("en-IN")
   "src/app/api/admin-client-ratchet.test.ts",
+  "src/app/api/role-gate-ratchet.test.ts", // R-732
+  "src/app/(app)/page-widths-ratchet.test.ts", // R-1489: §20 page widths
+  "src/lib/quotes/discount-copies-ratchet.test.ts", // R-1133: no new hand-written quote discount
+  "tests/ops/gen-api-doc.test.ts", // R-1665: docs/API.md regenerated when a route changes
+  "src/lib/accounting/sale-documents.guard.test.ts", // R-1739: every invoices reader says if it counts sales
+  "src/lib/queries/query-error-ratchet.test.ts", // R-1806/R-1807: a failed read shows an error, not ₹0 / empty
+  "src/lib/errors/raw-error-message-ratchet.test.ts", // R-1656/R-1813: no raw Postgres/RPC text on screen
+  "src/lib/dates/server-dates-ist.test.ts", // R-1660: no server-side date formatted without timeZone (emails in UTC)
   // ── migration scans ──
   "tests/rls-initplan-migrations.test.ts",
   "src/lib/security/definer-hardening-holds.test.ts",
@@ -32,6 +43,7 @@ export const PUSH_GUARD_SUITES = [
   "src/app/(app)/quotes/invoice-link.test.ts",
   "src/app/(app)/accounting/cash-flow/cash-flow-copy-english.test.ts",
   "src/app/(app)/assessments/ui-copy-english.test.ts",
+  "src/app/(app)/today/ui-copy-english.test.ts", // R-1731: whole-app Hinglish scan + allow-list that only shrinks
   "src/app/(app)/leads/card-list-scroll.test.ts",
   "src/app/(app)/marketing/marketing-copy-english.test.ts",
   "src/app/api/public/_lib/db-error.test.ts",
@@ -41,7 +53,14 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/ai/autonomy-chokepoint.test.ts",
   "src/lib/ai/gemini.test.ts",
   "src/lib/app-url-fallback.test.ts",
+  // R-1592 (18 Oct): repo-wide scans only CI ran — dd34789d (R-1598) broke the R-723 raw-host scan
+  // past the push gate and CI stayed red ~2 h.
+  "src/lib/app-url.test.ts",
+  "src/lib/nav-route-guard.test.ts",
+  "src/lib/queries/__tests__/money-read-scan.test.ts",
+  "tests/secret-scan.test.ts",
   "src/lib/auth/no-passwords-in-source.test.ts",
+  "src/lib/security/no-public-admin-env.test.ts", // R-730: admin allowlists never NEXT_PUBLIC_
   "src/lib/email/no-hardcoded-recipient.test.ts",
   "src/lib/feedback/internal-links.test.ts",
   "src/lib/feedback/route-map.test.ts",
@@ -69,6 +88,8 @@ export const PUSH_GUARD_SUITES = [
   "src/site/plus-price-hidden.test.ts",
   "src/site/silent-disabled-buttons.test.ts",
   "src/site/support-page.test.ts",
+  // ── repo-wide file scans ──
+  "tests/ops/deploy-targets.test.ts", // R-1604: only live + staging deploy targets
 ];
 
 /** Soft budget: the push prints a warning above this so the list gets trimmed, not ignored. */

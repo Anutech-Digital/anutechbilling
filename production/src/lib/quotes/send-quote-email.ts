@@ -18,6 +18,8 @@ export interface SendQuoteEmailInput {
   to?: string | null;
   subject?: string | null;
   message?: string | null;
+  /** R-1523: "proforma" sends it as a Proforma Invoice. Omit for the default Quotation. */
+  template?: "quotation" | "proforma";
 }
 
 /** Delivery status of the email (lib/email/send.ts), not a quote status. */
@@ -48,6 +50,7 @@ export async function sendQuoteEmail(
       to:      input.to?.trim() || undefined,
       subject: input.subject?.trim() || undefined,
       message: input.message?.trim() || undefined,
+      template: input.template === "proforma" ? "proforma" : undefined,
     }),
   });
   let json: Partial<SendQuoteEmailResult> & { error?: string } = {};

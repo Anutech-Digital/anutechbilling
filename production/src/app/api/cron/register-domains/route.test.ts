@@ -45,9 +45,10 @@ vi.mock("@/lib/email/send", () => ({ sendEmail: mail.sendEmail }));
 vi.mock("@/lib/email/owner-alert.server", () => ({ loadOwnerAlert: mail.loadOwnerAlert }));
 
 const quoteRow = vi.hoisted(() => ({ value: null as unknown }));
+const customerRow = vi.hoisted(() => ({ value: null as unknown }));
 vi.mock("@/lib/supabase/server", () => ({
   createAdminClient: () => ({
-    from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: quoteRow.value, error: null }) }) }) }) }),
+    from: (t: string) => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: t === "customers" ? customerRow.value : quoteRow.value, error: null }) }) }) }) }),
   }),
   createClient: () => ({ auth: { getUser: async () => ({ data: { user: null } }) } }),
 }));
@@ -182,5 +183,83 @@ describe("what it does with the answer", () => {
     engine.sendEngineCommand.mockResolvedValue({ kind: "gate_closed", reason: "ENGINE_DOMAIN_REGISTER_LIVE" });
     await GET(req());
     expect(engine.sendEngineCommand).toHaveBeenCalledTimes(1);
+  });
+});
+
+/* R-1552 / R-1587 (18 Oct 2026) */
+const hb = vi.hoisted(() => ({ pingHeartbeat: vi.fn() }));
+vi.mock("@/lib/ops/heartbeat", () => hb);
+
+describe("R-1552: only the cron secret runs it (the route's own check, behind the gate)", () => {
+  it("no bearer → 401, nothing listed", async () => {
+    const res = await GET(new Request("https://example.invalid/api/cron/register-domains"));
+    expect(res.status).toBe(401);
+    expect(prov.listReadyDomainRequests).not.toHaveBeenCalled();
+  });
+  it("CRON_SECRET unset → 503, nothing listed", async () => {
+    delete process.env.CRON_SECRET;
+    expect((await GET(req())).status).toBe(503);
+    expect(prov.listReadyDomainRequests).not.toHaveBeenCalled();
+  });
+});
+
+describe("R-1587: a DMS outage is heard", () => {
+  it("DMS down for every row → 503, a [cron/register-domains] stderr line, heartbeat fail", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    hb.pingHeartbeat.mockReset();
+    engine.sendEngineCommand.mockResolvedValue({ kind: "unreachable", reason: "connect ECONNREFUSED" });
+    const res = await GET(req());
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body).toMatchObject({ dmsUnreachable: true, failed: 0 });
+    expect(body.errors).toEqual([expect.stringMatching(/acme\.in: could not reach the DMS engine/)]);
+    expect(err.mock.calls.some((c) => String(c[0]).startsWith("[cron/register-domains] errors=1"))).toBe(true);
+    expect(hb.pingHeartbeat).toHaveBeenCalledWith("register-domains", false);
+    err.mockRestore();
+  });
+  it("a refusal is reported as failed, still 200", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    hb.pingHeartbeat.mockReset();
+    engine.sendEngineCommand.mockResolvedValue({ kind: "refused", reason: "quota" });
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ failed: 1, refused: 1 });
+    expect(err.mock.calls.some((c) => String(c[0]).startsWith("[cron/register-domains] failed=1"))).toBe(true);
+    expect(hb.pingHeartbeat).toHaveBeenCalledWith("register-domains", false);
+    err.mockRestore();
+  });
+  it("a clean run pings the heartbeat ok", async () => {
+    hb.pingHeartbeat.mockReset();
+    engine.sendEngineCommand.mockResolvedValue({ kind: "done", result: { orderId: "RC-1" }, replayed: false });
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    expect(hb.pingHeartbeat).toHaveBeenCalledWith("register-domains", true);
+  });
+  it("the queue read throws → reported 5xx, not a silent 200", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    hb.pingHeartbeat.mockReset();
+    prov.listReadyDomainRequests.mockRejectedValue(new TypeError("fetch failed"));
+    const res = await GET(req());
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(hb.pingHeartbeat).toHaveBeenCalledWith("register-domains", false);
+    err.mockRestore();
+  });
+});
+
+describe("R-1771: the command names the ResellerOS customer, so DMS links its account by ID", () => {
+  beforeEach(() => {
+    customerRow.value = null;
+    engine.sendEngineCommand.mockResolvedValue({ kind: "done", result: {}, replayed: true });
+  });
+  it("paid quote of customer C-00007 → payload.billingCustomerId = C-00007", async () => {
+    quoteRow.value = { id: "Q1", customer_id: "cust-1", line_items: [{ domain: "acme.in", registrant }] };
+    customerRow.value = { id: "cust-1", customer_number: "C-00007" };
+    await GET(req());
+    const cmd = engine.sendEngineCommand.mock.calls[0][0];
+    expect(cmd.payload).toMatchObject({ registrant, billingCustomerId: "C-00007", sourceRef: "Q1" });
+  });
+  it("quote not linked to a customer → no field, still sent", async () => {
+    await GET(req());
+    expect(engine.sendEngineCommand.mock.calls[0][0].payload).not.toHaveProperty("billingCustomerId");
   });
 });

@@ -26,7 +26,12 @@ import { validateGstin, gstStateFromGstin } from "@/lib/utils";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { getStatesForCountry } from "@/lib/gst/states-by-country";
 import { stateRequiredMessage } from "@/lib/gst/gstin-state";
+import {
+  CUSTOMER_GST_TREATMENTS, suggestGstTreatment, nextGstTreatment, gstTreatmentProblem,
+  gstTreatmentOption, panFromGstin, isValidPan, type CustomerGstTreatment,
+} from "@/lib/gst/customer-gst-treatment";
 import type { GstinVerification, Customer } from "@/lib/supabase/database.types";
+import { newCustomerReachProblem, defaultContactName, contactIsTheCompany } from "./new-customer-contact";
 
 // Schema — GSTIN optional but checksum-validated when present. State code stays
 // in the schema (needed for GST math) but has no visible input; we auto-derive
@@ -51,6 +56,13 @@ export const customerSchema = z.object({
   }),
   state:         z.string().optional(),
   state_code:    z.string().regex(/^\d{0,2}$/).optional(),
+  /* R-1736: Zoho-style GST treatment — auto-picked from country / GSTIN / type, changeable.
+     An SEZ customer is always IGST (lib/gst/place-of-supply.ts). */
+  gst_treatment: z.enum(CUSTOMER_GST_TREATMENTS).optional(),
+  /* R-1736: PAN. Filled from the GSTIN (characters 3–12) when there is one; typed otherwise. */
+  pan:           z.string().trim().optional().superRefine((v, ctx) => {
+    if (v && !isValidPan(v)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "A PAN is 5 letters, 4 digits, 1 letter (e.g. AAACR5055K)" });
+  }),
   country:       z.string().optional(),
   address:       z.string().optional(),
   city:          z.string().optional(),
@@ -99,6 +111,11 @@ export const customerSchema = z.object({
      (live had 17). GSTIN or not, the state is required; a valid GSTIN supplies it by itself. */
   const stateMsg = stateRequiredMessage(data);
   if (stateMsg) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["state"], message: stateMsg });
+  /* R-1736: a treatment the facts contradict (Overseas in India, Regular with no GSTIN). */
+  if (data.gst_treatment) {
+    const problem = gstTreatmentProblem({ treatment: data.gst_treatment, country: data.country, gstin: foreign ? "" : data.gstin });
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["gst_treatment"], message: problem });
+  }
   // A business needs a company name; an individual needs at least a person /
   // display name (no company). Enforced here so the shared `name` field can be
   // optional for individuals.
@@ -140,8 +157,11 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
 
   const form = useForm<CustomerFormData>({
     resolver: zodResolver(customerSchema),
-    defaultValues: { country: "India", customer_type: "business" },
+    defaultValues: { country: "India", customer_type: "business", gst_treatment: "unregistered_business" },
   });
+  /* R-1736: true once the user picks a GST treatment by hand (or the saved one differs from
+     what the facts suggest) — from then on the auto-pick leaves it alone (nextGstTreatment). */
+  const treatmentManual = React.useRef(false);
   const { register, handleSubmit, reset, watch, setValue, control, formState } = form;
   const { fields: contactPersonFields, append: appendContactPerson, remove: removeContactPerson } =
     useFieldArray({ control, name: "contact_persons" });
@@ -150,7 +170,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
   // wipes on close so reopening is clean.
   React.useEffect(() => {
     if (!open) {
-      reset({ country: "India", customer_type: "business" });
+      reset({ country: "India", customer_type: "business", gst_treatment: "unregistered_business" });
+      treatmentManual.current = false;
       setVerification(null);
       return;
     }
@@ -165,12 +186,17 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       // customer's contact isn't shown blank in the new split fields.
       let firstName = customer.contact_first_name ?? "";
       let lastName  = customer.contact_last_name ?? "";
-      if (!firstName && !lastName && customer.contact_name?.trim()) {
+      /* R-1738: a contact that is just the company's own name stays out of First/Last. */
+      if (!firstName && !lastName && customer.contact_name?.trim() && !contactIsTheCompany(customer)) {
         const parts = customer.contact_name.trim().split(/\s+/);
         firstName = parts[0] ?? "";
         lastName  = parts.slice(1).join(" ");
       }
+      const suggested = suggestGstTreatment({ country: customer.country, gstin: customer.gstin, customerType: customer.customer_type });
+      treatmentManual.current = !!customer.gst_treatment && customer.gst_treatment !== suggested;
       reset({
+        gst_treatment: customer.gst_treatment ?? suggested,
+        pan:           customer.pan ?? "",
         customer_type: customer.customer_type ?? "business",
         name:          customer.name ?? "",
         display_name:  customer.display_name ?? "",
@@ -207,7 +233,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       });
       setVerification(customer.gstin_verification ?? null);
     } else {
-      reset({ country: "India", customer_type: "business" });
+      reset({ country: "India", customer_type: "business", gst_treatment: "unregistered_business" });
+      treatmentManual.current = false;
       setVerification(null);
     }
   }, [open, customer, reset]);
@@ -221,6 +248,39 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     if (name) setValue("state",      name, { shouldDirty: true });
   }, [watchedGstin, setValue]);
 
+  /* R-1736: GST treatment follows country / GSTIN / customer type until picked by hand —
+     the same rule that backfilled existing customers (suggestGstTreatment). */
+  const watchedCountry  = watch("country");
+  const watchedType     = watch("customer_type");
+  const watchedTreatment = watch("gst_treatment");
+  const formForeign = isExportSupply(watchedCountry);
+  const suggestedTreatment = suggestGstTreatment({
+    country: watchedCountry, gstin: formForeign ? "" : watchedGstin, customerType: watchedType,
+  });
+  React.useEffect(() => {
+    const next = nextGstTreatment({ current: watchedTreatment, manual: treatmentManual.current, suggestion: suggestedTreatment });
+    if (next !== watchedTreatment) setValue("gst_treatment", next, { shouldDirty: true, shouldValidate: !!formState.isSubmitted });
+    if (next === suggestedTreatment) treatmentManual.current = false;
+  }, [suggestedTreatment, watchedTreatment, setValue, formState.isSubmitted]);
+  const onTreatmentChange = (value: CustomerGstTreatment) => {
+    treatmentManual.current = value !== suggestedTreatment;
+    setValue("gst_treatment", value, { shouldDirty: true, shouldValidate: true });
+  };
+
+  /* R-1736: PAN = GSTIN characters 3–12. Read-only while a valid GSTIN supplies it; typed
+     by hand for an unregistered customer. A PAN that only came from an old GSTIN is cleared
+     when the GSTIN goes, so a stale one is never saved. */
+  const panFromForm = formForeign ? null : panFromGstin(watchedGstin);
+  const lastDerivedPan = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (panFromForm) {
+      setValue("pan", panFromForm, { shouldDirty: true, shouldValidate: true });
+    } else if (lastDerivedPan.current && form.getValues("pan") === lastDerivedPan.current) {
+      setValue("pan", "", { shouldDirty: true });
+    }
+    lastDerivedPan.current = panFromForm;
+  }, [panFromForm, setValue, form]);
+
   const onSubmit = async (data: CustomerFormData) => {
     // Export (non-India) customers have no GSTIN / Indian state code — never
     // persist a stale one if the user typed then switched country.
@@ -230,32 +290,23 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     const combinedName = [data.contact_first_name?.trim(), data.contact_last_name?.trim()]
       .filter(Boolean).join(" ") || (data.contact_name?.trim() || null);
 
-    /* ── A NEW CUSTOMER MUST HAVE A PERSON ON IT ────────────────────────────
-       Abhishek's rule, 18 Sep 2026: "without contact customer not created". The customer
-       is the company; the contact is the human who receives its invoices and payment
-       reminders, and a customer without one is a bill addressed to nobody.
+    /* ── A NEW CUSTOMER NEEDS A WAY TO REACH IT (R-1738, 22 Oct 2026) ─────────
+       Was: name + contact person + email + phone, all four required (Abhishek, 18 Sep:
+       "without contact customer not created"). Zoho asks only the name. Now a new
+       customer needs its name (the schema) and ONE way to send the invoice — an email
+       or a phone. The contact is still never blank: when no person is typed, the
+       company itself is the contact (defaultContactName below), so useCreateCustomer's
+       contact rule, the customer_contacts link, the invoice / dunning recipient and the
+       subscription file's "Contact Name" all still get one.
 
-       CREATE ONLY, on purpose. Customers already on the books predate the rule — some
-       were imported, some came from the old flat columns — and refusing to save an edit
-       to one would lock the operator out of the very page where the missing contact is
-       fixed. New ones cannot get in without it; old ones get fixed, not frozen.
-
-       Enforced here rather than in the zod schema because the schema is shared by both
-       modes and cannot tell them apart. Reported through setError so it lands on the
-       field, the way every other validation message on this form does. */
+       CREATE ONLY, on purpose — editing an old customer is never blocked. Reported
+       through setError so it lands on the field like every other message here. */
     if (!isEdit) {
-      const missing: Array<[keyof CustomerFormData, string]> = [];
-      if (!combinedName) missing.push(["contact_first_name", "A contact person's name is required"]);
-      if (!data.contact_email?.trim()) missing.push(["contact_email", "The contact's email is required — invoices and reminders go here"]);
-      if (!data.contact_phone?.trim() && !data.contact_mobile?.trim()) {
-        missing.push(["contact_phone", "A phone number is required for the contact"]);
-      }
-      if (missing.length > 0) {
-        for (const [field, message] of missing) {
-          form.setError(field, { type: "manual", message });
-        }
-        toast.error("Add a contact person before saving this customer", {
-          description: "A customer needs one named human with an email and a phone number — they are who the invoice and the payment reminder go to. Fill in the Contact Person section, then save again.",
+      const problem = newCustomerReachProblem(data);
+      if (problem) {
+        form.setError("contact_email", { type: "manual", message: problem });
+        toast.error("Add an email or a phone number", {
+          description: "The invoice and the payment reminder need somewhere to go. One of the two is enough.",
         });
         return;
       }
@@ -299,11 +350,16 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       gstin:         foreign ? null : (data.gstin?.trim()      || null),
       state:         data.state?.trim()         || null,
       state_code:    foreign ? null : (data.state_code?.trim() || null),
+      /* R-1736: always sent, so an edit never leaves an old treatment behind. */
+      gst_treatment: data.gst_treatment
+        ?? suggestGstTreatment({ country: data.country, gstin: foreign ? "" : data.gstin, customerType: type }),
+      pan:           foreign ? null : (panFromGstin(data.gstin) ?? (data.pan?.trim().toUpperCase() || null)),
       country:       data.country?.trim()       || "India",
       address:       data.address?.trim()       || null,
       city:          data.city?.trim()          || null,
       pin_code:      data.pin_code?.trim()      || null,
-      contact_name:  combinedName,
+      /* R-1738: no contact person typed → the company (or the individual) is the contact. */
+      contact_name:  defaultContactName({ personName: combinedName, customerName: canonicalName }),
       contact_title: data.contact_title?.trim() || null,
       contact_email: data.contact_email?.trim() || null,
       contact_phone: data.contact_phone?.trim() || null,
@@ -364,11 +420,18 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     foreignStates,
     countryReg,
     onCountryChange,
+    /* R-1736 */
+    gstTreatment: watchedTreatment ?? suggestedTreatment,
+    gstTreatmentAuto: (watchedTreatment ?? suggestedTreatment) === suggestedTreatment,
+    gstTreatmentMeaning: gstTreatmentOption(watchedTreatment ?? suggestedTreatment)?.meaning ?? "",
+    onTreatmentChange,
+    panLocked: !!panFromForm,
     onSubmit,
     /* The state field sits on the Address tab, which may be closed — say what is missing
        instead of a Save button that silently does nothing (R-173). */
     submit: handleSubmit(onSubmit, (errs) => {
       if (errs.state?.message) toast.error("State is missing", { className: NEEDS_INPUT_CLASS, description: String(errs.state.message) });
+      if (errs.gst_treatment?.message) toast.error("Check the GST treatment", { className: NEEDS_INPUT_CLASS, description: String(errs.gst_treatment.message) });
     }),
   };
 }

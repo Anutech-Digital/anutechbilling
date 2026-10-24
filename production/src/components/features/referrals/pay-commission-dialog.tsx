@@ -55,7 +55,7 @@ export function PayCommissionDialog({ open, onOpenChange, commission }: Props) {
   if (!commission) return null;
 
   async function submit() {
-    if (!bankId) { toast.error("Pay-from account chuno."); return; }
+    if (!bankId) { toast.error("Select the Pay from account."); return; }
     try {
       await pay.mutateAsync({ commissionId: commission!.id, bankAccountId: bankId, paidOn, method: method.trim() || null });
       onOpenChange(false);
@@ -70,7 +70,7 @@ export function PayCommissionDialog({ open, onOpenChange, commission }: Props) {
         <SheetHeader className="!p-5 border-b border-hairline">
           <SheetTitle>Pay commission</SheetTitle>
           <SheetDescription>
-            <b>{commission.partner_name ?? "Partner"}</b> ko commission payout.
+            Commission payout to <b>{commission.partner_name ?? "Partner"}</b>.
           </SheetDescription>
         </SheetHeader>
 
@@ -87,7 +87,7 @@ export function PayCommissionDialog({ open, onOpenChange, commission }: Props) {
 
           <FormField label="Pay from" htmlFor="pay_bank">
             {payable.length === 0 ? (
-              <p className="text-[12px] text-rose">Koi bank account nahi mila. Pehle Banking me account add karein.</p>
+              <p className="text-[12px] text-rose">No bank account found. Add an account in Banking first.</p>
             ) : (
               <select id="pay_bank" value={bankId} onChange={(e) => setBankId(e.target.value)} className={selectCls}>
                 {payable.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -106,7 +106,7 @@ export function PayCommissionDialog({ open, onOpenChange, commission }: Props) {
 
           {commission.tds_amount > 0 && (
             <div className="rounded-md bg-amber-soft/40 border border-amber/30 px-3 py-2 text-xs text-amber-ink leading-relaxed">
-              ₹{commission.tds_amount.toLocaleString("en-IN")} TDS aapke paas rahega — usse govt ko deposit karna hoga (challan).
+              ₹{commission.tds_amount.toLocaleString("en-IN")} TDS stays with you — you must deposit it with the government (challan).
             </div>
           )}
         </div>

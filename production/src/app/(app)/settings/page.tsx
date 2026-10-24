@@ -17,7 +17,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { GST_STATE_OPTIONS, initialStateCode, normalizeStateCode } from "../setup/company-state";
+import { GST_STATE_OPTIONS, companyGstinStateConflict, initialStateCode, normalizeStateCode } from "../setup/company-state";
 import { InvoiceCodeField, useInvoiceCode, useSaveInvoiceCode } from "../setup/invoice-code-field";
 import { invoiceCodeProblem, normalizeInvoiceCode } from "../setup/invoice-code";
 import { useForm } from "react-hook-form";
@@ -33,7 +33,9 @@ import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { NotificationsCard } from "@/components/features/settings/notifications-card";
 import { ComplianceProfileCard } from "@/components/features/compliance/compliance-profile-card";
 import { TurnoverCard } from "@/components/features/compliance/turnover-card";
+import { GstRegistrationCard } from "@/components/features/compliance/gst-registration-card";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { ImportZohoInvoicesDialog, canImportOpeningInvoices } from "@/components/features/invoices/import-zoho-invoices-dialog";
 import { useUpdateTenant, useSetTenantLogo } from "@/lib/queries/tenant";
 import { isValidGstin, gstStateFromGstin, validateGstin, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { contactsCardState } from "@/lib/google/contacts-card-state";
@@ -41,6 +43,7 @@ import {
   CONNECT_GOOGLE_RESELLER_PATH, RESELLER_OAUTH_MESSAGES, RESELLER_STATUS_PARAM, resellerCardState,
 } from "@/lib/google/reseller-connect";
 import { mayDo } from "@/lib/auth/action-roles";
+import { geminiStatusText, CLAUDE_STATUS_DETAIL } from "@/lib/ai/gemini-status-text";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import SandboxConfigureDialog  from "@/components/features/integrations/sandbox-configure-dialog";
 import WhatsAppConfigureDialog from "@/components/features/integrations/whatsapp-configure-dialog";
@@ -50,6 +53,7 @@ import ChangePasswordCard from "@/components/features/settings/change-password-c
 import { TwoFactorCard } from "@/components/features/settings/two-factor-card";
 import GeminiConfigureDialog from "@/components/features/integrations/gemini-configure-dialog";
 import ApiKeysCard from "@/components/features/integrations/api-keys-card";
+import ZohoBooksCard from "@/components/features/integrations/zoho-books-card";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
@@ -76,6 +80,8 @@ const TABS: TabBarItem[] = [
      to a non-technical owner — it was to stay out until it did something. As of 22 Aug 2026
      it does: changing your own password, which had no home anywhere in the app. */
   { id: "security",      label: "Security"      },
+  /* R-1739: bringing data over from Zoho Books — open invoices (the same dialog as Invoices). */
+  { id: "import",        label: "Import"        },
 ];
 
 // ─── Field wrapper ────────────────────────────────────────────────────────────
@@ -142,6 +148,10 @@ const companySchema = z.object({
     .int("Whole days only")
     .min(0, "Cannot be negative")
     .max(30, "Max 30 days"),
+}).superRefine((v, ctx) => {
+  /* R-1128: the state must be the one the GSTIN was issued in — it decides CGST/SGST vs IGST. */
+  const conflict = companyGstinStateConflict(v.state_code, v.gstin);
+  if (conflict) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["state_code"], message: conflict.message });
 });
 type CompanyForm = z.infer<typeof companySchema>;
 
@@ -195,6 +205,8 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
   // First 2 digits of a GSTIN encode the state per GSTN master list.
   // Mark fields dirty so the form's "Save changes" button activates.
   const watchedGstin = watch("gstin");
+  /* R-1128: shown live under the state select, with a one-press fix. */
+  const stateConflict = companyGstinStateConflict(watch("state_code"), watchedGstin);
   React.useEffect(() => {
     const { code, name } = gstStateFromGstin(watchedGstin ?? "");
     if (code && name) setValue("state_code", code, { shouldDirty: true, shouldValidate: true });
@@ -315,10 +327,13 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                 {/* R-250: same select as the setup wizard — the value is always a 2-digit
                     GST state code, so a typo can no longer save state_code = null. */}
                 <Field htmlFor="settings-registered-state" label="Registered state">
+                  {/* R-1428: "Set company state" deep-links here (#settings-registered-state).
+                      scroll-mt-24 (96px) clears the sticky topbar (h-14) and keeps this label
+                      in view — without it the field landed under the header. */}
                   <select id="settings-registered-state"
-                    className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber"
-                    aria-invalid={!!errors.state_code}
-                    aria-describedby={errors.state_code ? "settings-registered-state-error" : undefined}
+                    className="scroll-mt-24 w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber"
+                    aria-invalid={!!errors.state_code || !!stateConflict}
+                    aria-describedby={errors.state_code || stateConflict ? "settings-registered-state-error" : undefined}
                     {...register("state_code")}
                   >
                     <option value="" disabled>Choose your state</option>
@@ -328,10 +343,16 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                       </option>
                     ))}
                   </select>
-                  {errors.state_code?.message && (
+                  {(stateConflict?.message ?? errors.state_code?.message) && (
                     <p id="settings-registered-state-error" className="mt-1 text-3xs text-rose">
-                      {errors.state_code.message}
+                      {stateConflict?.message ?? errors.state_code?.message}
                     </p>
+                  )}
+                  {stateConflict && (
+                    <Button type="button" variant="default" size="sm" className="mt-1"
+                      onClick={() => setValue("state_code", stateConflict.gstinCode, { shouldDirty: true, shouldValidate: true })}>
+                      Set state from GSTIN ({stateConflict.gstinState})
+                    </Button>
                   )}
                 </Field>
                 <Field htmlFor="settings-pin-code" label="PIN code">
@@ -378,7 +399,7 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                   {...register("grace_period_days", { valueAsNumber: true })}
                 />
                 <p className="mt-1 text-xs text-ink-3">
-                  Buffer between renewal date and auto-suspend. 0 means service suspends the day after renewal if unpaid; up to 30 days extra.
+                  Days after the renewal date before you get a Stop service task. Nothing stops by itself.
                 </p>
               </Field>
               <Field htmlFor="settings-address" label="Address">
@@ -523,6 +544,9 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
           )}
         </form>
       </Card>
+
+      {/* R-1529: Registered / Not registered / Composition → Tax Invoice or Bill of Supply. */}
+      <GstRegistrationCard isOwner={isOwner} gstin={me?.tenantGstin} />
 
       <InvoiceNumberingCard isOwner={isOwner} />
 
@@ -818,6 +842,9 @@ function GeminiIntegrationCard() {
   });
   const configured = Boolean(status?.configured);
   const envFallback = Boolean(status?.env_fallback);
+  const geminiText = geminiStatusText({ configured, envFallback });
+  /* R-1759: Claude runs on the server key — then the card is Live, never "Stub". */
+  const onClaude = status?.ai_provider === "claude";
   return (
     <>
       <div className="flex items-center justify-between rounded-lg border border-hairline p-3">
@@ -828,14 +855,16 @@ function GeminiIntegrationCard() {
           <div className="min-w-0">
             <p className="text-sm font-medium text-ink inline-flex items-center gap-1.5">
               AI assistant
-              {configured
+              {configured || onClaude
                 ? <Badge size="sm" kind="success">Live</Badge>
                 : envFallback
                   ? <Badge size="sm" kind="info">Shared</Badge>
                   : <Badge size="sm" kind="muted">Stub</Badge>}
             </p>
-            <p className="text-xs text-ink-3 truncate">
-              {configured ? "Real AI drafts + extraction" : envFallback ? "Using shared server key" : "Templates only — add a Gemini key"}
+            {/* R-1425: what "shared" means lives in lib/ai/gemini-status-text.ts (full line on hover).
+                R-1759: the line says which AI runs ("AI is using: Claude (server key)"). */}
+            <p className="text-xs text-ink-3 truncate" title={onClaude ? CLAUDE_STATUS_DETAIL : geminiText.detail}>
+              {status?.ai_using ?? geminiText.card}
             </p>
           </div>
         </div>
@@ -861,7 +890,12 @@ function GoogleResellerIntegrationCard() {
     queryFn: async () => {
       const res = await fetch("/api/integrations/google-reseller/subscriptions?probe=1");
       const body = await res.json().catch(() => ({}));
-      return { ok: res.ok, code: body?.code as string | undefined, connected: Boolean(body?.connected) };
+      return {
+        ok: res.ok,
+        code: body?.code as string | undefined,
+        connected: Boolean(body?.connected),
+        connectAvailable: typeof body?.connectAvailable === "boolean" ? (body.connectAvailable as boolean) : undefined,
+      };
     },
     staleTime: 60_000,
   });
@@ -872,7 +906,12 @@ function GoogleResellerIntegrationCard() {
     const p = url.searchParams.get(RESELLER_STATUS_PARAM);
     if (!p) return;
     const m = RESELLER_OAUTH_MESSAGES[p];
-    if (m) (m.ok ? toast.success : toast.error)(m.text);
+    /* R-1425: "not set up on this server" is a calm notice — the card below says the same. */
+    if (m) {
+      if (m.tone === "ok") toast.success(m.text);
+      else if (m.tone === "calm") toast(m.text);
+      else toast.error(m.text, { description: "Google Reseller is not connected yet. Press Connect Google Reseller below to try again." });
+    }
     url.searchParams.delete(RESELLER_STATUS_PARAM);
     window.history.replaceState({}, "", url.pathname + url.search);
   }, []);
@@ -895,7 +934,9 @@ function GoogleResellerIntegrationCard() {
             Google Reseller API
             {!isLoading && (connected
               ? <Badge size="sm" kind="success">Connected</Badge>
-              : <Badge size="sm" kind="warning">Setup</Badge>)}
+              : card.notAvailable
+                ? <Badge size="sm" kind="muted">Not available</Badge>
+                : <Badge size="sm" kind="warning">Setup</Badge>)}
           </p>
           <p className="text-xs text-ink-3 truncate">{sub}</p>
         </div>
@@ -962,7 +1003,7 @@ function GoogleContactsIntegrationCard() {
      bekaar hai — CLAUDE.md §24 kehta hai: kya hua, kyun, ab kya karein. Wo teeno baatein
      `last_error` me pehle se hain, isliye wahi dikhate hain. */
   const sub = state.kind === "unconfigured"
-    ? "Add Google OAuth keys in env to enable"
+    ? "Not available on this server yet · the ResellerOS admin turns on Google sign-in"
     : state.kind === "needs_reconsent"
       ? state.reason
       : state.kind === "ready"
@@ -984,7 +1025,7 @@ function GoogleContactsIntegrationCard() {
                 ? <Badge size="sm" kind="success">Connected</Badge>
                 : configured
                   ? <Badge size="sm" kind="warning">Connect</Badge>
-                  : <Badge size="sm" kind="muted">Setup</Badge>}
+                  : <Badge size="sm" kind="muted">Not available</Badge>}
           </p>
           {/* Wajah wali line ko truncate NAHI karte — wahi ek line hai jo batati hai ki
               ab kya karna hai. Baaki haalat me line chhoti hai, to title= kaafi hai. */}
@@ -1016,6 +1057,30 @@ function GoogleContactsIntegrationCard() {
   );
 }
 
+// ─── Import tab — R-1739 ─────────────────────────────────────────────────────
+function ImportTab() {
+  const { data: me } = useCurrentUser();
+  const [open, setOpen] = React.useState(false);
+  const allowed = canImportOpeningInvoices(me?.role);
+  return (
+    <Card className="p-5 max-w-2xl">
+      <p className="text-sm font-semibold text-ink">Open invoices from Zoho Books</p>
+      <p className="text-xs text-ink-3 mt-1">
+        Bring over what customers still owe on Zoho Books invoices (Unpaid, Overdue, Partially Paid). They show in
+        dues, aging, statements and reminders and can take payments; their GST and revenue stay in Zoho.
+      </p>
+      {allowed ? (
+        <Button className="mt-3" variant="primary" icon="download" onClick={() => setOpen(true)}>
+          Import open invoices
+        </Button>
+      ) : (
+        <p className="text-xs text-ink-2 mt-3">Only an owner, manager or accountant can import invoices.</p>
+      )}
+      {open && <ImportZohoInvoicesDialog open={open} onOpenChange={setOpen} />}
+    </Card>
+  );
+}
+
 function IntegrationsTab() {
   return (
     <>
@@ -1023,6 +1088,8 @@ function IntegrationsTab() {
     <div id="email-sending" className="mb-4 scroll-mt-20">
       <EmailSendingCard />
     </div>
+    {/* R-1749: each company connects its own Zoho Books (read-only). */}
+    <ZohoBooksCard />
     <Card className="p-5">
       <p className="mb-4 text-sm font-semibold text-ink">Connected services</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -1059,7 +1126,7 @@ function BrandingTab() {
     <Card className="p-5 md:p-6 max-w-2xl">
       <h2 className="font-serif text-xl text-ink">Company logo</h2>
       <p className="text-sm text-ink-3 mt-1 mb-5">
-        Shown in the sidebar and on customer-facing pages (enquiry form, quotations). PNG / JPG / WEBP / SVG, up to 5 MB. A square or wide logo on a transparent background works best.
+        Shown in the sidebar and on customer-facing pages (enquiry form, quotations). PNG / JPG / WEBP, up to 5 MB. A square or wide logo on a transparent background works best.
       </p>
 
       <div className="flex items-center gap-5 flex-wrap">
@@ -1075,7 +1142,7 @@ function BrandingTab() {
 
         <div className="flex flex-col gap-2">
           <input
-            ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp"
             className="hidden" onChange={(e) => onPick(e.target.files?.[0] ?? null)}
           />
           <div className="flex gap-2 flex-wrap">
@@ -1158,6 +1225,7 @@ function SettingsPageInner() {
       {tab === "branding"      && <BrandingTab />}
       {tab === "notifications" && <NotificationsCard />}
       {tab === "security"      && <div className="max-w-md"><ChangePasswordCard /><TwoFactorCard /></div>}
+      {tab === "import"        && <ImportTab />}
     </div>
   );
 }

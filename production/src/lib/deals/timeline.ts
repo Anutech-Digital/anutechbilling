@@ -194,7 +194,7 @@ const ACTIVITY: Record<string, { title: string; icon: string; group: DealEventGr
 
 const QUOTE_STATUS_TITLE: Record<string, string> = {
   sent: "Quote sent", viewed: "Customer ne quote dekha", accepted: "Quote accepted",
-  rejected: "Quote rejected", expired: "Quote expire ho gaya", draft: "Quote wapas draft me",
+  rejected: "Quote rejected", expired: "Quote expired", draft: "Quote moved back to draft",
 };
 
 // ─── The merge ──────────────────────────────────────────────────────────────
@@ -348,7 +348,7 @@ export function buildDealHistory(src: DealHistorySources, nameOf: NameOf = () =>
     push(iso(q.updated_at), {
       id: `quote-status:${q.id}`, group: "money", icon: st === "accepted" ? "check_circle" : "x_circle",
       tone: st === "accepted" ? "emerald" : "rose", title: QUOTE_STATUS_TITLE[st],
-      detail: `${q.id} · time = quote ka last update`, amount: q.amount ?? null, href: quoteHref(q.id),
+      detail: `${q.id} · time = last update of the quote`, amount: q.amount ?? null, href: quoteHref(q.id),
     });
   }
 

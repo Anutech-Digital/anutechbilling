@@ -24,12 +24,16 @@ import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { makeTrialToken } from "@/lib/hosting/trial-token";
 import { TRIAL_PLAN_ID, TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { checkTrialHistory, recordTrialInDms } from "@/lib/dms-engine/trials";
+import { maskContactValue, redactContacts } from "@/lib/security/redact-contact";
+import { websiteTenantId, WEBSITE_TENANT_MISSING_MESSAGE } from "@/lib/website-tenant";
+import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
+import { IST_TZ } from "@/lib/dates/ist";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: the website tenant is read per call (websiteTenantId) — outside production an unset
+   BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
 
-export const TRIAL_DAYS = 15;
+export const TRIAL_DAYS = HOSTING_TRIAL_DAYS; // R-1117: one place for the length
 
 export interface StartTrialInput {
   fullName: string;
@@ -101,6 +105,8 @@ export async function checkTrialEligibility(
   // Local testing only (Pawan, 1 Oct 2026): start trial after trial on the same details.
   // Never in a production build, whatever the variable says.
   if (repeatTrialsAllowed()) return { ok: true, eligible: true };
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) return { ok: false, error: WEBSITE_TENANT_MISSING_MESSAGE };
   const tierName = TRIAL_PLAN_NAME;
   const cleanDomain = normaliseTrialDomain(input.domain);
 
@@ -127,7 +133,7 @@ export async function checkTrialEligibility(
     return { ok: false, error: "We couldn't check whether you've had a trial before, so we haven't started one. Nothing was saved. Please try again in a minute." };
   }
   if (priorTrials && priorTrials.length > 0) {
-    const when = new Date(priorTrials[0].created_at as string).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+    const when = new Date(priorTrials[0].created_at as string).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: IST_TZ });
     return {
       ok: true,
       eligible: false,
@@ -148,7 +154,7 @@ export async function checkTrialEligibility(
   }
   if (dmsHistory.trialled) {
     const startedOn = dmsHistory.startedAt
-      ? new Date(dmsHistory.startedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+      ? new Date(dmsHistory.startedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: IST_TZ })
       : undefined;
     const when = startedOn ? ` (started ${startedOn})` : "";
     return {
@@ -169,6 +175,8 @@ export async function startHostingTrial(
   request: NextRequest,
   utmBody: Record<string, unknown>,
 ): Promise<StartTrialResult> {
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) return { ok: false, error: WEBSITE_TENANT_MISSING_MESSAGE };
   const { fullName, companyName, email, phone, domain, cycle } = input;
   const domainStatus: "have" | "need" = (domain ?? "").trim().length >= 3 ? "have" : "need";
   const tierId = TRIAL_PLAN_ID;
@@ -297,7 +305,7 @@ export async function startHostingTrial(
     console.error("[startHostingTrial] task auto-create failed (non-fatal):", taskErr);
   }
 
-  const trialEndsFmt = trialExpiresAt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const trialEndsFmt = trialExpiresAt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: IST_TZ });
 
   // Email-verification link — the bot guard. The account is provisioned only
   // after the customer clicks this. Without a signing secret configured we
@@ -362,7 +370,7 @@ ${signOff}`;
   }).catch((e: unknown) => ({ status: "failed" as const, errorMessage: (e as Error).message }));
   const confirmationSent = confirmation.status === "sent";
   if (!confirmationSent) {
-    console.error(`[trial/hosting] lead ${leadId}: the confirmation link did NOT reach ${email}: ${confirmation.errorMessage ?? confirmation.status}`);
+    console.error(`[trial/hosting] lead ${leadId}: the confirmation link did NOT reach ${maskContactValue(email)}: ${redactContacts(confirmation.errorMessage ?? confirmation.status)}`);
   }
 
   /* No owner email for a trial (owner, 30 Sep 2026: "remove this feature completely — that

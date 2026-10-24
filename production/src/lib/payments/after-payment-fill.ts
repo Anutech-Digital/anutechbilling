@@ -15,6 +15,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { quoteStateToFill } from "@/lib/payments/record-payment-invoice";
+import { pickDomainStampTarget } from "@/lib/quotes/payment-domain";
 
 type Client = SupabaseClient<Database>;
 
@@ -82,4 +83,54 @@ export async function saveDomainAfterPayment(
     console.error("[record-payment] domain not saved (payment still recorded):", e);
   }
   return out;
+}
+
+/**
+ * R-1730 — the whole "save this quote's domain" step, one place for its two callers:
+ *   · Record payment (record-payment-dialog), after the money is saved, with the domain the page
+ *     already knew (the sheet no longer has a domain field — setup, not money);
+ *   · the quote's "Setting up" card (provisioning-card), where a domain nobody knew yet is typed.
+ * Same writes as before (R-389 / R-407): ONE subscription of the quote (pickDomainStampTarget —
+ * the unique (tenant, quote, lower(domain)) index refuses a second), then the customer and the
+ * provisioning task. Blanks only, never overwrites; best-effort — a failure only logs.
+ */
+export async function stampPaymentDomain(
+  sb: Client,
+  args: { quoteId: string; domain: string | null | undefined },
+): Promise<{ subscription: boolean; customer: boolean; task: boolean }> {
+  const domain = (args.domain ?? "").trim();
+  if (!domain) return { subscription: false, customer: false, task: false };
+  let subscription = false;
+  const { data: quoteSubs, error: subsErr } = await sb
+    .from("subscriptions")
+    .select("id, vendor, domain")
+    .eq("quote_id", args.quoteId)
+    .order("created_at", { ascending: true });
+  if (subsErr) console.error("[record-payment] could not read the quote's subscriptions for the domain:", subsErr);
+  const targetId = subsErr ? null : pickDomainStampTarget(quoteSubs ?? [], domain);
+  if (targetId) {
+    const { data: stamped, error: domErr } = await sb
+      .from("subscriptions")
+      .update({ domain })
+      .eq("id", targetId)
+      .is("domain", null)
+      .select("id");
+    if (domErr) console.error("[record-payment] domain stamp failed (payment still recorded):", domErr);
+    subscription = Boolean(stamped?.length);
+  }
+  const rest = await saveDomainAfterPayment(sb, { quoteId: args.quoteId, domain });
+  return { subscription, ...rest };
+}
+
+/**
+ * R-1730 — the "Set up" pointer in the Record payment result toast when the quote makes a
+ * subscription and no domain is known yet (the sheet no longer asks for it). A fully paid quote
+ * has its "Setting up" card (raised by trg_quotes_raise_provisioning); before that, the
+ * subscription's own "Add domain" on Subscriptions. null = nothing to set up.
+ */
+export function domainSetupLine(r: { domainToSetUp: boolean; isFullyPaid: boolean }): string | null {
+  if (!r.domainToSetUp) return null;
+  return r.isFullyPaid
+    ? "Next: add the customer's domain on the quote's Setting up card."
+    : "Next: add the customer's domain in Subscriptions → Add domain.";
 }

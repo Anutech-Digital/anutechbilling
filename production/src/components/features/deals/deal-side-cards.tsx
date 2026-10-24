@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import { MetricCard } from "@/components/features/customers/customer-insights";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { Fact } from "@/components/features/leads/lead-detail-format";
 import { ExpectedCloseField } from "@/components/features/leads/expected-close-field";
 import { LeadFollowupsTab } from "@/components/features/leads/lead-detail-followups-tab";
@@ -101,10 +102,15 @@ export function DealFollowupsCard(props: {
   );
 }
 
-export function DealQuotesCard({ rows, onNewQuote, projectFailed }: { rows: DealQuoteRow[]; onNewQuote: () => void; projectFailed?: boolean }) {
+/* R-1806: `error` = the quotes-by-lead read failed — say so with Try again, never "No quotes yet". */
+export function DealQuotesCard({ rows, onNewQuote, projectFailed, error, onRetry }: {
+  rows: DealQuoteRow[]; onNewQuote: () => void; projectFailed?: boolean; error?: unknown; onRetry?: () => void;
+}) {
   return (
     <Card title={`Quotes${rows.length ? ` (${rows.length})` : ""}`} actions={<Button size="sm" variant="ghost" icon="plus" onClick={onNewQuote}>New quote</Button>}>
-      {rows.length === 0 ? (
+      {error != null ? (
+        <LoadErrorInline what="Quotes" error={error} onRetry={onRetry ?? (() => {})} />
+      ) : rows.length === 0 ? (
         <p className="text-sm italic text-ink-3">No quotes yet.</p>
       ) : (
         <ul className="-mx-1 divide-y divide-hairline">
@@ -137,8 +143,9 @@ export function DealMoneyCard({ money, subscriptions, failed, hasQuotes }: {
   const p = money.project;
   return (
     <Card title="Payments" sub="Invoices and payments from this deal's quotes">
+      {/* R-1806: after a failed read "no quote" is not known — the line at the bottom says so. */}
       {!hasQuotes ? (
-        <p className="text-sm italic text-ink-3">Invoices and payments appear here after a quote.</p>
+        failed ? null : <p className="text-sm italic text-ink-3">Invoices and payments appear here after a quote.</p>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fit,minmax(110px,1fr))] gap-2">
           <MetricCard label="Invoiced" value={money.invoiceCount ? rupee(money.invoiced) : "—"} hint={money.invoiceCount ? `${money.invoiceCount} invoice` : "None yet"} />

@@ -59,7 +59,7 @@ export default function LeadFinderPage() {
   const noProfiles = !profiles.isLoading && (profiles.data ?? []).length === 0;
 
   return (
-    <div className="mx-auto max-w-[1400px] p-4 md:p-6 lg:p-8 space-y-5">
+    <div className="mx-auto max-w-[1800px] p-4 md:p-6 lg:p-8 space-y-5">
       <header className="flex items-end justify-between gap-3 flex-wrap">
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Marketing &amp; Advertising</p>

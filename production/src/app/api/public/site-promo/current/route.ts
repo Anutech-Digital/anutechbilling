@@ -24,6 +24,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import type { SitePromoRow } from "@/lib/supabase/database.types";
 import { publicDbError } from "@/app/api/public/_lib/db-error";
 import { isUnreachableError } from "@/lib/supabase/resilient-fetch";
+import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -33,10 +34,12 @@ export const runtime  = "nodejs";
    route used to report as a 500. Refuse it here as the caller's mistake. */
 const TIER_SLUG = /^[a-z0-9_-]{1,40}$/;
 
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: the website tenant is read per request (websiteTenantId) — outside production an unset
+   BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
 
 export async function GET(req: NextRequest) {
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) return NextResponse.json(websiteTenantMissingBody(), { status: 503 });
   const url   = new URL(req.url);
   const tier  = url.searchParams.get("tier")?.toLowerCase().trim() || null;
   const seats = (() => {

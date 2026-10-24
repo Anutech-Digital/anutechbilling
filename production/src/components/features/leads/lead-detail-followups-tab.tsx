@@ -144,7 +144,7 @@ export function LeadFollowupsTab({ followUpDate, openTasks, doneTasks, setAddTas
                         )}
                       </div>
                       <div className="flex gap-0.5 shrink-0">
-                        <DropdownMenu>
+                        <DropdownMenu modal={false}>
                           <DropdownMenuTrigger asChild>
                             <IconButton icon="clock" size="sm" variant="ghost" aria-label="Snooze" title="Snooze" disabled={snoozeTo.isPending} />
                           </DropdownMenuTrigger>

@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { B2CL_THRESHOLD, buildAdvances, buildGstr1, docHsnLines, lineHsn, gstr1Csv, gstr1Json, gstr3bClass, gstSplit, hsnLines, posFor, GSTR1_HEADERS, type Advance, type Gstr1Doc } from "./gstr1";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { B2CL_THRESHOLD, buildAdvances, buildGstr1, docGstRate, docHsnLines, lineHsn, gstr1Csv, gstr1Json, gstr3bClass, gstSplit, hsnLines, posFor, GSTR1_HEADERS, type Advance, type Gstr1Doc } from "./gstr1";
 import { SAAS_HSN } from "./hsn";
 
 const seller = { stateCode: "07", state: "Delhi", gstin: "07AABCU9603R1ZM" };
@@ -308,5 +310,104 @@ describe("WC-gst: advances (Tables 11A / 11B)", () => {
     const j = gstr1Json(buildGstr1([], seller), seller.gstin, "082026", t);
     expect(j.at).toEqual([{ pos: "07", sply_ty: "INTRA", itms: [{ rt: 18, ad_amt: 10000, iamt: 0, camt: 900, samt: 900, csamt: 0 }] }]);
     expect(j.txpd[0]).toMatchObject({ pos: "07", sply_ty: "INTRA" });
+  });
+});
+
+/* R-1131: a note (or legacy invoice) with no stored tax_rate used to be filed at 18%.
+   The rate now comes from the document's own tax ÷ taxable, snapped to a GST slab;
+   with no tax figure to go on it is flagged "rate missing", never guessed. */
+describe("docGstRate — no hardcoded 18% fallback", () => {
+  it("a stored rate wins", () => {
+    expect(docGstRate(5, -1000, -180)).toEqual({ rate: 5, rateMissing: false });
+  });
+  it("no rate + 0 tax → 0%; no rate + 18% tax → 18% (signed credit-note figures)", () => {
+    expect(docGstRate(null, -1000, 0)).toEqual({ rate: 0, rateMissing: false });
+    expect(docGstRate(null, -1000, -180)).toEqual({ rate: 18, rateMissing: false });
+    expect(docGstRate(undefined, 847, 153)).toEqual({ rate: 18, rateMissing: false });
+    expect(docGstRate(null, 1000, 49)).toEqual({ rate: 5, rateMissing: false });
+    expect(docGstRate(null, 1000, 280)).toEqual({ rate: 28, rateMissing: false });
+  });
+  it("nothing to derive from → flagged, not 18", () => {
+    expect(docGstRate(null, null, null)).toEqual({ rate: 0, rateMissing: true });
+    expect(docGstRate(null, 0, 180)).toEqual({ rate: 0, rateMissing: true });
+  });
+  it("credit notes with no rate land in the 0% and 18% GSTR-1 rows", () => {
+    const zero = docGstRate(null, -1000, 0);
+    const eighteen = docGstRate(null, -1000, -180);
+    const s = buildGstr1([
+      doc({ id: "CN-0", docType: "credit_note", amount: -1000, taxableValue: -1000, gst: 0, taxRate: zero.rate }),
+      doc({ id: "CN-18", docType: "credit_note", amount: -1180, taxableValue: -1000, gst: -180, taxRate: eighteen.rate }),
+    ], seller);
+    const rows = s.b2cs.map((r) => [r.rate, r.taxable]).sort((a, b) => a[0] - b[0]);
+    expect(rows).toEqual([[0, -1000], [18, -1000]]);
+  });
+  it("the GST report source has no `?? 18` rate fallback left", () => {
+    const src = readFileSync(join(process.cwd(), "src/app/(app)/accounting/gst/report.ts"), "utf8");
+    expect(src).not.toMatch(/\?\?\s*18\b/);
+  });
+});
+
+describe("R-1742: SEZ and deemed export in GSTR-1 (invoices.gst_treatment)", () => {
+  /* Owner's example: SEZ (with payment) invoice of ₹38,232 = ₹32,400 + IGST ₹5,832. The SEZ
+     unit is in Delhi, the seller too — still IGST (IGST Act s.7(5)(b)). */
+  const sez = (over: Partial<Gstr1Doc>) => doc({
+    id: "INV-SEZ", customerGstin: "07AAACS1234E1ZP", customerStateCode: "07", customerState: "Delhi",
+    amount: 38232, taxableValue: 32400, gst: 5832, taxRate: 18, interState: true,
+    gstTreatment: "sez_with_payment", ...over,
+  });
+
+  it("SEZ with payment: B2B, invoice type SEWP in the JSON and 'SEZ supplies with payment' in the CSV, IGST ₹5,832", () => {
+    const s = buildGstr1([sez({})], seller);
+    expect(s.b2b).toHaveLength(1);
+    expect(s.b2b[0].heads).toEqual({ igst: 5832, cgst: 0, sgst: 0 });
+    expect(s.b2b[0].invType).toBe("SEWP");
+    const j = gstr1Json(s, seller.gstin, "102026");
+    expect(j.b2b[0].inv[0]).toMatchObject({ inum: "INV-SEZ", val: 38232, inv_typ: "SEWP", itms: [{ itm_det: { txval: 32400, iamt: 5832, camt: 0, samt: 0 } }] });
+    const csv = gstr1Csv(s);
+    expect(csv.b2b[0][8]).toBe("SEZ supplies with payment");
+    expect(csv.b2b[0]).toHaveLength(GSTR1_HEADERS.b2b.length);
+  });
+
+  it("an SEZ invoice stored as intra-state is still filed as IGST", () => {
+    const s = buildGstr1([sez({ interState: false })], seller);
+    expect(s.b2b[0].heads).toEqual({ igst: 5832, cgst: 0, sgst: 0 });
+    expect(s.hsn[0].heads).toEqual({ igst: 5832, cgst: 0, sgst: 0 });
+  });
+
+  it("SEZ without payment and no tax charged: SEWOP", () => {
+    const s = buildGstr1([sez({ gstTreatment: "sez_without_payment", amount: 32400, gst: 0, taxRate: 0 })], seller);
+    expect(s.b2b[0].invType).toBe("SEWOP");
+    expect(gstr1Csv(s).b2b[0][8]).toBe("SEZ supplies without payment");
+  });
+
+  it("SEZ without payment but IGST was charged (LUT rule pending): filed as SEWP — the type follows the tax actually charged", () => {
+    const s = buildGstr1([sez({ gstTreatment: "sez_without_payment" })], seller);
+    expect(s.b2b[0].invType).toBe("SEWP");
+  });
+
+  it("deemed export: B2B with invoice type DE, tax by state as charged", () => {
+    const s = buildGstr1([sez({ gstTreatment: "deemed_export", interState: false })], seller);
+    expect(s.b2b[0].invType).toBe("DE");
+    expect(s.b2b[0].heads).toEqual({ igst: 0, cgst: 2916, sgst: 2916 });
+    expect(gstr1Json(s, seller.gstin, "102026").b2b[0].inv[0].inv_typ).toBe("DE");
+    expect(gstr1Csv(s).b2b[0][8]).toBe("Deemed Exp");
+  });
+
+  it("regular and pre-R-1736 invoices (no treatment) stay R / Regular B2B", () => {
+    const s = buildGstr1([doc({ customerGstin: "29AABCU9603R1ZX", interState: true }), doc({ id: "INV-2", customerGstin: "29AABCU9603R1ZX", interState: true, gstTreatment: "registered_regular" })], seller);
+    expect(s.b2b.map((r) => r.invType)).toEqual(["R", "R"]);
+    expect(gstr1Csv(s).b2b[0][8]).toBe("Regular B2B");
+  });
+
+  it("an SEZ credit note: CDNR with the SEZ supply type", () => {
+    const s = buildGstr1([sez({ id: "CN-SEZ", docType: "credit_note", amount: -1180, taxableValue: -1000, gst: -180, interState: false })], seller);
+    expect(s.cdnr[0]).toMatchObject({ invType: "SEWP", heads: { igst: 180, cgst: 0, sgst: 0 } });
+    expect(gstr1Json(s, seller.gstin, "102026").cdnr[0].nt[0].inv_typ).toBe("SEWP");
+    expect(gstr1Csv(s).cdnr[0][7]).toBe("SEZ supplies with payment");
+  });
+
+  it("3B: a supply to an SEZ is zero-rated (3.1(b)); deemed export is not", () => {
+    expect(gstr3bClass(sez({}), seller).zeroRated).toBe(true);
+    expect(gstr3bClass(sez({ gstTreatment: "deemed_export" }), seller).zeroRated).toBe(false);
   });
 });

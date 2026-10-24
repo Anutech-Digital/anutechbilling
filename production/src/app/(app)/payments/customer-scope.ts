@@ -8,10 +8,11 @@
 
    Pure: the page passes its loaded lists in, gets the customer's slice back, and computes
    every number from that slice. No customer → the lists come back untouched. */
+import { cashReceived } from "@/lib/payments/cash-received";
 
 export interface ScopablePayment {
   customer_id?: string | null;
-  quote_id: string;
+  quote_id: string | null;
 }
 
 /** A payment belongs to the customer by its own customer_id, or — when that is empty
@@ -21,7 +22,7 @@ export function paymentBelongsTo(
   customerId: string,
   quoteCustomerId: (quoteId: string) => string | null | undefined,
 ): boolean {
-  return p.customer_id === customerId || quoteCustomerId(p.quote_id) === customerId;
+  return p.customer_id === customerId || (p.quote_id ? quoteCustomerId(p.quote_id) : undefined) === customerId;
 }
 
 export function scopeToCustomer<
@@ -53,14 +54,15 @@ export function scopeToCustomer<
 
 /** Tab counts + the all-time collected total, from an already-scoped list. */
 export function paymentTotals(
-  payments: readonly { status: string; amount: number }[],
+  payments: readonly { status: string; amount: number; credit_applied?: number | null }[],
   projectPayments: readonly { amount: number }[],
 ): { counts: Record<string, number>; received: number; projectCollected: number; totalCollected: number } {
   const counts: Record<string, number> = { all: payments.length };
   let received = 0;
   for (const p of payments) {
     counts[p.status] = (counts[p.status] ?? 0) + 1;
-    if (p.status === "received") received += p.amount;
+    /* R-1565: collected = money in; advance credit applied was collected on an earlier payment. */
+    if (p.status === "received") received += cashReceived(p);
   }
   const projectCollected = projectPayments.reduce((s, p) => s + p.amount, 0);
   return { counts, received, projectCollected, totalCollected: received + projectCollected };

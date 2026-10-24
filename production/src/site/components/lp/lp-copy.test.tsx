@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 /**
- * R-396 (7 Oct 2026, Pardeep: "both options hone chahiye") — the Google Workspace ads landing
- * page speaks English by default and Hinglish on `?lang=hi` or the header toggle. Pinned:
- * both dictionaries have the same keys (also a compile error), the facts and numbers match
- * line for line, the English one has no Hinglish words, no ₹ is typed into a sentence, and
- * the page picks the language from the server prop, the URL, the toggle and localStorage.
+ * R-1752 (22 Oct 2026, Pardeep: the public website is English too) — the Google Workspace ads
+ * landing page has ONE dictionary, in English. R-396 (7 Oct) had a Hinglish one behind a header
+ * toggle and `?lang=hi`; both are removed. Pinned: no Hinglish word anywhere in the copy, no
+ * toggle on the page, an old ad URL with `?lang=hi` (or a saved Hinglish choice) still opens
+ * the English page, no ₹ typed into a sentence, and Business Plus shows no price.
  */
 import * as React from "react";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/react";
-import { LP_TEXT, parseLpLang, LP_LANG_STORE, type LpDict } from "./lp-copy";
+import { render, cleanup, screen } from "@testing-library/react";
+import * as lpCopy from "./lp-copy";
+import { LP_TEXT, type LpDict } from "./lp-copy";
 
 vi.mock("@/site/lib/live-catalog", () => ({
   fetchLiveWorkspace: async () => null,
@@ -32,8 +33,7 @@ function leaves(v: unknown, path = "", out = new Map<string, string>()): Map<str
   else if (typeof v === "boolean" || typeof v === "number") out.set(path, String(v));
   return out;
 }
-const EN = leaves(LP_TEXT.en);
-const HI = leaves(LP_TEXT.hinglish);
+const EN = leaves(LP_TEXT);
 
 /** Words that only appear in Hinglish copy. Whole words, case-insensitive. */
 const HINGLISH_WORDS = [
@@ -45,45 +45,29 @@ const HINGLISH_WORDS = [
   "kadam", "wale", "sawal", "jaane", "badhaiye", "khaas", "bhasha", "taiyaar", "band",
 ];
 
-describe("R-396 — one typed dictionary, two languages", () => {
-  it("English and Hinglish have exactly the same keys (deep, incl. function results)", () => {
-    expect([...HI.keys()].sort()).toEqual([...EN.keys()].sort());
+describe("R-1752 — one dictionary, English only", () => {
+  it("there is one dictionary and no language switch is exported", () => {
     expect(EN.size).toBeGreaterThan(150);
-  });
-
-  it("facts stay identical: every line carries the same numbers in both languages", () => {
-    const nums = (s: string) => (s.match(/\d[\d,]*/g) ?? []).map((x) => x.replace(/,/g, "")).sort();
-    const diffs = [...EN].filter(([k, v]) => JSON.stringify(nums(v)) !== JSON.stringify(nums(HI.get(k) ?? "")));
-    expect(diffs.map(([k]) => k)).toEqual([]);
+    expect(Object.keys(lpCopy).sort()).toEqual(["LP_TEXT"]);
+    expect(LP_TEXT.htmlLang).toBe("en-IN");
   });
 
   it("no ₹ amount is typed into the copy — prices only come in as formatted arguments", () => {
-    const typed = [...EN, ...HI].filter(([, v]) => /₹/.test(v));
+    const typed = [...EN].filter(([, v]) => /₹/.test(v));
     expect(typed).toEqual([]);
   });
 
-  it("the English dictionary has no Hinglish words", () => {
+  it("the dictionary has no Hinglish words", () => {
     const re = new RegExp(`\\b(${HINGLISH_WORDS.join("|")})\\b`, "i");
     const hits = [...EN].filter(([k, v]) => k !== "htmlLang" && re.test(v)).map(([k, v]) => `${k}: ${v}`);
     expect(hits).toEqual([]);
-    // …and the word list really catches the Hinglish copy, so the check above means something.
-    expect([...HI].filter(([, v]) => re.test(v)).length).toBeGreaterThan(50);
-  });
-
-  it("?lang= parsing: hi / hinglish → Hinglish, en / english → English, anything else → null", () => {
-    expect(parseLpLang("hi")).toBe("hinglish");
-    expect(parseLpLang("Hinglish")).toBe("hinglish");
-    expect(parseLpLang(["hi", "en"])).toBe("hinglish");
-    expect(parseLpLang("en")).toBe("en");
-    expect(parseLpLang("english")).toBe("en");
-    expect(parseLpLang("fr")).toBeNull();
-    expect(parseLpLang(undefined)).toBeNull();
-    expect(parseLpLang("")).toBeNull();
+    // …and the word list really catches Hinglish copy, so the check above means something.
+    expect(re.test("Aapka plan kya hai? Abhi trial shuru karein.")).toBe(true);
   });
 
   it("type-level: a dictionary missing a key does not compile", () => {
-    // @ts-expect-error — `htmlLang` (and the rest) missing: LpDict is enforced on both languages
-    const broken: LpDict = { langToggleLabel: "x" };
+    // @ts-expect-error — `htmlLang` (and the rest) missing: LpDict is enforced
+    const broken: LpDict = { plans: {} };
     expect(broken).toBeTruthy();
   });
 });
@@ -103,7 +87,7 @@ function useStorage(local: unknown, session: unknown = new MemStorage()) {
   Object.defineProperty(window, "sessionStorage", { configurable: true, get: () => session });
 }
 
-describe("R-396 — the page picks the language", () => {
+describe("R-1752 — the page is English for every visitor", () => {
   beforeEach(() => {
     useStorage(new MemStorage());
     window.matchMedia = vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }) as unknown as typeof window.matchMedia;
@@ -111,81 +95,48 @@ describe("R-396 — the page picks the language", () => {
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-  it("defaults to English", () => {
-    render(<WorkspaceAdLanding annualPerSeatMo={270} />);
-    expect(screen.getAllByText(LP_TEXT.en.plans.starter.hero.h2).length).toBe(1);
+  it("renders the English hero and buttons, with no English | Hinglish toggle", () => {
+    const { container } = render(<WorkspaceAdLanding annualPerSeatMo={270} />);
+    expect(screen.getAllByText(LP_TEXT.plans.starter.hero.h2).length).toBe(1);
     expect(screen.getAllByRole("button", { name: /Start 14-Day Free Trial/ }).length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "English" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.queryByText(LP_TEXT.hinglish.plans.starter.hero.h2)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Hinglish" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "English" })).toBeNull();
+    expect(container.querySelector(".gw")?.getAttribute("lang")).toBe("en-IN");
+    expect(container.textContent).not.toMatch(/Hinglish/);
   });
 
-  it("lang=hinglish from the server renders Hinglish on the first paint", () => {
-    const { container } = render(<WorkspaceAdLanding annualPerSeatMo={270} lang="hinglish" />);
-    expect(screen.getByText(LP_TEXT.hinglish.plans.starter.hero.h2)).toBeTruthy();
-    expect(screen.getByText(LP_TEXT.hinglish.faq.h3)).toBeTruthy();
-    expect(container.querySelector(".gw")?.getAttribute("lang")).toBe("hi-Latn");
-  });
-
-  it("?lang=hi in the address switches to Hinglish even without the server prop", async () => {
+  it("an old ad URL with ?lang=hi, or a saved Hinglish choice, still opens the English page", async () => {
     window.history.replaceState(null, "", "/lp/google-workspace-business-starter-1?lang=hi&gclid=abc");
+    window.localStorage.setItem("anutech.lp.lang.v1", "hinglish");
     render(<WorkspaceAdLanding annualPerSeatMo={270} />);
-    await waitFor(() => expect(screen.getByText(LP_TEXT.hinglish.plans.starter.hero.h2)).toBeTruthy());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getAllByText(LP_TEXT.plans.starter.hero.h2).length).toBe(1);
+    expect(screen.getByText(LP_TEXT.faq.h3)).toBeTruthy();
   });
 
-  it("the toggle switches both ways, remembers the choice and keeps ?lang= in step", async () => {
-    window.history.replaceState(null, "", "/lp/google-workspace-business-starter-1?lang=en");
-    render(<WorkspaceAdLanding annualPerSeatMo={270} />);
-    fireEvent.click(screen.getByRole("button", { name: "Hinglish" }));
-    expect(screen.getByText(LP_TEXT.hinglish.plans.starter.hero.h2)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Hinglish" }).getAttribute("aria-pressed")).toBe("true");
-    expect(window.localStorage.getItem(LP_LANG_STORE)).toBe("hinglish");
-    expect(new URL(window.location.href).searchParams.get("lang")).toBe("hi");
-    fireEvent.click(screen.getByRole("button", { name: "English" }));
-    expect(screen.getByText(LP_TEXT.en.plans.starter.hero.h2)).toBeTruthy();
-    expect(window.localStorage.getItem(LP_LANG_STORE)).toBe("en");
-    expect(new URL(window.location.href).searchParams.get("lang")).toBe("en");
-  });
-
-  it("a saved choice comes back on the next visit (no ?lang=)", async () => {
-    window.localStorage.setItem(LP_LANG_STORE, "hinglish");
-    render(<WorkspaceAdLanding annualPerSeatMo={270} />);
-    await waitFor(() => expect(screen.getByText(LP_TEXT.hinglish.plans.starter.hero.h2)).toBeTruthy());
-  });
-
-  it("blocked storage does not break the page or the toggle", () => {
+  it("blocked storage does not break the page", () => {
     const blocked = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
     useStorage(blocked, blocked);
     render(<WorkspaceAdLanding annualPerSeatMo={270} />);
-    fireEvent.click(screen.getByRole("button", { name: "Hinglish" }));
-    expect(screen.getByText(LP_TEXT.hinglish.plans.starter.hero.h2)).toBeTruthy();
+    expect(screen.getAllByText(LP_TEXT.plans.starter.hero.h2).length).toBe(1);
   });
 
-  it("the WhatsApp prefill follows the language", () => {
-    const { unmount } = render(<WorkspaceAdLanding annualPerSeatMo={270} />);
-    const en = screen.queryAllByRole("link").map((a) => a.getAttribute("href") ?? "").find((h) => h.includes("wa.me"));
-    unmount();
-    render(<WorkspaceAdLanding annualPerSeatMo={270} lang="hinglish" />);
-    const hi = screen.queryAllByRole("link").map((a) => a.getAttribute("href") ?? "").find((h) => h.includes("wa.me"));
-    if (en && hi) {   // only when a real WhatsApp number is configured
-      expect(decodeURIComponent(en)).toContain(LP_TEXT.en.wa.want("Business Starter"));
-      expect(decodeURIComponent(hi)).toContain(LP_TEXT.hinglish.wa.want("Business Starter"));
-    }
+  it("the WhatsApp prefill is English", () => {
+    render(<WorkspaceAdLanding annualPerSeatMo={270} />);
+    const wa = screen.queryAllByRole("link").map((a) => a.getAttribute("href") ?? "").find((h) => h.includes("wa.me"));
+    if (wa) expect(decodeURIComponent(wa)).toContain(LP_TEXT.wa.want("Business Starter"));   // only when a real WhatsApp number is configured
+    expect(LP_TEXT.wa.want("Business Starter")).toMatch(/^[\x20-\x7E—–₹…]+$/);
   });
 
-  it("Business Plus shows no price in either language", () => {
-    for (const lang of ["en", "hinglish"] as const) {
-      const { container, unmount } = render(<WorkspaceAdLanding annualPerSeatMo={null} plan={LP_PLANS.plus} lang={lang} />);
-      expect(container.textContent).not.toMatch(/₹\s?[1-9]/);
-      unmount();
-    }
+  it("Business Plus shows no price", () => {
+    const { container } = render(<WorkspaceAdLanding annualPerSeatMo={null} plan={LP_PLANS.plus} />);
+    expect(container.textContent).not.toMatch(/₹\s?[1-9]/);
   });
 
-  it("server side: the plan and category pages pass ?lang=hi through as Hinglish, else English", async () => {
+  it("server side: the plan and category pages ignore ?lang= (no lang prop any more)", async () => {
     const hi = await LpPlanPage({ planKey: "starter", searchParams: Promise.resolve({ lang: "hi" }) });
-    expect((hi as React.ReactElement<{ lang: string }>).props.lang).toBe("hinglish");
-    const none = await LpPlanPage({ planKey: "starter", searchParams: Promise.resolve({}) });
-    expect((none as React.ReactElement<{ lang: string }>).props.lang).toBe("en");
+    expect((hi as React.ReactElement<Record<string, unknown>>).props.lang).toBeUndefined();
     const cat = await LpCategoryPage({ searchParams: Promise.resolve({ lang: "hinglish" }) });
-    expect((cat as React.ReactElement<{ lang: string }>).props.lang).toBe("hinglish");
+    expect((cat as React.ReactElement<Record<string, unknown>>).props.lang).toBeUndefined();
   });
 });

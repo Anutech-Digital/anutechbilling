@@ -93,7 +93,7 @@ const DialogContent = React.forwardRef<
     /** Allow the user to drag-resize this dialog (desktop only). Default on. */
     resizable?: boolean;
   }
->(({ className, children, hideClose, resizable = true, style, onInteractOutside, onEscapeKeyDown, ...props }, ref) => {
+>(({ className, children, hideClose, resizable = true, style, onInteractOutside, onEscapeKeyDown, onAnimationEnd, ...props }, ref) => {
   // Size the user has dragged the dialog to (null = natural / default size).
   const [size, setSize] = React.useState<{ w: number; h: number } | null>(null);
   // Offset (px) the user has dragged the dialog away from centre (null = centred).
@@ -298,6 +298,11 @@ const DialogContent = React.forwardRef<
       /* R-827: a click, focus or Escape inside AI Help never closes the dialog under it. */
       onInteractOutside={keepOpenForHelp(onInteractOutside)}
       onEscapeKeyDown={keepOpenForHelp(onEscapeKeyDown)}
+      /* R-1766: the handle overlay is first measured while the dialog is still zooming in
+         (scaled 95%), and a size change inside that animation is measured scaled too. Left
+         like that, the 6px top-edge strip lay across the finished dialog (on Zoho's "Undo
+         import" button) and took the mouse click. Measure again once the animation is over. */
+      onAnimationEnd={(e) => { onAnimationEnd?.(e); syncBox(); }}
     >
       {/* Drag handle (mobile only — visual affordance that the sheet is dismissible) */}
       <div className="md:hidden mx-auto -mt-1 mb-2 h-1.5 w-12 rounded-full bg-hairline" aria-hidden />

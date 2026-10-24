@@ -21,17 +21,38 @@ const missing: Err = { name: "AuthSessionMissingError", message: "Auth session m
 const err = (message: string, status = 400, code = "unexpected_failure"): Err => ({ name: "AuthApiError", message, status, code });
 
 let cached: TokenReply | null = null;
-let inflight: Promise<TokenReply> | null = null;
+let inflight: Promise<TokenReply | null> | null = null;
 
+/** One ask of the server. null = the ask itself failed (5xx, dropped request) — NOT "signed out". */
+async function askOnce(): Promise<TokenReply | null> {
+  try {
+    const r = await fetch("/api/auth/supabase-token", { cache: "no-store", credentials: "same-origin" });
+    if (!r.ok) return null;
+    return (await r.json()) as TokenReply;
+  } catch {
+    return null;
+  }
+}
+
+/* R-1501: a failed refresh used to be cached as { access_token: null } — "signed out" — so every
+   later request went out with the anon key until the page was reloaded, and the database refused
+   the person's own writes with 42501 ("You don't have access to this"; Pawan's report, 17 Oct).
+   Now a failed ask is retried once, then the still-valid old token is kept, and the failure is
+   never remembered: the next request asks again. Only the server's own answer "no session"
+   ({ access_token: null } with 200) means signed out. */
 async function token(force = false): Promise<TokenReply> {
   const now = Math.floor(Date.now() / 1000);
   if (!force && cached && (!cached.access_token || (cached.expires_at ?? 0) - 60 > now)) return cached;
-  inflight ??= fetch("/api/auth/supabase-token", { cache: "no-store", credentials: "same-origin" })
-    .then((r) => (r.ok ? (r.json() as Promise<TokenReply>) : { access_token: null, user: null }))
-    .catch(() => ({ access_token: null, user: null }))
+  inflight ??= askOnce()
+    .then((r) => r ?? askOnce())
     .finally(() => { inflight = null; });
-  cached = await inflight;
-  return cached;
+  const fresh = await inflight;
+  if (fresh) {
+    cached = fresh;
+    return fresh;
+  }
+  if (cached?.access_token && (cached.expires_at ?? 0) > Math.floor(Date.now() / 1000)) return cached;
+  return { access_token: null, user: cached?.user ?? null };
 }
 
 export function forgetBrowserSession() {
@@ -53,10 +74,15 @@ async function postJson(url: string, body: unknown): Promise<{ ok: boolean; stat
   return { ok: r.ok, status: r.status, data };
 }
 
+/** R-1548: Auth.js refused the try before checking the password (10 tries / 15 min per email). */
+export const TOO_MANY_ATTEMPTS_CODE = "too_many_attempts";
+export const TOO_MANY_ATTEMPTS_MESSAGE = "Too many wrong passwords — try again after 15 minutes. Forgot your password? Use Forgot password to set a new one.";
+
 const LOGIN_MESSAGES: Record<string, string> = {
   invalid_credentials: "Invalid login credentials",
   email_not_confirmed: "Email not confirmed",
   banned: "User is banned",
+  [TOO_MANY_ATTEMPTS_CODE]: TOO_MANY_ATTEMPTS_MESSAGE,
 };
 
 export function browserAuth() {
@@ -82,7 +108,7 @@ export function browserAuth() {
       const res = await authjsSignIn("credentials", { email: creds.email, password: creds.password, redirect: false });
       if (!res || res.error) {
         const code = (res as { code?: string } | undefined)?.code ?? "invalid_credentials";
-        return { data: { user: null, session: null }, error: err(LOGIN_MESSAGES[code] ?? LOGIN_MESSAGES.invalid_credentials, 400, code) };
+        return { data: { user: null, session: null }, error: err(LOGIN_MESSAGES[code] ?? LOGIN_MESSAGES.invalid_credentials, code === TOO_MANY_ATTEMPTS_CODE ? 429 : 400, code) };
       }
       const t = await token(true);
       return { data: { user: t.user, session: t.access_token ? { access_token: t.access_token, user: t.user } : null }, error: null };

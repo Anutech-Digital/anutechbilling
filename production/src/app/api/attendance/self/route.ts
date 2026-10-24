@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
     .from("users").select("tenant_id, employee_id").eq("id", authData.user.id).single();
   if (!me?.employee_id) {
     return NextResponse.json(
-      { error: "Pehle apna employee record link karo, phir attendance mark hogi." },
+      { error: "Link your employee record first, then you can mark attendance." },
       { status: 400 },
     );
   }
@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
 
   if (requireSelfie && !photo) {
     return NextResponse.json(
-      { error: "Selfie zaroori hai — camera allow karke dobara try karo." },
+      { error: "A selfie is required — allow the camera and try again." },
       { status: 400 },
     );
   }

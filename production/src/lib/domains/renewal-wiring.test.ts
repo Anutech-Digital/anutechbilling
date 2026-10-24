@@ -12,7 +12,7 @@ const src = (p: string) => readFileSync(join(__dirname, "..", "..", p), "utf8");
 const code = (p: string) => src(p).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("the payment webhook", () => {
-  const w = code("app/api/webhooks/razorpay/route.ts");
+  const w = code("app/api/webhooks/razorpay/webhook.server.ts");
 
   it("finds the domain subscription being renewed BEFORE record_payment rolls it forward", () => {
     const lookup = w.indexOf('.eq("renewal_quote_id", quote.id)');
@@ -73,6 +73,9 @@ describe("the renewals cron", () => {
     expect(c).toMatch(/:\s*await createOrGetRenewalQuote\(/);
   });
   it("holds a domain's reminder when the live price is unavailable, rather than emailing no price", () => {
-    expect(code("app/api/cron/renewals/route.ts")).toMatch(/if \(sub\.vendor === "domain" && !quoteResult\)/);
+    /* R-1571 widened the hold from domains to every vendor; the domain still gets its own reason. */
+    const cron = code("app/api/cron/renewals/route.ts");
+    expect(cron).toMatch(/if \(!quoteResult\) \{/);
+    expect(cron).toContain("the live renewal price could not be read");
   });
 });

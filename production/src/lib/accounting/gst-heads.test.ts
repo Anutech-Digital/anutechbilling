@@ -59,7 +59,7 @@ describe("expenseGstHeads — jab batwara nahi hai", () => {
     /* Aadha sach poore jhooth se kam khatarnak nahi hai jab wo sach jaisa dikhe. */
     const h = expenseGstHeads({ gst_paid: 500, igst: 274 });
     expect(h.measured).toBe(false);
-    expect(h.assumption).toContain("mel nahi khata");
+    expect(h.assumption).toContain("does not match the total GST");
     expect(h.cgst + h.sgst).toBe(500);
   });
 

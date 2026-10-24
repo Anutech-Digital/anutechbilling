@@ -676,7 +676,7 @@ function LoanRowActions({ loan, onPrimary, primaryLabel, onHistory, onEdit, onDe
   onHistory: () => void; onEdit?: () => void; onDelete?: () => void;
 }) {
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"

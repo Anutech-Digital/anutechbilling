@@ -8,7 +8,8 @@
 import { useCart } from "@/site/components/cart/CartProvider";
 import { domainTermPrice, rupee, type CartLine } from "@/site/lib/money";
 
-export function DomainYears({ line, compact = false }: { line: CartLine; compact?: boolean }) {
+/** `firstYearFree`: the cart's bundle makes this domain's first year free right now (R-1601). */
+export function DomainYears({ line, compact = false, firstYearFree = false }: { line: CartLine; compact?: boolean; firstYearFree?: boolean }) {
   const cart = useCart();
   if (!(line.sku ?? "").startsWith("domain:")) return null;
   const terms = Object.keys(line.yearPrices ?? {}).map(Number).filter((n) => Number.isInteger(n) && n >= 1).sort((a, b) => a - b);
@@ -25,7 +26,7 @@ export function DomainYears({ line, compact = false }: { line: CartLine; compact
         style={{ border: "1px solid var(--border-strong)", borderRadius: 6, padding: compact ? "4px 8px" : "6px 10px", fontSize: 14, background: "#fff" }}
       >
         {terms.map((t) => {
-          const price = domainTermPrice(line.yearPrices, t, line.bundleFree);
+          const price = domainTermPrice(line.yearPrices, t, firstYearFree);
           return (
             <option key={t} value={t}>
               {t} year{t === 1 ? "" : "s"}{price !== null ? ` — ${rupee(price)}` : ""}

@@ -21,6 +21,7 @@
 
 import * as React from "react";
 import { cn, rupee } from "@/lib/utils";
+import { signedRupee } from "@/lib/accounting/net-figure";
 import { layoutWaterfall, type WaterfallInput, type HundredRupeeSplit } from "@/lib/accounting/waterfall";
 
 /** Plot height in px. Labels live outside it, so this is the bars' own space. */
@@ -184,7 +185,7 @@ export function PnlWaterfall({
                   {Bar}
                 </button>
               ) : (
-                <span title={`${b.label} · ${rupee(b.magnitude)}`} className="flex h-full flex-col justify-end">
+                <span title={`${b.label} · ${b.direction === "total" ? signedRupee(b.end) : rupee(b.magnitude)}`} className="flex h-full flex-col justify-end">
                   {Bar}
                 </span>
               )}
@@ -216,7 +217,10 @@ export function PnlWaterfall({
               "font-mono text-[12px] tabular-nums leading-tight",
               b.direction === "down" ? "text-rose" : b.direction === "total" ? "text-ink font-semibold" : "text-amber-ink",
             )}>
-              {b.direction === "down" ? "−" : ""}{rupee(b.magnitude, { compact: true })}
+              {/* R-1486: a total below zero (a loss) carries its minus — "−₹68.1K", not "₹68.1K". */}
+              {b.direction === "down" ? `−${rupee(b.magnitude, { compact: true })}`
+                : b.direction === "total" ? signedRupee(b.end, { compact: true })
+                : rupee(b.magnitude, { compact: true })}
             </div>
             <div className="truncate text-xs text-ink-2" title={b.label}>{b.label}</div>
             {b.hint && (

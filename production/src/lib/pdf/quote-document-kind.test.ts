@@ -78,7 +78,8 @@ describe("QuotePDF drops the three sentences that ask for money", () => {
   });
 
   it("gates the Net-7 terms and the validity line behind !isPaid", () => {
-    expect(pdf).toContain("Net 7 days from acceptance");
+    /* R-1670 (3): the terms line is the quote's own terms now (payment-terms.ts), not "Net 7". */
+    expect(pdf).toContain("quotePaymentTermsLine(paymentTermsDays)");
     expect(pdf).toContain("Received in full");
     // Both money-asking lines are gated on !isPaid; the paid sentence on isPaid.
     expect(pdf).toMatch(/\{isPaid && \(\s*<Text style=\{s\.footerLine\}>/);

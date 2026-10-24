@@ -13,8 +13,8 @@
  *   - contact_name     ← First + Last
  *   - contact_email    ← Email      (Zoho "-No Value-" placeholders → blank)
  *   - contact_phone    ← Mobile Phone (fallback Phone)
- *   - gstin / state / state_code (state_code derived from GSTIN, else state name)
- *   - notes            ← "Company: <Company Name>" so the company isn't lost
+ *   - gstin / state / state_code (state_code from the GSTIN, else Place of supply, else state)
+ *   - gst_treatment / pan / payment_terms_days (R-1738 — rules in ./customers-csv.ts)
  *
  * Dedup: by customer_number (primary), else by email — within the file AND
  * against existing customers in this tenant.
@@ -36,42 +36,13 @@ import { createClient } from "@/lib/supabase/client";
 import { toastError } from "@/lib/errors/toast-error";
 import { readAllRows, existingCustomerKeys, type ExistingCustomerRow } from "./import-existing";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { cn, GST_STATE_BY_CODE, gstStateFromGstin } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { gstTreatmentOption } from "@/lib/gst/customer-gst-treatment";
+import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { parseCustomersCsv, SAMPLE_CSV, CSV_HEADER, TREATMENT_VALUES_HELP, type ParsedRow } from "./customers-csv";
 
-const CSV_HEADER = "customer_number,first_name,last_name,company_name,email,mobile_phone,gstin,billing_state";
-const SAMPLE_CSV = [
-  CSV_HEADER,
-  `CUS-00001,Test,Customer,Test Customer 1,customer1@example.test,+919800000001,03AAAAA0000A1Z5,Punjab`,
-  `CUS-00002,Test,Customer Two,Test Customer 2,customer2@example.test,9800000002,,Delhi`,
-].join("\n");
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-// state name (lowercased) → GST state code, derived from the canonical map.
-const STATE_NAME_TO_CODE: Record<string, string> = Object.entries(GST_STATE_BY_CODE)
-  .reduce((acc, [code, name]) => { acc[name.toLowerCase()] = code; return acc; }, {} as Record<string, string>);
-
-/** Zoho exports write "-No Value-" for empty cells — treat as blank. */
-function nv(v: string | undefined): string {
-  const t = (v ?? "").trim();
-  if (!t || t.toLowerCase() === "-no value-") return "";
-  return t;
-}
-
-interface ParsedRow {
-  rowNum: number;
-  customer_number?: string;
-  name: string;
-  contact_name?: string;
-  company?: string;
-  contact_email?: string;
-  contact_phone?: string;
-  gstin?: string;
-  state?: string;
-  state_code?: string;
-  error?: string;
-  dup?: boolean;
-}
+/** An Indian customer with no GST state cannot be invoiced; an overseas one has none. */
+const stateMissing = (r: ParsedRow) => !r.state_code && !isExportSupply(r.country);
 
 interface ImportCustomersDialogProps {
   open: boolean;
@@ -176,6 +147,11 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
         gstin: r.gstin || null,
         state: r.state || null,
         state_code: r.state_code || null,
+        /* R-1738 */
+        country: r.country || "India",
+        gst_treatment: r.gst_treatment ?? null,
+        pan: r.pan || null,
+        payment_terms_days: r.payment_terms_days ?? null,
       }));
 
       // Chunked insert so 1000+ rows don't hit payload limits.
@@ -188,7 +164,7 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
 
       const skipped = parsed.length - valid.length;
       /* R-174: rows whose state did not map to a GST state are imported, not hidden — but said so. */
-      const noState = valid.filter((r) => !r.state_code).length;
+      const noState = valid.filter(stateMissing).length;
       toast.success(
         `Imported ${inserted} customer${inserted === 1 ? "" : "s"}` +
         (skipped > 0 ? ` · ${skipped} skipped` : ""),
@@ -210,7 +186,7 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
 
   const validCount = parsed?.filter((r) => !r.error && !r.dup).length ?? 0;
   const dupCount   = parsed?.filter((r) => r.dup && !r.error).length ?? 0;
-  const noStateCount = parsed?.filter((r) => !r.error && !r.dup && !r.state_code).length ?? 0;
+  const noStateCount = parsed?.filter((r) => !r.error && !r.dup && stateMissing(r)).length ?? 0;
   const errorCount = parsed?.filter((r) => r.error).length ?? 0;
 
   return (
@@ -223,8 +199,8 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
           </DialogTitle>
           <DialogDescription className="break-words">
             Upload a CSV (export from Zoho as CSV, or Save-As CSV from Excel). Zoho columns
-            (Customer Number, First/Last Name, Company Name, Email, Mobile Phone, GSTIN, Billing State)
-            map automatically; "-No Value-" cells are treated as blank.
+            (Customer Number, First/Last Name, Company Name, Email, Mobile Phone, GSTIN, Place Of Supply,
+            GST Treatment, PAN, Payment Terms) map automatically; "-No Value-" cells are treated as blank.
           </DialogDescription>
         </DialogHeader>
 
@@ -232,8 +208,8 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
           <div className="space-y-4">
             <div className="rounded-md bg-amber-soft/60 border border-amber/30 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="text-sm text-amber-ink min-w-0">
-                <p className="font-semibold">Pehli baar? Sample file download karo.</p>
-                <p className="text-xs opacity-90 mt-0.5">Header + example rows. Zoho ka export bhi seedha chalega.</p>
+                <p className="font-semibold">First time? Download the sample file.</p>
+                <p className="text-xs opacity-90 mt-0.5">Header + example rows. A Zoho export works as it is.</p>
               </div>
               <Button type="button" variant="default" size="sm" icon="download"
                 onClick={downloadSample} className="sm:shrink-0 w-full sm:w-auto justify-center">
@@ -259,8 +235,13 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
                 {CSV_HEADER}
               </code>
               <p className="mt-2">
-                Name = <span className="font-semibold text-ink">First + Last</span> (Company Name fallback). Customer Number
-                is the stable key used to attach subscriptions later.
+                Name = <span className="font-semibold text-ink">Company Name</span> (First + Last when there is no company).
+                No contact person → the company is the contact. Customer Number is the stable key used to attach
+                subscriptions later.
+              </p>
+              <p className="mt-1">
+                GST treatment: {TREATMENT_VALUES_HELP} (Zoho names work too; blank = picked from the GSTIN).
+                PAN: 5 letters, 4 digits, 1 letter (taken from the GSTIN when blank). Payment terms: days, e.g. 30.
               </p>
             </div>
           </div>
@@ -294,6 +275,7 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
                       <th className="p-2 text-left font-semibold text-ink-3">Company (name)</th>
                       <th className="p-2 text-left font-semibold text-ink-3">Contact</th>
                       <th className="p-2 text-left font-semibold text-ink-3">State</th>
+                      <th className="p-2 text-left font-semibold text-ink-3">GST treatment</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -318,7 +300,8 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
                           )}
                         </td>
                         <td className="p-2 text-ink-2">{r.contact_name || <span className="text-ink-3">—</span>}</td>
-                        <td className="p-2 text-ink-2">{r.state_code ? r.state : <span className="text-amber-ink">{r.state ? `${r.state} — not a GST state` : "State missing"}</span>}</td>
+                        <td className="p-2 text-ink-2">{!stateMissing(r) ? (r.state || "—") : <span className="text-amber-ink">{r.state ? `${r.state} — not a GST state` : "State missing"}</span>}</td>
+                        <td className="p-2 text-ink-2">{r.gst_treatment ? gstTreatmentOption(r.gst_treatment)?.label : <span className="text-ink-3">—</span>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -347,114 +330,4 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
       </DialogContent>
     </Dialog>
   );
-}
-
-// ============================================================
-// CSV parsing — recognises ResellerOS + Zoho column names.
-// ============================================================
-function parseCustomersCsv(text: string, existingNums: Set<string>, existingEmails: Set<string>): ParsedRow[] {
-  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-  const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
-  if (lines.length < 2) throw new Error("CSV needs a header row + at least one data row.");
-
-  const header = parseLine(lines[0]).map((h) => h.trim().toLowerCase().replace(/^"|"$/g, ""));
-  const col = (aliases: string[]): number => {
-    for (const a of aliases) { const i = header.indexOf(a); if (i >= 0) return i; }
-    return -1;
-  };
-
-  const idxNum     = col(["customer_number", "customer number", "customer no", "customer id"]);
-  const idxCompany = col(["company name", "company_name", "company"]);
-  const idxDisplay = col(["display name", "display_name", "customer name", "customer_name", "name"]);
-  const idxFirst   = col(["first_name", "first name", "firstname"]);
-  const idxLast    = col(["last_name", "last name", "lastname"]);
-  const idxContact = col(["contact_name", "contact name", "primary contact", "contact person"]);
-  const idxEmail   = col(["contact_email", "email", "emailid", "email id", "email address"]);
-  const idxMobile  = col(["mobile_phone", "mobile phone", "mobilephone", "mobile"]);
-  const idxPhone   = col(["contact_phone", "phone"]);
-  const idxGstin   = col(["gstin", "gst_no", "gst no", "gst identification number (gstin)", "gst identification number", "gst"]);
-  const idxState   = col(["billing_state", "billing state", "state", "place of supply", "place_of_supply", "shipping state"]);
-
-  if (idxFirst === -1 && idxCompany === -1 && idxDisplay === -1 && idxContact === -1) {
-    throw new Error("Couldn't find a name column (First Name / Company Name / Display Name).");
-  }
-
-  const seenNum = new Set<string>();
-  const seenEmail = new Set<string>();
-  const rows: ParsedRow[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = parseLine(lines[i]);
-    const rowNum = i + 1;
-    const cell = (idx: number) => (idx >= 0 ? nv(cols[idx]) : "");
-
-    const first = cell(idxFirst);
-    const last  = cell(idxLast);
-    const company = cell(idxCompany);
-    const display = cell(idxDisplay);
-    const contact = cell(idxContact);
-
-    // Customer name = Company (B2B standard); Primary Contact = person (First+Last).
-    const person = [first, last].filter(Boolean).join(" ").trim();
-    const name = company || person || display || contact;
-    const contact_name = person || contact || display || undefined;
-    if (!name) {
-      rows.push({ rowNum, name: "", error: "Missing name" });
-      continue;
-    }
-
-    const customer_number = cell(idxNum) || undefined;
-    const email = cell(idxEmail);
-    const gstin = cell(idxGstin);
-    const stateRaw = cell(idxState);
-    // State name: a 2-letter code like "PB"/"DL" isn't a GST state name, so prefer
-    // GSTIN-derived code, then a full state-name match.
-    const fromGstin = gstin ? gstStateFromGstin(gstin) : { code: null, name: null };
-    const stateName = stateRaw.length > 2 ? stateRaw : (fromGstin.name ?? stateRaw);
-    const stateCode = fromGstin.code ?? (stateName ? STATE_NAME_TO_CODE[stateName.toLowerCase()] : undefined) ?? undefined;
-
-    // Dedup: customer_number first (stable), else email.
-    let dup = false;
-    const numKey = customer_number?.toLowerCase();
-    const emailKey = email.toLowerCase();
-    if (numKey) {
-      if (existingNums.has(numKey) || seenNum.has(numKey)) dup = true;
-      seenNum.add(numKey);
-    } else if (emailKey) {
-      if (existingEmails.has(emailKey) || seenEmail.has(emailKey)) dup = true;
-      seenEmail.add(emailKey);
-    }
-
-    rows.push({
-      rowNum,
-      customer_number,
-      name,
-      contact_name,
-      company: company || undefined,
-      contact_email: email && EMAIL_RE.test(email) ? email : (email || undefined),
-      contact_phone: (cell(idxMobile) || cell(idxPhone)) || undefined,
-      gstin: gstin || undefined,
-      state: stateName || undefined,
-      state_code: stateCode,
-      dup,
-    });
-  }
-  return rows;
-}
-
-function parseLine(line: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let inQuote = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQuote) {
-      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-      else if (ch === '"') inQuote = false;
-      else cur += ch;
-    } else if (ch === '"') inQuote = true;
-    else if (ch === ",") { out.push(cur); cur = ""; }
-    else cur += ch;
-  }
-  out.push(cur);
-  return out;
 }

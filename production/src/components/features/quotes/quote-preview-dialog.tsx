@@ -7,6 +7,8 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
+import type { Route } from "next";
 import { lineUnitLabel } from "@/lib/quotes/line-unit-label";
 import { linePriceBreakdown, linePriceBreakdownText } from "@/lib/quotes/line-price-breakdown";
 
@@ -18,7 +20,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
+import { istToday, addDaysISO } from "@/lib/dates/ist";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
+import { foreignQuoteFigures, cents } from "@/lib/quotes/foreign-totals";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { QuoteLineItem, LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
 import {
@@ -27,8 +31,33 @@ import {
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-divisor";
 import { quoteInstalmentPlan } from "@/lib/billing/instalments";
-import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
+import { ONE_TIME_SCHEDULE, type LinePeriodContext } from "@/lib/quotes/service-period";
+import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
+import { UPI_SETTINGS_HREF } from "@/lib/pdf/quote-template";
+import { billOfSupplyCustomerLine, billOfSupplyPlaceLabel, type BillOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
+
+/** R-1694: the scan-to-pay QR the customer's PDF carries (api/quotes/[id]/pay-qr → quotePayQr). */
+interface PreviewPayQr { dataUrl: string; vpa: string; amount: number }
+
+/**
+ * Fetches the PDF's own QR for a SAVED quote. Null while loading, on any failure, and whenever
+ * the PDF would print none (no UPI ID, non-₹, paid, invoiced) — the server decides, not this.
+ */
+function usePreviewPayQr(enabled: boolean, quoteId: string | null | undefined): PreviewPayQr | null {
+  const [qr, setQr] = React.useState<PreviewPayQr | null>(null);
+  React.useEffect(() => {
+    setQr(null);
+    if (!enabled || !quoteId) return;
+    let live = true;
+    fetch(`/api/quotes/${encodeURIComponent(quoteId)}/pay-qr`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { qr?: PreviewPayQr | null } | null) => { if (live) setQr(j?.qr ?? null); })
+      .catch(() => { /* no QR in the preview — the PDF itself is unaffected */ });
+    return () => { live = false; };
+  }, [enabled, quoteId]);
+  return qr;
+}
 
 /** Price tier + billing frequency, combined for a line (frequency is quote-level). */
 function scheduleLabel(commitment: LineCommitment | undefined, cycle: BillingCycle): string {
@@ -53,6 +82,8 @@ interface Props {
   contactName?:  string | null;
   contactEmail?: string | null;
   contactPhone?: string | null;
+  /** R-1485: the buyer's GSTIN under "Bill to" (quoteBuyerGstin — customer row, else the lead). */
+  customerGstin?: string | null;
   lineItems:     QuoteLineItem[];
   subtotal:      number;
   discountPct:   number;
@@ -67,12 +98,17 @@ interface Props {
   placeOfSupply?: string | null;
   /** Export supply (recipient outside India) → zero-rated under LUT, no GST. */
   isExport?:     boolean;
+  /** R-1532: the business issues a Bill of Supply and the quote carries no GST → one
+   *  "No GST — Bill of Supply" line instead of CGST/SGST/IGST rows. */
+  billOfSupply?: BillOfSupplyStatus | null;
   /** Billing currency + rate — foreign → the whole quote shows in that currency. */
   currency?:     string | null;
   exchangeRate?: number | null;
   /** Quote-level invoice frequency (migration 0161); falls back to legacy per-line commitment. */
   billingCycle?: BillingCycle;
   validityDays:  number;
+  /** R-1679: a saved quote's own validity date (IST) — shown as is, never re-counted from today. */
+  expiresDate?:  string | null;
   notes:         string;
   termsConditions?: string | null;
   isProspect?:   boolean;
@@ -80,6 +116,13 @@ interface Props {
   oneTime?:      boolean;
   /** R-811: "3-month extension" / "1-year extension" under the heading (extensionTitle()). */
   extensionTitle?: string | null;
+  /** R-1694: the workspace's UPI ID (useCurrentUser().tenantUpiVpa). Omitted → no QR logic at all. */
+  upiVpa?:       string | null;
+  /** R-1694: the SAVED quote's id, for its PDF QR. Null → not saved yet (builder), no QR to fetch. */
+  payQrQuoteId?: string | null;
+  /** R-1764: what each subscription line's "Domain:" and "Subscription period:" lines read
+   *  (quoteLinePeriodContext). Omitted → neither line. */
+  periodContext?: LinePeriodContext | null;
 }
 
 export function QuotePreviewDialog({
@@ -95,6 +138,7 @@ export function QuotePreviewDialog({
   contactName,
   contactEmail,
   contactPhone,
+  customerGstin,
   lineItems,
   subtotal,
   discountPct,
@@ -106,21 +150,27 @@ export function QuotePreviewDialog({
   interState,
   placeOfSupply,
   isExport = false,
+  billOfSupply = null,
   currency,
   exchangeRate,
   billingCycle,
   validityDays,
+  expiresDate = null,
   notes: rawNotes,
   termsConditions,
   isProspect = false,
   oneTime = false,
   extensionTitle = null,
+  upiVpa,
+  payQrQuoteId = null,
+  periodContext = null,
 }: Props) {
   /* R-813: this previews what the CUSTOMER sees — never the staff-only audit part. */
   const notes = customerQuoteNotes(rawNotes, lineItems);
   // First letter of tenant name → brand monogram (e.g. "Demo Co" → "E")
   const brandInitial = (tenantName?.trim()?.[0] ?? "?").toUpperCase();
-  const expiresOn = new Date(Date.now() + validityDays * 86400000);
+  /* R-1679: the saved date when there is one; else the date the builder will save (IST). */
+  const expiresOn = expiresDate ?? addDaysISO(istToday(), validityDays);
 
   // Billing frequency is a single quote-level value (migration 0161). Fall back
   // to the legacy per-line commitment for quotes written before the split.
@@ -139,6 +189,17 @@ export function QuotePreviewDialog({
     isForeign ? formatForeign(foreignEquivalent(n, fxRate), currency ?? "") : rupee(n);
   const fmt          = (n: number) =>
     perInvoice ? `${money(Math.round(n / totalsDiv))}${billingUnit}` : money(n);
+  /* R-1677: a foreign quote is totalled the one way the accept page, PDF, builder and invoice
+     total it (lib/quotes/foreign-totals) — per-unit to the cent, lines summed. Converting each
+     ₹ figure on its own printed $338.39 beside the customer's $338.40. */
+  const ff           = isForeign
+    ? foreignQuoteFigures({ lines: lineItems, fx: fxRate, discountPct, taxRate: isExport ? 0 : taxRate })
+    : null;
+  const fgn          = (v: number) => formatForeign(v, currency ?? "");
+  const fmtF         = (inr: number, foreign: number | undefined) =>
+    ff && foreign !== undefined
+      ? (perInvoice ? `${fgn(cents(foreign / totalsDiv))}${billingUnit}` : fgn(foreign))
+      : fmt(inr);
 
   // R-212: the same CGST/SGST split the email and the PDF print (lib/gst/tax-split).
   const intra        = splitIntraStateTax(tax);
@@ -156,6 +217,13 @@ export function QuotePreviewDialog({
   // R-367: the same "Support: Free — Included" line the PDF prints (one builder).
   const includedSupport = includedSupportLine(lineItems);
 
+  /* R-1694: the PDF's scan-to-pay QR. `upiVpa === undefined` means the caller did not wire it. */
+  const qrWired      = upiVpa !== undefined;
+  const hasUpi       = !!upiVpa?.trim();
+  const payQr        = usePreviewPayQr(open && qrWired && hasUpi, payQrQuoteId);
+  const upiHint      = qrWired && !hasUpi && !isForeign;
+  const unsavedHint  = qrWired && hasUpi && !isForeign && !payQrQuoteId;
+
   const handlePrint = () => {
     window.print();
   };
@@ -166,13 +234,15 @@ export function QuotePreviewDialog({
         <DialogTitle className="sr-only">Quote preview · {quoteId}</DialogTitle>
 
         {/* Toolbar (hidden when printing) */}
-        <div className="flex items-center justify-between gap-2 px-5 py-3 border-b border-hairline bg-paper-2 sticky top-0 z-10 print:hidden">
-          <div className="flex items-center gap-2">
+        {/* R-1654: wraps on a phone (as R-187 did for the invoice/receipt toolbars) — one line
+            of toolbar was 459px and pushed the whole sheet, Amount column too, off a 375px screen. */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-5 py-3 border-b border-hairline bg-paper-2 sticky top-0 z-10 print:hidden">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
             <Icon name="file" size={16} className="text-ink-3" />
             <span className="text-sm font-semibold text-ink">Preview</span>
             <span className="text-xs text-ink-3">· This is how the customer will see it</span>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button size="sm" icon="printer" onClick={handlePrint}>
               Print / Save as PDF
             </Button>
@@ -182,15 +252,42 @@ export function QuotePreviewDialog({
           </div>
         </div>
 
+        {/* Staff-only notes — outside the customer's document, never printed (R-1694).
+            R-1673: the prospect note used to sit under "Bill to" INSIDE the document. */}
+        {(isProspect || upiHint || unsavedHint) && (
+          <div className="space-y-1 border-b border-hairline bg-amber-soft px-5 py-2 text-xs text-amber-ink print:hidden" data-testid="preview-staff-notes">
+            {isProspect && (
+              <p data-testid="preview-staff-hint-prospect">
+                Only you see this: this quote is for a lead — the customer record is created after the payment is recorded.
+              </p>
+            )}
+            {upiHint && (
+              <p data-testid="preview-staff-hint-upi">
+                Add your UPI ID in Settings to show a Pay QR —{" "}
+                <Link href={UPI_SETTINGS_HREF as Route} className="font-semibold underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+                  Open Settings
+                </Link>
+              </p>
+            )}
+            {unsavedHint && (
+              <p data-testid="preview-staff-hint-unsaved">
+                The scan-to-pay QR shows once the quote is saved (the PDF gets it then too).
+              </p>
+            )}
+          </div>
+        )}
+
         {/* ─────── PDF-style document ─────── */}
-        <div className="bg-paper p-10 print:p-0 font-sans text-ink">
+        {/* R-1654: p-4 on a phone (p-10 cut the Amount column off at 375px); sm: and print keep
+            the A4 look unchanged. The emailed PDF is a separate react-pdf template. */}
+        <div className="bg-paper p-4 sm:p-10 print:p-0 font-sans text-ink" data-testid="preview-document">
           {/* Brand header */}
-          <div className="flex items-start justify-between border-b-2 border-ink pb-5 mb-6">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-md bg-ink text-paper grid place-items-center font-serif text-2xl">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between border-b-2 border-ink pb-5 mb-6 [overflow-wrap:anywhere]">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="w-12 h-12 shrink-0 rounded-md bg-ink text-paper grid place-items-center font-serif text-2xl">
                 {brandInitial}
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="font-serif text-2xl leading-tight">{tenantName}</div>
                 {tenantGstin && (
                   <div className="text-xs text-ink-3 mt-0.5">
@@ -207,7 +304,7 @@ export function QuotePreviewDialog({
                 )}
               </div>
             </div>
-            <div className="text-right">
+            <div className="sm:text-right">
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold">
                 Quotation
               </p>
@@ -227,12 +324,18 @@ export function QuotePreviewDialog({
           </div>
 
           {/* Bill to */}
-          <div className="grid grid-cols-2 gap-6 mb-6">
-            <div>
+          <div className="grid grid-cols-2 gap-3 sm:gap-6 mb-6 [overflow-wrap:anywhere]">
+            <div className="min-w-0">
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-1.5">
                 Bill to
               </p>
               <p className="font-serif text-lg leading-tight">{customerName}</p>
+              {/* R-1485: the buyer's GSTIN, as the PDF prints it (lib/quotes/buyer-gstin). */}
+              {customerGstin && (
+                <p className="text-xs text-ink-3 mt-0.5" data-testid="preview-buyer-gstin">
+                  GSTIN: <span className="font-mono">{customerGstin}</span>
+                </p>
+              )}
               {contactName && (
                 <p className="text-sm text-ink-2 mt-1">Attn: {contactName}</p>
               )}
@@ -242,19 +345,16 @@ export function QuotePreviewDialog({
               {contactPhone && (
                 <p className="text-sm text-ink-3 font-mono">{contactPhone}</p>
               )}
-              {isProspect && (
-                <p className="text-2xs text-amber-ink mt-2 italic print:hidden">
-                  Internal: this is a prospect — customer record pending payment
-                </p>
-              )}
             </div>
-            <div className="text-right">
+            <div className="min-w-0 text-right">
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-1.5">
                 Place of supply
               </p>
               <p className="text-sm">
                 {isExport
                   ? "Export · zero-rated under LUT (no GST)"
+                  : billOfSupply
+                  ? billOfSupplyPlaceLabel(placeOfSupply)
                   : placeOfSupply || (interState ? "Inter-state (IGST applies)" : "Intra-state (CGST + SGST)")}
               </p>
               {lineItems.length > 0 && firstCommitment && (
@@ -276,13 +376,14 @@ export function QuotePreviewDialog({
           </div>
 
           {/* Line items */}
-          <table className="w-full mb-6">
+          <div className="mb-6 overflow-x-auto">
+          <table className="w-full">
             <thead className="border-y-2 border-ink">
               <tr>
-                <th className="text-left py-2 text-2xs uppercase tracking-wider font-semibold text-ink">Description</th>
-                <th className="text-right py-2 text-2xs uppercase tracking-wider font-semibold text-ink w-20">Qty</th>
-                <th className="text-right py-2 text-2xs uppercase tracking-wider font-semibold text-ink w-32">Rate</th>
-                <th className="text-right py-2 text-2xs uppercase tracking-wider font-semibold text-ink w-36">Amount</th>
+                <th className="text-left py-2 whitespace-nowrap text-2xs uppercase tracking-normal sm:tracking-wider font-semibold text-ink">Description</th>
+                <th className="text-right py-2 whitespace-nowrap text-2xs uppercase tracking-normal sm:tracking-wider font-semibold text-ink pl-2 sm:w-20">Qty</th>
+                <th className="text-right py-2 whitespace-nowrap text-2xs uppercase tracking-normal sm:tracking-wider font-semibold text-ink pl-2 sm:w-32">Rate</th>
+                <th className="text-right py-2 whitespace-nowrap text-2xs uppercase tracking-normal sm:tracking-wider font-semibold text-ink pl-2 sm:w-36">Amount</th>
               </tr>
             </thead>
             <tbody>
@@ -293,7 +394,7 @@ export function QuotePreviewDialog({
                   </td>
                 </tr>
               ) : (
-                lineItems.map((line) => {
+                lineItems.map((line, li) => {
                   // Frequency is quote-level now (0161) — every line shares it.
                   /* R-369: a flex line's rate is already one month; only annual lines divide. */
                   const lineN    = billingN;
@@ -307,8 +408,12 @@ export function QuotePreviewDialog({
                   const breakdown = linePriceBreakdown(line, (n) => (showPer ? Math.round(n / lineDiv) : n));
                   return (
                     <tr key={line.id} className="border-b border-hairline">
-                      <td className="py-3 text-sm">
+                      <td className="py-3 text-sm [overflow-wrap:anywhere]">
                         <p className="font-medium text-ink">{line.name}</p>
+                        {/* R-1764: "Domain:" / "Subscription period:" — the PDF's words. */}
+                        {lineDetailNotes(line, periodContext).map((t) => (
+                          <p key={t} className="text-2xs text-ink-3 mt-0.5 tabular-nums" data-testid="line-period">{t}</p>
+                        ))}
                         <p className="text-2xs text-ink-3 mt-0.5">
                           {lineUnitLabel(line, showPer || oneTime)} · HSN 998313
                           {line.commitment && !oneTime && (
@@ -326,12 +431,12 @@ export function QuotePreviewDialog({
                           </p>
                         )}
                       </td>
-                      <td className="py-3 text-right text-sm tabular-nums">{line.qty}</td>
-                      <td className="py-3 text-right text-sm tabular-nums">
-                        {money(rate)}{showPer ? lineUnit : ""}
+                      <td className="py-3 pl-2 text-right text-sm tabular-nums">{line.qty}</td>
+                      <td className="py-3 pl-2 text-right text-sm tabular-nums">
+                        {ff && !showPer ? fgn(ff.lines[li].unit) : money(rate)}{showPer ? lineUnit : ""}
                       </td>
-                      <td className="py-3 text-right text-sm tabular-nums font-medium">
-                        <div>{money(amount)}{showPer ? lineUnit : ""}</div>
+                      <td className="py-3 pl-2 text-right text-sm tabular-nums font-medium">
+                        <div>{ff && !showPer ? fgn(ff.lines[li].gross) : money(amount)}{showPer ? lineUnit : ""}</div>
                         {showPer && (
                           <div className="text-3xs font-normal text-ink-3">
                             = {money(line.qty * line.rate * (lineN / lineDiv))}/yr
@@ -344,6 +449,7 @@ export function QuotePreviewDialog({
               )}
             </tbody>
           </table>
+          </div>
 
           {/* Totals */}
           {lineItems.length > 0 && (
@@ -351,20 +457,22 @@ export function QuotePreviewDialog({
               <div className="w-full max-w-xs space-y-2 text-sm">
                 <Row
                   label={perInvoice ? `Subtotal (per invoice)` : "Subtotal"}
-                  value={fmt(subtotal)}
+                  value={fmtF(subtotal, ff?.subtotal)}
                 />
                 {discountPct > 0 && (
                   <Row
                     label={`Discount (${discountPct}%)`}
-                    value={`−${fmt(discount)}`}
+                    value={`−${fmtF(discount, ff?.discount)}`}
                     accent
                   />
                 )}
-                <Row label="Taxable amount" value={firstInst ? fmtInst(firstInst.taxable) : fmt(taxable)} />
+                <Row label="Taxable amount" value={firstInst ? fmtInst(firstInst.taxable) : fmtF(taxable, ff?.taxable)} />
                 {isExport ? (
                   <Row label="Export — zero-rated (LUT), no GST" value={money(0)} />
+                ) : billOfSupply ? (
+                  <p className="text-2xs text-ink-2 py-1">{billOfSupplyCustomerLine(billOfSupply)}</p>
                 ) : interState ? (
-                  <Row label={`IGST (${taxRate}%)`} value={firstInst ? fmtInst(firstInst.tax) : fmt(tax)} />
+                  <Row label={`IGST (${taxRate}%)`} value={firstInst ? fmtInst(firstInst.tax) : fmtF(tax, ff?.tax)} />
                 ) : (
                   <>
                     <Row label={`CGST (${taxRate / 2}%)`} value={instHeads ? fmtInst(instHeads.cgst) : fmt(intra.cgst)} />
@@ -379,6 +487,8 @@ export function QuotePreviewDialog({
                     <span className="font-serif text-2xl tabular-nums">
                       {firstInst
                         ? fmtInst(firstInst.gross)
+                        : ff
+                        ? fmtF(total, ff.total)
                         : perInvoice
                         ? `${money(Math.round(total / totalsDiv))}${billingUnit}`
                         : money(total)}
@@ -441,6 +551,27 @@ export function QuotePreviewDialog({
             <p>
               <b>Quote validity:</b> {validityDays} days from issue date.
             </p>
+            {payQr && (
+              /* R-1694: the same block QuotePDF prints (upiRow) — same QR, same words. */
+              <div className="flex items-start gap-3 py-2" data-testid="preview-upi-block">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={payQr.dataUrl}
+                  alt={`UPI QR code to pay ${tenantName} ${rupee(payQr.amount)}`}
+                  className="h-24 w-24 shrink-0 rounded border border-hairline bg-white"
+                  data-testid="preview-upi-qr"
+                />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-ink-2">Scan to pay this advance</p>
+                  <p>Any UPI app — GPay, PhonePe, Paytm, BHIM.</p>
+                  <p className="font-mono text-xs font-semibold text-ink-2 break-all">{payQr.vpa}</p>
+                  <p>
+                    Amount and quote number are pre-filled. You&apos;ll receive a receipt
+                    voucher, and {billOfSupply ? "a Bill of Supply" : "a GST tax invoice"} when the order is provisioned.
+                  </p>
+                </div>
+              </div>
+            )}
             <p>
               Thank you for considering {tenantName}.{tenantEmail && (
                 <> Reach out at <span className="font-mono">{tenantEmail}</span> for any clarifications.</>

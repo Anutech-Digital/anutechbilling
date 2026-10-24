@@ -119,7 +119,9 @@ const toRows = (e: Entry[]): LogRow[] => e.map((x) => ({
 }));
 
 /* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
-const gated = gatedCron("health-digest", handle);
+/* R-1552: without the cron bearer the gate refuses — except here, where handle() itself lets
+   ONLY the R-112 dry-run preview through, for a signed-in owner and their own tenant. */
+const gated = gatedCron("health-digest", handle, { withoutBearer: handle });
 export async function GET(req: Request) { return gated(req); }
 export async function POST(req: Request) { return gated(req); }
 

@@ -79,6 +79,9 @@ export function pickDuplicate(rows: readonly LeadDuplicate[] | undefined, forCus
 
 const MATCH_LABEL: Record<string, string> = { gstin: "GSTIN", email: "email", phone: "phone", company: "company name" };
 
+/** R-1821: what the data gateway sends a role that sees masked contacts instead of matched_on. */
+export const COARSE_MATCH = "possible";
+
 /** "Ye pehle se hai: Acme (Quote Sent, Ravi)" — owner "koi owner nahi" when unassigned. */
 export function duplicateWarning(d: LeadDuplicate): { title: string; matched: string } {
   const stage = STAGE_LABEL[d.stage as Lead["stage"]] ?? d.stage;
@@ -86,6 +89,8 @@ export function duplicateWarning(d: LeadDuplicate): { title: string; matched: st
   const name = d.company.trim() || d.contact_name?.trim() || d.id;
   return {
     title: `Already exists: ${name} (${stage}${d.is_junk ? ", junk" : ""}, ${owner})`,
-    matched: `Same ${d.matched_on.map((m) => MATCH_LABEL[m] ?? m).join(" + ")}`,
+    matched: d.matched_on.includes(COARSE_MATCH)
+      ? "Possible duplicate — ask the owner or a manager to compare the details"
+      : `Same ${d.matched_on.map((m) => MATCH_LABEL[m] ?? m).join(" + ")}`,
   };
 }

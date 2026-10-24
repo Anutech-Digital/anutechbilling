@@ -53,6 +53,6 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   }
 
   return NextResponse.json(
-    payments.map((p) => mapPayment(p, quoteToInvoice.get(p.quote_id) ?? null)),
+    payments.map((p) => mapPayment(p, (p.quote_id ? quoteToInvoice.get(p.quote_id) : undefined) ?? p.invoice_id ?? null)),
   );
 }

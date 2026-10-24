@@ -11,9 +11,12 @@ describe("Out for review = the Sent + Viewed tabs", () => {
   const plainSent    = { status: "sent", payment_status: "none", invoice_id: null, amount: 590 };
   const viewed       = { status: "viewed", payment_status: null, invoice_id: null, amount: 1000 };
 
-  it("a sent quote already awaiting payment or invoiced is not out for review", () => {
-    expect(quoteListTab(sentAwaiting)).toBe("awaiting");
-    expect(quoteInFocus(sentAwaiting, "review")).toBe(false);
+  /* R-1713 (20 Oct): a SENT quote whose payment_status is 'awaiting' (extension / add-seats /
+     checkout quotes start that way) is still with the customer — Sent tab and tile. Only an
+     accepted one waits for payment. */
+  it("a sent quote awaiting payment stays Sent; an invoiced one is not out for review", () => {
+    expect(quoteListTab(sentAwaiting)).toBe("sent");
+    expect(quoteInFocus(sentAwaiting, "review")).toBe(true);
     expect(quoteInFocus(sentInvoiced, "review")).toBe(false);
   });
   it("plain sent and viewed quotes are", () => {

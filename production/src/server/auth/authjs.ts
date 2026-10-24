@@ -6,6 +6,7 @@
  *
  *   email + password  → Credentials provider → ./accounts.checkPassword (bcrypt, GoTrue hashes)
  *                       unconfirmed email is refused (R-048 part 1)
+ *                       R-1548: 10 tries / 15 min per email, 30 per IP → "too_many_attempts"
  *   Google            → Google provider → linked to the EXISTING account (R-529: Google identity,
  *                       then the public.users profile for the verified email, then auth.users
  *                       by email) — created only when the address is new. Unverified → refused.
@@ -14,12 +15,16 @@
  *   two-step (R-048)  → after password, a session with a verified factor is aal1; the /mfa
  *                       page calls update({ mfaCode }) and the code is checked HERE, server-side,
  *                       before the session becomes aal2. Nothing the browser sends is trusted.
+ *   login log (R-1010) → each successful password / Google sign-in writes one activity_log row
+ *                       (IP, device, time) from HERE — ./login-log. The browser cannot write it.
  */
 import "server-only";
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
-import { checkPassword, ensureOAuthUser, recordSignIn } from "./accounts";
+import { checkPassword, ensureOAuthUser, lastSignInAt, recordSignIn } from "./accounts";
+import { loginAttemptAllowed } from "./login-limit";
+import { recordLogin } from "./login-log";
 import { hasVerifiedFactor, verifyCode } from "./mfa";
 import { publicSession } from "./session-public";
 
@@ -51,6 +56,16 @@ interface Token {
   [k: string]: unknown;
 }
 
+/** The current request's headers (the Google callback) — null outside a request. */
+async function requestHeaders(): Promise<Headers | null> {
+  try {
+    const { headers } = await import("next/headers");
+    return new Headers(await headers());
+  } catch {
+    return null;
+  }
+}
+
 const googleId = process.env.AUTH_GOOGLE_ID ?? process.env.GOOGLE_OAUTH_CLIENT_ID;
 const googleSecret = process.env.AUTH_GOOGLE_SECRET ?? process.env.GOOGLE_OAUTH_CLIENT_SECRET;
 
@@ -62,13 +77,20 @@ export const authConfig: NextAuthConfig = {
     Credentials({
       id: "credentials",
       credentials: { email: {}, password: {} },
-      async authorize(raw) {
+      async authorize(raw, request) {
         const email = typeof raw?.email === "string" ? raw.email : "";
         const password = typeof raw?.password === "string" ? raw.password : "";
         if (!email || !password) throw new LoginError("invalid_credentials");
+        // R-1548: count the try per IP and per email BEFORE bcrypt — over the limit, the
+        // password is never checked (./login-limit). A sign-in moves lastSignInAt → fresh count.
+        const epoch = await lastSignInAt(email);
+        if (!(await loginAttemptAllowed({ email, headers: request?.headers, epoch }))) {
+          throw new LoginError("too_many_attempts");
+        }
         const r = await checkPassword(email, password);
         if (!r.ok) throw new LoginError(r.reason);
         await recordSignIn(r.user.id);
+        await recordLogin({ userId: r.user.id, headers: request?.headers, method: "password" });
         return { id: r.user.id, email: r.user.email, name: (r.user.user_metadata.full_name as string | undefined) ?? null };
       },
     }),
@@ -101,6 +123,7 @@ export const authConfig: NextAuthConfig = {
         if (!r.ok) throw new LoginError(r.reason);
         const u = r.user;
         await recordSignIn(u.id);
+        await recordLogin({ userId: u.id, headers: await requestHeaders(), method: "google" });
         t.uid = u.id;
         t.email = u.email;
         t.gat = account.access_token;
@@ -118,7 +141,8 @@ export const authConfig: NextAuthConfig = {
       if (trigger === "update" && t.uid && session && typeof session === "object") {
         const s = session as { mfaCode?: unknown; factorId?: unknown; refreshMfa?: unknown };
         if (typeof s.mfaCode === "string") {
-          const ok = await verifyCode(t.uid, s.mfaCode, typeof s.factorId === "string" ? s.factorId : undefined);
+          // R-1547: the current level decides whether a NEW factor may count as the second step.
+          const ok = await verifyCode(t.uid, s.mfaCode, typeof s.factorId === "string" ? s.factorId : undefined, t.aal === "aal2" ? "aal2" : "aal1");
           if (ok) { t.aal = "aal2"; t.mfa = true; }
         }
         if (s.refreshMfa === true) {

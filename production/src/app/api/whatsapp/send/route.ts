@@ -18,19 +18,24 @@
  *   with a clear error code (we surface the message).
  */
 
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server";
+import { withRoute } from "@/lib/api/with-route";
 import { sendCustomerWhatsApp } from "@/lib/messaging";
 import { classifySendFailure } from "@/lib/whatsapp/send-failure";
 import { renderQuotePDF } from "@/lib/pdf";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
-import { quoteAmountDue } from "@/lib/payments/amount-due";
+import { quoteDueNowUpiAmount } from "@/lib/payments/quote-due-now";
+import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
+import { loadQuotePeriodContext } from "@/lib/quotes/line-period-context";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -66,30 +71,15 @@ const schema = z.object({
   { message: "Provide exactly one of { text } or { template }; attach_quote_id can pair with text" },
 );
 
-export async function POST(req: NextRequest) {
-  let body: unknown;
-  try { body = await req.json(); } catch { body = {}; }
-  const parsed = schema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { ok: false, error: parsed.error.issues.map((i) => i.message).join(", ") },
-      { status: 400 },
-    );
-  }
-
-  // Authenticated only — RLS-scoped tenant
-  const supabase = createClient();
-  const { data: authData } = await supabase.auth.getUser();
-  if (!authData?.user) {
-    return NextResponse.json({ ok: false, error: "Not authenticated" }, { status: 401 });
-  }
-  const { data: me } = await supabase
-    .from("users").select("tenant_id, role").eq("id", authData.user.id).single();
-  if (!me?.tenant_id) {
-    return NextResponse.json({ ok: false, error: "No tenant context" }, { status: 403 });
-  }
-
-  const { to, text, template, attach_quote_id, related } = parsed.data;
+/* R-732: a message to a customer's phone needs the can_contact_customers permission (every
+   internal role; not the partner agent) — PERMISSIONS in roles.ts, applied by withRoute. */
+export const POST = withRoute({
+  route: "api/whatsapp/send",
+  input: schema,
+  permission: "can_contact_customers",
+  roleHint: "Your role cannot message customers — ask the workspace owner.",
+}, async ({ input, tenantId }) => {
+  const { to, text, template, attach_quote_id, related } = input;
 
   try {
     // ── Attachment branch — render quote PDF server-side, send as
@@ -101,26 +91,27 @@ export async function POST(req: NextRequest) {
         .select(`
           id, tenant_id, customer_id, customer_name, line_items, subtotal,
           discount_pct, tax_rate, amount, notes, expires_date, is_renewal, is_add_seats, is_one_off,
-          is_extension, extension_months
+          is_extension, extension_months, billing_cycle, currency, exchange_rate,
+          payment_status, invoice_id, created_date, domain, renewal_term_date, renewal_subscription_id
         `)
         .eq("id", attach_quote_id)
         .single();
       if (qErr || !quote) {
         return NextResponse.json({ ok: false, error: "Quote not found" }, { status: 404 });
       }
-      if (quote.tenant_id !== me.tenant_id) {
+      if (quote.tenant_id !== tenantId) {
         return NextResponse.json({ ok: false, error: "Quote belongs to a different tenant" }, { status: 403 });
       }
 
       const { data: tenant } = await admin
         .from("tenants")
         .select("name, email, phone, gstin, address, state_code, upi_vpa, upi_payee_name, logo_url")
-        .eq("id", me.tenant_id)
+        .eq("id", tenantId)
         .single();
       const { data: customer } = quote.customer_id
         ? await admin
             .from("customers")
-            .select("contact_name, contact_email, contact_phone, gstin, state_code")
+            .select("contact_name, contact_email, contact_phone, gstin, state_code, gst_treatment")
             .eq("id", quote.customer_id)
             .single()
         : { data: null };
@@ -136,14 +127,15 @@ export async function POST(req: NextRequest) {
 
       // Scan-to-pay on the PDF the customer receives over WhatsApp. This is the
       // shortest path there is from "quote arrives" to "money sent": the QR and
-      // the UPI app are on the same phone. quoteAmountDue() gates it — non-INR
-      // and already-invoiced quotes get no QR.
+      // the UPI app are on the same phone. R-1613: readQuoteDueNow gives the figure the
+      // online Pay button charges; non-INR, paid and already-invoiced quotes get no QR
+      // (currency / payment_status were not even selected here before — a USD quote got a ₹ QR).
       const tUpi = tenant as { upi_vpa?: string | null; upi_payee_name?: string | null } | null;
       const upi = await buildQuoteUpiQr({
         vpa:       tUpi?.upi_vpa,
         payeeName: tUpi?.upi_payee_name ?? tenant?.name,
         quoteId:   quote.id,
-        amountDue: quoteAmountDue(quote),
+        amountDue: quoteDueNowUpiAmount(await readQuoteDueNow(admin, quote)),
       });
 
       const blob = await renderQuotePDF({
@@ -166,9 +158,11 @@ export async function POST(req: NextRequest) {
         discount,
         taxable,
         taxRate,
+        /* R-1532: Bill of Supply business → "No GST — Bill of Supply" on a 0% quote. */
+        billOfSupply:  quoteDocBillOfSupply(await readTenantGstRegistration(admin, tenantId), taxRate),
         tax,
         total,
-        interState:    isInterStateSupply(customer?.state_code, tenant?.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant?.gstin }),
+        interState:    isInterStateSupply(customer?.state_code, tenant?.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant?.gstin, treatment: customer?.gst_treatment }),
         validityDays:  30,
         notes:         quote.notes ?? undefined,
         isRenewal:     quote.is_renewal,
@@ -177,11 +171,13 @@ export async function POST(req: NextRequest) {
           isExtension: quote.is_extension, extensionMonths: quote.extension_months,
         }),
         extensionTitle: extensionTitle({ isExtension: quote.is_extension, extensionMonths: quote.extension_months }),
+        /* R-1764: "Domain:" / "Subscription period:" under each subscription line. */
+        periodContext: await loadQuotePeriodContext(admin, quote),
       });
       const buffer = Buffer.from(await blob.arrayBuffer());
 
       const result = await sendCustomerWhatsApp({
-        tenantId: me.tenant_id,
+        tenantId: tenantId,
         to,
         message: {
           kind:     "document",
@@ -208,7 +204,7 @@ export async function POST(req: NextRequest) {
 
     // ── Plain text or template branch (no attachment)
     const result = await sendCustomerWhatsApp({
-      tenantId: me.tenant_id,
+      tenantId: tenantId,
       to,
       message: text
         ? { kind: "text", text }
@@ -233,4 +229,4 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ ok: false, error: message }, { status });
   }
-}
+});

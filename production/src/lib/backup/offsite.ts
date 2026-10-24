@@ -75,7 +75,7 @@ export function offsiteMonthlyName(now: Date): string | null {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function assertTenantId(tenantId: string): string {
-  if (!UUID_RE.test(tenantId)) throw new Error(`offsite: tenant id uuid nahi hai: ${JSON.stringify(tenantId)}`);
+  if (!UUID_RE.test(tenantId)) throw new Error(`offsite: tenant id is not a uuid: ${JSON.stringify(tenantId)}`);
   return tenantId.toLowerCase();
 }
 
@@ -141,17 +141,17 @@ export function offsiteEnvelope(
  */
 export function offsiteRefusal(env: OffsiteEnvelope, expectedTenants: number): string | null {
   if (env.snapshots.length === 0) {
-    return "koi snapshot nahi mila — sweep chala hi nahi, ya khidki chhoti pad gayi";
+    return "no snapshot found — the sweep did not run, or the time window was too short";
   }
   if (expectedTenants > 0 && env.snapshots.length < expectedTenants) {
     /* Aadha backup poore backup jaisa dikhta hai. Jis tenant ka snapshot nahi gaya wo
        surakshit lagta hai aur hai nahi — theek wahi shakl jisme sweep ki apni per-tenant
        failure chhupti thi. */
-    return `${expectedTenants} tenant hain par sirf ${env.snapshots.length} ka snapshot mila`;
+    return `${expectedTenants} tenants exist but only ${env.snapshots.length} have a snapshot`;
   }
   const empty = env.snapshots.filter((s) => s.payload === null || s.payload === undefined);
   if (empty.length > 0) {
-    return `${empty.length} snapshot bina payload ke — upload to ho jata, restore nahi hota`;
+    return `${empty.length} snapshot(s) without a payload — the upload would work, but restore would not`;
   }
   return null;
 }

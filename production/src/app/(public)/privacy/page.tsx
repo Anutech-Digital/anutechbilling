@@ -1,10 +1,10 @@
 /**
- * Privacy Policy — DPDP Act 2023 compliant (India).
+ * Privacy Policy — written for India's DPDP Act 2023 (a CA / lawyer review is still due, R-1600).
  *
  * Static server-rendered page. Disclose:
  *   • What we collect (auth, transactional, lead/customer data)
  *   • Why (operate the SaaS, deliver invoices, reconcile payments)
- *   • Sub-processors (Supabase, Razorpay, Resend, Gupshup, Sandbox, etc.)
+ *   • Sub-processors (Google Cloud, Razorpay, Resend, Gupshup, Sandbox, etc.)
  *   • User rights (access, correction, deletion, grievance redressal)
  *   • Data location + retention
  *   • Contact / DPO
@@ -18,22 +18,25 @@ import {
   PublicShell, Intro, TOC, Section, Callout, FooterMeta,
 } from "../_components/public-shell";
 import { PLATFORM_OPERATOR } from "@/lib/platform";
+import { DATA_LOCATION } from "@/site/lib/config";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — ResellerOS",
-  description: "How ResellerOS collects, uses, and protects your data. DPDP Act 2023 compliant.",
+  title: { absolute: "ResellerOS privacy policy" },
+  description: "How ResellerOS collects, uses, and protects your data, written for India's DPDP Act 2023.",
 };
 
 /* 26 Aug 2026 ko badla kyunki SERVICE CHALANE WALI ENTITY badli: dastavez pehle "Demo
    Co Pvt Ltd" ko operator batata tha, jo ek doosri legal entity hai (uska GSTIN
    ek proprietorship ka hai — dekho lib/platform.ts). Privacy Policy me operator ka naam
    badalna aur taareekh purani chhod dena wahi jhooth hai jise ye badlav theek karne aaya
-   hai — padhne wale ko lagega ki May se yahi likha tha. */
-const LAST_UPDATED = "26 Aug 2026";
+   hai — padhne wale ko lagega ki May se yahi likha tha.
+   19 Oct 2026 (R-1600): "Where we store your data" ab sach — Singapore (asia-southeast1),
+   Mumbai/Supabase nahi. Isliye taareekh bhi badli. */
+const LAST_UPDATED = "19 Oct 2026";
 
 export default function PrivacyPage() {
   return (
-    <PublicShell title="Privacy Policy" subtitle={`Last updated: ${LAST_UPDATED}`}>
+    <PublicShell title="ResellerOS privacy policy" subtitle={`Last updated: ${LAST_UPDATED}`}>
       <Intro>
         {PLATFORM_OPERATOR.productName} is operated by <b>{PLATFORM_OPERATOR.legalName}</b>{" "}
         (GSTIN {PLATFORM_OPERATOR.gstin}) (&ldquo;ResellerOS&rdquo;,
@@ -74,7 +77,7 @@ export default function PrivacyPage() {
         <Callout tone="info">
           <b>What we do NOT store:</b> Full bank account numbers (only last 4
           digits + IFSC), payment card details (handled by Razorpay), or
-          full Google OAuth tokens (Supabase Auth manages session JWTs only).
+          full Google OAuth tokens (our sign-in service keeps session tokens only).
         </Callout>
       </Section>
 
@@ -99,33 +102,42 @@ export default function PrivacyPage() {
           contractually bound to data protection standards equivalent to or
           stricter than the DPDP Act:
         </p>
-        <table className="w-full mt-3 text-sm">
-          <thead className="border-b border-hairline text-left text-2xs uppercase tracking-wider text-ink-3">
-            <tr>
-              <th className="py-2 pr-3 font-semibold">Provider</th>
-              <th className="py-2 pr-3 font-semibold">Purpose</th>
-              <th className="py-2 font-semibold">Data location</th>
-            </tr>
-          </thead>
-          <tbody className="text-ink-2">
-            {SUB_PROCESSORS.map((s) => (
-              <tr key={s.name} className="border-b border-hairline last:border-b-0">
-                <td className="py-2 pr-3 font-medium text-ink">{s.name}</td>
-                <td className="py-2 pr-3">{s.purpose}</td>
-                <td className="py-2 text-ink-3">{s.location}</td>
+        {/* R-1456: three short columns fit a phone; the box keeps any overflow off the page. */}
+        <div className="mt-3 max-w-full overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-hairline text-left text-2xs uppercase tracking-wider text-ink-3">
+              <tr>
+                <th className="py-2 pr-3 font-semibold">Provider</th>
+                <th className="py-2 pr-3 font-semibold">Purpose</th>
+                <th className="py-2 font-semibold">Data location</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="text-ink-2">
+              {SUB_PROCESSORS.map((s) => (
+                <tr key={s.name} className="border-b border-hairline last:border-b-0">
+                  <td className="py-2 pr-3 font-medium text-ink">{s.name}</td>
+                  <td className="py-2 pr-3">{s.purpose}</td>
+                  <td className="py-2 text-ink-3">{s.location}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Section>
 
       <Section id="data-location" n={4} title="Where we store your data">
         <p>
-          Your data lives on <b>Supabase Postgres in Mumbai (asia-south1)</b>,
-          with Row-Level Security ensuring each tenant only sees their own
-          data. Application servers run on <b>Google Cloud Run</b> in the
-          same Mumbai region. Backups are encrypted at rest and replicated
-          within India.
+          {/* R-1600: the TRUE location, from one constant (site/lib/config.ts DATA_LOCATION).
+              Production moved to Cloud SQL + Cloud Run in asia-southeast1 in Sep 2026. */}
+          Your data lives in <b>{DATA_LOCATION.database}</b> on{" "}
+          <b>{DATA_LOCATION.provider}</b> in{" "}
+          <b>{DATA_LOCATION.city} ({DATA_LOCATION.region})</b>, with Row-Level
+          Security ensuring each tenant only sees their own data. Application
+          servers run on <b>{DATA_LOCATION.provider} {DATA_LOCATION.app}</b> in the
+          same region. Sign-in and file storage run in our own {DATA_LOCATION.provider}{" "}
+          account. Backups are {DATA_LOCATION.provider}&rsquo;s managed backups,
+          encrypted at rest. This means your data is stored outside India, in{" "}
+          {DATA_LOCATION.city}.
         </p>
       </Section>
 
@@ -225,8 +237,8 @@ const TOC_ITEMS: Array<{ id: string; label: string }> = [
 ];
 
 const SUB_PROCESSORS: Array<{ name: string; purpose: string; location: string }> = [
-  { name: "Supabase",      purpose: "Postgres database, authentication, file storage", location: "Mumbai (asia-south1)" },
-  { name: "Google Cloud Run", purpose: "Application hosting", location: "Mumbai (asia-south1)" },
+  { name: `${DATA_LOCATION.provider} (${DATA_LOCATION.database}, ${DATA_LOCATION.app})`, purpose: "Database and application hosting", location: `${DATA_LOCATION.city} (${DATA_LOCATION.region})` },
+  { name: DATA_LOCATION.provider, purpose: "Sign-in service and file storage, run by us in our own account", location: "Google Cloud" },
   { name: "Razorpay",      purpose: "Payment processing",     location: "India" },
   { name: "Resend",        purpose: "Transactional email",    location: "EU + US" },
   { name: "Gupshup BSP",   purpose: "WhatsApp Business API",  location: "India" },

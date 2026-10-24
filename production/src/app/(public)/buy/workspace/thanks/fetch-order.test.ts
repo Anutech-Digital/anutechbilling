@@ -11,8 +11,10 @@ import { join } from "node:path";
 
 const db = vi.hoisted(() => ({
   row: null as Record<string, unknown> | null,
+  payments: [] as { amount: number }[],
   calls: 0,
   filters: [] as { op: string; col: string; val: unknown }[],
+  paymentFilters: [] as { op: string; col: string; val: unknown }[],
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createAdminClient: () => {
@@ -23,12 +25,21 @@ vi.mock("@/lib/supabase/server", () => ({
       in: (col: string, val: unknown) => { db.filters.push({ op: "in", col, val }); return chain; },
       maybeSingle: async () => ({ data: db.row, error: null }),
     };
-    return { from: () => chain };
+    /* R-1624: the received sum is read from payments (status 'received', this quote, this tenant). */
+    const pay = {
+      select: () => pay,
+      eq: (col: string, val: unknown) => { db.paymentFilters.push({ op: "eq", col, val }); return pay; },
+      then: (ok: (v: { data: { amount: number }[]; error: null }) => unknown) => Promise.resolve({ data: db.payments, error: null }).then(ok),
+    };
+    return { from: (table: string) => (table === "payments" ? pay : chain) };
   },
 }));
 
 import { fetchOrder } from "./fetch-order";
 import { thanksUrl } from "./thanks-url";
+/* R-1499: outside production the website tenant is never implied any more — name it, as a
+   deployment does. (The fixture is the same id the routes used to fall back to.) */
+process.env.BUY_PAGE_TENANT_ID ||= "fbb976f1-9090-4f10-9726-0901bd144e42";
 
 const TOKEN = "3f2b6c1e-8d4a-4b7e-9a51-2c7d8e9f0a1b";
 const paidRow = () => ({
@@ -39,8 +50,41 @@ const paidRow = () => ({
 
 beforeEach(() => {
   db.row = paidRow();
+  db.payments = [{ amount: 3186 }];
   db.calls = 0;
   db.filters = [];
+  db.paymentFilters = [];
+});
+
+describe("R-1624: the order's payment state comes from orderPaymentState, not 'received' alone", () => {
+  it("received → paid", async () => {
+    expect(await fetchOrder("Q-2026-27-0042", TOKEN)).toMatchObject({ paymentState: "paid", amountReceived: 3186 });
+  });
+  it("invoiced and fully paid → paid (was 'Partially paid')", async () => {
+    db.row = { ...paidRow(), payment_status: "invoiced" };
+    db.payments = [{ amount: 1000 }, { amount: 2186 }];
+    expect(await fetchOrder("Q-2026-27-0042", TOKEN)).toMatchObject({ paymentState: "paid", amountReceived: 3186 });
+    expect(db.paymentFilters).toEqual(expect.arrayContaining([
+      { op: "eq", col: "quote_id", val: "Q-2026-27-0042" },
+      { op: "eq", col: "status", val: "received" },
+      { op: "eq", col: "tenant_id", val: expect.any(String) },
+    ]));
+  });
+  it("invoiced but part paid → part-paid", async () => {
+    db.row = { ...paidRow(), payment_status: "invoiced" };
+    db.payments = [{ amount: 1000 }];
+    expect(await fetchOrder("Q-2026-27-0042", TOKEN)).toMatchObject({ paymentState: "part-paid", amountReceived: 1000 });
+  });
+  it("partial → part-paid", async () => {
+    db.row = { ...paidRow(), payment_status: "partial" };
+    db.payments = [{ amount: 1000 }];
+    expect(await fetchOrder("Q-2026-27-0042", TOKEN)).toMatchObject({ paymentState: "part-paid" });
+  });
+  it("the thanks page reads the state, never payment_status === 'received'", () => {
+    const src = readFileSync(join(process.cwd(), "src/app/(public)/buy/workspace/thanks/thanks-client.tsx"), "utf8");
+    expect(src).toMatch(/order\.paymentState === "paid"/);
+    expect(src).not.toMatch(/paymentStatus === "received"/);
+  });
 });
 
 describe("the thanks page shows an order only with its secret token", () => {

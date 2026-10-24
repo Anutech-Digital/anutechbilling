@@ -98,14 +98,14 @@ export function useDeleteCampaign() {
       const { error } = await db().from("marketing_campaigns").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["expenses"] }); qc.invalidateQueries({ queryKey: KEY }); toast.success("Campaign hataya — kharche waise hi hain, bas campaign se alag"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["expenses"] }); qc.invalidateQueries({ queryKey: KEY }); toast.success("Campaign removed — its expenses are kept, just no longer linked to the campaign"); },
     onError: (err) => toastError(err),
   });
 }
 
 /** A duplicate code is the one error a person can fix; say so in their words. */
 function friendly(err: { code?: string; message: string }): Error {
-  if (err.code === "23505") return new Error("Is code ka campaign pehle se hai — naam ya code badlo.");
+  if (err.code === "23505") return new Error("A campaign with this code already exists — change the name or code.");
   return new Error(err.message);
 }
 

@@ -25,10 +25,14 @@
  * record_payment's job when the money lands. Creating one early would start a renewal
  * clock on a deal nobody has paid for, and would count it in MRR. The same rule the banner
  * uses to stay quiet is the rule this route uses to say no.
+ *
+ * R-1686: an INVOICED quote (GST invoice out, money or not) is due a subscription too — since
+ * 20261019162652 "Invoice now (before payment)" files it — and the rebuilt row carries what is
+ * still owed (quote_open_balance), so an unpaid invoice lands in Payments → Subscription dues.
  */
 import { NextResponse } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
-import { orphanState, isOrphan, missingLines } from "@/lib/subscriptions/orphan-quote";
+import { orphanState, isOrphan, missingLines, rebuildOutstanding } from "@/lib/subscriptions/orphan-quote";
 import { rebuildTerm } from "@/lib/subscriptions/rebuild-term";
 import { istToday } from "@/lib/dates/ist";
 import { safeDbMessage, logDbError } from "@/lib/errors/db-error";
@@ -93,7 +97,7 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
 
   const { data: subs } = await admin
     .from("subscriptions")
-    .select("id, plan, domain")
+    .select("id, plan, domain, outstanding_amount")
     .eq("quote_id", quote.id)
     .eq("tenant_id", me.tenant_id);
 
@@ -168,7 +172,25 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
   const fallbackStart = quote.created_date ?? istToday();
   const customerId = quote.customer_id;
 
-  const rows = missing.map((l) => {
+  /* R-1686: the rebuilt subscription carries what is still OWED on this quote — its unpaid
+     invoice(s), or amount − money received when no invoice is out (quote_open_balance,
+     migration 20261019162652). It wrote 0 before, so an unpaid annual invoice rebuilt here
+     never reached Payments → Subscription dues and nobody chased it. Less whatever the
+     quote's surviving subscriptions already carry, so the dues are never counted twice. */
+  const { data: openBalance, error: balErr } = await admin.rpc("quote_open_balance", { p_quote_id: quote.id });
+  if (balErr) {
+    logDbError("quotes/recreate-subscription", balErr);
+    return NextResponse.json(
+      { error: safeDbMessage(balErr, "Could not work out what is still owed on this quote. Nothing was created — try again.") },
+      { status: 500 },
+    );
+  }
+  const firstOutstanding = rebuildOutstanding(
+    Number(openBalance ?? 0),
+    (subs ?? []).map((s) => s.outstanding_amount ?? 0),
+  );
+
+  const rows = missing.map((l, i) => {
     const start  = (l.start_date ?? fallbackStart).slice(0, 10);
     const seats  = l.qty ?? 0;
 
@@ -191,6 +213,8 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
       start_date:    start,
       renewal_date:  renewalDate,
       status:        "active" as const,
+      /* R-1686: the dues ride on the first rebuilt row, as record_payment files them. */
+      outstanding_amount: i === 0 ? firstOutstanding : 0,
       /* term_months drives the reminder ladder (lib/renewals/cadence.ts). billing_cycle is
          deliberately NOT set: the trigger subscription_cycle_follows_quote owns it and
          copies it from the quote, and writing it here too would be a second writer. */

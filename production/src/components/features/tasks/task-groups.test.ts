@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupTasks, taskGroupOf } from "./task-groups";
+import { groupTasks, taskGroupOf, taskTabCounts } from "./task-groups";
 
 // 7 Oct 2026, 15:00 IST
 const NOW = new Date("2026-10-07T09:30:00Z");
@@ -54,5 +54,19 @@ describe("R-354 task groups by IST day", () => {
     expect(groups[2].tasks.map((x) => x.id)).toEqual(["up1", "up2"]);
     expect(groups[4].tasks.map((x) => x.id)).toEqual(["d-new", "d-old"]);
     expect(groups.flatMap((g) => g.tasks).some((x) => x.id === "x")).toBe(false);
+  });
+});
+
+describe("R-1416 tab counts", () => {
+  it("'All' counts every task the All list shows — Done included (3 open + 2 done = 5)", () => {
+    const tasks = [
+      t("o1", "2026-10-06T05:30:00Z"), // overdue
+      t("o2", "2026-10-07T12:00:00Z"), // today
+      t("o3", null), // no date
+      t("d1", "2026-10-05T05:30:00Z", "done", "2026-10-05T06:00:00Z"),
+      t("d2", "2026-10-06T05:30:00Z", "done", "2026-10-06T06:00:00Z"),
+      t("x", "2026-10-06T05:30:00Z", "cancelled"), // not shown, not counted
+    ];
+    expect(taskTabCounts(groupTasks(tasks, NOW))).toEqual({ all: 5, overdue: 1, today: 1, upcoming: 0, done: 2 });
   });
 });

@@ -8,16 +8,22 @@
 -- domain acme.in 749 (no commitment → no subscription from record_payment).
 -- Expect: hosting subscription mrr = 300 (list), NOT 270. A line without renewal_rate keeps
 -- the old rule (mrr from the charged rate).
+--
+-- R-1616 (19 Oct 2026): the two blocks' tenants had doc_codes R329A / R329B (both "R329"
+-- after the 4-character cap) and a PO series seeded at 990000 — format_document_number pads
+-- to 4 digits and keeps the first 4, so both POs were PO-R329-27-9900 and, run in one
+-- transaction, the second hit purchase_orders_pkey. Now R3A9 / R3B9, seeded at 9000, and the
+-- seed's fiscal year is the IST day's (the allocator uses public.ist_today()).
 
 -- ── Coupon line: mrr = qty × renewal_rate ───────────────────────────────────
 begin;
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
-  values ('dddddddd-0000-0000-0000-0000000329a1','R329 A','r329a@example.in','07','R329A');
+  values ('dddddddd-0000-0000-0000-0000000329a1','R329 A','r329a@example.in','07','R3A9');
 insert into public.customers (id, tenant_id, name)
   values ('cccccccc-0000-0000-0000-0000000329a1','dddddddd-0000-0000-0000-0000000329a1','Cust R329');
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('dddddddd-0000-0000-0000-0000000329a1','purchase_order', public.indian_fiscal_year(current_date), 'PO', 990000);
+  values ('dddddddd-0000-0000-0000-0000000329a1','purchase_order', public.indian_fiscal_year(public.ist_today()), 'PO', 9000);
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, discount_pct, tax_rate, status, payment_status, line_items)
   values ('Q-R329-A','dddddddd-0000-0000-0000-0000000329a1','cccccccc-0000-0000-0000-0000000329a1','Cust R329',
           1202, 1019, 0, 18, 'sent', 'awaiting',
@@ -38,11 +44,11 @@ rollback;
 begin;
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
-  values ('dddddddd-0000-0000-0000-0000000329a2','R329 B','r329b@example.in','07','R329B');
+  values ('dddddddd-0000-0000-0000-0000000329a2','R329 B','r329b@example.in','07','R3B9');
 insert into public.customers (id, tenant_id, name)
   values ('cccccccc-0000-0000-0000-0000000329a2','dddddddd-0000-0000-0000-0000000329a2','Cust R329 B');
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('dddddddd-0000-0000-0000-0000000329a2','purchase_order', public.indian_fiscal_year(current_date), 'PO', 990000);
+  values ('dddddddd-0000-0000-0000-0000000329a2','purchase_order', public.indian_fiscal_year(public.ist_today()), 'PO', 9000);
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items)
   values ('Q-R329-B','dddddddd-0000-0000-0000-0000000329a2','cccccccc-0000-0000-0000-0000000329a2','Cust R329 B',
           122342, 103680, 18, 'sent', 'awaiting',

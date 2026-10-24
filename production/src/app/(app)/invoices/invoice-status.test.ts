@@ -34,17 +34,47 @@ describe("invoiceStatusBadge (R-238)", () => {
   });
 });
 
+describe("written off (R-1635)", () => {
+  const base = { status: "pending", due_date: "2026-09-01", amount: 1180, net_payable: 1180, paid_amount: 0 };
+  it("an overdue invoice written off reads 'Written off', not 'Overdue'", () => {
+    expect(invoiceStatusBadge(base, "2026-10-23")?.label).toMatch(/^Overdue/);
+    expect(invoiceStatusBadge({ ...base, written_off_at: "2026-10-23T06:00:00Z" }, "2026-10-23")).toEqual({ label: "Written off", kind: "muted" });
+  });
+  it("a paid invoice stays Paid", () => {
+    expect(invoiceStatusBadge({ ...base, status: "paid", written_off_at: "2026-10-23T06:00:00Z" }, "2026-10-23")?.label).toBe("Paid");
+  });
+});
+
+/* R-1709: T-L5 — settled by a credit note, not a rupee came in. */
+describe("Credited, from money (R-1709)", () => {
+  const tl5 = { status: "paid", due_date: "2026-10-30", amount: 38232, net_payable: 0, paid_amount: 0 };
+  it.each([
+    ["credit note closed it", tl5, { credit: 38232, debit: 0 }, "Credited"],
+    ["notes not read → stays Paid", tl5, undefined, "Paid"],
+    ["paid in full, credit note later → Paid", { ...tl5, amount: 100000, net_payable: 90000, paid_amount: 100000 }, { credit: 10000, debit: 0 }, "Paid"],
+    ["receipt after the invoice → Partial", { ...tl5, status: "pending", net_payable: 38232, paid_amount: 20000 }, null, "Partial"],
+  ] as const)("%s", (_l, inv, notes, label) => {
+    expect(invoiceStatusBadge(inv, "2026-10-21", notes)?.label).toBe(label);
+  });
+});
+
 describe("invoice page wiring (R-238)", () => {
   const detail = readFileSync(join(process.cwd(), "src/app/(app)/invoices/invoice-detail.tsx"), "utf8");
   const list = readFileSync(join(process.cwd(), "src/app/(app)/invoices/page.tsx"), "utf8");
 
-  it("the page header badge uses the shared label, not the raw status", () => {
-    expect(detail).toMatch(/invoiceStatusBadge\(invoice\)/);
+  it("the page header badge uses the shared label, not the raw status — with its credit notes (R-1709)", () => {
+    expect(detail).toMatch(/invoiceStatusBadge\(invoice, undefined, invoiceNotes\)/);
     expect(detail).not.toMatch(/\{invoice\.status\}\s*<\/Badge>/);
   });
 
-  it("the list uses the same function, so the two cannot drift", () => {
-    expect(list).toMatch(/invoiceStatusBadge\(inv\)/);
+  it("the list uses the same function with the same note totals, so the two cannot drift", () => {
+    expect(list).toMatch(/invoiceStatusBadge\(inv, undefined, notes\)/);
+    expect(list).not.toMatch(/invoiceStatusBadge\(inv\)/);
+    /* R-1709: chips, tile focus and KPIs read the same note totals as the row badge. */
+    expect(list).toMatch(/invoiceChipCounts\(viewInvoices, undefined, noteTotals\)/);
+    expect(list).toMatch(/invoiceKpis\(invoices \?\? \[\], undefined, noteTotals\)/);
+    expect(list).toMatch(/invoiceChip\(i, undefined, noteTotals\)/);
+    expect(list).toMatch(/invoiceInFocus\(i, focus, undefined, noteTotals\)/);
   });
 
   it("an empty receipts panel offers Record payment on the page", () => {

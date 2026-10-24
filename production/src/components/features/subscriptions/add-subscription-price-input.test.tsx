@@ -129,7 +129,7 @@ describe("Add Subscription — the number boxes can be emptied", () => {
  */
 describe("Add Subscription — the billing period drives the price field's unit", () => {
   beforeEach(() => {
-    /* ₹864/seat/month committed (₹10,368/yr), ₹1,000/seat/month flex. */
+    /* ₹864/seat/month committed (under the ₹1,080 list price — lifted, R-1704), ₹1,000/seat/month flex. */
     catalogRows.length = 0;
     catalogRows.push({
       id: "GW-STD", name: "Google Workspace Standard", vendor: "google",
@@ -143,8 +143,9 @@ describe("Add Subscription — the billing period drives the price field's unit"
   it("defaults to yearly, so it behaves as it did before the dropdown existed", () => {
     const { price } = renderDialog();
     expect(priceLabel()).toContain("₹/yr");
-    /* Seeded from the catalogue in the YEARLY unit: 864 × 12. */
-    expect(price.value).toBe("10368");
+    /* Seeded from the catalogue in the YEARLY unit. R-1704: ₹864/mo is under the R-205 list
+       price, so it is lifted to ₹1,080 × 12 — the same price the quote builder offers. */
+    expect(price.value).toBe("12960");
   });
 
   it("offers the billing period as a labelled control", () => {
@@ -348,5 +349,29 @@ describe("Add Subscription — R-876 switching the period converts the price", (
     /* Typing clears the hint. */
     fireEvent.change(price, { target: { value: "200" } });
     expect(document.querySelector('[data-testid="price-switch-hint"]')).toBeNull();
+  });
+});
+
+/**
+ * R-1704 — the owner's real row (billing audit, 20 Oct 2026): the tenant's Business Starter
+ * row still holds the old seed ₹136/seat/month. Add Subscription offered ₹1,632/yr (below
+ * our ₹3,080 cost) while the quote builder offered ₹3,240 for the same SKU.
+ */
+describe("Add Subscription — Workspace is never offered below list price (R-1704)", () => {
+  beforeEach(() => {
+    catalogRows.length = 0;
+    catalogRows.push({
+      id: "GW-STR-fbb", name: "Google Workspace Business Starter", vendor: "google",
+      msrp: 136, wholesale: 256.67,
+      prices: { annual: { msrp: 136, wholesale: 256.67 } },
+      item_type: "subscription", is_active: true,
+    });
+  });
+  afterEach(() => { catalogRows.length = 0; });
+
+  it("Business Starter is seeded at ₹3,240/yr, not ₹1,632", () => {
+    const { price } = renderDialog();
+    expect(priceLabel()).toContain("₹/yr");
+    expect(price.value).toBe("3240");
   });
 });

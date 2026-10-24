@@ -48,7 +48,7 @@ const ok = (v: string | null | undefined): boolean =>
  * baaki form ki tarah.
  */
 export function expenseCategoryError(o: ExpenseCategoryInput | null | undefined): string | null {
-  if (!o) return "Category chuniye — bina uske ye kharcha kis khaate me jayega, ye tay nahi hota.";
+  if (!o) return "Choose a category — it decides which expense account this is posted to.";
 
   if (o.itemised) {
     /* Ek bhi line ki category kaafi hai — baaki line uski chhaya me chali jaati hain (save
@@ -70,10 +70,10 @@ export function expenseCategoryError(o: ExpenseCategoryInput | null | undefined)
     const any = (o.itemCategories ?? []).some(ok) || ok(o.formCategory);
     return any
       ? null
-      : "Har item ke saamne ek category chuniye — neeche items wali table me, har line ke aakhir me.";
+      : "Choose a category for the items — in the last column of the items table below.";
   }
 
   return ok(o.formCategory)
     ? null
-    : "Category chuniye — upar 'Category' wale khaane me.";
+    : "Choose a category in the 'Category' field above.";
 }

@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAskText } from "@/components/providers/confirm-provider";
 import { cn } from "@/lib/utils";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 import { useUrlState } from "@/lib/hooks/use-url-state";
 import {
   sortRows, nextSort, toggleAllIds, toggleId, loadViews, saveView, deleteView, isViewActive, pagedCount,
@@ -119,6 +120,15 @@ export function decodeSort(raw: string, sortableIds: readonly string[]): SortSta
 
 const SHOW_TABLE = { md: "hidden md:block", lg: "hidden lg:block", xl: "hidden xl:block" } as const;
 const SHOW_CARDS = { md: "md:hidden", lg: "lg:hidden", xl: "xl:hidden" } as const;
+
+/**
+ * R-1741: the header row stays stuck just below the app's sticky top bar (top-0 h-14 z-30)
+ * while the window scrolls. On the th cells, not the thead: with border-collapse the cells
+ * are what reliably sticks, and a collapsed border does not travel with them — so the bottom
+ * line is an inset shadow, and the background is opaque so rows don't show through.
+ * z-20: above the rows, under the top bar. Needs no scroll-box ancestor (Card flush="clip").
+ */
+const STICKY_TH = "sticky top-14 z-20 bg-paper-2 shadow-[inset_0_-1px_0_hsl(var(--hairline-strong))]";
 
 function browserStorage(): ViewStorage | null {
   try { return typeof window === "undefined" ? null : window.localStorage; } catch { return null; }
@@ -210,7 +220,7 @@ export function DataTable<T>({
             })}
           </ul>
 
-          <Card flush className={SHOW_TABLE[cardsBelow]}>
+          <Card flush="clip" className={SHOW_TABLE[cardsBelow]}>
             <table className="w-full table-fixed">
               <colgroup>
                 {selectable && <col style={{ width: "3%" }} />}
@@ -219,7 +229,7 @@ export function DataTable<T>({
               <thead className="bg-paper-2 border-b border-hairline-strong">
                 <tr>
                   {selectable && (
-                    <th className="px-3 py-2.5">
+                    <th className={cn(STICKY_TH, "px-3 py-2.5")}>
                       <Checkbox
                         checked={allChecked}
                         onCheckedChange={() => onSelectedChange!(toggleAllIds(selected!, ids))}
@@ -230,7 +240,7 @@ export function DataTable<T>({
                   {columns.map((c) => (
                     <th
                       key={c.id}
-                      className={cn("px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider", c.align === "right" ? "text-right" : "text-left")}
+                      className={cn(STICKY_TH, "px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider", c.align === "right" ? "text-right" : "text-left")}
                       aria-sort={sort?.id === c.id ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
                     >
                       {c.sortValue ? (
@@ -264,8 +274,9 @@ export function DataTable<T>({
                   return (
                     <tr
                       key={id}
-                      className={cn("border-b border-hairline last:border-0", onRowClick && "cursor-pointer hover:bg-paper-2/50")}
-                      onClick={onRowClick ? () => onRowClick(row) : undefined}
+                      className={cn("border-b border-hairline last:border-0", onRowClick && cn("cursor-pointer hover:bg-paper-2/50", ROW_FOCUS_RING))}
+                      /* R-1658: a clickable row opens from the keyboard too (Tab, Enter/Space). */
+                      {...(onRowClick ? rowActivation(() => onRowClick(row)) : {})}
                     >
                       {checkboxCell}
                       {columns.map((c) => (
@@ -344,7 +355,7 @@ function ViewsMenu({ views, sort, setSort }: {
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button size="sm" variant="ghost" icon="bookmark" aria-label="Saved views">
           {active ? active.name : "Views"}

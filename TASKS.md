@@ -1,5 +1,7 @@
 # Tasks
 
+> **STALE — 8 Sep 2026 tak ka (stamped 19 Oct 2026, R-1609). Asli: team board (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n) + code.** Ye file sirf history hai — isse status, counts ya "kya bacha hai" mat padho.
+
 > Living task list — main ise update karta rahunga. Jaise-jaise kaam complete hoga, task `Done` mein strikethrough ho jayega. Tum bhi edit kar sakte ho. Visual board ke liye `dashboard.html` browser mein kholo.
 > Full detail: [docs/MONEY-FLOW-TEST-MATRIX.md](docs/MONEY-FLOW-TEST-MATRIX.md) (per-transaction) · [docs/ACCOUNTING-AUDIT.md](docs/ACCOUNTING-AUDIT.md) (P&L / Balance Sheet) · [docs/UX-AUDIT.md](docs/UX-AUDIT.md) (interaction / behaviour) · context: [docs/PROJECT-KNOWLEDGE.md](docs/PROJECT-KNOWLEDGE.md)
 
@@ -898,8 +900,9 @@ timeline par likhta hai, **bhejta kuch nahi**. Tum `/automation` se ghumaoge.
 
 **3. `runAutoReply` ab koi nahi bulata.** Dono webhook branch ab sales agent bulate hain — ye
 **badla gaya hai, joda nahi**: do drafter ek webhook par matlab ek customer ko do reply. Purani
-file `src/lib/ai/run-auto-reply.ts` **rakhi hai** (upar banner laga diya hai) kyunki uske test
-abhi bhi wo logic pin karte hain jo naya rasta reuse karta hai. Use delete karna tumhara faisla.
+file `src/lib/ai/run-auto-reply.ts` (aur `draft-reply.server.ts`) **19 Oct 2026 ko R-1606 me
+hata di** — uske tests (`human-touch.test.ts`, `auto-reply.test.ts`) ab `run-sales-agent.ts` ko
+jaanchte hain, jo asli me chalta hai.
 
 ### 🟡 Do cheezein jo maine jaan-boojh kar NAHI ki
 

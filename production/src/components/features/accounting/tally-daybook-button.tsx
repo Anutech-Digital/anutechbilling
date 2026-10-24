@@ -17,6 +17,8 @@ import {
   tallyVouchersXml, salesFromInvoices, receiptsFromPayments, paymentsFromBills,
   type InvoiceForTally, type PaymentForTally, type BillForTally,
 } from "@/lib/accounting/tally-vouchers";
+import { logExport } from "@/lib/export-log";
+import { onlySaleInvoices } from "@/lib/accounting/sale-documents";
 
 interface TallyDaybookButtonProps {
   period: LedgerPeriod;
@@ -33,11 +35,12 @@ export default function TallyDaybookButton({ period, companyName }: TallyDaybook
       const toTs = `${period.to}T23:59:59.999+05:30`;
       const fromTs = `${period.from}T00:00:00+05:30`;
       const [inv, pay, exp] = await Promise.all([
-        supabase.from("invoices")
-          .select("id, customer_name, invoice_date, status, amount, taxable_value, tax_amount, inter_state")
+        /* R-1739: an invoice imported from Zoho Books is no Sales voucher (it is in Zoho / Tally already). */
+        onlySaleInvoices(supabase.from("invoices")
+          .select("id, customer_name, invoice_date, status, amount, taxable_value, tax_amount, inter_state"))
           .gte("invoice_date", period.from).lte("invoice_date", period.to),
         supabase.from("payments")
-          .select("id, receipt_voucher_no, customer_id, amount, received_at, method, reference")
+          .select("id, receipt_voucher_no, customer_id, amount, credit_applied, received_at, method, reference")
           .gte("received_at", fromTs).lte("received_at", toTs),
         supabase.from("expenses")
           .select("id, vendor_name, bill_no, amount, paid, paid_date, payment_method, category")
@@ -69,6 +72,7 @@ export default function TallyDaybookButton({ period, companyName }: TallyDaybook
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      void logExport({ what: "tally-daybook", rowCount: s.sales.length + r.receipts.length + p.payments.length, format: "xml" });
 
       const skipped = s.skipped.length + r.skipped.length + p.skipped.length;
       toast.success(`Tally day book: ${s.sales.length} sales · ${r.receipts.length} receipts · ${p.payments.length} payments`, {
@@ -77,8 +81,8 @@ export default function TallyDaybookButton({ period, companyName }: TallyDaybook
           + "Import: Gateway of Tally → Import Data → Vouchers. Ledgers Sales, Output CGST/SGST/IGST, Round Off, Bank and every party must already exist in Tally.",
       });
     } catch (e) {
-      toast.error("Tally day book nahi ban payi", {
-        description: `${e instanceof Error ? e.message : "Unknown error"} — page refresh karke dobara try karo; phir bhi ho to period chhota karke dekho.`,
+      toast.error("Could not create the Tally day book", {
+        description: `${e instanceof Error ? e.message : "Unknown error"} — refresh the page and try again; if it still fails, try a shorter period.`,
       });
     } finally {
       setBusy(false);
@@ -87,7 +91,7 @@ export default function TallyDaybookButton({ period, companyName }: TallyDaybook
 
   return (
     <Button size="sm" variant="outline" icon="upload" onClick={onClick} disabled={busy}>
-      {busy ? "Banaa rahe…" : "Tally day book"}
+      {busy ? "Creating…" : "Tally day book"}
     </Button>
   );
 }

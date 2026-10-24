@@ -56,6 +56,10 @@ interface Props {
   mode?: "credit" | "debit";
   /** Invoice date (YYYY-MM-DD) for the s.34 time-limit warning. Read from the DB when not passed. */
   invoiceDate?: string | null;
+  /** R-1711: the reason picked when it opens (the cancel dialog opens it as "cancellation"). */
+  defaultReasonCode?: CreditNoteReasonCode;
+  /** R-1711: called after the note is issued (the cancel dialog re-reads what is still due). */
+  onIssued?: () => void;
 }
 
 /** R-335: the invoice's date — fetched only when the caller did not pass it and a credit dialog is open. */
@@ -73,7 +77,7 @@ function useInvoiceDate(invoiceId: string, enabled: boolean) {
 }
 
 export function IssueCreditNoteDialog({
-  open, onOpenChange, invoiceId, customerName, netPayable, taxRate, interState, isExport, mode = "credit", invoiceDate,
+  open, onOpenChange, invoiceId, customerName, netPayable, taxRate, interState, isExport, mode = "credit", invoiceDate, defaultReasonCode, onIssued,
 }: Props) {
   const isDebit = mode === "debit";
   const { data: fetchedDate } = useInvoiceDate(invoiceId, open && !isDebit && invoiceDate === undefined);
@@ -84,17 +88,17 @@ export function IssueCreditNoteDialog({
   const busy = isDebit ? issueDebit.isPending : issueCredit.isPending;
 
   const [amount, setAmount] = React.useState<string>("");
-  const [reasonCode, setReasonCode] = React.useState<string>(isDebit ? "undercharge" : "seats_reduced");
+  const [reasonCode, setReasonCode] = React.useState<string>(isDebit ? "undercharge" : (defaultReasonCode ?? "seats_reduced"));
   const [reason, setReason] = React.useState("");
 
   React.useEffect(() => {
     if (open) {
       // Credit defaults to the amount owed; a debit is a fresh add, so start blank.
       setAmount(isDebit ? "" : String(Math.max(0, netPayable)));
-      setReasonCode(isDebit ? "undercharge" : "seats_reduced");
+      setReasonCode(isDebit ? "undercharge" : (defaultReasonCode ?? "seats_reduced"));
       setReason("");
     }
-  }, [open, netPayable, isDebit]);
+  }, [open, netPayable, isDebit, defaultReasonCode]);
 
   const gross = Math.round(Number(amount) || 0);
   const rate = isExport ? 0 : (taxRate ?? 18);
@@ -113,6 +117,7 @@ export function IssueCreditNoteDialog({
         await issueCredit.mutateAsync({ invoiceId, grossAmount: gross, reasonCode: reasonCode as CreditNoteReasonCode, reason: reason.trim() || null });
       }
       onOpenChange(false);
+      onIssued?.();
     } catch {
       /* toast handled in the hook */
     }

@@ -127,11 +127,12 @@ export function useExpensesByVendor(vendorId: string | null | undefined) {
     enabled: Boolean(vendorId),
     queryFn: async (): Promise<ExpenseRow[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      // R-1582: a regular vendor (AWS, Google) has more than a page of expenses.
+      return (await fetchAllRows((from, to) => supabase
         .from("expenses").select("*")
-        .eq("vendor_id", vendorId!).order("expense_date", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as ExpenseRow[];
+        .eq("vendor_id", vendorId!).order("expense_date", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to))) as ExpenseRow[];
     },
   });
 }
@@ -143,10 +144,11 @@ export function useBillsByVendor(vendorId: string | null | undefined) {
     enabled: Boolean(vendorId),
     queryFn: async (): Promise<VendorBill[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("vendor_bills").select("*").eq("vendor_id", vendorId!).order("bill_date", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as VendorBill[];
+      // R-1582: every bill of the vendor, paged past the gateway's 1000-row cap.
+      return (await fetchAllRows((from, to) => supabase
+        .from("vendor_bills").select("*").eq("vendor_id", vendorId!).order("bill_date", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to))) as VendorBill[];
     },
   });
 }

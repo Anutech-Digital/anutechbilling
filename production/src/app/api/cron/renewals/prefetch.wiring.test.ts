@@ -31,7 +31,10 @@ describe("renewals cron — prefetch + bounded concurrency", () => {
 
   it("selects the same tenant and customer columns the per-row reads did", () => {
     expect(beforeLoop).toContain('"id, name, email, phone, gstin, address, grace_period_days, state_code, logo_url"');
-    expect(beforeLoop).toContain('"id, name, contact_name, contact_email, gstin, contact_phone, state_code"');
+    /* R-1736 added gst_treatment: the per-row place-of-supply check (isInterStateSupply …
+       treatment: customer?.gst_treatment) now reads it, so the prefetch must carry it (R-1743). */
+    expect(beforeLoop).toContain('"id, name, contact_name, contact_email, gstin, contact_phone, state_code, gst_treatment"');
+    expect(live).toContain("treatment: customer?.gst_treatment");
   });
 
   it("an early exit inside the per-row callback is `return`, never a stray `continue`", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { INVOICE_CHIPS, invoiceBalance, invoiceChipCounts, invoiceKpis, type KpiInvoice } from "./kpis";
+import { INVOICE_CHIPS, invoiceBalance, invoiceChip, invoiceChipCounts, invoiceInFocus, invoiceKpis, type KpiInvoice } from "./kpis";
 
 /* The rows as they sit in the local DB on 1 Oct 2026 (R-062). */
 const FBB9: KpiInvoice[] = [
@@ -55,6 +55,38 @@ describe("invoice status chips (R-063)", () => {
     const c = invoiceChipCounts(rows, "2026-10-01");
     expect(c.void).toBe(2);
     expect(INVOICE_CHIPS.reduce((s, k) => s + c[k], 0)).toBe(c.all);
-    expect(c).toEqual({ all: 8, paid: 2, partial: 1, pending: 1, overdue: 1, draft: 1, void: 2 });
+    expect(c).toEqual({ all: 8, paid: 2, credited: 0, partial: 1, pending: 1, overdue: 1, draft: 1, void: 2 });
+  });
+});
+
+/* R-1709 — the tile, the chip and the row read ONE money-based state (payment-state.ts). */
+describe("R-1709: Paid this month, Credited and Partial from money", () => {
+  const oct = new Date("2026-10-21T12:00:00+05:30");
+  /* T-L5: settled by a credit note — ₹38,232 never came in. */
+  const TL5: KpiInvoice = { id: "T-L5", status: "paid", amount: 38232, net_payable: 0, paid_amount: 0, paid_date: "2026-10-20", due_date: null };
+  const PAID: KpiInvoice = { id: "P", status: "paid", amount: 50000, net_payable: 30000, paid_amount: 30000, adjusted_advances: [{ amount: 20000 }], paid_date: "2026-10-10", due_date: null };
+  /* INV-0007: a receipt after the invoice, balance still due. */
+  const INV7: KpiInvoice = { id: "INV-0007", status: "pending", amount: 38232, net_payable: 38232, paid_amount: 20000, due_date: "2026-11-30" };
+  const notes = new Map([["T-L5", { credit: 38232, debit: 0 }]]);
+
+  it.each([
+    ["credit-note settled invoice is not money collected", [TL5, PAID], 50000, 1],
+    ["only the money that came in", [PAID], 50000, 1],
+    ["receipts capped at the value after notes", [{ ...PAID, id: "Q", paid_amount: 40000 }], 50000, 1],
+  ] as const)("%s", (_l, rows, sum, count) => {
+    const k = invoiceKpis([...rows], oct, notes);
+    expect(k.paidThisMonth).toBe(sum);
+    expect(k.paidThisMonthCount).toBe(count);
+  });
+
+  it("the credited invoice gets its own chip and badge; the chips still add up to All", () => {
+    const c = invoiceChipCounts([TL5, PAID, INV7], "2026-10-21", notes);
+    expect(c).toMatchObject({ all: 3, paid: 1, credited: 1, partial: 1, pending: 0 });
+    expect(INVOICE_CHIPS.reduce((s, k) => s + c[k], 0)).toBe(c.all);
+    expect(invoiceInFocus(TL5, "paid-month", oct, notes)).toBe(false);
+  });
+
+  it("Partial counts receipts after the invoice too (INV-0007 was 'Partial' on the row, 0 on the chip)", () => {
+    expect(invoiceChip(INV7, "2026-10-21")).toBe("partial");
   });
 });

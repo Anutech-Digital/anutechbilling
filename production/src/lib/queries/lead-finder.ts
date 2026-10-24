@@ -105,9 +105,9 @@ export function useRunFinder() {
     },
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: FINDER_KEY });
-      const drop = r.noContact ? ` · ${r.noContact} ka contact nahi mila, Rejected mein` : "";
-      if (r.saved === 0) toast.warning(`${r.discovered} mili, ${r.skippedDupe} pehle se thi — contact wali nayi koi nahi${drop}`);
-      else toast.success(`${r.saved} nayi companies, sabka phone/email hai (${r.skippedDupe} pehle se thi${drop})`);
+      const drop = r.noContact ? ` · ${r.noContact} with no contact moved to Rejected` : "";
+      if (r.saved === 0) toast.warning(`${r.discovered} found, ${r.skippedDupe} already existed — no new ones with a contact${drop}`);
+      else toast.success(`${r.saved} new companies, all with phone/email (${r.skippedDupe} already existed${drop})`);
       if (r.errors?.length) toast.warning(r.errors[0]);
     },
     onError: (e) => { qc.invalidateQueries({ queryKey: FINDER_KEY }); toastError(e); },
@@ -126,8 +126,8 @@ export function useFindContacts() {
     },
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: FINDER_KEY }); qc.invalidateQueries({ queryKey: ["leads"] });
-      if (r.checked === 0) toast.success("Sab companies ka contact pehle hi check ho chuka hai");
-      else toast.success(`${r.checked} websites padhi — ${r.found} ka contact mila${r.removed ? `, ${r.removed} bina contact wali Rejected mein gayi` : ""}`);
+      if (r.checked === 0) toast.success("All companies' contacts have already been checked");
+      else toast.success(`${r.checked} websites read — contact found for ${r.found}${r.removed ? `, ${r.removed} without a contact moved to Rejected` : ""}`);
     },
     onError: (e) => toastError(e),
   });
@@ -140,13 +140,13 @@ export function useSearchPeople() {
     mutationFn: async (input: { ids?: string[] } = {}) => {
       const res = await fetch("/api/leads/finder/contacts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...input, mode: "people" }) });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.error ?? "Naam search failed");
+      if (!res.ok) throw new Error(body?.error ?? "Name search failed");
       return body as { searched: number; found: number };
     },
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: FINDER_KEY }); qc.invalidateQueries({ queryKey: ["leads"] }); qc.invalidateQueries({ queryKey: ["tasks"] });
-      if (r.searched === 0) toast.success("Jin companies ka naam nahi tha, sab search ho chuki hain");
-      else toast.success(`${r.searched} companies search ki — ${r.found} ka naam public record mein mila`);
+      if (r.searched === 0) toast.success("All companies without a name have already been searched");
+      else toast.success(`${r.searched} companies searched — name found in public records for ${r.found}`);
     },
     onError: (e) => toastError(e),
   });
@@ -185,9 +185,9 @@ export function useApproveCandidate() {
     },
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: FINDER_KEY }); qc.invalidateQueries({ queryKey: ["leads"] }); qc.invalidateQueries({ queryKey: ["tasks"] });
-      if (!r.task) { toast.warning("Lead ban gaya, par follow-up task nahi bana — lead par khud reminder laga do"); return; }
+      if (!r.task) { toast.warning("Lead created, but the follow-up task was not — add a reminder on the lead yourself"); return; }
       const when = r.task.dueAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", hour: "numeric", minute: "2-digit" });
-      toast.success(`Lead ban gaya · ${r.task.kind === "call" ? "Call" : "Email"} task ${when} ka`);
+      toast.success(`Lead created · ${r.task.kind === "call" ? "Call" : "Email"} task for ${when}`);
     },
     onError: (e) => toastError(e),
   });

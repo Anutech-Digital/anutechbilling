@@ -17,10 +17,9 @@
  *   humanIsHandlingIt — a PERSON touched the thread since the customer wrote, and a machine
  *                       chiming in over a colleague is worse than silence
  *
- * The three FACTS are gathered again below because `run-auto-reply.ts` keeps them inline and
- * `human-touch.test.ts` asserts on that file's source shape — extracting them would break a
- * test that exists to protect a subtle fix. So the queries are repeated and the DECISION is
- * not, which is the right half to duplicate. The `created_by IS NOT NULL` filter is the subtle
+ * The three FACTS are gathered below in `checkReplyGates` (first written inline in
+ * run-auto-reply.ts, which nothing called after this swap and was deleted by R-1606, 19 Oct
+ * 2026). `human-touch.test.ts` now pins THIS file's query shape. The `created_by IS NOT NULL` filter is the subtle
  * fix in question: every automated write here leaves it NULL, so without it the app's own
  * timeline notes count as "a person picked this up" and the reply holds with a wrong REASON.
  *
@@ -423,9 +422,8 @@ async function latestQuote(
 /**
  * The three facts `decideAutoReply` needs, read fresh.
  *
- * See the file header for why these queries are repeated from run-auto-reply.ts rather than
- * extracted: `human-touch.test.ts` pins that file's source shape to protect the
- * `created_by IS NOT NULL` fix, and moving the code would break the test guarding it.
+ * `human-touch.test.ts` pins this function's source shape to protect the
+ * `created_by IS NOT NULL` fix (see the file header).
  */
 async function checkReplyGates(args: {
   db: SupabaseClient;

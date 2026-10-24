@@ -13,6 +13,7 @@ import * as React from "react";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
@@ -29,7 +30,8 @@ export default function PerformancePage() {
   const [period, setPeriod] = React.useState(thisMonth());
   const [scope, setScope] = React.useState<PerfScope>("month");
   const [pool, setPool] = React.useState("");
-  const { data: rows, isLoading } = usePerformance(period, scope);
+  const perf = usePerformance(period, scope);
+  const { data: rows, isLoading } = perf;
 
   const scopeTabs: TabBarItem[] = [
     { id: "week",  label: "This week" },
@@ -80,6 +82,9 @@ export default function PerformancePage() {
 
       {isLoading ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
+      ) : perf.isError ? (
+        /* R-1807: a failed read is an error + Try again, not an empty leaderboard. */
+        <LoadError what="The leaderboard" error={perf.error} onRetry={perf.refetch} />
       ) : (rows?.length ?? 0) === 0 ? (
         <Card className="py-2">
           <EmptyState icon="users" title="No team members yet" body="Invite teammates at /team, then their results this month show up here." />

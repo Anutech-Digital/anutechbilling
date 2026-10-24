@@ -8,6 +8,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { apiFailure } from "@/lib/errors/api-error";
 
 export async function POST(request: NextRequest) {
   const supabase = createClient();
@@ -22,11 +23,11 @@ export async function POST(request: NextRequest) {
   const photo = body?.photo as string | undefined;
   const targetId = (body?.employeeId as string | undefined) ?? me.employee_id ?? undefined;
 
-  if (!photo) return NextResponse.json({ error: "Photo zaroori hai" }, { status: 400 });
-  if (!targetId) return NextResponse.json({ error: "Pehle apna employee link karo" }, { status: 400 });
+  if (!photo) return NextResponse.json({ error: "A photo is required" }, { status: 400 });
+  if (!targetId) return NextResponse.json({ error: "Link your employee record first" }, { status: 400 });
   // Only the owner may enrol someone else's face.
   if (targetId !== me.employee_id && me.role !== "owner") {
-    return NextResponse.json({ error: "Sirf owner doosre employee ko enrol kar sakta hai" }, { status: 403 });
+    return NextResponse.json({ error: "Only the owner can enrol another employee" }, { status: 403 });
   }
 
   /* R-1001: read through the server client, scoped to the caller's tenant (employees SELECT
@@ -41,13 +42,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Employee not in your workspace" }, { status: 400 });
   }
   if (!emp.attendance_consent_at) {
-    return NextResponse.json({ error: "Pehle attendance consent zaroori hai", needsConsent: true }, { status: 428 });
+    return NextResponse.json({ error: "Attendance consent is required first", needsConsent: true }, { status: 428 });
   }
 
   const base64 = photo.includes(",") ? photo.split(",")[1] : photo;
   const buf = Buffer.from(base64, "base64");
   if (buf.length === 0 || buf.length > 3_000_000) {
-    return NextResponse.json({ error: "Photo galat ya bahut badi hai" }, { status: 400 });
+    return NextResponse.json({ error: "The photo is invalid or too large" }, { status: 400 });
   }
 
   /* R-724: _enroll is server-only in storage (20261011133000_r724_storage_roles) — with the
@@ -55,7 +56,13 @@ export async function POST(request: NextRequest) {
      clock in as them. targetId passed the owner/self + same-tenant + consent checks above. */
   const path = `${me.tenant_id}/_enroll/${targetId}.jpg`;
   const up = await admin.storage.from("attendance-selfies").upload(path, buf, { contentType: "image/jpeg", upsert: true });
-  if (up.error) return NextResponse.json({ error: up.error.message }, { status: 500 });
+  // R-1137: storage / DB text is logged, the screen gets a fixed sentence + code.
+  if (up.error) {
+    return NextResponse.json(
+      apiFailure("FACE_UPLOAD_FAILED", "Could not save the face photo — nothing was changed. Take the photo again and retry.", up.error, "attendance/face/enroll"),
+      { status: 500 },
+    );
+  }
 
   /* R-601: on the server client. employees writes are owner/manager/accountant only
      (20260930175000_role_hardening.sql), and an RLS-blocked update is silent, so an
@@ -64,7 +71,12 @@ export async function POST(request: NextRequest) {
   const { error } = await admin.from("employees")
     .update({ face_enrolled_at: new Date().toISOString(), face_ref_path: path })
     .eq("id", targetId).eq("tenant_id", me.tenant_id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    return NextResponse.json(
+      apiFailure("FACE_SAVE_FAILED", "The photo was uploaded but the employee record was not updated. Save the photo again; if it keeps failing, tell the owner.", error, "attendance/face/enroll"),
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({ ok: true });
 }

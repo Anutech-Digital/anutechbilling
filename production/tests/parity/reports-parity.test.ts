@@ -30,6 +30,7 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 import { balanceSheetFromRpc, type BalanceSheetRpcRow } from "@/lib/accounting/report-rpc";
+import { bookValueAt } from "@/lib/accounting/depreciation";
 import { assemblePnl, type PnlRpcRow, type PnlMasters, type PnLNumbers } from "@/lib/accounting/pnl-assemble";
 import {
   referenceBalanceSheet, referencePnl, referencePnlMonthlyRows,
@@ -38,7 +39,16 @@ import {
 } from "@/lib/accounting/reports-reference";
 import { buildLedger, fyPeriod, customPeriod, type LedgerPeriod } from "@/lib/accounting/ledger";
 import { statementFromRpc, type PartyLedgerRpc } from "@/lib/queries/ledger";
-import { monthlySeries } from "@/lib/accounting/pnl-charts";
+
+/* R-1647: the page's trend no longer reads report_pnl_monthly (each month is now report_pnl +
+   assemblePnl), so the old chart helper is gone; the RPC is still checked against its reference
+   month by month. */
+function byMonth(rows: readonly { date: string; amount: number }[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.date.slice(0, 7)] = (out[r.date.slice(0, 7)] ?? 0) + r.amount;
+  for (const k of Object.keys(out)) if (out[k] === 0) delete out[k];
+  return out;
+}
 
 const URL = process.env.PARITY_PG_URL ?? "";
 const PSQL = process.env.PARITY_PSQL ?? "psql";
@@ -236,7 +246,12 @@ run("S17 parity — report_* SQL functions reproduce the old TS numbers", () => 
     // Fixture ne sach me kuch ginaya — sab-zero par toEqual khaali jeet hoti (L7/L14).
     expect(want.cashAndBank).toBe(130500);
     expect(want.salaryDuesPayable).toBe(6450);
-    expect(want.fixedAssets).toBe(60000 + 9000 + 15000);
+    // R-1578: net block on as_of (cost − depreciation charged so far) + unregistered EMI at cost.
+    const asOf = d!.bsRpc.as_of;
+    expect(want.fixedAssets).toBe(
+      bookValueAt({ id: "l", name: "S17 Laptop", block: "computers", cost: 60000, put_to_use: "2026-04-20" }, asOf)
+      + bookValueAt({ id: "d", name: "S17 Desk", block: "furniture", cost: 10000, put_to_use: "2025-05-01" }, asOf)
+      + 15000);
   });
 
   it("P&L: every figure, model and project cost included", () => {
@@ -250,15 +265,9 @@ run("S17 parity — report_* SQL functions reproduce the old TS numbers", () => 
   });
 
   it("P&L monthly trend", () => {
-    const today = "2027-03-31";
     const legacy = referencePnlMonthlyRows(d!.trend.inv, d!.trend.exp, d!.trend.cn, d!.trend.dn);
-    const want = monthlySeries({ fyStartYear: 2026, ...legacy, cogsRatio: 0.3, today });
-    const got = monthlySeries({
-      fyStartYear: 2026, cogsRatio: 0.3, today,
-      revenue: d!.trend.rpc.map((m) => ({ date: `${m.month}-01`, amount: m.revenue })),
-      expenses: d!.trend.rpc.map((m) => ({ date: `${m.month}-01`, amount: m.expenses })),
-    });
-    expect(got).toEqual(want);
+    expect(byMonth(d!.trend.rpc.map((m) => ({ date: `${m.month}-01`, amount: m.revenue })))).toEqual(byMonth(legacy.revenue));
+    expect(byMonth(d!.trend.rpc.map((m) => ({ date: `${m.month}-01`, amount: m.expenses })))).toEqual(byMonth(legacy.expenses));
   });
 
   it("customer ledger: FY and a mid-year quarter (opening carries the earlier months)", () => {

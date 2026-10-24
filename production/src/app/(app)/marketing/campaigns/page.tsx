@@ -15,6 +15,7 @@ import Link from "next/link";
 import type { Route } from "next";
 
 import { Card } from "@/components/ui/card";
+import { LoadError } from "@/components/shared/load-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,7 +81,7 @@ export default function MarketingCampaignsPage() {
       {q.isLoading ? (
         <div className="grid gap-3 md:grid-cols-2">{[1, 2].map((i) => <Skeleton key={i} className="h-56" />)}</div>
       ) : q.error ? (
-        <Card className="p-4 text-sm text-red-600">{(q.error as Error).message}</Card>
+        <LoadError what="Your campaigns" error={q.error} onRetry={() => void q.refetch()} />
       ) : rows.length === 0 ? (
         <Card className="py-2">
           <EmptyState icon="target" title="No campaigns yet"
@@ -140,7 +141,7 @@ function CampaignCard({ r, today, onEdit }: { r: CampaignRow; today: string; onE
 
       <div className="space-y-1">
         <div className="flex justify-between text-xs">
-          <span className="text-ink-2">Kharcha</span>
+          <span className="text-ink-2">Spend</span>
           <span className={cn("tabular-nums", m.overBudget ? "text-red-600 font-medium" : "text-ink-2")}>
             {rupee(r.actuals.spend)}{r.budget > 0 && <> / {rupee(r.budget)} ({m.budgetUsedPct}%)</>}
           </span>
@@ -181,7 +182,7 @@ function CampaignCard({ r, today, onEdit }: { r: CampaignRow; today: string; onE
       {open && (
         <div className="space-y-3 text-xs">
           <div>
-            <p className="font-semibold text-ink-2 mb-1">Kharche</p>
+            <p className="font-semibold text-ink-2 mb-1">Expenses</p>
             {r.expenses.length === 0 ? <p className="text-ink-3">None. Tag a marketing expense (or use the Spend page) with this campaign.</p> : (
               <ul className="divide-y divide-hairline">
                 {r.expenses.map((e) => (

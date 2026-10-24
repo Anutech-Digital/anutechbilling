@@ -27,6 +27,7 @@ import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
 import type { MergedEdition } from "@/site/lib/live-catalog";
 import { enquiryReference, referenceNote } from "@/site/lib/enquiry-reference";
+import { landingForForm } from "@/site/lib/ad-attribution";
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const P = "var(--primary)";
@@ -207,7 +208,9 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
       const res = await fetch("/api/enquiry", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...ts.headers },
-        body: JSON.stringify({ fullName: contactName.trim(), companyName: company, email, phone, product: `Trial — ${labelOf(ed)}`, seats, requirement, edition: ed, term: "annual", trial: true }),
+        body: JSON.stringify({ fullName: contactName.trim(), companyName: company, email, phone, product: `Trial — ${labelOf(ed)}`, seats, requirement, edition: ed, term: "annual", trial: true,
+          /* R-1598: landing page with gclid/utm + where the visitor came from. */
+          ...landingForForm() }),
       });
       const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; ackSent?: boolean; reference?: string | null };
       if (!res.ok || !json.ok) {
@@ -353,7 +356,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
               <div style={{ display: "flex", gap: 10, marginTop: 16, padding: 12, background: "#FBFCFE", border: "1px solid var(--border-hairline)", borderRadius: 10 }}>
                 <span aria-hidden style={{ color: GREEN, fontWeight: 700, flex: "none" }}>✓</span>
                 <span style={{ fontSize: 12, lineHeight: 1.55, color: "var(--text-secondary)", minWidth: 0 }}>
-                  The vendor&apos;s own trial, set up by us on your domain as an authorised reseller — Google Premier Partner since 2014. Length and the free-user cap are the vendor&apos;s; we confirm both in writing before we start. No card is asked for and nothing is charged during the trial; when it ends you decide whether to buy at the published rate. Rates shown are India-region list rates — we add nothing on top: GST 18% (HSN {COMPANY.hsn}) is billed separately, the renewal stays at the same rate, and if a vendor changes a rate you get thirty days&apos; written notice.
+                  The vendor&apos;s own trial, set up by us on your domain as an authorised reseller — {COMPANY.partnerLine}. Length and the free-user cap are the vendor&apos;s; we confirm both in writing before we start. No card is asked for and nothing is charged during the trial; when it ends you decide whether to buy at the published rate. Rates shown are India-region list rates — we add nothing on top: GST 18% (HSN {COMPANY.hsn}) is billed separately, the renewal stays at the same rate, and if a vendor changes a rate you get thirty days&apos; written notice.
                 </span>
               </div>
               <button onClick={() => { setPlanDone(true); setOpen("detail"); }} className="btn btn-primary" style={{ marginTop: 16 }}>Continue to details →</button>

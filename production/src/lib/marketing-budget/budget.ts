@@ -1,10 +1,11 @@
 /**
  * Marketing budget & payments (R-1792, Abhishek 23 Oct 2026) — the parts with no database:
  * what each channel is called, how much is left on a budget, and which expense a paid request
- * becomes. The database enforces the same limits (migration 20261023120000); these are for
+ * becomes. The database enforces the same limits (migration 20261024063200); these are for
  * showing them before anyone presses a button.
  */
 import type { UserRole } from "@/lib/auth/roles";
+import { rupee } from "@/lib/utils";
 
 export const BUDGET_CHANNELS = [
   { value: "google-ads", label: "Google Ads" },
@@ -46,7 +47,7 @@ export function budgetPaid(payments: readonly { amount: number; status: string }
 export function paymentProblem(amount: number, left: number, budgetStatus: string): string | null {
   if (budgetStatus !== "approved") return "This budget is not approved yet — wait for the owner.";
   if (!Number.isInteger(amount) || amount <= 0) return "Enter the amount in whole rupees.";
-  if (amount > left) return `Only ₹${left.toLocaleString("en-IN")} is left on this budget — ask the owner for more budget.`;
+  if (amount > left) return `Only ${rupee(left)} is left on this budget — ask the owner for more budget.`;
   return null;
 }
 

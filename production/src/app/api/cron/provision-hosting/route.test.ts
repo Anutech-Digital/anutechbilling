@@ -33,11 +33,14 @@ const mail = vi.hoisted(() => ({ sendEmail: vi.fn(), loadOwnerAlert: vi.fn() }))
 vi.mock("@/lib/email/send", () => ({ sendEmail: mail.sendEmail }));
 vi.mock("@/lib/email/owner-alert.server", () => ({ loadOwnerAlert: mail.loadOwnerAlert }));
 
-const tables = vi.hoisted(() => ({ quotes: null as unknown, leads: null as unknown }));
+const tables = vi.hoisted(() => ({ quotes: null as unknown, leads: null as unknown, customers: null as unknown, customerEqs: [] as [string, unknown][] }));
 vi.mock("@/lib/supabase/server", () => ({
   createAdminClient: () => ({
-    from: (t: "quotes" | "leads") => ({
-      select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: tables[t], error: null }) }) }) }),
+    from: (t: "quotes" | "leads" | "customers") => ({
+      select: () => ({ eq: (c1: string, v1: unknown) => ({ eq: (c2: string, v2: unknown) => ({ maybeSingle: async () => {
+        if (t === "customers") tables.customerEqs.push([c1, v1], [c2, v2]);
+        return { data: tables[t], error: null };
+      } }) }) }),
     }),
   }),
   createClient: () => ({ auth: { getUser: async () => ({ data: { user: null } }) } }),
@@ -158,5 +161,93 @@ describe("what it sends and does", () => {
     await GET(req());
     expect(prov.noteProvisioning).toHaveBeenCalledWith("R1", "Held: [held] test-mode");
     expect(prov.markProvisioningActivated).not.toHaveBeenCalled();
+  });
+});
+
+/* R-1552 / R-1587 (18 Oct 2026) */
+const hb = vi.hoisted(() => ({ pingHeartbeat: vi.fn() }));
+vi.mock("@/lib/ops/heartbeat", () => hb);
+
+describe("R-1552: only the cron secret runs it (the route's own check, behind the gate)", () => {
+  it("no bearer → 401, nothing listed", async () => {
+    const res = await GET(new Request("https://example.invalid/api/cron/provision-hosting"));
+    expect(res.status).toBe(401);
+    expect(prov.listReadyHostingRequests).not.toHaveBeenCalled();
+  });
+  it("CRON_SECRET unset → 503, nothing listed", async () => {
+    delete process.env.CRON_SECRET;
+    expect((await GET(req())).status).toBe(503);
+    expect(prov.listReadyHostingRequests).not.toHaveBeenCalled();
+  });
+});
+
+describe("R-1587: a DMS outage is heard", () => {
+  it("DMS down for every row → 503, a [cron/provision-hosting] stderr line, heartbeat fail", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    hb.pingHeartbeat.mockReset();
+    engine.sendEngineCommand.mockResolvedValue({ kind: "unreachable", reason: "connect ECONNREFUSED" });
+    const res = await GET(req());
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body).toMatchObject({ dmsUnreachable: true, failed: 0 });
+    expect(body.errors).toEqual([expect.stringMatching(/acme\.in: could not reach the DMS engine/)]);
+    expect(err.mock.calls.some((c) => String(c[0]).startsWith("[cron/provision-hosting] errors=1"))).toBe(true);
+    expect(hb.pingHeartbeat).toHaveBeenCalledWith("provision-hosting", false);
+    err.mockRestore();
+  });
+  it("a refusal is reported as failed, still 200", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    hb.pingHeartbeat.mockReset();
+    engine.sendEngineCommand.mockResolvedValue({ kind: "refused", reason: "quota" });
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ failed: 1, refused: 1 });
+    expect(err.mock.calls.some((c) => String(c[0]).startsWith("[cron/provision-hosting] failed=1"))).toBe(true);
+    expect(hb.pingHeartbeat).toHaveBeenCalledWith("provision-hosting", false);
+    err.mockRestore();
+  });
+  it("a clean run pings the heartbeat ok", async () => {
+    hb.pingHeartbeat.mockReset();
+    engine.sendEngineCommand.mockResolvedValue({ kind: "done", result: { daUsername: "x" }, replayed: false });
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    expect(hb.pingHeartbeat).toHaveBeenCalledWith("provision-hosting", true);
+  });
+  it("the queue read throws → reported 5xx, not a silent 200", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    hb.pingHeartbeat.mockReset();
+    prov.listReadyHostingRequests.mockRejectedValue(new TypeError("fetch failed"));
+    const res = await GET(req());
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(hb.pingHeartbeat).toHaveBeenCalledWith("provision-hosting", false);
+    err.mockRestore();
+  });
+});
+
+describe("R-1771: the command names the ResellerOS customer, so DMS links its account by ID", () => {
+  beforeEach(() => {
+    tables.customerEqs = [];
+    engine.sendEngineCommand.mockResolvedValue({ kind: "done", result: { daUsername: "x" }, replayed: false });
+  });
+  it("paid quote of customer C-00007 → customer.billingCustomerId = C-00007 (read inside the row's tenant)", async () => {
+    tables.quotes = { ...(tables.quotes as object), customer_id: "cust-1" };
+    tables.customers = { id: "cust-1", customer_number: "C-00007" };
+    await GET(req());
+    const cmd = engine.sendEngineCommand.mock.calls[0][0];
+    expect(cmd.payload.customer).toMatchObject({ email: "asha@example.invalid", billingCustomerId: "C-00007" });
+    expect(tables.customerEqs).toEqual([["id", "cust-1"], ["tenant_id", "T1"]]);
+  });
+  it("no customer number yet → the customer's uuid (the id /api/v1 answers to)", async () => {
+    tables.quotes = { ...(tables.quotes as object), customer_id: "cust-1" };
+    tables.customers = { id: "cust-1", customer_number: null };
+    await GET(req());
+    expect(engine.sendEngineCommand.mock.calls[0][0].payload.customer.billingCustomerId).toBe("cust-1");
+  });
+  it("quote not linked to a customer → no field (the old email-only shape), still sent", async () => {
+    tables.customers = null;
+    await GET(req());
+    const cmd = engine.sendEngineCommand.mock.calls[0][0];
+    expect(cmd.payload.customer).not.toHaveProperty("billingCustomerId");
+    expect(cmd.payload.customer.email).toBe("asha@example.invalid");
   });
 });

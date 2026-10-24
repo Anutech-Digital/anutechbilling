@@ -110,3 +110,18 @@ describe("the order", () => {
     expect((await POST(req("{nope"))).status).toBe(400);
   });
 });
+
+/* R-1595: the panel is priced by the same bundle rule as the site cart — a yearly plan brings
+   ONE mailbox free, not every mailbox on the order. */
+describe("the yearly-hosting bundle on a panel order", () => {
+  it("Starter yearly + 10 mailboxes: one mailbox free, nine charged", async () => {
+    const { MAILBOX_YR } = await import("@/site/lib/data/domains-landing");
+    const res = await POST(req({ ...order, lines: [...order.lines, { sku: "mailbox:anutech", qty: 10 }] }));
+    expect(res.status).toBe(200);
+    const lines = row("quotes")?.line_items as { name: string; qty: number; rate: number }[];
+    const boxes = lines.filter((l) => /^Mailbox/.test(l.name));
+    expect(boxes.reduce((n, l) => n + l.qty, 0)).toBe(10);
+    expect(boxes.reduce((s, l) => s + l.qty * l.rate, 0)).toBe(9 * MAILBOX_YR);
+    expect(row("quotes")?.amount).toBe(Math.round((600 + 9 * MAILBOX_YR) * 1.18));
+  });
+});

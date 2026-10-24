@@ -19,7 +19,7 @@ import {
 import { PLATFORM_OPERATOR } from "@/lib/platform";
 
 export const metadata: Metadata = {
-  title: "Terms of Service — ResellerOS",
+  title: { absolute: "ResellerOS terms of service" },
   description: "Terms governing your use of ResellerOS.",
 };
 
@@ -30,7 +30,7 @@ const LAST_UPDATED = "26 Aug 2026";
 
 export default function TermsPage() {
   return (
-    <PublicShell title="Terms of Service" subtitle={`Last updated: ${LAST_UPDATED}`}>
+    <PublicShell title="ResellerOS terms of service" subtitle={`Last updated: ${LAST_UPDATED}`}>
       <Intro>
         These Terms govern your access to and use of <b>{PLATFORM_OPERATOR.productName}</b> — a
         software-as-a-service platform operated by <b>{PLATFORM_OPERATOR.legalName}</b>{" "}

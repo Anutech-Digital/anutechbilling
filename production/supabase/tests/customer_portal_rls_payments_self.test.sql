@@ -13,7 +13,8 @@
 --      portal_my_payments() returns own receipts only, with the display fields.
 --   2. customers: no direct row (notes / health / credit_limit unreachable); portal_my_customer()
 --      returns own profile only.
---   3. Own invoices are still readable (positive control for the impersonation).
+--   3. Invoices: the customer reads NONE directly, own included (R-1672 / R-728); the positive
+--      control for the impersonation is portal_my_payments() returning the own row.
 -- And for everyone else:
 --   4. Staff (public.users owner) still read the full payments/customers rows incl. internals;
 --      the portal readers give staff nothing.
@@ -112,8 +113,14 @@ begin
   end if;
 
   -- 3 first: positive control — if this reads 0, the "0 rows" checks below prove nothing.
+  -- R-1672: this used to read the own invoice directly. R-728 (migration 20261019013050) dropped
+  -- invoices_select_own_customer on purpose (invoice rows carry line_items[].cost since R-487);
+  -- customer invoice reads go through the R-845 definer reader. So the own-row positive control
+  -- is now the payments reader, and a direct invoice read must give 0.
+  select count(*) into v_n from public.portal_my_payments() where id = 'eeeeeeee-0000-0000-0000-000000398e0a';
+  if v_n <> 1 then raise exception 'FAIL 3: customer cannot read their own payment through portal_my_payments()'; end if;
   select count(*) into v_n from public.invoices where id = 'INV-R398-A';
-  if v_n <> 1 then raise exception 'FAIL 3: customer cannot read their own invoice'; end if;
+  if v_n <> 0 then raise exception 'FAIL 3: customer reads % invoice row(s) directly (line_items cost exposed), expected 0', v_n; end if;
 
   -- 1. payments
   select count(*) into v_n from public.payments;

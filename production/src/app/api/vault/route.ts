@@ -34,6 +34,7 @@ import { clientIp } from "@/lib/security/rate-limit";
 import { encryptSecret, isVaultConfigured, fingerprintPassword } from "@/lib/crypto/vault";
 import { assessStrength, vaultHealth, type VaultEntryHealth } from "@/lib/vault/passwords";
 import { vaultDb, UNDEFINED_TABLE, type VaultCategory } from "@/lib/vault/db";
+import { istToday } from "@/lib/dates/ist";
 import { vaultGate } from "./vault-access";
 
 export const dynamic = "force-dynamic";
@@ -75,7 +76,7 @@ export async function GET() {
   }
 
   const rows = data ?? [];
-  const today = new Date().toISOString().slice(0, 10);
+  const today = istToday();   // R-1653: IST day, not the UTC one
 
   // Health is computed from fingerprints and dates — none of which are secrets.
   const health = vaultHealth(

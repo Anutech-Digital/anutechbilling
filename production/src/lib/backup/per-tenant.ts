@@ -137,7 +137,7 @@ async function oneTenant(
      (snapshot bacha hai), par offsite_errors me jaakar subah ki digest me dikhti hai. */
   const exp = await deps.exportTenant(t.id, offsiteWindowStart(deps.now));
   if (!exp.ok) {
-    out.offsite_error = `snapshot padha nahi ja saka: ${exp.message}`;
+    out.offsite_error = `could not read the snapshot: ${exp.message}`;
     return out;
   }
   const env = offsiteEnvelope(deps.now, deps.projectRef, exp.data ? [exp.data] : []);
@@ -178,7 +178,7 @@ export async function runPerTenantBackup(deps: PerTenantDeps): Promise<PerTenant
   };
 
   const list = await deps.listTenants();
-  if (!list.ok) throw new Error(`tenants padhe nahi ja sake: ${list.message}`);
+  if (!list.ok) throw new Error(`could not read tenants: ${list.message}`);
   const tenants = list.data;
   if (tenants.length === 0) return report;
 

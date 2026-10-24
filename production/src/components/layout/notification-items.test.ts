@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildNotifications, newLeadTitle, NOTIFICATION_LIMIT, todayBoundsIST } from "./notification-items";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { buildNotifications, countUnread, newLeadTitle, notifReadStore, NOTIFICATION_LIMIT, todayBoundsIST } from "./notification-items";
 import type { NotificationRow } from "@/lib/supabase/database.types";
 import type { TaskWithLink } from "@/lib/queries/tasks";
 
@@ -57,5 +59,67 @@ describe("buildNotifications (R-247)", () => {
     });
     expect(items).toHaveLength(NOTIFICATION_LIMIT);
     expect(items.map((i) => i.id).slice(0, 2)).toEqual(["task-today", "task-old"]);
+  });
+});
+
+describe("badge = panel unread count (R-1122)", () => {
+  const tasks = [task("a", NOW - 2 * DAY), task("b", NOW - DAY), task("c", NOW)];
+
+  it("3 due tasks: Mark all read takes the count to 0, a new overdue task brings it back", () => {
+    const before = buildNotifications({ tasks, readIds: new Set(), now: NOW });
+    expect(countUnread(before)).toBe(3);
+
+    const read = new Set(before.map((n) => n.id));
+    expect(countUnread(buildNotifications({ tasks, readIds: read, now: NOW }))).toBe(0);
+
+    const more = [...tasks, task("d", NOW - 3 * DAY)];
+    expect(countUnread(buildNotifications({ tasks: more, readIds: read, now: NOW }))).toBe(1);
+  });
+
+  it("an opened task stops counting; a DB event counts until its read_at is set", () => {
+    const db = dbLead("n1", "L1");
+    const items = buildNotifications({ dbNotifs: [db], tasks, readIds: new Set(["task-a"]), now: NOW });
+    expect(countUnread(items)).toBe(3); // b, c, n1
+
+    const readDb = { ...db, read_at: new Date(NOW).toISOString() } as NotificationRow;
+    expect(countUnread(buildNotifications({ dbNotifs: [readDb], tasks, readIds: new Set(["task-a"]), now: NOW }))).toBe(2);
+  });
+});
+
+describe("shared read-state store (R-1122: bell and panel read the same set)", () => {
+  it("markRead reaches every subscriber and the next snapshot", () => {
+    const seen: number[] = [];
+    const off = notifReadStore.subscribe(() => seen.push(notifReadStore.getSnapshot().size));
+    const start = notifReadStore.getSnapshot().size;
+    notifReadStore.markRead(["task-x", "task-y"]);
+    expect(notifReadStore.getSnapshot().has("task-x")).toBe(true);
+    expect(seen).toEqual([start + 2]);
+    // Same ids again: same snapshot, no notify (useSyncExternalStore must not loop).
+    const snap = notifReadStore.getSnapshot();
+    notifReadStore.markRead(["task-x"]);
+    expect(notifReadStore.getSnapshot()).toBe(snap);
+    expect(seen).toHaveLength(1);
+    off();
+  });
+});
+
+describe("topbar badge uses the panel's count (R-1122)", () => {
+  it("does not add the raw due-task count any more", () => {
+    const src = readFileSync(join(__dirname, "topbar.tsx"), "utf8");
+    expect(src).not.toMatch(/useTaskCountDueOrOverdue/);
+    expect(src).toMatch(/useNotificationFeed\(/);
+  });
+});
+
+describe("task notification opens the linked record (R-1126)", () => {
+  const linkOf = (extra: Partial<TaskWithLink>) =>
+    buildNotifications({ tasks: [{ ...task("t", NOW - DAY), ...extra }], readIds: new Set(), now: NOW })[0].link;
+
+  it("lead, then quote, then customer, else /tasks", () => {
+    expect(linkOf({ lead_id: "L1", quote_id: "Q1" })).toBe("/leads?lead=L1");
+    expect(linkOf({ quote_id: "Q1" })).toBe("/quotes/Q1");
+    expect(linkOf({ customer_id: "C1" })).toBe("/customers/C1");
+    expect(linkOf({ quote_id: "Q1", customer_id: "C1" })).toBe("/quotes/Q1");
+    expect(linkOf({})).toBe("/tasks");
   });
 });

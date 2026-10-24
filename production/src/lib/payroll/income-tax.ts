@@ -15,6 +15,8 @@
  * (80CCD(2)) would, and is not modelled — the working says "salary as paid".
  */
 
+import { fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
+
 export interface Slab { upto: number | null; ratePct: number }
 export interface TaxYear { fyStart: number; slabs: Slab[]; standardDeduction: number; rebateLimit: number; cessPct: number }
 
@@ -32,11 +34,10 @@ export const TAX_YEARS: readonly TaxYear[] = [
 
 /** Indian FY start year for a YYYY-MM period. */
 export function fyStartOfPeriod(period: string): number {
-  const [y, m] = period.slice(0, 7).split("-").map(Number);
-  return m >= 4 ? y : y - 1;
+  return fyStartYear(period.slice(0, 7));
 }
 export function fyLabelOf(fyStart: number): string {
-  return `${fyStart}-${String((fyStart + 1) % 100).padStart(2, "0")}`;
+  return fyLabelOfYear(fyStart);
 }
 export function fyPeriods(fyStart: number): string[] {
   return Array.from({ length: 12 }, (_, i) => {
@@ -121,8 +122,8 @@ export function estimateMonthlyTds(i: TdsEstimateInput): TdsEstimate {
   const thisMonth = Math.max(0, Math.round(balanceTax / (monthsAhead + 1)));
   const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
   const note = tax.totalTax === 0
-    ? `FY ${fyLabelOf(fyStart)}: saal ka andaaza ${inr(projectedAnnual)} — taxable ${inr(tax.taxableIncome)} ≤ ${inr(taxYearFor(fyStart).rebateLimit)}, s.87A se tax shunya. TDS nahi.`
-    : `FY ${fyLabelOf(fyStart)}: saal ka andaaza ${inr(projectedAnnual)} → tax ${inr(tax.totalTax)} (cess samet) − ab tak kata ${inr(tdsSoFar)} = ${inr(Math.max(0, balanceTax))}, ${monthsAhead + 1} mahine mein → ${inr(thisMonth)}/mahina.`;
+    ? `FY ${fyLabelOf(fyStart)}: projected annual income ${inr(projectedAnnual)} — taxable ${inr(tax.taxableIncome)} ≤ ${inr(taxYearFor(fyStart).rebateLimit)}, tax is nil under s.87A. No TDS.`
+    : `FY ${fyLabelOf(fyStart)}: projected annual income ${inr(projectedAnnual)} → tax ${inr(tax.totalTax)} (incl. cess) − deducted so far ${inr(tdsSoFar)} = ${inr(Math.max(0, balanceTax))}, over ${monthsAhead + 1} month(s) → ${inr(thisMonth)}/month.`;
   return { fyStart, monthsAhead, projectedAnnual, tax, tdsSoFar, balanceTax, thisMonth, note };
 }
 

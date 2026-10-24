@@ -24,15 +24,26 @@ const sub = (over: Partial<RenewalRowLike["sub"]> = {}): RenewalRowLike["sub"] =
 });
 
 describe("R-239 bulk reminder", () => {
-  it("never targets renewed or suspended subscriptions", () => {
+  it("never targets suspended subscriptions, nor renewed ones with nothing due yet", () => {
     const t = bulkReminderTargets([
       { sub: sub({ id: "a" }), daysUntil: 5 },
-      { sub: sub({ id: "b", renewal_state: "renewed" }), daysUntil: 5 },
+      { sub: sub({ id: "b", renewal_state: "renewed", renewal_date: null }), daysUntil: 5 },
       { sub: sub({ id: "c", renewal_state: "suspended" }), daysUntil: 5 },
       { sub: sub({ id: "d" }), daysUntil: 45 },
       { sub: sub({ id: "e" }), daysUntil: -2 },
-    ]);
+    ], new Date("2026-10-15T06:30:00Z"));
     expect(t.map((r) => r.sub.id)).toEqual(["a"]);
+  });
+
+  /* R-1562: 'renewed' was excluded for good — but record_payment writes it while rolling
+     renewal_date one term on, so inside the new term's window the customer owes again. */
+  it("targets a renewed subscription once its NEW term's reminders are due", () => {
+    const today = new Date("2026-10-15T06:30:00Z");
+    const t = bulkReminderTargets([
+      { sub: sub({ id: "due", renewal_state: "renewed", renewal_date: "2026-10-20", term_months: 12 }), daysUntil: 5 },
+      { sub: sub({ id: "monthly-early", renewal_state: "renewed", renewal_date: "2026-10-25", term_months: 1 }), daysUntil: 10 },
+    ], today);
+    expect(t.map((r) => r.sub.id)).toEqual(["due"]);
   });
 
   it("confirm states the true count and the first 5 names", () => {

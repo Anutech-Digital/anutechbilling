@@ -42,6 +42,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import { ImportStatementDialog } from "@/components/features/banking/import-statement-dialog";
 import { SalaryLinesDialog, salaryLinesOf } from "@/components/features/banking/salary-lines-dialog";
 import { StatementCheckCard } from "@/components/features/banking/statement-check-card";
+import { BankImportsSection } from "@/components/features/banking/bank-imports-section";
 import { checkStatement } from "@/lib/banking/statement-check";
 import { ReconcileTransactionDialog } from "@/components/features/banking/reconcile-transaction-dialog";
 import { UnreconcileDialog } from "@/components/features/banking/unreconcile-dialog";
@@ -75,7 +76,8 @@ export default function BankAccountDetailPage() {
   const { data: transactions, isLoading: txnLoading } = txnQ;
   const autoReconcile = useAutoReconcile();
   /* R-254: billing reads the statement; only owner / manager / accountant may import or reconcile. */
-  const canWrite = canWriteMoney(useCurrentUser().data?.role);
+  const role = useCurrentUser().data?.role;
+  const canWrite = canWriteMoney(role);
 
   const [tab,           setTab]           = React.useState<FilterTab>("all");
   const [search,        setSearch]        = React.useState("");
@@ -156,7 +158,7 @@ export default function BankAccountDetailPage() {
     }
     setTab("unmatched");
     if (target) setReconcileTxn(target);
-    else toast("Us amount ki koi unmatched bank line nahi mili — neeche se manually reconcile karo.");
+    else toast("No unmatched bank line for that amount — reconcile it manually below.");
     window.history.replaceState(null, "", window.location.pathname);
   }, [transactions]);
 
@@ -314,6 +316,15 @@ export default function BankAccountDetailPage() {
         />
       )}
 
+      {/* R-1623: every import of this account — and "Ye import hatao" for a wrong one. */}
+      <BankImportsSection
+        accountId={account.id}
+        transactions={allTxns}
+        openingBalance={openingBal}
+        role={role}
+        onUnreconcileLine={(t) => setUnreconcileTxn(t)}
+      />
+
       {/* Filter tabs + one-tap auto-reconcile */}
       <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
         <TabBar items={tabs} value={tab} onChange={(v) => setTab(v as FilterTab)} />
@@ -338,7 +349,12 @@ export default function BankAccountDetailPage() {
               onClick={() => autoReconcile.mutate(account.id)}
               title="Auto-match every unmatched line to its expense / salary / payment where the match is unambiguous"
             >
-              {autoReconcile.isPending ? "Matching…" : `Auto-reconcile (${counts.unmatched})`}
+              {/* R-1657: runs on the server in chunks of 500 — show how far a big account has got. */}
+              {autoReconcile.isPending
+                ? (autoReconcile.progress?.checked
+                    ? `Matching… ${autoReconcile.progress.checked} of ${counts.unmatched} checked`
+                    : "Matching…")
+                : `Auto-reconcile (${counts.unmatched})`}
             </Button>
           </div>
         )}

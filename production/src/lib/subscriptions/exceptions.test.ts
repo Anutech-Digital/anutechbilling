@@ -225,6 +225,20 @@ describe("payment due date", () => {
     expect(f?.tone).toBe("muted");   // quiet while it is not yet close
   });
 
+  /* R-1689: T-M1 / T-M3 / T-N3 — sold on credit, so an invoice with a due date exists and
+     payment_due_date is empty. The row read "₹44,132 due · No payment due date". */
+  it("a credit / unpaid invoice row shows PAY BY the invoice's due date, not 'No payment due date'", () => {
+    const f = flag({ ...OWING, payment_due_date: null, pay_by: "2099-11-03" });
+    expect(f?.label).toMatch(/^Pay by 3 Nov 2099/);
+    expect(f?.label).not.toMatch(/No payment due date/);
+    expect(f?.title).toMatch(/invoice falls due/i);
+  });
+
+  it("an overdue unpaid invoice turns the chip DANGER even with no agreed date", () => {
+    const f = flag({ ...OWING, payment_due_date: null, pay_by: "2000-01-01" });
+    expect(f?.tone).toBe("danger");
+  });
+
   it("always names money, so it can never read as a renewal date", () => {
     /* The reported defect: the row carries a renewal date in the next column, so a
        bare "4 days left" beside it reads as another lifecycle date. */

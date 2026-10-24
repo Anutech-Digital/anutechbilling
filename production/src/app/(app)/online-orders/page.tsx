@@ -31,12 +31,18 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { rupee } from "@/lib/utils";
-import { WEBSITE_ORDER_FILTER, orderChannel, isTrialOrder, trialWindow } from "@/lib/online-orders/sources";
+import { orderChannel, isTrialOrder, trialWindow } from "@/lib/online-orders/sources";
 import { cn } from "@/lib/utils";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 import { createClient } from "@/lib/supabase/client";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { fetchAllRowsIn, type PageQuery } from "@/lib/ops/fetch-all";
+import { ORDERS_PAGE, fetchOrderLeadsPage, fetchMonthOrderLeads } from "./order-query";
+import { contactSearchHidden } from "@/lib/contacts/search-columns";
 import Link from "next/link";
 import { invoiceHref } from "./invoice-links";
 import { orderPaymentView, paymentByLead, type OrderPayment, type QuotePaymentRow } from "./order-payment";
+import { orderMoney, pickOrderQuote, type Fact, type OrderMoney, type OrderQuoteRow, type OrderInvoiceRow, type OrderPaymentRow } from "./order-money";
 import { ordersEmptyState } from "./empty-state";
 import { orderDrawerActions, type DrawerAction } from "./drawer-actions";
 import { useLeadOutcome } from "@/lib/leads/use-outcome";
@@ -69,10 +75,9 @@ interface Order {
   contact:     { name: string; email: string; phone: string };
   tier:        string;
   seats:       number;
-  billing:     "annual" | "monthly" | null;
-  monthlyRate: number;
-  lineTotal:   number | null;
-  gst:         number | null;
+  /** R-1120: every money row comes from the order's quote / GST invoice / payment — never the lead value. */
+  money:       OrderMoney;
+  /** The stored total (invoice, else quote) — null when unknown; list, KPIs and drawer read it. */
   total:       number | null;
   trialDay:    number | null;
   /** The trial's own length — hosting 15, Workspace 14 — from the lead's dates. */
@@ -83,7 +88,6 @@ interface Order {
   paid:        boolean;
   /** R-351: drawer Invoice row text when there is no invoice to link. */
   invoiceText: string;
-  razorpayId:  string | null;
   /** R-083: the GST invoice raised for this order's quote (R-079), or null if none yet. */
   invoiceNo:   string | null;
   status:      OrderStatus;
@@ -170,6 +174,7 @@ function OrderDetailDrawer({
   const isPaid = order.type === "paid";
   const steps  = isPaid ? PAID_STEPS : TRIAL_STEPS;
   const s      = STATUS_META[order.status];
+  const m      = order.money;
   /* R-236: every button does its real job or is not shown — see drawer-actions.ts. */
   const actions = orderDrawerActions({
     type: order.type, status: order.status, trialDay: order.trialDay,
@@ -249,16 +254,19 @@ function OrderDetailDrawer({
             <DrawerRow label="Seats">{order.seats}</DrawerRow>
             {isPaid ? (
               <>
-                <DrawerRow label="Billing">
-                  {order.billing === "annual" ? "Annual" : "Monthly"}
-                </DrawerRow>
-                <DrawerRow label="Rate/seat">{rupee(order.monthlyRate)}/month</DrawerRow>
-                <DrawerRow label="Line total">{rupee(order.lineTotal)}</DrawerRow>
-                <DrawerRow label="GST (18%)">{rupee(order.gst)}</DrawerRow>
+                {/* R-1120: stored facts only — "—" plus the reason when a fact is not stored. */}
+                <DrawerRow label="Billing"><FactText fact={m.billing} /></DrawerRow>
+                <DrawerRow label="Subtotal"><FactText fact={m.subtotal} money /></DrawerRow>
+                {m.discountPct != null && <DrawerRow label="Discount">{m.discountPct}%</DrawerRow>}
+                <DrawerRow label="Taxable value"><FactText fact={m.taxable} money /></DrawerRow>
+                <DrawerRow label={m.gstLabel}><FactText fact={m.gst} money /></DrawerRow>
+                <DrawerRow label="GST split"><FactText fact={m.gstSplit} /></DrawerRow>
                 <DrawerRow label="Total">
-                  <span className="font-semibold text-amber">{rupee(order.total)}</span>
+                  {m.total.value != null
+                    ? <span className="font-semibold text-amber">{rupee(m.total.value)}</span>
+                    : <FactText fact={m.total} money />}
                 </DrawerRow>
-                <DrawerRow label="Razorpay ID" mono>{order.razorpayId}</DrawerRow>
+                <DrawerRow label="Razorpay ID" mono={m.razorpayId.value != null}><FactText fact={m.razorpayId} /></DrawerRow>
                 <DrawerRow label="Invoice" mono>
                   {order.invoiceNo ? (
                     <Link href={invoiceHref(order.invoiceNo) as never} className="text-indigo-ink hover:underline" title="Open GST invoice">
@@ -355,6 +363,18 @@ function DrawerSection({
       {children}
     </div>
   );
+}
+
+/** R-1120: a stored value, or "—" with the short reason it is unknown. */
+function FactText({ fact, money }: { fact: Fact<string> | Fact<number>; money?: boolean }) {
+  if (fact.value == null) {
+    return (
+      <span className="font-sans text-ink-3">
+        —<span className="ml-1.5 text-xs">{"why" in fact ? fact.why : ""}</span>
+      </span>
+    );
+  }
+  return <>{money && typeof fact.value === "number" ? rupee(fact.value) : fact.value}</>;
 }
 
 function DrawerRow({
@@ -478,15 +498,15 @@ function nextActionFromLead(l: LeadRow, paid: boolean): string {
   }
 }
 
-function leadToOrder(l: LeadRow, payment?: OrderPayment): Order {
+function leadToOrder(l: LeadRow, payment?: OrderPayment, money?: OrderMoney): Order {
   const isTrial = isTrialOrder(l);
   const pay     = orderPaymentView(payment);
   const win     = isTrial ? trialWindow(l) : null;
   const tier    = tierFromPlan(l.plan);
   const seats   = l.seats ?? 0;
-  const lineTotal = isTrial ? null : (l.value ?? null);
-  const gst       = lineTotal ? Math.round(lineTotal * 0.18) : null;
-  const total     = lineTotal && gst ? lineTotal + gst : null;
+  /* R-1120: was lead.value × 1.18 — now the quote's / invoice's stored total, or unknown. */
+  const m         = money ?? orderMoney(undefined, undefined, []);
+  const total     = isTrial ? null : m.total.value;
   const day       = trialDay(l);
 
   return {
@@ -504,16 +524,12 @@ function leadToOrder(l: LeadRow, payment?: OrderPayment): Order {
     },
     tier,
     seats,
-    billing:     "annual",
-    monthlyRate: lineTotal && seats ? Math.round(lineTotal / seats / 12) : 0,
-    lineTotal,
-    gst,
+    money:       m,
     total,
     trialDay:    day,
     trialLength: win?.length ?? null,
     trialEndsOn: win ? win.endsOn.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : null,
     paid:        pay.paid,
-    razorpayId:  null,    // future: from payments table
     invoiceNo:   pay.invoiceNo,
     invoiceText: pay.invoiceText,
     status:      statusFromLead(l, pay.paid),
@@ -528,6 +544,86 @@ function leadToOrder(l: LeadRow, payment?: OrderPayment): Order {
     nextAction:  nextActionFromLead(l, pay.paid),
     lead:        l,
   };
+}
+
+/** A paged read as { data, error } — a failed side lookup is shown as "not loaded", never thrown. */
+async function settle<T>(p: Promise<T[]>): Promise<{ data: T[]; error: unknown }> {
+  try { return { data: await p, error: null }; } catch (error) { return { data: [], error }; }
+}
+
+/**
+ * Website-order leads → Orders, with each order's quote, GST invoice and recorded payments
+ * (R-083 / R-351 / R-1120). R-1637: the list page and the month's orders both go through
+ * here, so "Paid this month" reads money exactly as the rows do. null = cancelled.
+ */
+async function ordersFromLeads(
+  supabase: ReturnType<typeof createClient>,
+  leads: LeadRow[],
+  signal?: { cancelled: boolean },
+): Promise<Order[] | null> {
+  /* R-083: the invoice R-079 issues on payment sits on the order's quote
+     (quotes.lead_id -> quotes.invoice_id). R-351: the same rows say whether the order is
+     PAID (quotes.payment_status) — the one source for the badge and the steps. A failure
+     here shows nothing as paid (never a guess) — the orders themselves still show. */
+  let payments = new Map<string, OrderPayment>();
+  /* R-1120: the drawer's money rows read the same quote rows, plus the order quote's GST
+     invoice and its recorded payments (the Razorpay payment id). */
+  const money = new Map<string, OrderMoney>();
+  let noQuoteWhy: string | undefined;
+  const leadIds = leads.map((l) => l.id);
+  if (leadIds.length) {
+    const { data: qRows, error: qErr } = await settle(fetchAllRowsIn<OrderQuoteRow, string>(leadIds, (ids, from, to) => supabase
+      .from("quotes")
+      .select("id, lead_id, payment_status, invoice_id, created_at, amount, subtotal, tax_rate, discount_pct, billing_cycle")
+      .in("lead_id", ids)
+      .order("id", { ascending: true })
+      .range(from, to) as unknown as PageQuery<OrderQuoteRow>));
+    if (signal?.cancelled) return null;
+    if (qErr) {
+      console.error("[online-orders] payment/invoice lookup failed:", qErr);
+      noQuoteWhy = "Could not load the quote — reload the page";
+    } else {
+      const rows = (qRows ?? []) as OrderQuoteRow[];
+      payments = paymentByLead(rows as QuotePaymentRow[]);
+      const byLead = new Map<string, OrderQuoteRow[]>();
+      for (const r of rows) {
+        if (!r.lead_id) continue;
+        byLead.set(r.lead_id, [...(byLead.get(r.lead_id) ?? []), r]);
+      }
+      const picked = new Map<string, OrderQuoteRow>();
+      for (const [lead, list] of byLead) {
+        const q = pickOrderQuote(list);
+        if (q) picked.set(lead, q);
+      }
+      const quoteIds = [...picked.values()].map((q) => q.id);
+      const invoiceIds = [...picked.values()].map((q) => q.invoice_id).filter((v): v is string => !!v);
+      const [invRes, payRes] = await Promise.all([
+        settle(fetchAllRowsIn<OrderInvoiceRow, string>(invoiceIds, (ids, from, to) => supabase
+          .from("invoices").select("id, amount, taxable_value, tax_amount, tax_rate, inter_state")
+          .in("id", ids).order("id", { ascending: true }).range(from, to) as unknown as PageQuery<OrderInvoiceRow>)),
+        settle(fetchAllRowsIn<OrderPaymentRow, string>(quoteIds, (ids, from, to) => supabase
+          .from("payments").select("id, quote_id, method, reference, status, received_at")
+          .in("quote_id", ids).order("id", { ascending: true }).range(from, to) as unknown as PageQuery<OrderPaymentRow>)),
+      ]);
+      if (signal?.cancelled) return null;
+      if (invRes.error) console.error("[online-orders] invoice lookup failed:", invRes.error);
+      if (payRes.error) console.error("[online-orders] payment lookup failed:", payRes.error);
+      const invoices = new Map(((invRes.data ?? []) as OrderInvoiceRow[]).map((i) => [i.id, i]));
+      const pays = (payRes.data ?? []) as OrderPaymentRow[];
+      for (const [lead, q] of picked) {
+        const m = orderMoney(q, q.invoice_id ? invoices.get(q.invoice_id) : undefined, pays);
+        /* A failed side lookup is "not loaded", never "none". */
+        if (q.invoice_id && invRes.error) {
+          const why = { value: null, why: "Could not load the invoice — reload the page" } as const;
+          m.taxable = why; m.gst = why; m.gstSplit = why; m.total = why;
+        }
+        if (payRes.error && m.razorpayId.value == null) m.razorpayId = { value: null, why: "Could not load payments — reload the page" };
+        money.set(lead, m);
+      }
+    }
+  }
+
+  return leads.map((l) => leadToOrder(l, payments.get(l.id), money.get(l.id) ?? orderMoney(undefined, undefined, [], noQuoteWhy)));
 }
 
 export default function OnlineOrdersPage() {
@@ -545,71 +641,108 @@ export default function OnlineOrdersPage() {
   // and rendered "No orders yet" — a real load error masquerading as an empty
   // buy-flow. Track the error + expose a retry instead.
   const [loadError, setLoadError] = React.useState(false);
+  const { data: me, isLoading: meLoading } = useCurrentUser();
+  const tenantId = me?.tenantId ?? null;
+  /* R-1821: a role that sees masked contacts searches without the email column. */
+  const hideContacts = contactSearchHidden(me?.role);
+
+  /* R-1637:the search runs in the database (order-query.ts) a moment after the last key,
+     and the list grows ORDERS_PAGE at a time. "Load more" belongs to the search it was
+     pressed on — a new search starts again at one page. */
+  const [serverSearch, setServerSearch] = React.useState(() => search.trim());
+  React.useEffect(() => {
+    const t = setTimeout(() => setServerSearch(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+  const [more, setMore] = React.useState({ q: "", limit: ORDERS_PAGE });
+  const limit = more.q === serverSearch ? more.limit : ORDERS_PAGE;
+  const [total, setTotal] = React.useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = React.useState(false);
 
   // Fetch real leads with source from the buy page (paid enquiries + trials).
-  // RLS scopes by tenant automatically; no need to pass tenant_id here.
   const load = React.useCallback(async (signal?: { cancelled: boolean }) => {
-    setLoading(true);
     setLoadError(false);
     const supabase = createClient();
-    const { data, error } = await supabase
-      .from("leads")
-      .select("id, company, contact_name, contact_email, contact_phone, plan, seats, value, stage, source, notes, created_at, follow_up_date, domain, utm_source, trial_started_at, trial_expires_at, owner:users!leads_owner_id_fkey(full_name)")
-      .or(WEBSITE_ORDER_FILTER)
-      .order("created_at", { ascending: false })
-      .limit(100);
-
-    if (signal?.cancelled) return;
-    if (error) {
+    let leads: LeadRow[];
+    try {
+      const page = await fetchOrderLeadsPage<LeadRow>(supabase, { tenantId, search: serverSearch, limit, hideContacts });
+      leads = page.rows;
+      if (signal?.cancelled) return;
+      setTotal(page.total);
+    } catch (error) {
+      if (signal?.cancelled) return;
       console.error("[online-orders] fetch failed:", error);
       setLoadError(true);
       setLoading(false);
+      setLoadingMore(false);
       return;
     }
-    const leads = (data ?? []) as unknown as LeadRow[];
-
-    /* R-083: the invoice R-079 issues on payment sits on the order's quote
-       (quotes.lead_id -> quotes.invoice_id). R-351: the same rows say whether the order is
-       PAID (quotes.payment_status) — the one source for the badge and the steps. A failure
-       here shows nothing as paid (never a guess) — the orders themselves still show. */
-    let payments = new Map<string, OrderPayment>();
-    const leadIds = leads.map((l) => l.id);
-    if (leadIds.length) {
-      const { data: qRows, error: qErr } = await supabase
-        .from("quotes")
-        .select("lead_id, payment_status, invoice_id, created_at")
-        .in("lead_id", leadIds);
-      if (signal?.cancelled) return;
-      if (qErr) console.error("[online-orders] payment/invoice lookup failed:", qErr);
-      else payments = paymentByLead((qRows ?? []) as QuotePaymentRow[]);
-    }
-
+    const next = await ordersFromLeads(supabase, leads, signal);
+    if (!next || signal?.cancelled) return;
     // Real orders only — no demo/seed data. An empty buy-flow correctly shows
     // an empty state, never fabricated revenue.
-    setOrders(leads.map((l) => leadToOrder(l, payments.get(l.id))));
+    setOrders(next);
     setLoading(false);
-  }, []);
+    setLoadingMore(false);
+  }, [tenantId, serverSearch, limit, hideContacts]);
 
   React.useEffect(() => {
+    if (meLoading) return;
     const signal = { cancelled: false };
     void load(signal);
     return () => { signal.cancelled = true; };
-  }, [load]);
+  }, [load, meLoading]);
 
-  const openOrder = orders.find((o) => o.id === openId) ?? null;
+  const loadMore = () => {
+    setLoadingMore(true);
+    setMore({ q: serverSearch, limit: limit + ORDERS_PAGE });
+  };
+
+  /* R-1637: every order created this IST month — "New today" and "Paid this month" count
+     these, never the loaded page. null while loading or when the read failed. */
+  const [monthOrders, setMonthOrders] = React.useState<Order[] | null>(null);
+  const [monthError, setMonthError] = React.useState(false);
+  React.useEffect(() => {
+    if (meLoading) return;
+    const signal = { cancelled: false };
+    void (async () => {
+      const supabase = createClient();
+      try {
+        const leads = await fetchMonthOrderLeads<LeadRow>(supabase, { tenantId });
+        const next = await ordersFromLeads(supabase, leads, signal);
+        if (!next || signal.cancelled) return;
+        setMonthOrders(next);
+        setMonthError(false);
+      } catch (error) {
+        if (signal.cancelled) return;
+        console.error("[online-orders] month orders failed:", error);
+        setMonthError(true);
+      }
+    })();
+    return () => { signal.cancelled = true; };
+  }, [tenantId, meLoading]);
+
+  /* R-1637: "New today" and "Paid this month" list the month's orders (their tiles count
+     those); every other view lists the loaded pages, already searched by the database. */
+  const monthFocus = (focus === "today" || focus === "revenue-month") && monthOrders != null;
+  const base = monthFocus ? monthOrders : orders;
+  const openOrder = base.find((o) => o.id === openId) ?? orders.find((o) => o.id === openId) ?? null;
 
   // Filtered list
-  const filtered = orders.filter((o) => {
+  const filtered = base.filter((o) => {
     if (tab === "paid"   && !o.paid)              return false;
     if (tab === "trial"  && o.type !== "trial")   return false;
     if (tab === "issues" && o.status !== "issue") return false;
     if (focus && !orderInFocus(o, focus)) return false;
-    if (search) {
-      const q = search.toLowerCase();
+    /* The loaded pages come back already searched; the month's orders are searched here. */
+    if (monthFocus && search.trim()) {
+      const q = search.trim().toLowerCase();
+      const id = q.replace(/^ord-?/, "") || q;
       if (
         !o.company.toLowerCase().includes(q) &&
-        !o.id.toLowerCase().includes(q) &&
+        !o.id.toLowerCase().includes(id) &&
         !o.contact.email.toLowerCase().includes(q) &&
+        !o.contact.name.toLowerCase().includes(q) &&
         !o.domain.toLowerCase().includes(q)
       )
         return false;
@@ -619,17 +752,17 @@ export default function OnlineOrdersPage() {
 
   // KPI stats — all derived from the live `orders` state (real DB rows
   // merged with the seed demo data at top of the file).
-  const today      = orders.filter((o) => orderInFocus(o, "today")).length;
+  const today      = (monthOrders ?? orders).filter((o) => orderInFocus(o, "today")).length;
   const provis     = orders.filter((o) => orderInFocus(o, "provisioning")).length;
   const issues     = orders.filter((o) => orderInFocus(o, "issue")).length;
   const trialEx    = orders.filter((o) => orderInFocus(o, "converting")).length;
   /* Only money actually received — a cart order awaiting payment is not revenue. */
   const awaiting   = orders.filter((o) => o.status === "awaiting-payment");
   const converting = orders.filter((o) => o.status === "trial-converting");
-  const revenueMtd = orders.filter((o) => orderInFocus(o, "revenue-month")).reduce(
-    (s, o) => s + (o.total ?? 0),
-    0,
-  );
+  /* R-1637: summed over EVERY order of the month (fetchMonthOrderLeads), not the loaded page. */
+  const revenueMtd = monthOrders
+    ? monthOrders.filter((o) => orderInFocus(o, "revenue-month")).reduce((s, o) => s + (o.total ?? 0), 0)
+    : null;
 
   /* R-350: each tab / search / filter gets its own empty message — "No orders yet" only on All. */
   const empty = ordersEmptyState({
@@ -640,7 +773,7 @@ export default function OnlineOrdersPage() {
   });
 
   const tabItems: TabBarItem[] = [
-    { id: "all",    label: `All · ${orders.length}` },
+    { id: "all",    label: `All · ${total ?? orders.length}` },
     { id: "paid",   label: `Paid · ${orders.filter((o) => o.paid).length}` },
     { id: "trial",  label: `Trials · ${orders.filter((o) => o.type === "trial").length}` },
     { id: "issues", label: `Issues · ${issues}` },
@@ -747,8 +880,8 @@ export default function OnlineOrdersPage() {
         />
         <KPI
           label="Revenue MTD"
-          value={rupee(revenueMtd, { compact: true })}
-          trend="Paid this month"
+          value={revenueMtd == null ? "—" : rupee(revenueMtd, { compact: true })}
+          trend={monthError ? "Couldn't load — reload the page" : "Paid this month"}
           trendKind="neutral"
           icon="rupee"
           onClick={() => focusOn("revenue-month")}
@@ -792,7 +925,7 @@ export default function OnlineOrdersPage() {
             icon="alert"
             title="Couldn't load your orders"
             body="Something went wrong fetching orders from the buy flow. This is a load error, not an empty inbox — check your connection and try again."
-            action={<Button variant="primary" icon="refresh" onClick={() => void load()}>Retry</Button>}
+            action={<Button variant="primary" icon="refresh" onClick={() => { setLoading(true); void load(); }}>Retry</Button>}
             compact
           />
         ) : filtered.length === 0 ? (
@@ -830,13 +963,15 @@ export default function OnlineOrdersPage() {
                         <p className="font-mono text-2xs text-ink-3 truncate">{o.domain}</p>
                       </div>
                       <div className="text-right shrink-0">
-                        {o.total ? (
+                        {o.total != null ? (
                           <>
                             <p className="font-serif text-base tabular-nums text-ink">{rupee(o.total)}</p>
                             <p className="text-3xs text-ink-3">{o.seats} seats</p>
                           </>
-                        ) : (
+                        ) : o.type === "trial" ? (
                           <Badge kind="warning" size="sm">Trial</Badge>
+                        ) : (
+                          <p className="text-xs text-ink-3" title={o.money.total.value == null ? o.money.total.why : undefined}>—</p>
                         )}
                       </div>
                     </div>
@@ -891,8 +1026,8 @@ export default function OnlineOrdersPage() {
                   return (
                     <tr
                       key={o.id}
-                      className="cursor-pointer border-b border-hairline last:border-0 hover:bg-muted/20"
-                      onClick={() => setOpenId(o.id)}
+                      {...rowActivation(() => setOpenId(o.id))}
+                      className={cn("cursor-pointer border-b border-hairline last:border-0 hover:bg-muted/20", ROW_FOCUS_RING)}
                     >
                       {/* Order ID */}
                       <td className="px-4 py-3">
@@ -934,11 +1069,10 @@ export default function OnlineOrdersPage() {
                       <td className="px-4 py-3">
                         <p className="text-xs text-ink">{o.tier}</p>
                         <p className="text-2xs text-ink-3">
-                          {o.billing === "annual"
-                            ? "Annual"
-                            : o.billing === "monthly"
-                              ? "Monthly"
-                              : `${o.trialLength ?? 14}-day trial`}
+                          {/* R-1120: the quote's own billing cycle — it said "Annual" for every paid order. */}
+                          {o.type === "trial"
+                            ? `${o.trialLength ?? 14}-day trial`
+                            : o.money.billing.value ?? "—"}
                         </p>
                       </td>
 
@@ -953,8 +1087,10 @@ export default function OnlineOrdersPage() {
                           <span className="font-medium text-ink">
                             {rupee(o.total)}
                           </span>
-                        ) : (
+                        ) : o.type === "trial" ? (
                           <span className="italic text-ink-3">Trial</span>
+                        ) : (
+                          <span className="text-ink-3" title={o.money.total.value == null ? o.money.total.why : undefined}>—</span>
                         )}
                       </td>
 
@@ -989,6 +1125,15 @@ export default function OnlineOrdersPage() {
             </table>
           </div>
           </>
+        )}
+        {/* R-1637: the list is read a page at a time — the rest is one click away. */}
+        {!loading && !loadError && !monthFocus && total != null && orders.length < total && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-hairline px-5 py-3">
+            <p className="text-xs text-ink-3">Showing {orders.length} of {total} orders</p>
+            <Button variant="default" size="sm" loading={loadingMore} onClick={loadMore}>
+              Load more
+            </Button>
+          </div>
         )}
       </Card>
 

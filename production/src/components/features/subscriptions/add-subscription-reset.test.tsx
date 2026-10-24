@@ -153,7 +153,7 @@ function mountWithPickedCustomer() {
   const prefill: LeadPrefill = {
     leadId: "lead-1", customerId: "c-1", customerName: "Demo Co",
     domain: "example.test", contactName: "", contactEmail: "", contactPhone: "",
-    plan: "", seats: null, billingChoice: "annual_yearly",
+    plan: "", seats: null, billingChoice: "annual_yearly", gstin: "", stateCode: "",
   };
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(

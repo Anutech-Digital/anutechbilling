@@ -9,6 +9,15 @@ const Q: QuoteToSend = {
   validityDays: 7, alreadySent: false,
 };
 const text = (l: { text: string }[]) => l.map((c) => c.text).join(" | ");
+
+describe("R-1679: sending a quote whose validity has ended", () => {
+  it("warns that the accept link will refuse it — never 'Valid for −1 days'", () => {
+    const l = sendQuoteConsequences({ ...Q, validityDays: -1 });
+    expect(text(l.filter((c) => c.tone === "warning"))).toMatch(/validity has already ended/);
+    expect(text(l)).not.toMatch(/Valid for -?\d/);
+    expect(text(l)).not.toMatch(/no validity period/);
+  });
+});
 const warns = (l: { tone: string; text: string }[]) => l.filter((c) => c.tone === "warning");
 
 describe("sendQuoteConsequences", () => {

@@ -10,6 +10,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { KPI } from "@/components/shared/kpi";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { useDealRows } from "@/lib/queries/deals";
 import { summarizeDealStrip } from "@/lib/deals/pipeline-summary";
 import { canSeeDeals } from "@/lib/deals/access";
@@ -48,7 +49,7 @@ export function DealsStrip({ role }: { role: string | null | undefined }) {
       </div>
       {error ? (
         <p className="text-sm text-rose-ink rounded-lg border border-hairline bg-paper p-3">
-          Couldn't load deals — {(error as Error).message}. This is not ₹0; open <Link href={"/deals" as Route} className="underline">/deals</Link>.
+          Couldn't load deals. {loadErrorBody(error)} This is not ₹0; open <Link href={"/deals" as Route} className="underline">/deals</Link>.
         </p>
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

@@ -23,7 +23,7 @@
  * Isliye yahan andar paise (integer) me ginte hain aur milaan ₹1 ki chhoot se hota hai
  * (s.288B rounding) — ek hi jagah, ek hi unit.
  */
-import { utcDateISO } from "@/lib/dates/ist";
+import { utcDateISO, fyStartYear, fyCodeOfYear } from "@/lib/dates/ist";
 
 export type BookingStatus = "F" | "P" | "U" | "O" | "M" | "Z" | null;
 
@@ -164,8 +164,8 @@ export function parse26asText(text: string): ParsedCredits {
 
   if (entries.length === 0) {
     throw new Error(
-      "Is file me Form 26AS PART-I ki koi TDS entry nahi mili. TRACES se 26AS 'Text' format me " +
-      "download karke (zip khol kar .txt) dobara daalein — PDF ya HTML yahan nahi chalta.",
+      "No Form 26AS PART-I TDS entry was found in this file. Download 26AS from TRACES in 'Text' format " +
+      "(unzip it to get the .txt) and upload it again — PDF or HTML does not work here.",
     );
   }
   return { source: "26as", pan, financialYear, asOn, entries };
@@ -187,7 +187,7 @@ export function parseAisJson(input: string | unknown): ParsedCredits {
     try {
       root = JSON.parse(input.replace(/^\uFEFF/, ""));
     } catch {
-      throw new Error("Ye AIS JSON file nahi lagti — JSON padh nahi paaye. Compliance portal se AIS 'JSON' download karke dobara daalein.");
+      throw new Error("This does not look like an AIS JSON file — the JSON could not be read. Download the AIS 'JSON' from the Compliance portal and upload it again.");
     }
   } else {
     root = input;
@@ -238,8 +238,8 @@ export function parseAisJson(input: string | unknown): ParsedCredits {
 
   if (entries.length === 0) {
     throw new Error(
-      "Is AIS JSON me koi TDS entry nahi mili (TAN + tax deducted + date wali). Ho sakta hai file encrypted ho " +
-      "ya TIS ho — AIS utility se decrypt ki hui JSON, ya TRACES se 26AS text file daalein.",
+      "No TDS entry (with TAN + tax deducted + date) was found in this AIS JSON. The file may be encrypted " +
+      "or a TIS — upload the JSON decrypted with the AIS utility, or the 26AS text file from TRACES.",
     );
   }
   return { source: "ais", pan, financialYear, asOn: null, entries };
@@ -294,9 +294,7 @@ const TOLERANCE_PAISE = 100; // ₹1 — s.288B rounding
 
 /** "2026-05-20" → "FY2627" (tds_receivable.fiscal_year ka format). */
 export function fyCodeOf(iso: string): string {
-  const [y, m] = iso.split("-").map(Number);
-  const s = m >= 4 ? y : y - 1;
-  return `FY${String(s % 100).padStart(2, "0")}${String((s + 1) % 100).padStart(2, "0")}`;
+  return fyCodeOfYear(fyStartYear(iso));
 }
 
 function days(a: string, b: string): number {

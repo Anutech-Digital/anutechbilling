@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useUpdateTenant } from "@/lib/queries/tenant";
 import { gstStateFromGstin, isValidGstin, validateGstin } from "@/lib/utils";
-import { GST_STATE_OPTIONS, initialStateCode, normalizeStateCode, resolveCompanyState } from "./company-state";
+import { GST_STATE_OPTIONS, companyGstinStateConflict, initialStateCode, normalizeStateCode, resolveCompanyState } from "./company-state";
 import { InvoiceCodeField, useInvoiceCode, useSaveInvoiceCode, type InvoiceCodeState } from "./invoice-code-field";
 import { invoiceCodeProblem, normalizeInvoiceCode, suggestInvoiceCode } from "./invoice-code";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
@@ -38,6 +38,8 @@ import { useItems, useLoadDefaultCatalog } from "@/lib/queries/items";
 import { productCount } from "@/lib/items/catalog-state";
 import type { ChecklistItem } from "./done-checklist";
 import { StepDone } from "./done-screen";
+import { canSaveSetup } from "./owner-only";
+import { OwnerOnlyNote } from "./owner-only-note";
 import { useGoogleResellerStatus, useRazorpayStatus } from "./integration-status";
 import { paymentDetailsPatch, paymentDetailsProblem } from "./payment-details";
 import { DONE_STEP, wizardMove } from "./wizard-nav";
@@ -180,6 +182,7 @@ function StepCompany({
               values to tenants in one go. */}
           <GstinVerifyCard
             gstin={data.gstin}
+            party="company"
             cached={me?.tenantGstinVerification ?? null}
             cachedAt={me?.tenantGstinVerifiedAt}
             onFillForm={(v) => {
@@ -212,6 +215,19 @@ function StepCompany({
               Needed for the right GST on your invoices.
             </p>
           )}
+          {/* R-1128: a state that contradicts the GSTIN is refused on Continue — say so here, with the fix. */}
+          {(() => {
+            const conflict = companyGstinStateConflict(data.state, data.gstin);
+            if (!conflict) return null;
+            return (
+              <div id="setup-state-conflict" role="alert" className="mt-1 space-y-1">
+                <p className="text-3xs text-rose">{conflict.message}</p>
+                <Button type="button" variant="default" size="sm" onClick={() => update("state", conflict.gstinCode)}>
+                  Set state from GSTIN ({conflict.gstinState})
+                </Button>
+              </div>
+            );
+          })()}
         </Field>
         <Field htmlFor="setup-registered-address" label="Registered address" className="sm:col-span-2">
           <Input id="setup-registered-address"
@@ -576,6 +592,8 @@ function StepImport({
 export default function SetupPage() {
   const { data: me, isLoading: meLoading } = useCurrentUser();
   const updateTenant = useUpdateTenant();
+  // R-1798: wait for the role before deciding — no flash of the note for the owner.
+  const canSave = meLoading || canSaveSetup(me?.role);
 
   const [step, setStep] = React.useState(0);
   const [data, setData] = React.useState<WizardData>({
@@ -654,6 +672,15 @@ export default function SetupPage() {
       toast.error("Choose your state", { description: "It decides IGST vs CGST + SGST on every invoice." });
       return;
     }
+    // R-1128: the chosen state must match the GSTIN's first two digits.
+    const conflict = companyGstinStateConflict(data.state, data.gstin);
+    if (conflict) {
+      toast.error("State does not match your GSTIN", {
+        description: conflict.message,
+        action: { label: `Use ${conflict.gstinState}`, onClick: () => update("state", conflict.gstinCode) },
+      });
+      return;
+    }
     // R-260: optional UPI / bank — blank is fine, a wrong UPI ID or IFSC is not.
     const payment = {
       upiVpa: data.upiVpa, bankName: data.bankName, accountName: data.accountName,
@@ -710,14 +737,15 @@ export default function SetupPage() {
   };
 
   const goTo = (target: number) => {
-    const move = wizardMove(step, target);
+    const move = wizardMove(step, target, canSave);
     if (move === "save-company") { void saveCompanyAndAdvance(); return; }
     if (move === "finish")       { void finishSetup();           return; }
     setStep(Math.max(0, Math.min(STEPS.length - 1, target)));
   };
   const next = () => goTo(step + 1);
   // R-250: Continue stays off on step 1 until a state is chosen (or a valid GSTIN gives one).
-  const companyStateReady = resolveCompanyState(data.state, data.gstin) !== null;
+  // R-1798: a non-owner saves nothing, so a missing state does not hold them on step 1.
+  const companyStateReady = !canSave || resolveCompanyState(data.state, data.gstin) !== null;
   const back = () => setStep((s) => Math.max(0, s - 1));
   // R-260: Skip on the last step used to bypass finishSetup — it now goes through goTo.
   const skip = () => goTo(step + 1);
@@ -753,6 +781,8 @@ export default function SetupPage() {
               : "Let's get your reseller business operational in 5 quick steps."}
           </p>
         </div>
+
+        {!canSave && <OwnerOnlyNote />}
 
         {/* ── Step progress ── */}
         <div className="mb-8">
@@ -825,7 +855,11 @@ export default function SetupPage() {
 
         {/* ── Step content ── */}
         <Card className="p-4 sm:p-6">
-          {step === 0 && <StepCompany  data={data} update={update} codeState={codeState} codeError={codeError} payError={payError} />}
+          {step === 0 && (
+            <fieldset disabled={!canSave} className="m-0 min-w-0 border-0 p-0">
+              <StepCompany data={data} update={update} codeState={codeState} codeError={codeError} payError={payError} />
+            </fieldset>
+          )}
           {step === 1 && <StepImport   data={data} update={update} />}
           {step === 2 && <StepRazorpay />}
           {step === 3 && <StepCsp />}
@@ -857,6 +891,7 @@ export default function SetupPage() {
               >
                 {busy
                   ? "Saving…"
+                  : !canSave ? "Next"
                   : step === 3 ? "Finish setup" : "Continue"}
                 <Icon name="arrow_right" size={14} />
               </Button>

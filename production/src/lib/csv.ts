@@ -24,6 +24,8 @@
  *    between a usable export and one the CA emails back.
  */
 
+import { logExport } from "@/lib/export-log";
+
 /** Leading characters a spreadsheet will treat as the start of a formula. */
 const FORMULA_LEAD = /^[=+@\t\r]/;
 
@@ -83,6 +85,8 @@ export function downloadCSV(
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  // R-1006: record who exported what (export_log). Never throws, never blocks the file.
+  void logExport({ what: filename, rowCount: rows.length, format: "csv" });
 }
 
 /* ── Reading a CSV, not writing one ─────────────────────────────────────────

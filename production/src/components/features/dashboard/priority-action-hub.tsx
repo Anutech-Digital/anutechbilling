@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
+import type { Route } from "next";
+import { drillHref } from "@/lib/navigation/drilldown";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
@@ -14,7 +16,11 @@ interface PriorityActionHubProps {
   expiringRenewalsCount: number;
   expiringRenewalsValue: number;
   draftQuotesCount: number;
+  /** R-1473: lib/accounting/receivables-due toChaseSummary().total — subscription dues +
+   *  project invoices, the same figure as Companies "To collect" (+ dues with no company). */
   pendingCollectValue: number;
+  /** chaseNote() — what the figure is made of and why "Still owed" (invoices) can differ. */
+  pendingCollectNote?: string;
 }
 
 export function PriorityActionHub({
@@ -22,6 +28,7 @@ export function PriorityActionHub({
   expiringRenewalsValue,
   draftQuotesCount,
   pendingCollectValue,
+  pendingCollectNote,
 }: PriorityActionHubProps) {
   /* R-253: billing sees the Dashboard but cannot open /quotes — middleware sends it home. */
   const { data: me } = useCurrentUser();
@@ -104,14 +111,17 @@ export function PriorityActionHub({
             <div className="space-y-1">
               <StatusPill status="paid" label="Collections" size="sm" />
               <h4 className="text-sm font-semibold text-foreground mt-2">
+                {/* R-1473: this is the "to chase" figure (subscription dues + project
+                    invoices), not the invoice-based "Still owed" — it said "All invoices
+                    paid" at ₹0 even with unpaid invoices on file. */}
                 {pendingCollectValue > 0
-                  ? `${rupee(pendingCollectValue)} outstanding`
-                  : "All invoices paid"}
+                  ? `${rupee(pendingCollectValue)} to collect`
+                  : "Nothing to chase"}
               </h4>
               <p className="text-xs text-muted-foreground">
                 {pendingCollectValue > 0
-                  ? "Send payment reminders or record received bank payments."
-                  : "No pending receivables across active customer accounts."}
+                  ? (pendingCollectNote ?? "Subscription dues + project invoices.")
+                  : "No subscription dues or unpaid project invoices."}
               </p>
             </div>
             <div className="h-10 w-10 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 grid place-items-center shrink-0">
@@ -120,11 +130,12 @@ export function PriorityActionHub({
           </div>
           <div className="mt-4 flex items-center justify-between border-t border-emerald-500/20 pt-3">
             <span className="text-2xs font-medium text-muted-foreground">
-              Payments
+              Companies to collect from
             </span>
+            {/* R-118 tile == list: opens Companies → "Has receivables", whose total is this figure. */}
             <Button asChild size="sm" variant="outline" className="h-7 text-xs border-emerald-500/30 hover:bg-emerald-500/10">
-              <Link href="/payments">
-                View payments <Icon name="chevron_right" size={14} className="ml-1" />
+              <Link href={drillHref("customersUnpaid") as Route}>
+                Who owes <Icon name="chevron_right" size={14} className="ml-1" />
               </Link>
             </Button>
           </div>

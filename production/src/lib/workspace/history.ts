@@ -104,6 +104,25 @@ export type PopStateOutcome =
   | { kind: "left_workspace"; url: string };
 
 /**
+ * Is this `popstate` a step between pages the App Router made — or only the browser moving to
+ * a `#section` on the same page?
+ *
+ * R-1506 (17 Oct 2026, Pawan on staging): "See how migration works" (`<a href="#move">` on
+ * /hosting) made the page flicker and go nowhere. A plain `#anchor` click is a same-document
+ * fragment navigation: the browser scrolls to the section and fires `popstate` with a NULL
+ * history state. The popstate handler treated that like Back and called
+ * `router.replace("/hosting")` — the hash was dropped, the page went back to the top and
+ * re-fetched. Measured on staging: click → popstate(/hosting#move) → replaceState(/hosting),
+ * scrollY 0.
+ *
+ * Every entry the App Router creates carries `__NA: true` in its state (next/dist app-router,
+ * HistoryUpdater); Next's own popstate handler ignores the rest, and so must ours.
+ */
+export function isRouterHistoryEntry(state: unknown): boolean {
+  return typeof state === "object" && state !== null && (state as { __NA?: unknown }).__NA === true;
+}
+
+/**
  * Decide what a `popstate` means.
  *
  * @param url        Where the browser just navigated.

@@ -20,6 +20,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
+import { describeError } from "@/lib/errors/toast-error";
 
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -31,13 +32,22 @@ import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { CONTACT_FOR_PRICING, isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
 import { tierAnnualPrice, annualTotals } from "./tier-price";
+import { workspaceGstLabel } from "./gst-heads";
+import { postJson, NOT_REACHED } from "./post-json";
+import { checkCoupon, recheckCoupon, type AppliedCoupon } from "./coupon-check";
 import { buyNowSchema,buyerCompany, BUY_ANNUAL_NOTE, type BuyNowForm } from "./buy-now-schema";
 import { normalizeGstinInput } from "@/site/lib/checkout-details";
 import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database.types";
 import { thanksUrl } from "./thanks/thanks-url";
+import { saveWorkspacePayment } from "./thanks/payment-handoff";
+import { fromRazorpayHandler } from "@/lib/checkout/confirm-payment";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
-import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay } from "@/site/lib/config";
+import {
+  COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay,
+  SHOW_PREMIER_PARTNER, PARTNER_LINE, PARTNER_BADGE, PARTNER_SHORT,
+} from "@/site/lib/config";
+import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 // ──────────────────────────────────────────────────────────────────────
 // Site promo — fetched from /api/public/site-promo/current. Updates as
@@ -156,6 +166,33 @@ const phoneDisplay = () => whatsappDisplay(WHATSAPP_NUMBER);
 
 function whatsappLink(message: string): string {
   return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+}
+
+/**
+ * R-1137: a failed step on this public page — the server's sentence (raw DB text is
+ * translated by describeError), why nothing happened, and a button to reach us.
+ */
+function buyFail(apiError: string | undefined, fallback: string, why: string): void {
+  const d = describeError(apiError ? { message: apiError } : null, fallback);
+  toast.error(d.message, {
+    description: `${why} ${d.translated && d.description ? d.description : "Try again, or contact us and we'll finish it for you."}`,
+    action: WHATSAPP_READY
+      ? { label: "WhatsApp us", onClick: () => { window.open(whatsappLink(`Hi, I got "${d.message}" on the Google Workspace buy page.`), "_blank", "noopener,noreferrer"); } }
+      : { label: "Email us", onClick: () => { window.location.href = `mailto:${COMPANY.supportEmail}?subject=${encodeURIComponent("Help with Google Workspace purchase")}`; } },
+    duration: 10_000,
+  });
+}
+
+/**
+ * R-1110: our server was not reached (offline, timeout, a proxy's HTML 502). Say so, say what
+ * did NOT happen, and offer the same step again — the form keeps everything typed.
+ */
+function notReached(nothingDone: string, retry: () => void): void {
+  toast.error(NOT_REACHED, {
+    description: `${nothingDone} Check your internet connection and try again.`,
+    action: { label: "Try again", onClick: retry },
+    duration: 15_000,
+  });
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -513,71 +550,6 @@ const COMPARE_CATEGORIES: CompareCategory[] = [
 ];
 
 // ──────────────────────────────────────────────────────────────────────
-// Customer social proof data
-// PLACEHOLDER: replace with real customer logos + permission to display
-// before public launch. For now, illustrative Indian SME names + cities.
-// ──────────────────────────────────────────────────────────────────────
-interface CustomerLogo { name: string; city: string; }
-const CUSTOMER_LOGOS: CustomerLogo[] = [
-  { name: "Mehta Exports",     city: "Surat"      },
-  { name: "Acme Pvt Ltd",      city: "Pune"       },
-  { name: "Sharma Logistics",  city: "Delhi NCR"  },
-  { name: "Singhania & Co",    city: "Indore"     },
-  { name: "Rao Engineering",   city: "Bengaluru"  },
-  { name: "Patel Trading",     city: "Ahmedabad"  },
-];
-
-interface Testimonial {
-  name:    string;
-  role:    string;
-  company: string;
-  city:    string;
-  seats:   number;
-  quote:   string;
-  metric:  string;
-  initials: string;
-}
-const TESTIMONIALS: Testimonial[] = [
-  {
-    name:    "Rohit Mehta",
-    role:    "Managing Director",
-    company: "Mehta Exports",
-    city:    "Surat",
-    seats:   80,
-    quote:   "Switched from Microsoft 365 in one weekend. Pardeep's team did the entire migration — zero downtime, zero confusion. Old emails, calendars, drive — everything came across.",
-    metric:  "Saved ₹4.2L in year one",
-    initials: "RM",
-  },
-  {
-    name:    "Anita Rao",
-    role:    "CFO",
-    company: "Rao Engineering",
-    city:    "Bengaluru",
-    seats:   35,
-    quote:   "Phone-pickup support actually picks up. That's rare in this industry. The GST invoice has proper HSN codes — our accountant approved on first try.",
-    metric:  "Phone answered in under 30 sec",
-    initials: "AR",
-  },
-  {
-    name:    "Vikas Singhania",
-    role:    "Owner",
-    company: "Singhania & Co",
-    city:    "Indore",
-    seats:   12,
-    quote:   "I paid Saturday evening. Monday morning my whole team was on Gmail with custom domain. No tickets, no waiting, no English-only docs. Just done.",
-    metric:  "Live in 36 hours, weekend included",
-    initials: "VS",
-  },
-];
-
-// Gate the social-proof strip (logos + testimonials) OFF until real, permissioned
-// customer content exists. The names/quotes/₹-savings above are illustrative
-// placeholders — showing fabricated testimonials on a live checkout is a trust +
-// compliance risk (and against our "honest, not flattery" rule). Flip to `true`
-// once Pardeep supplies real, consented logos + testimonials.
-const SHOW_SOCIAL_PROOF = false;
-
-// ──────────────────────────────────────────────────────────────────────
 // Post-purchase timeline — removes ghosting fear
 // ──────────────────────────────────────────────────────────────────────
 interface TimelineStep { time: string; title: string; body: string; }
@@ -638,6 +610,8 @@ function GoogleGMark({ size = 32 }: { size?: number }) {
 
 /** Google Cloud "Sell · Premier Partner · Google Workspace" circular badge. */
 function PremierPartnerBadge({ size = 140 }: { size?: number }) {
+  // R-1602: shown only once the partner certificate is on file (site/lib/config.ts flag).
+  if (!SHOW_PREMIER_PARTNER) return null;
   return (
     <div
       style={{
@@ -722,8 +696,8 @@ function PremierBadgeShowcase() {
 function FounderHero({ waMessage }: { waMessage: string }) {
   return (
     <div className="relative w-full max-w-[440px]">
-      {/* Premier Partner badge — small corner accent, top-left */}
-      <div className="absolute -top-5 -left-5 z-20">
+      {/* Premier Partner badge — small corner accent, top-left (R-1602: behind the flag) */}
+      {SHOW_PREMIER_PARTNER && <div className="absolute -top-5 -left-5 z-20">
         <div
           className="rounded-full p-1"
           style={{
@@ -736,7 +710,7 @@ function FounderHero({ waMessage }: { waMessage: string }) {
             <PremierPartnerBadge size={84} />
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Main card — white surface, generous padding, subtle border */}
       <div
@@ -756,7 +730,7 @@ function FounderHero({ waMessage }: { waMessage: string }) {
             <div className="font-serif text-xl text-ink leading-tight">Pardeep Sharma</div>
             <div className="text-sm text-ink-3 mt-0.5">Founder, ANUTECH DIGITAL PVT LTD</div>
             <div className="text-2xs text-amber-ink mt-1 font-medium">
-              Google Premier Partner · since 2014
+              {PARTNER_LINE}
             </div>
           </div>
         </div>
@@ -996,8 +970,8 @@ function HeroVisual() {
         </div>
       </div>
 
-      {/* TOP-LEFT — Premier Partner badge (credential stamp, extends out) */}
-      <div className="absolute top-0 left-0 z-20">
+      {/* TOP-LEFT — Premier Partner badge (credential stamp, extends out; R-1602: behind the flag) */}
+      {SHOW_PREMIER_PARTNER && <div className="absolute top-0 left-0 z-20">
         <div
           className="rounded-full p-1"
           style={{
@@ -1010,7 +984,7 @@ function HeroVisual() {
             <PremierPartnerBadge size={96} />
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* TOP-RIGHT — Custom email card (Workspace's #1 value prop, made
           prominent: bigger pad, larger email font, all-mono so it reads as
@@ -1348,7 +1322,7 @@ export function BuyWorkspaceClient({
               color: "#FCD34D",
             }}
           >
-            <span style={{ fontSize: 11 }}>★</span> Google Premier Partner
+            <span style={{ fontSize: 11 }}>★</span> {PARTNER_BADGE}
           </div>
           <Button asChild variant="primary" size="sm">
             <a href="#enquiry">Get started</a>
@@ -1411,7 +1385,7 @@ export function BuyWorkspaceClient({
 
             <p className="text-base text-ink-3 leading-relaxed mb-7 max-w-xl">
               <b className="text-ink">Indian SMEs</b> trust us with their email.
-              Google Premier Partner since 2014. GST invoice, Hindi support,
+              {PARTNER_LINE}. GST invoice, Hindi support,
               <b className="text-ink"> one person who picks up the phone.</b>
             </p>
 
@@ -1615,7 +1589,7 @@ export function BuyWorkspaceClient({
             </div>
 
             {/* Tertiary trial CTA — small, low-commit. "No card needed" is the
-                key SME hesitation killer; the 14-day promise is industry-standard. */}
+                key SME hesitation killer; the trial-length promise is industry-standard. */}
             <div className="mb-4">
               <button
                 type="button"
@@ -1623,7 +1597,7 @@ export function BuyWorkspaceClient({
                 className="inline-flex items-center gap-1.5 text-sm text-ink hover:text-amber transition-colors underline underline-offset-4 decoration-dotted"
               >
                 <Icon name="rocket" size={14} className="text-amber" />
-                Or start a 14-day free trial
+                Or start a {WORKSPACE_TRIAL_DAYS}-day free trial
                 <span className="text-ink-3 text-xs">(no credit card needed)</span>
               </button>
             </div>
@@ -1700,7 +1674,7 @@ export function BuyWorkspaceClient({
                   <CompareBullet positive>Razorpay · UPI · NEFT · card · net-banking</CompareBullet>
                   <CompareBullet positive>Domain verification + DNS setup done by us</CompareBullet>
                   <CompareBullet positive>Annual upfront with single invoice</CompareBullet>
-                  <CompareBullet positive>Direct Google escalation via Premier Partner status</CompareBullet>
+                  {SHOW_PREMIER_PARTNER && <CompareBullet positive>Direct Google escalation via {PARTNER_SHORT} status</CompareBullet>}
                 </ul>
               </div>
 
@@ -1727,40 +1701,6 @@ export function BuyWorkspaceClient({
           </Card>
         </div>
       </section>
-
-      {/* ── Customer logo strip + testimonials — gated until real content exists ── */}
-      {SHOW_SOCIAL_PROOF && (
-        <>
-          <section className="border-y border-hairline bg-paper-2/30 py-10">
-            <div className="max-w-[1240px] mx-auto px-6">
-              <p className="text-center text-xs uppercase tracking-[0.14em] text-ink-3 mb-6 font-medium">
-                Trusted by Indian businesses — from 5-person studios to 200-person factories
-              </p>
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6 items-center">
-                {CUSTOMER_LOGOS.map((c) => (
-                  <LogoChip key={c.name} name={c.name} city={c.city} />
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="max-w-[1240px] mx-auto px-6 py-16 md:py-20">
-            <div className="text-center mb-12">
-              <div className="text-2xs uppercase tracking-[0.12em] font-semibold text-ink-3 mb-3">
-                Real customers · real outcomes
-              </div>
-              <h2 className="font-serif text-3xl md:text-4xl tracking-tight">
-                How others switched
-              </h2>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {TESTIMONIALS.map((t) => (
-                <TestimonialCard key={t.name} testimonial={t} />
-              ))}
-            </div>
-          </section>
-        </>
-      )}
 
       {/* ── Pricing section ── */}
       <section id="pricing" className="max-w-[1240px] mx-auto px-6 py-16 md:py-20">
@@ -1939,7 +1879,7 @@ export function BuyWorkspaceClient({
             />
             <FaqItem
               q="What if I want to cancel?"
-              a="On the annual plan you pay for the full year — users can be added any time but not removed, and it cannot be cancelled mid-year (this is Google's own rule for annual plans). A flexible (monthly) plan can be stopped at the end of any month. Not sure? Start with the free 14-day trial."
+              a={`On the annual plan you pay for the full year — users can be added any time but not removed, and it cannot be cancelled mid-year (this is Google's own rule for annual plans). A flexible (monthly) plan can be stopped at the end of any month. Not sure? Start with the free ${WORKSPACE_TRIAL_DAYS}-day trial.`}
             />
             <FaqItem
               q="Do you support Google Workspace Migrate tool?"
@@ -1977,7 +1917,7 @@ export function BuyWorkspaceClient({
             <div className="font-serif text-sm">ANUTECH DIGITAL PVT LTD</div>
           </div>
           <div className="text-xs text-ink-3 font-mono">
-            Made in India · GSTIN registered · Google Premier Partner
+            Made in India · GSTIN registered · {PARTNER_BADGE}
           </div>
         </div>
       </footer>
@@ -2266,51 +2206,6 @@ function AppChip({ app }: { app: WsApp }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Customer logo chip — text-based brand "logo" with city tag.
-// PLACEHOLDER: in production, swap for actual SVG logos in /public/logos/
-// ──────────────────────────────────────────────────────────────────────
-function LogoChip({ name, city }: { name: string; city: string }) {
-  return (
-    <div className="text-center">
-      <div className="font-serif text-base md:text-lg text-ink leading-tight">{name}</div>
-      <div className="text-3xs uppercase tracking-wider text-ink-3 mt-1">{city}</div>
-    </div>
-  );
-}
-
-// ──────────────────────────────────────────────────────────────────────
-// Testimonial card — avatar + quote + metric badge
-// ──────────────────────────────────────────────────────────────────────
-function TestimonialCard({ testimonial: t }: { testimonial: Testimonial }) {
-  return (
-    <Card className="p-6 flex flex-col h-full">
-      {/* Metric badge — the bold outcome number */}
-      <div className="inline-flex items-center self-start gap-1.5 px-3 py-1 mb-4 rounded-full bg-emerald-soft text-emerald text-xs font-semibold">
-        <Icon name="trending_up" size={13} />
-        <span>{t.metric}</span>
-      </div>
-
-      {/* Quote */}
-      <blockquote className="text-sm text-ink-2 leading-relaxed mb-5 flex-1">
-        &ldquo;{t.quote}&rdquo;
-      </blockquote>
-
-      {/* Attribution */}
-      <div className="flex items-center gap-3 pt-4 border-t border-hairline">
-        <div className="w-10 h-10 rounded-full bg-amber-soft grid place-items-center font-serif text-base text-amber-ink flex-shrink-0">
-          {t.initials}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="font-medium text-ink text-sm leading-tight">{t.name}</div>
-          <div className="text-2xs text-ink-3 mt-0.5">{t.role}, {t.company}</div>
-          <div className="text-3xs text-ink-3 mt-0.5">{t.city} · {t.seats} users</div>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-// ──────────────────────────────────────────────────────────────────────
 // Compare bullet — check or dash
 // ──────────────────────────────────────────────────────────────────────
 function CompareBullet({ positive, children }: { positive?: boolean; children: React.ReactNode }) {
@@ -2367,7 +2262,7 @@ function FaqItem({ q, a }: { q: string; a: string }) {
 // ──────────────────────────────────────────────────────────────────────
 // ──────────────────────────────────────────────────────────────────────
 // Trial dialog — separate flow from the GST-quote enquiry.
-// Lands at stage='trial' (qualified intent), free 14-day access, requires
+// Lands at stage='trial' (qualified intent), free WORKSPACE_TRIAL_DAYS access, requires
 // the customer's domain so we can provision in Google Reseller Console.
 // ──────────────────────────────────────────────────────────────────────
 const trialFormSchema = z.object({
@@ -2401,18 +2296,23 @@ function TrialDialog({
     },
   });
 
+  const ts = useTurnstile(); // R-737
   async function onSubmit(values: TrialForm) {
-    const res = await fetch("/api/public/trial/workspace", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify(values),
-    });
-    const json = await res.json() as { success?: boolean; error?: string };
-    if (!res.ok || json.error) {
-      toast.error(json.error ?? "Could not start trial. Please try again.");
+    const r = await postJson<{ success: boolean; error: string }>("/api/public/trial/workspace", values, ts.headers);
+    if (!r.reached) {
+      ts.reset();
+      notReached("Your trial was not requested.", () => { void handleSubmit(onSubmit)(); });
       return;
     }
-    toast.success(`Trial requested! Pardeep will WhatsApp you ${SLA.firstReply}.`);
+    const json = r.json;
+    if (!r.ok || json.error) {
+      ts.reset();
+      buyFail(json.error, "Could not start the trial.", "Your trial was not requested yet.");
+      return;
+    }
+    /* R-1116: the company answers, not one named person — and only promise WhatsApp when the
+       site's WhatsApp number is live (WHATSAPP_READY). */
+    toast.success(`Trial requested! Our team will ${WHATSAPP_READY ? "WhatsApp" : "call or email"} you ${SLA.firstReply}.`);
     onClose();
   }
 
@@ -2431,7 +2331,7 @@ function TrialDialog({
             <div>
               <div className="text-3xs uppercase tracking-wider text-emerald mb-1 font-semibold inline-flex items-center gap-1.5">
                 <Icon name="rocket" size={11} />
-                14-day free trial · no card needed
+                {WORKSPACE_TRIAL_DAYS}-day free trial · no card needed
               </div>
               <DialogTitle className="font-serif text-2xl leading-tight">
                 Try <GWInline /> free
@@ -2451,7 +2351,7 @@ function TrialDialog({
 
           {/* Trial promise band */}
           <div className="mb-5 p-3 rounded-lg bg-emerald-soft/40 border border-emerald/20 text-xs text-ink-2 leading-relaxed">
-            <b className="text-ink">First call:</b> Pardeep WhatsApps you {SLA.firstReply} to verify
+            <b className="text-ink">First call:</b> Our team {WHATSAPP_READY ? "WhatsApps" : "calls or emails"} you {SLA.firstReply} to verify
             domain. <br />
             <b className="text-ink">Live:</b> Your team is on Workspace {SLA.workspaceLive}.
             <br />
@@ -2493,6 +2393,7 @@ function TrialDialog({
             </FormField>
 
             <BusyPanel active={isSubmitting} title="Starting your Google Workspace trial" steps={["Saving your trial request", "Letting our team know, so we can set it up"]} />
+            {ts.widget}
             <Button
               type="submit"
               variant="primary"
@@ -2500,11 +2401,11 @@ function TrialDialog({
               style={{ background: "#10B981", borderColor: "#059669" }}
               loading={isSubmitting}
             >
-              Start my 14-day trial
+              Start my {WORKSPACE_TRIAL_DAYS}-day trial
             </Button>
 
             <p className="text-2xs text-ink-3 text-center leading-relaxed">
-              No credit card upfront. No auto-charge. Cancel anytime in 14 days.
+              No credit card upfront. No auto-charge. Cancel anytime in {WORKSPACE_TRIAL_DAYS} days.
             </p>
           </form>
         </div>
@@ -2536,15 +2437,16 @@ function EnquiryDialog({
     // customer it converts into) carries both — state_code drives IGST vs CGST+SGST.
     const stateCode = values.stateCode || undefined;
     const state     = stateCode ? `${GST_STATE_BY_CODE[stateCode]} (${stateCode})` : undefined;
-    const res = await fetch("/api/public/enquiry/workspace", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json", ...ts.headers },
-      body:    JSON.stringify({ ...values, stateCode, state }),
-    });
-    const json = await res.json() as { success?: boolean; error?: string };
-    if (!res.ok || json.error) {
+    const r = await postJson<{ success: boolean; error: string }>("/api/public/enquiry/workspace", { ...values, stateCode, state }, ts.headers);
+    if (!r.reached) {
       ts.reset();
-      toast.error(json.error ?? "Could not submit enquiry. Please try again.");
+      notReached("We did not receive your enquiry.", () => { void handleSubmit(onSubmit)(); });
+      return;
+    }
+    const json = r.json;
+    if (!r.ok || json.error) {
+      ts.reset();
+      buyFail(json.error, "Could not send your enquiry.", "We did not receive it yet.");
       return;
     }
     toast.success(`Got it! We'll call you ${SLA.firstReply}.`);
@@ -2724,18 +2626,7 @@ function loadRazorpayCheckout(): Promise<RazorpayCtor> {
 // ──────────────────────────────────────────────────────────────────────
 // Schema lives in ./buy-now-schema (R-226: tested on its own).
 
-/**
- * Coupon validation state — owned by the dialog. Updated each time the
- * visitor hits "Apply". The successful shape carries the server-computed
- * pre-GST rupee discount so we can re-render the price breakdown.
- */
-interface AppliedCoupon {
-  code:           string;
-  discount:       number;       // pre-GST rupees off
-  discount_type:  "percent" | "flat";
-  discount_value: number;
-  description?:   string | null;
-}
+/* Coupon validation (AppliedCoupon, checkCoupon, recheckCoupon) lives in ./coupon-check (R-1630). */
 
 interface CheckoutApiResponse {
   success?:        boolean;
@@ -2794,15 +2685,15 @@ function BuyNowDialog({
   const [seats, setSeats] = React.useState<number>(Math.max(1, initialSeats));
   const calc = React.useMemo(() => calcForTier(tier, seats), [tier, seats]);
 
-  // Coupon state — owned locally, cleared if visitor edits tier/seats
-  // (server re-validates anyway, but we don't want a stale "applied" pill
-  //  showing when the underlying basis has changed).
+  // Coupon state — owned locally, re-checked if visitor edits tier/seats
+  // (R-1630; server re-validates at checkout anyway).
   const [couponInput,    setCouponInput]    = React.useState("");
   const [couponApplied,  setCouponApplied]  = React.useState<AppliedCoupon | null>(null);
   const [couponError,    setCouponError]    = React.useState<string | null>(null);
   const [validatingCoupon, setValidatingCoupon] = React.useState(false);
   /* R-023: true while Razorpay's window is open — the dialog steps aside (see the return). */
   const [rzpOpen, setRzpOpen] = React.useState(false);
+  const ts = useTurnstile(); // R-737: the checkout POST carries the bot-check token
 
   // Pre-promo subtotal + discount line — needed for the breakdown card.
   // (calc.annual is the post-promo pre-GST subtotal, calc.savings is the
@@ -2836,13 +2727,27 @@ function BuyNowDialog({
   const anyDiscount       = sitePromoOff > 0 || couponPreGstOff > 0;
   const totalToPay        = anyDiscount ? finalTotal : calc.total;
 
-  // When tier or seats change, clear any applied coupon. The discount math
-  // depends on gross_amount, so a stale apply could mislead the visitor.
+  /* R-1630: when tier or seats change, check the applied code again for the new basket
+     (the discount depends on gross_amount). Still valid → it stays with the new discount;
+     not valid → removed, and the error line under the code box says why. It used to be
+     cleared silently, so the discount vanished from the total with no word.
+     Waits 400 ms so clicking "+" five times asks once; a newer change wins (seq). */
+  const recheckSeq = React.useRef(0);
   React.useEffect(() => {
-    if (couponApplied) {
-      setCouponApplied(null);
-      setCouponError(null);
-    }
+    if (!couponApplied) return;
+    const seq = ++recheckSeq.current;
+    const t = setTimeout(async () => {
+      setValidatingCoupon(true);
+      const next = await recheckCoupon(couponApplied, {
+        code: couponApplied.code, tier: tier.id, seats, gross_amount: postSitePromoSubtot,
+      });
+      if (seq !== recheckSeq.current) return;
+      setCouponApplied(next.applied);
+      setCouponError(next.error);
+      if (!next.applied) setCouponInput(couponApplied.code); // the code stays in the box to re-apply
+      setValidatingCoupon(false);
+    }, 400);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tierId, seats]);
 
@@ -2852,44 +2757,22 @@ function BuyNowDialog({
       setCouponError("Enter a code first");
       return;
     }
+    recheckSeq.current++; // an explicit Apply overrides a pending re-check
     setValidatingCoupon(true);
     setCouponError(null);
     try {
-      const res = await fetch("/api/public/coupons/validate", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code,
-          tier:         tier.id,
-          seats,
-          gross_amount: postSitePromoSubtot,  // stacks BELOW site promo
-        }),
+      const r = await checkCoupon({
+        code,
+        tier:         tier.id,
+        seats,
+        gross_amount: postSitePromoSubtot,  // stacks BELOW site promo
       });
-      const json = await res.json();
-      if (!json.ok) {
-        const friendly: Record<string, string> = {
-          invalid_code:        "That code doesn't exist",
-          inactive:            "This coupon is no longer active",
-          expired:             "This coupon has expired",
-          not_started:         "This coupon isn't active yet",
-          maxed_out:           "This coupon has reached its usage limit",
-          wrong_tier:          json.required_tier ? `Code is only for the ${json.required_tier} tier` : "Code doesn't apply to this tier",
-          min_seats_not_met:   `Needs at least ${json.min_seats ?? "more"} seats`,
-          max_seats_exceeded:  `Code only works up to ${json.max_seats ?? "fewer"} seats`,
-          bad_request:         json.message ?? "Invalid request",
-          server_error:        "Server error — try again",
-        };
-        setCouponError(friendly[json.reason as string] ?? "Could not apply this code");
+      if (!r.ok) {
+        setCouponError(r.message);
         setCouponApplied(null);
         return;
       }
-      setCouponApplied({
-        code:           json.code,
-        discount:       json.discount,
-        discount_type:  json.discount_type,
-        discount_value: json.discount_value,
-        description:    json.description,
-      });
+      setCouponApplied(r.coupon);
       setCouponError(null);
     } catch {
       setCouponError("Network error — try again");
@@ -2899,6 +2782,8 @@ function BuyNowDialog({
   }
 
   function removeCoupon() {
+    recheckSeq.current++; // a pending re-check must not put it back
+    setValidatingCoupon(false);
     setCouponApplied(null);
     setCouponInput("");
     setCouponError(null);
@@ -2908,6 +2793,7 @@ function BuyNowDialog({
     register,
     handleSubmit,
     setValue,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<BuyNowForm>({
     resolver: zodResolver(buyNowSchema),
@@ -2939,14 +2825,15 @@ function BuyNowDialog({
       couponCode: couponApplied?.code ?? undefined,
     };
 
-    const res = await fetch("/api/public/checkout/workspace", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify(payload),
-    });
-    const json: CheckoutApiResponse = await res.json();
-    if (!res.ok || json.error) {
-      toast.error(json.error ?? "Could not start checkout. Please try again.");
+    const r = await postJson<CheckoutApiResponse>("/api/public/checkout/workspace", payload, ts.headers);
+    ts.reset(); // R-737: a token works once — the next try (or a retry after Razorpay) needs a fresh one
+    if (!r.reached) {
+      notReached("No money was taken.", () => { void handleSubmit(onSubmit)(); });
+      return;
+    }
+    const json = r.json;
+    if (!r.ok || json.error) {
+      buyFail(json.error, "Could not start checkout.", "No money was taken.");
       return;
     }
 
@@ -2960,7 +2847,7 @@ function BuyNowDialog({
 
     // ── Live: open the Razorpay Checkout widget with the server's order.
     if (!json.orderId || !json.razorpayKeyId || !json.amount) {
-      toast.error("Server response missing payment details. Please retry.");
+      buyFail(undefined, "Could not open the payment window.", "No money was taken — our server did not send the payment details.");
       return;
     }
 
@@ -2968,8 +2855,9 @@ function BuyNowDialog({
     try {
       RazorpayCtor = await loadRazorpayCheckout();
     } catch (err) {
-      const m = err instanceof Error ? err.message : "Could not load payment widget";
-      toast.error(`${m}. Please check your internet connection.`);
+      // eslint-disable-next-line no-console
+      console.error("[buy-workspace] Razorpay load failed", err);
+      buyFail(undefined, "Could not load the payment window.", "No money was taken. Check your internet connection and press Pay again.");
       return;
     }
 
@@ -2990,23 +2878,26 @@ function BuyNowDialog({
         leadId:  json.leadId  ?? "",
         domain:  values.domain,
       },
-      theme: { color: "#C2410C" },
-      handler: () => {
-        // Razorpay captured the payment client-side. The webhook will do the
-        // real database work; we just take the visitor to the confirmation
-        // page so they see a clear next-steps timeline + support link.
+      /* R-1116: the storefront blue — the same value as site.css --primary and the /checkout
+         Razorpay window (Razorpay takes a hex, not a CSS variable). Was orange #C2410C. */
+      theme: { color: "#1668E3" },
+      handler: (resp) => {
+        // R-1625: Razorpay hands the browser {order, payment, signature}. Keep them for THIS
+        // order; the thanks page asks our server to confirm the payment (the R-1596 verify path,
+        // idempotent with the webhook) instead of waiting on the webhook and saying "not found".
+        saveWorkspacePayment(json.quoteId, fromRazorpayHandler(resp));
         window.location.href = thanksUrl(json.quoteId, json.publicToken, false);
       },
       modal: {
         ondismiss: () => {
           setRzpOpen(false);
-          toast.message("Payment cancelled. We've saved your quote — Pardeep will follow up.");
+          toast.message("Payment cancelled. We've saved your quote — our team will follow up.");
         },
         escape: true,
       },
     });
     rzp.on("payment.failed", (resp) => {
-      toast.error(`Payment failed: ${resp.error?.description ?? "Please retry or use WhatsApp."}`);
+      buyFail(undefined, `Payment failed${resp.error?.description ? `: ${resp.error.description}` : "."}`, "No money was taken.");
     });
     setRzpOpen(true);
     rzp.open();
@@ -3223,7 +3114,8 @@ function BuyNowDialog({
                   </div>
                 )}
                 <div className="flex justify-between gap-2 text-ink-2">
-                  <span>+ GST 18% (CGST 9% + SGST 9%)</span>
+                  {/* R-1109: the head follows the place of supply — IGST outside Delhi. */}
+                  <span>+ {workspaceGstLabel({ stateCode: watch("stateCode"), gstin: watch("gstin") })}</span>
                   <span className="font-mono whitespace-nowrap">
                     ₹{(anyDiscount ? recomputedGst : calc.gst).toLocaleString("en-IN")}
                   </span>
@@ -3429,6 +3321,7 @@ function BuyNowDialog({
             )}
 
             <BusyPanel active={isSubmitting} title="Preparing your secure payment" steps={["Re-checking the price on our server", "Creating your order", "Opening the Razorpay payment window"]} />
+            {ts.widget}
             <Button
               type="submit"
               variant="primary"

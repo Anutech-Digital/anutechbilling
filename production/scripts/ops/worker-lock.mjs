@@ -153,6 +153,36 @@ export function pushTurnFree(turn, now) {
 
 function sh(cmd) { return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
 
+/**
+ * R-1814: the line a waiting worker prints. It used to start with the OTHER card ("… R-1813 push kar
+ * raha hai"), and a waiting worker's summary reported that card as its own. Now it starts with mine.
+ */
+export function waitLine(name, card, otherCard, doing) {
+  return `… ${card}: ${name} ki baari ka intezaar — abhi doosra worker ${otherCard ?? "(koi)"} ${doing}`;
+}
+
+/**
+ * R-1814: decide the push from MY commits — `anutech/manager-pardeep..HEAD` after the rebase, newest
+ * first, as [{sha, subject}]. Before, the success line printed `git rev-parse HEAD`: when the rebase
+ * dropped my commits (already upstream) or I had none, HEAD was the other worker's tip, so a waiting
+ * worker reported "R-1813 push ho gaya: 9e4f6dfc". Nothing of mine → no push. Commits named for
+ * another card are listed so the worker can see it is carrying someone else's work.
+ */
+export function pushPlan(card, commits) {
+  const id = String(card).toUpperCase();
+  if (!commits.length) {
+    return { ok: false, message: `✗ ${id}: rebase ke baad push karne ko apna kuch nahi (anutech/manager-pardeep me pehle se hai ya commit hi nahi hua). Push nahi kiya — git log dekho.` };
+  }
+  const foreign = commits
+    .filter((c) => { const m = /^(R-\d+)\b/i.exec(c.subject); return m && m[1].toUpperCase() !== id; })
+    .map((c) => `${c.sha} ${c.subject}`);
+  return { ok: true, sha: commits[0].sha, count: commits.length, foreign };
+}
+
+export function pushDoneLine(card, plan) {
+  return `✓ ${String(card).toUpperCase()} push ho gaya: ${plan.sha} (${plan.count} commit apne)`;
+}
+
 /** Wait for a named turn (one holder at a time across all workers), run fn, release. */
 async function withTurn(name, card, doing, fn) {
   const turnFile = path.join(LOCK_DIR, `_${name}-turn.json`);
@@ -166,7 +196,7 @@ async function withTurn(name, card, doing, fn) {
       try { fs.writeFileSync(turnFile, JSON.stringify({ card, at: Date.now() }), { flag: "wx" }); break; } catch {}
     }
     if (Date.now() > waitUntil) { console.error(`✗ 30 min se ${name} ki baari nahi aayi (${turn?.card} ${doing}). Owner ko batao.`); process.exit(4); }
-    console.log(`… ${turn?.card ?? "koi"} ${doing} — baari ka intezaar`);
+    console.log(waitLine(name, card, turn?.card, doing));
     await new Promise((r) => setTimeout(r, 15000));
   }
   try { return await fn(); } finally { fs.rmSync(turnFile, { force: true }); }
@@ -176,10 +206,24 @@ async function withTurn(name, card, doing, fn) {
  * One type-check at a time (6 Oct night): each tsc of this repo takes ~2.6 GB; two or three at
  * once starved the local app on a 24 GB machine. Capping tsc's heap would just crash it.
  */
+/**
+ * R-1592 (18 Oct 2026): `next typegen` first — it writes .next/types (typedRoutes: the Route union
+ * that <Link href>/router.push are checked against; tsconfig includes .next/types/**). Without it a
+ * fresh worktree has no route types, so tsc passed a wrong href and only `next build` / the Cloud
+ * Build gate (`npx next typegen && npx tsc --noEmit`) went red. Same steps as `npm run typecheck`.
+ * typegen is light (~5 s warm, no build); it runs inside the heavy turn so tsc never sees half-written types.
+ */
+export const TSC_STEPS = ["npx next typegen", "npx tsc --noEmit -p ."];
+
 function tscWithTurn(card) {
   return withTurn("heavy", card, "type-check kar raha hai", async () => {
-    try { sh("npx tsc --noEmit -p ."); return true; }
-    catch (e) { console.error("✗ tsc fail:\n" + String(e.stdout ?? "").slice(0, 2000)); return false; }
+    for (const step of TSC_STEPS) {
+      const t0 = Date.now();
+      try { sh(step); }
+      catch (e) { console.error(`✗ ${step} fail:\n` + String(e.stdout ?? "").slice(0, 2000) + String(e.stderr ?? "").slice(-800)); return false; }
+      console.log(`  ${step}: ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+    }
+    return true;
   });
 }
 
@@ -226,6 +270,11 @@ async function pushWithTurn(card) {
     }
     /* R-910: the Auth.js/gateway code imports a Prisma client that is generated, not committed. */
     if (fs.existsSync("prisma/schema.prisma")) { try { sh("npx prisma generate"); } catch (e) { console.error("✗ prisma generate fail — push nahi hua.\n" + String(e.stderr ?? e.message ?? "").slice(-800)); process.exit(1); } }
+    /* R-1814: what THIS worker is pushing, read before anything else can move HEAD. */
+    const plan = pushPlan(card, execFileSync("git", ["log", "--no-merges", "--format=%h %s", "anutech/manager-pardeep..HEAD"], { encoding: "utf8" })
+      .split("\n").map((l) => l.trim()).filter(Boolean).map((l) => { const i = l.indexOf(" "); return { sha: l.slice(0, i), subject: l.slice(i + 1) }; }));
+    if (!plan.ok) { console.error(plan.message); process.exit(1); }
+    if (plan.foreign.length) console.log(`(dhyan: is push me doosre card ke commit bhi hain:\n   ${plan.foreign.join("\n   ")})`);
     if (!(await tscWithTurn(card))) { console.error("✗ Rebase ke baad tsc fail — push nahi hua."); process.exit(1); }
     const failed = await runGuardSuites(card);
     if (failed.length) {
@@ -241,7 +290,7 @@ async function pushWithTurn(card) {
     /* R-816 worker (10 Oct): on a detached worktree the branch name is empty and the old command became
        `git push anutech :manager-pardeep` — a branch DELETE (GitHub protection refused it). Push HEAD. */
     sh("git push -q anutech HEAD:manager-pardeep");
-    console.log(`✓ ${card} push ho gaya: ${sh("git rev-parse --short HEAD").trim()}`);
+    console.log(pushDoneLine(card, plan));
   });
 }
 

@@ -13,16 +13,17 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { rupee } from "@/lib/utils";
+import { formatMonthLabel } from "@/lib/dates/ist";
 import { ESI_EMPLOYEE_RATE, ESI_EMPLOYER_RATE, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
 import { useEsiRegister, usePfRegister, type EsiRegisterRow, type PfRegisterRow } from "@/lib/queries/payroll";
 import { buildEcr } from "@/lib/payroll/ecr";
 import { pfWageCeiling } from "@/lib/payroll/pf";
 import { toast } from "sonner";
+import { logExport } from "@/lib/export-log";
+import { csvEscape } from "@/lib/csv";
 
 function periodLabel(period: string): string {
-  const [y, m] = period.split("-").map(Number);
-  if (!y || !m) return period;
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+  return formatMonthLabel(period);
 }
 
 /** Export one month's rows in the ESIC "Monthly Contribution" bulk-upload
@@ -33,10 +34,9 @@ function downloadEsicCsv(period: string, rows: EsiRegisterRow[]) {
     "IP Number", "IP Name", "No of Days", "Total Monthly Wages",
     "Reason Code for Zero Working Days", "Last Working Day",
   ];
-  const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
   const lines = [header.join(",")];
   for (const r of rows) {
-    lines.push([r.esiNo ?? "", esc(r.employee), r.days, r.wage, "0", ""].join(","));
+    lines.push([csvEscape(r.esiNo ?? ""), csvEscape(r.employee), r.days, r.wage, "0", ""].join(","));
   }
   const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
@@ -47,6 +47,7 @@ function downloadEsicCsv(period: string, rows: EsiRegisterRow[]) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  void logExport({ what: "esic-monthly-contribution", rowCount: rows.length, format: "csv" });
 }
 
 /** EPFO ECR .txt for one month — what the unified portal imports under
@@ -56,16 +57,17 @@ function downloadEcr(period: string, rows: PfRegisterRow[]) {
     period, employee: r.employee, uan: r.uan, gross: r.gross, lopAmount: r.lopAmount, lopDays: r.lopDays,
     pfWage: r.pfWage, employeePf: r.employeeShare, employerPf: r.employerShare,
   })));
-  if (!f.lines.length) { toast.error(`Koi member upload layak nahi — ${f.skipped.map((s) => `${s.employee}: ${s.reason}`).join("; ")}`); return; }
+  if (!f.lines.length) { toast.error(`No member can be uploaded — ${f.skipped.map((s) => `${s.employee}: ${s.reason}`).join("; ")}`); return; }
   const blob = new Blob([f.text], { type: "text/plain;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = `ECR-${period.replace("-", "")}.txt`;
   document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  void logExport({ what: "epf-ecr", rowCount: f.lines.length, format: "txt" });
   const assumed = f.lines.filter((l) => l.wageAssumed).length;
   let msg = `ECR ${period}: ${f.lines.length} member, EPF wages ${rupee(f.totals.epfWages)}, EE ${rupee(f.totals.ee)}, EPS ${rupee(f.totals.eps)}, ER diff ${rupee(f.totals.erDiff)}.`;
-  if (f.skipped.length) msg += ` ⚠ ${f.skipped.length} chhoote: ${f.skipped.map((s) => s.employee).join(", ")} (UAN bharo).`;
-  if (assumed) msg += ` ⚠ ${assumed} payslip par PF wage nahi tha — gross liya.`;
+  if (f.skipped.length) msg += ` ⚠ ${f.skipped.length} skipped: ${f.skipped.map((s) => s.employee).join(", ")} (add their UAN).`;
+  if (assumed) msg += ` ⚠ ${assumed} payslip(s) had no PF wage — gross used.`;
   toast[f.skipped.length || assumed ? "warning" : "success"](msg);
 }
 
@@ -116,7 +118,7 @@ function PfSection() {
                   employee {rupee(ee)} · employer {rupee(er)} · <b className="text-ink">{rupee(ee + er)}</b>
                 </span>
                 <Button size="sm" variant="outline" icon="download" onClick={() => downloadEcr(period, rows)}>
-                  EPFO ECR{missingUan ? ` (${missingUan} bina UAN)` : ""}
+                  EPFO ECR{missingUan ? ` (${missingUan} without UAN)` : ""}
                 </Button>
               </div>
             </div>
@@ -138,9 +140,9 @@ function PfSection() {
                   {rows.map((r, i) => (
                     <tr key={i} className="border-t border-hairline">
                       <td className="px-4 py-2.5 text-ink">{r.employee}</td>
-                      <td className={`px-4 py-2.5 font-mono text-xs ${r.uan ? "text-ink-2" : "text-rose"}`}>{r.uan ?? "UAN nahi"}</td>
+                      <td className={`px-4 py-2.5 font-mono text-xs ${r.uan ? "text-ink-2" : "text-rose"}`}>{r.uan ?? "No UAN"}</td>
                       <td className="px-4 py-2.5 text-right font-mono">{rupee(r.gross)}</td>
-                      <td className={`px-4 py-2.5 text-right font-mono ${r.pfWage === null ? "text-amber-ink" : ""}`} title={r.pfWage === null ? "Payslip par PF wage nahi — ECR mein gross jayega" : undefined}>{r.pfWage === null ? `~${rupee(Math.max(0, r.gross - r.lopAmount))}` : rupee(r.pfWage)}</td>
+                      <td className={`px-4 py-2.5 text-right font-mono ${r.pfWage === null ? "text-amber-ink" : ""}`} title={r.pfWage === null ? "No PF wage on the payslip — gross goes to the ECR" : undefined}>{r.pfWage === null ? `~${rupee(Math.max(0, r.gross - r.lopAmount))}` : rupee(r.pfWage)}</td>
                       <td className="px-4 py-2.5 text-right font-mono">{r.lopDays}</td>
                       <td className="px-4 py-2.5 text-right font-mono">{rupee(r.employeeShare)}</td>
                       <td className="px-4 py-2.5 text-right font-mono">{rupee(r.employerShare)}</td>

@@ -12,7 +12,8 @@
  * etc. is never lost. So this component renders only its own body (hero → final
  * CTA); in-page navigation is the quick-jump strip. "Start free trial" leads to
  * the cart as a ₹0 trial line (no form in between); "Buy now" adds the plan to the cart.
- * Prices come from LANDING_PLANS via HOSTING_TIERS.
+ * Prices come from LANDING_PLANS via HOSTING_TIERS, or (R-1786, CATALOG_FROM_DB on) from the
+ * `tiers` the server page passes in, read from the `items` catalogue.
  *
  * Responsive is driven off a measured window width (`w`), exactly as the
  * prototype did; SSR and the first client render both use 1200 (desktop), so
@@ -24,8 +25,12 @@ import { hostingSans as manrope, hostingSerif as serif, hostingMono as mono } fr
 import { useCart } from "@/site/components/cart/CartProvider";
 import { isTrialPlan, TRIAL_PLAN_ID, TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { paidHostingLine } from "@/site/lib/hosting-cart-line";
+import { rupee } from "@/site/lib/money";
+import { HOSTING_DESCRIPTION } from "@/site/lib/data/hosting-copy";
 import {
   HOSTING_TIERS,
+  hostingCardPrices,
+  hostingCharge,
   REC_WHY,
   HOSTING_MATRIX,
   HOSTING_TIMELINE,
@@ -39,6 +44,7 @@ import {
   HOSTING_FAQS_V2,
   WHATSAPP_URL,
   TRIAL_DAYS,
+  type HostingTier,
 } from "@/site/lib/data/hosting-landing-v2";
 
 
@@ -52,13 +58,11 @@ const C = {
 const MONO = "var(--hf-mono), 'JetBrains Mono', monospace";
 const SERIF = "var(--hf-serif), 'Instrument Serif', serif";
 
-const inr = (n: number) => {
-  const r = Math.round(n * 100) / 100;
-  return "₹" + r.toLocaleString("en-IN", { minimumFractionDigits: r % 1 ? 2 : 0, maximumFractionDigits: 2 });
-};
-const gst = (n: number) => inr(n * 1.18);
+/* R-1465: whole rupees through one site formatter (99.98 / 374.40 rupees read as
+   auto-calculated). Billed and pay-today figures come from hostingCardPrices — the numbers
+   checkout charges, not a re-computation with paise. */
 
-export function HostingLanding() {
+export function HostingLanding({ tiers = HOSTING_TIERS }: { tiers?: readonly HostingTier[] } = {}) {
   const [billing, setBilling] = useState<"Monthly" | "Yearly">("Yearly");
   const [sites, setSites] = useState<string | null>(null);
   const [traffic, setTraffic] = useState<string | null>(null);
@@ -93,18 +97,18 @@ export function HostingLanding() {
     }
   }
 
-  const plans = HOSTING_TIERS.map((p) => {
+  const plans = tiers.map((p) => {
     const isRec = p.name === rec;
     const isTop = isRec || (!rec && p.isPopular);
-    const total = yearly ? p.yearlyTotal : p.monthly;
+    const shown = hostingCardPrices(p, yearly);
     return {
       ...p,
       badge: isRec ? "BEST FIT" : (!rec && p.isPopular ? "MOST CHOSEN" : null),
       isTop,
-      priceLabel: inr(yearly ? p.yearlyMo : p.monthly),
-      billingLine: yearly ? `Billed annually · ${inr(p.yearlyTotal)} + GST` : `Billed monthly · ${inr(p.monthly)} + GST`,
-      renewLine: `${inr(yearly ? p.yearlyMo : p.monthly)}/mo — the same price, not a first-year rate`,
-      payToday: `Pay today ${gst(total)} incl. 18% GST`,
+      priceLabel: shown.perMonth,
+      billingLine: `Billed ${yearly ? "annually" : "monthly"} · ${shown.billed} + GST`,
+      renewLine: `${shown.perMonth}/mo — the same price, not a first-year rate`,
+      payToday: `Pay today ${shown.payToday} incl. 18% GST`,
     };
   });
   /* One add-to-cart for both card layouts (trial plan: secondary button; others:
@@ -119,7 +123,7 @@ export function HostingLanding() {
   const startTrialInCart = () => {
     for (const l of cart.lines) if ((l.sku || "").startsWith("hosting-trial:")) cart.remove(l.key);
     cart.add({
-      label: `${TRIAL_PLAN_NAME} hosting — 15-day free trial`,
+      label: `${TRIAL_PLAN_NAME} hosting — ${TRIAL_DAYS}-day free trial`,
       detail: `No card · then ${TRIAL_PLAN_NAME} billed ${yearly ? "yearly" : "monthly"} if you keep it`,
       unitPrice: 0,
       unit: "trial",
@@ -130,12 +134,14 @@ export function HostingLanding() {
     router.push("/cart" as never);
   };
   const anchor = plans.find((p) => p.badge) ?? plans[1];
-  const anchorBase = HOSTING_TIERS.find((t) => t.name === anchor.name)!;
+  const anchorBase = tiers.find((t) => t.name === anchor.name)!;
 
-  const costRows = HOSTING_TIERS.map((p) => {
-    const y = p.yearlyTotal * 3, m = p.monthly * 36;
-    return { name: p.name, yearly: gst(y), monthly: gst(m), save: gst(m - y) };
+  /* Three years incl. GST, as the payments checkout takes: 3 yearly or 36 monthly. */
+  const costRows = tiers.map((p) => {
+    const y = hostingCharge(p, true).inclGst * 3, m = hostingCharge(p, false).inclGst * 36;
+    return { name: p.name, yearly: rupee(y), monthly: rupee(m), save: rupee(m - y) };
   });
+  const anchorShown = hostingCardPrices(anchorBase, yearly);
 
   // Shared style fragments
   const eyebrow = (color = C.accent): React.CSSProperties => ({ fontFamily: MONO, fontSize: 12, letterSpacing: ".1em", color, fontWeight: 700 });
@@ -177,7 +183,7 @@ export function HostingLanding() {
 
       {/* 3. Hero */}
       <section style={{ padding: "clamp(38px,6vw,66px) 20px clamp(40px,5vw,54px)", borderBottom: `1px solid ${C.line}` }}>
-        <div style={{ ...wrap, display: "grid", gridTemplateColumns: w < 880 ? "minmax(0,1fr)" : "minmax(0,1.15fr) minmax(0,.85fr)", gap: w < 880 ? 32 : w < 1060 ? 32 : 56, alignItems: w < 880 ? "start" : "center" }}>
+        <div data-grid-phone style={{ ...wrap, display: "grid", gridTemplateColumns: w < 880 ? "minmax(0,1fr)" : "minmax(0,1.15fr) minmax(0,.85fr)", gap: w < 880 ? 32 : w < 1060 ? 32 : 56, alignItems: w < 880 ? "start" : "center" }}>
           <div>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 9, background: C.accSurf, border: `1px solid ${C.accBorder}`, color: C.accentDark, padding: "7px 13px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, fontFamily: MONO }}>{TRIAL_DAYS}-DAY FREE TRIAL ON {TRIAL_PLAN_NAME.toUpperCase()} · NO CARD NEEDED</div>
             <h1 style={{ marginTop: 20, fontSize: "clamp(34px,4.4vw,56px)", lineHeight: 1.07, letterSpacing: "-.035em", fontWeight: 800 }}>
@@ -185,13 +191,13 @@ export function HostingLanding() {
               <span style={{ fontFamily: SERIF, fontWeight: 400, fontStyle: "italic", color: C.accent }}>FREE for {TRIAL_DAYS} Days.</span>
             </h1>
             <p style={{ marginTop: 18, fontSize: 18, lineHeight: 1.55, color: C.ink2, maxWidth: "min(100%,560px)", textWrap: "pretty" } as React.CSSProperties}>
-              Enterprise-grade web hosting powered by Google Cloud. Free SSL, daily backups, free migration and support from real people — and the trial needs no credit card, so your old host stays live until you approve the move.
+              {HOSTING_DESCRIPTION} Free SSL, daily backups, free migration and support from real people — and the trial needs no credit card, so your old host stays live until you approve the move.
             </p>
             <div style={{ marginTop: 26, display: "flex", gap: 12, flexWrap: "wrap" }}>
               <button type="button" onClick={startTrialInCart} className="hlp-orange" style={{ background: C.accent, color: "#fff", padding: "16px 24px", borderRadius: 12, fontSize: 16, fontWeight: 700, minHeight: 52, display: "inline-flex", alignItems: "center", border: 0, cursor: "pointer", fontFamily: "inherit" }}>Start the free {TRIAL_PLAN_NAME} trial</button>
               <a href="#move" className="hlp-outline" style={{ background: "#fff", border: `1px solid ${C.line}`, color: C.ink, padding: "16px 24px", borderRadius: 12, fontSize: 16, fontWeight: 700, minHeight: 52, display: "inline-flex", alignItems: "center" }}>See how migration works</a>
             </div>
-            <ul style={{ marginTop: 24, display: "flex", gap: "8px 22px", flexWrap: "wrap", listStyle: "none", padding: 0, margin: "24px 0 0" }}>
+            <ul style={{ display: "flex", gap: "8px 22px", flexWrap: "wrap", listStyle: "none", padding: 0, margin: "24px 0 0" }}>
               {["No credit card", "Full features during trial", "30-day refund on yearly"].map((t) => (
                 <li key={t} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14.5, fontWeight: 600, color: C.ink2 }}><span style={{ color: C.success, fontWeight: 800 }}>✓</span>{t}</li>
               ))}
@@ -207,9 +213,9 @@ export function HostingLanding() {
             </div>
             <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
               {[
-                ["Billed", yearly ? `${inr(anchorBase.yearlyTotal)} + GST once a year` : `${inr(anchorBase.monthly)} + GST every month`],
-                ["You pay today", `${gst(yearly ? anchorBase.yearlyTotal : anchorBase.monthly)} incl. GST`],
-                ["Renews at", `${inr(yearly ? anchorBase.yearlyMo : anchorBase.monthly)}/mo — same price`],
+                ["Billed", `${anchorShown.billed} + GST ${yearly ? "once a year" : "every month"}`],
+                ["You pay today", `${anchorShown.payToday} incl. GST`],
+                ["Renews at", `${anchorShown.perMonth}/mo — same price`],
               ].map(([k, v], i) => (
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 14.5, paddingBottom: 10, borderBottom: `1px dashed ${C.line}` }}><span style={{ color: C.muted }}>{k}</span><span style={{ fontWeight: 700, textAlign: "right" }}>{v}</span></div>
               ))}
@@ -239,7 +245,7 @@ export function HostingLanding() {
           <h2 style={{ ...h2, maxWidth: 700 }}>Answer two questions instead of reading three feature lists.</h2>
 
           <div style={{ marginTop: 26, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 18, padding: "clamp(20px,3vw,28px)" }}>
-            <div style={{ display: "grid", gridTemplateColumns: twoCol, gap: 22 }}>
+            <div data-grid-phone style={{ display: "grid", gridTemplateColumns: twoCol, gap: 22 }}>
               <div>
                 <div style={{ fontFamily: MONO, fontSize: 11.5, letterSpacing: ".08em", color: C.muted, fontWeight: 700 }}>HOW MANY WEBSITES?</div>
                 <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -276,10 +282,10 @@ export function HostingLanding() {
             </div>
           </div>
 
-          {/* Plan cards */}
-          <div style={mob
-            ? { margin: "26px -20px 0", padding: "4px 20px 18px", display: "flex", gap: 14, overflowX: "auto", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", alignItems: "start" } as React.CSSProperties
-            : { marginTop: 18, display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: mid ? 14 : 20, alignItems: "start" }}>
+          {/* Plan cards — id="specs": the menu's and footer's "Full specification" land here (R-1506). */}
+          <div id="specs" data-grid-phone style={mob
+            ? { margin: "26px -20px 0", padding: "4px 20px 18px", display: "flex", gap: 14, overflowX: "auto", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", alignItems: "start", scrollMarginTop: 84 } as React.CSSProperties
+            : { margin: "18px 0 0", display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: mid ? 14 : 20, alignItems: "start", scrollMarginTop: 84 }}>
             {plans.map((p) => (
               <div key={p.name} style={{
                 background: "#fff", border: p.isTop ? `1.5px solid ${C.accent}` : `1px solid ${C.line}`, borderRadius: 18,
@@ -310,7 +316,7 @@ export function HostingLanding() {
                           yearly alike. This plan is bought, so buying is the main action. */}
                       <button type="button" onClick={() => addPlanToCart(p)} className={p.isTop ? "hlp-orange" : "hlp-dark"} style={{ textAlign: "center", padding: 15, borderRadius: 11, fontSize: 15, fontWeight: 700, color: "#fff", minHeight: 50, background: p.isTop ? C.accent : C.ink, border: 0, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>Buy {p.name}</button>
                       <div style={{ textAlign: "center", fontSize: 13, lineHeight: 1.45, color: C.muted, minHeight: 46, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px" }}>
-                        <span>No free trial on {p.name}. <button type="button" onClick={startTrialInCart} style={{ color: C.accentDark, fontWeight: 700, background: "none", border: 0, padding: 0, cursor: "pointer", font: "inherit", textDecoration: "underline" }}>Try {TRIAL_PLAN_NAME} free</button> and move up later.</span>
+                        <span>No free trial on {p.name}. <button type="button" onClick={startTrialInCart} style={{ color: C.accentDark, fontWeight: 700, background: "none", border: 0, padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: "inherit", lineHeight: "inherit", textDecoration: "underline" }}>Try {TRIAL_PLAN_NAME} free</button> and move up later.</span>
                       </div>
                     </>
                   )}
@@ -384,7 +390,7 @@ export function HostingLanding() {
       <section style={{ padding: "clamp(46px,6vw,60px) 20px", background: C.ink, color: C.paper }}>
         <div style={wrap}>
           <h2 style={{ fontSize: "clamp(28px,4vw,36px)", letterSpacing: "-.03em", fontWeight: 800 }}>What happens on each day of the trial.</h2>
-          <div style={quadGrid}>
+          <div data-grid-phone style={quadGrid}>
             {HOSTING_TIMELINE.map((t) => (
               <div key={t.d} style={{ border: `1px solid ${C.darkBorder}`, background: C.darkCard, borderRadius: 14, padding: 22 }}>
                 <div style={{ fontFamily: MONO, fontSize: 11.5, letterSpacing: ".08em", color: C.accentLight, fontWeight: 700 }}>{t.d}</div>
@@ -402,7 +408,7 @@ export function HostingLanding() {
         <div style={wrap}>
           <div style={eyebrow()}>STEP 3 — MOVING YOUR SITE</div>
           <h2 style={{ ...h2, maxWidth: 720 }}>Free migration means we do it, not that we send you a guide.</h2>
-          <div style={{ marginTop: 30, display: "grid", gridTemplateColumns: twoCol, gap: 20 }}>
+          <div data-grid-phone style={{ marginTop: 30, display: "grid", gridTemplateColumns: twoCol, gap: 20 }}>
             <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16, padding: 26 }}>
               <div style={{ fontSize: 18, fontWeight: 800 }}>What we need from you</div>
               <ul style={{ marginTop: 14, display: "grid", gap: 11, listStyle: "none", padding: 0 }}>
@@ -432,7 +438,7 @@ export function HostingLanding() {
         <div style={wrap}>
           <div style={eyebrow()}>STEP 4 — WHAT IF</div>
           <h2 style={{ ...h2, maxWidth: 720 }}>The six worries people actually have before switching host.</h2>
-          <div style={{ marginTop: 30, display: "grid", gridTemplateColumns: threeCol, gap: 16 }}>
+          <div data-grid-phone style={{ marginTop: 30, display: "grid", gridTemplateColumns: threeCol, gap: 16 }}>
             {HOSTING_WORRIES.map((wr) => (
               <div key={wr.q} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 22 }}>
                 <div style={{ fontSize: 16.5, fontWeight: 800, letterSpacing: "-.02em", color: C.ink }}>{wr.q}</div>
@@ -448,7 +454,7 @@ export function HostingLanding() {
         <div style={wrap}>
           <div style={eyebrow()}>DON&apos;T TAKE OUR WORD</div>
           <h2 style={{ ...h2, maxWidth: 720 }}>Check us before you pay us.</h2>
-          <div style={{ marginTop: 28, display: "grid", gridTemplateColumns: tripleCol, gap: 16 }}>
+          <div data-grid-phone style={{ marginTop: 28, display: "grid", gridTemplateColumns: tripleCol, gap: 16 }}>
             {HOSTING_PROOFS.map((pf) => (
               <div key={pf.k} style={{ border: `1px solid ${C.line}`, background: "#fff", borderRadius: 14, padding: 22, display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ fontFamily: MONO, fontSize: 11, letterSpacing: ".08em", color: C.muted, fontWeight: 700 }}>{pf.k}</div>
@@ -467,7 +473,7 @@ export function HostingLanding() {
       <section style={{ padding: "clamp(50px,7vw,76px) 20px", borderBottom: `1px solid ${C.line}` }}>
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
           <h2 style={{ ...h2, marginTop: 0 }}>We&apos;d rather you know before you pay.</h2>
-          <div style={{ marginTop: 28, display: "grid", gridTemplateColumns: twoCol, gap: 20 }}>
+          <div data-grid-phone style={{ marginTop: 28, display: "grid", gridTemplateColumns: twoCol, gap: 20 }}>
             <div style={{ background: C.successSurf, border: `1px solid ${C.successBorder}`, borderRadius: 16, padding: 26 }}>
               <div style={{ fontSize: 18, fontWeight: 800, color: C.success }}>A good fit if you are</div>
               <ul style={{ marginTop: 14, display: "grid", gap: 10, listStyle: "none", padding: 0 }}>
@@ -488,7 +494,7 @@ export function HostingLanding() {
       <section style={{ padding: "clamp(50px,7vw,76px) 20px", background: C.tint, borderBottom: `1px solid ${C.line}` }}>
         <div style={wrap}>
           <h2 style={{ ...h2, marginTop: 0 }}>Talk to a person first. That&apos;s normal here.</h2>
-          <div style={quadGrid}>
+          <div data-grid-phone style={quadGrid}>
             {HOSTING_CHANNELS.map((ch) => (
               <div key={ch.t} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 22, display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-.02em" }}>{ch.t}</div>

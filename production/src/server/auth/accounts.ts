@@ -115,6 +115,18 @@ export async function checkPassword(email: string, password: string): Promise<Pa
   return { ok: true, user };
 }
 
+/**
+ * R-1548: the account's last sign-in time (null if none / no such account). The login limiter
+ * puts it in the per-email key, so a successful sign-in (recordSignIn) starts a fresh count —
+ * also on the shared Postgres counter, which has no "reset". Only the right password moves it.
+ */
+export async function lastSignInAt(email: string): Promise<string | null> {
+  const rows = await withAuthStore((tx) => tx.$queryRawUnsafe<{ t: string | null }[]>(
+    `select last_sign_in_at::text as t from auth.users where lower(email) = $1 and deleted_at is null order by created_at limit 1`,
+    normalise(email)));
+  return rows[0]?.t ?? null;
+}
+
 export async function recordSignIn(id: string): Promise<void> {
   await withAuthStore((tx) => tx.$executeRawUnsafe(`update auth.users set last_sign_in_at = now() where id = $1::uuid`, id));
 }

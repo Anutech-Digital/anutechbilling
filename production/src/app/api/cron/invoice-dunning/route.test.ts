@@ -44,7 +44,7 @@ function seed() {
      one page. Every one of them already had the final step. */
   const steps = ["pre_due", "due_today", "reminder", "retry", "grace_warning", "final"];
   const logs = invoices.slice(0, 200).flatMap((inv, i) =>
-    steps.map((step, k) => ({ id: `L${pad(i)}-${k}`, invoice_id: inv.id, dunning_step: step })));
+    steps.map((step, k) => ({ id: `L${pad(i)}-${k}`, invoice_id: inv.id, dunning_step: step, status: "sent" })));
   return {
     invoices: [...invoices, { id: "INV-PAID", tenant_id: "T-plain", status: "paid", due_date: "2026-09-10", amount: 1, paid_amount: 1 }],
     invoice_dunning_log: logs,

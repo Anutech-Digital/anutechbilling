@@ -65,7 +65,7 @@ describe("the checkout page", () => {
   });
   it("the wait shows as a pop-up too, so the form under it never moves (1 Oct 2026)", () => {
     const panels = src.match(/<BusyPanel[\s\S]*?\/>/g) ?? [];
-    expect(panels.length).toBe(2);
+    expect(panels.length).toBe(3); // trial, preparing payment, R-1596 confirming payment
     for (const p of panels) expect(p).toContain('variant="modal"');
   });
   it("the Razorpay window wears the storefront blue, the same value as site.css --primary (3 Oct 2026)", () => {

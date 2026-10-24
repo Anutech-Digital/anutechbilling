@@ -6,6 +6,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { istToday, toIstDate } from "@/lib/dates/ist";
@@ -63,7 +64,7 @@ function useInvalidate() {
     void qc.invalidateQueries({ queryKey: LATE_CHARGES_KEY });
     void qc.invalidateQueries({ queryKey: ["invoices"] });
     void qc.invalidateQueries({ queryKey: ["debit-notes"] });
-    void qc.invalidateQueries({ queryKey: ["aging"] });
+    void qc.invalidateQueries({ queryKey: queryKeys.aging() });
     void qc.invalidateQueries({ queryKey: ["credit"] });
   };
 }

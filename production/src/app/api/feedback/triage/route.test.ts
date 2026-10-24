@@ -29,6 +29,8 @@ vi.mock("@/lib/supabase/server", () => ({
         eq(c: string, v: unknown) { filters.push(["eq", c, v]); return q; },
         is(c: string, v: unknown) { filters.push(["is", c, v]); return q; },
         maybeSingle() {
+          /* R-1470: the caller is an owner (the gate reads users.role) */
+          if (table === "users") return Promise.resolve({ data: { role: "owner" }, error: null });
           return Promise.resolve({ data: table === "tenants" ? db.tenant : db.row, error: null });
         },
         then(resolve: (v: { data: null; error: null; count: number }) => unknown) {

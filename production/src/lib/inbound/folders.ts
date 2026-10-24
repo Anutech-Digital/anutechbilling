@@ -19,7 +19,7 @@
  * on every read rather than being flipped by a job that might not run.
  */
 import type { InboundEmailRow } from "@/lib/supabase/database.types";
-import { isSentReply } from "./sent";
+import { isSentReply, SENT_REPLY_STATUS } from "./sent";
 import { groupIntoThreads, type ThreadableEmail } from "./threads";
 
 export type MailFolder =
@@ -69,7 +69,12 @@ export type CountableRow = FoldersRow & ThreadableEmail;
  * a human should see — hiding it in Spam is how a real enquiry disappears because a
  * parser threw.
  */
-const SPAM_STATUSES = new Set(["skipped_non_enquiry", "duplicate"]);
+const SPAM_STATUS_LIST = ["skipped_non_enquiry", "duplicate"] as const;
+const SPAM_STATUSES = new Set<string>(SPAM_STATUS_LIST);
+
+/** Statuses that never reach the Inbox: system mail and our own sent replies. nav_badges()
+ *  (R-1541) leaves out the same list when it counts the Inbox's unread conversations. */
+export const INBOX_HIDDEN_STATUSES: readonly string[] = [...SPAM_STATUS_LIST, SENT_REPLY_STATUS];
 
 export function isSpam(row: FoldersRow): boolean {
   return SPAM_STATUSES.has(row.status);

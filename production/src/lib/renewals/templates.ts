@@ -28,7 +28,12 @@ export interface RenewalTemplateContext {
   amountInWords?: string;          // optional pre-formatted
   renewalDate:    string;          // e.g. "15 Jun 2026"
   daysUntil:      number;          // positive future, negative past
-  graceDays:      number;          // tenant's configured grace
+  graceDays:      number;          // this subscription's grace (effectiveGraceDays)
+  /**
+   * R-1621: the IST day the service stops if still unpaid (e.g. "23 Oct 2026") —
+   * serviceStopDate(renewal, grace). The urgent, final and grace mails name this exact day.
+   */
+  stopDate?:      string;
   paymentLink?:   string | null;   // Razorpay link (Phase 2)
   acceptLink?:    string;          // /quote/[id]/accept link
 }
@@ -122,7 +127,7 @@ ${ctx.acceptLink ? `Renew now: ${ctx.acceptLink}\n\n` : ""}If renewal is no long
 
 This is an urgent reminder. Your ${ctx.planName} subscription (${ctx.seats} seats) is due to renew on ${ctx.renewalDate} — just ${ctx.daysUntil} days from now.
 
-If payment is not received by then${ctx.graceDays > 0 ? ` (plus the ${ctx.graceDays}-day grace period that follows)` : ""}, your service will be automatically suspended. That means mailboxes will stop accepting mail, calendars stop syncing, and team access pauses.
+If payment is not received by then${ctx.graceDays > 0 ? ` (plus the ${ctx.graceDays}-day grace period that follows)` : ""}, your service will be suspended${ctx.stopDate ? ` on ${ctx.stopDate}` : ""}. That means mailboxes will stop accepting mail, calendars stop syncing, and team access pauses.
 
 Renewal amount: ${rupee(ctx.amount)}. Quote attached.
 
@@ -140,9 +145,10 @@ ${ctx.acceptLink ? `Pay now to avoid interruption: ${ctx.acceptLink}\n\n` : ""}I
 Today is your renewal day. Your ${ctx.planName} subscription (${ctx.seats} seats) is due for renewal at ${rupee(ctx.amount)}.
 
 ${ctx.graceDays > 0
-  ? `If payment is not received by end of day, your subscription will enter a ${ctx.graceDays}-day grace period. After that, service is suspended automatically — mailboxes stop accepting mail, calendar invites bounce, and shared drives become read-only.`
-  : `Without payment today, your subscription will be suspended starting tomorrow — mailboxes stop accepting mail, calendar invites bounce, and shared drives become read-only.`
+  ? `If payment is not received by end of day, your subscription will enter a ${ctx.graceDays}-day grace period. After that, service is suspended${ctx.stopDate ? ` on ${ctx.stopDate}` : ""} — mailboxes stop accepting mail, calendar invites bounce, and shared drives become read-only.`
+  : `Without payment today, your subscription will be suspended ${ctx.stopDate ? `on ${ctx.stopDate}` : "starting tomorrow"} — mailboxes stop accepting mail, calendar invites bounce, and shared drives become read-only.`
 }
+${ctx.stopDate ? `\nService stops on: ${ctx.stopDate} (IST), unless payment reaches us before then.\n` : ""}
 
 This is the last reminder we'll send before suspension.
 
@@ -155,11 +161,16 @@ If you've already paid, please ignore this — and apologies for the cross-over.
 
     case "grace":
       return {
-        subject: `Grace period · ${ctx.planName} payment overdue · suspends in ${ctx.graceDays + ctx.daysUntil} days`,
+        /* R-1621: the stop DATE, not a day count. The count was graceDays + daysUntil, where
+           daysUntil is the days PAST renewal (absolute) — day 2 of a 7-day grace said "suspends
+           in 9 days" when it was 6. A date cannot be added up wrong by the reader either. */
+        subject: ctx.stopDate
+          ? `Grace period · ${ctx.planName} payment overdue · service stops on ${ctx.stopDate}`
+          : `Grace period · ${ctx.planName} payment overdue · suspends in ${Math.max(1, ctx.graceDays - ctx.daysUntil + 1)} days`,
         body:
 `Hi ${ctx.customerName},
 
-Your ${ctx.planName} renewal payment hasn't reached us yet. Your subscription has entered the ${ctx.graceDays}-day grace period — service is still running for now, but it WILL automatically suspend in ${ctx.graceDays + ctx.daysUntil} day(s) if payment isn't received.
+Your ${ctx.planName} renewal payment hasn't reached us yet. Your subscription has entered the ${ctx.graceDays}-day grace period — service is still running for now, but it WILL be suspended ${ctx.stopDate ? `on ${ctx.stopDate} (IST)` : `in ${Math.max(1, ctx.graceDays - ctx.daysUntil + 1)} day(s)`} if payment isn't received.
 
 Amount due: ${rupee(ctx.amount)}. Renewal quote attached.
 

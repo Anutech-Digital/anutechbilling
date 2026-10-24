@@ -619,7 +619,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
               </div>
             ) : (
               <div className="space-y-2">
-                <p className="text-xs text-ink-3">Clears it from your TDS / PF / ESI “dues payable”. Mahina aur challan number likh do — 26Q / ECR mein quote hota hai.</p>
+                <p className="text-xs text-ink-3">Clears it from your TDS / PF / ESI “dues payable”. Enter the month and challan number — they are quoted in 26Q / ECR.</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <Input type="month" value={duesPeriod} onChange={(e) => setDuesPeriod(e.target.value)} aria-label="Month the challan paid for" />
                   <Input value={challanNo} onChange={(e) => setChallanNo(e.target.value)} placeholder="Challan / CIN no. (optional)" maxLength={40} aria-label="Challan number" />
@@ -764,9 +764,9 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 to reconcile. Kept FIRST — it's the commonest money-in. */}
             {isCredit && (
               <div className="rounded-md border border-amber/50 bg-amber-soft/25 p-3">
-                <p className="text-xs font-semibold text-ink-2 mb-1">Kisi sale / customer ka paisa?</p>
+                <p className="text-xs font-semibold text-ink-2 mb-1">Money from a sale / customer?</p>
                 <p className="text-xs text-ink-3 mb-3 leading-relaxed">
-                  Income aksar invoice se aati hai. Is {rupee(amount)} ki invoice abhi nahi bani? Yahan se invoice (ya project payment) banao — uska payment record karte hi ye line neeche <b>suggested match</b> me aa jayegi, phir ek click me reconcile.
+                  Income usually comes from an invoice. No invoice for this {rupee(amount)} yet? Create the invoice (or project payment) here — once its payment is recorded, this line shows under <b>suggested match</b> below and reconciles in one click.
                 </p>
                 {showProject && transaction ? (
                   <ProjectPaymentSection
@@ -794,7 +794,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                         setInvTaxable(String(Math.round(amount / 1.18)));
                       }}
                     >
-                      Invoice banao
+                      Create invoice
                     </Button>
                     <Button
                       size="sm"
@@ -819,8 +819,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                         aria-label="Customer"
                         className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
                       >
-                        <option value="" disabled>Customer chuno…</option>
-                        <option value={NEW_CUSTOMER}>＋ Naya customer banao</option>
+                        <option value="" disabled>Select a customer…</option>
+                        <option value={NEW_CUSTOMER}>＋ New customer</option>
                         {(customers ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                       </select>
                       <Button type="button" size="sm" variant="default" icon="plus" onClick={() => setNewCustomerOpen(true)} className="shrink-0">
@@ -838,8 +838,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                       aria-label="Product"
                       className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
                     >
-                      <option value="" disabled>Kya becha? Product chuno…</option>
-                      <option value={CUSTOM_ITEM}>✎ Custom — naam khud likho</option>
+                      <option value="" disabled>What was sold? Select a product…</option>
+                      <option value={CUSTOM_ITEM}>✎ Custom — type a name</option>
                       {activeItems.map((i) => (
                         <option key={i.id} value={i.id}>{i.name}{i.vendor ? ` · ${i.vendor}` : ""}</option>
                       ))}
@@ -848,13 +848,13 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                       <Input
                         value={invLineName}
                         onChange={(e) => setInvLineName(e.target.value)}
-                        placeholder="Kya becha? (e.g. Website / Setup fee)"
+                        placeholder="What was sold? (e.g. Website / Setup fee)"
                         aria-label="Custom product name"
                         autoFocus
                       />
                     )}
                     <Input aria-label="Taxable amount ₹ (ex-GST)" value={invTaxable} onChange={(e) => setInvTaxable(e.target.value)} type="number" min={0} placeholder="Taxable amount ₹ (ex-GST)" />
-                    <p className="text-xs text-ink-3">GST customer ke place-of-supply se apne-aap lagega. {rupee(amount)} received ka taxable (÷1.18) prefill kiya — theek kar lena.</p>
+                    <p className="text-xs text-ink-3">GST is applied automatically from the customer's place of supply. The taxable value of {rupee(amount)} received (÷1.18) is prefilled — correct it if needed.</p>
                     <div className="flex gap-2 pt-1">
                       <Button
                         size="sm"
@@ -864,7 +864,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                         disabled={!invCustomer || !invLineName.trim() || !(Number(invTaxable) > 0)}
                         onClick={handleBookInvoice}
                       >
-                        Invoice banao &amp; reconcile
+                        Create invoice &amp; reconcile
                       </Button>
                       <Button size="sm" variant="default" onClick={() => setShowInvoice(false)}>Cancel</Button>
                     </div>
@@ -887,14 +887,14 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                       <input type="radio" name="creditKind" checked={creditKind === "capital"} onChange={() => setCreditKind("capital")} className="mt-1" />
                       <span>
                         <span className="block text-sm text-ink">Owner&apos;s capital <span className="text-ink-3">(equity)</span></span>
-                        <span className="block text-xs text-ink-3">Poonji — business me daali, wapas nahi leni.</span>
+                        <span className="block text-xs text-ink-3">Capital put into the business — not to be taken back.</span>
                       </span>
                     </label>
                     <label className={`flex items-start gap-2 rounded-md border px-3 py-2 cursor-pointer ${creditKind === "director_loan" ? "border-emerald bg-emerald/10" : "border-hairline"}`}>
                       <input type="radio" name="creditKind" checked={creditKind === "director_loan"} onChange={() => setCreditKind("director_loan")} className="mt-1" />
                       <span>
                         <span className="block text-sm text-ink">Director&apos;s loan <span className="text-ink-3">(liability)</span></span>
-                        <span className="block text-xs text-ink-3">Temporary daala — company wapas degi.</span>
+                        <span className="block text-xs text-ink-3">Put in temporarily — the company will repay it.</span>
                       </span>
                     </label>
                   </div>
@@ -1036,21 +1036,21 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
             {!isCredit && (
               <div className="rounded-md border border-hairline p-3">
                 <button type="button" onClick={() => setShowBill((v) => !v)} aria-expanded={showBill} className="w-full flex items-center justify-between text-left">
-                  <span className="text-xs font-semibold text-ink-2">Vendor bill (Google / Microsoft / Zoho…) ka payment?</span>
+                  <span className="text-xs font-semibold text-ink-2">Payment of a vendor bill (Google / Microsoft / Zoho…)?</span>
                   <Icon name={showBill ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
                 </button>
                 {!showBill ? (
-                  <p className="text-xs text-ink-3 mt-1 leading-relaxed">Bill yahin se settle karo — Bills page se "Pay" karne par ek alag manual bank line banti hai, jo statement aane par double ho jaati hai.</p>
+                  <p className="text-xs text-ink-3 mt-1 leading-relaxed">Settle the bill here — paying it from the Bills page creates a separate manual bank line, which is counted twice once the statement arrives.</p>
                 ) : (
                   <div className="mt-2 space-y-2">
                     <select value={billPick} onChange={(e) => setBillPick(e.target.value)} aria-label="Vendor bill" className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40">
-                      <option value="">Bill chuno…</option>
+                      <option value="">Select a bill…</option>
                       {billCandidates.map((b) => {
                         const due = b.total - (b.paid_amount ?? 0);
-                        return <option key={b.id} value={b.id}>{b.vendor_name} · {b.bill_no ? `${b.bill_no} · ` : ""}{formatDate(b.bill_date)} · {due > 0 ? `due ${rupee(due)}` : `paid ${rupee(b.total)} (manual line replace hogi)`}</option>;
+                        return <option key={b.id} value={b.id}>{b.vendor_name} · {b.bill_no ? `${b.bill_no} · ` : ""}{formatDate(b.bill_date)} · {due > 0 ? `due ${rupee(due)}` : `paid ${rupee(b.total)} (replaces the manual line)`}</option>;
                       })}
                     </select>
-                    {billCandidates.length === 0 && <p className="text-xs text-ink-3">Koi open bill nahi — pehle Bills page par bill banao.</p>}
+                    {billCandidates.length === 0 && <p className="text-xs text-ink-3">No open bills — create the bill on the Bills page first.</p>}
                     <Button size="sm" variant="primary" icon="check" disabled={!billPick || bookBill.isPending} loading={bookBill.isPending} onClick={handleBookBill}>
                       Book {rupee(amount)} against this bill
                     </Button>
@@ -1063,18 +1063,18 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
             {!isCredit && commissionCandidates.length > 0 && (
               <div className="rounded-md border border-hairline p-3">
                 <button type="button" onClick={() => setShowCommission((v) => !v)} aria-expanded={showCommission} className="w-full flex items-center justify-between text-left">
-                  <span className="text-xs font-semibold text-ink-2">Referral partner ki commission?</span>
+                  <span className="text-xs font-semibold text-ink-2">Referral partner commission?</span>
                   <Icon name={showCommission ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
                 </button>
                 {showCommission && (
                   <div className="mt-2 space-y-2">
                     <select value={commissionPick} onChange={(e) => setCommissionPick(e.target.value)} aria-label="Referral commission" className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40">
-                      <option value="">Commission chuno…</option>
+                      <option value="">Select a commission…</option>
                       {commissionCandidates.map((c) => (
-                        <option key={c.id} value={c.id}>{c.partner_name ?? "partner"} · {formatDate(c.earned_date)} · net {rupee(c.net_payable)}{c.status === "paid" ? " (paid — manual line replace hogi)" : ""}</option>
+                        <option key={c.id} value={c.id}>{c.partner_name ?? "partner"} · {formatDate(c.earned_date)} · net {rupee(c.net_payable)}{c.status === "paid" ? " (paid — replaces the manual line)" : ""}</option>
                       ))}
                     </select>
-                    <p className="text-xs text-ink-3">Line ki raqam commission ke net payable ke barabar honi chahiye (TDS kaat kar).</p>
+                    <p className="text-xs text-ink-3">The line amount must equal the commission's net payable (after TDS).</p>
                     <Button size="sm" variant="primary" icon="check" disabled={!commissionPick || bookCommission.isPending} loading={bookCommission.isPending} onClick={handleBookCommission}>
                       Book {rupee(amount)} as commission paid
                     </Button>
@@ -1159,7 +1159,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                     <span className="block text-sm text-ink">
                       {isCredit ? "A loan/advance I GAVE has come back" : "I am GIVING a loan/advance"}
                     </span>
-                    <span className="block text-xs text-ink-3">Maine diya — paisa mera, wapas aana hai (asset).</span>
+                    <span className="block text-xs text-ink-3">I gave it — my money, to be received back (asset).</span>
                   </span>
                 </label>
                 <label className={`flex items-start gap-2 rounded-md border px-3 py-2 cursor-pointer ${advanceKind === "received" ? "border-indigo bg-indigo/10" : "border-hairline"}`}>
@@ -1168,7 +1168,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                     <span className="block text-sm text-ink">
                       {isCredit ? "Someone GAVE me a loan" : "I am REPAYING a loan someone gave me"}
                     </span>
-                    <span className="block text-xs text-ink-3">Mujhe mila — paisa unka, wapas dena hai (liability).</span>
+                    <span className="block text-xs text-ink-3">I received it — their money, to be repaid (liability).</span>
                   </span>
                 </label>
               </div>

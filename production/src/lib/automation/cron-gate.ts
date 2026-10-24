@@ -15,8 +15,15 @@
  *   · the switches cannot be read → 503, nothing runs (fail closed).
  * Every run stamps last_run_at / last_result on the companies it covered.
  *
- * Without a valid bearer the route's own auth answers (401) — the gate never tells an
- * anonymous caller anything, and never records a run for one.
+ * Without a valid bearer the gate answers itself and the route is NOT called (R-1552,
+ * 18 Oct 2026): CRON_SECRET unset → 503 (fail closed), missing/wrong bearer → 401. Until then
+ * the gate handed such a request to the route OUTSIDE any run context, where
+ * cronTenantAllowed() says yes to every company — so a route that also accepted a signed-in
+ * owner (the four provisioning crons) ran for ALL companies, automation switches ignored.
+ * The one exception is a route that declares `withoutBearer` (health-digest's owner preview):
+ * it is called inside a run context that allows NO company, so it must scope itself to the
+ * caller's own tenant, and any customer message from it is refused (sendCustomerMessage).
+ * The gate never tells an anonymous caller anything, and never records a run for one.
  * "platform" jobs (backup, demo reset, error digest) follow the platform company's switch.
  */
 import "server-only";
@@ -24,7 +31,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { AUTOMATION_JOBS, isDefaultOn, platformTenantId, stateOf, type AutomationJob } from "./jobs";
-import { cronTenants, ensureDefaultOnRow, readJobRow, recordRun } from "./gate.server";
+import { automationState, cronTenants, ensureDefaultOnRow, readJobRow, recordRun } from "./gate.server";
+import { currentManualRun, type ManualRun } from "./manual-run";
 
 export interface CronRunContext {
   job: AutomationJob;
@@ -115,12 +123,36 @@ async function runPass<R extends Request>(job: AutomationJob, mode: "live" | "dr
   return res;
 }
 
-export function gatedCron<R extends Request>(job: AutomationJob, handler: Handler<R>): Handler<R> {
+export interface GatedCronOptions<R extends Request> {
+  /**
+   * Called (instead of a 401/503) for a request WITHOUT a valid cron bearer. Runs inside a
+   * pass that allows no company — cronTenantAllowed() is false for every tenant — so it must
+   * do its own auth and work only on the caller's own tenant. Keep it read-only.
+   */
+  withoutBearer?: Handler<R>;
+}
+
+/** R-1552: what the gate answers when the cron bearer is missing or wrong. */
+function refuseWithoutBearer(): Response {
+  if (!process.env.CRON_SECRET?.trim()) return NextResponse.json({ error: "cron not configured" }, { status: 503 });
+  return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+}
+
+export function gatedCron<R extends Request>(job: AutomationJob, handler: Handler<R>, opts: GatedCronOptions<R> = {}): Handler<R> {
   return async function gated(req: R): Promise<Response> {
-    /* No valid secret: the gate stays silent and the route's own auth answers. */
-    if (!bearerOk(req)) return handler(req);
+    /* R-1552: no valid secret → the route is never reached (fail closed). */
+    if (!bearerOk(req)) {
+      const own = opts.withoutBearer;
+      if (!own) return refuseWithoutBearer();
+      const none: CronRunContext = { job, mode: "live", tenants: new Set(), allTenants: false, wouldSend: [] };
+      return als.run(none, () => own(req));
+    }
 
     const spec = AUTOMATION_JOBS[job];
+
+    /* R-1104: "Run now" / "Retry" from /automation — one company, its own switch. */
+    const manual = currentManualRun();
+    if (manual) return manualPass(job, manual, req, handler);
 
     /* Safety jobs (backup) are ON unless the platform company's row says otherwise, and a
        failed read RUNS them: for a backup, "could not check the switch" must not mean "no
@@ -168,6 +200,42 @@ export function gatedCron<R extends Request>(job: AutomationJob, handler: Handle
     }
     return live ?? practice ?? NextResponse.json({ ok: true, skipped: "dry_run_unavailable", job });
   };
+}
+
+/**
+ * R-1104: a pass started by a person (Run now / Retry on /automation) for ONE company. Same
+ * switch as the schedule: off → nothing runs ("Skipped — turned off"); practice run → the
+ * practice pass; on → the live pass. The pass may work on that company only, so a manager of
+ * one company can never run a job for another. A platform job (backup, demo reset, error
+ * digest) runs only for the platform company (the API route refuses anyone else first).
+ */
+async function manualPass<R extends Request>(job: AutomationJob, m: ManualRun, req: R, handler: Handler<R>): Promise<Response> {
+  const spec = AUTOMATION_JOBS[job];
+  const tenant = m.tenantId;
+  if (spec.scope === "platform" && tenant !== platformTenantId()) {
+    return NextResponse.json({ ok: false, error: "This job belongs to the platform company.", job }, { status: 403 });
+  }
+  let state: "off" | "dry_run" | "on";
+  if (isDefaultOn(job)) {
+    const row = await readJobRow(tenant, job);
+    state = row === undefined ? "on" : stateOf(row, job);
+    if (state !== "off" && row === null) await ensureDefaultOnRow(tenant, job);
+  } else {
+    state = await automationState(tenant, job);
+  }
+  if (state === "off") {
+    await recordRun(job, [tenant], "Skipped — turned off");
+    return NextResponse.json({ ok: true, skipped: "off", job });
+  }
+  const all = spec.scope === "platform";
+  if (state === "dry_run") {
+    if (!spec.dryRun) {
+      await recordRun(job, [tenant], "Practice run is not available for this job — nothing was done");
+      return NextResponse.json({ ok: true, skipped: "dry_run_unavailable", job });
+    }
+    return runPass(job, "dry", [tenant], all, req, handler);
+  }
+  return runPass(job, "live", [tenant], all, req, handler);
 }
 
 /** A practice run records what it WOULD have sent (shown as "would send N to X" under Last run). */

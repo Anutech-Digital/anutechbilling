@@ -210,11 +210,16 @@ describe("lead — model ka daawa, transcript ka saboot", () => {
     expect(route).toContain("/api/public/enquiry/general");
     expect(route).toContain("leadAlreadyCaptured");
     expect(route).toContain("leadDetailsAppearInTranscript(guarded.lead, messages)");
-    /* Self-call LOOPBACK HTTP par — nextUrl.origin Cloud Run par https bolta hai jabki
+    /* Self-call kabhi nextUrl.origin par nahi — Cloud Run par wo https bolta hai jabki
        container plain HTTP sunta hai; pehli asli chat-lead isi par giri thi
-       (ERR_SSL_WRONG_VERSION_NUMBER, live log). */
-    expect(route).toContain("http://127.0.0.1:");
+       (ERR_SSL_WRONG_VERSION_NUMBER, live log). R-1549 (19 Oct 2026): ab koi HTTP hop hi
+       nahi — handler in-process (visitor ke IP ke saath, Turnstile sirf hamari marked call
+       ke liye skip); 127.0.0.1 loopback ne sab visitors ko ek bucket me daala tha. */
     expect(route.includes("request.nextUrl.origin")).toBe(false);
+    expect(route).not.toMatch(/fetch\(new URL\("\/api\/public\/enquiry/);
+    expect(route).toContain('import { POST as generalEnquiry } from "@/app/api/public/enquiry/general/route"');
+    expect(route).toContain("markTrustedInternalCall(");
+    expect(route).toContain("passThroughHeaders(request)");
   });
 
   it("prompt: sawaal ek-ek karke, contact ka IMANDAAR kaaran, daam kabhi lock nahi", () => {
@@ -277,10 +282,16 @@ describe("self-learning — sabak advice hai, hukum nahi, aur figure-proof hai",
       join(process.cwd(), "src", "app", "api", "public", "agent", "chat", "route.ts"),
       "utf8",
     );
-    expect(route).toContain('resolveAutonomy("public_chat.learn", policy)');
-    expect(route).toContain('action: "public_chat.learn"');
-    /* READ par bhi sanitize — store ek DB row hai jise koi edit kar sakta hai. */
-    expect(route).toContain("sanitizeLearning((r as { reason: string | null }).reason)");
+    /* R-727: dial ke peeche, aur naya sabak HELD likha jaata hai — insaan approve kare tab prompt me. */
+    expect(route).toContain("resolveAutonomy(LESSON_ACTION, policy)");
+    expect(route).toContain("action: LESSON_ACTION");
+    expect(route).toContain('outcome: "held"');
+    expect(route).not.toContain('outcome: "did"');
+    /* READ: sirf approved sabak, aur unpar bhi sanitize (approvedLessons → sanitizeLearning) —
+       store ek DB row hai jise koi edit kar sakta hai. */
+    expect(route).toContain("approvedLessons(");
+    const lib = readFileSync(join(process.cwd(), "src", "lib", "ai", "public-chat-lessons.ts"), "utf8");
+    expect(lib).toContain("sanitizeLearning(r.reason)");
   });
 });
 

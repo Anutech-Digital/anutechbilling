@@ -13,6 +13,7 @@ import * as React from "react";
 import Link from "next/link";
 
 import { Card } from "@/components/ui/card";
+import { LoadError } from "@/components/shared/load-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,7 +75,7 @@ export default function TemplatesPage() {
       {q.isLoading ? (
         <div className="grid gap-3 md:grid-cols-2">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-32" />)}</div>
       ) : q.error ? (
-        <Card className="p-4 text-sm text-red-600">{(q.error as Error).message}</Card>
+        <LoadError what="Your templates" error={q.error} onRetry={() => void q.refetch()} />
       ) : (
         <>
           <Section title={`Your templates (${mine.length})`}>

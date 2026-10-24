@@ -13,6 +13,7 @@ import * as React from "react";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { rupee, cn } from "@/lib/utils";
@@ -25,7 +26,8 @@ function thisMonth(): string {
 
 export default function ScorecardPage() {
   const [period, setPeriod] = React.useState(thisMonth());
-  const { data: rows, isLoading } = usePerformance(period);
+  const perf = usePerformance(period);
+  const { data: rows, isLoading } = perf;
 
   return (
     <div className="mx-auto max-w-[1000px] p-4 md:p-6 lg:p-8 space-y-5">
@@ -34,7 +36,7 @@ export default function ScorecardPage() {
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Payroll</p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Scorecards</h1>
           <p className="text-sm text-ink-3 mt-1">
-            Har employee — <b>result pehle</b> (role ke hisaab se), phir reliability, phir activity. Activity sirf signal hai, score nahi.
+            Every employee — <b>results first</b> (based on their role), then reliability, then activity. Activity is only a signal, not part of the score.
           </p>
         </div>
         <div>
@@ -45,8 +47,12 @@ export default function ScorecardPage() {
 
       {isLoading ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-40 w-full" />)}</div>
+      ) : perf.isError ? (
+        /* R-1807: a failed read is an error + Try again — not "No team members yet", and
+           never a Revenue of ₹0 for everyone. */
+        <LoadError what="Scorecards" error={perf.error} onRetry={perf.refetch} />
       ) : (rows?.length ?? 0) === 0 ? (
-        <Card className="py-2"><EmptyState icon="users" title="No team members yet" body="Invite teammates at /team — phir unki scorecard yahan aayegi." /></Card>
+        <Card className="py-2"><EmptyState icon="users" title="No team members yet" body="Invite teammates at /team — their scorecards will show here." /></Card>
       ) : (
         <div className="space-y-4">
           {(rows ?? []).map((r) => <Scorecard key={r.userId} row={r} />)}
@@ -54,7 +60,7 @@ export default function ScorecardPage() {
       )}
 
       <p className="text-2xs text-ink-3">
-        Score = real outcomes (revenue, deals, quotes, payments, on-time tasks). Attendance + activity dikhaye jaate hain par score me nahi ginte — taaki koi "number game" na khele.
+        Score = real outcomes (revenue, deals, quotes, payments, on-time tasks). Attendance + activity are shown but not counted in the score — so nobody can play a "number game".
       </p>
     </div>
   );
@@ -104,7 +110,7 @@ function Scorecard({ row }: { row: PerfRow }) {
 
       <div className="mt-4 flex items-center gap-2 text-[12px] text-ink-3">
         <Icon name="clock" size={13} />
-        <span>Activity (leading signal, score me nahi): <b className="text-ink-2">{row.activityCount}</b> actions app me is mahine</span>
+        <span>Activity (leading signal, not scored): <b className="text-ink-2">{row.activityCount}</b> actions in the app this month</span>
       </div>
     </Card>
   );

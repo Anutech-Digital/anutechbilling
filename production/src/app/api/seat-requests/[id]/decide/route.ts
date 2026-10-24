@@ -75,7 +75,7 @@ export const POST = withRoute(
         updated_at: new Date().toISOString(),
       })
       .eq("id", params.id);
-    dbFail(error, "Faisla save nahi hua — thodi der baad dobara try kariye.");
+    dbFail(error, "Decision not saved — try again in a little while.");
     return NextResponse.json({ ok: true, status: "rejected" });
   }
 

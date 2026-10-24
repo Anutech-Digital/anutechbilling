@@ -88,7 +88,8 @@ describe("Money — semantic colour roles", () => {
   });
 
   it("greys a missing amount rather than colouring it", () => {
-    expect(el(<Money amount={null} tone="positive" />).className).toContain("text-ink-4");
+    // R-1135: muted grey that still reads at 4.5:1 (ink-4 is for placeholders only).
+    expect(el(<Money amount={null} tone="positive" />).className).toContain("text-ink-3");
   });
 });
 

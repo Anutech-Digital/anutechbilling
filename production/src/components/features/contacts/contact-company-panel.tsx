@@ -20,6 +20,7 @@ import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
 import { usePayments } from "@/lib/queries/payments";
 import { useCustomerProjects } from "@/lib/queries/projects";
 import { deriveCustomerInsights, CustomerMetricBar } from "@/components/features/customers/customer-insights";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,11 +29,20 @@ import { rupee, formatDate, initials } from "@/lib/utils";
 
 export function ContactCompanyPanel({ customerId }: { customerId: string }) {
   const { data: customer, isLoading, error } = useCustomer(customerId);
-  const { data: subs } = useCustomerSubscriptions(customerId);
-  const { data: invoices } = useCustomerInvoices(customerId);
-  const { data: quotes } = useCustomerQuotes(customerId);
-  const { data: projects } = useCustomerProjects(customerId);
-  const { data: allPayments } = usePayments();
+  const subsQ = useCustomerSubscriptions(customerId);
+  const invoicesQ = useCustomerInvoices(customerId);
+  const quotesQ = useCustomerQuotes(customerId);
+  const projectsQ = useCustomerProjects(customerId);
+  const paymentsQ = usePayments();
+  const { data: subs } = subsQ;
+  const { data: invoices } = invoicesQ;
+  const { data: quotes } = quotesQ;
+  const { data: projects } = projectsQ;
+  const { data: allPayments } = paymentsQ;
+  /* R-1807: any money read failing means "Outstanding: All clear" would be a guess. */
+  const moneyReads = [subsQ, invoicesQ, quotesQ, projectsQ, paymentsQ];
+  const moneyFailed = moneyReads.some((q) => q.isError);
+  const retryMoney = () => { for (const q of moneyReads) if (q.isError) void q.refetch(); };
 
   if (isLoading) {
     return (
@@ -104,13 +114,20 @@ export function ContactCompanyPanel({ customerId }: { customerId: string }) {
       </div>
 
       {/* Shared KPI bar — identical to Customer 360 */}
-      <CustomerMetricBar insights={insights} />
+      <CustomerMetricBar insights={insights} failed={moneyFailed} />
+      {moneyFailed && (
+        <LoadErrorInline
+          what="Some of this company's records"
+          error={moneyReads.find((q) => q.isError)?.error}
+          onRetry={retryMoney}
+        />
+      )}
 
       {/* Record counts */}
       <div className="grid grid-cols-4 gap-2 mt-4">
         {counts.map((k) => (
           <div key={k.label} className="rounded-lg border border-hairline bg-paper px-3 py-2 text-center">
-            <div className="text-lg font-semibold text-ink tabular-nums">{k.value}</div>
+            <div className="text-lg font-semibold text-ink tabular-nums">{moneyFailed ? "—" : k.value}</div>
             <div className="text-3xs uppercase tracking-wider text-ink-3">{k.label}</div>
           </div>
         ))}

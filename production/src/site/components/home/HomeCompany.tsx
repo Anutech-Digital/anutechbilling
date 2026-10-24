@@ -14,54 +14,67 @@
  * Same visual language as HomeV2 (palette, Archivo + Plex Mono), CSS in one <style> block
  * so the phone layout is media queries, not a JS width check.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { LucideIcon } from "lucide-react";
+import {
+  Award, BadgeCheck, CalendarCheck, ChartColumn, FileText, IndianRupee, LifeBuoy, MessageCircle,
+  MonitorPlay, Phone, ReceiptIndianRupee, Rocket, Sparkles, Target, Users,
+} from "lucide-react";
 import Link from "@/site/components/ui/SiteLink";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { reportLeadConversion } from "@/site/lib/google-ads";
-import { WHATSAPP_URL, WHATSAPP_READY, COMPANY } from "@/site/lib/config";
+import { WHATSAPP_URL, WHATSAPP_READY, COMPANY, PARTNER_BADGE, PARTNER_SHORT, SHOW_PREMIER_PARTNER } from "@/site/lib/config";
 import { C, MONO, CATALOGUE_V2, CatScene } from "@/site/components/home/HomeV2";
 import { COMPANY_FAQS } from "@/site/lib/data/company-faqs";
+import { teaserCardPrice, type DomainTeaser } from "@/site/lib/data/domain-teaser";
+import { ProductPeek } from "@/site/components/home/ProductPeek";
 
 const WA = (text: string) => `${WHATSAPP_URL}?text=${encodeURIComponent(text)}`;
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 
 /** What we automate — capabilities, phrased as the job the client does by hand today. */
-const AUTOMATE: readonly { icon: string; title: string; body: string }[] = [
-  { icon: "M3 7h18M3 12h18M3 17h12", title: "Leads & sales", body: "Enquiries from the website, WhatsApp and calls in one list, follow-up reminders, and a quote sent in a click." },
-  { icon: "M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6", title: "Billing & GST", body: "GST invoices, payment reminders, renewals and bank reconciliation — no more re-typing into Excel." },
-  { icon: "M16 11a4 4 0 10-8 0M4 21a8 8 0 0116 0", title: "Staff & HR", body: "Attendance, salary, advances, leave and training records, with each person seeing only their own." },
-  { icon: "M4 12l5 5L20 6", title: "Approvals", body: "Purchase, expense and discount approvals on the phone, with a record of who said yes and when." },
-  { icon: "M4 20V10M10 20V4M16 20v-7M22 20H2", title: "Reports & dashboards", body: "Today's numbers on one screen — sales, dues, stock, work pending — instead of a sheet someone updates on Friday." },
-  { icon: "M12 2a7 7 0 017 7c0 5-7 13-7 13S5 14 5 9a7 7 0 017-7zM12 7v4M12 13h.01", title: "AI where it saves time", body: "Reads documents, drafts replies, sorts enquiries and flags what is late — always with a person deciding." },
+const AUTOMATE: readonly { icon: LucideIcon; title: string; body: string }[] = [
+  { icon: Target, title: "Leads & sales", body: "Enquiries from the website, WhatsApp and calls in one list, follow-up reminders, and a quote sent in a click." },
+  { icon: ReceiptIndianRupee, title: "Billing & GST", body: "GST invoices, payment reminders, renewals and bank reconciliation — no more re-typing into Excel." },
+  { icon: Users, title: "Staff & HR", body: "Attendance, salary, advances, leave and training records, with each person seeing only their own." },
+  { icon: BadgeCheck, title: "Approvals", body: "Purchase, expense and discount approvals on the phone, with a record of who said yes and when." },
+  { icon: ChartColumn, title: "Reports & dashboards", body: "Today's numbers on one screen — sales, dues, stock, work pending — instead of a sheet someone updates on Friday." },
+  { icon: Sparkles, title: "AI where it saves time", body: "Reads documents, drafts replies, sorts enquiries and flags what is late — always with a person deciding." },
 ];
 
 /** The real project steps (docs/project-template, 7-step team model). */
-const STEPS: readonly { n: string; title: string; body: string; who: string }[] = [
-  { n: "01", title: "A free call", body: "Show us how the work is done today — the sheets, the WhatsApp groups, the registers. No preparation needed.", who: "You" },
-  { n: "02", title: "Requirements in writing", body: "Every point in plain words, for you to correct before anything is built.", who: "We" },
-  { n: "03", title: "A fixed quote", body: "Scope, price in rupees with GST, and milestones with dates. Nothing starts without your yes.", who: "You" },
-  { n: "04", title: "Build, with a demo at each milestone", body: "You use working software early and can change course — changes are written down with their effect on price and date.", who: "We" },
-  { n: "05", title: "Go-live and training", body: "We set it up, move your existing data, train your team and hand over every login.", who: "We" },
-  { n: "06", title: "Support after go-live", body: "Fixes and small changes on WhatsApp by the people who built it; an optional monthly support plan.", who: "We" },
+const STEPS: readonly { n: string; icon: LucideIcon; title: string; body: string; who: string }[] = [
+  { n: "01", icon: Phone, title: "A free call", body: "Show us how the work is done today — the sheets, the WhatsApp groups, the registers. No preparation needed.", who: "You" },
+  { n: "02", icon: FileText, title: "Requirements in writing", body: "Every point in plain words, for you to correct before anything is built.", who: "We" },
+  { n: "03", icon: IndianRupee, title: "A fixed quote", body: "Scope, price in rupees with GST, and milestones with dates. Nothing starts without your yes.", who: "You" },
+  { n: "04", icon: MonitorPlay, title: "Build, with a demo at each milestone", body: "You use working software early and can change course — changes are written down with their effect on price and date.", who: "We" },
+  { n: "05", icon: Rocket, title: "Go-live and training", body: "We set it up, move your existing data, train your team and hand over every login.", who: "We" },
+  { n: "06", icon: LifeBuoy, title: "Support after go-live", body: "Fixes and small changes on WhatsApp by the people who built it; an optional monthly support plan.", who: "We" },
 ];
 
 /** "IT for your office" — the licence/hosting catalogue, email first. */
 const IT_CARDS = [
-  { name: "Business email", href: "/email", from: "₹79", unit: "from · /mailbox/mo", gst: "+ GST 18%", body: "Google Workspace, Microsoft 365, Zoho or Anutech Mail — priced side by side, migrated free.", tags: ["GOOGLE PREMIER PARTNER", "FREE MIGRATION"], cta: "See email plans", icon: "mail" as const, img: "/googleworkspace-inbox.png" },
+  { name: "Business email", href: "/email", from: "₹79", unit: "from · /mailbox/mo", gst: "+ GST 18%", body: "Google Workspace, Microsoft 365, Zoho or Anutech Mail — priced side by side, migrated free.", tags: [PARTNER_BADGE.toUpperCase(), "FREE MIGRATION"], cta: "See email plans", icon: "mail" as const, img: "/googleworkspace-inbox.png" },
   ...CATALOGUE_V2.filter((c) => c.name !== "Reseller program"),
 ];
 
-export function HomeCompany({ emailFrom }: { emailFrom?: number }) {
+export function HomeCompany({ emailFrom, domainTeaser }: { emailFrom?: number; domainTeaser?: DomainTeaser }) {
   const [openFaq, setOpenFaq] = useState(0);
-  const cards = IT_CARDS.map((c) => (c.name === "Business email" && emailFrom ? { ...c, from: inr(emailFrom) } : c));
+  /* R-1599: the Domains card carries the live .in price the checkout charges (server-read). */
+  const cards = IT_CARDS.map((c) =>
+    c.name === "Business email" && emailFrom ? { ...c, from: inr(emailFrom) }
+    : c.name === "Domains" && domainTeaser ? { ...c, ...teaserCardPrice(domainTeaser) }
+    : c);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useScrollReveal(rootRef);
 
   return (
-    <div className="hc">
+    <div className="hc" ref={rootRef}>
       <style>{CSS}</style>
 
       {/* ── HERO: custom software first ──────────────────────────────────────── */}
       <section className="hc-wrap hc-hero">
-        <div>
+        <div className="hc-hero-text">
           <div className="hc-eyebrow">Anutech Digital · Delhi · Since 2014</div>
           <h1 className="hc-h1">Software that runs your office — built for how <em>your</em> business works.</h1>
           <p className="hc-lead">
@@ -80,8 +93,11 @@ export function HomeCompany({ emailFrom }: { emailFrom?: number }) {
         </div>
         {/* R-464: a wrapper that outlives the form→thanks swap, so the floating AI launcher
             (phone only) stays aside while this box is on screen. */}
-        <div data-avoid-floating="">
+        <div className="hc-hero-form" data-avoid-floating="">
           <StartForm />
+        </div>
+        <div className="hc-hero-visual">
+          <ProductPeek />
         </div>
       </section>
 
@@ -93,9 +109,9 @@ export function HomeCompany({ emailFrom }: { emailFrom?: number }) {
           <p className="hc-sub">One system for the work that today lives in sheets, registers and chat groups. Built around your process — not the other way round.</p>
           <ul className="hc-grid3">
             {AUTOMATE.map((a) => (
-              <li key={a.title} className="hc-tile">
+              <li key={a.title} className="hc-tile" data-reveal="">
                 <span className="hc-ico" aria-hidden>
-                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={a.icon} /></svg>
+                  <a.icon size={22} strokeWidth={1.8} />
                 </span>
                 <b>{a.title}</b>
                 <span>{a.body}</span>
@@ -118,7 +134,7 @@ export function HomeCompany({ emailFrom }: { emailFrom?: number }) {
             <Link href="/reselleros" className="hc-btn hc-btn-ghost">See ResellerOS →</Link>
           </div>
         </div>
-        <ul className="hc-proof-list" aria-label="What ResellerOS does for us">
+        <ul className="hc-proof-list" aria-label="What ResellerOS does for us" data-reveal="">
           {["Leads and follow-ups", "Quotes and GST invoices", "Subscriptions and renewals", "Bank reconciliation", "Staff, salary and advances", "AI assistant for the team"].map((t) => (
             <li key={t}><span aria-hidden>✓</span>{t}</li>
           ))}
@@ -133,10 +149,10 @@ export function HomeCompany({ emailFrom }: { emailFrom?: number }) {
           <p className="hc-sub">AI writes much of the code and our team checks every part of it — that is how a small team delivers quickly and keeps the price fair.</p>
           <ol className="hc-steps">
             {STEPS.map((s) => (
-              <li key={s.n}>
-                <span className="hc-step-n">{s.n}</span>
-                <span className="hc-step-body"><b>{s.title}</b><span>{s.body}</span></span>
-                <span className="hc-step-who">{s.who}</span>
+              <li key={s.n} data-reveal="">
+                <span className="hc-step-n" aria-hidden><s.icon size={18} strokeWidth={1.9} /></span>
+                <span className="hc-step-body"><small className="hc-step-num">Step {s.n}</small><b>{s.title}</b><span>{s.body}</span></span>
+                <span className={`hc-step-who ${s.who === "You" ? "hc-who-you" : "hc-who-we"}`}>{s.who}</span>
               </li>
             ))}
           </ol>
@@ -150,7 +166,7 @@ export function HomeCompany({ emailFrom }: { emailFrom?: number }) {
         <p className="hc-sub">Published prices, renewal shown up front, GST invoice on every order. {COMPANY.partnerLine}.</p>
         <div className="hc-grid4">
           {cards.map((c) => (
-            <Link key={c.name} href={c.href as never} className="hc-card">
+            <Link key={c.name} href={c.href as never} className="hc-card" data-reveal="">
               <span className="hc-card-img">
                 {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331) */}
                 {c.img ? <img src={c.img} alt="" loading="lazy" /> : <CatScene kind={c.icon} />}
@@ -169,13 +185,14 @@ export function HomeCompany({ emailFrom }: { emailFrom?: number }) {
       {/* ── COMPANY FACTS ────────────────────────────────────────────────────── */}
       <section className="hc-band">
         <div className="hc-wrap hc-facts">
-          {[
-            ["Since 2014", "In business"],
-            ["Premier Partner", "Google"],
-            ["A person", "Answers on WhatsApp"],
-            [COMPANY.gstin, "GSTIN · " + COMPANY.city],
-          ].map(([v, l]) => (
-            <div key={l}><b>{v}</b><span>{l}</span></div>
+          {([
+            [CalendarCheck, "Since 2014", "In business"],
+            // R-1602: "Premier Partner" only behind the flag in site/lib/config.ts.
+            [Award, PARTNER_SHORT, SHOW_PREMIER_PARTNER ? "Google" : "Google Workspace"],
+            [MessageCircle, "A person", "Answers on WhatsApp"],
+            [FileText, COMPANY.gstin, "GSTIN · " + COMPANY.city],
+          ] as const).map(([Icon, v, l]) => (
+            <div key={l} data-reveal=""><span className="hc-fact-ico" aria-hidden><Icon size={20} strokeWidth={1.8} /></span><b>{v}</b><span>{l}</span></div>
           ))}
         </div>
       </section>
@@ -209,6 +226,46 @@ export function HomeCompany({ emailFrom }: { emailFrom?: number }) {
       </section>
     </div>
   );
+}
+
+/**
+ * Light scroll motion (R-1454): blocks marked data-reveal that start BELOW the fold fade and
+ * rise in when they scroll into view. Safe by construction:
+ *  - the server HTML has no hidden state; only this effect adds "hc-wait", so with no JS (or
+ *    before hydration) everything is visible;
+ *  - blocks already on screen at load are never hidden, so nothing flickers above the fold;
+ *  - prefers-reduced-motion: nothing is hidden or moved at all (and the CSS only animates
+ *    inside a no-preference media query).
+ */
+function useScrollReveal(rootRef: React.RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || typeof IntersectionObserver === "undefined") return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const fold = window.innerHeight;
+    const waiting = Array.from(root.querySelectorAll<HTMLElement>("[data-reveal]")).filter(
+      (el) => el.getBoundingClientRect().top > fold,
+    );
+    if (!waiting.length) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          e.target.classList.remove("hc-wait");
+          io.unobserve(e.target);
+        }
+      },
+      { rootMargin: "0px 0px -8% 0px" },
+    );
+    for (const el of waiting) {
+      el.classList.add("hc-wait");
+      io.observe(el);
+    }
+    return () => {
+      io.disconnect();
+      for (const el of waiting) el.classList.remove("hc-wait");
+    };
+  }, [rootRef]);
 }
 
 /** The custom-software call-back: name, mobile, and (optional) the job to automate. */
@@ -290,7 +347,10 @@ const CSS = `
 .hc .hc-btn-light{background:#fff;color:${C.blueDk}}
 .hc-btn:focus-visible,.hc-card:focus-visible,.hc-faq-row button:focus-visible{outline:3px solid ${C.blueDk};outline-offset:2px}
 
-.hc-hero{display:grid;grid-template-columns:1.25fr 1fr;gap:48px;align-items:center;padding-block:48px 56px}
+.hc-hero{display:grid;grid-template-columns:1.25fr 1fr;grid-template-areas:"text form" "visual form";gap:28px 48px;align-items:start;padding-block:48px 64px}
+.hc-hero-text{grid-area:text}
+.hc-hero-form{grid-area:form;align-self:center}
+.hc-hero-visual{grid-area:visual;padding-right:14px}
 .hc-form{display:flex;flex-direction:column;gap:6px;background:${C.surfT};border:1px solid ${C.borderL};border-radius:16px;padding:24px;box-shadow:0 24px 50px -36px rgba(12,17,22,.45);scroll-margin-top:96px}
 .hc-form-title{font-size:19px;color:${C.ink}}
 .hc-form-sub{font-size:13px;color:${C.sec};margin-bottom:8px}
@@ -311,6 +371,7 @@ const CSS = `
 .hc-tile b{font-size:16.5px;color:${C.ink};letter-spacing:-.01em}
 .hc-tile span:last-child{font-size:14px;line-height:1.55}
 .hc-ico{display:inline-flex;width:40px;height:40px;align-items:center;justify-content:center;border-radius:10px;background:#E8F0FD;color:${C.blue};margin-bottom:6px}
+.hc-grid3 li:nth-child(even) .hc-ico{background:${C.greenT2};color:${C.green}}
 
 .hc-proof{display:grid;grid-template-columns:1.2fr 1fr;gap:40px;align-items:center;padding-block:56px}
 .hc-proof-list{list-style:none;margin:0;padding:22px 24px;display:grid;gap:12px;background:${C.greenT};border:1px solid #CFE7D8;border-radius:14px}
@@ -319,11 +380,14 @@ const CSS = `
 
 .hc-steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 40px}
 .hc-steps li{display:flex;gap:16px;padding:16px 0;border-top:1px solid ${C.borderL}}
-.hc-step-n{font-family:${MONO};font-size:13px;color:${C.blue};font-weight:500;width:26px;flex:none;padding-top:2px}
+.hc-step-n{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;flex:none;background:#fff;border:1px solid ${C.borderL};color:${C.blue};box-shadow:0 8px 18px -14px rgba(22,104,227,.6)}
+.hc-step-num{font-family:${MONO};font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:${C.blue}}
 .hc-step-body{flex:1;display:flex;flex-direction:column;gap:3px}
 .hc-step-body b{font-size:16px;color:${C.ink}}
 .hc-step-body span{font-size:14px;line-height:1.5}
-.hc-step-who{font-family:${MONO};font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${C.sec};flex:none;padding-top:3px}
+.hc-step-who{font-family:${MONO};font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;flex:none;align-self:flex-start;margin-top:2px;padding:3px 8px;border-radius:999px}
+.hc-who-you{background:${C.greenT2};color:${C.green}}
+.hc-who-we{background:#E8F0FD;color:${C.blueDk}}
 
 .hc-it{padding-block:56px}
 .hc-grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
@@ -341,6 +405,7 @@ const CSS = `
 .hc .hc-reseller a{color:${C.blue};font-weight:600}
 
 .hc-facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;text-align:center}
+.hc-fact-ico{display:inline-flex;width:40px;height:40px;align-items:center;justify-content:center;border-radius:50%;background:#fff;border:1px solid ${C.borderL};color:${C.blue};margin-bottom:10px}
 .hc-facts b{display:block;font-size:24px;letter-spacing:-.02em;color:${C.ink};overflow-wrap:anywhere}
 .hc-facts span{display:block;font-family:${MONO};font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:${C.sec};margin-top:4px}
 
@@ -356,9 +421,21 @@ const CSS = `
 .hc-on-dark{color:#fff}
 .hc-on-dark-sub{color:#DCE8FB;font-size:15.5px;line-height:1.55;margin:0;max-width:640px}
 
+/* Light motion (R-1454) — only for visitors who have not asked for reduced motion. */
+@media (prefers-reduced-motion: no-preference){
+  .hc [data-reveal]{transition:opacity .55s ease,transform .55s ease}
+  .hc [data-reveal].hc-wait{opacity:0;transform:translateY(16px)}
+  .hc-tile,.hc .hc-card{transition:opacity .55s ease,transform .25s ease,box-shadow .25s ease}
+  .hc-tile:hover,.hc .hc-card:hover{transform:translateY(-3px);box-shadow:0 22px 40px -28px rgba(12,17,22,.45)}
+  .hc .hc-btn-primary{transition:transform .2s ease,box-shadow .2s ease}
+  .hc .hc-btn-primary:hover{transform:translateY(-1px);box-shadow:0 16px 30px -16px rgba(22,104,227,.8)}
+}
+
 @media (max-width:980px){
   .hc-wrap{padding-inline:20px}
   .hc-hero,.hc-proof{grid-template-columns:1fr;gap:28px}
+  .hc-hero{grid-template-areas:"text" "form" "visual"}
+  .hc-hero-visual{padding-right:0;max-width:640px}
   .hc-hero{padding-block:32px 40px}
   .hc-h1{font-size:32px}
   .hc-h2{font-size:25px}

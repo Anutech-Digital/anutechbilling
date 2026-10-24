@@ -30,6 +30,8 @@
  * from a green tick. Marking it done would claim work happened that nobody did.
  */
 
+import { partPaidLine } from "./quote-payment-state";
+
 /** "trial" is only ever inserted by lib/trials/start-from-quote.ts withTrialStep (R-282). */
 export type LifecycleStage = "draft" | "sent" | "signed" | "trial" | "paid" | "provisioned" | "invoiced";
 export type StageState = "done" | "current" | "todo" | "skipped";
@@ -56,6 +58,11 @@ export interface LifecycleInput {
    * Absent → the old reading of paymentStatus alone, for callers that have no amounts.
    */
   paid?: boolean;
+  /**
+   * R-1710: the money itself (quotePaymentState) — so a quote invoiced after a part payment
+   * still says what came in and what is left, instead of "Invoiced before payment".
+   */
+  money?: { received: number; due: number };
 }
 
 const LABELS: Record<LifecycleStage, string> = {
@@ -106,6 +113,8 @@ export function quoteLifecycle(input: LifecycleInput): {
       state: paid ? "done" : "todo",
       detail: paid
         ? "Payment received."
+        : input.money && input.money.received > 0 && input.money.due > 0
+          ? `Part-paid — ${partPaidLine(input.money)}.`
         : input.paymentStatus === "partial"
           ? "Part-paid — the balance is still outstanding."
           : input.paymentStatus === "invoiced"

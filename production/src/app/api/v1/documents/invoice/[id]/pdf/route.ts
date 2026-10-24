@@ -16,6 +16,9 @@ import { buildInvoiceUpiQr } from "@/lib/pdf/upi-qr";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import type { Invoice, Quote, Customer } from "@/lib/supabase/database.types";
 import { readTenantUdyam } from "@/lib/compliance/udyam";
+import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
+import { loadRenewedSubscriptionDomain } from "@/lib/quotes/line-period-context";
+import { tdsByPayment } from "@/lib/accounting/tds-receipt";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,6 +40,11 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
   }
 
   const inv = invoice as Invoice;
+  /* R-1739: an invoice imported from Zoho Books is Zoho's document — this app never prints
+     it as its own Tax Invoice. The customer's copy is the one Zoho Books issued. */
+  if (isOpeningInvoice(inv)) {
+    return deny(409, "This invoice was imported from Zoho Books. Download its PDF from Zoho Books.");
+  }
   const [{ data: quote }, { data: customer }, { data: tenant }, udyamNumber] = await Promise.all([
     admin.from("quotes").select("*").eq("invoice_id", id).maybeSingle(),
     inv.customer_id
@@ -65,6 +73,8 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
   const props = buildInvoicePdfProps({
     logoDataUri: logo,
     razorpayConfigured,
+    /* R-1764: a renewal quote's "Domain:" comes from the subscription it renews. */
+    subscriptionDomain: await loadRenewedSubscriptionDomain(admin, (quote as Quote) ?? null),
     invoice:  inv,
     quote:    (quote as Quote) ?? null,
     customer: (customer as Customer) ?? null,
@@ -86,11 +96,26 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
     amountDue: invoiceAmountDue(inv),
   });
 
+  /* R-1670 (2): TDS the customer deducted on each adjusted advance, so the PDF prints the bank
+     money + the TDS instead of one gross figure. Unreadable → printed as before (one line).
+     A later-reversed row still counts, as on the receipt (useTdsForPayment): the invoice is
+     frozen as issued, and this is what that payment was at the time. */
+  const advPaymentIds = (inv.adjusted_advances ?? []).map((a) => a.payment_id).filter(Boolean);
+  let advanceTds: Record<string, number> | null = null;
+  if (advPaymentIds.length > 0) {
+    const { data: tdsRows, error: tdsErr } = await admin
+      .from("tds_receivable")
+      .select("payment_id, tds_amount")
+      .eq("tenant_id", inv.tenant_id)
+      .in("payment_id", advPaymentIds);
+    if (!tdsErr) advanceTds = tdsByPayment(tdsRows ?? []);
+  }
+
   const { renderToBuffer } = await import("@react-pdf/renderer");
   const { InvoicePDF } = await import("@/lib/pdf/InvoicePDF");
   const buffer = await renderToBuffer(
     createElement(InvoicePDF, {
-      ...props, upiQrDataUrl: upi?.dataUrl ?? null, upiVpa: upi?.vpa ?? null,
+      ...props, upiQrDataUrl: upi?.dataUrl ?? null, upiVpa: upi?.vpa ?? null, advanceTds,
     }) as unknown as Parameters<typeof renderToBuffer>[0],
   );
 

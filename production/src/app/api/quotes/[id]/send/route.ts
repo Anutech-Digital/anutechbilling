@@ -24,6 +24,7 @@
 import { NextResponse } from "next/server";
 import { trustedOrigin } from "@/lib/app-url";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import { isEmailConfigured } from "@/lib/email/send";
 import { sendCustomerEmail } from "@/lib/messaging";
@@ -32,17 +33,27 @@ import { replyToAddress } from "@/lib/email/reply-to";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { quoteContact } from "@/lib/quotes/quote-contact";
+import { quoteBuyerGstin } from "@/lib/quotes/buyer-gstin";
 import { firstChaseAfterSend } from "@/lib/ai/cadence";
 import { scheduleSalesLoop } from "@/lib/ai/sales-loops.server";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
-import { quoteAmountDue } from "@/lib/payments/amount-due";
+import { quoteDueNowUpiAmount } from "@/lib/payments/quote-due-now";
+import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import { rupee } from "@/lib/utils";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
+import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
 import { buildCustomerQuoteHtml } from "@/lib/email/quote-template";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
+import { loadQuotePeriodContext } from "@/lib/quotes/line-period-context";
+import { lineDetailNotes } from "@/lib/pdf/invoice-display";
+import {
+  parseQuoteTemplate, proformaBank, quoteTemplateFileName, quoteTemplateNoun, PROFORMA_NOTICE,
+} from "@/lib/pdf/quote-template";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -52,6 +63,8 @@ interface SendBody {
   cc?:      string[];
   subject?: string;
   message?: string;
+  /** R-1523: "proforma" → the PDF, subject and body go out as a Proforma Invoice. Default Quotation. */
+  template?: string;
 }
 
 export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
@@ -66,11 +79,16 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   // Resolve current user → tenant_id
   const { data: me, error: meErr } = await userClient
     .from("users")
-    .select("tenant_id, full_name")
+    .select("tenant_id, full_name, role")
     .eq("id", authData.user.id)
     .single();
   if (meErr || !me) {
     return NextResponse.json({ error: "user not linked to a tenant" }, { status: 403 });
+  }
+  /* R-1470: a quote is emailed from the quote page — only roles that open Quotes (owner,
+     manager, sales). Checked before the quote is loaded, rendered or sent. */
+  if (!mayOpenPage(me.role, ["/quotes"])) {
+    return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   }
 
   // ── 2. Parse body ────────────────────────────────────────────────
@@ -97,7 +115,11 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       id, tenant_id, customer_id, customer_name, plan, seats, amount,
       status, payment_status, line_items, subtotal, discount_pct, tax_rate,
       created_date, expires_date, notes, is_renewal, is_add_seats, is_one_off, is_extension, extension_months, public_token, lead_id,
-      prospect_state_code, prospect_country
+      domain, renewal_term_date, renewal_subscription_id,
+      prospect_state_code, prospect_country, currency, terms_conditions,
+      billing_cycle, exchange_rate, invoice_id, payment_terms_days,
+      approval_status, approval_tier, approval_requested_by, approved_by,
+      approved_discount_bps, approved_margin_bps, approval_rejection_reason
     `)
     .eq("id", params.id)
     .single();
@@ -113,11 +135,20 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       { status: 400 }
     );
   }
+  /* R-1669: the same approval gate as "Mark as sent" and the PDF link — a quote waiting for
+     (or refused) discount / margin approval is not emailed, whatever the button showed. */
+  const approvalBlock = customerCopyBlock(quote);
+  if (approvalBlock) {
+    return NextResponse.json(
+      { error: `Needs approval first — ${approvalBlock.reason} ${approvalBlock.nextStep}` },
+      { status: 409 },
+    );
+  }
 
   // ── 4. Tenant + customer info ────────────────────────────────────
   const { data: tenant } = await supabase
     .from("tenants")
-    .select("name, email, phone, gstin, address, state, state_code, upi_vpa, upi_payee_name, logo_url")
+    .select("name, email, phone, gstin, address, state, state_code, upi_vpa, upi_payee_name, logo_url, remit_bank_name, remit_account_name, remit_account_number, remit_ifsc, remit_branch")
     .eq("id", me.tenant_id)
     .single();
   if (!tenant) {
@@ -134,7 +165,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   const { data: customer } = quote.customer_id
     ? await supabase
         .from("customers")
-        .select("name, contact_name, contact_email, contact_phone, gstin, state_code, country")
+        .select("name, contact_name, contact_email, contact_phone, gstin, state_code, country, gst_treatment")
         .eq("id", quote.customer_id)
         .single()
     : { data: null };
@@ -168,6 +199,8 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   const tax         = quoteDisplayTax(taxable, taxRate, quote.amount); // R-804
   const total       = quote.amount ?? taxable + tax;
   const lineItems   = (quote.line_items ?? []) as QuoteLineItem[];
+  /* R-1764: each subscription line's "Domain:" / "Subscription period:" (email + PDF). */
+  const periodContext = await loadQuotePeriodContext(supabase, quote);
 
   // Build the accept/pay link from the ACTUAL host the request came in on, not
   // NEXT_PUBLIC_APP_URL — that's baked at build time to a domain that may not be
@@ -189,10 +222,31 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       { status: 500 },
     );
   }
+  /* R-1523: per-send choice, nothing stored on the quote. A Proforma keeps the quote number. */
+  const template    = parseQuoteTemplate(body.template);
+  const proforma    = template === "proforma";
+  const docNoun     = quoteTemplateNoun(template);
   const subject     = body.subject?.trim() ||
-                      `Quotation ${quote.id} from ${tenant.name}`;
+                      `${docNoun} ${quote.id} from ${tenant.name}`;
   const greetName   = customer?.contact_name || quote.customer_name;
-  const messageBody = body.message?.trim() || (
+  const messageBody = body.message?.trim() || (proforma
+    ? `Hi ${greetName},
+
+Please find Proforma Invoice ${quote.id} attached as a PDF.
+${PROFORMA_NOTICE}
+
+Total: ${rupee(total)}
+Due by: ${quote.expires_date ?? "within 30 days"}
+
+Bank details and a UPI QR (where available) are on the PDF. You can also review, accept and pay online:
+${customerUrl}
+
+If you have any questions, just reply to this email.
+
+Thanks,
+${me.full_name ?? tenant.name}
+${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${tenant.email}` : ""}`
+    :
 `Hi ${greetName},
 
 Please find your quotation ${quote.id} attached as a PDF.
@@ -219,20 +273,22 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
     totalAmount: total,
     expiresDate: quote.expires_date,
     acceptUrl: customerUrl,
-    lineItems: lineItems.map((li) => ({ name: li.name, qty: li.qty, rate: li.rate })),
+    /* R-1764: the email's lines say the domain and the period too, as the PDF does. */
+    lineItems: lineItems.map((li) => ({ name: li.name, qty: li.qty, rate: li.rate, notes: lineDetailNotes(li, periodContext) })),
+    documentLabel: proforma ? docNoun : undefined,
   });
 
   // ── 7. Render PDF attachment ─────────────────────────────────────
   // This is the PDF the customer actually receives, so the scan-to-pay QR
-  // matters more here than on the in-app download. quoteAmountDue() decides
-  // whether one is offered at all — it refuses non-INR quotes (UPI settles only
-  // in rupees) and quotes already invoiced (the invoice owns that ask).
+  // matters more here than on the in-app download. R-1613: readQuoteDueNow gives the
+  // same figure the online Pay button charges (remainder / instalment 1) and none at all
+  // on a non-INR, paid or already-invoiced quote (the invoice owns that ask).
   const tenantUpi = tenant as { name?: string; upi_vpa?: string | null; upi_payee_name?: string | null };
   const upi = await buildQuoteUpiQr({
     vpa:       tenantUpi.upi_vpa,
     payeeName: tenantUpi.upi_payee_name ?? tenant.name,
     quoteId:   quote.id,
-    amountDue: quoteAmountDue(quote),
+    amountDue: quoteDueNowUpiAmount(await readQuoteDueNow(supabase, quote)),
   });
 
   let attachments: { filename: string; content: Buffer; contentType: string }[] | undefined;
@@ -250,6 +306,8 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       customerName:  quote.customer_name,
       /* R-445 (1): a lead quote's PDF names the lead's person, as the in-app preview does. */
       ...quoteContact(customer, lead),
+      /* R-1485: the buyer's GSTIN under Bill to — customer row, else the lead's. */
+      customerGstin: quoteBuyerGstin(customer, lead),
       lineItems,
       subtotal,
       discountPct:   quote.discount_pct ?? 0,
@@ -261,20 +319,32 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       // GST head derived from seller (tenant) vs buyer (customer) state. (audit #18-20)
       interState:    pos.interState,
       isExport:      pos.isExport,
+      /* R-1532: a Bill of Supply business's 0% quote — "No GST — Bill of Supply", no heads. */
+      billOfSupply:  pos.isExport ? null : quoteDocBillOfSupply(await readTenantGstRegistration(supabase, me.tenant_id), taxRate),
       /* R-376 (f): "Haryana (06) · IGST" — state name and code, not just the head. */
       placeOfSupply: pos.label,
       validityDays:  30,
+      createdDate:   quote.created_date,
+      expiresDate:   quote.expires_date,
+      termsConditions: quote.terms_conditions ?? null,
+      /* R-1523 */
+      template,
+      bank:          proforma ? proformaBank(tenant) : null,
+      payLinkUrl:    customerUrl,
       notes:         quote.notes ?? undefined,
       isRenewal:     quote.is_renewal,
+      /* R-1670 (3): the invoice terms this quote will carry, not a fixed "Net 7". */
+      paymentTermsDays: quote.payment_terms_days ?? null,
       oneTime:       isOneTimeQuote({
         isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off,
         isExtension: quote.is_extension, extensionMonths: quote.extension_months,
       }),
       extensionTitle: extensionTitle({ isExtension: quote.is_extension, extensionMonths: quote.extension_months }),
+      periodContext,
     });
     const arrBuf = await blob.arrayBuffer();
     attachments = [{
-      filename:    `Quote-${quote.id}.pdf`,
+      filename:    quoteTemplateFileName(template, quote.id),
       content:     Buffer.from(arrBuf),
       contentType: "application/pdf",
     }];

@@ -1,3 +1,4 @@
+// Not wired yet — R-1608 (built, kept for later)
 /**
  * Whether the scheduled work actually happened, answered from the database.
  *

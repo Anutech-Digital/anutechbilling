@@ -58,3 +58,15 @@ describe("rejectLeadOffer (R-452)", () => {
     expect(lostActivityDetail("Q-8", "other", "went in-house")).toBe("Lost — Other. Quote Q-8 rejected · went in-house");
   });
 });
+
+describe("rejectLeadOffer — the lead's quotes are unknown (R-1807)", () => {
+  it("does not offer Lost while the lead's other quotes failed to load (or are still loading)", () => {
+    const r = rejectLeadOffer({ quoteId: "Q-8", lead: { stage: "quote" }, leadQuotes: null });
+    expect(r.offer).toBe(false);
+    expect(r.note).toMatch(/didn't load/i);
+  });
+
+  it("still answers for a Won / Lost lead without the list", () => {
+    expect(rejectLeadOffer({ quoteId: "Q-8", lead: { stage: "won" }, leadQuotes: null }).note).toMatch(/Won/);
+  });
+});

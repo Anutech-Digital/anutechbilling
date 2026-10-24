@@ -9,6 +9,14 @@
  *   • Line items table includes HSN/SAC column (mandated by GST rules)
  *   • Advance adjustment section (only when adjusted_advances has rows)
  *   • Net payable line at the bottom of totals
+ *
+ * R-1529: the same component prints a BILL OF SUPPLY (CGST Rule 49) when the invoice row
+ * says so (`document_kind`, frozen at issue): title "Bill of Supply", no CGST/SGST/IGST
+ * rows, no reverse-charge / GSTR-1 lines, and the declaration under the title — for a
+ * composition supplier, "composition taxable person, not eligible to collect tax on
+ * supplies" (Rule 5(1)(g), at the top). Rule 49's fields are all here: supplier name,
+ * address, GSTIN if any; number + date; recipient name, address, GSTIN if any; HSN/SAC;
+ * description; value; authorised signatory.
  */
 import {
   Document,
@@ -18,19 +26,23 @@ import {
   Image,
   StyleSheet,
 } from "@react-pdf/renderer";
-import { formatDate } from "@/lib/utils";
+import { formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { pdfRupee, pdfSafeMoney } from "./pdf-money";
 import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import { pdfText } from "./pdf-text";
-import { invoicePaidInFull, lineDomainNote } from "./invoice-display";
+import { invoicePaidInFull, lineDetailNotes } from "./invoice-display";
+import type { LinePeriodContext } from "@/lib/quotes/service-period";
 import { isRenderableLogo } from "./logo";
 import { splitTaxHeads } from "@/lib/gst/tax-split";
 import { SAAS_HSN, SAAS_HSN_LABEL } from "@/lib/gst/hsn";
 import type { PayMethods } from "./pay-methods";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { exportEndorsement } from "@/lib/gst/export-lut";
+import { sezEndorsement } from "@/lib/gst/sez-endorsement";
 import { udyamPdfLine } from "@/lib/compliance/udyam";
-import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
+import { billOfSupplyDeclarations, billOfSupplyPlace, documentTitle, isBillOfSupply } from "@/lib/invoices/document-kind";
+import { isForeignCurrency, formatForeign } from "@/lib/currency";
+import { foreignDocConverter } from "@/lib/quotes/foreign-totals";
 import type {
   Invoice,
   QuoteLineItem,
@@ -38,6 +50,7 @@ import type {
 } from "@/lib/supabase/database.types";
 
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
+import { advanceLinesWithTds, advanceMethodLabel } from "@/lib/accounting/tds-receipt";
 
 /* Styles ke BANNE se pehle. `StyleSheet.create` ab hi chal jata hai, aur `PDF_FONT`
    ek `let` hai — baad me register karne par style purani value pakde rehti. */
@@ -50,6 +63,9 @@ export interface InvoicePDFProps {
 
   // Quote-derived data (re-passes for breakdown — same shape TaxInvoiceDialog uses)
   lineItems:    QuoteLineItem[];
+  /** R-1764: the quote this invoice was raised from, for each subscription line's "Domain:" and
+   *  "Subscription period:" (the same words as the quote). Absent → neither line. */
+  periodContext?: LinePeriodContext | null;
   subtotal:     number;
   discountPct:  number;
   discount:     number;
@@ -115,6 +131,13 @@ export interface InvoicePDFProps {
    * account to send it to and naming a gateway that might not exist.
    */
   payMethods?:   PayMethods | null;
+
+  /**
+   * R-1670 (2). TDS the customer deducted, per adjusted advance (payment id → ₹), from
+   * tds_receivable. An advance with TDS prints as the bank money plus a "TDS deducted by
+   * customer" line; absent → each advance prints as one line, as before.
+   */
+  advanceTds?:   Readonly<Record<string, number>> | null;
 }
 
 // ─── Styles (shared shape with QuotePDF) ──────────────────────────────────
@@ -175,6 +198,13 @@ const s = StyleSheet.create({
     fontSize:   9,
     color:      COLORS.ink3,
     marginTop:  1,
+  },
+  /* R-1529: Bill of Supply declaration, under the title (Rule 5(1)(g) puts it at the top). */
+  titleDeclaration: {
+    fontFamily: PDF_FONT_BOLD,
+    fontSize:   9,
+    color:      COLORS.ink2,
+    marginTop:  3,
   },
 
   // Supplier / recipient block
@@ -434,12 +464,13 @@ const s = StyleSheet.create({
 export function InvoicePDF(props: InvoicePDFProps) {
   const {
     invoice, lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
+    periodContext = null,
     interState = false,
     customerGstin, customerEmail, customerAddress, customerState, customerCountry, placeOfSupply,
     currency, exchangeRate, fxSource = null, fxDate = null, termsConditions,
     tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress, tenantState, tenantLogo,
     lutNumber = null, udyamNumber = null,
-    upiQrDataUrl, upiVpa, payMethods = null,
+    upiQrDataUrl, upiVpa, payMethods = null, advanceTds = null,
   } = props;
 
   /* R-046: one definition of the CGST/SGST split, shared with the GSTR-1 return.
@@ -465,39 +496,59 @@ export function InvoicePDF(props: InvoicePDFProps) {
   const isExport = isExportSupply(customerCountry);
   /* R-334: CGST Rule 46 — a zero-rated export (no IGST) carries the LUT endorsement + ARN.
      Words only: the tax figures above are untouched. */
-  const endorsement = exportEndorsement({ isExport, tax, lutNumber });
+  /* R-1742: a supply to an SEZ unit / developer carries the Rule 46 SEZ endorsement instead —
+     from the treatment frozen on the invoice at issue (R-1736). An SEZ customer has an Indian
+     GSTIN and country India, so the two never both apply. */
+  const endorsement = sezEndorsement({ treatment: invoice.gst_treatment, tax, lutNumber })
+    ?? exportEndorsement({ isExport, tax, lutNumber });
   const isForeign = isForeignCurrency(currency);
   const rate = exchangeRate ?? 1;
   // Foreign-currency (export) invoices are shown in the CLIENT's currency (USD…)
   // — that's what an international customer asks for. The books stay ₹, so the INR
   // equivalent is printed as a GST/GSTR-1 reference. `money()` renders every amount
   // in the invoice's display currency.
-  const money = (inr: number) => (isForeign ? formatForeign(foreignEquivalent(inr, rate), currency ?? "") : pdfRupee(inr));
+  /* R-1677: the same dollar total the quote, accept page and staff dialog show
+     (lib/quotes/foreign-totals) — not ₹ ÷ rate per figure ($338.39 vs the quoted $338.40). */
+  const toForeign = foreignDocConverter({
+    lines: lineItems, fx: rate, discountPct, taxRate: tax === 0 ? 0 : taxRate,
+    inr: { subtotal, taxable, tax, total },
+  });
+  const money = (inr: number) => (isForeign ? formatForeign(toForeign(inr), currency ?? "") : pdfRupee(inr));
 
   const advances: InvoiceAdvanceAdjustment[] = invoice.adjusted_advances ?? [];
   const advancesTotal = advances.reduce((acc, a) => acc + a.amount, 0);
+  /* R-1670 (2): an advance paid with TDS → bank money + a TDS line (same total). */
+  const advanceLines = advanceLinesWithTds(advances, advanceTds);
   const netPayable    = invoice.net_payable ?? Math.max(0, total - advancesTotal);
   /* Settled → "Paid on" instead of a due date (3 Oct 2026; invoice-display.ts). Anything still
      owed keeps its due date. */
   const paidInFull    = invoicePaidInFull(invoice, total);
 
+  /* R-1529: Tax Invoice or Bill of Supply — read off the invoice row, frozen at issue. */
+  const bos          = isBillOfSupply(invoice);
+  const docTitle     = documentTitle(invoice);
+  const declarations = billOfSupplyDeclarations(invoice);
+
   return (
     <Document
-      title={`Tax Invoice ${invoice.id}`}
+      title={`${docTitle} ${invoice.id}`}
       author={tenantName}
-      subject={`Tax Invoice ${invoice.id} for ${invoice.customer_name}`}
+      subject={`${docTitle} ${invoice.id} for ${invoice.customer_name}`}
     >
       <Page size="A4" style={s.page}>
 
         {/* ── Title ─────────────────────────────────────────────── */}
         <View style={s.titleBar}>
           {isRenderableLogo(tenantLogo) && <Image src={tenantLogo} style={s.brandLogo} />}
-          <Text style={s.titleEyebrow}>Original for recipient · GST-compliant</Text>
-          <Text style={s.titleMain}>Tax Invoice</Text>
+          <Text style={s.titleEyebrow}>{bos ? "Original for recipient · No GST charged" : "Original for recipient · GST-compliant"}</Text>
+          <Text style={s.titleMain}>{docTitle}</Text>
           <Text style={s.titleId}>{invoice.id}</Text>
           {invoice.gst_irn && (
             <Text style={s.titleIrn}>IRN: {invoice.gst_irn}</Text>
           )}
+          {declarations.map((line) => (
+            <Text key={line} style={s.titleDeclaration}>{line}</Text>
+          ))}
         </View>
 
         {/* ── Supplier ↔ Recipient ─────────────────────────────── */}
@@ -525,11 +576,11 @@ export function InvoicePDF(props: InvoicePDFProps) {
         {/* ── Invoice meta row ─────────────────────────────────── */}
         <View style={s.metaRow}>
           <View style={s.metaCell}>
-            <Text style={s.metaLabel}>Invoice No.</Text>
+            <Text style={s.metaLabel}>{bos ? "Bill No." : "Invoice No."}</Text>
             <Text style={[s.metaValue, s.metaMono]}>{invoice.id}</Text>
           </View>
           <View style={s.metaCell}>
-            <Text style={s.metaLabel}>Invoice date</Text>
+            <Text style={s.metaLabel}>{bos ? "Bill date" : "Invoice date"}</Text>
             <Text style={s.metaValue}>{formatDate(invoice.invoice_date)}</Text>
           </View>
           <View style={s.metaCell}>
@@ -543,7 +594,10 @@ export function InvoicePDF(props: InvoicePDFProps) {
           <View style={s.metaCell}>
             <Text style={s.metaLabel}>Place of supply</Text>
             <Text style={s.metaValue}>
-              {placeOfSupply || (isExport ? `Export · ${customerCountry ?? "outside India"}` : interState ? "Inter-state (IGST)" : "Intra-state (CGST + SGST)")}
+              {/* R-1529: a Bill of Supply has no GST head to name — the state only. */}
+              {bos
+                ? (isExport ? `Export · ${customerCountry ?? "outside India"}` : billOfSupplyPlace(invoice.pos_state_code, GST_STATE_BY_CODE, customerState))
+                : placeOfSupply || (isExport ? `Export · ${customerCountry ?? "outside India"}` : interState ? "Inter-state (IGST)" : "Intra-state (CGST + SGST)")}
             </Text>
           </View>
         </View>
@@ -582,12 +636,13 @@ export function InvoicePDF(props: InvoicePDFProps) {
                       {li.description}
                     </Text>
                   )}
-                  {/* Which website the line is for (3 Oct 2026; invoice-display.ts). */}
-                  {lineDomainNote(li) && (
-                    <Text style={{ fontSize: 9, color: COLORS.ink3, marginTop: 2 }}>
-                      {pdfText(lineDomainNote(li) ?? "")}
+                  {/* Which website the line is for (3 Oct 2026; invoice-display.ts), and R-1764's
+                      "Domain:" / "Subscription period:" — the same words the quote printed. */}
+                  {lineDetailNotes(li, periodContext).map((n) => (
+                    <Text key={n} style={{ fontSize: 9, color: COLORS.ink3, marginTop: 2 }}>
+                      {pdfText(n)}
                     </Text>
-                  )}
+                  ))}
                 </View>
                 <Text style={s.tdHsn}>{li.hsn ?? SAAS_HSN}</Text>
                 <Text style={s.tdQty}>{li.qty}</Text>
@@ -612,10 +667,13 @@ export function InvoicePDF(props: InvoicePDFProps) {
               </View>
             )}
             <View style={[s.totalRow, s.totalRowDivider]}>
-              <Text style={s.totalLabel}>Taxable value</Text>
+              <Text style={s.totalLabel}>{bos ? "Value of supply" : "Taxable value"}</Text>
               <Text style={s.totalValue}>{money(taxable)}</Text>
             </View>
-            {isExport ? (
+            {bos ? (
+              /* R-1529: a Bill of Supply carries no CGST/SGST/IGST — not even a 0 row. */
+              null
+            ) : isExport ? (
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>Export — zero-rated (LUT), no GST</Text>
                 <Text style={s.totalValue}>{money(0)}</Text>
@@ -638,7 +696,7 @@ export function InvoicePDF(props: InvoicePDFProps) {
               </>
             )}
             <View style={s.grandTotalRow}>
-              <Text style={s.grandLabel}>Invoice total</Text>
+              <Text style={s.grandLabel}>{bos ? "Bill total" : "Invoice total"}</Text>
               <Text style={s.grandValue}>{money(total)}</Text>
             </View>
             {isForeign && (
@@ -686,15 +744,15 @@ export function InvoicePDF(props: InvoicePDFProps) {
     broken glyph here on every invoice with an adjusted advance — found in the same
     audit as the rupee sign, one line below it on the page. */}
             <Text style={s.advHeader}>Advances adjusted against this invoice</Text>
-            {advances.map((adv, i) => (
+            {advanceLines.map((line, i) => (
               <View
-                key={`${adv.payment_id}-${i}`}
-                style={i === advances.length - 1 ? s.advRowLast : s.advRow}
+                key={line.key}
+                style={i === advanceLines.length - 1 ? s.advRowLast : s.advRow}
               >
-                <Text style={s.advVoucher}>{adv.voucher_no ?? "—"}</Text>
-                <Text style={s.advDate}>{formatDate(adv.received_at)}</Text>
-                <Text style={s.advMethod}>{adv.method.toUpperCase()}</Text>
-                <Text style={s.advAmount}>{money(adv.amount)}</Text>
+                <Text style={s.advVoucher}>{line.voucherNo ?? (line.method === "tds" ? "" : "—")}</Text>
+                <Text style={s.advDate}>{formatDate(line.receivedAt)}</Text>
+                <Text style={s.advMethod}>{advanceMethodLabel(line.method)}</Text>
+                <Text style={s.advAmount}>{money(line.amount)}</Text>
               </View>
             ))}
             <View style={s.advTotal}>
@@ -710,9 +768,13 @@ export function InvoicePDF(props: InvoicePDFProps) {
 
         {/* ── Footer ───────────────────────────────────────────── */}
         <View style={s.footer}>
-          <Text style={s.reverseCharge}>
-            Whether tax is payable under reverse charge: <Text style={{ fontFamily: PDF_FONT }}>No</Text>
-          </Text>
+          {/* R-1529: reverse charge and the GSTR-1 month are Tax Invoice facts (Rule 46);
+              a Bill of Supply is in no GST return. */}
+          {!bos && (
+            <Text style={s.reverseCharge}>
+              Whether tax is payable under reverse charge: <Text style={{ fontFamily: PDF_FONT }}>No</Text>
+            </Text>
+          )}
           {/* R-010. Was the literal "998313 (Software licensing / SaaS)" — a fourth copy of
               the code, and on a PROJECT invoice it contradicted the 998314 printed one
               table above. It is now whatever the lines actually carry. The bracketed
@@ -721,8 +783,8 @@ export function InvoicePDF(props: InvoicePDFProps) {
               Table 12 as the Description. */}
           <Text style={[s.footerLine, { marginTop: 6 }]}>
             <Text style={s.footerBold}>HSN/SAC: </Text>
-            {sacSummary} · <Text style={s.footerBold}>GSTR-1 month: </Text>
-            {formatDate(invoice.invoice_date)}
+            {sacSummary}
+            {!bos && <> · <Text style={s.footerBold}>GSTR-1 month: </Text>{formatDate(invoice.invoice_date)}</>}
           </Text>
           {/* R-038. The methods half of this line was the fixed string "UPI / NEFT /
               Razorpay accepted", printed whatever the tenant had configured — it offered
@@ -806,7 +868,7 @@ export function InvoicePDF(props: InvoicePDFProps) {
             For {tenantName}
           </Text>
           <Text style={[s.footerLine, { fontSize: 8 }]}>
-            (Authorised signatory · This is a computer-generated invoice — no physical signature required.)
+            (Authorised signatory · This is a computer-generated {bos ? "bill" : "invoice"} — no physical signature required.)
           </Text>
         </View>
       </Page>

@@ -35,6 +35,10 @@ export const SECRET_COLUMNS = [
   "resend_api_key",
   // S34 — IndiaMART Lead Manager CRM key (migration 20260928151000).
   "indiamart_crm_key",
+  // R-1749 — Zoho Books OAuth refresh token, one per tenant (migration 20261022065809).
+  "zoho_books_refresh_token",
+  // R-1757 — its short-lived access token, cached until shortly before it expires.
+  "zoho_books_access_token",
 ] as const;
 
 const SECRET_SET = new Set<string>(SECRET_COLUMNS);

@@ -1,3 +1,4 @@
+// Not wired yet — R-1608 (built, kept for later)
 /**
  * Building a Razorpay payment link for a quote — the decision and the request body.
  *

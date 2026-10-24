@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatStrip } from "@/components/shared/stat-strip";
+import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import { rupee } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { createClient } from "@/lib/supabase/client";
@@ -27,13 +28,13 @@ import { CashFlowMonthSheet } from "@/components/features/accounting/cash-flow-m
 import { cashFlowByActivity } from "@/lib/accounting/cash-flow-lines";
 import { loadCashFlow, type CashFlowData } from "./load";
 import { monthRows, runway as computeRunway, type MonthRow } from "@/lib/accounting/cash-flow-summary";
-import { utcDateISO } from "@/lib/dates/ist";
+import { formatMonthLabel, utcDateISO, fyStartYear } from "@/lib/dates/ist";
 
 type RangeKey = "month" | "fy" | "12m" | "all";
 
+/** `d` is an IST-shifted Date (see rangeBounds), so its UTC calendar date is the IST date. */
 function fyStart(d: Date): Date {
-  const y = d.getUTCFullYear();
-  return new Date(Date.UTC(d.getUTCMonth() >= 3 ? y : y - 1, 3, 1));
+  return new Date(Date.UTC(fyStartYear(utcDateISO(d)), 3, 1));
 }
 function rangeBounds(key: RangeKey): { from: string | null; to: string | null; label: string } {
   const now = new Date(Date.now() + 5.5 * 3600 * 1000);
@@ -44,10 +45,7 @@ function rangeBounds(key: RangeKey): { from: string | null; to: string | null; l
   if (key === "12m")   return { from: iso(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1))), to: today, label: "Last 12 months" };
   return { from: null, to: null, label: "All time" };
 }
-const monthLabel = (ym: string) => {
-  const [y, m] = ym.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
-};
+const monthLabel = (ym: string) => formatMonthLabel(ym, { year: "2-digit" });
 
 function useCashFlow(range: RangeKey) {
   const { from, to } = rangeBounds(range);
@@ -62,7 +60,10 @@ export default function CashFlowPage() {
   const [range, setRange] = React.useState<RangeKey>("12m");
   const { data: flow, isLoading, error, refetch } = useCashFlow(range);
   const lines = flow?.lines;
-  const { data: bsAuto } = useBalanceSheetAuto();      // current cash-in-bank
+  const bsQ = useBalanceSheetAuto();      // current cash-in-bank
+  const bsAuto = bsQ.data;
+  /* R-1806: a failed balance-sheet read is not "₹0 in the bank" — no tile value, no runway. */
+  const cashFailed = bsQ.isError;
   const meta = rangeBounds(range);
 
   const currentCash = bsAuto?.cashAndBank ?? 0;
@@ -142,6 +143,7 @@ export default function CashFlowPage() {
         ))}
       </div>
 
+      {!error && cashFailed && <LoadErrorBanner onRetry={() => void bsQ.refetch()} />}
       {!empty && !error && (
         <StatStrip
           className="mb-5"
@@ -149,8 +151,8 @@ export default function CashFlowPage() {
             { label: "Cash in",  value: rupee(totals.cashIn, { compact: true }), tone: "emerald" },
             { label: "Cash out", value: rupee(totals.cashOut, { compact: true }), tone: "rose" },
             { label: "Net flow", value: `${totals.net < 0 ? "−" : ""}${rupee(Math.abs(totals.net), { compact: true })}`, tone: totals.net >= 0 ? "emerald" : "rose" },
-            { label: "Cash in bank now", value: rupee(currentCash, { compact: true }) },
-            ...(unbanked !== 0 ? [{ label: "Received, not yet in bank", value: rupee(unbanked, { compact: true }) }] : []),
+            { label: "Cash in bank now", value: cashFailed ? "—" : rupee(currentCash, { compact: true }) },
+            ...(!cashFailed && unbanked !== 0 ? [{ label: "Received, not yet in bank", value: rupee(unbanked, { compact: true }) }] : []),
           ]}
         />
       )}
@@ -185,7 +187,7 @@ export default function CashFlowPage() {
       )}
 
       {/* Runway callout */}
-      {!empty && !error && runway != null && (() => {
+      {!empty && !error && !cashFailed && runway != null && (() => {
         const tight = runway.atTrend !== null && runway.atTrend < 3;
         const watch = runway.atTrend !== null && runway.atTrend < 6;
         const spanLabel = runway.months === 1 ? "last month" : `last ${runway.months} months`;
@@ -220,8 +222,7 @@ export default function CashFlowPage() {
       })()}
 
       {error && (
-        <EmptyState icon="alert" title="Could not load cash flow" body={error.message}
-          action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>} />
+        <LoadError what="Cash flow" error={error} onRetry={() => void refetch()} />
       )}
       {isLoading && <Card flush><div className="p-4 space-y-3">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-8 w-full" />)}</div></Card>}
       {empty && (
@@ -247,6 +248,7 @@ export default function CashFlowPage() {
                 {months.map((r) => (
                   <tr
                     key={r.ym}
+                    data-keyboard-route="inner-control"
                     onClick={() => setOpenYm(r.ym)}
                     className="hover:bg-paper-2/40 cursor-pointer"
                     title="Click to see this month's bank lines"

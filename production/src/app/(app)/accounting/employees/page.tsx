@@ -6,6 +6,7 @@
 "use client";
 
 import { EmployeesTab, HrPageShell } from "../payroll/screens";
+import { EmployeeLoginsPanel } from "./employee-logins-panel";
 
 export default function EmployeesPage() {
   return (
@@ -14,6 +15,8 @@ export default function EmployeesPage() {
       sub="Your team — profiles, salary, ID documents (Aadhaar / PAN / resume) and paid-leave balance."
     >
       <EmployeesTab />
+      {/* R-1436: owner links each employee to a login so they can check in at /attendance/me. */}
+      <EmployeeLoginsPanel />
     </HrPageShell>
   );
 }

@@ -31,7 +31,7 @@ import { useCallLog } from "@/components/features/leads/call-log-dialog";
 import { canSeeDeals } from "@/lib/deals/access";
 import { buildDealHistory, dealMoney } from "@/lib/deals/timeline";
 import { dealQuoteRows } from "@/lib/deals/deal-quotes";
-import { isDealStage, isCloseOverdue, closeDateShort } from "@/lib/leads/deal-rules";
+import { isDealStage, isCloseOverdue, closeDateShort, wonOnDate } from "@/lib/leads/deal-rules";
 import { STAGE_LABEL } from "@/lib/leads/stage-meta";
 import { leadDisplayName } from "@/lib/leads/display-name";
 import { stageProbability, weightedValue } from "@/lib/leads/forecast";
@@ -164,8 +164,10 @@ export function DealDetailView({ leadId }: { leadId: string }) {
     () => [...new Set([
       ...(leadSrc.data?.failed ?? []), ...(quoteSrc.data?.failed ?? []), ...(projectSrc.data?.failed ?? []),
       ...(leadSrc.error || quoteSrc.error || projectSrc.error ? ["Some records"] : []),
+      /* R-1806: a failed quotes read — history has no quote events, not "none sent". */
+      ...(quotesQ.isError ? ["Quotes"] : []),
     ])],
-    [leadSrc.data, quoteSrc.data, projectSrc.data, leadSrc.error, quoteSrc.error, projectSrc.error],
+    [leadSrc.data, quoteSrc.data, projectSrc.data, leadSrc.error, quoteSrc.error, projectSrc.error, quotesQ.isError],
   );
 
   // ── Gates ────────────────────────────────────────────────────────────────
@@ -196,6 +198,8 @@ export function DealDetailView({ leadId }: { leadId: string }) {
   // ── Derived ──────────────────────────────────────────────────────────────
   const today = istToday();
   const overdue = isCloseOverdue(lead, today);
+  // R-1477: a Won deal shows the day it was won, not its (possibly future) expected close.
+  const wonOn = wonOnDate(lead);
   const prob = stageProbability(lead.stage);
   const daysInStage = daysBetweenISO(toIstDate(lead.stage_changed_at ?? lead.created_at), today);
   const owner = nameOf(lead.owner_id);
@@ -207,11 +211,11 @@ export function DealDetailView({ leadId }: { leadId: string }) {
   /* Delete — owner/manager only, never with a quote on it (lib/deals/delete-rules.ts; the
      database enforces both). Blocked → say why and offer Lost, in the toast. */
   const onDelete = async () => {
-    const block = dealDeleteBlock({ role: me?.role, quoteIds: quotes.map((q) => q.id) });
+    const block = dealDeleteBlock({ role: me?.role, quoteIds: quotes.map((q) => q.id), quotesFailed: quotesQ.isError });
     if (block) {
       toast.error("This deal can't be deleted", {
         description: block,
-        action: lead.stage !== "lost" && lead.stage !== "won" ? { label: "Mark lost", onClick: () => { void changeStage(lead, "lost"); } } : undefined,
+        action: lead.stage !== "lost" ? { label: "Mark lost", onClick: () => { void changeStage(lead, "lost"); } } : undefined,
       });
       return;
     }
@@ -275,7 +279,8 @@ export function DealDetailView({ leadId }: { leadId: string }) {
               }}
             >Email</Button>
             <Button icon="edit" variant="ghost" onClick={() => setEditOpen(true)}>Edit</Button>
-            {lead.stage !== "won" && lead.stage !== "lost" && (
+            {/* R-1762: on a Won deal too — refused with the reason when money is behind it. */}
+            {lead.stage !== "lost" && (
               <Button variant="ghost" onClick={() => { void changeStage(lead, "lost"); }}>Mark lost</Button>
             )}
             <Button variant="ghost" icon="trash" className="!text-rose hover:!bg-rose/10" loading={deleteLead.isPending} onClick={onDelete}>Delete</Button>
@@ -294,10 +299,10 @@ export function DealDetailView({ leadId }: { leadId: string }) {
           <MetricCard label="Deal value" value={lead.value ? rupee(lead.value) : "—"} hint={lead.value ? (lead.enquiry_type === "project" || lead.project_id ? "one-time, ex-GST" : "per year") : "Add via Edit"} />
           <MetricCard label="Weighted" value={lead.value ? rupee(weightedValue(lead)) : "—"} hint={`${prob}% · ${STAGE_LABEL[lead.stage]}`} />
           <MetricCard
-            label="Expected close"
-            value={lead.expected_close_date ? closeDateShort(lead.expected_close_date) : "—"}
+            label={wonOn ? "Won on" : "Expected close"}
+            value={wonOn ? closeDateShort(wonOn) : lead.expected_close_date ? closeDateShort(lead.expected_close_date) : "—"}
             tone={overdue ? "danger" : "default"}
-            hint={overdue ? "Overdue — update date" : lead.expected_close_date ? lead.expected_close_date.slice(0, 4) : "Not set"}
+            hint={wonOn ? wonOn.slice(0, 4) : overdue ? "Overdue — update date" : lead.expected_close_date ? lead.expected_close_date.slice(0, 4) : "Not set"}
           />
           <MetricCard label="In stage" value={`${Math.max(0, daysInStage)}d`} hint={lead.stage_changed_at ? `since ${formatDate(lead.stage_changed_at)}` : "since created"} />
           <MetricCard label="Owner" value={owner ?? "—"} />
@@ -323,11 +328,15 @@ export function DealDetailView({ leadId }: { leadId: string }) {
             openTasks={openTasks} doneTasks={doneTasks} setAddTaskOpen={setAddTaskOpen}
             completeTask={completeTask} snoozeTask={snoozeTask} deleteTask={deleteTask}
           />
-          <DealQuotesCard rows={quoteRows} onNewQuote={newQuote} projectFailed={(projectSrc.data?.failed ?? []).includes("Project quotation") || !!projectSrc.error} />
+          <DealQuotesCard
+            rows={quoteRows} onNewQuote={newQuote}
+            projectFailed={(projectSrc.data?.failed ?? []).includes("Project quotation") || !!projectSrc.error}
+            error={quotesQ.isError ? quotesQ.error : undefined} onRetry={() => void quotesQ.refetch()}
+          />
           <DealMoneyCard
             money={money}
             subscriptions={quoteSrc.data?.subscriptions?.length ?? 0}
-            failed={[...(quoteSrc.data?.failed ?? []), ...(projectSrc.data?.failed ?? [])].some((f) => f === "Invoices" || f === "Payments" || f.startsWith("Project"))}
+            failed={quotesQ.isError || [...(quoteSrc.data?.failed ?? []), ...(projectSrc.data?.failed ?? [])].some((f) => f === "Invoices" || f === "Payments" || f.startsWith("Project"))}
             hasQuotes={quoteRows.length > 0}
           />
           <DealDetailsCard lead={lead} userNames={userNames} onEdit={() => setEditOpen(true)} />

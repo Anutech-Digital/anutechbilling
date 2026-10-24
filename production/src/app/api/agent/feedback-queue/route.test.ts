@@ -41,6 +41,7 @@ vi.mock("@/lib/supabase/server", () => ({
       const q = {
         select(cols: string) { db.select = cols; return q; },
         eq(col: string, v: unknown) { db.filters.push([col, v]); return q; },
+        in(col: string, v: unknown) { db.filters.push([col, v]); return q; },
         order(col: string) { db.orders.push(col); return q; },
         limit() {
           if (db.missingColumns > 0) {
@@ -68,7 +69,10 @@ beforeEach(() => {
   db.users = []; db.tenants = []; db.lookups = [];
   db.rows = [{ id: "f1", title: "Add browser automation to AI Help", directive: "Do X", reported_severity: "low" }];
   process.env.AGENT_QUEUE_TOKEN = "q-token";
+  process.env.AGENT_QUEUE_TENANT_IDS = SCOPE;
 });
+/** R-739: the workspaces this token may read. */
+const SCOPE = "fbb976f1-9090-4f10-9726-0901bd144e42";
 afterEach(() => { process.env = { ...ENV }; });
 
 describe("GET /api/agent/feedback-queue", () => {
@@ -90,7 +94,8 @@ describe("GET /api/agent/feedback-queue", () => {
     expect(r.status).toBe(200);
     const body = await r.json();
     expect(body.items).toEqual(db.rows.map((r) => ({ ...r, reporter: null, workspace: null })));
-    expect(db.filters).toEqual([["status", "agent_queued"]]);
+    /* R-739: only the workspaces the token is scoped to — never every company's reports. */
+    expect(db.filters).toEqual([["status", "agent_queued"], ["tenant_id", [SCOPE]]]);
     expect(db.select).toContain("directive");
     expect(db.select).toContain("problem_summary");
   });

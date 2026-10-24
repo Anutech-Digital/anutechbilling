@@ -6,6 +6,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -14,6 +15,7 @@ import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate, cn } from "@/lib/utils";
 import { linePriceBreakdown, linePriceBreakdownText } from "@/lib/quotes/line-price-breakdown";
 import { isForeignCurrency, formatForeign } from "@/lib/currency";
+import { foreignQuoteFigures } from "@/lib/quotes/foreign-totals";
 import { loadRazorpayCheckout } from "@/lib/razorpay/checkout-client";
 import type { LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
 import {
@@ -23,8 +25,12 @@ import { quoteInstalments } from "@/lib/billing/instalments";
 import { whatsAppLink } from "@/lib/marketing/review-request";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { AcceptedPay } from "./accepted-pay";
+import { ExpiredQuote } from "./expired-quote";
+import type { QuoteDueNow } from "@/lib/payments/quote-due-now";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { taxableAfterDiscount } from "@/lib/quotes/amounts";
 import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
+import { billOfSupplyCustomerLine, type BillOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
 
 /** Customer-SAFE quote shape — no cost/margin. Built server-side in page.tsx. */
 export type PublicQuote = {
@@ -68,6 +74,9 @@ export type PublicLine = {
   seats_adjustable?: boolean;
   min_seats?: number;
   max_seats?: number;
+  /** R-1764: "Domain: x" / "Subscription period: 1 Year (…)" — worked out on the server with
+   *  the same helper as the PDF and the invoice. Absent → nothing printed. */
+  detail_notes?: string[];
 };
 
 function scheduleLabel(commitment: LineCommitment | undefined, cycle: BillingCycle): string {
@@ -91,8 +100,16 @@ interface Props {
   /** R-377: "Pay now" on the accepted screen — built by ./accepted-pay.ts on the server.
    *  Null = no payment method / nothing collectable → today's "will reach out" text. */
   acceptedPay?: AcceptedPay | null;
+  /** R-1613: what is due on the quote NOW — the figure the pay route charges
+   *  (lib/payments/quote-due-now.ts, read on the server). Drives the Pay button, its
+   *  instalment note and the "Paid" state. Absent (older callers / tests) → the quote's own
+   *  figures, as before. */
+  dueNow?: QuoteDueNow | null;
   /** R-376(b): inter-state → one IGST row; intra-state → CGST + SGST (quote preview rule). */
   interState?: boolean;
+  /** R-1532: the seller issues a Bill of Supply and this quote carries no GST → one
+   *  "No GST — Bill of Supply" line instead of GST rows. */
+  billOfSupply?: BillOfSupplyStatus | null;
   /** R-376(b): "Support: Free — Included" from lib/pdf/quote-support-line. */
   supportLine?: { text: string; detail: string } | null;
   /** R-376(d): the contact PERSON to pre-fill "Your full name" (./signer-default.ts) —
@@ -102,7 +119,7 @@ interface Props {
 
 export function QuoteAcceptView({
   quote, lineItems, token, payOnline = false, tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress,
-  upiQr = null, acceptedPay = null, interState = false, supportLine = null, signerDefault = null,
+  upiQr = null, acceptedPay = null, dueNow = null, interState = false, billOfSupply = null, supportLine = null, signerDefault = null,
 }: Props) {
   const [accepting, setAccepting] = React.useState(false);
   const [accepted, setAccepted] = React.useState(quote.status === "accepted");
@@ -151,11 +168,16 @@ export function QuoteAcceptView({
   const taxableInr  = quote.subtotal - discountInr;
   const taxInr      = quoteDisplayTax(taxableInr, quote.tax_rate, quote.amount); // R-804: adds up to the stored total
   const totalInr    = quote.amount ?? (taxableInr + taxInr);
-  const dSubtotal = isForeign ? dRound(dispLines.reduce((s, x) => s + x.amount, 0)) : quote.subtotal;
-  const dDiscount = isForeign ? dRound(dSubtotal * (quote.discount_pct / 100)) : discountInr;
-  const dTaxable  = isForeign ? dRound(dSubtotal - dDiscount) : taxableInr;
-  const dTax      = isForeign ? dRound(dTaxable * (quote.tax_rate / 100)) : taxInr;
-  const dTotal    = isForeign ? dRound(dTaxable + dTax) : totalInr;
+  /* R-1677: the foreign totals come from lib/quotes/foreign-totals — one rule for this page,
+     the builder, the staff preview, the quote PDF and the invoice. */
+  const fFig      = isForeign
+    ? foreignQuoteFigures({ lines: lineItems, fx: fxRate, discountPct: quote.discount_pct, taxRate: quote.tax_rate })
+    : null;
+  const dSubtotal = fFig ? fFig.subtotal : quote.subtotal;
+  const dDiscount = fFig ? fFig.discount : discountInr;
+  const dTaxable  = fFig ? fFig.taxable  : taxableInr;
+  const dTax      = fFig ? fFig.tax      : taxInr;
+  const dTotal    = fFig ? fFig.total    : totalInr;
 
   // Format an ANNUAL display-currency figure, slicing per-invoice when the cycle
   // bills more than once a year.
@@ -234,7 +256,7 @@ export function QuoteAcceptView({
    */
   const dueToday = React.useMemo(() => quoteInstalments({
     cycle:       effectiveCycle,
-    termTaxable: (quote.subtotal ?? 0) - Math.round((quote.subtotal ?? 0) * (quote.discount_pct ?? 0) / 100),
+    termTaxable: taxableAfterDiscount(quote.subtotal ?? 0, quote.discount_pct ?? 0), // R-1133: the tax invoice's formula
     termGross:   payableTotal,
     taxRate:     quote.tax_rate ?? 18,
     // Flex me stored aankde per-month hain — split kuch hai hi nahi (12× ka parivar).
@@ -244,10 +266,40 @@ export function QuoteAcceptView({
      taxable, GST and total from the same plan (lib/billing/instalments.ts), and the year as
      the sum of instalments. The tax rows were the year's GST ÷ 4. Only when nothing was
      changed on the page (a changed basket is the server's figure, not a plan yet). */
-  const inst = dueToday && !liveConfig && !isFlex ? dueToday : null;
+  /* R-1570: never on a foreign quote. `dueToday` is built from quote.subtotal — RUPEES — so on
+     a USD quote billed quarterly/monthly it printed a ₹ instalment with a "$" in front. The PDF
+     (lib/quotes/per-period-figures) gives a foreign quote no ₹ plan either; it divides the
+     display-currency figures, which is what fmtInv below does. */
+  const inst = dueToday && !liveConfig && !isFlex && !isForeign ? dueToday : null;
   const fmtInst = (n: number) => `${fmtC(n)}${billingUnit}`;
 
+  /* R-1613: the Pay button's figure. With the server's `dueNow` it is exactly what the pay
+     route charges (remainder on a part-paid quote, instalment 1 on a split one, nothing once
+     paid). Without it (older callers) the quote's own figures, as before. Never built from ₹
+     on a foreign quote — there is no online pay for one (R-1570). */
+  const payDue: number | null = dueNow
+    ? (dueNow.state === "due" && dueNow.inr ? dueNow.amount : null)
+    : isForeign ? null : dueToday ? dueToday.firstGross : dTotal;
+  const payInst: { count: number; cycle: BillingCycle; termGross: number } | null = dueNow
+    ? (dueNow.state === "due" && dueNow.inr ? dueNow.instalment : null)
+    : dueToday && !isForeign ? { count: dueToday.count, cycle: dueToday.cycle, termGross: dueToday.instalmentsGross } : null;
+  const alreadyPaidNow = dueNow?.state === "due" && dueNow.inr ? dueNow.alreadyPaid : 0;
+  /** Fully paid on the ledger — "Paid", no button, no QR. */
+  const fullyPaid = dueNow?.state === "paid";
+
   const [notifying, setNotifying] = React.useState(false);
+
+  /* R-1137: a failed step on this customer page says what happened (server sentence, or a
+     plain one for raw DB text — toastError), why nothing changed, and offers Try again; the
+     reseller's phone is the other way through. */
+  const failToast = (e: unknown, fallback: string, why: string, retry: () => void) =>
+    toastError(e, {
+      fallback,
+      description: `${why}${tenantPhone ? ` You can also call ${tenantName} on ${tenantPhone}.` : ""}`,
+      action: { label: "Try again", onClick: retry },
+      duration: 10_000,
+    });
+
   /**
    * "I've sent the payment" — tells the reseller to go and look.
    *
@@ -270,9 +322,7 @@ export function QuoteAcceptView({
         duration: 8000,
       });
     } catch (e) {
-      toast.error((e as Error).message, {
-        description: tenantPhone ? `You can also call them on ${tenantPhone}.` : undefined,
-      });
+      failToast(e, "Could not send the message.", "They have not been told yet.", () => { void handleUpiPaid(); });
     } finally {
       setNotifying(false);
     }
@@ -305,7 +355,7 @@ export function QuoteAcceptView({
       setAccepted(true);
       toast.success("Quote accepted · the reseller has been notified");
     } catch (e) {
-      toast.error((e as Error).message);
+      failToast(e, "Could not accept the quote.", "The quote is not accepted yet.", () => { void handleAccept(); });
     } finally {
       setAccepting(false);
     }
@@ -325,7 +375,7 @@ export function QuoteAcceptView({
       setAccepted(true);
       toast.success("Quote accepted with Purchase Order · reseller notified");
     } catch (e) {
-      toast.error((e as Error).message);
+      failToast(e, "Could not accept the quote.", "The quote is not accepted yet.", () => { void handlePoAccept(); });
     } finally {
       setAccepting(false);
     }
@@ -388,13 +438,17 @@ export function QuoteAcceptView({
         modal:       { ondismiss: () => setPaying(false) },
       });
       rzp.on("payment.failed", (r) => {
-        toast.error(r.error?.description ?? "Payment failed — please try again.");
+        toast.error(r.error?.description ?? "Payment failed.", {
+          description: `No money was taken. Try again, or ask ${tenantName} for another way to pay.`,
+          action: { label: "Try again", onClick: () => { void handlePayOnline(); } },
+          duration: 10_000,
+        });
         setPaying(false);
       });
       rzp.open();
       setPreparingPay(false); // Razorpay's window now shows its own progress
     } catch (e) {
-      toast.error((e as Error).message);
+      failToast(e, "Could not start the payment.", "No money was taken.", () => { void handlePayOnline(); });
       setPreparingPay(false);
       setPaying(false);
     }
@@ -443,7 +497,7 @@ export function QuoteAcceptView({
      shape in this visit — the server figure was built from the ORIGINAL quote and the
      accept may have re-priced it; a reload re-reads the saved quote and brings it back.
      The QR is offered only when it asks for exactly the Pay-now figure. */
-  const payCandidate   = !paid && acceptedPay && !liveConfig?.changed ? acceptedPay : null;
+  const payCandidate   = !paid && !fullyPaid && acceptedPay && !liveConfig?.changed ? acceptedPay : null;
   const upiAfterAccept = Boolean(payCandidate && upiQr && upiQr.amount === payCandidate.amount);
   const payAfterAccept = payCandidate && (payOnline || upiAfterAccept) ? payCandidate : null;
 
@@ -474,18 +528,21 @@ export function QuoteAcceptView({
   }
 
   // ──────────── Thank-you screen (accepted OR paid) ────────────
-  if (accepted || paid) {
+  if (accepted || paid || fullyPaid) {
     return (
       <div className="min-h-screen bg-paper-2/30 flex items-start justify-center py-10 px-4">
         <div className="max-w-2xl w-full bg-paper rounded-xl shadow-sm border border-hairline p-8 md:p-12 text-center">
           <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-emerald/15 grid place-items-center">
             <Icon name="check_circle" size={32} className="text-emerald" />
           </div>
-          <h1 className="font-serif text-3xl text-ink mb-2">{paid ? "Payment received" : "Quote accepted"}</h1>
+          <h1 className="font-serif text-3xl text-ink mb-2">{paid ? "Payment received" : fullyPaid ? "Paid" : "Quote accepted"}</h1>
           <p className="text-sm text-ink-3">
             {paid ? (
               <>Thank you! Your payment to <b className="text-ink">{tenantName}</b> is being confirmed.
               Your GST invoice will be issued and emailed to you shortly.</>
+            ) : fullyPaid ? (
+              <>This quote is paid in full — nothing more is due. Thank you! Your GST invoice
+              comes from <b className="text-ink">{tenantName}</b>.</>
             ) : payAfterAccept ? (
               <><b className="text-ink">{tenantName}</b> has been notified. Pay now and your GST
               invoice is issued as soon as the payment is confirmed.</>
@@ -514,6 +571,11 @@ export function QuoteAcceptView({
                     steps={["Checking the quote and its total", "Creating your payment order", "Opening the Razorpay payment window"]}
                   />
                 </>
+              )}
+              {!!payAfterAccept.alreadyPaid && payAfterAccept.alreadyPaid > 0 && (
+                <p className="text-[12px] leading-snug text-ink-3" data-testid="already-paid">
+                  {fmtC(payAfterAccept.alreadyPaid)} of {fmtC(dTotal)} is already received — this is the {fmtC(payAfterAccept.amount)} still due.
+                </p>
               )}
               {payAfterAccept.instalment && (
                 <p className="text-[12px] leading-snug text-ink-3">
@@ -554,29 +616,13 @@ export function QuoteAcceptView({
   // ──────────── No-longer-available screen (expired / rejected) ────────────
   // These states can't be accepted (the API rejects them), so don't show the
   // customer a working "Accept" button that only errors when clicked.
+  /* R-1679: the page passes "expired" for a sent / viewed quote past its validity too. */
   if (quote.status === "expired" || quote.status === "rejected") {
     return (
-      <div className="min-h-screen bg-paper-2/30 flex items-start justify-center py-10 px-4">
-        <div className="max-w-2xl w-full bg-paper rounded-xl shadow-sm border border-hairline p-8 md:p-12 text-center">
-          <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-rose/15 grid place-items-center">
-            <Icon name="alert" size={32} className="text-rose" />
-          </div>
-          <h1 className="font-serif text-3xl text-ink mb-2">
-            {quote.status === "expired" ? "This quote has expired" : "This quote is no longer available"}
-          </h1>
-          <p className="text-sm text-ink-3">
-            Quote <span className="font-mono">{quote.id}</span> can no longer be accepted online.
-            Please contact <b className="text-ink">{tenantName}</b> for an updated quote.
-          </p>
-          {tenantEmail && (
-            <Button asChild variant="primary" className="mt-6">
-              <a href={`mailto:${tenantEmail}?subject=${encodeURIComponent(`New quote request (ref ${quote.id})`)}`}>
-                Request a fresh quote
-              </a>
-            </Button>
-          )}
-        </div>
-      </div>
+      <ExpiredQuote
+        quoteId={quote.id} status={quote.status === "expired" ? "expired" : "rejected"} expiresDate={quote.expires_date} token={token}
+        tenantName={tenantName} tenantEmail={tenantEmail} tenantPhone={tenantPhone}
+      />
     );
   }
 
@@ -650,7 +696,7 @@ export function QuoteAcceptView({
                     </p>
                   )}
                   {isFlex && !oneTime && (
-                <p className="text-2xs text-ink-3">Pay-as-you-go — har mahine apni invoice, jab tak chalu rakhein</p>
+                <p className="text-2xs text-ink-3">Pay-as-you-go — a separate invoice every month, for as long as you keep it running</p>
               )}
               {billingN > 1 && !isFlex && !oneTime && (
                     <p className="text-2xs text-ink-3">{billingN} invoices per year</p>
@@ -729,6 +775,9 @@ export function QuoteAcceptView({
                           {r.line.name}
                           {r.line.optional && <span className="ml-1.5 text-3xs uppercase tracking-wider text-ink-3">optional</span>}
                         </p>
+                        {(r.line.detail_notes ?? []).map((n) => (
+                          <p key={n} className="text-2xs text-ink-3 mt-0.5 tabular-nums" data-testid="line-period">{n}</p>
+                        ))}
                         {r.line.commitment && !oneTime && (
                           <p className="text-2xs text-ink-3 mt-0.5">{scheduleLabel(r.line.commitment, effectiveCycle)}</p>
                         )}
@@ -787,6 +836,9 @@ export function QuoteAcceptView({
                             {line.name}
                             {line.optional && <span className="ml-1.5 text-3xs uppercase tracking-wider text-ink-3">optional</span>}
                           </p>
+                          {(line.detail_notes ?? []).map((n) => (
+                            <p key={n} className="text-2xs text-ink-3 mt-0.5 tabular-nums" data-testid="line-period">{n}</p>
+                          ))}
                           {line.commitment && !oneTime && (
                             <p className="text-2xs text-ink-3 mt-0.5">
                               {scheduleLabel(line.commitment, effectiveCycle)}
@@ -871,6 +923,7 @@ export function QuoteAcceptView({
                 taxRate={quote.tax_rate}
                 tax={inst ? inst.firstGross - inst.firstTaxable : liveConfig ? liveConfig.total - liveConfig.subtotal : dTax}
                 interState={interState}
+                billOfSupply={billOfSupply}
                 fmt={inst ? fmtInst : fmtInv}
               />
               <div className="border-t-2 border-ink pt-2 mt-2">
@@ -888,13 +941,13 @@ export function QuoteAcceptView({
                     {isFlex
                       ? `${fmtC(payableTotal)}/month`
                       : perInvoice
-                      ? `${fmtC(dueToday ? dueToday.firstGross : dRound(payableTotal / billingN))}${billingUnit}`
+                      ? `${fmtC(dueToday && !isForeign ? dueToday.firstGross : dRound(payableTotal / billingN))}${billingUnit}`
                       : fmtC(payableTotal)}
                   </span>
                 </div>
                 {isFlex && (
                   <div className="mt-1.5 text-2xs text-ink-3">
-                    Pay-as-you-go — koi saal ka bandhan nahi; seats ya plan kisi bhi mahine badal/band kar sakte hain.
+                    Pay-as-you-go — no yearly lock-in; you can change or stop seats or the plan in any month.
                   </div>
                 )}
                 {perInvoice && !isFlex && (
@@ -937,7 +990,7 @@ export function QuoteAcceptView({
                 now would charge the original total for a configuration nobody has
                 agreed to — the customer would pay the wrong amount and both sides
                 would think it was settled. Accept first, then pay. */}
-            {payOnline && !liveConfig?.changed && (
+            {payOnline && !liveConfig?.changed && payDue !== null && (
               <Button
                 variant="primary"
                 size="lg"
@@ -947,14 +1000,15 @@ export function QuoteAcceptView({
                 className="w-full justify-center"
               >
                 {/* The whole term used to be charged here regardless of cycle. */}
-                {dueToday
-                  ? `Pay ${dueToday.cycle === "monthly" ? "this month" : "this instalment"} · ${fmtC(dueToday.firstGross)}`
+                {/* R-1613: the figure the order will charge — never the total on a part-paid quote. */}
+                {payInst
+                  ? `Pay ${payInst.cycle === "monthly" ? "this month" : "this instalment"} · ${fmtC(payDue ?? 0)}`
                   : isFlex
-                  ? `Pay this month · ${fmtC(dTotal)}`
-                  : `Pay online now · ${fmtC(dTotal)}`}
+                  ? `Pay this month · ${fmtC(payDue ?? 0)}`
+                  : `Pay online now · ${fmtC(payDue ?? 0)}`}
               </Button>
             )}
-            {payOnline && !liveConfig?.changed && (
+            {payOnline && !liveConfig?.changed && payDue !== null && (
               <BusyPanel
                 active={preparingPay}
                 title="Preparing your secure payment"
@@ -963,17 +1017,22 @@ export function QuoteAcceptView({
             )}
             {/* Said next to the button, because "why is this less than the total?"
                 is the question a customer asks with their card already out. */}
-            {payOnline && !liveConfig?.changed && isFlex && (
-              <p className="text-[12px] leading-snug text-ink-3">
-                Flex plan: each month has its own invoice and is paid from it — today
-                you pay only this month&apos;s {fmtC(dTotal)}.
+            {payOnline && !liveConfig?.changed && payDue !== null && alreadyPaidNow > 0 && (
+              <p className="text-[12px] leading-snug text-ink-3" data-testid="already-paid">
+                {fmtC(alreadyPaidNow)} of {fmtC(dTotal)} is already received — you pay only the {fmtC(payDue)} still due.
               </p>
             )}
-            {payOnline && !liveConfig?.changed && dueToday && (
+            {payOnline && !liveConfig?.changed && isFlex && payDue !== null && (
               <p className="text-[12px] leading-snug text-ink-3">
-                This is instalment 1 of {dueToday.count}. The rest are invoiced one
+                Flex plan: each month has its own invoice and is paid from it — today
+                you pay only this month&apos;s {fmtC(payDue ?? 0)}.
+              </p>
+            )}
+            {payOnline && !liveConfig?.changed && payInst && (
+              <p className="text-[12px] leading-snug text-ink-3">
+                This is instalment 1 of {payInst.count}. The rest are invoiced one
                 period at a time on their own dates — you pay each from the invoice you
-                receive, never the whole {fmtC(dueToday.instalmentsGross)} at once.
+                receive, never the whole {fmtC(payInst.termGross)} at once.
               </p>
             )}
             {payOnline && liveConfig?.changed && (
@@ -994,7 +1053,7 @@ export function QuoteAcceptView({
 
                 Hidden once the customer reconfigures, for the same reason pay-online
                 is: the QR carries the ORIGINAL amount. */}
-            {upiQr && !liveConfig?.changed && upiBox(dueToday ? dueToday.count : null)}
+            {upiQr && !liveConfig?.changed && upiBox(payInst ? payInst.count : null)}
 
             <Button
               variant={payOnline && !liveConfig?.changed ? "default" : "primary"}
@@ -1227,9 +1286,12 @@ export function QuoteAcceptView({
 }
 
 /** GST rows: one IGST line inter-state, CGST + SGST halves intra-state (R-376b). */
-export function TaxRows({ taxRate, tax, interState, fmt }: {
+export function TaxRows({ taxRate, tax, interState, fmt, billOfSupply = null }: {
   taxRate: number; tax: number; interState: boolean; fmt: (v: number) => string;
+  billOfSupply?: BillOfSupplyStatus | null;
 }) {
+  /* R-1532: no GST on a Bill of Supply — say why, print no head. */
+  if (billOfSupply && !taxRate) return <p className="text-xs text-ink-2">{billOfSupplyCustomerLine(billOfSupply)}</p>;
   // Zero-rated (export under LUT) — no head to split; keep the plain row.
   if (!taxRate) return <Row label={`GST (${taxRate}%)`} value={fmt(tax)} />;
   if (interState) return <Row label={`IGST (${taxRate}%)`} value={fmt(tax)} />;

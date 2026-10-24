@@ -30,7 +30,11 @@ import { Avatar } from "@/components/ui/avatar";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatPhone, initials, rupee, daysBetween, cn } from "@/lib/utils";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { gstTreatmentOption } from "@/lib/gst/customer-gst-treatment";
+import type { PrimaryContact } from "@/components/features/customers/customer-links";
 import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
+import { seatsPhrase, manageSeatsHref } from "@/components/features/subscriptions/seat-words";
+import { followRevealed, isMaskedContact } from "@/lib/contacts/reveal-client";
 
 // ════════════════════════════════════════════════════════════════════════
 // Pure logic
@@ -262,8 +266,12 @@ export function buildCustomerActivity(subs: Subscription[], invoices: Invoice[],
 // ════════════════════════════════════════════════════════════════════════
 
 /** 4-KPI answer-bar — health / owed / value in one glance (real numbers). */
-export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0 }: {
+export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0, failed = false }: {
   insights: CustomerInsights;
+  /** R-1807: one of the reads the insights are built from (subscriptions, invoices, projects,
+   *  payments) failed. Its rows were never seen, so "All clear" / ₹0 would be a guess — every
+   *  tile reads "—" and says so. The screen shows the error + Try again beside it. */
+  failed?: boolean;
   /** When given, the money tiles link to the records behind them. Optional so the
    *  contacts panel — which derives insights for a company that may have no customer
    *  row — keeps working rather than linking to a filter that would match nothing. */
@@ -272,7 +280,7 @@ export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0 }: {
    *  TDS ₹B = ₹C" so the bank money can be matched. */
   lifetimeTds?: number;
 }) {
-  const { outstanding, projectReceivable, overdueCount, lifetimePaid, totalMRR, activeSubs, seatsUsed, seatsTotal, nearestRenewal, renewalDays } = insights;
+  const { outstanding, projectReceivable, overdueCount, lifetimePaid, totalMRR, activeSubs, nearestRenewal, renewalDays } = insights;
   // Exact figures (not compact lakh) for the money KPIs so they match the
   // Next-Best-Action + Transactions to the rupee — "₹15.2L" vs "₹15,16,000"
   // for the same number read as two different amounts.
@@ -283,6 +291,15 @@ export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0 }: {
   // auto-fit → columns follow the CONTAINER width (not the viewport), so this
   // strip fits whether it's in the narrow split-view panel, the full-width panel,
   // or the /customers/[id] page — 4-across when wide, wraps otherwise, never cut.
+  if (failed) {
+    return (
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
+        {["Outstanding", "Lifetime paid", "MRR", "Next renewal"].map((label) => (
+          <MetricCard key={label} label={label} value="—" hint="Didn't load" />
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
       <MetricCard
@@ -305,7 +322,11 @@ export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0 }: {
       <MetricCard
         label="MRR"
         value={totalMRR > 0 ? rupee(totalMRR) : "—"}
-        hint={activeSubs.length > 0 ? `${activeSubs.length} sub${activeSubs.length > 1 ? "s" : ""} · ${seatsUsed}/${seatsTotal} seats` : undefined}
+        /* R-1727: "1 sub · 0/10 seats" — the 0 was `used` (assigned users, never synced),
+           so it read as "nobody uses them". Said in words now, same rule as the drawer. */
+        hint={activeSubs.length > 0
+          ? [`${activeSubs.length} subscription${activeSubs.length > 1 ? "s" : ""}`, seatsPhrase(activeSubs)].filter(Boolean).join(" · ")
+          : undefined}
       />
       <MetricCard
         label="Next renewal"
@@ -419,7 +440,22 @@ export function NextBestActionCard({ nba, customer }: { nba: Nba; customer: Cust
                     <Button size="sm" variant="default" onClick={() => { navigator.clipboard?.writeText(draft.message); toast.success("Copied"); }}>Copy</Button>
                     {sendLink && (
                       <Button asChild size="sm" variant="primary">
-                        <a href={sendLink} target={channel === "whatsapp" ? "_blank" : undefined} rel="noopener noreferrer">
+                        <a
+                          href={sendLink}
+                          target={channel === "whatsapp" ? "_blank" : undefined}
+                          rel="noopener noreferrer"
+                          onClick={(e) => {
+                            /* R-1009: a masked phone / email is fetched (logged) before the send opens. */
+                            const wa = channel === "whatsapp" && Boolean(phone);
+                            followRevealed(e, wa ? phone : customer.contact_email,
+                              { table: "customers", id: customer.id, field: wa ? "contact_phone" : "contact_email" },
+                              wa ? "whatsapp" : "email",
+                              (real) => wa
+                                ? `https://wa.me/${real.replace(/\D/g, "")}?text=${encodeURIComponent(draft.message)}`
+                                : `mailto:${real}?subject=${encodeURIComponent(draft.subject || `Regarding ${customer.name}`)}&body=${encodeURIComponent(draft.message)}`,
+                              wa);
+                          }}
+                        >
                           <Icon name={channel === "whatsapp" ? "whatsapp" : "mail"} size={13} className="mr-1.5" />Send
                         </a>
                       </Button>
@@ -436,8 +472,13 @@ export function NextBestActionCard({ nba, customer }: { nba: Nba; customer: Cust
 }
 
 /** Quick contact action buttons (Call / WhatsApp / Email) — real deep-links. */
-export function CustomerContactActions({ customer }: { customer: Customer }) {
-  const phone = customer.contact_phone?.replace(/\s+/g, "");
+export function CustomerContactActions({ phone: rawPhone, email: rawEmail }: { phone: string | null | undefined; email: string | null | undefined }) {
+  /* R-1009: a masked value (a role without can_view_contact_details) gets no deep link — a
+     tel: to "••••••3210" can only fail. The masked text itself stays on the card above. */
+  const rawTel = rawPhone?.replace(/\s+/g, "");
+  const phone = rawTel && !isMaskedContact(rawTel) ? rawTel : undefined;
+  const email = rawEmail && !isMaskedContact(rawEmail) ? rawEmail : undefined;
+  if (!phone && !email) return null;
   return (
     <div className="flex flex-wrap gap-2">
       {phone && (
@@ -452,9 +493,9 @@ export function CustomerContactActions({ customer }: { customer: Customer }) {
           </a>
         </Button>
       )}
-      {customer.contact_email && (
+      {email && (
         <Button asChild size="sm" variant="default">
-          <a href={`mailto:${customer.contact_email}`}><Icon name="mail" size={13} className="mr-1.5" />Email</a>
+          <a href={`mailto:${email}`}><Icon name="mail" size={13} className="mr-1.5" />Email</a>
         </Button>
       )}
     </div>
@@ -512,7 +553,7 @@ export function SubscriptionList({ subs }: { subs: Subscription[] }) {
                     <Icon name="globe" size={11} /> {s.domain}
                   </span>
                 )}
-                <span>{s.used ?? 0}/{s.seats} seats</span>
+                {seatsPhrase([s]) && <span>{seatsPhrase([s])}</span>}
                 {s.start_date && s.renewal_date ? (
                   <span>{formatDate(s.start_date)} → {formatDate(s.renewal_date)}</span>
                 ) : s.renewal_date ? (
@@ -530,6 +571,16 @@ export function SubscriptionList({ subs }: { subs: Subscription[] }) {
                 <div className="text-2xs text-rose mt-0.5">{rupee(owed)} due</div>
               ) : (
                 <div className="text-2xs text-emerald mt-0.5">Paid</div>
+              )}
+              {/* R-1727: the everyday change (add / remove seats) one click from the company
+                  page — opens the same Manage seats dialog /subscriptions uses. */}
+              {active && (
+                <Link
+                  href={manageSeatsHref(s.id) as never}
+                  className="mt-1 inline-block text-2xs font-medium text-amber-ink hover:underline rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+                >
+                  Manage seats
+                </Link>
               )}
             </div>
           </div>
@@ -575,6 +626,8 @@ export function CustomerDetailsGrid({ c }: { c: Customer }) {
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-6">
           <Field label="GSTIN" value={c.gstin} mono badge={c.gstin ? (c.gstin_verified_at ? { kind: "success", text: "verified" } : { kind: "muted", text: "unverified" }) : undefined} />
           <Field label="Place of supply" value={c.state} />
+          <Field label="GST treatment" value={gstTreatmentOption(c.gst_treatment)?.label ?? null} />
+          <Field label="PAN" value={c.pan} mono />
           <Field label="TAN" value={c.tan} mono />
           <Field label="TDS" value={tds} />
         </dl>
@@ -605,8 +658,14 @@ export function CustomerDetailsGrid({ c }: { c: Customer }) {
  * WHO this customer is (contact + quick actions), WHERE (billing/shipping
  * address), and the tax/billing facts (Other details). All read-only, real data.
  */
-export function CustomerIdentityRail({ c }: { c: Customer }) {
-  const phone = c.contact_phone?.replace(/\s+/g, "");
+export function CustomerIdentityRail({ c, contact, onAddContact }: {
+  c: Customer;
+  /** R-1522: the primary contact PERSON (customer-links.ts primaryContactOf) — never the company. */
+  contact: PrimaryContact | null;
+  /** Opens the existing add-contact dialog (CustomerContactsCard). */
+  onAddContact?: () => void;
+}) {
+  const phone = contact?.phone?.replace(/\s+/g, "");
   const foreign = isExportSupply(c.country);
 
   const billing = [
@@ -630,22 +689,50 @@ export function CustomerIdentityRail({ c }: { c: Customer }) {
 
   return (
     <div className="space-y-4">
-      {/* Contact person + quick actions */}
+      {/* Contact person + quick actions.
+          R-1522 (17 Oct 2026, Pardeep): this card fell back to the COMPANY name when there
+          was no contact ("GL · GREENTIN SOLUTIONS PRIVATE LIMITED"), so a company read as a
+          person. It now shows the primary contact person, or says plainly there is none. */}
+      {!contact ? (
+      <Card>
+        <div className="flex items-start gap-3" data-testid="no-contact-person">
+          <Avatar initials="?" color="muted" size="md" />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium text-ink">No contact person yet</div>
+            <div className="text-2xs text-ink-3 mt-0.5">Add a contact person so invoices and reminders reach the right person.</div>
+            {onAddContact && (
+              <Button size="sm" variant="outline" icon="plus" className="mt-2" onClick={onAddContact}>
+                Add contact
+              </Button>
+            )}
+          </div>
+        </div>
+      </Card>
+      ) : (
       <Card>
         <div className="flex items-start gap-3">
-          <Avatar initials={initials(c.contact_name || c.name) || "?"} color="amber" size="md" />
+          <Avatar initials={initials(contact.name) || "?"} color="amber" size="md" />
           <div className="min-w-0 flex-1">
-            <div className="font-medium text-ink truncate">{c.contact_name || c.name}</div>
-            {c.contact_title && <div className="text-2xs text-ink-3">{c.contact_title}</div>}
+            <div className="font-medium text-ink truncate">{contact.name}</div>
+            {contact.title && <div className="text-2xs text-ink-3">{contact.title}</div>}
             <div className="mt-1.5 space-y-1">
-              {c.contact_email && (
-                <a href={`mailto:${c.contact_email}`} className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors">
+              {contact.email && (
+                /* R-1009: a masked value stays text — no mailto: / tel: to a mask. */
+                <a
+                  href={isMaskedContact(contact.email) ? undefined : `mailto:${contact.email}`}
+                  title={isMaskedContact(contact.email) ? "Hidden for your role. The owner or a manager can see it." : undefined}
+                  className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors"
+                >
                   <Icon name="mail" size={12} className="text-ink-3 flex-shrink-0" />
-                  <span className="font-mono truncate">{c.contact_email}</span>
+                  <span className="font-mono truncate">{contact.email}</span>
                 </a>
               )}
               {phone && (
-                <a href={`tel:${phone}`} className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors">
+                <a
+                  href={isMaskedContact(phone) ? undefined : `tel:${phone}`}
+                  title={isMaskedContact(phone) ? "Hidden for your role. The owner or a manager can see it." : undefined}
+                  className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors"
+                >
                   <Icon name="phone" size={12} className="text-ink-3 flex-shrink-0" />
                   <span className="tabular-nums">{formatPhone(phone)}</span>
                 </a>
@@ -653,10 +740,13 @@ export function CustomerIdentityRail({ c }: { c: Customer }) {
             </div>
           </div>
         </div>
+        {(phone || contact.email) && (
         <div className="mt-3 pt-3 border-t border-hairline">
-          <CustomerContactActions customer={c} />
+          <CustomerContactActions phone={phone} email={contact.email} />
         </div>
+        )}
       </Card>
+      )}
 
       {/* Address */}
       <Card title="Address">
@@ -690,6 +780,8 @@ export function CustomerIdentityRail({ c }: { c: Customer }) {
             />
           )}
           <Field label={foreign ? "State / Province" : "Place of supply"} value={c.state} />
+          <Field label="GST treatment" value={gstTreatmentOption(c.gst_treatment)?.label ?? null} />
+          {!foreign && c.pan && <Field label="PAN" value={c.pan} mono />}
           {!foreign && c.tan && <Field label="TAN" value={c.tan} mono />}
           {!foreign && tds && <Field label="TDS" value={tds} />}
           <Field label="Payment terms" value={terms} />

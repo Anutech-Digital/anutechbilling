@@ -45,19 +45,33 @@ export const PLATFORM_OPERATOR = {
  * see cross-tenant signup data. This is the ONLY thing that grants god-mode;
  * a tenant can never flip a flag to get in. The real gate is the server API
  * (which re-checks the caller's authenticated email against this list before
- * touching the service-role client) — the client copy just toggles nav/UI.
+ * touching the service-role client).
  *
- * Override in prod with PLATFORM_ADMIN_EMAILS="a@x.com,b@y.com".
+ * Override with the SERVER-ONLY env PLATFORM_ADMIN_EMAILS="a@x.com,b@y.com".
+ *
+ * R-730 (19 Oct 2026): this used to read NEXT_PUBLIC_PLATFORM_ADMIN_EMAILS first. A
+ * NEXT_PUBLIC_ variable is copied into the browser bundle at build time, so the list of
+ * god-mode addresses was readable by anyone who opened the app's JS. The browser no longer
+ * needs the list — useCurrentUser asks GET /api/platform/whoami — so it lives only on the
+ * server. The old name is still honoured ON THE SERVER until the deploy env is renamed
+ * (stagingStep on R-730); it is read through a computed key on purpose, because Next.js
+ * inlines only literal `process.env.NEXT_PUBLIC_*` accesses into the bundle.
+ * Guard: src/lib/security/no-public-admin-env.test.ts.
  */
 // R-1432: only the operator's own address is a default; any other admin comes from env.
 const DEFAULT_PLATFORM_ADMINS = ["pardeep@anutech.in"];
+/** Pre-R-730 name — server-side fallback only. Never write it as a literal env access. */
+const LEGACY_ADMIN_ENV = ["NEXT", "PUBLIC", "PLATFORM", "ADMIN", "EMAILS"].join("_");
 
 export function platformAdminEmails(): string[] {
-  const env = process.env.NEXT_PUBLIC_PLATFORM_ADMIN_EMAILS || process.env.PLATFORM_ADMIN_EMAILS;
+  const env =
+    process.env.PLATFORM_ADMIN_EMAILS ||
+    (typeof window === "undefined" ? process.env[LEGACY_ADMIN_ENV] : undefined);
   const list = (env ? env.split(",") : DEFAULT_PLATFORM_ADMINS).map((e) => e.trim().toLowerCase()).filter(Boolean);
   return list;
 }
 
+/** SERVER ONLY — the browser gets the answer from GET /api/platform/whoami. */
 export function isPlatformAdmin(email: string | null | undefined): boolean {
   if (!email) return false;
   return platformAdminEmails().includes(email.trim().toLowerCase());

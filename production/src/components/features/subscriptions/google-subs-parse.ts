@@ -90,12 +90,36 @@ export function normDomain(s: string): string {
   return (s || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
 }
 
-/** Google panel dates look like "November 27, 2026" — Date can parse these. */
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * R-1652 — a written calendar date ("November 27, 2026", "Nov 27, 2026 03:15") → YYYY-MM-DD,
+ * the SAME day the text names, in every time zone. It is a date, not an instant: never through
+ * `toISOString()` — `new Date("November 27, 2026")` is local midnight, which in an IST browser
+ * is 18:30 UTC on the 26th, so the import saved every start/renewal date one day early.
+ * "Month D, YYYY" is read by hand; anything else Date can parse is read by its LOCAL parts
+ * (the day the text names, since the text carries no zone). Impossible dates → null.
+ */
+export function textDateISO(s: string): string | null {
+  const t = (s || "").trim();
+  const m = t.match(/^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})\b/);
+  if (m) {
+    const mi = MONTHS.indexOf(m[1].slice(0, 3).toLowerCase());
+    const y = Number(m[3]), mo = mi + 1, d = Number(m[2]);
+    if (mi < 0 || d < 1 || d > new Date(Date.UTC(y, mo, 0)).getUTCDate()) return null;
+    return `${y}-${pad2(mo)}-${pad2(d)}`;
+  }
+  const d = new Date(t);
+  if (isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/** Google panel dates look like "November 27, 2026" (sometimes quoted). */
 export function gDate(s: string): string | undefined {
   const t = (s || "").trim().replace(/^"|"$/g, "");
   if (!t || t === "-") return undefined;
-  const d = new Date(t);
-  return isNaN(d.getTime()) ? undefined : d.toISOString().slice(0, 10);
+  return textDateISO(t) ?? undefined;
 }
 
 export function parseGoogle(text: string, lk: Lookups, priceMap: Map<string, number>): Parsed {

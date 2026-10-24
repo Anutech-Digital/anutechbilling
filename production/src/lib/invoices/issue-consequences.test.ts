@@ -184,3 +184,44 @@ describe("bulkIssueConsequences", () => {
     expect(c.consequences.some((x) => x.tone === "warning" && /nothing can be issued/i.test(x.text))).toBe(true);
   });
 });
+
+/* R-1633 (19 Oct 2026 audit): the quote page and the project milestone issued a GST invoice in
+   one click. Their confirm shows what will be issued — customer, GSTIN, amount with GST,
+   invoice date and the number's series. */
+describe("issueConsequences — R-1633 facts for the one-click paths", () => {
+  it("names the buyer's GSTIN when there is one", () => {
+    const t = text(issueConsequences({ quote: { ...QUOTE, customerGstin: "07AAACK1234F1Z5" }, series: HEALTHY }));
+    expect(t).toContain("Kailash Corporation");
+    expect(t).toContain("GSTIN 07AAACK1234F1Z5");
+  });
+
+  it("states the amount WITH the GST in it", () => {
+    const t = text(issueConsequences({ quote: { ...QUOTE, taxAmount: 18_000 }, series: HEALTHY }));
+    expect(t).toContain("₹1,18,000");
+    expect(t).toMatch(/including ₹18,000 GST/);
+  });
+
+  it("states the invoice date", () => {
+    const t = text(issueConsequences({ quote: { ...QUOTE, invoiceDate: "2026-10-24" }, series: HEALTHY }));
+    expect(t).toMatch(/Dated 24 Oct 2026/);
+  });
+
+  it("a milestone's own due date replaces the quote-terms line", () => {
+    const t = text(issueConsequences({ quote: { ...QUOTE, dueDate: "2026-11-30" }, series: HEALTHY }));
+    expect(t).toMatch(/Falls due on 30 Nov 2026/);
+    expect(t).not.toMatch(/30 days from today/i);
+  });
+
+  it("a Bill of Supply business is told the BOS series, not an INV number", () => {
+    const c = issueConsequences({ quote: { ...QUOTE, billOfSupply: true }, series: HEALTHY });
+    expect(c.predictedIsCertain).toBe(false);
+    expect(text(c)).toMatch(/Bill of Supply/);
+    expect(text(c)).toMatch(/BOS-/);
+    expect(text(c)).not.toContain("INV-TEST-27-0009");
+  });
+
+  it("adds nothing when the caller passes none of the new facts", () => {
+    const before = text(issueConsequences({ quote: QUOTE, series: HEALTHY }));
+    expect(before).not.toMatch(/Dated |GSTIN 0|including ₹|Bill of Supply/);
+  });
+});

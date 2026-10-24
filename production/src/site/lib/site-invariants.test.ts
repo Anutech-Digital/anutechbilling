@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { RESELLEROS_URL, OS_SIGNUP, ENQUIRY_API } from "./config";
+import { RESELLEROS_URL, OS_SIGNUP, ENQUIRY_API, resolveResellerosUrl, LIVE_RESELLEROS_URL } from "./config";
 import { TLDS, LICENCE_EDITIONS } from "./data/catalog";
 import { HOSTING_TIERS } from "./data/hosting-landing-v2";
 
@@ -51,10 +51,26 @@ describe("app ka pata — ek jagah", () => {
     /* 5 Sep 2026: cloud URLs region-move par badalte hain (asia-south1 →
        asia-southeast1), isliye ab STABLE domain anutech.in use hota hai — jo
        jis bhi live service se bound ho usi par jaata hai. Kabhi run.app pin mat karo. */
-    expect(RESELLEROS_URL).toContain("anutech.in");
-    expect(RESELLEROS_URL.includes("run.app")).toBe(false);
+    /* R-1499: production build ka default — live STABLE domain (pehle jaisa). */
+    const prod = resolveResellerosUrl(undefined, "production", "https://whatever.example");
+    expect(prod).toBe(LIVE_RESELLEROS_URL);
+    expect(prod).toContain("anutech.in");
+    expect(prod.includes("run.app")).toBe(false);
     expect(OS_SIGNUP).toBe(`${RESELLEROS_URL}/signup`);
     expect(ENQUIRY_API).toContain("/api/public/enquiry/general");
+  });
+
+  it("R-1499: laptop (next dev / test) kabhi LIVE par default nahi karta", () => {
+    expect(resolveResellerosUrl(undefined, "development", "http://localhost:3001/")).toBe("http://localhost:3001");
+    expect(resolveResellerosUrl("", "development", undefined)).toBe("http://localhost:3001");
+    expect(resolveResellerosUrl(undefined, "test", undefined)).not.toContain("reselleros.anutech.in");
+    /* Is test run ka apna RESELLEROS_URL bhi live nahi (NODE_ENV=test). */
+    if (!process.env.NEXT_PUBLIC_RESELLEROS_URL) expect(RESELLEROS_URL).not.toContain("reselleros.anutech.in");
+  });
+
+  it("R-1499: NEXT_PUBLIC_RESELLEROS_URL set ho to har build me wahi", () => {
+    expect(resolveResellerosUrl(" https://x.example ", "production", undefined)).toBe("https://x.example");
+    expect(resolveResellerosUrl("https://x.example", "development", "http://localhost:3001")).toBe("https://x.example");
   });
 });
 
@@ -117,6 +133,19 @@ describe("quote form ka enquiry contract", () => {
     for (const field of ["tierId", "billing", "ENQUIRY_WORKSPACE_API", "gwTierFor", "draftQuoteId"]) {
       expect(proxy.includes(field), `proxy me ${field} nahi`).toBe(true);
     }
+  });
+
+  it("R-1598: /api/enquiry aur /api/agent kisi doosri deployment (live) ko fetch nahi karte", () => {
+    /* Staging ke /quote, /trial aur AI chat ke leads LIVE me jaate the: dono routes
+       RESELLEROS_URL (default live domain) par fetch karte the. Ab handler isi process me. */
+    for (const p of [join(APP, "app", "api", "enquiry", "route.ts"), join(APP, "app", "api", "agent", "route.ts")]) {
+      const s = read(p);
+      expect(s.includes("RESELLEROS_URL"), `${p} RESELLEROS_URL use karta hai`).toBe(false);
+      expect(/\bfetch\(/.test(s), `${p} khud fetch karta hai`).toBe(false);
+      expect(s.includes("deliverToApp("), `${p} deliverToApp se nahi jaata`).toBe(true);
+    }
+    const fwd = read(join(SITE, "lib", "app-forward.ts"));
+    expect(/process\.env\.NEXT_PUBLIC/.test(fwd), "forward target NEXT_PUBLIC env se nahi aana chahiye (build me jam jaata hai)").toBe(false);
   });
 
   it("QuoteBuilder seedha app ko nahi, /api/enquiry ko POST karta hai (CORS)", () => {

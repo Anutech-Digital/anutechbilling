@@ -151,7 +151,7 @@ function PresenceCodeBanner() {
         <div>
           <div className="text-2xs uppercase tracking-wider text-amber-ink font-semibold">Office check-in code</div>
           <p className="text-xs text-ink-3 mt-0.5 max-w-md">
-            Apne phone se attendance mark karne wale employees ye code daalenge. Har {secs > 0 ? "" : "kuch"} second me badalta hai — office me hi dikhega.
+            Employees who mark attendance from their own phone will enter this code. It changes every few seconds and is shown only in the office.
           </p>
         </div>
         <div className="text-center">
@@ -249,7 +249,7 @@ function PinPad({ employee, requireSelfie, onClose }: { employee: Employee; requ
       const action = await mark.mutateAsync({ employeeId: employee.id, pin, photo });
       const msg = action === "checked_in" ? "Checked in ✓"
         : action === "checked_out" ? "Checked out ✓"
-        : action === "too_soon" ? "Abhi to check-in hua — ignore kiya"
+        : action === "too_soon" ? "Just checked in — ignored"
         : "Already done for today";
       setResult({ ok: true, msg });
       setTimeout(onClose, 1400);

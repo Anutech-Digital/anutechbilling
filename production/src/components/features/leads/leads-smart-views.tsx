@@ -206,7 +206,7 @@ export function LeadsSmartViews({
   const showOverdueAlert = overdue > 0 && active !== "overdue";
 
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         {/* "outline" once a view is applied, so a filtered pipeline is visibly
             filtered from across the room — the old chip bar signalled that with

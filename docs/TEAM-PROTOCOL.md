@@ -78,6 +78,8 @@ ResellerOS is too big for one builder, and splitting it by area (30 Sep) made pe
 5. **No two cards on the same files at once.** Each card lists the folders it will touch (`files`); the AI does not take a card whose `files` overlap a card someone else is doing — it takes the next one.
 6. **Done = verified.** Tests + gate green, and you opened it on localhost and checked it like the business owner. Then `status` = review with what you checked; Pardeep looks for 5 minutes and closes it.
 
+**Screen and data-entry rules (Pardeep, 21 Oct 2026).** Every card that touches a screen runs the 9-rule checklist in `.claude/skills/label-and-logic-check/SKILL.md` §4 before building and again before aiResult: one fact one place; statuses never contradict; the primary button is the right next step; English UI only; tables fit 1280px with the action column visible; one task one way; ask only what the task needs; fewest steps with smart defaults; the owner's 2–3 examples on the card are the first test. The aiResult says the checklist was run. The 21 Oct review found most of these mistakes only after the build — the checklist moves the catch to before it.
+
 What stays with people (not the queue): Pardeep — owner decisions (price, discount, bank / payments, spending, contracts, priority); Pawan — clients, demos, sales; Hitesh — books, GST / TDS filing, CA (after Pardeep's yes on money); Abhishek — deploy every Thursday 4 pm IST, server, support.
 
 Measured for the trial (end of week): hours from claim to merge per card, merge conflicts, times someone waited on someone.

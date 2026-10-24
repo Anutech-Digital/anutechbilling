@@ -17,8 +17,11 @@
  *        c. Render the renewal Quote PDF as attachment.
  *        d. Send via lib/email/send.ts (real Resend if key configured;
  *           stub mode otherwise — both paths log to renewal_email_log).
- *   3. If shouldSuspend → flip status='paused' + stamp suspended_at +
- *      set renewal_state='suspended'.
+ *   3. If grace is over (shouldSuspend) → R-1621: raise ONE "Stop service" task for the
+ *      owner (raise_renewal_grace_task, once per subscription per term). Nothing is paused
+ *      here any more — the owner stops it (renewal_grace_decide 'stop') or gives more days.
+ *      Grace = effectiveGraceDays(): trusted customer's own grace, else the company's, plus
+ *      any "+N days" for this term.
  *   4. Update renewal_state + reminder_count + last_reminder_sent_at_v2.
  *
  * Auth: Vercel adds `Authorization: Bearer <CRON_SECRET>` to its cron
@@ -36,7 +39,8 @@ import { NextResponse } from "next/server";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { createAdminClient } from "@/lib/supabase/server";
 import { primaryContactEmail } from "@/lib/contacts/primary";
-import { decideCadence, CADENCE_TRIGGERS } from "@/lib/renewals/cadence";
+import { decideCadence, CADENCE_TRIGGERS, reopensForNewTerm, effectiveGraceDays, serviceStopDate } from "@/lib/renewals/cadence";
+import { readGraceOverrides } from "@/lib/renewals/grace-overrides";
 import { renderTemplate } from "@/lib/renewals/templates";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 import { splitBilledRenewalStep } from "@/lib/renewals/split-billed-renewal";
@@ -44,6 +48,7 @@ import { createDomainRenewalQuote } from "@/lib/domains/renewal";
 import { isEmailConfigured } from "@/lib/email/send";
 import { sendCustomerEmail } from "@/lib/messaging";
 import { renderQuotePDF } from "@/lib/pdf";
+import { loadQuotePeriodContextById } from "@/lib/quotes/line-period-context";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
@@ -55,9 +60,11 @@ import { fetchAllRows, fetchAllRowsIn, errorMessage } from "@/lib/ops/fetch-all"
 import { createReminderSender } from "@/lib/marketing/whatsapp-reminders.server";
 import { renewalReminderKind } from "@/lib/marketing/whatsapp-reminders";
 import { rupee } from "@/lib/utils";
-import { istToday, toIstDate, addDaysISO } from "@/lib/dates/ist";
+import { istToday, toIstDate, addDaysISO, formatIstDate } from "@/lib/dates/ist";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
+import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
+import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -91,6 +98,8 @@ interface CronResult {
   emails_sent:      number;
   emails_skipped:   number;
   suspends:         number;
+  /** R-1621: grace over → "Stop service" owner tasks raised this run (nothing is paused by the cron). */
+  grace_tasks?:     number;
   /** RN-24: subscriptions lapsed to 'expired' because they're not renewing and the term ended. */
   lapsed:           number;
   /** R-808: split-billed subscriptions whose term rolled on this run (no renewal quote). */
@@ -209,7 +218,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
   const customerIds = uniq(allSubs.map((s) => s.customer_id).filter((x): x is string => Boolean(x)));
 
   type TenantRow = { id: string; name: string; email: string | null; phone: string | null; gstin: string | null; address: string | null; grace_period_days: number | null; state_code: string | null; logo_url: string | null };
-  type CustomerRow = { id: string; name: string; contact_name: string | null; contact_email: string | null; gstin: string | null; contact_phone: string | null; state_code: string | null };
+  type CustomerRow = { id: string; name: string; contact_name: string | null; contact_email: string | null; gstin: string | null; contact_phone: string | null; state_code: string | null; gst_treatment: string | null };
 
   const tenantById = new Map<string, TenantRow>();
   const ingestByTenant = new Map<string, { google_email: string | null }[]>();
@@ -235,13 +244,22 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
     }
     for (const ids of chunk(customerIds, PREFETCH_CHUNK)) {
       const { data: cs, error: cErr } = await supabase.from("customers")
-        .select("id, name, contact_name, contact_email, gstin, contact_phone, state_code")
+        .select("id, name, contact_name, contact_email, gstin, contact_phone, state_code, gst_treatment")
         .in("id", ids);
       if (cErr) throw new Error(`customers: ${cErr.message}`);
       for (const c of (cs ?? []) as CustomerRow[]) customerById.set(c.id, c);
     }
   } catch (e) {
     return NextResponse.json({ error: `prefetch failed: ${(e as Error).message}` }, { status: 500 });
+  }
+
+  /* R-1621: trusted customer grace + "+N days" per term. Read apart from the prefetch above so a
+     database without the migration yet still reminds everyone on the company grace. */
+  let overrides: Awaited<ReturnType<typeof readGraceOverrides>>;
+  try {
+    overrides = await readGraceOverrides(supabase, allSubs.map((s) => s.id), customerIds);
+  } catch (e) {
+    return NextResponse.json({ error: `grace overrides read failed: ${errorMessage(e)}` }, { status: 500 });
   }
 
   /* The logo is the same image for every renewal PDF a tenant sends in a run. */
@@ -318,10 +336,18 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
       // ── Per-customer info — need email to actually send ──
       const customer = sub.customer_id ? customerById.get(sub.customer_id) ?? null : null;
 
+      /* R-1621: this subscription's grace — trusted customer, company default, "+N days". */
+      const graceDays = effectiveGraceDays({
+        tenantGraceDays:  tenant.grace_period_days,
+        trustedGraceDays: sub.customer_id ? overrides.trustedByCustomer.get(sub.customer_id) ?? null : null,
+        renewalDate:      sub.renewal_date!,
+        graceUntil:       overrides.bySubscription.get(sub.id)?.graceUntil ?? null,
+      });
+
       // Decide cadence
       const decision = decideCadence({
         renewalDate:  sub.renewal_date!,
-        graceDays:    tenant.grace_period_days ?? 0,
+        graceDays,
         currentState: sub.renewal_state ?? "pending",
         /* The TERM picks the ladder, not the invoice frequency. An annual plan paid
            monthly is invoiced twelve times and renews once, and it needs the 30-day
@@ -337,19 +363,47 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
         emailStatus:    undefined as string | undefined,
       };
 
-      // ── Suspend path ─────────────────────────────────────────────
-      if (decision.shouldSuspend) {
-        await supabase
+      /* ── R-1562: a paid renewal re-opens for its NEW term ─────────────
+         record_payment writes 'renewed' while rolling renewal_date one term on. Once that
+         new term's first reminder is due, the row goes back to 'pending' BEFORE any email,
+         so the Renewals screen, its buttons and the Today inbox see it even if the send
+         below fails. Guarded on the state and date read: a payment landing in between
+         (new date, 'renewed' again) is not overwritten. */
+      if (reopensForNewTerm(sub.renewal_state, decision)) {
+        const { error: reopenErr } = await supabase
           .from("subscriptions")
-          .update({
-            status:        "paused",
-            renewal_state: "suspended",
-            suspended_at:  new Date().toISOString(),
-          })
-          .eq("id", sub.id);
-        result.suspends += 1;
-        detail.emailStatus = "(suspended)";
-        result.details.push(detail);
+          .update({ renewal_state: "pending" })
+          .eq("id", sub.id)
+          .eq("renewal_state", "renewed")
+          .eq("renewal_date", sub.renewal_date!);
+        if (reopenErr) {
+          result.errors.push({ subscription_id: sub.id, message: `Could not re-open the renewed subscription for its new term: ${reopenErr.message}` });
+          return;
+        }
+      }
+
+      // ── Grace over → the owner's task (R-1621) ───────────────────
+      /* This used to flip the subscription to 'paused' by itself while the real service at
+         Google / Microsoft / the hosting panel kept running (no vendor API, R-338) and nobody
+         was told. Now ONE "Stop service" task goes to the owner — customer, plan, ₹ due, the
+         Renewals link and the manual steps — and the owner presses Stop service (the same
+         pause as before) or "+ days". The function stamps grace_task_for, so re-runs raise
+         nothing new; a database without the migration gets an error line, never a pause. */
+      if (decision.shouldSuspend) {
+        if (overrides.bySubscription.get(sub.id)?.taskFor === sub.renewal_date) return;
+        const raise = supabase.rpc as unknown as (
+          fn: "raise_renewal_grace_task", args: { p_subscription_id: string },
+        ) => PromiseLike<{ data: { raised?: boolean; why?: string } | null; error: { message: string } | null }>;
+        const { data: raised, error: raiseErr } = await raise.call(supabase, "raise_renewal_grace_task", { p_subscription_id: sub.id });
+        if (raiseErr) {
+          result.errors.push({ subscription_id: sub.id, message: `Grace is over but the owner's "Stop service" task could not be raised: ${raiseErr.message}` });
+          return;
+        }
+        if (raised?.raised) {
+          result.grace_tasks = (result.grace_tasks ?? 0) + 1;
+          detail.emailStatus = "(grace over — owner task raised)";
+          result.details.push(detail);
+        }
         return;
       }
 
@@ -399,7 +453,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
               customerName:    sub.customer_name,
               domain:          sub.domain,
               renewalDate:     sub.renewal_date!,
-              graceDays:       tenant.grace_period_days ?? 0,
+              graceDays,
               existingQuoteId: sub.renewal_quote_id,
             })
           : await createOrGetRenewalQuote({
@@ -414,33 +468,36 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
           mrr:             sub.mrr ?? 0,
           termMonths:      sub.term_months ?? null,
           renewalDate:     sub.renewal_date!,
-          graceDays:       tenant.grace_period_days ?? 0,
+          graceDays,
           existingQuoteId: sub.renewal_quote_id,
           notes:           `Auto-generated renewal quote for subscription ${sub.id}`,
         });
 
-        /* A domain whose live renewal price could not be read gets no email this run: a
-           reminder with no price and no way to pay is worse than one a day later. The
-           reason is logged by createDomainRenewalQuote and the step is retried next run,
-           because nothing was logged as sent. */
-        if (sub.vendor === "domain" && !quoteResult) {
-          detail.emailStatus = "(held: live domain renewal price unavailable — retried next run)";
+        /* No renewal quote → no email this run, for EVERY vendor (R-1571). This held only
+           domains; everything else went out with no quote, no accept link and an amount
+           made up as mrr × 12 — 12x wrong on a monthly term, 144x where mrr already held
+           a yearly figure (the exact case renewalTerm refuses). A reminder with no true
+           price and no way to pay is worse than one a day later. Nothing is logged as
+           sent, so the step is retried next run; the reason is in errors. */
+        if (!quoteResult) {
+          const why = sub.vendor === "domain" && sub.domain
+            ? `No renewal quote for domain ${sub.domain}: the live renewal price could not be read.`
+            : `No renewal quote for ${sub.plan}: it could not be built (price check refused or no quote number — see the server log). No reminder sent; retried next run.`;
+          detail.emailStatus = "(held: no renewal quote — retried next run)";
           result.emails_skipped += 1;
-          result.errors.push({ subscription_id: sub.id, message: `No renewal quote for domain ${sub.domain}: the live renewal price could not be read.` });
+          result.errors.push({ subscription_id: sub.id, message: why });
           result.details.push(detail);
           return;
         }
 
-        const renewalQuoteId = quoteResult?.quoteId ?? null;
-        const renewalQuote = quoteResult
-          ? {
-              amount:       quoteResult.amount,
-              subtotal:     quoteResult.subtotal,
-              discount_pct: quoteResult.discountPct,
-              tax_rate:     quoteResult.taxRate,
-            }
-          : null;
-        const lineItems: QuoteLineItem[] = quoteResult?.lineItems ?? [];
+        const renewalQuoteId = quoteResult.quoteId;
+        const renewalQuote = {
+          amount:       quoteResult.amount,
+          subtotal:     quoteResult.subtotal,
+          discount_pct: quoteResult.discountPct,
+          tax_rate:     quoteResult.taxRate,
+        };
+        const lineItems: QuoteLineItem[] = quoteResult.lineItems ?? [];
 
         // Public accept-link token (SEC-1)
         let renewalToken: string | null = null;
@@ -482,8 +539,8 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
             customer_name: resolvedContact.name || customer?.contact_name || customer?.name || sub.customer_name,
             seller_name:   tenant.name,
             plan:          sub.plan,
-            amount:        renewalQuote ? rupee(renewalQuote.amount) : null,
-            due_date:      new Date(sub.renewal_date!).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
+            amount:        rupee(renewalQuote.amount),
+            due_date:      formatIstDate(sub.renewal_date!),
             days:          Math.abs(decision.daysUntilRenewal),
             link:          renewalQuoteId && renewalToken
               ? quoteAcceptUrl(process.env.NEXT_PUBLIC_APP_URL, renewalQuoteId, renewalToken)
@@ -519,12 +576,12 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
           tenantPhone:     tenant.phone,
           planName:        sub.plan,
           seats:           sub.seats,
-          amount:          renewalQuote?.amount ?? (sub.mrr ?? 0) * 12,
-          renewalDate:     new Date(sub.renewal_date!).toLocaleDateString("en-IN", {
-            day: "numeric", month: "short", year: "numeric",
-          }),
+          amount:          renewalQuote.amount,
+          renewalDate:     formatIstDate(sub.renewal_date!),
           daysUntil:       Math.abs(decision.daysUntilRenewal),
-          graceDays:       tenant.grace_period_days ?? 0,
+          graceDays,
+          /* R-1621: the exact IST day the service stops if still unpaid. */
+          stopDate:        formatIstDate(serviceStopDate(sub.renewal_date!, graceDays)),
           acceptLink:      renewalQuoteId && renewalToken
             /* `?? undefined` because quoteAcceptUrl now returns null when NEXT_PUBLIC_APP_URL
                is missing or has no scheme. NO LINK is the right outcome — the template omits
@@ -537,7 +594,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
 
         // 4. Render PDF attachment (only when we have a quote)
         let attachments: { filename: string; content: Buffer; contentType: string }[] | undefined;
-        if (renewalQuote && lineItems.length > 0) {
+        if (lineItems.length > 0) {
           try {
             const blob = await renderQuotePDF({
               tenantLogo:    await tenantLogo(sub.tenant_id, tenant.logo_url),
@@ -546,7 +603,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
               tenantEmail:   tenant.email,
               tenantPhone:   tenant.phone,
               tenantAddress: tenant.address,
-              quoteId:       renewalQuoteId!,
+              quoteId:       renewalQuoteId,
               customerName:  sub.customer_name,
               contactName:   customer?.contact_name ?? null,
               contactEmail:  customer?.contact_email ?? null,
@@ -557,14 +614,18 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
               discount:      0,
               taxable:       renewalQuote.subtotal ?? renewalQuote.amount,
               taxRate:       renewalQuote.tax_rate ?? 18,
+              /* R-1532: Bill of Supply business → "No GST — Bill of Supply" on a 0% quote. */
+              billOfSupply:  quoteDocBillOfSupply(await readTenantGstRegistration(supabase, sub.tenant_id), renewalQuote.tax_rate ?? 18),
               // Use the quote's actual rate (0 for a zero-rated export renewal) —
               // never a hardcoded 18% (which taxed foreign auto-renewals wrongly).
               tax:           Math.round((renewalQuote.subtotal ?? renewalQuote.amount) * (renewalQuote.tax_rate ?? 18) / 100),
               total:         renewalQuote.amount,
-              interState:    isInterStateSupply(customer?.state_code, tenant.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant.gstin }),
+              interState:    isInterStateSupply(customer?.state_code, tenant.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant.gstin, treatment: customer?.gst_treatment }),
               validityDays:  30,
               notes:         "Renewal quote — auto-generated. Reply or call us with any questions.",
               isRenewal:     true,
+              /* R-1764: "Domain:" / "Subscription period:" — the next term this quote buys. */
+              periodContext: await loadQuotePeriodContextById(supabase, sub.tenant_id, renewalQuoteId),
             });
             const arrBuf = await blob.arrayBuffer();
             attachments = [{
@@ -634,12 +695,12 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
 
       // ── No-op path: sync renewal_state if it drifted ─────────────
       // Guard against REGRESSING from terminal states:
-      //   - 'renewed': sub was just paid for this cycle. decideCadence
-      //     would return 'pending' for far-future renewal_dates, which
-      //     would wipe the "just renewed" signal until next T-15.
-      //   - 'suspended': sub was auto-suspended. Don't quietly revive it.
-      // Both states must be cleared explicitly (operator action or new
-      // renewal payment via record_payment).
+      //   - 'renewed': sub was just paid for this cycle and its new term's
+      //     first reminder is not due yet (decision 'pending'), so the
+      //     "Renewed" badge holds. R-1562: it does NOT hold past that —
+      //     the re-open step above moves it to 'pending' for the new term.
+      //   - 'suspended': sub was auto-suspended. Don't quietly revive it;
+      //     cleared by an operator or a renewal payment via record_payment.
       const isTerminalState =
         sub.renewal_state === "renewed" ||
         sub.renewal_state === "suspended";
@@ -676,7 +737,8 @@ interface PlannedAction {
   days_until:      number;
   step:            string;
   tone:            string | null;
-  action:          "email" | "suspend";
+  /** "grace_task" = grace is over; a real run raises the owner's "Stop service" task (R-1621). */
+  action:          "email" | "grace_task";
   /** Where the email would land — or why it would go nowhere. */
   recipient:       string;
   /** True when the action is planned but cannot actually be delivered. */
@@ -691,7 +753,8 @@ interface DryRunResult {
   /** Active + auto_renew + has a renewal date — what the cron would look at. */
   eligible:           number;
   would_email:        number;
-  would_suspend:      number;
+  /** R-1621: subscriptions whose grace is over — a real run raises the owner's task, it does not pause. */
+  would_raise_grace_task: number;
   /** Planned sends with no usable customer email — these fail silently in a real run. */
   blocked_no_email:   number;
   next_action_on:     string | null;
@@ -733,6 +796,8 @@ async function planOnly(
   const tenants = await fetchAllRowsIn(eligible.map((s) => s.tenant_id), (ids, from, to) => supabase
     .from("tenants").select("id, grace_period_days").in("id", ids).order("id", { ascending: true }).range(from, to));
   const graceByTenant = new Map(tenants.map((t) => [t.id, t.grace_period_days ?? 0]));
+  /* R-1621: trusted customer grace + "+N days", as the live pass reads them. */
+  const overrides = await readGraceOverrides(supabase, eligible.map((s) => s.id), eligible.map((s) => s.customer_id));
 
   // One fetch for every customer involved, rather than per-subscription — a dry
   // run should be cheap enough that nobody hesitates to use it.
@@ -759,7 +824,12 @@ async function planOnly(
     }
     const decision = decideCadence({
       renewalDate:  sub.renewal_date!,
-      graceDays:    graceByTenant.get(sub.tenant_id) ?? 0,
+      graceDays:    effectiveGraceDays({
+        tenantGraceDays:  graceByTenant.get(sub.tenant_id) ?? 0,
+        trustedGraceDays: sub.customer_id ? overrides.trustedByCustomer.get(sub.customer_id) ?? null : null,
+        renewalDate:      sub.renewal_date!,
+        graceUntil:       overrides.bySubscription.get(sub.id)?.graceUntil ?? null,
+      }),
       currentState: (sub.renewal_state ?? "pending") as never,
       termMonths:   sub.term_months,
       today:        asOf,
@@ -787,7 +857,7 @@ async function planOnly(
       days_until:      decision.daysUntilRenewal,
       step:            decision.targetState,
       tone:            decision.tone,
-      action:          decision.shouldSuspend ? "suspend" : "email",
+      action:          decision.shouldSuspend ? "grace_task" : "email",
       recipient:       email ?? "— no customer email on file —",
       blocked,
     });
@@ -821,7 +891,7 @@ async function planOnly(
     subscriptions_seen: subsSeen ?? eligible.length,
     eligible:           eligible.length,
     would_email:        actions.filter((a) => a.action === "email").length,
-    would_suspend:      actions.filter((a) => a.action === "suspend").length,
+    would_raise_grace_task: actions.filter((a) => a.action === "grace_task").length,
     blocked_no_email:   blockedNoEmail,
     next_action_on:     nextActionOn,
     actions,

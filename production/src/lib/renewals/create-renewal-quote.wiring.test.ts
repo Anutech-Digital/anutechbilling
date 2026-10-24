@@ -91,10 +91,13 @@ describe("R-012 follow-ups from Pawan's brief", () => {
     /* Anchor on CODE, not on the "Path 2" comment — `code` has comments stripped, so
        indexOf on a comment returns -1 and the slice silently runs to end of file. It
        did exactly that on the first run and the test failed for the wrong reason. */
-    const path1 = code.slice(
-      code.indexOf("if (existingQuoteId)"),
-      code.indexOf('next_document_number'),
-    );
+    /* R-1574: Path 2 no longer starts with next_document_number (the number is taken inside
+       create_renewal_quote) — its first step is the export-customer check. */
+    const start = code.indexOf("if (existingQuoteId)");
+    const end = code.indexOf("isExportSupply(");
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    const path1 = code.slice(start, end);
     expect(path1).toContain("created:     false");
     expect(path1).not.toContain("renewalCost(");
     expect(path1).not.toContain("extension_months");

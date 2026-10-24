@@ -20,10 +20,14 @@ import { GoogleAuthButton } from "@/components/features/auth/google-button";
 import { ResendVerification } from "@/components/features/auth/resend-verification";
 import { MfaCodeForm } from "@/components/features/auth/mfa-code-form";
 import { LocalTestLogin } from "./local-test-login";
+import { describeAuthError } from "@/lib/errors/auth-error";
 import { DEACTIVATED_ERROR, DEACTIVATED_MESSAGE } from "@/lib/auth/deactivated";
+import { TOO_MANY_ATTEMPTS_CODE, TOO_MANY_ATTEMPTS_MESSAGE } from "@/lib/auth/browser-auth";
 import {
   EMAIL_UNVERIFIED_ERROR, EMAIL_UNVERIFIED_MESSAGE, LINK_CONFLICT_ERROR, LINK_CONFLICT_MESSAGE,
+  INVITE_EXPIRED_ERROR, INVITE_USED_ERROR,
 } from "../callback/link-guard";
+import { INVITE_EXPIRED_MESSAGE, INVITE_USED_MESSAGE } from "@/lib/auth/invite-accept";
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -76,6 +80,8 @@ function LoginPageInner() {
   const [unconfirmed, setUnconfirmed] = React.useState<string | null>(null);
   /** R-048 part 2: password accepted, authenticator code still needed. */
   const [mfaStep, setMfaStep] = React.useState(false);
+  /** R-1548: too many wrong passwords for this email/IP — say so and offer a reset. */
+  const [tooMany, setTooMany] = React.useState(false);
 
   const {
     register,
@@ -96,12 +102,24 @@ function LoginPageInner() {
   async function onSubmit(values: FormData) {
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithPassword(values);
+    setTooMany(false);
     if (error) {
+      if ((error as { code?: string }).code === TOO_MANY_ATTEMPTS_CODE) {
+        setTooMany(true);
+        return;
+      }
       if (/not confirmed/i.test(error.message)) {
         setUnconfirmed(values.email);
         return;
       }
-      toast.error(error.message);
+      // R-1137: §24 copy, never the raw auth/DB text; the button is the next step.
+      const d = describeAuthError(error, "sign-in");
+      toast.error(d.message, {
+        description: d.description,
+        action: d.next === "forgot-password"
+          ? { label: "Forgot password", onClick: () => { window.location.href = "/forgot-password"; } }
+          : { label: "Try again", onClick: () => { void handleSubmit(onSubmit)(); } },
+      });
       return;
     }
     const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
@@ -222,6 +240,20 @@ function LoginPageInner() {
         </div>
       )}
 
+      {/* R-733: the Google callback found this address's team invite expired / already used. */}
+      {(searchParams.get("error") === INVITE_EXPIRED_ERROR || searchParams.get("error") === INVITE_USED_ERROR) && (
+        <div className="mb-4 rounded-md border border-amber bg-amber-soft p-3 text-sm text-amber-ink" role="alert">
+          {searchParams.get("error") === INVITE_EXPIRED_ERROR ? INVITE_EXPIRED_MESSAGE : INVITE_USED_MESSAGE}
+        </div>
+      )}
+
+      {tooMany && (
+        <div className="mb-4 rounded-md border border-amber bg-amber-soft p-3 text-sm text-amber-ink" role="alert">
+          <p className="mb-2">{TOO_MANY_ATTEMPTS_MESSAGE}</p>
+          <Link href="/forgot-password" className="font-medium underline">Forgot password</Link>
+        </div>
+      )}
+
       {unconfirmed && (
         <div className="mb-4 rounded-md border border-amber bg-amber-soft p-3 text-sm" role="alert">
           <p className="mb-3 text-amber-ink">
@@ -300,13 +332,20 @@ function LoginPageInner() {
       </p>
 
       {/* This page is also the site's "Client login", so a customer of Anutech Digital lands
-          here too: the documents they bought under are one click away (30 Sep 2026). */}
+          here too: the documents they bought under are one click away (30 Sep 2026).
+          R-1457: both sets, each named by whose document it is — the software's own pair and
+          the pair for buying from Anutech Digital are different documents, not duplicates. */}
       <p className="mt-3 text-center text-xs text-ink-3">
-        <Link href={"/terms-and-conditions" as never} className="hover:text-ink hover:underline">Terms and conditions</Link>
+        <Link href={"/terms" as never} className="hover:text-ink hover:underline">ResellerOS terms of service</Link>
+        {" · "}
+        <Link href={"/privacy" as never} className="hover:text-ink hover:underline">ResellerOS privacy policy</Link>
+      </p>
+      <p className="mt-1 text-center text-xs text-ink-3">
+        <Link href={"/terms-and-conditions" as never} className="hover:text-ink hover:underline">Anutech Digital terms and conditions</Link>
         {" · "}
         <Link href={"/refund" as never} className="hover:text-ink hover:underline">Refund policy</Link>
         {" · "}
-        <Link href={"/privacy-policy" as never} className="hover:text-ink hover:underline">Privacy policy</Link>
+        <Link href={"/privacy-policy" as never} className="hover:text-ink hover:underline">Anutech Digital privacy policy</Link>
       </p>
     </Card>
   );

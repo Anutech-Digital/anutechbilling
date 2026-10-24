@@ -1,3 +1,4 @@
+// Not wired yet — R-1608 (built, kept for later)
 /**
  * Co-terming — making an add-on renew on the same day as the customer's main plan.
  *

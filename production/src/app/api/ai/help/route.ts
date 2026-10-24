@@ -23,6 +23,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { maskPII } from "@/lib/ux/signals";
@@ -62,10 +63,10 @@ const bodySchema = z.object({
   images: z.array(imageSchema).max(HELP_MAX_IMAGES).optional(),
 });
 
-const UNAVAILABLE = "AI Help abhi jawab nahi de pa raha. Bug ho to isi Help panel ke 'Report a problem' tab (Ctrl+Shift+B) se seedha bhej dijiye.";
+const UNAVAILABLE = "AI Help cannot answer right now. To report a bug, use the 'Report a problem' tab in this Help panel (Ctrl+Shift+B).";
 /** R-190 (6 Oct 2026): another company had no AI key and was told only "not available".
     Say what is missing and where to add it. */
-const NO_KEY = "Is company ke liye AI (Gemini) key nahi lagi hai, isliye AI Help jawab nahi de sakta. Owner Settings → Integrations → Gemini me key daal de (/settings?tab=integrations). Tab tak bug ho to Help panel ke 'Report a problem' tab (Ctrl+Shift+B) se bhej dijiye.";
+const NO_KEY = "No AI (Gemini) key is set for this company, so AI Help cannot answer. The owner can add the key in Settings → Integrations → Gemini (/settings?tab=integrations). Until then, report bugs from the 'Report a problem' tab in the Help panel (Ctrl+Shift+B).";
 
 /** What the person "said" when they pressed a button instead of typing. */
 const MODE_PROMPT = { scan: "Is page ko jaancho.", error: "Abhi jo error aaya, uski report banao." } as const;
@@ -76,11 +77,11 @@ export async function POST(request: NextRequest) {
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
   if (!rateLimit(`ai-help:${user.id}`, { limit: 30, windowMs: 10 * 60_000 }).ok) {
-    return NextResponse.json({ error: "Thoda ruk kar poochhiye — 10 minute mein 30 sawaal ki seema hai." }, { status: 429 });
+    return NextResponse.json({ error: "Please wait a little before asking again — the limit is 30 questions in 10 minutes." }, { status: 429 });
   }
 
   const parsed = bodySchema.safeParse(await request.json().catch(() => ({})));
-  if (!parsed.success) return NextResponse.json({ error: "Message samajh nahi aaya — dobara likhiye." }, { status: 400 });
+  if (!parsed.success) return NextResponse.json({ error: "Could not read the message — please type it again." }, { status: 400 });
   const { pagePath, mode, outline } = parsed.data;
   const messages = [...parsed.data.messages];
   if (mode === "check_failed") {
@@ -104,6 +105,9 @@ ${what}` };
 
   // RLS scopes these reads to the caller's own row and tenant.
   const { data: me } = await supabase.from("users").select("tenant_id, full_name, role").eq("id", user.id).maybeSingle();
+  /* R-1470: AI Help is for every team role (the Help page's roles, partner agent included) — a
+     login without a known role (no users row, stale value) gets no model call on our key. */
+  if (!mayOpenPage(me?.role, ["/help"])) return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
   if (!gemini.apiKey) return NextResponse.json({ reply: NO_KEY, bugDraft: null, checklist: [], followUps: [], ai: false, reason: "no_key" });
 

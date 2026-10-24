@@ -55,3 +55,17 @@ export function rememberLanding(currentUrl: string, storage: Pick<Storage, "getI
   }
   return currentUrl;
 }
+
+/**
+ * R-1598: the attribution fields a site form sends with its enquiry — the visit's landing URL
+ * (first ad URL, with gclid/utm_*) as `pageUrl`, and where the visitor came from as
+ * `pageReferrer`. Browser-only; on the server (no window) it returns nothing.
+ */
+export function landingForForm(): { pageUrl?: string; pageReferrer?: string } {
+  if (typeof window === "undefined") return {};
+  let store: Storage | null = null;
+  try { store = window.sessionStorage; } catch { store = null; }
+  const pageUrl = rememberLanding(window.location.href, store);
+  const pageReferrer = typeof document !== "undefined" && document.referrer ? document.referrer : undefined;
+  return pageReferrer ? { pageUrl, pageReferrer } : { pageUrl };
+}

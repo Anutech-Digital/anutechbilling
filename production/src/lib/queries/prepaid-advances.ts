@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { PrepaidAdvanceRow, ExpenseRow } from "@/lib/supabase/database.types";
 
 const KEY = ["prepaid_advances"] as const;
@@ -28,32 +29,36 @@ export function useAdvanceExpenses(advanceId: string | null, enabled: boolean) {
     enabled: enabled && !!advanceId,
     queryFn: async (): Promise<AdvanceExpense[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      // R-1582: one ad wallet can be drawn by more than a page of expenses.
+      return (await fetchAllRows((from, to) => supabase
         .from("expenses")
         .select("id, amount, gst_paid, expense_date, description, notes, attachment_url")
         .eq("prepaid_advance_id", advanceId!)
-        .order("expense_date", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as AdvanceExpense[];
+        .order("expense_date", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to))) as AdvanceExpense[];
     },
   });
+}
+
+/** Every vendor prepaid advance with its balance. R-1582: paged past the 1000-row cap. */
+export async function fetchPrepaidAdvances(supabase: ReturnType<typeof createClient>): Promise<PrepaidAdvance[]> {
+  const rows = await fetchAllRows((from, to) => supabase
+    .from("prepaid_advances").select("*")
+    /* Staff advances (R-101) share the table but live on Accounting → Advances —
+       they are not vendor top-ups, so the Prepaid page, Marketing spend and the bank
+       reconcile picker leave them out. */
+    .neq("category", "Employee advance")
+    .order("paid_date", { ascending: false })
+    .order("id", { ascending: true })
+    .range(from, to));
+  return rows.map((r) => ({ ...r, balance: r.total_amount - r.consumed_amount }));
 }
 
 export function usePrepaidAdvances() {
   return useQuery({
     queryKey: KEY,
-    queryFn: async (): Promise<PrepaidAdvance[]> => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("prepaid_advances").select("*")
-        /* Staff advances (R-101) share the table but live on Accounting → Advances —
-           they are not vendor top-ups, so the Prepaid page, Marketing spend and the bank
-           reconcile picker leave them out. */
-        .neq("category", "Employee advance")
-        .order("paid_date", { ascending: false });
-      if (error) throw error;
-      return (data ?? []).map((r) => ({ ...r, balance: r.total_amount - r.consumed_amount }));
-    },
+    queryFn: (): Promise<PrepaidAdvance[]> => fetchPrepaidAdvances(createClient()),
   });
 }
 
@@ -107,7 +112,7 @@ export function useSetPrepaidAdvanceChannel() {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["marketing-report"] });
-      toast.success("Channel updated — is advance ke invoices bhi.");
+      toast.success("Channel updated — for this advance's invoices too.");
     },
     onError: (err) => toastError(err),
   });
@@ -224,7 +229,7 @@ export function useConsumePrepaidFifo() {
       qc.invalidateQueries({ queryKey: ["advance_expenses"] });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
-      toast.success(`Invoice booked to P&L. ${input.vendorName.trim()} advance left: ₹${left}.${input.tdsAmount ? ` TDS ₹${input.tdsAmount} recorded — challan mein jodo; vendor ko TDS certificate se credit milega.` : ""}`);
+      toast.success(`Invoice booked to P&L. ${input.vendorName.trim()} advance left: ₹${left}.${input.tdsAmount ? ` TDS ₹${input.tdsAmount} recorded — add it to the challan; the vendor gets credit through the TDS certificate.` : ""}`);
     },
     onError: (err) => toastError(err),
   });

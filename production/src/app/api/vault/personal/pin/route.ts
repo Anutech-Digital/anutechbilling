@@ -41,14 +41,14 @@ const bodySchema = z.object({
 /** The vault is an owner feature. Non-owners get 403 and no hint about what is behind it. */
 async function requireOwner(supabase: ReturnType<typeof createClient>) {
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: NextResponse.json({ error: "Aap logged in nahi ho." }, { status: 401 }) } as const;
+  if (!user) return { error: NextResponse.json({ error: "You are not signed in." }, { status: 401 }) } as const;
 
   const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
   if (!me?.tenant_id) {
-    return { error: NextResponse.json({ error: "Workspace nahi mila." }, { status: 403 }) } as const;
+    return { error: NextResponse.json({ error: "Workspace not found." }, { status: 403 }) } as const;
   }
   if (me.role !== "owner") {
-    return { error: NextResponse.json({ error: "Ye sirf owner ke liye hai." }, { status: 403 }) } as const;
+    return { error: NextResponse.json({ error: "This is for the owner only." }, { status: 403 }) } as const;
   }
   return { userId: user.id, tenantId: me.tenant_id } as const;
 }
@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
   try {
     body = bodySchema.parse(await request.json());
   } catch {
-    return NextResponse.json({ error: "Request theek nahi hai." }, { status: 400 });
+    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
 
   const { data: existing } = await supabase
@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
       const state = lockState(existing.failed_attempts, existing.locked_until, now);
       if (state.locked) {
         return NextResponse.json(
-          { error: `Bahut galat koshishein. ${Math.ceil(state.retryAfterSec / 60)} minute baad try karo.` },
+          { error: `Too many wrong attempts. Try again in ${Math.ceil(state.retryAfterSec / 60)} minute(s).` },
           { status: 429 },
         );
       }
@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
           .from("personal_vault_pin")
           .update({ failed_attempts: fail.failedAttempts, locked_until: fail.lockedUntil, updated_at: now.toISOString() })
           .eq("user_id", who.userId);
-        return NextResponse.json({ error: "Purana PIN galat hai." }, { status: 401 });
+        return NextResponse.json({ error: "Current PIN is wrong." }, { status: 401 });
       }
     }
 
@@ -137,13 +137,13 @@ export async function POST(request: NextRequest) {
 
   // ─── verify / remove both need an existing PIN ────────────────────────────
   if (!existing) {
-    return NextResponse.json({ error: "Koi PIN set hi nahi hai." }, { status: 400 });
+    return NextResponse.json({ error: "No PIN is set." }, { status: 400 });
   }
 
   const state = lockState(existing.failed_attempts, existing.locked_until, now);
   if (state.locked) {
     return NextResponse.json(
-      { error: `Bahut galat koshishein. ${Math.ceil(state.retryAfterSec / 60)} minute baad try karo.`, retryAfterSec: state.retryAfterSec },
+      { error: `Too many wrong attempts. Try again in ${Math.ceil(state.retryAfterSec / 60)} minute(s).`, retryAfterSec: state.retryAfterSec },
       { status: 429 },
     );
   }
@@ -162,8 +162,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         error: fail.locked
-          ? "PIN galat. Bahut koshishein ho gayi — 15 minute baad try karo."
-          : `PIN galat. ${left} koshish baaki.`,
+          ? "Wrong PIN. Too many attempts — try again in 15 minutes."
+          : `Wrong PIN. ${left} attempt(s) left.`,
         attemptsLeft: left,
         locked: fail.locked,
       },

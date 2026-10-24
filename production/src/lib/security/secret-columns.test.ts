@@ -12,7 +12,8 @@
  *
  *   1. SECRET_COLUMNS here == `secret_cols` in 09.
  *   2. 09's secret-table branch runs before its generic table-level grant and skips it.
- *   3. supabase/tests/secret_columns_hidden.test.sql carries a byte-identical copy of 09's block
+ *   3. supabase/tests/secret_columns_hidden.test.sql (and the r840 / r1559 SQL tests) carry a
+ *      byte-identical copy of 09's block
  *      (CI never applies cloudsql/ files, so the SQL test runs the copy).
  *   4. Replaying baseline + every migration in file order, no secret table ends with a
  *      table-level SELECT for authenticated/anon, and no column grant names a secret column.
@@ -29,6 +30,7 @@ import { readdirSync, readFileSync } from "node:fs";
 const NINE = "supabase/cloudsql/09-grant-what-policies-allow.sql";
 const SQL_TEST = "supabase/tests/secret_columns_hidden.test.sql";
 const SQL_TEST_R840 = "supabase/tests/r840_vault_ciphertext_hidden.test.sql";
+const SQL_TEST_R1559 = "supabase/tests/r1559_followup_columns_login_grants.test.sql";
 const MIG_DIR = "supabase/migrations";
 const BASELINE = "supabase/baseline.sql";
 
@@ -68,6 +70,8 @@ const REVIEWED_NOT_SECRET: Record<string, string> = {
   "tenant_secrets.razorpay_key_secret": "tenant_secrets is owner-only by RLS; the owner enters these keys",
   "tenant_secrets.razorpay_webhook_secret": "tenant_secrets is owner-only by RLS; the owner enters these keys",
   "tenant_secrets.resend_api_key": "tenant_secrets is owner-only by RLS; the owner enters these keys",
+  "tenant_secrets.zoho_books_refresh_token": "R-1749: tenant_secrets is owner-only by RLS (same tenant, zoho_books_connection_r1749.test.sql); stored sealed (SECRET_COLUMNS); only server routes open it",
+  "tenant_secrets.zoho_books_access_token": "R-1757: short-lived Zoho access token cache on the same owner-only tenant_secrets row; stored sealed (SECRET_COLUMNS); server routes only",
   "tenant_secrets.sandbox_api_key": "tenant_secrets is owner-only by RLS; the owner enters these keys",
   "tenant_secrets.sandbox_api_secret": "tenant_secrets is owner-only by RLS; the owner enters these keys",
   "tenant_secrets.whatsapp_access_token": "tenant_secrets is owner-only by RLS; the owner enters these keys",
@@ -104,6 +108,17 @@ describe("R-833 secret columns", () => {
     expect(list.sort()).toEqual([...SECRET_COLUMNS].sort());
   });
 
+  it("R-1557: the newest get_tenant_backup strips exactly SECRET_COLUMNS from the download", () => {
+    const defining = migrations().filter((f) =>
+      /create or replace function public\.get_tenant_backup\(/i.test(read(`${MIG_DIR}/${f}`)));
+    const newest = defining[defining.length - 1];
+    expect(newest, "no migration defines get_tenant_backup").toBeTruthy();
+    const m = /v_secret constant text\[\] := array\[([\s\S]*?)\];/.exec(read(`${MIG_DIR}/${newest}`));
+    expect(m, `${newest}: get_tenant_backup has no v_secret list — the download would carry secrets`).toBeTruthy();
+    const list = [...m![1].matchAll(/'([a-z_0-9]+\.[a-z_0-9]+)'/g)].map((x) => x[1]);
+    expect(list.sort()).toEqual([...SECRET_COLUMNS].sort());
+  });
+
   it("09 handles secret tables before (and instead of) its generic table-level grant", () => {
     const block = blockOf(read(NINE));
     const branch = block.indexOf("if rec.relname = any(secret_tables) then");
@@ -122,6 +137,14 @@ describe("R-833 secret columns", () => {
   it("the SQL test runs a byte-identical copy of 09's block", () => {
     expect(blockOf(read(SQL_TEST))).toBe(blockOf(read(NINE)));
     expect(blockOf(read(SQL_TEST_R840))).toBe(blockOf(read(NINE)));
+    expect(blockOf(read(SQL_TEST_R1559))).toBe(blockOf(read(NINE)));
+  });
+
+  it("R-1622: 09 keeps payment_followups INSERT/UPDATE as column grants (R-1559)", () => {
+    const m = /colgrant_tables text\[\] := array\[([\s\S]*?)\];/.exec(read(NINE));
+    expect(m, "09 has no colgrant_tables array").toBeTruthy();
+    const list = [...m![1].matchAll(/'([a-z_0-9]+)'/g)].map((x) => x[1]);
+    expect(list).toContain("payment_followups");
   });
 
   it("after baseline + every migration, no browser role has table-level SELECT on a secret table", () => {

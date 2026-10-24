@@ -30,6 +30,8 @@ const st = vi.hoisted(() => ({
   order: [] as string[],
   rateOk: true,
   createFails: null as string | null,
+  existingInvite: null as Record<string, unknown> | null,
+  sessionInviteUpdates: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("@/lib/security/rate-limit", () => ({
@@ -58,12 +60,19 @@ vi.mock("@/lib/supabase/server", () => ({
       if (table === "users") return chain(() => ({ data: { tenant_id: T1, role: st.callerRole, is_active: st.callerActive }, error: null }));
       if (table === "tenants") return chain(() => ({ data: { name: "Acme" }, error: null }));
       if (table === "team_invites") {
+        /* R-733: with st.existingInvite set, the insert hits the unique email index (23505)
+           and the route reads + updates that row instead. */
+        const existingQ = chain(() => ({ data: st.existingInvite, error: null }), (v) => st.sessionInviteUpdates.push(v));
         return {
           insert(v: Record<string, unknown>) {
             st.order.push("invite");
             st.invites.push(v);
-            return chain(() => ({ data: { token: "tok" }, error: null }));
+            return chain(() => st.existingInvite
+              ? { data: null, error: { code: "23505", message: "duplicate" } }
+              : { data: { token: "tok" }, error: null });
           },
+          select: existingQ.select,
+          update: existingQ.update,
         };
       }
       throw new Error(`unexpected table ${table}`);
@@ -130,6 +139,32 @@ beforeEach(() => {
   st.invites = []; st.inviteUpdates = []; st.audits = []; st.auditUpdates = [];
   st.createdAuth = []; st.deletedAuth = []; st.userRows = []; st.emails = [];
   st.actors = []; st.order = []; st.rateOk = true; st.createFails = null;
+  st.existingInvite = null; st.sessionInviteUpdates = [];
+});
+
+describe("R-733: re-inviting renews an expired invite", () => {
+  const PAST = new Date(Date.now() - 86_400_000).toISOString();
+  const FUTURE = new Date(Date.now() + 86_400_000).toISOString();
+
+  it("same role, still valid → 409 nothing to change (unchanged)", async () => {
+    st.existingInvite = { role: "sales", tenant_id: T1, token: "old-tok", expires_at: FUTURE };
+    expect((await call({ email: "new@acme.test", role: "sales" })).status).toBe(409);
+    expect(st.sessionInviteUpdates).toHaveLength(0);
+  });
+
+  it("same role, EXPIRED → new token + new 7-day expiry, and the email carries the NEW link", async () => {
+    st.existingInvite = { role: "sales", tenant_id: T1, token: "old-tok", expires_at: PAST };
+    const r = await call({ email: "new@acme.test", role: "sales" });
+    expect(r.status).toBe(200);
+    expect(st.sessionInviteUpdates).toHaveLength(1);
+    const upd = st.sessionInviteUpdates[0];
+    expect(upd.token).toEqual(expect.any(String));
+    expect(upd.token).not.toBe("old-tok");
+    const days = (Date.parse(String(upd.expires_at)) - Date.now()) / 86_400_000;
+    expect(days).toBeGreaterThan(6.9);
+    expect(days).toBeLessThan(7.1);
+    expect(JSON.stringify(st.emails)).not.toContain("invite=old-tok");
+  });
 });
 
 const noLogin = () => {

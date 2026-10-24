@@ -2,14 +2,18 @@
  * R-897: the scheduled-job switches on /automation.
  *
  *   GET  owner + manager — every job (from lib/automation/jobs.ts) with its state, last run
- *        and last result. A job with no row is OFF.
+ *        and last result. A job with no row is OFF. R-1104: plus its schedule in plain English,
+ *        its last 10 runs (automation_job_runs) and canRun (owner or manager: Run now / Retry
+ *        through POST ./run).
  *   PUT  owner only — { job, enabled, dryRun }. Written through the SIGNED-IN client and the
  *        set_automation_job() RPC, so the database's own owner-only policy decides, and the
  *        trigger stamps who changed it and writes the change to activity_log.
  */
 import { z } from "zod";
 import { withRoute, RouteError } from "@/lib/api/with-route";
-import { readTenantJobs } from "@/lib/automation/gate.server";
+import { readRunHistory, readTenantJobs } from "@/lib/automation/gate.server";
+import { scheduleFor } from "@/lib/automation/schedule";
+import { groupRuns } from "@/lib/automation/run-history";
 import {
   AUTOMATION_JOBS, CUSTOMER_MESSAGES, CUSTOMER_MESSAGES_SPEC, isAutomationSwitch, platformTenantId, stateOf,
   type AutomationJob,
@@ -28,6 +32,9 @@ export const GET = withRoute(
     const rows = await readTenantJobs(tenantId);
     if (!rows) throw new RouteError(503, "Could not read the job switches. Nothing has changed — reload to try again.");
     const byJob = new Map(rows.map((r) => [r.job, r]));
+    /* R-1104: a history that could not be read is said as such, never shown as "no runs". */
+    const runs = await readRunHistory(tenantId);
+    const history = runs ? groupRuns(runs, 10) : null;
     const isPlatform = tenantId === platformTenantId();
     const row = (job: string) => {
       const r = byJob.get(job);
@@ -40,12 +47,14 @@ export const GET = withRoute(
     };
     return {
       canEdit: role === "owner",
+      canRun: role === "owner" || role === "manager",
+      historyReadable: history !== null,
       customerMessages: { id: CUSTOMER_MESSAGES, ...CUSTOMER_MESSAGES_SPEC, ...row(CUSTOMER_MESSAGES) },
       jobs: (Object.keys(AUTOMATION_JOBS) as AutomationJob[])
         /* Platform jobs (backup, demo reset, error digest) belong to the platform company
            only; another company's switch for them would control nothing. */
         .filter((id) => AUTOMATION_JOBS[id].scope === "tenant" || isPlatform)
-        .map((id) => ({ id, ...AUTOMATION_JOBS[id], ...row(id) })),
+        .map((id) => ({ id, ...AUTOMATION_JOBS[id], ...row(id), schedule: scheduleFor(id), runs: history?.[id] ?? [] })),
     };
   },
 );

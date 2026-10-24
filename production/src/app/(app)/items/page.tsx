@@ -17,6 +17,7 @@ import { CatalogUnitCheck } from "@/components/features/items/catalog-unit-check
 import { FAB } from "@/components/ui/fab";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { StatStrip } from "@/components/shared/stat-strip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button, IconButton } from "@/components/ui/button";
@@ -43,6 +44,7 @@ import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import type { Item, PartnerCatalogRow, TenantWithParent } from "@/lib/supabase/database.types";
 import { newestFirst } from "@/lib/sort/newest-first";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 
 const VENDOR_TABS: TabBarItem[] = [
   { id: "all",       label: "All" },
@@ -351,14 +353,7 @@ export default function ItemsPage() {
       )}
 
       {/* Error */}
-      {error && (
-        <EmptyState
-          icon="alert"
-          title="Could not load items"
-          body={error.message}
-          action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
-        />
-      )}
+      {error && <LoadError what="Items" error={error} onRetry={() => refetch()} />}
 
       {/* Loading */}
       {isLoading && (
@@ -491,9 +486,10 @@ export default function ItemsPage() {
                 return (
                   <tr
                     key={it.id}
-                    onClick={() => { setEditing(it); setAddOpen(true); }}
+                    {...rowActivation(() => { setEditing(it); setAddOpen(true); })}
                     className={cn(
                       "border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer transition-colors",
+                      ROW_FOCUS_RING,
                       !it.is_active && "opacity-50"
                     )}
                   >
@@ -561,7 +557,7 @@ export default function ItemsPage() {
                       </div>
                     </td>
                     <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
-                      <DropdownMenu>
+                      <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
                           <IconButton icon="more_h" aria-label="More actions" size="sm" />
                         </DropdownMenuTrigger>
@@ -712,8 +708,8 @@ function OneTimeCatalog({
               return (
                 <tr
                   key={it.id}
-                  onClick={() => onEdit(it)}
-                  className={cn("border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer transition-colors", !it.is_active && "opacity-50")}
+                  {...rowActivation(() => onEdit(it))}
+                  className={cn("border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer transition-colors", ROW_FOCUS_RING, !it.is_active && "opacity-50")}
                 >
                   <td className="p-3 font-medium text-sm">{it.name}</td>
                   <td className="p-3 font-mono text-xs text-ink-2">{it.hsn ?? "—"}</td>
@@ -729,7 +725,7 @@ function OneTimeCatalog({
                   <td className="p-3 text-right tabular-nums text-sm text-emerald">{rupee(margin)}</td>
                   <td className="p-3">{it.is_active ? <Badge kind="success" dot>Active</Badge> : <Badge kind="muted">Inactive</Badge>}</td>
                   <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
-                    <DropdownMenu>
+                    <DropdownMenu modal={false}>
                       <DropdownMenuTrigger asChild>
                         <IconButton icon="more_h" aria-label="More actions" size="sm" />
                       </DropdownMenuTrigger>

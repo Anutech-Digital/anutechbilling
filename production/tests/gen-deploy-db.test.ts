@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 // @ts-expect-error — plain .mjs ops script, no types
-import { parseDeployHeaders, defaultKey, selectFiles, filesInScript, replaceMigs, splitScript, generate, buildMigsBody, ENVS } from "../scripts/ops/gen-deploy-db.mjs";
+import { parseDeployHeaders, defaultKey, selectFiles, filesInScript, replaceMigs, splitScript, generate, buildMigsBody, ENVS, peeksFromScript, renderPeeksModule, PEEKS_FILE } from "../scripts/ops/gen-deploy-db.mjs";
 
 // R-385 (7 Oct 2026): the MIGS array of the day's staging + live deploy-db scripts is generated
 // from `-- deploy-peek:` headers in the migrations instead of hand-edited (6 hand edits on 7 Oct).
@@ -150,5 +150,35 @@ describe("migration versions", () => {
       if (seen.has(v)) clashes.push(`${seen.get(v)} + ${f}`); else seen.set(v, f);
     }
     expect(clashes).toEqual([]);
+  });
+});
+
+/* R-1721 (21 Oct 2026): the deployed app checks its own DB against this list. 21 Oct the staging DB
+   step stopped after the backup and new code ran ~1 hour without 4 migrations. The list is fixed at
+   build time — a committed file this generator writes from the MIGS block — never SQL from a request. */
+describe("R-1721 peeks.generated.ts (what /api/health/migrations checks)", () => {
+  const appDir = path.resolve(supabaseDir, "..");
+
+  it("is in sync with the newest staging deploy-db script — rerun gen-deploy-db if this fails", () => {
+    const dir = path.join(supabaseDir, "cloudsql", "staging");
+    const newest = fs.readdirSync(dir).filter((n) => /^deploy-db-\d{4}-\d{2}-\d{2}\.sh$/.test(n)).sort().pop()!;
+    const script = fs.readFileSync(path.join(dir, newest), "utf8");
+    const want = renderPeeksModule(peeksFromScript(script, newest), `supabase/cloudsql/staging/${newest}`);
+    const have = fs.readFileSync(path.join(appDir, PEEKS_FILE), "utf8").replace(/\r\n/g, "\n");
+    expect(have, "run: node scripts/ops/gen-deploy-db.mjs --date " + newest.slice(10, 20)).toBe(want);
+  });
+
+  it("carries every MIGS key once, and every peek is the script's own text", () => {
+    const script = fs.readFileSync(path.join(supabaseDir, "cloudsql", "staging", "deploy-db-2026-10-07.sh"), "utf8");
+    const peeks = peeksFromScript(script, "staging") as Array<{ key: string; peek: string }>;
+    expect(peeks.length).toBe(filesInScript(script, "staging").length);
+    expect(new Set(peeks.map((p) => p.key)).size).toBe(peeks.length);
+    expect(peeks.find((p) => p.key === "r1707quoteopenbalances")?.peek).toBe("exists(select 1 from pg_proc where oid = to_regprocedure('public.quote_open_balances()') and prosrc like '%R-1707%')");
+  });
+
+  it("renders plain data the app can import (quotes escaped, one entry per line)", () => {
+    const out = renderPeeksModule([{ key: "a", peek: "x like '%\\%'" }], "s.sh");
+    expect(out).toContain(`{ key: "a", peek: "x like '%\\\\%'" },`);
+    expect(out).toMatch(/^\/\* GENERATED/);
   });
 });

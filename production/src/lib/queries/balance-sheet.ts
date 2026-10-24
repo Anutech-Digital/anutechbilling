@@ -22,6 +22,8 @@ import { createClient } from "@/lib/supabase/client";
 import type { BalanceSheetSection } from "@/lib/supabase/database.types";
 import { balanceSheetFromRpc, rpcRowOrThrow, type BalanceSheetRpcRow } from "@/lib/accounting/report-rpc";
 import { fetchLoansGivenAsset } from "@/lib/queries/loans-given";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { OPENING_INVOICE_KIND } from "@/lib/accounting/sale-documents";
 
 export type BalanceSheetItem = {
   id:         string;
@@ -44,7 +46,12 @@ export interface BalanceSheetAuto {
    *  fixtures stay valid; absent = 0. */
   loansGiven?:     number;
   prepaidAdvances: number;   // vendor advances paid but not yet consumed (a current asset)
-  fixedAssets:     number;   // registered assets at WDV (lib/accounting/depreciation.ts) + EMI purchases not yet registered, at cost
+  fixedAssets:     number;   // NET BLOCK: registered assets at cost − accumulated depreciation to as_of (lib/accounting/depreciation.ts, R-1578) + EMI purchases not yet registered, at cost
+  /** R-1578: the two halves of `fixedAssets` — cost (incl. unregistered EMI purchases) and the
+   *  depreciation charged on them so far (P&L). Optional so fixtures stay valid; absent = the
+   *  Trial Balance shows one net line as before. */
+  fixedAssetsCost?: number;
+  accumulatedDepreciation?: number;
   payables:        number;   // unpaid vendor bills (total − paid)
   salaryPayable:   number;   // net salary accrued (payroll run) but not yet paid out — a liability
   salaryDuesPayable: number; // statutory dues: salary TDS/PF/ESI (both shares) + vendor TDS, less challans
@@ -59,6 +66,14 @@ export interface BalanceSheetAuto {
   expensesPayable: number;   // unpaid expenses (amount − TDS), no bank line matched — a liability
   expensesPaidUnbanked: number; // "paid" expenses (cash / UPI) not matched to any bank line — money already gone; reduces cash-like assets
   salaryOtherDeductions: number; // "other" deductions withheld from salary — held by the company, owed onward / back (a liability)
+  /** R-1580: partner commission earned but not yet paid (net of its 194H TDS, which sits in
+   *  salaryDuesPayable) — a liability. Optional so fixtures stay valid; absent = 0. */
+  commissionsPayable?: number;
+  /** R-1739: the Cr side of the open balances imported from Zoho Books — sum of
+   *  invoices.opening_balance (what was still due when imported). Their Dr side is inside
+   *  `receivables`. An equity line "Opening Balance Adjustments" (name to be confirmed by
+   *  the CA). Optional so fixtures stay valid; absent = 0. */
+  openingBalanceAdjustments?: number;
   fyLabel:         string;   // e.g. "FY 2026-27" for the GST caveat
 }
 
@@ -119,6 +134,22 @@ export function computeCustomerAdvances(
     .reduce((s, p) => s + (p.amount ?? 0), 0);
 }
 
+/**
+ * R-1581: the Balance Sheet's "Loans given" asset. 0 ONLY when the loans_given_asset RPC is not
+ * on this database yet (PostgREST PGRST202 / Postgres 42883 — no loans can exist then). Any
+ * other failure (network, permission, timeout) is thrown, so the page says it didn't load
+ * instead of printing ₹0 for money owed to the company (CLAUDE.md §17c fail-closed).
+ */
+export async function loansGivenUnlessMissing(read: () => Promise<number>): Promise<number> {
+  try {
+    return await read();
+  } catch (e) {
+    const code = (e as { code?: unknown } | null)?.code;
+    if (code === "PGRST202" || code === "42883") return 0;
+    throw e;
+  }
+}
+
 // ── Auto figures from app records ───────────────────────────────────────────
 /**
  * S17 (28 Sep 2026): ek RPC, ek round trip.
@@ -133,18 +164,31 @@ export function computeCustomerAdvances(
  * Purana per-row hisaab lib/accounting/reports-reference.ts me oracle hai — parity test
  * tests/parity/reports-parity.test.ts.
  */
+/** R-1739: sum of the balances imported from Zoho Books (invoices.opening_balance). A failed
+ *  read fails the query — never a silent ₹0 equity line. */
+export async function fetchOpeningBalanceAdjustments(supabase: ReturnType<typeof createClient>): Promise<number> {
+  const rows = await fetchAllRows<{ opening_balance: number | null }>((from, to) =>
+    supabase.from("invoices").select("opening_balance, id")
+      .eq("document_kind", OPENING_INVOICE_KIND)
+      .order("id", { ascending: true })
+      .range(from, to) as never);
+  return rows.reduce((s, r) => s + (r.opening_balance ?? 0), 0);
+}
+
 export function useBalanceSheetAuto() {
   return useQuery({
     queryKey: ["balance-sheet", "auto"],
     queryFn: async (): Promise<BalanceSheetAuto> => {
       const supabase = createClient();
-      const [res, loansGiven] = await Promise.all([
+      const [res, loansGiven, openingBalanceAdjustments] = await Promise.all([
         supabase.rpc("report_balance_sheet", {}),
         /* R-544: before migration 20261010140000 is applied the RPC does not exist and
-           there are no loans given — 0 is the true figure then, not a guess. */
-        fetchLoansGivenAsset().catch(() => 0),
+           there are no loans given — 0 is the true figure then, not a guess. R-1581: only
+           then; any other failure fails the query (LoadError), never a silent ₹0 asset. */
+        loansGivenUnlessMissing(fetchLoansGivenAsset),
+        fetchOpeningBalanceAdjustments(supabase),
       ]);
-      return { ...balanceSheetFromRpc(rpcRowOrThrow<BalanceSheetRpcRow>(res, "report_balance_sheet")), loansGiven };
+      return { ...balanceSheetFromRpc(rpcRowOrThrow<BalanceSheetRpcRow>(res, "report_balance_sheet")), loansGiven, openingBalanceAdjustments };
     },
     staleTime: 30_000,
   });

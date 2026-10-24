@@ -14,13 +14,14 @@ import { useListKeys } from "@/lib/hooks/useKeyboard";
 import { KeyHintBar, ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { useRouter } from "next/navigation";
 import { useSubscriptions, useSetSubscriptionDomain, useDeleteSubscription } from "@/lib/queries/subscriptions";
+import { useOutstandingReceivables } from "@/lib/queries/payments";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
 import { initialSubscriptionSearch, SUBSCRIPTION_SEARCH_EVENT } from "./palette-links";
 import { newestFirst } from "@/lib/sort/newest-first";
 import { subscriptionFacts } from "@/lib/subscriptions/facts";
 import { sortSubscriptions, defaultDirFor, type SubSort, type SubSortKey } from "@/lib/subscriptions/sort";
-import { assessLeakage } from "@/lib/vendor/leakage";
+import { assessLeakage, leakageTotals } from "@/lib/vendor/leakage";
 import { useActiveTrials } from "@/lib/queries/trials";
 import ExtendSubscriptionDialog from "@/components/features/subscriptions/extend-subscription-dialog";
 import AddSeatsDialog            from "@/components/features/subscriptions/add-seats-dialog";
@@ -50,25 +51,35 @@ interface PendingPaymentHandoff {
 }
 import { EditSubscriptionDialog } from "@/components/features/subscriptions/edit-subscription-dialog";
 import { BillingScheduleCard } from "@/components/features/subscriptions/billing-schedule-card";
+import { externalSourceText } from "@/lib/subscriptions/billed-elsewhere";
 import { CancelSubscriptionDialog, cancelNote } from "@/components/features/subscriptions/cancel-subscription-dialog";
 import { useItems } from "@/lib/queries/items";
 import { subscriptionCogs, cogsBadge, cogsTotals } from "@/lib/vendor/cogs";
-import { LicenseLeakageCard } from "@/components/features/subscriptions/license-leakage-card";
+import { LicenseLeakageCard, leakageRows } from "@/components/features/subscriptions/license-leakage-card";
+import { SubsInsightsStrip } from "@/components/features/subscriptions/subs-insights-strip";
+import { seatsPhrase, manageSeatsIdFromSearch } from "@/components/features/subscriptions/seat-words";
+import { openSubscriptionIdFromSearch } from "./open-link";
+import { raisedInvoiceHref } from "../invoices/invoice-href";
+import { useMarginAlerts } from "@/lib/queries/margin-alerts";
 import { SeatRequestsCard } from "@/components/features/subscriptions/seat-requests-card";
 import { useSeatRequests, useAmendments } from "@/lib/queries/seat-requests";
 import { AmendmentHistory } from "@/components/features/subscriptions/amendment-history";
+import { SeatQuotesPending } from "@/components/features/subscriptions/seat-quotes-pending";
 import { LateChargesPreview } from "@/components/features/late-charges/customer-late-charges";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { ImportSubscriptionsDialog } from "@/components/features/subscriptions/import-subscriptions-dialog";
 import { ReconcileGoogleDialog } from "@/components/features/subscriptions/reconcile-google-dialog";
 import { ImportGoogleSubsDialog } from "@/components/features/subscriptions/import-google-subs-dialog";
-import { MarginAlertsCard } from "@/components/features/subscriptions/margin-alerts-card";
+import { MarginAlertsCard, marginAlertCounts } from "@/components/features/subscriptions/margin-alerts-card";
+import { SubDrawerActions, SubDrawerDangerZone } from "@/components/features/subscriptions/sub-drawer-actions";
+import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
 import Link from "next/link";
 import { toast } from "sonner";
 import { toastError, describeError } from "@/lib/errors/toast-error";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
+import { loadErrorBody } from "@/components/shared/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button, IconButton } from "@/components/ui/button";
 import { FAB } from "@/components/ui/fab";
@@ -85,9 +96,18 @@ import { useCustomers } from "@/lib/queries/customers";
 import { usePrimaryContacts } from "@/lib/queries/contacts";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { subscriptionExceptions } from "@/lib/subscriptions/exceptions";
-import { rowTerm, renewalDistance, termValue, termValueLabel } from "@/lib/subscriptions/renewal-display";
+import { renewalClock, termValue, termValueLabel, liveTermAmount, subscriptionEnded } from "@/lib/subscriptions/renewal-display";
+import {
+  subscriptionCycle, matchesCycle, cycleOptions, cycleFromUrl,
+  CYCLE_URL_VALUES, type CycleFilter, type CycleUrlValue,
+} from "@/lib/subscriptions/billing-cycle";
+import { BillingCycleFilter } from "@/components/features/subscriptions/billing-cycle-filter";
+import { SubCycleBadge } from "@/components/features/subscriptions/sub-cycle-badge";
 import { useQuotes } from "@/lib/queries/quotes";
+import { canOpenQuotes } from "@/lib/quotes/access";
+import { SubCustomerLink, SubQuoteLink } from "./sub-links";
 import { cn } from "@/lib/utils";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import type { Subscription } from "@/lib/supabase/database.types";
 
@@ -122,8 +142,9 @@ function vendorMeta(v: string): { label: string; kind: "info" | "success" | "mut
  * because none of these branches fire against today's production data — a bug
  * in any of them would look exactly like silence on screen.
  */
-function SubExceptions({ sub, size = "sm" }: { sub: Subscription; size?: "sm" | "md" }) {
-  const flags = subscriptionExceptions(sub);
+function SubExceptions({ sub, payBy, size = "sm" }: { sub: Subscription; payBy?: string | null; size?: "sm" | "md" }) {
+  /* R-1689: payBy = the oldest unpaid invoice's due date (credit / invoice-now rows), else the agreed date. */
+  const flags = subscriptionExceptions({ ...sub, pay_by: payBy });
   if (flags.length === 0) return null;
   return (
     <>
@@ -193,12 +214,21 @@ function SortHeader({
 export default function SubscriptionsPage() {
   const router = useRouter();
   const { data: subs, isLoading, error, refetch } = useSubscriptions();
+  /* R-1689: when each owing subscription's money is due — the same dues read as Payments
+     (its oldest unpaid invoice's due date, else the agreed payment_due_date). */
+  const { data: dues } = useOutstandingReceivables();
+  const payByOf = React.useMemo(
+    () => new Map((dues ?? []).map((o) => [o.subscription_id, o.pay_by ?? null] as const)),
+    [dues],
+  );
   /* The catalogue is what makes a margin real rather than a multiplier — see
      lib/vendor/cogs.ts. Empty while it loads, which resolves to "Unknown" rather
      than to a wrong number. */
   const { data: catalogItems } = useItems();
   const catalog = React.useMemo(() => catalogItems ?? [], [catalogItems]);
   const { data: seatRequestRows, refetch: refetchRequests } = useSeatRequests({ pendingOnly: true });
+  /* R-1727: Margin-at-risk counts for the closed Insights strip (same query MarginAlertsCard uses — one fetch). */
+  const { data: marginAlerts } = useMarginAlerts();
   const seatRequests = React.useMemo(() => seatRequestRows ?? [], [seatRequestRows]);
   const { data: trials } = useActiveTrials();
   /* ─── THE CONTRACTED ANNUAL, SO THE SCREEN STOPS INVENTING RUPEES ──────────
@@ -240,6 +270,11 @@ export default function SubscriptionsPage() {
   const tabOn = (t: string) => { setFocus(""); setTab(t); };
   const focusOn = (f: SubFocus) => { setTab("all"); setFocus(f); };
   const [vendor, setVendor] = React.useState("all");
+  /* R-1696: billing cycle, kept in ?cycle= like ?tab= — one rule with the row label
+     (lib/subscriptions/billing-cycle.ts). */
+  /* R-1774: old ?cycle=quarterly / half_yearly links still open — on Check term. */
+  const [cycleRaw, setCycle] = useUrlChoice<CycleUrlValue>("cycle", CYCLE_URL_VALUES, "all");
+  const cycle: CycleFilter = cycleFromUrl(cycleRaw);
   const [search, setSearch] = React.useState("");
   /* R-244: ?q= pre-fills the search — Ctrl+K opens a subscription as the list filtered to it.
      Read once after mount (no useSearchParams: build rule, see ?from_lead below). */
@@ -253,6 +288,25 @@ export default function SubscriptionsPage() {
   }, []);
   const [extendSub,  setExtendSub]   = React.useState<Subscription | null>(null);
   const [scheduleSub, setScheduleSub] = React.useState<Subscription | null>(null);
+  /* R-1433: ?open=<subscription id> — "Open subscription" on an invoice lands here and opens
+     that subscription's drawer. Read once after mount (no useSearchParams: build rule), then
+     dropped from the URL so a refresh does not reopen it; ?q= (its domain) stays as the filter. */
+  const [openFromLink, setOpenFromLink] = React.useState("");
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const id = openSubscriptionIdFromSearch(window.location.search);
+    if (!id) return;
+    setOpenFromLink(id);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("open");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search);
+  }, []);
+  React.useEffect(() => {
+    if (!openFromLink || !subs) return;
+    const sub = subs.find((x) => x.id === openFromLink);
+    setOpenFromLink("");
+    if (sub) setScheduleSub(sub);
+  }, [openFromLink, subs]);
   /** Null = the newest-first default. Set when a column header is clicked. */
   const [sort, setSort] = React.useState<SubSort | null>(null);
   /* First click opens the column the way it is usually asked about; clicking the SAME
@@ -275,12 +329,33 @@ export default function SubscriptionsPage() {
     setAddSeatsPrefill(prefill);
     setAddSeatsSub(sub);
   };
+  /* R-1727: ?seats=<subscription id> — "Manage seats" on the company page lands here and
+     opens the same Manage seats dialog for that subscription. Read once after mount (no
+     useSearchParams: build rule), then dropped from the URL so a refresh does not reopen it. */
+  const [seatsFromLink, setSeatsFromLink] = React.useState("");
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const id = manageSeatsIdFromSearch(window.location.search);
+    if (!id) return;
+    setSeatsFromLink(id);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("seats");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search);
+  }, []);
+  React.useEffect(() => {
+    if (!seatsFromLink || !subs) return;
+    const sub = subs.find((x) => x.id === seatsFromLink);
+    setSeatsFromLink("");
+    if (sub) { setAddSeatsPrefill(undefined); setAddSeatsSub(sub); }
+  }, [seatsFromLink, subs]);
   const [editSub,     setEditSub]     = React.useState<Subscription | null>(null);
   /* R-455: END a real subscription (customer left) — separate from Delete (wrong entry). */
   const [cancelSub,   setCancelSub]   = React.useState<Subscription | null>(null);
   const delSub = useDeleteSubscription();
   /* R-718: deleting a subscription is owner / accountant only — the database refuses the rest. */
   const canDeleteSub = canDeleteMoney(useCurrentUser().data?.role);
+  /* R-1513: the "Quote" link only for roles that can open /quotes (R-237). */
+  const canQuotesHere = canOpenQuotes(useCurrentUser().data?.role);
   const confirm = useConfirm();
   const handleDeleteSub = async (s: Subscription) => {
     const body = `This removes the subscription (and any draft purchase order for it). `
@@ -304,7 +379,7 @@ export default function SubscriptionsPage() {
     if (!leadId) return;
     let live = true;
     void createClient().from("leads")
-      .select("id, company, customer_id, domain, contact_name, contact_email, contact_phone, plan, seats, billing_cycle")
+      .select("id, company, customer_id, domain, contact_name, contact_email, contact_phone, plan, seats, billing_cycle, gstin, state_code")
       .eq("id", leadId).maybeSingle()
       .then(({ data }) => {
         if (!live || !data) return;
@@ -400,7 +475,7 @@ export default function SubscriptionsPage() {
       toast.success(`GST invoice ${String(data ?? "")} raised · subscription is live 🎉`, {
         description: "Not sent yet — open it to email or download the PDF.",
         duration: 8000,
-        action: { label: "Open invoice", onClick: () => router.push("/invoices" as Route) },
+        action: { label: "Open invoice", onClick: () => router.push(raisedInvoiceHref(data == null ? null : String(data)) as Route) },
       });
     }
     refetch();
@@ -408,11 +483,6 @@ export default function SubscriptionsPage() {
   const [reconcileOpen,  setReconcileOpen]  = React.useState(false);
   const [helpOpen,       setHelpOpen]       = React.useState(false);
   const [addGoogleOpen,  setAddGoogleOpen]  = React.useState(false);
-  /* Both analytics cards start CLOSED (Abhishek, 12 Sep 2026). They are reference, not
-     the day's work: this page is opened to act on a subscription, and two tall panels
-     above the list pushed the table itself below the fold. Each collapsed header still
-     carries its own headline numbers, so nothing is hidden — only unstacked. */
-  const [kpiOpen, setKpiOpen] = React.useState(false);
   const [visible, setVisible] = React.useState(60);  // render cap — paginates large lists
   const today = new Date();
   /* One "today" for every folder decision on this page, in IST — a date derived per call
@@ -444,7 +514,9 @@ export default function SubscriptionsPage() {
   );
   const { data: primaryContacts } = usePrimaryContacts(customerIdsForExport);
 
-  const filtered = subsByWorkspace.filter((s) => {
+  /* Every filter EXCEPT the billing cycle — the cycle chips count over these rows, so the
+     number on a chip is exactly what clicking it leaves on screen (R-1696). */
+  const beforeCycle = subsByWorkspace.filter((s) => {
     if (tab === "trials") return false;  // trials handled in separate table below
     if (tab !== "all" && folderOf(s, todayISO) !== tab) return false;
     if (focus && !subInFocus(s, focus)) return false;   // the tile's own predicate
@@ -472,6 +544,8 @@ export default function SubscriptionsPage() {
     }
     return true;
   });
+  const cycleChips = cycleOptions(beforeCycle, cycle);
+  const filtered = beforeCycle.filter((s) => matchesCycle(s, cycle));
 
   /* ── Newest first, except in Expiring ─────────────────────────────────────
      `useSubscriptions` fetches in renewal-date order, which is right for the dashboard
@@ -639,7 +713,7 @@ export default function SubscriptionsPage() {
     reportBulk(done, failed, "Deleted");
   };
   const hasMore = ordered.length > shown.length;
-  React.useEffect(() => { setVisible(60); }, [tab, vendor, search]);
+  React.useEffect(() => { setVisible(60); }, [tab, vendor, cycle, search]);
 
   // Trial-specific filter (for the Trials tab)
   const filteredTrials = (trials ?? []).filter((t) => {
@@ -703,8 +777,9 @@ export default function SubscriptionsPage() {
   const activeSubs = subsByWorkspace.filter((s) => subInFocus(s, "active"));
   const activeMRR = activeSubs.reduce((s, x) => s + x.mrr, 0);
   const activeARR = activeMRR * 12;
-  const totalSeats = activeSubs.reduce((s, x) => s + x.seats, 0);
-  const usedSeats = activeSubs.reduce((s, x) => s + x.used, 0);
+  /* R-1727: the closed Insights strip's counts — the same rows its two boxes count. */
+  const leakTotals = leakageTotals(leakageRows(subsByWorkspace, catalog).map((r) => r.result));
+  const marginCounts = marginAlerts ? marginAlertCounts(marginAlerts) : null;
   /* Margin from real cost. Subscriptions whose cost is unknown are EXCLUDED from the
      total rather than counted as free — including them would inflate the margin by
      exactly the amount nobody has measured. `marginUnknownCount` puts that on screen
@@ -782,95 +857,94 @@ export default function SubscriptionsPage() {
         </div>
       </div>
 
-      {/* Collapsible Subscriptions Analytics Banner */}
+      {/* ── R-1727: ONE closed strip above the list, not three boxes ─────────
+          Owner journey audit, 21 Oct 2026: the analytics banner, "Margin at risk" and
+          "License leakage" stacked above the table pushed it below the first screen at
+          1280px — on a page opened to act on a subscription. They live inside one strip
+          now, closed by default (remembered per viewer), and its closed line still
+          carries the counts, so closing hides the detail, never the warning. */}
       {!isLoading && subs && subs.length > 0 && (
-        <div className="mb-4 bg-paper border border-hairline rounded-lg overflow-hidden transition-all shadow-xs">
-          <button
-            type="button"
-            onClick={() => setKpiOpen((o) => !o)}
-            className="w-full flex items-center justify-between px-3.5 py-2.5 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer"
-          >
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              <Icon name="bar_chart" size={15} className="text-amber-ink" />
-              <span className="font-semibold text-ink">Subscriptions Revenue Analytics</span>
-              <span className="text-ink-3">·</span>
-              <span className="text-ink-2 font-mono font-medium">MRR: <b className="text-amber-ink">{rupee(activeMRR, { compact: true })}</b></span>
-              <span className="text-ink-3 font-mono">·</span>
-              <span className="text-ink-2 font-mono font-medium">ARR: <b className="text-emerald">{rupee(activeARR, { compact: true })}</b></span>
-              <span className="text-ink-3 font-mono">·</span>
-              <span className="text-ink-2 font-mono font-medium">Seats: <b className="text-ink">{usedSeats}/{totalSeats}</b></span>
-            </div>
-            <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
-              <span>{kpiOpen ? "Collapse" : "Expand"}</span>
-              <Icon name={kpiOpen ? "chevron_up" : "chevron_down"} size={14} />
-            </div>
-          </button>
-
-          {kpiOpen && (
-            <div className="p-3 border-t border-hairline space-y-3 bg-paper">
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-                <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                  <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Active MRR</p>
-                  <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{rupee(activeMRR, { compact: true })}</p>
-                </button>
-                <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                  <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Active ARR</p>
-                  <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(activeARR, { compact: true })}</p>
-                </button>
-                <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                  <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Margin (ARR)</p>
-                  <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(annualMargin, { compact: true })} <span className="text-xs text-ink-3 font-normal">({avgMarginPct}%)</span></p>
-                  {/* A total that silently drops the unmeasured rows reads as covering
-                      everything. Both counts are stated so it cannot. */}
-                  {marginUnknownCount > 0 && (
-                    <p className="mt-0.5 text-3xs leading-snug text-amber-ink">
-                      {marginUnknownCount} excluded — no cost
-                    </p>
-                  )}
-                  {marginEstimatedCount > 0 && (
-                    <p className="mt-0.5 text-3xs leading-snug text-ink-3">
-                      {marginEstimatedCount} from catalogue, not vendor bills
-                    </p>
-                  )}
-                </button>
-                <button type="button" onClick={() => tabOn("all")} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                  <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Total Subscriptions</p>
-                  <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{subsByWorkspace.length} <span className="text-xs text-emerald font-normal">({folderCount.active + folderCount.expiring} live)</span></p>
-                </button>
-                <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                  <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Seats In Use</p>
-                  <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{usedSeats} <span className="text-xs text-ink-3 font-normal">/ {totalSeats}</span></p>
-                </button>
-                <button type="button" onClick={() => tabOn("trials")} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                  <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Active Trials</p>
-                  <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{trials?.length ?? 0}</p>
-                </button>
-              </div>
-
-              {/* Renewal intelligence */}
-              {atRiskCount > 0 && (
-                <GeminiCard
-                  title="Renewal intelligence"
-                  actions={
-                    <Button size="sm" variant="primary" icon="mail" onClick={() => router.push("/renewals" as never)}>Bulk renewal email</Button>
-                  }
-                  compact
-                >
-                  <b>{atRiskCount} subscription{atRiskCount === 1 ? "" : "s"} expiring in next 30 days.</b>{" "}
-                  Worth {rupee(atRiskMRR, { compact: true })} MRR — start renewal conversations now.
-                </GeminiCard>
+        <SubsInsightsStrip
+          mrr={activeMRR}
+          arr={activeARR}
+          seats={seatsPhrase(activeSubs)}
+          marginAtRisk={marginCounts ? marginCounts.atRisk : null}
+          marginUnchecked={marginCounts ? marginCounts.unchecked : null}
+          leakingMonthly={leakTotals.underBilledMonthly}
+          leakingCount={leakTotals.underBilledCount}
+          neverReconciled={leakTotals.unknownCount}
+        >
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+            <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+              <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Active MRR</p>
+              <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{rupee(activeMRR, { compact: true })}</p>
+            </button>
+            <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+              <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Active ARR</p>
+              <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(activeARR, { compact: true })}</p>
+            </button>
+            <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+              <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Margin (ARR)</p>
+              <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(annualMargin, { compact: true })} <span className="text-xs text-ink-3 font-normal">({avgMarginPct}%)</span></p>
+              {/* A total that silently drops the unmeasured rows reads as covering
+                  everything. Both counts are stated so it cannot. */}
+              {marginUnknownCount > 0 && (
+                <p className="mt-0.5 text-3xs leading-snug text-amber-ink">
+                  {marginUnknownCount} excluded — no cost
+                </p>
               )}
-            </div>
+              {marginEstimatedCount > 0 && (
+                <p className="mt-0.5 text-3xs leading-snug text-ink-3">
+                  {marginEstimatedCount} from catalogue, not vendor bills
+                </p>
+              )}
+            </button>
+            <button type="button" onClick={() => tabOn("all")} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+              <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Total Subscriptions</p>
+              <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{subsByWorkspace.length} <span className="text-xs text-emerald font-normal">({folderCount.active + folderCount.expiring} live)</span></p>
+            </button>
+            <button type="button" onClick={() => focusOn("active")} aria-pressed={focus === "active"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+              {/* R-1727: "0 / 10" read as "nobody uses them" — the 0 is assigned users, never synced. */}
+              <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Seats</p>
+              <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{seatsPhrase(activeSubs) || "—"}</p>
+            </button>
+            <button type="button" onClick={() => tabOn("trials")} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+              <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Active Trials</p>
+              <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{trials?.length ?? 0}</p>
+            </button>
+          </div>
+
+          {/* Renewal intelligence */}
+          {atRiskCount > 0 && (
+            <GeminiCard
+              title="Renewal intelligence"
+              actions={
+                <Button size="sm" variant="primary" icon="mail" onClick={() => router.push("/renewals" as never)}>Bulk renewal email</Button>
+              }
+              compact
+            >
+              <b>{atRiskCount} subscription{atRiskCount === 1 ? "" : "s"} expiring in next 30 days.</b>{" "}
+              Worth {rupee(atRiskMRR, { compact: true })} MRR — start renewal conversations now.
+            </GeminiCard>
           )}
-        </div>
+
+          {/* Margin at risk — losses / thin margins at today's vendor cost, plus the
+              subscriptions whose cost we cannot look up at all. Self-hiding when clean. */}
+          <MarginAlertsCard />
+
+          {/* Seats the vendor bills us for vs seats we bill the customer. */}
+          <LicenseLeakageCard
+            subscriptions={subsByWorkspace}
+            catalog={catalog}
+            onReconcile={() => setReconcileOpen(true)}
+            onBillGap={(sub, seats) => openAddSeats(sub, seats)}
+            defaultOpen
+          />
+        </SubsInsightsStrip>
       )}
 
-      {/* Margin at risk — losses / thin margins at today's vendor cost, plus the
-          subscriptions whose cost we cannot look up at all. Self-hiding when there
-          is nothing to say, so it costs no vertical space on a good day. */}
-      {!isLoading && <MarginAlertsCard />}
-
-      {/* Customers asking for seats. Approving applies them and raises the quote. */}
+      {/* Customers asking for seats. Approving applies them and raises the quote.
+          Kept OUT of the strip: a customer waiting on us is today's work, not analytics. */}
       {!isLoading && (
         <SeatRequestsCard
           requests={seatRequests}
@@ -884,16 +958,6 @@ export default function SubscriptionsPage() {
           print "Not tracked" for Expansion and Contraction; this card supplies both, so the
           two belong together. Subscriptions is an operating list — a period-over-period
           revenue comparison is not something anybody acts on here. */}
-
-      {/* Seats the vendor bills us for vs seats we bill the customer. */}
-      {!isLoading && subsByWorkspace.length > 0 && (
-        <LicenseLeakageCard
-          subscriptions={subsByWorkspace}
-          catalog={catalog}
-          onReconcile={() => setReconcileOpen(true)}
-          onBillGap={(sub, seats) => openAddSeats(sub, seats)}
-        />
-      )}
 
       {/* Trials in progress — virtual subs */}
       {!isLoading && trials && trials.length > 0 && tab !== "trials" && (
@@ -974,6 +1038,8 @@ export default function SubscriptionsPage() {
               ].map((opt) => (
                 <button
                   key={opt.value}
+                  type="button"
+                  aria-pressed={vendor === opt.value}
                   onClick={() => setVendor(opt.value)}
                   className={cn(
                     "px-3 py-1 text-xs font-medium rounded transition-colors cursor-pointer",
@@ -984,6 +1050,9 @@ export default function SubscriptionsPage() {
                 </button>
               ))}
             </div>
+            {tab !== "trials" && (
+              <BillingCycleFilter options={cycleChips} value={cycle} onChange={setCycle} />
+            )}
             <div className="w-full sm:w-64">
               <Input
                 prefix={<Icon name="search" size={14} />}
@@ -998,9 +1067,12 @@ export default function SubscriptionsPage() {
             <Button
               variant="outline"
               icon="download"
+              disabled={ordered.length === 0}
               onClick={() => {
-                downloadCSV(`subscriptions-${new Date().toISOString().slice(0, 10)}.csv`, [...PORTABLE_SUBSCRIPTION_HEADERS], exportRows(subs ?? []));
-                toast.success(`Exported ${(subs ?? []).length} subscriptions to CSV`, {
+                /* R-1696: the rows on screen — tab, vendor, billing cycle and search —
+                   not the whole book behind them. */
+                downloadCSV(`subscriptions-${new Date().toISOString().slice(0, 10)}.csv`, [...PORTABLE_SUBSCRIPTION_HEADERS], exportRows(ordered));
+                toast.success(`Exported ${ordered.length} subscription${ordered.length === 1 ? "" : "s"} to CSV`, {
                   description: "Includes the customer and contact details, so this file can be imported back.",
                 });
               }}
@@ -1016,7 +1088,7 @@ export default function SubscriptionsPage() {
         <EmptyState
           icon="alert"
           title="Could not load subscriptions"
-          body={error.message}
+          body={loadErrorBody(error)}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
         />
       )}
@@ -1058,7 +1130,9 @@ export default function SubscriptionsPage() {
         <ul className="xl:hidden space-y-2 mb-3">
           {shown.map((s) => {
             const dl = daysUntil(s.renewal_date);
-            const t  = rowTerm(s.billing_cycle, s.start_date, s.renewal_date);
+            const clock = renewalClock(s, dl);
+            const cyc = subscriptionCycle(s);
+            const t  = cyc.term;
             const vm = vendorMeta(s.vendor);
             /* Seat gap only — the money needs the catalogue, and this card deliberately
                shows no margin figure (see the note further down about estimateMargin). */
@@ -1086,11 +1160,15 @@ export default function SubscriptionsPage() {
                 {/* Who they are, and what they pay */}
                 <div className="flex items-start justify-between gap-3 mb-1.5">
                   <div className="min-w-0 flex-1">
-                    <p className="font-medium text-ink truncate">{cleanDisplayName(s.customer_name)}</p>
+                    <p className="font-medium text-ink truncate">
+                      {/* R-1513: tap the name for the customer, "Quote" for its quote. */}
+                      <SubCustomerLink sub={s} name={s.customer_name} />
+                    </p>
+                    <SubQuoteLink sub={s} canQuotes={canQuotesHere} className="py-1" />
                     <DomainCell sub={s} compact />
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="font-serif text-base tabular-nums text-ink">{rupee(s.mrr)}</p>
+                    <p className="font-serif text-base tabular-nums text-ink">{subscriptionEnded(s.status) ? "—" : rupee(s.mrr)}</p>
                     {/* Same shape as the table: vendor / billed, with the problem named
                         underneath. §20 — a number that exists only on the desktop table
                         is a number half the users never see. */}
@@ -1127,16 +1205,17 @@ export default function SubscriptionsPage() {
                     utilisation gate: don't assert what isn't measured. */}
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <Badge kind={vm.kind} size="sm" dot>{vm.label}</Badge>
-                  {t && (
-                    <Badge kind="muted" size="sm"
-                           title={`${t.label} — ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)} per invoice`}>
-                      {t.label}{t.months > 1 ? ` · ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)}` : ""}
-                    </Badge>
-                  )}
+                  {/* R-1774: same words as the cycle chips; Check term → Correct details. */}
+                  <SubCycleBadge
+                    cyc={cyc}
+                    /* R-1685: no renewal amount on an ended subscription. */
+                          amount={liveTermAmount(s.status, t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null)}
+                    onCorrect={() => setEditSub(s)}
+                  />
                 </div>
 
                 {/* Status, anything abnormal, and the renewal clock. The day
-                    count is always shown — see renewalDistance() for why. */}
+                    count is shown for live rows — see renewalClock() (R-1774). */}
                 <div className="flex items-end justify-between gap-2 mt-2 pt-2 border-t border-hairline/60">
                   <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                     <Badge
@@ -1150,7 +1229,7 @@ export default function SubscriptionsPage() {
                     >
                       {s.status}
                     </Badge>
-                    <SubExceptions sub={s} />
+                    <SubExceptions sub={s} payBy={payByOf.get(s.id)} />
                   </div>
                   <div className="text-right shrink-0">
                     {/* The date needs saying what it IS. On desktop the column
@@ -1160,13 +1239,15 @@ export default function SubscriptionsPage() {
                     <p className="text-xs text-ink-2 tabular-nums">
                       {s.renewal_date ? formatDate(s.renewal_date) : "—"}
                     </p>
-                    {dl !== null && (
+                    {/* R-1774: a cancelled / expired row says "Ended …", never a red
+                        "overdue"; a suspended row shows no clock. */}
+                    {clock && (
                       <p className={cn(
                         "text-3xs tabular-nums",
-                        dl <= 7  ? "text-rose font-medium"     :
-                        dl <= 30 ? "text-amber-ink font-medium" : "text-ink-3"
+                        clock.tone === "urgent" ? "text-rose font-medium"      :
+                        clock.tone === "soon"   ? "text-amber-ink font-medium" : "text-ink-3"
                       )}>
-                        {renewalDistance(dl)}
+                        {clock.text}
                       </p>
                     )}
                   </div>
@@ -1180,8 +1261,10 @@ export default function SubscriptionsPage() {
       {/* Desktop table — viewports >= 1280px */}
       {!isLoading && !error && filtered.length > 0 && (
         <Card flush className="hidden xl:block">
+            {/* R-1481: own scroll box — Card flush overflow-x-auto never scrolls vertically, so a sticky header needs this to stick. */}
+            <div className="overflow-auto max-h-[calc(100vh-15rem)]">
             <table className="w-full">
-              <thead className="bg-paper-2 border-b border-hairline-strong">
+              <thead className="sticky top-0 z-10 bg-paper-2 border-b border-hairline-strong">
                 <tr>
                   {/* ── Select-all covers the rows ON SCREEN, not the whole filtered set ──
                       This list paginates at 60. A checkbox that silently selected 800 rows
@@ -1253,11 +1336,16 @@ export default function SubscriptionsPage() {
                     pricePerSeatMonth: s.seats > 0 ? Math.round(s.mrr / s.seats) : null,
                   });
                   const dl = daysUntil(s.renewal_date);
-                  const t  = rowTerm(s.billing_cycle, s.start_date, s.renewal_date);
-                  const isUrgent = dl !== null && dl >= 0 && dl <= 30;
+                  const clock = renewalClock(s, dl);
+                  const cyc = subscriptionCycle(s);
+                  const t  = cyc.term;
+                  /* R-1774: only a live subscription renews — a cancelled row due next
+                     week gets no "In 5d" badge and no Renew button. */
+                  const isUrgent = s.status === "active" && dl !== null && dl >= 0 && dl <= 30;
                   /* Postpaid credit clock. `none` for everything else, so prepaid rows
                      and pre-10-Sep-2026 rows look exactly as they did. */
-                  const due = paymentDueState(s.payment_due_date, todayIST(), s.outstanding_amount ?? 0);
+                  /* R-1685: an ended subscription is on no payment clock (its owed money still shows in SubExceptions). */
+                  const due = paymentDueState(subscriptionEnded(s.status) ? null : (payByOf.get(s.id) ?? s.payment_due_date), todayIST(), s.outstanding_amount ?? 0);
                   const kbSelected = rowIndex === subKeys.index;
                   return (
                     <tr
@@ -1338,7 +1426,9 @@ export default function SubscriptionsPage() {
                       </td>
                       <td className="px-3 py-2.5 align-middle">
                         <div className="font-medium text-sm text-ink break-words leading-snug flex items-center gap-2 flex-wrap">
-                          <span>{cleanDisplayName(s.customer_name)}</span>
+                          {/* R-1513: customer name → the customer; "Quote" → the quote behind it. */}
+                          <SubCustomerLink sub={s} name={s.customer_name} />
+                          <SubQuoteLink sub={s} canQuotes={canQuotesHere} />
                         </div>
                         <div onClick={(e) => e.stopPropagation()}>
                           <DomainCell sub={s} />
@@ -1346,12 +1436,14 @@ export default function SubscriptionsPage() {
                       </td>
                       <td className="px-3 py-2.5 text-sm text-ink-2 align-middle">
                         <div className="break-words leading-snug">{s.plan}</div>
-                        {t && (
-                          <Badge kind="muted" size="sm" className="mt-1"
-                                 title={`${t.label} — ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)} per invoice`}>
-                            {t.label}{t.months > 1 ? ` · ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)}` : ""}
-                          </Badge>
-                        )}
+                        {/* R-1774: same words as the cycle chips; Check term → Correct details. */}
+                        <SubCycleBadge
+                          cyc={cyc}
+                          className="mt-1"
+                          /* R-1685: no renewal amount on an ended subscription. */
+                          amount={liveTermAmount(s.status, t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null)}
+                          onCorrect={() => setEditSub(s)}
+                        />
                       </td>
                       <td className="px-3 py-2.5 align-middle">
                         {(() => { const vm = vendorMeta(s.vendor); return <Badge kind={vm.kind} dot>{vm.label}</Badge>; })()}
@@ -1416,7 +1508,7 @@ export default function SubscriptionsPage() {
                       </td>
                       {/* MRR — the money, given weight. */}
                       <td className="px-3 py-2.5 text-right tabular-nums align-middle">
-                        <span className="font-serif text-[15px] font-semibold text-ink">{rupee(s.mrr)}</span>
+                        <span className="font-serif text-[15px] font-semibold text-ink">{subscriptionEnded(s.status) ? "—" : rupee(s.mrr)}</span>
                       </td>
                       {/* Margin — colour-coded badge. */}
                       <td className="px-3 py-2.5 text-right align-middle">
@@ -1436,12 +1528,13 @@ export default function SubscriptionsPage() {
                       <td className="px-3 py-2.5 text-sm text-ink-2 align-middle whitespace-nowrap">{s.start_date ? formatDate(s.start_date) : "—"}</td>
                       <td className="px-3 py-2.5 text-sm align-middle whitespace-nowrap">
                         <div className="text-ink-2">{s.renewal_date ? formatDate(s.renewal_date) : "—"}</div>
-                        {dl !== null && s.status !== "expired" && dl >= 0 && dl <= 30 ? (
+                        {isUrgent && dl !== null ? (
                           <div className="mt-0.5"><Badge kind={dl <= 7 ? "danger" : "warning"} dot>{dl === 0 ? "Due today" : `In ${dl}d`}</Badge></div>
-                        ) : dl !== null && s.status !== "expired" ? (
+                        ) : clock ? (
                           // Beyond 30 days the badge would be alarmist, but the
                           // distance still beats making the reader subtract dates.
-                          <div className="mt-0.5 text-2xs text-ink-3 tabular-nums">{renewalDistance(dl)}</div>
+                          // R-1774: a cancelled / expired row reads "Ended …" here.
+                          <div className="mt-0.5 text-2xs text-ink-3 tabular-nums">{clock.text}</div>
                         ) : null}
                       </td>
                       <td className="px-3 py-2.5 align-middle">
@@ -1456,7 +1549,7 @@ export default function SubscriptionsPage() {
                             suspension, write-off — one shared component so the
                             table and the mobile card can never drift apart. */}
                         <div className="flex flex-col items-start gap-1 mt-1 empty:mt-0">
-                          <SubExceptions sub={s} size="md" />
+                          <SubExceptions sub={s} payBy={payByOf.get(s.id)} size="md" />
                         </div>
                       </td>
                       {/* ── ONE ACTION ON THE ROW, THE REST IN THE DRAWER ────────
@@ -1487,6 +1580,7 @@ export default function SubscriptionsPage() {
                 })}
               </tbody>
             </table>
+            </div>
         </Card>
       )}
       {!isLoading && !error && tab !== "trials" && hasMore && (
@@ -1500,8 +1594,10 @@ export default function SubscriptionsPage() {
       {/* Trials tab — same column layout, virtual-sub rows */}
       {!isLoading && !error && tab === "trials" && filteredTrials.length > 0 && (
         <Card flush className="hidden md:block">
+            {/* R-1481: own scroll box — Card flush overflow-x-auto never scrolls vertically, so a sticky header needs this to stick. */}
+            <div className="overflow-auto max-h-[calc(100vh-15rem)]">
             <table className="w-full">
-              <thead className="bg-paper-2 border-b border-hairline">
+              <thead className="sticky top-0 z-10 bg-paper-2 border-b border-hairline">
                 <tr>
                   <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Customer · Domain</th>
                   <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Plan</th>
@@ -1529,8 +1625,8 @@ export default function SubscriptionsPage() {
                   return (
                     <tr
                       key={t.id}
-                      onClick={() => router.push(`/leads?lead=${t.id}` as never)}
-                      className="border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer"
+                      {...rowActivation(() => router.push(`/leads?lead=${t.id}` as never))}
+                      className={cn("border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer", ROW_FOCUS_RING)}
                     >
                       <td className="p-3">
                         <div className="font-medium text-sm text-ink">{t.company}</div>
@@ -1571,6 +1667,7 @@ export default function SubscriptionsPage() {
                 })}
               </tbody>
             </table>
+            </div>
         </Card>
       )}
 
@@ -1640,7 +1737,7 @@ export default function SubscriptionsPage() {
             icon="search"
             title="No subscriptions match"
             body="Try changing tab, vendor filter, or search term."
-            action={<Button icon="x" onClick={() => { setTab("all"); setVendor("all"); setSearch(""); }}>Clear filters</Button>}
+            action={<Button icon="x" onClick={() => { setTab("all"); setVendor("all"); setCycle("all"); setSearch(""); }}>Clear filters</Button>}
             compact
           />
         </div>
@@ -1680,6 +1777,20 @@ export default function SubscriptionsPage() {
               <SheetDescription>
                 {scheduleSub.plan}{scheduleSub.domain ? ` · ${scheduleSub.domain}` : ""}
               </SheetDescription>
+              {/* R-1513: one click to the customer and to the quote this subscription came from. */}
+              <div className="flex items-center gap-3 flex-wrap text-sm" data-testid="sub-drawer-links">
+                {scheduleSub.customer_id && (
+                  <span className="inline-flex items-center gap-1 text-ink-3">
+                    <Icon name="users" size={12} className="flex-shrink-0" />
+                    <SubCustomerLink sub={scheduleSub} name={scheduleSub.customer_name} className="text-ink-2" />
+                  </span>
+                )}
+                <SubQuoteLink sub={scheduleSub} canQuotes={canQuotesHere} className="text-xs" />
+                {/* R-1763: an imported subscription says which Zoho invoice it came from. */}
+                {externalSourceText(scheduleSub) && (
+                  <span className="text-xs text-ink-3" data-testid="sub-drawer-source">{externalSourceText(scheduleSub)}</span>
+                )}
+              </div>
             </SheetHeader>
             {/* ── The body carries its own padding ──────────────────────────────
                 SheetContent has NO horizontal padding — SheetHeader brings its own p-6
@@ -1689,7 +1800,42 @@ export default function SubscriptionsPage() {
                 Padded here rather than on the shared primitive: other sheets lay out
                 their own edge-to-edge content and would gain an indent nobody asked
                 for. */}
+            {(() => {
+            const drawerLeak = assessLeakage({
+              vendorSeats: scheduleSub.vendor_seats,
+              billedSeats: scheduleSub.seats,
+              assignedSeats: scheduleSub.used,
+              costPerSeatMonth: subscriptionCogs(scheduleSub, catalog).perSeatMonth,
+              pricePerSeatMonth: scheduleSub.seats > 0 ? Math.round(scheduleSub.mrr / scheduleSub.seats) : null,
+            });
+            const leakFixShown = drawerLeak.kind === "under_billed" && drawerLeak.seatGap != null;
+            return (
             <div className="px-6 pb-6">
+              {/* ── R-1727: the actions, right under the header ──────────────────
+                  They used to sit at the very bottom, after the schedule, amendments and
+                  late fees — and the only filled button there was a red "Cancel
+                  subscription". Owner journey audit, 21 Oct 2026: the everyday job comes
+                  first, Manage seats is the primary, Cancel / Delete wait at the bottom
+                  as red outlines (SubDrawerDangerZone).
+
+                  "Billing schedule" is not among them: this drawer IS the schedule.
+                  Each one CLOSES the drawer first. Every action either navigates away or
+                  opens its own dialog, and a dialog stacked on an open sheet leaves two
+                  dismissable layers over the page. */}
+              {/* R-1796: unpaid past the renewal date — the vendor renewal waits for the
+                  payment; owner / manager may "Renew anyway" for this term (logged). */}
+              <div className="mb-3 empty:hidden" data-testid="sub-drawer-vendor-hold">
+                <VendorHoldBadge sub={scheduleSub} size="md" />
+              </div>
+              <SubDrawerActions
+                hasCustomer={!!scheduleSub.customer_id}
+                primary={!leakFixShown}
+                onManageSeats={() => { const sub = scheduleSub; setScheduleSub(null); openAddSeats(sub); }}
+                onExtend={() => { const sub = scheduleSub; setScheduleSub(null); setExtendSub(sub); }}
+                onOpenCustomer={() => { const id = scheduleSub.customer_id; setScheduleSub(null); router.push(`/customers/${id}` as never); }}
+                onStatement={() => { const id = scheduleSub.customer_id; setScheduleSub(null); router.push(`/accounting/ledger?customer=${id}` as never); }}
+                onCorrect={() => { const sub = scheduleSub; setScheduleSub(null); setEditSub(sub); }}
+              />
               {/* ── WHAT TO DO ABOUT THE LEAK, NOT JUST THAT THERE IS ONE ────────
                   The row and the card both learned to SHOW leakage on 21 Sep 2026, and
                   Abhishek's next words were the right ones: "user dont know what action
@@ -1705,13 +1851,7 @@ export default function SubscriptionsPage() {
                   so a button offering to "correct" it would be pushing the operator
                   toward undoing something they meant to do. */}
               {(() => {
-                const leak = assessLeakage({
-                  vendorSeats: scheduleSub.vendor_seats,
-                  billedSeats: scheduleSub.seats,
-                  assignedSeats: scheduleSub.used,
-                  costPerSeatMonth: subscriptionCogs(scheduleSub, catalog).perSeatMonth,
-                  pricePerSeatMonth: scheduleSub.seats > 0 ? Math.round(scheduleSub.mrr / scheduleSub.seats) : null,
-                });
+                const leak = drawerLeak;
                 if (leak.kind !== "under_billed" || leak.seatGap == null) return null;
                 const gap = leak.seatGap;
                 const sub = scheduleSub;
@@ -1759,6 +1899,8 @@ export default function SubscriptionsPage() {
                   </div>
                 ))}
               </dl>
+              {/* R-1705: added seats whose pro-rata quote is still unpaid. */}
+              <SeatQuotesPending subscriptionId={scheduleSub.id} />
               <BillingScheduleCard subscription={scheduleSub} todayISO={todayIST()} />
               {/* The contract's own history, next to its schedule — the two questions a
                   rep opens this drawer with are "what will they be billed?" and "what
@@ -1767,101 +1909,20 @@ export default function SubscriptionsPage() {
               {/* R-530: late fee On/Off for this subscription + charges on its invoices. */}
               <LateChargesPreview level="subscription" id={scheduleSub.id} />
 
-              {/* ── The actions, where the subscription is ────────────────────
-                  Moved off the row's ⋯ menu on 19 Sep 2026. They act on this
-                  subscription, so they belong beside it rather than behind a menu on a
-                  list — and a seven-item menu on every row was most of that row's
-                  clutter for something few people opened.
-
-                  "Billing schedule" is not among them: this drawer IS the billing
-                  schedule, so the item would have reopened the thing it was clicked in.
-
-                  Each one CLOSES the drawer first. Every action below either navigates
-                  away or opens its own dialog, and a dialog stacked on an open sheet
-                  leaves two dismissable layers over the page — close the wrong one and
-                  the form is still there, behind. */}
-              <div className="mt-6 pt-4 border-t border-hairline">
-                <p className="text-2xs uppercase tracking-wider text-ink-3 mb-2">Actions</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    icon="plus"
-                    onClick={() => { const sub = scheduleSub; setScheduleSub(null); openAddSeats(sub); }}
-                  >
-                    Manage seats
-                  </Button>
-                  <Button
-                    icon="clock"
-                    onClick={() => { const sub = scheduleSub; setScheduleSub(null); setExtendSub(sub); }}
-                  >
-                    Extend term
-                  </Button>
-                  {scheduleSub.customer_id && (
-                    <Button
-                      icon="users"
-                      onClick={() => { const id = scheduleSub.customer_id; setScheduleSub(null); router.push(`/customers/${id}` as never); }}
-                    >
-                      Open customer
-                    </Button>
-                  )}
-                  {/* The statement, one click from here. A renewal conversation is
-                      exactly when somebody asks "and what do they actually owe us?", and
-                      the answer used to be four clicks away through Accounting with the
-                      customer picked by hand. ?customer= seeds the picker; the Tally XML
-                      and CSV exports on that page are the ones a CA imports. */}
-                  {scheduleSub.customer_id && (
-                    <Button
-                      icon="book"
-                      onClick={() => { const id = scheduleSub.customer_id; setScheduleSub(null); router.push(`/accounting/ledger?customer=${id}` as never); }}
-                    >
-                      Statement
-                    </Button>
-                  )}
-                  <Button
-                    icon="edit"
-                    className="col-span-2"
-                    onClick={() => { const sub = scheduleSub; setScheduleSub(null); setEditSub(sub); }}
-                  >
-                    Correct details
-                  </Button>
-                </div>
-
-                {/* ── Kept at arm's length, on purpose ──────────────────────────
-                    The other half of the 19 Sep proposal was to promote this to a trash
-                    icon on every row. It was declined: a subscription carries invoices
-                    and payments, and the design that makes the most destructive action
-                    the easiest one to reach is the wrong way round. It sits last, below
-                    a rule, visually apart from the five above, and still asks for
-                    confirmation naming the customer and the plan. */}
-                <div className="mt-4 pt-3 border-t border-hairline space-y-2">
-                  {/* R-455: two different things, two buttons. Cancel = the customer is
-                      leaving (keeps the record, leaves MRR/renewals). Delete = this entry
-                      should never have existed. The old single "Cancel / delete" button only
-                      deleted, and was blocked for every paid sale. */}
-                  {scheduleSub.status === "cancelled" ? (
-                    <p className="text-2xs text-ink-3">{cancelNote(scheduleSub)}</p>
-                  ) : (
-                    <Button
-                      variant="danger"
-                      icon="x"
-                      className="w-full"
-                      onClick={() => { const sub = scheduleSub; setScheduleSub(null); setCancelSub(sub); }}
-                    >
-                      Cancel subscription
-                    </Button>
-                  )}
-                  {canDeleteSub && (
-                    <Button
-                      variant="ghost"
-                      icon="trash"
-                      className="w-full text-rose"
-                      onClick={() => { const sub = scheduleSub; setScheduleSub(null); handleDeleteSub(sub); }}
-                    >
-                      Delete (wrong entry)
-                    </Button>
-                  )}
-                </div>
-              </div>
+              {/* ── Kept at arm's length, on purpose ──────────────────────────────
+                  A subscription carries invoices and payments, so the destructive acts
+                  sit last, below a rule, apart from the everyday ones above — and since
+                  R-1727 as red OUTLINE buttons, never the filled primary. Both still ask
+                  for confirmation naming the customer and the plan. */}
+              <SubDrawerDangerZone
+                cancelledNote={scheduleSub.status === "cancelled" ? cancelNote(scheduleSub) : null}
+                canDelete={canDeleteSub}
+                onCancel={() => { const sub = scheduleSub; setScheduleSub(null); setCancelSub(sub); }}
+                onDelete={() => { const sub = scheduleSub; setScheduleSub(null); handleDeleteSub(sub); }}
+              />
             </div>
+            );
+            })()}
           </SheetContent>
         </Sheet>
       )}

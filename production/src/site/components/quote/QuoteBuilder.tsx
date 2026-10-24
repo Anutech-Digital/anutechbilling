@@ -12,31 +12,47 @@
  *
  * Money maths (WHOLE RUPEES, CLAUDE.md §13): a monthly-cycle line on an annual
  * commitment bills ×12 (a year on this invoice); once-a-year lines (domain, SSL,
- * onsite) bill once. Payable = round(subtotal × 1.18). Renewal annualises every
- * line at today's rate. Every figure is derived, never hardcoded.
+ * onsite) bill once. GST = round(subtotal × 18%), payable = subtotal + GST (R-1438,
+ * lib/quotes/amounts.ts gstBreakup — same maths as the tax invoice). Renewal: quoteRenewal
+ * (R-1483) — flexible monthly = the month's payable × 12, domains at their renewal price.
+ * Every figure is derived, never hardcoded.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, withLiveEditions, quoteRate, quoteInr, type QuoteProduct } from "@/site/lib/data/quote-catalog";
+import { CERTS } from "@/site/lib/data/catalog";
+import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, quotePrefill, withLiveEditions, quoteRate, quoteInr, quoteLineAmount, quoteUnitAmount, quoteRenewal, quoteRenewalText, withPriceBook, type QuoteBookPrices, type QuoteProduct } from "@/site/lib/data/quote-catalog";
 import { WHATSAPP_URL, COMPANY } from "@/site/lib/config";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
 import type { MergedEdition } from "@/site/lib/live-catalog";
 import { enquiryReference, referenceNote } from "@/site/lib/enquiry-reference";
+import { landingForForm } from "@/site/lib/ad-attribution";
+import { gstBreakup } from "@/lib/quotes/amounts";
+import { isIndianMobile, quoteMissing, quoteMissingMessage, type QuoteMissingKey } from "@/site/lib/quote-missing";
 
-/* R-224: hosting rates carry paise (₹49.99) — print them exactly as /rates does, not rounded. */
+export { isIndianMobile };
+
+/* R-1465: whole rupees, as every site page prints them (₹50, not ₹49.99). Line amounts are
+   rounded once per line (quoteLineAmount), so the summary never mixes ₹599.88 with ₹600. */
 const inr = quoteInr;
 const P = "var(--primary)";
+/* R-1504: the certificate /ssl includes free (its "Included" card) — named, not repriced, here. */
+const FREE_DV = CERTS.find((c) => c.cta === "Included");
 
-export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
+export function QuoteBuilder({ editions, prices }: { editions?: MergedEdition[]; prices?: QuoteBookPrices }) {
   const params = useSearchParams();
 
   // Live rates (if the page supplied them) override the static edition prices. An edition
   // with no flexible tier comes back with monthly: null — annual only (R-224).
-  const products = useMemo<QuoteProduct[]>(() => withLiveEditions(QUOTE_PRODUCTS, editions), [editions]);
+  // R-1797: hosting and SSL from the price book the page read (what checkout and /ssl say).
+  const products = useMemo<QuoteProduct[]>(() => withPriceBook(withLiveEditions(QUOTE_PRODUCTS, editions), prices), [editions, prices]);
   const byName = useMemo(() => new Map(products.map((p) => [p.name, p])), [products]);
 
   const [lines, setLines] = useState<Record<string, number>>({ "GW Business Starter": 1 });
+  /* R-1627: what the visitor is typing in a quantity box, before it is a number. An empty box
+     while typing keeps the line (it used to delete it the moment the old number was cleared). */
+  const [qtyDraft, setQtyDraft] = useState<Record<string, string>>({});
+  const [qtyError, setQtyError] = useState<Record<string, string>>({});
   const [term, setTerm] = useState<"annual" | "monthly">("annual");
   const [openSec, setOpenSec] = useState<"plan" | "details">("plan");
   const [cat, setCat] = useState<string>("all");
@@ -56,6 +72,8 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   // submit / doc
   const [submitState, setSubmitState] = useState<"idle" | "sending" | "done" | "failed">("idle");
   const [err, setErr] = useState("");
+  // R-1461: the first missing part to focus once its step is open.
+  const [focusKey, setFocusKey] = useState<QuoteMissingKey | null>(null);
   /* Did the requirement reach our team? The quote is shown either way (it is built here and
      is valid to send by hand), but it must not look sent when it was not (30 Sep 2026: this
      used to clear the error and show the quote as if the team had it). */
@@ -66,18 +84,18 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   const [quoteAt, setQuoteAt] = useState<Date | null>(null);
   const [delivered, setDelivered] = useState<"email" | "wa" | "">("");
 
-  // Prefill from the home/hero deep link (?ed & seats & term).
+  // Prefill from the home/hero deep link (?ed & seats & term), or /ssl's ?product=ssl (R-1504).
   useEffect(() => {
-    const ed = params.get("ed") ?? params.get("edition");
+    const { ed, cat: preCat } = quotePrefill(params, byName);
     const seats = Math.max(1, Math.min(300, parseInt(params.get("seats") ?? "", 10) || 0));
     const t = params.get("term");
     const next: Record<string, number> = {};
-    if (ed && byName.has(ed)) {
+    if (ed) {
       next[ed] = seats || 1;
       /* Open on that product's category, not "All plans" (Pardeep, 4 Oct 2026). */
-      const v = byName.get(ed)?.vendor;
+      const v = preCat ?? byName.get(ed)?.vendor;
       if (v) setCat(v);
-    }
+    } else if (preCat) setCat(preCat);
     if (Object.keys(next).length) setLines(next);
     /* A deep link asking for monthly on an annual-only edition stays annual (R-224). */
     const edAnnualOnly = !!ed && byName.get(ed)?.monthly === null;
@@ -93,13 +111,27 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
     return quoteRate(p, term) ?? p.annual;
   };
   const annualOnly = (p: QuoteProduct) => p.monthly === null;
-  const amountOf = (p: QuoteProduct, qty: number): number => (p.cycle === "mo" ? rateOf(p) * qty * (annual ? 12 : 1) : rateOf(p) * qty);
+  /* R-1482: one unit's price for the period it is billed (₹600/site/yr, not ₹50/site), so
+     qty × the unit shown is always the line amount — rounded per unit, as checkout charges. */
+  const monthsOf = (p: QuoteProduct): number => (p.cycle === "mo" && annual ? 12 : 1);
+  const unitOf = (p: QuoteProduct): number => quoteUnitAmount(rateOf(p), monthsOf(p));
+  const periodOf = (p: QuoteProduct): string => (p.cycle === "mo" && !annual ? "mo" : "yr");
+  const amountOf = (p: QuoteProduct, qty: number): number => quoteLineAmount(rateOf(p), qty, monthsOf(p));
+  /* R-1484: a domain renews at its extension's renewal price, not the registration price. */
+  const renewRateOf = (p: QuoteProduct): number =>
+    p.domain ? QUOTE_TLDS.find((t) => t.tld === domainTld)?.renew ?? 0 : rateOf(p);
 
   const selected = products.filter((p) => (lines[p.name] ?? 0) > 0);
   const subtotal = selected.reduce((n, p) => n + amountOf(p, lines[p.name]), 0);
-  const payable = Math.round(subtotal * 1.18);
-  const gst = payable - subtotal;
-  const renewal = Math.round(selected.reduce((n, p) => n + (p.cycle === "mo" ? rateOf(p) * lines[p.name] * 12 : rateOf(p) * lines[p.name]), 0) * 1.18);
+  /* R-1438: GST is 18% OF the subtotal, then payable = subtotal + GST — never payable first
+     and GST back-solved from the rounded total (₹3,839.88 used to show GST ₹691.12 while the
+     tax invoice charges ₹691.18). Same helper as the invoice side (lib/quotes/amounts.ts). */
+  const { gst, total: payable } = gstBreakup(subtotal);
+  /* R-1483: Flexible monthly renews as twelve monthly invoices — the month's payable × 12
+     (+ yearly items once), so ₹1,977 a month reads ₹23,724 a year, never ₹23,716. */
+  const renewal = quoteRenewal(selected.map((p) => ({ cycle: p.cycle, qty: lines[p.name], rate: rateOf(p), renewRate: renewRateOf(p) })), term);
+  /* R-1629: one helper writes the line WITH "incl. 18% GST" — page, print/PDF and email. */
+  const renewalText = quoteRenewalText(renewal);
   // Saving from annual commitment, over discountable (monthly-cycle) lines only.
   const moLines = selected.filter((p) => p.cycle === "mo" && p.monthly !== null && p.monthly > p.annual);
   const savePct = moLines.length
@@ -109,6 +141,30 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   const annualOnlyPicked = selected.filter(annualOnly);
 
   const setQty = (nm: string, q: number) => setLines((L) => { const v = Math.max(0, Math.min(999, q)); const c = { ...L }; if (v === 0) delete c[nm]; else c[nm] = v; return c; });
+  const forget = (nm: string, m: Record<string, string>) => { if (!(nm in m)) return m; const c = { ...m }; delete c[nm]; return c; };
+  /* R-1627: typing — only digits, up to 999; an empty box or 0 leaves the line as it was. */
+  const typeQty = (nm: string, raw: string) => {
+    const digits = raw.replace(/\D/g, "").slice(0, 3);
+    setQtyDraft((d) => ({ ...d, [nm]: digits }));
+    setQtyError((e) => forget(nm, e));
+    const n = parseInt(digits, 10);
+    if (n > 0) setQty(nm, n);
+  };
+  /* Leaving the box: empty or 0 puts back 1 and says why — removing a line is the tick box or "–". */
+  const leaveQty = (nm: string) => {
+    const draft = qtyDraft[nm];
+    setQtyDraft((d) => forget(nm, d));
+    if (draft === undefined) return;
+    if (!(parseInt(draft, 10) > 0)) {
+      setQty(nm, 1);
+      setQtyError((e) => ({ ...e, [nm]: "Quantity must be at least 1 — set to 1. Untick the line to remove it." }));
+    }
+  };
+  const stepQty = (nm: string, q: number) => {
+    setQtyDraft((d) => forget(nm, d));
+    setQtyError((e) => forget(nm, e));
+    setQty(nm, q);
+  };
   const toggle = (nm: string) => setLines((L) => {
     const c = { ...L };
     if (c[nm]) delete c[nm];
@@ -134,7 +190,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   const quoteText = () => {
     const L = selected.map((p) => p.priceOnRequest
       ? `• ${p.label} — ${lines[p.name]} ${p.per}${lines[p.name] === 1 ? "" : "s"} — price on request (sent with the formal quotation)`
-      : `• ${p.label}${p.domain ? " " + domainTld : ""} — ${lines[p.name]} × ${inr(rateOf(p))}/${p.per}/${p.cycle === "mo" ? (annual ? "mo (×12)" : "mo") : "yr"} = ${inr(amountOf(p, lines[p.name]))}`).join("\n");
+      : `• ${p.label}${p.domain ? " " + domainTld : ""} — ${lines[p.name]} × ${inr(unitOf(p))}/${p.per}/${periodOf(p)} =${inr(amountOf(p, lines[p.name]))}`).join("\n");
     return [
       `Quotation ${quoteNo || "(draft)"} — Anutech Digital`,
       `For: ${company || "—"}${gstin ? " · GSTIN " + gstin : ""}`,
@@ -145,17 +201,29 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
       `Subtotal ${inr(subtotal)}`,
       `GST 18% ${inr(gst)}`,
       `Payable on this invoice ${inr(payable)}`,
-      `Renews ${inr(renewal)}/yr at today's rates`,
+      `${renewalText} at today's rates`,
       "",
       "Rate held 15 days · ₹0 migration · GST invoice on payment · renewal unchanged (30 days' notice).",
     ].join("\n");
   };
 
-  const valid = company.trim().length >= 2 && name.trim().length >= 2 && email.includes("@") && isIndianMobile(phone) && selected.length > 0 && (gstin === "" || gstin.length === 15);
+  /* R-1461: name exactly what is missing, in on-screen order — the old fixed message told a
+     visitor with items picked to "add at least one line". */
+  const missing = quoteMissing({ lineCount: selected.length, company, name, phone, email, gstin });
+  const valid = missing.length === 0;
+
+  useEffect(() => {
+    if (!focusKey) return;
+    const el = focusKey === "lines"
+      ? document.querySelector<HTMLElement>('#quote-lines [role="checkbox"]:not([disabled])') ?? document.getElementById("quote-step-plan")
+      : document.getElementById(`quote-${focusKey}`);
+    el?.focus();
+    setFocusKey(null);
+  }, [focusKey, openSec]);
 
   async function generate() {
     setTouched(true); setErr("");
-    if (!valid) { setOpenSec(selected.length === 0 ? "plan" : "details"); setErr("Add at least one line, and a company, name, valid email and 10-digit phone — that's where the formal quotation goes."); return; }
+    if (!valid) { setOpenSec(missing[0].key === "lines" ? "plan" : "details"); setErr(quoteMissingMessage(missing)); setFocusKey(missing[0].key); return; }
     /* R-228: the quote's number is the APP's (draft quote number, else lead id) from
        /api/enquiry — never a per-browser counter, which gave every new visitor AQ-…-001. */
     const now = new Date();
@@ -175,6 +243,9 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
           seats: primary ? lines[primary.name] : selected.reduce((s, p) => s + lines[p.name], 0),
           requirement,
           edition: primary?.name, term,
+          /* R-1598: the landing page (first ad URL of the visit, with gclid/utm) and where the
+             visitor came from — without them every /quote lead read "direct". */
+          ...landingForForm(),
         }),
       });
       const data = (await res.json().catch(() => ({ ok: false }))) as { ok: boolean; error?: string; ackSent?: boolean; reference?: string | null };
@@ -204,7 +275,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
         {/* Step 1 — What to quote */}
         <div style={card}>
-          <button onClick={() => setOpenSec(openSec === "plan" ? "details" : "plan")} aria-expanded={openSec === "plan"} style={secHead(openSec === "plan")}>
+          <button id="quote-step-plan" onClick={() => setOpenSec(openSec === "plan" ? "details" : "plan")} aria-expanded={openSec === "plan"} style={secHead(openSec === "plan")}>
             <span style={stepMark(selected.length > 0)}>{selected.length > 0 ? "✓" : "1"}</span>
             <span style={{ flex: 1 }}>
               <span style={{ display: "block", fontSize: 16, fontWeight: 700, color: "var(--text)" }}>What to quote</span>
@@ -243,8 +314,14 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
                   {annualOnlyPicked.map((p) => p.label).join(", ")} {annualOnlyPicked.length > 1 ? "are" : "is"} annual only. Remove {annualOnlyPicked.length > 1 ? "them" : "it"} for a monthly quote.
                 </p>
               )}
+              {/* R-1504: the free certificate /ssl offers is not a quote line — say where it comes from. */}
+              {cat === "SSL & security" && FREE_DV && (
+                <p className="meta" style={{ margin: "0 0 10px", fontSize: 13 }}>
+                  {FREE_DV.name} ({FREE_DV.price}) comes with every site we host — no quote needed. Pick a paid certificate below only when you need one.
+                </p>
+              )}
               {/* rows */}
-              <div style={{ display: "flex", flexDirection: "column" }}>
+              <div id="quote-lines" style={{ display: "flex", flexDirection: "column" }}>
                 {visible.length === 0 && (
                   <p className="meta" style={{ padding: "16px 0" }}>Nothing matches. <button onClick={() => { setQuery(""); setCat("all"); }} style={{ background: "none", border: "none", color: P, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Show all plans</button></p>
                 )}
@@ -262,16 +339,19 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
                           <span style={{ display: "block", fontSize: 12.5, color: "var(--text-muted)" }}>{p.note}</span>
                         </button>
                         <span id={locked ? lockNoteId : undefined} className="mono" style={{ fontSize: 13.5, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
-                          {p.priceOnRequest ? ON_REQUEST : !annual && annualOnly(p) ? "Annual only" : rateOf(p) === 0 ? "Free" : `${inr(rateOf(p))}/${p.per}`}
+                          {p.priceOnRequest ? ON_REQUEST : !annual && annualOnly(p) ? "Annual only" : rateOf(p) === 0 ? "Free" : `${inr(rateOf(p))}/${p.per}/${p.cycle}`}
                         </span>
                         {on && (
                           <span style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border-strong)", borderRadius: 8, overflow: "hidden", flex: "none" }}>
-                            <button onClick={() => setQty(p.name, lines[p.name] - 1)} aria-label="Fewer" style={{ minHeight: 36, padding: "0 10px", border: "none", background: "#fff", cursor: "pointer", color: "var(--text-secondary)" }}>–</button>
-                            <input value={lines[p.name]} inputMode="numeric" aria-label={`${p.label} quantity`} onChange={(e) => setQty(p.name, parseInt(e.target.value.replace(/\D/g, ""), 10) || 0)} style={{ width: 40, textAlign: "center", border: "none", borderLeft: "1px solid var(--border-light)", borderRight: "1px solid var(--border-light)", fontFamily: "var(--font-mono), monospace", fontSize: 14, minHeight: 36 }} />
-                            <button onClick={() => setQty(p.name, lines[p.name] + 1)} aria-label="More" style={{ minHeight: 36, padding: "0 10px", border: "none", background: "#fff", cursor: "pointer", color: "var(--text-secondary)" }}>+</button>
+                            <button onClick={() => stepQty(p.name, lines[p.name] - 1)} aria-label={lines[p.name] === 1 ? `Remove ${p.label}` : "Fewer"} style={{ minHeight: 36, padding: "0 10px", border: "none", background: "#fff", cursor: "pointer", color: "var(--text-secondary)" }}>–</button>
+                            <input value={qtyDraft[p.name] ?? String(lines[p.name])} inputMode="numeric" aria-label={`${p.label} quantity`} aria-invalid={qtyError[p.name] ? true : undefined} aria-describedby={qtyError[p.name] ? `${lockNoteId}-qty` : undefined} onChange={(e) => typeQty(p.name, e.target.value)} onBlur={() => leaveQty(p.name)} style={{ width: 40, textAlign: "center", border: "none", borderLeft: "1px solid var(--border-light)", borderRight: "1px solid var(--border-light)", fontFamily: "var(--font-mono), monospace", fontSize: 14, minHeight: 36 }} />
+                            <button onClick={() => stepQty(p.name, lines[p.name] + 1)} aria-label="More" style={{ minHeight: 36, padding: "0 10px", border: "none", background: "#fff", cursor: "pointer", color: "var(--text-secondary)" }}>+</button>
                           </span>
                         )}
                       </div>
+                      {on && qtyError[p.name] && (
+                        <p id={`${lockNoteId}-qty`} role="alert" style={{ margin: "0 0 10px", fontSize: 12.5, color: "var(--warning)", textAlign: "right" }}>{qtyError[p.name]}</p>
+                      )}
                     </div>
                   );
                 })}
@@ -309,12 +389,12 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
           {openSec === "details" && (
             /* R-231: data-grid → one column on a phone (two 1fr columns left ~150px boxes). */
             <div style={{ padding: 18, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }} data-grid>
-              <QField label="Company" value={company} set={setCompany} touched={touched} required autoComplete="organization" />
-              <QField label="Your name" value={name} set={setName} touched={touched} required autoComplete="name" />
-              <QField label="Mobile" value={phone} set={setPhone} touched={touched} required kind="tel" autoComplete="tel" inputMode="tel" />
-              <QField label="Email" value={email} set={setEmail} touched={touched} required kind="email" autoComplete="email" inputMode="email" />
+              <QField id="quote-company" label="Company" value={company} set={setCompany} touched={touched} required autoComplete="organization" />
+              <QField id="quote-name" label="Your name" value={name} set={setName} touched={touched} required autoComplete="name" />
+              <QField id="quote-phone" label="Mobile" value={phone} set={setPhone} touched={touched} required kind="tel" autoComplete="tel" inputMode="tel" />
+              <QField id="quote-email" label="Email" value={email} set={setEmail} touched={touched} required kind="email" autoComplete="email" inputMode="email" />
               <div>
-                <QField label="GSTIN (optional)" value={gstin} set={(v) => setGstin(v.toUpperCase().slice(0, 15))} touched={touched} />
+                <QField id="quote-gstin" label="GSTIN (optional)" value={gstin} set={(v) => setGstin(v.toUpperCase().slice(0, 15))} touched={touched} />
                 {gstin.length > 0 && gstin.length !== 15 && <span style={{ fontSize: 11.5, color: "var(--warning)" }}>{gstin.length}/15 characters</span>}
               </div>
               <QField label="Where does mail run today?" value={mailToday} set={setMailToday} touched={false} placeholder="Gmail, GoDaddy, cPanel…" />
@@ -353,10 +433,10 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
                   <span style={{ fontWeight: 700 }}>Payable on this invoice</span>
                   <span className="mono" style={{ fontSize: 18, fontWeight: 700 }}>{inr(payable)}</span>
                 </div>
-                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Renews {inr(renewal)}/yr at today&apos;s rates · incl. 18% GST</div>
+                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{renewalText} at today&apos;s rates</div>
               </div>
             )}
-            {err && <p style={{ fontSize: 13, color: "var(--warning)", marginTop: 10 }}>{err}</p>}
+            {err && <p role="alert" style={{ fontSize: 13, color: "var(--warning)", marginTop: 10 }}>{err}</p>}
             <BusyPanel
               active={submitState === "sending"}
               title="Preparing your quotation"
@@ -396,7 +476,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
             <div style={{ fontSize: 13, marginBottom: 10 }}><b>Quote for:</b> {company}{gstin ? ` · GSTIN ${gstin}` : ""}</div>
             {selected.map((p) => (
               <div key={p.name} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border-hairline)", fontSize: 12.5 }}>
-                <span>{p.label}{p.domain ? " " + domainTld : ""} <span className="mono" style={{ color: "var(--text-muted)" }}>{lines[p.name]} × {p.priceOnRequest ? "price on request" : `${inr(rateOf(p))}/${p.per}`} · HSN {COMPANY.hsn}</span></span>
+                <span>{p.label}{p.domain ? " " + domainTld : ""} <span className="mono" style={{ color: "var(--text-muted)" }}>{lines[p.name]} × {p.priceOnRequest ? "price on request" : `${inr(unitOf(p))}/${p.per}/${periodOf(p)}`} · HSN {COMPANY.hsn}</span></span>
                 <span className="mono" style={{ whiteSpace: "nowrap" }}>{p.priceOnRequest ? ON_REQUEST : inr(amountOf(p, lines[p.name]))}</span>
               </div>
             ))}
@@ -406,7 +486,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
               <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0 2px", borderTop: "1px solid var(--border)", marginTop: 4 }}>
                 <b>Payable on this invoice</b><span className="mono" style={{ fontWeight: 700 }}>{inr(payable)}</span>
               </div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Renews {inr(renewal)}/yr</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{renewalText} at today&apos;s rates</div>
             </div>
             <ul style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5, margin: "12px 0 0", paddingLeft: 16 }}>
               <li>Rate held for 15 days.</li><li>Migration is ₹0, done by us.</li><li>Setup included.</li><li>GST invoice issued on payment.</li><li>Renewal at the same rate — 30 days&apos; notice of any change.</li>
@@ -434,22 +514,15 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "var(--text-secondary)" }}><span>{l}</span><span className="mono">{v}</span></div>;
 }
 
-/**
- * R-231: a 10-digit Indian mobile (6–9 first), with or without +91 / 0 in front. The old
- * rule only wanted 2 digits, so "12345" looked fine until the quote button refused it.
- */
-export function isIndianMobile(v: string): boolean {
-  const d = v.replace(/\D/g, "").replace(/^(?:91|0)(?=\d{10}$)/, "");
-  return /^[6-9]\d{9}$/.test(d);
-}
+/* R-231 isIndianMobile now lives in site/lib/quote-missing (R-1461), re-exported above. */
 
-export function QField({ label, value, set, touched, required, kind = "text", placeholder, autoComplete, inputMode }: { label: string; value: string; set: (v: string) => void; touched: boolean; required?: boolean; kind?: string; placeholder?: string; autoComplete?: string; inputMode?: "text" | "email" | "tel" }) {
+export function QField({ id, label, value, set, touched, required, kind = "text", placeholder, autoComplete, inputMode }: { id?: string; label: string; value: string; set: (v: string) => void; touched: boolean; required?: boolean; kind?: string; placeholder?: string; autoComplete?: string; inputMode?: "text" | "email" | "tel" }) {
   const bad = touched && required && (kind === "email" ? !value.includes("@") : kind === "tel" ? !isIndianMobile(value) : value.replace(/\s/g, "").length < 2);
   const msg = kind === "tel" && value.trim() ? "Enter a 10-digit mobile number." : label + " is needed here.";
   return (
     <label style={{ fontSize: 13, color: "var(--text-secondary)" }}>
       {label}
-      <input type={kind} value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder} autoComplete={autoComplete} inputMode={inputMode} aria-invalid={bad || undefined}
+      <input id={id} type={kind} value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder} autoComplete={autoComplete} inputMode={inputMode} aria-invalid={bad || undefined}
         style={{ width: "100%", marginTop: 4, minHeight: 44, border: `1.5px solid ${bad ? "var(--warning)" : "var(--border-strong)"}`, borderRadius: 8, padding: "9px 11px", fontSize: 14, fontFamily: "inherit" }} />
       {bad && <span style={{ fontSize: 11.5, color: "var(--warning)" }}>{msg}</span>}
     </label>
