@@ -31,6 +31,14 @@ describe("push guard suites (R-385)", () => {
     expect(PUSH_GUARD_BUDGET_MS).toBe(90_000);
   });
 
+  it("R-1817: the Gemini scans run on push, the slow retry-timer suite does not", () => {
+    expect(list).toContain("src/lib/ai/gemini-one-door.test.ts");
+    expect(list).not.toContain("src/lib/ai/gemini.test.ts");
+    const scans = fs.readFileSync(path.join(root, "src/lib/ai/gemini-one-door.test.ts"), "utf8");
+    expect(scans).toContain("generativelanguage.googleapis.com");
+    expect(fs.readFileSync(path.join(root, "src/lib/ai/gemini.test.ts"), "utf8")).not.toContain("readdirSync");
+  });
+
   it("includes the two suites that broke CI on 7 Oct", () => {
     expect(list).toContain("src/lib/a11y/a11y-ratchet.test.tsx");
     expect(list).toContain("src/app/(app)/quotes/invoice-link.test.ts");
