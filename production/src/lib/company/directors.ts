@@ -1,7 +1,7 @@
 /**
  * R-1850 (epic R-1841, Phase 3 — Pvt Ltd) — the directors register, as pure, tested rules.
  *
- * Rows live in company_directors (migration 20261024201000_r1850_company_directors.sql); the
+ * Rows live in company_directors (migration 20261024203000_r1850_company_directors.sql); the
  * database checks the same DIN / PAN / designation / date rules — the screen checks first so
  * the person sees the message beside the field.
  *

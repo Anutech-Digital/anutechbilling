@@ -1,6 +1,6 @@
 /**
  * R-1851 — share capital (company_share_capital) + shareholders (company_shareholders) and
- * their RPCs (migration 20261024202000_r1851_share_capital.sql). Writes only through the RPCs,
+ * their RPCs (migration 20261024204000_r1851_share_capital.sql). Writes only through the RPCs,
  * which check the role, the company, the business type and the authorised-capital limit.
  *
  * Untyped client: the tables and functions are newer than database.types.ts (shared,
