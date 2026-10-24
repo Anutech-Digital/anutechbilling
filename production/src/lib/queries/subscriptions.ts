@@ -12,6 +12,7 @@ import { guardErrorToast } from "@/lib/ui/guard-toast";
 import { createClient } from "@/lib/supabase/client";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { rupee } from "@/lib/utils";
 
 export function useSubscriptions() {
   return useQuery({
@@ -213,17 +214,71 @@ export function useCancelSubscription() {
         p_clear_due:       args.clearDue,
       });
       if (error) throw new Error(error.message);
-      return data as { due_cleared: number; last_day: string };
+      return data as { due_cleared: number; last_day: string; due_kept?: number; open_invoices?: string[] };
     },
     onSuccess: (r) => {
       invalidateReceivables(qc);   // R-1634: a cleared due leaves /collections too
+      /* R-1711: a due an open invoice asks for is kept — say where it still is. */
+      const kept = (r.due_kept ?? 0) > 0
+        ? ` ${rupee(r.due_kept ?? 0)} is still due on ${(r.open_invoices ?? []).join(", ")} — a credit note on that invoice reduces it.`
+        : "";
       toast.success("Subscription cancelled", {
-        description: r.due_cleared > 0
+        description: (r.due_cleared > 0
           ? `Out of MRR and renewals. ₹${r.due_cleared.toLocaleString("en-IN")} due cleared.`
-          : "Out of MRR and renewals. Nothing was deleted.",
+          : "Out of MRR and renewals. Nothing was deleted.") + kept,
       });
     },
     onError: (err) => toastError(err, { fallback: "Could not cancel the subscription." }),
+  });
+}
+
+/**
+ * R-1711: every invoice of a subscription — its own quote's, its renewal quote's and its
+ * instalments (the same match as cancel_subscription / write_off_subscription) — with the
+ * money columns the cancel dialog needs to split the due (lib/subscriptions/cancel-due.ts)
+ * and to open a credit note on one of them.
+ */
+export interface SubscriptionInvoice {
+  id: string;
+  status: string | null;
+  amount: number | null;
+  net_payable: number | null;
+  paid_amount: number | null;
+  written_off_at: string | null;
+  customer_name: string | null;
+  tax_rate: number | null;
+  inter_state: boolean | null;
+  invoice_date: string | null;
+}
+
+export function useSubscriptionInvoices(
+  sub: Pick<Subscription, "id" | "quote_id" | "renewal_quote_id"> | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["subscriptions", "invoices", sub?.id, sub?.quote_id, sub?.renewal_quote_id],
+    enabled: enabled && !!sub?.id,
+    queryFn: async (): Promise<SubscriptionInvoice[]> => {
+      const supabase = createClient();
+      const cols = "id, status, amount, net_payable, paid_amount, written_off_at, customer_name, tax_rate, inter_state, invoice_date";
+      const { data: bills, error: bErr } = await supabase
+        .from("subscription_billings").select("invoice_id").eq("subscription_id", sub!.id);
+      if (bErr) throw new Error(bErr.message);
+      const instalmentIds = Array.from(new Set((bills ?? []).map((b) => b.invoice_id).filter((x): x is string => !!x)));
+      const quoteIds = [sub!.quote_id, sub!.renewal_quote_id].filter((x): x is string => !!x);
+      const out = new Map<string, SubscriptionInvoice>();
+      if (quoteIds.length > 0) {
+        const { data, error } = await supabase.from("invoices").select(cols).in("quote_id", quoteIds);
+        if (error) throw new Error(error.message);
+        for (const r of (data ?? []) as SubscriptionInvoice[]) out.set(r.id, r);
+      }
+      if (instalmentIds.length > 0) {
+        const { data, error } = await supabase.from("invoices").select(cols).in("id", instalmentIds);
+        if (error) throw new Error(error.message);
+        for (const r of (data ?? []) as SubscriptionInvoice[]) out.set(r.id, r);
+      }
+      return Array.from(out.values());
+    },
   });
 }
 

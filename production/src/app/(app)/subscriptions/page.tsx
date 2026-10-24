@@ -95,7 +95,7 @@ import { useCustomers } from "@/lib/queries/customers";
 import { usePrimaryContacts } from "@/lib/queries/contacts";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { subscriptionExceptions } from "@/lib/subscriptions/exceptions";
-import { renewalClock, termValue, termValueLabel } from "@/lib/subscriptions/renewal-display";
+import { renewalClock, termValue, termValueLabel, liveTermAmount, subscriptionEnded } from "@/lib/subscriptions/renewal-display";
 import {
   subscriptionCycle, matchesCycle, cycleOptions, cycleFromUrl,
   CYCLE_URL_VALUES, type CycleFilter, type CycleUrlValue,
@@ -370,7 +370,7 @@ export default function SubscriptionsPage() {
     if (!leadId) return;
     let live = true;
     void createClient().from("leads")
-      .select("id, company, customer_id, domain, contact_name, contact_email, contact_phone, plan, seats, billing_cycle")
+      .select("id, company, customer_id, domain, contact_name, contact_email, contact_phone, plan, seats, billing_cycle, gstin, state_code")
       .eq("id", leadId).maybeSingle()
       .then(({ data }) => {
         if (!live || !data) return;
@@ -1159,7 +1159,7 @@ export default function SubscriptionsPage() {
                     <DomainCell sub={s} compact />
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="font-serif text-base tabular-nums text-ink">{rupee(s.mrr)}</p>
+                    <p className="font-serif text-base tabular-nums text-ink">{subscriptionEnded(s.status) ? "—" : rupee(s.mrr)}</p>
                     {/* Same shape as the table: vendor / billed, with the problem named
                         underneath. §20 — a number that exists only on the desktop table
                         is a number half the users never see. */}
@@ -1199,7 +1199,8 @@ export default function SubscriptionsPage() {
                   {/* R-1774: same words as the cycle chips; Check term → Correct details. */}
                   <SubCycleBadge
                     cyc={cyc}
-                    amount={t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null}
+                    /* R-1685: no renewal amount on an ended subscription. */
+                          amount={liveTermAmount(s.status, t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null)}
                     onCorrect={() => setEditSub(s)}
                   />
                 </div>
@@ -1334,7 +1335,8 @@ export default function SubscriptionsPage() {
                   const isUrgent = s.status === "active" && dl !== null && dl >= 0 && dl <= 30;
                   /* Postpaid credit clock. `none` for everything else, so prepaid rows
                      and pre-10-Sep-2026 rows look exactly as they did. */
-                  const due = paymentDueState(s.payment_due_date, todayIST(), s.outstanding_amount ?? 0);
+                  /* R-1685: an ended subscription is on no payment clock (its owed money still shows in SubExceptions). */
+                  const due = paymentDueState(subscriptionEnded(s.status) ? null : s.payment_due_date, todayIST(), s.outstanding_amount ?? 0);
                   const kbSelected = rowIndex === subKeys.index;
                   return (
                     <tr
@@ -1429,7 +1431,8 @@ export default function SubscriptionsPage() {
                         <SubCycleBadge
                           cyc={cyc}
                           className="mt-1"
-                          amount={t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null}
+                          /* R-1685: no renewal amount on an ended subscription. */
+                          amount={liveTermAmount(s.status, t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null)}
                           onCorrect={() => setEditSub(s)}
                         />
                       </td>
@@ -1496,7 +1499,7 @@ export default function SubscriptionsPage() {
                       </td>
                       {/* MRR — the money, given weight. */}
                       <td className="px-3 py-2.5 text-right tabular-nums align-middle">
-                        <span className="font-serif text-[15px] font-semibold text-ink">{rupee(s.mrr)}</span>
+                        <span className="font-serif text-[15px] font-semibold text-ink">{subscriptionEnded(s.status) ? "—" : rupee(s.mrr)}</span>
                       </td>
                       {/* Margin — colour-coded badge. */}
                       <td className="px-3 py-2.5 text-right align-middle">

@@ -68,6 +68,22 @@ export function renewalDistance(days: number): string {
  *   paused    → nothing (the status already says Suspended; renewal is on hold)
  *   active    → renewalDistance(), red when lapsed or within a week, amber within 30 days.
  */
+/**
+ * R-1685 — THE rule for "is this subscription over?". Every place that shows a renewal, a
+ * renewal amount, a renewal / payment clock or an auto-renew warning asks this, so a closed
+ * subscription can never read "Quarterly · ₹1,620, renews in 0d / due today" again
+ * (staging 19 Oct, T-19). Money really still owed (outstanding_amount) is still shown — as
+ * owed, not as a renewal.
+ */
+export function subscriptionEnded(status: string | null | undefined): boolean {
+  return status === "cancelled" || status === "expired";
+}
+
+/** R-1685: the per-invoice renewal amount for a term badge — none once the subscription has ended. */
+export function liveTermAmount(status: string | null | undefined, amount: string | null): string | null {
+  return subscriptionEnded(status) ? null : amount;
+}
+
 export interface RenewalClock {
   text: string;
   tone: "urgent" | "soon" | "calm" | "ended";
@@ -77,7 +93,7 @@ export function renewalClock(
   sub: { status: string | null | undefined; renewal_date: string | null | undefined; cancelled_at?: string | null },
   days: number | null,
 ): RenewalClock | null {
-  if (sub.status === "cancelled" || sub.status === "expired") {
+  if (subscriptionEnded(sub.status)) {
     const when = (sub.status === "cancelled" ? sub.cancelled_at : null) ?? sub.renewal_date;
     return { text: when ? `Ended ${formatDate(when)}` : "Ended", tone: "ended" };
   }

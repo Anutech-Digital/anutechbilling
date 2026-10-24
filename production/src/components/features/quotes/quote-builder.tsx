@@ -67,7 +67,8 @@ import { AddCustomerForm } from "@/components/features/customers/add-customer-fo
 import { useCreateQuote, useQuote } from "@/lib/queries/quotes";
 import { useGenerateInvoice } from "@/lib/queries/invoices";
 import { useUpdateLead, useQuoteLead, useCreateLead } from "@/lib/queries/leads";
-import { prospectContactProblem, hasProspectContact, prospectLeadRow } from "@/lib/quotes/prospect-contact";
+import { prospectContactProblem, hasProspectContact, prospectLeadRow, validProspectGstin } from "@/lib/quotes/prospect-contact";
+import { checkGstin, liveGstin, gstinState } from "@/lib/forms/poka-yoke";
 import { sameProductSubscriptions, sameProductNote } from "@/lib/quotes/same-product";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
@@ -369,6 +370,10 @@ function QuoteBuilderBody() {
      (lib/quotes/prospect-contact.ts) — quotes have no contact columns of their own. */
   const [prospectEmail, setProspectEmail] = React.useState<string>("");
   const [prospectPhone, setProspectPhone] = React.useState<string>("");
+  /* R-1712: a business typed as a new prospect got a B2C invoice — the GSTIN was never asked.
+     Saved on the prospect's lead (leads.gstin), which accept / record_payment copy to the new
+     customer's customers.gstin — the field every invoice reads. */
+  const [prospectGstin, setProspectGstin] = React.useState<string>("");
   /** The lead made for a typed prospect on an earlier save of this screen — never two. */
   const prospectLeadRef = React.useRef<string | null>(null);
   // Customer-entry mode — a clean either/or toggle (was two inputs shown at once,
@@ -881,10 +886,11 @@ function QuoteBuilderBody() {
       ? quoteContact(customer, leadFromQuery)
       : quoteContact({ contact_email: prospectEmail, contact_phone: prospectPhone });
   /* R-1485: the buyer's GSTIN in the preview — lead mode: the (editable) lead GSTIN; a
-     customer: its own row only (quoteBuyerGstin). A typed prospect has none. */
+     customer: its own row only (quoteBuyerGstin). A typed prospect: the GSTIN typed here once it
+     passes the checksum (R-1712). */
   const previewGstin = isLeadMode
     ? quoteBuyerGstin(null, { gstin: leadGstin })
-    : customerId ? quoteBuyerGstin(customer ?? { gstin: null }) : null;
+    : customerId ? quoteBuyerGstin(customer ?? { gstin: null }) : validProspectGstin(prospectGstin);
   const gstinMissing = !!customerId && buyerGstinMissing(customer);
   // Invoice mode: pre-fill the payment terms from the customer's default (0164).
   // Fires when a customer with a saved term is selected; a manual Terms change
@@ -1371,7 +1377,7 @@ function QuoteBuilderBody() {
       return;
     }
     const typedProspect = !isLeadMode && !customerId && !isInvoiceMode;
-    const contactProblem = typedProspect ? prospectContactProblem({ email: prospectEmail, phone: prospectPhone }) : null;
+    const contactProblem = typedProspect ? prospectContactProblem({ email: prospectEmail, phone: prospectPhone, gstin: prospectGstin }) : null;
     if (contactProblem) {
       toast.error("Check the prospect's contact", { description: contactProblem });
       return;
@@ -1478,11 +1484,11 @@ function QuoteBuilderBody() {
          linked to it — the contact then lives where Send, Record payment and the pipeline
          already read it. Made once per screen (the ref), never for a picked customer. */
       let prospectLeadId: string | null = prospectLeadRef.current;
-      if (typedProspect && !linkedLeadId && !prospectLeadId && hasProspectContact({ email: prospectEmail, phone: prospectPhone })) {
+      if (typedProspect && !linkedLeadId && !prospectLeadId && hasProspectContact({ email: prospectEmail, phone: prospectPhone, gstin: prospectGstin })) {
         const seats = quoteSeatCount(lineItems) ?? 0;
         const row = prospectLeadRow({
           name: resolvedCustomerName,
-          contact: { email: prospectEmail, phone: prospectPhone },
+          contact: { email: prospectEmail, phone: prospectPhone, gstin: prospectGstin },
           stateCode: prospectStateCode || null,
           stateName: prospectStateCode ? (GST_STATE_BY_CODE[prospectStateCode] ?? null) : null,
           country: prospectCountry,
@@ -2012,6 +2018,32 @@ function QuoteBuilderBody() {
                       value={prospectPhone}
                       onChange={(e) => setProspectPhone(e.target.value)}
                     />
+                  </FormField>
+                  {/* R-1712: GSTIN, checked as typed; a valid one sets the place of supply below. */}
+                  <FormField label="GSTIN" htmlFor="prospectGstin" className="sm:col-span-2">
+                    <Input
+                      id="prospectGstin"
+                      autoComplete="off"
+                      placeholder="27AAPFU0939F1ZV"
+                      className="font-mono uppercase"
+                      value={prospectGstin}
+                      onChange={(e) => {
+                        const v = liveGstin(e.target.value);
+                        setProspectGstin(v);
+                        const st = gstinState(v);
+                        if (st) setProspectStateCode(st.code);
+                      }}
+                    />
+                    {(() => {
+                      const g = checkGstin(prospectGstin);
+                      if (g.tone === "ok") return <p className="mt-1 text-3xs text-emerald">Valid GSTIN · {g.detail} — place of supply set from it.</p>;
+                      if (g.tone === "typing" || g.tone === "error") return <p role="alert" className="mt-1 text-3xs text-rose">{g.message}</p>;
+                      return (
+                        <p className="mt-1 text-3xs text-amber-ink">
+                          A registered business? Add its GSTIN — without it the tax invoice is B2C and they cannot claim the GST back. Leave it empty for a person.
+                        </p>
+                      );
+                    })()}
                   </FormField>
                   {prospectContactProblem({ email: prospectEmail, phone: prospectPhone }) ? (
                     <p role="alert" className="sm:col-span-2 -mt-1 text-3xs text-rose">

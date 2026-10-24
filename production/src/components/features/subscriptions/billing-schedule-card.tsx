@@ -27,7 +27,8 @@ import { subscriptionSchedule, nextTermSchedule } from "@/lib/billing/subscripti
 import { scheduleTotal, periodLastDay } from "@/lib/billing/schedule";
 import { cycleScheduleLabel } from "@/lib/quotes/billing";
 import { useScheduleInvoices } from "@/lib/queries/subscriptions";
-import { scheduleInvoices, nextUninvoiced, nextTermShowsNext, type ScheduleInvoice } from "./schedule-invoices";
+import { scheduleInvoices, nextUninvoiced, nextTermShowsNext, scheduleCountLabel, type ScheduleInvoice } from "./schedule-invoices";
+import { subscriptionEnded } from "@/lib/subscriptions/renewal-display";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenRoute } from "@/lib/nav";
 import { InvoicePeekDialog } from "./invoice-peek-dialog";
@@ -37,7 +38,9 @@ export function BillingScheduleCard({ subscription, todayISO }: {
   todayISO: string;
 }) {
   const current = React.useMemo(() => subscriptionSchedule(subscription), [subscription]);
-  const next    = React.useMemo(() => nextTermSchedule(subscription), [subscription]);
+  /* R-1685: an ended subscription has no next term and no "next" bill. */
+  const ended   = subscriptionEnded(subscription.status);
+  const next    = React.useMemo(() => (ended ? [] : nextTermSchedule(subscription)), [subscription, ended]);
   const { data: inv } = useScheduleInvoices(subscription);
   const invoiced = React.useMemo(() => scheduleInvoices({
     periods: current,
@@ -70,7 +73,7 @@ export function BillingScheduleCard({ subscription, todayISO }: {
       title="Billing schedule"
       sub={`${termLabel} term · ${cycleScheduleLabel(subscription.billing_cycle)}`}
     >
-      <ScheduleTable rows={current} todayISO={todayISO} label="This term" invoiced={invoiced} />
+      <ScheduleTable rows={current} todayISO={todayISO} label={ended ? "Billing dates (ended)" : "This term"} invoiced={invoiced} showNext={!ended} />
 
       {next.length > 0 && (
         <div className="mt-4 border-t border-hairline pt-4">
@@ -109,7 +112,7 @@ function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true
             for one bill with nothing distinguishing them is how a rep and a customer
             end up arguing about which is right. */}
         <span className="text-2xs text-ink-3">
-          {rows.length} {rows.length === 1 ? "invoice" : "invoices"} · {rupee(total)} ex-GST
+          {scheduleCountLabel(rows.length, rows.filter((p) => invoiced.has(p.index)).length)} · {rupee(total)} ex-GST
         </span>
       </div>
       <ul className="divide-y divide-hairline">

@@ -82,3 +82,13 @@ export function nextUninvoiced(periods: BillingPeriod[], invoiced: Map<number, S
 export function nextTermShowsNext(current: BillingPeriod[], invoiced: Map<number, ScheduleInvoice>, todayISO: string): boolean {
   return nextUninvoiced(current, invoiced, todayISO) === null;
 }
+
+/**
+ * R-1685: the schedule header counted ROWS and called them invoices — a back-dated monthly term
+ * with no invoice raised read "1 invoice" beside "date passed" (staging T-16). Rows are billing
+ * dates; how many of them really have an invoice is said separately, and only when there is one.
+ */
+export function scheduleCountLabel(rows: number, invoicedCount: number): string {
+  const dates = `${rows} billing ${rows === 1 ? "date" : "dates"}`;
+  return invoicedCount > 0 ? `${dates} · ${invoicedCount} invoiced` : dates;
+}

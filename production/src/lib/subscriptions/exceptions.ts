@@ -20,6 +20,7 @@
 import { rupee, formatDate } from "@/lib/utils";
 import { renewalStateLabel, renewalStateTone, type RenewalState } from "@/lib/renewals/cadence";
 import { paymentDueState, paymentDueChipLabel, todayIST } from "./payment-due";
+import { subscriptionEnded } from "./renewal-display";
 
 export type ExceptionTone = "muted" | "info" | "warning" | "danger" | "success";
 
@@ -34,6 +35,8 @@ export interface SubExceptionFlag {
 
 /** Only the fields this decision reads — so tests need not build a whole row. */
 export interface SubExceptionFields {
+  /** R-1685: an ended (cancelled / expired) subscription has no renewal and no payment clock. */
+  status?: string | null;
   auto_renew?: boolean | null;
   renewal_state?: RenewalState | null;
   reminder_count?: number | null;
@@ -52,11 +55,12 @@ const n = (v: number | null | undefined): number =>
 
 export function subscriptionExceptions(s: SubExceptionFields): SubExceptionFlag[] {
   const out: SubExceptionFlag[] = [];
+  const ended = subscriptionEnded(s.status);
 
   // Auto-renew off means the renewals cron generates no quote and the
   // subscription lapses to `expired` on its date with nobody told. This was
   // not surfaced anywhere in the app — mobile or desktop.
-  if (s.auto_renew === false) {
+  if (s.auto_renew === false && !ended) {
     out.push({
       key: "auto_renew_off",
       label: "Won't auto-renew",
@@ -68,7 +72,7 @@ export function subscriptionExceptions(s: SubExceptionFields): SubExceptionFlag[
   // Where the renewal chase has actually reached, so nobody rings a customer
   // unaware that four reminders already went out under their name.
   // `pending` is the resting state and carries no news.
-  if (s.renewal_state && s.renewal_state !== "pending") {
+  if (s.renewal_state && s.renewal_state !== "pending" && !ended) {
     const sent = n(s.reminder_count);
     out.push({
       key: "renewal_state",
@@ -81,7 +85,16 @@ export function subscriptionExceptions(s: SubExceptionFields): SubExceptionFlag[
   }
 
   // Service can be live with money still owed.
-  if (n(s.outstanding_amount) > 0) {
+  /* R-1685: an ended subscription that still owes says so — as owed, with no "service is
+     active" and no payment countdown (a closed record is not on a credit clock). */
+  if (n(s.outstanding_amount) > 0 && ended) {
+    out.push({
+      key: "outstanding",
+      label: `${rupee(n(s.outstanding_amount))} still owed`,
+      tone: "warning",
+      title: "The subscription has ended but this amount is still unpaid",
+    });
+  } else if (n(s.outstanding_amount) > 0) {
     out.push({
       key: "outstanding",
       label: `${rupee(n(s.outstanding_amount))} due`,

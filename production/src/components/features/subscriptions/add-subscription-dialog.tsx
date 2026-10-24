@@ -12,6 +12,7 @@ import * as React from "react";
 import { NUMBERING_FIX } from "@/lib/onboarding/setup-links";
 import { GstStateSelect, EXPORT_STATE } from "@/components/shared/gst-state-select";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
+import { checkGstin, liveGstin, gstinState } from "@/lib/forms/poka-yoke";
 import { toast } from "sonner";
 import { describeError } from "@/lib/errors/toast-error";
 import { NEEDS_INPUT_CLASS } from "@/lib/ai/test-trail";
@@ -178,6 +179,12 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
   /* R-174: a new customer's place of supply (GST code, or EXPORT_STATE). Without it the
      GST invoice for this sale is refused ("no state on record"). */
   const [newCustState, setNewCustState] = React.useState("");
+  /* R-1712: a new customer's GSTIN — it was never asked, so a business got a B2C invoice that
+     cannot be changed afterwards. Written to customers.gstin (the field every invoice reads),
+     only for a customer this form CREATES; an existing customer is never changed here. */
+  const [newCustGstin, setNewCustGstin] = React.useState("");
+  const newGstinCheck = checkGstin(newCustGstin);
+  const newGstinValid = newGstinCheck.tone === "ok" ? liveGstin(newCustGstin) : null;
   /* ── Picking someone who already exists ────────────────────────────────────
      Abhishek, 18 Sep 2026: "make it searchable so if that contact available then it
      should selected". Since migration 20260918090000 a person can serve several
@@ -419,8 +426,8 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       setContactEmail("");
       setContactPhone("");
       setContactRole("poc");
-    setNewCustState("");
-      setNewCustState("");
+    setNewCustState(""); setNewCustGstin("");
+      setNewCustState(""); setNewCustGstin("");
     }
   };
 
@@ -432,7 +439,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
     setContactEmail("");
     setContactPhone("");
     setContactRole("poc");
-    setNewCustState("");
+    setNewCustState(""); setNewCustGstin("");
   };
 
   /**
@@ -517,6 +524,10 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       setContactName(prefill.contactName);
       setContactEmail(prefill.contactEmail);
       setContactPhone(prefill.contactPhone);
+      /* R-1712: the deal's GSTIN (and the state it proves) come along. */
+      if (prefill.gstin) setNewCustGstin(liveGstin(prefill.gstin));
+      const prefillState = gstinState(prefill.gstin)?.code ?? prefill.stateCode;
+      if (prefillState) setNewCustState(prefillState);
     }
     if (prefill.seats) setSeatsText(String(prefill.seats));
     setBillingChoice(prefill.billingChoice);
@@ -766,6 +777,18 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
        bare 10-digit mobiles, landlines with a 2-to-4 digit STD code, extensions — and
        every pattern strict enough to be worth having would eventually refuse a real
        customer's real number. Required, not policed. */
+    if (needsContact && (newGstinCheck.tone === "typing" || newGstinCheck.tone === "error")) {
+      toast.error("Check the GSTIN", { className: NEEDS_INPUT_CLASS,
+        description: `${newGstinCheck.message} Fix it, or clear the box if this customer has no GSTIN.`,
+      });
+      return;
+    }
+    if (needsContact && newGstinValid && newCustState && newCustState !== newGstinValid.slice(0, 2)) {
+      toast.error("The GSTIN and the state disagree", { className: NEEDS_INPUT_CLASS,
+        description: `The GSTIN is registered in ${GST_STATE_BY_CODE[newGstinValid.slice(0, 2)] ?? newGstinValid.slice(0, 2)}, the state says ${GST_STATE_BY_CODE[newCustState] ?? newCustState}. The invoice's GST head follows the state — pick the right one.`,
+      });
+      return;
+    }
     if (needsContact && !newCustState) {
       toast.error("Choose the customer's state", { className: NEEDS_INPUT_CLASS,
         description: "The GST invoice needs it — it decides CGST + SGST or IGST. Pick \"Outside India\" for a foreign customer.",
@@ -919,6 +942,8 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
           ...(newCustState === EXPORT_STATE
             ? { country: "Outside India" }
             : newCustState ? { state_code: newCustState, state: GST_STATE_BY_CODE[newCustState] ?? null } : {}),
+          // R-1712: the GSTIN typed for this NEW customer (checksum-valid only).
+          ...(newGstinValid && newCustState !== EXPORT_STATE ? { gstin: newGstinValid } : {}),
         } as any);
         if (custErr) throw custErr;
         customerId = newCustId;
@@ -1358,6 +1383,29 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               </FormField>
               <FormField label="Customer's state (GST)" required htmlFor="newCustState">
                 <GstStateSelect id="newCustState" value={newCustState} onChange={setNewCustState} allowExport />
+              </FormField>
+              {/* R-1712: the GSTIN, checked as typed; a valid one sets the state. */}
+              <FormField label="GSTIN" htmlFor="newCustGstin">
+                <Input
+                  id="newCustGstin"
+                  autoComplete="off"
+                  placeholder="27AAPFU0939F1ZV"
+                  className="font-mono uppercase"
+                  value={newCustGstin}
+                  onChange={(e) => {
+                    const v = liveGstin(e.target.value);
+                    setNewCustGstin(v);
+                    const st = gstinState(v);
+                    if (st) setNewCustState(st.code);
+                  }}
+                />
+                {newGstinCheck.tone === "ok" ? (
+                  <p className="mt-1 text-3xs text-emerald">Valid GSTIN · {newGstinCheck.detail}</p>
+                ) : newGstinCheck.tone === "empty" ? (
+                  <p className="mt-1 text-3xs text-amber-ink">A registered business? Add it — without it the invoice is B2C and they cannot claim the GST back.</p>
+                ) : (
+                  <p role="alert" className="mt-1 text-3xs text-rose">{newGstinCheck.message}</p>
+                )}
               </FormField>
               <FormField label="Contact Phone" required htmlFor="contactPhone">
                 <Input

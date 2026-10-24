@@ -60,6 +60,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   split_outstanding_for: "per quote",
   suggest_invoice_write_off: "open balances",
   suspend_subscription: "per subscription",
+  cancel_subscription: "R-1711: what one subscription's open invoices still ask for, so a cancel never clears it (no money column changes on invoices)",
   write_off_subscription: "R-1635: stamps one subscription's open invoices written off (no money column changes)",
   sync_project_invoice_paid: "project receipts",
   tg_payment_followups_same_tenant: "tenant check",
