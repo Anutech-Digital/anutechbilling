@@ -6,7 +6,7 @@
  * expenses. What the screens need, kept pure so it can be tested:
  *   - which open advance a person has (the bank page pre-picks "top-up" vs "new advance");
  *   - how a set of bills splits between the advance and a reimbursement — the same order and
- *     arithmetic as add_employee_advance_bills (migration 20261024170000), so the dialog's
+ *     arithmetic as add_employee_advance_bills (migration 20261024202000), so the dialog's
  *     "Reimburse ₹X to <name>" is the number the database books;
  *   - which advance a money-in line most likely returns.
  * Whole rupees in, whole rupees out.

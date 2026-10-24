@@ -4,7 +4,7 @@
  *   book_bank_txn_as_employee_advance(p_txn_id, p_kind, p_name, p_advance_id, p_reimbursement_id, p_note)
  *     'give' / 'top_up' (money-out), 'return' (money-in), 'reimburse' (money-out, pays a pending
  *     reimbursement). Reuses give / top-up / settle_employee_advance and settle_reimbursement;
- *     un-reconciling the line reverses it (trigger). Migration 20261024170000.
+ *     un-reconciling the line reverses it (trigger). Migration 20261024202000.
  *   add_employee_advance_bills(p_advance_id, p_bills, p_reimburse_extra)
  *     several bills as expenses against the advance; the part over the balance → add_reimbursement.
  */
