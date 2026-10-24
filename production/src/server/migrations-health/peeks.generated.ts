@@ -182,4 +182,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r1657autoreconcile", peek: "to_regprocedure('public.auto_reconcile_bank_account(uuid,uuid,integer)') is not null" },
   { key: "r1716istdocdates", peek: "exists(select 1 from pg_attrdef d join pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum where d.adrelid = to_regclass('public.quotes') and a.attname = 'created_date' and pg_get_expr(d.adbin, d.adrelid) like '%Asia/Kolkata%')" },
   { key: "r1711cancelinvoicedue", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.cancel_subscription(uuid,date,text,boolean)') and prosrc like '%R-1711%')" },
+  { key: "r1816moneyrpcsisttoday", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.get_partner_metrics()') and prosrc not ilike '%current_date%')" },
 ];

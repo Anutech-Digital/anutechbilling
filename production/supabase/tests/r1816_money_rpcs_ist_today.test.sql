@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 -- R-1816: the money RPCs stamp the IST calendar day, not CURRENT_DATE (the UTC day on Cloud SQL —
--- a day behind between 00:00 and 05:30 IST). Migration: 20261024022950_r1816_money_rpcs_ist_today.
+-- a day behind between 00:00 and 05:30 IST). Migration: 20261024030326_r1816_money_rpcs_ist_today.
 -- Self-asserting, ONE transaction, rolled back — safe anywhere:
 --
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/tests/r1816_money_rpcs_ist_today.test.sql

@@ -132,7 +132,7 @@ describe("document dates default to the IST day, not CURRENT_DATE (R-1716)", () 
   /* SQL functions that write a document / customer row with an explicit CURRENT_DATE do not use
      the column default. Ratchet over the LATEST definition of each function: the list may only
      go DOWN. R-1716 recorded nine money RPCs here; R-1816 (migration
-     20261024022950_r1816_money_rpcs_ist_today) moved all nine to public.ist_today(), so the
+     20261024030326_r1816_money_rpcs_ist_today) moved all nine to public.ist_today(), so the
      list is EMPTY — any hit now is a new regression. */
   const KNOWN_SQL_CURRENT_DATE = new Set<string>([]);
   const WRITES = /(invoices|credit_notes|debit_notes|quotes|customers)\b/i;

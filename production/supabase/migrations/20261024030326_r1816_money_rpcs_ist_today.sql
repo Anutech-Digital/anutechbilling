@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.get_partner_metrics()') and prosrc not ilike '%current_date%')
 -- deploy-key: r1816moneyrpcsisttoday
--- 20261024022950_r1816_money_rpcs_ist_today.sql
+-- 20261024030326_r1816_money_rpcs_ist_today.sql
 --
 -- R-1816 (P1 money, 24 Oct 2026) — follow-up to R-1716 (needsDecision b).
 -- Nine money RPCs stamped dates with CURRENT_DATE. That is the day in the session time zone,

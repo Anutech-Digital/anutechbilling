@@ -210,6 +210,7 @@ MIGS=(
   "r1657autoreconcile|20261024001702_r1657_auto_reconcile_server.sql|resellersos_migration|to_regprocedure('public.auto_reconcile_bank_account(uuid,uuid,integer)') is not null"
   "r1716istdocdates|20261024013223_r1716_ist_document_dates.sql|resellersos_migration|exists(select 1 from pg_attrdef d join pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum where d.adrelid = to_regclass('public.quotes') and a.attname = 'created_date' and pg_get_expr(d.adbin, d.adrelid) like '%Asia/Kolkata%')"
   "r1711cancelinvoicedue|20261024023359_r1711_cancel_keeps_invoice_due.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.cancel_subscription(uuid,date,text,boolean)') and prosrc like '%R-1711%')"
+  "r1816moneyrpcsisttoday|20261024030326_r1816_money_rpcs_ist_today.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.get_partner_metrics()') and prosrc not ilike '%current_date%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
