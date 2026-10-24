@@ -1,5 +1,5 @@
 /**
- * POST /api/auth/onboarding/new-tenant   { companyName, gstin?, businessType? }
+ * POST /api/auth/onboarding/new-tenant   { companyName, gstin?, businessType?, sellMode? }
  *
  * Creates the workspace that the OAuth callback used to create by itself.
  *
@@ -16,6 +16,11 @@
  * R-1843: businessType (proprietor | partnership | llp | pvt_ltd) is optional — the /welcome
  * question. Missing / null leaves tenants.business_type empty (= Pvt Ltd until the owner sets
  * it in Settings); any other value is a 400, nothing created.
+ *
+ * R-1860: sellMode (subscriptions | one_time | both) is optional too — the /welcome "What do you
+ * sell?" question. Missing / null / 'both' writes nothing (the column default is Both); any other
+ * value is a 400. Stored with a separate update after the tenant insert, so a workspace is still
+ * created on a database that does not have tenants.sell_mode yet.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { trustedOrigin } from "@/lib/app-url";
@@ -25,12 +30,16 @@ import { initials } from "@/lib/utils";
 import { normalizeEmail } from "@/lib/auth/membership";
 import { emailDomain, isPublicEmailDomain } from "@/lib/auth/domain";
 import { routeVerifiedSignupToCompany } from "@/lib/auth/tenant-match";
+import { SELL_MODES, type SellMode } from "@/lib/sell-mode";
 
 const schema = z.object({
   companyName: z.string().trim().min(2, "Company name is required").max(120),
   gstin:       z.string().trim().max(20).optional().nullable(),
   businessType: z.enum(["proprietor", "partnership", "llp", "pvt_ltd"], {
     message: "Pick Proprietorship, Partnership, LLP or Private Limited — or leave it empty and set it later in Settings.",
+  }).optional().nullable(),
+  sellMode: z.enum(SELL_MODES as [SellMode, ...SellMode[]], {
+    message: "Pick Subscriptions, One-time products & services or Both — you can change it later in Settings.",
   }).optional().nullable(),
 });
 
@@ -120,6 +129,16 @@ export async function POST(request: NextRequest) {
     await admin.from("tenants").delete().eq("id", tenantId);
     console.error("[onboarding/new-tenant] users insert failed:", userErr.message);
     return NextResponse.json({ error: "Could not finish setting you up. Please try again." }, { status: 500 });
+  }
+
+  // R-1860: what this business sells. Not 'both' (the column default) → store it. A failure
+  // here never undoes the workspace — the owner can set it in Settings → Company.
+  const sellMode = parsed.data.sellMode;
+  if (sellMode && sellMode !== "both") {
+    const { error } = await (admin.from("tenants") as unknown as {
+      update: (row: { sell_mode: SellMode }) => { eq: (c: string, v: string) => Promise<{ error: { message: string } | null }> };
+    }).update({ sell_mode: sellMode }).eq("id", tenantId);
+    if (error) console.warn("[onboarding/new-tenant] sell mode not saved:", error.message);
   }
 
   // Claim this company's own domain, UNVERIFIED. Unverified routes nobody

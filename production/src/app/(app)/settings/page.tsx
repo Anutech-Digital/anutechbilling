@@ -32,6 +32,7 @@ import { Input } from "@/components/ui/input";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { NotificationsCard } from "@/components/features/settings/notifications-card";
 import { ComplianceProfileCard } from "@/components/features/compliance/compliance-profile-card";
+import { SellModeCard } from "@/components/features/settings/sell-mode-card";
 import { BusinessTypePrompt } from "@/components/features/compliance/business-type-prompt";
 import { PartnersRegisterCard } from "@/components/features/partners/partners-register-card";
 import { TurnoverCard } from "@/components/features/compliance/turnover-card";
@@ -560,6 +561,9 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
 
       {/* R-1847: Partnership / LLP only — the partners register (name, PAN, DPIN, share %, capital). */}
       <PartnersRegisterCard />
+
+      {/* R-1860: Subscriptions / One-time / Both → what the menu and dashboard show first. */}
+      <SellModeCard isOwner={isOwner} />
 
       {/* R-337: aggregate turnover → e-invoice (IRN) warnings on invoices. */}
       <TurnoverCard isOwner={isOwner} />
