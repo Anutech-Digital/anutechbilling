@@ -97,7 +97,10 @@ export function BankFilterBar({ filters: f, onChange, counts, totals, needs, imp
                 {filtersLabel}
               </Button>
             </PopoverTrigger>
-            <PopoverContent align="start" className="w-[24rem] max-h-[70vh] overflow-y-auto p-0">
+            {/* Fit the space Radix measured, so a low trigger never pushes the panel off-screen. */}
+            <PopoverContent align="start" side="bottom" collisionPadding={12}
+              className="w-[24rem] overflow-y-auto p-0"
+              style={{ maxHeight: "min(70vh, var(--radix-popover-content-available-height))" }}>
               {panel}
             </PopoverContent>
           </Popover>

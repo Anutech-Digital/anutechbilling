@@ -77,6 +77,8 @@ import {
   type StatusFilter,
 } from "@/lib/banking/bank-filters";
 import { reconcileCoverage } from "@/lib/banking/reconcile-coverage";
+import { guessVendor, type VendorLite } from "@/lib/banking/debit-pay-for";
+import { useVendors } from "@/lib/queries/vendors";
 import { BankFilterBar, type ImportOption } from "@/components/features/banking/bank-filter-bar";
 import { ReconcileCoverageTile } from "@/components/features/banking/reconcile-coverage-tile";
 import { downloadCSV } from "@/lib/csv";
@@ -174,15 +176,17 @@ export default function BankAccountDetailPage() {
   const { data: oldBookings } = useOldOneOffBookings(accountId, canWrite);
   const oldById = React.useMemo(() => new Map((oldBookings ?? []).map((b) => [b.txn_id, b])), [oldBookings]);
 
-  /* R-1869 "Money out · no vendor yet": unmatched money out that is not a salary line (Salary
-     lines has its own button). R-1867 narrows it with the vendor guess from the narration
-     (lib/banking/debit-pay-for guessVendor) when that lands — swap the rule here, one place. */
+  /* R-1869 "Money out · no vendor yet": unmatched money out where R-1866's guessVendor (the
+     same guess the Reconcile sheet pre-fills) finds nobody — and not a salary line (Salary lines
+     has its own button). Same vendor list query as the sheet, so it is read once. */
+  const { data: vendorRows } = useVendors();
   const noVendorIds = React.useMemo(() => {
     const salaryIds = new Set(salaryLines.map((l) => l.txn.id));
+    const vendors = (vendorRows ?? []) as unknown as VendorLite[];
     return new Set((transactions ?? [])
-      .filter((t) => t.matched_to_type === null && t.debit > 0 && !salaryIds.has(t.id))
+      .filter((t) => t.matched_to_type === null && t.debit > 0 && !salaryIds.has(t.id) && guessVendor(t, vendors) === null)
       .map((t) => t.id));
-  }, [transactions, salaryLines]);
+  }, [transactions, salaryLines, vendorRows]);
 
   /* The Imports list (R-1623) — "Statement file" filter: which lines each import brought in. */
   const { data: importRows } = useBankImportHistory(accountId);
