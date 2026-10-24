@@ -33,6 +33,8 @@ const SQL_NOT_SALE: Record<string, string> = {
   zoho_books_import_apply: "R-1753: open Zoho invoices go in through import_opening_invoices (opening, never a sale)",
   zoho_books_import_undo: "R-1753: refuses while a created customer has other invoices; removes its own opening invoices",
   accept_project_quote: "creates a project invoice of ours",
+  bank_credit_open_items: "R-1838: lists a customer's unpaid invoices to take a bank receipt (opening invoices excluded: no quote / instalment link)",
+  reconcile_bank_credit_to_item: "R-1838: records a bank receipt on the picked invoice via record_desk_payment / record_instalment_payment",
   activate_quote_on_credit: "quote → our invoice",
   bill_late_charges: "late fee on an overdue balance (a new debit note of ours)",
   delete_customer: "refuses while invoices exist",
