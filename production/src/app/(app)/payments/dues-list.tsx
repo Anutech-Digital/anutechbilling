@@ -97,11 +97,11 @@ export const canWriteOffDue = (o: Pick<OutstandingRow, "days_outstanding">) => o
  * Overdue first: rows past their agreed due date, then the oldest balance first. Stable for
  * ties (the hook's own order), and never mutates the input.
  */
-export function duesOrder<T extends Pick<OutstandingRow, "payment_due_date" | "outstanding_amount" | "days_outstanding">>(
+export function duesOrder<T extends Pick<OutstandingRow, "payment_due_date" | "pay_by" | "outstanding_amount" | "days_outstanding">>(
   rows: readonly T[],
   today: string = todayIST(),
 ): T[] {
-  const overdue = (o: T) => (paymentDueState(o.payment_due_date, today, o.outstanding_amount).kind === "overdue" ? 1 : 0);
+  const overdue = (o: T) => (paymentDueState(payByOf(o), today, o.outstanding_amount).kind === "overdue" ? 1 : 0);
   return rows
     .map((o, i) => ({ o, i, od: overdue(o) }))
     .sort((a, b) => b.od - a.od || b.o.days_outstanding - a.o.days_outstanding || a.i - b.i)
@@ -159,17 +159,24 @@ function DuesMoreMenu({ o, actions }: { o: OutstandingRow; actions: DuesActions 
   );
 }
 
-/** The agreed-due-date chip (postpaid credit clock) — same function as /subscriptions. */
+/** R-1689: the date the row's money is due — its oldest unpaid invoice's, else the agreed date. */
+function payByOf(o: Pick<OutstandingRow, "payment_due_date" | "pay_by">): string | null {
+  return o.pay_by ?? o.payment_due_date ?? null;
+}
+
+/** The pay-by chip (invoice due date, else the postpaid credit clock) — same function as /subscriptions. */
 function DueChip({ o }: { o: OutstandingRow }) {
-  const due = paymentDueState(o.payment_due_date, todayIST(), o.outstanding_amount);
-  if (due.kind === "none") return null;
+  const payBy = payByOf(o);
+  const due = paymentDueState(payBy, todayIST(), o.outstanding_amount);
+  if (due.kind === "none" || !payBy) return null;
+  const fromInvoice = !!o.pay_by && o.pay_by !== o.payment_due_date?.slice(0, 10);
   return (
     <Badge
       kind={due.kind === "overdue" ? "danger" : due.kind === "upcoming" ? "muted" : "warning"}
       size="sm"
-      title={`Agreed due date ${formatDate(o.payment_due_date!)}`}
+      title={`${fromInvoice ? "Invoice due date" : "Agreed due date"} ${formatDate(payBy)}`}
     >
-      {paymentDueChipLabel(due, formatDate(o.payment_due_date!))}
+      {paymentDueChipLabel(due, formatDate(payBy))}
     </Badge>
   );
 }

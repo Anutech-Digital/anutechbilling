@@ -44,6 +44,9 @@ export interface SubExceptionFields {
   outstanding_amount?: number | null;
   /** Postpaid credit clock (migration 20260910060000). Null = no agreed date. */
   payment_due_date?: string | null;
+  /** R-1689: when the money is due — the oldest unpaid invoice's due date, else the agreed date
+   *  (OutstandingRow.pay_by). Absent = not read; the agreed date alone is used. */
+  pay_by?: string | null;
   seats?: number | null;
   used?: number | null;
   suspended_at?: string | null;
@@ -113,12 +116,18 @@ export function subscriptionExceptions(s: SubExceptionFields): SubExceptionFlag[
        it too, for free, and it is tested in exceptions.test.ts alongside the other
        branches — none of which fire against today's production data, which is
        exactly why they are tested here and not eyeballed on screen. */
-    const state = paymentDueState(s.payment_due_date, todayIST(), n(s.outstanding_amount));
+    /* R-1689: credit / "invoice now, pay later" raise an invoice with a due date and leave
+       payment_due_date empty — the row read "No payment due date" while the invoice fell due on
+       3 Nov. The date the money is due is the oldest unpaid invoice's (pay_by, from the dues
+       read — lib/queries/payments.ts subscriptionPayBy), else the agreed date. */
+    const payBy = s.pay_by ?? s.payment_due_date ?? null;
+    const fromInvoice = !!s.pay_by && s.pay_by !== s.payment_due_date?.slice(0, 10);
+    const state = paymentDueState(payBy, todayIST(), n(s.outstanding_amount));
     out.push({
       key: "payment-due",
       label: paymentDueChipLabel(
         state,
-        s.payment_due_date ? formatDate(s.payment_due_date) : "",
+        payBy ? formatDate(payBy) : "",
       ),
       /* Red only once it is actually late. Amber inside the last three days, quiet
          before that, and MUTED when no date was ever agreed — that last one is a
@@ -129,7 +138,9 @@ export function subscriptionExceptions(s: SubExceptionFields): SubExceptionFlag[
           : "warning",
       title: state.kind === "none"
         ? "No agreed payment date — set one via the row's ⋯ menu → Correct subscription, and the countdown starts"
-        : `Postpaid — ${rupee(n(s.outstanding_amount))} due on ${formatDate(s.payment_due_date!)}`,
+        : fromInvoice
+          ? `Unpaid invoice — ${rupee(n(s.outstanding_amount))} due, the invoice falls due on ${formatDate(payBy!)}`
+          : `Postpaid — ${rupee(n(s.outstanding_amount))} due on ${formatDate(payBy!)}`,
     });
   }
 

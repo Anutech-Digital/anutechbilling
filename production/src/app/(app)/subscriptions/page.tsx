@@ -14,6 +14,7 @@ import { useListKeys } from "@/lib/hooks/useKeyboard";
 import { KeyHintBar, ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { useRouter } from "next/navigation";
 import { useSubscriptions, useSetSubscriptionDomain, useDeleteSubscription } from "@/lib/queries/subscriptions";
+import { useOutstandingReceivables } from "@/lib/queries/payments";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
 import { initialSubscriptionSearch, SUBSCRIPTION_SEARCH_EVENT } from "./palette-links";
@@ -141,8 +142,9 @@ function vendorMeta(v: string): { label: string; kind: "info" | "success" | "mut
  * because none of these branches fire against today's production data — a bug
  * in any of them would look exactly like silence on screen.
  */
-function SubExceptions({ sub, size = "sm" }: { sub: Subscription; size?: "sm" | "md" }) {
-  const flags = subscriptionExceptions(sub);
+function SubExceptions({ sub, payBy, size = "sm" }: { sub: Subscription; payBy?: string | null; size?: "sm" | "md" }) {
+  /* R-1689: payBy = the oldest unpaid invoice's due date (credit / invoice-now rows), else the agreed date. */
+  const flags = subscriptionExceptions({ ...sub, pay_by: payBy });
   if (flags.length === 0) return null;
   return (
     <>
@@ -212,6 +214,13 @@ function SortHeader({
 export default function SubscriptionsPage() {
   const router = useRouter();
   const { data: subs, isLoading, error, refetch } = useSubscriptions();
+  /* R-1689: when each owing subscription's money is due — the same dues read as Payments
+     (its oldest unpaid invoice's due date, else the agreed payment_due_date). */
+  const { data: dues } = useOutstandingReceivables();
+  const payByOf = React.useMemo(
+    () => new Map((dues ?? []).map((o) => [o.subscription_id, o.pay_by ?? null] as const)),
+    [dues],
+  );
   /* The catalogue is what makes a margin real rather than a multiplier — see
      lib/vendor/cogs.ts. Empty while it loads, which resolves to "Unknown" rather
      than to a wrong number. */
@@ -1220,7 +1229,7 @@ export default function SubscriptionsPage() {
                     >
                       {s.status}
                     </Badge>
-                    <SubExceptions sub={s} />
+                    <SubExceptions sub={s} payBy={payByOf.get(s.id)} />
                   </div>
                   <div className="text-right shrink-0">
                     {/* The date needs saying what it IS. On desktop the column
@@ -1336,7 +1345,7 @@ export default function SubscriptionsPage() {
                   /* Postpaid credit clock. `none` for everything else, so prepaid rows
                      and pre-10-Sep-2026 rows look exactly as they did. */
                   /* R-1685: an ended subscription is on no payment clock (its owed money still shows in SubExceptions). */
-                  const due = paymentDueState(subscriptionEnded(s.status) ? null : s.payment_due_date, todayIST(), s.outstanding_amount ?? 0);
+                  const due = paymentDueState(subscriptionEnded(s.status) ? null : (payByOf.get(s.id) ?? s.payment_due_date), todayIST(), s.outstanding_amount ?? 0);
                   const kbSelected = rowIndex === subKeys.index;
                   return (
                     <tr
@@ -1540,7 +1549,7 @@ export default function SubscriptionsPage() {
                             suspension, write-off — one shared component so the
                             table and the mobile card can never drift apart. */}
                         <div className="flex flex-col items-start gap-1 mt-1 empty:mt-0">
-                          <SubExceptions sub={s} size="md" />
+                          <SubExceptions sub={s} payBy={payByOf.get(s.id)} size="md" />
                         </div>
                       </td>
                       {/* ── ONE ACTION ON THE ROW, THE REST IN THE DRAWER ────────

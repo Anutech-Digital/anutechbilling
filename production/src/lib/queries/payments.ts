@@ -339,6 +339,18 @@ export interface OutstandingRow {
   quote_id:           string | null;
   /** Postpaid credit clock; null when there is no agreed date. */
   payment_due_date:   string | null;
+  /**
+   * R-1689: the date the money is really asked for — the oldest unpaid invoice's due date
+   * (credit / "invoice now, pay later" raise an invoice and leave payment_due_date empty),
+   * else the agreed payment_due_date; null when neither exists.
+   */
+  pay_by?:            string | null;
+}
+
+/** R-1689: when the money is due — the oldest open invoice's due date first, else the agreed date. */
+export function subscriptionPayBy(agreedDueDate: string | null | undefined, oldestInvoiceDue: string | null | undefined): string | null {
+  const inv = oldestInvoiceDue ? oldestInvoiceDue.slice(0, 10) : null;
+  return inv ?? (agreedDueDate ? agreedDueDate.slice(0, 10) : null);
 }
 
 export interface DuesSubRow {
@@ -480,6 +492,7 @@ export function buildDuesRows(
       days_outstanding:   daysSince(ageFrom, today),
       quote_id:           actionQuote?.id ?? null,
       payment_due_date:   s.payment_due_date ?? null,
+      pay_by:             subscriptionPayBy(s.payment_due_date, unpaidDue[0]),
     };
   }).sort((a, b) => b.days_outstanding - a.days_outstanding);
 }
