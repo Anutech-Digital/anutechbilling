@@ -212,6 +212,9 @@ MIGS=(
   "r1711cancelinvoicedue|20261024023359_r1711_cancel_keeps_invoice_due.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.cancel_subscription(uuid,date,text,boolean)') and prosrc like '%R-1711%')"
   "r1816moneyrpcsisttoday|20261024030326_r1816_money_rpcs_ist_today.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.get_partner_metrics()') and prosrc not ilike '%current_date%')"
   "r1684correctsubterms|20261024030954_r1684_correct_subscription_terms.sql|resellersos_migration|to_regprocedure('public.correct_subscription_terms(uuid,text,integer,integer,text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_contract_amendment()') and prosrc like '%R-1684%')"
+  "r1791marketingrole|20261024060800_r1791_marketing_role.sql|resellersos_migration|exists(select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'user_role' and e.enumlabel = 'marketing')"
+  "r1791coldmarketing|20261024060810_r1791_cold_calling_marketing.sql|resellersos_migration|exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'cold_call_campaigns' and policyname = 'cold_call_team' and qual like '%marketing%')"
+  "r1792marketingbudget|20261024060820_r1792_marketing_budget.sql|resellersos_migration|to_regclass('public.marketing_payment_requests') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

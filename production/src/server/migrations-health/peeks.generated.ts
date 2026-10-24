@@ -184,4 +184,7 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r1711cancelinvoicedue", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.cancel_subscription(uuid,date,text,boolean)') and prosrc like '%R-1711%')" },
   { key: "r1816moneyrpcsisttoday", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.get_partner_metrics()') and prosrc not ilike '%current_date%')" },
   { key: "r1684correctsubterms", peek: "to_regprocedure('public.correct_subscription_terms(uuid,text,integer,integer,text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_contract_amendment()') and prosrc like '%R-1684%')" },
+  { key: "r1791marketingrole", peek: "exists(select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'user_role' and e.enumlabel = 'marketing')" },
+  { key: "r1791coldmarketing", peek: "exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'cold_call_campaigns' and policyname = 'cold_call_team' and qual like '%marketing%')" },
+  { key: "r1792marketingbudget", peek: "to_regclass('public.marketing_payment_requests') is not null" },
 ];

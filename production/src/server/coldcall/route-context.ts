@@ -22,7 +22,7 @@ export async function coldCallContext(): Promise<ColdCallContext | NextResponse>
   const role = await roleOf(run, session.userId);
   if (!role || !(COLD_CALL_ROLES as readonly string[]).includes(role)) {
     return NextResponse.json(
-      { error: "Cold Calling is for owners, managers and the sales team.", detail: "Ask the owner to change your role on the Team page." },
+      { error: "Cold Calling is for owners, managers, marketing and the sales team.", detail: "Ask the owner to change your role on the Team page." },
       { status: 403 },
     );
   }

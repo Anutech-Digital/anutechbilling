@@ -53,6 +53,7 @@ const ROLES: readonly Role[] = INVITABLE_ROLES;
 const ROLE_TONE: Record<Role, "success" | "info" | "muted" | "warning"> = {
   owner: "info", manager: "info", sales: "success", sales_senior: "info",
   billing: "success", accountant: "warning", delivery: "info", support: "muted",
+  marketing: "info",
 };
 
 interface Member { id: string; full_name: string | null; email: string | null; role: Role; initials: string | null; color: string | null; is_active: boolean | null; can_view_deals: boolean | null; manager_id: string | null; gets_new_leads: boolean | null; }

@@ -84,10 +84,11 @@ afterEach(() => {
 });
 
 describe("R-1005 role table", () => {
-  test("every role is decided; exactly the five low roles are limited", () => {
+  test("every role is decided; exactly the six low roles are limited", () => {
     expect(Object.keys(GATEWAY_LIMITED_BY_ROLE).sort()).toEqual([...USER_ROLES].sort());
+    /* R-1791 (23 Oct 2026): the Marketing role is limited too — it reads no customer data. */
     expect(USER_ROLES.filter((r) => GATEWAY_LIMITED_BY_ROLE[r]).sort())
-      .toEqual(["delivery", "partner_agent", "sales", "sales_senior", "support"]);
+      .toEqual(["delivery", "marketing", "partner_agent", "sales", "sales_senior", "support"]);
   });
 });
 
