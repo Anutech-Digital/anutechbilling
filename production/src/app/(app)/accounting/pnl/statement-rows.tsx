@@ -122,7 +122,8 @@ export function SubRows({ group, cmpOn, cmpLoading, showAll, onToggleAll, onOpen
               )}
             <div className="flex items-baseline gap-3 shrink-0">
               <div className={c ? "text-right sm:min-w-[8rem]" : "text-right"}>
-                <div className="font-mono whitespace-nowrap text-ink-2">{prefix}{rupee(l.now)}</div>
+                {/* R-1835: a family can be below zero (a credit note on an earlier invoice) — "−₹1,000". */}
+                <div className="font-mono whitespace-nowrap text-ink-2">{prefix}{signedRupee(l.now)}</div>
                 {c && <CmpCells c={c} phone />}
               </div>
               {c && <CmpCells c={c} />}

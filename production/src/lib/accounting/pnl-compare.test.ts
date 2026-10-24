@@ -246,3 +246,97 @@ describe("R-1832/R-1833 CSV", () => {
     expect(rows.find((r) => r[0] === "  Software projects")).toEqual(["  Software projects", 120_000, 0, 120_000, "—"]);
   });
 });
+
+/* ── R-1835: Revenue by what was sold (report_pnl_revenue_by_product) ── */
+
+describe("R-1835 revenue sub-lines by product", () => {
+  /* Adds up to row(): invoiced 5,00,000 · credit notes 20,000 · debit notes 5,000. */
+  const byProduct: PnlRpcRow["revenue_by_product"] = [
+    { family: "domain", invoiced: 5_000, credit_notes: 0, debit_notes: 0, invoice_count: 1 },
+    { family: "google", invoiced: 300_000, credit_notes: 15_000, debit_notes: 0, invoice_count: 3 },
+    { family: "hosting", invoiced: 15_000, credit_notes: 5_000, debit_notes: 0, invoice_count: 2 },
+    { family: "microsoft", invoiced: 60_000, credit_notes: 0, debit_notes: 0, invoice_count: 1 },
+    { family: "projects", invoiced: 120_000, credit_notes: 0, debit_notes: 5_000, invoice_count: 1 },
+  ];
+
+  it("one line per product, each net of its own notes, largest first — no separate note lines", () => {
+    const d = pnl({ revenue_by_product: byProduct });
+    const { lines } = revenueBreakdown(d);
+    expect(lines.map((l) => [l.label, l.now, l.kind])).toEqual([
+      ["Google Workspace", 285_000, "item"],
+      ["Software projects", 125_000, "item"],
+      ["Microsoft 365", 60_000, "item"],
+      ["Hosting", 10_000, "item"],
+      ["Domains", 5_000, "item"],
+    ]);
+    expect(subSum(lines, "now")).toBe(d.model.revenue);
+    expect(d.model.revenue).toBe(485_000);
+  });
+
+  it("parts that do not add up to report_pnl are not shown — R-1833 lines instead", () => {
+    const off = byProduct!.map((r) => (r.family === "google" ? { ...r, invoiced: r.invoiced + 1 } : r));
+    const d = pnl({ revenue_by_product: off });
+    expect(d.revenueByProduct).toBeNull();
+    expect(revenueBreakdown(d).lines.map((l) => l.label)).toEqual([
+      "Subscriptions, licences & other sales", "Software projects", "Less: credit notes", "Add: debit notes",
+    ]);
+  });
+
+  it("compare: a product in only one period shows ₹0 on the other side; both sides add up", () => {
+    const cur = pnl({ revenue_by_product: byProduct });
+    const prev = pnl({
+      inv_taxable: 400_000, cn_taxable: 0, dn_taxable: 0, revenue_by_project: [],
+      revenue_by_product: [
+        { family: "google", invoiced: 390_000, credit_notes: 0, debit_notes: 0, invoice_count: 4 },
+        { family: "zoho", invoiced: 10_000, credit_notes: 0, debit_notes: 0, invoice_count: 1 },
+      ],
+    });
+    const { lines } = revenueBreakdown(cur, prev);
+    expect(lines.find((l) => l.label === "Google Workspace")).toMatchObject({ now: 285_000, was: 390_000 });
+    expect(lines.find((l) => l.label === "Zoho")).toMatchObject({ now: 0, was: 10_000 });
+    expect(lines.find((l) => l.label === "Microsoft 365")).toMatchObject({ now: 60_000, was: 0 });
+    expect(subSum(lines, "now")).toBe(cur.model.revenue);
+    expect(subSum(lines, "was")).toBe(prev.model.revenue);
+  });
+
+  it("compare with an older period that has no split: each side still adds up to its Revenue", () => {
+    const cur = pnl({ revenue_by_product: byProduct });
+    const prev = pnl({ inv_taxable: 400_000, cn_taxable: 8_000, dn_taxable: 0, revenue_by_project: [] });
+    const { lines } = revenueBreakdown(cur, prev);
+    expect(lines.find((l) => l.key === "less:cn")).toMatchObject({ now: 0, was: 8_000 });
+    expect(subSum(lines, "now")).toBe(485_000);
+    expect(subSum(lines, "was")).toBe(392_000);
+  });
+
+  it("a product below zero (a credit note on an earlier month's invoice) stays a minus line", () => {
+    const d = pnl({
+      inv_taxable: 10_000, cn_taxable: 3_000, dn_taxable: 0, revenue_by_project: [],
+      revenue_by_product: [
+        { family: "hosting", invoiced: 10_000, credit_notes: 0, debit_notes: 0, invoice_count: 1 },
+        { family: "google", invoiced: 0, credit_notes: 3_000, debit_notes: 0, invoice_count: 0 },
+      ],
+    });
+    const { lines } = revenueBreakdown(d);
+    expect(lines.map((l) => [l.label, l.now])).toEqual([["Hosting", 10_000], ["Google Workspace", -3_000]]);
+    expect(subSum(lines, "now")).toBe(7_000);
+  });
+
+  it("CSV: a row per product under Revenue, adding up to it, with compare columns", () => {
+    const cur = pnl({ revenue_by_product: byProduct });
+    const prev = pnl({
+      inv_taxable: 400_000, cn_taxable: 0, dn_taxable: 0, revenue_by_project: [],
+      revenue_by_product: [{ family: "google", invoiced: 400_000, credit_notes: 0, debit_notes: 0, invoice_count: 4 }],
+    });
+    const { rows } = pnlCsv(cur, SEP, { data: prev, range: { from: "2026-08-01", to: "2026-08-31" } });
+    const idx = rows.findIndex((r) => r[0] === "Revenue");
+    const subs: (string | number)[][] = [];
+    for (let i = idx + 1; String(rows[i][0]).startsWith("  "); i++) subs.push(rows[i]);
+    expect(subs.map((r) => r[0])).toEqual([
+      "  Google Workspace", "  Software projects", "  Microsoft 365", "  Hosting", "  Domains",
+    ]);
+    expect(subs[0]).toEqual(["  Google Workspace", 285_000, 400_000, -115_000, -28.7]);
+    expect(subs.reduce((s, r) => s + (r[1] as number), 0)).toBe(rows[idx][1]);
+    expect(subs.reduce((s, r) => s + (r[2] as number), 0)).toBe(rows[idx][2]);
+    expect(rows.some((r) => r[0] === "  Less: credit notes")).toBe(false);
+  });
+});

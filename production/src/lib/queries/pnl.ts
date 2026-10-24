@@ -24,6 +24,7 @@ import { queryKeys } from "@/lib/queries/keys";
 import { createClient } from "@/lib/supabase/client";
 import { vendorsFromSubscriptions } from "@/lib/accounting/pnl";
 import { assemblePnl, type PnLNumbers, type PnlMasters, type PnlRpcRow } from "@/lib/accounting/pnl-assemble";
+import type { RevenueByProductRow } from "@/lib/accounting/revenue-family";
 import { fyMonthsSoFar, monthRange } from "@/lib/accounting/pnl-charts";
 import { rpcRowOrThrow } from "@/lib/accounting/report-rpc";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
@@ -99,6 +100,21 @@ async function pnlFor(supabase: Client, range: Range, masters: (r: Range) => Pnl
   return assemblePnl(range, row, masters(range));
 }
 
+type RevenueByProductRpc = (
+  fn: "report_pnl_revenue_by_product", args: { p_from: string; p_to: string },
+) => PromiseLike<{ data: RevenueByProductRow[] | null; error: { code?: string; message: string } | null }>;
+
+/**
+ * R-1835: Revenue by what was sold — companion of report_pnl (migration 20261024110239).
+ * Optional on purpose: on a database without the function, or when the call fails, the
+ * statement keeps R-1833's Revenue lines (null here). The Revenue TOTAL never comes from here.
+ */
+async function revenueByProductRows(supabase: Client, range: Range): Promise<RevenueByProductRow[] | null> {
+  const rpc = supabase.rpc as unknown as RevenueByProductRpc;
+  const { data, error } = await rpc.call(supabase, "report_pnl_revenue_by_product", { p_from: range.from, p_to: range.to });
+  return error || !Array.isArray(data) ? null : data;
+}
+
 export function usePnL(range: Range, enabled = true) {
   return useQuery({
     queryKey: [...queryKeys.pnl(), range.from, range.to],
@@ -108,12 +124,13 @@ export function usePnL(range: Range, enabled = true) {
     enabled,
     queryFn: async (): Promise<PnLNumbers> => {
       const supabase = createClient();
-      const [rpc, masters] = await Promise.all([
+      const [rpc, masters, byProduct] = await Promise.all([
         supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
         fetchPnlMasters(supabase),
+        revenueByProductRows(supabase, range),
       ]);
       const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
-      return assemblePnl(range, row, masters(range));
+      return assemblePnl(range, { ...row, revenue_by_product: byProduct }, masters(range));
     },
   });
 }

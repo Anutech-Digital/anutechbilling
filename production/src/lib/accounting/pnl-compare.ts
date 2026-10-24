@@ -174,7 +174,8 @@ export function formatChange(c: Change): string {
  * One indented sub-line of the statement. `now` / `was` are positive rupees.
  *
  * A group's sub-lines add up to their parent line, to the rupee: "item" and "add" lines add,
- * "less" lines subtract. Revenue: sales + projects − credit notes + debit notes. Licence cost:
+ * "less" lines subtract. Revenue: one line per product family, each net of its own notes
+ * (R-1835) — on an older database sales + projects − credit notes + debit notes. Licence cost:
  * bills per vendor + other bills + the estimate per vendor. Operating expenses: what was paid
  * per category (GST included, as the Expense report shows it) − GST claimed back − salary on
  * projects moved up to cost of goods.
@@ -274,9 +275,17 @@ export function opexBreakdown(cur: OpexSource, prev?: OpexSource | null, opts: O
 
 // — Revenue —
 
-export type RevenueSource = Pick<PnLNumbers, "revenueParts" | "model">;
+export type RevenueSource = Pick<PnLNumbers, "revenueParts" | "model"> & Partial<Pick<PnLNumbers, "revenueByProduct">>;
+
+/* R-1835: with the split by what was sold, each family is already net of its own credit / debit
+   notes (shared over its invoice's families in SQL), so there are no separate note lines. */
+const notesOf = (d: RevenueSource | null | undefined, k: "creditNotes" | "debitNotes") =>
+  !d || d.revenueByProduct ? 0 : d.revenueParts?.[k] ?? 0;
 
 const revenueItems = (d: RevenueSource): Item[] => {
+  if (d.revenueByProduct) {
+    return d.revenueByProduct.map((f) => ({ key: `rev:${f.family}`, label: f.label, now: f.net, was: 0, sense: "more-is-good" }));
+  }
   const p = d.revenueParts;
   if (!p) return [{ key: "rev:all", label: "Sales", now: d.model.revenue, was: 0, sense: "more-is-good" }];
   return [
@@ -289,8 +298,8 @@ export function revenueBreakdown(cur: RevenueSource, prev?: RevenueSource | null
   const items = merge(revenueItems(cur), prev ? revenueItems(prev) : []);
   const lines = [
     ...rollUp(items, !!opts.showAll, "lines"),
-    ...lessLine("less:cn", "Less: credit notes", cur.revenueParts?.creditNotes ?? 0, prev?.revenueParts?.creditNotes ?? 0, "more-is-bad"),
-    ...addLine("add:dn", "Add: debit notes", cur.revenueParts?.debitNotes ?? 0, prev?.revenueParts?.debitNotes ?? 0, "more-is-good"),
+    ...lessLine("less:cn", "Less: credit notes", notesOf(cur, "creditNotes"), notesOf(prev, "creditNotes"), "more-is-bad"),
+    ...addLine("add:dn", "Add: debit notes", notesOf(cur, "debitNotes"), notesOf(prev, "debitNotes"), "more-is-good"),
   ];
   return { lines, itemCount: itemCount(items) };
 }
