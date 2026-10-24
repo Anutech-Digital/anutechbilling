@@ -137,7 +137,7 @@ export interface Permissions {
   can_reveal_vault: boolean;
   /** P&L, balance sheet, bank reconciliation — the books. */
   can_view_financials: boolean;
-  /** Invite, offboard, and change roles. */
+  /** Invite, offboard, and change roles. The ONE check for it — Team page and invite API (R-1651). */
   can_manage_team: boolean;
   /** API keys, integration secrets, tenant-wide configuration. */
   can_manage_secrets: boolean;
@@ -177,7 +177,10 @@ export const PERMISSIONS: Record<UserRole, Permissions> = {
     can_export_data:          true,
     can_view_contact_details: true,
     can_reveal_vault:         true,
-    can_manage_team:          true,
+    /* R-1651: false — inviting, role changes and offboarding are owner-only on the server
+       (api/team/invite, team_invites RLS). This said true while nothing read it, and the
+       Team page promised a manager an invite they could not send. */
+    can_manage_team:          false,
     can_contact_customers:    true,
   },
   // Owns named corporate accounts, so needs the real contact details — but a
