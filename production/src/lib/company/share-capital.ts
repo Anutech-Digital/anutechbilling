@@ -1,7 +1,7 @@
 /**
  * R-1851 (epic R-1841, Phase 3 — Pvt Ltd) — share capital + shareholders register, as pure,
  * tested rules. Rows live in company_share_capital / company_shareholders (migration
- * 20261024204000_r1851_share_capital.sql); the database checks the same limits.
+ * 20261024205930_r1851_share_capital.sql); the database checks the same limits.
  *
  * One fact, one place: the number of paid-up shares is the shareholders' shares added up —
  * not typed a second time — so the holders' percentages always total 100 % of the paid-up

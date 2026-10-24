@@ -35,6 +35,8 @@ import { ComplianceProfileCard } from "@/components/features/compliance/complian
 import { SellModeCard } from "@/components/features/settings/sell-mode-card";
 import { BusinessTypePrompt } from "@/components/features/compliance/business-type-prompt";
 import { PartnersRegisterCard } from "@/components/features/partners/partners-register-card";
+import { DirectorsRegisterCard } from "@/components/features/company/directors-register-card";
+import { ShareCapitalCard } from "@/components/features/company/share-capital-card";
 import { TurnoverCard } from "@/components/features/compliance/turnover-card";
 import { GstRegistrationCard } from "@/components/features/compliance/gst-registration-card";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -561,6 +563,10 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
 
       {/* R-1847: Partnership / LLP only — the partners register (name, PAN, DPIN, share %, capital). */}
       <PartnersRegisterCard />
+
+      {/* R-1850 / R-1851: Pvt Ltd only — directors (DIN, DSC, KYC) and share capital + shareholders. */}
+      <DirectorsRegisterCard />
+      <ShareCapitalCard />
 
       {/* R-1860: Subscriptions / One-time / Both → what the menu and dashboard show first. */}
       <SellModeCard isOwner={isOwner} />

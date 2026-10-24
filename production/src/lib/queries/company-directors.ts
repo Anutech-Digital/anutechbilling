@@ -1,6 +1,6 @@
 /**
  * R-1850 — the directors register (company_directors) and its two RPCs
- * (migration 20261024203000_r1850_company_directors.sql). Writes only through the RPCs, which
+ * (migration 20261024205900_r1850_company_directors.sql). Writes only through the RPCs, which
  * check the role, the company and the business type (Pvt Ltd / not set).
  *
  * Reads go through the data gateway, which masks email / phone for a role without

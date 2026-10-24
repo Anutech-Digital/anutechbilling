@@ -1,6 +1,6 @@
 -- deploy-peek: to_regclass('public.company_share_capital') is not null and to_regclass('public.company_shareholders') is not null and to_regprocedure('public.save_share_capital(bigint,integer)') is not null and to_regprocedure('public.save_shareholder(uuid,text,text,bigint,date)') is not null and to_regprocedure('public.delete_shareholder(uuid)') is not null
 -- deploy-key: r1851sharecapital
--- 20261024204000_r1851_share_capital.sql
+-- 20261024205930_r1851_share_capital.sql
 --
 -- R-1851 (epic R-1841, Phase 3 — Pvt Ltd): share capital + shareholders register.
 --
