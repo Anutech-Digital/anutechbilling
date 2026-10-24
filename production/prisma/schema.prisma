@@ -5118,3 +5118,90 @@ model cold_call_contacts {
   @@index([tenant_id, campaign_id, status], map: "cold_call_contacts_campaign_status_idx")
   @@schema("public")
 }
+
+/// R-1878: AI campaign co-pilot plan (migration 20261024234500_ad_copilot_tables). Owner / manager / marketing only (RLS).
+/// marketing_campaign_id / item_id are checked same-company by a trigger; no Prisma relation, so those models stay untouched.
+model ad_plans {
+  id                    String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id             String             @db.Uuid
+  marketing_campaign_id String?            @db.Uuid
+  brand_id              String?            @db.Uuid
+  item_id               String?
+  name                  String
+  objective             String
+  platforms             String[]
+  prompt                String             @default("")
+  tone                  String?
+  language              String             @default("en")
+  status                String             @default("draft")
+  created_by            String?            @default(dbgenerated("auth.uid()")) @db.Uuid
+  created_at            DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime           @default(now()) @db.Timestamptz(6)
+  ad_target_groups      ad_target_groups[]
+  ad_creatives          ad_creatives[]
+  ad_copies             ad_copies[]
+
+  @@unique([tenant_id, id])
+  @@index([tenant_id, created_at(sort: Desc)], map: "ad_plans_tenant_recent_idx")
+  @@schema("public")
+}
+
+/// R-1878: who sees a plan's ads. platform null = every platform of the plan.
+model ad_target_groups {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String   @db.Uuid
+  plan_id    String   @db.Uuid
+  platform   String?
+  name       String
+  kind       String   @default("generic")
+  age_min    Int?     @db.SmallInt
+  age_max    Int?     @db.SmallInt
+  genders    String[] @default([])
+  regions    Json     @default("[]")
+  interests  Json     @default("[]")
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  ad_plans   ad_plans @relation(fields: [tenant_id, plan_id], references: [tenant_id, id], onDelete: Cascade, onUpdate: NoAction, map: "ad_target_groups_plan_fk")
+
+  @@index([tenant_id, plan_id], map: "ad_target_groups_plan_idx")
+  @@schema("public")
+}
+
+/// R-1878: an uploaded image / video for a plan (storage bucket: R-1883).
+model ad_creatives {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id        String   @db.Uuid
+  plan_id          String   @db.Uuid
+  storage_path     String
+  mime_type        String
+  size_bytes       BigInt
+  width            Int?
+  height           Int?
+  duration_seconds Decimal? @db.Decimal(8, 2)
+  created_by       String?  @default(dbgenerated("auth.uid()")) @db.Uuid
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  ad_plans         ad_plans @relation(fields: [tenant_id, plan_id], references: [tenant_id, id], onDelete: Cascade, onUpdate: NoAction, map: "ad_creatives_plan_fk")
+
+  @@index([tenant_id, plan_id], map: "ad_creatives_plan_idx")
+  @@schema("public")
+}
+
+/// R-1878: one line of ad text — platform + format + field keys from lib/marketing/copilot/channel-specs.ts.
+model ad_copies {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id    String   @db.Uuid
+  plan_id      String   @db.Uuid
+  platform     String
+  format       String
+  field        String
+  text         String
+  position     Int      @default(0) @db.SmallInt
+  ai_generated Boolean  @default(false)
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @default(now()) @db.Timestamptz(6)
+  ad_plans     ad_plans @relation(fields: [tenant_id, plan_id], references: [tenant_id, id], onDelete: Cascade, onUpdate: NoAction, map: "ad_copies_plan_fk")
+
+  @@unique([plan_id, platform, format, field, position], map: "ad_copies_slot")
+  @@index([tenant_id, plan_id], map: "ad_copies_plan_idx")
+  @@schema("public")
+}
