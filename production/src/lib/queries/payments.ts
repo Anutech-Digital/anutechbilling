@@ -8,7 +8,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { toastError } from "@/lib/errors/toast-error";
+import { toastError, describeError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows, fetchAllRowsIn, type PageQuery } from "@/lib/ops/fetch-all";
 import { toOpenBalanceMap, type QuoteOpenBalanceRow } from "@/lib/quotes/open-balances";
@@ -575,22 +575,40 @@ export function useMarkReminderSent() {
    asks why, links the unpaid invoice). A bare status = 'paused' update kept no reason and never
    came back on payment. */
 
+/* R-1641: a refused resume used to say nothing (no onError), and an update that RLS filters
+   to zero rows "succeeded" while changing nothing. Both now say it is still paused, with a
+   Try again; the list is refetched either way so the row shows its real status. */
 export function useResumeSubscription() {
   const qc = useQueryClient();
-  return useMutation({
+  const m = useMutation({
     mutationFn: async (subscriptionId: string) => {
       const supabase = createClient();
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("subscriptions")
         .update({ status: "active" })
-        .eq("id", subscriptionId);
+        .eq("id", subscriptionId)
+        .select("id");
       if (error) throw error;
+      if (!data || data.length === 0) {
+        throw new Error("This subscription could not be resumed — it may have been changed or removed, or your role can't change it.");
+      }
     },
     onSuccess: () => {
       invalidateReceivables(qc);
       toast.success("Subscription resumed");
     },
+    onError: (e, subscriptionId) => {
+      invalidateReceivables(qc);
+      const why = describeError(e).description;
+      toastError(e, {
+        fallback: "Subscription not resumed",
+        description: `${why ? `${why} ` : ""}It is still paused.`,
+        action: { label: "Try again", onClick: () => m.mutate(subscriptionId) },
+        duration: 10_000,
+      });
+    },
   });
+  return m;
 }
 
 /** What write_off_subscription answers (migration 20261023184545). */
