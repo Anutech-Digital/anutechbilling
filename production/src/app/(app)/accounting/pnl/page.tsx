@@ -30,7 +30,13 @@ import { usePnL, usePnLMonths } from "@/lib/queries/pnl";
 import { PnLDrilldownDialog, type PnLDrillKind } from "@/components/features/accounting/pnl-drilldown-dialog";
 import { PnlWaterfall, HundredRupeeBar } from "@/components/features/accounting/pnl-waterfall";
 import { MoneyFlow } from "@/components/features/accounting/money-flow";
-import { compareFigures, isPartialPeriod, isEstimatedBasis, licenceCostHint } from "@/lib/accounting/pnl";
+import { isEstimatedBasis, licenceCostHint } from "@/lib/accounting/pnl";
+import {
+  COMPARE_OPTIONS, compareRange, rangeLabel, periodName, runningNote,
+  opexBreakdown, revenueBreakdown, licenceBreakdown, pnlCsv,
+  type CompareMode, type Sense,
+} from "@/lib/accounting/pnl-compare";
+import { Row, SubRows, UnknownRow, GstCompare, Divider, HIDDEN_NOTE, type Cmp } from "./statement-rows";
 import { pnlWaterfall, hundredRupeeSplit } from "@/lib/accounting/waterfall";
 import { ProfitDonut, MonthlyTrend } from "@/components/features/accounting/pnl-charts";
 import {
@@ -112,16 +118,6 @@ const QUICK_RANGES: { label: string; build: () => DateRange }[] = [
 // Page
 // ────────────────────────────────────────────────────────────────
 
-/** The period immediately before this one, of the same length — for the comparison. */
-function previousRange(r: DateRange): DateRange {
-  const day = (s: string) => Date.parse(`${s}T00:00:00Z`);
-  const len = day(r.to) - day(r.from) + 86_400_000;
-  return {
-    from: yyyymmdd(new Date(day(r.from) - len)),
-    to:   yyyymmdd(new Date(day(r.from) - 86_400_000)),
-  };
-}
-
 export default function PnLPage() {
   const [range, setRange] = React.useState<DateRange>(thisMonth());
   const { data, isLoading, isError, refetch } = usePnL(range);
@@ -129,15 +125,25 @@ export default function PnLPage() {
   const [drillExpenseCat, setDrillExpenseCat] = React.useState<string | null>(null);
   const [projectCostOpen, setProjectCostOpen] = React.useState(false);
 
-  /* ── Comparison ──────────────────────────────────────────────────────────
-     Off by default. A second full aggregation on every page load, for a number the
-     owner has not asked for yet, is a cost with no reader. */
-  const [compare, setCompare] = React.useState(false);
-  const prevRange = React.useMemo(() => previousRange(range), [range]);
-  const { data: prev } = usePnL(prevRange, compare);
+  /* ── R-1832: Compare — None · Previous period · Same period last year ─────
+     Off by default, so the page reads as before. The compare period is the SAME P&L
+     (usePnL → report_pnl → assemblePnl, depreciation only to today — R-1808), fetched
+     only once the owner asks for it. Whole months move by whole months (This month →
+     last month, a quarter → the quarter before, an FY → the FY before) — lib/accounting/
+     pnl-compare.ts. */
+  const [compareMode, setCompareMode] = React.useState<CompareMode>("none");
+  const cmpRange = React.useMemo(() => compareRange(range, compareMode), [range, compareMode]);
+  const { data: cmpData, isError: cmpError } = usePnL(cmpRange ?? range, cmpRange !== null);
+  /* undefined while loading; null when comparison is off. */
+  const prev = cmpRange ? cmpData : null;
+  const cmpName = cmpRange ? periodName(cmpRange) : "";
+
+  /* R-1833: "Show all" per statement group (Revenue / Licence cost / Operating expenses). */
+  const [showAll, setShowAll] = React.useState<Record<string, boolean>>({});
+  const toggleAll = (k: string) => setShowAll((s) => ({ ...s, [k]: !s[k] }));
 
   const today = React.useMemo(() => yyyymmdd(istToday()), []);
-  const partial = isPartialPeriod(range.to, today);
+  const running = runningNote(range, today);
 
   const [vendorTab, setVendorTab] = React.useState<string | "all">("all");
 
@@ -159,28 +165,27 @@ export default function PnLPage() {
   // Export the statement as a CSV the owner can hand to their CA (mirrors GST export).
   function exportCSV() {
     if (!data) return;
+    /* Same figures as the screen (`model`): a missing cost of goods exports as "not recorded",
+       not as ₹0. With a comparison on, the compare amount and the change are columns too;
+       the sub-lines (R-1833) are indented rows under their line. */
+    const csv = pnlCsv(data, range, cmpRange && prev ? { data: prev, range: cmpRange } : null);
     downloadCSV(
-      `pnl-${range.from}-to-${range.to}.csv`,
-      ["Line", "Amount (INR)"],
-      [
-        /* Same figures as the screen (`model`): a missing cost of goods exports as
-           "not recorded", not as ₹0 with a profit computed on top of it. */
-        ["Period", `${range.from} to ${range.to}`],
-        ["Revenue", data.model.revenue],
-        ["Cost of goods — project delivery (salary on projects)", data.model.projectCostHidden ? "hidden for your role (inside operating expenses)" : -data.model.projectCost],
-        ["Cost of goods — licence cost", data.model.cogsBasis === "unknown" ? "not recorded" : -data.model.licenceCogs],
-        ["Licence cost basis", data.model.cogsBasis],
-        ["Gross margin", data.model.grossMargin ?? (data.model.projectCostHidden ? "hidden for your role (needs project salary)" : "unknown")],
-        ["Operating expenses", -(data.expenses - data.model.projectCost)],
-        ["Commissions", -data.commissions], ["Depreciation", -data.depreciation],
-        ["Net profit", data.model.netProfit ?? "unknown (cost of goods not recorded)"],
-        ["", ""],
-        ["Output GST (on sales)", data.outputGST],
-        ["Input GST (ITC)", data.inputGST],
-        ["Net GST payable", data.netGST],
-      ],
+      cmpRange && prev
+        ? `pnl-${range.from}-to-${range.to}-vs-${cmpRange.from}-to-${cmpRange.to}.csv`
+        : `pnl-${range.from}-to-${range.to}.csv`,
+      csv.headers,
+      csv.rows,
     );
   }
+
+  /* R-1833: the statement's sub-lines — each group adds up to its line (lib/accounting/pnl-compare.ts). */
+  const revenueLines = data ? revenueBreakdown(data, prev, { showAll: showAll.revenue }) : null;
+  const licenceLines = data ? licenceBreakdown(data, prev, { showAll: showAll.licence }) : null;
+  const opexLines = data ? opexBreakdown(data, prev, { showAll: showAll.opex }) : null;
+  const cmpOn = cmpRange !== null;
+  /** The compare cell for a statement line: undefined while the compare period loads. */
+  const cmp = (now: number | null, was: (p: NonNullable<typeof prev>) => number | null, sense: Sense, neg = false): Cmp | undefined =>
+    cmpOn ? { now, was: prev ? was(prev) : undefined, sense, neg } : undefined;
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1240px] mx-auto">
@@ -239,6 +244,32 @@ export default function PnLPage() {
             />
           </div>
         </div>
+        {/* R-1832: one control for the comparison. None keeps the page as it was. */}
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-hairline pt-3" role="group" aria-label="Compare">
+          <span className="text-xs text-ink-3 font-semibold uppercase tracking-wide mr-1">Compare</span>
+          {COMPARE_OPTIONS.map((o) => (
+            <button
+              key={o.mode}
+              type="button"
+              aria-pressed={compareMode === o.mode}
+              onClick={() => setCompareMode(o.mode)}
+              className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                compareMode === o.mode
+                  ? "border-amber bg-amber-soft text-amber-ink font-semibold"
+                  : "border-hairline text-ink-3 hover:text-ink hover:bg-paper-2"
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        {cmpRange && (
+          <p className="mt-2 text-xs text-ink-2" data-testid="pnl-compare-heading">
+            <b className="font-semibold">{rangeLabel(range)}</b> vs <b className="font-semibold">{rangeLabel(cmpRange)}</b>
+            {running && <span className="text-ink-3"> · this period {running}</span>}
+            {cmpError && <span className="text-rose"> · the compare period could not load</span>}
+          </p>
+        )}
       </Card>
 
       {/* R-270: a failed load says so. Before, every figure below simply vanished (or
@@ -257,6 +288,7 @@ export default function PnLPage() {
           revenueCount={data.revenueCount}
           expensesCount={data.expensesCount}
           outputGst={data.outputGST}
+          compare={cmpRange ? { model: prev?.model ?? null, name: cmpName } : null}
           onOpen={(k) => { if (k === "expenses") setDrillExpenseCat(null); setDrill(k); }}
         />
       )}
@@ -266,8 +298,16 @@ export default function PnLPage() {
         {/* Left: waterfall */}
         <Card className="p-5 md:p-6">
           <div className="text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-4">
-            Profit &amp; Loss statement · {range.from} to {range.to}
+            Profit &amp; Loss statement · {cmpRange ? <>{rangeLabel(range)} vs {rangeLabel(cmpRange)}</> : <>{range.from} to {range.to}</>}
           </div>
+          {/* R-1832: column heads for the compare columns (wider screens; a phone stacks them under the amount). */}
+          {cmpOn && data && (
+            <div className="hidden sm:flex items-end justify-end gap-3 mb-2 text-3xs uppercase tracking-wider text-ink-3 font-semibold">
+              <span className="min-w-[8rem] text-right">This period</span>
+              <span className="w-28 text-right">{cmpName}</span>
+              <span className="w-36 text-right">Change</span>
+            </div>
+          )}
 
           {isLoading ? (
             <div className="space-y-3">
@@ -283,13 +323,21 @@ export default function PnLPage() {
                   the government, not earned — and the hint says so in numbers. */}
               <Row label="Revenue"        amount={data.model.revenue}
                    hint={`${rupee(data.model.revenue + data.outputGST)} invoiced − ${rupee(data.outputGST)} GST · ${data.revenueCount} invoice${data.revenueCount === 1 ? "" : "s"}`}
-                   onHint={() => setDrill("revenue")} tone="ink" />
+                   onHint={() => setDrill("revenue")} tone="ink"
+                   cmp={cmp(data.model.revenue, (p) => p.model.revenue, "more-is-good")} />
+              {revenueLines && (
+                <SubRows group={revenueLines} cmpOn={cmpOn} cmpLoading={cmpOn && !prev}
+                         showAll={!!showAll.revenue} onToggleAll={() => toggleAll("revenue")}
+                         onOpen={() => setDrill("revenue")} />
+              )}
               {/* Unknown is written as unknown. "₹0" under an unrecorded cost of goods — and a
                   "₹0" gross margin under it — read as facts; they are gaps. */}
               {/* Salary spent building customers' software is the cost of those sales —
                   moved here from operating expenses (lib/accounting/project-cost.ts). */}
-              {data.model.projectCost > 0 && (
+              {(data.model.projectCost > 0 || (prev?.model.projectCost ?? 0) > 0) && (
                 <Row label={<>− <Term k="cogs">Cost of goods</Term> (project delivery)</>}
+                     cmp={cmp(data.model.projectCostHidden ? null : data.model.projectCost,
+                       (p) => p.model.projectCostHidden ? null : p.model.projectCost, "more-is-bad", true)}
                      amount={-data.model.projectCost}
                      hint={[
                        data.projectCost.labour > 0 ? `${rupee(data.projectCost.labour)} salary on projects` : null,
@@ -302,46 +350,68 @@ export default function PnLPage() {
               {/* R-1649: salaries are owner / manager / accountant only, so for other roles the
                   project cost is unknown — said so, never printed as ₹0. */}
               {data.model.projectCostHidden && (
-                <UnknownRow label={<>− <Term k="cogs">Cost of goods</Term> (project delivery)</>} value="Hidden" note={HIDDEN_NOTE} />
+                <UnknownRow label={<>− <Term k="cogs">Cost of goods</Term> (project delivery)</>} value="Hidden" note={HIDDEN_NOTE}
+                            cmpOn={cmpOn} />
               )}
               {data.model.cogsBasis === "unknown" ? (
-                <UnknownRow label={<>− <Term k="cogs">Cost of goods</Term> (licence cost)</>} value="Not recorded" note="enter the vendor bills" />
-              ) : data.model.licenceCogs === 0 && data.model.projectCost > 0 ? null : (
-                <Row label={<>− <Term k="cogs">Cost of goods</Term> (licence cost)</>}
-                     amount={-data.model.licenceCogs}
-                     hint={licenceCostHint(data.model, data.cogsCount)}
-                     onHint={() => setDrill("cogs")}
-                     tone="rose" />
+                <UnknownRow label={<>− <Term k="cogs">Cost of goods</Term> (licence cost)</>} value="Not recorded" note="enter the vendor bills"
+                            cmpOn={cmpOn} />
+              ) : data.model.licenceCogs === 0 && data.model.projectCost > 0 && !(prev && prev.model.licenceCogs > 0) ? null : (
+                <>
+                  <Row label={<>− <Term k="cogs">Cost of goods</Term> (licence cost)</>}
+                       amount={-data.model.licenceCogs}
+                       hint={licenceCostHint(data.model, data.cogsCount)}
+                       onHint={() => setDrill("cogs")}
+                       tone="rose"
+                       cmp={cmp(data.model.licenceCogs, (p) => p.model.cogsBasis === "unknown" ? null : p.model.licenceCogs, "more-is-bad", true)} />
+                  {licenceLines && (
+                    <SubRows group={licenceLines} cmpOn={cmpOn} cmpLoading={cmpOn && !prev}
+                             showAll={!!showAll.licence} onToggleAll={() => toggleAll("licence")}
+                             onOpen={() => setDrill("cogs")} />
+                  )}
+                </>
               )}
 
               <Divider />
               {data.model.grossMargin === null ? (
                 data.model.projectCostHidden && data.model.netProfit !== null
-                  ? <UnknownRow label={<Term k="gross_margin">Gross Margin</Term>} value="Hidden" note="needs the project salary — net profit below is complete" />
-                  : <UnknownRow label={<Term k="gross_margin">Gross Margin</Term>} value="Unknown" note="needs the cost of goods" />
+                  ? <UnknownRow label={<Term k="gross_margin">Gross Margin</Term>} value="Hidden" note="needs the project salary — net profit below is complete" cmpOn={cmpOn} />
+                  : <UnknownRow label={<Term k="gross_margin">Gross Margin</Term>} value="Unknown" note="needs the cost of goods" cmpOn={cmpOn} />
               ) : (
                 <Row label={<Term k="gross_margin">Gross Margin</Term>}
                      amount={data.model.grossMargin}
                      hint={data.model.grossMarginPct === null ? "no revenue this period" : `${data.model.grossMarginPct}% margin`}
                      tone={data.model.grossMargin >= 0 ? "emerald" : "rose"}
-                     emphasis />
+                     emphasis
+                     cmp={cmp(data.model.grossMargin, (p) => p.model.grossMargin, "more-is-good")} />
               )}
 
               <Row label={<>− <Term k="opex">Operating expenses</Term></>}
                    amount={-(data.expenses - data.model.projectCost)}
                    hint={`${data.expensesCount} ${data.expensesCount === 1 ? "entry" : "entries"}${data.model.projectCost > 0 ? ` · ${rupee(data.model.projectCost)} moved to project cost` : ""}`}
                    onHint={() => { setDrillExpenseCat(null); setDrill("expenses"); }}
-                   tone="rose" />
+                   tone="rose"
+                   cmp={cmp(data.expenses - data.model.projectCost, (p) => p.expenses - p.model.projectCost, "more-is-bad", true)} />
 
-              {/* Per-category breakdown: the Expense report card below (a third copy here was too many). */}
+              {/* R-1833: the expense heads inside the statement, adding up to the line above;
+                  a category opens its entries. The Expense report card below keeps vendors and months. */}
+              {opexLines && (
+                <SubRows group={opexLines} cmpOn={cmpOn} cmpLoading={cmpOn && !prev}
+                         showAll={!!showAll.opex} onToggleAll={() => toggleAll("opex")}
+                         onOpen={(l) => { setDrillExpenseCat(l.category ?? null); setDrill("expenses"); }} />
+              )}
 
-              {data.commissions > 0 && (
+              {(data.commissions > 0 || (prev?.commissions ?? 0) > 0) && (
                 <Row label="− Referral commissions"
                      amount={-data.commissions}
                      hint={`${data.commissionsCount} ${data.commissionsCount === 1 ? "payout" : "payouts"}`}
-                     tone="rose" />
+                     tone="rose"
+                     cmp={cmp(data.commissions, (p) => p.commissions, "more-is-bad", true)} />
               )}
-              {data.depreciation > 0 && <Row label="− Depreciation" amount={-data.depreciation} tone="rose" hint="R-1578: Assets register, Income-tax WDV, days in this period" />}
+              {(data.depreciation > 0 || (prev?.depreciation ?? 0) > 0) && (
+                <Row label="− Depreciation" amount={-data.depreciation} tone="rose" hint="R-1578: Assets register, Income-tax WDV, days in this period"
+                     cmp={cmp(data.depreciation, (p) => p.depreciation, "more-is-bad", true)} />
+              )}
               <Divider thick />
               {/* From `model`, like every other line of this statement. The flat
                   `data.netProfit` subtracts vendor-bill COGS, which is ₹0 when no bills are
@@ -361,7 +431,7 @@ export default function PnLPage() {
                       </div>
                     </div>
                   ) : (
-                    <UnknownRow label="Net Profit" value="Unknown" note={`cost of goods not recorded · at most ${rupee(v.value)}`} large />
+                    <UnknownRow label="Net Profit" value="Unknown" note={`cost of goods not recorded · at most ${rupee(v.value)}`} large cmpOn={cmpOn} />
                   );
                 })()
               ) : (
@@ -372,7 +442,8 @@ export default function PnLPage() {
                        : "no revenue this period"}
                      tone={data.model.netProfit >= 0 ? "emerald" : "rose"}
                      emphasis
-                     xl />
+                     xl
+                     cmp={cmp(data.model.netProfit, (p) => p.model.netProfit, "more-is-good")} />
               )}
             </div>
           ) : null}
@@ -393,10 +464,13 @@ export default function PnLPage() {
                 <span className="text-ink-3"><Term k="output_gst">Output GST</Term> (on sales)</span>
                 <span className="font-mono text-ink font-semibold">{rupee(data.outputGST)}</span>
               </div>
+              {/* R-1832: GST compares too, in neutral colour — more GST simply follows more sales. */}
+              {cmpOn && <GstCompare now={data.outputGST} was={prev?.outputGST} name={cmpName} />}
               <div className="flex justify-between items-baseline">
                 <span className="text-ink-3">− <Term k="input_gst">Input GST</Term> paid</span>
                 <span className="font-mono text-emerald">−{rupee(data.inputGST)}</span>
               </div>
+              {cmpOn && <GstCompare now={data.inputGST} was={prev?.inputGST} name={cmpName} />}
               {data.itcBlocked > 0 && (
                 <div className="flex justify-between items-baseline text-xs">
                   <span className="text-ink-3">GST with no credit (no tax invoice, proforma, no GSTIN, wrong head, or s.17(5)), counted as expense / cost of goods</span>
@@ -409,6 +483,7 @@ export default function PnLPage() {
                   {rupee(data.netGST)}
                 </span>
               </div>
+              {cmpOn && <GstCompare now={data.netGST} was={prev?.netGST} name={cmpName} />}
               <p className="text-xs text-ink-3 leading-relaxed mt-3">
                 Net positive = payable to govt. Negative = refund / carryforward credit.
                 File via GSTR-3B by the 20th of next month.
@@ -486,15 +561,13 @@ export default function PnLPage() {
 
 
       {/* ── EXPENSE REPORT ─────────────────────────────────────────────────────
-          The operating expenses behind the waterfall, as a report: category (share of
-          the total), vendor, month. Same rows as the "Operating expenses" line, so the
-          totals match; a category opens the same drill-down the line uses. */}
+          The operating expenses behind the statement, by vendor and month. R-1833: the
+          categories now sit inside the statement, so this card no longer repeats them. */}
       {!isLoading && data && (
         <ExpenseReportCard
           report={data.expenseReport}
           periodLabel={`${range.from} to ${range.to}`}
           fileStem={`${range.from}-to-${range.to}`}
-          onCategory={(c) => { setDrillExpenseCat(c); setDrill("expenses"); }}
           movedToCogs={data.model.projectCost}
         />
       )}
@@ -520,18 +593,10 @@ export default function PnLPage() {
               <h2 className="text-2xs uppercase tracking-wider text-ink-3 font-semibold">
                 Where the money went
               </h2>
-              <div className="flex items-center gap-2">
-                {isEstimatedBasis(m.cogsBasis) && (
-                  <Badge kind="warning" size="sm">{m.cogsBasis === "mixed" ? "Licence cost partly estimated" : "Licence cost estimated"}</Badge>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setCompare((c) => !c)}
-                  className="text-xs font-semibold text-amber-ink hover:underline"
-                >
-                  {compare ? "Hide comparison" : "Compare with previous period"}
-                </button>
-              </div>
+              {/* R-1832: the comparison moved to the one Compare control at the top. */}
+              {isEstimatedBasis(m.cogsBasis) && (
+                <Badge kind="warning" size="sm">{m.cogsBasis === "mixed" ? "Licence cost partly estimated" : "Licence cost estimated"}</Badge>
+              )}
             </div>
 
             {/* ── THE HEADLINE, BEFORE THE CHART ───────────────────────────────
@@ -662,26 +727,6 @@ export default function PnLPage() {
             {/* The cost-basis note is said once, in the headline at the top of the page —
                 it used to appear here twice more. */}
 
-            {/* Comparison — deltas that refuse to lie. See compareFigures. */}
-            {compare && (
-              <div className="mt-3 grid grid-cols-1 gap-2 border-t border-hairline pt-3 sm:grid-cols-3">
-                {([
-                  ["Revenue", m.revenue, prev?.model.revenue ?? null],
-                  ["Gross margin", m.grossMargin, prev?.model.grossMargin ?? null],
-                  ["Net profit", m.netProfit, prev?.model.netProfit ?? null],
-                ] as const).map(([label, cur, was]) => (
-                  <ComparisonCell
-                    key={label}
-                    label={label}
-                    current={cur}
-                    previous={was}
-                    partial={partial}
-                    loading={!prev}
-                    periodLabel={`${prevRange.from} to ${prevRange.to}`}
-                  />
-                ))}
-              </div>
-            )}
           </Card>
         );
       })()}
@@ -831,61 +876,6 @@ export default function PnLPage() {
 // P&L row primitives
 // ────────────────────────────────────────────────────────────────
 
-function Row({
-  label, amount, hint, onHint, tone, emphasis, xl,
-}: {
-  label: React.ReactNode;
-  amount: number;
-  hint?: string;
-  /** When set, the hint becomes a button that opens the drill-down popup. */
-  onHint?: () => void;
-  tone: "ink" | "emerald" | "rose";
-  emphasis?: boolean;
-  xl?: boolean;
-}) {
-  const colorClass = tone === "emerald" ? "text-emerald"
-                   : tone === "rose"    ? "text-rose"
-                   : "text-ink";
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <div className="min-w-0">
-        <div className={`${emphasis ? "font-semibold" : ""} ${xl ? "text-base" : "text-sm"} text-ink leading-tight`}>
-          {label}
-        </div>
-        {hint && (
-          onHint
-            ? <button type="button" onClick={onHint} className="text-xs text-amber-ink hover:underline mt-0.5 inline-flex items-center gap-0.5">{hint} <span aria-hidden>→</span></button>
-            : <div className="text-xs text-ink-3 mt-0.5">{hint}</div>
-        )}
-      </div>
-      <div className={`font-mono whitespace-nowrap ${xl ? "font-serif text-3xl" : emphasis ? "text-lg font-semibold" : "text-base"} ${colorClass}`}>
-        {amount < 0 ? "−" : ""}{rupee(Math.abs(amount))}
-      </div>
-    </div>
-  );
-}
-
-/** A statement line whose figure is not known — shown as words, never as ₹0. */
-/** R-1649: why the project delivery cost is not shown to this role. */
-const HIDDEN_NOTE = "salary on projects — owner, manager and accountant see it";
-
-function UnknownRow({ label, value, note, large }: {
-  label: React.ReactNode; value: string; note: string; large?: boolean;
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <div className={`${large ? "text-base font-semibold" : "text-sm"} text-ink leading-tight`}>{label}</div>
-      <div className="text-right">
-        <div className={`${large ? "font-serif text-2xl" : "text-base"} text-ink-3 italic`}>{value}</div>
-        <div className="text-xs text-amber-ink">{note}</div>
-      </div>
-    </div>
-  );
-}
-
-function Divider({ thick = false }: { thick?: boolean }) {
-  return <div className={`my-2 border-t ${thick ? "border-ink-2 border-t-2" : "border-hairline"}`} />;
-}
 
 /** One figure in the vendor card. Colour by direction, not by size. */
 function Figure({ label, value, tone }: {
@@ -896,58 +886,6 @@ function Figure({ label, value, tone }: {
     <div>
       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">{label}</div>
       <div className={cn("font-serif text-lg leading-none tabular-nums", cls)}>{rupee(value)}</div>
-    </div>
-  );
-}
-
-/**
- * One period-over-period cell.
- *
- * ─── THE BADGE REFUSES TO LIE ───────────────────────────────────────────────
- * Growth from ₹0 is "new", not +100%. A drop to ₹0 is "nothing this period", not −100%.
- * And a period that is STILL RUNNING is not compared at all: 18 days of this month
- * against all 31 of last month shows a fall that has not happened, and a red badge there
- * is simply wrong. compareFigures() makes those calls; this only paints them.
- */
-function ComparisonCell({ label, current, previous, partial, loading, periodLabel }: {
-  label: string;
-  current: number | null;
-  previous: number | null;
-  partial: boolean;
-  loading: boolean;
-  periodLabel: string;
-}) {
-  if (loading) return <Skeleton className="h-14 w-full" />;
-
-  /* Either side unknown — the P&L could not state a margin — so there is nothing to
-     compare. Better an em dash than a delta computed from a number we refused to print. */
-  if (current === null || previous === null) {
-    return (
-      <div className="rounded-md border border-hairline px-3 py-2">
-        <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">{label}</div>
-        <div className="text-[13px] text-ink-3">Not comparable — a figure is unknown.</div>
-      </div>
-    );
-  }
-
-  const d = compareFigures(current, previous, { partialCurrent: partial });
-  const tone =
-    d.kind === "up" ? "text-emerald"
-    : d.kind === "down" ? "text-rose"
-    : d.kind === "new" ? "text-emerald"
-    : "text-ink-3";
-
-  return (
-    <div className="rounded-md border border-hairline px-3 py-2">
-      <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">{label}</div>
-      <div className="flex flex-wrap items-baseline gap-2">
-        <span className="font-mono text-[13px] tabular-nums text-ink">{rupee(current)}</span>
-        <span className={cn("text-[12px] font-semibold", tone)}>{d.label}</span>
-      </div>
-      <div className="text-xs text-ink-3 tabular-nums" title={periodLabel}>
-        was {rupee(previous)}
-        {d.pct !== null && ` · ${d.absolute >= 0 ? "+" : "−"}${rupee(Math.abs(d.absolute))}`}
-      </div>
     </div>
   );
 }
