@@ -18,7 +18,10 @@
 --              the last 7 defaults + 14 functions, so both known lists are empty and stay empty
 --   MONEY      ist_today() pinned to 21 Oct inside this transaction; record_payment settles an
 --              invoice and stamps paid_date 21 Oct, not the server's day
---   MUTATION   CURRENT_DATE put back into record_payment → MONEY refuses it
+--   ARGS       (R-1830) no public function argument DEFAULT uses CURRENT_DATE / now()::date —
+--              prosrc is the body only, so the RATCHET could not see these
+--   MUTATION   CURRENT_DATE put back into record_payment → MONEY refuses it; put back as
+--              consume_prepaid_advance's p_date default → ARGS refuses it
 
 begin;
 set local timezone = 'UTC';   -- Cloud SQL's clock
@@ -111,6 +114,31 @@ begin
   end if;
 end $$;
 
+-- ── ARGS: function parameter defaults (R-1830) ──────────────────────────────────────────
+-- prosrc is the body only; `p_date date DEFAULT CURRENT_DATE` lives in proargdefaults, so a
+-- caller that leaves the argument out got the UTC day while the body scan stayed green.
+-- R-1830 (20261024091100) fixed the last two (consume_prepaid_advance / consume_prepaid_fifo).
+create function pg_temp.night_ist_arg_scan() returns text[] language sql stable as $f$
+  select coalesce(array_agg(distinct p.oid::regprocedure::text order by p.oid::regprocedure::text), '{}')
+    from pg_proc p
+   where p.pronamespace = 'public'::regnamespace
+     and p.proargdefaults is not null
+     and pg_get_expr(p.proargdefaults, 0) ~* '\mcurrent_date\M|(\mnow\(\)|\mcurrent_timestamp\M)\)?::date';
+$f$;
+
+do $$
+declare v_new text[] := pg_temp.night_ist_arg_scan(); v_seen int;
+begin
+  if cardinality(v_new) > 0 then
+    raise exception 'R-1830: function argument default on the UTC day: % — use DEFAULT public.ist_today()', array_to_string(v_new, ', ');
+  end if;
+  -- The scan must see ist_today() defaults (R-1828's three + R-1830's two), or it reads nothing.
+  select count(*) into v_seen from pg_proc p
+   where p.pronamespace = 'public'::regnamespace and p.proargdefaults is not null
+     and pg_get_expr(p.proargdefaults, 0) ~* 'ist_today\(\)';
+  if v_seen < 5 then raise exception 'R-1830: only % functions default an argument to ist_today() — expected 5 at least', v_seen; end if;
+end $$;
+
 -- ── MONEY: ist_today() pinned to the night day; record_payment settles an invoice ──────
 create or replace function public.ist_today() returns date language sql stable as $function$
   select (timestamptz '2026-10-20 19:00:00+00' at time zone 'Asia/Kolkata')::date;
@@ -171,6 +199,18 @@ begin
     if sqlerrm like 'R-1826 MUTATION%' then raise; end if;
     raise notice 'mutation caught (money): %', sqlerrm;
   end;
+end $$;
+
+-- ── MUTATION: CURRENT_DATE back as consume_prepaid_advance's p_date default ─────────────
+do $$
+declare v_def text := pg_get_functiondef('public.consume_prepaid_advance(uuid,integer,date,text,integer,text)'::regprocedure);
+begin
+  if v_def !~* 'p_date date DEFAULT (public\.)?ist_today\(\)' then
+    raise exception 'R-1830 MUTATION: consume_prepaid_advance has no ist_today() default to swap';
+  end if;
+  execute regexp_replace(v_def, 'p_date date DEFAULT (public\.)?ist_today\(\)', 'p_date date DEFAULT CURRENT_DATE');
+  if pg_temp.night_ist_arg_scan() = '{}' then raise exception 'R-1830 MUTATION: ARGS missed consume_prepaid_advance'; end if;
+  raise notice 'mutation caught (args): %', pg_temp.night_ist_arg_scan();
 end $$;
 
 select 'PASS night_ist_pin' as result;
