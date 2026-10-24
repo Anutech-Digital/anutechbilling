@@ -74,6 +74,8 @@ export interface EquityInput<T extends ManualEquityLine> {
   formatDate?: (iso: string) => string;
   /** R-1851: the share capital register (Pvt Ltd only). Null / nothing paid up = not used. */
   shareRegister?: ShareRegisterTotals | null;
+  /** R-1849: TDS taken from partners on year-end splits posted in the range (partnerTdsInRange). */
+  partnerTds?: number;
 }
 
 /** A hand-entered company equity line that belongs under Reserves & surplus, not Share capital. */
@@ -168,7 +170,14 @@ export function equitySection<T extends ManualEquityLine>(input: EquityInput<T>)
     };
   }
 
-  const rows: Row[] = [...manual("manual", input.manualLines), ...openingCapital, ...openingReserves, profitRow, ...entries];
+  /* R-1849: TDS on the partners' interest + remuneration is their tax, paid by the firm from
+     their capital — it lowers equity like drawings (and is in TDS payable until deposited). */
+  const partnerTds: Row[] = (input.partnerTds ?? 0) !== 0
+    ? [line("partner_tds", "Less: TDS on partners' interest & remuneration",
+        "deducted on the year-end profit split (s.194T / s.393(3)) — owed to the government",
+        -(input.partnerTds ?? 0), "auto", "Profit split", "/accounting/balance-sheet/profit-split")]
+    : [];
+  const rows: Row[] = [...manual("manual", input.manualLines), ...openingCapital, ...openingReserves, profitRow, ...entries, ...partnerTds];
   return {
     type: profile.type,
     heading: profile.equityTitle,

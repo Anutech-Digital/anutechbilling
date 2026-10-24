@@ -169,3 +169,15 @@ describe("Add-line choices", () => {
     expect(isReservesLine({ label: "Share capital", notes: "Share capital" })).toBe(false);
   });
 });
+
+describe("R-1849 — TDS on partners' interest + remuneration lowers the partners' capital", () => {
+  it("partnership: a 'Less: TDS' line; the section total drops by exactly the TDS", () => {
+    const before = equitySection({ businessType: "partnership", manualLines: MANUAL, opening: OPENING, profit: PROFIT, totals: TOTALS, movements: MOVES, range: RANGE });
+    const after = equitySection({ businessType: "partnership", manualLines: MANUAL, opening: OPENING, profit: PROFIT, totals: TOTALS, movements: MOVES, range: RANGE, partnerTds: 84_000 });
+    expect(labels(after)).toContain("Less: TDS on partners' interest & remuneration");
+    expect(equitySectionTotal(after)).toBe(equitySectionTotal(before) - 84_000);
+  });
+  it("none posted → no line", () => {
+    expect(labels(build("partnership"))).not.toContain("Less: TDS on partners' interest & remuneration");
+  });
+});

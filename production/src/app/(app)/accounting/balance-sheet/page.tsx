@@ -65,6 +65,8 @@ import { useShareCapital } from "@/lib/queries/share-capital";
 import { shareCapitalSummary } from "@/lib/company/share-capital";
 import { useFirmPartners } from "@/lib/queries/partners";
 import { PartnerCapitalBox } from "./partner-capital-box";
+import { usePartnerAppropriations } from "@/lib/queries/partner-appropriations";
+import { partnerTdsInRange } from "@/lib/accounting/partner-capital";
 import { entityProfile } from "@/lib/compliance/entity";
 import type { BusinessType } from "@/lib/compliance/obligations";
 import { useBusinessLoans } from "@/lib/queries/business-loans";
@@ -126,6 +128,11 @@ export default function BalanceSheetPage() {
   /* R-1847: a firm's partners come from the partners register (Settings → Company → Partners). */
   const partnersQ = useFirmPartners(words.needsPartner);
   const partners = React.useMemo(() => partnersQ.data ?? [], [partnersQ.data]);
+  /* R-1849: posted year-end splits — per-partner interest / remuneration / share, and the TDS
+     taken from partners (in TDS payable; lowers their capital). Read for every type: the TDS
+     is in the report's TDS payable whatever the type is now. */
+  const splitsQ = usePartnerAppropriations();
+  const splits = React.useMemo(() => splitsQ.data ?? [], [splitsQ.data]);
   /* R-1851: a company's paid-up capital comes from the share capital register (Settings → Company). */
   const shareQ = useShareCapital(profile.type === "pvt_ltd");
   const shareRegister = React.useMemo(() => {
@@ -142,9 +149,9 @@ export default function BalanceSheetPage() {
   const loansTaken = splitLoansTaken(auto?.businessLoansPayable ?? 0, bizLoans);
   const undeclared = undeclaredDirectorLoans(bizLoans);
 
-  const loading = autoLoading || itemsLoading || (movementsQ.isLoading && !movementsMissing) || shareQ.isLoading || (companyLoans && bizLoansQ.isLoading);
+  const loading = autoLoading || itemsLoading || (movementsQ.isLoading && !movementsMissing) || shareQ.isLoading || (companyLoans && bizLoansQ.isLoading) || splitsQ.isLoading;
   /* R-270: a failed fetch must not print a ₹0 balance sheet that reads as "you own nothing". */
-  const failed = autoFailed || itemsFailed || (movementsQ.isError && !movementsMissing) || shareQ.isError || (companyLoans && bizLoansQ.isError);
+  const failed = autoFailed || itemsFailed || (movementsQ.isError && !movementsMissing) || shareQ.isError || (companyLoans && bizLoansQ.isError) || splitsQ.isError;
 
   const manual = (section: BalanceSheetSection) => (items ?? []).filter((i) => i.section === section);
   const manualAssetRows = manual("asset");
@@ -185,14 +192,16 @@ export default function BalanceSheetPage() {
   /* R-1845: the equity section by business type — same lines, same total, arranged and named
      the way a proprietor / firm / company Balance Sheet is. */
   const equityRange = React.useMemo(() => ({ after: opening?.asOf ?? null, upTo: today }), [opening?.asOf, today]);
+  const partnerTds = partnerTdsInRange(splits, equityRange);
   const equity = equitySection({
     businessType, manualLines: manualEqRows, opening, profit: cumulativeProfit, totals: ownerTotals,
-    movements, range: equityRange, formatDate, shareRegister,
+    movements, range: equityRange, formatDate, shareRegister, partnerTds,
   });
   /* R-1851: share capital from the register is explained money — it leaves the unexplained gap
-     (equity total = net worth, so the sheet still balances). */
+     (equity total = net worth, so the sheet still balances). R-1849: so is the partners' TDS
+     (in TDS payable, taken from their capital). */
   const unexplained = cumulativeProfit === null ? null
-    : unexplainedAfterEntries({ retained: retained - registerShareCapital(equity), openingEquity, profit: cumulativeProfit, totals: ownerTotals });
+    : unexplainedAfterEntries({ retained: retained - registerShareCapital(equity) + partnerTds, openingEquity, profit: cumulativeProfit, totals: ownerTotals });
   /* Old hand-entered "Drawings" lines stay as they are; if real entries exist too, say it once. */
   const drawingsTwice = ownerTotals.drawings > 0 && manualEqRows.some((r) => looksLikeDrawingsLine(r.label));
 
@@ -480,7 +489,7 @@ export default function BalanceSheetPage() {
                   ))}
                   {/* R-1848: each partner's capital account — breaks the section total down, never changes it. */}
                   {words.needsPartner && !movementsMissing && (
-                    <PartnerCapitalBox partners={partners} movements={movements} profit={cumulativeProfit}
+                    <PartnerCapitalBox partners={partners} movements={movements} profit={cumulativeProfit} posted={splits}
                       range={equityRange} sectionTotal={cumulativeProfit === null ? null : equitySectionTotal(equity)} />
                   )}
                   {/* R-1739: Cr side of the balances imported from Zoho Books (their Dr is in receivables). */}
@@ -529,6 +538,9 @@ export default function BalanceSheetPage() {
                         <div className="flex justify-between gap-3"><span>{opening ? "− Profit since the opening date (P&L)" : "− Profit (P&L, all periods)"}</span><span className="tabular-nums">{fmtBS(cumulativeProfit ?? 0)}</span></div>
                         {hasOwnerEntries && (
                           <div className="flex justify-between gap-3"><span>− Capital introduced + drawings (entries)</span><span className="tabular-nums">{fmtBS(ownerTotals.capitalIntroduced - ownerTotals.drawings)}</span></div>
+                        )}
+                        {partnerTds !== 0 && (
+                          <div className="flex justify-between gap-3"><span>− TDS on partners&apos; interest &amp; remuneration (profit split)</span><span className="tabular-nums">{fmtBS(-partnerTds)}</span></div>
                         )}
                         <div className="flex justify-between gap-3 border-t border-hairline pt-1 font-semibold text-ink"><span>= Unexplained difference</span><span className="tabular-nums">{fmtBS(unexplained ?? retained)}</span></div>
                       </div>

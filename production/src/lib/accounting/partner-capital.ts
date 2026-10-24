@@ -14,6 +14,12 @@
  *                  year-end split (R-1849: interest on capital, remuneration, s.40(b)) is posted.
  *                  Only partners in the firm on the sheet's date share it.
  *
+ * R-1849: a POSTED year-end split (partner_appropriations, dated 31 March of its FY) replaces the
+ * estimate for that year: interest on capital + remuneration + share of profit − TDS. Only the
+ * profit not covered by a posted year (profit − Σ posted net profit) is still estimated by ratio.
+ *
+ *   Closing = Opening + Introduced + Interest + Remuneration + Share of profit − TDS − Drawings
+ *
  * Older entries with a typed name (no partner_id) stay under that name, not linked, with no
  * opening or profit share — the screen offers "Link to partner". Whatever the partners'
  * accounts do not cover (the CA's lump opening, hand-entered lines, an unshared % of profit)
@@ -23,12 +29,23 @@
 import type { FirmPartner } from "./partners";
 import { isActivePartner } from "./partners";
 import type { OwnerEquityMovement } from "./owner-equity";
+import { fyLabelOfYear } from "@/lib/dates/ist";
+
+/** R-1849: one posted year-end split (partner_appropriations + its lines). */
+export interface PostedSplitLine { partnerId: string; interest: number; remuneration: number; profitShare: number; tds: number; tdsSection: string | null }
+export interface PostedSplit { fyStart: number; postedOn: string; netProfit: number; lines: PostedSplitLine[] }
 
 type Mv = Pick<OwnerEquityMovement, "kind" | "amount" | "movement_date" | "partner_name" | "partner_id" | "note">;
 
 export interface Range { after?: string | null; upTo?: string | null }
 
 const inRange = (d: string, r: Range) => !(r.after && d <= r.after) && !(r.upTo && d > r.upTo);
+
+/** R-1849: TDS taken from the partners on splits posted in the range — lowers equity like drawings. */
+export function partnerTdsInRange(posted: readonly PostedSplit[], range: Range): number {
+  return posted.filter((s) => inRange(s.postedOn, range))
+    .reduce((t, s) => t + s.lines.reduce((u, l) => u + l.tds, 0), 0);
+}
 
 /**
  * Profit × each ratio, whole rupees, largest remainder so the parts add up to exactly
@@ -62,9 +79,19 @@ export interface PartnerCapitalRow {
   sharePct: number;
   opening: number;
   capitalIntroduced: number;
+  /** R-1849: from posted year-end splits. */
+  interest: number;
+  remuneration: number;
+  /** Posted shares + the estimate on the profit not yet posted. */
   profitShare: number;
+  /** The part of profitShare that is still an estimate by ratio. */
+  estimatedShare: number;
+  /** TDS (194T / 393(3)) deducted on posted interest + remuneration. */
+  tds: number;
   drawings: number;
   closing: number;
+  /** Posted splits, oldest first — for the statement. */
+  posted: { fyStart: number; postedOn: string; line: PostedSplitLine }[];
 }
 
 export interface PartnerCapitalAccounts {
@@ -72,8 +99,10 @@ export interface PartnerCapitalAccounts {
   totalClosing: number;
   /** Section total − Σ closing; null when no section total was given. */
   notSplit: number | null;
-  /** Profit share is ratio × profit until R-1849 posts the year-end split. */
-  profitShareIsEstimate: true;
+  /** Some profit is not covered by a posted year-end split (R-1849) — its share is ratio × profit. */
+  profitShareIsEstimate: boolean;
+  /** Profit − Σ net profit of the splits posted in the range. */
+  estimatedProfit: number;
   profitLoading: boolean;
   /** Entries in range that name a partner by typed text only. */
   unlinkedCount: number;
@@ -84,6 +113,8 @@ export function partnerCapitalAccounts(input: {
   movements: readonly Mv[];
   /** The Balance Sheet's profit for the same range. Null = still loading. */
   profit: number | null;
+  /** R-1849: posted year-end splits (any range — filtered here). */
+  posted?: readonly PostedSplit[];
   range?: Range;
   /** What the equity section adds up to on the Balance Sheet (for `notSplit`). */
   sectionTotal: number | null;
@@ -91,6 +122,10 @@ export function partnerCapitalAccounts(input: {
   const range = input.range ?? {};
   const onDate = range.upTo ?? "9999-12-31";
   const inRangeMv = input.movements.filter((m) => inRange(m.movement_date, range));
+  const postedIn = (input.posted ?? []).filter((s) => inRange(s.postedOn, range)).slice().sort((a, b) => a.fyStart - b.fyStart);
+  const estimatedProfit = (input.profit ?? 0) - postedIn.reduce((s, x) => s + x.netProfit, 0);
+  const postedOf = (id: string) => postedIn.flatMap((s) => s.lines.filter((l) => l.partnerId === id)
+    .map((line) => ({ fyStart: s.fyStart, postedOn: s.postedOn, line })));
 
   const byId = new Map<string, Mv[]>();
   const byName = new Map<string, { name: string; items: Mv[] }>();
@@ -113,29 +148,37 @@ export function partnerCapitalAccounts(input: {
     { capitalIntroduced: 0, drawings: 0 },
   );
 
-  /* Register partners in the firm on the date, plus anyone with entries in range. */
+  /* Register partners in the firm on the date, plus anyone with entries or a posted split in range. */
+  const postedIds = new Set(postedIn.flatMap((s) => s.lines.map((l) => l.partnerId)));
   const listed = input.partners
-    .filter((p) => isActivePartner(p, onDate) || byId.has(p.id))
+    .filter((p) => isActivePartner(p, onDate) || byId.has(p.id) || postedIds.has(p.id))
     .sort((a, b) => a.name.localeCompare(b.name));
   const sharing = listed.filter((p) => isActivePartner(p, onDate));
-  const shares = splitProfit(input.profit ?? 0, sharing.map((p) => Number(p.profit_share_pct)));
+  const shares = splitProfit(estimatedProfit, sharing.map((p) => Number(p.profit_share_pct)));
   const shareOf = new Map(sharing.map((p, i) => [p.id, shares[i]]));
 
   const rows: PartnerCapitalRow[] = listed.map((p) => {
     const s = sums(byId.get(p.id) ?? []);
     const opening = Number(p.capital_contribution) || 0;
-    const profitShare = shareOf.get(p.id) ?? 0;
+    const posted = postedOf(p.id);
+    const sum = (f: (l: PostedSplitLine) => number) => posted.reduce((t, x) => t + f(x.line), 0);
+    const interest = sum((l) => l.interest);
+    const remuneration = sum((l) => l.remuneration);
+    const tds = sum((l) => l.tds);
+    const estimatedShare = shareOf.get(p.id) ?? 0;
+    const profitShare = sum((l) => l.profitShare) + estimatedShare;
     return {
       key: p.id, partnerId: p.id, name: p.name, linked: true, left: !isActivePartner(p, onDate),
-      sharePct: Number(p.profit_share_pct), opening, ...s, profitShare,
-      closing: opening + s.capitalIntroduced + profitShare - s.drawings,
+      sharePct: Number(p.profit_share_pct), opening, ...s, interest, remuneration, profitShare, estimatedShare, tds, posted,
+      closing: opening + s.capitalIntroduced + interest + remuneration + profitShare - tds - s.drawings,
     };
   });
   for (const [k, g] of [...byName.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name))) {
     const s = sums(g.items);
     rows.push({
       key: `name:${k}`, partnerId: null, name: g.name, linked: false, left: false, sharePct: 0,
-      opening: 0, ...s, profitShare: 0, closing: s.capitalIntroduced - s.drawings,
+      opening: 0, ...s, interest: 0, remuneration: 0, profitShare: 0, estimatedShare: 0, tds: 0, posted: [],
+      closing: s.capitalIntroduced - s.drawings,
     });
   }
 
@@ -144,7 +187,8 @@ export function partnerCapitalAccounts(input: {
     rows,
     totalClosing,
     notSplit: input.sectionTotal === null ? null : input.sectionTotal - totalClosing,
-    profitShareIsEstimate: true,
+    profitShareIsEstimate: estimatedProfit !== 0,
+    estimatedProfit,
     profitLoading: input.profit === null,
     unlinkedCount,
   };
@@ -170,8 +214,16 @@ export function partnerStatement(row: PartnerCapitalRow, movements: readonly Mv[
       note: m.note ?? null,
     });
   }
-  if (row.linked && row.profitShare !== 0) {
-    lines.push({ date: null, label: `Share of profit (${row.sharePct}%, estimate)`, amount: row.profitShare, note: null });
+  for (const p of row.posted) {
+    const fy = `FY ${fyLabelOfYear(p.fyStart)}`;
+    const l = p.line;
+    if (l.interest !== 0) lines.push({ date: p.postedOn, label: `Interest on capital ${fy}`, amount: l.interest, note: null });
+    if (l.remuneration !== 0) lines.push({ date: p.postedOn, label: `Remuneration ${fy}`, amount: l.remuneration, note: null });
+    if (l.profitShare !== 0) lines.push({ date: p.postedOn, label: `Share of profit ${fy} (${row.sharePct}%)`, amount: l.profitShare, note: null });
+    if (l.tds !== 0) lines.push({ date: p.postedOn, label: `Less: TDS u/s ${l.tdsSection ?? "194T"} ${fy}`, amount: -l.tds, note: null });
+  }
+  if (row.linked && row.estimatedShare !== 0) {
+    lines.push({ date: null, label: `Share of profit (${row.sharePct}%, estimate)`, amount: row.estimatedShare, note: null });
   }
   lines.push({ date: null, label: "Closing capital", amount: row.closing, note: null, total: true });
   return lines;

@@ -241,6 +241,7 @@ MIGS=(
   "r1852directoremployee|20261025003000_r1852_director_employee.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema='public' and table_name='company_directors' and column_name='employee_id') and to_regprocedure('public.set_director_employee(uuid,uuid)') is not null"
   "r1735leadgstinfill|20261025004500_r1735_lead_gstin_fills_blank_customer.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'quotes_fill_customer_gstin_from_lead' and tgrelid = to_regclass('public.quotes'))"
   "r1893primary|20261025015700_r1893_primary_contact_phone.sql|resellersos_migration|to_regprocedure('public.r1893_sync_primary_contact_phone()') is not null and to_regprocedure('public.r1893_backfill_primary_contact_phones()') is not null"
+  "r1849partnerappropriation|20261025030249_r1849_partner_appropriation.sql|resellersos_migration|to_regclass('public.partner_appropriations') is not null and to_regclass('public.partner_appropriation_lines') is not null and to_regprocedure('public.post_partner_appropriation(integer,bigint,jsonb)') is not null and to_regprocedure('public.undo_partner_appropriation(integer)') is not null and to_regprocedure('public.partner_remuneration_limit(integer,bigint)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-1849%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

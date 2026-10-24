@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { partnerCapitalAccounts, splitProfit, partnerStatement, partnerCapitalCsv } from "./partner-capital";
+import { partnerCapitalAccounts, splitProfit, partnerStatement, partnerCapitalCsv, partnerTdsInRange } from "./partner-capital";
 import type { FirmPartner } from "./partners";
 import type { OwnerEquityMovement } from "./owner-equity";
 
@@ -154,5 +154,54 @@ describe("partnerStatement — the drill-down", () => {
     expect(csv.header).toEqual(["Date", "Particulars", "Amount (INR)", "Note"]);
     expect(csv.rows[0]).toEqual(["", "Opening capital", 100000, ""]);
     expect(csv.rows.at(-1)).toEqual(["", "Closing capital", 100000, ""]);
+  });
+});
+
+describe("R-1849 — a posted year-end split replaces the estimate for that year", () => {
+  const split = {
+    fyStart: 2025, postedOn: "2026-03-31", netProfit: 1_060_000,
+    lines: [
+      { partnerId: "a", interest: 60_000, remuneration: 433_333, profitShare: 132_000, tds: 49_333, tdsSection: "194T" },
+      { partnerId: "b", interest: 0, remuneration: 346_667, profitShare: 88_000, tds: 34_667, tdsSection: "194T" },
+    ],
+  };
+
+  it("posted interest, remuneration and share, less TDS; only the profit after it is estimated", () => {
+    const res = partnerCapitalAccounts({ partners: [A, B], movements: [], profit: 1_260_000, posted: [split], sectionTotal: null });
+    const a = res.rows.find((r) => r.name === "Asha")!;
+    expect(a).toMatchObject({ interest: 60_000, remuneration: 433_333, profitShare: 252_000, estimatedShare: 120_000, tds: 49_333 });
+    expect(a.closing).toBe(100_000 + 60_000 + 433_333 + 252_000 - 49_333);
+    expect(res.profitShareIsEstimate).toBe(true);
+    expect(res.estimatedProfit).toBe(200_000);
+  });
+
+  it("all the profit posted → nothing is an estimate", () => {
+    const res = partnerCapitalAccounts({ partners: [A, B], movements: [], profit: 1_060_000, posted: [split], sectionTotal: null });
+    expect(res.profitShareIsEstimate).toBe(false);
+    expect(res.rows.find((r) => r.name === "Bimal")!.closing).toBe(50_000 + 346_667 + 88_000 - 34_667);
+  });
+
+  it("a split posted on or before the CA's opening date is inside the opening figure — not counted again", () => {
+    const res = partnerCapitalAccounts({ partners: [A, B], movements: [], profit: 0, posted: [split], range: { after: "2026-03-31" }, sectionTotal: null });
+    expect(res.rows.find((r) => r.name === "Asha")!.interest).toBe(0);
+  });
+
+  it("the statement shows the year's split dated 31 March, then the estimate", () => {
+    const res = partnerCapitalAccounts({ partners: [A, B], movements: [], profit: 1_260_000, posted: [split], sectionTotal: null });
+    const st = partnerStatement(res.rows.find((r) => r.name === "Asha")!, [], {});
+    expect(st.map((l) => [l.date, l.label, l.amount])).toEqual([
+      [null, "Opening capital", 100_000],
+      ["2026-03-31", "Interest on capital FY 2025-26", 60_000],
+      ["2026-03-31", "Remuneration FY 2025-26", 433_333],
+      ["2026-03-31", "Share of profit FY 2025-26 (60%)", 132_000],
+      ["2026-03-31", "Less: TDS u/s 194T FY 2025-26", -49_333],
+      [null, "Share of profit (60%, estimate)", 120_000],
+      [null, "Closing capital", 100_000 + 60_000 + 433_333 + 252_000 - 49_333],
+    ]);
+  });
+
+  it("partnerTdsInRange: the TDS taken from partners in the range (for the equity section)", () => {
+    expect(partnerTdsInRange([split], {})).toBe(84_000);
+    expect(partnerTdsInRange([split], { after: "2026-03-31" })).toBe(0);
   });
 });

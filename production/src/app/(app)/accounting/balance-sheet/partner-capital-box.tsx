@@ -20,7 +20,7 @@ import { downloadCSV } from "@/lib/csv";
 import { formatDate } from "@/lib/utils";
 import {
   partnerCapitalAccounts, partnerStatement, partnerCapitalCsv,
-  type PartnerCapitalRow, type Range,
+  type PartnerCapitalRow, type Range, type PostedSplit,
 } from "@/lib/accounting/partner-capital";
 import type { FirmPartner } from "@/lib/accounting/partners";
 import type { OwnerEquityMovement } from "@/lib/accounting/owner-equity";
@@ -28,13 +28,20 @@ import { useLinkOwnerEquityPartner } from "@/lib/queries/partners";
 import { PARTNERS_HREF } from "@/components/features/partners/partner-picker";
 import { fmtBS } from "./format";
 
+const NO_SPLITS: readonly PostedSplit[] = [];
+
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "partner";
 
-export function PartnerCapitalBox({ partners, movements, profit, range, sectionTotal }: {
+/** R-1849: the year-end split screen. */
+export const PROFIT_SPLIT_HREF = "/accounting/balance-sheet/profit-split";
+
+export function PartnerCapitalBox({ partners, movements, profit, posted = NO_SPLITS, range, sectionTotal }: {
   partners: readonly FirmPartner[];
   movements: readonly OwnerEquityMovement[];
   /** The Balance Sheet's profit for the range; null while it loads. */
   profit: number | null;
+  /** R-1849: posted year-end splits — they replace the estimate for their year. */
+  posted?: readonly PostedSplit[];
   range: Range;
   /** The equity section's total (equitySectionTotal) — the partners' closings add up to it with "Not yet split". */
   sectionTotal: number | null;
@@ -42,8 +49,8 @@ export function PartnerCapitalBox({ partners, movements, profit, range, sectionT
   const link = useLinkOwnerEquityPartner();
   const [open, setOpen] = React.useState<string | null>(null);
   const acc = React.useMemo(
-    () => partnerCapitalAccounts({ partners, movements, profit, range, sectionTotal }),
-    [partners, movements, profit, range, sectionTotal],
+    () => partnerCapitalAccounts({ partners, movements, profit, posted, range, sectionTotal }),
+    [partners, movements, profit, posted, range, sectionTotal],
   );
   const linkChoices = [...partners].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -89,7 +96,12 @@ export function PartnerCapitalBox({ partners, movements, profit, range, sectionT
                   <span className="tabular-nums font-medium shrink-0">{fmtBS(r.closing)}</span>
                 </span>
                 <span className="block text-xs text-ink-3 tabular-nums">
-                  {fmtBS(r.opening)} + {fmtBS(r.capitalIntroduced)} in + {fmtBS(r.profitShare)} profit − {fmtBS(r.drawings)} drawings
+                  {fmtBS(r.opening)} + {fmtBS(r.capitalIntroduced)} in
+                  {r.interest !== 0 && <> + {fmtBS(r.interest)} interest</>}
+                  {r.remuneration !== 0 && <> + {fmtBS(r.remuneration)} remuneration</>}
+                  {" "}+ {fmtBS(r.profitShare)} profit
+                  {r.tds !== 0 && <> − {fmtBS(r.tds)} TDS</>}
+                  {" "}− {fmtBS(r.drawings)} drawings
                 </span>
               </button>
               {!r.linked && r.partnerId === null && r.key !== "name:no partner named" && linkChoices.length > 0 && (
@@ -136,9 +148,12 @@ export function PartnerCapitalBox({ partners, movements, profit, range, sectionT
           </li>
         )}
       </ul>
-      {!acc.profitLoading && acc.rows.some((r) => r.profitShare !== 0) && (
-        <p className="text-3xs text-ink-3 mt-0.5">Share of profit is an estimate by profit-sharing ratio until the year-end split is posted.</p>
+      {!acc.profitLoading && acc.rows.some((r) => r.estimatedShare !== 0) && (
+        <p className="text-3xs text-ink-3 mt-0.5">Share of profit for a year not yet split is an estimate by profit-sharing ratio.</p>
       )}
+      <Link href={PROFIT_SPLIT_HREF as never} className="mt-1 inline-block text-xs font-medium text-indigo underline">
+        Split the year&apos;s profit — interest, remuneration, shares
+      </Link>
     </div>
   );
 }

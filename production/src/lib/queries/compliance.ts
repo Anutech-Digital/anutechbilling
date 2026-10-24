@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
-import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { fetchAllRows, type PageQuery } from "@/lib/ops/fetch-all";
 import type { ComplianceLogRow } from "@/lib/supabase/database.types";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { tdsLookbackFrom, tdsMonthsFrom } from "@/lib/compliance/tds-not-applicable";
@@ -80,7 +80,18 @@ export async function fetchTdsMonths(supabase: ReturnType<typeof createClient>, 
   ]);
   /* R-1891: 194Q TDS on goods bills paid from the bank — a deposit in the month it was deducted. */
   const goods = await fetchCogsBillTds(supabase, { from });
-  return tdsMonthsFrom(sal, [...exp, ...goods.map((g) => ({ expense_date: g.tds_on, tds_amount: g.tds_amount }))], comm);
+  /* R-1849: TDS on partners' interest + remuneration, deducted on the year-end split (31 March). */
+  const splits = await fetchPartnerSplitMonths(supabase, from);
+  return tdsMonthsFrom(sal, [...exp, ...goods.map((g) => ({ expense_date: g.tds_on, tds_amount: g.tds_amount })), ...splits], comm);
+}
+
+/** R-1849: posted partner splits with TDS, as dated TDS rows. A failed read is an error (R-1655). */
+async function fetchPartnerSplitMonths(supabase: ReturnType<typeof createClient>, from: string): Promise<{ expense_date: string; tds_amount: number }[]> {
+  type SplitRow = { posted_on: string; tds_total: number };
+  const rows = await fetchAllRows<SplitRow>((f, t) => supabase.from("partner_appropriations" as never)
+    .select("posted_on, tds_total").gte("posted_on", from).gt("tds_total", 0)
+    .order("id", { ascending: true }).range(f, t) as unknown as PageQuery<SplitRow>);
+  return rows.map((r) => ({ expense_date: r.posted_on, tds_amount: Number(r.tds_total) || 0 }));
 }
 
 /** filed-map keyed by `${obligation_key}|${period_key}` → filed_date. */

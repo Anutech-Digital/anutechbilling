@@ -99,6 +99,27 @@ describe("R-1848 partners' capital accounts on the Balance Sheet", () => {
     expect(link).toHaveBeenCalledWith({ movementId: movements[2].id, partnerId: "a" });
   });
 
+  it("R-1849: a posted year-end split shows interest, remuneration and TDS; the statement lists it; a link opens the split screen", () => {
+    const split = {
+      fyStart: 2025, postedOn: "2026-03-31", netProfit: 100000,
+      lines: [
+        { partnerId: "a", interest: 12000, remuneration: 30000, profitShare: 34800, tds: 4200, tdsSection: "194T" },
+        { partnerId: "b", interest: 0, remuneration: 0, profitShare: 23200, tds: 0, tdsSection: null },
+      ],
+    };
+    render(box({ profit: 100000, posted: [split], range: {}, sectionTotal: null }));
+    const a = screen.getByRole("button", { name: /Partner A/ });
+    expect(a.textContent).toMatch(/12,000 interest/);
+    expect(a.textContent).toMatch(/30,000 remuneration/);
+    expect(a.textContent).toMatch(/4,200 TDS/);
+    expect(screen.queryByText(/estimate/i)).toBeNull();
+    fireEvent.click(a);
+    const st = screen.getByRole("table", { name: /Partner A/ });
+    expect(within(st).getByText("Interest on capital FY 2025-26")).toBeTruthy();
+    expect(within(st).getByText("Less: TDS u/s 194T FY 2025-26")).toBeTruthy();
+    expect((screen.getByRole("link", { name: /Split the year's profit/ }) as HTMLAnchorElement).getAttribute("href")).toBe("/accounting/balance-sheet/profit-split");
+  });
+
   it("no partners and no entries → a prompt to add the partners", () => {
     movements = [];
     render(box({ partners: [], sectionTotal: 0 }));

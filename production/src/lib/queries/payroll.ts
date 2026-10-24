@@ -10,7 +10,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
-import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { fetchAllRows, type PageQuery } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { guardErrorToast } from "@/lib/ui/guard-toast";
@@ -520,12 +520,27 @@ export async function fetchStatutoryDues(supabase: ReturnType<typeof createClien
   /* R-1891: 194Q TDS deducted when a COGS (goods) bill was paid from the bank — on the payment
      row, not on an expense. Same rule as report_balance_sheet.dues_vendor_tds. */
   const bt = await fetchCogsBillTds(supabase);
+  /* R-1849: TDS on partners' interest + remuneration (194T / 393(3)) from a posted year-end
+     split. Same rule as report_balance_sheet.dues_vendor_tds. Before the migration: none. */
+  const pt = await fetchPartnerSplitTds(supabase);
   const sumTds = (rows: { tds_amount: number | null }[]) => rows.reduce((s, r) => s + (r.tds_amount ?? 0), 0);
   return statutoryDues({
     salaries: sal,
-    vendorTds: sumTds(vt) + sumTds(ct) + sumTds(bt),
+    vendorTds: sumTds(vt) + sumTds(ct) + sumTds(bt) + pt,
     paid,
   });
+}
+
+/** R-1849: Σ TDS on posted partner splits. A missing table (code before the migration) = 0. */
+export async function fetchPartnerSplitTds(supabase: ReturnType<typeof createClient>): Promise<number> {
+  try {
+    const rows = await fetchAllRows<{ tds: number | null }>((from, to) => supabase.from("partner_appropriation_lines" as never)
+      .select("tds").gt("tds", 0).order("id", { ascending: true }).range(from, to) as unknown as PageQuery<{ tds: number | null }>);
+    return rows.reduce((s, r) => s + (Number(r.tds) || 0), 0);
+  } catch (e) {
+    if (/partner_appropriation/.test(String((e as Error)?.message ?? e)) && /(does not exist|could not find|schema cache)/i.test(String((e as Error)?.message ?? e))) return 0;
+    throw e;
+  }
 }
 
 export function useStatutoryDues() {
