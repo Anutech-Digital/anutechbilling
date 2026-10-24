@@ -28,7 +28,7 @@ import { billProblem, parseRupees, splitBills } from "@/lib/accounting/employee-
 import type { EmployeeAdvance } from "@/lib/queries/advances";
 
 /** Categories a bill paid from an office advance can be (salary and director pay go through Payroll). */
-export const ADVANCE_BILL_CATEGORIES = EXPENSE_CATEGORIES.filter((c) => c !== "Salaries" && c !== "Director's Remuneration");
+export const ADVANCE_BILL_CATEGORIES: readonly string[] = EXPENSE_CATEGORIES.filter((c) => c !== "Salaries" && c !== "Director's Remuneration");
 
 interface Row {
   key: number;
