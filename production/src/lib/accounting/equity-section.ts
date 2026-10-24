@@ -142,7 +142,8 @@ export function equitySection<T extends ManualEquityLine>(input: EquityInput<T>)
     const share: Row[] = [
       ...(reg ? [line("register_share_capital", "Equity share capital",
         `${num(reg.paidUpShares)} shares × ${rupee(reg.faceValue)}, fully paid — from the share capital register`,
-        reg.paidUpCapital, "auto", "Share register", "/settings?tab=company#share-capital")] : []),
+        /* No link: Settings is owner/manager only, and every Balance Sheet link must open for the accountant (nav.test R-255). */
+        reg.paidUpCapital, "auto", "Share register")] : []),
       ...manual("manual_share", manualShare),
       ...openingCapital,
       /* Entries recorded while the company was set up as another type stay visible, never dropped. */

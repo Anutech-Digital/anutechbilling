@@ -202,7 +202,7 @@ export function DirectorsRegisterCard() {
           {isCurrent && (
             <p className="text-xs mt-0.5 flex flex-wrap gap-x-2">
               <span className={DSC_TONE[dsc.kind]}>{dsc.text}</span>
-              <span className="text-ink-4" aria-hidden>·</span>
+              <span className="text-ink-3" aria-hidden>·</span>
               <span className={kyc.overdue ? "text-rose" : "text-ink-2"}>
                 {kyc.text}{kyc.fromCycle ? " (add the last KYC year to be sure)" : ""}
               </span>

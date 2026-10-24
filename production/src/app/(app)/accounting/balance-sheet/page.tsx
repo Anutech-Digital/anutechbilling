@@ -61,7 +61,6 @@ import { ownerEquityWords, movementTotals, unexplainedAfterEntries, looksLikeDra
 import { useOwnerEquityMovements, isOwnerEquityTableMissing } from "@/lib/queries/owner-equity";
 import { OwnerEquityCard, RecordOwnerEquityDialog, type RecordInit } from "./owner-equity-card";
 import { equitySection, equitySectionTotal, equityLineCategories, registerShareCapital, type EquityGroup } from "@/lib/accounting/equity-section";
-import Link from "next/link";
 import { useShareCapital } from "@/lib/queries/share-capital";
 import { shareCapitalSummary } from "@/lib/company/share-capital";
 import { useFirmPartners } from "@/lib/queries/partners";
@@ -512,7 +511,7 @@ export default function BalanceSheetPage() {
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           {/* R-1851: with the share register in use, shares are added there, not as a hand-entered line. */}
                           {profile.type === "pvt_ltd" && unexplained > 0 && registerShareCapital(equity) !== 0 ? (
-                            <Button size="sm" variant="primary" asChild><Link href={"/settings?tab=company#share-capital" as never}>Shares issued? Add them in the register</Link></Button>
+                            <span className="text-xs text-ink-2">Shares issued? Add them in Settings → Company → Share capital.</span>
                           ) : (
                             <Button size="sm" variant="primary" loading={createItem.isPending} onClick={() => void bookUnexplained("capital")}>
                               {unexplained > 0 ? `Add ${profile.capitalLabel} ${rupee(unexplained)}` : `Record ${words.drawings.toLowerCase()} ${rupee(-unexplained)}`}
