@@ -45,6 +45,7 @@ import { reconcileTag, ReconcileTag, PayBadge, BillChip, isPayrollExpense } from
 import { filterExpenses, EXPENSE_SORT, expenseViewState, readExpenseView } from "./expense-table";
 import { logExport } from "@/lib/export-log";
 import { csvEscape } from "@/lib/csv";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 
 type DateRange = { from: string; to: string };
 const GROUP_BY_CHOICES: readonly GroupBy[] = ["none", "vendor", "category"];
@@ -314,8 +315,8 @@ export default function ExpensesPage() {
     const noBill = e.bill_type === "none" && !isPayrollExpense(e);
     return (
           <tr key={e.id}
-            className={`border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer align-top ${selectedIds.has(e.id) ? "bg-amber-soft/40" : ""}`}
-            onClick={() => openRow(e)}>
+            className={`border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer align-top ${ROW_FOCUS_RING} ${selectedIds.has(e.id) ? "bg-amber-soft/40" : ""}`}
+            {...rowActivation(() => openRow(e))}>
             {/* Bulk-select checkbox — only for settle-able payables */}
             <td className="px-2 py-2.5" onClick={(ev) => ev.stopPropagation()}>
               {bulkEligible(e) && (

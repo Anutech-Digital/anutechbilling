@@ -42,6 +42,7 @@ import { Tds26asImport } from "@/components/features/accounting/tds-26as-import"
 import { istToday } from "@/lib/dates/ist";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenRoute } from "@/lib/nav";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 
 // ────────────────────────────────────────────────────────────────
 // Status color mapping
@@ -265,8 +266,8 @@ export default function TdsReceivablePage() {
                 {rows.map((r) => (
                   <tr
                     key={r.id}
-                    className="hover:bg-paper-2/40 cursor-pointer"
-                    onClick={() => setSelected(r)}
+                    className={`hover:bg-paper-2/40 cursor-pointer ${ROW_FOCUS_RING}`}
+                    {...rowActivation(() => setSelected(r))}
                   >
                     <td className="px-4 py-3 text-ink-2">{formatDate(r.payment_received_date)}</td>
                     <td className="px-4 py-3">

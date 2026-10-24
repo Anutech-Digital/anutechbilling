@@ -31,6 +31,7 @@ import { Input }             from "@/components/ui/input";
 import { Icon }              from "@/components/ui/icon";
 import { rupee, formatDate, cn } from "@/lib/utils";
 import type { PurchaseOrderRow } from "@/lib/supabase/database.types";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 
 const STATUS_META: Record<string, { label: string; kind: "warning"|"info"|"success"|"danger"|"muted" }> = {
   draft:       { label: "Draft",       kind: "warning" },
@@ -246,8 +247,8 @@ export default function PurchaseOrdersPage() {
                   return (
                     <tr
                       key={p.id}
-                      className="border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer"
-                      onClick={() => setSelected(p)}
+                      className={`border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer ${ROW_FOCUS_RING}`}
+                      {...rowActivation(() => setSelected(p))}
                     >
                       <td className="p-3 font-mono text-xs font-semibold text-ink">{p.id}</td>
                       <td className="p-3">

@@ -43,6 +43,7 @@ import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import type { Item, PartnerCatalogRow, TenantWithParent } from "@/lib/supabase/database.types";
 import { newestFirst } from "@/lib/sort/newest-first";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 
 const VENDOR_TABS: TabBarItem[] = [
   { id: "all",       label: "All" },
@@ -491,9 +492,10 @@ export default function ItemsPage() {
                 return (
                   <tr
                     key={it.id}
-                    onClick={() => { setEditing(it); setAddOpen(true); }}
+                    {...rowActivation(() => { setEditing(it); setAddOpen(true); })}
                     className={cn(
                       "border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer transition-colors",
+                      ROW_FOCUS_RING,
                       !it.is_active && "opacity-50"
                     )}
                   >
@@ -712,8 +714,8 @@ function OneTimeCatalog({
               return (
                 <tr
                   key={it.id}
-                  onClick={() => onEdit(it)}
-                  className={cn("border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer transition-colors", !it.is_active && "opacity-50")}
+                  {...rowActivation(() => onEdit(it))}
+                  className={cn("border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer transition-colors", ROW_FOCUS_RING, !it.is_active && "opacity-50")}
                 >
                   <td className="p-3 font-medium text-sm">{it.name}</td>
                   <td className="p-3 font-mono text-xs text-ink-2">{it.hsn ?? "—"}</td>

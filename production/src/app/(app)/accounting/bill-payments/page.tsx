@@ -23,6 +23,7 @@ import { downloadCSV } from "@/lib/csv";
 import { useMoneyOut } from "@/lib/queries/payments-made";
 import { summarisePaidOut, paidOutCsvRows, PAID_OUT_CSV_HEADERS, GROUP_LABEL, paymentEditHref, type PaidGroup } from "@/lib/accounting/payments-made";
 import { istToday } from "@/lib/dates/ist";
+import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 
 type Tab = "all" | PaidGroup;
 const TABS: Tab[] = ["all", "vendors", "salaries", "statutory", "advances", "other", "unreconciled"];
@@ -158,8 +159,8 @@ export default function PaymentsMadePage() {
                 </thead>
                 <tbody>
                   {rows.map((l) => (
-                    <tr key={l.id} onClick={() => router.push(paymentEditHref(l) as Route)}
-                      className="border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer" title="Open this payment">
+                    <tr key={l.id} {...rowActivation(() => router.push(paymentEditHref(l) as Route))}
+                      className={`border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer ${ROW_FOCUS_RING}`} title="Open this payment">
                       <td className="p-3 whitespace-nowrap text-ink-2">{formatDate(l.txn_date)}</td>
                       <td className="p-3 font-medium text-ink">
                         {/* A real link too, for keyboard and new-tab users; the row click is the shortcut. */}
