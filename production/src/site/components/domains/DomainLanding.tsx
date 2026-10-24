@@ -292,7 +292,7 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
 
           {/* ── TRANSFER ── */}
           {tab === "transfer" && (
-            <div style={{ padding: mob ? "22px 18px 26px" : "26px 28px 30px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1fr 1fr", gap: mid ? 28 : 40 }}>
+            <div data-grid-phone style={{ padding: mob ? "22px 18px 26px" : "26px 28px 30px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1fr 1fr", gap: mid ? 28 : 40 }}>
               <div>
                 <h3 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, color: C.ink, margin: 0 }}>Move a name in. Three things, ten minutes.</h3>
                 <p style={{ fontSize: 15, color: C.ink2, lineHeight: 1.6, marginTop: 12 }}>We copy your DNS records first so nothing breaks, then start the transfer. A transfer adds a full year to the registration.</p>
@@ -329,7 +329,7 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
             <div style={{ padding: mob ? "22px 18px 26px" : "26px 28px 30px" }}>
               <h3 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, color: C.ink, margin: 0 }}>For resellers running a book of names.</h3>
               <p style={{ fontSize: 15, color: C.ink2, lineHeight: 1.6, maxWidth: "62ch", marginTop: 12 }}>Sweep availability across a whole list, price it on wholesale slabs, and host the portfolio too — one GST invoice, one dashboard.</p>
-              <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "repeat(3, 1fr)", gap: 14, marginTop: 18 }}>
+              <div data-grid-phone style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "repeat(3, 1fr)", gap: 14, marginTop: 18 }}>
                 {[
                   { t: "Bulk availability sweep", b: "Paste hundreds of names; get a live available/taken map back in one pass.", hot: false },
                   { t: "Wholesale slabs", b: "Reseller pricing that steps down with volume — shown before you commit.", hot: false },
@@ -347,7 +347,7 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
       </section>
 
       {/* ── 1 · HERO + ARITHMETIC ─────────────────────────────────────────── */}
-      <section style={wrap({ paddingTop: mob ? 44 : 52, display: "grid", gridTemplateColumns: mid ? "1fr" : "1.15fr 0.85fr", gap: mid ? 36 : 56, alignItems: "start" })}>
+      <section data-grid-phone style={wrap({ paddingTop: mob ? 44 : 52, display: "grid", gridTemplateColumns: mid ? "1fr" : "1.15fr 0.85fr", gap: mid ? 36 : 56, alignItems: "start" })}>
         <div>
           <div style={eyebrow}>Why the domain can cost ₹0</div>
           <h1 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: mob ? 44 : 62, lineHeight: 1.02, letterSpacing: "-0.02em", color: C.ink, margin: "14px 0 0", textWrap: "balance" as const }}>
@@ -405,7 +405,7 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
       </section>
 
       {/* ── 3 · WHY HOSTING IS IN THE BOX ──────────────────────────────────── */}
-      <section style={wrap({ paddingTop: mob ? 48 : 64, display: "grid", gridTemplateColumns: mid ? "1fr" : "1fr 1fr", gap: mid ? 28 : 52, alignItems: "start" })}>
+      <section data-grid-phone style={wrap({ paddingTop: mob ? 48 : 64, display: "grid", gridTemplateColumns: mid ? "1fr" : "1fr 1fr", gap: mid ? 28 : 52, alignItems: "start" })}>
         <div>
           <div style={eyebrow}>Why hosting is in the box</div>
           <h2 style={h2}>A registered domain does nothing on its own.</h2>
@@ -426,7 +426,7 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
 
       {/* ── 4 · THE HONEST COUNTER-ARGUMENT ────────────────────────────────── */}
       <section style={wrap({ paddingTop: mob ? 48 : 60 })}>
-        <div style={{ background: C.darkCard, color: "#EDE6DE", borderRadius: 18, padding: mob ? "26px 22px" : "34px 36px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1fr 1fr", gap: mid ? 24 : 44 }}>
+        <div data-grid-phone style={{ background: C.darkCard, color: "#EDE6DE", borderRadius: 18, padding: mob ? "26px 22px" : "34px 36px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1fr 1fr", gap: mid ? 24 : 44 }}>
           <div>
             <div style={{ ...eyebrow, color: "#FFB388" }}>The honest counter-argument</div>
             <h3 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: mob ? 26 : 32, color: "#fff", margin: "10px 0 0" }}>Don&apos;t add hosting if any of these is you.</h3>
@@ -510,7 +510,7 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
       <section id="included" style={wrap({ paddingTop: mob ? 48 : 62, scrollMarginTop: 84 })}>
         <div style={eyebrow}>Included</div>
         <h2 style={{ ...h2, marginBottom: 20 }}>Included with every domain — hosting or not.</h2>
-        <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : mid ? "1fr 1fr" : "repeat(4, 1fr)", gap: 1, background: C.line, border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
+        <div data-grid-phone style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : mid ? "1fr 1fr" : "repeat(4, 1fr)", gap: 1, background: C.line, border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
           {DOMAIN_INCLUDED.map((f) => (
             <div key={f.t} style={{ background: C.card, padding: "20px 22px" }}>
               <div style={{ fontSize: 15.5, fontWeight: 600, color: C.ink }}>{f.t}</div>
@@ -521,7 +521,7 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
       </section>
 
       {/* ── 7 · FAQ ────────────────────────────────────────────────────────── */}
-      <section id="faq" style={wrap({ paddingTop: mob ? 48 : 62, display: "grid", gridTemplateColumns: mid ? "1fr" : "0.72fr 1.28fr", gap: mid ? 24 : 52, scrollMarginTop: 84 })}>
+      <section data-grid-phone id="faq" style={wrap({ paddingTop: mob ? 48 : 62, display: "grid", gridTemplateColumns: mid ? "1fr" : "0.72fr 1.28fr", gap: mid ? 24 : 52, scrollMarginTop: 84 })}>
         <div>
           <div style={eyebrow}>Objections</div>
           <h2 style={h2}>The four reasons people skip the hosting box — and two we agree with.</h2>
@@ -546,7 +546,7 @@ export function DomainLanding({ tlds, tiers = HOSTING_TIERS, mailboxYearly = MAI
 
       {/* ── 8 · CLOSING CTA ────────────────────────────────────────────────── */}
       <section style={wrap({ paddingTop: mob ? 48 : 66, paddingBottom: 20 })}>
-        <div style={{ border: `1.5px solid ${C.accent}`, background: C.accSurf2, borderRadius: 18, padding: mob ? "26px 22px" : "34px 36px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1.3fr 0.7fr", gap: mid ? 20 : 32, alignItems: "center" }}>
+        <div data-grid-phone style={{ border: `1.5px solid ${C.accent}`, background: C.accSurf2, borderRadius: 18, padding: mob ? "26px 22px" : "34px 36px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1.3fr 0.7fr", gap: mid ? 20 : 32, alignItems: "center" }}>
           <div>
             <h2 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: mob ? 28 : 38, color: C.ink, margin: 0 }}>Name, hosting and mailbox — one invoice, one afternoon.</h2>
             <p style={{ fontSize: 15.5, color: C.accentDark, lineHeight: 1.6, margin: "10px 0 0" }}>Search the name, pick a plan, and our team wires the DNS and mailbox for you — the domain is registered {SLA.domainRegistered}. Nothing is charged until you review the cart.</p>
@@ -608,7 +608,7 @@ function ResultBlock(p: {
       <p style={{ padding: "16px 22px 6px", fontSize: 13.5, color: C.muted, margin: 0 }}>Pick one — you can change it any time before you pay.</p>
 
       {/* two options */}
-      <div role="radiogroup" aria-label="Domain options" style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "1fr 1fr", gap: 12, padding: "0 22px 4px" }}>
+      <div data-grid-phone role="radiogroup" aria-label="Domain options" style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "1fr 1fr", gap: 12, padding: "0 22px 4px" }}>
         {/* bundle */}
         <button role="radio" aria-checked={hostingOn} onClick={() => setHostingOn(true)}
           style={{ appearance: "none", cursor: "pointer", textAlign: "left", background: hostingOn ? C.accSurf : C.paper, border: `1.5px solid ${hostingOn ? C.accent : C.line}`, borderRadius: 12, padding: "16px 18px", fontFamily: "inherit" }}>
@@ -661,7 +661,7 @@ function ResultBlock(p: {
               })}
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "repeat(3, 1fr)", gap: 10, marginTop: 12 }}>
+          <div data-grid-phone style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "repeat(3, 1fr)", gap: 10, marginTop: 12 }}>
             {p.tiers.map((t) => {
               const on = planName === t.name;
               return (

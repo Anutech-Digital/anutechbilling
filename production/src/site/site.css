@@ -171,6 +171,26 @@
   .anutech-site [data-grid] { grid-template-columns: 1fr !important; }
 }
 
+/* R-1811 (24 Oct 2026): /hosting, /domains and /email (HomeV2) size their grids from a `w` state
+   that starts at 1200 and is measured only after hydration, so the server HTML — what a phone
+   paints first, and all it ever paints when JS is slow or fails — was the desktop layout: the
+   /hosting "honest numbers" card sat in a second column, cut off at the right edge. Hosting and
+   domains grids that are one column on a phone carry `data-grid-phone` (their own 760px `mob`
+   line); HomeV2's carry `data-grid` / `data-grid-2up` (its 980px line). The footer's columns
+   moved here from styled-jsx for the same reason (styled-jsx reaches the page only after
+   hydration). Guarded by src/site/phone-width.test.ts. */
+@media (max-width: 759px) {
+  .anutech-site [data-grid-phone] { grid-template-columns: minmax(0, 1fr) !important; }
+}
+/* Two-up below the 980px line (the /email stat rows), where the desktop row has four. */
+@media (max-width: 979px) {
+  .anutech-site [data-grid-2up] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+.anutech-site .footer-grid { display: grid; grid-template-columns: 1.5fr repeat(5, minmax(0, 1fr)); gap: 28px; }
+@media (max-width: 979px) {
+  .anutech-site .footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .anutech-site .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 .anutech-site .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
 .anutech-site .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }

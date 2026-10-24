@@ -226,7 +226,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
           Annual billing saves up to {maxSavePct}% · GST invoice in ₹, input-credit eligible.
         </p>
 
-        <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 12, maxWidth: 860, margin: "0 auto 14px", textAlign: "left" }}>
+        <div data-grid style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : "repeat(3, minmax(0,1fr))", gap: 12, maxWidth: 860, margin: "0 auto 14px", textAlign: "left" }}>
           {VENDORS.map((v) => {
             const from = Math.min(...editionsFor(v).map((e) => e.annual));
             const perDay = Math.round((from * 1.18 * 12) / 365);
@@ -262,7 +262,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
       {/* ── PRODUCT: pick an edition ───────────────────────────────────────── */}
       <section id="products" style={wrap({ padding: "44px 48px 8px", scrollMarginTop: 12 })}>
         {/* sticky strip */}
-        <div style={{ position: "sticky", top: 69, zIndex: 60, display: "grid", gridTemplateColumns: mob ? "1fr" : "auto 1fr auto", alignItems: "center", gap: 18, padding: "10px 14px", background: C.strip, border: `1px solid ${C.stripBd}`, borderRadius: 14, backdropFilter: "blur(6px)" }}>
+        <div data-grid style={{ position: "sticky", top: 69, zIndex: 60, display: "grid", gridTemplateColumns: mob ? "1fr" : "auto 1fr auto", alignItems: "center", gap: 18, padding: "10px 14px", background: C.strip, border: `1px solid ${C.stripBd}`, borderRadius: 14, backdropFilter: "blur(6px)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
             <span style={{ fontSize: 14, color: C.ink2 }}>Users</span>
             <span style={{ display: "inline-flex", alignItems: "center", background: C.surf, border: `1px solid #DDE3EB`, borderRadius: 8, overflow: "hidden" }}>
@@ -293,7 +293,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
 
         <div style={{ height: 18 }} />
 
-        <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : ".82fr 2.18fr", gap: mob ? 24 : 36, alignItems: "stretch" }}>
+        <div data-grid style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : ".82fr 2.18fr", gap: mob ? 24 : 36, alignItems: "stretch" }}>
           {/* left explainer */}
           <div style={{ display: "flex", flexDirection: "column" }}>
             <div style={{ ...eyebrow, marginBottom: 10 }}>{PARTNER_SHORT} · Since 2014</div>
@@ -305,7 +305,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
           </div>
 
           {/* edition trio */}
-          <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : `repeat(${Math.min(vendorEditions.length + (vendor.key === "gw" ? 1 : 0), 3)}, minmax(0,1fr))`, gap: 16, alignItems: "stretch" }}>
+          <div data-grid style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : `repeat(${Math.min(vendorEditions.length + (vendor.key === "gw" ? 1 : 0), 3)}, minmax(0,1fr))`, gap: 16, alignItems: "stretch" }}>
             {vendorEditions.map((e, i) => {
               const rate = rateOf(e);
               const pop = e.name === vendor.popular;
@@ -521,7 +521,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
 
       {/* ── MIGRATION: four steps + the real inbox image ───────────────────── */}
       <section style={{ background: C.surf, borderTop: `1px solid ${C.hair}` }}>
-        <div style={wrap({ padding: mob ? "44px 48px" : "56px 48px", display: "grid", gridTemplateColumns: mob ? "1fr" : "1fr 1fr", gap: mob ? 32 : 52, alignItems: "center" })}>
+        <div data-grid style={wrap({ padding: mob ? "44px 48px" : "56px 48px", display: "grid", gridTemplateColumns: mob ? "1fr" : "1fr 1fr", gap: mob ? 32 : 52, alignItems: "center" })}>
           <div>
             <div style={{ ...eyebrow, marginBottom: 10 }}>Moving your old mail</div>
             <h2 style={{ fontSize: mob ? 27 : 31, fontWeight: 700, letterSpacing: "-0.03em", color: C.ink, margin: "0 0 10px", textWrap: "balance" as const }}>Four steps. We do three, you do one.</h2>
@@ -556,7 +556,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
         if (!am) return null;
         return (
           <section id="anutech-mail" style={{ background: C.sectT, borderTop: `1px solid ${C.hair}` }}>
-            <div style={wrap({ padding: "40px 48px", display: "grid", gridTemplateColumns: mob ? "1fr" : "1.2fr 1fr", gap: mob ? 18 : 40, alignItems: "center" })}>
+            <div data-grid style={wrap({ padding: "40px 48px", display: "grid", gridTemplateColumns: mob ? "1fr" : "1.2fr 1fr", gap: mob ? 18 : 40, alignItems: "center" })}>
               <div>
                 <div style={{ ...eyebrow, marginBottom: 10 }}>Only need mail?</div>
                 <h2 style={{ fontSize: mob ? 25 : 28, fontWeight: 700, letterSpacing: "-0.03em", color: C.ink, margin: "0 0 8px", textWrap: "balance" as const }}>Anutech Mail — a plain mailbox on your domain</h2>
@@ -584,7 +584,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
           <div style={eyebrow}>The rest of the catalogue</div>
           <h2 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em", color: C.ink, margin: "8px 0 6px", textWrap: "balance" as const }}>Domains, hosting, SSL — same published-price rule</h2>
           <p style={{ fontSize: 15, color: C.body, margin: "0 0 22px" }}>Every rate on the card, GST 18% billed separately, renewal price shown up front.</p>
-          <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr 1fr" : "repeat(4,1fr)", gap: 16 }}>
+          <div data-grid-2up style={{ display: "grid", gridTemplateColumns: mob ? "1fr 1fr" : "repeat(4,1fr)", gap: 16 }}>
             {CATALOGUE_V2.map((c) => (
               <Link key={c.name} href={c.href as never} style={{ display: "flex", flexDirection: "column", background: C.surf, border: `1px solid ${C.borderL}`, borderRadius: 11, padding: "16px 17px 14px", boxShadow: SH_CARD, textDecoration: "none", color: "inherit" }}>
                 {/* 16:9 icon band */}
@@ -619,7 +619,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
           {/* 2 Oct 2026: the three "Google review" cards below this were sample text (the names
               are the app's test fixtures), not reviews anyone wrote — removed until real ones,
               linked to their source, replace them. */}
-          <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr 1fr" : "repeat(4,1fr)", gap: 16 }}>
+          <div data-grid-2up style={{ display: "grid", gridTemplateColumns: mob ? "1fr 1fr" : "repeat(4,1fr)", gap: 16 }}>
             {TRUST.map((f) => (
               <div key={f.label} style={{ textAlign: "center" }}>
                 <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: "-0.03em", color: ("primary" in f && f.primary) ? C.blue : C.ink }}>{f.value}</div>
