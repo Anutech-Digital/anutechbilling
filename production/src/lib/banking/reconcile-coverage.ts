@@ -4,7 +4,7 @@
  * Replaces the "Balance in app" tile (R-1829 / R-1831 era): opening balance + ONLY the
  * reconciled lines. That is not a balance of anything — with ₹26 lakh of credits still
  * unreconciled and the salaries already matched, it showed ₹-19,17,804 in red, which looks like
- * the account is overdrawn. Pardeep's staging account (Excel Technologies HDFC, 1,449 lines).
+ * the account is overdrawn. Seen on a staging account of 1,449 lines (24 Oct 2026).
  *
  * The honest measure is COVERAGE, not cash: of all the money that moved through the account
  * (money in + money out, each line counted once at its own amount), how much has a record in the
