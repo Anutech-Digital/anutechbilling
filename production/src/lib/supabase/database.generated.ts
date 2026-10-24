@@ -2180,6 +2180,7 @@ export type Database = {
           id: string
           ifsc: string | null
           is_active: boolean
+          is_default_petty_cash: boolean
           name: string
           notes: string | null
           opening_balance: number
@@ -2195,6 +2196,7 @@ export type Database = {
           id?: string
           ifsc?: string | null
           is_active?: boolean
+          is_default_petty_cash?: boolean
           name: string
           notes?: string | null
           opening_balance?: number
@@ -2210,6 +2212,7 @@ export type Database = {
           id?: string
           ifsc?: string | null
           is_active?: boolean
+          is_default_petty_cash?: boolean
           name?: string
           notes?: string | null
           opening_balance?: number
@@ -14497,6 +14500,7 @@ export type Database = {
         Args: { p_account_id: string; p_after?: string; p_limit?: number }
         Returns: Json
       }
+      backfill_default_petty_cash: { Args: never; Returns: number }
       backup_all_tenants: { Args: { p_label?: string }; Returns: Json }
       backup_tenant: {
         Args: { p_label?: string; p_tenant: string }

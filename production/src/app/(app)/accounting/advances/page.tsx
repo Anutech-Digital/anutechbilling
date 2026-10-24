@@ -36,6 +36,7 @@ import {
 } from "@/lib/queries/advances";
 import { useEmployees } from "@/lib/queries/payroll";
 import { useBankAccounts } from "@/lib/queries/bank";
+import { defaultCashAccountId } from "@/lib/payments/deposit-accounts";
 import { AddExpenseDialog } from "@/components/features/accounting/add-expense-dialog";
 import { getBillAttachmentUrl } from "@/lib/queries/vendor-bills";
 import { toast } from "sonner";
@@ -338,6 +339,13 @@ function DisburseAdvanceDialog({ open, onOpenChange, prefill }: { open: boolean;
   const [date, setDate] = React.useState<string>(todayISO());
   const [method, setMethod] = React.useState<string>("bank_transfer");
   const [bankId, setBankId] = React.useState<string>("");
+  /* R-1834: an advance given in Cash starts on the company's Petty Cash (the only cash account,
+     or the auto one among several); the person can still pick another account. */
+  const accountId = bankId || (method === "cash" ? defaultCashAccountId(bankAccounts) : "");
+  const pickMethod = (m: string) => {
+    setMethod(m);
+    if (m === "cash" && bankAccounts.find((b) => b.id === bankId)?.account_type !== "cash") setBankId("");
+  };
   const [purpose, setPurpose] = React.useState<string>("");
 
   /* Fill from AI Entry: the employee is matched by name (exact, then first-name), else the
@@ -376,7 +384,7 @@ function DisburseAdvanceDialog({ open, onOpenChange, prefill }: { open: boolean;
         disbursed_amount: parsedAmount,
         disbursed_date: date,
         payment_method: method,
-        bank_account_id: bankId || null,
+        bank_account_id: accountId || null,
         purpose: purpose.trim() || null,
       },
       {
@@ -448,7 +456,7 @@ function DisburseAdvanceDialog({ open, onOpenChange, prefill }: { open: boolean;
 
           <div className="grid grid-cols-2 gap-3">
             <FormField htmlFor="advances-payment-method" label="Payment Method">
-              <Select value={method} onValueChange={setMethod}>
+              <Select value={method} onValueChange={pickMethod}>
                 <SelectTrigger id="advances-payment-method" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
@@ -463,7 +471,7 @@ function DisburseAdvanceDialog({ open, onOpenChange, prefill }: { open: boolean;
             </FormField>
 
             <FormField htmlFor="advances-company-bank-cash" label="Company Bank / Cash">
-              <Select value={bankId} onValueChange={setBankId}>
+              <Select value={accountId} onValueChange={setBankId}>
                 <SelectTrigger id="advances-company-bank-cash" className="w-full">
                   <SelectValue placeholder="Select Bank..." />
                 </SelectTrigger>

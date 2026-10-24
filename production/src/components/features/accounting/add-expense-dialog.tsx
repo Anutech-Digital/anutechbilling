@@ -50,6 +50,7 @@ import { compactName } from "@/lib/banking/salary-lines";
 import { TDS_SECTION_RATES, tdsBase } from "@/lib/accounting/tds-rates";
 import { tdsDecision, panFromGstin } from "@/lib/accounting/tds-deductor";
 import { useBankAccounts } from "@/lib/queries/bank";
+import { defaultCashAccountId } from "@/lib/payments/deposit-accounts";
 import { useVendors, ensureVendor } from "@/lib/queries/vendors";
 import { useAddReimbursement } from "@/lib/queries/reimbursements";
 import { toast } from "sonner";
@@ -136,7 +137,10 @@ export function AddExpenseDialog({
   const { data: bankAccounts } = useBankAccounts();
   const cashAccounts = (bankAccounts ?? []).filter((a) => a.account_type === "cash");
   const bankOnlyAccounts = (bankAccounts ?? []).filter((a) => a.account_type !== "cash");
-  const [pettyCashAccountId, setPettyCashAccountId] = React.useState<string>("");
+  /* R-1834: Cash starts on the company's Petty Cash (the only cash account, or the auto one among
+     several). null = not touched yet → that default; "" = "Don't deduct from petty cash". */
+  const [pettyCashPick, setPettyCashAccountId] = React.useState<string | null>(null);
+  const pettyCashAccountId = isEdit ? "" : (pettyCashPick ?? defaultCashAccountId(bankAccounts));
   /* Staff advances still open — "Paid by → Employee advance" lists them with what is left. */
   const { data: allAdvances } = useEmployeeAdvances();
   const [advanceId, setAdvanceId] = React.useState<string>(
