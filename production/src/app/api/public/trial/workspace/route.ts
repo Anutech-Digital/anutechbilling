@@ -27,6 +27,7 @@ import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
 import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
+import { IST_TZ } from "@/lib/dates/ist";
 
 /* The owner recipient was hardcoded here to an address on a retired domain
    (CLAUDE.md §1). Resolved from the storefront tenant's row now — see
@@ -186,7 +187,7 @@ export async function POST(request: NextRequest) {
     const trialEnds = new Date();
     trialEnds.setDate(trialEnds.getDate() + TRIAL_DAYS);
     const trialEndsFmt = trialEnds.toLocaleDateString("en-IN", {
-      day: "2-digit", month: "short", year: "numeric",
+      day: "2-digit", month: "short", year: "numeric", timeZone: IST_TZ,
     });
 
     const { alert: owner, tenant: ownerTenant } = await loadOwnerAlert(admin, BUY_PAGE_TENANT_ID);

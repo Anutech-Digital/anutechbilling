@@ -33,6 +33,7 @@ import { unsubscribeUrl, unsubscribeFooter, normaliseEmail } from "@/lib/marketi
 import { fillName, greetingName, NO_NAME } from "@/lib/marketing/greeting-name";
 import { cleanPitch } from "@/lib/leads/lead-finder";
 import { campaignHtmlVars, campaignHtmlName } from "@/lib/marketing/campaign-html";
+import { IST_TZ } from "@/lib/dates/ist";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -193,7 +194,7 @@ export const POST = withRoute(
   const emailMode   = isEmailConfigured() ? "real" : "stub";
 
   const offerExpiresFmt = offer?.expires_at
-    ? new Date(offer.expires_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+    ? new Date(offer.expires_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: IST_TZ })
     : "";
 
   let sent   = 0;

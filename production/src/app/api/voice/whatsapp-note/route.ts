@@ -22,6 +22,7 @@ import { synthesizeSpeech } from "@/lib/voice/tts";
 import { sendCustomerWhatsApp } from "@/lib/messaging";
 import { rupee } from "@/lib/utils";
 import { hasPhone, noPhoneNotice, NO_PHONE_STATUS } from "@/lib/voice/voice-note-phone";
+import { IST_TZ } from "@/lib/dates/ist";
 
 const bodySchema = z.object({
   customerId: z.string().min(1),
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest) {
   let script: string;
   if (parsed.purpose === "renewal") {
     const on = active?.renewal_date
-      ? new Date(active.renewal_date).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
+      ? new Date(active.renewal_date).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: IST_TZ })
       : "soon";
     script = `Hello ${firstName}. This is a reminder from ${brand}. Your ${plan} is due for renewal on ${on}. Please renew so your service continues without interruption. Thank you.`;
   } else {
