@@ -29,6 +29,7 @@ export function lineLabel(t: Pick<CashFlowTxn, "matched_to_type" | "category">):
     case "prepaid":     return "Prepaid advance";
     case "expense":     return t.category ? t.category : "Expense";
     case "vendor_bill": return "Vendor bill";
+    case "vendor_payment": return "Vendor payment";   // R-1866: bills / new bill / advance from one line
     case "payment":     return "Customer payment";
     case "project":     return "Project payment";
     case "transfer":    return "Transfer (own accounts)";

@@ -60,12 +60,13 @@ import { previousPeriod, titleCaseName, parseSalaryNarration, matchEmployee } fr
 import { useBookSalaryLines } from "@/lib/queries/salary-from-bank";
 import { detectGovtPayment } from "@/lib/banking/govt-payment";
 import { payeeFromNarration, TEST_TRANSFER_MAX } from "@/lib/banking/narration";
-import { usePrepaidAdvances, useBookBankTxnAsPrepaid } from "@/lib/queries/prepaid-advances";
+import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
 import { useVendorBills } from "@/lib/queries/vendor-bills";
 import { useReferralCommissions } from "@/lib/queries/referral-commissions";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
 import { ProjectPaymentSection } from "@/components/features/banking/project-payment-section";
 import { CreditPayForSection } from "@/components/features/banking/credit-pay-for-section";
+import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-section";
 import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
 import { IncentiveFromBankSection } from "@/components/features/banking/incentive-from-bank-section";
 import { useComplianceProfile } from "@/lib/compliance/profile";
@@ -189,8 +190,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     setBookCategory(expenseSuggestion?.category ?? ""); setBookGst("");
   }, [transaction?.id, expenseSuggestion?.category]);
 
-  /* Prepaid advance to a vendor (money-out). */
-  const bookPrepaid = useBookBankTxnAsPrepaid();
+  /* Names already used for vendor advances — so a rule's "FACEBK" reads as the existing "Facebook". */
   const { data: prepaidAdvances } = usePrepaidAdvances();
   const prepaidVendorNames = React.useMemo(
     () => [...new Set((prepaidAdvances ?? []).map((a) => a.vendor_name.trim()))].sort(),
@@ -211,33 +211,13 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     return prepaidVendorNames.find((v) => v.toUpperCase().startsWith(key)) ?? titleCaseName(pattern);
   }, [transaction, categoryRules, prepaidVendorNames]);
 
-  const [showPrepaid, setShowPrepaid] = React.useState(false);
-  const [prepaidVendor, setPrepaidVendor] = React.useState("");
-  const [prepaidCategory, setPrepaidCategory] = React.useState("Advertising");
   React.useEffect(() => {
     setBookVendor(suggestedVendor);
-    setShowPrepaid(false);
-    setPrepaidVendor(suggestedVendor);
-    setPrepaidCategory(expenseSuggestion?.category ?? "Advertising");
-  }, [transaction?.id, suggestedVendor, expenseSuggestion?.category]);
-  const handleBookPrepaid = async () => {
-    if (!transaction || !prepaidVendor.trim()) return;
-    try {
-      await bookPrepaid.mutateAsync({
-        transactionId: transaction.id,
-        accountId:     transaction.bank_account_id,
-        vendorName:    prepaidVendor,
-        category:      prepaidCategory,
-        notes:         transaction.description,
-      });
-      onOpenChange(false);
-    } catch { /* hook toasts */ }
-  };
+  }, [transaction?.id, suggestedVendor]);
 
-  /* Vendor bill / referral commission paid from this line (money-out). Settles the
-     bill / commission against THIS imported line; a synthetic line the Bills or
-     Referrals page had made for the same payment is replaced (migration 20260927190000).
-     Candidates: open bills, plus paid ones whose synthetic line matches this amount. */
+  /* R-1866: paying a vendor (open bills, a new bill, an advance) is DebitPayForSection. What stays
+     here: a bill payment ALREADY recorded on the Bills page (its own manual bank line) — this
+     imported line replaces that manual one (migration 20260927190000) — and referral commissions. */
   const bookBill = useBookBankTxnAsVendorBill();
   const bookCommission = useBookBankTxnAsCommission();
   const { data: allBills } = useVendorBills();
@@ -249,12 +229,10 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   React.useEffect(() => { setShowBill(false); setBillPick(""); setShowCommission(false); setCommissionPick(""); }, [transaction?.id]);
   const billCandidates = React.useMemo(() => {
     const amt = transaction?.debit ?? 0;
+    /* Only bills with a payment of this amount already on them (its manual line gets replaced). */
     return (allBills ?? [])
-      .filter((b) => (b.total - (b.paid_amount ?? 0)) > 0 || (b.paid_amount ?? 0) === amt || b.total === amt)
-      .sort((a, b) => {
-        const ax = Math.abs(a.total - (a.paid_amount ?? 0) - amt), bx = Math.abs(b.total - (b.paid_amount ?? 0) - amt);
-        return ax - bx || b.bill_date.localeCompare(a.bill_date);
-      })
+      .filter((b) => amt > 0 && (b.paid_amount ?? 0) >= amt)
+      .sort((a, b) => Number((b.paid_amount ?? 0) === amt) - Number((a.paid_amount ?? 0) === amt) || b.bill_date.localeCompare(a.bill_date))
       .slice(0, 40);
   }, [allBills, transaction?.debit]);
   const commissionCandidates = React.useMemo(() => {
@@ -760,6 +738,13 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
               />
             ))}
 
+            {/* R-1866: money to a vendor — "This payment is for:" its open bills (several, part,
+                net of TDS), a bill recorded on the spot, an advance, a bank charge. One transaction.
+                A challan to the government (govtHint) is not a vendor — booked below instead. */}
+            {!isCredit && !govtHint && (
+              <DebitPayForSection transaction={transaction} onSaved={() => setPayForDone(true)} onDone={() => onOpenChange(false)} />
+            )}
+
             {/* Once booked, only the result stays: the other choices no longer apply to this line. */}
             {!payForDone && (<>
 
@@ -935,27 +920,24 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
             {!isCredit && <IncentiveFromBankSection transaction={transaction} onDone={() => onOpenChange(false)} />}
             <OwnerEquitySection transaction={transaction} onDone={() => onOpenChange(false)} />
 
-            {/* Vendor bill (COGS) paid from this line — settled against THIS line, never a second one. */}
-            {!isCredit && (
+            {/* A bill payment already recorded on the Bills page has its own manual bank line;
+                this imported line takes its place (counted once). Open bills are paid above. */}
+            {!isCredit && billCandidates.length > 0 && (
               <div className="rounded-md border border-hairline p-3">
                 <button type="button" onClick={() => setShowBill((v) => !v)} aria-expanded={showBill} className="w-full flex items-center justify-between text-left">
-                  <span className="text-xs font-semibold text-ink-2">Payment of a vendor bill (Google / Microsoft / Zoho…)?</span>
+                  <span className="text-xs font-semibold text-ink-2">Already recorded this bill payment on the Bills page?</span>
                   <Icon name={showBill ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
                 </button>
-                {!showBill ? (
-                  <p className="text-xs text-ink-3 mt-1 leading-relaxed">Settle the bill here — paying it from the Bills page creates a separate manual bank line, which is counted twice once the statement arrives.</p>
-                ) : (
+                {showBill && (
                   <div className="mt-2 space-y-2">
                     <select value={billPick} onChange={(e) => setBillPick(e.target.value)} aria-label="Vendor bill" className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40">
                       <option value="">Select a bill…</option>
-                      {billCandidates.map((b) => {
-                        const due = b.total - (b.paid_amount ?? 0);
-                        return <option key={b.id} value={b.id}>{b.vendor_name} · {b.bill_no ? `${b.bill_no} · ` : ""}{formatDate(b.bill_date)} · {due > 0 ? `due ${rupee(due)}` : `paid ${rupee(b.total)} (replaces the manual line)`}</option>;
-                      })}
+                      {billCandidates.map((b) => (
+                        <option key={b.id} value={b.id}>{b.vendor_name} · {b.bill_no ? `${b.bill_no} · ` : ""}{formatDate(b.bill_date)} · paid {rupee(b.paid_amount ?? 0)} (replaces the manual line)</option>
+                      ))}
                     </select>
-                    {billCandidates.length === 0 && <p className="text-xs text-ink-3">No open bills — create the bill on the Bills page first.</p>}
                     <Button size="sm" variant="primary" icon="check" disabled={!billPick || bookBill.isPending} loading={bookBill.isPending} onClick={handleBookBill}>
-                      Book {rupee(amount)} against this bill
+                      Match {rupee(amount)} to this bill payment
                     </Button>
                   </div>
                 )}
@@ -980,66 +962,6 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                     <p className="text-xs text-ink-3">The line amount must equal the commission's net payable (after TDS).</p>
                     <Button size="sm" variant="primary" icon="check" disabled={!commissionPick || bookCommission.isPending} loading={bookCommission.isPending} onClick={handleBookCommission}>
                       Book {rupee(amount)} as commission paid
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Paid a VENDOR in advance (Facebook / Google ads top-up, a retainer) —
-                money-out. Not an expense yet: a prepaid asset, expensed when the
-                vendor's invoice arrives (Prepaid page → Book invoice, oldest top-up first). */}
-            {!isCredit && (
-              <div className="rounded-md border border-hairline p-3">
-                <button
-                  type="button"
-                  onClick={() => setShowPrepaid((v) => !v)}
-                  aria-expanded={showPrepaid}
-                  className="w-full flex items-center justify-between text-left"
-                >
-                  <span className="text-xs font-semibold text-ink-2">Paid in advance to a vendor? (e.g. Facebook ads top-up)</span>
-                  <Icon name={showPrepaid ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
-                </button>
-                {!showPrepaid ? (
-                  <p className="text-xs text-ink-3 mt-1 leading-relaxed">
-                    Ad platforms take money first and invoice what was used later. Book the top-up as an <b>advance</b>;
-                    the monthly invoice then becomes the expense.
-                  </p>
-                ) : (
-                  <div className="mt-2 space-y-2">
-                    <p className="text-xs text-ink-3 leading-relaxed">
-                      Holds this {rupee(amount)} as a <b>prepaid asset</b> — no expense today. When the invoice comes, book it on
-                      Prepaid / Advances: it is drawn from the oldest top-ups first.
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <Input
-                        value={prepaidVendor}
-                        onChange={(e) => setPrepaidVendor(e.target.value)}
-                        placeholder="Paid to (e.g. Facebook)"
-                        aria-label="Vendor"
-                        list="prepaid-vendors"
-                      />
-                      <datalist id="prepaid-vendors">
-                        {prepaidVendorNames.map((v) => <option key={v} value={v} />)}
-                      </datalist>
-                      <select
-                        value={prepaidCategory}
-                        onChange={(e) => setPrepaidCategory(e.target.value)}
-                        aria-label="Category the advance will be used for"
-                        className="rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
-                      >
-                        {EXPENSE_CATEGORIES.filter((c) => c !== "Salaries").map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      icon="check"
-                      disabled={!prepaidVendor.trim() || bookPrepaid.isPending}
-                      loading={bookPrepaid.isPending}
-                      onClick={handleBookPrepaid}
-                    >
-                      Book {rupee(amount)} as {prepaidVendor.trim() || "vendor"} advance
                     </Button>
                   </div>
                 )}
