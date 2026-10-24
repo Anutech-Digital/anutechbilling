@@ -8,8 +8,8 @@
  * R-1844, onboarding R-1843) read it instead of hard-coding their own words.
  *
  * Null / unknown type = Pvt Ltd, exactly as obligationsFor() treats it today (the catalog's
- * original audience). Note: R-1839's owner-equity words treat null as proprietor for drawings;
- * which rule wins is an open decision on R-1839 — this module keeps today's calendar meaning.
+ * original audience). One rule for the whole app (coordinator decision, 24 Oct 2026): every
+ * reader resolves the type through resolveBusinessType() — R-1839's drawings words included.
  *
  * ROC filings and the calendar diff are DERIVED from obligationsFor(), never listed twice.
  * Pure — no I/O.
@@ -51,7 +51,7 @@ interface Words {
 const WORDS: Record<BusinessType, Words> = {
   proprietor: {
     peopleLabel: "Owner", capitalLabel: "Owner's capital", equityHeading: "Owner's capital",
-    drawingsLabel: "Drawings", itrForm: "ITR-3", itrText: "ITR-3 on the owner's PAN",
+    drawingsLabel: "Owner drawings", itrForm: "ITR-3", itrText: "ITR-3 on the owner's PAN",
   },
   partnership: {
     peopleLabel: "Partners", capitalLabel: "Partners' capital", equityHeading: "Partners' capital",
@@ -59,7 +59,7 @@ const WORDS: Record<BusinessType, Words> = {
   },
   llp: {
     peopleLabel: "Designated partners", capitalLabel: "Partners' capital", equityHeading: "Partners' capital",
-    drawingsLabel: "Partner drawings", itrForm: "ITR-5", itrText: "ITR-5 for the LLP",
+    drawingsLabel: "Partner withdrawal", itrForm: "ITR-5", itrText: "ITR-5 for the LLP",
   },
   pvt_ltd: {
     peopleLabel: "Directors", capitalLabel: "Share capital", equityHeading: "Share capital + Reserves and surplus",
@@ -131,7 +131,7 @@ export function businessTypeChange(
   const added = [...new Set([...after.values()].filter((n) => !beforeNames.has(n)))];
   const removed = [...new Set([...before.values()].filter((n) => !afterNames.has(n)))];
 
-  const drawings = (p: EntityProfile) => p.drawingsLabel ?? "Not used (pay directors through payroll)";
+  const drawings = (p: EntityProfile) => p.drawingsLabel ?? "Not used — money to a director is salary, a loan or a reimbursement";
   const rows = [
     { what: "Income-tax return", from: a.itrText, to: b.itrText },
     { what: "People", from: a.peopleLabel, to: b.peopleLabel },

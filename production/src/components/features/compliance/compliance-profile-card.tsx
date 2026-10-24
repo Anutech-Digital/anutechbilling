@@ -250,7 +250,7 @@ export function ComplianceProfileCard({ isOwner }: { isOwner: boolean }) {
   };
 
   return (
-    <Card className="p-5 max-w-3xl">
+    <Card id="compliance-profile" className="p-5 max-w-3xl scroll-mt-20">
       <div className="mb-1 flex items-center justify-between gap-2">
         <p className="text-sm font-semibold text-ink">Compliance profile</p>
         {missing ? <Badge kind="muted">Coming soon</Badge>

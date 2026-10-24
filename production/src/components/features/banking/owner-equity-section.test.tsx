@@ -96,6 +96,24 @@ describe("R-1839 reconcile — owner drawings (debit)", () => {
   });
 });
 
+describe("business type not set = Pvt Ltd (one rule for the app, 24 Oct)", () => {
+  it("an empty type gives the director choices, not drawings", () => {
+    businessType = null;
+    const { container } = render(<OwnerEquitySection transaction={txn({})} onDone={vi.fn()} />);
+    expect(screen.getByText("Paid to a director?")).toBeTruthy();
+    expect(container.textContent).not.toMatch(/Owner drawings|Partner drawings|Partner withdrawal/);
+    expect(screen.queryByRole("button", { name: /Book/ })).toBeNull();
+  });
+  it("after choosing Proprietor the drawings option appears", () => {
+    businessType = null;
+    const { rerender } = render(<OwnerEquitySection transaction={txn({})} onDone={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /owner drawings/ })).toBeNull();
+    businessType = "proprietor";
+    rerender(<OwnerEquitySection transaction={txn({ id: "t1" })} onDone={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /Book ₹5,000 as owner drawings/ })).toBeTruthy();
+  });
+});
+
 describe("R-1839 reconcile — capital introduced (credit)", () => {
   it("proprietor: money in books as Capital introduced, not income", async () => {
     render(<OwnerEquitySection transaction={txn({ debit: 0, credit: 15000 })} onDone={vi.fn()} />);

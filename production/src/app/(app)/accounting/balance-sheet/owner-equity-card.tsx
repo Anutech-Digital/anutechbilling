@@ -35,6 +35,7 @@ import {
   type OwnerEquityKind, type OwnerEquityMovement, type OwnerEquityWords,
 } from "@/lib/accounting/owner-equity";
 import { useRecordOwnerEquity, useDeleteOwnerEquity } from "@/lib/queries/owner-equity";
+import { BusinessTypePrompt } from "@/components/features/compliance/business-type-prompt";
 import { parseWholeRupees } from "./format";
 
 export interface RecordInit { kind: OwnerEquityKind; amount?: number }
@@ -215,6 +216,8 @@ export function OwnerEquityCard({ words, movements, loading, error, onRetry, onR
   if (!words.allowed) {
     return (
       <Card id="drawings" className="mt-6 p-5 md:p-6 scroll-mt-20">
+        {/* Type not set reads as Pvt Ltd — a proprietor or firm sets it here to get drawings. */}
+        <BusinessTypePrompt className="mb-3" />
         <h2 className="text-xs uppercase tracking-wider text-ink-3 font-semibold">Money paid to a director</h2>
         <p className="text-xs text-ink-3 mt-1 max-w-xl leading-relaxed">
           A Pvt Ltd company has no owner drawings. Money a director takes from the company is one of these — book it where it belongs:

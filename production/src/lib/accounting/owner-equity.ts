@@ -15,6 +15,7 @@
  * the equity side. Money is whole rupees.
  */
 import type { BusinessType } from "@/lib/compliance/obligations";
+import { entityProfile } from "@/lib/compliance/entity";
 
 export type OwnerEquityKind = "drawings" | "capital_introduced";
 
@@ -44,22 +45,25 @@ export interface OwnerEquityWords {
   register: string;
 }
 
+/**
+ * Not set yet = Pvt Ltd, through the one resolver every screen uses (R-1842 entity.ts; coordinator
+ * decision 24 Oct 2026 — the calendar already read it that way). So an empty type shows the
+ * director choices, and the screens prompt to set the type (BusinessTypePrompt).
+ */
 export function ownerEquityWords(type: BusinessType | null | undefined): OwnerEquityWords {
-  switch (type) {
+  const p = entityProfile(type);
+  switch (p.type) {
     case "pvt_ltd":
       return { allowed: false, needsPartner: false, drawings: "Paid to director", capital: "Money from a director or shareholder",
         person: "director", register: "Drawings & capital" };
     case "partnership":
-      return { allowed: true, needsPartner: true, drawings: "Partner drawings", capital: "Capital introduced",
+      return { allowed: true, needsPartner: true, drawings: p.drawingsLabel ?? "Partner drawings", capital: "Capital introduced",
         person: "partner", register: "Partners' drawings & capital" };
     case "llp":
-      return { allowed: true, needsPartner: true, drawings: "Partner withdrawal", capital: "Partner's capital contribution",
+      return { allowed: true, needsPartner: true, drawings: p.drawingsLabel ?? "Partner withdrawal", capital: "Partner's capital contribution",
         person: "partner", register: "Partners' withdrawals & capital" };
     case "proprietor":
-    default:
-      /* Company type not set yet (Settings → Company): a small business is most often a
-         proprietorship, and drawings is the safe reading — the screens say to set the type. */
-      return { allowed: true, needsPartner: false, drawings: "Owner drawings", capital: "Capital introduced",
+      return { allowed: true, needsPartner: false, drawings: p.drawingsLabel ?? "Owner drawings", capital: "Capital introduced",
         person: "owner", register: "Owner drawings & capital" };
   }
 }

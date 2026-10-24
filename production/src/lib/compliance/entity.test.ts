@@ -5,12 +5,12 @@ import { describe, expect, it } from "vitest";
 import { businessTypeChange, businessTypeHint, entityProfile, resolveBusinessType } from "./entity";
 
 describe("entityProfile — words for each business type", () => {
-  it("proprietor: Owner, Owner's capital, Drawings, ITR-3 on the owner's PAN, no ROC filings", () => {
+  it("proprietor: Owner, Owner's capital, Owner drawings, ITR-3 on the owner's PAN, no ROC filings", () => {
     const p = entityProfile("proprietor");
     expect(p.label).toBe("Proprietor");
     expect(p.peopleLabel).toBe("Owner");
     expect(p.capitalLabel).toBe("Owner's capital");
-    expect(p.drawingsLabel).toBe("Drawings");
+    expect(p.drawingsLabel).toBe("Owner drawings");
     expect(p.itrForm).toBe("ITR-3");
     expect(p.itrText).toBe("ITR-3 on the owner's PAN");
     expect(p.rocFilings).toEqual([]);
@@ -29,7 +29,7 @@ describe("entityProfile — words for each business type", () => {
     const p = entityProfile("llp");
     expect(p.peopleLabel).toBe("Designated partners");
     expect(p.capitalLabel).toBe("Partners' capital");
-    expect(p.drawingsLabel).toBe("Partner drawings");
+    expect(p.drawingsLabel).toBe("Partner withdrawal");
     expect(p.itrForm).toBe("ITR-5");
     expect(p.rocFilings).toEqual(expect.arrayContaining(["Form 11", "Form 8", "DIR-3 KYC Web"]));
     expect(p.rocFilings).not.toContain("AOC-4");
@@ -69,7 +69,7 @@ describe("businessTypeChange — what the owner is told before saving", () => {
       { what: "Income-tax return", from: "ITR-3 on the owner's PAN", to: "ITR-6 for the company" },
       { what: "People", from: "Owner", to: "Directors" },
       { what: "Capital", from: "Owner's capital", to: "Share capital" },
-      { what: "Drawings", from: "Drawings", to: "Not used (pay directors through payroll)" },
+      { what: "Drawings", from: "Owner drawings", to: "Not used — money to a director is salary, a loan or a reimbursement" },
       { what: "Balance Sheet equity", from: "Owner's capital", to: "Share capital + Reserves and surplus" },
     ]));
   });

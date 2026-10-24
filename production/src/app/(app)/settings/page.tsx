@@ -32,6 +32,7 @@ import { Input } from "@/components/ui/input";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { NotificationsCard } from "@/components/features/settings/notifications-card";
 import { ComplianceProfileCard } from "@/components/features/compliance/compliance-profile-card";
+import { BusinessTypePrompt } from "@/components/features/compliance/business-type-prompt";
 import { TurnoverCard } from "@/components/features/compliance/turnover-card";
 import { GstRegistrationCard } from "@/components/features/compliance/gst-registration-card";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -247,6 +248,9 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
 
   return (
     <div className="grid grid-cols-1 gap-5">
+      {/* Business type empty → the app reads it as Pvt Ltd; ask to set it (button → Compliance profile). */}
+      <BusinessTypePrompt className="max-w-3xl" />
+
       {/* Reseller hierarchy (migration 0040). Read-only display for now —
           link/unlink controls land in a later slice. */}
       <ResellerTierCard />

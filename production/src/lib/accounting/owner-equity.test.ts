@@ -4,6 +4,7 @@ import {
   ownerEquityWords, movementTotals, capitalStatement, unexplainedAfterEntries, drawingsRegister,
   drawingsRegisterCsv, looksLikeDrawingsLine, DIRECTOR_CHOICES, type OwnerEquityMovement,
 } from "./owner-equity";
+import { entityProfile } from "@/lib/compliance/entity";
 
 const mv = (p: Partial<OwnerEquityMovement> & Pick<OwnerEquityMovement, "kind" | "amount" | "movement_date">): OwnerEquityMovement => ({
   id: `m-${p.movement_date}-${p.amount}`, bank_account_id: "acc-1", bank_txn_id: "t", own_line: true, partner_name: null, note: null, ...p,
@@ -63,8 +64,15 @@ describe("R-1839 labels by company type", () => {
     expect(DIRECTOR_CHOICES.find((c) => c.key === "salary")?.href).toBe("/accounting/payroll");
     expect(DIRECTOR_CHOICES.find((c) => c.key === "loan")?.href).toBe("/accounting/loans-given");
   });
-  it("company type not set reads as a proprietorship", () => {
-    expect(ownerEquityWords(null).drawings).toBe("Owner drawings");
+  it("company type not set reads as Pvt Ltd — one rule with the calendar (coordinator, 24 Oct)", () => {
+    expect(ownerEquityWords(null)).toEqual(ownerEquityWords("pvt_ltd"));
+    expect(ownerEquityWords(undefined).allowed).toBe(false);
+    expect(ownerEquityWords(null).drawings).toBe("Paid to director");
+  });
+  it("drawings words come from the shared business-type helper", () => {
+    expect(ownerEquityWords("proprietor").drawings).toBe(entityProfile("proprietor").drawingsLabel);
+    expect(ownerEquityWords("partnership").drawings).toBe(entityProfile("partnership").drawingsLabel);
+    expect(ownerEquityWords("llp").drawings).toBe(entityProfile("llp").drawingsLabel);
   });
 });
 
