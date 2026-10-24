@@ -187,7 +187,7 @@ async function handle(req: Request) {
       // its "Deposit TDS" reminder is not sent. If the TDS read fails, every
       // month counts as before — a stray reminder beats a missed deadline.
       const lookback = tdsLookbackFrom(today);
-      const [tdsSal, tdsExp, tdsComm] = await Promise.all([
+      const [tdsSal, tdsExp, tdsComm, tdsGoods] = await Promise.all([
         supabase.from("salary_payments").select("period, tds")
           .eq("tenant_id", tenant.id).gte("period", lookback.slice(0, 7)).gt("tds", 0),
         supabase.from("expenses").select("expense_date, tds_amount")
@@ -195,10 +195,16 @@ async function handle(req: Request) {
         // R-1580: TDS on partner commissions (194H) is a deposit too.
         supabase.from("referral_commissions").select("earned_date, tds_amount, status")
           .eq("tenant_id", tenant.id).gte("earned_date", lookback).gt("tds_amount", 0).neq("status", "cancelled"),
+        // R-1891: 194Q TDS on goods bills paid from the bank (on the payment row, not an expense).
+        supabase.from("bank_vendor_payment_lines" as never).select("tds_on, tds_amount")
+          .eq("tenant_id", tenant.id).in("kind", ["bill", "new_bill"]).gte("tds_on", lookback).gt("tds_amount", 0) as unknown as
+          PromiseLike<{ data: { tds_on: string | null; tds_amount: number }[] | null; error: unknown }>,
       ]);
-      const notApplicable = tdsSal.error || tdsExp.error || tdsComm.error
+      const notApplicable = tdsSal.error || tdsExp.error || tdsComm.error || tdsGoods.error
         ? undefined
-        : noTdsDeductedPredicate(tdsMonthsFrom(tdsSal.data, tdsExp.data, tdsComm.data), today);
+        : noTdsDeductedPredicate(tdsMonthsFrom(tdsSal.data,
+            [...(tdsExp.data ?? []), ...(tdsGoods.data ?? []).map((g) => ({ expense_date: g.tds_on, tds_amount: g.tds_amount }))],
+            tdsComm.data), today);
 
       const rows = buildComplianceRows(today, filed, undefined, notApplicable, profileFromRow(tenant, null));
       // A rung counts as done for the tenant only once EVERY recipient has it —

@@ -31,7 +31,7 @@ import { useVendorTdsThisFy, EXPENSE_CATEGORIES } from "@/lib/queries/expenses";
 import { VENDOR_BILL_CATEGORIES } from "@/lib/queries/vendor-bills";
 import { TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
 import type { BankTransactionRow } from "@/lib/queries/bank";
-import { useVendorOpenItems, usePayVendorFromBankDebit } from "@/lib/queries/bank-debit-pay-for";
+import { useVendorOpenItems, usePayVendorFromBankDebit, useVendor194q, useSet194qBuyer } from "@/lib/queries/bank-debit-pay-for";
 import {
   allocateOldestFirst, cashDue, guessVendor, itemKey, itemLabel, newBillTds, newBillTotal, planTds, preselect,
   resultLines, summarise, tdsMap, vendorPan,
@@ -99,7 +99,13 @@ export function DebitPayForSection({ transaction, onSaved, onDone }: Props) {
     };
   }, [fy]);
   const fyOthers = othersFor(pickedItems);
-  const tdsOpts = { section: section || null, pan, fyOthers, off: noTds };
+  /* R-1891: 194Q on goods (COGS) bills — the database's figure per bill, and the company's
+     answer to "turnover last FY above ₹10 crore?". */
+  const { data: q194rows } = useVendor194q(vendor?.id ?? null);
+  const q194 = React.useMemo(() => new Map((q194rows ?? []).map((r) => [r.doc_id, r])), [q194rows]);
+  const buyer = q194rows?.[0]?.buyer ?? null;
+  const setBuyer = useSet194qBuyer();
+  const tdsOpts = { section: section || null, pan, fyOthers, off: noTds, q194 };
   const tdsLines = planTds(pickedItems, tdsOpts);
   const tdsByKey = tdsMap(tdsLines);
 
@@ -108,13 +114,15 @@ export function DebitPayForSection({ transaction, onSaved, onDone }: Props) {
   const preKey = `${vendorId}|${open.map(itemKey).join(",")}`;
   const [preDone, setPreDone] = React.useState("");
   React.useEffect(() => {
-    if (!items || preDone === preKey || (section && !fy)) return;
-    const pre = preselect(items, debit, (bills) => tdsMap(planTds(bills, { section: section || null, pan, fyOthers: othersFor(bills), off: false })));
+    if (!items || preDone === preKey || (section && !fy) || (section === "194Q" && vendor && !q194rows)) return;
+    const pre = preselect(items, debit, (bills) => tdsMap(planTds(bills, { section: section || null, pan, fyOthers: othersFor(bills), off: false, q194 })));
     setPicked(new Set(pre.keys));
     if (pre.noTds) setNoTds(true);
     setCashEdit({});
     setPreDone(preKey);
-  }, [items, preKey, preDone, debit, section, pan, fy, othersFor]);
+  }, [items, preKey, preDone, debit, section, pan, fy, othersFor, vendor, q194rows, q194]);
+  /* A picked goods bill that crosses ₹50 lakh this year — 194Q may apply. */
+  const goodsOver = pickedItems.some((i) => i.source === "vendor_bill" && (q194.get(i.doc_id)?.base ?? 0) > 0);
   React.useEffect(() => { setPicked(new Set()); setCashEdit({}); setPreDone(""); }, [transaction.id, vendorId]);
 
   /* (b) New bill on the spot. */
@@ -291,7 +299,8 @@ export function DebitPayForSection({ transaction, onSaved, onDone }: Props) {
                             <Input type="number" min={0} className="w-28 h-8" aria-label={`Amount paid on ${itemLabel(i)}`}
                               value={String(cash)}
                               onChange={(e) => setCashEdit((c) => ({ ...c, [k]: Math.max(0, Math.round(Number(e.target.value) || 0)) }))} />
-                            {cash > 0 && cash < i.amount_due && <span className="text-amber-ink">part payment — {rupee(i.amount_due - cash)} stays due</span>}
+                            {tds > 0 && cash > 0 && <span>+ TDS {rupee(tds)} ({t?.section}) = {rupee(cash + tds)} settled</span>}
+                            {cash > 0 && cash + tds < i.amount_due && <span className="text-amber-ink">part payment — {rupee(i.amount_due - cash - tds)} stays due</span>}
                           </label>
                         ) : cash > 0 ? (
                           <span>{rupee(i.amount_due)}{tds > 0 ? <> − TDS {rupee(tds)} ({t?.section}) = <b>{rupee(cash)}</b> from bank</> : <> from bank</>}</span>
@@ -307,7 +316,7 @@ export function DebitPayForSection({ transaction, onSaved, onDone }: Props) {
           ))}
 
           {/* TDS */}
-          {(pickedItems.some((i) => i.source === "expense") || (showNew && bill.kind === "expense")) && (
+          {(pickedItems.some((i) => i.source === "expense") || (showNew && bill.kind === "expense") || goodsOver) && (
             <div className="rounded-md border border-hairline bg-paper p-2.5 space-y-1.5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-medium text-ink-2">TDS deducted</span>
@@ -316,8 +325,26 @@ export function DebitPayForSection({ transaction, onSaved, onDone }: Props) {
                   {TDS_SECTIONS.map((s) => <option key={s} value={s}>{s} · {TDS_SECTION_RATES[s].ratePct}%</option>)}
                 </select>
               </div>
-              {[...tdsLines.filter((t) => t.reason && !t.fixed).map((t) => t.reason), showNew ? billTds.reason : null]
+              {[...tdsLines.filter((t) => t.reason && (!t.fixed || t.section === "194Q")).map((t) => t.reason), showNew ? billTds.reason : null]
                 .filter(Boolean).slice(-1).map((r) => <p key="r" className="text-xs text-ink-3">{r}</p>)}
+              {/* R-1891: 194Q needs one answer about the company, asked here the first time. */}
+              {goodsOver && !noTds && section === "194Q" && buyer === null && (
+                <div className="rounded-md border border-amber/50 bg-amber-soft/30 p-2 space-y-1.5" role="group" aria-label="194Q turnover question">
+                  <p className="text-xs text-ink">
+                    194Q TDS applies only if your business turnover last financial year was <b>above ₹10 crore</b>. Was it?
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Button size="sm" variant="primary" loading={setBuyer.isPending} onClick={() => setBuyer.mutate(true)}>Yes, above ₹10 crore — deduct 194Q</Button>
+                    <Button size="sm" variant="default" disabled={setBuyer.isPending} onClick={() => setBuyer.mutate(false)}>No</Button>
+                  </div>
+                </div>
+              )}
+              {goodsOver && !noTds && section === "194Q" && buyer === false && (
+                <p className="text-xs text-ink-3">
+                  No 194Q: you said your turnover last year was not above ₹10 crore.{" "}
+                  <button type="button" className="underline hover:no-underline" onClick={() => setBuyer.mutate(true)}>It was above — deduct 194Q</button>
+                </p>
+              )}
             </div>
           )}
 

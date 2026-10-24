@@ -12,7 +12,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { toastError } from "@/lib/errors/toast-error";
-import { payArgs, type PayInput, type VendorOpenItem, type VendorPayResult } from "@/lib/banking/debit-pay-for";
+import { payArgs, type Bill194q, type PayInput, type VendorOpenItem, type VendorPayResult } from "@/lib/banking/debit-pay-for";
+import { queryKeys } from "@/lib/queries/keys";
 
 /* The generated types do not know the R-1866 functions yet (migration not applied there). */
 type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }> };
@@ -51,10 +52,49 @@ export function usePayVendorFromBankDebit() {
     },
     onSuccess: () => {
       for (const key of ["bank_transactions", "bank_accounts", "bank_debit_vendor_open_items", "vendor_bills", "vendors",
-                         "expenses", "prepaid_advances", "balance-sheet", "payments-made", "pnl"]) {
+                         "expenses", "prepaid_advances", "balance-sheet", "payments-made", "vendor_194q", "vendor-payments", "statutory-dues"]) {
         qc.invalidateQueries({ queryKey: [key] });
       }
+      qc.invalidateQueries({ queryKey: queryKeys.pnl() });   // the P&L's real key (was ["pnl"], read by nothing)
     },
+    onError: (err) => toastError(err),
+  });
+}
+
+/**
+ * R-1891: 194Q on the vendor's open COGS bills — worked out by the database
+ * (vendor_bill_194q_calc, migration 20261024230000); the screen only shows it. `buyer` is the
+ * company's answer to "turnover last FY above ₹10 crore?" (null = not answered).
+ */
+export const vendor194qKey = (vendorId: string | null) => ["vendor_194q", vendorId] as const;
+
+export function useVendor194q(vendorId: string | null) {
+  return useQuery({
+    queryKey: vendor194qKey(vendorId),
+    enabled: Boolean(vendorId),
+    queryFn: async (): Promise<Bill194q[]> => {
+      const { data, error } = await rpc("vendor_194q_open_bills", { p_vendor_id: vendorId });
+      if (error) throw error;
+      return ((data ?? []) as Bill194q[]).map((r) => ({
+        ...r,
+        fy_before: num(r.fy_before), base: num(r.base), rate_pct: num(r.rate_pct),
+        tds_total: num(r.tds_total), tds_already: num(r.tds_already), tds_due: num(r.tds_due),
+      }));
+    },
+    staleTime: 15_000,
+  });
+}
+
+/** R-1891: the company's answer to the ₹10 crore question (owner / manager / accountant). */
+export function useSet194qBuyer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (value: boolean) => {
+      const { error } = await rpc("set_tds_194q_buyer", { p_value: value });
+      if (error) throw error;
+      return value;
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["vendor_194q"] }); },
     onError: (err) => toastError(err),
   });
 }

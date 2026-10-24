@@ -15,6 +15,8 @@ const state = vi.hoisted(() => ({
   items: {} as Record<string, unknown[]>,
   fy: { base: 0, baseWithoutTds: 0 },
   pay: vi.fn(),
+  q194: {} as Record<string, unknown[]>,
+  setBuyer: vi.fn(),
 }));
 
 vi.mock("@/lib/queries/vendors", () => ({
@@ -22,6 +24,7 @@ vi.mock("@/lib/queries/vendors", () => ({
     data: [
       { id: "v1", name: "Sharma Associates", pan: "AAKFS1866A", gstin: "07AAKFS1866A1Z5", default_tds_section: "194J", default_category: "Professional Services" },
       { id: "v2", name: "Google Cloud India", gstin: "29AACCG1866B1Z9", default_category: "COGS-Workspace" },
+      { id: "v3", name: "Ingram Micro India", pan: "AAACI1891A", default_tds_section: "194Q", default_category: "COGS-Hardware" },
     ],
   }),
 }));
@@ -33,6 +36,8 @@ vi.mock("@/lib/queries/vendor-bills", () => ({ VENDOR_BILL_CATEGORIES: ["COGS-Wo
 vi.mock("@/lib/queries/bank-debit-pay-for", () => ({
   useVendorOpenItems: (id: string | null) => ({ data: id ? state.items[id] ?? [] : undefined, isLoading: false }),
   usePayVendorFromBankDebit: () => ({ mutateAsync: state.pay, isPending: false }),
+  useVendor194q: (id: string | null) => ({ data: id ? state.q194[id] ?? [] : undefined }),
+  useSet194qBuyer: () => ({ mutate: state.setBuyer, isPending: false }),
 }));
 
 import { DebitPayForSection } from "./debit-pay-for-section";
@@ -40,8 +45,10 @@ import { DebitPayForSection } from "./debit-pay-for-section";
 afterEach(cleanup);
 beforeEach(() => {
   state.pay.mockReset();
+  state.setBuyer.mockReset();
   state.fy = { base: 70800 - 10800, baseWithoutTds: 60000 };   // the two unpaid bills ARE the year so far
   state.items = {};
+  state.q194 = {};
 });
 
 const txn = (debit: number, description: string): BankTransactionRow => ({
@@ -146,6 +153,30 @@ describe("R-1866 DebitPayForSection", () => {
     await screen.findByText("Done — this bank line is reconciled");
     expect(state.pay.mock.calls[0][0]).toMatchObject({ bankCharge: 25, advance: 0 });
     expect(state.pay.mock.calls[0][0].items[0].cash).toBe(23600);
+  });
+
+  /* R-1891: a goods bill over ₹50 lakh this year, vendor's usual section 194Q. */
+  const IM2: VendorOpenItem = { ...G2, doc_id: "B9", bill_no: "IM-2", total: 2360000, amount_due: 2360000, gst: 360000, tds_base: 2000000 };
+  const q = (buyer: boolean | null) => [{ doc_id: "B9", fy_start: "2026-04-01", fy_before: 4000000, base: 1000000, rate_pct: 0.1, no_pan: false, tds_total: 1000, tds_already: 0, tds_due: 1000, buyer }];
+
+  it("R-1891: 194Q on a goods bill — asks the ₹10 crore question once, then takes the database's TDS", async () => {
+    state.items.v3 = [IM2];
+    state.q194.v3 = q(null);
+    const { rerender } = render(<DebitPayForSection transaction={txn(2359000, "NEFT INGRAM MICRO IM-2")} onDone={() => {}} />);
+    fireEvent.click(screen.getByLabelText(/^Pay Bill IM-2 · /));
+    expect(screen.getByText(/turnover last financial year was/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Yes, above ₹10 crore/ }));
+    expect(state.setBuyer).toHaveBeenCalledWith(true);
+
+    state.q194.v3 = q(true);
+    state.pay.mockResolvedValue(result({ vendor_name: "Ingram Micro India" }));
+    rerender(<DebitPayForSection transaction={txn(2359000, "NEFT INGRAM MICRO IM-2")} onDone={() => {}} />);
+    expect(screen.getByText(/0.1% on ₹10,00,000 above ₹50 lakh = ₹1,000/)).toBeTruthy();
+    expect(screen.getByText(/\+ TDS ₹1,000 \(194Q\)/)).toBeTruthy();
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0].items.map((x: { item: VendorOpenItem; cash: number; tds: number; section: string }) => [x.item.doc_id, x.cash, x.tds, x.section]))
+      .toEqual([["B9", 2359000, 1000, "194Q"]]);
   });
 
   it("parts that do not make the bank amount cannot be saved", () => {

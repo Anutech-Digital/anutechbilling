@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import {
   allocateOldestFirst, guessVendor, itemKey, newBillTds, payArgs, planTds, preselect, resultLines, summarise,
-  tdsMap, vendorPan, type VendorOpenItem, type VendorPayResult,
+  tdsMap, vendorPan, type Bill194q, type VendorOpenItem, type VendorPayResult,
 } from "./debit-pay-for";
 
 const exp = (o: Partial<VendorOpenItem>): VendorOpenItem => ({
@@ -81,6 +81,47 @@ describe("planTds — the app's TDS rule on the bills paid together", () => {
   });
   it("PAN from the GSTIN when the vendor has none", () => {
     expect(vendorPan({ pan: null, gstin: "07AAKFS1866A1Z5" })).toBe("AAKFS1866A");
+  });
+});
+
+describe("planTds — R-1891 194Q on a COGS bill: the database's figure, only for a ₹10 crore buyer", () => {
+  const q = (o: Partial<Bill194q> = {}): Bill194q => ({
+    doc_id: "B2", fy_start: "2026-04-01", fy_before: 4000000, base: 1000000, rate_pct: 0.1, no_pan: false,
+    tds_total: 1000, tds_already: 0, tds_due: 1000, buyer: true, ...o,
+  });
+  const big = cogs({ doc_id: "B2", bill_no: "IM-2", total: 2360000, amount_due: 2360000, gst: 360000, tds_base: 2000000 });
+  const with194q = (rows: Bill194q[]) => ({ ...j("194Q"), q194: new Map(rows.map((r) => [r.doc_id, r])) });
+
+  it("section 194Q + buyer yes → the bill's TDS due, with the why", () => {
+    const [t] = planTds([big], with194q([q()]));
+    expect(t).toMatchObject({ tds: 1000, section: "194Q", fixed: true });
+    expect(t.reason).toBe("194Q: bought ₹40,00,000 from this vendor this year before this bill — 0.1% on ₹10,00,000 above ₹50 lakh = ₹1,000.");
+  });
+  it("seller without PAN → says 5%", () => {
+    const [t] = planTds([big], with194q([q({ rate_pct: 5, no_pan: true, tds_total: 50000, tds_due: 50000 })]));
+    expect(t.tds).toBe(50000);
+    expect(t.reason).toContain("5% (no PAN)");
+  });
+  it("turnover not answered or 'no' → no TDS on the goods bill", () => {
+    expect(planTds([big], with194q([q({ buyer: null })]))[0].tds).toBe(0);
+    expect(planTds([big], with194q([q({ buyer: false })]))[0].tds).toBe(0);
+  });
+  it("another section, 'No TDS', or nothing due → none", () => {
+    expect(planTds([big], { ...with194q([q()]), section: "194C" })[0].tds).toBe(0);
+    expect(planTds([big], { ...with194q([q()]), off: true })[0].tds).toBe(0);
+    expect(planTds([big], with194q([q({ base: 0, tds_total: 0, tds_due: 0 })]))[0].tds).toBe(0);
+  });
+  it("the exact bank amount after 194Q is pre-ticked", () => {
+    const pre = preselect([big], 2359000, (bills) => tdsMap(planTds(bills, with194q([q()]))));
+    expect(pre.keys).toEqual([itemKey(big)]);
+  });
+  it("the TDS reaches the server with the gross settled", () => {
+    const args = payArgs({
+      transactionId: "t", vendorId: "v", newVendor: null,
+      items: [{ item: big, cash: 2359000, tds: 1000, section: "194Q" }],
+      newBill: null, advance: 0, advanceCategory: null, bankCharge: 0, note: null,
+    });
+    expect(args.p_items).toEqual([{ source: "vendor_bill", doc_id: "B2", amount: 2360000, tds_amount: 1000, tds_section: "194Q" }]);
   });
 });
 

@@ -124,11 +124,48 @@ export interface TdsLine { key: string; tds: number; section: string | null; rea
  * (`fyOthers`, plus the fixed bills) — and the TDS is shared over the bills by their base (the
  * last bill takes the rounding). `off` = the operator said "no TDS".
  */
+/**
+ * R-1891: 194Q on one open COGS bill, as the database works it out (vendor_194q_open_bills →
+ * vendor_bill_194q_calc, migration 20261024230000). `buyer` = the company said its business
+ * turnover last FY was above ₹10 crore (null = not answered).
+ */
+export interface Bill194q {
+  doc_id: string;
+  fy_start: string;
+  /** Value without GST of this vendor's goods bills earlier in the FY. */
+  fy_before: number;
+  /** The part of this bill above ₹50 lakh (without GST). */
+  base: number;
+  rate_pct: number;
+  no_pan: boolean;
+  tds_total: number;
+  tds_already: number;
+  tds_due: number;
+  buyer: boolean | null;
+}
+
+/** The why of a COGS bill's 194Q, in one line. */
+export function reason194q(q: Bill194q): string {
+  const rate = `${q.rate_pct}%${q.no_pan ? " (no PAN)" : ""}`;
+  if (q.tds_due === 0 && q.tds_already > 0) return `194Q: ${rupee(q.tds_already)} TDS already deducted on this bill.`;
+  if (q.base === 0) return `194Q: bought ${rupee(q.fy_before)} from this vendor this year before this bill — this bill stays within ₹50 lakh, no TDS.`;
+  return `194Q: bought ${rupee(q.fy_before)} from this vendor this year before this bill — ${rate} on ${rupee(q.base)} above ₹50 lakh = ${rupee(q.tds_due)}.`;
+}
+
 export function planTds(
   items: readonly VendorOpenItem[],
-  opts: { section: string | null; pan: string | null; fyOthers: { base: number; baseWithoutTds: number } | null; off: boolean },
+  opts: {
+    section: string | null; pan: string | null; fyOthers: { base: number; baseWithoutTds: number } | null; off: boolean;
+    /** R-1891: 194Q figures per open COGS bill (doc_id → row). */
+    q194?: ReadonlyMap<string, Bill194q> | null;
+  },
 ): TdsLine[] {
   const sec = (opts.section ?? "").trim().toUpperCase();
+  const goods = (i: VendorOpenItem): TdsLine | null => {
+    const q = opts.q194?.get(i.doc_id);
+    if (opts.off || sec !== "194Q" || !q || q.buyer !== true || !(q.tds_due > 0)) return null;
+    return { key: itemKey(i), tds: q.tds_due, section: "194Q", reason: reason194q(q), fixed: true };
+  };
   const free = items.filter((i) => i.source === "expense" && !(i.tds_amount > 0));
   const fixedBase = items.filter((i) => i.source === "expense" && i.tds_amount > 0).reduce((s, i) => s + i.tds_base, 0);
   const base = free.reduce((s, i) => s + i.tds_base, 0);
@@ -140,7 +177,7 @@ export function planTds(
   const lastFree = free.length ? itemKey(free[free.length - 1]) : "";
   return items.map((i) => {
     const key = itemKey(i);
-    if (i.source !== "expense") return { key, tds: 0, section: null, reason: null, fixed: false };
+    if (i.source !== "expense") return goods(i) ?? { key, tds: 0, section: null, reason: null, fixed: false };
     if (i.tds_amount > 0) return { key, tds: i.tds_amount, section: i.tds_section, reason: "TDS already on this bill", fixed: true };
     if (!d) return { key, tds: 0, section: null, reason: null, fixed: false };
     const share = key === lastFree ? total - given : Math.round((total * i.tds_base) / base);

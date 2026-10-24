@@ -17,6 +17,7 @@ import { guardErrorToast } from "@/lib/ui/guard-toast";
 import type { Database } from "@/lib/supabase/database.types";
 import { statutoryDues, type DuesSummary } from "@/lib/accounting/tds-deductor";
 import { monthBounds } from "@/lib/dates/ist";
+import { fetchCogsBillTds } from "@/lib/queries/cogs-bill-tds";
 
 /** R-607: no pin_hash — members cannot read it (20261010010000). Use `pin_set`. */
 export type Employee = Omit<Database["public"]["Tables"]["employees"]["Row"], "pin_hash">;
@@ -516,10 +517,13 @@ export async function fetchStatutoryDues(supabase: ReturnType<typeof createClien
     fetchAllRows<{ tds_amount: number | null }>((from, to) => supabase.from("referral_commissions")
       .select("tds_amount").gt("tds_amount", 0).neq("status", "cancelled").order("id", { ascending: true }).range(from, to)),
   ]);
+  /* R-1891: 194Q TDS deducted when a COGS (goods) bill was paid from the bank — on the payment
+     row, not on an expense. Same rule as report_balance_sheet.dues_vendor_tds. */
+  const bt = await fetchCogsBillTds(supabase);
   const sumTds = (rows: { tds_amount: number | null }[]) => rows.reduce((s, r) => s + (r.tds_amount ?? 0), 0);
   return statutoryDues({
     salaries: sal,
-    vendorTds: sumTds(vt) + sumTds(ct),
+    vendorTds: sumTds(vt) + sumTds(ct) + sumTds(bt),
     paid,
   });
 }

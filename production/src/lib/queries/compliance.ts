@@ -14,6 +14,7 @@ import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { ComplianceLogRow } from "@/lib/supabase/database.types";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { tdsLookbackFrom, tdsMonthsFrom } from "@/lib/compliance/tds-not-applicable";
+import { fetchCogsBillTds } from "@/lib/queries/cogs-bill-tds";
 
 const KEY = ["compliance_log"] as const;
 
@@ -77,7 +78,9 @@ export async function fetchTdsMonths(supabase: ReturnType<typeof createClient>, 
       .gte("earned_date", from).gt("tds_amount", 0).neq("status", "cancelled")
       .order("id", { ascending: true }).range(f, t)),
   ]);
-  return tdsMonthsFrom(sal, exp, comm);
+  /* R-1891: 194Q TDS on goods bills paid from the bank — a deposit in the month it was deducted. */
+  const goods = await fetchCogsBillTds(supabase, { from });
+  return tdsMonthsFrom(sal, [...exp, ...goods.map((g) => ({ expense_date: g.tds_on, tds_amount: g.tds_amount }))], comm);
 }
 
 /** filed-map keyed by `${obligation_key}|${period_key}` → filed_date. */
