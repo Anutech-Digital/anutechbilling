@@ -3,7 +3,8 @@
  *
  * Per-account view showing every imported/manual transaction with its
  * reconciliation state. Operator can:
- *   • Filter by status (all / matched / unmatched / overdue)
+ *   • Filter (R-1869): status, money in / out, date, amount, matched to, needs attention,
+ *     statement file; sort, search, totals and Export CSV — state in the URL query
  *   • Import a new statement (CSV/Excel) — opens the import drawer
  *   • Reconcile each unmatched row against a payment / expense / vendor bill
  *
@@ -57,11 +58,35 @@ import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canWriteMoney } from "@/lib/nav";
 import { useBankAaConnection, useFetchAaNow } from "@/lib/queries/bank-aa";
+import { useBankImportHistory } from "@/lib/queries/bank";
+import { importKey, linesOfImport } from "@/lib/banking/import-history";
+import {
+  DEFAULT_FILTERS,
+  PAGE_SIZE,
+  applyBankFilters,
+  bankLinesCsv,
+  clearFilters,
+  facetCounts,
+  filterTotals,
+  filtersFromQuery,
+  filtersToQuery,
+  hasAnyFilter,
+  type BankFilters,
+  type FilterContext,
+  type NeedKey,
+  type StatusFilter,
+} from "@/lib/banking/bank-filters";
+import { reconcileCoverage } from "@/lib/banking/reconcile-coverage";
+import { BankFilterBar, type ImportOption } from "@/components/features/banking/bank-filter-bar";
+import { ReconcileCoverageTile } from "@/components/features/banking/reconcile-coverage-tile";
+import { downloadCSV } from "@/lib/csv";
+import { istToday } from "@/lib/dates/ist";
 
-type FilterTab = "all" | "unmatched" | "matched";
-/* R-1863: a narrower list inside a tab — unassigned receipts to work through one by one, and
-   lines booked before R-1838 as a one-off bank sale (to relink). */
-type Chip = "none" | "no_customer" | "old_one_off";
+/* R-1869: one filter system — status tabs, Money in / out, a Filters panel (date, amount, matched
+   to, needs attention incl. R-1863's "no customer yet" + "Old one-off bookings", statement file),
+   sort, search, totals and Export CSV. State lives in the URL query (lib/banking/bank-filters). */
+const ALL_NEEDS: readonly NeedKey[] = ["no_customer", "no_vendor", "old_one_off", "duplicates", "large"];
+const READ_ONLY_NEEDS: readonly NeedKey[] = ["duplicates", "large"];
 
 // Column order (left→right) + default widths (px) for the resizable table.
 // Status is folded into the last column: an unmatched row just shows the
@@ -88,8 +113,11 @@ export default function BankAccountDetailPage() {
   const role = useCurrentUser().data?.role;
   const canWrite = canWriteMoney(role);
 
-  const [tab,           setTab]           = React.useState<FilterTab>("all");
-  const [search,        setSearch]        = React.useState("");
+  const [filters,       setFiltersState]  = React.useState<BankFilters>(DEFAULT_FILTERS);
+  /* Lines drawn so far — 1,449 rows at once made the page slow; "Load more" adds PAGE_SIZE. */
+  const [shownCount,    setShownCount]    = React.useState(PAGE_SIZE);
+  const setFilters = React.useCallback((next: BankFilters) => { setFiltersState(next); setShownCount(PAGE_SIZE); }, []);
+  const setStatus = (status: StatusFilter) => setFilters({ ...filters, status });
   const [importOpen,    setImportOpen]    = React.useState(false);
   const [salaryOpen,    setSalaryOpen]    = React.useState(false);
   const [aaConnectOpen, setAaConnectOpen] = React.useState(false);
@@ -97,7 +125,6 @@ export default function BankAccountDetailPage() {
   /* Un-reconcile goes through a confirm that says what the line leaves behind (and can
      undo a sale raised from it) — components/features/banking/unreconcile-dialog.tsx. */
   const [unreconcileTxn, setUnreconcileTxn] = React.useState<BankTransactionRow | null>(null);
-  const [chip,          setChip]          = React.useState<Chip>("none");
   /* The booking is kept as it was when Relink was pressed: after the save the line leaves the
      old-bookings list, and the dialog must stay open to show what happened. */
   const [relink,        setRelink]        = React.useState<{ txn: BankTransactionRow; booking: OldOneOffBooking } | null>(null);
@@ -111,14 +138,15 @@ export default function BankAccountDetailPage() {
   const { data: aaConn } = useBankAaConnection(accountId);
   const fetchAa = useFetchAaNow();
 
-  // Tab counts
+  // Account-wide counts (Auto-reconcile, empty states) — the tabs count under the other filters.
   const counts = React.useMemo(() => {
     const all       = transactions?.length ?? 0;
     const matched   = transactions?.filter((t) => t.matched_to_type !== null).length ?? 0;
     const unmatched = all - matched;
     return { all, unmatched, matched };
   }, [transactions]);
-  const salaryLineCount = React.useMemo(() => salaryLinesOf(transactions ?? []).length, [transactions]);
+  const salaryLines = React.useMemo(() => salaryLinesOf(transactions ?? []), [transactions]);
+  const salaryLineCount = salaryLines.length;
 
   /* R-399: "Matches INV-…" chip on unmatched credit rows whose best open-invoice candidate
      is certain (R-109 matcher). Only for someone who can reconcile — the chip opens the
@@ -146,25 +174,76 @@ export default function BankAccountDetailPage() {
   const { data: oldBookings } = useOldOneOffBookings(accountId, canWrite);
   const oldById = React.useMemo(() => new Map((oldBookings ?? []).map((b) => [b.txn_id, b])), [oldBookings]);
 
+  /* R-1869 "Money out · no vendor yet": unmatched money out that is not a salary line (Salary
+     lines has its own button). R-1867 narrows it with the vendor guess from the narration
+     (lib/banking/debit-pay-for guessVendor) when that lands — swap the rule here, one place. */
+  const noVendorIds = React.useMemo(() => {
+    const salaryIds = new Set(salaryLines.map((l) => l.txn.id));
+    return new Set((transactions ?? [])
+      .filter((t) => t.matched_to_type === null && t.debit > 0 && !salaryIds.has(t.id))
+      .map((t) => t.id));
+  }, [transactions, salaryLines]);
+
+  /* The Imports list (R-1623) — "Statement file" filter: which lines each import brought in. */
+  const { data: importRows } = useBankImportHistory(accountId);
+  const { importOptions, importLines } = React.useMemo(() => {
+    const opts: ImportOption[] = [];
+    const map = new Map<string, Set<string>>();
+    for (const r of importRows ?? []) {
+      if (r.removed_at) continue;
+      const ids = linesOfImport(r, transactions ?? []).map((t) => t.id);
+      if (ids.length === 0) continue;
+      const k = importKey(r);
+      map.set(k, new Set(ids));
+      opts.push({ key: k, label: `${r.file_name || "Older import"} · ${formatDate(r.imported_at)}`, count: ids.length });
+    }
+    return { importOptions: opts, importLines: map };
+  }, [importRows, transactions]);
+
+  const filterCtx = React.useMemo<FilterContext>(() => ({
+    sets: { no_customer: noCustomerIds, no_vendor: noVendorIds, old_one_off: new Set(oldById.keys()) },
+    importLines,
+  }), [noCustomerIds, noVendorIds, oldById, importLines]);
+
+  const facets = React.useMemo(() => facetCounts(transactions ?? [], filters, filterCtx), [transactions, filters, filterCtx]);
+  const visibleTxns = React.useMemo(
+    () => applyBankFilters(transactions ?? [], filters, filterCtx),
+    [transactions, filters, filterCtx],
+  );
+  const totals = React.useMemo(() => filterTotals(visibleTxns), [visibleTxns]);
+  const drawnTxns = visibleTxns.slice(0, shownCount);
+
   const tabs: TabBarItem[] = [
-    { id: "all",       label: "All",        count: counts.all       },
-    { id: "unmatched", label: "Unmatched",  count: counts.unmatched },
-    { id: "matched",   label: "Reconciled", count: counts.matched   },
+    { id: "all",       label: "All",        count: facets.status.all       },
+    { id: "unmatched", label: "Unmatched",  count: facets.status.unmatched },
+    { id: "matched",   label: "Reconciled", count: facets.status.matched   },
   ];
 
-  const visibleTxns = React.useMemo(() => {
-    if (!transactions) return [];
-    let list = transactions;
-    if (tab === "unmatched") list = list.filter((t) => t.matched_to_type === null);
-    else if (tab === "matched") list = list.filter((t) => t.matched_to_type !== null);
-    if (chip === "no_customer") list = list.filter((t) => noCustomerIds.has(t.id));
-    else if (chip === "old_one_off") list = list.filter((t) => oldById.has(t.id));
-    const q = search.trim().toLowerCase();
-    if (q) list = list.filter((t) =>
-      [t.description, t.reference, String(t.debit ?? ""), String(t.credit ?? "")]
-        .some((f) => (f ?? "").toString().toLowerCase().includes(q)));
-    return list;
-  }, [transactions, tab, search, chip, noCustomerIds, oldById]);
+  /* Filters ⇄ URL: read once on open (a shared link / Back restores the view), then every change
+     is written back with replaceState, so typing in search does not pile up history entries. */
+  const urlReadRef = React.useRef(false);
+  const skipWriteRef = React.useRef(false);
+  React.useEffect(() => {
+    setFiltersState(filtersFromQuery(new URLSearchParams(window.location.search)));
+    urlReadRef.current = true;
+    skipWriteRef.current = true; // the write effect below runs in this same commit, with the defaults
+  }, []);
+  React.useEffect(() => {
+    if (!urlReadRef.current) return;
+    if (skipWriteRef.current) { skipWriteRef.current = false; return; }
+    const keep = new URLSearchParams(window.location.search);
+    const qs = filtersToQuery(filters);
+    // Deep-link params (focus / match) are not filters — the effect below removes them itself.
+    for (const k of ["focus", "match"]) { const v = keep.get(k); if (v) qs.set(k, v); }
+    const next = qs.toString() ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(window.history.state, "", next);
+  }, [filters]);
+
+  const exportCsv = () => {
+    const { headers, rows } = bankLinesCsv(visibleTxns);
+    const name = (account?.name ?? "bank").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    downloadCSV(`${name}-bank-lines-${istToday()}.csv`, headers, rows);
+  };
 
   /* R-1863: in "no customer yet", saving a line opens the next one — the list is worked through
      one receipt after another. The sheet is closed after its save; once the refreshed list shows
@@ -206,11 +285,11 @@ export default function BankAccountDetailPage() {
       target = transactions.find((t) => t.matched_to_type === null && (t.debit ?? 0) === amt)
             ?? transactions.find((t) => t.matched_to_type === null && (t.credit ?? 0) === amt);
     }
-    setTab("unmatched");
     if (target) setReconcileTxn(target);
     else toast("No unmatched bank line for that amount — reconcile it manually below.");
-    window.history.replaceState(null, "", window.location.pathname);
-  }, [transactions]);
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}?status=unmatched`);
+    setFilters({ ...DEFAULT_FILTERS, status: "unmatched" });
+  }, [transactions, setFilters]);
 
   if (accLoading) {
     return <div className="p-8"><Skeleton className="h-32" /></div>;
@@ -239,16 +318,16 @@ export default function BankAccountDetailPage() {
     );
   }
 
-  // Two balances for reconciliation:
-  //  • Bank    = opening + every imported statement line (what the bank shows)
-  //  • App     = opening + only the RECONCILED lines (what your books account for)
-  //  • The gap = the still-unreconciled lines. When all are matched, they're equal.
+  //  • Bank balance = opening + every imported statement line (what the bank shows — real cash)
+  //  • Reconciled so far (R-1869) = how much of the money that moved has a record in the books.
+  //    It replaced "Balance in app" (opening + reconciled lines only), which is not a balance of
+  //    anything and showed ₹-19,17,804 on a healthy account. Coverage, never cash: always ≥ 0.
   const openingBal = account.opening_balance ?? 0;
   const allTxns    = transactions ?? [];
   const sumDelta   = (list: typeof allTxns) => list.reduce((s, t) => s + (t.credit ?? 0) - (t.debit ?? 0), 0);
   const bankBalance = openingBal + sumDelta(allTxns);
-  const appBalance  = openingBal + sumDelta(allTxns.filter((t) => t.matched_to_type !== null));
-  const toReconcile = bankBalance - appBalance;
+  const coverage    = reconcileCoverage(allTxns);
+  const filtersOn   = hasAnyFilter(filters);
   /* Plain call, not a hook — this runs after the early returns above. Cheap: one pass. */
   const statementCheck = checkStatement(allTxns, openingBal);
 
@@ -334,27 +413,16 @@ export default function BankAccountDetailPage() {
             </p>
           </div>
           <div>
-            <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Balance in app</p>
-            <p className={`font-serif text-2xl mt-1 ${appBalance >= 0 ? "text-ink" : "text-rose"}`}>
-              {rupee(appBalance)}
-            </p>
-            <p className="text-xs text-ink-3 mt-0.5">
-              {counts.unmatched > 0 ? "Bank balance minus lines not yet reconciled" : "Reconciled in your books"}
-            </p>
-          </div>
-          <div>
             <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Opening balance</p>
             <p className="font-serif text-2xl text-ink-2 mt-1">{rupee(account.opening_balance)}</p>
             <p className="text-xs text-ink-3 mt-0.5">as of {formatDate(account.opening_balance_date)}</p>
           </div>
-          <div>
-            <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">To reconcile</p>
-            <p className={`font-serif text-2xl mt-1 ${counts.unmatched > 0 ? "text-rose" : "text-emerald"}`}>
-              {counts.unmatched === 0 ? "✓" : rupee(toReconcile)}
-            </p>
-            <p className="text-xs text-ink-3 mt-0.5">
-              {counts.unmatched === 0 ? "Bank = app, all reconciled" : `${counts.unmatched} txns not yet in books`}
-            </p>
+          {/* R-1869: coverage of the books, not a second "balance" (see coverage above). */}
+          <div className="col-span-2">
+            <ReconcileCoverageTile
+              c={coverage}
+              onShowUnmatched={() => setFilters({ ...clearFilters(filters), status: "unmatched" })}
+            />
           </div>
         </div>
       </Card>
@@ -380,7 +448,7 @@ export default function BankAccountDetailPage() {
 
       {/* Filter tabs + one-tap auto-reconcile */}
       <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
-        <TabBar items={tabs} value={tab} onChange={(v) => { setTab(v as FilterTab); setChip("none"); }} />
+        <TabBar items={tabs} value={filters.status} onChange={(v) => setStatus(v as StatusFilter)} />
         {canWrite && counts.unmatched > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
             {/* Salary lines Payroll never recorded — auto-reconcile has nothing to match
@@ -413,64 +481,34 @@ export default function BankAccountDetailPage() {
         )}
       </div>
 
-      {/* R-1863: narrower lists — unassigned receipts, and old one-off bookings to relink. */}
-      {canWrite && (noCustomerIds.size > 0 || oldById.size > 0 || chip !== "none") && (
-        <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Narrow the list">
-          {(noCustomerIds.size > 0 || chip === "no_customer") && (
-            <FilterChip
-              pressed={chip === "no_customer"}
-              onClick={() => { if (chip === "no_customer") setChip("none"); else { setTab("unmatched"); setChip("no_customer"); } }}
-              title="Money-in lines where no customer could be guessed — reconcile them one after another"
-            >
-              Money in · no customer yet ({noCustomerIds.size})
-            </FilterChip>
-          )}
-          {(oldById.size > 0 || chip === "old_one_off") && (
-            <FilterChip
-              pressed={chip === "old_one_off"}
-              onClick={() => { if (chip === "old_one_off") setChip("none"); else { setTab("matched"); setChip("old_one_off"); } }}
-              title="Lines booked before 24 Oct 2026 as a one-off sale — relink each to its renewal, extra seats or quote"
-            >
-              Old one-off bookings ({oldById.size})
-            </FilterChip>
-          )}
-        </div>
+      {/* R-1831: every run ends with a result that stays — matched N, and why the rest were left. */}
+      {autoReconcile.isSuccess && autoReconcile.data && (
+        <AutoReconcileResult
+          summary={autoReconcile.data}
+          unmatchedShown={filters.status === "unmatched"}
+          onShowUnmatched={() => setStatus("unmatched")}
+          onClose={() => autoReconcile.reset()}
+        />
       )}
-      {chip === "old_one_off" && oldById.size > 0 && (
+
+      {/* R-1869: one filter row — Money in / out, Filters (date, amount, matched to, needs
+          attention, statement file), sort, search, Export CSV; chips; totals of what is shown. */}
+      <BankFilterBar
+        filters={filters}
+        onChange={setFilters}
+        counts={facets}
+        totals={totals}
+        needs={canWrite ? ALL_NEEDS : READ_ONLY_NEEDS}
+        imports={importOptions}
+        todayIso={istToday()}
+        onExport={exportCsv}
+      />
+      {filters.need === "old_one_off" && oldById.size > 0 && (
         <p className="mb-3 text-xs text-ink-3 max-w-3xl">
           These were booked as one-off sales before the bank page asked what the money was for. They stay as they are.
           If one was really a renewal, extra seats or a quote, press <b>Relink</b>: you see what will happen, then pick what it paid.
         </p>
       )}
-
-      {/* R-1831: every run ends with a result that stays — matched N, and why the rest were left. */}
-      {autoReconcile.isSuccess && autoReconcile.data && (
-        <AutoReconcileResult
-          summary={autoReconcile.data}
-          unmatchedShown={tab === "unmatched"}
-          onShowUnmatched={() => setTab("unmatched")}
-          onClose={() => autoReconcile.reset()}
-        />
-      )}
-
-      {/* Search transactions */}
-      <div className="mb-3 relative">
-        <Icon name="search" size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-3" />
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search transactions — description, reference or amount…"
-          aria-label="Search transactions"
-          className="w-full pl-8 pr-8 py-2 text-sm rounded-md border border-hairline bg-paper focus:outline-none focus:border-hairline-strong"
-        />
-        {search && (
-          <button type="button" onClick={() => setSearch("")}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink" aria-label="Clear search">
-            <Icon name="x" size={14} />
-          </button>
-        )}
-      </div>
 
       {/* Transactions list */}
       {txnLoading ? (
@@ -479,30 +517,29 @@ export default function BankAccountDetailPage() {
         </div>
       ) : visibleTxns.length === 0 ? (
         <Card>
-          <EmptyState
-            icon={tab === "unmatched" || chip !== "none" ? "check_circle" : "upload"}
-            title={
-              chip === "no_customer" ? "Every money-in line has a customer ✓" :
-              chip === "old_one_off" ? "No old one-off bookings left ✓" :
-              tab === "unmatched"  ? "All transactions reconciled ✓" :
-              tab === "matched"    ? "No reconciled transactions yet." :
-                                     "No transactions yet."
-            }
-            body={
-              counts.all === 0
-                ? "Import a bank statement CSV to populate this account. Most Indian banks let you download a 30-day or 90-day statement from net banking."
-                : tab === "unmatched"
-                  ? "Every transaction has been matched to a payment, expense, or marked as reconciled."
-                  : "Matched transactions will appear here after you reconcile."
-            }
-            action={
-              counts.all === 0 && canWrite
-                ? <Button variant="primary" icon="upload" onClick={() => setImportOpen(true)}>Import statement</Button>
-                : chip !== "none"
-                  ? <Button variant="default" onClick={() => setChip("none")}>Show all {tab === "matched" ? "reconciled" : "unmatched"} lines</Button>
-                  : undefined
-            }
-          />
+          {counts.all === 0 ? (
+            <EmptyState
+              icon="upload"
+              title="No transactions yet."
+              body="Import a bank statement CSV to populate this account. Most Indian banks let you download a 30-day or 90-day statement from net banking."
+              action={canWrite ? <Button variant="primary" icon="upload" onClick={() => setImportOpen(true)}>Import statement</Button> : undefined}
+            />
+          ) : (
+            <EmptyState
+              icon="check_circle"
+              title={
+                filters.need === "no_customer" ? "Every money-in line has a customer ✓" :
+                filters.need === "old_one_off" ? "No old one-off bookings left ✓" :
+                filters.status === "unmatched" && !filtersOn ? "All transactions reconciled ✓" :
+                filters.status === "matched" && !filtersOn ? "No reconciled transactions yet." :
+                                                  "No lines match these filters."
+              }
+              body={`${counts.all.toLocaleString("en-IN")} lines in this account — ${counts.unmatched.toLocaleString("en-IN")} not yet reconciled.`}
+              action={filtersOn
+                ? <Button variant="default" onClick={() => setFilters(clearFilters(filters))}>Clear all filters</Button>
+                : undefined}
+            />
+          )}
         </Card>
       ) : (
         <>
@@ -530,7 +567,7 @@ export default function BankAccountDetailPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleTxns.map((txn) => (
+                  {drawnTxns.map((txn) => (
                     <TransactionRow
                       key={txn.id}
                       txn={txn}
@@ -550,7 +587,7 @@ export default function BankAccountDetailPage() {
           {/* Card list on phone + narrow/tablet widths (table needs ≥1024px to
               show every column + the Reconcile button without clipping). */}
           <ul className="lg:hidden space-y-2.5">
-            {visibleTxns.map((txn) => (
+            {drawnTxns.map((txn) => (
               <TransactionCard
                 key={txn.id}
                 txn={txn}
@@ -561,6 +598,16 @@ export default function BankAccountDetailPage() {
               />
             ))}
           </ul>
+
+          {/* R-1869: lines are drawn in pages — totals and Export CSV still cover every match. */}
+          {visibleTxns.length > drawnTxns.length && (
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-xs text-ink-3">
+              <span>{`Showing ${drawnTxns.length.toLocaleString("en-IN")} of ${visibleTxns.length.toLocaleString("en-IN")} lines`}</span>
+              <Button variant="default" size="sm" onClick={() => setShownCount((n) => n + PAGE_SIZE)}>
+                {`Load ${Math.min(PAGE_SIZE, visibleTxns.length - drawnTxns.length)} more`}
+              </Button>
+            </div>
+          )}
         </>
       )}
 
@@ -576,7 +623,7 @@ export default function BankAccountDetailPage() {
         open={Boolean(reconcileTxn)}
         onOpenChange={(o) => {
           if (o) return;
-          if (chip === "no_customer" && reconcileTxn) {
+          if (filters.need === "no_customer" && reconcileTxn) {
             nextAfterRef.current = reconcileTxn.id;
             openNextUnassigned(transactions);
           }
@@ -598,20 +645,6 @@ export default function BankAccountDetailPage() {
 // ============================================================
 // Shared bits (used by both the desktop row and the mobile card)
 // ============================================================
-function FilterChip({ pressed, onClick, title, children }: { pressed: boolean; onClick: () => void; title: string; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={pressed}
-      onClick={onClick}
-      title={title}
-      className={`rounded-full border px-3 py-1 text-xs font-medium ${pressed ? "border-amber bg-amber/10 text-amber-ink" : "border-hairline bg-paper text-ink-2 hover:border-hairline-strong"}`}
-    >
-      {children}
-    </button>
-  );
-}
-
 function TxnAmount({ txn }: { txn: BankTransactionRow }) {
   if (txn.debit > 0)  return <span className="text-rose">-{rupee(txn.debit)}</span>;
   if (txn.credit > 0) return <span className="text-emerald">+{rupee(txn.credit)}</span>;
