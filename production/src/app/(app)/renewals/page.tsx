@@ -55,6 +55,8 @@ import {
   sentToastText,
   matchesRenewalSearch,
   readJsonSafe,
+  sendBulkReminders,
+  bulkReminderReport,
 } from "./reminders";
 import { renewalRisk } from "./risk";
 import { priorTermDueText } from "./prior-due";
@@ -755,30 +757,31 @@ export default function RenewalsPage() {
     /* R-1124: lapsed rows still in grace are included (and named apart in the confirm). */
     const targets = bulkReminderTargets(enriched, today, graceDays);
     if (targets.length === 0) { toast.info("No renewals due in the next 30 days, and none lapsed in grace"); return; }
+    await sendReminders(targets);
+  }
+
+  /* R-1642: names who failed and why, and "Retry failed" re-sends only those (after the
+     same confirm — R-239: nobody is emailed without seeing the names first). */
+  async function sendReminders(targets: typeof enriched) {
     const ok = await confirm({ ...bulkReminderConfirm(targets), confirmLabel: `Email ${targets.length}`, icon: "mail" });
     if (!ok) return;
     setBulkSending(true);
-    let sent = 0, failed = 0, stub = false;
-    for (const r of targets) {
-      try {
-        const res = await fetch("/api/renewals/send-now", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subscription_id: r.sub.id }),
-        });
-        const json = await readJsonSafe(res);
-        if (!res.ok) { failed++; continue; }
-        sent++;
-        if (json.email_mode === "stub") stub = true;
-      } catch { failed++; }
-    }
+    const result = await sendBulkReminders(targets, async (subscriptionId) => {
+      const res = await fetch("/api/renewals/send-now", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription_id: subscriptionId }),
+      });
+      return { ok: res.ok, json: await readJsonSafe(res) };
+    });
     setBulkSending(false);
     qc.invalidateQueries({ queryKey: ["subscriptions"] });
-    if (sent > 0) {
-      toast.success(`Reminder logged for ${sent} renewal${sent === 1 ? "" : "s"}${failed ? `, ${failed} failed` : ""}${stub ? " · stub mode (no real email yet)" : ""}`);
-    } else {
-      toast.error(`Could not send any reminders${failed ? ` (${failed} failed)` : ""}`);
-    }
+    const m = bulkReminderReport(result);
+    const failedRows = result.failed.map((f) => f.row);
+    const retry = { label: "Retry failed", onClick: () => void sendReminders(failedRows) };
+    if (m.tone === "success") toast.success(m.title);
+    else if (m.tone === "warning") toast.warning(m.title, { description: m.description, action: retry, duration: 15_000 });
+    else toast.error(m.title, { description: m.description, action: retry, duration: 15_000 });
   }
 
   return (
