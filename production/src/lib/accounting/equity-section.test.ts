@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { equitySection, equitySectionTotal, equityLineCategories, isReservesLine, type EquitySection } from "./equity-section";
+import { equitySection, equitySectionTotal, equityLineCategories, isReservesLine, registerShareCapital, type EquitySection } from "./equity-section";
 import { balanceSheetTotals } from "./balance-sheet-totals";
 import { movementTotals, unexplainedAfterEntries } from "./owner-equity";
 import type { BalanceSheetAuto, BalanceSheetItem } from "@/lib/queries/balance-sheet";
@@ -104,6 +104,53 @@ describe("totals are the same as before (balanceSheetTotals untouched)", () => {
       expect(t.totalAssets).toBe(t.totalLiab + t.netWorth);
     });
   }
+});
+
+describe("R-1851: Share capital from the shareholders register", () => {
+  const REG = { paidUpCapital: 1_000_000, paidUpShares: 100_000, faceValue: 10 };
+  const withReg = (type: Parameters<typeof equitySection>[0]["businessType"], manualLines = MANUAL) =>
+    equitySection({ businessType: type, manualLines, opening: OPENING, profit: PROFIT, totals: TOTALS, movements: MOVES, range: RANGE, shareRegister: REG });
+
+  it("Pvt Ltd: the paid-up capital is the first Share capital line, from the register", () => {
+    const s = withReg("pvt_ltd", []);
+    const first = s.groups[0].rows[0];
+    expect(first).toMatchObject({ kind: "line", key: "register_share_capital", label: "Equity share capital", amount: 1_000_000, origin: "auto", source: "Share register" });
+    expect(first.kind === "line" && first.hint).toBe("1,00,000 shares × ₹10, fully paid — from the share capital register");
+    expect(s.groups[0].total?.hint).toBe("paid-up capital from the share capital register");
+    expect(registerShareCapital(s)).toBe(1_000_000);
+  });
+
+  it("a hand-entered Share capital line stays as it is (stored data unchanged) and is flagged", () => {
+    const s = withReg("pvt_ltd");
+    const manual = s.groups[0].rows.find((r) => r.kind === "manual");
+    expect(manual && manual.kind === "manual" && manual.items.map((i) => i.label)).toEqual(["Owner's capital"]);
+    expect(s.shareCapitalTwice).toBe(true);
+    expect(withReg("pvt_ltd", []).shareCapitalTwice).toBe(false);
+  });
+
+  it("empty type = Pvt Ltd; other types ignore the register", () => {
+    expect(withReg(null)).toEqual(withReg("pvt_ltd"));
+    for (const t of ["proprietor", "partnership", "llp"] as const) {
+      expect(withReg(t)).toEqual(build(t));
+      expect(registerShareCapital(withReg(t))).toBe(0);
+    }
+  });
+
+  it("no register (or nothing paid up): exactly as before", () => {
+    expect(equitySection({ businessType: "pvt_ltd", manualLines: MANUAL, opening: OPENING, profit: PROFIT, totals: TOTALS, movements: MOVES, range: RANGE, shareRegister: null }))
+      .toEqual(build("pvt_ltd"));
+    expect(equitySection({ businessType: "pvt_ltd", manualLines: MANUAL, opening: OPENING, profit: PROFIT, totals: TOTALS, movements: MOVES, range: RANGE, shareRegister: { ...REG, paidUpCapital: 0, paidUpShares: 0 } }))
+      .toEqual(build("pvt_ltd"));
+  });
+
+  it("Assets = Liabilities + Equity still holds: the register amount comes out of the unexplained difference", () => {
+    const t = balanceSheetTotals(AUTO, MANUAL);
+    const s = withReg("pvt_ltd");
+    const unexplained = unexplainedAfterEntries({
+      retained: t.retained - registerShareCapital(s), openingEquity: OPENING.ownerCapital + OPENING.retainedEarnings, profit: PROFIT, totals: TOTALS,
+    });
+    expect(equitySectionTotal(s) + unexplained).toBe(t.netWorth);
+  });
 });
 
 describe("Add-line choices", () => {

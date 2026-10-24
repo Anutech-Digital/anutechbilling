@@ -60,7 +60,10 @@ import { useComplianceProfile } from "@/lib/compliance/profile";
 import { ownerEquityWords, movementTotals, unexplainedAfterEntries, looksLikeDrawingsLine } from "@/lib/accounting/owner-equity";
 import { useOwnerEquityMovements, isOwnerEquityTableMissing } from "@/lib/queries/owner-equity";
 import { OwnerEquityCard, RecordOwnerEquityDialog, type RecordInit } from "./owner-equity-card";
-import { equitySection, equitySectionTotal, equityLineCategories, type EquityGroup } from "@/lib/accounting/equity-section";
+import { equitySection, equitySectionTotal, equityLineCategories, registerShareCapital, type EquityGroup } from "@/lib/accounting/equity-section";
+import Link from "next/link";
+import { useShareCapital } from "@/lib/queries/share-capital";
+import { shareCapitalSummary } from "@/lib/company/share-capital";
 import { useFirmPartners } from "@/lib/queries/partners";
 import { PartnerCapitalBox } from "./partner-capital-box";
 import { entityProfile } from "@/lib/compliance/entity";
@@ -116,10 +119,17 @@ export default function BalanceSheetPage() {
   /* R-1847: a firm's partners come from the partners register (Settings → Company → Partners). */
   const partnersQ = useFirmPartners(words.needsPartner);
   const partners = React.useMemo(() => partnersQ.data ?? [], [partnersQ.data]);
+  /* R-1851: a company's paid-up capital comes from the share capital register (Settings → Company). */
+  const shareQ = useShareCapital(profile.type === "pvt_ltd");
+  const shareRegister = React.useMemo(() => {
+    if (!shareQ.data?.capital) return null;
+    const s = shareCapitalSummary(shareQ.data.capital, shareQ.data.holders);
+    return { paidUpCapital: s.paidUpCapital, paidUpShares: s.paidUpShares, faceValue: shareQ.data.capital.face_value };
+  }, [shareQ.data]);
 
-  const loading = autoLoading || itemsLoading || (movementsQ.isLoading && !movementsMissing);
+  const loading = autoLoading || itemsLoading || (movementsQ.isLoading && !movementsMissing) || shareQ.isLoading;
   /* R-270: a failed fetch must not print a ₹0 balance sheet that reads as "you own nothing". */
-  const failed = autoFailed || itemsFailed || (movementsQ.isError && !movementsMissing);
+  const failed = autoFailed || itemsFailed || (movementsQ.isError && !movementsMissing) || shareQ.isError;
 
   const manual = (section: BalanceSheetSection) => (items ?? []).filter((i) => i.section === section);
   const manualAssetRows = manual("asset");
@@ -156,16 +166,18 @@ export default function BalanceSheetPage() {
   /* R-1839: entries after the CA's opening date (earlier ones are inside the opening figure), up
      to today. Each has its bank / cash line, so cash & bank already moved — this is the equity side. */
   const ownerTotals = movementTotals(movements, { after: opening?.asOf ?? null, upTo: today });
-  const unexplained = cumulativeProfit === null ? null
-    : unexplainedAfterEntries({ retained, openingEquity, profit: cumulativeProfit, totals: ownerTotals });
   const hasOwnerEntries = ownerTotals.capitalIntroduced !== 0 || ownerTotals.drawings !== 0;
   /* R-1845: the equity section by business type — same lines, same total, arranged and named
      the way a proprietor / firm / company Balance Sheet is. */
   const equityRange = React.useMemo(() => ({ after: opening?.asOf ?? null, upTo: today }), [opening?.asOf, today]);
   const equity = equitySection({
     businessType, manualLines: manualEqRows, opening, profit: cumulativeProfit, totals: ownerTotals,
-    movements, range: equityRange, formatDate,
+    movements, range: equityRange, formatDate, shareRegister,
   });
+  /* R-1851: share capital from the register is explained money — it leaves the unexplained gap
+     (equity total = net worth, so the sheet still balances). */
+  const unexplained = cumulativeProfit === null ? null
+    : unexplainedAfterEntries({ retained: retained - registerShareCapital(equity), openingEquity, profit: cumulativeProfit, totals: ownerTotals });
   /* Old hand-entered "Drawings" lines stay as they are; if real entries exist too, say it once. */
   const drawingsTwice = ownerTotals.drawings > 0 && manualEqRows.some((r) => looksLikeDrawingsLine(r.label));
 
@@ -446,6 +458,11 @@ export default function BalanceSheetPage() {
                   {(auto?.openingBalanceAdjustments ?? 0) !== 0 && (
                     <BSLine label="Opening Balance Adjustments" hint="balance due on invoices imported from Zoho Books, as imported — account name to confirm with your CA" amount={auto?.openingBalanceAdjustments ?? 0} kind="auto" source="Zoho import" href="/invoices" />
                   )}
+                  {equity.shareCapitalTwice && (
+                    <p className="text-xs text-amber-ink bg-amber-soft/40 rounded px-2 py-1.5 my-1">
+                      Share capital now comes from the share capital register, and a hand-entered share capital line above is counted too. If it is the same money, delete the hand-entered line.
+                    </p>
+                  )}
                   {drawingsTwice && (
                     <p className="text-xs text-amber-ink bg-amber-soft/40 rounded px-2 py-1.5 my-1">
                       A hand-entered Drawings line above and the recorded drawings are both counted. If they are the same money, delete the hand-entered line.
@@ -474,6 +491,9 @@ export default function BalanceSheetPage() {
                         <div className="flex justify-between gap-3"><span>Total assets</span><span className="tabular-nums">{fmtBS(totalAssets)}</span></div>
                         <div className="flex justify-between gap-3"><span>− Total liabilities</span><span className="tabular-nums">{fmtBS(totalLiab)}</span></div>
                         <div className="flex justify-between gap-3"><span>− {profile.capitalLabel} &amp; other hand-entered equity</span><span className="tabular-nums">{fmtBS(netWorth - retained)}</span></div>
+                        {registerShareCapital(equity) !== 0 && (
+                          <div className="flex justify-between gap-3"><span>− Share capital (share capital register)</span><span className="tabular-nums">{fmtBS(registerShareCapital(equity))}</span></div>
+                        )}
                         {opening && (
                           <div className="flex justify-between gap-3"><span>− Opening capital + profit b/f (CA)</span><span className="tabular-nums">{fmtBS(openingEquity)}</span></div>
                         )}
@@ -490,9 +510,14 @@ export default function BalanceSheetPage() {
                       </p>
                       {unexplained !== null && unexplained !== 0 && (unexplained > 0 || words.allowed) && (
                         <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <Button size="sm" variant="primary" loading={createItem.isPending} onClick={() => void bookUnexplained("capital")}>
-                            {unexplained > 0 ? `Add ${profile.capitalLabel} ${rupee(unexplained)}` : `Record ${words.drawings.toLowerCase()} ${rupee(-unexplained)}`}
-                          </Button>
+                          {/* R-1851: with the share register in use, shares are added there, not as a hand-entered line. */}
+                          {profile.type === "pvt_ltd" && unexplained > 0 && registerShareCapital(equity) !== 0 ? (
+                            <Button size="sm" variant="primary" asChild><Link href={"/settings?tab=company#share-capital" as never}>Shares issued? Add them in the register</Link></Button>
+                          ) : (
+                            <Button size="sm" variant="primary" loading={createItem.isPending} onClick={() => void bookUnexplained("capital")}>
+                              {unexplained > 0 ? `Add ${profile.capitalLabel} ${rupee(unexplained)}` : `Record ${words.drawings.toLowerCase()} ${rupee(-unexplained)}`}
+                            </Button>
+                          )}
                           {unexplained > 0 && profile.type === "pvt_ltd" && (
                             <Button size="sm" loading={createItem.isPending} onClick={() => void bookUnexplained("director_loan")}>
                               Loan from director {rupee(unexplained)}

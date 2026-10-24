@@ -8,7 +8,8 @@
  *   • Partnership / LLP — the partners' capital accounts; per partner only where R-1839 entries
  *     name a partner (the partner register is R-1847 / R-1848).
  *   • Pvt Ltd — Shareholders' funds = Share capital + Reserves & surplus (retained earnings).
- *     Share capital is the hand-entered equity line until the shareholder register (R-1851).
+ *     Share capital = the paid-up capital from the shareholders register (R-1851) when it has
+ *     shares, plus any hand-entered lines (kept as they are; flagged as possibly counted twice).
  *     A company has no drawings.
  *
  * This file only ARRANGES what the page already has — hand-entered equity lines, the CA's
@@ -22,6 +23,7 @@
 import type { BusinessType } from "@/lib/compliance/obligations";
 import { entityProfile } from "@/lib/compliance/entity";
 import { ownerEquityWords, type MovementTotals, type OwnerEquityMovement } from "./owner-equity";
+import { num, rupee } from "@/lib/utils";
 
 export interface ManualEquityLine { id: string; label: string; amount: number; notes: string | null }
 
@@ -48,7 +50,12 @@ export interface EquitySection<T extends ManualEquityLine = ManualEquityLine> {
   groups: EquityGroup<T>[];
   /** Partnership / LLP: R-1839 entries that name a partner, in the Balance Sheet's range. */
   byPartner: PartnerEquity[];
+  /** R-1851: Pvt Ltd with register shares AND a hand-entered share-capital line — maybe the same money twice. */
+  shareCapitalTwice: boolean;
 }
+
+/** R-1851: the paid-up capital from the share capital register (lib/company/share-capital.ts). */
+export interface ShareRegisterTotals { paidUpCapital: number; paidUpShares: number; faceValue: number }
 
 export interface EquityInput<T extends ManualEquityLine> {
   businessType: BusinessType | null | undefined;
@@ -65,6 +72,8 @@ export interface EquityInput<T extends ManualEquityLine> {
   range?: { after?: string | null; upTo?: string | null };
   /** How the page prints a date ("1 Apr 2026"). */
   formatDate?: (iso: string) => string;
+  /** R-1851: the share capital register (Pvt Ltd only). Null / nothing paid up = not used. */
+  shareRegister?: ShareRegisterTotals | null;
 }
 
 /** A hand-entered company equity line that belongs under Reserves & surplus, not Share capital. */
@@ -128,8 +137,13 @@ export function equitySection<T extends ManualEquityLine>(input: EquityInput<T>)
   ];
 
   if (company) {
+    const reg = input.shareRegister && input.shareRegister.paidUpCapital > 0 ? input.shareRegister : null;
+    const manualShare = input.manualLines.filter((l) => !isReservesLine(l));
     const share: Row[] = [
-      ...manual("manual_share", input.manualLines.filter((l) => !isReservesLine(l))),
+      ...(reg ? [line("register_share_capital", "Equity share capital",
+        `${num(reg.paidUpShares)} shares × ${rupee(reg.faceValue)}, fully paid — from the share capital register`,
+        reg.paidUpCapital, "auto", "Share register", "/settings?tab=company#share-capital")] : []),
+      ...manual("manual_share", manualShare),
       ...openingCapital,
       /* Entries recorded while the company was set up as another type stay visible, never dropped. */
       ...entries,
@@ -140,11 +154,16 @@ export function equitySection<T extends ManualEquityLine>(input: EquityInput<T>)
       heading: profile.equityTitle,
       groups: [
         { key: "share_capital", title: "Share capital", rows: share,
-          total: share.length ? { label: "Total share capital", hint: "paid-up capital (hand-entered until the shareholder register)", amount: rowsTotal(share) } : null },
+          total: share.length ? {
+            label: "Total share capital",
+            hint: reg ? "paid-up capital from the share capital register" : "paid-up capital (hand-entered until the shareholder register)",
+            amount: rowsTotal(share),
+          } : null },
         { key: "reserves", title: "Reserves & surplus", rows: reserves,
           total: profit === null ? null : { label: "Total reserves & surplus", hint: "retained earnings — profit kept in the company", amount: rowsTotal(reserves) } },
       ],
       byPartner: [],
+      shareCapitalTwice: Boolean(reg) && manualShare.length > 0,
     };
   }
 
@@ -158,7 +177,17 @@ export function equitySection<T extends ManualEquityLine>(input: EquityInput<T>)
         : { label: "Closing capital", hint: "opening capital + capital introduced + net profit − drawings", amount: rowsTotal(rows) },
     }],
     byPartner: profile.type === "proprietor" ? [] : partnerBreakdown(input.movements, input.range),
+    shareCapitalTwice: false,
   };
+}
+
+/**
+ * R-1851: the register amount inside the section. The Balance Sheet's equity total is its net
+ * worth, so this comes OUT of the unexplained difference (the sheet still balances).
+ */
+export function registerShareCapital(s: EquitySection<ManualEquityLine>): number {
+  return s.groups.reduce((a, g) => a + g.rows.reduce(
+    (b, r) => b + (r.kind === "line" && r.key === "register_share_capital" ? r.amount : 0), 0), 0);
 }
 
 /** Every row of the section added up — what the old equity lines summed to. */
