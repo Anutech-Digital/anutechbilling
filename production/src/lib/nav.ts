@@ -358,6 +358,22 @@ export const ROLE_HOME: Record<UserRole, string> = {
   marketing:    "/marketing",
 };
 
+/**
+ * R-1837 (24 Oct 2026): where this role lands — after login, on "/", and when the app's generic
+ * landing ("/dashboard", the login default and every "Back to dashboard" link) is not theirs.
+ * isRouteAllowed is the one rule: ROLE_HOME[role] if the role may open it, else the first page
+ * of its own menu. So a home that drifts out of the menu can never start a redirect loop, and a
+ * role without /dashboard never meets a "You don't have access" toast just for signing in.
+ */
+export function homeForRole(role: UserRole, opts: NavFilterOpts = {}): string {
+  const home = ROLE_HOME[role];
+  if (home && isRouteAllowed(role, home, opts)) return home;
+  return allowedRoutesForRole(role, opts).find((href) => isRouteAllowed(role, href, opts)) ?? "/dashboard";
+}
+
+/** The generic landing page: a role that cannot open it is sent home WITHOUT ?denied (R-1837). */
+export const GENERIC_HOME = "/dashboard";
+
 // ============================================================
 // Internal app nav (the main sidebar for resellers)
 // ============================================================

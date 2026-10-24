@@ -49,17 +49,53 @@ function localSupabase() {
   const r = spawnSync("npx", ["supabase", "status", "-o", "env"], { encoding: "utf8", shell: process.platform === "win32" });
   const out = `${r.stdout ?? ""}`;
   const get = (k) => new RegExp(`^${k}="?([^"\\r\\n]+)"?`, "m").exec(out)?.[1];
-  const url = get("API_URL"), anon = get("ANON_KEY"), service = get("SERVICE_ROLE_KEY");
-  if (!url || !anon || !service) {
+  const url = get("API_URL"), anon = get("ANON_KEY"), service = get("SERVICE_ROLE_KEY"), db = get("DB_URL");
+  if (!url || !anon || !service || !db) {
     console.error("Local Supabase nahi mila. Pehle `npx supabase start` chalao (Docker chahiye).");
     process.exit(2);
   }
-  const host = new URL(url).hostname;
-  if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
-    console.error(`supabase status ne ${host} diya — ye local nahi hai. Ruk raha hoon.`);
-    process.exit(2);
+  for (const u of [url, db]) {
+    const host = new URL(u).hostname;
+    if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
+      console.error(`supabase status ne ${host} diya — ye local nahi hai. Ruk raha hoon.`);
+      process.exit(2);
+    }
   }
-  return { url, anon, service };
+  return { url, anon, service, db };
+}
+
+/**
+ * R-1837 (24 Oct 2026): the Prisma path. dev:local never set DATABASE_URL, so every withTenant
+ * route (Marketing budget, Cold calling, …) answered 500 "db: DATABASE_URL is not set" on
+ * localhost while staging worked. The local Supabase stack has no app_* logins either, so
+ * db/local/supabase-stack-runtime.sql makes them (password "localdev", local only) and gives
+ * the helpers their production bodies — idempotent, run on every start, and only here, after
+ * localSupabase() proved the database is on this machine. Returns the four login URLs.
+ */
+async function prismaLogins(adminUrl) {
+  const { default: pg } = await import("pg");
+  const client = new pg.Client({ connectionString: adminUrl });
+  try {
+    await client.connect();
+    await client.query(readFileSync(new URL("../db/local/supabase-stack-runtime.sql", import.meta.url), "utf8"));
+  } catch (e) {
+    console.error(`Local DB setup (db/local/supabase-stack-runtime.sql) fail: ${e instanceof Error ? e.message : e}`);
+    process.exit(2);
+  } finally {
+    await client.end().catch(() => {});
+  }
+  const as = (login) => {
+    const u = new URL(adminUrl);
+    u.username = login;
+    u.password = "localdev";
+    return u.toString();
+  };
+  return {
+    DATABASE_URL: as("app_runtime"),
+    JOBS_DATABASE_URL: as("app_jobs"),
+    ANON_DATABASE_URL: as("app_anon"),
+    SERVICE_DATABASE_URL: as("app_service"),
+  };
 }
 
 const args = process.argv.slice(2);
@@ -67,6 +103,7 @@ const portIdx = args.findIndex((a) => a === "-p" || a === "--port");
 const port = portIdx >= 0 ? args[portIdx + 1] : "3001";
 
 const sb = localSupabase();
+const dbLogins = await prismaLogins(sb.db);
 const env = { ...process.env };
 const blanked = [];
 for (const f of [".env", ".env.local", ".env.development", ".env.development.local"]) {
@@ -89,10 +126,13 @@ Object.assign(env, {
      start checkout". Sell under the seed's tenant instead; LOCAL_BUY_PAGE_TENANT_ID (in the
      shell, not .env.local) picks another local tenant. */
   BUY_PAGE_TENANT_ID: process.env.LOCAL_BUY_PAGE_TENANT_ID || "11111111-1111-1111-1111-111111111111",
+  /* R-1837: app_runtime / app_jobs / app_anon / app_service on the LOCAL database (above). */
+  ...dbLogins,
 });
 
 console.log(`\n  dev:local  →  http://localhost:${port}`);
 console.log(`  database   →  ${sb.url} (local)`);
+console.log(`  prisma     →  app_runtime @ ${new URL(sb.db).host} (local)`);
 console.log(`  band kiye  →  ${[...new Set(blanked)].filter((k) => !k.startsWith("NEXT_PUBLIC_SUPABASE") && k !== "SUPABASE_SERVICE_ROLE_KEY").length} live keys (Razorpay, Resend, Gupshup, Vapi, Google, GST IRP, …)\n`);
 
 /* Turbopack by default (1 Oct 2026, measured on this laptop): first compile of a page
