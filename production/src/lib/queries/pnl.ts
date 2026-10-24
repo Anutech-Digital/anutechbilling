@@ -29,6 +29,7 @@ import { fyMonthsSoFar, monthRange } from "@/lib/accounting/pnl-charts";
 import { rpcRowOrThrow } from "@/lib/accounting/report-rpc";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import type { AssetBlock } from "@/lib/accounting/depreciation";
+import { fetchDirectorPayroll } from "@/lib/queries/director-payroll";
 
 export type { PnLNumbers } from "@/lib/accounting/pnl-assemble";
 
@@ -43,7 +44,7 @@ async function fetchPnlMasters(supabase: Client) {
   /* R-265: the master-data reads page with fetchAllRows on `id` — a bare select stops
      at PostgREST's 1000-row cap and the subscription cost / project cost would silently
      cover only the first 1000 rows. fetchAllRows throws a page's error itself. */
-  const [subs, labourRows, emps, projects, assets] = await Promise.all([
+  const [subs, labourRows, emps, projects, assets, directorPayroll] = await Promise.all([
     /* ── THE SUBSCRIPTION BOOK — where the licence cost actually lives ──────
        `vendor_bills` is EMPTY on this tenant, so billed COGS is ₹0 and the report used
        to claim a 100% gross margin. The subscriptions carry the cost; lib/accounting/
@@ -69,6 +70,8 @@ async function fetchPnlMasters(supabase: Client) {
     fetchAllRows((a, b) => supabase.from("fixed_assets")
       .select("id, name, block, cost, put_to_use, disposed_on, disposal_value")
       .order("id").range(a, b)),
+    /* ── R-1852: a director-employee's payroll → the Director's Remuneration line ── */
+    fetchDirectorPayroll(supabase),
   ]);
 
   const itemIds = [...new Set(subs.map((s) => s.item_id).filter((id): id is string => !!id))];
@@ -90,6 +93,7 @@ async function fetchPnlMasters(supabase: Client) {
     projects,
     employeeNames: new Map(emps.map((e) => [e.id, e.name])),
     assets: assets.map((x) => ({ ...x, block: x.block as AssetBlock })),
+    directorPayroll,
   };
   return (range: Range): PnlMasters => ({ ...fixed, vendors: vendorsFromSubscriptions(book, range.from, range.to) });
 }

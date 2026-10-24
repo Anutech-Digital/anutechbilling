@@ -19,6 +19,7 @@ import {
   projectCostForPeriod, type ProjectCostResult, type LabourAllocation, type ProjectInfo, type CostExpense,
 } from "@/lib/accounting/project-cost";
 import { registerDepreciationForRange, type AssetLike } from "@/lib/accounting/depreciation";
+import { moveDirectorPayroll, type DirectorPayrollExpense } from "@/lib/accounting/director-remuneration";
 import { revenueByProduct, type RevenueByProductRow, type RevenueFamily } from "@/lib/accounting/revenue-family";
 
 export interface PnLNumbers {
@@ -121,6 +122,12 @@ export interface PnlMasters {
   employeeNames: Map<string, string>;
   /** R-1578: the fixed-asset register. Absent = no depreciation line (₹0). */
   assets?: readonly AssetLike[];
+  /**
+   * R-1852: payroll expense rows of employees linked to a director (company_directors.employee_id
+   * → salary_payments.expense_id). Shown under Director's Remuneration instead of Salaries.
+   * Absent / empty = no move.
+   */
+  directorPayroll?: readonly DirectorPayrollExpense[];
 }
 
 /**
@@ -165,7 +172,10 @@ export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m
   const cogsCount = r.cogs_count;
 
   /* Mahina "YYYY-MM" aata hai; report sirf slice(0, 7) padhta hai, isliye pehli tareekh. */
-  const expenseRows = r.expense_groups.map((g) => ({
+  /* R-1852: a director-employee's payroll → Director's Remuneration (same total, one line with
+     sitting fees booked as expenses). Everything below — the category list, the expense report,
+     the trial balance and ITR that read them — then agrees. */
+  const expenseRows = moveDirectorPayroll(r.expense_groups, m.directorPayroll ?? [], range).map((g) => ({
     amount: g.amount, category: g.category, vendor_name: g.vendor_name,
     expense_date: `${g.month}-01`, n: g.n,
   }));

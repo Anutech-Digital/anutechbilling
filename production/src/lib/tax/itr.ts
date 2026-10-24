@@ -394,7 +394,8 @@ export function computeItrPack(fy: FinancialYear, s: ItrSources, businessType?: 
     gaps.push(
       "Licence purchases are ₹0 because no COGS vendor bill is recorded this year. In that case the P&L page shows an ESTIMATE from the subscription book — an estimate is not accepted in tax papers: add the vendor bills in Purchases → Bills.",
     );
-  const salaryBooked = s.expenses.some((c) => c.category === SALARY_CATEGORY && c.count > 0);
+  /* R-1852: a director-employee's payroll is shown as Director's Remuneration — still salary booked. */
+  const salaryBooked = s.expenses.some((c) => (c.category === SALARY_CATEGORY || c.category === "Director's Remuneration") && c.count > 0);
   if (!salaryBooked)
     gaps.push(
       "No salary expense is booked — if the company pays salaries, they are not counted here (running payroll adds them to the Salaries category automatically).",

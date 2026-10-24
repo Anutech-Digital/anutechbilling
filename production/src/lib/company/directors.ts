@@ -49,6 +49,8 @@ export interface CompanyDirector {
   /** Masked ("as••••@…") for a role without can_view_contact_details (R-1009 gateway). */
   email: string | null;
   phone: string | null;
+  /** R-1852: the employee Payroll pays this director as. Absent before migration 20261025003000. */
+  employee_id?: string | null;
 }
 
 export function showsDirectorsRegister(type: BusinessType | null | undefined): boolean {

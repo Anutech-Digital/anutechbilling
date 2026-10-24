@@ -29,6 +29,7 @@ import type { AssetBlock } from "@/lib/accounting/depreciation";
 import { assemblePnl, type PnlRpcRow } from "@/lib/accounting/pnl-assemble";
 import { rpcRowOrThrow } from "@/lib/accounting/report-rpc";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { fetchDirectorPayroll } from "@/lib/queries/director-payroll";
 
 export function useItrPack(fyStartYear: number) {
   return useQuery({
@@ -74,6 +75,8 @@ export function useItrPack(fyStartYear: number) {
          ke COGS andaze ke liye hain, aur tax andaza nahi leta. Isliye khaali masters. */
       const pnl = assemblePnl({ from: fy.start, to: fy.end }, row, {
         vendors: [], allocations: [], monthlyGross: new Map(), projects: [], employeeNames: new Map(), assets,
+        /* R-1852: same Director's Remuneration line as the P&L page. */
+        directorPayroll: await fetchDirectorPayroll(supabase),
       });
 
       const sources: ItrSources = {

@@ -8,10 +8,12 @@ import * as React from "react";
 import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const recordSpy = vi.fn(async (_v: Record<string, unknown>) => "mov-1");
-const state: { type: string | null; partners: Record<string, unknown>[] } = { type: "proprietor", partners: [] };
+const state: { type: string | null; partners: Record<string, unknown>[]; directors: Record<string, unknown>[] } = { type: "proprietor", partners: [], directors: [] };
 
 vi.mock("@/lib/compliance/profile", () => ({ useComplianceProfile: () => ({ data: { businessType: state.type } }) }));
 vi.mock("@/lib/queries/partners", () => ({ useFirmPartners: () => ({ data: state.partners, isLoading: false }) }));
+vi.mock("@/lib/queries/company-directors", () => ({ useCompanyDirectors: () => ({ data: state.directors }) }));
+vi.mock("next/link", () => ({ default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a> }));
 vi.mock("@/lib/queries/owner-equity", () => ({ useRecordOwnerEquity: () => ({ mutateAsync: recordSpy, isPending: false }) }));
 
 import { OwnerPayCautionBox } from "./owner-pay-caution";
@@ -23,7 +25,7 @@ function Box(p: Partial<React.ComponentProps<typeof OwnerPayCautionBox>> = {}) {
   );
 }
 
-beforeEach(() => { recordSpy.mockClear(); state.type = "proprietor"; state.partners = []; });
+beforeEach(() => { recordSpy.mockClear(); state.type = "proprietor"; state.partners = []; state.directors = []; });
 afterEach(cleanup);
 
 describe("R-1846 OwnerPayCautionBox", () => {

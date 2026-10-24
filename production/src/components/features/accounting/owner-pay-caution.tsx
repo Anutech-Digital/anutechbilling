@@ -5,7 +5,8 @@
  * ONE click: record the same amount, date and account as drawings (R-1839's
  * record_owner_equity_movement — the bank / cash line moves in the same step) and close the
  * form without saving an expense. It never blocks: the person can still save the expense.
- * A Pvt Ltd (or an empty type) never sees it.
+ * A Pvt Ltd (or an empty type) never sees it — R-1852: it sees instead "a director's salary goes
+ * through Payroll" when the payee is a director on the payroll or the note says "director salary".
  */
 "use client";
 
@@ -18,6 +19,10 @@ import { useRecordOwnerEquity } from "@/lib/queries/owner-equity";
 import { showsPartnersRegister } from "@/lib/accounting/partners";
 import { ownerPayCaution, drawingsFromExpense } from "@/lib/accounting/owner-salary-guard";
 import { PartnerPicker } from "@/components/features/partners/partner-picker";
+import Link from "next/link";
+import { useCompanyDirectors } from "@/lib/queries/company-directors";
+import { showsDirectorsRegister } from "@/lib/company/directors";
+import { directorPaidByExpenseCaution } from "@/lib/accounting/director-remuneration";
 
 export function OwnerPayCautionBox({ category, payee, text, amount, method, bankAccountId, pettyCashAccountId, date, today, onRecorded }: {
   category: string | null | undefined;
@@ -40,7 +45,25 @@ export function OwnerPayCautionBox({ category, payee, text, amount, method, bank
   const [pickedPartner, setPickedPartner] = React.useState("");
   const [err, setErr] = React.useState<string | null>(null);
 
+  /* R-1852: a company paying a director's SALARY as an expense → Payroll (TDS on salary, s.192). */
+  const directorsQ = useCompanyDirectors(showsDirectorsRegister(businessType));
+  const directorCaution = directorPaidByExpenseCaution({
+    businessType, category, payee, text, directors: directorsQ.data ?? [], onDate: date || today,
+  });
+
   const caution = ownerPayCaution({ businessType, category, payee, text, partners: partnersQ.data ?? [], onDate: date });
+  if (!caution && directorCaution) {
+    return (
+      <div role="status" data-testid="director-pay-caution" className="rounded-md border border-amber/50 bg-amber-soft px-3 py-2.5 text-xs text-ink-2 space-y-2">
+        <p className="font-semibold text-amber-ink">{directorCaution.title}</p>
+        <p className="leading-relaxed">{directorCaution.body}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild size="sm"><Link href="/accounting/payroll">Open Payroll</Link></Button>
+          <span className="text-ink-3">You can still save this expense — nothing is blocked.</span>
+        </div>
+      </div>
+    );
+  }
   if (!caution) return null;
 
   async function recordAsDrawings() {

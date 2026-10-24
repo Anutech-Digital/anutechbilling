@@ -39,10 +39,14 @@ export function useCompanyDirectors(enabled = true) {
     queryKey: [...COMPANY_DIRECTORS_KEY, tenantId],
     enabled: enabled && Boolean(tenantId),
     queryFn: async (): Promise<CompanyDirector[]> => {
-      const { data, error } = await untyped()
-        .from("company_directors")
-        .select("id, name, din, pan, designation, appointed_on, ceased_on, dsc_expiry, last_kyc_year, email, phone")
-        .order("name", { ascending: true });
+      const cols = "id, name, din, pan, designation, appointed_on, ceased_on, dsc_expiry, last_kyc_year, email, phone";
+      let res: { data: unknown[] | null; error: { message: string } | null } =
+        await untyped().from("company_directors").select(`${cols}, employee_id`).order("name", { ascending: true });
+      /* R-1852: migration 20261025003000 not applied yet → read without the employee link. */
+      if (res.error && /employee_id/.test(res.error.message)) {
+        res = await untyped().from("company_directors").select(cols).order("name", { ascending: true });
+      }
+      const { data, error } = res;
       if (error) {
         if (isCompanyDirectorsTableMissing(error.message)) return [];
         throw new Error(error.message);
@@ -80,6 +84,31 @@ export function useSaveCompanyDirector() {
       toast.success(input.id ? `${input.name} updated` : `${input.name} added to the directors register`);
     },
     onError: (err) => toastError(err, { fallback: "Couldn't save the director" }),
+  });
+}
+
+/**
+ * R-1852 — which employee Payroll pays this director as (null = none). One employee is one
+ * director; the RPC refuses a second link with a plain message.
+ */
+export function useSetDirectorEmployee() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { directorId: string; employeeId: string | null; previousDirectorId?: string | null }) => {
+      /* Moving the employee to another director: free it from the old one first. */
+      if (input.previousDirectorId && input.previousDirectorId !== input.directorId) {
+        const un = await untyped().rpc("set_director_employee", { p_director_id: input.previousDirectorId, p_employee_id: null });
+        if (un.error) throw new Error(un.error.message);
+      }
+      const { error } = await untyped().rpc("set_director_employee", { p_director_id: input.directorId, p_employee_id: input.employeeId });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: (_d, input) => {
+      void qc.invalidateQueries({ queryKey: COMPANY_DIRECTORS_KEY });
+      void qc.invalidateQueries({ queryKey: ["accounting"] });
+      toast.success(input.employeeId ? "Linked — Payroll pays this director; the P&L shows it as Director's Remuneration" : "No longer marked as a director");
+    },
+    onError: (err) => toastError(err, { fallback: "Couldn't change the director link" }),
   });
 }
 
