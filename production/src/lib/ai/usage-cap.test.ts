@@ -34,11 +34,15 @@ describe("aiCapMessage", () => {
 });
 
 describe("aiUsageLine (Settings → Integrations → AI)", () => {
-  it("used of cap, and the reset day", () => {
-    expect(aiUsageLine({ used: 12, cap: 1000, month: "2026-10-01" })).toBe("AI used this month: 12 of 1,000 calls (resets 1 Nov)");
+  it("short line used / cap; the reset day in the detail", () => {
+    const u = aiUsageLine({ used: 12, cap: 1000, month: "2026-10-01" });
+    expect(u.line).toBe("12 / 1,000 AI calls this month");
+    expect(u.detail).toBe("Your company has used 12 of its 1,000 AI calls this month. The count starts again on 1 Nov.");
   });
   it("says when the limit is reached; December resets on 1 Jan", () => {
-    expect(aiUsageLine({ used: 2, cap: 2, month: "2026-12-01" })).toBe("AI used this month: 2 of 2 calls — limit reached (resets 1 Jan)");
+    const u = aiUsageLine({ used: 2, cap: 2, month: "2026-12-01" });
+    expect(u.line).toBe("2 / 2 AI calls this month");
+    expect(u.detail).toContain("starts again on 1 Jan. The limit is reached");
   });
 });
 

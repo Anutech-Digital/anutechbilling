@@ -886,7 +886,7 @@ function GeminiIntegrationCard() {
             </p>
             {/* R-1877: this month's AI calls against the company's cap (server: lib/ai/usage-cap.ts). */}
             {status?.ai_usage?.line && (
-              <p className={`text-xs truncate ${status.ai_usage.used >= status.ai_usage.cap ? "text-danger" : "text-ink-3"}`} title={status.ai_usage.line}>
+              <p className={`text-xs truncate ${status.ai_usage.used >= status.ai_usage.cap ? "text-danger" : "text-ink-3"}`} title={status.ai_usage.detail}>
                 {status.ai_usage.line}
               </p>
             )}

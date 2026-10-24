@@ -94,7 +94,7 @@ export async function GET() {
     model:        data?.gemini_model ?? DEFAULT_MODEL,
     updated_at:   data?.updated_at ?? null,
     ai_usage:     usage
-      ? { used: usage.used, cap: usage.cap, month: usage.month, line: aiUsageLine(usage) }
+      ? { used: usage.used, cap: usage.cap, month: usage.month, ...aiUsageLine(usage) }
       : null,
   });
 }

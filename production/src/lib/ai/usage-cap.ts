@@ -61,11 +61,17 @@ export function aiCapMessage(s: AiCapState): string {
     `It starts again on ${resetDayLabel(s.month)}. To raise the limit, contact Anutech support.`;
 }
 
-/** Settings → Integrations → AI: "AI used this month: 12 of 1,000 calls (resets 1 Nov)". */
-export function aiUsageLine(s: AiCapState): string {
+/**
+ * Settings → Integrations → AI. The card is narrow (a third of the row at 1280), so the line
+ * is short — "12 / 1,000 AI calls this month" — and the full sentence goes on hover.
+ */
+export function aiUsageLine(s: AiCapState): { line: string; detail: string } {
   const n = (v: number) => v.toLocaleString("en-IN");
-  const full = s.used >= s.cap ? " — limit reached" : "";
-  return `AI used this month: ${n(s.used)} of ${n(s.cap)} calls${full} (resets ${resetDayLabel(s.month)})`;
+  const full = s.used >= s.cap ? " The limit is reached — AI features use their basic version until then." : "";
+  return {
+    line: `${n(s.used)} / ${n(s.cap)} AI calls this month`,
+    detail: `Your company has used ${n(s.used)} of its ${n(s.cap)} AI calls this month. The count starts again on ${resetDayLabel(s.month)}.${full}`,
+  };
 }
 
 function db() {
