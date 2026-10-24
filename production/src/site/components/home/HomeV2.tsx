@@ -214,7 +214,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
   return (
     <div style={{ background: C.surf, color: C.body, fontFamily: "var(--font-sans), 'Archivo', system-ui, sans-serif" }}>
       {/* ── HERO: pick a suite ─────────────────────────────────────────────── */}
-      <section style={wrap({ padding: "34px 48px 6px", textAlign: "center" })}>
+      <section data-gutter style={wrap({ padding: "34px 48px 6px", textAlign: "center" })}>
         <div style={eyebrow}>{PARTNER_BADGE} · Delhi · Since 2014</div>
         <h1 style={{ fontSize: mob ? 30 : 38, fontWeight: 700, letterSpacing: "-0.04em", lineHeight: 1.06, margin: "12px auto", maxWidth: 900, color: C.ink, textWrap: "balance" as const }}>
           Business mail and Office — in rupees, supported on WhatsApp.
@@ -260,7 +260,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
       </section>
 
       {/* ── PRODUCT: pick an edition ───────────────────────────────────────── */}
-      <section id="products" style={wrap({ padding: "44px 48px 8px", scrollMarginTop: 12 })}>
+      <section id="products" data-gutter style={wrap({ padding: "44px 48px 8px", scrollMarginTop: 12 })}>
         {/* sticky strip */}
         <div data-grid style={{ position: "sticky", top: 69, zIndex: 60, display: "grid", gridTemplateColumns: mob ? "1fr" : "auto 1fr auto", alignItems: "center", gap: 18, padding: "10px 14px", background: C.strip, border: `1px solid ${C.stripBd}`, borderRadius: 14, backdropFilter: "blur(6px)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
@@ -408,7 +408,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
 
       {/* ── FEATURES: full feature list for the selected suite ─────────────── */}
       <section id="features" style={{ background: C.sectT, borderTop: `1px solid ${C.hair}`, scrollMarginTop: 80 }}>
-        <div style={wrap({ padding: "34px 48px" })}>
+        <div data-gutter style={wrap({ padding: "34px 48px" })}>
           <button onClick={() => setFeaturesOpen((v) => !v)} aria-expanded={featuresOpen} style={{ width: "100%", background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: 0, fontFamily: "inherit" }}>
             <div style={eyebrow}>Feature comparison</div>
             <h2 style={{ fontSize: 27, fontWeight: 700, letterSpacing: "-0.035em", color: C.ink, margin: "8px 0 0" }}>{vendor.name} — every feature, edition by edition <span style={{ color: C.blue }}>{featuresOpen ? "▲" : "▼"}</span></h2>
@@ -462,7 +462,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
       </section>
 
       {/* ── COMPARE: all three suites side by side ─────────────────────────── */}
-      <section id="compare" style={wrap({ padding: "40px 48px", scrollMarginTop: 80 })}>
+      <section id="compare" data-gutter style={wrap({ padding: "40px 48px", scrollMarginTop: 80 })}>
         <button onClick={() => setCompareOpen((v) => !v)} aria-expanded={compareOpen} style={{ width: "100%", background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: 0, fontFamily: "inherit" }}>
           <div style={eyebrow}>Compare editions</div>
           <h2 style={{ fontSize: 27, fontWeight: 700, letterSpacing: "-0.035em", color: C.ink, margin: "8px 0 0" }}>All three suites, side by side <span style={{ color: C.blue }}>{compareOpen ? "▲" : "▼"}</span></h2>
@@ -521,7 +521,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
 
       {/* ── MIGRATION: four steps + the real inbox image ───────────────────── */}
       <section style={{ background: C.surf, borderTop: `1px solid ${C.hair}` }}>
-        <div data-grid style={wrap({ padding: mob ? "44px 48px" : "56px 48px", display: "grid", gridTemplateColumns: mob ? "1fr" : "1fr 1fr", gap: mob ? 32 : 52, alignItems: "center" })}>
+        <div data-grid data-gutter style={wrap({ padding: mob ? "44px 48px" : "56px 48px", display: "grid", gridTemplateColumns: mob ? "1fr" : "1fr 1fr", gap: mob ? 32 : 52, alignItems: "center" })}>
           <div>
             <div style={{ ...eyebrow, marginBottom: 10 }}>Moving your old mail</div>
             <h2 style={{ fontSize: mob ? 27 : 31, fontWeight: 700, letterSpacing: "-0.03em", color: C.ink, margin: "0 0 10px", textWrap: "balance" as const }}>Four steps. We do three, you do one.</h2>
@@ -556,7 +556,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
         if (!am) return null;
         return (
           <section id="anutech-mail" style={{ background: C.sectT, borderTop: `1px solid ${C.hair}` }}>
-            <div data-grid style={wrap({ padding: "40px 48px", display: "grid", gridTemplateColumns: mob ? "1fr" : "1.2fr 1fr", gap: mob ? 18 : 40, alignItems: "center" })}>
+            <div data-grid data-gutter style={wrap({ padding: "40px 48px", display: "grid", gridTemplateColumns: mob ? "1fr" : "1.2fr 1fr", gap: mob ? 18 : 40, alignItems: "center" })}>
               <div>
                 <div style={{ ...eyebrow, marginBottom: 10 }}>Only need mail?</div>
                 <h2 style={{ fontSize: mob ? 25 : 28, fontWeight: 700, letterSpacing: "-0.03em", color: C.ink, margin: "0 0 8px", textWrap: "balance" as const }}>Anutech Mail — a plain mailbox on your domain</h2>
@@ -580,7 +580,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
       {/* ── CATALOGUE — the rest of what we sell (old home only) ──────────── */}
       {!onEmail && (
       <section id="catalogue" style={{ background: C.sectT, borderTop: `1px solid ${C.hair}`, scrollMarginTop: 80 }}>
-        <div style={wrap({ padding: "44px 48px 48px" })}>
+        <div data-gutter style={wrap({ padding: "44px 48px 48px" })}>
           <div style={eyebrow}>The rest of the catalogue</div>
           <h2 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em", color: C.ink, margin: "8px 0 6px", textWrap: "balance" as const }}>Domains, hosting, SSL — same published-price rule</h2>
           <p style={{ fontSize: 15, color: C.body, margin: "0 0 22px" }}>Every rate on the card, GST 18% billed separately, renewal price shown up front.</p>
@@ -615,7 +615,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
 
       {/* ── TRUST ──────────────────────────────────────────────────────────── */}
       <section style={{ background: C.sectT, borderTop: `1px solid ${C.borderL}` }}>
-        <div style={wrap({ padding: "44px 48px" })}>
+        <div data-gutter style={wrap({ padding: "44px 48px" })}>
           {/* 2 Oct 2026: the three "Google review" cards below this were sample text (the names
               are the app's test fixtures), not reviews anyone wrote — removed until real ones,
               linked to their source, replace them. */}
@@ -631,7 +631,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
       </section>
 
       {/* ── FAQ ────────────────────────────────────────────────────────────── */}
-      <section id="faq" style={wrap({ padding: "44px 48px", maxWidth: 820 })}>
+      <section id="faq" data-gutter style={wrap({ padding: "44px 48px", maxWidth: 820 })}>
         <div style={{ ...eyebrow, textAlign: "center" }}>Questions</div>
         <h2 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em", color: C.ink, margin: "8px 0 18px", textAlign: "center", textWrap: "balance" as const }}>The five things buyers ask us first</h2>
         {HOME_FAQS.map((f, i) => {
@@ -651,7 +651,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
       {/* ── RESELLEROS (old home only — the new home has its own) ─────────── */}
       {!onEmail && (
       <section style={{ background: "#FFF6F0", borderTop: "1px solid #F5D9C6" }}>
-        <div style={wrap({ padding: "40px 48px" })}>
+        <div data-gutter style={wrap({ padding: "40px 48px" })}>
           <div style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 500, letterSpacing: "0.14em", textTransform: "uppercase", color: "#C2410C", marginBottom: 10 }}>For resellers</div>
           <h2 style={{ fontSize: 27, fontWeight: 700, letterSpacing: "-0.03em", color: C.ink, margin: "0 0 8px" }}>Resell this for a living? Run it on ResellerOS.</h2>
           <p style={{ fontSize: 15, lineHeight: 1.55, color: C.body, margin: "0 0 16px", maxWidth: 640 }}>Our own software: subscriptions and seats, GST quotes and invoices, renewals on autopilot, bank reconciliation — free during beta.</p>

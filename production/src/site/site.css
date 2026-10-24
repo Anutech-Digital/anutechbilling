@@ -186,6 +186,11 @@
 @media (max-width: 979px) {
   .anutech-site [data-grid-2up] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
 }
+/* R-1815 (24 Oct 2026): HomeV2 (/email) sections keep their 48px desktop gutter in inline
+   styles; on a phone CLAUDE.md §20 asks for 16px, so the side padding shrinks here (pre-JS too). */
+@media (max-width: 639px) {
+  .anutech-site [data-gutter] { padding-left: 16px !important; padding-right: 16px !important; }
+}
 .anutech-site .footer-grid { display: grid; grid-template-columns: 1.5fr repeat(5, minmax(0, 1fr)); gap: 28px; }
 @media (max-width: 979px) {
   .anutech-site .footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

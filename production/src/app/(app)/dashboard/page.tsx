@@ -564,7 +564,9 @@ export default function DashboardPage() {
             <span className="hidden sm:inline"> · {workspaceName}</span>
           </p>
         </div>
-        <div className="flex gap-2">
+        {/* R-1815: wraps on a phone — the three buttons are ~444px in one row, which made the
+            whole page 460px wide at 375px. */}
+        <div className="flex flex-wrap gap-2">
           {/* Re-run setup — only when wizard was completed once. Wizard
               entry is hidden from sidebar after completion, so this
               keeps it reachable for a re-run / re-tour. */}

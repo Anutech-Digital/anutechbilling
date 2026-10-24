@@ -73,7 +73,7 @@ export function OpeningInvoiceDuesCard({ customerId, canRecord }: { customerId?:
           </p>
         </div>
       </div>
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-3xs uppercase tracking-wider text-ink-3 border-b border-hairline">

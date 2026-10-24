@@ -183,7 +183,7 @@ export function LeadsToolbar({
         onFolder={(id) => selectFolder(id as typeof folder)}
       />
 
-      <div className="flex items-center gap-2 shrink-0 flex-wrap">
+      <div className="flex items-center gap-2 shrink-0 flex-wrap max-w-full">
         {/* View Switcher: Kanban vs List */}
         <div className="inline-flex rounded-md border border-hairline overflow-hidden">
           <button

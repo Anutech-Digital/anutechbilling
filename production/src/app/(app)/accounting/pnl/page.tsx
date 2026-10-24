@@ -222,20 +222,20 @@ export default function PnLPage() {
               );
             })}
           </div>
-          <div className="flex items-center gap-2 ml-auto">
+          <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-2 sm:flex sm:w-auto sm:ml-auto">
             <label htmlFor="pnl-from" className="text-xs text-ink-3 font-semibold uppercase tracking-wide">From</label>
             <input id="pnl-from"
               type="date"
               value={range.from}
               onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
-              className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper"
+              className="w-full sm:w-auto min-w-0 px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper"
             />
             <label htmlFor="pnl-to" className="text-xs text-ink-3 font-semibold uppercase tracking-wide">To</label>
             <input id="pnl-to"
               type="date"
               value={range.to}
               onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
-              className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper"
+              className="w-full sm:w-auto min-w-0 px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper"
             />
           </div>
         </div>
