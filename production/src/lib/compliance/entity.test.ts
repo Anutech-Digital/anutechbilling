@@ -2,7 +2,7 @@
    and what changes when the stored type is corrected. Null = Pvt Ltd, as the calendar does today. */
 import { describe, expect, it } from "vitest";
 
-import { businessTypeChange, businessTypeHint, entityProfile, resolveBusinessType } from "./entity";
+import { BUSINESS_TYPE_CHOICES, businessTypeChange, businessTypeHint, entityProfile, resolveBusinessType } from "./entity";
 
 describe("entityProfile — words for each business type", () => {
   it("proprietor: Owner, Owner's capital, Owner drawings, ITR-3 on the owner's PAN, no ROC filings", () => {
@@ -39,7 +39,9 @@ describe("entityProfile — words for each business type", () => {
     const p = entityProfile("pvt_ltd");
     expect(p.peopleLabel).toBe("Directors");
     expect(p.capitalLabel).toBe("Share capital");
-    expect(p.equityHeading).toBe("Share capital + Reserves and surplus");
+    expect(p.equityTitle).toBe("Shareholders' funds");
+    expect(p.equityHeading).toBe("Shareholders' funds: Share capital + Reserves and surplus");
+    expect(p.itrObligationKey).toBe("it_itr6");
     expect(p.drawingsLabel).toBeNull();
     expect(p.itrForm).toBe("ITR-6");
     expect(p.rocFilings).toEqual(expect.arrayContaining(["AOC-4", "MGT-7A", "ADT-1", "AGM", "DIR-3 KYC Web"]));
@@ -70,7 +72,7 @@ describe("businessTypeChange — what the owner is told before saving", () => {
       { what: "People", from: "Owner", to: "Directors" },
       { what: "Capital", from: "Owner's capital", to: "Share capital" },
       { what: "Drawings", from: "Owner drawings", to: "Not used — money to a director is salary, a loan or a reimbursement" },
-      { what: "Balance Sheet equity", from: "Owner's capital", to: "Share capital + Reserves and surplus" },
+      { what: "Balance Sheet equity", from: "Proprietor's capital account", to: "Shareholders' funds: Share capital + Reserves and surplus" },
     ]));
   });
 
@@ -99,5 +101,25 @@ describe("businessTypeChange — what the owner is told before saving", () => {
     expect(c.removed).toEqual(expect.arrayContaining(["AOC-4", "MGT-7A", "AGM"]));
     expect(c.added).toEqual([]);
     expect(c.rows[0]).toEqual({ what: "Income-tax return", from: "ITR-6 for the company", to: "ITR-3 on the owner's PAN" });
+  });
+});
+
+describe("R-1844 / R-1845 / R-1843 — the facts later cards read", () => {
+  it("Balance Sheet equity headings by type", () => {
+    expect(entityProfile("proprietor").equityTitle).toBe("Proprietor's capital account");
+    expect(entityProfile("partnership").equityTitle).toBe("Partners' capital accounts");
+    expect(entityProfile("llp").equityTitle).toBe("Partners' capital accounts");
+    expect(entityProfile(null).equityTitle).toBe("Shareholders' funds");
+  });
+  it("ITR pack marks the right calendar row filed", () => {
+    expect(entityProfile("proprietor").itrObligationKey).toBe("it_itr_business");
+    expect(entityProfile("llp").itrObligationKey).toBe("it_itr_business");
+    expect(entityProfile("pvt_ltd").itrObligationKey).toBe("it_itr6");
+  });
+  it("sign-up choices: four, in order, each with one line of help", () => {
+    expect(BUSINESS_TYPE_CHOICES.map((c) => [c.type, c.title])).toEqual([
+      ["proprietor", "Proprietorship"], ["partnership", "Partnership"], ["llp", "LLP"], ["pvt_ltd", "Private Limited"],
+    ]);
+    for (const c of BUSINESS_TYPE_CHOICES) expect(c.help.length).toBeGreaterThan(20);
   });
 });

@@ -28,13 +28,19 @@ export interface EntityProfile {
   peopleLabel: string;
   /** The capital line: Owner's capital · Partners' capital · Share capital. */
   capitalLabel: string;
-  /** Balance Sheet equity section heading. */
+  /** Balance Sheet equity section heading (R-1845). */
+  equityTitle: string;
+  /** What that section holds, in one line — the "What will change" row. */
   equityHeading: string;
   /** Money the owners take out. Null for a company — directors are paid, they do not draw. */
   drawingsLabel: string | null;
   itrForm: ItrForm;
   /** "ITR-3 on the owner's PAN", "ITR-5 for the firm", … */
   itrText: string;
+  /** The Compliance Calendar row the ITR pack's "Mark as filed" writes (R-1844). */
+  itrObligationKey: "it_itr6" | "it_itr_business";
+  /** One line under the choice at sign-up (R-1843). */
+  help: string;
   /** Short names of the ROC / MCA filings the calendar shows for this type. */
   rocFilings: string[];
 }
@@ -42,28 +48,38 @@ export interface EntityProfile {
 interface Words {
   peopleLabel: string;
   capitalLabel: string;
+  equityTitle: string;
   equityHeading: string;
   drawingsLabel: string | null;
   itrForm: ItrForm;
   itrText: string;
+  help: string;
 }
 
 const WORDS: Record<BusinessType, Words> = {
   proprietor: {
-    peopleLabel: "Owner", capitalLabel: "Owner's capital", equityHeading: "Owner's capital",
+    peopleLabel: "Owner", capitalLabel: "Owner's capital",
+    equityTitle: "Proprietor's capital account", equityHeading: "Proprietor's capital account",
     drawingsLabel: "Owner drawings", itrForm: "ITR-3", itrText: "ITR-3 on the owner's PAN",
+    help: "One owner, not registered as a firm or company — the business runs on the owner's PAN.",
   },
   partnership: {
-    peopleLabel: "Partners", capitalLabel: "Partners' capital", equityHeading: "Partners' capital",
+    peopleLabel: "Partners", capitalLabel: "Partners' capital",
+    equityTitle: "Partners' capital accounts", equityHeading: "Partners' capital accounts",
     drawingsLabel: "Partner drawings", itrForm: "ITR-5", itrText: "ITR-5 for the firm",
+    help: "Two or more partners under a partnership deed; the firm has its own PAN.",
   },
   llp: {
-    peopleLabel: "Designated partners", capitalLabel: "Partners' capital", equityHeading: "Partners' capital",
+    peopleLabel: "Designated partners", capitalLabel: "Partners' capital",
+    equityTitle: "Partners' capital accounts", equityHeading: "Partners' capital accounts",
     drawingsLabel: "Partner withdrawal", itrForm: "ITR-5", itrText: "ITR-5 for the LLP",
+    help: "Limited Liability Partnership registered with the MCA (it has an LLPIN).",
   },
   pvt_ltd: {
-    peopleLabel: "Directors", capitalLabel: "Share capital", equityHeading: "Share capital + Reserves and surplus",
+    peopleLabel: "Directors", capitalLabel: "Share capital",
+    equityTitle: "Shareholders' funds", equityHeading: "Shareholders' funds: Share capital + Reserves and surplus",
     drawingsLabel: null, itrForm: "ITR-6", itrText: "ITR-6 for the company",
+    help: "Private limited company registered with the MCA (it has a CIN and directors).",
   },
 };
 
@@ -92,7 +108,11 @@ export function entityProfile(t: BusinessType | null | undefined): EntityProfile
   const rocFilings = obligationsFor({ businessType: type, gstFiling: null })
     .filter((ob) => ob.category === "roc")
     .map((ob) => shortName(ob, type));
-  return { type, label: BUSINESS_TYPE_LABEL[type], ...WORDS[type], rocFilings };
+  return {
+    type, label: BUSINESS_TYPE_LABEL[type], ...WORDS[type],
+    itrObligationKey: type === "pvt_ltd" ? "it_itr6" : "it_itr_business",
+    rocFilings,
+  };
 }
 
 /** The one-line hint under the Business type choice in Settings → Company. */
@@ -142,3 +162,16 @@ export function businessTypeChange(
 
   return { from: a, to: b, added, removed, rows };
 }
+
+/**
+ * R-1843 — the four choices at sign-up, in this order, with their full names and one line of
+ * help each. Nothing is pre-selected: skipping leaves the type empty (= Pvt Ltd until set).
+ */
+export const BUSINESS_TYPE_CHOICES: readonly { type: BusinessType; title: string; help: string }[] = (
+  [
+    ["proprietor", "Proprietorship"],
+    ["partnership", "Partnership"],
+    ["llp", "LLP"],
+    ["pvt_ltd", "Private Limited"],
+  ] as const
+).map(([type, title]) => ({ type, title, help: WORDS[type].help }));
