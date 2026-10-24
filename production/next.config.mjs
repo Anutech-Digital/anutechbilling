@@ -79,6 +79,16 @@ const nextConfig = {
   experimental: {
     cpus: 3,
     webpackMemoryOptimizations: true,
+    /* R-1836, 24 Oct 2026: Next's dev-only "segment explorer" (devtools panel) wraps every
+       layout/page/loading/error segment in extra SegmentViewNode components. On the first,
+       cold load of a route in `next dev --turbopack` the browser often hydrated the shell
+       without one of those wrappers, so React's useId tree differed from the server's and
+       every Radix id in the shell (sidebar account menu, Demo data, More) mismatched —
+       "A tree hydrated but some attributes…" on /customers/<id>, /accounting/pnl, /quotes,
+       /leads: 4 of 6 cold pages red, 0 of 6 with this off (same server, same code). Not a
+       time/IST value. Dev only — production never renders the explorer — and we do not use
+       the panel, so off; the local smoke check stays meaningful. */
+    devtoolSegmentExplorer: false,
   },
   images: {
     /* Deep study 27 Sep 2026: next 14.2.35 carries an unauthenticated RCE advisory in the
