@@ -107,7 +107,7 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-async function callGemini(apiKey: string, model: string, prompt: string, category: string, includeOffer: boolean): Promise<GenResult | null> {
+async function callGemini(apiKey: string, model: string, tenantId: string | null, prompt: string, category: string, includeOffer: boolean, onCapReached: (message: string) => void): Promise<GenResult | null> {
   const userPrompt = `Category: ${category}
 Include offer block (use {{offer_code}}/{{discount}}/{{expires}}): ${includeOffer}
 
@@ -120,11 +120,12 @@ Return ONLY the JSON object as specified.`;
     /* Pehle apna `fetch` tha — geminiJson ki hu-ba-hu copy, uski suraksha ke bina.
        Fence kaatna bhi wahin ho chuka hai. */
     const parsed = await geminiJson<GenResult>({
-      apiKey, model,
+      apiKey, model, tenantId,
       system: SYSTEM_PROMPT,
       user: userPrompt,
       temperature: 0.8,
       label: "campaigns/ai-generate",
+      onCapReached,
     });
     if (!parsed) return null;
 
@@ -169,7 +170,15 @@ export async function POST(req: Request) {
   const gemini = await resolveGeminiConfig(userClient, me?.tenant_id ?? null);
 
   // Try Gemini; fall back to stub
-  const result = gemini.apiKey ? await callGemini(gemini.apiKey, gemini.model, prompt, category, includeOffer) : null;
+  /* R-1877: the company's monthly AI cap is checked inside geminiJson before the AI is asked.
+     Refused → 429 with the reason, not the stub (a stub would read as "the AI wrote this"). */
+  let capMessage: string | null = null;
+  const result = gemini.apiKey
+    ? await callGemini(gemini.apiKey, gemini.model, gemini.tenantId, prompt, category, includeOffer, (m) => { capMessage = m; })
+    : null;
+  if (capMessage) {
+    return NextResponse.json({ error: capMessage, code: "ai_cap_reached" }, { status: 429 });
+  }
   if (result) {
     return NextResponse.json({ ...result, mode: "gemini" });
   }

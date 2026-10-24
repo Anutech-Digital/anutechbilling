@@ -194,6 +194,8 @@ export async function claudeJson<T>(args: {
   attachments?: readonly Attachment[];
   timeoutMs?: number;
   label: string;
+  /** R-1877: the tokens Claude reported for this call (billed even when the reply is unusable). */
+  onUsage?: (u: { inputTokens: number; outputTokens: number }) => void;
 }): Promise<ClaudeResult<T>> {
   const now = Date.now();
   if (breakerOpen(now)) {
@@ -228,6 +230,7 @@ export async function claudeJson<T>(args: {
       },
       { timeout: timeoutMs, maxRetries: 1 },
     );
+    if (res.usage) args.onUsage?.({ inputTokens: res.usage.input_tokens ?? 0, outputTokens: res.usage.output_tokens ?? 0 });
 
     if (res.stop_reason === "refusal") {
       recordFailure(now);

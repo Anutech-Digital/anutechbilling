@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { geminiJson, __resetGeminiBreaker } from "./gemini";
 
-const ARGS = { apiKey: "k".repeat(20), model: "gemini-2.5-flash", system: "s", user: "u", label: "test" };
+const ARGS = { apiKey: "k".repeat(20), model: "gemini-2.5-flash", system: "s", user: "u", label: "test", tenantId: null };
 
 /** Shape a successful Gemini generateContent response. */
 function ok(text: string) {

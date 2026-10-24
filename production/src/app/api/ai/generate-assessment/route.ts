@@ -119,14 +119,14 @@ const SOFTWARE_SAMPLE: AssessmentQuestion[] = [
     q_hi: "Customer aur Contact me kya fark hai?", options_hi: ["Dono same hain", "Customer = jo company/account paisa deta hai; Contact = ek vyakti", "Contact paisa deta hai, Customer vyakti hai", "Customer ek vendor hota hai"] },
 ];
 
-async function genWithGemini(apiKey: string, model: string, prompt: string): Promise<AssessmentQuestion[] | null> {
+async function genWithGemini(apiKey: string, model: string, tenantId: string | null, prompt: string): Promise<AssessmentQuestion[] | null> {
   {
     /* Pehle apna `fetch` tha, aur usme `responseMimeType: application/json` bhi nahi tha —
        ye sirf prompt ki umeed par JSON maang raha tha aur phir fence khud kaat raha tha.
        geminiJson wo mimeType set karta hai (yaani model se saaf JSON aata hai), aur uske
        saath timeout, circuit breaker aur retry bhi deta hai. */
     const arr = await geminiJson<AssessmentQuestion[]>({
-      apiKey, model, user: prompt, label: "ai/generate-assessment",
+      apiKey, model, tenantId, user: prompt, label: "ai/generate-assessment",
     });
     if (!arr || !Array.isArray(arr)) return null;
     // Sanitise: keep only well-formed MCQs with a valid correct index.
@@ -175,7 +175,7 @@ export async function POST(request: NextRequest) {
     : buildPrompt(topic, difficulty, count, language);
 
   if (gemini.apiKey) {
-    const q = await genWithGemini(gemini.apiKey, gemini.model, prompt);
+    const q = await genWithGemini(gemini.apiKey, gemini.model, gemini.tenantId, prompt);
     if (q && q.length > 0) return NextResponse.json({ questions: q.slice(0, count), mode: "gemini" });
   }
   // Stub fallback — sample set so the test still works without a key. For

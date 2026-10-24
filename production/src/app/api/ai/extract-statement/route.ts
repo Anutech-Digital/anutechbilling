@@ -132,14 +132,14 @@ const isBusyOrSlow = (reason: string) =>
   /\b503\b|high demand|unavailable|overload|jawab nahi diya|timed out|paused/i.test(reason);
 
 async function extractWithFallback(
-  apiKey: string, model: string, mimeType: string, base64: string, prompt: string,
+  apiKey: string, model: string, tenantId: string | null, mimeType: string, base64: string, prompt: string,
 ): Promise<{ answer: AiAnswer | null; reason: string }> {
   let reason = "";
-  const first = await extractWithGemini(apiKey, model, mimeType, base64, prompt, (r) => { reason = r; });
+  const first = await extractWithGemini(apiKey, model, tenantId, mimeType, base64, prompt, (r) => { reason = r; });
   if (first) return { answer: first, reason: "" };
   if (model !== FALLBACK_MODEL && isBusyOrSlow(reason)) {
     console.warn(`[ai/extract-statement] ${model} failed (${reason}) — trying ${FALLBACK_MODEL}`);
-    const second = await extractWithGemini(apiKey, FALLBACK_MODEL, mimeType, base64, prompt, (r) => { reason = r; });
+    const second = await extractWithGemini(apiKey, FALLBACK_MODEL, tenantId, mimeType, base64, prompt, (r) => { reason = r; });
     if (second) return { answer: second, reason: "" };
   }
   return { answer: null, reason };
@@ -166,7 +166,7 @@ function countedRows(pagesJson: unknown, range: { from: number; to: number } | n
 }
 
 async function extractWithGemini(
-  apiKey: string, model: string, mimeType: string, base64: string, prompt: string, onFailure?: (reason: string) => void,
+  apiKey: string, model: string, tenantId: string | null, mimeType: string, base64: string, prompt: string, onFailure?: (reason: string) => void,
 ): Promise<AiAnswer | null> {
   /* Pehle yahan apna `fetch` tha — aur iske paas timeout bhi nahi tha. Ye bank statement
      padhta hai, yaani seedha paise ka data, aur ek atki hui call operator ko spinner par
@@ -184,7 +184,7 @@ async function extractWithGemini(
      Timeout aur badhane ki jagah ab lamba PDF pages ke hisson me padha jata hai — har hissa
      60s me aaram se aata hai. */
   const json = await geminiJson<{ rows?: AiRow[]; pages?: unknown }>({
-    apiKey, model,
+    apiKey, model, tenantId,
     user: prompt,
     attachment: { mimeType, base64 },
     temperature: 0,
@@ -227,7 +227,7 @@ export async function POST(request: NextRequest) {
   const pages = /pdf/i.test(parsed.mimeType) ? parsed.pages : undefined;
   const prompt = pages ? PROMPT + pagesPrompt(pages) : PROMPT;
 
-  const { answer, reason } = await extractWithFallback(gemini.apiKey, gemini.model, parsed.mimeType, parsed.fileBase64, prompt);
+  const { answer, reason } = await extractWithFallback(gemini.apiKey, gemini.model, gemini.tenantId, parsed.mimeType, parsed.fileBase64, prompt);
   if (!answer) {
     /* Say WHICH failure it was — each has a different next step. Until 19 Oct 2026 a
        timeout read "Google's AI is busy or slow", so people waited a minute and retried a

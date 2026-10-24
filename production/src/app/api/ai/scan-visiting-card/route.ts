@@ -60,7 +60,7 @@ const PROMPT =
   "one whose details are most prominent.";
 
 async function askGemini(
-  apiKey: string, model: string,
+  apiKey: string, model: string, tenantId: string | null,
   part: { text: string } | { inlineData: { mimeType: string; data: string } },
 ): Promise<ScannedCard | null> {
   /* Pehle yahan apna `fetch` tha. Timeout iske paas THA (15s), par circuit breaker aur
@@ -71,7 +71,7 @@ async function askGemini(
      sakta hai. Isliye geminiJson ka `system` optional hai. */
   const isImage = "inlineData" in part;
   return geminiJson<ScannedCard>({
-    apiKey, model,
+    apiKey, model, tenantId,
     /* Text wali shakl me doosra part bhi text hi hai, to dono ko jod dete hain — request
        ka matlab wahi rehta hai (Gemini do text parts ko jodkar hi padhta hai). */
     user: isImage ? PROMPT : `${PROMPT}\n\n${part.text}`,
@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
     ? { text: `Signature / pasted text:\n${input.text.slice(0, 4000)}` }
     : { inlineData: { mimeType: input.mimeType, data: input.fileBase64 } };
 
-  const ai = await askGemini(gemini.apiKey, gemini.model, part);
+  const ai = await askGemini(gemini.apiKey, gemini.model, gemini.tenantId, part);
   if (!ai) {
     return NextResponse.json(
       { error: "Couldn't read that. Try a sharper photo, or type the details in — the form works fine by hand." },

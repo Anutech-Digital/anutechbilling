@@ -137,6 +137,7 @@ export async function POST(request: NextRequest) {
     const ai = await geminiJson<GeminiTriage>({
       apiKey: gemini.apiKey,
       model: gemini.model,
+      tenantId: gemini.tenantId,
       system,
       user: user_,
       temperature: 0,

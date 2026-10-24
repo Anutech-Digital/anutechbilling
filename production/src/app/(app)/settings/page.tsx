@@ -884,6 +884,12 @@ function GeminiIntegrationCard() {
             <p className="text-xs text-ink-3 truncate" title={onClaude ? CLAUDE_STATUS_DETAIL : geminiText.detail}>
               {status?.ai_using ?? geminiText.card}
             </p>
+            {/* R-1877: this month's AI calls against the company's cap (server: lib/ai/usage-cap.ts). */}
+            {status?.ai_usage?.line && (
+              <p className={`text-xs truncate ${status.ai_usage.used >= status.ai_usage.cap ? "text-danger" : "text-ink-3"}`} title={status.ai_usage.line}>
+                {status.ai_usage.line}
+              </p>
+            )}
           </div>
         </div>
         <Button variant={configured ? "ghost" : "primary"} size="sm" onClick={() => setOpen(true)}>
