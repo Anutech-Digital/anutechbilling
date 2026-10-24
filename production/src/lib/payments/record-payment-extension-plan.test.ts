@@ -51,10 +51,21 @@ describe("record_payment renewal/extension branch keeps the subscription plan (R
     expect(branch).toMatch(/when coalesce\(v_quote\.is_extension, false\) then 'pending'/);
   });
 
-  it("deploy header: peek uses to_regprocedure (no ::regclass) and a letters/digits key", () => {
+  /* What the header must guarantee: the deploy peek runs BEFORE the migration, so it must not throw
+     (no ::regclass — that errors on a missing object; to_regprocedure returns null instead), it must
+     look at the catalog body of a function THIS migration redefines (so "applied" means the new body
+     is live), and the key must be letters/digits. R-829 / R-1816 (24 Oct): a later card's migration
+     keeps the R-812 body (checked above) but may peek at another function it redefines in the same
+     file — record_payment is not required by name. */
+  it("deploy header: catalog-only peek via to_regprocedure on a function this migration defines (no ::regclass) and a letters/digits key", () => {
     const head = sql.split("\n").slice(0, 3).join("\n");
     expect(head).toMatch(/^-- deploy-key: [a-z0-9]+$/m);
-    expect(head).toMatch(/^-- deploy-peek: .*to_regprocedure\('public\.record_payment\(text,integer,text,text,text\)'\).*R-\d+/m);  // R-829: a later card's migration keeps the R-812 body (checked above) under its own marker
-    expect(head).not.toMatch(/::regclass/);
+    const peek = head.match(/^-- deploy-peek: (.+)$/m)?.[1] ?? "";
+    expect(peek, "no deploy-peek line in the first 3 lines").not.toBe("");
+    expect(head).not.toMatch(/::regclass/i);
+    const target = peek.match(/to_regprocedure\('public\.([a-z_0-9]+)\([^)]*\)'\)/i)?.[1];
+    expect(target, "peek must use to_regprocedure('public.<fn>(<args>)')").toBeTruthy();
+    expect(sql).toMatch(new RegExp(`create or replace function public\\.${target}\\(`, "i"));
+    expect(peek, "peek must check the function body (prosrc), not only that it exists").toMatch(/prosrc/i);
   });
 });

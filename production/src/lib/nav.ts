@@ -442,6 +442,7 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/items/subscriptions": "Subscriptions tab of Products (/items) — the menu row opens the page, the tab links here",
   "/items/products": "One-time products tab of Products (/items) — the menu row opens the page, the tab links here",
   "/products": "Redirects to Products (/items) for people who type the menu name as a URL (R-490)",
+  "/settings/company": "redirect to /settings (Company tab), R-1670",
 };
 
 export const APP_NAV: NavSection[] = [
