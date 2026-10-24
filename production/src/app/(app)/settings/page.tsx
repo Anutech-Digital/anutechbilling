@@ -33,6 +33,7 @@ import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { NotificationsCard } from "@/components/features/settings/notifications-card";
 import { ComplianceProfileCard } from "@/components/features/compliance/compliance-profile-card";
 import { BusinessTypePrompt } from "@/components/features/compliance/business-type-prompt";
+import { PartnersRegisterCard } from "@/components/features/partners/partners-register-card";
 import { TurnoverCard } from "@/components/features/compliance/turnover-card";
 import { GstRegistrationCard } from "@/components/features/compliance/gst-registration-card";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -556,6 +557,9 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
 
       {/* R-262: business type + GST filing → which filings the Compliance Calendar shows. */}
       <ComplianceProfileCard isOwner={isOwner} />
+
+      {/* R-1847: Partnership / LLP only — the partners register (name, PAN, DPIN, share %, capital). */}
+      <PartnersRegisterCard />
 
       {/* R-337: aggregate turnover → e-invoice (IRN) warnings on invoices. */}
       <TurnoverCard isOwner={isOwner} />

@@ -30,6 +30,11 @@ export function isOwnerEquityTableMissing(err: unknown): boolean {
   return /owner_equity_movements/.test(m) && /(does not exist|could not find|schema cache)/i.test(m);
 }
 
+/** owner_equity_movements.partner_id is not there yet (R-1847 migration not applied). */
+export function isPartnerIdMissing(message: string): boolean {
+  return /partner_id/.test(message) && /(does not exist|could not find|schema cache)/i.test(message);
+}
+
 /** Every entry of the company, newest first. A failed read is an error (never an empty list). */
 export function useOwnerEquityMovements(enabled = true) {
   const me = useCurrentUser();
@@ -38,13 +43,17 @@ export function useOwnerEquityMovements(enabled = true) {
     queryKey: [...OWNER_EQUITY_KEY, tenantId],
     enabled: enabled && Boolean(tenantId),
     queryFn: async (): Promise<OwnerEquityMovement[]> => {
-      const { data, error } = await untyped()
+      const read = (cols: string) => untyped()
         .from("owner_equity_movements")
-        .select("id, kind, movement_date, amount, bank_account_id, bank_txn_id, own_line, partner_name, note")
+        .select(cols)
         .order("movement_date", { ascending: false })
         .order("created_at", { ascending: false });
+      const base = "id, kind, movement_date, amount, bank_account_id, bank_txn_id, own_line, partner_name, note";
+      let { data, error } = await read(`${base}, partner_id`);
+      /* R-1847: partner_id comes with migration 20261024190000 — before it, read without the link. */
+      if (error && isPartnerIdMissing(error.message)) ({ data, error } = await read(base));
       if (error) throw new Error(error.message);
-      return (data ?? []) as OwnerEquityMovement[];
+      return ((data ?? []) as unknown as OwnerEquityMovement[]).map((m) => ({ ...m, partner_id: m.partner_id ?? null }));
     },
   });
 }

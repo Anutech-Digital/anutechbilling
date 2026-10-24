@@ -29,6 +29,8 @@ export interface OwnerEquityMovement {
   /** true = the app added the cash line (recorded by hand); false = a statement line booked from Banking. */
   own_line: boolean;
   partner_name: string | null;
+  /** R-1847: the register partner (firm_partners). Null on older free-text entries. */
+  partner_id?: string | null;
   note: string | null;
 }
 

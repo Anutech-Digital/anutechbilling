@@ -22,7 +22,9 @@ import { rupee, formatDate } from "@/lib/utils";
 import { useComplianceProfile } from "@/lib/compliance/profile";
 import { DIRECTOR_CHOICES, ownerEquityWords, type OwnerEquityMovement } from "@/lib/accounting/owner-equity";
 import { useOwnerEquityMovements, useBookBankTxnAsOwnerEquity } from "@/lib/queries/owner-equity";
+import { useFirmPartners } from "@/lib/queries/partners";
 import type { BankTransactionRow } from "@/lib/queries/bank";
+import { PartnerPicker } from "@/components/features/partners/partner-picker";
 
 const dayGap = (a: string, b: string) => Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000;
 
@@ -45,6 +47,7 @@ export function OwnerEquitySection({ transaction, onDone }: { transaction: BankT
   const words = ownerEquityWords(profileQ.data?.businessType ?? null);
   const movementsQ = useOwnerEquityMovements(words.allowed);
   const book = useBookBankTxnAsOwnerEquity();
+  const partnersQ = useFirmPartners(words.needsPartner);
   const [partner, setPartner] = React.useState("");
   const [note, setNote] = React.useState("");
   React.useEffect(() => { setPartner(""); setNote(""); }, [transaction.id]);
@@ -52,7 +55,6 @@ export function OwnerEquitySection({ transaction, onDone }: { transaction: BankT
   const isDebit = (transaction.debit ?? 0) > 0;
   const amount = isDebit ? transaction.debit : transaction.credit;
   const candidates = ownerEntryCandidates(movementsQ.data ?? [], transaction);
-  const partners = [...new Set((movementsQ.data ?? []).map((m) => m.partner_name).filter((p): p is string => !!p))].sort();
 
   async function submit(movementId: string | null) {
     try {
@@ -119,11 +121,9 @@ export function OwnerEquitySection({ transaction, onDone }: { transaction: BankT
 
       <div className="space-y-2">
         {words.needsPartner && (
-          <>
-            <Input aria-label="Partner" list="oe-reconcile-partners" placeholder="Partner's name" value={partner}
-              onChange={(e) => setPartner(e.target.value)} maxLength={200} />
-            <datalist id="oe-reconcile-partners">{partners.map((p) => <option key={p} value={p} />)}</datalist>
-          </>
+          /* R-1847: from the partners register, never free text. */
+          <PartnerPicker id="oe-reconcile-partner" ariaLabel="Partner" partners={partnersQ.data ?? []}
+            loading={partnersQ.isLoading} onDate={transaction.txn_date} value={partner} onChange={setPartner} />
         )}
         <Input aria-label="Note" placeholder={isDebit ? "Note (optional) — e.g. Home rent" : "Note (optional)"} value={note}
           onChange={(e) => setNote(e.target.value)} maxLength={500} />
@@ -132,7 +132,7 @@ export function OwnerEquitySection({ transaction, onDone }: { transaction: BankT
         loading={book.isPending} disabled={needPartner} onClick={() => submit(null)}>
         Book {rupee(amount)} as {label.toLowerCase()}
       </Button>
-      {needPartner && <p className="text-xs text-ink-3 mt-1">Enter the partner&apos;s name first — each partner has their own capital account.</p>}
+      {needPartner && <p className="text-xs text-ink-3 mt-1">Pick the partner first — each partner has their own capital account.</p>}
     </div>
   );
 }

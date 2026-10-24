@@ -8,6 +8,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import type { OwnerEquityMovement } from "@/lib/accounting/owner-equity";
+import type { FirmPartner } from "@/lib/accounting/partners";
 
 const mutateAsync = vi.fn();
 let businessType: string | null = "proprietor";
@@ -18,6 +19,15 @@ vi.mock("@/lib/compliance/profile", () => ({
 vi.mock("@/lib/queries/owner-equity", () => ({
   useOwnerEquityMovements: () => ({ data: movements, isLoading: false, isError: false }),
   useBookBankTxnAsOwnerEquity: () => ({ mutateAsync, isPending: false }),
+}));
+const firm = (id: string, name: string, pct: number, left_on: string | null = null): FirmPartner => ({
+  id, name, pan: null, din_dpin: null, is_designated: false, profit_share_pct: pct, capital_contribution: 0,
+  joined_on: null, left_on, note: null,
+});
+const REGISTER = [firm("r", "Ravi", 60), firm("s", "Sita", 40), firm("g", "Gopal", 0, "2026-09-30")];
+let partners: FirmPartner[] = REGISTER;
+vi.mock("@/lib/queries/partners", () => ({
+  useFirmPartners: () => ({ data: partners, isLoading: false, isError: false }),
 }));
 vi.mock("next/link", () => ({ default: ({ href, children, ...p }: { href: string; children: React.ReactNode }) => <a href={href} {...p}>{children}</a> }));
 
@@ -35,7 +45,7 @@ const mv = (over: Partial<OwnerEquityMovement>): OwnerEquityMovement => ({
 });
 
 afterEach(cleanup);
-beforeEach(() => { mutateAsync.mockReset(); mutateAsync.mockResolvedValue({}); businessType = "proprietor"; movements = []; });
+beforeEach(() => { mutateAsync.mockReset(); mutateAsync.mockResolvedValue({}); businessType = "proprietor"; movements = []; partners = REGISTER; });
 
 describe("R-1839 reconcile — owner drawings (debit)", () => {
   it("proprietor: books the money-out line as Owner drawings, not an expense", async () => {
@@ -65,16 +75,29 @@ describe("R-1839 reconcile — owner drawings (debit)", () => {
     expect(list.map((m) => m.id)).toEqual(["near", "far"]);
   });
 
-  it("partnership: the partner is required before booking", async () => {
+  it("partnership: the partner is required before booking — picked from the register (R-1847)", async () => {
     businessType = "partnership";
     render(<OwnerEquitySection transaction={txn({})} onDone={vi.fn()} />);
     const btn = screen.getByRole("button", { name: /as partner drawings/ }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText("Partner"), { target: { value: "Ravi" } });
+    const pick = screen.getByLabelText("Partner") as HTMLSelectElement;
+    expect(pick.tagName).toBe("SELECT");
+    // Ravi and Sita are in the firm on 6 Oct; Gopal left on 30 Sep — not offered.
+    expect([...pick.options].map((o) => o.value)).toEqual(["", "Ravi", "Sita"]);
+    fireEvent.change(pick, { target: { value: "Ravi" } });
     expect(btn.disabled).toBe(false);
     fireEvent.click(btn);
     await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     expect(mutateAsync.mock.calls[0][0]).toMatchObject({ partner: "Ravi" });
+  });
+
+  it("partnership with an empty register: no free text — a link to add the partners", () => {
+    businessType = "partnership";
+    partners = [];
+    render(<OwnerEquitySection transaction={txn({})} onDone={vi.fn()} />);
+    expect(screen.queryByLabelText("Partner")).toBeNull();
+    expect((screen.getByRole("link", { name: /add your partners/ }) as HTMLAnchorElement).getAttribute("href")).toBe("/settings?tab=company#partners");
+    expect((screen.getByRole("button", { name: /as partner drawings/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("LLP says partner withdrawal", () => {
