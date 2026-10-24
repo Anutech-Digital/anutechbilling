@@ -102,9 +102,7 @@ function useAfterPay() {
   return () => {
     qc.invalidateQueries({ queryKey: ["bank_transactions"] });
     qc.invalidateQueries({ queryKey: ["bank_credit_open_items"] });
-    qc.invalidateQueries({ queryKey: ["subscriptions"] });
-    qc.invalidateQueries({ queryKey: ["quotes"] });
-    qc.invalidateQueries({ queryKey: ["payments"] });
+    /* payments, invoices, quotes, subscriptions, credit notes, dues: the one list (R-1634). */
     invalidateReceivables(qc);
   };
 }
@@ -186,7 +184,6 @@ export function relinkArgs(t: RelinkTarget) {
 /** Undo the old one-off sale and book the line on what it paid — ONE server transaction. */
 export function useRelinkOneOffSale() {
   const after = useAfterPay();
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: async (t: RelinkTarget): Promise<PayForResult> => {
       const { data, error } = await rpc("relink_bank_one_off_sale", relinkArgs(t));
@@ -194,11 +191,8 @@ export function useRelinkOneOffSale() {
       if (!data) throw new Error("The relink was not confirmed — refresh the page to see whether it was saved.");
       return data as PayForResult;
     },
-    onSuccess: () => {
-      after();
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["credit_notes"] });
-    },
+    /* The undone sale's invoice + credit note refresh via invalidateReceivables (["invoices"], ["credit-notes"]). */
+    onSuccess: after,
     onError: onPayError,
   });
 }
