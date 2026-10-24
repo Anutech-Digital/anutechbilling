@@ -3,7 +3,7 @@
  * "does this workspace already have subscriptions?" probe, and each user's "Show all modules".
  *
  * Read through an untyped client because sell_mode is newer than the generated types. A missing
- * column (before migration 20261024201632_r1860_tenant_sell_mode.sql) reads as 'both' — today's
+ * column (before migration 20261024204624_r1860_tenant_sell_mode.sql) reads as 'both' — today's
  * full menu — and Save says it needs a database update first, like lib/compliance/profile.ts.
  */
 "use client";

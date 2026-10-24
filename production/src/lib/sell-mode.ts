@@ -1,6 +1,6 @@
 /**
  * R-1860 (epic R-1841, Phase 5) — "What do you sell?": the one answer that decides what the
- * app puts up front. Stored on tenants.sell_mode (migration 20261024201632_r1860_tenant_sell_mode.sql).
+ * app puts up front. Stored on tenants.sell_mode (migration 20261024204624_r1860_tenant_sell_mode.sql).
  *
  *   subscriptions — recurring licences / plans (renewals, MRR)
  *   one_time      — one-time products & services (projects, invoices)
