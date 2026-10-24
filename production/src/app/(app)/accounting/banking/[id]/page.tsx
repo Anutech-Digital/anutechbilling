@@ -277,7 +277,8 @@ export default function BankAccountDetailPage() {
               {rupee(bankBalance)}
             </p>
             <p className="text-xs text-ink-3 mt-0.5">
-              {statementCheck && Math.abs(statementCheck.difference) > 1
+              {/* R-1829: red only for a real gap — a few rupees of paise rounding is not one. */}
+              {statementCheck?.verdict === "off"
                 ? <span className="text-rose">Statement says {rupee(statementCheck.statementBalance)}</span>
                 : "Per imported statement"}
             </p>
@@ -287,7 +288,9 @@ export default function BankAccountDetailPage() {
             <p className={`font-serif text-2xl mt-1 ${appBalance >= 0 ? "text-ink" : "text-rose"}`}>
               {rupee(appBalance)}
             </p>
-            <p className="text-xs text-ink-3 mt-0.5">Reconciled in your books</p>
+            <p className="text-xs text-ink-3 mt-0.5">
+              {counts.unmatched > 0 ? "Bank balance minus lines not yet reconciled" : "Reconciled in your books"}
+            </p>
           </div>
           <div>
             <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Opening balance</p>

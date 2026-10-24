@@ -105,3 +105,54 @@ describe("checkStatement", () => {
     expect(r?.gaps).toEqual([]);
   });
 });
+
+describe("checkStatement — paise rounding vs real gaps (R-1829)", () => {
+  /* Seeded so the test is the same every run. */
+  const rng = (seed: number) => () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+
+  /** Real-looking statement: random paise amounts, a few lines a day, stored rounded. */
+  function randomStatement(seed: number, n: number): StatementLine[] {
+    const r = rng(seed);
+    let bal = 500000;
+    let day = 0;
+    const out: StatementLine[] = [];
+    for (let i = 0; i < n; i++) {
+      if (r() < 0.15) day++;
+      const amt = Math.round((r() * 20000 + 1) * 100) / 100;
+      const isCredit = r() < 0.5;
+      bal = Math.round((bal + (isCredit ? amt : -amt)) * 100) / 100;
+      const date = new Date(Date.UTC(2026, 3, 1) + day * 86_400_000).toISOString().slice(0, 10);
+      out.push(L(date, isCredit ? 0 : Math.round(amt), isCredit ? Math.round(amt) : 0, Math.round(bal)));
+    }
+    return out;
+  }
+
+  it.each([1, 7, 42, 2026, 4523])("seed %i: 1,449 paise lines never read as missing lines", (seed) => {
+    const r = checkStatement(randomStatement(seed, 1449), 500000)!;
+    expect(r.gaps).toEqual([]);
+    expect(["match", "rounding"]).toContain(r.verdict);
+    expect(r.lineCount).toBe(1449);
+    expect(Math.abs(r.roundingDrift)).toBeLessThanOrEqual(r.roundingAllowance);
+  });
+
+  it("a missing ₹500 line among paise lines is still a gap, around its date", () => {
+    const lines = randomStatement(7, 400);
+    const i = 200;
+    const d = lines[i].txn_date;
+    // The bank had a ₹500 debit right after line i that was never imported: every later
+    // running balance is ₹500 lower than the imported lines explain.
+    const cut = [...lines.slice(0, i + 1), ...lines.slice(i + 1).map((l) => ({ ...l, balance_after: (l.balance_after as number) - 500 }))];
+    const r = checkStatement(cut, 500000)!;
+    expect(r.verdict).toBe("off");
+    expect(r.gaps).toHaveLength(1);
+    // The day is compared as a whole, so its own lines' paise rounding rides along (±a few ₹).
+    expect(Math.abs(r.gaps[0].amount - 500)).toBeLessThanOrEqual(5);
+    expect(r.gaps[0].after <= d && d <= r.gaps[0].by).toBe(true);
+  });
+
+  it("the opening, the gaps and the rounding add up to the total difference", () => {
+    const r = checkStatement(randomStatement(42, 300), 499000)!;
+    const sum = r.openingDifference + r.gaps.reduce((s, g) => s + g.amount, 0) + r.roundingDrift;
+    expect(sum).toBe(r.difference);
+  });
+});
