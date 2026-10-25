@@ -223,4 +223,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r1912unreconcilekeepspaidbill", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_vendor_payment_line_unmatched()') and prosrc like '%R-1912%')" },
   { key: "r1934marketingrole", peek: "exists(select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid join pg_namespace n on n.oid = t.typnamespace where n.nspname = 'public' and t.typname = 'user_role' and e.enumlabel = 'marketing')" },
   { key: "r1934vendorguess", peek: "exists(select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'bank_debit_vendor_guess' and p.prosrc like '%R-1934%')" },
+  { key: "r1917bookexpensevendorguard", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.book_bank_txn_as_expense(uuid,text,text,integer,text)') and prosrc like '%R-1917%')" },
 ];
