@@ -20,7 +20,7 @@
  */
 import { verifyDraftMoney } from "@/lib/ai/money-guard";
 import {
-  CHANNEL_SPECS, fitCheck, objectiveFor,
+  CHANNEL_SPECS, DEFAULT_CTA, fitCheck, objectiveFor,
   type AdPlatform, type CopilotObjective, type CopyField,
 } from "./channel-specs";
 
@@ -46,6 +46,8 @@ export interface CopyBrief {
   language: CopyLanguage;
   /** What the person typed about the offer / audience. */
   brief: string;
+  /** Who this set is for, in plain words (R-1897: one copy set per audience). */
+  audience?: string;
 }
 
 export interface CopySlot {
@@ -57,6 +59,8 @@ export interface CopySlot {
   want: number;
   /** Filled from the brand name, not written by the AI (Performance Max business name). */
   fromBrand?: boolean;
+  /** A pick-from-list field (Meta call-to-action): the value used when the AI picks none (R-1897). */
+  defaultChoice?: string;
 }
 
 export const slotKey = (platform: string, format: string, field: string) => `${platform}.${format}.${field}`;
@@ -86,8 +90,9 @@ export function copySlots(platforms: readonly AdPlatform[], objective: CopilotOb
     }
     for (const field of format.fields) {
       slots.push({
-        platform, format: format.key, formatLabel: format.label, field, want: field.maxCount,
+        platform, format: format.key, formatLabel: format.label, field, want: field.aiCount ?? field.maxCount,
         ...(field.key === "business_name" ? { fromBrand: true } : {}),
+        ...(field.choices ? { defaultChoice: field.key === "cta" ? DEFAULT_CTA[objective] : field.choices[0]?.value } : {}),
       });
     }
   }
@@ -111,6 +116,9 @@ Rules:
 
 export function buildCopyPrompt(b: CopyBrief, slots: readonly CopySlot[]): { system: string; user: string } {
   const asks = slots.filter((s) => !s.fromBrand).map((s) => {
+    if (s.field.choices) {
+      return `- ${keyOf(s)}: exactly 1 value, copied exactly from this list: ${s.field.choices.map((c) => c.value).join(", ")} (${s.field.label}, ${s.formatLabel})`;
+    }
     const n = `${s.want} line${s.want === 1 ? "" : "s"}`;
     const limit = s.field.max != null
       ? `each at most ${s.field.max} characters`
@@ -124,6 +132,7 @@ export function buildCopyPrompt(b: CopyBrief, slots: readonly CopySlot[]): { sys
     `Brand voice: ${b.tone?.trim() || DEFAULT_TONE}`,
     `Language: ${LANGUAGE_WORDS[b.language]}`,
     `Brief from the business: ${b.brief.trim() || "(none)"}`,
+    ...(b.audience?.trim() ? [`Who sees the ads: ${b.audience.trim()}`] : []),
     "",
     "Write these fields:",
     ...asks,
@@ -166,6 +175,14 @@ export function collectCandidates(raw: unknown, slots: readonly CopySlot[], b: P
       const v = f && typeof f === "object" ? (f as Record<string, unknown>)[s.field.key] : undefined;
       values = Array.isArray(v) ? v : typeof v === "string" ? [v] : [];
     }
+    if (s.field.choices) {
+      /* Pick-from-list (Meta call-to-action): only a value on the list, matched by value or button text. */
+      const pick = values.map(clean).map((c) => c && s.field.choices!.find((o) =>
+        sameKey(o.value) === sameKey(c) || sameKey(o.label) === sameKey(c) || sameKey(o.value) === sameKey(c.replace(/\s+/g, "_"))))
+        .find(Boolean);
+      out.set(keyOf(s), [pick?.value ?? s.defaultChoice].filter((x): x is string => !!x));
+      continue;
+    }
     const seen = new Set<string>();
     const lines: string[] = [];
     for (const v of values) {
@@ -184,7 +201,7 @@ export function collectCandidates(raw: unknown, slots: readonly CopySlot[], b: P
 export function needsShortening(c: Candidates, slots: readonly CopySlot[]): ShortenItem[] {
   const items: ShortenItem[] = [];
   for (const s of slots) {
-    if (s.fromBrand) continue; // a business name must match the real name — never reworded
+    if (s.fromBrand || s.field.choices) continue; // a business name must match the real name — never reworded; a list value is not text
     (c.get(keyOf(s)) ?? []).forEach((text, i) => {
       const fit = fitCheck(text, s.field);
       if (!fit.ok && fit.limit != null) items.push({ id: `${keyOf(s)}#${i}`, text, limit: fit.limit });
@@ -310,6 +327,10 @@ export function stubCopy(b: CopyBrief, slots: readonly CopySlot[]): Record<strin
   const out: Record<string, Record<string, Record<string, string[]>>> = {};
   for (const s of slots) {
     if (s.fromBrand) continue;
+    if (s.field.choices) {
+      ((out[s.platform] ??= {})[s.format] ??= {})[s.field.key] = s.defaultChoice ? [s.defaultChoice] : [];
+      continue;
+    }
     const limit = s.field.max ?? s.field.recommended ?? 90;
     const pool = s.field.key === "headline" && s.platform === "google-ads" ? STUB_HEADLINES
       : s.field.key === "headline" ? [`{product}`, `{brand}`]
@@ -331,4 +352,56 @@ export function stubCopy(b: CopyBrief, slots: readonly CopySlot[]): Record<strin
     ((out[s.platform] ??= {})[s.format] ??= {})[s.field.key] = lines;
   }
   return out;
+}
+
+/* ── Rewrite one line (R-1897, "Rewrite this line") ─────────────────────────── */
+
+export const REWRITE_SYSTEM = `You rewrite ONE paid-ad line for an Indian business. Output ONLY JSON: {"text":"<new line>"}.
+Rules:
+- Same job as the old line (same field), but say it differently. It must not repeat any of the other lines.
+- Fit the character limit. Count every character, including spaces.
+- Never invent a price, discount, percentage, date or guarantee. Use a number only if it is in the brief or the old line.
+- No ALL CAPS words, no "!!", no emoji in Google lines.
+- Write in the requested language and brand voice.`;
+
+export interface RewriteAsk {
+  platformLabel: string;
+  field: CopyField;
+  current: string;
+  /** The other lines of the same field — the new line must differ from all of them. */
+  others: readonly string[];
+}
+
+export function buildRewritePrompt(b: CopyBrief, ask: RewriteAsk): { system: string; user: string } {
+  const limit = ask.field.max != null
+    ? `at most ${ask.field.max} characters`
+    : ask.field.recommended != null ? `ideally at most ${ask.field.recommended} characters` : "any length";
+  const user = [
+    `Brand: ${b.brand}`,
+    `Product / service: ${b.product?.trim() || "(the brand's main offer)"}`,
+    `Objective: ${OBJECTIVE_WORDS[b.objective]}`,
+    `Brand voice: ${b.tone?.trim() || DEFAULT_TONE}`,
+    `Language: ${LANGUAGE_WORDS[b.language]}`,
+    `Brief from the business: ${b.brief.trim() || "(none)"}`,
+    ...(b.audience?.trim() ? [`Who sees the ads: ${b.audience.trim()}`] : []),
+    "",
+    `Field: ${ask.platformLabel} ${ask.field.label}, ${limit}`,
+    `Old line: ${ask.current}`,
+    `Other lines (do not repeat): ${ask.others.length ? ask.others.map((o) => `"${o}"`).join("; ") : "(none)"}`,
+  ].join("\n");
+  return { system: REWRITE_SYSTEM, user };
+}
+
+export type RewriteCheck = { ok: true; text: string; length: number } | { ok: false; reason: string };
+
+/** The server's check on a rewritten line: fits a hard limit, differs from the rest, no new ₹ figure. */
+export function checkRewrite(raw: unknown, ask: RewriteAsk, allowedMoney: readonly number[]): RewriteCheck {
+  const text = clean(raw);
+  if (!text) return { ok: false, reason: "The AI did not send a line." };
+  const fit = fitCheck(text, ask.field);
+  if (fit.kind === "max" && !fit.ok) return { ok: false, reason: `The new line was longer than ${fit.limit} characters.` };
+  if ([ask.current, ...ask.others].some((o) => sameKey(o) === sameKey(text))) return { ok: false, reason: "The new line repeated an existing line." };
+  const money = verifyDraftMoney(text, [...allowedMoney, ...verifyDraftMoney(ask.current, []).found]);
+  if (!money.ok) return { ok: false, reason: `The new line mentioned a price you did not give (${money.violations.join(", ")}).` };
+  return { ok: true, text, length: fit.length };
 }
