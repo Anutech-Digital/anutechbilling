@@ -251,6 +251,7 @@ MIGS=(
   "r1912unreconcilekeepspaidbill|20261025151118_r1912_unreconcile_keeps_paid_bill.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_vendor_payment_line_unmatched()') and prosrc like '%R-1912%')"
   "r1934marketingrole|20261025151939_r1934_marketing_role.sql|resellersos_migration|exists(select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid join pg_namespace n on n.oid = t.typnamespace where n.nspname = 'public' and t.typname = 'user_role' and e.enumlabel = 'marketing')"
   "r1934vendorguess|20261025151940_r1934_vendor_guess_no_name_match.sql|resellersos_migration|exists(select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'bank_debit_vendor_guess' and p.prosrc like '%R-1934%')"
+  "r1917bookexpensevendorguard|20261025155521_r1917_book_expense_vendor_guard.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.book_bank_txn_as_expense(uuid,text,text,integer,text)') and prosrc like '%R-1917%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
