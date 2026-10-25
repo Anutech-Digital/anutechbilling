@@ -46,6 +46,9 @@ import { filterExpenses, EXPENSE_SORT, expenseViewState, readExpenseView } from 
 import { logExport } from "@/lib/export-log";
 import { csvEscape } from "@/lib/csv";
 import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
+import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
+import { billAdvanceView } from "@/lib/accounting/vendor-account";
+import { AdvanceAppliedLine, ApplyAdvanceButton } from "./advance-on-bill";
 
 type DateRange = { from: string; to: string };
 const GROUP_BY_CHOICES: readonly GroupBy[] = ["none", "vendor", "category"];
@@ -148,6 +151,12 @@ export default function ExpensesPage() {
   const del     = useDeleteExpense();
   const salariesQ = useSalaryPayments();
   const confirm = useConfirm();
+  /* R-1913: advances still with each vendor — a bill row offers "Apply advance". */
+  const advancesQ = usePrepaidAdvances();
+  const advanceView = React.useCallback(
+    (e: Expense) => billAdvanceView(e, isPayrollExpense(e) ? [] : advancesQ.data ?? []),
+    [advancesQ.data],
+  );
 
   // expense_id → its salary payment (for the partial/paid reconcile tag).
   const salByExpense = React.useMemo(
@@ -313,6 +322,7 @@ export default function ExpensesPage() {
   /* One desktop row — rendered flat or under a vendor / category group header. */
   const renderDesktopRow = (e: Expense) => {
     const noBill = e.bill_type === "none" && !isPayrollExpense(e);
+    const adv = advanceView(e);
     return (
           <tr key={e.id}
             className={`border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer align-top ${ROW_FOCUS_RING} ${selectedIds.has(e.id) ? "bg-amber-soft/40" : ""}`}
@@ -354,6 +364,7 @@ export default function ExpensesPage() {
               <div className="font-semibold text-ink font-mono">{rupee(e.amount)}</div>
               {e.gst_paid > 0 && <div className="text-xs text-emerald">+{rupee(e.gst_paid)} GST</div>}
               {(() => { const fx = foreignAmount(e.currency, e.amount, e.fx_rate); return fx ? <div className="text-xs text-ink-3">{fx}</div> : null; })()}
+              <AdvanceAppliedLine expenseId={e.id} view={adv} />
             </td>
             {/* Actions — icon-first, wrap instead of overflowing */}
             <td className="px-3 py-2.5" onClick={(ev) => ev.stopPropagation()}>
@@ -362,6 +373,7 @@ export default function ExpensesPage() {
                   <IconButton icon="upload" size="sm" variant="ghost" aria-label="Upload receipt"
                     title="Upload receipt / bill" onClick={() => setEditing(e)} />
                 )}
+                <ApplyAdvanceButton expenseId={e.id} view={adv} />
                 {!e.paid && !isPayrollExpense(e) && (
                   <Button variant="default" className="h-7 px-2 py-0 text-xs"
                     onClick={() => setPayingExpense(e)}>Mark paid</Button>
@@ -380,7 +392,9 @@ export default function ExpensesPage() {
   };
 
   /* One mobile card — flat or under a group header. */
-  const renderMobileCard = (e: Expense) => (
+  const renderMobileCard = (e: Expense) => {
+    const adv = advanceView(e);
+    return (
         <Card className={`p-4 cursor-pointer ${selectedIds.has(e.id) ? "ring-1 ring-amber/50 bg-amber-soft/30" : ""}`} onClick={() => openRow(e)}>
           <div className="flex items-start justify-between gap-2 mb-1">
             {bulkEligible(e) && (
@@ -409,11 +423,13 @@ export default function ExpensesPage() {
           </div>
           {e.vendor_name && <div className="text-xs text-ink-2 mb-1">{e.vendor_name}</div>}
           {e.description && <div className="text-xs text-ink-3 mb-2">{e.description}</div>}
+          <div className="mb-1.5"><AdvanceAppliedLine expenseId={e.id} view={adv} /></div>
           <div className="flex items-center justify-between">
             {e.gst_paid > 0 && (
               <span className="text-xs text-emerald">+{foreignAmount(e.currency, e.gst_paid, e.fx_rate) ?? rupee(e.gst_paid)} input GST</span>
             )}
-            <div className="ml-auto flex items-center gap-1">
+            <div className="ml-auto flex items-center gap-1 flex-wrap justify-end">
+              <ApplyAdvanceButton expenseId={e.id} view={adv} className="h-7 px-2 py-0 text-xs mr-1" />
               {!e.paid && !isPayrollExpense(e) && (
                 <Button variant="default" className="h-7 px-2 py-0 text-xs mr-1"
                   onClick={(ev) => { ev.stopPropagation(); setPayingExpense(e); }}>
@@ -438,7 +454,8 @@ export default function ExpensesPage() {
             </div>
           </div>
         </Card>
-  );
+    );
+  };
   const renderMobileRow = (e: Expense) => <li key={e.id}>{renderMobileCard(e)}</li>;
 
   /* R-213: the flat list is on the shared DataTable — click Date / Expense / Vendor /

@@ -5267,6 +5267,7 @@ export type Database = {
       }
       expenses: {
         Row: {
+          advance_applied: number
           amount: number
           attachment_url: string | null
           bank_account_id: string | null
@@ -5304,6 +5305,7 @@ export type Database = {
           vendor_name: string | null
         }
         Insert: {
+          advance_applied?: number
           amount: number
           attachment_url?: string | null
           bank_account_id?: string | null
@@ -5341,6 +5343,7 @@ export type Database = {
           vendor_name?: string | null
         }
         Update: {
+          advance_applied?: number
           amount?: number
           attachment_url?: string | null
           bank_account_id?: string | null

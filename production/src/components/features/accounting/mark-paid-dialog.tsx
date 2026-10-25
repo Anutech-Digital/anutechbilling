@@ -23,6 +23,8 @@ import { istToday } from "@/lib/dates/ist";
 
 export function MarkPaidDialog({ expense, onClose }: { expense: Expense; onClose: () => void }) {
   const markPaid = useMarkExpensePaid();
+  /* R-1913: what is left after the vendor's advance applied to the bill. */
+  const toPay = expense.amount - (expense.advance_applied ?? 0);
   const today = istToday();
   const [paidDate, setPaidDate] = React.useState<string>(today);
   const [method, setMethod] = React.useState<string>(expense.payment_method ?? "bank_transfer");
@@ -49,7 +51,8 @@ export function MarkPaidDialog({ expense, onClose }: { expense: Expense; onClose
         <DialogHeader>
           <DialogTitle>Mark as paid</DialogTitle>
           <DialogDescription>
-            {expense.vendor_name ? `${expense.vendor_name} · ` : ""}{rupee(expense.amount)}
+            {expense.vendor_name ? `${expense.vendor_name} · ` : ""}{rupee(toPay)}
+            {(expense.advance_applied ?? 0) > 0 ? ` (bill ${rupee(expense.amount)} − advance ${rupee(expense.advance_applied)})` : ""}
             {expense.description ? ` — ${expense.description}` : ""}
           </DialogDescription>
         </DialogHeader>
@@ -89,7 +92,7 @@ export function MarkPaidDialog({ expense, onClose }: { expense: Expense; onClose
         <DialogFooter>
           <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
           <Button type="button" variant="primary" loading={markPaid.isPending} onClick={submit}>
-            Mark {rupee(expense.amount)} paid
+            Mark {rupee(toPay)} paid
           </Button>
         </DialogFooter>
       </DialogContent>

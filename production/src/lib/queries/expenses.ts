@@ -459,7 +459,7 @@ export function useCreateExpense() {
  */
 export async function fetchOutstandingPayable(supabase: ReturnType<typeof createClient>): Promise<{ count: number; amount: number }> {
   const [op, sal, stat] = await Promise.all([
-    fetchAllRows<{ amount: number | null }>((rFrom, rTo) => supabase.from("expenses").select("amount")
+    fetchAllRows<{ amount: number | null; advance_applied: number | null }>((rFrom, rTo) => supabase.from("expenses").select("amount, advance_applied")
       .eq("paid", false).order("id", { ascending: true }).range(rFrom, rTo)),
     fetchAllRows<{ net: number | null; paid_amount: number | null; paid_status: string }>((rFrom, rTo) => supabase.from("salary_payments")
       .select("net, paid_amount, paid_status").neq("paid_status", "paid").order("id", { ascending: true }).range(rFrom, rTo)),
@@ -468,7 +468,8 @@ export async function fetchOutstandingPayable(supabase: ReturnType<typeof create
   ]);
 
   let amount = 0, count = 0;
-  for (const r of op)   { amount += r.amount ?? 0; count++; }
+  /* R-1913: the part settled from the vendor's advance is no longer owed. */
+  for (const r of op)   { amount += (r.amount ?? 0) - (r.advance_applied ?? 0); count++; }
   for (const s of sal)  { const rem = (s.net ?? 0) - (s.paid_amount ?? 0); if (rem > 0) { amount += rem; count++; } }
   for (const r of stat) { amount += r.amount ?? 0; count++; }
   return { count, amount };
@@ -510,7 +511,7 @@ export function useUnpaidBillsDue() {
       const supabase = createClient();
       const { data, error } = await supabase
         .from("expenses")
-        .select("id, vendor_name, amount, due_date, expense_date")
+        .select("id, vendor_name, amount, advance_applied, due_date, expense_date")
         .eq("paid", false)
         .order("due_date", { ascending: true, nullsFirst: false })
         .limit(500);
@@ -523,7 +524,7 @@ export function useUnpaidBillsDue() {
         return {
           id: r.id as string,
           vendor: (r.vendor_name ?? null) as string | null,
-          amount: (r.amount ?? 0) as number,
+          amount: ((r.amount ?? 0) - (r.advance_applied ?? 0)) as number,   // R-1913: less the advance applied
           due_date: due,
           daysOverdue: due
             ? Math.round((todayMs - Date.parse(`${due.slice(0, 10)}T00:00:00+05:30`)) / 86_400_000)
@@ -559,13 +560,15 @@ export function useMarkExpensePaid() {
       if (error) throw error;
       const expense = data as Expense;
 
-      if (input.pettyCashAccountId && expense.amount > 0) {
+      /* R-1913: the part already settled from the vendor's advance did not leave the cash box. */
+      const cashOut = expense.amount - (expense.advance_applied ?? 0);
+      if (input.pettyCashAccountId && cashOut > 0) {
         const { data: txn, error: txnErr } = await supabase.from("bank_transactions").insert({
           tenant_id:        expense.tenant_id,
           bank_account_id:  input.pettyCashAccountId,
           txn_date:         input.paid_date,
           description:      `Petty cash: ${expense.category}${expense.vendor_name ? ` · ${expense.vendor_name}` : ""}`,
-          debit:            expense.amount,
+          debit:            cashOut,
           credit:           0,
           source:           "manual",
           matched_to_type:  "expense",
