@@ -55,6 +55,12 @@ export interface PrimaryContact {
   title: string | null;
   phone: string | null;
   email: string | null;
+  /**
+   * R-1894: true when this is NOT a contact person but what is typed on the customer record
+   * (customers.contact_*). Screens label it "On the customer record"; `name` is "" when the
+   * record has a mobile / email but no person's name.
+   */
+  fromRecord?: true;
 }
 
 interface ContactLike {
@@ -88,7 +94,8 @@ export function isCompanyName(person: string | null | undefined, c: CustomerLike
 /**
  * The customer's primary contact person, or null when there is none.
  * Order: the PRIMARY linked contact → the first linked contact → the legacy flat
- * `contact_*` columns. A name that equals the company name is never returned.
+ * `contact_*` columns (marked `fromRecord`; R-1894: also when only a mobile / email is on the
+ * record). A name that equals the company name is never returned.
  */
 export function primaryContactOf(c: CustomerLike, contacts: readonly ContactLike[] | null | undefined): PrimaryContact | null {
   const linked = (contacts ?? []).filter((x) => (x.full_name ?? "").trim() && !isCompanyName(x.full_name, c));
@@ -103,13 +110,20 @@ export function primaryContactOf(c: CustomerLike, contacts: readonly ContactLike
       email: pick.email?.trim() || null,
     };
   }
+  /* R-1894: no contact person — show what is typed on the customer record, marked as such.
+     A name that only repeats the company is dropped, but a stored mobile / email never is:
+     "No contact person yet" over a typed mobile hid the only number the owner had. */
   const flat = c.contact_name?.trim();
-  if (flat && !isCompanyName(flat, c)) {
+  const name = flat && !isCompanyName(flat, c) ? flat : "";
+  const phone = recordPhoneOf(c);
+  const email = c.contact_email?.trim() || null;
+  if (name || phone || email) {
     return {
-      name: flat,
-      title: c.contact_title?.trim() || null,
-      phone: recordPhoneOf(c),
-      email: c.contact_email?.trim() || null,
+      name,
+      title: name ? c.contact_title?.trim() || null : null,
+      phone,
+      email,
+      fromRecord: true,
     };
   }
   return null;

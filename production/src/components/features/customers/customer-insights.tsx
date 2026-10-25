@@ -713,8 +713,12 @@ export function CustomerIdentityRail({ c, contact, onAddContact }: {
         <div className="flex items-start gap-3">
           <Avatar initials={initials(contact.name) || "?"} color="amber" size="md" />
           <div className="min-w-0 flex-1">
-            <div className="font-medium text-ink truncate">{contact.name}</div>
+            {contact.name
+              ? <div className="font-medium text-ink truncate">{contact.name}</div>
+              : <div className="font-medium text-ink-2">No contact person yet</div>}
             {contact.title && <div className="text-2xs text-ink-3">{contact.title}</div>}
+            {/* R-1894: a mobile / email typed on the customer record, not a contact person. */}
+            {contact.fromRecord && <div className="text-2xs text-ink-3">On the customer record</div>}
             <div className="mt-1.5 space-y-1">
               {contact.email && (
                 /* R-1009: a masked value stays text — no mailto: / tel: to a mask. */
