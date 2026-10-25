@@ -49,6 +49,7 @@ import { showsDirectorLoans, splitLoansTaken, undeclaredDirectorLoans } from "@/
 import { useEmployeeAdvances } from "@/lib/queries/advances";
 import { splitPrepaidAdvances } from "@/lib/accounting/employee-advance";
 import { SectionTitle, Ratio, BSLine, ManualLines, TotalLine, equityCsvRows } from "./bs-lines";
+import { StatementRow } from "@/components/ui/statement-row";
 import { OpeningBalancesCard } from "./opening-balances-card";
 import { EditLineDialog, AddLineDialog } from "./line-dialogs";
 
@@ -455,13 +456,13 @@ export default function BalanceSheetPage() {
                         <BSLine key={r.key} label={r.label} hint={r.hint} amount={r.amount} kind={r.origin} source={r.source} href={r.href} />
                       ))}
                       {g.total && (
-                        <div className="flex items-start justify-between gap-3 py-1.5 border-t border-hairline mt-1">
+                        <StatementRow className="flex items-start justify-between gap-3 py-1.5 border-t border-hairline mt-1">
                           <span className="text-sm text-ink font-medium">
                             {g.total.label}
                             <span className="block text-xs text-ink-3 font-normal">{g.total.hint}</span>
                           </span>
                           <span className="text-sm font-semibold tabular-nums">{fmtBS(g.total.amount)}</span>
-                        </div>
+                        </StatementRow>
                       )}
                     </div>
                   ))}

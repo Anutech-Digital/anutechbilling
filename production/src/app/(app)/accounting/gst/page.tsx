@@ -28,6 +28,7 @@ import { LoadError } from "@/components/shared/load-error";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
+import { STATEMENT_ROW } from "@/components/ui/statement-row";
 import { rupee, formatDate } from "@/lib/utils";
 import { buildGstr1, buildAdvances, docHeads, gstr1Csv, gstr1Json, isExportDoc, GSTR1_HEADERS } from "@/lib/gst/gstr1";
 import { gstr3bRows } from "@/lib/gst/gstr3b";
@@ -543,7 +544,7 @@ function GstReportInner() {
                   const cell = (v: string | number) => (v === "" ? "—" : typeof v === "number" ? rupee(v) : v);
                   const tone = isNet ? "font-semibold text-rose" : isRev ? "text-amber-ink" : isItc ? "text-emerald" : isInfo ? "text-ink-3" : "text-ink";
                   return (
-                    <tr key={box + String(r[1])} className={isNet ? "bg-paper-2/30" : isInfo ? "opacity-80" : ""}>
+                    <tr key={box + String(r[1])} className={`${STATEMENT_ROW} ${isNet ? "bg-paper-2/30" : isInfo ? "opacity-80" : ""}`}>
                       <td className="px-3 py-2 text-ink-2">{box}</td>
                       <td className={`px-3 py-2 font-sans ${isNet ? "font-semibold text-ink" : "text-ink"}`}>{String(r[1])}</td>
                       <td className="px-3 py-2 text-right text-ink-3">{cell(r[2])}</td>

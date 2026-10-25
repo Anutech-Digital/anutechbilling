@@ -37,6 +37,7 @@ import {
   type CompareMode, type Sense,
 } from "@/lib/accounting/pnl-compare";
 import { Row, SubRows, UnknownRow, GstCompare, Divider, HIDDEN_NOTE, type Cmp } from "./statement-rows";
+import { StatementRow } from "@/components/ui/statement-row";
 import { pnlWaterfall, hundredRupeeSplit } from "@/lib/accounting/waterfall";
 import { ProfitDonut, MonthlyTrend } from "@/components/features/accounting/pnl-charts";
 import {
@@ -314,7 +315,8 @@ export default function PnLPage() {
               {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
             </div>
           ) : data ? (
-            <div className="space-y-2.5">
+            /* R-1899: each row carries py-1 for its hover band, so the gap between rows is smaller. */
+            <div className="space-y-0.5">
               {/* These rows read `model`, not the flat fields. The flat `cogs` comes from
                   `vendor_bills`, which is empty here — it is what printed "₹0 · 100.0%
                   margin" directly under a chart saying 37%. One page cannot hold two
@@ -423,13 +425,13 @@ export default function PnLPage() {
                 (() => {
                   const v = netProfitView(data.model);
                   return v.kind === "loss-at-least" ? (
-                    <div className="flex items-baseline justify-between gap-3">
+                    <StatementRow className="flex items-baseline justify-between gap-3 py-1">
                       <div className="text-base font-semibold text-ink leading-tight">Net Loss</div>
                       <div className="text-right">
                         <div className="font-serif text-2xl text-rose">at least {rupee(v.value)}</div>
                         <div className="text-xs text-amber-ink">the licence cost, once recorded, only adds to it</div>
                       </div>
-                    </div>
+                    </StatementRow>
                   ) : (
                     <UnknownRow label="Net Profit" value="Unknown" note={`cost of goods not recorded · at most ${rupee(v.value)}`} large cmpOn={cmpOn} />
                   );
