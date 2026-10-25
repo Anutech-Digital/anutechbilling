@@ -42,7 +42,6 @@ import {
   useBookBankCredit,
   useBookBankAdvance,
   useBookBankTxnAsStatutory,
-  useBookBankTxnAsVendorBill,
   useBookBankTxnAsCommission,
   useReconcileSalaryAdvanceSplit,
   type BankTransactionRow,
@@ -61,7 +60,6 @@ import { useBookSalaryLines } from "@/lib/queries/salary-from-bank";
 import { detectGovtPayment } from "@/lib/banking/govt-payment";
 import { payeeFromNarration, TEST_TRANSFER_MAX } from "@/lib/banking/narration";
 import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
-import { useVendorBills } from "@/lib/queries/vendor-bills";
 import { useReferralCommissions } from "@/lib/queries/referral-commissions";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
 import { ProjectPaymentSection } from "@/components/features/banking/project-payment-section";
@@ -217,26 +215,15 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     setBookVendor(suggestedVendor);
   }, [transaction?.id, suggestedVendor]);
 
-  /* R-1866: paying a vendor (open bills, a new bill, an advance) is DebitPayForSection. What stays
-     here: a bill payment ALREADY recorded on the Bills page (its own manual bank line) — this
-     imported line replaces that manual one (migration 20260927190000) — and referral commissions. */
-  const bookBill = useBookBankTxnAsVendorBill();
+  /* R-1866: paying a vendor (open bills, a new bill, an advance) is DebitPayForSection. R-1911: a
+     payment ALREADY recorded on the Bills / Expenses page is matched there too (listed first and
+     pre-ticked) — the separate "Already recorded this bill payment?" block is retired (one way).
+     What stays here: referral commissions. */
   const bookCommission = useBookBankTxnAsCommission();
-  const { data: allBills } = useVendorBills();
   const { data: allCommissions } = useReferralCommissions();
-  const [showBill, setShowBill] = React.useState(false);
-  const [billPick, setBillPick] = React.useState("");
   const [showCommission, setShowCommission] = React.useState(false);
   const [commissionPick, setCommissionPick] = React.useState("");
-  React.useEffect(() => { setShowBill(false); setBillPick(""); setShowCommission(false); setCommissionPick(""); }, [transaction?.id]);
-  const billCandidates = React.useMemo(() => {
-    const amt = transaction?.debit ?? 0;
-    /* Only bills with a payment of this amount already on them (its manual line gets replaced). */
-    return (allBills ?? [])
-      .filter((b) => amt > 0 && (b.paid_amount ?? 0) >= amt)
-      .sort((a, b) => Number((b.paid_amount ?? 0) === amt) - Number((a.paid_amount ?? 0) === amt) || b.bill_date.localeCompare(a.bill_date))
-      .slice(0, 40);
-  }, [allBills, transaction?.debit]);
+  React.useEffect(() => { setShowCommission(false); setCommissionPick(""); }, [transaction?.id]);
   const commissionCandidates = React.useMemo(() => {
     const amt = transaction?.debit ?? 0;
     return (allCommissions ?? [])
@@ -244,13 +231,6 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
       .sort((a, b) => Math.abs(a.net_payable - amt) - Math.abs(b.net_payable - amt) || b.earned_date.localeCompare(a.earned_date))
       .slice(0, 40);
   }, [allCommissions, transaction?.debit]);
-  const handleBookBill = async () => {
-    if (!transaction || !billPick) return;
-    try {
-      await bookBill.mutateAsync({ transactionId: transaction.id, accountId: transaction.bank_account_id, billId: billPick, method: null });
-      onOpenChange(false);
-    } catch { /* hook toasts */ }
-  };
   const handleBookCommission = async () => {
     if (!transaction || !commissionPick) return;
     try {
@@ -930,30 +910,6 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 reimbursement owed) and its unused money coming back (money-in). An asset, not an expense. */}
             <EmployeeAdvanceBankSection transaction={transaction} onDone={() => onOpenChange(false)} />
             <OwnerEquitySection transaction={transaction} onDone={() => onOpenChange(false)} />
-
-            {/* A bill payment already recorded on the Bills page has its own manual bank line;
-                this imported line takes its place (counted once). Open bills are paid above. */}
-            {!isCredit && billCandidates.length > 0 && (
-              <div className="rounded-md border border-hairline p-3">
-                <button type="button" onClick={() => setShowBill((v) => !v)} aria-expanded={showBill} className="w-full flex items-center justify-between text-left">
-                  <span className="text-xs font-semibold text-ink-2">Already recorded this bill payment on the Bills page?</span>
-                  <Icon name={showBill ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
-                </button>
-                {showBill && (
-                  <div className="mt-2 space-y-2">
-                    <select value={billPick} onChange={(e) => setBillPick(e.target.value)} aria-label="Vendor bill" className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40">
-                      <option value="">Select a bill…</option>
-                      {billCandidates.map((b) => (
-                        <option key={b.id} value={b.id}>{b.vendor_name} · {b.bill_no ? `${b.bill_no} · ` : ""}{formatDate(b.bill_date)} · paid {rupee(b.paid_amount ?? 0)} (replaces the manual line)</option>
-                      ))}
-                    </select>
-                    <Button size="sm" variant="primary" icon="check" disabled={!billPick || bookBill.isPending} loading={bookBill.isPending} onClick={handleBookBill}>
-                      Match {rupee(amount)} to this bill payment
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Referral commission paid from this line. */}
             {!isCredit && commissionCandidates.length > 0 && (

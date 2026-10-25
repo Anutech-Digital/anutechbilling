@@ -120,8 +120,10 @@ begin
     union all
     -- R-1911 (b): an expense marked paid with no bank line (Expenses → Mark paid), not cash.
     select 'recorded_payment'::text, e.id, e.bill_no, coalesce(e.paid_date, e.expense_date), e.due_date, e.category,
+           -- amount_due = the cash recorded (TDS already withheld on the expense stays there; 0 here,
+           -- so "cash due = amount_due − tds_amount" holds for every row)
            e.amount, e.amount - coalesce(e.tds_amount, 0), coalesce(e.gst_paid, 0), greatest(0, e.amount - coalesce(e.gst_paid, 0)),
-           coalesce(e.tds_amount, 0), e.tds_section, false, null::text, coalesce(e.paid_date, e.expense_date), 'expense'::text, e.id
+           0, null::text, false, null::text, coalesce(e.paid_date, e.expense_date), 'expense'::text, e.id
       from public.expenses e
      where e.tenant_id = v_vendor.tenant_id
        and (e.vendor_id = v_vendor.id or (e.vendor_id is null and upper(trim(coalesce(e.vendor_name, ''))) = upper(trim(v_vendor.name))))
