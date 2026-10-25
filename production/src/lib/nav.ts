@@ -562,6 +562,8 @@ export const APP_NAV: NavSection[] = [
           { id: "marketing-budget", href: "/marketing/budget", label: "Budget & Payments", icon: "wallet", roles: ["owner", "marketing", "billing", "accountant"], hint: "Marketing asks for a budget, the owner approves, billing pays up to it" },
         ],
         directory: [
+          /* R-1879 (25 Oct 2026, epic R-1874): one line → a Google + Meta ad plan, step by step. */
+          { id: "marketing-copilot", href: "/marketing/copilot", label: "Campaign Co-pilot", icon: "sparkles", roles: OMK, group: "Plan & spend", hint: "Write one line — the AI drafts a Google Ads + Meta plan" },
           { id: "marketing-campaigns", href: "/marketing/campaigns", label: "Campaign budgets", icon: "target", roles: OMK, group: "Plan & spend", hint: "Each campaign's budget, dates and target, with spend and leads" },
           { id: "marketing-spend", href: "/marketing/spend",   label: "Spend",          icon: "wallet", roles: OMK, group: "Plan & spend" },
           { id: "marketing-roas",  href: "/marketing/reports", label: "ROAS & CAC",     icon: "chart",  roles: OMK, group: "Plan & spend" },

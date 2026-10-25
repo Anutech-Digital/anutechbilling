@@ -148,6 +148,8 @@ const ADDED_23OCT_MARKETING_ROLE = [
   "/marketing/ads", "/marketing/landing-pages", "/marketing/links", "/lead-gen",
   "/marketing/google-business", "/marketing/reviews", "/online-promos",
 ];
+/** R-1879 (25 Oct 2026): Campaign Co-pilot — owner, manager, marketing (RLS on ad_plans, R-1878). */
+const ADDED_25OCT_COPILOT = ["/marketing/copilot"];
 const removedFor = (role: string) => REMOVED_3OCT[role] ?? [];
 const addedFor = (role: string) => [
   ...(role === "owner" || role === "manager" ? ADDED_3OCT_OM : []),
@@ -171,6 +173,7 @@ const addedFor = (role: string) => [
   ...(["owner", "manager", "sales", "sales_senior"].includes(role) ? ADDED_19OCT_COLD_CALLING : []),
   ...(role === "marketing" ? ADDED_23OCT_MARKETING_ROLE : []),
   ...(["owner", "marketing", "billing", "accountant"].includes(role) ? ADDED_23OCT_BUDGET : []),
+  ...(["owner", "manager", "marketing"].includes(role) ? ADDED_25OCT_COPILOT : []),
   ...ADDED_FOR_EVERY_ROLE,
 ];
 
@@ -390,7 +393,7 @@ describe("2. structure", () => {
   it("groups the Marketing Hub into five and the Reports directory by kind", () => {
     const hub = flat.find((e) => e.item.id === "marketing-hub")!.item;
     expect(groupDirectory(hub.directory!).map((g) => g.group)).toHaveLength(5);
-    expect(hub.directory).toHaveLength(14 + ADDED_S28.length + 2); // 14 at S30 + S28 reminders + the IndiaMART key screen (S34) + Ads landing pages (4 Oct 2026)
+    expect(hub.directory).toHaveLength(14 + ADDED_S28.length + 2 + ADDED_25OCT_COPILOT.length); // 14 at S30 + S28 reminders + the IndiaMART key screen (S34) + Ads landing pages (4 Oct 2026) + Campaign Co-pilot (R-1879)
 
     const reports = flat.find((e) => e.item.id === "reports")!.item;
     expect(reports.directory!.map((d) => d.href)).toEqual(expect.arrayContaining([
