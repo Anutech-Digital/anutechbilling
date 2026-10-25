@@ -211,4 +211,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r1857directorkycchange", peek: "exists(select 1 from information_schema.columns where table_schema='public' and table_name='company_directors' and column_name='kyc_details_changed_on')" },
   { key: "r1878adcopilot", peek: "to_regclass('public.ad_plans') is not null and to_regclass('public.ad_target_groups') is not null and to_regclass('public.ad_creatives') is not null and to_regclass('public.ad_copies') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'ad_copies' and policyname = 'zzz_service_role_all')" },
   { key: "r1852directoremployee", peek: "exists(select 1 from information_schema.columns where table_schema='public' and table_name='company_directors' and column_name='employee_id') and to_regprocedure('public.set_director_employee(uuid,uuid)') is not null" },
+  { key: "r1735leadgstinfill", peek: "exists(select 1 from pg_trigger where tgname = 'quotes_fill_customer_gstin_from_lead' and tgrelid = to_regclass('public.quotes'))" },
 ];

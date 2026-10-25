@@ -239,6 +239,7 @@ MIGS=(
   "r1857directorkycchange|20261024235500_r1857_director_kyc_change.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema='public' and table_name='company_directors' and column_name='kyc_details_changed_on')"
   "r1878adcopilot|20261025001000_ad_copilot_tables.sql|resellersos_migration|to_regclass('public.ad_plans') is not null and to_regclass('public.ad_target_groups') is not null and to_regclass('public.ad_creatives') is not null and to_regclass('public.ad_copies') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'ad_copies' and policyname = 'zzz_service_role_all')"
   "r1852directoremployee|20261025003000_r1852_director_employee.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema='public' and table_name='company_directors' and column_name='employee_id') and to_regprocedure('public.set_director_employee(uuid,uuid)') is not null"
+  "r1735leadgstinfill|20261025004500_r1735_lead_gstin_fills_blank_customer.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'quotes_fill_customer_gstin_from_lead' and tgrelid = to_regclass('public.quotes'))"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
