@@ -29,7 +29,14 @@ export interface ExpenseBillLike {
   prepaid_advance_id: string | null;
   /** R-1913: the part already settled from the vendor's advance (Apply advance). */
   advance_applied?: number | null;
+  /** R-1915: cash already paid on the bill from bank lines (part payments). */
+  paid_amount?: number | null;
 }
+
+/** R-1915: cash still owed — amount less TDS, the advance applied and the bank parts paid
+ *  (migration 20261025174159: amount − tds_amount − advance_applied − paid_amount). */
+const cashLeft = (e: ExpenseBillLike) =>
+  (e.amount ?? 0) - (e.tds_amount ?? 0) - (e.advance_applied ?? 0) - (e.paid_amount ?? 0);
 
 export function isOpenExpenseBill(e: ExpenseBillLike): boolean {
   return e.paid === false
@@ -37,13 +44,29 @@ export function isOpenExpenseBill(e: ExpenseBillLike): boolean {
     && e.category !== "Salaries"
     && !NOT_VENDOR_BILL_METHODS.includes(e.payment_method ?? "")
     && !e.prepaid_advance_id
-    && (e.amount ?? 0) - (e.advance_applied ?? 0) > 0;
+    && cashLeft(e) > 0;
 }
 
-/** Cash still owed on an expense bill: its amount less the TDS recorded on it and (R-1913) the
- *  vendor's advance already applied to it. */
+/** Cash still owed on an expense bill: its amount less the TDS recorded on it, (R-1913) the
+ *  vendor's advance already applied to it and (R-1915) the part already paid from the bank. */
 export function expenseBillDue(e: ExpenseBillLike): number {
-  return isOpenExpenseBill(e) ? Math.max(0, (e.amount ?? 0) - (e.tds_amount ?? 0) - (e.advance_applied ?? 0)) : 0;
+  return isOpenExpenseBill(e) ? Math.max(0, cashLeft(e)) : 0;
+}
+
+/** R-1915: an unpaid bill with part of it already paid from the bank — "Partly paid". */
+export function isPartlyPaidExpense(e: Pick<ExpenseBillLike, "paid" | "paid_amount">): boolean {
+  return e.paid === false && (e.paid_amount ?? 0) > 0;
+}
+
+/**
+ * R-1915: what an unpaid bill still owes, gross — the "To pay" totals. Before any bank part:
+ * the bill less the advance applied (its TDS is still to be withheld when it is paid). After a
+ * part: the cash rest (the bill's whole TDS went with the first part). Same as the Banking
+ * step's amount_due (bank_debit_vendor_open_items).
+ */
+export function expenseStillOwed(e: Pick<ExpenseBillLike, "amount" | "tds_amount" | "advance_applied" | "paid_amount">): number {
+  const paid = e.paid_amount ?? 0;
+  return Math.max(0, (e.amount ?? 0) - (e.advance_applied ?? 0) - paid - (paid > 0 ? e.tds_amount ?? 0 : 0));
 }
 
 /* ─── Advance ──────────────────────────────────────────────────────────────────────── */
@@ -85,6 +108,8 @@ export function advanceToApply(advanceLeftAmount: number, billDue: number): numb
 export interface BillAdvanceView {
   /** Already settled from the advance. */
   applied: number;
+  /** R-1915: cash already paid from the bank on a bill still to pay (part payments). */
+  paidPart: number;
   /** Cash still owed on the bill (after TDS and the advance). */
   due: number;
   /** "Apply advance ₹X" — 0 hides the button. */
@@ -99,11 +124,13 @@ export function billAdvanceView(
   advances: readonly VendorAdvanceLike[],
 ): BillAdvanceView {
   const applied = Math.max(0, e.advance_applied ?? 0);
+  const paidPart = isPartlyPaidExpense(e) ? Math.max(0, e.paid_amount ?? 0) : 0;
   const open = isOpenExpenseBill(e);
   const due = expenseBillDue(e);
   const canApply = open && due > 0 ? advanceToApply(vendorAdvanceLeft(advances, e.vendor_id, e.vendor_name), due) : 0;
-  const canUndo = applied > 0 && !e.reconciled_txn_id && (e.paid === false || e.payment_method === "advance");
-  return { applied, due, canApply, canUndo };
+  /* R-1915: not while a bank part is on the bill (undo_vendor_advance refuses — un-reconcile first). */
+  const canUndo = applied > 0 && !e.reconciled_txn_id && !((e.paid_amount ?? 0) > 0) && (e.paid === false || e.payment_method === "advance");
+  return { applied, paidPart, due, canApply, canUndo };
 }
 
 /* ─── Balance ──────────────────────────────────────────────────────────────────────── */

@@ -20,11 +20,14 @@ import { PAYMENT_METHODS, useMarkExpensePaid, type Expense } from "@/lib/queries
 import { useBankAccounts } from "@/lib/queries/bank";
 import { defaultCashAccountId } from "@/lib/payments/deposit-accounts";
 import { istToday } from "@/lib/dates/ist";
+import { expenseStillOwed } from "@/lib/accounting/vendor-account";
 
 export function MarkPaidDialog({ expense, onClose }: { expense: Expense; onClose: () => void }) {
   const markPaid = useMarkExpensePaid();
-  /* R-1913: what is left after the vendor's advance applied to the bill. */
-  const toPay = expense.amount - (expense.advance_applied ?? 0);
+  /* R-1913: what is left after the vendor's advance applied to the bill. R-1915: and after the
+     part already paid from the bank. */
+  const toPay = expenseStillOwed(expense);
+  const paidPart = expense.paid_amount ?? 0;
   const today = istToday();
   const [paidDate, setPaidDate] = React.useState<string>(today);
   const [method, setMethod] = React.useState<string>(expense.payment_method ?? "bank_transfer");
@@ -52,7 +55,9 @@ export function MarkPaidDialog({ expense, onClose }: { expense: Expense; onClose
           <DialogTitle>Mark as paid</DialogTitle>
           <DialogDescription>
             {expense.vendor_name ? `${expense.vendor_name} · ` : ""}{rupee(toPay)}
-            {(expense.advance_applied ?? 0) > 0 ? ` (bill ${rupee(expense.amount)} − advance ${rupee(expense.advance_applied)})` : ""}
+            {(expense.advance_applied ?? 0) > 0 || paidPart > 0
+              ? ` (bill ${rupee(expense.amount)}${(expense.advance_applied ?? 0) > 0 ? ` − advance ${rupee(expense.advance_applied)}` : ""}${paidPart > 0 ? ` − already paid ${rupee(paidPart + (expense.tds_amount ?? 0))}` : ""})`
+              : ""}
             {expense.description ? ` — ${expense.description}` : ""}
           </DialogDescription>
         </DialogHeader>

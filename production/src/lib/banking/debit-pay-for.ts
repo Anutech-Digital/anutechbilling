@@ -97,12 +97,13 @@ export interface VendorOpenItem {
   /** Gross still owed — from the database, never recomputed here. */
   amount_due: number;
   gst: number;
-  /** Value before GST — the TDS base. */
+  /** Value before GST — the TDS base. R-1915: 0 on an expense bill already part-paid (its TDS
+   *  went with the first part — nothing left to deduct on). */
   tds_base: number;
-  /** TDS already on the expense row (0 = none yet). */
+  /** TDS already on the expense row (0 = none yet, or already withheld with an earlier part). */
   tds_amount: number;
   tds_section: string | null;
-  /** COGS bill: yes. Expense bill: paid in full. */
+  /** R-1915: COGS bills and expense bills can both be part-paid. */
   can_part: boolean;
   /** An open payment run holding it — pay it there. */
   in_run: string | null;
@@ -182,7 +183,8 @@ export function planTds(
     if (opts.off || sec !== "194Q" || !q || q.buyer !== true || !(q.tds_due > 0)) return null;
     return { key: itemKey(i), tds: q.tds_due, section: "194Q", reason: reason194q(q), fixed: true };
   };
-  const free = items.filter((i) => i.source === "expense" && !(i.tds_amount > 0));
+  /* R-1915: a part-paid expense bill (tds_base 0) takes no TDS — it went with its first part. */
+  const free = items.filter((i) => i.source === "expense" && !(i.tds_amount > 0) && i.tds_base > 0);
   const fixedBase = items.filter((i) => i.source === "expense" && i.tds_amount > 0).reduce((s, i) => s + i.tds_base, 0);
   const base = free.reduce((s, i) => s + i.tds_base, 0);
   const d = !opts.off && sec && base > 0
@@ -195,6 +197,7 @@ export function planTds(
     const key = itemKey(i);
     if (i.source !== "expense") return goods(i) ?? { key, tds: 0, section: null, reason: null, fixed: false };
     if (i.tds_amount > 0) return { key, tds: i.tds_amount, section: i.tds_section, reason: "TDS already on this bill", fixed: true };
+    if (!(i.tds_base > 0)) return { key, tds: 0, section: null, reason: null, fixed: false };
     if (!d) return { key, tds: 0, section: null, reason: null, fixed: false };
     const share = key === lastFree ? total - given : Math.round((total * i.tds_base) / base);
     given += share;
@@ -220,7 +223,7 @@ export const cashDue = (i: VendorOpenItem, tds: number) => Math.max(0, i.amount_
 
 /**
  * The bank amount over the picked bills, oldest first: each takes what it still needs; a COGS
- * bill can take a part, an expense bill only all of it (else it gets nothing and the rest stays
+ * bill (and, R-1915, an expense bill) can take a part; an item that cannot gets all or nothing (the rest stays
  * unallocated). Returns the cash per bill and what is left over.
  */
 export function allocateOldestFirst(
