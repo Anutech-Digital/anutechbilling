@@ -31,9 +31,10 @@ export async function vaultGate(supabase: ServerClient, userId: string): Promise
      (access_ends_on), gets nothing — reveal decrypts with the admin client, so this gate is the
      only check on that path besides the middleware. Falls back if the column is not there yet. */
   type Me = { tenant_id: string | null; role: string; is_active?: boolean | null; access_ends_on?: string | null };
-  const read = (cols: string) => supabase.from("users").select(cols).eq("id", userId).maybeSingle();
-  let res = await read("tenant_id, role, is_active, access_ends_on");
-  if (res.error && isMissingColumnError(res.error)) res = await read("tenant_id, role, is_active");
+  let res = await supabase.from("users").select("tenant_id, role, is_active, access_ends_on").eq("id", userId).maybeSingle();
+  if (res.error && isMissingColumnError(res.error)) {
+    res = await supabase.from("users").select("tenant_id, role, is_active").eq("id", userId).maybeSingle();
+  }
   const me = (res.data as Me | null) ?? null;
 
   if (!me?.tenant_id) {
