@@ -43,11 +43,14 @@
  * claim needs triage {verdict, why, at}, kind, category, doneWhen; push needs howToCheck. Commits are
  * NOT checked: the sha exists only after the push, so the worker/dispatcher writes `commits` right after.
  * `--no-card-check` skips this ONLY for R-9xx manager cards. Exit 6 = card contract missing / no --card.
+ *
+ * R-1936: push also refuses on a red manager-pardeep CI (exit 7; --fixes-red / --owner-override) and on a
+ * red related SQL test (exit 5). `ci <CARD>` waits for the sha's CI + SQL runs (exit 0 / 7 red / 8 timeout).
  */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execSync, execFileSync } from "node:child_process";
+import { execSync, execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites } from "./push-guard-suites.mjs";
 
@@ -272,9 +275,15 @@ export function runGuardSuites(card) {
   });
 }
 
-async function pushWithTurn(card) {
+async function pushWithTurn(card, ciFlags = {}) {
+  /* R-1936: SQL tests of the migrations this push changes — on the local DB, before the push turn. */
+  relatedSqlGate(card, { skip: ciFlags.skipRelatedSql });
   await withTurn("push", card, "push kar raha hai", async () => {
     sh("git fetch -q anutech");
+    /* R-1936: never push onto a red manager-pardeep (unless this card fixes it / owner override). */
+    const gate = checkRedGate(card, { gh: realGh, fixesRed: ciFlags.fixesRed, ownerOverride: ciFlags.ownerOverride, log: appendCiLog });
+    if (!gate.ok) { console.error(gate.message); process.exit(7); }
+    console.log(gate.message);
     /* R-910 (10 Oct): a branch that already contains the tip needs no rebase, and a plain rebase would
        flatten a merge (staging → manager-pardeep). Otherwise --rebase-merges keeps any merge commits. */
     let upToDate = false;
@@ -306,6 +315,9 @@ async function pushWithTurn(card) {
        `git push anutech :manager-pardeep` — a branch DELETE (GitHub protection refused it). Push HEAD. */
     sh("git push -q anutech HEAD:manager-pardeep", pushEnv("push", card));
     console.log(pushDoneLine(card, plan));
+    /* R-1936: remember the sha so "worker-lock ci <CARD>" knows what to wait for. */
+    try { fs.writeFileSync(pushedNote(card), JSON.stringify({ card, sha: sh("git rev-parse HEAD").trim(), at: new Date().toISOString() })); } catch {}
+    console.log(`Ab: node scripts/ops/worker-lock.mjs ci ${card}  → jo JSON aaye use card par ciCheck likho.`);
   });
 }
 
@@ -422,6 +434,349 @@ export function guardPush(lines, env = process.env) {
   if (bad.length) return { ok: false, message: "✗ push guard ne roka:\n   " + bad.join("\n   ") };
   return { ok: true, message: "" };
 }
+
+/**
+ * R-1936 (25 Oct 2026) — stop the line on red CI (G-PROCESS recommendation #2).
+ * 12–25 Oct: CI was red 26% and SQL tests 23% of the time, red stretches up to 24 h, and new pushes
+ * kept landing on a red manager-pardeep. Three rules:
+ *
+ *   push  — before pushing, the newest finished "CI" and "SQL tests" runs on manager-pardeep must not
+ *           be red. Red → refuse ("CI laal hai … pehle woh theek karo"). `--fixes-red` (the card that
+ *           fixes it) and `--owner-override` pass, and both are logged. A run still going does not
+ *           block. gh missing/offline → warn and continue: a tool failure never blocks a push.
+ *   push  — when the push changes supabase/migrations/*.sql, the SQL tests that mention a function /
+ *           table / view those migrations create run first on the LOCAL DB (migration + test in one
+ *           rolled-back transaction). One red → no push. Local DB down → warn and skip.
+ *   ci    — after the push: wait for this sha's "CI" and "SQL tests" runs, print green/red with the
+ *           failing test names, and a one-line JSON the worker writes as `ciCheck` on the card.
+ *           Exit 0 green, 7 red, 8 timeout / could not tell.
+ *
+ *   node scripts/ops/worker-lock.mjs push R-197 --card c.json [--fixes-red | --owner-override] [--skip-related-sql]
+ *   node scripts/ops/worker-lock.mjs ci   R-197 [--sha <sha>] [--timeout-min 25]
+ *   node scripts/ops/worker-lock.mjs sql-related R-197
+ *
+ * gh / git / psql are injected so tests drive every rule with fakes.
+ */
+export const CI_REPO = "Anutech-Digital/anutechbilling";
+export const CI_BRANCH = "manager-pardeep";
+export const GATE_WORKFLOWS = ["CI", "SQL tests"];
+/** Conclusions that mean "the branch is broken". cancelled/skipped/neutral = superseded, not red. */
+export const RED_CONCLUSIONS = ["failure", "timed_out", "startup_failure", "action_required"];
+const SKIP_CONCLUSIONS = ["cancelled", "skipped", "neutral", "stale"];
+export const CI_EXIT = { green: 0, red: 7, timeout: 8 };
+const RUN_FIELDS = "databaseId,workflowName,status,conclusion,headSha,url,createdAt";
+
+/** Pull the R-1936 flags out of the positional args. */
+export function parseCiFlags(args) {
+  const rest = []; const f = { fixesRed: false, ownerOverride: false, skipRelatedSql: false, sha: null, timeoutMin: 25 };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--fixes-red") f.fixesRed = true;
+    else if (a === "--owner-override") f.ownerOverride = true;
+    else if (a === "--skip-related-sql") f.skipRelatedSql = true;
+    else if (a === "--sha") f.sha = args[++i] ?? null;
+    else if (a.startsWith("--sha=")) f.sha = a.slice(6);
+    else if (a === "--timeout-min") f.timeoutMin = Number(args[++i]);
+    else if (a.startsWith("--timeout-min=")) f.timeoutMin = Number(a.slice(14));
+    else rest.push(a);
+  }
+  if (!Number.isFinite(f.timeoutMin) || f.timeoutMin <= 0) f.timeoutMin = 25;
+  return { rest, ...f };
+}
+
+function newestFirst(runs) {
+  return [...runs].sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")));
+}
+
+/**
+ * The branch's state per gate workflow, from `gh run list -b manager-pardeep` rows. Newest first;
+ * cancelled/skipped runs are passed over (a newer push superseded them). The first run that is still
+ * going → "running" (does not block); the first finished run → "green" or "red".
+ */
+export function branchGateState(runs) {
+  const out = {};
+  for (const wf of GATE_WORKFLOWS) {
+    out[wf] = { state: "none" };
+    for (const r of newestFirst(runs.filter((x) => x.workflowName === wf))) {
+      if (r.status !== "completed") { out[wf] = { state: "running", run: r }; break; }
+      if (SKIP_CONCLUSIONS.includes(r.conclusion)) continue;
+      out[wf] = { state: RED_CONCLUSIONS.includes(r.conclusion) ? "red" : "green", run: r };
+      break;
+    }
+  }
+  return out;
+}
+
+/** Failing test names from `gh run view --log-failed`: vitest " FAIL  tests/x.test.ts > …" and test-sql " FAIL [21/300] name". */
+export function failingTestNames(log, max = 8) {
+  const names = [];
+  for (const raw of String(log ?? "").split(/\r?\n/)) {
+    const content = raw.split("\t").pop().replace(/\x1b\[[0-9;]*m/g, "").replace(/^\uFEFF?\d{4}-\d\d-\d\dT[\d:.]+Z ?/, "");
+    const m = /^\s*FAIL\s+(?:\[\d+\/\d+\]\s+)?(\S.*?)\s*$/.exec(content);
+    /* ratchet / guard summaries: "Lint ratchet FAILED — more warnings than baseline for: max-lines" */
+    const r = m ? null : /^\s*(\S.*\bFAILED\s+—.*?)\s*$/.exec(content);
+    const name = m?.[1] ?? r?.[1];
+    if (name && !names.includes(name)) names.push(name);
+  }
+  return names.length > max ? [...names.slice(0, max), `… +${names.length - max} aur`] : names;
+}
+
+/** Failed steps from `gh run view --json jobs`: ["checks › Run npm run lint:ratchet"]. */
+export function failingSteps(jobsJson) {
+  const jobs = jobsJson && Array.isArray(jobsJson.jobs) ? jobsJson.jobs : [];
+  return jobs.flatMap((j) => (j.steps ?? []).filter((st) => RED_CONCLUSIONS.includes(st.conclusion)).map((st) => `${j.name} › ${st.name}`));
+}
+
+function failedTestsOf(gh, run) {
+  let n = [];
+  try { n = failingTestNames(gh(["run", "view", String(run.databaseId), "-R", CI_REPO, "--log-failed"])); } catch {}
+  if (n.length) return n;
+  try { n = failingSteps(JSON.parse(gh(["run", "view", String(run.databaseId), "-R", CI_REPO, "--json", "jobs"]))); } catch {}
+  return n.length ? n.map((x) => `step: ${x}`) : ["(test ka naam log me nahi mila — " + run.url + ")"];
+}
+
+/** gh as a function: (args) => stdout. Throws when gh is missing / offline / not logged in. */
+export function realGh(args) {
+  return execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000, maxBuffer: 64 * 1024 * 1024 });
+}
+
+/**
+ * The red-branch gate inside `push`. Returns { ok, message, warn?, logged? }. Never throws: any gh
+ * failure → ok with a warning. `log` (line) => void records an override/fixes-red pass.
+ */
+export function checkRedGate(card, { gh, fixesRed = false, ownerOverride = false, log = () => {} } = {}) {
+  const id = String(card).toUpperCase();
+  let runs;
+  try { runs = JSON.parse(gh(["run", "list", "-R", CI_REPO, "-b", CI_BRANCH, "-L", "40", "--json", RUN_FIELDS])); }
+  catch (e) {
+    return { ok: true, warn: true, message: `⚠ ${id}: GitHub CI ka haal nahi mila (gh nahi chala: ${String(e?.message ?? e).split("\n")[0].slice(0, 160)}) — CI-laal jaanch chhodi, push aage. Push ke baad "worker-lock ci ${id}" zaroor chalao.` };
+  }
+  const state = branchGateState(Array.isArray(runs) ? runs : []);
+  const red = GATE_WORKFLOWS.filter((wf) => state[wf].state === "red").map((wf) => ({ workflow: wf, run: state[wf].run }));
+  const running = GATE_WORKFLOWS.filter((wf) => state[wf].state === "running");
+  const note = running.length ? ` (${running.join(" + ")} abhi chal raha hai — rokta nahi)` : "";
+  if (!red.length) return { ok: true, message: `✓ ${CI_BRANCH} par CI laal nahi${note}.` };
+  const parts = red.map(({ workflow, run }) => `${workflow} on ${String(run.headSha).slice(0, 8)}: ${failedTestsOf(gh, run).join(", ")}`);
+  const what = parts.join("; ");
+  if (fixesRed || ownerOverride) {
+    const how = fixesRed ? "--fixes-red" : "--owner-override";
+    const line = JSON.stringify({ at: new Date().toISOString(), card: id, how, red: what });
+    try { log(line); } catch {}
+    return { ok: true, logged: line, message: `⚠ CI laal hai (${what}) — ${id} ${how} se aage badh raha hai (log me likha). ${fixesRed ? "Push ke baad 'worker-lock ci' se dekho ki hara hua." : "Card ke liveLog me override likho."}` };
+  }
+  return {
+    ok: false,
+    message: `✗ CI laal hai (${what}) — pehle woh theek karo.\n` +
+      red.map(({ workflow, run }) => `   ${workflow}: ${run.url}`).join("\n") +
+      `\n   Ye card hi laal ko theek karta hai → push ${id} … --fixes-red. Owner ne kaha "phir bhi push karo" → --owner-override (log hota hai).`,
+  };
+}
+
+/**
+ * Verdict for one workflow from the runs for this sha. `later` = newer runs on the branch whose sha
+ * CONTAINS ours (oldest first): when our run was cancelled by the next push, that run decides.
+ * Returns { state: green|red|pending|skipped|missing, run? , via? }.
+ */
+export function workflowVerdict(wf, shaRuns, later, { graceOver, ciDone }) {
+  const mine = newestFirst(shaRuns.filter((r) => r.workflowName === wf));
+  const pick = (r) => (r.status !== "completed" ? "pending" : RED_CONCLUSIONS.includes(r.conclusion) ? "red" : r.conclusion === "success" ? "green" : null);
+  for (const r of mine) { const s = pick(r); if (s) return { state: s, run: r }; }
+  if (mine.length || graceOver) {
+    for (const r of later.filter((x) => x.workflowName === wf)) { const s = pick(r); if (s) return { state: s, run: r, via: r.headSha }; }
+  }
+  if (!mine.length) {
+    /* SQL tests run only when production/supabase/** changed — none for this sha = nothing to test. */
+    if (wf === "SQL tests" && (ciDone || graceOver)) return { state: "skipped" };
+    return graceOver ? { state: "missing" } : { state: "pending" };
+  }
+  return graceOver ? { state: "missing", run: mine[0] } : { state: "pending", run: mine[0] }; // all cancelled, nothing later yet
+}
+
+/** The last sha pushed for this card: the lock dir note `push` writes, else the newest "<CARD>:" commit on the branch. */
+export function lastPushedSha(card, { git, readNote = () => null } = {}) {
+  const id = String(card).toUpperCase();
+  try { const n = readNote(id); if (n?.sha) return n.sha; } catch {}
+  try {
+    const s = git(["log", `anutech/${CI_BRANCH}`, "-1", "--format=%H", "-E", `--grep=^${id}:`]).trim();
+    if (s) return s;
+  } catch {}
+  return null;
+}
+
+/**
+ * `ci <CARD>`: poll until both gate workflows have a verdict for the sha, or the timeout.
+ * deps: gh, git, isAncestor(a, b), now(), sleep(ms), print(line). Returns { code, check, lines }.
+ */
+export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = 25, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), print = () => {}, readNote, pollMs = 30_000, graceMs = 3 * 60_000 } = {}) {
+  const id = String(card).toUpperCase();
+  const target = sha || lastPushedSha(id, { git, readNote });
+  const finish = (code, check, extra = []) => ({ code, check, lines: extra });
+  if (!target) return finish(CI_EXIT.timeout, null, [`✗ ${id}: is card ka push kiya sha nahi mila — --sha <sha> do.`]);
+  let full = target;
+  try { full = git(["rev-parse", target]).trim() || target; } catch {}
+  const t0 = now();
+  const deadline = t0 + timeoutMin * 60_000;
+  let lastErr = null;
+  for (;;) {
+    let shaRuns = null, branchRuns = [];
+    try {
+      shaRuns = JSON.parse(gh(["run", "list", "-R", CI_REPO, "--commit", full, "-L", "20", "--json", RUN_FIELDS]));
+      branchRuns = JSON.parse(gh(["run", "list", "-R", CI_REPO, "-b", CI_BRANCH, "-L", "40", "--json", RUN_FIELDS]));
+      lastErr = null;
+    } catch (e) { lastErr = String(e?.message ?? e).split("\n")[0].slice(0, 200); }
+    if (shaRuns) {
+      const later = newestFirst(branchRuns).reverse()
+        .filter((r) => r.headSha !== full && !shaRuns.some((m) => m.databaseId === r.databaseId))
+        .filter((r) => { try { return isAncestor(full, r.headSha); } catch { return false; } });
+      const graceOver = now() - t0 >= graceMs;
+      const ci = workflowVerdict("CI", shaRuns, later, { graceOver, ciDone: false });
+      const sql = workflowVerdict("SQL tests", shaRuns, later, { graceOver, ciDone: ci.state === "green" || ci.state === "red" });
+      const settled = (v) => v.state !== "pending";
+      const timedOut = now() >= deadline;
+      if ((settled(ci) && settled(sql)) || timedOut) {
+        const runUrls = [ci.run?.url, sql.run?.url].filter(Boolean);
+        const check = { sha: full, ci: ci.state, sql: sql.state, at: new Date(now()).toISOString().replace(/\.\d{3}Z$/, "Z"), runUrls };
+        if (ci.via || sql.via) check.via = (ci.via || sql.via);
+        const lines = [];
+        const icon = (s) => (s === "green" ? "✓" : s === "skipped" ? "–" : s === "red" ? "✗" : "…");
+        lines.push(`${id} @ ${full.slice(0, 8)}: CI ${icon(ci.state)} ${ci.state} · SQL ${icon(sql.state)} ${sql.state}${check.via ? ` (apna run cancel hua; ${check.via.slice(0, 8)} wala run dekha jisme ye sha hai)` : ""}`);
+        for (const [wf, v] of [["CI", ci], ["SQL tests", sql]]) {
+          if (v.state === "red") { const names = failedTestsOf(gh, v.run); check[wf === "CI" ? "ciFailed" : "sqlFailed"] = names; lines.push(`  ✗ ${wf} laal: ${names.join(", ")}\n    ${v.run.url}`); }
+        }
+        const red = ci.state === "red" || sql.state === "red";
+        const green = ci.state === "green" && (sql.state === "green" || sql.state === "skipped");
+        if (!red && !green) lines.push(`  ✗ ${timedOut ? `${timeoutMin} min me faisla nahi hua` : "run nahi mila"} — thodi der baad dobara: worker-lock ci ${id} --sha ${full.slice(0, 12)}`);
+        else if (red) lines.push(`  CI laal — fixing it comes first (card ${id} ke liveLog me likho; theek karne wala push --fixes-red ke saath).`);
+        lines.push(`  Card par ciCheck likho: ${JSON.stringify(check)}`);
+        return finish(red ? CI_EXIT.red : green ? CI_EXIT.green : CI_EXIT.timeout, check, lines);
+      }
+      print(`… ${id}: CI ${ci.state} · SQL ${sql.state} — ${Math.round((now() - t0) / 60000)} min`);
+    } else if (now() >= deadline) {
+      return finish(CI_EXIT.timeout, null, [`✗ ${id}: gh se CI ka haal nahi mila (${lastErr}). gh auth status / network dekho.`]);
+    } else {
+      print(`… ${id}: gh nahi chala (${lastErr}) — dobara koshish`);
+    }
+    await sleep(pollMs);
+  }
+}
+
+/* ── Related SQL tests before the push ───────────────────────────────────────────────────── */
+
+/** Functions / tables / views a migration creates or replaces (lower case, no schema). */
+export function migrationDefines(sql) {
+  const names = new Set();
+  const src = String(sql ?? "").replace(/--[^\n]*/g, "");
+  const id = String.raw`(?:"?[a-z_][a-z0-9_]*"?\.)?"?([a-z_][a-z0-9_]*)"?`;
+  const res = [
+    new RegExp(String.raw`create\s+(?:or\s+replace\s+)?function\s+${id}`, "gi"),
+    new RegExp(String.raw`create\s+(?:unlogged\s+)?table\s+(?:if\s+not\s+exists\s+)?${id}`, "gi"),
+    new RegExp(String.raw`create\s+(?:or\s+replace\s+)?(?:materialized\s+)?view\s+(?:if\s+not\s+exists\s+)?${id}`, "gi"),
+  ];
+  for (const re of res) for (const m of src.matchAll(re)) names.add(m[1].toLowerCase());
+  return [...names];
+}
+
+/** The test files (of [{file, src}]) that mention any of the names as a whole word. */
+export function relatedSqlTests(names, tests) {
+  if (!names.length) return [];
+  const res = names.map((n) => new RegExp(String.raw`(^|[^a-z0-9_])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9_]|$)`, "i"));
+  return tests.filter((t) => res.some((re) => re.test(t.src))).map((t) => ({ ...t, hits: names.filter((n, i) => res[i].test(t.src)) }));
+}
+
+/** First-line `-- deploy-peek: <SQL boolean>` of a migration, or null. */
+export function deployPeek(sql) {
+  const m = /^\s*--\s*deploy-peek:\s*(.+)$/m.exec(String(sql ?? "").split("\n").slice(0, 3).join("\n"));
+  return m ? m[1].trim() : null;
+}
+
+/** Same safety rule as scripts/test-sql.mjs: ends in rollback, never commits. */
+export function sqlTestSafe(src) {
+  return /^\s*rollback\s*;/im.test(src) && !/^\s*commit\s*;/im.test(src);
+}
+
+/** One script: begin; the not-yet-applied migrations (their own begin;/commit; lines dropped); the test (ends in rollback). */
+export function relatedTestScript(pendingMigrations, testSrc) {
+  const mig = pendingMigrations.map((m) => `-- migration ${m.file}\n` + m.src.replace(/^\s*(begin|commit)\s*;\s*$/gim, "-- ($1 dropped: one rolled-back transaction)")).join("\n\n");
+  return `begin;\n${mig}\n\n${testSrc}\n`;
+}
+
+/**
+ * Run the SQL tests related to the changed migrations on the LOCAL DB. deps:
+ *   changed: [{file, src}] migrations this push adds/changes; tests: [{file, src}] supabase/tests/*.sql;
+ *   psql(sql) => {status, out} (null when no local DB).
+ * Returns { ok, skipped?, ran: [{file, ok, why?}], message }.
+ */
+export function runRelatedSql({ changed, tests, psql }) {
+  if (!changed.length) return { ok: true, skipped: true, ran: [], message: "(koi migration nahi badli — related SQL tests nahi)" };
+  const names = [...new Set(changed.flatMap((m) => migrationDefines(m.src)))];
+  const related = relatedSqlTests(names, tests);
+  if (!related.length) return { ok: true, skipped: true, ran: [], message: `(badli migrations [${names.join(", ") || "kuch nahi banaya"}] ka koi SQL test nahi mila)` };
+  if (!psql) return { ok: true, skipped: true, ran: [], message: `⚠ local DB nahi chal raha — ${related.length} related SQL test chhode (${related.map((t) => t.file).join(", ")}). CI ka "SQL tests" dekhna.` };
+  if (changed.some((m) => /\bconcurrently\b/i.test(m.src.replace(/--[^\n]*/g, "")))) {
+    return { ok: true, skipped: true, ran: [], message: "⚠ migration me CONCURRENTLY hai (transaction me nahi chalta) — related SQL tests chhode; CI dekhna." };
+  }
+  /* A migration whose deploy-peek is already true on the local DB is applied — run the test on top of it. */
+  const pending = [];
+  for (const m of changed) {
+    const peek = deployPeek(m.src);
+    let applied = false;
+    if (peek) { const r = psql(`select case when (${peek}) then 'PEEK_APPLIED' else 'PEEK_PENDING' end;`); applied = r.status === 0 && /PEEK_APPLIED/.test(r.out); }
+    if (!applied) pending.push(m);
+  }
+  const ran = [];
+  for (const t of related) {
+    if (!sqlTestSafe(t.src)) { ran.push({ file: t.file, ok: false, why: "rollback se khatam nahi hoti / commit karti hai (CI ka runner bhi mana karega)" }); continue; }
+    const r = psql(relatedTestScript(pending, t.src));
+    ran.push(r.status === 0 ? { file: t.file, ok: true } : { file: t.file, ok: false, why: ((String(r.out).match(/ERROR:[^\n]{0,300}/g) ?? [String(r.out).slice(-300)]).slice(0, 3).join(" | ")) });
+  }
+  const bad = ran.filter((x) => !x.ok);
+  const head = `related SQL tests (${names.join(", ")}): ${ran.length - bad.length}/${ran.length} hare` + (pending.length ? `, ${pending.length} nayi migration ke saath (rollback)` : "");
+  return {
+    ok: !bad.length, ran,
+    message: (bad.length ? "✗ " : "✓ ") + head + bad.map((b) => `\n   ✗ ${b.file}: ${b.why}`).join(""),
+  };
+}
+
+/** Real deps for runRelatedSql, from the worktree's production/ folder. */
+function relatedSqlDeps() {
+  const base = execSync(`git merge-base HEAD anutech/${CI_BRANCH}`, { encoding: "utf8" }).trim();
+  const files = execFileSync("git", ["diff", "--name-only", "--diff-filter=AM", base, "HEAD", "--", "supabase/migrations"], { encoding: "utf8" })
+    .split("\n").map((s) => s.trim()).filter((s) => /\.sql$/.test(s));
+  const top = execSync("git rev-parse --show-toplevel", { encoding: "utf8" }).trim();
+  const changed = files.map((f) => ({ file: path.basename(f), src: fs.readFileSync(path.join(top, f), "utf8") }));
+  const dir = path.join("supabase", "tests");
+  const tests = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(".sql")).sort().map((f) => ({ file: f, src: fs.readFileSync(path.join(dir, f), "utf8") })) : [];
+  let psql = null;
+  if (changed.length) {
+    try {
+      const container = execFileSync("docker", ["ps", "--format", "{{.Names}}"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 20_000 })
+        .split(/\r?\n/).map((s) => s.trim()).find((n) => /^supabase_db_/.test(n));
+      if (container) {
+        psql = (sql) => {
+          const r = spawnSync("docker", ["exec", "-i", container, "psql", "-v", "ON_ERROR_STOP=1", "-tA", "-U", "postgres", "-d", "postgres"], { input: sql, encoding: "utf8", timeout: 120_000 });
+          return { status: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+        };
+      }
+    } catch { psql = null; }
+  }
+  return { changed, tests, psql };
+}
+
+function relatedSqlGate(card, { skip = false } = {}) {
+  if (skip) { appendCiLog({ at: new Date().toISOString(), card, how: "--skip-related-sql" }); console.log("⚠ --skip-related-sql: related SQL tests chhode (log me likha)."); return; }
+  let r;
+  try { r = runRelatedSql(relatedSqlDeps()); }
+  catch (e) { console.log(`⚠ related SQL tests nahi chal paaye (${String(e?.message ?? e).split("\n")[0].slice(0, 200)}) — chhode, CI dekhna.`); return; }
+  if (r.ok) { console.log(r.message); return; }
+  console.error(r.message);
+  console.error(`✗ ${card}: badli migration ka SQL test laal — push NAHI hua. Theek karo (test dheela mat karo), phir dobara push.`);
+  process.exit(5);
+}
+
+export const CI_LOG = () => path.join(LOCK_DIR, "_ci-gate.log");
+function appendCiLog(obj) { try { fs.appendFileSync(CI_LOG(), (typeof obj === "string" ? obj : JSON.stringify(obj)) + "\n"); } catch {} }
+const pushedNote = (card) => path.join(LOCK_DIR, `_pushed-${String(card).toUpperCase()}.json`);
+function readPushedNote(card) { try { return JSON.parse(fs.readFileSync(pushedNote(card), "utf8")); } catch { return null; } }
 
 /** "export { default } from '../leads/page'" → "../leads/page"; null when the file has real code. */
 export function reexportTarget(src) {
@@ -584,7 +939,30 @@ function main(argv) {
     console.log(`✓ ${files.length} badli files — kisi aur worker se takraav nahi.`);
     return;
   }
-  if (cmd === "push") { enforceCard(card, "push", cardFlags); return pushWithTurn(card); }
+  if (cmd === "push") {
+    const ciFlags = parseCiFlags(rest);
+    enforceCard(card, "push", cardFlags);
+    return pushWithTurn(card, ciFlags);
+  }
+  if (cmd === "ci") {
+    /* R-1936: wait for this card's CI + SQL tests runs; exit 0 green, 7 red, 8 timeout. */
+    const f = parseCiFlags(rest);
+    const git = (gargs) => execFileSync("git", gargs, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const isAncestor = (a, b) => { try { execFileSync("git", ["merge-base", "--is-ancestor", a, b], { stdio: "ignore" }); return true; } catch { return false; } };
+    try { git(["fetch", "-q", "anutech"]); } catch {}
+    return runCi(card, { gh: realGh, git, isAncestor, sha: f.sha, timeoutMin: f.timeoutMin, readNote: readPushedNote, print: (l) => console.log(l) })
+      .then((r) => {
+        for (const l of r.lines) (r.code ? console.error : console.log)(l);
+        if (r.check) console.log(JSON.stringify(r.check));
+        process.exit(r.code);
+      });
+  }
+  if (cmd === "sql-related") {
+    const r = runRelatedSql(relatedSqlDeps());
+    (r.ok ? console.log : console.error)(r.message);
+    if (!r.ok) process.exit(5);
+    return;
+  }
   if (cmd === "tsc") return tscWithTurn(card).then((ok) => { if (ok) console.log("✓ tsc green"); else process.exit(1); });
   if (cmd === "prep") return prep(card, rest);
   if (cmd === "release") {
@@ -602,7 +980,7 @@ function main(argv) {
     console.log(r.message);
     return;
   }
-  console.error("claim | check | push | wip | resume | tsc | prep | release | list | guard-push   (claim/push need --card <card.json>)");
+  console.error("claim | check | push | ci | sql-related | wip | resume | tsc | prep | release | list | guard-push   (claim/push need --card <card.json>)");
   process.exit(1);
 }
 
