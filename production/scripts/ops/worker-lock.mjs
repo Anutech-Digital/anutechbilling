@@ -727,13 +727,22 @@ export function runRelatedSql({ changed, tests, psql }) {
   for (const t of related) {
     if (!sqlTestSafe(t.src)) { ran.push({ file: t.file, ok: false, why: "rollback se khatam nahi hoti / commit karti hai (CI ka runner bhi mana karega)" }); continue; }
     const r = psql(relatedTestScript(pending, t.src));
-    ran.push(r.status === 0 ? { file: t.file, ok: true } : { file: t.file, ok: false, why: ((String(r.out).match(/ERROR:[^\n]{0,300}/g) ?? [String(r.out).slice(-300)]).slice(0, 3).join(" | ")) });
+    if (r.status === 0) { ran.push({ file: t.file, ok: true }); continue; }
+    const why = (String(r.out).match(/ERROR:[^\n]{0,300}/g) ?? [String(r.out).slice(-300)]).slice(0, 3).join(" | ");
+    /* Red WITH the new migration but also red WITHOUT it = the local DB was already broken for this test
+       (leftover rows, a missing older migration) — not this push's doing. Warn, don't block; CI decides. */
+    if (pending.length && psql(relatedTestScript([], t.src)).status !== 0) { ran.push({ file: t.file, ok: true, localRed: true, why }); continue; }
+    ran.push({ file: t.file, ok: false, why });
   }
   const bad = ran.filter((x) => !x.ok);
-  const head = `related SQL tests (${names.join(", ")}): ${ran.length - bad.length}/${ran.length} hare` + (pending.length ? `, ${pending.length} nayi migration ke saath (rollback)` : "");
+  const localRed = ran.filter((x) => x.localRed);
+  const head = `related SQL tests (${names.join(", ")}): ${ran.length - bad.length - localRed.length}/${ran.length} hare` + (pending.length ? `, ${pending.length} nayi migration ke saath (rollback)` : "");
   return {
     ok: !bad.length, ran,
-    message: (bad.length ? "✗ " : "✓ ") + head + bad.map((b) => `\n   ✗ ${b.file}: ${b.why}`).join(""),
+    message: (bad.length ? "✗ " : "✓ ") + head +
+      localRed.map((b) => `\n   ⚠ ${b.file}: migration ke bina bhi local DB par laal (local DB ki purani gadbad, is push ki nahi) — ${b.why}`).join("") +
+      bad.map((b) => `\n   ✗ ${b.file}: ${b.why}`).join("") +
+      (bad.length && !pending.length ? "\n   (migration local DB par pehle se lagi hai. Agar ye test migration ke bina bhi laal tha — local DB ki purani gadbad — to owner se poochh kar --skip-related-sql, log hota hai.)" : ""),
   };
 }
 
