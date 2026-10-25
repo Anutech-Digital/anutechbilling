@@ -19,7 +19,8 @@ import { withTenant } from "@/server/db";
 import { createClient } from "@/lib/supabase/server";
 import { geminiJson, resolveGeminiConfig } from "@/lib/ai/gemini";
 import { buildPrefillPrompt, guessFromPrompt, mergeAiPrefill, normalizePlan, type ItemOption } from "@/lib/marketing/copilot/plan-draft";
-import { activeItems, copilotRoleOk, forbidden, writePlan } from "../plans/plan-io";
+import { COPILOT_COPY_ROLES } from "@/lib/marketing/copilot/copy-prompt";
+import { activeItems, forbidden, myActiveRole, writePlan } from "../plans/plan-io";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -39,7 +40,9 @@ export async function POST(req: Request) {
   const prompt = parsed.data.prompt;
 
   const ctx = await withTenant(session, async (tx) => {
-    if (!(await copilotRoleOk(tx, session.userId))) return null;
+    /* Role gate (R-732 ratchet): owner / manager / marketing — the same roles as the co-pilot tables' RLS. */
+    const role = await myActiveRole(tx, session.userId);
+    if (!role || !(COPILOT_COPY_ROLES as readonly string[]).includes(role)) return null;
     return { items: await activeItems(tx, session.tenantId) };
   });
   if (!ctx) return forbidden();

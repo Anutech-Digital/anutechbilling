@@ -16,9 +16,14 @@ import type { CopyLanguage } from "@/lib/marketing/copilot/copy-prompt";
 /** The most products offered in the picker (and sent to the AI). */
 const ITEM_LIMIT = 300;
 
-export async function copilotRoleOk(tx: Tx, userId: string): Promise<boolean> {
+/** The signed-in person's role, or null when the users row is missing or inactive. */
+export async function myActiveRole(tx: Tx, userId: string): Promise<string | null> {
   const me = await tx.public_users.findUnique({ where: { id: userId }, select: { role: true, is_active: true } });
-  return mayWriteCopy(me && me.is_active !== false ? String(me.role) : null);
+  return me && me.is_active !== false ? String(me.role) : null;
+}
+
+export async function copilotRoleOk(tx: Tx, userId: string): Promise<boolean> {
+  return mayWriteCopy(await myActiveRole(tx, userId));
 }
 
 export const forbidden = () => NextResponse.json(

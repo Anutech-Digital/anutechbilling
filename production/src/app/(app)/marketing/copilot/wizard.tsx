@@ -183,8 +183,8 @@ function StepOne({ draft, items, brand, change }: {
   return (
     <div className="space-y-5">
       <div className="grid gap-4 md:grid-cols-2">
-        <FormField label="Plan name" required>
-          <Input value={draft.name} maxLength={120} onChange={(e) => change({ name: e.target.value })} />
+        <FormField label="Plan name" htmlFor="copilot-plan-name" required>
+          <Input id="copilot-plan-name" value={draft.name} maxLength={120} onChange={(e) => change({ name: e.target.value })} />
         </FormField>
         <div>
           <p className="text-sm font-medium text-ink mb-1.5">Brand</p>
@@ -192,9 +192,9 @@ function StepOne({ draft, items, brand, change }: {
         </div>
       </div>
 
-      <FormField label="Product" hint="Pick what the ads sell, or the whole business">
+      <FormField label="Product" htmlFor="copilot-product" hint="Pick what the ads sell, or the whole business">
         <Select value={draft.itemId ?? NO_PRODUCT} onValueChange={(v) => change({ itemId: v === NO_PRODUCT ? null : v })}>
-          <SelectTrigger className="w-full md:max-w-md"><SelectValue placeholder="Whole business" /></SelectTrigger>
+          <SelectTrigger id="copilot-product" className="w-full md:max-w-md"><SelectValue placeholder="Whole business" /></SelectTrigger>
           <SelectContent>
             <SelectItem value={NO_PRODUCT}>Whole business (no single product)</SelectItem>
             {!known && draft.itemId && <SelectItem value={draft.itemId}>Product no longer active</SelectItem>}
@@ -264,8 +264,8 @@ function StepTwo({ draft, change, audience }: {
   const genderKey = a.genders.length === 1 ? a.genders[0] : "all";
   const left = INDIA_REGIONS.filter((r) => !a.regions.includes(r));
   const ageInput = (key: "ageMin" | "ageMax", label: string) => (
-    <FormField label={label}>
-      <Input type="number" inputMode="numeric" min={AGE_FLOOR} max={AGE_CEIL} value={a[key]} className="w-24"
+    <FormField label={label} htmlFor={`copilot-age-${key}`}>
+      <Input id={`copilot-age-${key}`} type="number" inputMode="numeric" min={AGE_FLOOR} max={AGE_CEIL} value={a[key]} className="w-24"
         onChange={(e) => {
           const n = Math.round(Number(e.target.value));
           if (Number.isFinite(n)) audience({ [key]: Math.min(AGE_CEIL, Math.max(AGE_FLOOR, n)) });
@@ -282,11 +282,11 @@ function StepTwo({ draft, change, audience }: {
             const info = platformInfo(p, draft.objective);
             const on = draft.platforms.includes(p);
             return (
-              <label key={p} className={cn(
+              <label key={p} htmlFor={`copilot-platform-${p}`} className={cn(
                 "flex items-start gap-2 rounded-md border px-3 py-2",
                 on ? "border-ink" : "border-hairline", info.available ? "cursor-pointer" : "opacity-70",
               )}>
-                <Checkbox className="mt-0.5" checked={on} disabled={!info.available}
+                <Checkbox id={`copilot-platform-${p}`} className="mt-0.5" checked={on} disabled={!info.available}
                   onCheckedChange={(v) => togglePlatform(p, v === true)} aria-label={CHANNEL_SPECS[p].label} />
                 <span>
                   <span className="block text-sm font-medium text-ink">{CHANNEL_SPECS[p].label}</span>
@@ -319,9 +319,9 @@ function StepTwo({ draft, change, audience }: {
         </div>
 
         <div>
-          <FormField label="Regions" hint={a.regions.length ? `${a.regions.length} selected` : "All of India"}>
+          <FormField label="Regions" htmlFor="copilot-regions" hint={a.regions.length ? `${a.regions.length} selected` : "All of India"}>
             <Select value="" onValueChange={(v) => v && audience({ regions: [...a.regions, v].sort((x, y) => x.localeCompare(y)) })}>
-              <SelectTrigger className="w-full md:max-w-md" aria-label="Add a state"><SelectValue placeholder="Add a state…" /></SelectTrigger>
+              <SelectTrigger id="copilot-regions" className="w-full md:max-w-md" aria-label="Add a state"><SelectValue placeholder="Add a state…" /></SelectTrigger>
               <SelectContent>{left.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
             </Select>
           </FormField>
@@ -338,8 +338,8 @@ function StepTwo({ draft, change, audience }: {
           )}
         </div>
 
-        <label className={cn("flex items-start gap-2", lookalikeOk ? "cursor-pointer" : "opacity-70")}>
-          <Checkbox className="mt-0.5" checked={a.lookalike && lookalikeOk} disabled={!lookalikeOk}
+        <label htmlFor="copilot-lookalike" className={cn("flex items-start gap-2", lookalikeOk ? "cursor-pointer" : "opacity-70")}>
+          <Checkbox id="copilot-lookalike" className="mt-0.5" checked={a.lookalike && lookalikeOk} disabled={!lookalikeOk}
             onCheckedChange={(v) => audience({ lookalike: v === true })} aria-label="Also reach people like my customers" />
           <span>
             <span className="block text-sm font-medium text-ink">Also reach people like my customers (lookalike)</span>

@@ -8,7 +8,7 @@ type Row = Record<string, unknown>;
 const h = vi.hoisted(() => ({
   session: { userId: "u1", tenantId: "t1", aal: "aal1" } as { userId: string; tenantId: string; aal: string } | null,
   role: "marketing" as string | null,
-  apiKey: "sk-ant-test-key-1234567890" as string | null,
+  apiKey: "fake-ai-key" as string | null,
   gemini: vi.fn(),
   plans: [] as Row[],
   groups: [] as Row[],
@@ -48,7 +48,7 @@ const PROMPT = "Diwali offer on Google Workspace for Delhi SMEs — get enquirie
 beforeEach(() => {
   h.session = { userId: "u1", tenantId: "t1", aal: "aal1" };
   h.role = "marketing";
-  h.apiKey = "sk-ant-test-key-1234567890";
+  h.apiKey = "fake-ai-key";
   h.gemini.mockReset();
   h.plans = [];
   h.groups = [];
