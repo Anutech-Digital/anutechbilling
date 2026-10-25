@@ -35,6 +35,9 @@ import {
   usePartnerAppropriations, usePostPartnerAppropriation, useUndoPartnerAppropriation, type PostedSplitDetail,
 } from "@/lib/queries/partner-appropriations";
 import { PARTNERS_HREF } from "@/components/features/partners/partner-picker";
+import { canOpenRoute } from "@/lib/nav";
+
+const SETTINGS_HREF = "/settings?tab=company";
 import { fmtBS } from "../format";
 
 const MONEY_ROLES = ["owner", "manager", "accountant"];
@@ -47,6 +50,8 @@ export default function ProfitSplitPage() {
 
   const me = useCurrentUser();
   const canPost = MONEY_ROLES.includes(me.data?.role ?? "");
+  /* Settings is owner / manager only — the accountant gets words, not a link that bounces (R-255). */
+  const canSettings = canOpenRoute(me.data?.role, SETTINGS_HREF);
   const profileQ = useComplianceProfile();
   const isFirm = showsPartnersRegister(profileQ.data?.businessType ?? null);
   const partnersQ = useFirmPartners(isFirm);
@@ -93,7 +98,9 @@ export default function ProfitSplitPage() {
       ) : !isFirm ? (
         <Card className="p-5 text-sm text-ink-2">
           The profit split is for a <b>Partnership</b> or <b>LLP</b>. Your business type is set to something else.{" "}
-          <Link href={"/settings?tab=company" as never} className="text-indigo underline">Check the business type</Link>
+          {canSettings
+            ? <Link href={SETTINGS_HREF as never} className="text-indigo underline">Check the business type</Link>
+            : <span>Ask the owner to check it in Settings → Company.</span>}
         </Card>
       ) : failedQ ? (
         <LoadError what="The partners and their capital" error={failedQ.error} onRetry={() => void failedQ.refetch()} />
@@ -112,13 +119,14 @@ export default function ProfitSplitPage() {
           openingAsOf={openingQ.data?.asOf ?? null}
           earlier={splits.filter((s) => s.fyStart < fy)}
           canPost={canPost}
+          canSettings={canSettings}
         />
       )}
     </div>
   );
 }
 
-function SplitForm({ fy, today, netProfit, pnlError, onRetryPnl, partners, movements, openingAsOf, earlier, canPost }: {
+function SplitForm({ fy, today, netProfit, pnlError, onRetryPnl, partners, movements, openingAsOf, earlier, canPost, canSettings }: {
   fy: number;
   today: string;
   netProfit: number | null;
@@ -129,6 +137,7 @@ function SplitForm({ fy, today, netProfit, pnlError, onRetryPnl, partners, movem
   openingAsOf: string | null;
   earlier: PostedSplitDetail[];
   canPost: boolean;
+  canSettings: boolean;
 }) {
   const post = usePostPartnerAppropriation();
   const confirm = useConfirm();
@@ -177,7 +186,10 @@ function SplitForm({ fy, today, netProfit, pnlError, onRetryPnl, partners, movem
       <div className="space-y-3 min-w-0">
         {a.lines.length === 0 && (
           <Card className="p-4 text-sm text-ink-2">
-            No partners in the firm during {FY(fy)}. <Link href={PARTNERS_HREF as never} className="text-indigo underline">Add partners</Link>
+            No partners in the firm during {FY(fy)}.{" "}
+            {canSettings
+              ? <Link href={PARTNERS_HREF as never} className="text-indigo underline">Add partners</Link>
+              : "Ask the owner to add them in Settings → Company → Partners."}
           </Card>
         )}
         {a.lines.map((l) => {

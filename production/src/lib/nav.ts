@@ -492,6 +492,8 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/attendance/kiosk": "Runs on the office kiosk device, not in a person's menu",
   "/platform": "Founder-only cross-tenant view; any other owner would be refused by the server",
   "/aa/simulate-approval": "Mock consent screen for the bank-statement (Account Aggregator) test flow",
+  /* R-1849: admitted by the Balance Sheet row (prefix); billing denied with it. */
+  "/accounting/balance-sheet/profit-split": "Year-end profit split of a partnership; opened from Balance Sheet → partners' capital accounts",
   /* R-384 (7 Oct 2026, owner decision): one menu row "Products" (/items) instead of three. */
   "/items/subscriptions": "Subscriptions tab of Products (/items) — the menu row opens the page, the tab links here",
   "/items/products": "One-time products tab of Products (/items) — the menu row opens the page, the tab links here",
