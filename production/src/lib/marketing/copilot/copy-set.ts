@@ -239,3 +239,9 @@ export function fromRows(
   }
   return { ...set, version };
 }
+
+/** Who a set is for, in words the AI writes to (copy + rewrite routes). */
+export const AUDIENCE_WORDS: Record<AudienceKey, string> = {
+  generic: "the main audience of the plan",
+  lookalike: "people similar to the business's existing customers (they do not know the brand yet)",
+};
