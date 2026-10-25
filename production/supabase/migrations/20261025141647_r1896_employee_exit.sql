@@ -49,6 +49,9 @@ begin
   end if;
 end $$;
 
+-- employees is column-granted (pin_hash hidden, 20261010010000): every new column is granted here.
+grant select (exit_date, exit_reason, resignation_date, exit_note, exit_started_at) on public.employees to authenticated;
+
 comment on column public.employees.exit_date is
   'R-1896: last working day. Paid up to this day; no payslip after this month; the linked login ends after it.';
 comment on column public.employees.exit_reason is

@@ -5060,6 +5060,10 @@ export type Database = {
           emergency_contact_phone: string | null
           esi_applicable: boolean
           esi_no: string | null
+          exit_date: string | null
+          exit_note: string | null
+          exit_reason: string | null
+          exit_started_at: string | null
           face_enrolled_at: string | null
           face_ref_path: string | null
           id: string
@@ -5075,6 +5079,7 @@ export type Database = {
           phone: string | null
           pin_hash: string | null
           pin_set: boolean | null
+          resignation_date: string | null
           tenant_id: string
           updated_at: string
         }
@@ -5094,6 +5099,10 @@ export type Database = {
           emergency_contact_phone?: string | null
           esi_applicable?: boolean
           esi_no?: string | null
+          exit_date?: string | null
+          exit_note?: string | null
+          exit_reason?: string | null
+          exit_started_at?: string | null
           face_enrolled_at?: string | null
           face_ref_path?: string | null
           id?: string
@@ -5109,6 +5118,7 @@ export type Database = {
           phone?: string | null
           pin_hash?: string | null
           pin_set?: boolean | null
+          resignation_date?: string | null
           tenant_id: string
           updated_at?: string
         }
@@ -5128,6 +5138,10 @@ export type Database = {
           emergency_contact_phone?: string | null
           esi_applicable?: boolean
           esi_no?: string | null
+          exit_date?: string | null
+          exit_note?: string | null
+          exit_reason?: string | null
+          exit_started_at?: string | null
           face_enrolled_at?: string | null
           face_ref_path?: string | null
           id?: string
@@ -5143,6 +5157,7 @@ export type Database = {
           phone?: string | null
           pin_hash?: string | null
           pin_set?: boolean | null
+          resignation_date?: string | null
           tenant_id?: string
           updated_at?: string
         }
@@ -13276,6 +13291,7 @@ export type Database = {
       }
       users: {
         Row: {
+          access_ends_on: string | null
           attendance_checkout_reminder_at: string
           attendance_reminders_enabled: boolean
           avatar_url: string | null
@@ -13296,6 +13312,7 @@ export type Database = {
           tenant_id: string
         }
         Insert: {
+          access_ends_on?: string | null
           attendance_checkout_reminder_at?: string
           attendance_reminders_enabled?: boolean
           avatar_url?: string | null
@@ -13316,6 +13333,7 @@ export type Database = {
           tenant_id: string
         }
         Update: {
+          access_ends_on?: string | null
           attendance_checkout_reminder_at?: string
           attendance_reminders_enabled?: boolean
           avatar_url?: string | null
@@ -14611,6 +14629,10 @@ export type Database = {
         Returns: Json
       }
       can_see_record: { Args: { p_owner: string }; Returns: boolean }
+      cancel_employee_exit: {
+        Args: { p_employee_id: string }
+        Returns: undefined
+      }
       cancel_payment_run: { Args: { p_run_id: string }; Returns: undefined }
       cancel_subscription: {
         Args: {
@@ -16007,6 +16029,16 @@ export type Database = {
       split_project_milestone: {
         Args: { p_amount: number; p_label: string; p_milestone_id: string }
         Returns: string
+      }
+      start_employee_exit: {
+        Args: {
+          p_employee_id: string
+          p_last_day: string
+          p_note?: string
+          p_reason: string
+          p_resignation_date?: string
+        }
+        Returns: Json
       }
       submit_expense_claim: {
         Args: {
