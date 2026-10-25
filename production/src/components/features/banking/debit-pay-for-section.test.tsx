@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
   pay: vi.fn(),
   q194: {} as Record<string, unknown[]>,
   setBuyer: vi.fn(),
+  advances: [] as unknown[],
+  applyAdvance: vi.fn(),
 }));
 
 vi.mock("@/lib/queries/vendors", () => ({
@@ -40,12 +42,18 @@ vi.mock("@/lib/queries/bank-debit-pay-for", () => ({
   useSet194qBuyer: () => ({ mutate: state.setBuyer, isPending: false }),
 }));
 
+/* R-1913: the vendor's advance (Prepaid) and "Apply advance". */
+vi.mock("@/lib/queries/prepaid-advances", () => ({ usePrepaidAdvances: () => ({ data: state.advances }) }));
+vi.mock("@/lib/queries/vendor-advance", () => ({ useApplyVendorAdvance: () => ({ mutate: state.applyAdvance, isPending: false }) }));
+
 import { DebitPayForSection } from "./debit-pay-for-section";
 
 afterEach(cleanup);
 beforeEach(() => {
   state.pay.mockReset();
   state.setBuyer.mockReset();
+  state.applyAdvance.mockReset();
+  state.advances = [];
   state.fy = { base: 70800 - 10800, baseWithoutTds: 60000 };   // the two unpaid bills ARE the year so far
   state.items = {};
   state.q194 = {};
@@ -243,5 +251,29 @@ describe("R-1911 DebitPayForSection — match a payment already recorded", () =>
     expect((screen.getByLabelText(/^Match this bank line to the payment/) as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText(/^Pay Bill G-10 · /) as HTMLInputElement).checked).toBe(true);
     expect(saveButton().disabled).toBe(false);
+  });
+});
+
+/* R-1913 (R-1906 audit B2): Verma's ₹30,000 advance, ₹50,000 bill on Expenses, the ₹20,000 bank
+   line — the advance is applied to the bill first, so the line pays only the rest. */
+describe("R-1913 DebitPayForSection — the vendor's advance on an expense bill", () => {
+  it("shows 'Advance with vendor ₹30,000' on the bill and applies at most what the bill owes", () => {
+    state.items.v1 = [exp({ doc_id: "EV1", bill_no: "VC-1", total: 50000, amount_due: 50000, gst: 0, tds_base: 50000 })];
+    state.advances = [{ vendor_id: "v1", vendor_name: "Sharma Associates", total_amount: 30000, consumed_amount: 0, closed_at: null, category: "Professional Services" }];
+    render(<DebitPayForSection transaction={txn(20000, "IMPS SHARMA ASSOCIATES VC-1")} onDone={() => {}} />);
+    expect(screen.getByText("Advance with vendor ₹30,000")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Apply ₹30,000 to this bill" }));
+    expect(state.applyAdvance).toHaveBeenCalledWith({ expenseId: "EV1" });
+  });
+
+  it("no advance with the vendor, or a COGS bill: nothing offered", () => {
+    state.items.v1 = [exp({})];
+    render(<DebitPayForSection transaction={txn(59000, "IMPS SHARMA ASSOCIATES")} onDone={() => {}} />);
+    expect(screen.queryByText(/Advance with vendor/)).toBeNull();
+    cleanup();
+    state.items.v2 = [G2];
+    state.advances = [{ vendor_id: "v2", vendor_name: "Google Cloud India", total_amount: 5000, consumed_amount: 0, closed_at: null, category: "Other" }];
+    render(<DebitPayForSection transaction={txn(23600, "NEFT GOOGLE")} onDone={() => {}} />);
+    expect(screen.queryByText(/Advance with vendor/)).toBeNull();
   });
 });

@@ -27,6 +27,8 @@ export interface ExpenseBillLike {
   category: string | null;
   payment_method: string | null;
   prepaid_advance_id: string | null;
+  /** R-1913: the part already settled from the vendor's advance (Apply advance). */
+  advance_applied?: number | null;
 }
 
 export function isOpenExpenseBill(e: ExpenseBillLike): boolean {
@@ -35,12 +37,13 @@ export function isOpenExpenseBill(e: ExpenseBillLike): boolean {
     && e.category !== "Salaries"
     && !NOT_VENDOR_BILL_METHODS.includes(e.payment_method ?? "")
     && !e.prepaid_advance_id
-    && (e.amount ?? 0) > 0;
+    && (e.amount ?? 0) - (e.advance_applied ?? 0) > 0;
 }
 
-/** Cash still owed on an expense bill: its amount less the TDS already recorded on it. */
+/** Cash still owed on an expense bill: its amount less the TDS recorded on it and (R-1913) the
+ *  vendor's advance already applied to it. */
 export function expenseBillDue(e: ExpenseBillLike): number {
-  return isOpenExpenseBill(e) ? Math.max(0, (e.amount ?? 0) - (e.tds_amount ?? 0)) : 0;
+  return isOpenExpenseBill(e) ? Math.max(0, (e.amount ?? 0) - (e.tds_amount ?? 0) - (e.advance_applied ?? 0)) : 0;
 }
 
 /* ─── Advance ──────────────────────────────────────────────────────────────────────── */
@@ -51,6 +54,56 @@ export interface AdvanceLike { total_amount: number | null; consumed_amount: num
 export function advanceLeft(a: AdvanceLike): number {
   if (a.closed_at) return 0;
   return Math.max(0, (a.total_amount ?? 0) - (a.consumed_amount ?? 0));
+}
+
+export interface VendorAdvanceLike extends AdvanceLike {
+  vendor_id: string | null;
+  vendor_name: string | null;
+  category?: string | null;
+}
+
+/**
+ * R-1913: what is left of a vendor's advances — the same match as apply_vendor_advance
+ * (migration 20261025164002): by vendor id, or by name for an advance with no vendor yet (or a
+ * bill with no vendor record). Staff advances share the table and never count.
+ */
+export function vendorAdvanceLeft(advances: readonly VendorAdvanceLike[], vendorId: string | null, vendorName: string | null): number {
+  const name = (vendorName ?? "").trim().toUpperCase();
+  return advances.reduce((s, a) => {
+    if (a.category === "Employee advance") return s;
+    const byId = vendorId != null && a.vendor_id === vendorId;
+    const byName = (a.vendor_id == null || vendorId == null) && name !== "" && (a.vendor_name ?? "").trim().toUpperCase() === name;
+    return byId || byName ? s + advanceLeft(a) : s;
+  }, 0);
+}
+
+/** R-1913: what "Apply advance" sets off on a bill — the advance left, at most the bill's due. */
+export function advanceToApply(advanceLeftAmount: number, billDue: number): number {
+  return Math.max(0, Math.min(Math.round(advanceLeftAmount || 0), Math.round(billDue || 0)));
+}
+
+export interface BillAdvanceView {
+  /** Already settled from the advance. */
+  applied: number;
+  /** Cash still owed on the bill (after TDS and the advance). */
+  due: number;
+  /** "Apply advance ₹X" — 0 hides the button. */
+  canApply: number;
+  /** "Undo advance" — only while no bank line / Mark-paid settled the rest. */
+  canUndo: boolean;
+}
+
+/** R-1913: what an expense bill row shows about the vendor's advance. */
+export function billAdvanceView(
+  e: ExpenseBillLike & { vendor_id: string | null; vendor_name: string | null },
+  advances: readonly VendorAdvanceLike[],
+): BillAdvanceView {
+  const applied = Math.max(0, e.advance_applied ?? 0);
+  const open = isOpenExpenseBill(e);
+  const due = expenseBillDue(e);
+  const canApply = open && due > 0 ? advanceToApply(vendorAdvanceLeft(advances, e.vendor_id, e.vendor_name), due) : 0;
+  const canUndo = applied > 0 && !e.reconciled_txn_id && (e.paid === false || e.payment_method === "advance");
+  return { applied, due, canApply, canUndo };
 }
 
 /* ─── Balance ──────────────────────────────────────────────────────────────────────── */

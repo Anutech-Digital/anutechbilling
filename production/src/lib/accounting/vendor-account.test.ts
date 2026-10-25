@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isOpenExpenseBill, expenseBillDue, advanceLeft, vendorBalance, balanceWords, vendorPaymentRows,
+  vendorAdvanceLeft, advanceToApply, billAdvanceView,
 } from "./vendor-account";
 
 const exp = (o: Partial<Parameters<typeof isOpenExpenseBill>[0]> = {}) => ({
@@ -114,5 +115,52 @@ describe("payments made to the vendor", () => {
       advancesOutsideBank: [{ id: "p9", paid_date: "2026-10-05", total_amount: 5000, payment_method: "cash" }],
     });
     expect(rows).toEqual([{ key: "adv:p9", date: "2026-10-05", cash: 5000, tds: 0, via: "cash", what: "Advance", href: "/accounting/prepaid" }]);
+  });
+});
+
+/* R-1913 (R-1906 audit B2/B3): Verma — ₹30,000 advance from the bank, ₹50,000 bill on Expenses. */
+describe("R-1913 — the vendor's advance on a bill", () => {
+  const VERMA = "v-verma";
+  const adv = (o: Partial<{ vendor_id: string | null; vendor_name: string | null; total_amount: number; consumed_amount: number; closed_at: string | null; category: string | null }> = {}) => ({
+    vendor_id: VERMA, vendor_name: "Verma Contractors", total_amount: 30000, consumed_amount: 0, closed_at: null, category: "Repairs & Maintenance", ...o,
+  });
+  const bill = (o: Partial<Parameters<typeof billAdvanceView>[0]> = {}) => ({
+    ...exp({ amount: 50000, category: "Repairs & Maintenance" }), vendor_id: VERMA, vendor_name: "Verma Contractors", advance_applied: 0, ...o,
+  });
+
+  it("before: the bill offers 'Apply advance ₹30,000'; after: ₹20,000 due, nothing more to apply", () => {
+    expect(billAdvanceView(bill(), [adv()])).toEqual({ applied: 0, due: 50000, canApply: 30000, canUndo: false });
+    expect(billAdvanceView(bill({ advance_applied: 30000 }), [adv({ consumed_amount: 30000 })]))
+      .toEqual({ applied: 30000, due: 20000, canApply: 0, canUndo: true });
+  });
+
+  it("the popup's due takes the advance applied off (You owe ₹20,000, not ₹50,000)", () => {
+    expect(expenseBillDue(bill({ advance_applied: 30000 }))).toBe(20000);
+    expect(vendorBalance(expenseBillDue(bill({ advance_applied: 30000 })), 0)).toMatchObject({ net: 20000, state: "owe" });
+  });
+
+  it("a bill settled by the advance is no longer open; undo is still offered", () => {
+    const settled = bill({ amount: 20000, advance_applied: 20000, paid: true, payment_method: "advance" });
+    expect(isOpenExpenseBill(settled)).toBe(false);
+    expect(billAdvanceView(settled, [adv({ consumed_amount: 20000 })])).toMatchObject({ due: 0, canApply: 0, canUndo: true });
+  });
+
+  it("no undo once a bank line (or Mark paid) settled the rest", () => {
+    expect(billAdvanceView(bill({ advance_applied: 30000, paid: true, reconciled_txn_id: "t1", payment_method: "bank" }), []).canUndo).toBe(false);
+    expect(billAdvanceView(bill({ advance_applied: 30000, paid: true, payment_method: "neft" }), []).canUndo).toBe(false);
+  });
+
+  it("advance left: by vendor id (renamed vendor), by name when the advance has no vendor; never staff advances", () => {
+    expect(vendorAdvanceLeft([adv({ vendor_name: "Old name" })], VERMA, "Verma Contractors")).toBe(30000);
+    expect(vendorAdvanceLeft([adv({ vendor_id: null, vendor_name: " verma contractors " })], VERMA, "Verma Contractors")).toBe(30000);
+    expect(vendorAdvanceLeft([adv({ vendor_id: "other" })], VERMA, "Verma Contractors")).toBe(0);
+    expect(vendorAdvanceLeft([adv({ category: "Employee advance" })], VERMA, "Verma Contractors")).toBe(0);
+    expect(vendorAdvanceLeft([adv({ closed_at: "2026-10-01" })], VERMA, "Verma Contractors")).toBe(0);
+  });
+
+  it("apply at most the bill's due, and never more than the advance", () => {
+    expect(advanceToApply(30000, 20000)).toBe(20000);
+    expect(advanceToApply(30000, 50000)).toBe(30000);
+    expect(advanceToApply(0, 50000)).toBe(0);
   });
 });

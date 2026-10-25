@@ -38,6 +38,9 @@ import {
   type NewBillDraft, type VendorLite, type VendorOpenItem, type VendorPayResult,
 } from "@/lib/banking/debit-pay-for";
 import type { VendorFocus } from "@/lib/banking/vendor-line-guard";
+import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
+import { advanceToApply, vendorAdvanceLeft } from "@/lib/accounting/vendor-account";
+import { useApplyVendorAdvance } from "@/lib/queries/vendor-advance";
 
 const NEW_VENDOR = "__new_vendor__";
 const TDS_SECTIONS = Object.keys(TDS_SECTION_RATES);
@@ -85,6 +88,11 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
   }, [onVendorChange, vendorName, vendor, items]);
   const [picked, setPicked] = React.useState<Set<string>>(new Set());
   const [cashEdit, setCashEdit] = React.useState<Record<string, number>>({});
+  /* R-1913: an advance still with this vendor can be set off against an expense bill first, so
+     the bank line pays only the rest. */
+  const { data: advanceRows } = usePrepaidAdvances();
+  const advLeft = vendor ? vendorAdvanceLeft(advanceRows ?? [], vendor.id, vendor.name) : 0;
+  const applyAdv = useApplyVendorAdvance();
 
   /* TDS — the vendor's usual section, else the one already on its bills. */
   const [section, setSection] = React.useState("");
@@ -325,6 +333,16 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
                         {i.in_run && <span className="block text-xs text-amber-ink">In payment run {i.in_run} — mark that run paid instead.</span>}
                       </span>
                     </label>
+                    {/* R-1913: the vendor's advance first — the bank line then pays only the rest. */}
+                    {i.source === "expense" && !i.in_run && advLeft > 0 && advanceToApply(advLeft, cashDue(i, i.tds_amount)) > 0 && (
+                      <div className="mt-1.5 pl-6 flex flex-wrap items-center gap-2 text-xs text-ink-2">
+                        <span>Advance with vendor {rupee(advLeft)}</span>
+                        <Button size="sm" variant="default" loading={applyAdv.isPending}
+                          onClick={() => applyAdv.mutate({ expenseId: i.doc_id })}>
+                          Apply {rupee(advanceToApply(advLeft, cashDue(i, i.tds_amount)))} to this bill
+                        </Button>
+                      </div>
+                    )}
                     {on && (
                       <div className="mt-2 pl-6 flex flex-wrap items-center gap-2 text-xs text-ink-2 tabular-nums">
                         {i.can_part ? (
