@@ -32,7 +32,14 @@ insert into public.salary_payments (id, tenant_id, employee_id, period, gross, n
 
 do $$ declare n int; begin
   update public.expenses set amount = 10001 where id = 'EXP-AUDIT-1';
-  select count(*) into n from public.activity_log where tenant_id = 'aaaaaaaa-0000-0000-0000-0000000000e1';
+  /* R-1922: a new company is born with its Customer messages switch ON, and the R-897 switch
+     trail deliberately logs that as "System: customer_messages: on" (entity automation_job) —
+     the setting the company starts with, not a system change to a business row. Only that one
+     line is set aside; every other line still counts, so the system inserts/update above must
+     still log nothing. */
+  select count(*) into n from public.activity_log
+   where tenant_id = 'aaaaaaaa-0000-0000-0000-0000000000e1'
+     and not (entity = 'automation_job' and entity_id = 'customer_messages' and user_id is null);
   if n <> 0 then raise exception 'FAIL 5: a system change (no user) was logged'; end if;
 end $$;
 

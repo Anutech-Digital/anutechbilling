@@ -6,6 +6,7 @@
 --
 -- Expect "PASS r897_automation_gate". Every check is collected first, failures listed together.
 --
+--   NEW      (R-1922) a new company starts with only customer_messages ON; crons have no row = OFF
 --   DEFAULT  no row → automation_allowed false, automation_state 'off'
 --   OWNER    owner can enable (set_automation_job) → allowed true; dry run → state 'dry_run',
 --            allowed false; the change lands in activity_log with only enabled/dry_run
@@ -38,6 +39,30 @@ insert into public.users (id, tenant_id, email, full_name, role, is_active) valu
 create temp table r897_fail (msg text);
 create temp table r897_ctx (k text primary key, v text);
 grant all on r897_fail, r897_ctx to authenticated, service_role;
+
+-- ═══ 0. NEW COMPANY (R-1922, Pardeep's decision 25 Oct) ══════════════════════════
+-- A new company is born with ONLY its customer_messages switch ON; every cron has no row = OFF.
+-- Then both companies are put back to an "existing company" state (no switch rows at all — the
+-- state of every company made before R-1922), so every R-897 check below still proves that a
+-- missing row means OFF, unchanged.
+do $$
+declare n int;
+begin
+  select count(*) into n from public.automation_jobs
+   where tenant_id in ('e8970000-0000-0000-0000-0000000000a0', 'e8970000-0000-0000-0000-0000000000b0')
+     and job = 'customer_messages' and enabled and not dry_run;
+  if n <> 2 then insert into r897_fail values ('NEW: a new company should start with customer_messages ON, found ' || n || ' of 2'); end if;
+  select count(*) into n from public.automation_jobs
+   where tenant_id in ('e8970000-0000-0000-0000-0000000000a0', 'e8970000-0000-0000-0000-0000000000b0')
+     and job <> 'customer_messages';
+  if n <> 0 then insert into r897_fail values ('NEW: a new company got ' || n || ' cron row(s) — crons must start OFF'); end if;
+  if public.automation_allowed('invoice-dunning', 'e8970000-0000-0000-0000-0000000000a0')
+     or public.automation_allowed('renewals', 'e8970000-0000-0000-0000-0000000000a0') then
+    insert into r897_fail values ('NEW: a cron is allowed for a brand-new company');
+  end if;
+end $$;
+delete from public.automation_jobs
+ where tenant_id in ('e8970000-0000-0000-0000-0000000000a0', 'e8970000-0000-0000-0000-0000000000b0');
 
 create or replace function pg_temp.as_user(sub uuid) returns void language plpgsql as $$
 begin
