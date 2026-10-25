@@ -5289,6 +5289,7 @@ export type Database = {
           line_items: Json
           notes: string | null
           paid: boolean
+          paid_amount: number
           paid_date: string | null
           payment_method: string | null
           prepaid_advance_id: string | null
@@ -5327,6 +5328,7 @@ export type Database = {
           line_items?: Json
           notes?: string | null
           paid?: boolean
+          paid_amount?: number
           paid_date?: string | null
           payment_method?: string | null
           prepaid_advance_id?: string | null
@@ -5365,6 +5367,7 @@ export type Database = {
           line_items?: Json
           notes?: string | null
           paid?: boolean
+          paid_amount?: number
           paid_date?: string | null
           payment_method?: string | null
           prepaid_advance_id?: string | null

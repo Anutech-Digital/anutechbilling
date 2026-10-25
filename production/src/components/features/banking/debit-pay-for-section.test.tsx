@@ -277,3 +277,37 @@ describe("R-1913 DebitPayForSection — the vendor's advance on an expense bill"
     expect(screen.queryByText(/Advance with vendor/)).toBeNull();
   });
 });
+
+/* R-1915 (R-1906 audit B5): Sharma's ₹59,000 expense bill paid in two bank lines. */
+describe("R-1915 — expense bill part payment", () => {
+  it("₹25,000 line: tick the ₹59,000 bill → 'Pays ₹25,000', ₹34,000 stays due; one RPC with the part", async () => {
+    state.items.v1 = [exp({ bill_no: "PS-1", can_part: true })];
+    state.pay.mockResolvedValue(result({
+      bank_amount: 25000,
+      paid: [{ source: "expense", doc_id: "E1", bill_no: "PS-1", settled: 25000, cash: 25000, tds: 0, tds_section: null, status: "partial", still_due: 34000 }],
+    }));
+    render(<DebitPayForSection transaction={txn(25000, "UPI SHARMA ASSOCIATES PART")} onDone={() => {}} />);
+    const box = screen.getByLabelText(/^Pay Bill PS-1 · /) as HTMLInputElement;
+    if (!box.checked) fireEvent.click(box);
+    fireEvent.change(screen.getByLabelText("TDS section"), { target: { value: "" } });   // Sharma takes no TDS here
+    expect((screen.getByLabelText(/^Amount paid on Bill PS-1/) as HTMLInputElement).value).toBe("25000");
+    expect(screen.getByText(/part payment — ₹34,000 stays due/)).toBeTruthy();
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay).toHaveBeenCalledTimes(1);
+    const arg = state.pay.mock.calls[0][0];
+    expect(arg.items.map((x: { item: VendorOpenItem; cash: number; tds: number }) => [x.item.doc_id, x.cash, x.tds])).toEqual([["E1", 25000, 0]]);
+    expect(arg.advance).toBe(0);
+    expect(screen.getByText("Paid Bill #PS-1 (₹25,000) to Sharma Associates · Bill now part paid, ₹34,000 still due")).toBeTruthy();
+  });
+
+  it("second line ₹34,000: the part-paid bill (TDS already taken, base 0) is ticked and takes no new TDS", () => {
+    state.items.v1 = [exp({ bill_no: "PS-1", can_part: true, amount_due: 34000, tds_base: 0, tds_amount: 0, tds_section: "194J" })];
+    render(<DebitPayForSection transaction={txn(34000, "UPI SHARMA ASSOCIATES REST")} onDone={() => {}} />);
+    expect((screen.getByLabelText(/^Pay Bill PS-1 · /) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(/^Amount paid on Bill PS-1/) as HTMLInputElement).value).toBe("34000");
+    expect(screen.queryByText(/stays due/)).toBeNull();
+    expect(screen.queryByText(/\+ TDS/)).toBeNull();
+    expect(saveButton().disabled).toBe(false);
+  });
+});

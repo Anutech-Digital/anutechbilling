@@ -46,7 +46,7 @@ export type Vendor = VendorRow & {
 // Minimal shapes the rollup needs (keeps the pure fn independent of full rows).
 type RollupBill    = { vendor_id: string | null; total: number | null; paid_amount: number | null; bill_date: string | null; currency?: string | null; fx_rate?: number | null };
 type RollupExpense = { vendor_id: string | null; amount: number | null; expense_date: string | null; currency?: string | null; fx_rate?: number | null }
-  & Partial<Pick<ExpenseBillLike, "paid" | "tds_amount" | "reconciled_txn_id" | "category" | "payment_method" | "prepaid_advance_id" | "advance_applied">>;
+  & Partial<Pick<ExpenseBillLike, "paid" | "tds_amount" | "reconciled_txn_id" | "category" | "payment_method" | "prepaid_advance_id" | "advance_applied" | "paid_amount">>;
 type RollupAdvance = { vendor_id: string | null; vendor_name: string | null } & AdvanceLike;
 
 /**
@@ -83,6 +83,7 @@ export function rollupVendors(vendors: VendorRow[], bills: RollupBill[], expense
       amount: amt, paid: e.paid, tds_amount: e.tds_amount ?? 0, reconciled_txn_id: e.reconciled_txn_id ?? null,
       category: e.category ?? null, payment_method: e.payment_method ?? null, prepaid_advance_id: e.prepaid_advance_id ?? null,
       advance_applied: e.advance_applied ?? 0,   // R-1913
+      paid_amount: e.paid_amount ?? 0,           // R-1915: part paid from the bank
     });
     if (e.expense_date && (!a.last || e.expense_date > a.last)) a.last = e.expense_date;
     const code = (e.currency || "INR").toUpperCase();
@@ -138,7 +139,7 @@ export function useVendors() {
           .range(from, to));
       const expenses = await fetchAllRows<RollupExpense>((from, to) =>
         supabase
-          .from("expenses").select("vendor_id, amount, expense_date, currency, fx_rate, paid, tds_amount, reconciled_txn_id, category, payment_method, prepaid_advance_id, advance_applied")
+          .from("expenses").select("vendor_id, amount, expense_date, currency, fx_rate, paid, tds_amount, reconciled_txn_id, category, payment_method, prepaid_advance_id, advance_applied, paid_amount")
           .order("id", { ascending: true })
           .range(from, to));
       // R-1868: what is left of advances paid to vendors (Prepaid).
