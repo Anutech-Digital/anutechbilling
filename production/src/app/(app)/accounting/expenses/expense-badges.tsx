@@ -5,7 +5,6 @@
 import { Icon } from "@/components/ui/icon";
 import { rupee } from "@/lib/utils";
 import { expensePayStatus, type Expense } from "@/lib/queries/expenses";
-import { isPartlyPaidExpense } from "@/lib/accounting/vendor-account";
 
 /** Reconcile tag shown next to a Salaries expense's category. Salary expenses
  *  reflect their salary's paid-status (which supports PARTIAL payments); every
@@ -49,18 +48,13 @@ export function PayBadge({ e, today }: { e: Expense; today: string }) {
   const base = "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-3xs font-medium align-middle";
   if (!e.paid) {
     const overdue = expensePayStatus(e, today) === "overdue";
-    /* R-1915: part of it already paid from the bank — what is still due is under the amount. */
-    const partly = isPartlyPaidExpense(e);
-    const label = partly ? (overdue ? "Partly paid · overdue" : "Partly paid") : overdue ? "Overdue" : "To pay";
     return (
       <span
-        title={partly
-          ? `Part paid from the bank (${rupee(e.paid_amount ?? 0)}) — pay the rest from Banking.`
-          : overdue ? "Payable overdue — settle it and Mark paid." : "Payable — not paid yet."}
+        title={overdue ? "Payable overdue — settle it and Mark paid." : "Payable — not paid yet."}
         className={`${base} ${overdue ? "bg-rose/10 text-rose" : "bg-amber-soft text-amber-ink"}`}
       >
         <Icon name={overdue ? "alert" : "clock"} size={11} />
-        {label}
+        {overdue ? "Overdue" : "To pay"}
       </span>
     );
   }

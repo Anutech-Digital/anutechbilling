@@ -91,7 +91,7 @@ begin
   if n is distinct from 2 then raise exception 'FAIL A: Sharma has % open items (want 2)', n; end if;
   select * into r from public.bank_debit_vendor_open_items('eeeeeeee-0000-0000-0000-000000186601') limit 1;
   if r.doc_id is distinct from 'EXP-R1866-E1' or r.amount_due is distinct from 59000 or r.tds_base is distinct from 50000
-     or not r.can_part or r.source is distinct from 'expense' then   -- R-1915: expense bills can be part-paid
+     or r.can_part or r.source is distinct from 'expense' then
     raise exception 'FAIL A: first Sharma row % % % % %', r.doc_id, r.amount_due, r.tds_base, r.can_part, r.source; end if;
   select * into r from public.bank_debit_vendor_open_items('eeeeeeee-0000-0000-0000-000000186602') o where o.doc_id = 'BILL-R1866-B2';
   if r.amount_due is distinct from 23600 or r.tds_base is distinct from 20000 or not r.can_part or r.gst is distinct from 3600 then
@@ -240,10 +240,9 @@ begin
 
   ok := false;
   begin perform public.reconcile_bank_debit_to_vendor('11111111-0000-0000-0000-000000186608', null, '{"name":"Somebody Else"}'::jsonb,
-         '[{"source":"expense","doc_id":"EXP-R1866-OT","amount":25000}]'::jsonb);
-  -- R-1915: a part is allowed now; more than the bill still owes is refused.
-  exception when invalid_parameter_value then ok := sqlerrm like '%more than the ₹20000 still to pay%'; end;
-  if not ok then raise exception 'FAIL I: paying more than an expense bill owes not refused'; end if;
+         '[{"source":"expense","doc_id":"EXP-R1866-OT","amount":9999}]'::jsonb);
+  exception when invalid_parameter_value then ok := sqlerrm like '%paid in full%'; end;
+  if not ok then raise exception 'FAIL I: part payment of an expense bill not refused'; end if;
 
   ok := false;
   begin perform public.reconcile_bank_debit_to_vendor('11111111-0000-0000-0000-000000186608', 'eeeeeeee-0000-0000-0000-000000186601', null,
@@ -255,7 +254,7 @@ begin
      or exists (select 1 from public.bank_vendor_payment_lines where bank_txn_id = '11111111-0000-0000-0000-000000186608')
      or exists (select 1 from public.vendors where name = 'Somebody Else') then
     raise exception 'FAIL I: something was written'; end if;
-  raise notice 'PASS I: mismatch / COGS TDS / expense over-payment / wrong vendor refused, nothing written';
+  raise notice 'PASS I: mismatch / COGS TDS / expense part / wrong vendor refused, nothing written';
 end $$;
 
 -- J. Un-reconcile puts everything back

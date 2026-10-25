@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isOpenExpenseBill, expenseBillDue, advanceLeft, vendorBalance, balanceWords, vendorPaymentRows,
-  vendorAdvanceLeft, advanceToApply, billAdvanceView, isPartlyPaidExpense, expenseStillOwed,
+  vendorAdvanceLeft, advanceToApply, billAdvanceView,
 } from "./vendor-account";
 
 const exp = (o: Partial<Parameters<typeof isOpenExpenseBill>[0]> = {}) => ({
@@ -129,9 +129,9 @@ describe("R-1913 — the vendor's advance on a bill", () => {
   });
 
   it("before: the bill offers 'Apply advance ₹30,000'; after: ₹20,000 due, nothing more to apply", () => {
-    expect(billAdvanceView(bill(), [adv()])).toEqual({ applied: 0, paidPart: 0, due: 50000, canApply: 30000, canUndo: false });
+    expect(billAdvanceView(bill(), [adv()])).toEqual({ applied: 0, due: 50000, canApply: 30000, canUndo: false });
     expect(billAdvanceView(bill({ advance_applied: 30000 }), [adv({ consumed_amount: 30000 })]))
-      .toEqual({ applied: 30000, paidPart: 0, due: 20000, canApply: 0, canUndo: true });
+      .toEqual({ applied: 30000, due: 20000, canApply: 0, canUndo: true });
   });
 
   it("the popup's due takes the advance applied off (You owe ₹20,000, not ₹50,000)", () => {
@@ -162,41 +162,5 @@ describe("R-1913 — the vendor's advance on a bill", () => {
     expect(advanceToApply(30000, 20000)).toBe(20000);
     expect(advanceToApply(30000, 50000)).toBe(30000);
     expect(advanceToApply(0, 50000)).toBe(0);
-  });
-});
-
-/* R-1915 (R-1906 audit B5): Sharma Associates — ₹59,000 bill PS-1, ₹25,000 paid from a bank line. */
-describe("R-1915 — an expense bill paid in parts", () => {
-  const ps1 = (o: Partial<Parameters<typeof billAdvanceView>[0]> = {}) => ({
-    ...exp({ amount: 59000 }), vendor_id: "v-sharma", vendor_name: "Sharma Associates", advance_applied: 0, paid_amount: 0, ...o,
-  });
-
-  it("₹25,000 paid → 'Partly paid', ₹34,000 due (popup and the bill row)", () => {
-    const b = ps1({ paid_amount: 25000 });
-    expect(isPartlyPaidExpense(b)).toBe(true);
-    expect(isOpenExpenseBill(b)).toBe(true);
-    expect(expenseBillDue(b)).toBe(34000);
-    expect(vendorBalance(expenseBillDue(b), 0)).toMatchObject({ net: 34000, state: "owe" });
-    expect(billAdvanceView(b, [])).toEqual({ applied: 0, paidPart: 25000, due: 34000, canApply: 0, canUndo: false });
-    expect(expenseStillOwed(b)).toBe(34000);
-  });
-
-  it("not yet paid: not 'Partly paid'; still owed is the bill less the advance (TDS taken when paid)", () => {
-    expect(isPartlyPaidExpense(ps1())).toBe(false);
-    expect(expenseStillOwed(ps1({ tds_amount: 5000 }))).toBe(59000);
-    expect(expenseStillOwed(ps1({ advance_applied: 9000 }))).toBe(50000);
-  });
-
-  it("TDS ₹5,000 went with the first part (₹20,000 cash) → ₹34,000 cash due", () => {
-    const b = ps1({ paid_amount: 20000, tds_amount: 5000 });
-    expect(expenseBillDue(b)).toBe(34000);
-    expect(expenseStillOwed(b)).toBe(34000);
-  });
-
-  it("the rest paid → no longer open; with an advance + part the due is what is left", () => {
-    expect(isOpenExpenseBill(ps1({ paid_amount: 59000 }))).toBe(false);
-    expect(isPartlyPaidExpense(ps1({ paid_amount: 59000, paid: true }))).toBe(false);
-    const v = billAdvanceView(ps1({ amount: 50000, advance_applied: 30000, paid_amount: 5000 }), []);
-    expect(v).toMatchObject({ applied: 30000, paidPart: 5000, due: 15000, canUndo: false });
   });
 });
