@@ -71,6 +71,7 @@ import { IncentiveFromBankSection } from "@/components/features/banking/incentiv
 import { EmployeeAdvanceBankSection } from "@/components/features/banking/employee-advance-bank-section";
 import { useComplianceProfile } from "@/lib/compliance/profile";
 import { ownerEquityWords } from "@/lib/accounting/owner-equity";
+import { expenseGuard, sameVendor, type VendorFocus } from "@/lib/banking/vendor-line-guard";
 
 interface Props {
   open: boolean;
@@ -211,9 +212,24 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     return prepaidVendorNames.find((v) => v.toUpperCase().startsWith(key)) ?? titleCaseName(pattern);
   }, [transaction, categoryRules, prepaidVendorNames]);
 
+  /* R-1917 (R-1906 audit B8): the vendor the "Paying a vendor?" section is on (guessed from the
+     narration or picked) and its open items. With a vendor, that section is the ONE way: it is the
+     only block open and its Record payment the only primary button; every other choice sits behind
+     "Not a vendor payment?". "Book as expense" for the same vendor is refused when one of its open
+     items equals this line (book_bank_txn_as_expense refuses it too). */
+  const [vendorFocus, setVendorFocus] = React.useState<VendorFocus | null>(null);
+  const [showOther, setShowOther] = React.useState(false);
+  React.useEffect(() => { setVendorFocus(null); setShowOther(false); }, [transaction?.id]);
+  /* The expense form's payee: the vendor the line is paid to, else the Category Rule / narration payee. */
   React.useEffect(() => {
-    setBookVendor(suggestedVendor);
-  }, [transaction?.id, suggestedVendor]);
+    setBookVendor(vendorFocus?.vendorName || suggestedVendor);
+  }, [transaction?.id, suggestedVendor, vendorFocus?.vendorName]);
+  const expenseCheck = expenseGuard(vendorFocus, bookVendor, transaction?.debit ?? 0);
+  const otherWaysRef = React.useRef<HTMLButtonElement>(null);
+  const backToVendor = () => {
+    setShowOther(false);
+    otherWaysRef.current?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  };
 
   /* R-1866: paying a vendor (open bills, a new bill, an advance) is DebitPayForSection. R-1911: a
      payment ALREADY recorded on the Bills / Expenses page is matched there too (listed first and
@@ -240,7 +256,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   };
 
   const handleBookExpense = async () => {
-    if (!transaction || !bookCategory) return;
+    if (!transaction || !bookCategory || expenseCheck?.blocked) return;
     try {
       await bookExpense.mutateAsync({
         transactionId: transaction.id,
@@ -456,6 +472,13 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const amount   = isCredit ? transaction?.credit ?? 0 : transaction?.debit ?? 0;
   const dirIcon  = isCredit ? "arrow_left" : "arrow_right";
   const dirLabel = isCredit ? "Money in"   : "Money out";
+  /* R-1917: a money-out line with a known vendor — the vendor section is the one way. */
+  const vendorLine = !isCredit && !govtHint && vendorFocus !== null && !payForDone;
+  /* "Combine multiple expenses": the vendor's own unpaid bills are paid in its section above (with
+     TDS) — not offered a second time here. */
+  const combineCandidates = (candidateExpenses ?? []).filter((e) =>
+    !vendorLine || !vendorFocus
+      || !((vendorFocus.vendorId && e.vendor_id === vendorFocus.vendorId) || sameVendor(e.vendor_name ?? "", vendorFocus.vendorName)));
 
 
   /* The statutory / tax section, defined once and placed either first (a detected
@@ -588,6 +611,64 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
 
     </>
   );
+  const suggestionsBlock = (
+    <div>
+      <p className="text-xs font-semibold text-ink-2 mb-2">
+        Suggested matches
+      </p>
+
+      {sugLoading ? (
+        <div className="space-y-2">
+          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-14" />)}
+        </div>
+      ) : !suggestions || suggestions.length === 0 ? (
+        <div className="rounded-md border border-dashed border-hairline bg-paper-2/20 px-4 py-6 text-center">
+          <Icon name="info" size={18} className="text-ink-3 mx-auto mb-1" />
+          <p className="text-sm text-ink-2">No close matches found</p>
+          <p className="text-xs text-ink-3 mt-1">
+            We looked for {isCredit ? "payments" : "expenses"} within ±₹100 and
+            ±7 days. Use &ldquo;Mark reconciled manually&rdquo; below for bank
+            charges, interest, or owner transfers.
+          </p>
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {suggestions.map((s) => (
+            <li
+              key={`${s.match_type}-${s.match_id}`}
+              className="rounded-md border border-hairline bg-paper hover:border-hairline-strong transition-colors p-3 flex items-center gap-3"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <Badge
+                    kind={s.match_type === "payment" ? "success" : s.match_type === "project" ? "info" : s.match_type === "salary" ? "warning" : "muted"}
+                    size="sm"
+                  >
+                    {s.match_type === "payment" ? "Payment" : s.match_type === "project" ? "Project" : s.match_type === "salary" ? "Salary" : "Expense"}
+                  </Badge>
+                  <ConfidencePill confidence={s.match_confidence} />
+                </div>
+                <p className="text-sm font-medium text-ink truncate">
+                  {s.match_label}
+                </p>
+                <p className="text-xs text-ink-3">
+                  {rupee(s.match_amount)} · {formatDate(s.match_date)}
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => handleMatch(s)}
+                disabled={reconcile.isPending}
+              >
+                Match
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -633,63 +714,9 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
               </div>
             </div>
 
-            {/* Suggested matches — hidden once "This money is for:" has booked the line (R-1838). */}
-            {!payForDone && <div>
-              <p className="text-xs font-semibold text-ink-2 mb-2">
-                Suggested matches
-              </p>
-
-              {sugLoading ? (
-                <div className="space-y-2">
-                  {[1, 2, 3].map((i) => <Skeleton key={i} className="h-14" />)}
-                </div>
-              ) : !suggestions || suggestions.length === 0 ? (
-                <div className="rounded-md border border-dashed border-hairline bg-paper-2/20 px-4 py-6 text-center">
-                  <Icon name="info" size={18} className="text-ink-3 mx-auto mb-1" />
-                  <p className="text-sm text-ink-2">No close matches found</p>
-                  <p className="text-xs text-ink-3 mt-1">
-                    We looked for {isCredit ? "payments" : "expenses"} within ±₹100 and
-                    ±7 days. Use &ldquo;Mark reconciled manually&rdquo; below for bank
-                    charges, interest, or owner transfers.
-                  </p>
-                </div>
-              ) : (
-                <ul className="space-y-2">
-                  {suggestions.map((s) => (
-                    <li
-                      key={`${s.match_type}-${s.match_id}`}
-                      className="rounded-md border border-hairline bg-paper hover:border-hairline-strong transition-colors p-3 flex items-center gap-3"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <Badge
-                            kind={s.match_type === "payment" ? "success" : s.match_type === "project" ? "info" : s.match_type === "salary" ? "warning" : "muted"}
-                            size="sm"
-                          >
-                            {s.match_type === "payment" ? "Payment" : s.match_type === "project" ? "Project" : s.match_type === "salary" ? "Salary" : "Expense"}
-                          </Badge>
-                          <ConfidencePill confidence={s.match_confidence} />
-                        </div>
-                        <p className="text-sm font-medium text-ink truncate">
-                          {s.match_label}
-                        </p>
-                        <p className="text-xs text-ink-3">
-                          {rupee(s.match_amount)} · {formatDate(s.match_date)}
-                        </p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="primary"
-                        onClick={() => handleMatch(s)}
-                        disabled={reconcile.isPending}
-                      >
-                        Match
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>}
+            {/* Suggested matches — hidden once "This money is for:" has booked the line (R-1838); behind
+                "Not a vendor payment?" on a vendor line (R-1917). */}
+            {!payForDone && !vendorLine && suggestionsBlock}
 
             {/* R-1838: money from a customer — FIRST, it is the commonest money-in. Says what
                 the money is for (renewal / add seats / new-product quote, unpaid invoice, or a new
@@ -722,19 +749,39 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
 
             {/* R-1864: an EMI / loan repayment — matched to the loan's instalment and split into
                 principal (reduces the loan) + interest (P&L); opens itself when the line looks like one. */}
-            {!isCredit && !payForDone && (
+            {!isCredit && !payForDone && !vendorLine && (
               <EmiRepaymentSection transaction={transaction} onDone={() => onOpenChange(false)} />
             )}
 
             {/* R-1866: money to a vendor — "This payment is for:" its open bills (several, part,
                 net of TDS), a bill recorded on the spot, an advance, a bank charge. One transaction.
-                A challan to the government (govtHint) is not a vendor — booked below instead. */}
+                A challan to the government (govtHint) is not a vendor — booked below instead.
+                R-1917: once it knows the vendor it is the one way — everything else is folded below. */}
             {!isCredit && !govtHint && (
-              <DebitPayForSection transaction={transaction} onSaved={() => setPayForDone(true)} onDone={() => onOpenChange(false)} />
+              <DebitPayForSection transaction={transaction} onSaved={() => setPayForDone(true)} onDone={() => onOpenChange(false)} onVendorChange={setVendorFocus} />
             )}
 
-            {/* Once booked, only the result stays: the other choices no longer apply to this line. */}
-            {!payForDone && (<>
+            {vendorLine && (
+              <button
+                ref={otherWaysRef}
+                type="button"
+                onClick={() => setShowOther((v) => !v)}
+                aria-expanded={showOther}
+                className="w-full flex items-center justify-between gap-2 rounded-md border border-hairline px-3 py-2 text-left hover:border-hairline-strong"
+              >
+                <span className="text-xs font-semibold text-ink-2">
+                  Not a payment to {vendorFocus?.vendorName}? Other ways to book this line
+                </span>
+                <Icon name={showOther ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3 shrink-0" />
+              </button>
+            )}
+
+            {/* Once booked, only the result stays: the other choices no longer apply to this line.
+                R-1917: on a vendor line they open only from "Not a payment to …?". */}
+            {!payForDone && (!vendorLine || showOther) && (<>
+
+            {vendorLine && suggestionsBlock}
+            {vendorLine && <EmiRepaymentSection transaction={transaction} onDone={() => onOpenChange(false)} />}
 
             {/* Book money-IN as capital / a director's loan — credit lines only.
                 Adds the Balance-Sheet line AND reconciles, in one step. */}
@@ -877,12 +924,23 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                     <Input aria-label="GST paid ₹ (optional)" value={bookGst} onChange={(e) => setBookGst(e.target.value)} type="number" min={0} placeholder="GST paid ₹ (optional)" />
                   </div>
                 </div>
+                {/* R-1917 (B8): this vendor's open bill of this amount is PAID with this line, not booked again. */}
+                {expenseCheck && (
+                  <div role={expenseCheck.blocked ? "alert" : "note"} className={`mt-2.5 rounded-md border px-2.5 py-2 text-xs leading-relaxed ${expenseCheck.blocked ? "border-rose/40 bg-rose-soft/30 text-rose-ink" : "border-amber/40 bg-paper text-amber-ink"}`}>
+                    <p>{expenseCheck.message}</p>
+                    {expenseCheck.blocked && (
+                      <button type="button" onClick={backToVendor} className="mt-1 font-medium underline hover:no-underline">
+                        Go to Record payment
+                      </button>
+                    )}
+                  </div>
+                )}
                 <Button
                   size="sm"
                   variant="primary"
                   icon="check"
                   className="mt-3"
-                  disabled={!bookCategory || bookExpense.isPending}
+                  disabled={!bookCategory || bookExpense.isPending || Boolean(expenseCheck?.blocked)}
                   loading={bookExpense.isPending}
                   onClick={handleBookExpense}
                 >
@@ -1081,7 +1139,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
 
             {/* Combine several expenses into one bank line (money-out only).
                 e.g. multiple bills, or 2 months' salary, paid in one transfer. */}
-            {!isCredit && (candidateExpenses ?? []).length > 0 && (
+            {!isCredit && combineCandidates.length > 0 && (
               <div className="rounded-md border border-hairline p-3">
                 <button
                   type="button"
@@ -1099,7 +1157,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 {showSplit && (
                   <div className="mt-2 space-y-2">
                     <ul className="max-h-52 overflow-y-auto space-y-1 pr-1">
-                      {(candidateExpenses ?? []).map((e) => (
+                      {combineCandidates.map((e) => (
                         <li key={e.id}>
                           <label className="flex items-center gap-2 rounded-md border border-hairline px-2.5 py-1.5 cursor-pointer hover:border-hairline-strong">
                             <input

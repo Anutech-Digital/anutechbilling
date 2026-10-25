@@ -37,6 +37,7 @@ import {
   resultLines, summarise, tdsMap, vendorPan,
   type NewBillDraft, type VendorLite, type VendorOpenItem, type VendorPayResult,
 } from "@/lib/banking/debit-pay-for";
+import type { VendorFocus } from "@/lib/banking/vendor-line-guard";
 
 const NEW_VENDOR = "__new_vendor__";
 const TDS_SECTIONS = Object.keys(TDS_SECTION_RATES);
@@ -50,9 +51,12 @@ interface Props {
   /** The line is booked — the parent hides the choices that no longer apply. */
   onSaved?: () => void;
   onDone: () => void;
+  /** R-1917: the vendor this line is being paid to (guessed or picked) and its open items — the
+   *  sheet makes this section the one way and guards "Book as expense" with it. null = no vendor. */
+  onVendorChange?: (focus: VendorFocus | null) => void;
 }
 
-export function DebitPayForSection({ transaction, onSaved, onDone }: Props) {
+export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChange }: Props) {
   const debit = transaction.debit ?? 0;
 
   /* ── 1. Vendor ───────────────────────────────────────────────────────────── */
@@ -74,6 +78,11 @@ export function DebitPayForSection({ transaction, onSaved, onDone }: Props) {
   /* ── 2. Open bills ───────────────────────────────────────────────────────── */
   const { data: items, isLoading: itemsLoading } = useVendorOpenItems(vendor?.id ?? null);
   const open = React.useMemo(() => items ?? [], [items]);
+  /* R-1917: tell the sheet which vendor this line is for, with its open items once loaded. */
+  React.useEffect(() => {
+    if (!onVendorChange) return;
+    onVendorChange(vendorName ? { vendorId: vendor?.id ?? null, vendorName, openItems: vendor && items ? items : [] } : null);
+  }, [onVendorChange, vendorName, vendor, items]);
   const [picked, setPicked] = React.useState<Set<string>>(new Set());
   const [cashEdit, setCashEdit] = React.useState<Record<string, number>>({});
 
