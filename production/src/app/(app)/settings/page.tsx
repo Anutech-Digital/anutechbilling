@@ -56,6 +56,7 @@ import RazorpayConfigureDialog from "@/components/features/integrations/razorpay
 import EmailSendingCard from "@/components/features/integrations/email-sending-card";
 import ChangePasswordCard from "@/components/features/settings/change-password-card";
 import { TwoFactorCard } from "@/components/features/settings/two-factor-card";
+import { MobileNumberCard } from "@/components/features/settings/mobile-number-card";
 import GeminiConfigureDialog from "@/components/features/integrations/gemini-configure-dialog";
 import ApiKeysCard from "@/components/features/integrations/api-keys-card";
 import ZohoBooksCard from "@/components/features/integrations/zoho-books-card";
@@ -1248,7 +1249,7 @@ function SettingsPageInner() {
       {tab === "integrations"  && <IntegrationsTab />}
       {tab === "branding"      && <BrandingTab />}
       {tab === "notifications" && <NotificationsCard />}
-      {tab === "security"      && <div className="max-w-md"><ChangePasswordCard /><TwoFactorCard /></div>}
+      {tab === "security"      && <div className="max-w-md"><ChangePasswordCard /><TwoFactorCard /><MobileNumberCard /></div>}
       {tab === "import"        && <ImportTab />}
     </div>
   );
