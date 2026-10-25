@@ -18,6 +18,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { statutoryDues, type DuesSummary } from "@/lib/accounting/tds-deductor";
 import { monthBounds } from "@/lib/dates/ist";
 import { fetchCogsBillTds } from "@/lib/queries/cogs-bill-tds";
+import { resolveSalaryBankLines, salariesNeedingBankLine, type BankLineFacts, type BankLineRef } from "@/lib/payroll/salary-bank-link";
 
 /** R-607: no pin_hash — members cannot read it (20261010010000). Use `pin_set`. */
 export type Employee = Omit<Database["public"]["Tables"]["employees"]["Row"], "pin_hash">;
@@ -355,6 +356,36 @@ export function useUnlinkedSalaryBankLines(nets: number[], since: string | null)
         if (!byAmount.has(k)) byAmount.set(k, r.bank_account_id);
       }
       return byAmount;
+    },
+    staleTime: 30_000,
+  });
+}
+
+/** R-1895: salary id → the bank line that paid it (account + line id), for the Salary Register's
+ *  "open the bank line" link. reconciled_txn_id first; else a line matched to the salary or its
+ *  expense (lib/payroll/salary-bank-link). Only paid / partial salaries are looked up. */
+export function useSalaryBankLines(rows: readonly SalaryPayment[]) {
+  const need = salariesNeedingBankLine(rows);
+  const txnIds = [...new Set(need.map((p) => p.reconciled_txn_id).filter((x): x is string => !!x))].sort();
+  const loose = need.filter((p) => !p.reconciled_txn_id);
+  const salIds = loose.map((p) => p.id).sort();
+  const expIds = loose.map((p) => p.expense_id).filter((x): x is string => !!x).sort();
+  return useQuery({
+    queryKey: ["salary-payments", "bank-lines", txnIds.join(","), salIds.join(","), expIds.join(",")],
+    enabled: need.length > 0,
+    queryFn: async (): Promise<Map<string, BankLineRef>> => {
+      const supabase = createClient();
+      const cols = "id, bank_account_id, txn_date, matched_to_type, matched_to_id";
+      const chunks = (xs: readonly string[], n = 150) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+      const reads: Promise<BankLineFacts[]>[] = [
+        ...chunks(txnIds).map((ids) => fetchAllRows<BankLineFacts>((from, to) => supabase.from("bank_transactions").select(cols)
+          .in("id", ids).order("id", { ascending: true }).range(from, to))),
+        ...chunks(salIds).map((ids) => fetchAllRows<BankLineFacts>((from, to) => supabase.from("bank_transactions").select(cols)
+          .eq("matched_to_type", "salary").in("matched_to_id", ids).order("id", { ascending: true }).range(from, to))),
+        ...chunks(expIds).map((ids) => fetchAllRows<BankLineFacts>((from, to) => supabase.from("bank_transactions").select(cols)
+          .eq("matched_to_type", "expense").in("matched_to_id", ids).order("id", { ascending: true }).range(from, to))),
+      ];
+      return resolveSalaryBankLines(need, (await Promise.all(reads)).flat());
     },
     staleTime: 30_000,
   });

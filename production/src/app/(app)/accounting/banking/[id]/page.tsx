@@ -77,6 +77,7 @@ import {
   type StatusFilter,
 } from "@/lib/banking/bank-filters";
 import { reconcileCoverage } from "@/lib/banking/reconcile-coverage";
+import { revealTxn } from "@/lib/banking/txn-deep-link";
 import { guessVendor, type VendorLite } from "@/lib/banking/debit-pay-for";
 import { useVendors } from "@/lib/queries/vendors";
 import { BankFilterBar, type ImportOption } from "@/components/features/banking/bank-filter-bar";
@@ -130,6 +131,8 @@ export default function BankAccountDetailPage() {
   /* The booking is kept as it was when Relink was pressed: after the save the line leaves the
      old-bookings list, and the dialog must stay open to show what happened. */
   const [relink,        setRelink]        = React.useState<{ txn: BankTransactionRow; booking: OldOneOffBooking } | null>(null);
+  /* R-1895: ?txn=<line> (e.g. from the Salary Register) — that line is scrolled to and lit up. */
+  const [highlightId,   setHighlightId]   = React.useState<string | null>(null);
   /* Relink removes the old receipt — owner / accountant, as delete_payment (the server checks too). */
   const canRelink = role === "owner" || role === "accountant";
 
@@ -270,6 +273,8 @@ export default function BankAccountDetailPage() {
   };
 
   // Deep-link from elsewhere (e.g. Payroll "Reconcile in Banking →"):
+  //   ?txn=<txnId>     → show that line (R-1895): filters / "Load more" set so it is drawn,
+  //                      scrolled to and highlighted for a few seconds — nothing opens
   //   ?focus=<txnId>   → open that transaction's reconcile
   //   ?match=<amount>  → open the matching unmatched debit's reconcile
   // Runs once, after transactions load; cleans the URL so a refresh won't repeat.
@@ -278,6 +283,23 @@ export default function BankAccountDetailPage() {
     if (focusedRef.current || !transactions || transactions.length === 0) return;
     if (typeof window === "undefined") return;
     const sp = new URLSearchParams(window.location.search);
+    const txnParam = sp.get("txn");
+    if (txnParam) {
+      focusedRef.current = true;
+      const shown = revealTxn(transactions, filtersFromQuery(sp), filterCtx, txnParam);
+      sp.delete("txn");
+      if (shown) {
+        setFiltersState(shown.filters);
+        setShownCount(shown.shownCount);
+        setHighlightId(txnParam);
+        const qs = filtersToQuery(shown.filters).toString();
+        window.history.replaceState(window.history.state, "", qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
+      } else {
+        toast("That bank line is not in this account's statement any more.");
+        window.history.replaceState(window.history.state, "", sp.toString() ? `${window.location.pathname}?${sp}` : window.location.pathname);
+      }
+      return;
+    }
     const focus = sp.get("focus");
     const match = sp.get("match");
     if (!focus && !match) return;
@@ -293,7 +315,17 @@ export default function BankAccountDetailPage() {
     else toast("No unmatched bank line for that amount — reconcile it manually below.");
     window.history.replaceState(window.history.state, "", `${window.location.pathname}?status=unmatched`);
     setFilters({ ...DEFAULT_FILTERS, status: "unmatched" });
-  }, [transactions, setFilters]);
+  }, [transactions, setFilters, filterCtx]);
+
+  /* R-1895: once the highlighted line is drawn, bring it into view; the glow fades after 3 s. */
+  React.useEffect(() => {
+    if (!highlightId) return;
+    const el = Array.from(document.querySelectorAll<HTMLElement>(`[data-txn-id="${CSS.escape(highlightId)}"]`))
+      .find((e) => e.offsetParent !== null);
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+    const t = window.setTimeout(() => setHighlightId(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [highlightId, shownCount]);
 
   if (accLoading) {
     return <div className="p-8"><Skeleton className="h-32" /></div>;
@@ -575,6 +607,7 @@ export default function BankAccountDetailPage() {
                     <TransactionRow
                       key={txn.id}
                       txn={txn}
+                      highlighted={txn.id === highlightId}
                       invoiceMatch={canWrite ? invoiceChips.get(txn.id) : undefined}
                       onReconcile={canWrite ? () => openReconcile(txn) : undefined}
                       onUnreconcile={canWrite ? () => setUnreconcileTxn(txn) : undefined}
@@ -595,6 +628,7 @@ export default function BankAccountDetailPage() {
               <TransactionCard
                 key={txn.id}
                 txn={txn}
+                highlighted={txn.id === highlightId}
                 invoiceMatch={canWrite ? invoiceChips.get(txn.id) : undefined}
                 onReconcile={canWrite ? () => openReconcile(txn) : undefined}
                 onUnreconcile={canWrite ? () => setUnreconcileTxn(txn) : undefined}
@@ -674,14 +708,19 @@ function TxnStatusBadge({ txn }: { txn: BankTransactionRow }) {
 // ============================================================
 // Row (desktop)
 // ============================================================
+/** R-1895: the line a deep link (?txn=) pointed at — lit up for a few seconds. */
+const HIGHLIGHT = "bg-amber-soft ring-2 ring-inset ring-amber-400 transition-colors duration-700";
+
 function TransactionRow({
   txn,
+  highlighted = false,
   invoiceMatch,
   onReconcile,
   onUnreconcile,
   onRelink,
 }: {
   txn: BankTransactionRow;
+  highlighted?: boolean;
   /** R-399: a certain open-invoice match for this unmatched credit — the chip opens the drawer. */
   invoiceMatch?: InvoiceMatch;
   /** Both left out for a read-only viewer (R-254) — the status shows, the buttons do not. */
@@ -693,7 +732,8 @@ function TransactionRow({
   const reconcile = useReconcileTransaction();
 
   return (
-    <tr className="border-b border-hairline last:border-b-0 hover:bg-paper-2/30">
+    <tr data-txn-id={txn.id} aria-current={highlighted ? "true" : undefined}
+      className={`border-b border-hairline last:border-b-0 transition-colors duration-700 ${highlighted ? HIGHLIGHT : "hover:bg-paper-2/30"}`}>
       <td className="px-4 py-3 text-ink-2 whitespace-nowrap truncate">
         {formatDate(txn.txn_date)}
       </td>
@@ -759,13 +799,13 @@ function TransactionRow({
 // ============================================================
 // Card (mobile)
 // ============================================================
-function TransactionCard({ txn, invoiceMatch, onReconcile, onUnreconcile, onRelink }: {
-  txn: BankTransactionRow; invoiceMatch?: InvoiceMatch; onReconcile?: () => void; onUnreconcile?: () => void; onRelink?: () => void;
+function TransactionCard({ txn, highlighted = false, invoiceMatch, onReconcile, onUnreconcile, onRelink }: {
+  txn: BankTransactionRow; highlighted?: boolean; invoiceMatch?: InvoiceMatch; onReconcile?: () => void; onUnreconcile?: () => void; onRelink?: () => void;
 }) {
   const reconcile = useReconcileTransaction();
   return (
-    <li>
-      <Card className="p-3">
+    <li data-txn-id={txn.id} aria-current={highlighted ? "true" : undefined}>
+      <Card className={`p-3 transition-colors duration-700 ${highlighted ? HIGHLIGHT : ""}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-sm font-medium leading-snug text-ink break-words">{txn.description}</div>
