@@ -78,6 +78,21 @@ describe("middleware on Auth.js — deactivated member is signed out (R-1103 / R
     expect(cleared(r)).toEqual(["__Secure-authjs.session-token"]);
   });
 
+  it("R-1896: ex-employee past their last working day (access_ends_on) is signed out", async () => {
+    st.row = { role: "sales", can_view_deals: false, is_active: true, access_ends_on: "2020-01-31" };
+    const r = await go("/leads");
+    expect(r.status).toBe(307);
+    expect(new URL(r.headers.get("location")!).searchParams.get("error")).toBe("deactivated");
+    expect(cleared(r)).toEqual(["__Secure-authjs.session-token"]);
+  });
+
+  it("R-1896: last working day still ahead → works as normal", async () => {
+    st.row = { role: "sales", can_view_deals: false, is_active: true, access_ends_on: "2099-12-31" };
+    const r = await go("/leads");
+    expect(r.status).toBe(200);
+    expect(cleared(r)).toEqual([]);
+  });
+
   it("deactivated member on /login: renders (no loop), cookie cleared", async () => {
     st.row = { role: "sales", can_view_deals: false, is_active: false };
     const r = await go("/login?error=deactivated");
