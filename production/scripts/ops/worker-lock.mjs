@@ -19,6 +19,8 @@
  *   node scripts/ops/worker-lock.mjs push    R-197      (inside the worktree: waits its turn, rebases, pushes)
  *   node scripts/ops/worker-lock.mjs list
  *   node scripts/ops/worker-lock.mjs prep    R-197 <path>...   (manager, before a card is given out)
+ *   node scripts/ops/worker-lock.mjs wip     R-197               (R-1898: worktree HEAD → anutech wip/r-197)
+ *   node scripts/ops/worker-lock.mjs resume  R-197 <worktree>    (R-1898: any laptop picks up a stopped card)
  *
  * prep — card prep (6 Oct: R-202's card named a page that does not exist; R-197's page was a
  * re-export of leads/page.tsx). For every path: does it exist, and if it is a one-line
@@ -302,9 +304,123 @@ async function pushWithTurn(card) {
     catch { console.error("✗ secret-scan ne push roka — upar wali file:line se value hatao (env var use karo). Asli secret kabhi push hua ho to ROTATE karo."); process.exit(6); }
     /* R-816 worker (10 Oct): on a detached worktree the branch name is empty and the old command became
        `git push anutech :manager-pardeep` — a branch DELETE (GitHub protection refused it). Push HEAD. */
-    sh("git push -q anutech HEAD:manager-pardeep");
+    sh("git push -q anutech HEAD:manager-pardeep", pushEnv("push", card));
     console.log(pushDoneLine(card, plan));
   });
+}
+
+/**
+ * R-1898 (25 Oct 2026) — any member's Claude Code picks up any member's stopped card.
+ * Pardeep: "kisi bhi team member ke claude code se kisi bhi team member ka ruka kaam aage badhe".
+ * Half-done work lives on GitHub at anutech wip/<card lowercase>; the board card (status, claimedBy,
+ * liveLog, `branch`) says where it stopped. docs/TEAM-PROTOCOL.md → "Picking up a stopped card".
+ *
+ *   node scripts/ops/worker-lock.mjs wip    R-197                (inside the worktree: HEAD → anutech wip/r-197)
+ *   node scripts/ops/worker-lock.mjs resume R-197 <new worktree> (fetch wip/r-197, worktree w-r-197 from it)
+ *   node scripts/ops/worker-lock.mjs guard-push [remote] [url]   (git pre-push hook: refs on stdin)
+ *
+ * `git` is injected ((args, {env}) => stdout) so tests drive these with a fake git.
+ */
+export const WIP_REMOTE = "anutech";
+export const PUSH_MODE_ENV = "WORKER_LOCK_PUSH_MODE";
+export const PUSH_CARD_ENV = "WORKER_LOCK_PUSH_CARD";
+
+/** "R-1898" → "wip/r-1898". Only real card ids. */
+export function wipBranch(card) {
+  const id = String(card ?? "").trim().toUpperCase();
+  if (!/^R-\d+$/.test(id)) throw new Error(`card id chahiye (jaise R-197), mila: ${card}`);
+  return `wip/${id.toLowerCase()}`;
+}
+
+/** The env a push made by this script carries, so the pre-push guard knows who is pushing what. */
+export function pushEnv(mode, card, env = process.env) {
+  return { ...env, [PUSH_MODE_ENV]: mode, [PUSH_CARD_ENV]: String(card).toUpperCase() };
+}
+
+/**
+ * wip: push the worktree HEAD to anutech wip/<card>. `branch` (optional) is what the caller asked
+ * for — anything but the card's own wip branch is refused before git is touched. The lease is
+ * explicit: the tip this clone last fetched/pushed ("" = must not exist yet), so a teammate's newer push to the
+ * same wip branch is never overwritten silently. Returns { ok, message, branch?, sha? }.
+ */
+export function runWip(card, { git, branch, env = process.env } = {}) {
+  let own;
+  try { own = wipBranch(card); } catch (e) { return { ok: false, message: `✗ ${e.message}` }; }
+  const id = String(card).toUpperCase();
+  const target = branch == null ? own : String(branch).replace(/^refs\/heads\//, "");
+  if (target !== own) {
+    return { ok: false, message: `✗ ${id}: wip sirf ${own} par push hota hai — "${target}" mana hai (manager-pardeep/main/deploy/staging/doosre card ki branch kabhi nahi).` };
+  }
+  const dirty = git(["status", "--porcelain"]).trim();
+  /* The lease is the wip tip THIS clone last saw (resume's fetch / our own last wip push), not a fresh
+     ls-remote: if a teammate pushed the same wip branch since, GitHub has moved past it and the push is refused. */
+  let remoteSha = "";
+  try { remoteSha = git(["rev-parse", "--verify", "-q", `refs/remotes/${WIP_REMOTE}/${own}`]).trim(); } catch {}
+  try {
+    git(["push", "-q", `--force-with-lease=refs/heads/${own}:${remoteSha}`, WIP_REMOTE, `HEAD:refs/heads/${own}`], { env: pushEnv("wip", id, env) });
+  } catch (e) {
+    return { ok: false, message: `✗ ${id}: ${own} push nahi hua — GitHub par kisi ne isi branch par naya push kiya (lease) ya network. git fetch ${WIP_REMOTE} karke dekho; zabardasti mat karo.\n${String(e?.stderr ?? e?.message ?? e).slice(-600)}` };
+  }
+  const sha = git(["rev-parse", "--short", "HEAD"]).trim();
+  const lines = [
+    `✓ ${id} WIP GitHub par: ${WIP_REMOTE}/${own} @ ${sha}${remoteSha ? "" : " (nayi branch)"}`,
+    `  Card par likho (ArtifactData update): "branch": "${own}" + liveLog "done …; next …; branch ${own}".`,
+  ];
+  if (dirty) lines.push(`  (dhyan: bina commit ki badli files push NAHI hui — pehle "WIP ${id}: …" commit karo, phir wip dobara.)`);
+  return { ok: true, branch: own, sha, message: lines.join("\n") };
+}
+
+/**
+ * resume: fetch anutech wip/<card> and build a NEW worktree (branch w-<card>) from it.
+ * `exists` is injected (fs.existsSync in the CLI). Returns { ok, message }.
+ */
+export function runResume(card, worktree, { git, exists }) {
+  let own;
+  try { own = wipBranch(card); } catch (e) { return { ok: false, message: `✗ ${e.message}` }; }
+  const id = String(card).toUpperCase();
+  if (!worktree) return { ok: false, message: `resume ${id} <naya worktree folder>   (jaise C:/Users/<you>/reselleros-w-${id.toLowerCase()})` };
+  if (exists(worktree)) return { ok: false, message: `✗ ${worktree} pehle se hai — naya folder do (ya wahi worktree hai to usme git pull karo).` };
+  try { git(["fetch", "-q", WIP_REMOTE, `+refs/heads/${own}:refs/remotes/${WIP_REMOTE}/${own}`]); }
+  catch { return { ok: false, message: `✗ ${id}: GitHub par ${WIP_REMOTE}/${own} nahi mili — uthane ko WIP nahi. Card ka liveLog dekho; naya kaam ${WIP_REMOTE}/manager-pardeep se shuru karo.` }; }
+  const local = `w-${id.toLowerCase()}`;
+  try { git(["worktree", "add", worktree, "-b", local, `${WIP_REMOTE}/${own}`]); }
+  catch (e) { return { ok: false, message: `✗ worktree nahi bana (branch ${local} pehle se? \`git branch -D ${local}\` sirf tab jab wo khaali ho):\n${String(e?.stderr ?? e?.message ?? e).slice(-600)}` }; }
+  const last = git(["log", "-1", "--format=%h %s", `${WIP_REMOTE}/${own}`]).trim();
+  return {
+    ok: true,
+    message: [
+      `✓ ${id} uthaya: ${worktree} (branch ${local}) ← ${WIP_REMOTE}/${own} @ ${last}`,
+      "Ab:",
+      `  1. Board: card ${id} → status doing, claimedBy = tumhara naam, claimedAt (date -u), liveLog "picked up from <pichhla claimedBy> — <kahan ruka tha>; next …".`,
+      "  2. node_modules junction/symlink + production/.env.local copy + npx prisma generate (docs/WORKER-STEPS.md step 1).",
+      `  3. production/ se: node scripts/ops/worker-lock.mjs claim ${id} ${worktree} <files>... --card <card.json>`,
+      `  4. Card ke aakhri liveLog ka "next" se aage; har green step par commit + wip ${id}; aakhir me sirf push ${id}.`,
+    ].join("\n"),
+  };
+}
+
+/**
+ * Pre-push guard, pure: `lines` = git pre-push stdin ("<local ref> <local sha> <remote ref> <remote sha>").
+ * wip/* only from `wip` and only to that card's own branch; manager-pardeep only from `push`.
+ * Other refs are not this guard's business. Returns { ok, message }.
+ */
+export function guardPush(lines, env = process.env) {
+  const mode = env[PUSH_MODE_ENV] || "";
+  const card = env[PUSH_CARD_ENV] || "";
+  const bad = [];
+  for (const raw of lines) {
+    const parts = String(raw).trim().split(/\s+/);
+    if (parts.length < 4) continue;
+    const ref = parts[2].replace(/^refs\/heads\//, "");
+    if (ref.startsWith("wip/")) {
+      let own = null; try { own = wipBranch(card); } catch {}
+      if (mode !== "wip" || ref !== own) bad.push(`${ref} — wip branch sirf "worker-lock.mjs wip <CARD>" se, aur sirf us card ki apni (${own ?? "koi card nahi"})`);
+    } else if (ref === "manager-pardeep" && mode !== "push") {
+      bad.push(`${ref} — sirf "worker-lock.mjs push <CARD>" se`);
+    }
+  }
+  if (bad.length) return { ok: false, message: "✗ push guard ne roka:\n   " + bad.join("\n   ") };
+  return { ok: true, message: "" };
 }
 
 /** "export { default } from '../leads/page'" → "../leads/page"; null when the file has real code. */
@@ -430,6 +546,12 @@ function main(argv) {
     for (const l of locks) console.log(`${l.card}  ${l.claimedAt}  ${[...l.areas, ...(l.files ?? [])].join("  ")}`);
     return;
   }
+  if (cmd === "guard-push") {
+    /* R-1898: git pre-push hook — the refs come on stdin. */
+    const r = guardPush(fs.readFileSync(0, "utf8").split("\n"));
+    if (!r.ok) { console.error(r.message); process.exit(1); }
+    return;
+  }
   if (!card || !/^R-\d+$/.test(card)) { console.error("Card id do, jaise R-197"); process.exit(1); }
 
   if (cmd === "claim") {
@@ -470,7 +592,17 @@ function main(argv) {
     console.log(`✓ ${card} ka lock hata.`);
     return;
   }
-  console.error("claim | check | push | tsc | prep | release | list   (claim/push need --card <card.json>)");
+  if (cmd === "wip" || cmd === "resume") {
+    /* R-1898: real git, same interface the tests fake. */
+    const git = (gargs, opts = {}) => execFileSync("git", gargs, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...(opts.env ? { env: opts.env } : {}) });
+    const r = cmd === "wip"
+      ? runWip(card, { git, branch: rest[0] })
+      : runResume(card, rest[0], { git, exists: (p) => fs.existsSync(p) });
+    if (!r.ok) { console.error(r.message); process.exit(1); }
+    console.log(r.message);
+    return;
+  }
+  console.error("claim | check | push | wip | resume | tsc | prep | release | list | guard-push   (claim/push need --card <card.json>)");
   process.exit(1);
 }
 
