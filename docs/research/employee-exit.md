@@ -72,3 +72,15 @@ Primary button at each stage = the next step (Start exit → Settle F&F → Pay 
 - `users.access_ends_on`: the linked login works through that IST day and is off from the next. This needs **no cron**: `current_tenant_id()` and the middleware compare it with the IST date on every request. The vault, every RLS policy and every SECURITY DEFINER guard follow automatically.
 - RPCs `start_employee_exit` and `cancel_employee_exit` (owner only, atomic). The salary guard trigger refuses a payslip for any month after the exit month.
 - Payroll lists an employee up to and including the exit month only, and pro-rates that month to the last working day.
+
+## 6. Next cards (on the board, ranks 0.351–0.357 right after R-1896)
+
+| Card | Slice |
+|---|---|
+| R-1945 | Notice period policy + shortfall recovery / waiver |
+| R-1946 | F&F calculator (pro-rata, leave encashment, gratuity, recoveries, TDS) |
+| R-1947 | F&F approve → one atomic RPC + bank reconcile + 2-working-day deadline on Today |
+| R-1948 | Relieving + experience letter PDF → Documents |
+| R-1949 | After the exit day: kiosk / expense-claim / pickers, PF-ESI exit date, Form 16 |
+| R-1950 | Hand over leads / customers / tasks (R-1528 pattern) |
+| R-1951 | Exit checklist tied to exit date + F&F status |
