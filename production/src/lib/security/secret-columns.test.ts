@@ -66,6 +66,7 @@ const REVIEWED_NOT_SECRET: Record<string, string> = {
   "attendance_devices.credential_id": "WebAuthn credential id — a public identifier, the key never leaves the phone",
   "vault_access_log.credential_id": "id of a vault entry (foreign key), not a credential",
   "vault_passwords.password_fingerprint": "keyed truncated HMAC for reuse detection, not crackable; owner/manager only (R-716 RLS); the vault list shows reuse from it",
+  "phone_otps.code_hash": "R-1903: keyed HMAC (server secret) of a 5-minute OTP; phone_otps has no authenticated policy or grant — service role + SECURITY DEFINER RPCs only (r1903_phone_otp.test.sql check 1d)",
   "personal_vault_pin.pin_hash": "own row only (RLS user_id = auth.uid()); /api/vault/personal/pin verifies with it",
   "tenants.attendance_ingest_key": "emptied by R-607 (20261010000000) — always null, key moved to attendance_settings.ingest_key",
   "tenant_secrets.gemini_api_key": "tenant_secrets is owner-only by RLS (tenant_secrets_owner_*); the owner enters these keys",

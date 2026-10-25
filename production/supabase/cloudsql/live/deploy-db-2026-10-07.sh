@@ -244,6 +244,7 @@ MIGS=(
   "r1849partnerappropriation|20261025030249_r1849_partner_appropriation.sql|resellersos_migration|to_regclass('public.partner_appropriations') is not null and to_regclass('public.partner_appropriation_lines') is not null and to_regprocedure('public.post_partner_appropriation(integer,bigint,jsonb)') is not null and to_regprocedure('public.undo_partner_appropriation(integer)') is not null and to_regprocedure('public.partner_remuneration_limit(integer,bigint)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-1849%')"
   "r1894addcust|20261025044600_r1894_add_customer_contact.sql|resellersos_migration|to_regprocedure('public.add_customer_contact(uuid,text,text,text,text,text)') is not null and to_regprocedure('public.r1894_link_orphan_contacts()') is not null"
   "r1901ctxhelpers|20261025065946_r1901_request_context_helpers.sql|resellersos_migration|to_regprocedure('public.current_request_role()') is not null and to_regprocedure('public.current_user_id()') is not null"
+  "r1903phoneotp|20261025083015_r1903_phone_otp.sql|resellersos_migration|to_regclass('public.phone_otps') is not null and to_regprocedure('public.verify_phone_otp(text,text)') is not null and to_regprocedure('public.request_phone_otp(text,text)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
