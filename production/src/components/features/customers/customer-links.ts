@@ -18,6 +18,7 @@
  *    name (an import mistake) counts as no contact.
  */
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { recordPhoneOf } from "@/lib/customers/record-phone";
 
 /* Typed routes (CLAUDE.md §25.2): hrefs here are plain strings, cast to Route only where
    they reach <Link> / router.push. A Route-typed ternary (Route | null) makes next build fail
@@ -96,7 +97,9 @@ export function primaryContactOf(c: CustomerLike, contacts: readonly ContactLike
     return {
       name: (pick.full_name ?? "").trim(),
       title: pick.title?.trim() || null,
-      phone: pick.phone?.trim() || null,
+      /* R-1893: a contact with no phone falls back to the number typed in the customer form
+         (customers.contact_mobile / contact_phone) — the owner typed it, so it must show. */
+      phone: pick.phone?.trim() || recordPhoneOf(c),
       email: pick.email?.trim() || null,
     };
   }
@@ -105,7 +108,7 @@ export function primaryContactOf(c: CustomerLike, contacts: readonly ContactLike
     return {
       name: flat,
       title: c.contact_title?.trim() || null,
-      phone: c.contact_phone?.trim() || c.contact_mobile?.trim() || null,
+      phone: recordPhoneOf(c),
       email: c.contact_email?.trim() || null,
     };
   }

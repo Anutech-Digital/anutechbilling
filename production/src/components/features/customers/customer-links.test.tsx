@@ -100,6 +100,23 @@ describe("R-1522: the contact person, never the company name", () => {
     expect(primaryContactOf({ ...company, contact_name: "Ravi K", contact_phone: "98" }, [])?.name).toBe("Ravi K");
   });
 
+  it("R-1893: the mobile typed in the customer form shows when the contact has no phone", () => {
+    /* Pardeep, 25 Oct (staging, "Anil Tayal"): the mobile was on customers.contact_mobile,
+       the primary contact had no phone — header and Contacts card showed name + email only. */
+    const anil = { name: "Anil Tayal Co", contact_mobile: "9876543210", contact_phone: null };
+    const got = primaryContactOf(anil, [
+      { full_name: "Anil Tayal", phone: null, email: "office2@example.in", is_primary: true },
+    ]);
+    expect(got?.phone).toBe("9876543210");
+    /* The contact's own phone wins when it has one. */
+    expect(primaryContactOf(anil, [
+      { full_name: "Anil Tayal", phone: "9000000001", email: null, is_primary: true },
+    ])?.phone).toBe("9000000001");
+    /* Mobile first, then the landline — the same order as the database backfill. */
+    expect(primaryContactOf({ name: "X Co", contact_name: "Ravi K", contact_phone: "01140000000", contact_mobile: "9111111111" }, [])?.phone)
+      .toBe("9111111111");
+  });
+
   it("a contact named like the company (import mistake) counts as no contact", () => {
     expect(isCompanyName("Greentin Solutions Private Limited", company)).toBe(true);
     expect(primaryContactOf({ ...company, contact_name: "GREENTIN SOLUTIONS PRIVATE LIMITED" }, [])).toBeNull();

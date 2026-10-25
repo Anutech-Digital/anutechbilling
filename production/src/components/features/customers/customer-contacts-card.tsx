@@ -37,6 +37,8 @@ import {
   CONTACT_ROLES, roleLabel, useContactSearchIndex, type Contact, type ContactRole,
 } from "@/lib/queries/contacts";
 import type { PrimaryContact } from "@/components/features/customers/customer-links";
+import { formatPhone } from "@/lib/utils";
+import { isMaskedContact } from "@/lib/auth/roles";
 
 interface Props {
   customerId: string;
@@ -51,6 +53,12 @@ interface Props {
    * renewals do go there, so the card must not say "no contact" over it.
    */
   recordContact?: PrimaryContact | null;
+  /**
+   * R-1893: the number typed in the customer form (customers.contact_mobile, else
+   * contact_phone — recordPhoneOf). Shown on the PRIMARY row when that contact has no phone
+   * of its own, so a mobile the owner typed is never invisible here.
+   */
+  recordPhone?: string | null;
 }
 
 type Draft = {
@@ -64,7 +72,7 @@ type Draft = {
 
 const emptyDraft: Draft = { full_name: "", email: "", phone: "", title: "", role: "poc" };
 
-export function CustomerContactsCard({ customerId, customerName, autoOpenAdd, onAutoOpenHandled, recordContact = null }: Props) {
+export function CustomerContactsCard({ customerId, customerName, autoOpenAdd, onAutoOpenHandled, recordContact = null, recordPhone = null }: Props) {
   const { data: contacts, isLoading } = useCustomerContacts(customerId);
   /* How many customers each of these people serves — drives the "Serves N customers"
      chip. Already cached by the Customers and Subscriptions pages. */
@@ -217,9 +225,19 @@ export function CustomerContactsCard({ customerId, customerName, autoOpenAdd, on
                   </Link>
                 )}
               </div>
-              <div className="mt-0.5 text-2xs text-ink-3 break-words">
-                {[c.title, c.email, c.phone].filter(Boolean).join(" · ") || "No email or phone yet"}
-              </div>
+              {(() => {
+                /* R-1893: the primary takes the customer form's number when it has none. */
+                const phone = c.phone?.trim() || (c.is_primary ? recordPhone?.trim() || null : null);
+                const text = [c.title, c.email].filter(Boolean).join(" · ");
+                return (
+                  <div className="mt-0.5 text-2xs text-ink-3 break-words">
+                    {text}
+                    {text && phone && " · "}
+                    {phone && <ContactPhone phone={phone} />}
+                    {!text && !phone && "No email or phone yet"}
+                  </div>
+                );
+              })()}
             </div>
             <div className="flex items-center gap-1 shrink-0">
               {!c.is_primary && (
@@ -302,5 +320,25 @@ export function CustomerContactsCard({ customerId, customerName, autoOpenAdd, on
         </DialogContent>
       </Dialog>
     </Card>
+  );
+}
+
+/**
+ * R-1893: a contact's phone, tap to call — the same rule as the header (primary-contact-line):
+ * a masked value (R-1009, a role without can_view_contact_details) stays plain text, never a
+ * tel: link that could only dial the mask.
+ */
+function ContactPhone({ phone }: { phone: string }) {
+  const tel = phone.replace(/\s+/g, "");
+  if (isMaskedContact(tel)) {
+    return <span className="tabular-nums" title="Hidden for your role. The owner or a manager can see it.">{tel}</span>;
+  }
+  return (
+    <a
+      href={`tel:${tel}`}
+      className="tabular-nums text-ink-2 hover:text-amber-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-sm"
+    >
+      {formatPhone(tel)}
+    </a>
   );
 }

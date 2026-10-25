@@ -112,6 +112,27 @@ describe("Customer contacts — what is on screen", () => {
     expect((screen.getByLabelText(/name/i, { selector: "input" }) as HTMLInputElement).value).toBe("Rajesh K");
   });
 
+  it("R-1893: the primary row shows the customer's mobile when the contact has no phone, tap to call", () => {
+    /* Pardeep, 25 Oct: "Anil Tayal · Primary · Point of contact · office2@…" and no phone,
+       though the mobile was typed in the customer form. */
+    state.contacts = [
+      contact({ full_name: "Anil Tayal", phone: null, title: null, email: "office2@example.in" }),
+      contact({ id: "c2", full_name: "Sunita M", phone: null, is_primary: false, title: null, email: "s@example.in" }),
+    ];
+    render(<CustomerContactsCard customerId="cust1" customerName="Anil Tayal Co" recordPhone="9876543210" />);
+    const call = screen.getByRole("link", { name: /98765 43210/ });
+    expect(call.getAttribute("href")).toBe("tel:9876543210");
+    /* Only the primary takes the customer's number — Sunita is someone else. */
+    expect(screen.getAllByRole("link", { name: /98765 43210/ })).toHaveLength(1);
+  });
+
+  it("R-1893: a contact's own phone is shown as a tap-to-call link", () => {
+    state.contacts = [contact({ phone: "+91 98765 43210" })];
+    render(<CustomerContactsCard customerId="cust1" customerName="Chandan Trading" recordPhone="9111111111" />);
+    expect(screen.getByRole("link", { name: /98765 43210/ }).getAttribute("href")).toBe("tel:+919876543210");
+    expect(document.body.textContent).not.toContain("91111");
+  });
+
   it("offers 'Make primary' only on contacts that are not already primary", () => {
     state.contacts = [
       contact(),
