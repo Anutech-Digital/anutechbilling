@@ -69,6 +69,7 @@ import { addGstinHref, buyerGstinMissing, quoteBuyerGstin } from "@/lib/quotes/b
 import { paletteMayOpen } from "@/components/layout/palette-access";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
+import { copyCustomerLink } from "@/components/features/quotes/failed-send-toast";
 import { PayQrNotice } from "@/components/features/quotes/pay-qr-notice";
 import SendWhatsAppDialog from "@/components/features/whatsapp/send-whatsapp-dialog";
 import { ApprovalDrawer } from "@/components/features/quotes/approval-drawer";
@@ -1099,6 +1100,14 @@ export default function QuoteDetailPage() {
             Send on WhatsApp
           </Button>
           )}
+          {/* R-1922 (G-ONBOARD OB-1): the link works without any email or WhatsApp setup, so a new
+              company can reach its customer in one click — it was hidden under More. */}
+          <Button
+            icon="link"
+            disabled={!!customerBlock}
+            title={customerBlock ? CUSTOMER_COPY_BLOCKED_TITLE : "Copy the customer's accept link — share it by email, WhatsApp or chat"}
+            onClick={() => copyCustomerLink(acceptUrl)}
+          >Copy customer link</Button>
           <Button
             icon="download"
             loading={downloadingPdf}
@@ -1133,16 +1142,6 @@ export default function QuoteDetailPage() {
               <Button icon="more_h">More</Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[13rem]">
-              <DropdownMenuItem
-                className="gap-2.5 py-2 cursor-pointer"
-                disabled={!!customerBlock}
-                onClick={() => {
-                  navigator.clipboard?.writeText(acceptUrl);
-                  toast.success("Customer link copied · share via email or WhatsApp");
-                }}
-              >
-                <Icon name="link" size={15} /> Copy customer link
-              </DropdownMenuItem>
               {/* R-1523: the same quote as a Proforma Invoice — server-rendered, so it carries the
                   UPI QR, bank details and pay link exactly as the emailed copy does. */}
               <DropdownMenuItem

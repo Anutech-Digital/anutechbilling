@@ -33,6 +33,10 @@ export interface SendQuoteEmailResult {
   recipient:    string;
   attachedPdf:  boolean;
   quoteStatus:  string;
+  /** R-1922: why a failed send was refused before any mail server was asked. */
+  refusedReason?: "customer_messages_off";
+  /** R-1922: the customer's accept link, on a failed send — so the toast can offer "Copy link instead". */
+  customerLink?: string;
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -116,11 +120,71 @@ export function quoteEmailOutcome(
       description: "Email delivery is not set up on this server.",
     };
   }
+  if (res.refusedReason === "customer_messages_off") {
+    return {
+      ok: false,
+      title: `Email did not go to ${res.recipient}`,
+      description:
+        `Customer messages are switched off for this company. ${opts.alreadySent ? "Nothing was sent." : "The quote is saved as a draft."} ` +
+        "Copy the customer link and share it yourself, or send it on WhatsApp from the quote page.",
+    };
+  }
   return {
     ok: false,
     title: `Email did not go to ${res.recipient}`,
-    description: `${res.errorMessage ?? "Unknown error"}. ${notSentTail(opts.alreadySent)}`,
+    description: `${withoutFullStop(res.errorMessage ?? "Unknown error")}. ${notSentTail(opts.alreadySent)}`,
   };
+}
+
+function withoutFullStop(s: string): string {
+  return s.trim().replace(/\.+$/, "");
+}
+
+/**
+ * R-1922: where the "Turn on customer messages" button goes — the switch card on /automation
+ * (id set in app/(app)/automation/scheduled-jobs.tsx). Only the owner can press that switch.
+ */
+export const CUSTOMER_MESSAGES_SWITCH_HREF = "/automation#customer-messages";
+
+export type FailedSendButton =
+  | { kind: "turn-on-messages"; label: "Turn on customer messages"; href: string }
+  | { kind: "copy-link"; label: "Copy link instead"; link: string }
+  | { kind: "open-quote"; label: "Open quote"; href: string }
+  | { kind: "retry"; label: "Try again" };
+
+/**
+ * R-1922: the two buttons on a failed-send toast (a toast has room for two), plus a line for
+ * someone who cannot fix it themselves. A refusal for customer messages gets the button that
+ * fixes it — never only "Try again", which would be refused the same way. Every failure with
+ * a link also offers "Copy link instead", so the quote can still reach the customer today.
+ * `res` null = the request itself failed (no answer, no link).
+ */
+export function failedSendButtons(
+  res: Pick<SendQuoteEmailResult, "refusedReason" | "customerLink"> | null,
+  /** onQuotePage: the sender is already on the quote page (Send on WhatsApp is right there). */
+  opts: { role: string | null | undefined; quoteId: string; onQuotePage?: boolean },
+): { primary: FailedSendButton; secondary?: FailedSendButton; note?: string } {
+  const copy: FailedSendButton | undefined = res?.customerLink
+    ? { kind: "copy-link", label: "Copy link instead", link: res.customerLink }
+    : undefined;
+  if (res?.refusedReason === "customer_messages_off") {
+    if (opts.role === "owner") {
+      return {
+        primary: { kind: "turn-on-messages", label: "Turn on customer messages", href: CUSTOMER_MESSAGES_SWITCH_HREF },
+        ...(copy ? { secondary: copy } : {}),
+      };
+    }
+    const open: FailedSendButton | undefined = opts.onQuotePage
+      ? undefined
+      : { kind: "open-quote", label: "Open quote", href: `/quotes/${encodeURIComponent(opts.quoteId)}` };
+    const [primary, secondary] = [copy, open].filter(Boolean) as FailedSendButton[];
+    return {
+      primary: primary ?? { kind: "retry", label: "Try again" },
+      ...(secondary ? { secondary } : {}),
+      note: "Only the owner can turn on customer messages — ask the owner (Automation → Customer messages).",
+    };
+  }
+  return { primary: { kind: "retry", label: "Try again" }, ...(copy ? { secondary: copy } : {}) };
 }
 
 /** Toast copy when the request itself failed (network, 4xx/5xx). */

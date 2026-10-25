@@ -30,7 +30,9 @@ import { lineEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-econom
 import {
   sendQuoteEmail, quoteRecipient, saveAndSendPlan,
   quoteEmailOutcome, quoteEmailErrorOutcome, markedSentOutcome, needsApprovalOutcome,
+  type SendQuoteEmailResult,
 } from "@/lib/quotes/send-quote-email";
+import { showFailedSendToast } from "./failed-send-toast";
 import { NUMBERING_FIX, COMPANY_STATE_FIX, companyStateFixFor } from "@/lib/onboarding/setup-links";
 
 /* A fixed, written sentence — not a raw error — so the R-300 toast guard can tell them apart. */
@@ -1333,9 +1335,11 @@ function QuoteBuilderBody() {
   /** Email an already-saved quote; on failure keep a "Try again" on the toast. */
   const emailSavedQuote = async (id: string, to: string): Promise<boolean> => {
     let out;
+    let res: SendQuoteEmailResult | null = null;
     setEmailing(true);
     try {
-      out = quoteEmailOutcome(await sendQuoteEmail(id, { to }), { quoteId: id });
+      res = await sendQuoteEmail(id, { to });
+      out = quoteEmailOutcome(res, { quoteId: id });
     } catch (err) {
       out = quoteEmailErrorOutcome(err);
     } finally {
@@ -1345,14 +1349,14 @@ function QuoteBuilderBody() {
       toast.success(out.title, out.description ? { description: out.description } : undefined);
       return true;
     }
-    toast.error(out.title, {
-      description: out.description,
-      duration: 15000,
-      action: {
-        label: "Try again",
-        onClick: () => {
-          void emailSavedQuote(id, to).then((ok) => { if (ok) router.push(`/quotes/${id}` as never); });
-        },
+    /* R-1922: the reason plus the button that fixes it ("Turn on customer messages" for the
+       owner), and "Copy link instead" so the quote still reaches the customer today. Any
+       other failure keeps "Try again". */
+    showFailedSendToast({
+      out, res, role: currentUser?.role, quoteId: id,
+      navigate: (href) => router.push(href as never),
+      onRetry: () => {
+        void emailSavedQuote(id, to).then((ok) => { if (ok) router.push(`/quotes/${id}` as never); });
       },
     });
     return false;

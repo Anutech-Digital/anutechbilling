@@ -252,6 +252,7 @@ MIGS=(
   "r1934marketingrole|20261025151939_r1934_marketing_role.sql|resellersos_migration|exists(select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid join pg_namespace n on n.oid = t.typnamespace where n.nspname = 'public' and t.typname = 'user_role' and e.enumlabel = 'marketing')"
   "r1934vendorguess|20261025151940_r1934_vendor_guess_no_name_match.sql|resellersos_migration|exists(select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'bank_debit_vendor_guess' and p.prosrc like '%R-1934%')"
   "r1917bookexpensevendorguard|20261025155521_r1917_book_expense_vendor_guard.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.book_bank_txn_as_expense(uuid,text,text,integer,text)') and prosrc like '%R-1917%')"
+  "r1922custmsgson|20261025160239_r1922_new_company_customer_messages_on.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_tenants_customer_messages_on' and tgrelid = to_regclass('public.tenants')) and exists(select 1 from pg_trigger where tgname = 'trg_demo_tenants_customer_messages_off' and tgrelid = to_regclass('public.demo_tenants')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.merge_stranded_user_into_tenant(text,uuid,user_role)') and prosrc like '%R-1922%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

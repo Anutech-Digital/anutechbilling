@@ -143,6 +143,15 @@ export function ScheduledJobs() {
     run.mutate({ job: row, retryOf });
   }
 
+  /* R-1922: a refused quote email's "Turn on customer messages" lands on
+     /automation#customer-messages. The card renders only after this query, after the browser
+     has already tried the #hash — so scroll to it once the data is here. */
+  const loaded = Boolean(q.data);
+  React.useEffect(() => {
+    if (!loaded || typeof window === "undefined" || window.location.hash !== "#customer-messages") return;
+    document.getElementById("customer-messages")?.scrollIntoView({ block: "center" });
+  }, [loaded]);
+
   if (q.isLoading) return <Card className="mb-6 p-4"><Skeleton className="h-40 w-full" /></Card>;
   if (q.error) {
     return (
@@ -165,7 +174,7 @@ export function ScheduledJobs() {
         <span className="text-2xs text-ink-3">Every job starts off, except the nightly backup. Only the owner can change them.</span>
       </div>
 
-      <Card className="mb-3 border-amber/40 p-4">
+      <Card id="customer-messages" className="mb-3 scroll-mt-24 border-amber/40 p-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
