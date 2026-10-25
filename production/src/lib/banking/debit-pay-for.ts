@@ -82,7 +82,9 @@ export function vendorPan(v: Pick<VendorLite, "pan" | "gstin"> | null | undefine
 
 /* ─── Open bills (rows of bank_debit_vendor_open_items) ──────────────────────────────── */
 
-export type PaySource = "vendor_bill" | "expense";
+/** R-1911: "recorded_payment" = a payment already recorded outside the bank (Bills page Pay,
+ *  payment run, Expenses → Mark paid) that this bank line MATCHES — it is never paid again. */
+export type PaySource = "vendor_bill" | "expense" | "recorded_payment";
 
 export interface VendorOpenItem {
   source: PaySource;
@@ -104,11 +106,25 @@ export interface VendorOpenItem {
   can_part: boolean;
   /** An open payment run holding it — pay it there. */
   in_run: string | null;
+  /** R-1911 recorded_payment: when it was recorded as paid, and the bill / expense it paid. */
+  paid_on?: string | null;
+  pays_source?: "vendor_bill" | "expense" | null;
+  pays_doc_id?: string | null;
 }
+
+/** R-1911: a payment already recorded outside the bank — the line is matched to it, not paid again. */
+export const isRecorded = (i: Pick<VendorOpenItem, "source">) => i.source === "recorded_payment";
+
+/** Where the recorded payment was entered, in the owner's words. */
+export const recordedWhere = (i: Pick<VendorOpenItem, "pays_source">) =>
+  i.pays_source === "expense" ? "the Expenses page" : "the Bills page";
 
 export const itemKey = (i: Pick<VendorOpenItem, "source" | "doc_id">) => `${i.source}:${i.doc_id}`;
 
 export function itemLabel(i: VendorOpenItem): string {
+  if (isRecorded(i)) {
+    return `Already paid on ${formatDate(i.paid_on ?? i.doc_date)} from ${recordedWhere(i)}${i.bill_no ? ` · Bill ${i.bill_no}` : ""}`;
+  }
   return `${i.bill_no ? `Bill ${i.bill_no}` : i.source === "vendor_bill" ? "COGS bill" : "Expense bill"} · ${formatDate(i.doc_date)}`;
 }
 
@@ -212,7 +228,8 @@ export function allocateOldestFirst(
   cash: number,
   tdsByKey: ReadonlyMap<string, number>,
 ): { cashByKey: Map<string, number>; left: number } {
-  const order = [...picked].sort((a, b) => a.doc_date.localeCompare(b.doc_date) || a.doc_id.localeCompare(b.doc_id));
+  /* R-1911: a recorded payment is matched first (whole), then the bills oldest first. */
+  const order = [...picked].sort((a, b) => Number(isRecorded(b)) - Number(isRecorded(a)) || a.doc_date.localeCompare(b.doc_date) || a.doc_id.localeCompare(b.doc_id));
   const cashByKey = new Map<string, number>();
   let left = Math.max(0, Math.round(cash));
   for (const i of order) {
@@ -225,15 +242,27 @@ export function allocateOldestFirst(
 }
 
 /**
- * Bills to tick for the operator: the ONE bill whose cash due (after its planned TDS) equals the
- * debit; else ALL open bills when together they equal it. Anything else → none (the operator picks).
+ * Bills to tick for the operator. R-1911 first: a payment of exactly this amount already recorded
+ * outside the bank (Bills page / Mark paid) IS this line — it is ticked, and the bill it paid is
+ * never offered as a second payment (QuickBooks "match, don't add again"); with several, the one
+ * recorded nearest the bank date. Else the ONE bill whose cash due (after its planned TDS) equals
+ * the debit; else ALL open bills when together they equal it. Anything else → none (the operator picks).
  */
 export function preselect(
   items: readonly VendorOpenItem[],
   debit: number,
   /** TDS per bill when exactly these bills are paid together (planTds). */
   tdsFor: (bills: readonly VendorOpenItem[]) => ReadonlyMap<string, number>,
+  /** The bank line's date — picks the nearest of several same-amount recorded payments. */
+  txnDate?: string,
 ): { keys: string[]; noTds: boolean } {
+  const recorded = items.filter((i) => isRecorded(i) && i.amount_due === debit);
+  if (recorded.length) {
+    const t = txnDate ? Date.parse(txnDate) : NaN;
+    const gap = (i: VendorOpenItem) => (Number.isNaN(t) ? 0 : Math.abs(Date.parse(i.paid_on ?? i.doc_date) - t));
+    const best = [...recorded].sort((a, b) => gap(a) - gap(b) || a.doc_id.localeCompare(b.doc_id))[0];
+    return { keys: [itemKey(best)], noTds: false };
+  }
   const open = items.filter((i) => !i.in_run);
   const net = (bills: readonly VendorOpenItem[]) => {
     const t = tdsFor(bills);
@@ -350,6 +379,8 @@ export function payArgs(i: PayInput) {
 export interface PaidDoc {
   source: PaySource; doc_id: string; bill_no: string | null;
   settled: number; cash: number; tds: number; tds_section: string | null; status: string; still_due: number; total?: number;
+  /** R-1911 recorded_payment: what the matched payment had paid, and when it was recorded. */
+  pays_source?: "vendor_bill" | "expense"; paid_on?: string;
 }
 
 export interface VendorPayResult {
@@ -367,12 +398,21 @@ export interface VendorPayResult {
 
 export interface ResultLine { text: string; href?: string; tone?: "warn" }
 
-const docHref = (d: Pick<PaidDoc, "source" | "doc_id">) =>
-  d.source === "expense" ? `/accounting/expenses?edit=${encodeURIComponent(d.doc_id)}` : "/accounting/bills";
+const docHref = (d: Pick<PaidDoc, "source" | "doc_id" | "pays_source">) =>
+  d.source === "expense" || (d.source === "recorded_payment" && d.pays_source === "expense")
+    ? `/accounting/expenses?edit=${encodeURIComponent(d.doc_id)}` : "/accounting/bills";
 
 const statusWord = (d: PaidDoc) => (d.status === "paid" ? "Paid" : `part paid, ${rupee(d.still_due)} still due`);
 
 function docLine(d: PaidDoc, vendor: string, isNew: boolean): ResultLine {
+  if (d.source === "recorded_payment") {
+    const what = d.bill_no ? `Bill #${d.bill_no}` : d.pays_source === "expense" ? "the expense" : "the bill";
+    const where = d.pays_source === "expense" ? "the Expenses page" : "the Bills page";
+    return {
+      text: `Matched to the ${rupee(d.settled)} already paid to ${vendor} on ${d.paid_on ? formatDate(d.paid_on) : "an earlier date"} from ${where} for ${what} — counted once, not paid again · ${d.status === "paid" ? "Paid" : `Bill now ${statusWord(d)}`}`,
+      href: docHref(d),
+    };
+  }
   const name = d.bill_no ? `Bill #${d.bill_no}` : d.source === "expense" ? "Expense bill" : "COGS bill";
   const tds = d.tds > 0 ? ` · TDS ${rupee(d.tds)} deducted (${d.tds_section})` : "";
   return {

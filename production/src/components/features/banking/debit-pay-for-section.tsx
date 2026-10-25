@@ -33,7 +33,7 @@ import { TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import { useVendorOpenItems, usePayVendorFromBankDebit, useVendor194q, useSet194qBuyer } from "@/lib/queries/bank-debit-pay-for";
 import {
-  allocateOldestFirst, cashDue, guessVendor, itemKey, itemLabel, newBillTds, newBillTotal, planTds, preselect,
+  allocateOldestFirst, cashDue, guessVendor, isRecorded, itemKey, itemLabel, newBillTds, newBillTotal, planTds, preselect,
   resultLines, summarise, tdsMap, vendorPan,
   type NewBillDraft, type VendorLite, type VendorOpenItem, type VendorPayResult,
 } from "@/lib/banking/debit-pay-for";
@@ -115,12 +115,12 @@ export function DebitPayForSection({ transaction, onSaved, onDone }: Props) {
   const [preDone, setPreDone] = React.useState("");
   React.useEffect(() => {
     if (!items || preDone === preKey || (section && !fy) || (section === "194Q" && vendor && !q194rows)) return;
-    const pre = preselect(items, debit, (bills) => tdsMap(planTds(bills, { section: section || null, pan, fyOthers: othersFor(bills), off: false, q194 })));
+    const pre = preselect(items, debit, (bills) => tdsMap(planTds(bills, { section: section || null, pan, fyOthers: othersFor(bills), off: false, q194 })), transaction.txn_date);
     setPicked(new Set(pre.keys));
     if (pre.noTds) setNoTds(true);
     setCashEdit({});
     setPreDone(preKey);
-  }, [items, preKey, preDone, debit, section, pan, fy, othersFor, vendor, q194rows, q194]);
+  }, [items, preKey, preDone, debit, section, pan, fy, othersFor, vendor, q194rows, q194, transaction.txn_date]);
   /* A picked goods bill that crosses ₹50 lakh this year — 194Q may apply. */
   const goodsOver = pickedItems.some((i) => i.source === "vendor_bill" && (q194.get(i.doc_id)?.base ?? 0) > 0);
   React.useEffect(() => { setPicked(new Set()); setCashEdit({}); setPreDone(""); }, [transaction.id, vendorId]);
@@ -175,6 +175,8 @@ export function DebitPayForSection({ transaction, onSaved, onDone }: Props) {
   const advCat = advCategory || (vendor?.default_category && !vendor.default_category.startsWith("COGS-") ? vendor.default_category : "") || "Other";
   const nothingPicked = pickedItems.length === 0 && !showNew && advance <= 0;
   const canSave = Boolean(vendorName) && !pay.isPending && sum.diff === 0 && !nothingPicked && !newBillBad && starved.length === 0;
+  /* R-1911: the line only matches payments already recorded — the button says so. */
+  const onlyMatch = pickedItems.length > 0 && pickedItems.every(isRecorded) && !showNew && advance <= 0 && charge <= 0;
 
   const save = async () => {
     if (!canSave) return;
@@ -228,7 +230,7 @@ export function DebitPayForSection({ transaction, onSaved, onDone }: Props) {
     <section aria-labelledby="vpay-h" className="rounded-md border border-amber/50 bg-amber-soft/25 p-3 space-y-3">
       <div>
         <p id="vpay-h" className="text-xs font-semibold text-ink-2">Paying a vendor? This payment is for:</p>
-        <p className="text-xs text-ink-3 mt-0.5">Pick the vendor and the bills it pays — bills are marked paid, TDS is recorded, extra money stays as an advance.</p>
+        <p className="text-xs text-ink-3 mt-0.5">Pick the vendor and the bills it pays — bills are marked paid, TDS is recorded, extra money stays as an advance. A payment already recorded on the Bills or Expenses page is listed first: match this line to it so it is counted once.</p>
       </div>
 
       {/* 1. Vendor */}
@@ -274,6 +276,29 @@ export function DebitPayForSection({ transaction, onSaved, onDone }: Props) {
                 const tds = on ? t?.tds ?? 0 : 0;
                 const cash = on ? cashOf(i) : 0;
                 const exact = cashDue(i, i.tds_amount) === debit;
+                /* R-1911: a payment already recorded on the Bills / Expenses page — this line is
+                   MATCHED to it (it replaces that entry), never paid again. */
+                if (isRecorded(i)) {
+                  return (
+                    <li key={k} className={`rounded-md border p-2.5 ${on ? "border-emerald bg-emerald-soft/30" : "border-hairline bg-paper"}`}>
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input type="checkbox" className="mt-1" checked={on} onChange={() => toggle(i)} aria-label={`Match this bank line to the payment ${itemLabel(i)}`} />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-sm font-medium text-ink break-words">{itemLabel(i)} — match this bank line to it</span>
+                            {exact && <Badge kind="success" size="sm">Exact amount</Badge>}
+                          </span>
+                          <span className="block text-xs text-ink-3 tabular-nums">
+                            {rupee(i.amount_due)} recorded as paid{i.total > i.amount_due ? ` on a ${rupee(i.total)} bill` : ""} — this bank line takes its place, so it is counted once.
+                          </span>
+                        </span>
+                      </label>
+                      {on && cash <= 0 && (
+                        <p className="mt-2 pl-6 text-xs text-rose-ink">Not enough left on this line for it ({rupee(i.amount_due)} needed) — untick it.</p>
+                      )}
+                    </li>
+                  );
+                }
                 return (
                   <li key={k} className={`rounded-md border p-2.5 ${on ? "border-amber bg-amber/10" : "border-hairline bg-paper"}`}>
                     <label className="flex items-start gap-2 cursor-pointer">
@@ -435,7 +460,7 @@ export function DebitPayForSection({ transaction, onSaved, onDone }: Props) {
 
           <Button size="sm" variant="primary" icon="check" disabled={!canSave} loading={pay.isPending} onClick={save}
             className="whitespace-normal h-auto min-h-8 py-1.5 text-left max-w-full">
-            {`Record payment ${rupee(debit)} to ${vendorName} & reconcile`}
+            {onlyMatch ? `Match ${rupee(debit)} to the payment already recorded & reconcile` : `Record payment ${rupee(debit)} to ${vendorName} & reconcile`}
           </Button>
         </>
       )}

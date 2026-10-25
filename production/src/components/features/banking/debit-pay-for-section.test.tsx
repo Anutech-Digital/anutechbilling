@@ -187,3 +187,61 @@ describe("R-1866 DebitPayForSection", () => {
     expect(saveButton().disabled).toBe(true);
   });
 });
+
+/* R-1911 (R-1906 audit B1): a payment already recorded on the Bills / Expenses page + the real
+   bank line must count ONCE — the sheet offers "match this bank line to it" first and pre-ticks it,
+   never the bill as a second payment, never the whole line as an advance. The money is proven by
+   supabase/tests/r1911_match_recorded_vendor_payment.test.sql. */
+describe("R-1911 DebitPayForSection — match a payment already recorded", () => {
+  const recordedBill: VendorOpenItem = {
+    source: "recorded_payment", doc_id: "11111111-aaaa-bbbb-cccc-000000000001", bill_no: "G-10", doc_date: "2026-10-10", due_date: null,
+    category: "COGS-Workspace", total: 10000, amount_due: 5000, gst: 0, tds_base: 0, tds_amount: 0, tds_section: null, can_part: false,
+    in_run: null, paid_on: "2026-10-10", pays_source: "vendor_bill", pays_doc_id: "B10",
+  };
+  const billHalfPaid: VendorOpenItem = { ...G2, doc_id: "B10", bill_no: "G-10", doc_date: "2026-09-05", total: 10000, amount_due: 5000 };
+  const matchButton = () => screen.getByRole("button", { name: /^Match ₹5,000 to the payment already recorded/ }) as HTMLButtonElement;
+
+  it("Bills-page payment of ₹5,000 + the real ₹5,000 line: listed first, pre-ticked, the bill NOT ticked, one match sent", async () => {
+    state.items.v2 = [recordedBill, billHalfPaid];
+    state.pay.mockResolvedValue(result({
+      vendor_name: "Google Cloud India", bank_amount: 5000,
+      paid: [{ source: "recorded_payment", pays_source: "vendor_bill", paid_on: "2026-10-10", doc_id: "B10", bill_no: "G-10", settled: 5000, cash: 5000, tds: 0, tds_section: null, status: "partial", still_due: 5000 }],
+    }));
+    render(<DebitPayForSection transaction={txn(5000, "NEFT DR-HDFC0001-GOOGLE CLOUD INDIA-N283")} onDone={() => {}} />);
+    const boxes = screen.getAllByRole("checkbox").filter((b) => /Match this bank line|^Pay Bill/.test(b.getAttribute("aria-label") ?? ""));
+    expect(boxes[0].getAttribute("aria-label")).toMatch(/^Match this bank line to the payment Already paid on .* from the Bills page · Bill G-10$/);
+    expect((boxes[0] as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(/^Pay Bill G-10 · /) as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText(/from the Bills page · Bill G-10 — match this bank line to it/)).toBeTruthy();
+    expect((screen.getByLabelText("Advance to vendor") as HTMLInputElement).value).toBe("0");
+    expect(matchButton().disabled).toBe(false);
+    fireEvent.click(matchButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay).toHaveBeenCalledTimes(1);
+    const arg = state.pay.mock.calls[0][0];
+    expect(arg.advance).toBe(0);
+    expect(arg.items.map((x: { item: VendorOpenItem; cash: number; tds: number }) => [x.item.source, x.item.doc_id, x.cash, x.tds]))
+      .toEqual([["recorded_payment", recordedBill.doc_id, 5000, 0]]);
+    expect(screen.getByText(/Matched to the ₹5,000 already paid to Google Cloud India on .* from the Bills page for Bill #G-10 — counted once, not paid again/)).toBeTruthy();
+  });
+
+  it("Expenses → Mark paid, then the real line: matched, NOT pre-filled as a whole-line advance", () => {
+    state.items.v1 = [{
+      ...recordedBill, doc_id: "EXP-9", bill_no: "PS-9", category: "Professional Services", total: 11800, amount_due: 10800,
+      paid_on: "2026-10-14", pays_source: "expense", pays_doc_id: "EXP-9",
+    }];
+    render(<DebitPayForSection transaction={txn(10800, "UPI SHARMA ASSOCIATES PS9")} onDone={() => {}} />);
+    expect((screen.getByLabelText(/^Match this bank line to the payment Already paid on .* from the Expenses page · Bill PS-9$/) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Advance to vendor") as HTMLInputElement).value).toBe("0");
+    expect(screen.queryByText(/has no unpaid bills/)).toBeNull();
+    expect(screen.getByRole("button", { name: /^Match ₹10,800 to the payment already recorded/ })).toBeTruthy();
+  });
+
+  it("a recorded payment of another amount is listed but not ticked; the exact bill still is", () => {
+    state.items.v2 = [{ ...recordedBill, amount_due: 3000 }, { ...billHalfPaid, amount_due: 7000 }];
+    render(<DebitPayForSection transaction={txn(7000, "NEFT GOOGLE CLOUD INDIA")} onDone={() => {}} />);
+    expect((screen.getByLabelText(/^Match this bank line to the payment/) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText(/^Pay Bill G-10 · /) as HTMLInputElement).checked).toBe(true);
+    expect(saveButton().disabled).toBe(false);
+  });
+});
