@@ -25,7 +25,7 @@ export type Employee = Omit<Database["public"]["Tables"]["employees"]["Row"], "p
 
 /** Every employees column a member may read: all but pin_hash. Kept explicit because
  *  `select("*")` now fails with "permission denied" (column grants). */
-const EMPLOYEE_COLUMNS = "id, tenant_id, name, monthly_gross, joining_date, leave_allowance, pan, pf_no, esi_no, is_active, notes, created_at, updated_at, email, phone, designation, date_of_birth, address, emergency_contact_name, emergency_contact_phone, esi_applicable, pf_applicable, biometric_id, attendance_consent_at, attendance_consent_source, face_enrolled_at, face_ref_path, basic_monthly, da_monthly, pin_set, attendance_anywhere";
+const EMPLOYEE_COLUMNS = "id, tenant_id, name, monthly_gross, joining_date, leave_allowance, pan, pf_no, esi_no, is_active, notes, created_at, updated_at, email, phone, designation, date_of_birth, address, emergency_contact_name, emergency_contact_phone, esi_applicable, pf_applicable, biometric_id, attendance_consent_at, attendance_consent_source, face_enrolled_at, face_ref_path, basic_monthly, da_monthly, pin_set, attendance_anywhere, exit_date, exit_reason, resignation_date, exit_note, exit_started_at";
 export type LeaveEntry = Database["public"]["Tables"]["leave_entries"]["Row"];
 export type SalaryPayment = Database["public"]["Tables"]["salary_payments"]["Row"];
 export type Attendance = Database["public"]["Tables"]["attendance"]["Row"];
@@ -91,6 +91,50 @@ export function useUpsertEmployee() {
       toast.success("Employee saved");
     },
     onError: (err) => toastError(err),
+  });
+}
+
+/** R-1896 — owner starts an exit: last working day + reason on the employee, and their linked
+ *  login ends after that IST day (users.access_ends_on). One RPC, one transaction. */
+export function useStartEmployeeExit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { employeeId: string; lastDay: string; reason: string; resignationDate?: string | null; note?: string | null }) => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("start_employee_exit", {
+        p_employee_id: input.employeeId,
+        p_last_day: input.lastDay,
+        p_reason: input.reason,
+        ...(input.resignationDate ? { p_resignation_date: input.resignationDate } : {}),
+        ...(input.note ? { p_note: input.note } : {}),
+      });
+      if (error) throw error;
+      return data as { logins_ending?: number } | null;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["employees"] });
+      qc.invalidateQueries({ queryKey: ["team"] });
+      toast.success("Exit started");
+    },
+    onError: (err) => toastError(err, { fallback: "Could not start the exit." }),
+  });
+}
+
+/** R-1896 — owner undoes an exit (a mistake, or they stay on). Their login works again. */
+export function useCancelEmployeeExit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (employeeId: string) => {
+      const supabase = createClient();
+      const { error } = await supabase.rpc("cancel_employee_exit", { p_employee_id: employeeId });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["employees"] });
+      qc.invalidateQueries({ queryKey: ["team"] });
+      toast.success("Exit cancelled");
+    },
+    onError: (err) => toastError(err, { fallback: "Could not cancel the exit." }),
   });
 }
 

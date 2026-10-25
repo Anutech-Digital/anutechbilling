@@ -18,6 +18,8 @@ const state = vi.hoisted(() => ({
   inserts: [] as { client: "user" | "admin"; row: Record<string, unknown> }[],
   adminActor: [] as string[],
   rowTenant: "T1",
+  /** R-1896: extra users-row fields (is_active / access_ends_on). */
+  userExtra: {} as Record<string, unknown>,
 }));
 
 vi.mock("@/lib/supabase/server", () => {
@@ -29,7 +31,7 @@ vi.mock("@/lib/supabase/server", () => {
           select: () => ({
             eq: () => ({
               maybeSingle: async () => ({
-                data: state.role ? { tenant_id: "T1", role: state.role } : null,
+                data: state.role ? { tenant_id: "T1", role: state.role, ...state.userExtra } : null,
                 error: null,
               }),
             }),
@@ -110,6 +112,28 @@ beforeEach(() => {
   state.inserts = [];
   state.adminActor = [];
   state.rowTenant = "T1";
+  state.userExtra = {};
+});
+
+describe("R-1896 vault after the last working day", () => {
+  it("a manager whose login ended (access_ends_on in the past) gets 403 — nothing decrypted", async () => {
+    state.role = "manager";
+    state.userExtra = { is_active: true, access_ends_on: "2020-01-31" };
+    const res = await reveal(req(), params);
+    expect(res.status).toBe(403);
+    expect(state.vaultCalls).toEqual([]);
+  });
+  it("a deactivated owner gets 403", async () => {
+    state.role = "owner";
+    state.userExtra = { is_active: false };
+    expect((await reveal(req(), params)).status).toBe(403);
+    expect(state.vaultCalls).toEqual([]);
+  });
+  it("last working day still ahead → works", async () => {
+    state.role = "manager";
+    state.userExtra = { is_active: true, access_ends_on: "2099-12-31" };
+    expect((await reveal(req(), params)).status).toBe(200);
+  });
 });
 
 const BLOCKED = ["sales", "sales_senior", "support", "accountant", "billing", "delivery", "partner_agent"];
