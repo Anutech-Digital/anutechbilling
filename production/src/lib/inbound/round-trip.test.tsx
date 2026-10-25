@@ -97,7 +97,7 @@ async function walk(opts: { subject: string; body: string }) {
       /* Subject SAMET — aaj ki asli mail me poori maang subject me thi. */
       text: `Subject: ${opts.subject}\n\n${opts.body}`,
       catalogue: [{ id: ITEM.id, name: ITEM.name }],
-      gemini: { apiKey: "k", model: "m" },
+      gemini: { apiKey: "k", model: "m", tenantId: null },
     },
     matchStarter,
   );

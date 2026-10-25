@@ -49,9 +49,10 @@ export async function fetchMoneyOut(supabase: Client): Promise<PaidOutLine[]> {
 
   const idsOf = (type: string) => rows.filter((t) => t.matched_to_type === type && t.matched_to_id).map((t) => t.matched_to_id as string);
   const expIds = idsOf("expense"), salIds = idsOf("salary").concat(idsOf("split")), billIds = idsOf("vendor_bill"),
-    statIds = idsOf("statutory"), prepIds = idsOf("prepaid"), commIds = idsOf("referral_commission");
+    statIds = idsOf("statutory"), prepIds = idsOf("prepaid"), commIds = idsOf("referral_commission"),
+    vendIds = idsOf("vendor_payment");   // R-1866: matched_to_id = the vendor
 
-  const [exps, sals, bills, dues, taxes, preps, comms] = await Promise.all([
+  const [exps, sals, bills, dues, taxes, preps, comms, vends] = await Promise.all([
     lookup<{ id: string; vendor_name: string | null; category: string; bill_no: string | null; description: string | null }>(expIds, (run, from, to) =>
       supabase.from("expenses").select("id, vendor_name, category, bill_no, description").in("id", run).order("id").range(from, to)),
     lookup<unknown>(salIds, (run, from, to) =>
@@ -66,7 +67,10 @@ export async function fetchMoneyOut(supabase: Client): Promise<PaidOutLine[]> {
       supabase.from("prepaid_advances").select("id, vendor_name, category").in("id", run).order("id").range(from, to)),
     lookup<unknown>(commIds, (run, from, to) =>
       supabase.from("referral_commissions").select("id, referral_partners(name)").in("id", run).order("id").range(from, to)),
+    lookup<{ id: string; name: string }>(vendIds, (run, from, to) =>
+      supabase.from("vendors").select("id, name").in("id", run).order("id").range(from, to)),
   ]);
+  const vend = new Map(vends.data.map((v) => [v.id, v]));
   const exp = new Map(exps.data.map((e) => [e.id, e]));
   const sal = new Map((sals.data as { id: string; period: string; employees?: { name: string | null } | null }[]).map((s) => [s.id, s]));
   const bill = new Map(bills.data.map((b) => [b.id, b]));
@@ -85,6 +89,7 @@ export async function fetchMoneyOut(supabase: Client): Promise<PaidOutLine[]> {
     let payee = narr(t.description), what = "—", reference: string | null = t.reference ?? null;
     switch (t.matched_to_type) {
       case "expense": { const e = exp.get(id); if (e) { payee = e.vendor_name || payee; what = e.category; reference = e.bill_no ?? reference; } break; }
+      case "vendor_payment": { const v = vend.get(id); if (v) payee = v.name; what = "Vendor payment"; break; }   // R-1866
       case "vendor_bill": { const b = bill.get(id); if (b) { payee = b.vendor_name; what = "Vendor bill"; reference = b.bill_no ?? reference; } break; }
       case "salary": case "split": { const s = sal.get(id); if (s) { payee = s.employees?.name ?? payee; what = `Salary ${s.period}${t.matched_to_type === "split" ? " (+ advance)" : ""}`; } else what = "Salary"; break; }
       case "statutory": {

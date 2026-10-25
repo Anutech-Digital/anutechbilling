@@ -28,10 +28,13 @@ import {
   type ComplianceCategory, type ComplianceRow, type ComplianceStatus,
 } from "@/lib/compliance/obligations";
 import { useComplianceProfile } from "@/lib/compliance/profile";
+import { useCompliancePeople } from "@/lib/compliance/people-query";
 import {
   useComplianceLog, toFiledMap, useMarkComplianceFiled, useUnmarkComplianceFiled, useTdsMonths,
 } from "@/lib/queries/compliance";
 import { noTdsDeductedPredicate, TDS_DEPOSIT_KEY } from "@/lib/compliance/tds-not-applicable";
+import { taxAuditStatus, taxAuditFyFor } from "@/lib/compliance/tax-audit";
+import { useTaxAuditInputs } from "@/lib/compliance/tax-audit-query";
 import { istToday } from "@/lib/dates/ist";
 import { RevisedInvoiceCard } from "./revised-invoice-card";
 
@@ -46,7 +49,8 @@ const STATUS_META: Record<ComplianceStatus, { label: string; cls: string; icon: 
 function dueText(r: ComplianceRow): string {
   if (r.status === "filed") return `Filed ${r.filedDate ? formatDate(r.filedDate) : ""}`.trim();
   if (r.status === "not_applicable") {
-    return r.ob.key === TDS_DEPOSIT_KEY ? "No TDS deducted — nothing to deposit" : "Nothing to file";
+    if (r.ob.key === TDS_DEPOSIT_KEY) return "No TDS deducted — nothing to deposit";
+    return r.ob.key === "it_taxaudit" ? "No tax audit needed" : "Nothing to file";
   }
   if (r.daysToDue === 0) return "Due today";
   if (r.daysToDue < 0) return `${Math.abs(r.daysToDue)} day${Math.abs(r.daysToDue) === 1 ? "" : "s"} overdue`;
@@ -84,9 +88,28 @@ export function ComplianceView({
   // migrated → the original Pvt Ltd, monthly-GST calendar.
   const profileQ = useComplianceProfile();
   const profile = profileQ.data;
+  /* R-1859: does the tax audit apply for the FY of the next audit report? From that FY's
+     turnover + cash share (lib/compliance/tax-audit.ts). Until it loads (or if it fails) the
+     Tax audit and ITR rows read exactly as before. */
+  const showsIncomeTax = !fixedCategories || fixedCategories.includes("income_tax");
+  const taxAuditFy = React.useMemo(
+    () => taxAuditFyFor(today, (k) => filedMap.has(`it_taxaudit|${k}`)),
+    [today, filedMap],
+  );
+  const auditQ = useTaxAuditInputs(showsIncomeTax && !logQ.isLoading ? taxAuditFy : null);
+  const taxAudit = React.useMemo(
+    () => (auditQ.data ? taxAuditStatus({ businessType: profile?.businessType ?? null, ...auditQ.data }) : null),
+    [auditQ.data, profile?.businessType],
+  );
+  /* R-1857: each director (LLP: designated partner) gets their own DIR-3 KYC / DSC / details rows. */
+  const people = useCompliancePeople(profile?.businessType);
+  const rowProfile = React.useMemo(() => {
+    const p = taxAudit ? { businessType: null, gstFiling: null, ...profile, taxAudit } : profile;
+    return people?.length ? { businessType: null, gstFiling: null, ...p, people } : p;
+  }, [profile, taxAudit, people]);
   const rows = React.useMemo(
-    () => buildComplianceRows(today, filedMap, cats, notApplicable, profile),
-    [today, filedMap, cats, notApplicable, profile],
+    () => buildComplianceRows(today, filedMap, cats, notApplicable, rowProfile),
+    [today, filedMap, cats, notApplicable, rowProfile],
   );
   const profileSet = Boolean(profile?.businessType && profile?.gstFiling);
   const profileText = profile?.businessType
@@ -136,7 +159,7 @@ export function ComplianceView({
       {/* KPI strip */}
       <div className="grid grid-cols-3 gap-2 mb-4">
         <KPI label="Overdue"   value={String(overdue)}  tone={overdue > 0 ? "rose" : undefined} />
-        <KPI label="Due soon"  value={String(dueSoon)}  tone={dueSoon > 0 ? "amber" : undefined} sub="next 15 days" />
+        <KPI label="Due soon"  value={String(dueSoon)}  tone={dueSoon > 0 ? "amber" : undefined} sub={rows.some((r) => r.status === "due_soon" && r.ob.remindDays) ? "next 15 days · DSC / KYC 30" : "next 15 days"} />
         <KPI label="Filed"     value={String(filedCount)} tone={filedCount > 0 ? "emerald" : undefined} />
       </div>
 
@@ -206,10 +229,17 @@ export function ComplianceView({
                               How to file
                             </Button>
                           )}
-                          <Button variant="ghost" icon="check" className="h-7 px-2.5 text-xs"
-                            onClick={() => setFiling(r)}>
-                            Mark filed
-                          </Button>
+                          {r.ob.doneBy ? (
+                            /* R-1857: a DSC row is settled by saving the new expiry in the register. */
+                            <Button asChild variant="ghost" icon="pencil" className="h-7 px-2.5 text-xs">
+                              <Link href={r.ob.doneBy.href as never}>{r.ob.doneBy.label}</Link>
+                            </Button>
+                          ) : (
+                            <Button variant="ghost" icon="check" className="h-7 px-2.5 text-xs"
+                              onClick={() => setFiling(r)}>
+                              Mark filed
+                            </Button>
+                          )}
                         </>
                       )}
                     </div>

@@ -1,0 +1,189 @@
+// @vitest-environment jsdom
+/* R-1866 — "Paying a vendor? This payment is for:" on a money-out bank line. One test per path
+   Pardeep named: two bills in one payment net of 194J TDS, part payment, a new bill on the spot
+   with GST input, an advance to a new vendor, a bank charge, and a mismatch that cannot be saved.
+   Each pins what reaches the server (one RPC per save) — the money work itself is proven by the
+   SQL test supabase/tests/r1866_bank_debit_vendor.test.sql. */
+import * as React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+
+import type { VendorOpenItem, VendorPayResult } from "@/lib/banking/debit-pay-for";
+import type { BankTransactionRow } from "@/lib/queries/bank";
+
+const state = vi.hoisted(() => ({
+  items: {} as Record<string, unknown[]>,
+  fy: { base: 0, baseWithoutTds: 0 },
+  pay: vi.fn(),
+  q194: {} as Record<string, unknown[]>,
+  setBuyer: vi.fn(),
+}));
+
+vi.mock("@/lib/queries/vendors", () => ({
+  useVendors: () => ({
+    data: [
+      { id: "v1", name: "Sharma Associates", pan: "AAKFS1866A", gstin: "07AAKFS1866A1Z5", default_tds_section: "194J", default_category: "Professional Services" },
+      { id: "v2", name: "Google Cloud India", gstin: "29AACCG1866B1Z9", default_category: "COGS-Workspace" },
+      { id: "v3", name: "Ingram Micro India", pan: "AAACI1891A", default_tds_section: "194Q", default_category: "COGS-Hardware" },
+    ],
+  }),
+}));
+vi.mock("@/lib/queries/expenses", () => ({
+  EXPENSE_CATEGORIES: ["Professional Services", "Advertising", "Bank Charges", "Salaries", "Other"],
+  useVendorTdsThisFy: (_v: string | null, _n: string, section: string) => ({ data: section ? state.fy : undefined }),
+}));
+vi.mock("@/lib/queries/vendor-bills", () => ({ VENDOR_BILL_CATEGORIES: ["COGS-Workspace", "COGS-Other"] }));
+vi.mock("@/lib/queries/bank-debit-pay-for", () => ({
+  useVendorOpenItems: (id: string | null) => ({ data: id ? state.items[id] ?? [] : undefined, isLoading: false }),
+  usePayVendorFromBankDebit: () => ({ mutateAsync: state.pay, isPending: false }),
+  useVendor194q: (id: string | null) => ({ data: id ? state.q194[id] ?? [] : undefined }),
+  useSet194qBuyer: () => ({ mutate: state.setBuyer, isPending: false }),
+}));
+
+import { DebitPayForSection } from "./debit-pay-for-section";
+
+afterEach(cleanup);
+beforeEach(() => {
+  state.pay.mockReset();
+  state.setBuyer.mockReset();
+  state.fy = { base: 70800 - 10800, baseWithoutTds: 60000 };   // the two unpaid bills ARE the year so far
+  state.items = {};
+  state.q194 = {};
+});
+
+const txn = (debit: number, description: string): BankTransactionRow => ({
+  id: `t-${debit}`, bank_account_id: "b1", txn_date: "2026-10-11", description, debit, credit: 0, reference: null,
+} as unknown as BankTransactionRow);
+
+const exp = (o: Partial<VendorOpenItem>): VendorOpenItem => ({
+  source: "expense", doc_id: "E1", bill_no: "PS-101", doc_date: "2026-09-01", due_date: null, category: "Professional Services",
+  total: 59000, amount_due: 59000, gst: 9000, tds_base: 50000, tds_amount: 0, tds_section: null, can_part: false, in_run: null, ...o,
+});
+const G2: VendorOpenItem = {
+  source: "vendor_bill", doc_id: "B2", bill_no: "G-2", doc_date: "2026-09-20", due_date: "2026-10-20", category: "COGS-Workspace",
+  total: 23600, amount_due: 23600, gst: 3600, tds_base: 20000, tds_amount: 0, tds_section: null, can_part: true, in_run: null,
+};
+const result = (o: Partial<VendorPayResult>): VendorPayResult => ({
+  vendor_id: "v1", vendor_name: "Sharma Associates", vendor_created: false, bank_amount: 0, paid: [], new_bill: null,
+  advance: null, bank_charge: null, tds_total: 0, tds_section: null, ...o,
+});
+const saveButton = () => screen.getByRole("button", { name: /^Record payment/ }) as HTMLButtonElement;
+
+describe("R-1866 DebitPayForSection", () => {
+  it("two bills in one payment net of 194J: vendor guessed, both ticked, maths shown, one RPC, result names bill + TDS", async () => {
+    state.items.v1 = [exp({}), exp({ doc_id: "E2", bill_no: "PS-102", doc_date: "2026-09-15", total: 11800, amount_due: 11800, gst: 1800, tds_base: 10000 })];
+    state.pay.mockResolvedValue(result({
+      bank_amount: 64800, tds_total: 6000, tds_section: "194J",
+      paid: [{ source: "expense", doc_id: "E1", bill_no: "PS-101", settled: 59000, cash: 54000, tds: 5000, tds_section: "194J", status: "paid", still_due: 0 }],
+    }));
+    render(<DebitPayForSection transaction={txn(64800, "IMPS SHARMA ASSOCIATES FEES")} onDone={() => {}} />);
+    expect((screen.getByLabelText("Vendor paid") as HTMLSelectElement).value).toBe("v1");
+    expect(screen.getByText(/Guessed from the bank line says/)).toBeTruthy();
+    expect((screen.getByLabelText(/^Pay Bill PS-101 · /) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(/^Pay Bill PS-102 · /) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText(/Bills ₹70,800/).textContent).toContain("TDS ₹6,000");
+    expect(screen.getByText(/= ₹64,800 paid from the bank/)).toBeTruthy();
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay).toHaveBeenCalledTimes(1);
+    const arg = state.pay.mock.calls[0][0];
+    expect(arg).toMatchObject({ transactionId: "t-64800", vendorId: "v1", advance: 0, bankCharge: 0, newBill: null });
+    expect(arg.items.map((x: { item: VendorOpenItem; cash: number; tds: number; section: string }) => [x.item.doc_id, x.cash, x.tds, x.section]))
+      .toEqual([["E1", 54000, 5000, "194J"], ["E2", 10800, 1000, "194J"]]);
+    expect(screen.getByText("Paid Bill #PS-101 (₹59,000) to Sharma Associates · TDS ₹5,000 deducted (194J) · Bill now Paid")).toBeTruthy();
+  });
+
+  it("part payment: ₹10,000 on a ₹23,600 COGS bill stays part due", async () => {
+    state.items.v2 = [G2];
+    state.pay.mockResolvedValue(result({ vendor_name: "Google Cloud India" }));
+    render(<DebitPayForSection transaction={txn(10000, "NEFT GOOGLE PART")} onDone={() => {}} />);
+    const box = screen.getByLabelText(/^Pay Bill G-2 · /) as HTMLInputElement;
+    expect(box.checked).toBe(false);          // 10,000 ≠ 23,600 — nothing pre-ticked
+    expect(saveButton().disabled).toBe(true);
+    fireEvent.click(box);
+    expect(screen.getByText(/part payment — ₹13,600 stays due/)).toBeTruthy();
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    const arg = state.pay.mock.calls[0][0];
+    expect(arg.items.map((x: { item: VendorOpenItem; cash: number; tds: number }) => [x.item.doc_id, x.cash, x.tds])).toEqual([["B2", 10000, 0]]);
+    expect(arg.advance).toBe(0);
+  });
+
+  it("new bill on the spot with GST input + 194J TDS: bank = bill − TDS", async () => {
+    state.fy = { base: 60000, baseWithoutTds: 0 };
+    state.pay.mockResolvedValue(result({}));
+    render(<DebitPayForSection transaction={txn(21600, "UPI SHARMA ASSOC AUDIT")} onDone={() => {}} />);
+    fireEvent.click(screen.getByLabelText(/The bill is not in the books yet/));
+    fireEvent.change(screen.getByLabelText("Bill number"), { target: { value: "PS-130" } });
+    fireEvent.change(screen.getByLabelText("Value before GST"), { target: { value: "20000" } });
+    fireEvent.change(screen.getByLabelText("GST on the bill"), { target: { value: "3600" } });
+    expect(screen.getByText(/Bill ₹23,600/).textContent).toContain("TDS ₹2,000 (194J) = ₹21,600 from bank");
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0].newBill).toMatchObject({
+      kind: "expense", billNo: "PS-130", category: "Professional Services", taxable: 20000, gst: 3600, itc: true, pay: 23600, tds: 2000, tdsSection: "194J",
+    });
+  });
+
+  it("advance to a vendor added on the spot (nothing billed yet)", async () => {
+    state.pay.mockResolvedValue(result({ vendor_name: "Meta Ads India", vendor_created: true, advance: { id: "a1", amount: 15000, category: "Advertising" } }));
+    render(<DebitPayForSection transaction={txn(15000, "CARD META ADS")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Vendor paid"), { target: { value: "__new_vendor__" } });
+    fireEvent.change(screen.getByLabelText("New vendor name"), { target: { value: "Meta Ads India" } });
+    fireEvent.change(screen.getByLabelText("PAN (optional)"), { target: { value: "aagcm1866c" } });
+    expect((screen.getByLabelText("Advance to vendor") as HTMLInputElement).value).toBe("15000");
+    fireEvent.change(screen.getByLabelText("Advance category"), { target: { value: "Advertising" } });
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0]).toMatchObject({
+      vendorId: null, newVendor: { name: "Meta Ads India", pan: "AAGCM1866C" }, items: [], advance: 15000, advanceCategory: "Advertising",
+    });
+    expect(screen.getByText(/New vendor Meta Ads India added/)).toBeTruthy();
+  });
+
+  it("bank charge on the line is its own part; the rest pays the bill", async () => {
+    state.items.v2 = [G2];
+    state.pay.mockResolvedValue(result({ vendor_name: "Google Cloud India" }));
+    render(<DebitPayForSection transaction={txn(23625, "NEFT GOOGLE G-2")} onDone={() => {}} />);
+    fireEvent.click(screen.getByLabelText(/^Pay Bill G-2 · /));
+    expect((screen.getByLabelText("Advance to vendor") as HTMLInputElement).value).toBe("25");   // extra before the charge is typed
+    fireEvent.change(screen.getByLabelText("Bank charge"), { target: { value: "25" } });
+    expect((screen.getByLabelText("Advance to vendor") as HTMLInputElement).value).toBe("0");
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0]).toMatchObject({ bankCharge: 25, advance: 0 });
+    expect(state.pay.mock.calls[0][0].items[0].cash).toBe(23600);
+  });
+
+  /* R-1891: a goods bill over ₹50 lakh this year, vendor's usual section 194Q. */
+  const IM2: VendorOpenItem = { ...G2, doc_id: "B9", bill_no: "IM-2", total: 2360000, amount_due: 2360000, gst: 360000, tds_base: 2000000 };
+  const q = (buyer: boolean | null) => [{ doc_id: "B9", fy_start: "2026-04-01", fy_before: 4000000, base: 1000000, rate_pct: 0.1, no_pan: false, tds_total: 1000, tds_already: 0, tds_due: 1000, buyer }];
+
+  it("R-1891: 194Q on a goods bill — asks the ₹10 crore question once, then takes the database's TDS", async () => {
+    state.items.v3 = [IM2];
+    state.q194.v3 = q(null);
+    const { rerender } = render(<DebitPayForSection transaction={txn(2359000, "NEFT INGRAM MICRO IM-2")} onDone={() => {}} />);
+    fireEvent.click(screen.getByLabelText(/^Pay Bill IM-2 · /));
+    expect(screen.getByText(/turnover last financial year was/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Yes, above ₹10 crore/ }));
+    expect(state.setBuyer).toHaveBeenCalledWith(true);
+
+    state.q194.v3 = q(true);
+    state.pay.mockResolvedValue(result({ vendor_name: "Ingram Micro India" }));
+    rerender(<DebitPayForSection transaction={txn(2359000, "NEFT INGRAM MICRO IM-2")} onDone={() => {}} />);
+    expect(screen.getByText(/0.1% on ₹10,00,000 above ₹50 lakh = ₹1,000/)).toBeTruthy();
+    expect(screen.getByText(/\+ TDS ₹1,000 \(194Q\)/)).toBeTruthy();
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0].items.map((x: { item: VendorOpenItem; cash: number; tds: number; section: string }) => [x.item.doc_id, x.cash, x.tds, x.section]))
+      .toEqual([["B9", 2359000, 1000, "194Q"]]);
+  });
+
+  it("parts that do not make the bank amount cannot be saved", () => {
+    state.items.v2 = [G2];
+    render(<DebitPayForSection transaction={txn(10000, "NEFT GOOGLE")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Advance to vendor"), { target: { value: "4000" } });
+    expect(screen.getByText(/₹6,000 of the ₹10,000 is not placed yet/)).toBeTruthy();
+    expect(saveButton().disabled).toBe(true);
+  });
+});

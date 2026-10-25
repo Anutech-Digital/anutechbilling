@@ -111,6 +111,8 @@ function withRealDates(p: Preview | ParseResult, serverSwapped = 0): Preview {
   if (fix.swappedAll) warnings.push(`The dates were in day-first order — all ${fix.swapped} were flipped. Check a few dates in the preview before importing.`);
   else if (swapped > 0) warnings.push(`${swapped} date${swapped === 1 ? " had its" : "s had their"} day and month swapped and ${swapped === 1 ? "was" : "were"} corrected — check ${swapped === 1 ? "it" : "them"} in the preview.`);
   if (dropped > 0) warnings.push(`${dropped} row${dropped === 1 ? "" : "s"} had an impossible date and ${dropped === 1 ? "was" : "were"} skipped.`);
+  /* R-1890: a future date is kept as written, never swapped — only flagged. */
+  if (fix.future > 0) warnings.push(`${fix.future} line${fix.future === 1 ? " is" : "s are"} dated after today — kept as written. Check ${fix.future === 1 ? "it" : "them"} in the preview before importing.`);
   return { ...p, rows, skipped: p.skipped + dropped, warnings };
 }
 

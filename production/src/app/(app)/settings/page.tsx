@@ -32,6 +32,11 @@ import { Input } from "@/components/ui/input";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { NotificationsCard } from "@/components/features/settings/notifications-card";
 import { ComplianceProfileCard } from "@/components/features/compliance/compliance-profile-card";
+import { SellModeCard } from "@/components/features/settings/sell-mode-card";
+import { BusinessTypePrompt } from "@/components/features/compliance/business-type-prompt";
+import { PartnersRegisterCard } from "@/components/features/partners/partners-register-card";
+import { DirectorsRegisterCard } from "@/components/features/company/directors-register-card";
+import { ShareCapitalCard } from "@/components/features/company/share-capital-card";
 import { TurnoverCard } from "@/components/features/compliance/turnover-card";
 import { GstRegistrationCard } from "@/components/features/compliance/gst-registration-card";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -247,6 +252,9 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
 
   return (
     <div className="grid grid-cols-1 gap-5">
+      {/* Business type empty → the app reads it as Pvt Ltd; ask to set it (button → Compliance profile). */}
+      <BusinessTypePrompt className="max-w-3xl" />
+
       {/* Reseller hierarchy (migration 0040). Read-only display for now —
           link/unlink controls land in a later slice. */}
       <ResellerTierCard />
@@ -552,6 +560,16 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
 
       {/* R-262: business type + GST filing → which filings the Compliance Calendar shows. */}
       <ComplianceProfileCard isOwner={isOwner} />
+
+      {/* R-1847: Partnership / LLP only — the partners register (name, PAN, DPIN, share %, capital). */}
+      <PartnersRegisterCard />
+
+      {/* R-1850 / R-1851: Pvt Ltd only — directors (DIN, DSC, KYC) and share capital + shareholders. */}
+      <DirectorsRegisterCard />
+      <ShareCapitalCard />
+
+      {/* R-1860: Subscriptions / One-time / Both → what the menu and dashboard show first. */}
+      <SellModeCard isOwner={isOwner} />
 
       {/* R-337: aggregate turnover → e-invoice (IRN) warnings on invoices. */}
       <TurnoverCard isOwner={isOwner} />
@@ -866,6 +884,12 @@ function GeminiIntegrationCard() {
             <p className="text-xs text-ink-3 truncate" title={onClaude ? CLAUDE_STATUS_DETAIL : geminiText.detail}>
               {status?.ai_using ?? geminiText.card}
             </p>
+            {/* R-1877: this month's AI calls against the company's cap (server: lib/ai/usage-cap.ts). */}
+            {status?.ai_usage?.line && (
+              <p className={`text-xs truncate ${status.ai_usage.used >= status.ai_usage.cap ? "text-danger" : "text-ink-3"}`} title={status.ai_usage.detail}>
+                {status.ai_usage.line}
+              </p>
+            )}
           </div>
         </div>
         <Button variant={configured ? "ghost" : "primary"} size="sm" onClick={() => setOpen(true)}>

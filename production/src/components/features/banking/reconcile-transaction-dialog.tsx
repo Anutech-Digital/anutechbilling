@@ -44,7 +44,6 @@ import {
   useBookBankTxnAsStatutory,
   useBookBankTxnAsVendorBill,
   useBookBankTxnAsCommission,
-  useBookCreditAsInvoice,
   useReconcileSalaryAdvanceSplit,
   type BankTransactionRow,
   type MatchSuggestion,
@@ -54,7 +53,6 @@ import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
 import { suggestForLine, categoriseByRules } from "@/lib/banking/categorise";
 import { useUnreconciledSalaries, useEmployees } from "@/lib/queries/payroll";
 import { useCustomers } from "@/lib/queries/customers";
-import { useItems } from "@/lib/queries/items";
 import { rupee, formatDate } from "@/lib/utils";
 import { useBookBankTxnAsTax } from "@/lib/queries/tax-payments";
 import { fyLabel, fyStartYearOf } from "@/lib/accounting/tax-payments";
@@ -62,17 +60,19 @@ import { previousPeriod, titleCaseName, parseSalaryNarration, matchEmployee } fr
 import { useBookSalaryLines } from "@/lib/queries/salary-from-bank";
 import { detectGovtPayment } from "@/lib/banking/govt-payment";
 import { payeeFromNarration, TEST_TRANSFER_MAX } from "@/lib/banking/narration";
-import { usePrepaidAdvances, useBookBankTxnAsPrepaid } from "@/lib/queries/prepaid-advances";
+import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
 import { useVendorBills } from "@/lib/queries/vendor-bills";
 import { useReferralCommissions } from "@/lib/queries/referral-commissions";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
 import { ProjectPaymentSection } from "@/components/features/banking/project-payment-section";
-import { InvoiceCreditMatchSection } from "@/components/features/banking/invoice-credit-match-section";
-
-/** Sentinel option value for "+ Naya customer banao" in the customer select. */
-const NEW_CUSTOMER = "__new_customer__";
-/** Sentinel option value for "Custom — type the name" in the product select. */
-const CUSTOM_ITEM = "__custom_item__";
+import { CreditPayForSection } from "@/components/features/banking/credit-pay-for-section";
+import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-section";
+import { EmiRepaymentSection } from "@/components/features/banking/emi-repayment-section";
+import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
+import { IncentiveFromBankSection } from "@/components/features/banking/incentive-from-bank-section";
+import { EmployeeAdvanceBankSection } from "@/components/features/banking/employee-advance-bank-section";
+import { useComplianceProfile } from "@/lib/compliance/profile";
+import { ownerEquityWords } from "@/lib/accounting/owner-equity";
 
 interface Props {
   open: boolean;
@@ -192,8 +192,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     setBookCategory(expenseSuggestion?.category ?? ""); setBookGst("");
   }, [transaction?.id, expenseSuggestion?.category]);
 
-  /* Prepaid advance to a vendor (money-out). */
-  const bookPrepaid = useBookBankTxnAsPrepaid();
+  /* Names already used for vendor advances — so a rule's "FACEBK" reads as the existing "Facebook". */
   const { data: prepaidAdvances } = usePrepaidAdvances();
   const prepaidVendorNames = React.useMemo(
     () => [...new Set((prepaidAdvances ?? []).map((a) => a.vendor_name.trim()))].sort(),
@@ -214,33 +213,13 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     return prepaidVendorNames.find((v) => v.toUpperCase().startsWith(key)) ?? titleCaseName(pattern);
   }, [transaction, categoryRules, prepaidVendorNames]);
 
-  const [showPrepaid, setShowPrepaid] = React.useState(false);
-  const [prepaidVendor, setPrepaidVendor] = React.useState("");
-  const [prepaidCategory, setPrepaidCategory] = React.useState("Advertising");
   React.useEffect(() => {
     setBookVendor(suggestedVendor);
-    setShowPrepaid(false);
-    setPrepaidVendor(suggestedVendor);
-    setPrepaidCategory(expenseSuggestion?.category ?? "Advertising");
-  }, [transaction?.id, suggestedVendor, expenseSuggestion?.category]);
-  const handleBookPrepaid = async () => {
-    if (!transaction || !prepaidVendor.trim()) return;
-    try {
-      await bookPrepaid.mutateAsync({
-        transactionId: transaction.id,
-        accountId:     transaction.bank_account_id,
-        vendorName:    prepaidVendor,
-        category:      prepaidCategory,
-        notes:         transaction.description,
-      });
-      onOpenChange(false);
-    } catch { /* hook toasts */ }
-  };
+  }, [transaction?.id, suggestedVendor]);
 
-  /* Vendor bill / referral commission paid from this line (money-out). Settles the
-     bill / commission against THIS imported line; a synthetic line the Bills or
-     Referrals page had made for the same payment is replaced (migration 20260927190000).
-     Candidates: open bills, plus paid ones whose synthetic line matches this amount. */
+  /* R-1866: paying a vendor (open bills, a new bill, an advance) is DebitPayForSection. What stays
+     here: a bill payment ALREADY recorded on the Bills page (its own manual bank line) — this
+     imported line replaces that manual one (migration 20260927190000) — and referral commissions. */
   const bookBill = useBookBankTxnAsVendorBill();
   const bookCommission = useBookBankTxnAsCommission();
   const { data: allBills } = useVendorBills();
@@ -252,12 +231,10 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   React.useEffect(() => { setShowBill(false); setBillPick(""); setShowCommission(false); setCommissionPick(""); }, [transaction?.id]);
   const billCandidates = React.useMemo(() => {
     const amt = transaction?.debit ?? 0;
+    /* Only bills with a payment of this amount already on them (its manual line gets replaced). */
     return (allBills ?? [])
-      .filter((b) => (b.total - (b.paid_amount ?? 0)) > 0 || (b.paid_amount ?? 0) === amt || b.total === amt)
-      .sort((a, b) => {
-        const ax = Math.abs(a.total - (a.paid_amount ?? 0) - amt), bx = Math.abs(b.total - (b.paid_amount ?? 0) - amt);
-        return ax - bx || b.bill_date.localeCompare(a.bill_date);
-      })
+      .filter((b) => amt > 0 && (b.paid_amount ?? 0) >= amt)
+      .sort((a, b) => Number((b.paid_amount ?? 0) === amt) - Number((a.paid_amount ?? 0) === amt) || b.bill_date.localeCompare(a.bill_date))
       .slice(0, 40);
   }, [allBills, transaction?.debit]);
   const commissionCandidates = React.useMemo(() => {
@@ -297,46 +274,24 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     } catch { /* hook toasts the error */ }
   };
 
-  // "Book as income / invoice" (credit lines): raise a GST invoice (+ its
-  // one-off quote), record its payment, and reconcile this line — one step.
-  const bookInvoice = useBookCreditAsInvoice();
+  /* R-1838: money from a customer — "This money is for:" (CreditPayForSection) picks the
+     customer and WHAT it pays (renewal / add-seats / new-product quote, unpaid invoice, or a new
+     sale with seats × unit price) and books it through record_payment in one transaction. It
+     replaces the old "Create invoice" form, which booked every receipt as a one-off sale. */
   const { data: customers } = useCustomers();
-  const [showInvoice, setShowInvoice]   = React.useState(false);
-  const [invCustomer, setInvCustomer]   = React.useState("");
   /* New customer from here opens the SAME side-sheet form the quote builder uses
      (components/features/customers — Billing's form, used as-is, not copied), and
      picks the customer it creates. */
   const [newCustomerOpen, setNewCustomerOpen] = React.useState(false);
+  const [createdCustomer, setCreatedCustomer] = React.useState<string | null>(null);
+  const [payForDone, setPayForDone] = React.useState(false);
   /* "Project payment" — which project (existing or new) this money is for; booked here
      instead of sending the operator off to the projects page. */
   const [showProject, setShowProject]   = React.useState(false);
   const [projCustomer, setProjCustomer] = React.useState("");
-  const [invLineName, setInvLineName]   = React.useState("");
-  const [invTaxable, setInvTaxable]     = React.useState("");
-  /* "" = not picked · CUSTOM_ITEM = typed name · else an items.id from the catalog. */
-  const [invItem, setInvItem]           = React.useState("");
-  const { data: items } = useItems();
-  const activeItems = (items ?? []).filter((i) => i.is_active);
   React.useEffect(() => {
-    setShowInvoice(false); setInvCustomer(""); setInvLineName(""); setInvTaxable(""); setInvItem("");
-    setShowProject(false); setProjCustomer("");
+    setShowProject(false); setProjCustomer(""); setCreatedCustomer(null); setPayForDone(false);
   }, [transaction?.id]);
-
-  const handleBookInvoice = async () => {
-    if (!transaction || !invCustomer || !invLineName.trim() || !(Number(invTaxable) > 0)) return;
-    try {
-      await bookInvoice.mutateAsync({
-        transactionId: transaction.id,
-        bankAccountId: transaction.bank_account_id,
-        customerId:    invCustomer,
-        lineName:      invLineName.trim(),
-        itemId:        invItem && invItem !== CUSTOM_ITEM ? invItem : null,
-        taxableAmount: Math.round(Number(invTaxable)),
-        reference:     transaction.reference,
-      });
-      onOpenChange(false);
-    } catch { /* hook toasts */ }
-  };
 
   // "Book this money-in as…" (credit lines): capital / director's loan. Books
   // the Balance-Sheet line AND reconciles this line in one step.
@@ -344,14 +299,19 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const [creditLabel, setCreditLabel] = React.useState("");
   React.useEffect(() => { setCreditKind("capital"); setCreditLabel(""); }, [transaction?.id]);
 
+  /* R-1839: company type decides the owner's words; a firm's box here is only a partner's loan
+     (capital goes in as a dated "Capital introduced" entry, OwnerEquitySection). */
+  const profileQ = useComplianceProfile();
+  const ownerWords = ownerEquityWords(profileQ.data?.businessType ?? null);
   const handleBookCredit = async () => {
     if (!transaction) return;
+    const kind = ownerWords.allowed ? "director_loan" : creditKind;
     try {
       await bookCredit.mutateAsync({
         transactionId: transaction.id,
         accountId:     transaction.bank_account_id,
-        kind:          creditKind,
-        label:         creditLabel.trim() || (creditKind === "capital" ? "Owner's capital" : "Director's loan"),
+        kind,
+        label:         creditLabel.trim() || (ownerWords.allowed ? "Loan from partner" : kind === "capital" ? "Owner's capital" : "Director's loan"),
         notes:         transaction.description,
       });
       onOpenChange(false);
@@ -693,8 +653,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
               </div>
             </div>
 
-            {/* Suggested matches */}
-            <div>
+            {/* Suggested matches — hidden once "This money is for:" has booked the line (R-1838). */}
+            {!payForDone && <div>
               <p className="text-xs font-semibold text-ink-2 mb-2">
                 Suggested matches
               </p>
@@ -749,139 +709,68 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                   ))}
                 </ul>
               )}
-            </div>
+            </div>}
 
-            {/* R-109: money for an invoice that is already raised but not yet marked paid —
-                one operator click records the payment and reconciles this line. */}
-            {isCredit && (
-              <InvoiceCreditMatchSection transaction={transaction} onDone={() => onOpenChange(false)} />
-            )}
-
-            {/* Income from a sale — credit lines only. Most money-in with no
-                match is a customer paying for a sale that wasn't invoiced yet.
-                Route to the proper invoice/project builder (amount prefilled);
-                once the payment is recorded it shows here as a suggested match
-                to reconcile. Kept FIRST — it's the commonest money-in. */}
-            {isCredit && (
+            {/* R-1838: money from a customer — FIRST, it is the commonest money-in. Says what
+                the money is for (renewal / add seats / new-product quote, unpaid invoice, or a new
+                sale with seats × unit price) and records it through record_payment. Project
+                money keeps its own section. */}
+            {isCredit && (showProject ? (
               <div className="rounded-md border border-amber/50 bg-amber-soft/25 p-3">
-                <p className="text-xs font-semibold text-ink-2 mb-1">Money from a sale / customer?</p>
-                <p className="text-xs text-ink-3 mb-3 leading-relaxed">
-                  Income usually comes from an invoice. No invoice for this {rupee(amount)} yet? Create the invoice (or project payment) here — once its payment is recorded, this line shows under <b>suggested match</b> below and reconciles in one click.
-                </p>
-                {showProject && transaction ? (
-                  <ProjectPaymentSection
-                    txn={transaction}
-                    amount={amount}
-                    customers={customers ?? []}
-                    customerId={projCustomer}
-                    onCustomerChange={setProjCustomer}
-                    onNewCustomer={() => setNewCustomerOpen(true)}
-                    onCancel={() => setShowProject(false)}
-                    onDone={() => { setShowProject(false); onOpenChange(false); }}
-                  />
-                ) : !showInvoice ? (
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      icon="file"
-                      onClick={() => {
-                        setShowInvoice(true);
-                        /* No prefill from the bank narration: "50200008254523-TPT-PO 00038-…"
-                           is a transfer reference, not what was sold, and it would print on
-                           the customer's tax invoice. The operator picks the product. */
-                        setInvItem(""); setInvLineName("");
-                        setInvTaxable(String(Math.round(amount / 1.18)));
-                      }}
-                    >
-                      Create invoice
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="default"
-                      icon="briefcase"
-                      onClick={() => setShowProject(true)}
-                    >
-                      Project payment
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="flex gap-2">
-                      <select
-                        value={invCustomer}
-                        onChange={(e) => {
-                          /* "+ Naya customer" is an action, not a value: open the form and
-                             keep the current pick until a customer is actually created. */
-                          if (e.target.value === NEW_CUSTOMER) { setNewCustomerOpen(true); return; }
-                          setInvCustomer(e.target.value);
-                        }}
-                        aria-label="Customer"
-                        className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
-                      >
-                        <option value="" disabled>Select a customer…</option>
-                        <option value={NEW_CUSTOMER}>＋ New customer</option>
-                        {(customers ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                      </select>
-                      <Button type="button" size="sm" variant="default" icon="plus" onClick={() => setNewCustomerOpen(true)} className="shrink-0">
-                        New
-                      </Button>
-                    </div>
-                    <select
-                      value={invItem}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setInvItem(v);
-                        const it = activeItems.find((i) => i.id === v);
-                        setInvLineName(it ? it.name : "");
-                      }}
-                      aria-label="Product"
-                      className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
-                    >
-                      <option value="" disabled>What was sold? Select a product…</option>
-                      <option value={CUSTOM_ITEM}>✎ Custom — type a name</option>
-                      {activeItems.map((i) => (
-                        <option key={i.id} value={i.id}>{i.name}{i.vendor ? ` · ${i.vendor}` : ""}</option>
-                      ))}
-                    </select>
-                    {invItem === CUSTOM_ITEM && (
-                      <Input
-                        value={invLineName}
-                        onChange={(e) => setInvLineName(e.target.value)}
-                        placeholder="What was sold? (e.g. Website / Setup fee)"
-                        aria-label="Custom product name"
-                        autoFocus
-                      />
-                    )}
-                    <Input aria-label="Taxable amount ₹ (ex-GST)" value={invTaxable} onChange={(e) => setInvTaxable(e.target.value)} type="number" min={0} placeholder="Taxable amount ₹ (ex-GST)" />
-                    <p className="text-xs text-ink-3">GST is applied automatically from the customer's place of supply. The taxable value of {rupee(amount)} received (÷1.18) is prefilled — correct it if needed.</p>
-                    <div className="flex gap-2 pt-1">
-                      <Button
-                        size="sm"
-                        variant="primary"
-                        icon="check"
-                        loading={bookInvoice.isPending}
-                        disabled={!invCustomer || !invLineName.trim() || !(Number(invTaxable) > 0)}
-                        onClick={handleBookInvoice}
-                      >
-                        Create invoice &amp; reconcile
-                      </Button>
-                      <Button size="sm" variant="default" onClick={() => setShowInvoice(false)}>Cancel</Button>
-                    </div>
-                  </div>
-                )}
+                <ProjectPaymentSection
+                  txn={transaction}
+                  amount={amount}
+                  customers={customers ?? []}
+                  customerId={projCustomer}
+                  onCustomerChange={setProjCustomer}
+                  onNewCustomer={() => setNewCustomerOpen(true)}
+                  onCancel={() => setShowProject(false)}
+                  onDone={() => { setShowProject(false); onOpenChange(false); }}
+                />
               </div>
+            ) : (
+              <CreditPayForSection
+                transaction={transaction}
+                customers={customers ?? []}
+                onNewCustomer={() => setNewCustomerOpen(true)}
+                pickedCustomerId={createdCustomer}
+                onProjectPayment={() => setShowProject(true)}
+                onSaved={() => setPayForDone(true)}
+                onDone={() => onOpenChange(false)}
+              />
+            ))}
+
+            {/* R-1864: an EMI / loan repayment — matched to the loan's instalment and split into
+                principal (reduces the loan) + interest (P&L); opens itself when the line looks like one. */}
+            {!isCredit && !payForDone && (
+              <EmiRepaymentSection transaction={transaction} onDone={() => onOpenChange(false)} />
             )}
+
+            {/* R-1866: money to a vendor — "This payment is for:" its open bills (several, part,
+                net of TDS), a bill recorded on the spot, an advance, a bank charge. One transaction.
+                A challan to the government (govtHint) is not a vendor — booked below instead. */}
+            {!isCredit && !govtHint && (
+              <DebitPayForSection transaction={transaction} onSaved={() => setPayForDone(true)} onDone={() => onOpenChange(false)} />
+            )}
+
+            {/* Once booked, only the result stays: the other choices no longer apply to this line. */}
+            {!payForDone && (<>
 
             {/* Book money-IN as capital / a director's loan — credit lines only.
                 Adds the Balance-Sheet line AND reconciles, in one step. */}
-            {isCredit && (
+            {/* R-1839: a proprietor / firm books money the owner puts in as dated "Capital
+                introduced" (OwnerEquitySection, below) — one way, not a lump line here. A firm
+                keeps the loan-from-partner choice; a company keeps both choices as before. */}
+            {isCredit && !(ownerWords.allowed && !ownerWords.needsPartner) && (
               <div className="rounded-md border border-emerald/40 bg-emerald/5 p-3">
-                <p className="text-xs font-semibold text-ink-2 mb-1">Money put into the business?</p>
+                <p className="text-xs font-semibold text-ink-2 mb-1">{ownerWords.allowed ? "A loan from a partner?" : "Money put into the business?"}</p>
                 <p className="text-xs text-ink-3 mb-3 leading-relaxed">
-                  Account opening / promoter funds — this {rupee(amount)} is <b>not income</b>. Book it correctly and reconcile in one step.
+                  {ownerWords.allowed
+                    ? <>Money a partner lent the firm, to be repaid — this {rupee(amount)} is <b>not income</b> and not capital.</>
+                    : <>Account opening / promoter funds — this {rupee(amount)} is <b>not income</b>. Book it correctly and reconcile in one step.</>}
                 </p>
                 <div className="space-y-2">
+                  {!ownerWords.allowed && (
                   <div className="grid grid-cols-1 gap-1.5">
                     <label className={`flex items-start gap-2 rounded-md border px-3 py-2 cursor-pointer ${creditKind === "capital" ? "border-emerald bg-emerald/10" : "border-hairline"}`}>
                       <input type="radio" name="creditKind" checked={creditKind === "capital"} onChange={() => setCreditKind("capital")} className="mt-1" />
@@ -898,10 +787,11 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                       </span>
                     </label>
                   </div>
+                  )}
                   <Input aria-label="Ledger label"
                     value={creditLabel}
                     onChange={(e) => setCreditLabel(e.target.value)}
-                    placeholder={creditKind === "capital" ? "Label (default: Owner's capital)" : "Label (default: Director's loan)"}
+                    placeholder={ownerWords.allowed ? "Label (default: Loan from partner)" : creditKind === "capital" ? "Label (default: Owner's capital)" : "Label (default: Director's loan)"}
                   />
                 </div>
                 <Button
@@ -912,7 +802,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                   loading={bookCredit.isPending}
                   onClick={handleBookCredit}
                 >
-                  Book {rupee(amount)} as {creditKind === "capital" ? "capital" : "director's loan"}
+                  Book {rupee(amount)} as {ownerWords.allowed ? "a loan from a partner" : creditKind === "capital" ? "capital" : "director's loan"}
                 </Button>
               </div>
             )}
@@ -1032,27 +922,33 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
               </div>
             )}
 
-            {/* Vendor bill (COGS) paid from this line — settled against THIS line, never a second one. */}
-            {!isCredit && (
+            {/* R-1839: not an expense — the owner's own money (drawings / capital introduced), or
+                for a Pvt Ltd the "Paid to a director" choices; and an employee's incentive, which
+                is salary (Payroll), never a plain expense. */}
+            {!isCredit && <IncentiveFromBankSection transaction={transaction} onDone={() => onOpenChange(false)} />}
+            {/* R-1871: office-expense advance to an employee (money-out: give / top-up, or a
+                reimbursement owed) and its unused money coming back (money-in). An asset, not an expense. */}
+            <EmployeeAdvanceBankSection transaction={transaction} onDone={() => onOpenChange(false)} />
+            <OwnerEquitySection transaction={transaction} onDone={() => onOpenChange(false)} />
+
+            {/* A bill payment already recorded on the Bills page has its own manual bank line;
+                this imported line takes its place (counted once). Open bills are paid above. */}
+            {!isCredit && billCandidates.length > 0 && (
               <div className="rounded-md border border-hairline p-3">
                 <button type="button" onClick={() => setShowBill((v) => !v)} aria-expanded={showBill} className="w-full flex items-center justify-between text-left">
-                  <span className="text-xs font-semibold text-ink-2">Payment of a vendor bill (Google / Microsoft / Zoho…)?</span>
+                  <span className="text-xs font-semibold text-ink-2">Already recorded this bill payment on the Bills page?</span>
                   <Icon name={showBill ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
                 </button>
-                {!showBill ? (
-                  <p className="text-xs text-ink-3 mt-1 leading-relaxed">Settle the bill here — paying it from the Bills page creates a separate manual bank line, which is counted twice once the statement arrives.</p>
-                ) : (
+                {showBill && (
                   <div className="mt-2 space-y-2">
                     <select value={billPick} onChange={(e) => setBillPick(e.target.value)} aria-label="Vendor bill" className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40">
                       <option value="">Select a bill…</option>
-                      {billCandidates.map((b) => {
-                        const due = b.total - (b.paid_amount ?? 0);
-                        return <option key={b.id} value={b.id}>{b.vendor_name} · {b.bill_no ? `${b.bill_no} · ` : ""}{formatDate(b.bill_date)} · {due > 0 ? `due ${rupee(due)}` : `paid ${rupee(b.total)} (replaces the manual line)`}</option>;
-                      })}
+                      {billCandidates.map((b) => (
+                        <option key={b.id} value={b.id}>{b.vendor_name} · {b.bill_no ? `${b.bill_no} · ` : ""}{formatDate(b.bill_date)} · paid {rupee(b.paid_amount ?? 0)} (replaces the manual line)</option>
+                      ))}
                     </select>
-                    {billCandidates.length === 0 && <p className="text-xs text-ink-3">No open bills — create the bill on the Bills page first.</p>}
                     <Button size="sm" variant="primary" icon="check" disabled={!billPick || bookBill.isPending} loading={bookBill.isPending} onClick={handleBookBill}>
-                      Book {rupee(amount)} against this bill
+                      Match {rupee(amount)} to this bill payment
                     </Button>
                   </div>
                 )}
@@ -1077,66 +973,6 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                     <p className="text-xs text-ink-3">The line amount must equal the commission's net payable (after TDS).</p>
                     <Button size="sm" variant="primary" icon="check" disabled={!commissionPick || bookCommission.isPending} loading={bookCommission.isPending} onClick={handleBookCommission}>
                       Book {rupee(amount)} as commission paid
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Paid a VENDOR in advance (Facebook / Google ads top-up, a retainer) —
-                money-out. Not an expense yet: a prepaid asset, expensed when the
-                vendor's invoice arrives (Prepaid page → Book invoice, oldest top-up first). */}
-            {!isCredit && (
-              <div className="rounded-md border border-hairline p-3">
-                <button
-                  type="button"
-                  onClick={() => setShowPrepaid((v) => !v)}
-                  aria-expanded={showPrepaid}
-                  className="w-full flex items-center justify-between text-left"
-                >
-                  <span className="text-xs font-semibold text-ink-2">Paid in advance to a vendor? (e.g. Facebook ads top-up)</span>
-                  <Icon name={showPrepaid ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
-                </button>
-                {!showPrepaid ? (
-                  <p className="text-xs text-ink-3 mt-1 leading-relaxed">
-                    Ad platforms take money first and invoice what was used later. Book the top-up as an <b>advance</b>;
-                    the monthly invoice then becomes the expense.
-                  </p>
-                ) : (
-                  <div className="mt-2 space-y-2">
-                    <p className="text-xs text-ink-3 leading-relaxed">
-                      Holds this {rupee(amount)} as a <b>prepaid asset</b> — no expense today. When the invoice comes, book it on
-                      Prepaid / Advances: it is drawn from the oldest top-ups first.
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <Input
-                        value={prepaidVendor}
-                        onChange={(e) => setPrepaidVendor(e.target.value)}
-                        placeholder="Paid to (e.g. Facebook)"
-                        aria-label="Vendor"
-                        list="prepaid-vendors"
-                      />
-                      <datalist id="prepaid-vendors">
-                        {prepaidVendorNames.map((v) => <option key={v} value={v} />)}
-                      </datalist>
-                      <select
-                        value={prepaidCategory}
-                        onChange={(e) => setPrepaidCategory(e.target.value)}
-                        aria-label="Category the advance will be used for"
-                        className="rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
-                      >
-                        {EXPENSE_CATEGORIES.filter((c) => c !== "Salaries").map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      icon="check"
-                      disabled={!prepaidVendor.trim() || bookPrepaid.isPending}
-                      loading={bookPrepaid.isPending}
-                      onClick={handleBookPrepaid}
-                    >
-                      Book {rupee(amount)} as {prepaidVendor.trim() || "vendor"} advance
                     </Button>
                   </div>
                 )}
@@ -1372,6 +1208,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 Mark reconciled manually
               </Button>
             </div>
+            </>)}
           </div>
         )}
 
@@ -1387,7 +1224,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
       <AddCustomerForm
         open={newCustomerOpen}
         onOpenChange={setNewCustomerOpen}
-        onCreated={(id) => { setInvCustomer(id); setProjCustomer(id); setNewCustomerOpen(false); }}
+        onCreated={(id) => { setCreatedCustomer(id); setProjCustomer(id); setNewCustomerOpen(false); }}
       />
     </Sheet>
   );

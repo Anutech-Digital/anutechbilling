@@ -54,6 +54,8 @@ const SECRET_COLUMNS = [
 /** Secret-LOOKING columns that are fine for their table's readers — each with the reason. */
 const REVIEWED_NOT_SECRET: Record<string, string> = {
   "ad_accounts.token_expires_at": "an expiry time, not the token",
+  "ai_usage_monthly.input_tokens": "R-1877 AI usage counter — integer count of model input tokens, no secret",
+  "ai_usage_monthly.output_tokens": "R-1877 AI usage counter — integer count of model output tokens, no secret",
   "user_google_tokens.token_expiry": "an expiry time, not the token",
   "api_keys.key_hash": "SHA-256 of a random API key; owner-only by RLS; a hash cannot be used as the key",
   "assessments.public_token": "share-link token the team sends to the customer",
@@ -195,6 +197,33 @@ describe("R-833 secret columns", () => {
     const open = [...state.entries()].filter(([, v]) => v.on).map(([k, v]) => `${k} (last: ${v.file})`);
     expect(open, "table-level SELECT left on a secret table").toEqual([]);
     expect(colLeaks, "a column grant names a secret column").toEqual([]);
+  });
+
+  it("R-1884: code that writes ad_accounts.access_token seals it (meta-token-vault), never plaintext", () => {
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = `${dir}/${e.name}`;
+        if (e.isDirectory()) walk(p);
+        else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) && !/database\.(generated|types)\.ts$/.test(e.name)) files.push(p);
+      }
+    };
+    walk("src");
+    // Each `.from("ad_accounts")` call up to the next `.from(` — the write's own payload.
+    const writes: { file: string; value: string }[] = [];
+    for (const f of files) {
+      const s = read(f);
+      for (const part of s.split(/\.from\(/).slice(1)) {
+        if (!part.startsWith('"ad_accounts"') || !/\.(upsert|update|insert)\(/.test(part)) continue;
+        for (const m of part.matchAll(/\baccess_token\s*:\s*([A-Za-z_][\w.]*)/g)) writes.push({ file: f, value: m[1] });
+      }
+    }
+    expect(writes.length, "scanner found no ad_accounts token write — did the Meta callback move?").toBeGreaterThan(0);
+    for (const w of writes) {
+      expect(read(w.file), `${w.file} writes ad_accounts.access_token without the vault`).toMatch(/from "@\/lib\/meta\/meta-token-vault"/);
+      // the only value written into the column is the sealed one (sync reseals via a spread patch)
+      expect(w.value, `${w.file}: access_token: ${w.value} — must be sealed`).toBe("sealed");
+    }
   });
 
   it("every secret-looking column is either SECRET_COLUMNS or reviewed", () => {

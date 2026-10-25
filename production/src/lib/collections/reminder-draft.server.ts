@@ -128,7 +128,7 @@ type CallAi = typeof geminiJson;
 /** Draft with Gemini when a key is set; the template otherwise. Never sends anything. */
 export async function draftReminder(
   ctx: ReminderContext,
-  cfg: { apiKey: string | null; model: string },
+  cfg: { apiKey: string | null; model: string; tenantId: string | null },
   callAi: CallAi = geminiJson,
 ): Promise<DraftResult> {
   const template = buildReminderTemplate(ctx);
@@ -137,6 +137,7 @@ export async function draftReminder(
   const out = await callAi<Partial<ReminderDraft>>({
     apiKey: cfg.apiKey,
     model: cfg.model,
+    tenantId: cfg.tenantId,
     system: REMINDER_AI_SYSTEM,
     user: `Facts:\n${reminderFactsForAi(ctx)}\n\nDraft the reminder now.`,
     temperature: 0.4,

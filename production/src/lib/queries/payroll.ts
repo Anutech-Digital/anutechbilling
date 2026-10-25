@@ -10,13 +10,15 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
-import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { fetchAllRows, type PageQuery } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { guardErrorToast } from "@/lib/ui/guard-toast";
 import type { Database } from "@/lib/supabase/database.types";
 import { statutoryDues, type DuesSummary } from "@/lib/accounting/tds-deductor";
 import { monthBounds } from "@/lib/dates/ist";
+import { fetchCogsBillTds } from "@/lib/queries/cogs-bill-tds";
+import { resolveSalaryBankLines, salariesNeedingBankLine, type BankLineFacts, type BankLineRef } from "@/lib/payroll/salary-bank-link";
 
 /** R-607: no pin_hash — members cannot read it (20261010010000). Use `pin_set`. */
 export type Employee = Omit<Database["public"]["Tables"]["employees"]["Row"], "pin_hash">;
@@ -359,6 +361,36 @@ export function useUnlinkedSalaryBankLines(nets: number[], since: string | null)
   });
 }
 
+/** R-1895: salary id → the bank line that paid it (account + line id), for the Salary Register's
+ *  "open the bank line" link. reconciled_txn_id first; else a line matched to the salary or its
+ *  expense (lib/payroll/salary-bank-link). Only paid / partial salaries are looked up. */
+export function useSalaryBankLines(rows: readonly SalaryPayment[]) {
+  const need = salariesNeedingBankLine(rows);
+  const txnIds = [...new Set(need.map((p) => p.reconciled_txn_id).filter((x): x is string => !!x))].sort();
+  const loose = need.filter((p) => !p.reconciled_txn_id);
+  const salIds = loose.map((p) => p.id).sort();
+  const expIds = loose.map((p) => p.expense_id).filter((x): x is string => !!x).sort();
+  return useQuery({
+    queryKey: ["salary-payments", "bank-lines", txnIds.join(","), salIds.join(","), expIds.join(",")],
+    enabled: need.length > 0,
+    queryFn: async (): Promise<Map<string, BankLineRef>> => {
+      const supabase = createClient();
+      const cols = "id, bank_account_id, txn_date, matched_to_type, matched_to_id";
+      const chunks = (xs: readonly string[], n = 150) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+      const reads: Promise<BankLineFacts[]>[] = [
+        ...chunks(txnIds).map((ids) => fetchAllRows<BankLineFacts>((from, to) => supabase.from("bank_transactions").select(cols)
+          .in("id", ids).order("id", { ascending: true }).range(from, to))),
+        ...chunks(salIds).map((ids) => fetchAllRows<BankLineFacts>((from, to) => supabase.from("bank_transactions").select(cols)
+          .eq("matched_to_type", "salary").in("matched_to_id", ids).order("id", { ascending: true }).range(from, to))),
+        ...chunks(expIds).map((ids) => fetchAllRows<BankLineFacts>((from, to) => supabase.from("bank_transactions").select(cols)
+          .eq("matched_to_type", "expense").in("matched_to_id", ids).order("id", { ascending: true }).range(from, to))),
+      ];
+      return resolveSalaryBankLines(need, (await Promise.all(reads)).flat());
+    },
+    staleTime: 30_000,
+  });
+}
+
 /** Salaries not yet fully cleared (unpaid or partially paid), with the still-
  *  owed remaining amount — fed to the reconcile dialog so a money-out bank line
  *  can be applied (fully or partially) to a chosen salary. */
@@ -516,12 +548,30 @@ export async function fetchStatutoryDues(supabase: ReturnType<typeof createClien
     fetchAllRows<{ tds_amount: number | null }>((from, to) => supabase.from("referral_commissions")
       .select("tds_amount").gt("tds_amount", 0).neq("status", "cancelled").order("id", { ascending: true }).range(from, to)),
   ]);
+  /* R-1891: 194Q TDS deducted when a COGS (goods) bill was paid from the bank — on the payment
+     row, not on an expense. Same rule as report_balance_sheet.dues_vendor_tds. */
+  const bt = await fetchCogsBillTds(supabase);
+  /* R-1849: TDS on partners' interest + remuneration (194T / 393(3)) from a posted year-end
+     split. Same rule as report_balance_sheet.dues_vendor_tds. Before the migration: none. */
+  const pt = await fetchPartnerSplitTds(supabase);
   const sumTds = (rows: { tds_amount: number | null }[]) => rows.reduce((s, r) => s + (r.tds_amount ?? 0), 0);
   return statutoryDues({
     salaries: sal,
-    vendorTds: sumTds(vt) + sumTds(ct),
+    vendorTds: sumTds(vt) + sumTds(ct) + sumTds(bt) + pt,
     paid,
   });
+}
+
+/** R-1849: Σ TDS on posted partner splits. A missing table (code before the migration) = 0. */
+export async function fetchPartnerSplitTds(supabase: ReturnType<typeof createClient>): Promise<number> {
+  try {
+    const rows = await fetchAllRows<{ tds: number | null }>((from, to) => supabase.from("partner_appropriation_lines" as never)
+      .select("tds").gt("tds", 0).order("id", { ascending: true }).range(from, to) as unknown as PageQuery<{ tds: number | null }>);
+    return rows.reduce((s, r) => s + (Number(r.tds) || 0), 0);
+  } catch (e) {
+    if (/partner_appropriation/.test(String((e as Error)?.message ?? e)) && /(does not exist|could not find|schema cache)/i.test(String((e as Error)?.message ?? e))) return 0;
+    throw e;
+  }
 }
 
 export function useStatutoryDues() {

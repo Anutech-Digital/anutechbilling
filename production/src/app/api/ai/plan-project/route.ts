@@ -111,10 +111,10 @@ type GeminiPlanReply = {
   tasks?: unknown;
 };
 
-async function genWithGemini(apiKey: string, model: string, prompt: string): Promise<GeminiPlanReply | null> {
+async function genWithGemini(apiKey: string, model: string, tenantId: string | null, prompt: string): Promise<GeminiPlanReply | null> {
   /* Pehle apna `fetch` tha, bina `responseMimeType: application/json`, bina timeout, bina
      circuit breaker. geminiJson wo teeno deta hai. */
-  return geminiJson<GeminiPlanReply>({ apiKey, model, user: prompt, label: "ai/plan-project" });
+  return geminiJson<GeminiPlanReply>({ apiKey, model, tenantId, user: prompt, label: "ai/plan-project" });
 }
 
 const STUB_QUESTIONS: QuestionItem[] = [
@@ -215,7 +215,7 @@ export async function POST(request: NextRequest) {
 
   if (body.action === "questions") {
     if (gemini.apiKey) {
-      const qRes = await genWithGemini(gemini.apiKey, gemini.model, buildQuestionsPrompt(body));
+      const qRes = await genWithGemini(gemini.apiKey, gemini.model, gemini.tenantId, buildQuestionsPrompt(body));
       if (qRes && Array.isArray(qRes.questions) && qRes.questions.length > 0) {
         return NextResponse.json({ questions: qRes.questions, mode: "gemini" });
       }
@@ -224,7 +224,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (gemini.apiKey) {
-    const planRes = await genWithGemini(gemini.apiKey, gemini.model, buildPlanPrompt(body));
+    const planRes = await genWithGemini(gemini.apiKey, gemini.model, gemini.tenantId, buildPlanPrompt(body));
     if (planRes && (planRes.explanation || planRes.clientProposal || (Array.isArray(planRes.tasks) && planRes.tasks.length > 0))) {
       return NextResponse.json({
         clientProposal: planRes.clientProposal || "",

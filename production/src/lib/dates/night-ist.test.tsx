@@ -45,6 +45,8 @@ vi.mock("@/lib/supabase/client", () => ({
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }));
+/* R-1846: the owner-salary caution reads the business type / partners — not part of these tests. */
+vi.mock("@/components/features/accounting/owner-pay-caution", () => ({ OwnerPayCautionBox: () => null }));
 vi.mock("@/lib/queries/bank", () => ({
   useBankAccounts: () => ({ data: [], isLoading: false }),
   useRecentDepositTags: () => ({ data: [] }),

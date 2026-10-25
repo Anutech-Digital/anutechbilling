@@ -60,6 +60,24 @@ export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | 
               </span>
             </label>
           </div>
+        ) : impact?.kind === "advance" ? (
+          impact.usedOrRefunded > 0 ? (
+            <div className="space-y-2 text-sm text-ink-2">
+              <p>
+                This line is {impact.customerName ?? "a customer"}&apos;s advance of {rupee(impact.amount)}, and {rupee(impact.usedOrRefunded)} of it
+                is already used on a later payment (or refunded), so it cannot be taken back.
+              </p>
+              <p className="text-xs text-ink-3">
+                Next step: on <Link href={"/payments" as never} className="text-amber-ink underline">Payments</Link>, delete or refund the payment that used this credit — the credit opens again — then un-reconcile this line.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-ink-2">
+              This line is {impact.customerName ?? "a customer"}&apos;s advance of {rupee(impact.amount)}. Un-reconciling takes it back:
+              the receipt{impact.voucherNo ? <> <span className="font-mono">{impact.voucherNo}</span></> : null} is removed (its number is kept as cancelled)
+              and the customer&apos;s {rupee(impact.amount)} credit goes too.
+            </p>
+          )
         ) : impact?.kind === "receipt" ? (
           <p className="text-sm text-ink-2">
             This line is linked to a receipt of {rupee(impact.amount)}{impact.invoiceId ? <> (invoice <span className="font-mono">{impact.invoiceId}</span>)</> : null}.
@@ -81,9 +99,11 @@ export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | 
 
         <DialogFooter>
           <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
-          <Button type="button" variant="danger" loading={unreconcile.isPending} disabled={isLoading} onClick={confirm}>
-            Un-reconcile{impact?.kind === "bank-sale" && undoSale ? " & sale palto" : ""}
-          </Button>
+          {impact?.kind === "advance" && impact.usedOrRefunded > 0 ? null : (
+            <Button type="button" variant="danger" loading={unreconcile.isPending} disabled={isLoading} onClick={confirm}>
+              Un-reconcile{impact?.kind === "bank-sale" && undoSale ? " & sale palto" : impact?.kind === "advance" ? " & remove advance" : ""}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

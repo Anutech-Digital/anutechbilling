@@ -27,6 +27,19 @@ const items: BalanceSheetItem[] = [
   { id: "2", section: "asset", label: "Security deposit", amount: 25000, sort_order: 0, notes: null },
 ];
 
+describe("R-1839 owner drawings / capital introduced in the Trial Balance", () => {
+  it("drawings Dr and capital Cr in Equity; the difference moves by exactly their net; no income / expense head", () => {
+    const base = buildTrialBalance({ bs, pnl, items });
+    const tb = buildTrialBalance({ bs, pnl, items, ownerEquity: { capitalIntroduced: 20000, drawings: 12000 } });
+    expect(tb.rows.find((r) => r.head === "Drawings")).toMatchObject({ group: "Equity", debit: 12000, credit: 0 });
+    expect(tb.rows.find((r) => r.head === "Capital introduced")).toMatchObject({ group: "Equity", debit: 0, credit: 20000 });
+    expect(tb.difference).toBe(base.difference + 12000 - 20000);
+    expect(tb.rows.filter((r) => r.group === "Income" || r.group === "Expenses"))
+      .toEqual(base.rows.filter((r) => r.group === "Income" || r.group === "Expenses"));
+    expect(tb.totalDebit).toBe(tb.totalCredit);
+  });
+});
+
 describe("buildTrialBalance", () => {
   const tb = buildTrialBalance({ bs, pnl, items });
   const row = (head: string) => tb.rows.find((r) => r.head === head);

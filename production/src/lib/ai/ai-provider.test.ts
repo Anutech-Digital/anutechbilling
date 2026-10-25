@@ -147,7 +147,7 @@ describe("geminiJson on Claude", () => {
     vi.stubGlobal("fetch", fetchSpy);
     createMock.mockResolvedValue(claudeReply('```json\n{"vendor_name":"Acme","total":1180}\n```'));
     const bill = await geminiJson<{ vendor_name: string; total: number }>({
-      apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "Read this bill", label: "ai/extract-bill",
+      apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "Read this bill", tenantId: null, label: "ai/extract-bill",
       temperature: 0.1, attachment: { mimeType: "application/pdf", base64: "JVBERi0x" },
     });
     expect(bill).toEqual({ vendor_name: "Acme", total: 1180 });
@@ -168,46 +168,46 @@ describe("geminiJson on Claude", () => {
 
   it("image → image block", async () => {
     createMock.mockResolvedValue(claudeReply('{"ok":true}'));
-    await geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", label: "t", attachment: { mimeType: "image/png", base64: "iVBO" } });
+    await geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", tenantId: null, label: "t", attachment: { mimeType: "image/png", base64: "iVBO" } });
     expect(createMock.mock.calls[0][0].messages[0].content[0]).toEqual({ type: "image", source: { type: "base64", media_type: "image/png", data: "iVBO" } });
   });
 
   it("a Gemini model name passed by a caller is replaced by the Claude model", async () => {
     createMock.mockResolvedValue(claudeReply('{"ok":true}'));
-    await geminiJson({ apiKey: CLAUDE_KEY, model: "gemini-3.6-flash", user: "u", label: "t" });
+    await geminiJson({ apiKey: CLAUDE_KEY, model: "gemini-3.6-flash", user: "u", tenantId: null, label: "t" });
     expect(createMock.mock.calls[0][0].model).toBe("claude-opus-5-5");
   });
 
   it("JSON arrays come back too", async () => {
     createMock.mockResolvedValue(claudeReply('Here you go:\n[{"a":1},{"a":2}]'));
-    await expect(geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", label: "t" })).resolves.toEqual([{ a: 1 }, { a: 2 }]);
+    await expect(geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", tenantId: null, label: "t" })).resolves.toEqual([{ a: 1 }, { a: 2 }]);
   });
 
   it("bad JSON → null with a reason", async () => {
     createMock.mockResolvedValue(claudeReply("Sorry, I cannot read that."));
     const onFailure = vi.fn();
-    await expect(geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", label: "t", onFailure })).resolves.toBeNull();
+    await expect(geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", tenantId: null, label: "t", onFailure })).resolves.toBeNull();
     expect(onFailure).toHaveBeenCalledWith(expect.stringMatching(/Claude.*not valid JSON/i));
   });
 
   it("refusal → null with a reason, content not read", async () => {
     createMock.mockResolvedValue(claudeReply('{"x":1}', "refusal"));
     const onFailure = vi.fn();
-    await expect(geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", label: "t", onFailure })).resolves.toBeNull();
+    await expect(geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", tenantId: null, label: "t", onFailure })).resolves.toBeNull();
     expect(onFailure).toHaveBeenCalledWith(expect.stringMatching(/Claude declined/i));
   });
 
   it("max_tokens → null with a reason", async () => {
     createMock.mockResolvedValue(claudeReply('{"x":', "max_tokens"));
     const onFailure = vi.fn();
-    await expect(geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", label: "t", onFailure })).resolves.toBeNull();
+    await expect(geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", tenantId: null, label: "t", onFailure })).resolves.toBeNull();
     expect(onFailure).toHaveBeenCalledWith(expect.stringMatching(/cut off/i));
   });
 
   it("401 → clear reason, null (no Gemini key to fall back to)", async () => {
     createMock.mockRejectedValue(APIError.generate(401, { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }, "invalid x-api-key", new Headers()));
     const onFailure = vi.fn();
-    await expect(geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", label: "t", onFailure })).resolves.toBeNull();
+    await expect(geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", tenantId: null, label: "t", onFailure })).resolves.toBeNull();
     expect(onFailure).toHaveBeenCalledWith(expect.stringMatching(/Claude API key was refused/));
   });
 
@@ -217,7 +217,7 @@ describe("geminiJson on Claude", () => {
     const fetchSpy = vi.fn(async () => geminiOk('{"from":"gemini"}'));
     vi.stubGlobal("fetch", fetchSpy);
     const onFailure = vi.fn();
-    await expect(geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", label: "t", onFailure })).resolves.toEqual({ from: "gemini" });
+    await expect(geminiJson({ apiKey: CLAUDE_KEY, model: "claude-opus-5-5", user: "u", tenantId: null, label: "t", onFailure })).resolves.toEqual({ from: "gemini" });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(String((fetchSpy.mock.calls[0] as unknown[])[0])).toContain("generativelanguage.googleapis.com");
     expect(onFailure).not.toHaveBeenCalled();
@@ -232,7 +232,7 @@ describe("fallback from Gemini to Claude", () => {
     vi.stubGlobal("fetch", vi.fn(async () => gemini429()));
     createMock.mockResolvedValue(claudeReply('{"vendor_name":"Acme"}'));
     const onFailure = vi.fn();
-    const r = await geminiJson({ apiKey: GEMINI_KEY, model: "gemini-flash-latest", user: "u", label: "ai/extract-bill", onFailure, attachment: { mimeType: "application/pdf", base64: "JVBE" } });
+    const r = await geminiJson({ apiKey: GEMINI_KEY, model: "gemini-flash-latest", user: "u", tenantId: null, label: "ai/extract-bill", onFailure, attachment: { mimeType: "application/pdf", base64: "JVBE" } });
     expect(r).toEqual({ vendor_name: "Acme" });
     expect(createMock).toHaveBeenCalledTimes(1);
     expect(createMock.mock.calls[0][0].model).toBe("claude-opus-5-5");
@@ -243,7 +243,7 @@ describe("fallback from Gemini to Claude", () => {
   it("Gemini 429 and no Anthropic key → null with the Gemini reason (old behaviour)", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => gemini429()));
     const onFailure = vi.fn();
-    await expect(geminiJson({ apiKey: GEMINI_KEY, model: "gemini-flash-latest", user: "u", label: "t", onFailure })).resolves.toBeNull();
+    await expect(geminiJson({ apiKey: GEMINI_KEY, model: "gemini-flash-latest", user: "u", tenantId: null, label: "t", onFailure })).resolves.toBeNull();
     expect(createMock).not.toHaveBeenCalled();
     expect(onFailure).toHaveBeenCalledWith(expect.stringMatching(/Gemini quota/));
   });
@@ -253,7 +253,7 @@ describe("fallback from Gemini to Claude", () => {
     vi.stubGlobal("fetch", vi.fn(async () => gemini429()));
     createMock.mockRejectedValue(APIError.generate(529, { type: "error", error: { type: "overloaded_error", message: "Overloaded" } }, "Overloaded", new Headers()));
     const onFailure = vi.fn();
-    await expect(geminiJson({ apiKey: GEMINI_KEY, model: "gemini-flash-latest", user: "u", label: "t", onFailure })).resolves.toBeNull();
+    await expect(geminiJson({ apiKey: GEMINI_KEY, model: "gemini-flash-latest", user: "u", tenantId: null, label: "t", onFailure })).resolves.toBeNull();
     expect(createMock).toHaveBeenCalledTimes(1);                  // tried once, no ping-pong
     expect(onFailure).toHaveBeenCalledTimes(1);
     expect(onFailure.mock.calls[0][0]).toMatch(/Gemini quota/);

@@ -28,6 +28,7 @@ import { ctcFromEmployee } from "@/lib/payroll/ctc";
 import { DocViewerDialog } from "@/components/features/documents/doc-viewer-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { EmployeeProperty } from "@/components/features/payroll/employee-property";
+import { EmployeeDirectorLink } from "@/components/features/company/employee-director-link";
 
 const DOC_LABEL = new Map(EMPLOYEE_DOC_TYPES.map((d) => [d.value, d.label]));
 
@@ -104,6 +105,9 @@ export function EmployeeDetailDrawer({
                 <Field label="Emergency phone" value={employee.emergency_contact_phone} />
               </div>
             </div>
+
+            {/* R-1852: a whole-time / managing director on the payroll → Director's Remuneration on the P&L. */}
+            <EmployeeDirectorLink employeeId={employee.id} />
 
             {/* CTC Breakdown Card */}
             {employee && (() => {

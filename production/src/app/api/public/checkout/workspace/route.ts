@@ -227,7 +227,9 @@ export async function POST(request: NextRequest) {
         { status: 503 },
       );
     }
-    if (razorpayConfigured && isSimulation) {
+    /* R-1769: TEST keys on a laptop no longer block a simulated order — simulationAllowed is
+       false on every deployment and with a live key, and the check above already refused those. */
+    if (razorpayConfigured && isSimulation && !simulationAllowed) {
       // Once live, simulation must be off — otherwise anyone could create
       // free "paid" orders. Defence-in-depth alongside the client gating.
       return NextResponse.json(

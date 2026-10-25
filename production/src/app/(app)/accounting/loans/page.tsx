@@ -38,7 +38,10 @@ import {
   useEditLoan,
   useDeleteEmployeeLoan,
   useLoanRepayments,
+  useLoanGhostPairs,
+  useRemoveLoanGhostPair,
   LOAN_KIND_LABEL,
+  type LoanGhostPair,
   type EmployeeLoan,
   type EmployeeLoanKind,
   type LoanRepaymentMethod,
@@ -86,7 +89,10 @@ function EmployeeLoansInner() {
   const [editClaimFor, setEditClaimFor] = React.useState<ExpenseClaim | null>(null);
   const deleteLoan = useDeleteEmployeeLoan();
   /* R-885: deleting a staff loan or a claim is owner / accountant only (the database refuses the rest). */
-  const canDelete = canDeleteMoney(useCurrentUser().data?.role);
+  const myRole = useCurrentUser().data?.role;
+  const canDelete = canDeleteMoney(myRole);
+  /* R-1873: only the owner sees and removes payouts left behind by old loan deletes. */
+  const isOwner = myRole === "owner";
   const confirm = useConfirm();
   const pendingClaimsQ = useExpenseClaims("pending");
   const pendingClaims = pendingClaimsQ.data ?? [];
@@ -107,7 +113,7 @@ function EmployeeLoansInner() {
   const confirmDelete = async (l: EmployeeLoan) => {
     if (await confirm({
       title: `Delete this ${LOAN_KIND_LABEL[l.kind].toLowerCase()} to ${l.employee_name} (${rupee(l.principal)})?`,
-      body: "The disbursed cash will be restored to the account.",
+      body: "Its payout line in the bank or cash account is removed too, so the account balance and Payments Made go back as if it was never given.",
       confirmLabel: "Delete",
       danger: true,
     })) {
@@ -148,6 +154,8 @@ function EmployeeLoansInner() {
           </Button>
         </div>
       </div>
+
+      {isOwner && <LeftoverPayoutsPanel />}
 
       {pendingClaims.length > 0 && (
         <PendingClaimsPanel
@@ -383,6 +391,70 @@ function PendingClaimsPanel({
       <p className="mt-2 text-xs text-ink-3">
         Approving books the expense under its category and reduces that employee&apos;s advance. No cash moves — it already left when the advance was given.
       </p>
+    </Card>
+  );
+}
+
+/**
+ * R-1873: payout lines left behind by loans deleted before 24 Oct 2026. The old delete added a
+ * "Correction" credit instead of removing the payout, so Payments Made still lists the payout.
+ * Owner only: shows exactly the two lines that go, and removing them does not move the balance.
+ * Lines that were reconciled or re-booked are never offered (the database checks again).
+ */
+function LeftoverPayoutsPanel() {
+  const pairsQ = useLoanGhostPairs(true);
+  const remove = useRemoveLoanGhostPair();
+  const confirm = useConfirm();
+  const pairs = pairsQ.data ?? [];
+  if (pairs.length === 0) return null;
+  const ask = async (p: LoanGhostPair) => {
+    if (await confirm({
+      title: `Remove the left-over ${rupee(p.amount)} payout to ${p.person}?`,
+      body: `Two lines in ${p.account_name ?? "the account"} are removed together: the payout "Loan/advance to ${p.person}" `
+        + `of ${formatDate(p.payout_date)} (−${rupee(p.amount)}) and its "Correction: reversed" line of ${formatDate(p.correction_date)} (+${rupee(p.amount)}). `
+        + "The account balance does not change; Payments Made stops showing this payout. No loan is touched.",
+      confirmLabel: "Remove both lines",
+      danger: true,
+    })) {
+      remove.mutate(p);
+    }
+  };
+  return (
+    <Card className="mb-6 border-amber/40 bg-amber-soft/30 p-4 md:p-5">
+      <div className="mb-1 flex items-center gap-2">
+        <Icon name="alert" size={16} className="text-amber-ink" />
+        <h2 className="font-medium text-ink">Payouts left behind by deleted loans</h2>
+        <Badge kind="warning">{pairs.length}</Badge>
+      </div>
+      <p className="mb-3 text-xs text-ink-3">
+        These loans were deleted before 24 Oct 2026. The old delete put the money back with a correction line but left the payout,
+        so Payments Made still lists it. Removing the pair leaves the balance as it is.
+      </p>
+      <ul className="space-y-2">
+        {pairs.map((p) => (
+          <li key={p.payout_id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-hairline bg-paper px-3 py-2.5">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-ink">{p.person}</span>
+                <span className="font-mono text-sm text-ink">{rupee(p.amount)}</span>
+                <span className="text-xs text-ink-3">{p.account_name ?? "—"}</span>
+              </div>
+              <div className="mt-0.5 text-xs text-ink-3">
+                Paid out {formatDate(p.payout_date)} · put back {formatDate(p.correction_date)}
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Button variant="ghost" size="sm" icon="eye"
+                onClick={() => window.location.assign(`/accounting/banking/${encodeURIComponent(p.bank_account_id)}?focus=${encodeURIComponent(p.payout_id)}`)}>
+                See in Banking
+              </Button>
+              <Button variant="danger" size="sm" loading={remove.isPending && remove.variables?.payout_id === p.payout_id} onClick={() => ask(p)}>
+                Remove pair
+              </Button>
+            </div>
+          </li>
+        ))}
+      </ul>
     </Card>
   );
 }
@@ -777,15 +849,27 @@ function DisburseDialog({ onClose, initialKind }: { onClose: () => void; initial
   }, [accounts, accountId]);
 
   const amt = Math.round(Number(amount));
+  /* R-1873: a double-click must give the money once. `disburse.isPending` disables the button
+     only after the next render, so a second click in the same frame got through; this ref
+     closes that gap synchronously. */
+  const savingRef = React.useRef(false);
 
   async function submit() {
+    if (savingRef.current) return;
     if (!name.trim()) return;
     if (!Number.isFinite(amt) || amt <= 0) return;
     if (!accountId) return;
-    await disburse.mutateAsync({
-      employeeName: name.trim(), principal: amt, disbursedOn: date, bankAccountId: accountId, kind, notes: notes.trim() || null,
-    });
-    onClose();
+    savingRef.current = true;
+    try {
+      await disburse.mutateAsync({
+        employeeName: name.trim(), principal: amt, disbursedOn: date, bankAccountId: accountId, kind, notes: notes.trim() || null,
+      });
+      onClose();
+    } catch {
+      /* the hook's onError already showed the toast; the dialog stays open to try again */
+    } finally {
+      savingRef.current = false;
+    }
   }
 
   const kindHint =

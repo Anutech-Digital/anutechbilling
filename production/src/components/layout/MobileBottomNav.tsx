@@ -35,6 +35,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/ui/icon";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { DEFAULT_SELL_MODE, sellsSubscriptions } from "@/lib/sell-mode";
+import { useHasSubscriptions, useSellMode, useShowAllModules } from "@/lib/queries/sell-mode";
 import { cn } from "@/lib/utils";
 
 interface BottomNavItem {
@@ -54,6 +56,8 @@ const TAB_TASKS:     BottomNavItem = { id: "tasks",     href: "/tasks",         
 const TAB_PAYMENTS:  BottomNavItem = { id: "payments",  href: "/payments",      label: "Payments",  icon: "rupee"  };
 const TAB_CUSTOMERS: BottomNavItem = { id: "customers", href: "/customers",     label: "Companies", icon: "users"  };
 const TAB_RENEWALS:  BottomNavItem = { id: "renewals",  href: "/renewals",      label: "Renewals",  icon: "refresh"};
+/* R-1861: a one-time business with no subscriptions gets Invoices in the Renewals slot. */
+const TAB_INVOICES:  BottomNavItem = { id: "invoices",  href: "/invoices",      label: "Invoices",  icon: "receipt"};
 const TAB_MY_EXPENSES: BottomNavItem = { id: "my-expenses", href: "/my-expenses", label: "Expenses", icon: "wallet" };
 const TAB_MORE:      BottomNavItem = { id: "more",      href: "#",              label: "More",      icon: "more_h", action: "menu" };
 
@@ -65,6 +69,12 @@ interface Props {
 export function MobileBottomNav({ onMoreClick }: Props) {
   const pathname = usePathname();
   const { data: me } = useCurrentUser();
+  /* R-1861 — same rule as the sidebar (lib/nav-apps.ts forSellMode): hide, never block. */
+  const { data: sell } = useSellMode();
+  const answerHides = !sellsSubscriptions(sell?.mode ?? DEFAULT_SELL_MODE);
+  const hasSubscriptions = useHasSubscriptions(answerHides);
+  const [showAll] = useShowAllModules();
+  const renewalsTab = answerHides && !showAll && hasSubscriptions !== true ? TAB_INVOICES : TAB_RENEWALS;
 
   // Compute role-appropriate tabs. We start blank + push to keep the
   // intent explicit (vs filter on a master array). Sales explicitly
@@ -88,7 +98,7 @@ export function MobileBottomNav({ onMoreClick }: Props) {
     tabs.push(TAB_HOME);
     tabs.push(TAB_PAYMENTS);
     tabs.push(TAB_CUSTOMERS);
-    tabs.push(TAB_RENEWALS);
+    tabs.push(renewalsTab);
     tabs.push(TAB_MORE);
   }
 

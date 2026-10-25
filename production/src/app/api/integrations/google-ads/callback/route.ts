@@ -8,7 +8,7 @@ import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { googleOAuthCreds, originFromRequest, googleAdsRedirectUri, exchangeCode, fetchGoogleEmail } from "@/lib/google/oauth";
 import { refuseConnectWithoutVault, sealRefreshToken } from "@/lib/google/token-vault";
 import { scopesLost, scopeLossMessage, hasGoogleAdsScope } from "@/lib/google/scope-union";
-import { getFreshGoogleAdsAccessToken, listAdAccounts, googleAdsDeveloperToken } from "@/lib/google/google-ads-api";
+import { getFreshGoogleAdsAccessToken, listAdAccounts } from "@/lib/google/google-ads-api";
 import { syncTenantAds } from "@/lib/marketing/ad-sync";
 
 export const dynamic = "force-dynamic";
@@ -56,8 +56,8 @@ export async function GET(request: NextRequest) {
     }, { onConflict: "user_id" });
     if (error) throw error;
 
-    if (!googleAdsDeveloperToken()) return done("nodevtoken");
-
+    // R-1884: no developer-token check — Google sunset them on 9 Sep 2026 (access level is
+    // on the Cloud project now); a refusal comes back from Google and is explained below.
     // Discover the accounts now, so the page has something to show and to switch off.
     try {
       const token = await getFreshGoogleAdsAccessToken(admin, user.id);

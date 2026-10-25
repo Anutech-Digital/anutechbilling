@@ -90,7 +90,7 @@ describe.skipIf(!ON)("sukha chalan — AI kya likhta, aur jayega ya rukega", () 
     if (!gem.apiKey) throw new Error("Gemini ki chaabi nahi mili — tenant_secrets padha nahi ja saka.");
 
     const raw = await geminiJson<unknown>({
-      apiKey: gem.apiKey, model: gem.model,
+      apiKey: gem.apiKey, model: gem.model, tenantId: gem.tenantId,
       system: built.system, user: built.user,
       temperature: 0.2, label: "sales-dry-run",
     });

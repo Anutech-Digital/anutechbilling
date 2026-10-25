@@ -34,6 +34,8 @@ export type DateFix = {
   swapped: number;
   /** True when the whole statement was read as day-first and flipped together. */
   swappedAll: boolean;
+  /** Dates after `today` — kept as they are (R-1890); the caller shows a warning. */
+  future: number;
 };
 
 /** Out-of-order steps, ascending or descending — whichever the statement uses. */
@@ -48,13 +50,19 @@ function disorder(dates: Array<string | null>): number {
 }
 
 /**
- * @param today YYYY-MM-DD. A statement line cannot be dated after today, so such a date
- *   counts as impossible too — the same day-first misread that gives "2026-21-08" gives
- *   "2026-11-08" (8 Nov) for 11 Aug whenever the day is 12 or less. Measured 25 Sep 2026:
- *   two lines came back as 8 Oct and 8 Nov.
+ * @param today YYYY-MM-DD. Only COUNTS dates after today (`future`) so the caller can warn.
+ *   R-1890 (24 Oct 2026): a future date used to count as impossible and got its day and
+ *   month swapped — ISO 2026-11-05 became 11 May. A real calendar date is never swapped
+ *   for being in the future; only an impossible one ("2026-21-08") is evidence of a misread.
  */
 export function fixStatementDates(input: string[], today?: string): DateFix {
-  const ok = (d: string) => isRealDate(d) && (!today || d <= today);
+  const fix = repair(input);
+  const future = today ? fix.dates.filter((d) => d !== null && d > today).length : 0;
+  return { ...fix, future };
+}
+
+function repair(input: string[]): Omit<DateFix, "future"> {
+  const ok = isRealDate;
   const asIs = input.map((d) => (ok(d) ? d : null));
   const flipped = input.map((d) => (ok(swap(d)) ? swap(d) : null));
 
@@ -76,8 +84,10 @@ export function fixStatementDates(input: string[], today?: string): DateFix {
      flipped. An impossible-both-ways date ("2026-31-31") is not evidence of anything. */
   const someImpossible = input.some((_, i) => asIs[i] === null && flipped[i] !== null);
   /* Fewer impossible dates wins; then fewer out-of-order steps; on a full tie, an
-     impossible date is the evidence that the reader went day-first, so flip them all. */
-  const flipAll = nF < nE || (nF === nE && (oF < oE || (oF === oE && someImpossible)));
+     impossible date is the evidence that the reader went day-first, so flip them all.
+     R-1890: with no impossible date there is no evidence at all — real dates are kept,
+     however much "neater" the flipped order looks. */
+  const flipAll = someImpossible && (nF < nE || (nF === nE && oF <= oE));
 
   if (flipAll) {
     return { dates: flipped, swapped: flipped.filter((d, i) => d && d !== input[i]).length, swappedAll: true };

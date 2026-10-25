@@ -107,6 +107,7 @@ export const READABLE_BILL_MIME = /^(image\/(png|jpe?g|webp|heic|heif)|applicati
 export async function readBillWithGemini(args: {
   apiKey:   string;
   model:    string;
+  tenantId: string | null;
   mimeType: string;
   base64:   string;
 }): Promise<ExtractedBill | null> {
@@ -125,6 +126,7 @@ export async function readBillWithGemini(args: {
      is fix ka maqsad nahi. */
   return geminiJson<ExtractedBill>({
     apiKey: args.apiKey,
+    tenantId: args.tenantId,
     model: args.model,
     user: BILL_PROMPT,
     attachment: { mimeType: args.mimeType, base64: args.base64 },

@@ -183,3 +183,19 @@ describe("R-1129 setup is the owner's job (company save is owner-only in the dat
     expect(screen.queryByText(/Only the owner can finish setup/)).toBeNull();
   });
 });
+
+describe("GettingStartedCard — first product by 'What do you sell?' (R-1862)", () => {
+  it("a one-time business is sent to the One-time products tab", () => {
+    mockRole = "owner";
+    render(<GettingStartedCard {...props} setup={doneSetup} sellMode="one_time" />);
+    const link = within(row("Add your first one-time item")).getByRole("link");
+    expect(link.getAttribute("href")).toBe("/items/products");
+    expect(screen.queryByText("Load your price list")).toBeNull();
+  });
+
+  it("Both keeps the subscription price list step", () => {
+    mockRole = "owner";
+    render(<GettingStartedCard {...props} setup={doneSetup} sellMode="both" />);
+    expect(within(row("Load your price list")).getByRole("link").getAttribute("href")).toBe("/items");
+  });
+});

@@ -42,6 +42,8 @@ import {
   withIssuedInvoice,
   type BuyerPlace,
 } from "@/lib/payments/record-payment-invoice";
+import { b2cGstinNudge, type B2cNudge } from "@/lib/payments/b2c-gstin-nudge";
+import Link from "next/link";
 
 import {
   Sheet,
@@ -490,6 +492,8 @@ export function RecordPaymentDialog({
   const [invoiceFacts, setInvoiceFacts] = React.useState<{
     billingCycle: string | null;
     buyer: BuyerPlace | null;
+    /** R-1735: "No GSTIN — invoice will be B2C. Add GSTIN?" — a reminder, never a block. */
+    gstinNudge: B2cNudge | null;
   } | null>(null);
   React.useEffect(() => {
     if (!open || invoiceId) { setInvoiceFacts(null); return; }
@@ -506,14 +510,17 @@ export function RecordPaymentDialog({
          paymentBuyerPlace (customer with a state → quote → lead). Before issuing, the sheet
          copies the quote's state onto a customer that has none (fillCustomerStateFromQuote). */
       const { data: c } = q.customer_id
-        ? await supabase.from("customers").select("state_code, gstin, country").eq("id", q.customer_id).maybeSingle()
+        ? await supabase.from("customers").select("state_code, gstin, country, customer_type, gst_treatment").eq("id", q.customer_id).maybeSingle()
         : { data: null };
       // record_payment copies the lead's state + GSTIN onto the customer it creates.
       const { data: l } = !q.customer_id && q.lead_id
         ? await supabase.from("leads").select("state_code, gstin").eq("id", q.lead_id).maybeSingle()
         : { data: null };
       const buyer: BuyerPlace | null = paymentBuyerPlace({ customer: c ?? null, quote: q, lead: l ?? null });
-      if (live) setInvoiceFacts({ billingCycle: q.billing_cycle ?? null, buyer });
+      const gstinNudge = b2cGstinNudge({
+        quoteId, customerId: q.customer_id ?? null, customer: c ?? null, lead: l ?? null, prospectCountry: q.prospect_country,
+      });
+      if (live) setInvoiceFacts({ billingCycle: q.billing_cycle ?? null, buyer, gstinNudge });
     })();
     return () => { live = false; };
   }, [open, quoteId, invoiceId]);
@@ -1555,6 +1562,14 @@ export function RecordPaymentDialog({
                   </div>
                 </div>
               </label>
+              {invoiceFacts?.gstinNudge && (
+                <p className="mt-2 text-2xs text-amber-ink" data-testid="b2c-gstin-nudge">
+                  {invoiceFacts.gstinNudge.text}{" "}
+                  <Link href={invoiceFacts.gstinNudge.href as never} className="underline underline-offset-2 font-medium">
+                    {invoiceFacts.gstinNudge.label}?
+                  </Link>
+                </p>
+              )}
             </div>
           )}
 

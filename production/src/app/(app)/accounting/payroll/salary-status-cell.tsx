@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { rupee } from "@/lib/utils";
 import { salaryPayState, salaryBankLineKey, type SalaryPayFacts } from "@/lib/payroll/salary-status";
+import type { SalaryBankLink } from "@/lib/payroll/salary-bank-link";
+import type * as React from "react";
 
 export function SalaryStatusCell({
   p, waitingLines, canWrite, size = "md", showAmounts = false,
@@ -42,4 +44,36 @@ export function SalaryStatusCell({
       )}
     </span>
   );
+}
+
+/**
+ * R-1895: next to the status — "Bank line" opens the bank-statement line that paid this salary
+ * (highlighted there); a Paid salary no bank line points at reads "Not matched to bank" with
+ * Match (the bank reconcile flow). Nothing for Not paid yet. Links stop propagation: a register
+ * row is itself clickable.
+ */
+export function SalaryBankLinkAction({ link, canWrite }: { link: SalaryBankLink; canWrite: boolean }) {
+  const stop = { onClick: (e: React.SyntheticEvent) => e.stopPropagation(), onKeyDown: (e: React.SyntheticEvent) => e.stopPropagation() };
+  if (link.kind === "open") {
+    return (
+      <Link href={link.href as never} {...stop} title="Open this payment in the bank statement"
+        className="text-xs font-medium text-primary hover:underline whitespace-nowrap">
+        Bank line
+      </Link>
+    );
+  }
+  if (link.kind === "not_matched") {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-ink-3 whitespace-nowrap">
+        Not matched to bank
+        {canWrite && (
+          <Link href={link.matchHref as never} {...stop} title="Match this salary to its bank-statement line"
+            className="font-medium text-primary hover:underline">
+            Match
+          </Link>
+        )}
+      </span>
+    );
+  }
+  return null;
 }

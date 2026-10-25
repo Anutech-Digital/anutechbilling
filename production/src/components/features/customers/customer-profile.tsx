@@ -75,6 +75,7 @@ import { PrimaryContactLine } from "@/components/features/customers/primary-cont
 /* R-1740: my relationship with this company's best-known person — saves to that contact. */
 import { CustomerRelationshipChip } from "@/components/features/contacts/relationship-chip";
 import { txnHref, primaryContactOf } from "@/components/features/customers/customer-links";
+import { recordPhoneOf } from "@/lib/customers/record-phone";
 import { buildCustomerStatement, statementBalanceText, statementPayments, useCustomerNotes } from "@/components/features/customers/customer-statement";
 import { RecordTable, RowLink } from "@/components/features/customers/customer-record-table";
 
@@ -559,6 +560,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
             autoOpenAdd={addContactAsked}
             onAutoOpenHandled={clearAddContactAsk}
             recordContact={primaryContact}
+            recordPhone={recordPhoneOf(c)}
           />
 
           {/* R-346: may this customer be activated on credit, and up to how much. */}

@@ -21,6 +21,8 @@ interface PriorityActionHubProps {
   pendingCollectValue: number;
   /** chaseNote() — what the figure is made of and why "Still owed" (invoices) can differ. */
   pendingCollectNote?: string;
+  /** R-1862: false for a one-time business with no subscription — no renewals card. Default true. */
+  showRenewals?: boolean;
 }
 
 export function PriorityActionHub({
@@ -29,6 +31,7 @@ export function PriorityActionHub({
   draftQuotesCount,
   pendingCollectValue,
   pendingCollectNote,
+  showRenewals = true,
 }: PriorityActionHubProps) {
   /* R-253: billing sees the Dashboard but cannot open /quotes — middleware sends it home. */
   const { data: me } = useCurrentUser();
@@ -36,8 +39,9 @@ export function PriorityActionHub({
   return (
     <div className="space-y-4 mb-6">
       {/* Priority Action Banner */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className={`grid grid-cols-1 gap-4 ${showRenewals ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
         {/* Card 1: Renewals Attention */}
+        {showRenewals && (
         <Card className="p-4 border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent relative overflow-hidden shadow-xs">
           <div className="flex items-start justify-between">
             <div className="space-y-1">
@@ -68,6 +72,7 @@ export function PriorityActionHub({
             </Button>
           </div>
         </Card>
+        )}
 
         {/* Card 2: Quotes to Send */}
         <Card className="p-4 border-blue-500/30 bg-gradient-to-br from-blue-500/10 via-blue-500/5 to-transparent relative overflow-hidden shadow-xs">

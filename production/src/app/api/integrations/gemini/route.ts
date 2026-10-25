@@ -17,6 +17,7 @@ import { trySealTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { maskSecret } from "@/lib/crypto/vault";
 import { resolveGeminiConfig } from "@/lib/ai/gemini";
 import { aiUsingLine } from "@/lib/ai/gemini-status-text";
+import { aiUsageSummary, aiUsageLine } from "@/lib/ai/usage-cap";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -79,6 +80,8 @@ export async function GET() {
   const envFallback = Boolean(process.env.GEMINI_API_KEY?.trim() && process.env.GEMINI_API_KEY!.trim().length >= 10);
   // R-1759: which AI actually runs (Claude or Gemini, env AI_PROVIDER) — one line, never a key.
   const ai = await resolveGeminiConfig(admin, r.tenantId);
+  // R-1877: this month's AI calls against the company's cap (null = could not read).
+  const usage = await aiUsageSummary(r.tenantId);
 
   return NextResponse.json({
     ok:           true,
@@ -90,6 +93,9 @@ export async function GET() {
     can_manage:   r.isOwner,
     model:        data?.gemini_model ?? DEFAULT_MODEL,
     updated_at:   data?.updated_at ?? null,
+    ai_usage:     usage
+      ? { used: usage.used, cap: usage.cap, month: usage.month, ...aiUsageLine(usage) }
+      : null,
   });
 }
 

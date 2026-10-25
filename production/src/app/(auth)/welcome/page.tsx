@@ -16,6 +16,15 @@
  * Option A is deliberately NOT the visually loudest. The most likely correct
  * answer for anyone arriving with a work address is B, and the failure this page
  * exists to prevent is people taking A when they meant B.
+ *
+ * R-1843 (24 Oct 2026): "new business" also asks how the business is registered —
+ * Proprietorship / Partnership / LLP / Private Limited, one line of help each (from
+ * lib/compliance/entity.ts). Nothing is pre-selected and it is optional: left empty, the
+ * type stays unset (= Pvt Ltd everywhere) and Settings shows "Set your business type".
+ *
+ * R-1860: and one more optional question — "What do you sell?" (Subscriptions / One-time
+ * products & services / Both, Both pre-picked). It only decides what the menu and dashboard
+ * put first (lib/sell-mode.ts); it never switches a page off.
  */
 
 import * as React from "react";
@@ -29,6 +38,9 @@ import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { BUSINESS_TYPE_CHOICES } from "@/lib/compliance/entity";
+import type { BusinessType } from "@/lib/compliance/obligations";
+import { DEFAULT_SELL_MODE, SELL_MODES, SELL_MODE_HINT, SELL_MODE_LABEL, type SellMode } from "@/lib/sell-mode";
 
 type Choice = "new" | "join" | "quote";
 
@@ -45,6 +57,8 @@ function WelcomeInner() {
   const [sentMsg, setSentMsg] = React.useState<string | null>(null);
 
   const [companyName, setCompanyName] = React.useState(suggested);
+  const [businessType, setBusinessType] = React.useState<BusinessType | null>(null);
+  const [sellMode, setSellMode]         = React.useState<SellMode>(DEFAULT_SELL_MODE);
   const [domain, setDomain]           = React.useState("");
   const [quoteId, setQuoteId]         = React.useState("");
 
@@ -106,7 +120,7 @@ function WelcomeInner() {
       const res  = await fetch("/api/auth/onboarding/new-tenant", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ companyName: companyName.trim() }),
+        body:    JSON.stringify({ companyName: companyName.trim(), businessType, sellMode }),
       });
       const json = await res.json() as { ok?: boolean; error?: string; status?: string; tenantName?: string };
       if (!res.ok || json.error) {
@@ -225,6 +239,44 @@ function WelcomeInner() {
               helper="This creates a brand-new, empty company. Your teammates won't be in it."
             />
           </FormField>
+          <fieldset>
+            <legend className="mb-1.5 text-xs font-medium text-ink-2">How is your business registered?</legend>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {BUSINESS_TYPE_CHOICES.map((c) => (
+                <label key={c.type}
+                  className={`flex cursor-pointer items-start gap-2 rounded-md border p-2.5 text-left transition-colors focus-within:ring-2 focus-within:ring-amber ${
+                    businessType === c.type ? "border-amber bg-amber-soft/40" : "border-hairline hover:border-ink-4"}`}>
+                  <input type="radio" name="businessType" value={c.type} checked={businessType === c.type}
+                    onChange={() => setBusinessType(c.type)} className="mt-0.5 accent-amber" />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-ink">{c.title}</span>
+                    <span className="block text-xs leading-snug text-ink-3">{c.help}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-ink-3">
+              It decides your tax return form, filings and Balance Sheet. Not sure? Leave it — you can set it later in Settings → Company.
+            </p>
+          </fieldset>
+          {/* R-1860: what comes first in the menu and dashboard. Optional — Both is pre-picked. */}
+          <fieldset>
+            <legend className="mb-1.5 text-xs font-medium text-ink-2">What do you sell?</legend>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {SELL_MODES.map((m) => (
+                <label key={m}
+                  className={`flex cursor-pointer items-start gap-2 rounded-md border p-2.5 text-left transition-colors focus-within:ring-2 focus-within:ring-amber ${
+                    sellMode === m ? "border-amber bg-amber-soft/40" : "border-hairline hover:border-ink-4"}`}>
+                  <input type="radio" name="sellMode" value={m} checked={sellMode === m}
+                    onChange={() => setSellMode(m)} className="mt-0.5 accent-amber" />
+                  <span className="min-w-0 text-sm font-medium text-ink">{SELL_MODE_LABEL[m]}</span>
+                </label>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-ink-3">
+              {SELL_MODE_HINT[sellMode]} Nothing is switched off — change it any time in Settings → Company.
+            </p>
+          </fieldset>
           <Button variant="primary" className="w-full justify-center" loading={busy} onClick={createWorkspace}>
             Create my workspace
           </Button>

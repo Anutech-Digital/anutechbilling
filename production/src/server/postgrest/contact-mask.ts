@@ -41,6 +41,8 @@ export const CONTACT_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   contacts: ["email", "phone", "whatsapp"],
   /* R-1820: a parent account's own contact — read directly and as customers' embed. */
   customer_groups: ["contact_email", "contact_phone"],
+  /* R-1850: a director's own email / phone in the directors register. */
+  company_directors: ["email", "phone"],
 };
 
 /**

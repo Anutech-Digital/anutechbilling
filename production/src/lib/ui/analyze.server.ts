@@ -59,7 +59,7 @@ export async function runUiAnalysis(admin: Admin, tenantId: string, withSite: bo
     const gemini = await resolveGeminiConfig(admin as never, tenantId);
     if (gemini.apiKey) {
       const raw = await geminiJson<unknown>({
-        apiKey: gemini.apiKey, model: gemini.model, system: uiPrompt(),
+        apiKey: gemini.apiKey, model: gemini.model, tenantId: gemini.tenantId, system: uiPrompt(),
         user: JSON.stringify({ pages: withIssues.map((p) => ({ surface: p.surface, path: p.path, score: p.score, samples: p.samples, issues: p.issues.map(({ code, rule, evidence }) => ({ code, rule, evidence })) })) }),
         temperature: 0.3, timeoutMs: 45_000, label: "ui-analysis",
       });

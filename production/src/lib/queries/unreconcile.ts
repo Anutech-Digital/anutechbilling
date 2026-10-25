@@ -13,14 +13,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { toastError } from "@/lib/errors/toast-error";
+import { rupee } from "@/lib/utils";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 
 /** The receipt note useBookCreditAsInvoice writes — how a sale raised FROM a bank line is recognised. */
 export const BANK_RECEIPT_NOTE = "Reconciled from bank receipt";
 
+/** R-1863: the receipt note reconcile_bank_credit_as_advance writes — a line booked as a customer's advance. */
+export const BANK_ADVANCE_NOTE_PREFIX = "Advance on account — bank credit of ";
+
 export type UnreconcileImpact =
   | { kind: "bank-sale"; amount: number; invoiceId: string | null; quoteId: string }
+  /** R-1863: un-reconciling takes the advance back (receipt + credit); refused once any is used. */
+  | { kind: "advance"; amount: number; customerName: string | null; voucherNo: string | null; usedOrRefunded: number }
   | { kind: "receipt"; amount: number; invoiceId: string | null }
   | { kind: "project"; amount: number; projectTitle: string; milestoneLabel: string; invoiceId: string | null; projectId: string }
   | { kind: "other" };
@@ -35,9 +41,23 @@ export function useUnreconcileImpact(txn: BankTransactionRow | null) {
 
       if (txn.matched_to_type === "payment") {
         const { data: pay, error } = await supabase
-          .from("payments").select("id, amount, notes, quote_id, invoice_id").eq("id", txn.matched_to_id).maybeSingle();
+          .from("payments").select("id, amount, notes, quote_id, invoice_id, customer_id, receipt_voucher_no").eq("id", txn.matched_to_id).maybeSingle();
         if (error) throw error;
         if (!pay) return { kind: "other" };
+        if (pay.notes?.startsWith(BANK_ADVANCE_NOTE_PREFIX)) {
+          const [{ data: credits, error: cErr }, { data: cust }] = await Promise.all([
+            supabase.from("customer_credits").select("amount, status").eq("source_payment_id", pay.id),
+            pay.customer_id
+              ? supabase.from("customers").select("name").eq("id", pay.customer_id).maybeSingle()
+              : Promise.resolve({ data: null }),
+          ]);
+          if (cErr) throw cErr;
+          const open = (credits ?? []).filter((c) => c.status === "open").reduce((s, c) => s + (c.amount ?? 0), 0);
+          return {
+            kind: "advance", amount: pay.amount, customerName: cust?.name ?? null,
+            voucherNo: pay.receipt_voucher_no ?? null, usedOrRefunded: Math.max(0, pay.amount - open),
+          };
+        }
         /* R-1739: a payment on an imported Zoho invoice carries the invoice, not a quote. */
         const { data: q } = pay.quote_id
           ? await supabase.from("quotes").select("invoice_id").eq("id", pay.quote_id).maybeSingle()
@@ -80,7 +100,7 @@ export function useUnreconcileBankTxn() {
         p_undo_sale: input.undoSale,
       });
       if (error) throw error;
-      return data as { invoice_voided: string | null; invoice_credited: string | null; credit_note_id: string | null; receipt_removed: string | null };
+      return data as { invoice_voided: string | null; invoice_credited: string | null; credit_note_id: string | null; receipt_removed: string | null; advance_removed?: number | null };
     },
     onSuccess: (res) => {
       for (const k of ["bank_transactions", "bank_accounts",
@@ -90,7 +110,8 @@ export function useUnreconcileBankTxn() {
       /* R-1634: a receipt removed / invoice credited changes what the customer owes. */
       invalidateReceivables(qc);
       toast.success(
-        res?.invoice_credited ? `Un-reconciled · credit note ${res.credit_note_id ?? ""} raised on invoice ${res.invoice_credited}, receipt removed`
+        res?.advance_removed ? `Un-reconciled · advance of ${rupee(res.advance_removed)} and its receipt removed`
+        : res?.invoice_credited ? `Un-reconciled · credit note ${res.credit_note_id ?? ""} raised on invoice ${res.invoice_credited}, receipt removed`
         : res?.invoice_voided ? `Un-reconciled · draft invoice ${res.invoice_voided} voided, receipt removed`
         : "Un-reconciled",
       );

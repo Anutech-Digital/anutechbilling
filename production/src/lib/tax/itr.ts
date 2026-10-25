@@ -55,6 +55,9 @@
  */
 
 import { fyStartYear, fyLabelOfYear, fyCodeOfYear } from "@/lib/dates/ist";
+import type { BusinessType } from "@/lib/compliance/obligations";
+import { entityProfile, type ItrForm } from "@/lib/compliance/entity";
+import { individualRates, slabRegimeTax, firmTax, FIRM_RATES } from "./entity-tax";
 
 /* ─────────────────────────── Financial year ─────────────────────────── */
 
@@ -174,10 +177,16 @@ export interface PnlLine {
 }
 
 export interface TaxEstimate {
-  regime: "normal" | "s115BAA";
+  /** Company: normal / 115BAA. Proprietor: new / old slab regime. Firm / LLP: firm. (R-1844) */
+  regime: "normal" | "s115BAA" | "new_slab" | "old_slab" | "firm";
   regimeLabel: string;
+  /** Flat rate; 0 for slab regimes (see rateText). */
   ratePct: number;
+  /** "25%", "Slabs 0–30%", … — what the screen prints next to the base tax. */
+  rateText: string;
   baseTax: number;
+  /** Section 87A rebate (slab regimes only); 0 otherwise. */
+  rebate: number;
   surcharge: number;
   cess: number;
   total: number;
@@ -194,6 +203,17 @@ export interface AdvanceTaxInstallment {
 
 export interface ItrPack {
   fy: FinancialYear;
+  /** R-1844: whose return this is — the tax maths, form and due date follow it. Empty type = Pvt Ltd. */
+  entityType: BusinessType;
+  itrForm: ItrForm;
+  /** "ITR-3 on the owner's PAN", … */
+  itrText: string;
+  /** Compliance Calendar row "Mark as filed" writes. */
+  obligationKey: "it_itr6" | "it_itr_business";
+  /** Return due date (139(1)) and what it assumes. */
+  due: { date: string; note: string };
+  /** Where the rates come from — always "CA to confirm"; printed under the estimate. */
+  ratesNote: string;
   /** Jodne me jo istemal hua — screen/CSV counts aur TDS yahi se padhte hain. */
   sources: ItrSources;
   pnl: PnlLine[];
@@ -232,7 +252,43 @@ function estimate(
   const baseTax = r0((taxable * ratePct) / 100);
   const surcharge = surchargeOf(baseTax, taxable);
   const cess = r0(((baseTax + surcharge) * 4) / 100);
-  return { regime, regimeLabel, ratePct, baseTax, surcharge, cess, total: baseTax + surcharge + cess };
+  return { regime, regimeLabel, ratePct, rateText: `${ratePct}%`, baseTax, rebate: 0, surcharge, cess, total: baseTax + surcharge + cess };
+}
+
+/**
+ * R-1844: the estimates for this business type. Company = 25% / 115BAA 22% (unchanged).
+ * Proprietor = slabs on the owner's PAN, new regime (default) and old regime. Firm / LLP = 30%.
+ * Rates: lib/tax/entity-tax.ts, each with its source — all "CA to confirm".
+ */
+function estimatesFor(type: BusinessType, taxable: number, fyStart: number): { estimates: TaxEstimate[]; ratesNote: string } {
+  if (type === "pvt_ltd") {
+    return {
+      estimates: taxable > 0 ? [
+        estimate("normal", "Normal regime (25%)", 25, normalSurcharge, taxable),
+        estimate("s115BAA", "Section 115BAA (22%)", 22, s115baaSurcharge, taxable),
+      ] : [],
+      ratesNote: "Company rates: 25% (turnover up to ₹400 crore) or 22% under Section 115BAA, + surcharge + 4% cess. Estimate — your CA confirms.",
+    };
+  }
+  if (type === "proprietor") {
+    const r = individualRates(fyStart);
+    const slab = (regime: "new_slab" | "old_slab", label: string, b: ReturnType<typeof slabRegimeTax>): TaxEstimate =>
+      ({ regime, regimeLabel: label, ratePct: 0, rateText: "slabs", ...b });
+    return {
+      estimates: taxable > 0 ? [
+        slab("new_slab", "New regime (default)", slabRegimeTax(taxable, r.newRegime)),
+        slab("old_slab", "Old regime", slabRegimeTax(taxable, r.oldRegime)),
+      ] : [],
+      ratesNote: `Individual slab rates (owner under 60, resident), 87A rebate, surcharge + 4% cess — ${r.source}. `
+        + "On business income only; marginal relief and deductions (old regime) are not counted. "
+        + (r.confirmed === "official" ? "Estimate — CA / Hitesh to confirm." : "ESTIMATE, rates not confirmed on an official page — CA / Hitesh to confirm."),
+    };
+  }
+  const b = firmTax(taxable);
+  return {
+    estimates: taxable > 0 ? [{ regime: "firm", regimeLabel: `${type === "llp" ? "LLP" : "Firm"} rate (30%)`, ratePct: FIRM_RATES.ratePct, rateText: `${FIRM_RATES.ratePct}%`, ...b }] : [],
+    ratesNote: `${FIRM_RATES.source}, + 4% cess. Before partners' salary and interest (Section 40(b)) — your CA deducts those. ESTIMATE — CA / Hitesh to confirm.`,
+  };
 }
 
 /** Saadha raasta: surcharge sirf badi aamdani par. */
@@ -255,7 +311,9 @@ const INSTALLMENTS: ReadonlyArray<{ month: string; label: string; pct: number; n
 /** `expenses` me salary is naam ki category se book hoti hai. */
 const SALARY_CATEGORY = "Salaries";
 
-export function computeItrPack(fy: FinancialYear, s: ItrSources): ItrPack {
+export function computeItrPack(fy: FinancialYear, s: ItrSources, businessType?: BusinessType | null): ItrPack {
+  const profile = entityProfile(businessType);   // empty type = Pvt Ltd (one resolver)
+  const company = profile.type === "pvt_ltd";
   const pnl: PnlLine[] = [
     {
       label: "Revenue (excluding GST, including credit/debit notes)",
@@ -303,13 +361,7 @@ export function computeItrPack(fy: FinancialYear, s: ItrSources): ItrPack {
   const bookProfit = totalIncome - totalExpense;
   const taxableIncome = bookProfit > 0 ? roundTaxable(bookProfit) : 0;
 
-  const estimates: TaxEstimate[] =
-    taxableIncome > 0
-      ? [
-          estimate("normal", "Normal regime (25%)", 25, normalSurcharge, taxableIncome),
-          estimate("s115BAA", "Section 115BAA (22%)", 22, s115baaSurcharge, taxableIncome),
-        ]
-      : [];
+  const { estimates, ratesNote } = estimatesFor(profile.type, taxableIncome, fy.startYear);
   const cheaperEstimate =
     estimates.length > 0 ? estimates.reduce((a, b) => (b.total < a.total ? b : a)) : null;
 
@@ -342,7 +394,8 @@ export function computeItrPack(fy: FinancialYear, s: ItrSources): ItrPack {
     gaps.push(
       "Licence purchases are ₹0 because no COGS vendor bill is recorded this year. In that case the P&L page shows an ESTIMATE from the subscription book — an estimate is not accepted in tax papers: add the vendor bills in Purchases → Bills.",
     );
-  const salaryBooked = s.expenses.some((c) => c.category === SALARY_CATEGORY && c.count > 0);
+  /* R-1852: a director-employee's payroll is shown as Director's Remuneration — still salary booked. */
+  const salaryBooked = s.expenses.some((c) => (c.category === SALARY_CATEGORY || c.category === "Director's Remuneration") && c.count > 0);
   if (!salaryBooked)
     gaps.push(
       "No salary expense is booked — if the company pays salaries, they are not counted here (running payroll adds them to the Salaries category automatically).",
@@ -365,9 +418,24 @@ export function computeItrPack(fy: FinancialYear, s: ItrSources): ItrPack {
     gaps.push(
       "Advance tax payment is not recorded — if you paid it, book that challan's bank line in Banking via Reconcile → Statutory → Income tax (and give the challan to the CA); if not paid, the schedule is above, and late payment attracts Section 234B/C interest.",
     );
+  /* R-1844: what only the owner / CA knows, by type. */
+  if (profile.type === "proprietor")
+    gaps.push(
+      "Slab tax is on the owner's TOTAL income — salary, interest, rent or capital gains outside this business and deductions (80C etc., old regime only) are not in the app. Tell your CA; the tax above is on this business's profit alone.",
+    );
+  if (profile.type === "partnership" || profile.type === "llp")
+    gaps.push(
+      "Salary and interest paid to partners are not deducted yet — the CA deducts them within the Section 40(b) limits (the deed must allow them). The firm's tax will be lower than shown.",
+    );
+
+  const due = company
+    ? { date: fy.itrDue, note: "Due date for a company under audit (Section 139(1))" }
+    : { date: `${fy.startYear + 1}-07-31`, note: "31 July when the accounts are not audited; 31 October if a tax audit applies (Section 139(1))" };
 
   return {
-    fy, sources: s, pnl, totalIncome, totalExpense, bookProfit, taxableIncome,
+    fy, entityType: profile.type, itrForm: profile.itrForm, itrText: profile.itrText,
+    obligationKey: profile.itrObligationKey, due, ratesNote,
+    sources: s, pnl, totalIncome, totalExpense, bookProfit, taxableIncome,
     estimates, cheaperEstimate, netPayableAfterTds, advanceTaxRequired,
     advanceTaxSchedule, gaps,
   };
