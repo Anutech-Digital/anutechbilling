@@ -29,7 +29,7 @@ import { verifyDraftMoney } from "@/lib/ai/money-guard";
 import { COPILOT_OBJECTIVES, PLATFORMS, type AdPlatform, type CopilotObjective } from "@/lib/marketing/copilot/channel-specs";
 import {
   COPY_LANGUAGES, SHORTEN_SYSTEM, applyShortened, buildCopyPrompt, buildShortenPrompt, collectCandidates,
-  copySlots, finalizeCopy, mayWriteCopy, needsShortening, stubCopy, type CopyBrief, type CopyLanguage,
+  COPILOT_COPY_ROLES, copySlots, finalizeCopy, needsShortening, stubCopy, type CopyBrief, type CopyLanguage,
 } from "@/lib/marketing/copilot/copy-prompt";
 
 export const dynamic = "force-dynamic";
@@ -65,7 +65,8 @@ export async function POST(req: Request) {
   const ctx = await withTenant(session, async (tx) => {
     const me = await tx.public_users.findUnique({ where: { id: session.userId }, select: { role: true, is_active: true } });
     const role = me && me.is_active !== false ? String(me.role) : null;
-    if (!mayWriteCopy(role)) return { kind: "forbidden" as const };
+    /* Role gate (R-732 ratchet): owner / manager / marketing — the same roles as the co-pilot tables' RLS. */
+    if (!role || !(COPILOT_COPY_ROLES as readonly string[]).includes(role)) return { kind: "forbidden" as const };
     const tenant = await tx.tenants.findUnique({ where: { id: session.tenantId }, select: { name: true } });
     const plan = b.planId
       ? await tx.ad_plans.findFirst({
