@@ -177,8 +177,8 @@ export function collectCandidates(raw: unknown, slots: readonly CopySlot[], b: P
     }
     if (s.field.choices) {
       /* Pick-from-list (Meta call-to-action): only a value on the list, matched by value or button text. */
-      const pick = values.map(clean).map((c) => c && s.field.choices!.find((o) =>
-        sameKey(o.value) === sameKey(c) || sameKey(o.label) === sameKey(c) || sameKey(o.value) === sameKey(c.replace(/\s+/g, "_"))))
+      const pick = values.map(clean).map((c) => (c ? s.field.choices!.find((o) =>
+        sameKey(o.value) === sameKey(c) || sameKey(o.label) === sameKey(c) || sameKey(o.value) === sameKey(c.replace(/\s+/g, "_"))) : undefined))
         .find(Boolean);
       out.set(keyOf(s), [pick?.value ?? s.defaultChoice].filter((x): x is string => !!x));
       continue;

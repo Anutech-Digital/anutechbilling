@@ -14,7 +14,8 @@
 import { NextResponse } from "next/server";
 import { getTenantSession } from "@/server/auth/session";
 import { withTenant } from "@/server/db";
-import { EDITABLE, copilotRoleOk, forbidden } from "../../plan-io";
+import { EDITABLE, copilotRoleOk, forbidden, myActiveRole } from "../../plan-io";
+import { COPILOT_COPY_ROLES } from "@/lib/marketing/copilot/copy-prompt";
 import { checkSetBody, planForCopy, readSets, saveSet, saveSetSchema } from "../../copy-io";
 
 export const dynamic = "force-dynamic";
@@ -55,7 +56,8 @@ export async function PUT(req: Request, { params }: Ctx) {
 
   const out = await withTenant(session, async (tx) => {
     /* Role gate (R-732 ratchet): owner / manager / marketing — the same roles as the co-pilot tables' RLS. */
-    if (!(await copilotRoleOk(tx, session.userId))) return { kind: "forbidden" as const };
+    const role = await myActiveRole(tx, session.userId);
+    if (!role || !(COPILOT_COPY_ROLES as readonly string[]).includes(role)) return { kind: "forbidden" as const };
     const plan = await planForCopy(tx, session.tenantId, id);
     if (!plan) return { kind: "missing" as const };
     if (!EDITABLE.has(plan.status)) return { kind: "locked" as const };

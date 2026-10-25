@@ -28,12 +28,12 @@ import { CHANNEL_SPECS, type AdPlatform, type CopilotObjective, type CopyField }
 import { COPY_LANGUAGES, type CopyLanguage } from "@/lib/marketing/copilot/copy-prompt";
 import { OBJECTIVE_INFO } from "@/lib/marketing/copilot/plan-draft";
 import {
-  AUDIENCE_LABEL, audienceBlocks, counterTone, emptySet, formatFields, fromRows, mergeAi, newLineKey,
+  audienceBlocks, counterTone, emptySet, formatFields, fromRows, mergeAi, newLineKey,
   pinOptions, readyCheck, replaceLine, setProgress, toRows,
   type AudienceBlock, type CopySet, type DraftLine,
 } from "@/lib/marketing/copilot/copy-set";
 import {
-  ApiError, copyKey, listVersions, markReady, rewriteLine, saveSet, useCopySets, writeCopy,
+  ApiError, listVersions, markReady, rewriteLine, saveSet, useCopySets, writeCopy,
   type SavedSetDto, type VersionDto,
 } from "./use-copy";
 
@@ -500,7 +500,7 @@ export function LineRow({ platform, field, line, n, busy, onText, onKeep, onPin,
         </Button>
         <Button size="sm" variant="ghost" icon="lock" aria-pressed={line.locked} onClick={onKeep}
           aria-label={`Keep ${name.toLowerCase()}`} className={cn(line.locked && "bg-amber-soft")}>
-          {line.locked ? "Kept" : "Keep"}
+          Keep
         </Button>
         {pins.length > 0 && (
           <Select value={line.pinned ? String(line.pinned) : NO_PIN} onValueChange={(v) => onPin(v === NO_PIN ? null : Number(v))}>
