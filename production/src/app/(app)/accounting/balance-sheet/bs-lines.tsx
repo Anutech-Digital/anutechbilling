@@ -4,7 +4,6 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/ui/icon";
-import { StatementRow } from "@/components/ui/statement-row";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenRoute } from "@/lib/nav";
 import { type BalanceSheetItem } from "@/lib/queries/balance-sheet";
@@ -60,9 +59,8 @@ export function BSLine({
   const clickable = !!href && canOpenRoute(role, href);
   const go = () => { if (href && clickable) router.push(href as never); };
   return (
-    <StatementRow
-      clickable={clickable}
-      className="flex items-start justify-between gap-3 py-1.5 group"
+    <div
+      className={`flex items-start justify-between gap-3 py-1.5 group rounded-md ${clickable ? "cursor-pointer hover:bg-paper-2/50 -mx-2 px-2" : ""}`}
       {...(clickable ? {
         role: "button", tabIndex: 0, onClick: go,
         onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } },
@@ -79,17 +77,16 @@ export function BSLine({
               <Icon name="info" size={13} />
             </button>
           )}
-          {clickable && <Icon name="arrow_right" size={12} className="text-ink-3 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity" />}
-          {/* R-1899: keyboard focus shows the row's buttons too, not only the mouse. */}
+          {clickable && <Icon name="arrow_right" size={12} className="text-ink-3 opacity-0 group-hover:opacity-100 transition-opacity" />}
           {onEdit && (
             <button type="button" onClick={(e) => { e.stopPropagation(); onEdit(); }}
-              className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-ink-3 hover:text-ink transition-opacity" aria-label={`Edit ${label}`}>
+              className="opacity-0 group-hover:opacity-100 text-ink-3 hover:text-ink transition-opacity" aria-label={`Edit ${label}`}>
               <Icon name="edit" size={12} />
             </button>
           )}
           {onDelete && (
             <button type="button" onClick={(e) => { e.stopPropagation(); onDelete(); }}
-              className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-ink-3 hover:text-rose transition-opacity" aria-label={`Remove ${label}`}>
+              className="opacity-0 group-hover:opacity-100 text-ink-3 hover:text-rose transition-opacity" aria-label={`Remove ${label}`}>
               <Icon name="trash" size={12} />
             </button>
           )}
@@ -99,7 +96,7 @@ export function BSLine({
       <span className={`font-mono text-sm tabular-nums whitespace-nowrap shrink-0 ${amount < 0 ? "text-rose" : "text-ink"}`}>
         {fmtBS(amount)}
       </span>
-    </StatementRow>
+    </div>
   );
 }
 
@@ -144,9 +141,8 @@ export function ManualGroup({
   const total = rows.reduce((s, r) => s + r.amount, 0);
   return (
     <div>
-      <StatementRow
-        clickable
-        className="flex items-start justify-between gap-3 py-1.5"
+      <div
+        className="flex items-start justify-between gap-3 py-1.5 rounded-md cursor-pointer hover:bg-paper-2/50 -mx-2 px-2"
         role="button" tabIndex={0} onClick={() => setOpen((o) => !o)}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen((o) => !o); } }}
       >
@@ -157,7 +153,7 @@ export function ManualGroup({
           <span className="text-xs text-ink-3">· {rows.length} entries</span>
         </div>
         <span className={`font-mono text-sm tabular-nums whitespace-nowrap shrink-0 ${total < 0 ? "text-rose" : "text-ink"}`}>{fmtBS(total)}</span>
-      </StatementRow>
+      </div>
       {open && (
         <div className="pl-5 border-l border-hairline ml-1">
           {rows.map((r) => (
@@ -172,13 +168,12 @@ export function ManualGroup({
 
 export function TotalLine({ label, amount, muted }: { label: string; amount: number; muted?: boolean }) {
   return (
-    <StatementRow className={`mt-3 pt-2 pb-1 border-t ${muted ? "border-hairline" : "border-ink-2 border-t-2"} flex items-baseline justify-between gap-3`}>
+    <div className={`mt-3 pt-2 border-t ${muted ? "border-hairline" : "border-ink-2 border-t-2"} flex items-baseline justify-between gap-3`}>
       <span className={`${muted ? "text-sm text-ink-2" : "text-sm font-semibold text-ink"}`}>{label}</span>
-      {/* R-1899: plain text-rose (no important flag) so the highlighted row can darken it to rose-ink. */}
-      <span className={`font-mono tabular-nums whitespace-nowrap ${muted ? "text-base" : "font-serif text-xl"} ${amount < 0 ? "text-rose" : "text-ink"}`}>
+      <span className={`font-mono tabular-nums whitespace-nowrap ${muted ? "text-base text-ink" : "font-serif text-xl text-ink"} ${amount < 0 ? "!text-rose" : ""}`}>
         {fmtBS(amount)}
       </span>
-    </StatementRow>
+    </div>
   );
 }
 

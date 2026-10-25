@@ -6,7 +6,6 @@
 
 import * as React from "react";
 import { rupee } from "@/lib/utils";
-import { StatementRow } from "@/components/ui/statement-row";
 import {
   periodChange, changeTone, formatChange, signedRupee, TONE_CLASS, MAX_SUB_LINES, type Sense, type SubLines,
 } from "@/lib/accounting/pnl-compare";
@@ -59,7 +58,7 @@ export function Row({
                    : tone === "rose"    ? "text-rose"
                    : "text-ink";
   return (
-    <StatementRow className="flex items-baseline justify-between gap-3 py-1">
+    <div className="flex items-baseline justify-between gap-3">
       <div className="min-w-0">
         <div className={`${emphasis ? "font-semibold" : ""} ${xl ? "text-base" : "text-sm"} text-ink leading-tight`}>
           {label}
@@ -79,7 +78,7 @@ export function Row({
         </div>
         {cmp && <CmpCells c={cmp} />}
       </div>
-    </StatementRow>
+    </div>
   );
 }
 
@@ -99,7 +98,7 @@ export function SubRows({ group, cmpOn, cmpLoading, showAll, onToggleAll, onOpen
   /* A single line equal to its parent says nothing new. */
   if (group.lines.length < 2) return null;
   return (
-    <div className="border-l-2 border-hairline pl-3 ml-1" data-testid="pnl-sub-lines">
+    <div className="space-y-1 border-l-2 border-hairline pl-3 ml-1" data-testid="pnl-sub-lines">
       {group.lines.map((l) => {
         const prefix = l.kind === "less" ? "−" : l.kind === "add" ? "+" : "";
         const c: Cmp | undefined = cmpOn
@@ -112,7 +111,7 @@ export function SubRows({ group, cmpOn, cmpLoading, showAll, onToggleAll, onOpen
           </>
         );
         return (
-          <StatementRow key={l.key} className="flex items-baseline justify-between gap-3 py-0.5 text-[13px]">
+          <div key={l.key} className="flex items-baseline justify-between gap-3 text-[13px]">
             {l.kind === "less" || l.kind === "add"
               ? <span className="min-w-0 text-ink-3">{label}</span>
               : (
@@ -129,11 +128,11 @@ export function SubRows({ group, cmpOn, cmpLoading, showAll, onToggleAll, onOpen
               </div>
               {c && <CmpCells c={c} />}
             </div>
-          </StatementRow>
+          </div>
         );
       })}
       {group.itemCount > MAX_SUB_LINES && (
-        <button type="button" onClick={onToggleAll} className="mt-1 text-xs text-amber-ink hover:underline">
+        <button type="button" onClick={onToggleAll} className="text-xs text-amber-ink hover:underline">
           {showAll ? `Show top ${MAX_SUB_LINES - 1}` : `Show all ${group.itemCount}`}
         </button>
       )}
@@ -151,7 +150,7 @@ export function UnknownRow({ label, value, note, large, cmpOn }: {
   cmpOn?: boolean;
 }) {
   return (
-    <StatementRow className="flex items-baseline justify-between gap-3 py-1">
+    <div className="flex items-baseline justify-between gap-3">
       <div className={`${large ? "text-base font-semibold" : "text-sm"} text-ink leading-tight`}>{label}</div>
       <div className="flex items-baseline gap-3">
         <div className={cmpOn ? "text-right sm:min-w-[8rem]" : "text-right"}>
@@ -165,7 +164,7 @@ export function UnknownRow({ label, value, note, large, cmpOn }: {
           </>
         )}
       </div>
-    </StatementRow>
+    </div>
   );
 }
 
