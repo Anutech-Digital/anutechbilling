@@ -4,7 +4,7 @@
  * "What will you create today?" — one line in the prompt bar becomes a SAVED draft plan
  * (POST /api/marketing/copilot/draft: the AI fills product, objective, platforms and audience,
  * checked against the real lists; no AI key → filled from the words). The wizard opens on it
- * (?plan=<id>&step=1|2), so a refresh keeps both the plan and the step. Recent plans below.
+ * (?plan=<id>&step=1|2|3), so a refresh keeps both the plan and the step. Recent plans below.
  * Owner, manager, marketing (nav.ts OMK; the API checks the role again, RLS a third time).
  */
 "use client";
@@ -49,7 +49,7 @@ function Copilot() {
   const router = useRouter();
   const params = useSearchParams();
   const planId = params.get("plan");
-  const step = params.get("step") === "2" ? 2 : 1;
+  const step = params.get("step") === "3" ? 3 : params.get("step") === "2" ? 2 : 1;
   const home = useCopilotHome();
   const plan = useCopilotPlan(planId);
   const create = useCreateFromPrompt();

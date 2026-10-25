@@ -38,6 +38,10 @@ export interface CopyField {
   /** How many of this field one ad takes (e.g. 3–15 headlines). */
   minCount: number;
   maxCount: number;
+  /** How many lines "Write copy with AI" writes (R-1897). Unset = maxCount. */
+  aiCount?: number;
+  /** A field picked from a fixed list (Meta call-to-action button), not free text. */
+  choices?: readonly { value: string; label: string }[];
   /** The official page the numbers were read from. */
   source: string;
 }
@@ -63,8 +67,38 @@ const G_PMAX = "https://support.google.com/google-ads/answer/14528373";         
 const G_CHANNEL = "https://developers.google.com/google-ads/api/reference/rpc/latest/AdvertisingChannelTypeEnum.AdvertisingChannelType";
 const G_SIMILAR = "https://ads-developers.googleblog.com/2022/11/announcing-deprecation-and-sunset-of.html";
 const M_FEED = "https://www.facebook.com/business/ads-guide/update/image/facebook-feed/traffic";
+const M_ASSET_FEED = "https://developers.facebook.com/docs/marketing-api/ad-creative/asset-feed-spec/options";
 const M_OBJECTIVE = "https://developers.facebook.com/docs/marketing-api/reference/ad-campaign-group/";
 const M_LOOKALIKE = "https://developers.facebook.com/docs/marketing-api/audiences/guides/lookalike-audiences/";
+
+/**
+ * Meta call-to-action buttons (R-1897): the Marketing API value + the button text people see.
+ * A subset of the Ads Guide list that fits our objectives; some show only for some industries.
+ */
+export const META_CTAS: readonly { value: string; label: string }[] = [
+  { value: "LEARN_MORE", label: "Learn more" },
+  { value: "GET_QUOTE", label: "Get quote" },
+  { value: "CONTACT_US", label: "Contact us" },
+  { value: "SHOP_NOW", label: "Shop now" },
+  { value: "SIGN_UP", label: "Sign up" },
+  { value: "APPLY_NOW", label: "Apply now" },
+  { value: "ORDER_NOW", label: "Order now" },
+  { value: "GET_OFFER", label: "Get offer" },
+  { value: "CALL_NOW", label: "Call now" },
+  { value: "WHATSAPP_MESSAGE", label: "Send WhatsApp message" },
+  { value: "MESSAGE_PAGE", label: "Send message" },
+  { value: "DOWNLOAD", label: "Download" },
+  { value: "SUBSCRIBE", label: "Subscribe" },
+];
+
+/** The button pre-picked for an objective (the person can change it). */
+export const DEFAULT_CTA: Record<CopilotObjective, string> = {
+  awareness: "LEARN_MORE",
+  traffic: "LEARN_MORE",
+  engagement: "LEARN_MORE",
+  lead_gen: "GET_QUOTE",
+  sales: "SHOP_NOW",
+};
 
 export const CHANNEL_SPECS: Record<AdPlatform, ChannelSpec> = {
   "google-ads": {
@@ -109,10 +143,15 @@ export const CHANNEL_SPECS: Record<AdPlatform, ChannelSpec> = {
         key: "feed_image",
         label: "Feed image ad",
         fields: [
-          // Ads Guide "Text Recommendations": "Primary Text: 50-150 characters" — a recommendation, no max published
-          { key: "primary_text", label: "Primary text", max: null, recommended: 150, recommendedMin: 50, minCount: 1, maxCount: 1, source: M_FEED },
-          // "Headline: 27 characters" — a recommendation
-          { key: "headline", label: "Headline", max: null, recommended: 27, minCount: 1, maxCount: 1, source: M_FEED },
+          // Ads Guide "Text Recommendations": "Primary Text: 50-150 characters" — a recommendation, no max published.
+          // Count: asset feed options "Total number of bodies: <= 5" (M_ASSET_FEED); the AI writes 3 (R-1897).
+          { key: "primary_text", label: "Primary text", max: null, recommended: 150, recommendedMin: 50, minCount: 1, maxCount: 5, aiCount: 3, source: M_FEED },
+          // "Headline: 27 characters" — a recommendation · "Total number of titles: <= 5"
+          { key: "headline", label: "Headline", max: null, recommended: 27, minCount: 1, maxCount: 5, aiCount: 3, source: M_FEED },
+          // Optional · "Total number of descriptions: <= 5" · Meta publishes no length for it
+          { key: "description", label: "Description", max: null, recommended: null, minCount: 0, maxCount: 5, aiCount: 1, source: M_ASSET_FEED },
+          // The button under the ad — one value from Meta's list (Ads Guide call-to-action list)
+          { key: "cta", label: "Call-to-action button", max: null, recommended: null, minCount: 1, maxCount: 1, choices: META_CTAS, source: M_FEED },
         ],
       },
     ],

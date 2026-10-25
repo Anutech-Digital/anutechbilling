@@ -245,6 +245,7 @@ MIGS=(
   "r1894addcust|20261025044600_r1894_add_customer_contact.sql|resellersos_migration|to_regprocedure('public.add_customer_contact(uuid,text,text,text,text,text)') is not null and to_regprocedure('public.r1894_link_orphan_contacts()') is not null"
   "r1901ctxhelpers|20261025065946_r1901_request_context_helpers.sql|resellersos_migration|to_regprocedure('public.current_request_role()') is not null and to_regprocedure('public.current_user_id()') is not null"
   "r1903phoneotp|20261025083015_r1903_phone_otp.sql|resellersos_migration|to_regclass('public.phone_otps') is not null and to_regprocedure('public.verify_phone_otp(text,text)') is not null and to_regprocedure('public.request_phone_otp(text,text)') is not null"
+  "r1897adcopysets|20261025092735_r1897_ad_copy_sets.sql|resellersos_migration|to_regclass('public.ad_copy_sets') is not null and to_regclass('public.ad_copy_set_versions') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'ad_copies' and column_name = 'audience') and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'ad_copy_set_versions' and policyname = 'zzz_service_role_all')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

@@ -1,8 +1,9 @@
 /**
- * R-1879 — the co-pilot wizard, steps 1–2 (steps 3–4 are R-1880, 5 is the publisher).
+ * R-1879 — the co-pilot wizard, steps 1–3 (step 4 is R-1880, 5 is the publisher).
  *   Step 1: plan name, brand (the company name), product, objective (goal → objective).
  *   Step 2: platforms (with WHY a platform is not offered), audience: ages, gender, regions,
  *           lookalike (only where the platform has one).
+ *   Step 3: the ad copy per platform and audience — R-1897, step-three.tsx.
  * Every change is saved by itself a moment later, so a refresh never loses work; the buttons
  * save at once too. The rules live in lib/marketing/copilot/plan-draft.ts.
  */
@@ -22,6 +23,8 @@ import {
   normalizePlan, platformInfo, type Gender, type PlanDraft,
 } from "@/lib/marketing/copilot/plan-draft";
 import { useSavePlan, type SavedPlan } from "./use-copilot";
+import { StepThree } from "./step-three";
+import { useQueryClient } from "@tanstack/react-query";
 
 const NO_PRODUCT = "__none__";
 const AUTOSAVE_MS = 1200;
@@ -32,7 +35,7 @@ export const STEPS = [
   { n: 3, label: "Ad copy" },
   { n: 4, label: "Budget & review" },
 ] as const;
-const BUILT_STEPS = 2;
+const BUILT_STEPS = 3;
 
 const toDraft = (p: SavedPlan): PlanDraft => ({
   name: p.name, itemId: p.itemId, objective: p.objective, platforms: p.platforms,
@@ -52,7 +55,7 @@ export function Wizard({ plan, items, brand, step, onStep, onClose }: {
   const [dirty, setDirty] = React.useState(false);
   const [savedAt, setSavedAt] = React.useState<string | null>(plan.updatedAt);
   const [error, setError] = React.useState<string | null>(null);
-  const [done, setDone] = React.useState(false);
+  const qc = useQueryClient();
   const locked = plan.status !== "draft" && plan.status !== "ready";
 
   const check = normalizePlan(draft);
@@ -64,7 +67,6 @@ export function Wizard({ plan, items, brand, step, onStep, onClose }: {
     edits.current += 1;
     setDraft((d) => ({ ...d, ...next }));
     setDirty(true);
-    setDone(false);
   };
   const audience = (next: Partial<PlanDraft["audience"]>) => change({ audience: { ...draft.audience, ...next } });
 
@@ -105,7 +107,7 @@ export function Wizard({ plan, items, brand, step, onStep, onClose }: {
           {plan.prompt && <p className="text-sm text-ink-3 mt-1 break-words">“{plan.prompt}”</p>}
         </div>
         <div className="flex items-center gap-3">
-          <span className={cn("text-xs", dirty && problem ? "text-rose-ink" : "text-ink-3")} role="status" aria-live="polite">{status}</span>
+          {step !== 3 && <span className={cn("text-xs", dirty && problem ? "text-rose-ink" : "text-ink-3")} role="status" aria-live="polite">{status}</span>}
           <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
         </div>
       </div>
@@ -120,7 +122,12 @@ export function Wizard({ plan, items, brand, step, onStep, onClose }: {
                 type="button"
                 disabled={!built}
                 aria-current={current ? "step" : undefined}
-                onClick={() => built && onStep(s.n)}
+                onClick={async () => {
+                  if (!built) return;
+                  /* Step 3 reads the SAVED plan (platforms, objective, audiences): save first. */
+                  if (s.n === 3 && dirty && !locked && !(await saveNow())) return;
+                  onStep(s.n);
+                }}
                 className={cn(
                   "w-full text-left rounded-md border px-3 py-2 text-sm",
                   current ? "border-amber bg-amber-soft text-ink" : "border-hairline text-ink-2",
@@ -140,35 +147,38 @@ export function Wizard({ plan, items, brand, step, onStep, onClose }: {
       <fieldset disabled={locked} className="space-y-5">
         {step === 1 ? (
           <StepOne draft={draft} items={items} brand={brand} change={change} />
-        ) : (
+        ) : step === 2 ? (
           <StepTwo draft={draft} change={change} audience={audience} />
+        ) : (
+          <StepThree
+            plan={{
+              id: plan.id, objective: plan.objective, platforms: plan.platforms, lookalike: plan.audience.lookalike,
+              language: plan.language, product: items.find((i) => i.id === plan.itemId)?.name ?? null, status: plan.status,
+            }}
+            onStatus={() => { void qc.invalidateQueries({ queryKey: ["copilot-plans"] }); }}
+          />
         )}
       </fieldset>
 
-      {check.notes.length > 0 && (
+      {step !== 3 && check.notes.length > 0 && (
         <ul className="text-sm text-amber-ink list-disc pl-5">{check.notes.map((n) => <li key={n}>{n}</li>)}</ul>
       )}
       {error && <p className="text-sm text-rose-ink" role="alert">{error}</p>}
-      {done && (
-        <p className="text-sm text-emerald-ink" role="status">
-          Draft saved. Ad copy and budget (steps 3–4) are being built next — this plan waits under Recent plans.
-        </p>
-      )}
 
       <div className="flex items-center justify-between gap-2 flex-wrap border-t border-hairline pt-4">
-        {step === 1 ? <span /> : <Button variant="default" icon="chevron_left" onClick={() => onStep(1)}>Back</Button>}
+        {step === 1 ? <span /> : <Button variant="default" icon="chevron_left" onClick={() => onStep(step - 1)}>Back</Button>}
         {step === 1 ? (
           <Button variant="primary" iconRight="arrow_right" loading={save.isPending} disabled={locked}
             onClick={async () => { if (await saveNow()) onStep(2); }}>
             Next: platforms &amp; audience
           </Button>
-        ) : done ? (
-          <Button variant="primary" iconRight="arrow_right" onClick={onClose}>Back to Recent plans</Button>
-        ) : (
-          <Button variant="primary" icon="check" loading={save.isPending} disabled={locked}
-            onClick={async () => { if (await saveNow()) setDone(true); }}>
-            Save draft
+        ) : step === 2 ? (
+          <Button variant="primary" iconRight="arrow_right" loading={save.isPending} disabled={locked}
+            onClick={async () => { if (!dirty || await saveNow()) onStep(3); }}>
+            Next: ad copy
           </Button>
+        ) : (
+          <Button variant="default" onClick={onClose}>Back to Recent plans</Button>
         )}
       </div>
     </Card>

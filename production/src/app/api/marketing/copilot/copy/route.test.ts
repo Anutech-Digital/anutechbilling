@@ -219,3 +219,53 @@ describe("POST /api/marketing/copilot/copy — no AI", () => {
     expect(body.note).toMatch(/AI did not answer/i);
   });
 });
+
+describe("R-1897 — one full set per platform and audience (Step 3 'Write copy with AI')", () => {
+  it("Meta: 3 primary texts, 3 headlines, a description and a CTA from Meta's list; audience in the brief", async () => {
+    h.gemini.mockResolvedValueOnce({
+      "meta-ads": {
+        feed_image: {
+          primary_text: [
+            "This Diwali, move your office email to Google Workspace with our own Delhi team.",
+            "Delhi SMEs: get Google Workspace set up, migrated and supported by people you can call.",
+            "Your team's email, calendar and files in one place. Talk to us about Google Workspace.",
+          ],
+          headline: ["Workspace for Diwali", "Email that just works", "Talk to our team"],
+          description: ["Setup and migration included"],
+          cta: ["Get quote"],
+        },
+      },
+    });
+    const r = await call({ ...BASE, platforms: ["meta-ads"], audience: "lookalike" });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(field(body, "meta-ads", "primary_text").lines).toHaveLength(3);
+    expect(field(body, "meta-ads", "primary_text").lines.every((l) => l.ok && l.length <= 150)).toBe(true);
+    expect(field(body, "meta-ads", "headline").lines).toHaveLength(3);
+    expect(field(body, "meta-ads", "headline").lines.every((l) => l.ok && l.length <= 27)).toBe(true);
+    expect(field(body, "meta-ads", "description").lines).toHaveLength(1);
+    expect(field(body, "meta-ads", "cta").lines.map((l) => l.text)).toEqual(["GET_QUOTE"]);
+    expect(h.gemini.mock.calls[0][0].user).toMatch(/Who sees the ads: people similar to the business's existing customers/);
+  });
+
+  it("a CTA that is not on Meta's list falls back to the objective's default", async () => {
+    h.gemini.mockResolvedValueOnce({ "meta-ads": { feed_image: { primary_text: ["Get Google Workspace for your Delhi office this Diwali."], headline: ["Workspace for Diwali"], cta: ["BUY A CAR"] } } });
+    const body = await (await call({ ...BASE, platforms: ["meta-ads"] })).json();
+    expect(field(body, "meta-ads", "cta").lines.map((l) => l.text)).toEqual(["GET_QUOTE"]);
+  });
+
+  it("Google: the full 15 headlines ≤30 and 4 descriptions ≤90 come back as one set", async () => {
+    h.gemini.mockResolvedValueOnce({
+      "google-ads": { search: {
+        headline: Array.from({ length: 15 }, (_, i) => `Workspace headline ${i + 1}`),
+        description: Array.from({ length: 4 }, (_, i) => `Google Workspace set up by our own Delhi team, option ${i + 1}.`),
+        path: ["workspace", "diwali"],
+      } },
+    });
+    const body = await (await call({ ...BASE, platforms: ["google-ads"] })).json();
+    expect(field(body, "google-ads", "headline").lines).toHaveLength(15);
+    expect(field(body, "google-ads", "headline").lines.every((l) => l.ok && l.length <= 30)).toBe(true);
+    expect(field(body, "google-ads", "description").lines).toHaveLength(4);
+    expect(field(body, "google-ads", "description").lines.every((l) => l.ok && l.length <= 90)).toBe(true);
+  });
+});

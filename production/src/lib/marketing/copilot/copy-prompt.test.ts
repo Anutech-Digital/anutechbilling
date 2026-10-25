@@ -38,8 +38,10 @@ describe("copySlots", () => {
     ]);
     const m = slots.filter((s) => s.platform === "meta-ads");
     expect(m.map((s) => [s.format, s.field.key, s.want])).toEqual([
-      ["feed_image", "primary_text", 1], ["feed_image", "headline", 1],
+      // R-1897: Meta takes up to 5 of each; the AI writes 3 primary texts, 3 headlines, 1 description + a CTA
+      ["feed_image", "primary_text", 3], ["feed_image", "headline", 3], ["feed_image", "description", 1], ["feed_image", "cta", 1],
     ]);
+    expect(m.find((s) => s.field.key === "cta")!.defaultChoice).toBe("GET_QUOTE");
   });
 
   it("sales on Google = Performance Max; business name comes from the brand, not the AI", () => {
@@ -67,7 +69,8 @@ describe("buildCopyPrompt", () => {
     expect(p.user).toContain("friendly, expert");
     expect(p.user).toMatch(/Hinglish/);
     expect(p.user).toMatch(/google-ads\.search\.headline: 15 lines, each at most 30 characters/);
-    expect(p.user).toMatch(/meta-ads\.feed_image\.headline: 1 line, ideally at most 27 characters/);
+    expect(p.user).toMatch(/meta-ads\.feed_image\.headline: 3 lines, ideally at most 27 characters/);
+    expect(p.user).toMatch(/meta-ads\.feed_image\.cta: exactly 1 value, copied exactly from this list: LEARN_MORE, GET_QUOTE/);
     expect(p.system).toMatch(/JSON/);
     expect(p.system).toMatch(/never invent a price/i);
   });
