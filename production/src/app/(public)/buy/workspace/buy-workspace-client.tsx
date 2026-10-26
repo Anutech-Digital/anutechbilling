@@ -476,7 +476,7 @@ function BuyWorkspaceBody({
         <Hero card={card} onPlans={() => goTo("plans")} onTrial={startTrial} trialOk />
         <PlanCards
           plans={plans} selectedId={plan.id} seats={seats} billing={billing} onBilling={setBilling}
-          monthlyOk={monthlyOk} savePct={savePct} onChoose={choose} contact={contact}
+          monthlyOk={monthlyOk} savePct={savePct} onChoose={choose} contact={contact} onSeats={setSeats}
         />
         <CompareTable open={compareOpen} onToggle={() => setCompareOpen((o) => !o)} />
         <SamePrice plans={plans} plan={plan} billing={billing} brand={brand} />

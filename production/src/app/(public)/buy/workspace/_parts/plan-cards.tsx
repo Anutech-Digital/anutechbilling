@@ -8,10 +8,47 @@ import * as React from "react";
 import { SLA } from "@/site/lib/config";
 import { rupee } from "@/lib/utils";
 import { BillingToggle } from "./hero";
-import { BUSINESS_MAX_USERS, COMPARE_ROWS, PLAN_COPY, planRate, planSum, usersLabel, type Billing, type BuyPlan } from "./plans";
+import { BUSINESS_MAX_USERS, COMPARE_ROWS, PLAN_COPY, SEAT_PRESETS, clampSeats, planRate, planSum, usersLabel, type Billing, type BuyPlan } from "./plans";
 import { GoogleWorkspaceWordmark } from "./wordmark";
 import { priceHeadline } from "../price-headline";
 import { whatsappHref, type BuyContact } from "./brand";
+
+/**
+ * R-1986 (Pardeep): change the users right in "Choose a plan" — presets and − [n] +, writing the
+ * page's ONE seats state (hero card, order summary and phone bar read the same), so every card's
+ * working line moves with it. Over 300 users → the Enterprise note.
+ */
+export function PlanSeats({ seats, onSeats }: { seats: number; onSeats: (n: number) => void }) {
+  const set = (n: number) => onSeats(clampSeats(n));
+  const btn = "w-11 h-11 shrink-0 border border-hairline bg-white rounded-[10px] text-xl text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber";
+  return (
+    <div className="flex flex-col gap-1.5" data-testid="plan-seats">
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor="plans-seats" className="text-[13px] font-semibold text-ink-2">Users<span className="sr-only"> for every plan</span></label>
+        <div className="flex gap-1.5" role="group" aria-label="Quick user counts for the plans">
+          {SEAT_PRESETS.map((n) => (
+            <button key={n} type="button" aria-pressed={seats === n} onClick={() => set(n)}
+              className={`min-h-11 min-w-11 rounded-full text-xs px-2.5 border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber ${
+                seats === n ? "border-amber bg-amber-soft text-amber-ink" : "border-hairline bg-white text-ink-2"
+              }`}>
+              {n}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button type="button" aria-label="Fewer users for the plans" onClick={() => set(seats - 1)} className={btn}>−</button>
+          <input id="plans-seats" type="number" inputMode="numeric" min={1} value={seats}
+            onChange={(e) => set(Number(e.target.value))}
+            className="w-[72px] h-11 text-center font-serif text-[20px] border border-hairline rounded-[10px] bg-white text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber" />
+          <button type="button" aria-label="More users for the plans" onClick={() => set(seats + 1)} className={btn}>+</button>
+        </div>
+      </div>
+      {seats > BUSINESS_MAX_USERS && (
+        <p role="status" className="text-[13px] text-amber-ink bg-amber-soft rounded-lg px-3 py-2 m-0">Over {BUSINESS_MAX_USERS} users? That&apos;s Enterprise — Talk to sales below.</p>
+      )}
+    </div>
+  );
+}
 
 /** R-1986: the WhatsApp text for a quoted plan — names the plan and the users, like the page's other WhatsApp links. */
 export function salesWhatsappMessage(planName: string, seats: number): string {
@@ -19,8 +56,10 @@ export function salesWhatsappMessage(planName: string, seats: number): string {
 }
 
 export function PlanCards({
-  plans, selectedId, seats, billing, onBilling, monthlyOk, savePct, onChoose, contact = { tel: null, whatsapp: null },
+  plans, selectedId, seats, billing, onBilling, monthlyOk, savePct, onChoose, contact = { tel: null, whatsapp: null }, onSeats,
 }: {
+  /** R-1986: the users control in this section (the page's one seats state). */
+  onSeats?: (n: number) => void;
   /** R-1986: the tenant phone / site WhatsApp (buyContact) for the "Talk to sales" cards. */
   contact?: BuyContact;
   plans: BuyPlan[];
@@ -43,7 +82,10 @@ export function PlanCards({
             for <b className="text-ink">{usersLabel(seats)}</b>.
           </p>
         </div>
-        {monthlyOk && <BillingToggle billing={billing} onBilling={onBilling} savePct={savePct} compact />}
+        <div className="flex flex-wrap items-start gap-3">
+          {onSeats && <PlanSeats seats={seats} onSeats={onSeats} />}
+          {monthlyOk && <BillingToggle billing={billing} onBilling={onBilling} savePct={savePct} compact />}
+        </div>
       </div>
 
       {/* R-1986 (Pardeep): the buttons and the feature lists line up across the cards whatever the
