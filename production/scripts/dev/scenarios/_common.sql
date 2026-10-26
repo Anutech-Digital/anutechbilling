@@ -23,6 +23,104 @@ begin
   end if;
 end $$;
 
+/* R-1980 — sales-side scenarios (ads-month). Their rows are found from the scope's `docs` alone:
+   lead ids, quote ids, invoice ids, campaign codes and ad-account ids listed there, plus everything
+   hanging off them — the quotes of those leads, the subscriptions of those quotes and their
+   billing rows, the invoices of those quotes / billings, and every payment on any of them (so a
+   payment a tester records on a scenario quote goes with it). Vendor scenarios list none of
+   these, so for them every count is 0. */
+create function pg_temp.scn_sales_scope(p_tenant uuid, p_docs text[])
+returns table(kind text, id text)
+language sql stable as $f$
+  with l as (
+    select x.id from public.leads x where x.tenant_id = p_tenant and x.id = any(p_docs)
+  ), q as (
+    select x.id from public.quotes x
+     where x.tenant_id = p_tenant and (x.id = any(p_docs) or x.lead_id in (select id from l))
+  ), s as (
+    select x.id from public.subscriptions x where x.tenant_id = p_tenant and x.quote_id in (select id from q)
+  ), sb as (
+    select x.id, x.invoice_id from public.subscription_billings x
+     where x.tenant_id = p_tenant and x.subscription_id in (select id from s)
+  ), i as (
+    select x.id from public.invoices x
+     where x.tenant_id = p_tenant
+       and (x.id = any(p_docs) or x.quote_id in (select id from q) or x.id in (select invoice_id from sb))
+  ), p as (
+    select x.id from public.payments x
+     where x.tenant_id = p_tenant and (x.quote_id in (select id from q) or x.invoice_id in (select id from i))
+  ), c as (
+    select x.id from public.marketing_campaigns x where x.tenant_id = p_tenant and x.code = any(p_docs)
+  ), a as (
+    select x.id from public.ad_accounts x where x.tenant_id = p_tenant and x.account_id = any(p_docs)
+  )
+  select 'lead', id from l
+  union all select 'quote', id from q
+  union all select 'subscription', id::text from s
+  union all select 'billing', id::text from sb
+  union all select 'invoice', id from i
+  union all select 'payment', id::text from p
+  union all select 'campaign', id::text from c
+  union all select 'adAccount', id::text from a
+$f$;
+
+create function pg_temp.scn_sales_count(p_tenant uuid, p_docs text[])
+returns jsonb
+language sql stable as $f$
+  with s as (select * from pg_temp.scn_sales_scope(p_tenant, p_docs))
+  select jsonb_build_object(
+    'leads',         (select count(*) from s where kind = 'lead'),
+    'quotes',        (select count(*) from s where kind = 'quote'),
+    'invoices',      (select count(*) from s where kind = 'invoice'),
+    'payments',      (select count(*) from s where kind = 'payment'),
+    'subscriptions', (select count(*) from s where kind = 'subscription'),
+    'campaigns',     (select count(*) from s where kind = 'campaign'),
+    'adDays',        (select count(*) from public.ad_spend_daily d
+                       where d.tenant_id = p_tenant and d.ad_account_id::text in (select id from s where kind = 'adAccount'))
+  )
+$f$;
+
+create function pg_temp.scn_sales_clear(p_tenant uuid, p_docs text[])
+returns jsonb
+language plpgsql as $f$
+declare
+  got jsonb := pg_temp.scn_sales_count(p_tenant, p_docs);
+  ids record;
+  sales_tables text[] := array['payments', 'subscription_billings', 'invoices', 'subscriptions', 'quotes', 'leads',
+    'ad_spend_daily', 'ad_accounts', 'marketing_campaigns'];
+begin
+  if (select sum(v::int) from jsonb_each_text(got) as t(k, v)) = 0 then
+    return got;
+  end if;
+  select coalesce(array_agg(id) filter (where kind = 'lead'), '{}')                 as l,
+         coalesce(array_agg(id) filter (where kind = 'quote'), '{}')                as q,
+         coalesce(array_agg(id::uuid) filter (where kind = 'subscription'), '{}')   as s,
+         coalesce(array_agg(id::uuid) filter (where kind = 'billing'), '{}')        as sb,
+         coalesce(array_agg(id) filter (where kind = 'invoice'), '{}')              as i,
+         coalesce(array_agg(id::uuid) filter (where kind = 'payment'), '{}')        as p,
+         coalesce(array_agg(id::uuid) filter (where kind = 'campaign'), '{}')       as c,
+         coalesce(array_agg(id::uuid) filter (where kind = 'adAccount'), '{}')      as a
+    into ids
+    from pg_temp.scn_sales_scope(p_tenant, p_docs);
+
+  -- Same reason as scn_clear below: test data being taken away, not a user's action.
+  execute (select string_agg(format('alter table public.%I disable trigger user', tbl), '; ') from unnest(sales_tables) tbl);
+  delete from public.payments where id = any(ids.p);
+  delete from public.subscription_billings where id = any(ids.sb);
+  update public.quotes set invoice_id = null where id = any(ids.q) and invoice_id is not null;
+  delete from public.invoices where id = any(ids.i);
+  delete from public.subscriptions where id = any(ids.s);
+  delete from public.quotes where id = any(ids.q);
+  delete from public.leads where id = any(ids.l);
+  delete from public.ad_spend_daily where tenant_id = p_tenant and ad_account_id = any(ids.a);
+  delete from public.ad_accounts where id = any(ids.a);
+  update public.expenses set campaign_id = null where tenant_id = p_tenant and campaign_id = any(ids.c);
+  delete from public.marketing_campaigns where id = any(ids.c);
+  execute (select string_agg(format('alter table public.%I enable trigger user', tbl), '; ') from unnest(sales_tables) tbl);
+  return got;
+end
+$f$;
+
 create function pg_temp.scn_scope(p_tenant uuid, p_vendors uuid[], p_txns uuid[], p_docs text[], p_names text[], p_upis text[])
 returns table(kind text, id text)
 language sql stable as $f$
@@ -75,7 +173,7 @@ language sql stable as $f$
         select bill_no from public.expenses where tenant_id = p_tenant and bill_no like 'SCN-%' group by bill_no having count(*) > 1
         union all
         select bill_no from public.vendor_bills where tenant_id = p_tenant and bill_no like 'SCN-%' group by bill_no having count(*) > 1) d)
-  )
+  ) || pg_temp.scn_sales_count(p_tenant, p_docs)  -- R-1980: leads, quotes, invoices, payments, …
 $f$;
 
 create function pg_temp.scn_clear(p_tenant uuid, p_vendors uuid[], p_txns uuid[], p_docs text[], p_names text[], p_upis text[])
@@ -126,6 +224,7 @@ begin
 
   execute (select string_agg(format('alter table public.%I enable trigger user', tbl), '; ') from unnest(scn_tables) tbl);
   return jsonb_build_object('vendors', cardinality(v), 'expenses', cardinality(e), 'bills', cardinality(b),
-                            'txns', cardinality(t), 'prepaid', cardinality(p));
+                            'txns', cardinality(t), 'prepaid', cardinality(p))
+         || pg_temp.scn_sales_clear(p_tenant, p_docs);  -- R-1980: after the expenses, so a campaign's bills are gone first
 end
 $f$;
