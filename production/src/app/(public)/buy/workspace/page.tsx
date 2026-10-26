@@ -33,20 +33,46 @@ import { checkoutPaymentMode } from "@/lib/checkout/checkout-payment-mode";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { PARTNER_LINE } from "@/site/lib/config";
 import { websiteTenantId } from "@/lib/website-tenant";
+import { brandFromTenant, type BuyBrand } from "./_parts/brand";
 
 /* R-1499: tenant read per call (websiteTenantId) — outside production an unset BUY_PAGE_TENANT_ID
    shows nothing (and logs why), never the live tenant's data. */
 
-export const metadata: Metadata = {
-  title: { absolute: "Buy Google Workspace · Anutech Digital" },
-  description: `Google Workspace pricing for India. Annual GST invoice, hand-held migration, Hindi + English support. ${PARTNER_LINE}.`,
-};
+/* R-1970 (DECISIONS 1): the title names the website tenant, read from its row — never typed. */
+export async function generateMetadata(): Promise<Metadata> {
+  const brand = await fetchBuyBrand();
+  return {
+    title: { absolute: brand ? `Buy Google Workspace · ${brand.name}` : "Buy Google Workspace" },
+    description: `Google Workspace pricing for India. GST invoice, hand-held migration, Hindi + English support. ${PARTNER_LINE}.`,
+  };
+}
 
 // Don't cache for the SSR — Pardeep needs price/enablement edits in the
 // catalog to reflect on the buy page within seconds.
 export const dynamic = "force-dynamic";
 
 const READ_TIMEOUT_MS = 3_000;
+
+/**
+ * R-1970: the company the page sells as — the website tenant's own row (name, logo, GSTIN,
+ * address, state, phone). A failed or slow read shows a neutral header, never another name.
+ */
+async function fetchBuyBrand(): Promise<BuyBrand | null> {
+  const tenantId = websiteTenantId();
+  if (!tenantId) return null;
+  try {
+    const { data, error } = await createAdminClient()
+      .from("tenants")
+      .select("name, logo_url, gstin, address, pin_code, state, state_code, phone, email")
+      .eq("id", tenantId)
+      .abortSignal(AbortSignal.timeout(READ_TIMEOUT_MS))
+      .maybeSingle();
+    if (error) { console.warn("[buy/workspace] tenant brand read failed:", error.message); return null; }
+    return brandFromTenant(data);
+  } catch {
+    return null;
+  }
+}
 
 async function fetchGoogleWorkspaceItems(): Promise<CatalogItem[]> {
   const BUY_PAGE_TENANT_ID = websiteTenantId();
@@ -128,7 +154,7 @@ export default async function BuyWorkspacePage(props: {
 }) {
   const pick = parseBuyParams(await props.searchParams);
   // Both reads at once (R-027) — each is capped, so the page waits at most ~3 s, not the sum.
-  const [catalogItems, { configured, keyId }] = await Promise.all([fetchGoogleWorkspaceItems(), isRazorpayConfigured()]);
+  const [catalogItems, { configured, keyId }, brand] = await Promise.all([fetchGoogleWorkspaceItems(), isRazorpayConfigured(), fetchBuyBrand()]);
   // Live when Razorpay is fully configured. When it isn't:
   //  · non-prod (or ALLOW_SIMULATED_CHECKOUT=1) → "simulation": Buy now stays
   //    visible for Pardeep to walk the full pipeline, clearly TEST-MODE banded.
@@ -148,6 +174,7 @@ export default async function BuyWorkspacePage(props: {
       initialTierId={pick.tier ?? undefined}
       initialSeats={pick.seats ?? undefined}
       openBuy={pick.openBuy}
+      brand={brand}
     />
   );
 }

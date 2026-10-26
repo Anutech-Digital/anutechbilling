@@ -28,7 +28,6 @@ import { BUY_A_DOMAIN_HREF } from "@/lib/checkout/hosting-domain";
 import { FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
 import { BundleNote, LinePrice } from "@/site/components/cart/LinePrice";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
-import { cartCheckoutHref } from "@/site/components/cart/workspace-line";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 
 /* Indian states and union territories by GST code, A to Z, for the State field (R-091).
@@ -238,26 +237,6 @@ export default function CheckoutPage() {
     if (step === "payment" && !inUrl) window.history.pushState(null, "", "?step=payment");
     window.scrollTo(0, 0);
   }, [step]);
-
-  /* R-1966: a Google Workspace line is paid in its own Buy now dialog on /buy/workspace (the
-     route that prices Workspace on the server and takes the Google domain) — this checkout
-     would refuse it at Pay. So it goes there first; the other items stay in the cart. */
-  const workspaceHref = cart.loaded ? cartCheckoutHref(cart.lines) : "/checkout";
-  useEffect(() => {
-    if (workspaceHref !== "/checkout") router.replace(workspaceHref as never);
-  }, [workspaceHref, router]);
-  if (workspaceHref !== "/checkout") {
-    return (
-      <section className="section rise">
-        <div className="wrap" style={{ maxWidth: 640 }}>
-          <h1 className="h1-narrow" style={{ marginBottom: 16 }}>Checkout</h1>
-          <p className="body-lg" role="status" style={{ color: "var(--text-muted)" }}>
-            Opening the Google Workspace checkout… <a href={workspaceHref} style={{ color: "var(--primary)" }}>Open it now</a>
-          </p>
-        </div>
-      </section>
-    );
-  }
 
   /* R-1502: before the saved cart is read, say so — not "The cart is empty". */
   if (!cart.loaded) {

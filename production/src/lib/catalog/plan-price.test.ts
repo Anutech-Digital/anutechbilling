@@ -12,8 +12,8 @@ const CATALOG = [
     prices: { annual: { msrp: 136, wholesale: 110 }, monthly: { msrp: 170, wholesale: 138 } } },
   { id: "GW-STD-t", name: "Google Workspace Standard", item_type: "subscription", is_active: true, msrp: 736, wholesale: 620,
     prices: { annual: { msrp: 736, wholesale: 620 }, monthly: { msrp: 920, wholesale: 780 } } },
-  { id: "GW-PLS-t", name: "Google Workspace Plus", item_type: "subscription", is_active: true, msrp: 1380, wholesale: 1150,
-    prices: { annual: { msrp: 1380, wholesale: 1150 } } },
+  { id: "GW-PLS-t", name: "Google Workspace Plus", item_type: "subscription", is_active: true, msrp: 1500, wholesale: 1150,
+    prices: { annual: { msrp: 1500, wholesale: 1150 } } },
   { id: "SUP-GW-STR-t-MO", name: "Google Workspace Business Starter Support", item_type: "subscription", is_active: true, msrp: 999, wholesale: 0, prices: {} },
   { id: "M365-BB-t", name: "Microsoft 365 Business Basic", item_type: "subscription", is_active: true, msrp: 160, wholesale: 120, prices: {} },
 ] as unknown as Item[];

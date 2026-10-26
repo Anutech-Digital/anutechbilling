@@ -17,6 +17,12 @@ const FILES = [
   "app/(public)/assessment/[token]/page.tsx",
   "site/components/domains/DomainLanding.tsx",
   "app/(app)/online-orders/page.tsx",
+  /* R-1970: the v2 page sections */
+  "app/(public)/buy/workspace/_parts/hero.tsx",
+  "app/(public)/buy/workspace/_parts/plan-cards.tsx",
+  "app/(public)/buy/workspace/_parts/info-sections.tsx",
+  "app/(public)/buy/workspace/_parts/site-header.tsx",
+  "app/(public)/buy/workspace/_parts/checkout-section.tsx",
 ];
 const read = (f: string) => readFileSync(join(SRC, f), "utf8");
 

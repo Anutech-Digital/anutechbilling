@@ -22,8 +22,8 @@ const STALE_STANDARD = {
 };
 
 describe("list prices (Pardeep, 6 Oct)", () => {
-  it("Starter ₹270 (₹3,240/yr), Standard ₹1,080 (₹12,960/yr), Plus ₹1,380", () => {
-    expect(WORKSPACE_LIST_PRICE_PM).toEqual({ starter: 270, standard: 1080, plus: 1380 });
+  it("Starter ₹270 (₹3,240/yr), Standard ₹1,080 (₹12,960/yr), Plus ₹1,500 (R-1970, Pardeep 26 Oct; was ₹1,380)", () => {
+    expect(WORKSPACE_LIST_PRICE_PM).toEqual({ starter: 270, standard: 1080, plus: 1500 });
     expect(WORKSPACE_LIST_PRICE_PM.starter * 12).toBe(3240);
     expect(WORKSPACE_LIST_PRICE_PM.standard * 12).toBe(12960);
   });

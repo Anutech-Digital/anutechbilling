@@ -22,12 +22,14 @@ const inr = (n: number) => rupee(n);
 
 export function priceHeadline(i: HeadlineInput) {
   const users = `${i.seats} ${i.seats === 1 ? "user" : "users"}`;
-  const billed = i.billing === "annual" ? "Billed annually (1-year commitment)" : "Billed monthly";
+  const annual = i.billing === "annual";
+  const billed = annual ? "Billed annually (1-year commitment)" : "Billed monthly";
+  /* R-1970: a monthly bill is ONE month — no "× 12", "/month + GST". Annual wording unchanged. */
   return {
     big: inr(i.subtotal),
-    bigSuffix: "/year + GST",
+    bigSuffix: annual ? "/year + GST" : "/month + GST",
     was: i.wasSubtotal != null && i.wasSubtotal > i.subtotal ? inr(i.wasSubtotal) : null,
-    breakdown: `${inr(i.rate)}/user/month × ${users} × 12 · ${billed}`,
+    breakdown: `${inr(i.rate)}/user/month × ${users}${annual ? " × 12" : ""} · ${billed}`,
     gstLine: `+ ${inr(i.gst)} GST (18%) · Total ${inr(i.total)}`,
   };
 }

@@ -37,10 +37,14 @@ describe("R-1965 price headline: pre-GST yearly total, GST on its own line", () 
     expect(h.gstLine).toBe("+ ₹5,832 GST (18%) · Total ₹38,232");
   });
 
-  it("monthly (flexible) billing says Billed monthly", () => {
-    const t = sums(annualTotals(2, 325));
-    const h = priceHeadline({ rate: 325, seats: 2, billing: "monthly", ...t });
-    expect(h.breakdown).toBe("₹325/user/month × 2 users × 12 · Billed monthly");
+  /* R-1970 (DECISIONS 3 / R-1971 doneWhen): a monthly bill is users × the monthly rate for ONE
+     month — Standard 2 users = 2,600 + 468 = 3,068 — so the line has no "× 12". */
+  it("monthly (flexible) billing is one month: /month + GST, no × 12, Billed monthly", () => {
+    const h = priceHeadline({ rate: 1300, seats: 2, billing: "monthly", subtotal: 2600, gst: 468, total: 3068 });
+    expect(h.big).toBe("₹2,600");
+    expect(h.bigSuffix).toBe("/month + GST");
+    expect(h.breakdown).toBe("₹1,300/user/month × 2 users · Billed monthly");
+    expect(h.gstLine).toBe("+ ₹468 GST (18%) · Total ₹3,068");
   });
 
   it("site promo: struck old and new big numbers are both pre-GST; GST line uses the post-promo sums", () => {
@@ -70,7 +74,8 @@ describe("R-1965 price headline: pre-GST yearly total, GST on its own line", () 
   });
 
   it("the calculator uses the headline and no longer leads with an incl-GST price", () => {
-    const src = readFileSync(join(__dirname, "buy-workspace-client.tsx"), "utf8");
+    /* R-1970: the calculator is the hero's "Your price" card now (_parts/hero.tsx). */
+    const src = readFileSync(join(__dirname, "_parts", "hero.tsx"), "utf8");
     expect(src).toMatch(/priceHeadline\(/);
     expect(src).not.toMatch(/\/year incl 18% GST/);
     expect(src).not.toMatch(/Effective ₹/);

@@ -47,7 +47,7 @@ describe("Workspace checkout order amount never below list (R-206)", () => {
   });
 
   it("no catalogue row → list price", () => {
-    expect(buildLinesFromCatalog(null, "plus", 1).monthlyMsrp).toBe(1380);
+    expect(buildLinesFromCatalog(null, "plus", 1).monthlyMsrp).toBe(1500); // R-1970: Plus list 1,500 (Pardeep 26 Oct)
   });
 
   it("the route prices through this module (not its own copy)", () => {
