@@ -4,6 +4,7 @@
  * price" card — plan, users, Annual/Monthly and the live total. The card reads the SAME state as
  * the plan cards and the checkout, so a number shown here is the number charged there.
  */
+import * as React from "react";
 import { CONTACT_FOR_PRICING } from "@/lib/catalog/public-price-policy";
 import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 import { SLA } from "@/site/lib/config";
@@ -20,6 +21,58 @@ const APPS: ReadonlyArray<{ name: string; src: string }> = [
   { name: "Calendar", src: "/ic-calendar.png" },
   { name: "Gemini", src: "/ic-gemini.png" },
 ];
+
+/**
+ * R-1990 (Pardeep, 26 Oct 2026): the hero's background clip — Pexels 3251737 by fauxels (Pexels
+ * License, free commercial use; public/media/README.md). 11 s, no sound, 1280×720, ~1.6 MB.
+ * Set to null to switch the video off (the hero is then exactly as before).
+ */
+export const HERO_VIDEO: { src: string; poster: string } | null = {
+  src: "/media/hero-workspace.mp4",
+  poster: "/media/hero-workspace.jpg",
+};
+
+/** Motion is welcome: no "reduce motion" setting and no Save-Data. Unknown → no (poster only). */
+function motionWelcome(): boolean {
+  if (typeof window === "undefined") return false;
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  const saveData = Boolean((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData);
+  return !reduce && !saveData;
+}
+
+/**
+ * R-1990: muted, looping, inline video at half speed, behind a 10% black layer. The poster is the
+ * first paint (and all a reduced-motion / Save-Data visitor gets); the video only starts after
+ * mount, so it never holds up the page.
+ */
+function HeroBackground() {
+  const [play, setPlay] = React.useState(false);
+  React.useEffect(() => { setPlay(motionWelcome()); }, []);
+  if (!HERO_VIDEO) return null;
+  return (
+    <div aria-hidden className="absolute inset-0 -z-10 overflow-hidden pointer-events-none">
+      {play ? (
+        <video
+          className="absolute inset-0 w-full h-full object-cover"
+          src={HERO_VIDEO.src}
+          poster={HERO_VIDEO.poster}
+          muted
+          autoPlay
+          loop
+          playsInline
+          preload="metadata"
+          aria-hidden="true"
+          ref={(v) => { if (v) v.muted = true; }}
+          onLoadedMetadata={(e) => { e.currentTarget.playbackRate = 0.5; }}
+        />
+      ) : (
+        /* eslint-disable-next-line @next/next/no-img-element -- the poster is the hero's first paint */
+        <img data-testid="hero-poster" src={HERO_VIDEO.poster} alt="" fetchPriority="high" className="absolute inset-0 w-full h-full object-cover" />
+      )}
+      <div data-testid="hero-dim" className="absolute inset-0 bg-black/10" />
+    </div>
+  );
+}
 
 const CHECKS = ["GST tax invoice, ITC-ready", "UPI, cards and netbanking", "Domain + DNS setup included", "Hindi + English phone support"];
 
@@ -167,9 +220,12 @@ export function PriceCard(p: PriceCardProps) {
 
 export function Hero({ card, onPlans, onTrial, trialOk }: { card: PriceCardProps; onPlans: () => void; onTrial: () => void; trialOk: boolean }) {
   return (
-    <section className="border-b border-hairline">
+    <section data-testid="hero" className="relative isolate border-b border-hairline">
+      <HeroBackground />
       <div className="max-w-[1200px] mx-auto px-4 sm:px-5 pt-14 pb-16 flex flex-wrap gap-12 items-center">
-        <div className="flex-[1_1_440px] min-w-0">
+        {/* R-1990: the text sits on a light paper panel — over the video alone (10% black) dark text
+            measured 1.04:1 at worst; through the panel the darkest point keeps ink-2 above 4.5:1. */}
+        <div data-testid="hero-text" className="flex-[1_1_440px] min-w-0 bg-paper/85 backdrop-blur-sm rounded-2xl p-5 sm:p-7">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 border border-hairline-strong rounded-full text-xs text-ink-2 font-medium mb-5">
             <span aria-hidden className="w-2 h-2 rounded-full bg-emerald" />
             <span className="font-bold"><GoogleWorkspaceWordmark /></span> reseller since 2014
@@ -198,7 +254,7 @@ export function Hero({ card, onPlans, onTrial, trialOk }: { card: PriceCardProps
             ))}
           </ul>
           <div className="mt-8 pt-6 border-t border-hairline max-w-[560px]">
-            <p className="text-xs font-semibold tracking-[0.08em] text-ink-3 mb-3.5">EVERY PLAN INCLUDES</p>
+            <p className="text-xs font-semibold tracking-[0.08em] text-ink-2 mb-3.5">EVERY PLAN INCLUDES</p>
             <ul className="flex flex-wrap gap-2.5 list-none p-0 m-0">
               {APPS.map((a) => (
                 <li key={a.name} className="flex flex-col items-center gap-1.5 w-[60px]">
