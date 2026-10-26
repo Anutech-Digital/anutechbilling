@@ -14,6 +14,7 @@ import type { Quote, QuoteLineItem, LineCommitment } from "@/lib/supabase/databa
 import { quoteTokenMatches } from "@/lib/quotes/accept-token";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
 import { quoteUpiAmount } from "./upi-amount";
+import { quotePayOnlineOffered } from "@/lib/checkout/platform-razorpay";
 import { acceptedPayNow } from "./accepted-pay";
 import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
@@ -233,14 +234,14 @@ export default async function QuoteAcceptPage(props: Props) {
     .select("razorpay_key_id, razorpay_key_secret")
     .eq("tenant_id", quote.tenant_id)
     .maybeSingle();
-  const rzConfigured =
-    Boolean(rzSecret?.razorpay_key_id && rzSecret?.razorpay_key_secret) ||
-    Boolean(
-      (process.env.RAZORPAY_KEY_ID || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID) &&
-      process.env.RAZORPAY_KEY_SECRET,
-    );
-  const quoteIsForeign = !!quote.currency && quote.currency.toUpperCase() !== "INR";
-  const payOnline = rzConfigured && !quoteIsForeign;
+  /* R-1923: the env Razorpay keys are the platform's own account — they count only for the
+     platform tenant's quotes. Another company without its own keys gets no "Pay online";
+     its UPI QR (below) is how the customer pays. */
+  const payOnline = quotePayOnlineOffered({
+    tenantId: quote.tenant_id,
+    tenantHasOwnKeys: Boolean(rzSecret?.razorpay_key_id && rzSecret?.razorpay_key_secret),
+    currency: quote.currency,
+  });
 
   /* UPI straight to the reseller's own VPA — built server-side because the QR needs
      the `qrcode` package, which has no business in a customer's bundle.
