@@ -222,3 +222,38 @@ describe("R-1980 adSourceText — the Online Orders 'Source' cell", () => {
     expect(adSourceText({ utm_source: null, utm_medium: null, utm_campaign: null, referrer_url: null }, new Map())).toBeNull();
   });
 });
+
+/* R-1984 — the footer's ROAS became ads-only in R-1980, but the row beside it still showed
+   Revenue of EVERY row (the "Not from an ad campaign" money too), so Revenue ÷ Spend on that
+   one line did not give its ROAS. The Ads total is the campaign rows only, CAC included. */
+describe("R-1984 adTotals — the campaign rows only, every column", () => {
+  it("ads-month: spend 10,000 · 330 clicks · 5 leads · 3 paid · 31,000 · ROAS 3.10 · CAC 3,333", () => {
+    const r = campaignSalesReport(fixture());
+    expect(r.adTotals.spend).toBe(10000);
+    expect(r.adTotals.clicks).toBe(330);
+    expect(r.adTotals.leads).toBe(5);
+    expect(r.adTotals.paidOrders).toBe(3);
+    expect(r.adTotals.revenue).toBe(31000);
+    expect(r.adTotals.roas).toBeCloseTo(3.1, 2);
+    expect(r.adTotals.cac).toBe(3333);
+  });
+
+  it("a big payment not from any campaign moves none of the ads total (the 38.17× on localhost)", () => {
+    const f = fixture();
+    f.payments.push({ id: "P-BIG", quote_id: null, invoice_id: null, amount: 413858, status: "received", received_at: T(9), refunded_at: null });
+    const r = campaignSalesReport(f);
+    expect(r.rows.find((x) => x.key === NO_CAMPAIGN)!.revenue).toBeGreaterThan(350000);
+    expect(r.adTotals.revenue).toBe(31000);
+    expect(r.adTotals.paidOrders).toBe(3);
+    expect(r.adTotals.roas).toBeCloseTo(3.1, 2);
+  });
+
+  it("no ad spend → no ads ROAS or CAC (a dash, never ∞ or 0)", () => {
+    const f = fixture();
+    f.spendDays = []; f.campaignExpenses = [];
+    const r = campaignSalesReport(f);
+    expect(r.adTotals.spend).toBe(0);
+    expect(r.adTotals.roas).toBeNull();
+    expect(r.adTotals.cac).toBeNull();
+  });
+});
