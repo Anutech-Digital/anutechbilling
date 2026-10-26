@@ -103,7 +103,7 @@ export function maxWorkersAt(date) {
 }
 
 /**
- * R-1973 (26 Oct 2026): a pushed card that only waits for GitHub CI (20–25 min in `worker-lock ci`)
+ * R-1973 (26 Oct 2026): a pushed card that only waits for GitHub CI (~30 min in `worker-lock ci`, default wait 35 min — R-1987)
  * runs no tsc and no tests on this laptop, yet it filled a slot — R-1920 was refused with exit 3 while
  * R-1961 was only waiting on CI. Lock states:
  *   working (no state field = old locks) — counts toward the cap, holds its files;
@@ -553,7 +553,7 @@ export function guardPush(lines, env = process.env) {
  *           Exit 0 green, 7 red, 8 timeout / could not tell.
  *
  *   node scripts/ops/worker-lock.mjs push R-197 --card c.json [--fixes-red | --owner-override] [--skip-related-sql]
- *   node scripts/ops/worker-lock.mjs ci   R-197 [--sha <sha>] [--timeout-min 25]
+ *   node scripts/ops/worker-lock.mjs ci   R-197 [--sha <sha>] [--timeout-min 35]   (default CI_DEFAULT_TIMEOUT_MIN)
  *   node scripts/ops/worker-lock.mjs sql-related R-197
  *
  * gh / git / psql are injected so tests drive every rule with fakes.
@@ -566,10 +566,13 @@ export const RED_CONCLUSIONS = ["failure", "timed_out", "startup_failure", "acti
 const SKIP_CONCLUSIONS = ["cancelled", "skipped", "neutral", "stale"];
 export const CI_EXIT = { green: 0, red: 7, timeout: 8 };
 const RUN_FIELDS = "databaseId,workflowName,status,conclusion,headSha,url,createdAt";
+/** R-1987 (26 Oct 2026): `worker-lock ci` waits this many minutes by default. CI takes ~29 min, so the old
+ *  25 timed out (exit 8) for nearly every card. `--timeout-min` still overrides it. */
+export const CI_DEFAULT_TIMEOUT_MIN = 35;
 
 /** Pull the R-1936 flags out of the positional args. */
 export function parseCiFlags(args) {
-  const rest = []; const f = { fixesRed: false, ownerOverride: false, skipRelatedSql: false, sha: null, timeoutMin: 25 };
+  const rest = []; const f = { fixesRed: false, ownerOverride: false, skipRelatedSql: false, sha: null, timeoutMin: CI_DEFAULT_TIMEOUT_MIN };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--fixes-red") f.fixesRed = true;
@@ -581,7 +584,7 @@ export function parseCiFlags(args) {
     else if (a.startsWith("--timeout-min=")) f.timeoutMin = Number(a.slice(14));
     else rest.push(a);
   }
-  if (!Number.isFinite(f.timeoutMin) || f.timeoutMin <= 0) f.timeoutMin = 25;
+  if (!Number.isFinite(f.timeoutMin) || f.timeoutMin <= 0) f.timeoutMin = CI_DEFAULT_TIMEOUT_MIN;
   return { rest, ...f };
 }
 
@@ -708,7 +711,7 @@ export function lastPushedSha(card, { git, readNote = () => null } = {}) {
  * `ci <CARD>`: poll until both gate workflows have a verdict for the sha, or the timeout.
  * deps: gh, git, isAncestor(a, b), now(), sleep(ms), print(line). Returns { code, check, lines }.
  */
-export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = 25, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), print = () => {}, readNote, pollMs = 30_000, graceMs = 3 * 60_000 } = {}) {
+export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = CI_DEFAULT_TIMEOUT_MIN, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), print = () => {}, readNote, pollMs = 30_000, graceMs = 3 * 60_000 } = {}) {
   const id = String(card).toUpperCase();
   const target = sha || lastPushedSha(id, { git, readNote });
   const finish = (code, check, extra = []) => ({ code, check, lines: extra });

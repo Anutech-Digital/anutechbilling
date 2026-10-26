@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain .mjs ops script, no types
-import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript } from "../scripts/ops/worker-lock.mjs";
+import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, CI_DEFAULT_TIMEOUT_MIN, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript } from "../scripts/ops/worker-lock.mjs";
 
 describe("worker locks (two workers must never build in the same files)", () => {
   it("compares paths from the app root, whatever the slashes", () => {
@@ -355,7 +355,17 @@ describe("R-1936: push refuses while manager-pardeep CI is red", () => {
 
   it("flags: --fixes-red, --owner-override, --sha, --timeout-min come out of the args", () => {
     expect(parseCiFlags(["--fixes-red", "--sha", "abc", "--timeout-min", "3", "x"])).toMatchObject({ rest: ["x"], fixesRed: true, ownerOverride: false, sha: "abc", timeoutMin: 3 });
-    expect(parseCiFlags(["--owner-override", "--timeout-min=bad"])).toMatchObject({ ownerOverride: true, timeoutMin: 25, sha: null });
+    expect(parseCiFlags(["--owner-override", "--timeout-min=bad"])).toMatchObject({ ownerOverride: true, timeoutMin: 35, sha: null });
+  });
+
+  it("R-1987: ci waits 35 min by default (CI takes ~29 min; 25 timed out nearly every card), --timeout-min still overrides", () => {
+    expect(CI_DEFAULT_TIMEOUT_MIN).toBe(35);
+    expect(parseCiFlags([]).timeoutMin).toBe(35);
+    expect(parseCiFlags(["--timeout-min", "0"]).timeoutMin).toBe(35);
+    expect(parseCiFlags(["--timeout-min", "50"]).timeoutMin).toBe(50);
+    const src = readFileSync(path.join(path.resolve(__dirname, ".."), "scripts", "ops", "worker-lock.mjs"), "utf8");
+    expect(src).toMatch(/runCi\(card, \{[^}]*timeoutMin = CI_DEFAULT_TIMEOUT_MIN/);
+    expect(src).toContain("[--timeout-min 35]");
   });
 });
 
