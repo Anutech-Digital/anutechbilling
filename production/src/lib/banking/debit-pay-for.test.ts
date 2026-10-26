@@ -47,7 +47,7 @@ describe("guessVendor — only an unambiguous payee", () => {
   it("the vendor sharing more words wins (Kapoor Legal Associates over Kapoor Stationers)", () => {
     const vs = [{ id: "k1", name: "Kapoor Stationers" }, { id: "k2", name: "Kapoor Legal Associates" }];
     expect(guessVendor({ description: "NEFT-KAPOOR LEGAL ASSOCIATES-KL201 KL202" }, vs))
-      .toEqual({ vendorId: "k2", reason: "the bank line says “kapoor legal associates”" });
+      .toEqual({ vendorId: "k2", reason: "the bank line says “kapoor legal associates”", step: "name" });
   });
 });
 

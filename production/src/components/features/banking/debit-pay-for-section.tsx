@@ -32,7 +32,8 @@ import { useVendorTdsThisFy, EXPENSE_CATEGORIES } from "@/lib/queries/expenses";
 import { VENDOR_BILL_CATEGORIES } from "@/lib/queries/vendor-bills";
 import { TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
 import type { BankTransactionRow } from "@/lib/queries/bank";
-import { useVendorOpenItems, usePayVendorFromBankDebit, useVendor194q, useSet194qBuyer } from "@/lib/queries/bank-debit-pay-for";
+import { useVendorOpenItems, usePayVendorFromBankDebit, useVendor194q, useSet194qBuyer, useVendorNarrationAliases } from "@/lib/queries/bank-debit-pay-for";
+import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
 import {
   allocateOldestFirst, cashDue, guessVendor, isRecorded, itemKey, itemLabel, newBillTds, newBillTotal, planTds, preselect,
   resultLines, summarise, tdsMap, vendorPan,
@@ -73,7 +74,14 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
     () => (vendorRows ?? []).map((v) => v as unknown as VendorLite),
     [vendorRows],
   );
-  const guess = React.useMemo(() => guessVendor(transaction, vendors), [transaction, vendors]);
+  /* R-1919: the one guess order — UPI → account no → Category Rule → learned alias → name words —
+     the same as bank_debit_vendor_guess, which auto-reconcile uses. */
+  const { data: categoryRules } = useTxnCategoryRules();
+  const { data: aliases } = useVendorNarrationAliases();
+  const guess = React.useMemo(
+    () => guessVendor(transaction, vendors, { rules: categoryRules ?? [], aliases: aliases ?? [] }),
+    [transaction, vendors, categoryRules, aliases],
+  );
   const [vendorId, setVendorId] = React.useState("");
   const [touched, setTouched] = React.useState(false);
   const [nv, setNv] = React.useState(EMPTY_NV);
@@ -290,7 +298,9 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
           {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
         </select>
         {guess && vendorId === guess.vendorId && !touched && (
-          <p className="text-xs text-ink-3">Guessed from {guess.reason} — change it if wrong.</p>
+          <p className="text-xs text-ink-3">
+            {guess.step === "alias" ? "Learned from your last payment to this vendor" : `Guessed from ${guess.reason}`} — change it if wrong.
+          </p>
         )}
         {/* R-1918: no vendor matched, but the bank line names the payee — add it in one click. */}
         {!vendorId && !guess && fromLine.name && (
