@@ -29,6 +29,8 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: { absolute: brand ? `Order confirmed · ${brand.name}` : "Order confirmed" },
     description: `Your Google Workspace order is confirmed. Our team will call or WhatsApp you ${SLA.firstReply} to verify your domain.`,
+    /* One buyer's order page — never in search results (R-1479: a per-visitor link says noindex). */
+    robots: { index: false, follow: false },
   };
 }
 
