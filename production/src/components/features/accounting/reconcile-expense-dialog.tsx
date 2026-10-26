@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { rupee, formatDate } from "@/lib/utils";
 import { type Expense } from "@/lib/queries/expenses";
 import { useUnmatchedBankDebits, useReconcileTransaction, type UnmatchedDebit } from "@/lib/queries/bank";
+import { expenseCashDue, expenseDueNote } from "@/lib/payables/still-due";
 
 /** Rank: exact-amount first, then nearest amount, then nearest date. */
 function rank(a: UnmatchedDebit, b: UnmatchedDebit, amount: number, date: string): number {
@@ -32,20 +33,24 @@ export function ReconcileExpenseDialog({ expense, onClose }: { expense: Expense;
   const { data: lines, isLoading } = useUnmatchedBankDebits();
   const reconcile = useReconcileTransaction();
   const [busyId, setBusyId] = React.useState<string | null>(null);
+  /* R-1952: the bank line is for what was actually paid — the bill less its TDS, the advance
+     applied and the bank parts already reconciled — never the whole bill. */
+  const due = expenseCashDue(expense);
+  const dueNote = expenseDueNote(expense, rupee);
 
   /* Only lines whose amount is close enough to BE this expense are offered as matches
      (within ₹100 or 2%, whichever is larger — bank charges and rounding). Everything
      else sits behind a warning: the list used to offer a ₹2,00,000 expense three ₹3,000
      ESIC lines with the same Reconcile button, one click from a wrong match. */
-  const tolerance = Math.max(100, Math.round(expense.amount * 0.02));
+  const tolerance = Math.max(100, Math.round(due * 0.02));
   const [showOthers, setShowOthers] = React.useState(false);
   const { close, others } = React.useMemo(() => {
-    const all = [...(lines ?? [])].sort((a, b) => rank(a, b, expense.amount, expense.expense_date));
+    const all = [...(lines ?? [])].sort((a, b) => rank(a, b, due, expense.expense_date));
     return {
-      close: all.filter((t) => Math.abs(t.debit - expense.amount) <= tolerance).slice(0, 40),
-      others: all.filter((t) => Math.abs(t.debit - expense.amount) > tolerance).slice(0, 40),
+      close: all.filter((t) => Math.abs(t.debit - due) <= tolerance).slice(0, 40),
+      others: all.filter((t) => Math.abs(t.debit - due) > tolerance).slice(0, 40),
     };
-  }, [lines, expense.amount, expense.expense_date, tolerance]);
+  }, [lines, due, expense.expense_date, tolerance]);
   const ranked = showOthers ? [...close, ...others] : close;
 
   async function match(txnId: string) {
@@ -69,7 +74,7 @@ export function ReconcileExpenseDialog({ expense, onClose }: { expense: Expense;
         <DialogHeader>
           <DialogTitle>Reconcile with a bank line</DialogTitle>
           <DialogDescription>
-            {expense.vendor_name ? `${expense.vendor_name} · ` : ""}{rupee(expense.amount)}
+            {expense.vendor_name ? `${expense.vendor_name} · ` : ""}{rupee(due)}{dueNote ? ` (${dueNote})` : ""}
             {expense.description ? ` — ${expense.description}` : ""} · {formatDate(expense.expense_date)}
           </DialogDescription>
         </DialogHeader>
@@ -86,15 +91,15 @@ export function ReconcileExpenseDialog({ expense, onClose }: { expense: Expense;
           <>
           {close.length === 0 && !showOthers && (
             <div className="rounded-md border border-amber/40 bg-amber-soft/30 px-3 py-2.5 text-xs text-ink-2 leading-relaxed">
-              <b className="text-ink">No bank line for {rupee(expense.amount)}.</b> None of the unreconciled bank debits is within{" "}
+              <b className="text-ink">No bank line for {rupee(due)}.</b> None of the unreconciled bank debits is within{" "}
               {rupee(tolerance)} of this expense. Import the statement that covers {formatDate(expense.expense_date)}, or — if
               this was paid in cash or from another account — leave it unreconciled.
             </div>
           )}
           <ul className="max-h-[50vh] overflow-y-auto divide-y divide-hairline -mx-1">
             {ranked.map((t) => {
-              const exact = t.debit === expense.amount;
-              const far = Math.abs(t.debit - expense.amount) > tolerance;
+              const exact = t.debit === due;
+              const far = Math.abs(t.debit - due) > tolerance;
               return (
                 <li key={t.id} className={`flex items-center gap-3 px-1 py-2 ${far ? "opacity-70" : ""}`}>
                   <div className="min-w-0 flex-1">
@@ -103,7 +108,7 @@ export function ReconcileExpenseDialog({ expense, onClose }: { expense: Expense;
                       {exact && <span className="rounded-full bg-emerald/10 text-emerald px-1.5 py-0.5 text-3xs font-medium">exact match</span>}
                       {far && (
                         <span className="rounded-full bg-rose/10 text-rose px-1.5 py-0.5 text-3xs font-medium">
-                          {rupee(Math.abs(t.debit - expense.amount))} {t.debit > expense.amount ? "more" : "less"}
+                          {rupee(Math.abs(t.debit - due))} {t.debit > due ? "more" : "less"}
                         </span>
                       )}
                     </div>
