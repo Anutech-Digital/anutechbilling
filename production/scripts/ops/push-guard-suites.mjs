@@ -93,6 +93,18 @@ export const PUSH_GUARD_SUITES = [
   "src/site/plus-price-hidden.test.ts",
   "src/site/silent-disabled-buttons.test.ts",
   "src/site/support-page.test.ts",
+  // R-1973 (26 Oct): src/site scans CI ran but the push did not — 8ca1bcbe went red on
+  // page-metadata (R-1479 "no two indexable routes share a title"). All ten together ~5 s.
+  "src/site/page-metadata.test.ts",
+  "src/site/about-link-and-titles.test.ts",
+  "src/site/anchor-links.test.ts",
+  "src/site/claims-truth.test.ts",
+  "src/site/honest-claims.test.ts",
+  "src/site/box-padding.test.ts",
+  "src/site/phone-width.test.ts",
+  "src/site/site-price-display.test.ts",
+  "src/site/lib/public-metadata-r1631.test.ts",
+  "src/site/lib/site-split.test.ts",
   // ── repo-wide file scans ──
   "tests/ops/deploy-targets.test.ts", // R-1604: only live + staging deploy targets
 ];

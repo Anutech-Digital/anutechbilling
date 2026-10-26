@@ -101,9 +101,62 @@ export function maxWorkersAt(date) {
   return h >= 9 && h < 22 ? 2 : 3;
 }
 
+/**
+ * R-1973 (26 Oct 2026): a pushed card that only waits for GitHub CI (20–25 min in `worker-lock ci`)
+ * runs no tsc and no tests on this laptop, yet it filled a slot — R-1920 was refused with exit 3 while
+ * R-1961 was only waiting on CI. Lock states:
+ *   working (no state field = old locks) — counts toward the cap, holds its files;
+ *   ci-wait — set by a successful push: does NOT count toward the cap, still HOLDS its files
+ *             (no other card may touch them until CI says green or red);
+ *   ci-red  — set by `ci` on red: still holds its files, does not count until the same card takes a
+ *             slot back with `claim <CARD> --fixes-red` (allowed even when the cap is full — red first).
+ * `ci` green removes the lock (files free). A push sets the card back to working while it runs.
+ */
+export const LOCK_STATES = { working: "working", ciWait: "ci-wait", ciRed: "ci-red" };
+
+/** Does this lock use one of the cap's slots? Only a card that is actually being built does. */
+export function countsTowardCap(lock) {
+  return !lock || (lock.state !== LOCK_STATES.ciWait && lock.state !== LOCK_STATES.ciRed);
+}
+
 /** True when another worker may not start: the live locks (other cards) already fill every slot. */
 export function queueFull(card, locks, max = maxWorkersAt(Date.now())) {
-  return locks.filter((l) => l.card !== card).length >= max;
+  return locks.filter((l) => l.card !== card && countsTowardCap(l)).length >= max;
+}
+
+/** The lock after a successful push: waiting on CI, files kept, slot freed. */
+export function lockAfterPush(lock, { sha, at }) {
+  return { ...lock, state: LOCK_STATES.ciWait, ciWaitSince: at, pushedSha: sha };
+}
+
+/**
+ * The lock after `ci` gave a verdict (CI_EXIT code). green → null (lock removed, files free);
+ * red → ci-red (files kept; take the slot back with claim --fixes-red); timeout → unchanged.
+ */
+export function lockAfterCi(lock, code, { at }) {
+  if (!lock) return lock;
+  if (code === 0) return null;
+  if (code === 7) return { ...lock, state: LOCK_STATES.ciRed, ciRedAt: at };
+  return lock;
+}
+
+/** The lock while the card is being built again (re-claim or a new push): back in a slot. */
+export function lockWorking(lock) {
+  const { ciWaitSince: _a, ciRedAt: _b, ...rest } = lock;
+  return { ...rest, state: LOCK_STATES.working };
+}
+
+/**
+ * claim's cap decision, pure. `own` = this card's existing lock (or null). A card whose own lock is
+ * waiting on CI / red takes its slot back with --fixes-red even when the cap is full (stop the line on
+ * red, R-1936); anything else waits for a free slot. Returns { ok, overCap }.
+ */
+export function claimSlot(card, locks, { fixesRed = false, max = maxWorkersAt(Date.now()) } = {}) {
+  const own = locks.find((l) => l.card === card) ?? null;
+  const full = queueFull(card, locks, max);
+  if (!full) return { ok: true, overCap: false };
+  if (fixesRed && own && !countsTowardCap(own)) return { ok: true, overCap: true };
+  return { ok: false, overCap: false };
 }
 
 /** Every pair of overlapping paths between my claims and other live locks. */
@@ -119,7 +172,18 @@ export function findConflicts(card, mine, locks) {
   return out;
 }
 
-function lockFile(card) { return path.join(LOCK_DIR, `${card.toUpperCase()}.json`); }
+function lockFile(card, dir = LOCK_DIR) { return path.join(dir, `${card.toUpperCase()}.json`); }
+
+/** Read-modify-write one card's lock file (R-1973). fn(lock) → new lock, or null to remove. No lock → no-op. */
+export function updateLock(card, fn, dir = LOCK_DIR) {
+  const f = lockFile(card, dir);
+  let lock;
+  try { lock = JSON.parse(fs.readFileSync(f, "utf8")); } catch { return { found: false }; }
+  const next = fn(lock);
+  if (next === null) fs.rmSync(f, { force: true });
+  else fs.writeFileSync(f, JSON.stringify(next, null, 2));
+  return { found: true, lock: next };
+}
 
 export function readLocks() {
   if (!fs.existsSync(LOCK_DIR)) return [];
@@ -303,6 +367,8 @@ async function pushWithTurn(card, ciFlags = {}) {
   /* R-1958: before the rebase (and again after it) — nothing of another card's may be undone. */
   const scope = (exit) => enforceScope(card, "commits", { lockDir: LOCK_DIR, allowOutside: ciFlags.allowOutside, cardPath: ciFlags.cardPath, exit });
   scope();
+  /* R-1973: a card pushing again (e.g. --fixes-red after a red ci) is being built — back in a slot. */
+  try { updateLock(card, (l) => (countsTowardCap(l) ? l : lockWorking(l))); } catch {}
   /* R-1936: SQL tests of the migrations this push changes — on the local DB, before the push turn. */
   relatedSqlGate(card, { skip: ciFlags.skipRelatedSql });
   await withTurn("push", card, "push kar raha hai", async () => {
@@ -344,7 +410,13 @@ async function pushWithTurn(card, ciFlags = {}) {
     sh("git push -q anutech HEAD:manager-pardeep", pushEnv("push", card));
     console.log(pushDoneLine(card, plan));
     /* R-1936: remember the sha so "worker-lock ci <CARD>" knows what to wait for. */
-    try { fs.writeFileSync(pushedNote(card), JSON.stringify({ card, sha: sh("git rev-parse HEAD").trim(), at: new Date().toISOString() })); } catch {}
+    let pushedSha = null;
+    try { pushedSha = sh("git rev-parse HEAD").trim(); fs.writeFileSync(pushedNote(card), JSON.stringify({ card, sha: pushedSha, at: new Date().toISOString() })); } catch {}
+    /* R-1973: waiting on CI frees the slot but keeps the files until ci says green/red. */
+    try {
+      const u = updateLock(card, (l) => lockAfterPush(l, { sha: pushedSha, at: new Date().toISOString() }));
+      if (u.found) console.log(`  ${card} ab ci-wait: worker slot khaali (doosra card shuru ho sakta hai), files ka claim CI green/red tak rahega.`);
+    } catch {}
     console.log(`Ab: node scripts/ops/worker-lock.mjs ci ${card}  → jo JSON aaye use card par ciCheck likho.`);
   });
 }
@@ -936,7 +1008,7 @@ function main(argv) {
   if (cmd === "list") {
     const locks = readLocks();
     if (!locks.length) return console.log("Koi worker lock nahi.");
-    for (const l of locks) console.log(`${l.card}  ${l.claimedAt}  ${[...l.areas, ...(l.files ?? [])].join("  ")}`);
+    for (const l of locks) console.log(`${l.card}  ${l.state ?? LOCK_STATES.working}${countsTowardCap(l) ? "" : " (slot nahi ginta)"}  ${l.claimedAt}  ${[...l.areas, ...(l.files ?? [])].join("  ")}`);
     return;
   }
   if (cmd === "guard-push") {
@@ -948,20 +1020,35 @@ function main(argv) {
   if (!card || !/^R-\d+$/.test(card)) { console.error("Card id do, jaise R-197"); process.exit(1); }
 
   if (cmd === "claim") {
-    const [worktree, ...areas] = rest;
-    if (!worktree || !areas.length) { console.error("claim <CARD> <worktree> <folder/file>... --card <card.json>"); process.exit(1); }
+    const { rest: claimArgs, fixesRed } = parseCiFlags(rest);
+    const [worktree, ...areas] = claimArgs;
+    const locks = readLocks();
+    const own = locks.find((l) => l.card === card) ?? null;
+    /* R-1973: `claim <CARD> --fixes-red` (no paths) = take the slot back for a card in ci-wait / ci-red. */
+    const reclaim = fixesRed && own && !countsTowardCap(own) && !worktree;
+    if (!reclaim && (!worktree || !areas.length)) { console.error("claim <CARD> <worktree> <folder/file>... --card <card.json>   (CI laal ke baad: claim <CARD> --fixes-red --card <card.json>)"); process.exit(1); }
     enforceCard(card, "claim", cardFlags);
     const broad = areas.filter(tooBroad);
     if (broad.length) { console.error(`✗ Bahut bada area: ${broad.join(", ")} — page/lib ka folder ya file do (kam se kam 3 hisse, jaise src/lib/deals).`); process.exit(1); }
-    const locks = readLocks();
-    if (queueFull(card, locks)) {
-      console.error(`✗ PEHLE SE ${maxWorkersAt(Date.now())} WORKER chal rahe hain (${locks.map((l) => l.card).join(", ")}) — computer hang na ho, isliye ruko.`);
+    const slot = claimSlot(card, locks, { fixesRed });
+    if (!slot.ok) {
+      const busy = locks.filter((l) => l.card !== card && countsTowardCap(l)).map((l) => l.card);
+      const waiting = locks.filter((l) => l.card !== card && !countsTowardCap(l)).map((l) => `${l.card} ${l.state}`);
+      console.error(`✗ PEHLE SE ${maxWorkersAt(Date.now())} WORKER chal rahe hain (${busy.join(", ")})${waiting.length ? ` — CI ka intezaar slot nahi ginta: ${waiting.join(", ")}` : ""} — computer hang na ho, isliye ruko.`);
       console.error("Owner ko batao: \"Ek worker khatam hone ke baad ye card chalaiye.\" Lock ko haath mat lagao.");
       process.exit(3);
     }
+    if (slot.overCap) console.log(`(${card} --fixes-red: CI laal theek karna pehle — cap bhara hone par bhi slot wapas diya)`);
+    if (reclaim) {
+      updateLock(card, lockWorking);
+      console.log(`✓ ${card} ne slot wapas liya (${own.state} → working); files wahi: ${[...(own.areas ?? []), ...(own.files ?? [])].join(", ")}`);
+      return;
+    }
     const conflicts = findConflicts(card, areas, locks);
     if (conflicts.length) report(conflicts);
-    fs.writeFileSync(lockFile(card), JSON.stringify({ card, worktree: path.resolve(worktree), areas: areas.map(normPath), files: [], claimedAt: new Date().toISOString() }, null, 2));
+    /* A re-claim keeps what the card already holds (its ci-wait files stay claimed). */
+    const keep = own ? [...(own.areas ?? [])] : [];
+    fs.writeFileSync(lockFile(card), JSON.stringify({ card, worktree: path.resolve(worktree), areas: [...new Set([...keep, ...areas.map(normPath)])], files: own?.files ?? [], claimedAt: own?.claimedAt ?? new Date().toISOString(), state: LOCK_STATES.working }, null, 2));
     console.log(`✓ ${card} ka lock laga: ${areas.map(normPath).join(", ")}`);
     return;
   }
@@ -992,6 +1079,12 @@ function main(argv) {
     return runCi(card, { gh: realGh, git, isAncestor, sha: f.sha, timeoutMin: f.timeoutMin, readNote: readPushedNote, print: (l) => console.log(l) })
       .then((r) => {
         for (const l of r.lines) (r.code ? console.error : console.log)(l);
+        /* R-1973: green → lock removed (files free); red → ci-red (files kept, slot back with claim --fixes-red). */
+        try {
+          const u = updateLock(card, (l) => lockAfterCi(l, r.code, { at: new Date().toISOString() }));
+          if (u.found && u.lock === null) console.log(`  ${card} ka lock hata (CI green) — files ab doosre cards ke liye khaali.`);
+          else if (u.found && r.code === CI_EXIT.red) console.error(`  ${card} ci-red: files ka claim abhi bhi tumhara. Theek karne se pehle slot wapas lo: claim ${card} --fixes-red --card <card.json>, phir push ${card} … --fixes-red.`);
+        } catch {}
         if (r.check) console.log(JSON.stringify(r.check));
         process.exit(r.code);
       });
