@@ -12,6 +12,8 @@ import { gstinProblem } from "@/site/lib/checkout-details";
 
 export const BUY_TERMS_ERROR = "Tick the box to agree to the terms and refund policy before you pay";
 export const BUY_ANNUAL_NOTE = "Annual plan — billed for 12 months; Google does not allow mid-term cancellation.";
+/** R-1967: the line above Pay when the buyer picked Monthly (flex). */
+export const BUY_MONTHLY_NOTE = "Monthly plan (flex) — billed each month; cancel anytime.";
 
 export const buyNowSchema = z.object({
   fullName:    z.string().min(2, "Your name"),

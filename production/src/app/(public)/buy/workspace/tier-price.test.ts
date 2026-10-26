@@ -6,8 +6,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tierAnnualPrice, annualTotals } from "./tier-price";
-import { buildLinesFromCatalog, type CatalogPriceRow } from "@/app/api/public/checkout/workspace/pricing";
+import { tierAnnualPrice, annualTotals, monthlyTotals, billingBreakdownLine } from "./tier-price";
+import { buildFlexLinesFromCatalog, buildLinesFromCatalog, type CatalogPriceRow } from "@/app/api/public/checkout/workspace/pricing";
 
 const row = (name: string, annual: number): CatalogPriceRow => ({
   id: name, name, msrp: annual, wholesale: null,
@@ -42,6 +42,21 @@ describe("R-276 Buy-now dialog price = charged price", () => {
       const shown = annualTotals(seats, tierAnnualPrice(slug, stale));
       expect(buildLinesFromCatalog(row(name, stale), slug, seats).amount).toBe(shown.total);
     }
+  });
+
+  it("R-1967 monthly (flex) is ONE month: 10 × ₹325 = ₹3,250 + ₹585 GST = ₹3,835 = server amount", () => {
+    const shown = monthlyTotals(10, 325);
+    expect(shown).toEqual({ subtotal: 3250, gst: 585, total: 3835 });
+    const flexRow: CatalogPriceRow = { ...row("Google Workspace Business Starter", 270), prices: { annual: { msrp: 270, wholesale: 0 }, monthly: { msrp: 325, wholesale: 0 } } };
+    const server = buildFlexLinesFromCatalog(flexRow, "starter", 10)!;
+    expect(server.amount).toBe(shown.total);
+    expect(server.subtotal).toBe(shown.subtotal);
+  });
+
+  it("R-1967 the breakdown says how it is billed", () => {
+    expect(billingBreakdownLine("annual", 10, 270)).toBe("10 users × ₹270/mo × 12 · Billed annually");
+    expect(billingBreakdownLine("monthly", 10, 325)).toBe("10 users × ₹325/mo · Billed monthly");
+    expect(billingBreakdownLine("monthly", 1, 1300)).toBe("1 user × ₹1,300/mo · Billed monthly");
   });
 
   it("the dialog builds its tiers and totals through these helpers", () => {

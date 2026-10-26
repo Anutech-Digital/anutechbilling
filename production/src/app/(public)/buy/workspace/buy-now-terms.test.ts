@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buyNowSchema, BUY_TERMS_ERROR, BUY_ANNUAL_NOTE } from "./buy-now-schema";
+import { buyNowSchema, BUY_TERMS_ERROR, BUY_ANNUAL_NOTE, BUY_MONTHLY_NOTE } from "./buy-now-schema";
 
 const base = {
   fullName: "Asha Rao", companyName: "Acme Pvt Ltd", email: "asha@acme.in", phone: "9000000000",
@@ -38,7 +38,9 @@ describe("R-226 buy-now terms tick", () => {
     expect(src).toMatch(/register\("agreeTerms"\)/);
     expect(src).toMatch(/href="\/terms-and-conditions"/);
     expect(src).toMatch(/href="\/refund"/);
-    const note = src.indexOf("{BUY_ANNUAL_NOTE}");
+    /* R-1967: the line above Pay follows the billing picked — the annual one on Annual. */
+    const note = src.indexOf('{billing === "monthly" ? BUY_MONTHLY_NOTE : BUY_ANNUAL_NOTE}');
+    expect(BUY_MONTHLY_NOTE).toMatch(/billed each month/);
     const tick = src.indexOf('id="buy-agree-terms"');
     const pay = src.indexOf("securely`}");
     expect(note).toBeGreaterThan(0);

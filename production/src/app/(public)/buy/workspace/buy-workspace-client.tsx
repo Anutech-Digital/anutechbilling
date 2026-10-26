@@ -31,12 +31,12 @@ import { Icon } from "@/components/ui/icon";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { CONTACT_FOR_PRICING, isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
-import { tierAnnualPrice, annualTotals } from "./tier-price";
+import { tierAnnualPrice, annualTotals, monthlyTotals, billingBreakdownLine, type BuyBilling } from "./tier-price";
 import { priceHeadline } from "./price-headline";
 import { workspaceGstLabel } from "./gst-heads";
 import { postJson, NOT_REACHED } from "./post-json";
 import { checkCoupon, recheckCoupon, type AppliedCoupon } from "./coupon-check";
-import { buyNowSchema,buyerCompany, BUY_ANNUAL_NOTE, type BuyNowForm } from "./buy-now-schema";
+import { buyNowSchema,buyerCompany, BUY_ANNUAL_NOTE, BUY_MONTHLY_NOTE, type BuyNowForm } from "./buy-now-schema";
 import { normalizeGstinInput } from "@/site/lib/checkout-details";
 import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database.types";
 import { thanksUrl } from "./thanks/thanks-url";
@@ -1288,6 +1288,8 @@ function BuyWorkspaceBody({
   // company details, then launches the Razorpay Checkout widget. Different
   // from selectedTier (which opens the GST-quote enquiry form).
   const [buyNowTier, setBuyNowTier] = React.useState<Tier | null>(null);
+  /* R-1967: the billing the Buy now dialog opens on — a pricing card on Monthly opens it on Monthly. */
+  const [buyNowBilling, setBuyNowBilling] = React.useState<BuyBilling>("annual");
   // Tier + seat count drive the live price calculator AND the WhatsApp /
   // form-submission flow. Visitor can pick any tier — calculator math, CTA
   // copy, and the auto-quote tier are all wired off this single state.
@@ -1308,7 +1310,11 @@ function BuyWorkspaceBody({
   const cart = useCart();
   const canPayOnline = (t: Tier) => onlineBuyEnabled && t.annualPrice != null;
   const buyLabel = (t: Tier) => (canPayOnline(t) ? "Buy now" : "Get a GST quote");
-  const buy = (t: Tier) => (canPayOnline(t) ? setBuyNowTier(t) : setSelectedTier(t));
+  const buy = (t: Tier) => {
+    if (!canPayOnline(t)) { setSelectedTier(t); return; }
+    setBuyNowBilling("annual"); // the hero calculator and header price the annual plan
+    setBuyNowTier(t);
+  };
   /* "Add to cart" — any edition with a public annual price, in every payment mode (the cart's
      Checkout brings the visitor back to this dialog, or the quote form while payment is off). */
   const canCart = (t: Tier) =>
@@ -1822,7 +1828,7 @@ function BuyWorkspaceBody({
               // Buy now shows in both live and simulation modes; Enterprise
               // (no fixed annualPrice) always uses the quote path.
               onBuyNow={
-                tier.annualPrice != null && onlineBuyEnabled ? () => setBuyNowTier(tier) : undefined
+                tier.annualPrice != null && onlineBuyEnabled ? () => { setBuyNowBilling(billing === "monthly" && tier.monthlyPrice != null ? "monthly" : "annual"); setBuyNowTier(tier); } : undefined
               }
               /* R-1966: the edition + the calculator's users into the website cart. */
               onAddToCart={canCart(tier) ? () => addToCart(tier) : undefined}
@@ -2043,6 +2049,7 @@ function BuyWorkspaceBody({
       {buyNowTier && (
         <BuyNowDialog
           initialTier={buyNowTier}
+          initialBilling={buyNowBilling}
           initialSeats={seats}
           allTiers={TIERS}
           isSimulation={isSimulation}
@@ -2158,7 +2165,7 @@ function PricingCard({
             "Get a quote" secondary (for visitors who want Pardeep-touch
             before paying — GST review, custom seats, PO process). Enterprise
             shows the single "Contact sales" CTA. */}
-        {onBuyNow && price !== null && billing === "annual" ? (
+        {onBuyNow && price !== null && (billing === "annual" || tier.monthlyPrice != null) ? (
           <div className="space-y-2">
             <Button
               variant="primary"
@@ -2168,7 +2175,7 @@ function PricingCard({
               <Icon name="zap" size={14} className="mr-1.5" />
               Buy now — pay online
             </Button>
-            {onAddToCart && (
+            {onAddToCart && billing === "annual" && (
               <Button variant="default" className="w-full justify-center" onClick={onAddToCart}>
                 <Icon name="cart" size={14} className="mr-1.5" />
                 Add to cart
@@ -2748,10 +2755,12 @@ interface CheckoutApiResponse {
 }
 
 function BuyNowDialog({
-  initialTier, initialSeats, allTiers, isSimulation = false, sitePromo = null, onClose,
+  initialTier, initialSeats, allTiers, isSimulation = false, sitePromo = null, onClose, initialBilling = "annual",
 }: {
   initialTier: Tier;
   initialSeats: number;
+  /** R-1967: Annual (default) or Monthly (flex) — the page's Monthly/Annual toggle carries in. */
+  initialBilling?: BuyBilling;
   /** Full tier list from the parent — so the visitor can switch tier inside
    *  the dialog without backing out. Enterprise (no fixed price) is filtered
    *  out internally; it always uses the GST-quote path. */
@@ -2780,7 +2789,19 @@ function BuyNowDialog({
   const tier = buyableTiers.find((t) => t.id === tierId) ?? initialTier;
 
   const [seats, setSeats] = React.useState<number>(Math.max(1, initialSeats));
-  const calc = React.useMemo(() => calcForTier(tier, seats), [tier, seats]);
+  /* R-1967: Annual (1-year plan) or Monthly (flex). Monthly only when this edition has a real
+     flexible price; switching to an edition without one falls back to Annual. The server prices
+     the choice from the catalogue — this only shows what it will charge. */
+  const [billingPick, setBillingPick] = React.useState<BuyBilling>(initialBilling);
+  const monthlyOffered = tier.monthlyPrice != null;
+  const billing: BuyBilling = billingPick === "monthly" && monthlyOffered ? "monthly" : "annual";
+  const annualCalc = React.useMemo(() => calcForTier(tier, seats), [tier, seats]);
+  const calc = React.useMemo<PriceCalc>(() => {
+    if (billing !== "monthly" || tier.monthlyPrice == null) return annualCalc;
+    const m = monthlyTotals(seats, tier.monthlyPrice);
+    // `annual` here is the pre-GST subtotal of the period paid now — one month on flex.
+    return { annual: m.subtotal, gst: m.gst, total: m.total, savings: 0, perUserPm: 0, isCustom: false };
+  }, [billing, tier.monthlyPrice, seats, annualCalc]);
 
   // Coupon state — owned locally, re-checked if visitor edits tier/seats
   // (R-1630; server re-validates at checkout anyway).
@@ -2796,8 +2817,10 @@ function BuyNowDialog({
   // (calc.annual is the post-promo pre-GST subtotal, calc.savings is the
   //  savings × 1.18 — but we want the pre-GST discount value for the line.)
   const annualPrice  = tier.annualPrice ?? 0;
-  const promoPrice   = tier.promoPrice  ?? null;
-  const grossSubtot  = seats * annualPrice * 12;
+  const promoPrice   = billing === "annual" ? tier.promoPrice ?? null : null;
+  /* R-1967: the rate on the breakdown's first line — the annual plan's, or the flex one. */
+  const lineRate     = billing === "monthly" ? tier.monthlyPrice ?? 0 : annualPrice;
+  const grossSubtot  = billing === "monthly" ? seats * lineRate : seats * annualPrice * 12;
   const promoDiscPre = promoPrice ? seats * (annualPrice - promoPrice) * 12 : 0;
   const monthlyRate  = promoPrice ?? annualPrice;
 
@@ -2846,7 +2869,7 @@ function BuyNowDialog({
     }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tierId, seats]);
+  }, [tierId, seats, billing]);
 
   async function applyCoupon() {
     const code = couponInput.trim().toUpperCase();
@@ -2919,6 +2942,7 @@ function BuyNowDialog({
       tierId,
       seats,
       simulate:   isSimulation,
+      commitment: billing,   // R-1967: the CHOICE only — the server prices it from the catalogue
       couponCode: couponApplied?.code ?? undefined,
     };
 
@@ -2963,7 +2987,7 @@ function BuyNowDialog({
       amount:      json.amount,
       currency:    json.currency ?? "INR",
       name:        "ANUTECH DIGITAL PVT LTD",
-      description: `Google Workspace ${json.tierName ?? tier.name} · ${json.seats ?? seats} users (annual)`,
+      description: `Google Workspace ${json.tierName ?? tier.name} · ${json.seats ?? seats} users (${billing === "monthly" ? "monthly" : "annual"})`,
       order_id:    json.orderId,
       prefill: {
         name:    values.fullName,
@@ -3069,7 +3093,7 @@ function BuyNowDialog({
                 >
                   {buyableTiers.map((t) => {
                     const active = tierId === t.id;
-                    const pricePm = t.promoPrice ?? t.annualPrice ?? 0;
+                    const pricePm = billing === "monthly" && t.monthlyPrice != null ? t.monthlyPrice : t.promoPrice ?? t.annualPrice ?? 0;
                     return (
                       <button
                         key={t.id}
@@ -3094,10 +3118,43 @@ function BuyNowDialog({
               </div>
             )}
 
+            {/* R-1967: Billing — Annual (1-year commitment) or Monthly (flex). Only when this
+                edition has a flexible price. */}
+            {monthlyOffered && (
+              <div>
+                <p id="buy-billing-label" className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
+                  {buyableTiers.length > 1 ? "2 · " : ""}Billing
+                </p>
+                <div role="radiogroup" aria-labelledby="buy-billing-label" className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 p-1 rounded-lg bg-paper border border-hairline">
+                  {([
+                    { value: "annual", title: "Annual", sub: "Billed annually · 1-year commitment" },
+                    { value: "monthly", title: "Monthly (flex)", sub: "Billed monthly · cancel anytime" },
+                  ] as const).map((o) => {
+                    const active = billing === o.value;
+                    return (
+                      <button
+                        key={o.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setBillingPick(o.value)}
+                        className={`px-3 py-2 rounded-md text-left transition-colors ${
+                          active ? "bg-amber text-paper shadow-sm" : "text-ink-3 hover:text-ink hover:bg-paper-2"
+                        }`}
+                      >
+                        <div className="text-sm font-semibold leading-tight">{o.title}</div>
+                        <div className={`text-3xs mt-0.5 ${active ? "text-paper/85" : "text-ink-3"}`}>{o.sub}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Seat stepper */}
             <div>
               <label htmlFor="buy-seats" className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
-                {buyableTiers.length > 1 ? "2 · " : ""}How many users?
+                {buyableTiers.length > 1 ? (monthlyOffered ? "3 · " : "2 · ") : ""}How many users?
               </label>
 
               <div className="flex items-stretch gap-2">
@@ -3164,7 +3221,7 @@ function BuyNowDialog({
               <div className="space-y-1.5 text-sm">
                 <div className="flex justify-between gap-2">
                   <span className="text-ink-2">
-                    {seats} {seats === 1 ? "user" : "users"} × ₹{annualPrice.toLocaleString("en-IN")}/mo × 12 mo
+                    {billingBreakdownLine(billing, seats, lineRate)}
                   </span>
                   <span className="font-mono text-ink whitespace-nowrap">
                     ₹{grossSubtot.toLocaleString("en-IN")}
@@ -3395,7 +3452,7 @@ function BuyNowDialog({
             {/* R-226: annual licence, no mid-term cancel — said before Pay, and the terms /
                 refund box must be ticked (schema blocks submit, so Razorpay never opens). */}
             <p className="text-xs text-ink-2 rounded-md border border-hairline bg-paper-2 px-3 py-2">
-              {BUY_ANNUAL_NOTE}
+              {billing === "monthly" ? BUY_MONTHLY_NOTE : BUY_ANNUAL_NOTE}
             </p>
             <div className="flex items-start gap-2.5">
               <input
