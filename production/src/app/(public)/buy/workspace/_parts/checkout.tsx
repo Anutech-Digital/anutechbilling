@@ -65,6 +65,11 @@ export interface CheckoutProps {
   onlinePay: boolean;
   isSimulation: boolean;
   onChangePlan: () => void;
+  /** R-1983: the order summary changes users / billing in the page state. */
+  onSeats?: (n: number) => void;
+  onBilling?: (b: Billing) => void;
+  monthlyOk?: boolean;
+  savePct?: number;
 }
 
 /** Pay is offered only for a priced business plan, ≤300 users, with online payment on. */
@@ -291,7 +296,7 @@ export function Checkout(p: CheckoutProps) {
               </>
             )}
           </div>
-          <OrderSummary plan={plan} seats={p.seats} billing={p.billing} sum={p.sum} promo={p.promo} co={co} brand={p.brand} contact={p.contact} waMessage={p.waMessage} onChangePlan={p.onChangePlan} />
+          <OrderSummary plan={plan} seats={p.seats} billing={p.billing} sum={p.sum} promo={p.promo} co={co} brand={p.brand} contact={p.contact} waMessage={p.waMessage} onChangePlan={p.onChangePlan} onSeats={p.onSeats} onBilling={p.onBilling} monthlyOk={p.monthlyOk} savePct={p.savePct} />
         </div>
       </div>
     </section>

@@ -488,6 +488,7 @@ function BuyWorkspaceBody({
           brand={brand} contact={contact} waMessage={waMessage}
           onlinePay={onlinePay} isSimulation={isSimulation}
           onChangePlan={() => goTo("plans")}
+          onSeats={setSeats} onBilling={setBilling} monthlyOk={monthlyOk} savePct={savePct}
         />
         <AfterYouPay />
         <Faq brand={brand} />
