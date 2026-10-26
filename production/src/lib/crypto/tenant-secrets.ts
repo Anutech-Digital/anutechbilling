@@ -39,6 +39,8 @@ export const SECRET_COLUMNS = [
   "zoho_books_refresh_token",
   // R-1757 — its short-lived access token, cached until shortly before it expires.
   "zoho_books_access_token",
+  // R-1979 — Meta Conversions API access token (migration 20261026162526). The pixel id is not secret.
+  "meta_capi_token",
 ] as const;
 
 const SECRET_SET = new Set<string>(SECRET_COLUMNS);

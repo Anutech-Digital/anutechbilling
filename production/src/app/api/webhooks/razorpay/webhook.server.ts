@@ -40,6 +40,7 @@ import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { razorpayMode } from "@/lib/payments/razorpay-readiness";
 import { decideProvisioning, testPaymentProvisioningAllowed } from "@/lib/provisioning/provisioning";
 import { queueProvisioning } from "@/lib/provisioning/provisioning.server";
+import { reportPurchaseToMeta } from "@/lib/meta/capi.server";
 import { provisioningProducts, productAmountPaid } from "@/lib/provisioning/products";
 import { domainRegistrationEnabled, hostingProvisioningEnabled } from "@/lib/provisioning/domain-registration";
 import {
@@ -680,6 +681,14 @@ export async function settleCapturedPayment(
         }
       }
     }
+  }
+
+  /* R-1979: the server Purchase to Meta for a buy-page order — only when the buyer accepted
+     analytics cookies (the checkout put metaConsent in the payment notes) and the tenant set a
+     pixel + token. Deduped with the browser by event_id; a redelivered event is deduped too.
+     Best-effort: reportPurchaseToMeta never throws, so the payment is never affected. */
+  if (!isRenewal && notes.metaConsent === "1") {
+    await reportPurchaseToMeta(admin, { quoteId: quote.id, tenantId: quote.tenant_id, consent: true, fbp: notes.fbp ?? null });
   }
 
   // ── Send confirmation emails (best-effort) ────────────────────────────
