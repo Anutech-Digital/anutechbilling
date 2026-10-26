@@ -134,7 +134,13 @@ export function PlanCards({
                   over ? (
                     <><CardSeats planName={p.name} seats={n} onSeats={setN} />users · <span>Max {BUSINESS_MAX_USERS} users — see Enterprise</span></>
                   ) : head ? (
-                    <>{head.workingParts.before}<CardSeats planName={p.name} seats={n} onSeats={setN} />{head.workingParts.after}</>
+                    /* R-1986 (Pardeep): a FIXED three-line layout in every card — the number of digits
+                       never moves a word to another line. */
+                    <>
+                      <span className="block whitespace-nowrap" data-line="1">{head.workingParts.before}</span>
+                      <span className="block whitespace-nowrap" data-line="2"><CardSeats planName={p.name} seats={n} onSeats={setN} />{head.workingParts.mid}</span>
+                      <span className="block whitespace-nowrap" data-line="3">{head.workingParts.after}</span>
+                    </>
                   ) : null
                 ) : over ? `Max ${BUSINESS_MAX_USERS} users — see Enterprise` : head?.working}
               </div>

@@ -35,7 +35,9 @@ export function priceHeadline(i: HeadlineInput) {
     /** The same words around the users number, for a card where the number is an input. */
     workingParts: {
       before: `${inr(i.rate)}/user/month ×`,
-      after: `${i.seats === 1 ? "user" : "users"}${annual ? " × 12" : ""} = ${inr(i.subtotal)}${annual ? "/year + GST" : "/month + GST"}`,
+      /** Line 2 after the number ("users × 12 =" / "users =") and line 3 ("₹9,720/year + GST"). */
+      mid: `${i.seats === 1 ? "user" : "users"}${annual ? " × 12" : ""} =`,
+      after: `${inr(i.subtotal)}${annual ? "/year + GST" : "/month + GST"}`,
     },
     gstLine: `+ ${inr(i.gst)} GST (18%) · Total ${inr(i.total)}`,
   };

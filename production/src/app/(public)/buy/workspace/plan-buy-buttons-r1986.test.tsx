@@ -156,7 +156,10 @@ describe("R-1986 plan card total box shows the working", () => {
     mount();
     expect(working("starter")).toBe("₹270/user/month × 10 users × 12 = ₹32,400/year + GST");
     expect(working("standard")).toBe("₹1,080/user/month × 10 users × 12 = ₹1,29,600/year + GST");
-    expect(screen.getByTestId("plan-total-starter").textContent).toBe("₹270/user/month ×users × 12 = ₹32,400/year + GST");
+    // R-1986: three fixed lines — "₹270/user/month ×" / "[10] users × 12 =" / "₹32,400/year + GST"
+    const lines = [...screen.getByTestId("plan-total-starter").querySelectorAll("[data-line]")].map((l) => l.textContent);
+    expect(lines).toEqual(["₹270/user/month ×", "users × 12 =", "₹32,400/year + GST"]);
+    expect(screen.getByTestId("plan-total-starter").querySelector("[data-line=\"2\"] input")).toBeTruthy();
     expect(usersIn("Business Starter").value).toBe("10");
   });
   it("monthly, 10 users: '₹325/user/month × 10 users = ₹3,250/month + GST'", () => {
@@ -168,7 +171,7 @@ describe("R-1986 plan card total box shows the working", () => {
     const { priceHeadline } = await import("./price-headline");
     const h = priceHeadline({ rate: 270, seats: 10, billing: "annual", subtotal: 32400, gst: 5832, total: 38232 });
     expect(h.working).toBe("₹270/user/month × 10 users × 12 = ₹32,400/year + GST");
-    expect(`${h.workingParts.before} 10 ${h.workingParts.after}`).toBe(h.working);
+    expect(`${h.workingParts.before} 10 ${h.workingParts.mid} ${h.workingParts.after}`).toBe(h.working);
   });
 });
 
@@ -211,5 +214,21 @@ describe("R-1986 users inside each card — each card keeps its own count", () =
     expect(within(screen.getByTestId("plan-total-starter")).getByText("Max 300 users — see Enterprise")).toBeTruthy();
     expect(usersIn("Business Starter").value).toBe("301");
     expect(working("standard")).toMatch(/× 10 users/);
+  });
+});
+
+describe("R-1986 fixed three-line working box", () => {
+  const lines = (id: string) => [...screen.getByTestId(`plan-total-${id}`).querySelectorAll("[data-line]")].map((l) => l.textContent);
+  it("Starter and Standard have the same three lines whatever the digits; each line never wraps", () => {
+    mount(10, "standard");
+    fireEvent.change(usersIn("Business Starter"), { target: { value: "3" } });
+    expect(lines("starter")).toEqual(["₹270/user/month ×", "users × 12 =", "₹9,720/year + GST"]);
+    expect(lines("standard")).toEqual(["₹1,080/user/month ×", "users × 12 =", "₹1,29,600/year + GST"]);
+    for (const l of screen.getByTestId("plan-total-starter").querySelectorAll("[data-line]")) expect(l.className).toMatch(/block whitespace-nowrap/);
+  });
+  it("monthly: line 2 'users =', line 3 '/month + GST'", () => {
+    mount(10, "standard");
+    fireEvent.click(within(plans()).getByRole("button", { name: "Monthly" }));
+    expect(lines("starter")).toEqual(["₹325/user/month ×", "users =", "₹3,250/month + GST"]);
   });
 });
