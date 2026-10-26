@@ -435,7 +435,24 @@ function BuyWorkspaceBody({
      bar) opens the PAY checkout — a trial started earlier must not keep the buyer in trial mode.
      Only "Start free trial" sets trial; the checkout's "Pay now instead" switches back. */
   const goPay = () => { co.setMode("pay"); window.setTimeout(goCheckout, 30); };
-  const choose = (id: BuyPlan["id"]) => { setPlanId(id); goPay(); };
+  /* R-1986 (Pardeep): each plan card keeps its OWN users count; the selected plan's card is the
+     page's count. "Buy <plan>" takes that card's count into the checkout. */
+  const [cardSeats, setCardSeats] = React.useState<Partial<Record<BuyPlan["id"], number>>>({});
+  const seatsFor = (id: BuyPlan["id"]) => (id === planId ? seats : cardSeats[id] ?? seats);
+  const onCardSeats = (id: BuyPlan["id"], n: number) => {
+    if (id === planId) setSeats(n);
+    else setCardSeats((m) => ({ ...m, [id]: clampSeats(n) }));
+  };
+  const choose = (id: BuyPlan["id"]) => {
+    if (id !== planId) {
+      const n = seatsFor(id);
+      /* the plan left behind keeps the count it had */
+      setCardSeats((m) => ({ ...m, [planId]: seats, [id]: undefined }));
+      setSeats(n);
+    }
+    setPlanId(id);
+    goPay();
+  };
   const onNav = (id: string) => {
     if (id === "compare") { setCompareOpen(true); window.setTimeout(() => goTo("compare"), 30); return; }
     goTo(id);
@@ -476,7 +493,7 @@ function BuyWorkspaceBody({
         <Hero card={card} onPlans={() => goTo("plans")} onTrial={startTrial} trialOk />
         <PlanCards
           plans={plans} selectedId={plan.id} seats={seats} billing={billing} onBilling={setBilling}
-          monthlyOk={monthlyOk} savePct={savePct} onChoose={choose} contact={contact} onSeats={setSeats}
+          monthlyOk={monthlyOk} savePct={savePct} onChoose={choose} contact={contact} seatsFor={seatsFor} onCardSeats={onCardSeats}
         />
         <CompareTable open={compareOpen} onToggle={() => setCompareOpen((o) => !o)} />
         <SamePrice plans={plans} plan={plan} billing={billing} brand={brand} />

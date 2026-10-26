@@ -32,6 +32,11 @@ export function priceHeadline(i: HeadlineInput) {
     breakdown: `${inr(i.rate)}/user/month × ${users}${annual ? " × 12" : ""} · ${billed}`,
     /** R-1986: the sum written out, for the plan cards — "₹270/user/month × 10 users × 12 = ₹32,400/year + GST". */
     working: `${inr(i.rate)}/user/month × ${users}${annual ? " × 12" : ""} = ${inr(i.subtotal)}${annual ? "/year + GST" : "/month + GST"}`,
+    /** The same words around the users number, for a card where the number is an input. */
+    workingParts: {
+      before: `${inr(i.rate)}/user/month ×`,
+      after: `${i.seats === 1 ? "user" : "users"}${annual ? " × 12" : ""} = ${inr(i.subtotal)}${annual ? "/year + GST" : "/month + GST"}`,
+    },
     gstLine: `+ ${inr(i.gst)} GST (18%) · Total ${inr(i.total)}`,
   };
 }

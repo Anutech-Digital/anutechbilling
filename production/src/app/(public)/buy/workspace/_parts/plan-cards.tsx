@@ -8,45 +8,30 @@ import * as React from "react";
 import { SLA } from "@/site/lib/config";
 import { rupee } from "@/lib/utils";
 import { BillingToggle } from "./hero";
-import { BUSINESS_MAX_USERS, COMPARE_ROWS, PLAN_COPY, SEAT_PRESETS, clampSeats, planRate, planSum, usersLabel, type Billing, type BuyPlan } from "./plans";
+import { BUSINESS_MAX_USERS, COMPARE_ROWS, PLAN_COPY, clampSeats, planRate, planSum, usersLabel, type Billing, type BuyPlan } from "./plans";
 import { GoogleWorkspaceWordmark } from "./wordmark";
 import { priceHeadline } from "../price-headline";
 import { whatsappHref, type BuyContact } from "./brand";
 
 /**
- * R-1986 (Pardeep): change the users right in "Choose a plan" — presets and − [n] +, writing the
- * page's ONE seats state (hero card, order summary and phone bar read the same), so every card's
- * working line moves with it. Over 300 users → the Enterprise note.
+ * R-1986 (Pardeep, marked screenshot): the users number sits INSIDE a priced card's working box —
+ * "₹270/user/month × [10] users × 12 = ₹32,400/year + GST" — and each card keeps its OWN count
+ * (all start at the page's count). The selected plan's card IS the page's count (hero, summary,
+ * phone bar); "Buy <plan>" carries that card's count into the checkout. 1–300 sells online; more is
+ * Enterprise.
  */
-export function PlanSeats({ seats, onSeats }: { seats: number; onSeats: (n: number) => void }) {
-  const set = (n: number) => onSeats(clampSeats(n));
-  const btn = "w-11 h-11 shrink-0 border border-hairline bg-white rounded-[10px] text-xl text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber";
+function CardSeats({ planName, seats, onSeats }: { planName: string; seats: number; onSeats: (n: number) => void }) {
   return (
-    <div className="flex flex-col gap-1.5" data-testid="plan-seats">
-      <div className="flex flex-wrap items-center gap-2">
-        <label htmlFor="plans-seats" className="text-[13px] font-semibold text-ink-2">Users<span className="sr-only"> for every plan</span></label>
-        <div className="flex gap-1.5" role="group" aria-label="Quick user counts for the plans">
-          {SEAT_PRESETS.map((n) => (
-            <button key={n} type="button" aria-pressed={seats === n} onClick={() => set(n)}
-              className={`min-h-11 min-w-11 rounded-full text-xs px-2.5 border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber ${
-                seats === n ? "border-amber bg-amber-soft text-amber-ink" : "border-hairline bg-white text-ink-2"
-              }`}>
-              {n}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button type="button" aria-label="Fewer users for the plans" onClick={() => set(seats - 1)} className={btn}>−</button>
-          <input id="plans-seats" type="number" inputMode="numeric" min={1} value={seats}
-            onChange={(e) => set(Number(e.target.value))}
-            className="w-[72px] h-11 text-center font-serif text-[20px] border border-hairline rounded-[10px] bg-white text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber" />
-          <button type="button" aria-label="More users for the plans" onClick={() => set(seats + 1)} className={btn}>+</button>
-        </div>
-      </div>
-      {seats > BUSINESS_MAX_USERS && (
-        <p role="status" className="text-[13px] text-amber-ink bg-amber-soft rounded-lg px-3 py-2 m-0">Over {BUSINESS_MAX_USERS} users? That&apos;s Enterprise — Talk to sales below.</p>
-      )}
-    </div>
+    <input
+      type="number"
+      inputMode="numeric"
+      min={1}
+      max={BUSINESS_MAX_USERS}
+      value={seats}
+      aria-label={`Number of users for ${planName}`}
+      onChange={(e) => onSeats(clampSeats(Number(e.target.value)))}
+      className="inline-block w-[58px] h-8 mx-1 px-1 text-center font-mono text-[14px] text-ink border border-hairline-strong rounded-md bg-white align-middle focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+    />
   );
 }
 
@@ -56,10 +41,11 @@ export function salesWhatsappMessage(planName: string, seats: number): string {
 }
 
 export function PlanCards({
-  plans, selectedId, seats, billing, onBilling, monthlyOk, savePct, onChoose, contact = { tel: null, whatsapp: null }, onSeats,
+  plans, selectedId, seats, billing, onBilling, monthlyOk, savePct, onChoose, contact = { tel: null, whatsapp: null }, seatsFor, onCardSeats,
 }: {
-  /** R-1986: the users control in this section (the page's one seats state). */
-  onSeats?: (n: number) => void;
+  /** R-1986: each card's own users count (the selected plan's = the page's count). Omitted → the page's count. */
+  seatsFor?: (id: BuyPlan["id"]) => number;
+  onCardSeats?: (id: BuyPlan["id"], n: number) => void;
   /** R-1986: the tenant phone / site WhatsApp (buyContact) for the "Talk to sales" cards. */
   contact?: BuyContact;
   plans: BuyPlan[];
@@ -78,14 +64,11 @@ export function PlanCards({
         <div className="max-w-[620px]">
           <h2 className="font-serif font-normal text-[clamp(30px,3.6vw,42px)] leading-[1.1] mb-2.5">Choose a plan</h2>
           <p className="text-base text-ink-2 leading-relaxed m-0">
-            Same Google Workspace you&apos;d get from Google. Prices are per user per month, before 18% GST. Totals below are
-            for <b className="text-ink">{usersLabel(seats)}</b>.
+            Same Google Workspace you&apos;d get from Google. Prices are per user per month, before 18% GST. Change the
+            number of users in any plan&apos;s total.
           </p>
         </div>
-        <div className="flex flex-wrap items-start gap-3">
-          {onSeats && <PlanSeats seats={seats} onSeats={onSeats} />}
-          {monthlyOk && <BillingToggle billing={billing} onBilling={onBilling} savePct={savePct} compact />}
-        </div>
+        {monthlyOk && <BillingToggle billing={billing} onBilling={onBilling} savePct={savePct} compact />}
       </div>
 
       {/* R-1986 (Pardeep): the buttons and the feature lists line up across the cards whatever the
@@ -94,17 +77,14 @@ export function PlanCards({
       <div className="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] gap-4 sm:gap-y-0" data-testid="plan-grid">
         {plans.map((p) => {
           const sel = p.id === selectedId;
+          const n = seatsFor ? seatsFor(p.id) : seats; // R-1986: this card's own users
           const rate = planRate(p, billing);
-          const sum = planSum(p, seats, billing);
+          const sum = planSum(p, n, billing);
           const quote = p.custom || p.priceHidden || rate == null;
-          const totalLine = quote
-            ? `Written GST quote ${SLA.quote}`
-            : seats > BUSINESS_MAX_USERS
-              ? `Max ${BUSINESS_MAX_USERS} users — see Enterprise`
-              : sum
-                /* R-1986: the working, from the hero card's own helper (price-headline.ts) — the two never disagree. */
-                ? priceHeadline({ rate: sum.rate, seats, billing, subtotal: sum.subtotal, gst: sum.gst, total: sum.total }).working
-                : "";
+          /* R-1986: the working, from the hero card's own helper (price-headline.ts) — the two never disagree. */
+          const head = !quote && sum ? priceHeadline({ rate: sum.rate, seats: n, billing, subtotal: sum.subtotal, gst: sum.gst, total: sum.total }) : null;
+          const over = !quote && n > BUSINESS_MAX_USERS;
+          const setN = (v: number) => onCardSeats?.(p.id, v);
           /* R-1986 (Pardeep): a priced plan's button says what it does — "Buy Business Starter" —
              picks the plan and opens the PAY checkout (R-1975: never the trial). */
           const cta = quote ? "Get a quote" : `Buy ${p.name}`; // R-1986: both quoted plans say "Get a quote"
@@ -139,14 +119,25 @@ export function PlanCards({
                     <a href={contact.tel.href} className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px] whitespace-nowrap">Call {contact.tel.display}</a>
                   )}
                   {contact.whatsapp && (
-                    <a href={whatsappHref(contact.whatsapp, salesWhatsappMessage(p.name, seats))} target="_blank" rel="noopener noreferrer"
+                    <a href={whatsappHref(contact.whatsapp, salesWhatsappMessage(p.name, n))} target="_blank" rel="noopener noreferrer"
                       className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px]">WhatsApp us</a>
                   )}
                 </div>
               ) : (
                 <div className="text-[13px] text-ink-3 min-h-5 mt-2">{annual ? "Billed yearly · 12-month plan" : "Billed monthly"}</div>
               )}
-              <div className="text-[13px] text-ink-2 px-3 py-2.5 bg-paper rounded-lg mt-3 mb-4 font-mono">{totalLine}</div>
+              <div className="text-[13px] text-ink-2 px-3 py-2.5 bg-paper rounded-lg mt-3 mb-4 font-mono leading-[2]"
+                data-testid={`plan-total-${p.id}`} data-working={over ? "" : head?.working ?? ""}>
+                {quote ? (
+                  `Written GST quote ${SLA.quote}`
+                ) : onCardSeats ? (
+                  over ? (
+                    <><CardSeats planName={p.name} seats={n} onSeats={setN} />users · <span>Max {BUSINESS_MAX_USERS} users — see Enterprise</span></>
+                  ) : head ? (
+                    <>{head.workingParts.before}<CardSeats planName={p.name} seats={n} onSeats={setN} />{head.workingParts.after}</>
+                  ) : null
+                ) : over ? `Max ${BUSINESS_MAX_USERS} users — see Enterprise` : head?.working}
+              </div>
               <button
                 type="button"
                 onClick={() => onChoose(p.id)}

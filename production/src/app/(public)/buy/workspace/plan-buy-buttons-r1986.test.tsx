@@ -144,55 +144,72 @@ describe("R-1986 plan cards line up", () => {
   });
 });
 
-/* R-1986 (Pardeep): the grey total box shows the working, from the hero card's helper. */
+/* R-1986 (Pardeep): the grey total box shows the working, from the hero card's helper, and the
+   users number in it is an input — each card keeps its OWN count. */
+const working = (id: string) => screen.getByTestId(`plan-total-${id}`).getAttribute("data-working");
+const usersIn = (name: string) => within(card(name)).getByLabelText(`Number of users for ${name}`) as HTMLInputElement;
+const mount = (seats = 10, tier?: string) =>
+  render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={BRAND} initialSeats={seats} initialTierId={tier} />);
+
 describe("R-1986 plan card total box shows the working", () => {
-  const box = (name: string) => card(name).querySelector(".font-mono")?.textContent;
   it("annual, 10 users: '₹270/user/month × 10 users × 12 = ₹32,400/year + GST'", () => {
-    render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={BRAND} initialSeats={10} />);
-    expect(box("Business Starter")).toBe("₹270/user/month × 10 users × 12 = ₹32,400/year + GST");
-    expect(box("Business Standard")).toBe("₹1,080/user/month × 10 users × 12 = ₹1,29,600/year + GST");
+    mount();
+    expect(working("starter")).toBe("₹270/user/month × 10 users × 12 = ₹32,400/year + GST");
+    expect(working("standard")).toBe("₹1,080/user/month × 10 users × 12 = ₹1,29,600/year + GST");
+    expect(screen.getByTestId("plan-total-starter").textContent).toBe("₹270/user/month ×users × 12 = ₹32,400/year + GST");
+    expect(usersIn("Business Starter").value).toBe("10");
   });
   it("monthly, 10 users: '₹325/user/month × 10 users = ₹3,250/month + GST'", () => {
-    render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={BRAND} initialSeats={10} />);
+    mount();
     fireEvent.click(within(plans()).getByRole("button", { name: "Monthly" }));
-    expect(box("Business Starter")).toBe("₹325/user/month × 10 users = ₹3,250/month + GST");
+    expect(working("starter")).toBe("₹325/user/month × 10 users = ₹3,250/month + GST");
   });
   it("the same words as the hero price card's helper", async () => {
     const { priceHeadline } = await import("./price-headline");
-    expect(priceHeadline({ rate: 270, seats: 10, billing: "annual", subtotal: 32400, gst: 5832, total: 38232 }).working)
-      .toBe("₹270/user/month × 10 users × 12 = ₹32,400/year + GST");
+    const h = priceHeadline({ rate: 270, seats: 10, billing: "annual", subtotal: 32400, gst: 5832, total: 38232 });
+    expect(h.working).toBe("₹270/user/month × 10 users × 12 = ₹32,400/year + GST");
+    expect(`${h.workingParts.before} 10 ${h.workingParts.after}`).toBe(h.working);
   });
 });
 
-/* R-1986 (Pardeep): the users can be changed in "Choose a plan" too — the page's one state. */
-describe("R-1986 users stepper in Choose a plan", () => {
-  const seatsIn = () => within(screen.getByTestId("plan-seats")).getByLabelText(/Users/) as HTMLInputElement;
-  const box = (name: string) => card(name).querySelector(".font-mono")?.textContent;
-  it("+ in the plan section → 11 users on every card, the hero card and the order summary", () => {
-    render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={BRAND} initialSeats={10} initialTierId="starter" />);
-    fireEvent.click(within(plans()).getByRole("button", { name: "More users for the plans" }));
-    expect(seatsIn().value).toBe("11");
-    expect(box("Business Starter")).toBe("₹270/user/month × 11 users × 12 = ₹35,640/year + GST");
-    expect(box("Business Standard")).toBe("₹1,080/user/month × 11 users × 12 = ₹1,42,560/year + GST");
-    expect((document.getElementById("hero-seats") as HTMLInputElement).value).toBe("11");
-    expect(within(summary()).getByText("11 users × ₹270/user/month × 12 months")).toBeTruthy();
+describe("R-1986 users inside each card — each card keeps its own count", () => {
+  it("no separate users row at the top of the plan section; Annual/Monthly stays", () => {
+    mount();
+    expect(screen.queryByTestId("plan-seats")).toBeNull();
+    expect(within(plans()).getByRole("button", { name: "Monthly" })).toBeTruthy();
   });
-  it("a preset (25) and typing work; the hero card moves too", () => {
-    render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={BRAND} initialSeats={10} />);
-    fireEvent.click(within(screen.getByRole("group", { name: "Quick user counts for the plans" })).getByRole("button", { name: "25" }));
-    expect((document.getElementById("hero-seats") as HTMLInputElement).value).toBe("25");
-    fireEvent.change(seatsIn(), { target: { value: "3" } });
-    expect(box("Business Starter")).toBe("₹270/user/month × 3 users × 12 = ₹9,720/year + GST");
+
+  it("editing Starter's box changes only Starter's total — Standard keeps its own", () => {
+    mount(10, "standard");
+    fireEvent.change(usersIn("Business Starter"), { target: { value: "3" } });
+    expect(working("starter")).toBe("₹270/user/month × 3 users × 12 = ₹9,720/year + GST");
+    expect(working("standard")).toBe("₹1,080/user/month × 10 users × 12 = ₹1,29,600/year + GST");
+    expect((document.getElementById("hero-seats") as HTMLInputElement).value).toBe("10");
   });
-  it("the hero card's users drive the plan section too", () => {
-    render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={BRAND} initialSeats={10} />);
-    fireEvent.change(document.getElementById("hero-seats") as HTMLInputElement, { target: { value: "7" } });
-    expect(seatsIn().value).toBe("7");
+
+  it("'Buy Business Starter' carries Starter's own count into the checkout; Standard keeps its count", () => {
+    mount(10, "standard");
+    fireEvent.change(usersIn("Business Starter"), { target: { value: "3" } });
+    fireEvent.click(within(card("Business Starter")).getByRole("button", { name: "Buy Business Starter" }));
+    expect(within(summary()).getByText("Google Workspace Business Starter")).toBeTruthy();
+    expect(within(summary()).getByText("3 users × ₹270/user/month × 12 months")).toBeTruthy();
+    expect((document.getElementById("hero-seats") as HTMLInputElement).value).toBe("3");
+    expect(working("standard")).toBe("₹1,080/user/month × 10 users × 12 = ₹1,29,600/year + GST");
   });
-  it("301 → the Enterprise note; cards say 'Max 300 users — see Enterprise'", () => {
-    render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={BRAND} initialSeats={300} />);
-    fireEvent.click(within(plans()).getByRole("button", { name: "More users for the plans" }));
-    expect(within(screen.getByTestId("plan-seats")).getByRole("status").textContent).toMatch(/Over 300 users\? That's Enterprise/);
-    expect(box("Business Starter")).toBe("Max 300 users — see Enterprise");
+
+  it("the selected plan's box is the page's count: hero and box move together", () => {
+    mount(10, "starter");
+    fireEvent.change(usersIn("Business Starter"), { target: { value: "4" } });
+    expect((document.getElementById("hero-seats") as HTMLInputElement).value).toBe("4");
+    fireEvent.change(document.getElementById("hero-seats") as HTMLInputElement, { target: { value: "6" } });
+    expect(usersIn("Business Starter").value).toBe("6");
+  });
+
+  it("301 in a box → that card says 'Max 300 users — see Enterprise', the input stays", () => {
+    mount(10, "standard");
+    fireEvent.change(usersIn("Business Starter"), { target: { value: "301" } });
+    expect(within(screen.getByTestId("plan-total-starter")).getByText("Max 300 users — see Enterprise")).toBeTruthy();
+    expect(usersIn("Business Starter").value).toBe("301");
+    expect(working("standard")).toMatch(/× 10 users/);
   });
 });
