@@ -5,7 +5,9 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const src = readFileSync(join(process.cwd(), "src/app/(public)/buy/workspace/buy-workspace-client.tsx"), "utf8");
+/* R-1971: the trial promise and the Razorpay window moved into the inline checkout. */
+const src = ["_parts/checkout.tsx", "_parts/submit-order.ts"]
+  .map((f) => readFileSync(join(process.cwd(), "src/app/(public)/buy/workspace", f), "utf8")).join("\n");
 /** Visible text and code only — comments may still tell the history. */
 const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
 

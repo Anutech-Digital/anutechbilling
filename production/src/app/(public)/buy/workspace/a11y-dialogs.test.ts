@@ -22,7 +22,8 @@ const FILES = [
   "app/(public)/buy/workspace/_parts/plan-cards.tsx",
   "app/(public)/buy/workspace/_parts/info-sections.tsx",
   "app/(public)/buy/workspace/_parts/site-header.tsx",
-  "app/(public)/buy/workspace/_parts/checkout-section.tsx",
+  "app/(public)/buy/workspace/_parts/checkout.tsx",
+  "app/(public)/buy/workspace/_parts/order-summary.tsx",
 ];
 const read = (f: string) => readFileSync(join(SRC, f), "utf8");
 
@@ -39,12 +40,17 @@ describe("R-023 a11y on the public buy screens", () => {
     expect(hits).toEqual([]);
   }, 60_000);
 
-  it("Buy-now dialog steps aside while Razorpay's window is open, and comes back on dismiss", () => {
-    const src = read(FILES[0]);
-    // A Radix modal blocks pointer events + focus outside itself; Razorpay's window is outside.
-    expect(src).toMatch(/<Dialog open=\{!rzpOpen\}/);
-    expect(src).toMatch(/setRzpOpen\(true\);\s*rzp\.open\(\)/);
-    expect(src).toMatch(/ondismiss: \(\) => \{\s*setRzpOpen\(false\)/);
+  /* R-1971: no popup on the buy page any more — checkout is inline, so nothing traps focus
+     away from Razorpay's window. The Pay button stays off while that window is open, and
+     dismissing it hands the page back. */
+  it("buy page: no modal; Pay waits while Razorpay's window is open and comes back on dismiss", () => {
+    const checkout = read("app/(public)/buy/workspace/_parts/checkout.tsx");
+    expect(read(FILES[0]) + checkout).not.toMatch(/<Dialog\b|@\/components\/ui\/dialog/);
+    const submit = read("app/(public)/buy/workspace/_parts/submit-order.ts");
+    expect(submit).toMatch(/onRazorpay\(true\);\s*rzp\.open\(\)/);
+    expect(submit).toMatch(/ondismiss: \(\) => \{\s*onRazorpay\(false\)/);
+    expect(checkout).toMatch(/const busy = co\.busy \|\| rzpOpen;/);
+    expect(checkout).toMatch(/disabled=\{busy\}/);
   });
 
   it("PO / accept dialogs cannot be closed while the acceptance is being saved", () => {

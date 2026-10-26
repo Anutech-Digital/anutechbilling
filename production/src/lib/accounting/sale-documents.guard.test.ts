@@ -139,6 +139,7 @@ const TS_SALE = new Set([
   "src/lib/queries/month-close.ts",                               // month's output GST
 ]);
 const TS_NOT_SALE: Record<string, string> = {
+  "src/app/(public)/buy/workspace/thanks/fetch-order.ts": "R-1971: the number of this order's own GST invoice (by quote_id) for the buyer's thanks page — not a list or a total",
   "src/lib/exports/read-rows.server.ts": "R-1007: the invoice-register CSV lists every invoice the user ticked or can see (opening ones too, as the Invoices screen does) — not GST or revenue",
   "src/lib/integrations/zoho-books/import-store.ts": "R-1753: Zoho numbers already imported as opening invoices (so a second import skips them)",
   "src/app/(app)/accounting/aging/read.ts": "aging of open balances — includes opening invoices on purpose",

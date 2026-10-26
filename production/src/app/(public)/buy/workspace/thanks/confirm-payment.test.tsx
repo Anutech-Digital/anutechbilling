@@ -159,7 +159,8 @@ describe("the thanks page confirms the payment on our server (R-1625)", () => {
 });
 
 describe("the buy page hands the payment over (R-1625)", () => {
-  const src = readFileSync(join(process.cwd(), "src/app/(public)/buy/workspace/buy-workspace-client.tsx"), "utf8");
+  /* R-1971: the buy page's checkout is inline now — the submit logic lives in _parts/submit-order.ts. */
+  const src = readFileSync(join(process.cwd(), "src/app/(public)/buy/workspace/_parts/submit-order.ts"), "utf8");
   it("Razorpay's success handler keeps {order, payment, signature} for this quote before redirecting", () => {
     expect(src).toMatch(/handler: \(resp\) => \{\s*(?:\/\/.*\s*)*saveWorkspacePayment\(json\.quoteId, fromRazorpayHandler\(resp\)\);\s*window\.location\.href = thanksUrl\(json\.quoteId, json\.publicToken, false\);/);
   });

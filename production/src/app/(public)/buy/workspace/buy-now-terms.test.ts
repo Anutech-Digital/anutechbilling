@@ -32,15 +32,16 @@ describe("R-226 buy-now terms tick", () => {
     expect(r.success).toBe(false);
   });
 
-  it("the dialog renders the tick with terms + refund links and the annual line above Pay", () => {
-    const src = readFileSync(join(__dirname, "buy-workspace-client.tsx"), "utf8");
-    expect(src).toMatch(/resolver: zodResolver\(buyNowSchema\)/);
-    expect(src).toMatch(/register\("agreeTerms"\)/);
+  /* R-1971: the Buy now dialog became the inline checkout's payment step — same rules. */
+  it("the payment step: the order's line, then the tick with terms + refund links, then Pay; no tick → no order", () => {
+    const src = readFileSync(join(__dirname, "_parts", "checkout.tsx"), "utf8");
+    expect(src).toMatch(/buyNowSchema\.safeParse\(body\)/);
+    expect(src).toMatch(/if \(!co\.agree\) \{ co\.setErrors\(\{ agree: BUY_TERMS_ERROR \}\); return; \}/);
     expect(src).toMatch(/href="\/terms-and-conditions"/);
     expect(src).toMatch(/href="\/refund"/);
-    const note = src.indexOf("{BUY_ANNUAL_NOTE}");
+    const note = src.indexOf("BUY_ANNUAL_NOTE : BUY_MONTHLY_NOTE}");
     const tick = src.indexOf('id="buy-agree-terms"');
-    const pay = src.indexOf("securely`}");
+    const pay = src.lastIndexOf("payLabel}");
     expect(note).toBeGreaterThan(0);
     expect(tick).toBeGreaterThan(note);
     expect(pay).toBeGreaterThan(tick);

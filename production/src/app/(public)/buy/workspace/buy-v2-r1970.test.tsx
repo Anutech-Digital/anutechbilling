@@ -84,7 +84,7 @@ describe("R-1970 /buy/workspace v2", () => {
     page({ initialTierId: "starter", initialSeats: 1 });
     expect(screen.getByTestId("hero-total").textContent).toBe("₹3,240");
     expect(screen.getByText("+ ₹583 GST (18%) · Total ₹3,823")).toBeTruthy();
-    expect(screen.getByTestId("checkout-total").textContent).toBe("₹3,823");
+    expect(screen.getByTestId("summary-total").textContent).toBe("₹3,823"); // R-1971: the order summary
   });
 
   it("monthly: Standard 2 users = ₹2,600 /month + GST, ₹3,068 total", () => {
@@ -92,7 +92,7 @@ describe("R-1970 /buy/workspace v2", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Monthly" })[0]);
     expect(screen.getByTestId("hero-total").textContent).toBe("₹2,600");
     expect(screen.getByText("+ ₹468 GST (18%) · Total ₹3,068")).toBeTruthy();
-    expect(screen.getByTestId("checkout-total").textContent).toBe("₹3,068");
+    expect(screen.getByTestId("summary-total").textContent).toBe("₹3,068");
   });
 
   it("301 users: no Buy — the price card and checkout send the buyer to Enterprise", () => {
@@ -100,8 +100,9 @@ describe("R-1970 /buy/workspace v2", () => {
     expect(screen.getAllByText(/Business plans support up to 300 users. For more, choose Enterprise./).length).toBe(1);
     expect(screen.getByRole("button", { name: "Talk to us about Enterprise" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Continue to checkout" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Continue to payment" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Request an Enterprise quote" })).toBeTruthy();
+    /* R-1971: checkout shows the Enterprise call / WhatsApp panel instead of the three steps. */
+    expect(screen.getByText("Enterprise is quoted, not checked out")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Your domain" })).toBeNull();
     expect(screen.getAllByText("Max 300 users — see Enterprise").length).toBe(2);
   });
 
@@ -120,16 +121,6 @@ describe("R-1970 /buy/workspace v2", () => {
     expect(faq.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(faq);
     expect(faq.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("annual + payable → 'Continue to payment' opens the Buy now dialog; payment off → a GST quote", () => {
-    page({ initialTierId: "starter", initialSeats: 3 });
-    fireEvent.click(screen.getByRole("button", { name: "Continue to payment" }));
-    expect(screen.getByRole("dialog")).toBeTruthy();
-    cleanup();
-    page({ paymentMode: "disabled", initialTierId: "starter", initialSeats: 3 });
-    expect(screen.queryByRole("button", { name: "Continue to payment" })).toBeNull();
-    expect(screen.getByText(/Online payment opens soon/)).toBeTruthy();
   });
 
   it("no tenant row → a neutral header, no other company's name or GSTIN", () => {

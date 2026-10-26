@@ -20,7 +20,8 @@ const PROMISES = [
   { n: "03", title: "No lock-in", body: "Want to move to Google direct or another partner? We transfer your subscription. No data moves, nothing stops working." },
 ];
 
-export function WhyUs({ brand }: { brand: BuyBrand | null }) {
+/** R-1971: `children` = the GST invoice preview, beside "Check us before you pay". */
+export function WhyUs({ brand, children }: { brand: BuyBrand | null; children?: React.ReactNode }) {
   const sellerState = stateName(brand?.stateCode);
   return (
     <section id="why-us" className="max-w-[1200px] mx-auto px-4 sm:px-5 pt-6 pb-[72px] scroll-mt-20">
@@ -37,8 +38,9 @@ export function WhyUs({ brand }: { brand: BuyBrand | null }) {
           </div>
         ))}
       </div>
+      <div className="flex flex-wrap gap-6 items-start">
       {brand && (
-        <div className="max-w-[640px]">
+        <div className="flex-[1_1_420px] min-w-0 max-w-[640px]">
           <h3 className="font-serif font-normal text-[28px] mb-1.5">Check us before you pay</h3>
           <p className="text-[15px] text-ink-3 mb-[18px]">Don&apos;t take our word for it — check us on the official registers.</p>
           <div className="bg-white border border-hairline rounded-[14px] divide-y divide-hairline">
@@ -65,6 +67,8 @@ export function WhyUs({ brand }: { brand: BuyBrand | null }) {
           </div>
         </div>
       )}
+      {children}
+      </div>
     </section>
   );
 }

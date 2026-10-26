@@ -24,6 +24,8 @@ import type { OrderPaymentState } from "@/lib/checkout/order-payment-state";
 
 export interface ThanksOrder {
   quoteId:        string;
+  /** R-1971: the GST invoice number for this order, once issued. */
+  invoiceNumber?: string | null;
   customerName:   string;
   tierName:       string;
   seats:          number;
@@ -245,6 +247,12 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
                 <span className="text-ink-3 sm:text-2xs sm:uppercase sm:tracking-wider sm:font-semibold sm:block sm:mb-0.5">Company</span>
                 <span className="text-ink font-medium">{order.customerName}</span>
               </div>
+              {order.invoiceNumber && (
+                <div className="flex justify-between sm:block">
+                  <span className="text-ink-3 sm:text-2xs sm:uppercase sm:tracking-wider sm:font-semibold sm:block sm:mb-0.5">GST invoice</span>
+                  <span className="text-ink font-medium font-mono" data-testid="thanks-invoice">{order.invoiceNumber}</span>
+                </div>
+              )}
               <div className="flex justify-between sm:block">
                 <span className="text-ink-3 sm:text-2xs sm:uppercase sm:tracking-wider sm:font-semibold sm:block sm:mb-0.5">Plan</span>
                 <span className="text-ink font-medium">{order.tierName}</span>

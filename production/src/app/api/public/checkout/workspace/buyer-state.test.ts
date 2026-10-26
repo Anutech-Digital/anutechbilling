@@ -8,7 +8,8 @@ import { buyNowSchema } from "@/app/(public)/buy/workspace/buy-now-schema";
    generate_invoice refused its GST invoice ("no state on record"). These pin both halves: the
    page asks for it, the route refuses before saving or charging, and the lead carries it. */
 const route = readFileSync(join(process.cwd(), "src/app/api/public/checkout/workspace/route.ts"), "utf8");
-const page = readFileSync(join(process.cwd(), "src/app/(public)/buy/workspace/buy-workspace-client.tsx"), "utf8");
+/* R-1971: the Buy now form is the inline checkout's details step now. */
+const page = readFileSync(join(process.cwd(), "src/app/(public)/buy/workspace/_parts/checkout.tsx"), "utf8");
 /* R-280: R-226 moved the form rules out of the client into buy-now-schema.ts. */
 const schemaSrc = readFileSync(join(process.cwd(), "src/app/(public)/buy/workspace/buy-now-schema.ts"), "utf8");
 
@@ -39,8 +40,8 @@ describe("Workspace Buy now — buyer state (R-173)", () => {
   });
 
   it("the Buy now form has a required state select unless a valid GSTIN gives it", () => {
-    expect(page).toMatch(/htmlFor="buy-state"/);
-    expect(page).toMatch(/zodResolver\(buyNowSchema\)/);
+    expect(page).toMatch(/htmlFor="buy-stateCode"/);
+    expect(page).toMatch(/buyNowSchema\.safeParse\(body\)/);
     expect(schemaSrc).toMatch(/if \(!v\.stateCode && !stateCodeFromGstin\(v\.gstin\)\)/);
   });
 

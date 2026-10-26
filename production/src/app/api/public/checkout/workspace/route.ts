@@ -40,7 +40,7 @@ import { issueInvoiceForOnlinePayment } from "@/lib/checkout/online-invoice.serv
 import { publicDbError } from "@/app/api/public/_lib/db-error";
 import { customerSetupSteps, leadOwnerNextSteps } from "@/lib/email/workspace-onboarding";
 import { loadLeadOwner } from "@/lib/email/lead-owner.server";
-import { buildLinesFromCatalog, type CatalogPriceRow } from "./pricing";
+import { BUY_COMMITMENTS, buildOrderLines, type CatalogPriceRow } from "./pricing";
 import { PLUS_NOT_SOLD_ONLINE, isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
 import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 
@@ -80,6 +80,12 @@ const checkoutSchema = z.object({
    *  conversion funnel before he has Razorpay keys. Refused when Razorpay
    *  IS configured (would let attackers create free orders). */
   simulate:    z.boolean().optional(),
+  /** R-1967: "annual" (1-year plan — the default, as before) or "monthly" (flex). Only the
+   *  CHOICE comes from the browser; the rate is read from the catalogue on this server. */
+  commitment:  z.enum(BUY_COMMITMENTS).default("annual"),
+  /** R-1971: the buyer has no domain yet and asked us to register this one. No live check
+   *  (R-1972) — the team calls them; the lead and quote notes say so. */
+  domainNew:   z.boolean().optional(),
 });
 
 // R-206: pricing (catalogue row → floored ₹/seat/month → lines → GST total) lives in ./pricing.
@@ -132,7 +138,7 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    const { fullName, companyName, email, phone, seats, domain, tierId, gstin, simulate, couponCode } = parsed.data;
+    const { fullName, companyName, email, phone, seats, domain, tierId, gstin, simulate, couponCode, commitment, domainNew } = parsed.data;
 
     /* R-328 (7 Oct 2026, Pardeep): Business Plus is "Contact us for pricing" on the website,
        like Google's own page — never sold or priced online. Refused before anything is read,
@@ -242,7 +248,19 @@ export async function POST(request: NextRequest) {
     // Pricing source of truth = catalog. If Pardeep edits item MSRP, the
     // next checkout immediately reflects it — no re-deploy needed.
     const catalogRow = await fetchCatalogPrice(admin, tierId);
-    const built      = buildLinesFromCatalog(catalogRow, tierId, seats);
+    /* R-1967: Annual (as before) or Monthly (flex) — priced HERE from the catalogue. */
+    const isMonthly  = commitment === "monthly";
+    const built      = buildOrderLines(catalogRow, tierId, seats, commitment);
+    if (!built) {
+      return NextResponse.json(
+        {
+          error: "Monthly billing isn't offered for this plan right now. Nothing was charged. " +
+                 "Choose Annual, or ask us for a quote.",
+          monthlyNotOffered: true,
+        },
+        { status: 400 },
+      );
+    }
     const items      = built.items;
     const tierName   = built.tierName;
     let   subtotal   = built.subtotal;
@@ -304,9 +322,10 @@ export async function POST(request: NextRequest) {
     const sourceTag   = isSimulation ? "buy-workspace-direct-sim" : "buy-workspace-direct";
     const leadNotes   = [
       isSimulation ? `[SIMULATION] Test buy — no real payment` : `DIRECT BUY · proceeding to Razorpay`,
-      `Domain: ${cleanDomain}`,
+      domainNew ? `Domain: ${cleanDomain} — NEW: register it for the buyer and call them (not checked yet)` : `Domain: ${cleanDomain}`,
       `Plan: Google Workspace ${tierName}`,
       `Seats: ${seats}`,
+      isMonthly ? `Billing: monthly (flex) — this is one month` : `Billing: annual (1-year plan)`,
       `Total: ₹${amount.toLocaleString("en-IN")} (incl 18% GST)`,
       gstin ? `GSTIN: ${gstin}` : null,
     ].filter(Boolean).join("\n");
@@ -438,6 +457,9 @@ export async function POST(request: NextRequest) {
       created_date:   createdDate,
       expires_date:   expiresDate,
       notes:          quoteNotes,
+      /* R-1967: a monthly (flex) order is billed each month — the PDF says PAYABLE EACH MONTH,
+         like the enquiry route's flex draft. The annual order row is written exactly as before. */
+      ...(isMonthly ? { billing_cycle: "monthly" } : {}),
     }).select("public_token").single();
     if (qErr || !inserted?.public_token) {
       console.error("[checkout/workspace] quote insert failed:", qErr ?? "no public_token returned");
@@ -560,6 +582,7 @@ test rows before going live.`,
         customerName:   fullName,
         tierName,
         seats,
+        commitment,
         totalRupees:    amount,
         sitePromoId,
         sitePromoDiscount,
@@ -610,6 +633,7 @@ test rows before going live.`,
       customerName:   fullName,
       tierName,
       seats,
+      commitment,
       totalRupees:    amount,
       sitePromoId,
       sitePromoDiscount,

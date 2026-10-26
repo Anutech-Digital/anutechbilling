@@ -26,8 +26,8 @@ describe("R-1110 postJson never throws", () => {
   });
 });
 
-describe("R-1110 wiring — all three dialogs", () => {
-  const src = readFileSync("src/app/(public)/buy/workspace/buy-workspace-client.tsx", "utf8");
+describe("R-1110 wiring — trial, quote and pay (inline checkout, R-1971)", () => {
+  const src = readFileSync("src/app/(public)/buy/workspace/_parts/submit-order.ts", "utf8");
   it("trial, quote and buy all post through postJson and handle 'not reached' with a retry", () => {
     for (const url of ["/api/public/trial/workspace", "/api/public/enquiry/workspace", "/api/public/checkout/workspace"]) {
       expect(src).toMatch(new RegExp(`postJson<[^>]+>\\("${url.replace(/\//g, "\\/")}"`));

@@ -59,8 +59,20 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
     ? null
     : ((payRows ?? []) as { amount: number | null }[]).reduce((s, p) => s + Number(p.amount ?? 0), 0);
 
+  /* R-1968 / R-1971: the GST invoice number issued for this order (generate_invoice links it by
+     quote_id), so the buyer sees it on the thanks page. None yet / unreadable → not shown. */
+  const { data: inv } = await admin
+    .from("invoices")
+    .select("id")
+    .eq("tenant_id", BUY_PAGE_TENANT_ID)
+    .eq("quote_id", data.id)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
   return {
     quoteId:        data.id,
+    invoiceNumber:  (inv as { id?: string } | null)?.id ?? null,
     customerName:   data.customer_name ?? "",
     tierName,
     seats:          data.seats ?? 0,
