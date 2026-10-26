@@ -35,6 +35,7 @@ import {
 import CreateCouponDialog        from "@/components/features/coupons/create-coupon-dialog";
 import CouponRedemptionsDialog   from "@/components/features/coupons/coupon-redemptions-dialog";
 import { useConfirm }            from "@/components/providers/confirm-provider";
+import { useCampaignOptions }    from "@/lib/queries/marketing-campaigns";
 import type { CouponRow }        from "@/lib/supabase/database.types";
 
 function couponStateTone(c: CouponRow): {
@@ -66,6 +67,12 @@ export default function CouponsPage() {
   const toggle = useToggleCoupon();
   const del    = useDeleteCoupon();
   const confirm = useConfirm();
+  /* R-1981: coupons.campaign_id → the campaign's name (Marketing → Campaigns). */
+  const campaignOptions = useCampaignOptions();
+  const campaignName = React.useCallback(
+    (id: string | null | undefined) => (id ? campaignOptions.data?.find((x) => x.id === id)?.name ?? null : null),
+    [campaignOptions.data],
+  );
 
   const [createOpen,           setCreateOpen]         = React.useState(false);
   const [viewingRedemptions,   setViewingRedemptions] = React.useState<string | null>(null);
@@ -178,6 +185,7 @@ export default function CouponsPage() {
                 <tr>
                   <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Code</th>
                   <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Discount</th>
+                  <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Campaign</th>
                   <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Tier</th>
                   <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Seats</th>
                   <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Uses</th>
@@ -208,6 +216,9 @@ export default function CouponsPage() {
                         )}
                       </td>
                       <td className="p-3 text-sm text-ink-2">{discountLabel(c)}</td>
+                      <td className="p-3 text-xs max-w-[180px] truncate">
+                        {campaignName(c.campaign_id) ?? <span className="text-ink-3">No campaign</span>}
+                      </td>
                       <td className="p-3 text-xs">
                         {c.applies_to_tier ? (
                           <Badge size="sm" kind="info">{c.applies_to_tier}</Badge>
@@ -301,6 +312,7 @@ export default function CouponsPage() {
                       {c.max_seats != null ? ` · max ${c.max_seats}` : ""}
                       {" · "}
                       {c.valid_until ? `expires ${formatDate(c.valid_until)}` : "no expiry"}
+                      {campaignName(c.campaign_id) ? ` · ${campaignName(c.campaign_id)}` : ""}
                     </div>
                     <div className="flex items-center gap-1 pt-1 border-t border-hairline">
                       <Button variant="ghost" size="sm" onClick={() => onToggle(c)} disabled={toggle.isPending}>
@@ -340,6 +352,7 @@ export default function CouponsPage() {
           open={!!viewingRedemptions}
           onOpenChange={(v) => !v && setViewingRedemptions(null)}
           code={viewingRedemptions}
+          campaignName={campaignName(coupons?.find((c) => c.code === viewingRedemptions)?.campaign_id)}
         />
       )}
 

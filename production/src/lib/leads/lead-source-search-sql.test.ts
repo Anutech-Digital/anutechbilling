@@ -94,16 +94,26 @@ describe("20261007190000_lead_source_filter_search — only search + sources cha
   });
 });
 
+/* R-1981: the NEWEST migration that defines a function is the one the database runs —
+   LEAD_SOURCES must match that one (R-1981 added the website sources and their aliases). */
+function newestDefining(fn: string): string {
+  const files = fs.readdirSync(MIG).filter((f) => f.endsWith(".sql")).sort();
+  const hit = files.filter((f) => read(f).includes(`create or replace function public.${fn}(`));
+  expect(hit.length, `${fn} defined nowhere`).toBeGreaterThan(0);
+  return read(hit[hit.length - 1]);
+}
+
 describe("lead_source_key / lead_source_label ↔ LEAD_SOURCES", () => {
   const sq = (s: string) => `'${s.replace(/'/g, "''")}'`;
-  const keyFn = block(NEW, "create or replace function public.lead_source_key(", "$fn$;");
-  const labelFn = block(NEW, "create or replace function public.lead_source_label(", "$fn$;");
+  const keyFn = block(newestDefining("lead_source_key"), "create or replace function public.lead_source_key(", "$fn$;");
+  const labelFn = block(newestDefining("lead_source_label"), "create or replace function public.lead_source_label(", "$fn$;");
 
-  it("maps every key and lowercased label to the key", () => {
+  it("maps every key, lowercased label and alias to the key", () => {
     for (const s of LEAD_SOURCES) {
       /* Searched CASE: Postgres has no `when 'a', 'b'` list form (that is MySQL) — the first
          version used it and failed on apply (caught 7 Oct applying on local). */
-      expect(keyFn).toContain(`    when lower(btrim(coalesce(p_source, ''))) in (${sq(s.value)}, ${sq(s.label.toLowerCase())}) then ${sq(s.value)}`);
+      const names = [s.value, s.label.toLowerCase(), ...(s.aliases ?? [])].map(sq).join(", ");
+      expect(keyFn).toContain(`    when lower(btrim(coalesce(p_source, ''))) in (${names}) then ${sq(s.value)}`);
     }
     expect(keyFn.match(/^ {4}when /gm)?.length).toBe(LEAD_SOURCES.length);
   });
