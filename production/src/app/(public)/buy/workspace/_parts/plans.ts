@@ -22,7 +22,7 @@ export const MAX_SEATS = 10_000;
 /** One plan as the page sees it. A null rate = not sold online at that billing. */
 export interface BuyPlan {
   id: PlanId;
-  name: string;           // "Business Starter"
+  name: string;           // "Business Starter" — PLAN_COPY.name (R-1986), display only
   short: string;          // "Starter"
   blurb: string;
   features: string[];
@@ -35,26 +35,37 @@ export interface BuyPlan {
   custom: boolean;
 }
 
-interface PlanCopy { short: string; blurb: string; features: string[]; popular?: boolean }
+/**
+ * R-1986 (Pardeep, 26 Oct 2026): `name` is Google's full plan name — "Business Starter",
+ * "Business Standard", "Business Plus", "Enterprise" — the ONE source for every label on the buy
+ * page and checkout (cards, buttons, price card, compare header, summary, phone bar). `short` is
+ * only for a place too narrow for it (the price card's plan switch on a phone). Display only:
+ * catalogue item names and the server's quote lines are not read from here.
+ */
+interface PlanCopy { name: string; short: string; blurb: string; features: string[]; popular?: boolean }
 
 export const PLAN_COPY: Record<PlanId, PlanCopy> = {
   starter: {
+    name: "Business Starter",
     short: "Starter",
     blurb: "Professional email and the core apps for small teams.",
     features: ["Email on your own domain", "30 GB storage per user", "Meet calls up to 100 people", "Gemini in Gmail"],
   },
   standard: {
+    name: "Business Standard",
     short: "Standard",
     popular: true,
     blurb: "More storage, meeting recordings and Gemini across every app.",
     features: ["2 TB storage per user", "Meet up to 150 people, with recording", "Gemini in Docs, Sheets, Slides and Meet", "Booking pages and eSignature"],
   },
   plus: {
+    name: "Business Plus",
     short: "Plus",
     blurb: "Archiving and stronger security for regulated businesses.",
     features: ["5 TB storage per user", "Meet up to 500 people, attendance tracking", "Vault retention and eDiscovery", "Advanced endpoint management"],
   },
   enterprise: {
+    name: "Enterprise",
     short: "Enterprise",
     blurb: "For 300+ users or strict compliance requirements.",
     features: ["5 TB+ storage per user", "Livestreams up to 1,000 people", "Data loss prevention, data regions", "Context-aware access"],
@@ -79,7 +90,7 @@ export function toBuyPlans(
     const custom = id === "enterprise";
     plans.push({
       id,
-      name: id === "enterprise" ? "Enterprise" : (t?.name ?? copy.short),
+      name: copy.name,
       short: copy.short,
       blurb: copy.blurb,
       features: copy.features,

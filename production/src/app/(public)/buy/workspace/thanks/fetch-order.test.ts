@@ -167,3 +167,17 @@ describe("the buy page sends the token", () => {
     expect(src.match(/^\s+publicToken,$/gm)).toHaveLength(2);
   });
 });
+
+describe("R-1986: the thanks page names the plan as the buy page does", () => {
+  it("a buy-page order (plan google-workspace-starter) → 'Business Starter'", async () => {
+    db.row = { ...paidRow(), plan: "google-workspace-starter", line_items: [{ name: "Google Workspace Starter" }] };
+    expect((await fetchOrder("Q-2026-27-0042", TOKEN))?.tierName).toBe("Business Starter");
+  });
+  it("a monthly buy-page order → 'Business Standard — monthly'", async () => {
+    db.row = { ...paidRow(), plan: "google-workspace-standard", line_items: [{ name: "Google Workspace Business Standard — monthly (flex)" }] };
+    expect((await fetchOrder("Q-2026-27-0042", TOKEN))?.tierName).toBe("Business Standard — monthly");
+  });
+  it("another quote keeps its line name", async () => {
+    expect((await fetchOrder("Q-2026-27-0042", TOKEN))?.tierName).toBe("Business Starter");
+  });
+});

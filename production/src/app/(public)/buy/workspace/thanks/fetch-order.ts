@@ -7,6 +7,7 @@ import { quoteTokenMatches } from "@/lib/quotes/accept-token";
 import type { ThanksOrder } from "./thanks-client";
 import { websiteTenantId } from "@/lib/website-tenant";
 import { orderPaymentState } from "@/lib/checkout/order-payment-state";
+import { PLAN_COPY, type PlanId } from "../_parts/plans";
 
 /* R-1499: tenant read per call (websiteTenantId) — outside production an unset BUY_PAGE_TENANT_ID
    shows nothing (and logs why), never the live tenant's data. */
@@ -42,9 +43,13 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
   const firstLine = Array.isArray(data.line_items) && data.line_items.length > 0
     ? (data.line_items[0] as { name?: string })
     : null;
-  const tierName = firstLine?.name?.replace(/^Google Workspace\s*[·\-]?\s*/i, "").replace(/\s*\(annual\)\s*$/i, "")
+  const lineTier = firstLine?.name?.replace(/^Google Workspace\s*[·\-]?\s*/i, "").replace(/\s*\(annual\)\s*$/i, "")
                 ?? data.plan
                 ?? "Google Workspace";
+  /* R-1986: an order from the buy page (plan google-workspace-<tier>) is named as the page names
+     it — Google's full plan name (PLAN_COPY); a monthly one keeps saying so. Other quotes: the line. */
+  const slug = /^google-workspace-(starter|standard|plus|enterprise)$/.exec(String(data.plan ?? ""))?.[1] as PlanId | undefined;
+  const tierName = slug ? `${PLAN_COPY[slug].name}${/monthly/i.test(firstLine?.name ?? "") ? " — monthly" : ""}` : lineTier;
 
   /* R-1624: what came in against this quote. 'invoiced' (set the moment the GST invoice is
      issued) does not by itself say whether the order is paid in full, so the page's state comes
