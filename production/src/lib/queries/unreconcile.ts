@@ -6,6 +6,8 @@
  * counted the same money twice (INV-1111-2026-27-0001). `useUnreconcileImpact` reads what
  * the line points to so the confirm step can say it; `useUnreconcileBankTxn` runs
  * unreconcile_bank_receipt (migration 20260925210000), which can also undo that sale.
+ * R-1920: a vendor-payment line gets the server's preview of every leg it reverses, and a
+ * refusal (later payment, used advance, deposited TDS) with the page to fix it on.
  */
 "use client";
 
@@ -29,7 +31,76 @@ export type UnreconcileImpact =
   | { kind: "advance"; amount: number; customerName: string | null; voucherNo: string | null; usedOrRefunded: number }
   | { kind: "receipt"; amount: number; invoiceId: string | null }
   | { kind: "project"; amount: number; projectTitle: string; milestoneLabel: string; invoiceId: string | null; projectId: string }
+  /** R-1920: a vendor payment — what goes back, worked out by the server (vendor_payment_undo_preview). */
+  | { kind: "vendor-payment"; preview: VendorUndoPreview }
   | { kind: "other" };
+
+/** R-1920: one row of bank_vendor_payment_lines, with its document before / after the undo. */
+export type VendorUndoLeg = {
+  id: string;
+  kind: "bill" | "expense" | "new_bill" | "new_expense" | "advance" | "bank_charge" | "recorded_payment";
+  cash: number;
+  tds_amount: number;
+  tds_section: string | null;
+  doc_type: "vendor_bill" | "expense" | "advance";
+  doc_id: string;
+  doc_no: string | null;
+  doc_total: number | null;
+  before_paid: number | null;
+  before_status: string | null;
+  /** After the dry run — absent when the undo is refused (the dry run stopped). */
+  after_paid?: number | null;
+  after_status?: string | null;
+  removed?: boolean;
+  href: string;
+};
+
+/** R-1920: the server's dry run of un-reconciling a vendor-payment line (always rolled back). */
+export type VendorUndoPreview = {
+  txn_id: string;
+  debit: number;
+  txn_date: string;
+  vendor_name: string | null;
+  legs: VendorUndoLeg[];
+  blocked: boolean;
+  block_message: string | null;
+  block_href: string | null;
+};
+
+const STATUS_LABEL: Record<string, string> = { unpaid: "Unpaid", partial: "Part paid", paid: "Paid" };
+
+/**
+ * R-1920: one plain line per leg — what un-reconciling does to it. The numbers come from the
+ * server's dry run, so the sentence says what the trigger will really do.
+ */
+export function vendorUndoLegLine(leg: VendorUndoLeg): string {
+  const doc = `${leg.doc_type === "vendor_bill" ? "Bill" : "Expense bill"} ${leg.doc_no ?? leg.doc_id}`;
+  const tds = leg.tds_amount > 0 ? `; TDS ${rupee(leg.tds_amount)}${leg.tds_section ? ` (${leg.tds_section})` : ""} taken off` : "";
+  if (leg.kind === "advance") return `Advance of ${rupee(leg.cash)} to the vendor is removed`;
+  if (leg.kind === "bank_charge") return `Bank charge of ${rupee(leg.cash)} is removed`;
+  if (leg.kind === "recorded_payment") return `${doc}: the payment recorded earlier comes back, waiting for its bank line`;
+  const created = leg.kind === "new_bill" || leg.kind === "new_expense";
+  if (leg.removed) {
+    return created
+      ? `${doc} (${rupee(leg.doc_total ?? leg.cash + leg.tds_amount)}), created from this line, is deleted${tds}`
+      : `${doc} is deleted${tds}`;
+  }
+  // A refused preview has no "after" — say only what this line's money is.
+  if (!leg.after_status) return `${doc}${created ? ", created from this line" : ""}: ${rupee(leg.cash)} from this line comes off${tds}`;
+  const status = STATUS_LABEL[leg.after_status] ?? leg.after_status;
+  const due = leg.after_status === "unpaid" && leg.doc_total != null ? `, ${rupee(leg.doc_total)} due again`
+    : leg.after_status === "partial" && leg.after_paid != null ? ` (${rupee(leg.after_paid)} paid stays)` : "";
+  return `${doc} goes back to ${status}${due} — ${rupee(leg.cash)} from this line comes off${tds}`;
+}
+
+/** R-1920: the page a refusal's link opens, as a button label. */
+export function blockHrefLabel(href: string): string {
+  if (href.startsWith("/accounting/banking")) return "Open Banking";
+  if (href.startsWith("/accounting/expenses")) return "Open Expenses";
+  if (href.startsWith("/accounting/bills")) return "Open Bills";
+  if (href.startsWith("/accounting/prepaid")) return "Open Prepaid";
+  return "Open";
+}
 
 export function useUnreconcileImpact(txn: BankTransactionRow | null) {
   return useQuery({
@@ -85,6 +156,12 @@ export function useUnreconcileImpact(txn: BankTransactionRow | null) {
         };
       }
 
+      if (txn.matched_to_type === "vendor_payment") {
+        const { data, error } = await supabase.rpc("vendor_payment_undo_preview" as never, { p_txn_id: txn.id } as never);
+        if (error) throw error;
+        return { kind: "vendor-payment", preview: data as unknown as VendorUndoPreview };
+      }
+
       return { kind: "other" };
     },
   });
@@ -104,7 +181,7 @@ export function useUnreconcileBankTxn() {
     },
     onSuccess: (res) => {
       for (const k of ["bank_transactions", "bank_accounts",
-                       "salary-payments", "expenses", "balance-sheet", "tax-payments", "project_sales", "accounting", "itr-pack"]) {
+                       "salary-payments", "expenses", "vendor_bills", "prepaid_advances", "balance-sheet", "tax-payments", "project_sales", "accounting", "itr-pack"]) {
         qc.invalidateQueries({ queryKey: [k] });
       }
       /* R-1634: a receipt removed / invoice credited changes what the customer owes. */
