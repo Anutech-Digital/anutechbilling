@@ -22,7 +22,7 @@ import { toast } from "sonner";
 import {
   failedSendButtons, type FailedSendButton, type Outcome, type SendQuoteEmailResult,
 } from "@/lib/quotes/send-quote-email";
-import { markQuoteSent, copyNeedsMarkSent } from "@/lib/quotes/mark-quote-sent";
+import { markSentBeforeShare } from "./share-marking-sent";
 
 /**
  * Per-toast sonner classNames for a toast that carries buttons. Sonner's own layout rules are
@@ -61,22 +61,13 @@ export async function copyLinkMarkingSent(args: {
   /** Refresh the caller's cached quote / leads after the status changed. */
   onMarkedSent?: () => void;
 }): Promise<boolean> {
-  if (!copyNeedsMarkSent(args.quoteStatus)) {
-    copyCustomerLink(args.link);
-    return false;
-  }
-  try {
-    const r = await markQuoteSent(args.quoteId);
-    args.onMarkedSent?.();
-    copyCustomerLink(args.link, { markedSent: r.changed });
-    return r.changed;
-  } catch (err) {
-    toast.error("Link not copied — the quote is still a draft", {
-      description: err instanceof Error ? err.message : String(err),
-      duration: 15000,
-    });
-    return false;
-  }
+  /* R-1961: the same mark-sent step as both WhatsApp shares (share-marking-sent.ts). */
+  const r = await markSentBeforeShare({
+    quoteId: args.quoteId, quoteStatus: args.quoteStatus, channel: "copy", onMarkedSent: args.onMarkedSent,
+  });
+  if (!r.ok) return false;
+  copyCustomerLink(args.link, { markedSent: r.markedSent });
+  return r.markedSent;
 }
 
 export function showFailedSendToast(args: {
