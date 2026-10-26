@@ -3,7 +3,8 @@
  * The vendor side of R-1838's "This money is for:".
  *
  *   1. Vendor — guessed from the narration (UPI id, account no., name), changeable, or added on
- *      the spot (name, GSTIN, PAN, usual TDS section).
+ *      the spot (name, GSTIN, PAN, usual TDS section; R-1918: name, account no, IFSC and UPI id
+ *      pre-filled from the narration and saved, so the next line from them is guessed).
  *   2. What it pays —
  *        (a) that vendor's open bills: COGS bills and unpaid expense bills, oldest first, the exact
  *            match (or the match after TDS) ticked; several bills share the amount oldest-first,
@@ -38,11 +39,15 @@ import {
   type NewBillDraft, type VendorLite, type VendorOpenItem, type VendorPayResult,
 } from "@/lib/banking/debit-pay-for";
 import type { VendorFocus } from "@/lib/banking/vendor-line-guard";
+import { newVendorFromNarration, tailMismatch, type NewVendorField } from "@/lib/banking/narration-bank-details";
+import { checkBankDetails } from "@/lib/banking/bank-details";
 import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
 import { advanceToApply, vendorAdvanceLeft } from "@/lib/accounting/vendor-account";
 import { useApplyVendorAdvance } from "@/lib/queries/vendor-advance";
 
 const NEW_VENDOR = "__new_vendor__";
+const EMPTY_NV = { name: "", gstin: "", pan: "", tdsSection: "", accountNo: "", ifsc: "", upi: "" };
+const FIELD_WORD: Record<NewVendorField, string> = { name: "name", accountNo: "account number", ifsc: "IFSC", upi: "UPI ID" };
 const TDS_SECTIONS = Object.keys(TDS_SECTION_RATES);
 const EXPENSE_CATS = EXPENSE_CATEGORIES.filter((c) => c !== "Salaries");
 
@@ -71,12 +76,31 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
   const guess = React.useMemo(() => guessVendor(transaction, vendors), [transaction, vendors]);
   const [vendorId, setVendorId] = React.useState("");
   const [touched, setTouched] = React.useState(false);
-  const [nv, setNv] = React.useState({ name: "", gstin: "", pan: "", tdsSection: "" });
-  React.useEffect(() => { setVendorId(""); setTouched(false); setNv({ name: "", gstin: "", pan: "", tdsSection: "" }); }, [transaction.id]);
+  const [nv, setNv] = React.useState(EMPTY_NV);
+  React.useEffect(() => { setVendorId(""); setTouched(false); setNv(EMPTY_NV); }, [transaction.id]);
+  /* R-1918: "＋ New vendor" starts from the narration — name, account no, IFSC, UPI id. */
+  const fromLine = React.useMemo(() => newVendorFromNarration(transaction.description), [transaction.description]);
+  const pickVendor = (id: string) => {
+    setVendorId(id);
+    setTouched(true);
+    if (id === NEW_VENDOR && !nv.name && !nv.accountNo && !nv.ifsc && !nv.upi) {
+      setNv({ ...EMPTY_NV, name: fromLine.name, accountNo: fromLine.accountNo, ifsc: fromLine.ifsc, upi: fromLine.upi });
+    }
+  };
   React.useEffect(() => { if (!touched && guess && !vendorId) setVendorId(guess.vendorId); }, [guess, touched, vendorId]);
   const isNew = vendorId === NEW_VENDOR;
   const vendor = isNew ? null : vendors.find((v) => v.id === vendorId) ?? null;
   const vendorName = isNew ? nv.name.trim() : vendor?.name ?? "";
+  /* R-1905's rules for the bank fields. An IFSC with no account number (an NEFT line shows only the
+     IFSC) does not block the payment — it is simply not saved, and the form says so. */
+  const bankErr = React.useMemo(() => {
+    const e = { ...checkBankDetails({ accountNo: nv.accountNo, ifsc: nv.ifsc, upi: nv.upi }).errors };
+    if (!nv.accountNo.trim()) delete e.accountNo;
+    return e;
+  }, [nv.accountNo, nv.ifsc, nv.upi]);
+  const bankBad = isNew && Object.keys(bankErr).length > 0;
+  const tailWarn = isNew ? tailMismatch(nv.accountNo, fromLine.accountTail) : null;
+  const filledFromLine = fromLine.fromLine.filter((k) => nv[k] && nv[k] === fromLine[k]);
 
   /* ── 2. Open bills ───────────────────────────────────────────────────────── */
   const { data: items, isLoading: itemsLoading } = useVendorOpenItems(vendor?.id ?? null);
@@ -191,7 +215,7 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
   React.useEffect(() => { setResult(null); }, [transaction.id]);
   const advCat = advCategory || (vendor?.default_category && !vendor.default_category.startsWith("COGS-") ? vendor.default_category : "") || "Other";
   const nothingPicked = pickedItems.length === 0 && !showNew && advance <= 0;
-  const canSave = Boolean(vendorName) && !pay.isPending && sum.diff === 0 && !nothingPicked && !newBillBad && starved.length === 0;
+  const canSave = Boolean(vendorName) && !pay.isPending && sum.diff === 0 && !nothingPicked && !newBillBad && starved.length === 0 && !bankBad;
   /* R-1911: the line only matches payments already recorded — the button says so. */
   const onlyMatch = pickedItems.length > 0 && pickedItems.every(isRecorded) && !showNew && advance <= 0 && charge <= 0;
 
@@ -201,7 +225,10 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
       const r = await pay.mutateAsync({
         transactionId: transaction.id,
         vendorId: vendor?.id ?? null,
-        newVendor: isNew ? { name: nv.name, gstin: nv.gstin || null, pan: nv.pan || null, tdsSection: nv.tdsSection || null } : null,
+        newVendor: isNew ? {
+          name: nv.name, gstin: nv.gstin || null, pan: nv.pan || null, tdsSection: nv.tdsSection || null,
+          accountNo: nv.accountNo || null, ifsc: nv.ifsc || null, upi: nv.upi || null,
+        } : null,
         items: pickedItems.map((i) => {
           const t = tdsLines.find((x) => x.key === itemKey(i));
           return { item: i, cash: cashOf(i), tds: t?.tds ?? 0, section: t?.section ?? null };
@@ -254,7 +281,7 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
       <div className="space-y-1">
         <select
           value={vendorId}
-          onChange={(e) => { setVendorId(e.target.value); setTouched(true); }}
+          onChange={(e) => pickVendor(e.target.value)}
           aria-label="Vendor paid"
           className={selectCls}
         >
@@ -265,6 +292,13 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
         {guess && vendorId === guess.vendorId && !touched && (
           <p className="text-xs text-ink-3">Guessed from {guess.reason} — change it if wrong.</p>
         )}
+        {/* R-1918: no vendor matched, but the bank line names the payee — add it in one click. */}
+        {!vendorId && !guess && fromLine.name && (
+          <Button size="sm" variant="default" icon="plus" onClick={() => pickVendor(NEW_VENDOR)}
+            className="whitespace-normal h-auto min-h-8 py-1.5 text-left max-w-full">
+            Add “{fromLine.name}” as a new vendor
+          </Button>
+        )}
       </div>
 
       {isNew && (
@@ -272,10 +306,35 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
           <Input aria-label="New vendor name" placeholder="Vendor name" value={nv.name} onChange={(e) => setNv({ ...nv, name: e.target.value })} className="sm:col-span-2" />
           <Input aria-label="GSTIN (optional)" placeholder="GSTIN (optional)" value={nv.gstin} onChange={(e) => setNv({ ...nv, gstin: e.target.value.toUpperCase() })} />
           <Input aria-label="PAN (optional)" placeholder="PAN (optional)" value={nv.pan} onChange={(e) => setNv({ ...nv, pan: e.target.value.toUpperCase() })} />
+          <div className="space-y-0.5">
+            <Input aria-label="Account number (optional)" inputMode="numeric" value={nv.accountNo}
+              placeholder={fromLine.accountTail ? `Account number (ends ${fromLine.accountTail})` : "Account number (optional)"}
+              aria-invalid={Boolean(bankErr.accountNo)} onChange={(e) => setNv({ ...nv, accountNo: e.target.value })} />
+            {bankErr.accountNo && <p className="text-xs text-rose-ink">{bankErr.accountNo}</p>}
+            {!bankErr.accountNo && tailWarn && <p className="text-xs text-amber-ink">{tailWarn}</p>}
+          </div>
+          <div className="space-y-0.5">
+            <Input aria-label="IFSC (optional)" placeholder="IFSC (optional)" value={nv.ifsc}
+              aria-invalid={Boolean(bankErr.ifsc)} onChange={(e) => setNv({ ...nv, ifsc: e.target.value.toUpperCase() })} />
+            {bankErr.ifsc && <p className="text-xs text-rose-ink">{bankErr.ifsc}</p>}
+            {!bankErr.ifsc && nv.ifsc.trim() && !nv.accountNo.trim() && (
+              <p className="text-xs text-ink-3">Saved together with the account number — type it to keep the IFSC.</p>
+            )}
+          </div>
+          <div className="space-y-0.5 sm:col-span-2">
+            <Input aria-label="UPI ID (optional)" placeholder="UPI ID (optional)" value={nv.upi}
+              aria-invalid={Boolean(bankErr.upi)} onChange={(e) => setNv({ ...nv, upi: e.target.value })} />
+            {bankErr.upi && <p className="text-xs text-rose-ink">{bankErr.upi}</p>}
+          </div>
           <select aria-label="Usual TDS section" value={nv.tdsSection} onChange={(e) => setNv({ ...nv, tdsSection: e.target.value })} className={`${selectCls} sm:col-span-2`}>
             <option value="">No TDS usually</option>
             {TDS_SECTIONS.map((s) => <option key={s} value={s}>{s} · {TDS_SECTION_RATES[s].ratePct}%</option>)}
           </select>
+          {filledFromLine.length > 0 && (
+            <p className="text-xs text-ink-3 sm:col-span-2">
+              Filled from the bank line: {filledFromLine.map((k) => FIELD_WORD[k]).join(", ")} — check them. Saved on the vendor, they let the next payment to {nv.name.trim() || "this vendor"} be recognised.
+            </p>
+          )}
         </div>
       )}
 
