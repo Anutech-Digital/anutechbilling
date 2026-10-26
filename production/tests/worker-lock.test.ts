@@ -237,8 +237,8 @@ describe("tsc heap (R-1827)", () => {
   it("every TSC_STEPS child is spawned with tscEnv()", () => {
     const src = readFileSync(path.join(root, "scripts", "ops", "worker-lock.mjs"), "utf8");
     const at = src.indexOf("function tscWithTurn");
-    const body = src.slice(at, at + 600);
-    expect(body).toMatch(/for \(const step of TSC_STEPS\)/);
+    const body = src.slice(at, at + 1400);
+    expect(body).toMatch(/for \(const step of tscStepsFor\(\{ full \}\)\)/); // R-1960: TSC_STEPS, or the cold step with --full-tsc
     expect(body).toMatch(/sh\(step, tscEnv\(\)\)/);
   });
 });
