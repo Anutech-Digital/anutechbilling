@@ -3426,6 +3426,7 @@ export type Database = {
         Row: {
           applies_to_tier: string | null
           applies_to_vendor: string | null
+          campaign_id: string | null
           code: string
           created_at: string
           created_by: string | null
@@ -3445,6 +3446,7 @@ export type Database = {
         Insert: {
           applies_to_tier?: string | null
           applies_to_vendor?: string | null
+          campaign_id?: string | null
           code: string
           created_at?: string
           created_by?: string | null
@@ -3464,6 +3466,7 @@ export type Database = {
         Update: {
           applies_to_tier?: string | null
           applies_to_vendor?: string | null
+          campaign_id?: string | null
           code?: string
           created_at?: string
           created_by?: string | null
@@ -3481,6 +3484,13 @@ export type Database = {
           valid_until?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "coupons_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "marketing_campaigns"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "coupons_tenant_id_fkey"
             columns: ["tenant_id"]
