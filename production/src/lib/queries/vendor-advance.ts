@@ -5,6 +5,8 @@
  *     20261025164002): takes up to min(advance left, bill due) from the vendor's advances, oldest
  *     first; no new expense row (the bill is the cost). Settled in full → the bill is paid.
  *   undo_vendor_advance(p_expense_id) — gives the advance back and reopens the bill.
+ * R-1914: the same two calls take a COGS bill (vendor_bills) — billId — so Google's / AWS's
+ *   advance settles their COGS bill (migration 20261026032214); the cost stays COGS.
  * The amounts the toast shows are what the database did.
  */
 "use client";
@@ -35,7 +37,7 @@ export function applyAdvanceWords(r: ApplyAdvanceResult): string {
 function useInvalidateMoney() {
   const qc = useQueryClient();
   return () => {
-    for (const key of [["expenses"], ["prepaid_advances"], ["vendors"], ["vendor-payments"], ["balance-sheet"], ["bank_debit_vendor_open_items"]]) {
+    for (const key of [["expenses"], ["vendor_bills"], ["prepaid_advances"], ["vendors"], ["vendor-payments"], ["balance-sheet"], ["bank_debit_vendor_open_items"]]) {
       qc.invalidateQueries({ queryKey: key });
     }
   };
@@ -44,14 +46,14 @@ function useInvalidateMoney() {
 export function useApplyVendorAdvance() {
   const invalidate = useInvalidateMoney();
   return useMutation({
-    mutationFn: async (input: { expenseId: string; amount?: number | null }): Promise<ApplyAdvanceResult> => {
+    mutationFn: async (input: ({ expenseId: string; billId?: never } | { billId: string; expenseId?: never }) & { amount?: number | null }): Promise<ApplyAdvanceResult> => {
       const { data, error } = await rpc("apply_vendor_advance", {
-        p_source: "expense", p_doc_id: input.expenseId, p_amount: input.amount ?? null,
+        p_source: input.billId ? "vendor_bill" : "expense", p_doc_id: input.billId ?? input.expenseId, p_amount: input.amount ?? null,
       });
       if (error) throw new Error(error.message);
       const r = data as Record<string, unknown>;
       return {
-        expense_id: String(r.expense_id), bill_no: (r.bill_no as string | null) ?? null, vendor_name: String(r.vendor_name ?? ""),
+        expense_id: String(r.expense_id ?? r.doc_id), bill_no: (r.bill_no as string | null) ?? null, vendor_name: String(r.vendor_name ?? ""),
         applied: Number(r.applied) || 0, still_due: Number(r.still_due) || 0, settled: Boolean(r.settled), advance_left: Number(r.advance_left) || 0,
       };
     },
@@ -63,8 +65,9 @@ export function useApplyVendorAdvance() {
 export function useUndoVendorAdvance() {
   const invalidate = useInvalidateMoney();
   return useMutation({
-    mutationFn: async (expenseId: string): Promise<{ given_back: number; bill_no: string | null }> => {
-      const { data, error } = await rpc("undo_vendor_advance", { p_expense_id: expenseId });
+    /* R-1914: an expense id or a COGS bill id — the database finds which. */
+    mutationFn: async (docId: string): Promise<{ given_back: number; bill_no: string | null }> => {
+      const { data, error } = await rpc("undo_vendor_advance", { p_expense_id: docId });
       if (error) throw new Error(error.message);
       const r = data as Record<string, unknown>;
       return { given_back: Number(r.given_back) || 0, bill_no: (r.bill_no as string | null) ?? null };

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   isOpenExpenseBill, expenseBillDue, advanceLeft, vendorBalance, balanceWords, vendorPaymentRows,
   vendorAdvanceLeft, advanceToApply, billAdvanceView, isPartlyPaidExpense, expenseStillOwed,
+  cogsBillAdvanceView, advanceHeadDefault,
 } from "./vendor-account";
 
 const exp = (o: Partial<Parameters<typeof isOpenExpenseBill>[0]> = {}) => ({
@@ -198,5 +199,42 @@ describe("R-1915 — an expense bill paid in parts", () => {
     expect(isPartlyPaidExpense(ps1({ paid_amount: 59000, paid: true }))).toBe(false);
     const v = billAdvanceView(ps1({ amount: 50000, advance_applied: 30000, paid_amount: 5000 }), []);
     expect(v).toMatchObject({ applied: 30000, paidPart: 5000, due: 15000, canUndo: false });
+  });
+});
+
+describe("R-1914 — a COGS vendor's advance on a COGS bill (Bills page)", () => {
+  const adv = (o: Partial<Parameters<typeof vendorAdvanceLeft>[0][number]> = {}) => ({
+    total_amount: 11800, consumed_amount: 0, closed_at: null, vendor_id: "g", vendor_name: "Google Cloud India", category: "COGS-Workspace", ...o,
+  });
+  const bill = (o: Partial<Parameters<typeof cogsBillAdvanceView>[0]> = {}) => ({
+    total: 11800, paid_amount: 0, status: "unpaid", currency: "INR", advance_applied: 0, vendor_id: "g", vendor_name: "Google Cloud India", ...o,
+  });
+  it("Google ₹11,800 advance + ₹11,800 COGS bill → Apply advance ₹11,800 (the COGS head no longer hides it)", () => {
+    expect(cogsBillAdvanceView(bill(), [adv()])).toEqual({ applied: 0, due: 11800, canApply: 11800, canUndo: false });
+  });
+  it("after Apply: paid by the advance, Undo offered, nothing more to apply", () => {
+    expect(cogsBillAdvanceView(bill({ paid_amount: 11800, advance_applied: 11800, status: "paid" }), [adv({ consumed_amount: 11800 })]))
+      .toEqual({ applied: 11800, due: 0, canApply: 0, canUndo: true });
+  });
+  it("part: ₹5,000 advance on an ₹11,800 bill leaves ₹6,800 due", () => {
+    expect(cogsBillAdvanceView(bill({ paid_amount: 5000, advance_applied: 5000, status: "partial" }), [adv({ total_amount: 5000, consumed_amount: 5000 })]))
+      .toEqual({ applied: 5000, due: 6800, canApply: 0, canUndo: true });
+  });
+  it("another vendor's advance, a foreign-currency bill, or a bill without the column → nothing to apply", () => {
+    expect(cogsBillAdvanceView(bill(), [adv({ vendor_id: "aws", vendor_name: "AWS" })]).canApply).toBe(0);
+    expect(cogsBillAdvanceView(bill({ currency: "USD" }), [adv()]).canApply).toBe(0);
+    expect(cogsBillAdvanceView(bill({ advance_applied: undefined }), [adv()])).toMatchObject({ applied: 0, canApply: 11800 });
+  });
+});
+
+describe("R-1914 — the head an advance is saved under (Banking → Paying a vendor?)", () => {
+  it("a COGS vendor keeps its COGS head — not 'Other'", () => {
+    expect(advanceHeadDefault("COGS-Workspace")).toBe("COGS-Workspace");
+    expect(advanceHeadDefault("Professional Services")).toBe("Professional Services");
+  });
+  it("no head, or Salaries → Other", () => {
+    expect(advanceHeadDefault(null)).toBe("Other");
+    expect(advanceHeadDefault("  ")).toBe("Other");
+    expect(advanceHeadDefault("Salaries")).toBe("Other");
   });
 });

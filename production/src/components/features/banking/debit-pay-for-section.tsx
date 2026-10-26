@@ -43,7 +43,7 @@ import type { VendorFocus } from "@/lib/banking/vendor-line-guard";
 import { newVendorFromNarration, tailMismatch, type NewVendorField } from "@/lib/banking/narration-bank-details";
 import { checkBankDetails } from "@/lib/banking/bank-details";
 import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
-import { advanceToApply, vendorAdvanceLeft } from "@/lib/accounting/vendor-account";
+import { advanceHeadDefault, advanceToApply, vendorAdvanceLeft } from "@/lib/accounting/vendor-account";
 import { useApplyVendorAdvance } from "@/lib/queries/vendor-advance";
 
 const NEW_VENDOR = "__new_vendor__";
@@ -51,6 +51,8 @@ const EMPTY_NV = { name: "", gstin: "", pan: "", tdsSection: "", accountNo: "", 
 const FIELD_WORD: Record<NewVendorField, string> = { name: "name", accountNo: "account number", ifsc: "IFSC", upi: "UPI ID" };
 const TDS_SECTIONS = Object.keys(TDS_SECTION_RATES);
 const EXPENSE_CATS = EXPENSE_CATEGORIES.filter((c) => c !== "Salaries");
+/* R-1914: an advance may be for goods (COGS) too — Google, AWS. */
+const ADVANCE_HEADS: readonly string[] = [...EXPENSE_CATS, ...VENDOR_BILL_CATEGORIES];
 
 const selectCls =
   "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
@@ -221,7 +223,8 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
   const pay = usePayVendorFromBankDebit();
   const [result, setResult] = React.useState<VendorPayResult | null>(null);
   React.useEffect(() => { setResult(null); }, [transaction.id]);
-  const advCat = advCategory || (vendor?.default_category && !vendor.default_category.startsWith("COGS-") ? vendor.default_category : "") || "Other";
+  /* R-1914: a COGS vendor's advance keeps its COGS head (set off later against its COGS bill). */
+  const advCat = advCategory || advanceHeadDefault(vendor?.default_category);
   const nothingPicked = pickedItems.length === 0 && !showNew && advance <= 0;
   const canSave = Boolean(vendorName) && !pay.isPending && sum.diff === 0 && !nothingPicked && !newBillBad && starved.length === 0 && !bankBad;
   /* R-1911: the line only matches payments already recorded — the button says so. */
@@ -402,12 +405,13 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
                         {i.in_run && <span className="block text-xs text-amber-ink">In payment run {i.in_run} — mark that run paid instead.</span>}
                       </span>
                     </label>
-                    {/* R-1913: the vendor's advance first — the bank line then pays only the rest. */}
-                    {i.source === "expense" && !i.in_run && advLeft > 0 && advanceToApply(advLeft, cashDue(i, i.tds_amount)) > 0 && (
+                    {/* R-1913: the vendor's advance first — the bank line then pays only the rest.
+                        R-1914: a COGS bill takes it too (Google's / AWS's advance). */}
+                    {(i.source === "expense" || i.source === "vendor_bill") && !i.in_run && advLeft > 0 && advanceToApply(advLeft, cashDue(i, i.tds_amount)) > 0 && (
                       <div className="mt-1.5 pl-6 flex flex-wrap items-center gap-2 text-xs text-ink-2">
                         <span>Advance with vendor {rupee(advLeft)}</span>
                         <Button size="sm" variant="default" loading={applyAdv.isPending}
-                          onClick={() => applyAdv.mutate({ expenseId: i.doc_id })}>
+                          onClick={() => applyAdv.mutate(i.source === "vendor_bill" ? { billId: i.doc_id } : { expenseId: i.doc_id })}>
                           Apply {rupee(advanceToApply(advLeft, cashDue(i, i.tds_amount)))} to this bill
                         </Button>
                       </div>
@@ -538,7 +542,7 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
               <label className="text-xs text-ink-3 space-y-0.5 sm:col-span-2">
                 <span className="block">The advance will be used for</span>
                 <select aria-label="Advance category" value={advCat} onChange={(e) => setAdvCategory(e.target.value)} className={selectCls}>
-                  {EXPENSE_CATS.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {(ADVANCE_HEADS.includes(advCat) ? ADVANCE_HEADS : [advCat, ...ADVANCE_HEADS]).map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </label>
             )}

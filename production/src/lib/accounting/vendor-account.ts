@@ -133,6 +133,50 @@ export function billAdvanceView(
   return { applied, paidPart, due, canApply, canUndo };
 }
 
+export interface CogsBillLike {
+  total: number | null;
+  paid_amount: number | null;
+  status: string | null;
+  currency?: string | null;
+  /** R-1914: the part of paid_amount settled from the vendor's advance. */
+  advance_applied?: number | null;
+  vendor_id: string | null;
+  vendor_name: string | null;
+}
+
+export interface CogsBillAdvanceView {
+  /** Already settled from the advance (inside paid_amount). */
+  applied: number;
+  /** Still owed on the bill: total − paid_amount. */
+  due: number;
+  /** "Apply advance ₹X" — 0 hides it. The database may apply less when 194Q TDS is still due. */
+  canApply: number;
+  /** "Undo advance" — any time an advance is on the bill (the bank parts stay). */
+  canUndo: boolean;
+}
+
+/**
+ * R-1914: the vendor's advance on a COGS bill (Bills page) — same match as apply_vendor_advance
+ * ('vendor_bill', migration 20261026032214). An advance under a COGS head (Google, AWS) counts.
+ */
+export function cogsBillAdvanceView(b: CogsBillLike, advances: readonly VendorAdvanceLike[]): CogsBillAdvanceView {
+  const applied = Math.max(0, Math.round(b.advance_applied ?? 0));
+  const due = b.status === "paid" ? 0 : Math.max(0, Math.round((b.total ?? 0) - (b.paid_amount ?? 0)));
+  const inr = (b.currency ?? "INR").toUpperCase() === "INR";
+  const canApply = inr && due > 0 ? advanceToApply(vendorAdvanceLeft(advances, b.vendor_id, b.vendor_name), due) : 0;
+  return { applied, due, canApply, canUndo: applied > 0 };
+}
+
+/**
+ * R-1914: the head an advance is saved under when the operator picks none — the vendor's own
+ * (a COGS head included: it is set off later against that vendor's COGS bill); 'Other' when the
+ * vendor has none. Same rule as reconcile_bank_debit_to_vendor.
+ */
+export function advanceHeadDefault(vendorDefaultCategory: string | null | undefined): string {
+  const c = (vendorDefaultCategory ?? "").trim();
+  return c && c !== "Salaries" ? c : "Other";
+}
+
 /* ─── Balance ──────────────────────────────────────────────────────────────────────── */
 
 export interface VendorBalance {

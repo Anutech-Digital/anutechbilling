@@ -54,6 +54,12 @@ import { istToday, fyBounds } from "@/lib/dates/ist";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { BILL_SORT, billOutstanding, filterBills, readBillsView, type BillStatusFilter } from "./bills-table";
 import { useAddBillFromUrl } from "./add-from-url";
+import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
+import { cogsBillAdvanceView } from "@/lib/accounting/vendor-account";
+import { useApplyVendorAdvance, useUndoVendorAdvance } from "@/lib/queries/vendor-advance";
+
+/** R-1914: vendor_bills.advance_applied (migration 20261026032214) — not in the generated types yet. */
+type BillWithAdvance = VendorBill & { advance_applied?: number | null };
 
 /** Current financial year (Apr 1 → today), IST-safe, in YYYY-MM-DD. Defaulting
  *  to the FY (not just this month) so a freshly-added bill dated in an earlier
@@ -347,11 +353,14 @@ function AmountCell({ bill: b }: { bill: VendorBill }) {
       : "No GST";
   const fx = foreignAmount(b.currency, b.total, b.fx_rate);
   const due = billOutstanding(b);
+  /* R-1914: the part settled from the vendor's advance (inside paid_amount). */
+  const applied = Math.max(0, (b as BillWithAdvance).advance_applied ?? 0);
   return (
     <div className="whitespace-nowrap">
       <div className="font-semibold text-ink font-mono tabular-nums">{rupee(b.total)}</div>
       {fx && <div className="text-xs font-normal text-ink-3 font-mono">{fx}</div>}
       {gst > 0 && <div className="text-xs text-emerald cursor-help" title={gstTitle}>incl {rupee(gst)} GST</div>}
+      {applied > 0 && <div className="text-xs text-ink-3 tabular-nums">Advance {rupee(applied)} applied</div>}
       {due > 0 && (b.paid_amount ?? 0) > 0 && <div className="text-xs text-rose tabular-nums">{rupee(due)} due</div>}
     </div>
   );
@@ -395,9 +404,21 @@ function BillActions({ bill, onPay, onDelete }: { bill: VendorBill; onPay: () =>
   const [viewer, setViewer] = React.useState(false);
   const fileName = bill.attachment_url ? (bill.attachment_url.split("/").pop() ?? "bill") : null;
   const outstanding = bill.total - (bill.paid_amount ?? 0);
+  /* R-1914: money already with this vendor as an advance (Google, AWS) settles the bill first —
+     that is the right next step, so it takes the primary button; Pay stays under the menu. */
+  const { data: advances } = usePrepaidAdvances();
+  const adv = cogsBillAdvanceView(bill, advances ?? []);
+  const apply = useApplyVendorAdvance();
+  const undo = useUndoVendorAdvance();
   return (
     <div className="flex items-center gap-1.5">
-      {bill.status !== "paid" && outstanding > 0 && (
+      {adv.canApply > 0 ? (
+        <Button size="sm" variant="primary" icon="wallet" loading={apply.isPending}
+          title="Set the money already paid to this vendor as an advance off against this bill"
+          onClick={() => apply.mutate({ billId: bill.id })}>
+          Apply advance {rupee(adv.canApply)}
+        </Button>
+      ) : bill.status !== "paid" && outstanding > 0 && (
         <Button size="sm" variant="primary" icon="rupee" onClick={onPay}>Pay</Button>
       )}
       <DropdownMenu modal={false}>
@@ -419,6 +440,11 @@ function BillActions({ bill, onPay, onDelete }: { bill: VendorBill; onPay: () =>
           {bill.status !== "paid" && outstanding > 0 && (
             <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onPay}>
               <Icon name="rupee" size={15} /> Record payment
+            </DropdownMenuItem>
+          )}
+          {adv.canUndo && (
+            <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" disabled={undo.isPending} onClick={() => undo.mutate(bill.id)}>
+              <Icon name="refresh" size={15} /> Undo advance {rupee(adv.applied)}
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />

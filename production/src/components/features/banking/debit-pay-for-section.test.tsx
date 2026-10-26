@@ -294,15 +294,36 @@ describe("R-1913 DebitPayForSection — the vendor's advance on an expense bill"
     expect(state.applyAdvance).toHaveBeenCalledWith({ expenseId: "EV1" });
   });
 
-  it("no advance with the vendor, or a COGS bill: nothing offered", () => {
+  it("no advance with the vendor: nothing offered", () => {
     state.items.v1 = [exp({})];
     render(<DebitPayForSection transaction={txn(59000, "IMPS SHARMA ASSOCIATES")} onDone={() => {}} />);
     expect(screen.queryByText(/Advance with vendor/)).toBeNull();
-    cleanup();
+  });
+});
+
+/* R-1914 (R-1906 audit B4): Google Cloud India (COGS-Workspace) — its advance keeps the COGS
+   head and is applied to its COGS bill (vendor_bills), not booked as an 'Other' expense. */
+describe("R-1914 DebitPayForSection — a COGS vendor's advance", () => {
+  it("Google's advance is offered on Google's COGS bill and applied to the bill (vendor_bill)", () => {
     state.items.v2 = [G2];
-    state.advances = [{ vendor_id: "v2", vendor_name: "Google Cloud India", total_amount: 5000, consumed_amount: 0, closed_at: null, category: "Other" }];
-    render(<DebitPayForSection transaction={txn(23600, "NEFT GOOGLE")} onDone={() => {}} />);
-    expect(screen.queryByText(/Advance with vendor/)).toBeNull();
+    state.advances = [{ vendor_id: "v2", vendor_name: "Google Cloud India", total_amount: 5000, consumed_amount: 0, closed_at: null, category: "COGS-Workspace" }];
+    render(<DebitPayForSection transaction={txn(18600, "NEFT GOOGLE")} onDone={() => {}} />);
+    expect(screen.getByText("Advance with vendor ₹5,000")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Apply ₹5,000 to this bill" }));
+    expect(state.applyAdvance).toHaveBeenCalledWith({ billId: "B2" });
+  });
+
+  it("₹11,800 to Google with no bill yet → advance saved under COGS-Workspace (was 'Other')", async () => {
+    state.pay.mockResolvedValue(result({ vendor_name: "Google Cloud India", advance: { id: "a1", amount: 11800, category: "COGS-Workspace" } }));
+    render(<DebitPayForSection transaction={txn(11800, "NEFT GOOGLE CLOUD INDIA ADV")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Vendor paid"), { target: { value: "v2" } });
+    expect((screen.getByLabelText("Advance to vendor") as HTMLInputElement).value).toBe("11800");
+    const head = screen.getByLabelText("Advance category") as HTMLSelectElement;
+    expect(head.value).toBe("COGS-Workspace");
+    expect(Array.from(head.options).map((o) => o.value)).toContain("COGS-Other");
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0]).toMatchObject({ vendorId: "v2", advance: 11800, advanceCategory: "COGS-Workspace" });
   });
 });
 
