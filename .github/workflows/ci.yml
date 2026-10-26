@@ -35,9 +35,16 @@ on:
 # One group per workflow + ref (a PR's ref is refs/pull/N/merge, so per PR): a newer push
 # cancels the older run. main/deploy are NOT cancelled — each commit there keeps its own result.
 # Which checks run is unchanged; tests/ops/ci-workflow.test.ts pins all of this.
+# ─── R-1989 (26 Oct 2026): manager-pardeep NO LONGER CANCELS ITS RUNNING RUN ──
+# Measured 26 Oct 13:28–14:21Z: CI takes ~29 min and workers pushed manager-pardeep faster
+# than that, so every run was cancelled by the next push (ea8c4fe4, dd1e6be2, 87556d8c,
+# 7a2eb9e6, 8997ff58) — no run finished in ~53 min and `worker-lock ci` kept timing out.
+# Now manager-pardeep is treated like main/deploy: the running run finishes, GitHub keeps
+# only the NEWEST pending run (older pending ones are still dropped), and that run tests
+# every commit pushed meanwhile. All other branches/PRs still cancel as before.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/deploy' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/deploy' && github.ref != 'refs/heads/manager-pardeep' }}
 jobs:
   checks:
     runs-on: ubuntu-latest

@@ -16,12 +16,31 @@ type Workflow = { concurrency: { group: string; "cancel-in-progress": string | b
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const wf = yaml.load(readFileSync(`${root}.github/workflows/ci.yml`, "utf8")) as Workflow;
 
+describe("sql-tests.yml — R-1989 manager-pardeep keeps its running run", () => {
+  const sql = yaml.load(readFileSync(`${root}.github/workflows/sql-tests.yml`, "utf8")) as Workflow;
+  it("cancels older runs on every ref except manager-pardeep (main/deploy behaviour unchanged)", () => {
+    expect(sql.concurrency.group).toBe("sql-tests-${{ github.ref }}");
+    expect(String(sql.concurrency["cancel-in-progress"])).toBe("${{ github.ref != 'refs/heads/manager-pardeep' }}");
+  });
+});
+
 describe("ci.yml — R-1593 cost controls", () => {
   it("one concurrency group per workflow + ref, cancelling older runs except on main/deploy", () => {
     expect(wf.concurrency.group).toBe("ci-${{ github.workflow }}-${{ github.ref }}");
     const cancel = String(wf.concurrency["cancel-in-progress"]);
     expect(cancel).toContain("github.ref != 'refs/heads/main'");
     expect(cancel).toContain("github.ref != 'refs/heads/deploy'");
+  });
+
+  /* R-1989 (26 Oct 2026): 13:28–14:21Z every manager-pardeep run was cancelled by the next push
+     (CI takes ~29 min, pushes came faster) — no run finished and `worker-lock ci` timed out.
+     manager-pardeep now keeps its running run like main/deploy; GitHub keeps only the newest
+     pending one, which then tests every commit pushed meanwhile. */
+  it("R-1989: a running CI on manager-pardeep is never cancelled; other branches unchanged", () => {
+    const cancel = String(wf.concurrency["cancel-in-progress"]);
+    expect(cancel).toBe(
+      "${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/deploy' && github.ref != 'refs/heads/manager-pardeep' }}",
+    );
   });
 
   it("every job has a timeout of at most 30 minutes", () => {

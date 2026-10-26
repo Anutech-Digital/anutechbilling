@@ -45,9 +45,13 @@ on:
 permissions:
   contents: read
 
+# R-1989 (26 Oct 2026): same problem as ci.yml — on manager-pardeep each push cancelled the
+# running SQL run (13:28–14:21Z no run finished; `worker-lock ci` waits on this one too). There
+# the running run now finishes and only the newest pending run is kept. Every other ref
+# (main/deploy included) cancels exactly as before.
 concurrency:
   group: sql-tests-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/manager-pardeep' }}
 
 jobs:
   sql-tests:
