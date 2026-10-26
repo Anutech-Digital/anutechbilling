@@ -13,7 +13,7 @@
  * app's own TDS config — the section's rate in tds-rates.ts and the thresholds in tdsDecision
  * (tds-deductor.ts) — never from numbers here.
  *
- *   guessVendor        — the payee, from the narration (UPI id, account no., a name word)
+ *   guessVendor        — the payee: UPI id → account no (or its masked tail) → Category Rule → learned alias → name words (R-1919)
  *   planTds            — TDS per selected expense bill (the rows' own TDS, else the section's)
  *   allocateOldestFirst— the bank amount spread over the picked bills, oldest first
  *   preselect          — the bill(s) the debit pays exactly (or exactly after TDS)
@@ -25,6 +25,9 @@ import { customerNameTokens, narrationNames } from "@/lib/accounting/credit-matc
 import { tdsDecision, panFromGstin } from "@/lib/accounting/tds-deductor";
 import { rupee, formatDate } from "@/lib/utils";
 import { cleanAccountNo, cleanIfsc } from "@/lib/banking/bank-details";
+import { categoriseByRules, type CategoryRule } from "@/lib/banking/categorise";
+import { narrationKey } from "@/lib/banking/narration-key";
+import { bankDetailsFromNarration } from "@/lib/banking/narration-bank-details";
 
 /* ─── Vendors ────────────────────────────────────────────────────────────────────────── */
 
@@ -39,29 +42,88 @@ export interface VendorLite {
   default_category?: string | null;
 }
 
-export interface VendorGuess { vendorId: string; reason: string }
+export type VendorGuessStep = "upi" | "account" | "account_tail" | "rule" | "alias" | "name";
+export interface VendorGuess { vendorId: string; reason: string; step: VendorGuessStep }
+
+/** R-1919: a learned "narration key → vendor" (vendor_narration_aliases, written by the database on
+ *  every vendor-payment save from a bank line). */
+export interface VendorAlias { narration_key: string; vendor_id: string }
+
+export interface GuessExtras {
+  /** The company's Category Rules (txn_category_rules). */
+  rules?: readonly CategoryRule[];
+  /** The company's learned aliases. */
+  aliases?: readonly VendorAlias[];
+}
+
+const letters = (s: string | null | undefined) => (s ?? "").toUpperCase().replace(/[^A-Z]/g, "");
+
+/** R-1919: the vendors a Category Rule's pattern names — "FACEBK" → "Facebook…" (the first five
+ *  letters start the name, as the expense form always read it), or "PAYUFACEBOOK" → a vendor
+ *  whose first name word (4+ letters) is inside the pattern. */
+export function vendorsForRule(pattern: string, vendors: readonly VendorLite[]): VendorLite[] {
+  const p = letters(pattern);
+  if (p.length < 4) return [];
+  const key = p.slice(0, 5);
+  return vendors.filter((v) => {
+    if (letters(v.name).startsWith(key)) return true;
+    const first = customerNameTokens(v.name)[0];
+    return !!first && first.length >= 4 && p.includes(first.toUpperCase());
+  });
+}
 
 /**
- * Who was paid. Only an unambiguous answer: the vendor's UPI id or bank account number in the
- * narration (strong), else a narration word shared with exactly ONE vendor's name. Two vendors
- * → no guess; paying the wrong vendor's bills is worse than asking.
+ * Who was paid — R-1919: ONE order, the same as the database's bank_debit_vendor_guess (which
+ * auto-reconcile uses), so the sheet and auto-reconcile can never disagree:
+ *   1. the vendor's UPI id in the narration
+ *   2. the vendor's bank account number in the narration — or, below it, the masked tail ("XXXX4521")
+ *   3. the Category Rule that matches the line names the vendor
+ *   4. learned alias — this narration key was matched to the vendor before
+ *   5. a narration word shared with exactly ONE vendor's name (most shared words wins)
+ * Each step answers only when exactly one vendor fits; two → that step says nothing and the next
+ * one is asked. Nobody → no guess: paying the wrong vendor's bills is worse than asking.
  */
 export function guessVendor(
-  txn: { description: string | null; reference?: string | null },
+  txn: { description: string | null; reference?: string | null; debit?: number | null },
   vendors: readonly VendorLite[],
+  extras: GuessExtras = {},
 ): VendorGuess | null {
   const text = `${txn.description ?? ""} ${txn.reference ?? ""}`;
   const lower = text.toLowerCase();
   const digits = text.replace(/[^0-9]/g, " ");
 
-  const byUpi = vendors.filter((v) => v.upi_id && lower.includes(v.upi_id.trim().toLowerCase()));
-  if (byUpi.length === 1) return { vendorId: byUpi[0].id, reason: `the bank line has their UPI id ${byUpi[0].upi_id}` };
+  const byUpi = vendors.filter((v) => v.upi_id && v.upi_id.trim() && lower.includes(v.upi_id.trim().toLowerCase()));
+  if (byUpi.length === 1) return { vendorId: byUpi[0].id, reason: `the bank line has their UPI id ${byUpi[0].upi_id}`, step: "upi" };
 
   const byAcct = vendors.filter((v) => {
     const a = (v.bank_account_no ?? "").replace(/[^0-9]/g, "");
     return a.length >= 6 && digits.split(/\s+/).some((d) => d.length >= 6 && (a.endsWith(d) || d.endsWith(a)));
   });
-  if (byAcct.length === 1) return { vendorId: byAcct[0].id, reason: "the bank line has their account number" };
+  if (byAcct.length === 1) return { vendorId: byAcct[0].id, reason: "the bank line has their account number", step: "account" };
+
+  /* R-1919: a masked account ("XXXXXX4521") shows only its last digits — R-1918's parser reads
+     them; one vendor whose saved account ends with them (4+ digits) is a match. */
+  const tail = bankDetailsFromNarration(txn.description).accountTail;
+  if (tail && tail.length >= 4) {
+    const byTail = vendors.filter((v) => {
+      const a = (v.bank_account_no ?? "").replace(/[^0-9]/g, "");
+      return a.length >= 6 && a.endsWith(tail);
+    });
+    if (byTail.length === 1) return { vendorId: byTail[0].id, reason: `the bank line shows their account ending ${tail}`, step: "account_tail" };
+  }
+
+  const rule = categoriseByRules({ description: txn.description, debit: Math.max(1, txn.debit ?? 1), credit: 0 }, extras.rules ?? []);
+  if (rule) {
+    const byRule = vendorsForRule(rule.rule.pattern, vendors);
+    if (byRule.length === 1) return { vendorId: byRule[0].id, reason: `your Category Rule “${rule.rule.pattern.trim()}”`, step: "rule" };
+  }
+
+  const key = narrationKey(txn.description);
+  if (key) {
+    const known = new Set(vendors.map((v) => v.id));
+    const byAlias = [...new Set((extras.aliases ?? []).filter((a) => a.narration_key === key && known.has(a.vendor_id)).map((a) => a.vendor_id))];
+    if (byAlias.length === 1) return { vendorId: byAlias[0], reason: "your last payment to this vendor", step: "alias" };
+  }
 
   /* Name words: the vendor sharing the MOST distinctive words wins, only when no other vendor
      shares as many ("Kapoor Legal Associates" over "Kapoor Stationers" for "KAPOOR LEGAL…"). */
@@ -71,7 +133,7 @@ export function guessVendor(
     .filter((h) => h.shared.length > 0)
     .sort((a, b) => b.shared.length - a.shared.length);
   if (hits.length > 0 && (hits.length === 1 || hits[0].shared.length > hits[1].shared.length)) {
-    return { vendorId: hits[0].v.id, reason: `the bank line says “${hits[0].shared.join(" ")}”` };
+    return { vendorId: hits[0].v.id, reason: `the bank line says “${hits[0].shared.join(" ")}”`, step: "name" };
   }
   return null;
 }

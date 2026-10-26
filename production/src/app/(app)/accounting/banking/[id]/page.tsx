@@ -80,6 +80,8 @@ import { reconcileCoverage } from "@/lib/banking/reconcile-coverage";
 import { revealTxn } from "@/lib/banking/txn-deep-link";
 import { guessVendor, type VendorLite } from "@/lib/banking/debit-pay-for";
 import { useVendors } from "@/lib/queries/vendors";
+import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
+import { useVendorNarrationAliases } from "@/lib/queries/bank-debit-pay-for";
 import { BankFilterBar, type ImportOption } from "@/components/features/banking/bank-filter-bar";
 import { ReconcileCoverageTile } from "@/components/features/banking/reconcile-coverage-tile";
 import { downloadCSV } from "@/lib/csv";
@@ -183,13 +185,17 @@ export default function BankAccountDetailPage() {
      same guess the Reconcile sheet pre-fills) finds nobody — and not a salary line (Salary lines
      has its own button). Same vendor list query as the sheet, so it is read once. */
   const { data: vendorRows } = useVendors();
+  /* R-1919: the one guess order — Category Rules and learned aliases count too. */
+  const { data: guessRules } = useTxnCategoryRules();
+  const { data: guessAliases } = useVendorNarrationAliases();
   const noVendorIds = React.useMemo(() => {
     const salaryIds = new Set(salaryLines.map((l) => l.txn.id));
     const vendors = (vendorRows ?? []) as unknown as VendorLite[];
+    const extras = { rules: guessRules ?? [], aliases: guessAliases ?? [] };
     return new Set((transactions ?? [])
-      .filter((t) => t.matched_to_type === null && t.debit > 0 && !salaryIds.has(t.id) && guessVendor(t, vendors) === null)
+      .filter((t) => t.matched_to_type === null && t.debit > 0 && !salaryIds.has(t.id) && guessVendor(t, vendors, extras) === null)
       .map((t) => t.id));
-  }, [transactions, salaryLines, vendorRows]);
+  }, [transactions, salaryLines, vendorRows, guessRules, guessAliases]);
 
   /* The Imports list (R-1623) — "Statement file" filter: which lines each import brought in. */
   const { data: importRows } = useBankImportHistory(accountId);

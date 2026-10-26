@@ -19,6 +19,8 @@ const state = vi.hoisted(() => ({
   setBuyer: vi.fn(),
   advances: [] as unknown[],
   applyAdvance: vi.fn(),
+  aliases: [] as Array<{ narration_key: string; vendor_id: string }>,
+  rules: [] as unknown[],
 }));
 
 vi.mock("@/lib/queries/vendors", () => ({
@@ -40,7 +42,10 @@ vi.mock("@/lib/queries/bank-debit-pay-for", () => ({
   usePayVendorFromBankDebit: () => ({ mutateAsync: state.pay, isPending: false }),
   useVendor194q: (id: string | null) => ({ data: id ? state.q194[id] ?? [] : undefined }),
   useSet194qBuyer: () => ({ mutate: state.setBuyer, isPending: false }),
+  useVendorNarrationAliases: () => ({ data: state.aliases }),
 }));
+/* R-1919: the one guess order reads the Category Rules and the learned aliases too. */
+vi.mock("@/lib/queries/txn-category-rules", () => ({ useTxnCategoryRules: () => ({ data: state.rules }) }));
 
 /* R-1913: the vendor's advance (Prepaid) and "Apply advance". */
 vi.mock("@/lib/queries/prepaid-advances", () => ({ usePrepaidAdvances: () => ({ data: state.advances }) }));
@@ -57,6 +62,29 @@ beforeEach(() => {
   state.fy = { base: 70800 - 10800, baseWithoutTds: 60000 };   // the two unpaid bills ARE the year so far
   state.items = {};
   state.q194 = {};
+  state.aliases = [];
+  state.rules = [];
+});
+
+describe("R-1919 DebitPayForSection — one vendor guess, learned from the last payment", () => {
+  it("a payee picked by hand once is chosen on the next line, and says so", () => {
+    const line = txn(25000, "IMPS-612256082222-RK INFRA-FINO-XXXX6722-RENT OCT");
+    render(<DebitPayForSection transaction={line} onDone={() => {}} />);
+    expect((screen.getByLabelText("Vendor paid") as HTMLSelectElement).value).toBe("");   // nobody guessed yet
+    cleanup();
+    state.aliases = [{ narration_key: "rk infra", vendor_id: "v1" }];                    // what the save taught
+    render(<DebitPayForSection transaction={line} onDone={() => {}} />);
+    expect((screen.getByLabelText("Vendor paid") as HTMLSelectElement).value).toBe("v1");
+    expect(screen.getByText(/Learned from your last payment to this vendor — change it if wrong./)).toBeTruthy();
+  });
+
+  it("a Category Rule names the vendor before a learned alias (the order auto-reconcile uses)", () => {
+    state.rules = [{ id: "r1", pattern: "PAYUGOOGLE", category: "Advertising", direction: "debit" }];
+    state.aliases = [{ narration_key: "payugoogle", vendor_id: "v1" }];
+    render(<DebitPayForSection transaction={txn(5000, "K4UHU5ENAJ52FPOTCU/PAYUGOOGLE")} onDone={() => {}} />);
+    expect((screen.getByLabelText("Vendor paid") as HTMLSelectElement).value).toBe("v2");
+    expect(screen.getByText(/Guessed from your Category Rule “PAYUGOOGLE”/)).toBeTruthy();
+  });
 });
 
 const txn = (debit: number, description: string): BankTransactionRow => ({
