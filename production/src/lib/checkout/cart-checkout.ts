@@ -210,7 +210,7 @@ function repriceLine(sku: string | undefined, cycle: string | undefined, qty: nu
   return null;
 }
 
-type DomainPricing =
+export type DomainPricing =
   /* testPrice: R-1769 — priced from the laptop-only TEST list (lib/domains/test-prices.ts). */
   | { ok: true; line: QuoteLine; firstYear: number; testPrice: boolean }
   | { ok: false; reason: string };
@@ -240,8 +240,9 @@ export function bundledDomainRate(termRate: number, firstYear: number): number {
  * available with a known price for its term at this moment. R-156: the term
  * (`years`, default 1) is priced from the registry's own N-year total; a term the
  * registry does not price is refused, never extrapolated from the 1-year price.
+ * Exported (R-1977): the Workspace checkout prices its "I need a new domain" line here too.
  */
-async function priceDomainLines(
+export async function priceDomainLines(
   lines: { sku?: string; label?: string; qty: number; domain?: string; years?: number }[],
 ): Promise<Map<number, DomainPricing>> {
   const out = new Map<number, DomainPricing>();
