@@ -27,7 +27,7 @@ import { TabBar } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Icon } from "@/components/ui/icon";
-import { useItems } from "@/lib/queries/items";
+import { useItems, useLoadDefaultCatalog } from "@/lib/queries/items";
 import { billingUnitOf, defaultQtyForUnit, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { headlinePrice, headlineSuffix, isOwnService } from "@/lib/catalog/headline-price";
 import { catalogYearlyPrice, commitmentForUnit } from "@/lib/quotes/catalog-line";
@@ -77,6 +77,10 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
   const usdEntry = isUsd && !!fx;
   const entryCur = usdEntry ? (currency ?? "USD") : "₹";
   const { data: allItems, isLoading } = useItems();
+  // R-1928: an empty catalogue loads the standard price list in place — the same loader as
+  // /items and /setup. It only invalidates ["items"]; the dialog stays open, so the quote
+  // underneath is untouched and the plans appear here to be picked.
+  const loadCatalog = useLoadDefaultCatalog();
   // Subscription quote line picker — exclude one-time (Items Catalog) products.
   // R-387: rows are floored to the GW list price here too, so the price SHOWN in this picker is
   // the price the line gets (catalogYearlyPrice floors as well) and matches the quote chips.
@@ -223,8 +227,23 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
               ) : (items?.length ?? 0) === 0 ? (
                 <EmptyState
                   icon="package"
-                  title="No items in catalog"
-                  body="Add items via /items page first, then come back to build a quote."
+                  title="Your catalog is empty"
+                  body="Load the standard price list (Google Workspace, Microsoft 365, Zoho) to pick a plan, or add your own item for this quote."
+                  action={
+                    <Button
+                      variant="primary"
+                      icon="package"
+                      loading={loadCatalog.isPending}
+                      onClick={() => loadCatalog.mutate()}
+                    >
+                      Load standard price list
+                    </Button>
+                  }
+                  secondary={
+                    <Button icon="plus" onClick={() => setTab("custom")}>
+                      Add my own item
+                    </Button>
+                  }
                   compact
                 />
               ) : filtered.length === 0 ? (
