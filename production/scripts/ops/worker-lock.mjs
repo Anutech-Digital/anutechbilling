@@ -261,7 +261,7 @@ function tscWithTurn(card, { full = false } = {}) {
       }
       const t0 = Date.now();
       try { sh(step, tscEnv()); }
-      catch (e) { console.error(`✗ ${step} fail:\n` + String(e.stdout ?? "").slice(0, 2000) + String(e.stderr ?? "").slice(-800)); return false; }
+      catch (e) { console.error(`✗ ${step} fail (${((Date.now() - t0) / 1000).toFixed(1)} s):\n` + String(e.stdout ?? "").slice(0, 2000) + String(e.stderr ?? "").slice(-800)); return false; }
       console.log(`  ${step}: ${((Date.now() - t0) / 1000).toFixed(1)} s`);
     }
     if (!full) { const w = saveBuildInfo(root); if (!w.saved) console.log(`  (tsc cache save nahi hua: ${w.reason})`); }

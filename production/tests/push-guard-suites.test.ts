@@ -63,7 +63,7 @@ describe("push guard suites (R-385)", () => {
   it("worker-lock push runs the guard after tsc and refuses the push on failure", () => {
     const src = fs.readFileSync(path.join(root, "scripts/ops/worker-lock.mjs"), "utf8");
     const push = src.slice(src.indexOf("async function pushWithTurn"));
-    const tsc = push.indexOf("tscWithTurn(card)");
+    const tsc = push.indexOf("tscWithTurn(card"); // R-1960: tscWithTurn(card, { full: ciFlags.fullTsc })
     const guard = push.indexOf("runGuardSuites(card)");
     const gitPush = push.indexOf("git push");
     expect(tsc).toBeGreaterThan(0);
