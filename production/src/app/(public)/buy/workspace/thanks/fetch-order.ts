@@ -70,8 +70,14 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
     .limit(1)
     .maybeSingle();
 
+  /* R-1977: a new domain bought with this order — its line carries the registrant. */
+  const newDomain = Array.isArray(data.line_items)
+    ? ((data.line_items as { domain?: unknown; registrant?: unknown }[]).find((l) => typeof l?.domain === "string" && l.registrant && typeof l.registrant === "object")?.domain as string | undefined) ?? null
+    : null;
+
   return {
     quoteId:        data.id,
+    newDomain,
     invoiceNumber:  (inv as { id?: string } | null)?.id ?? null,
     customerName:   data.customer_name ?? "",
     tierName,

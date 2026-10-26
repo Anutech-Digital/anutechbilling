@@ -156,9 +156,11 @@ describe("R-1971 inline checkout → the same route", { timeout: 60_000 }, () =>
     expect(quoteRow().line_items[0]).toMatchObject({ qty: 2, rate: 1300, commitment: "monthly" });
   });
 
-  it("a new domain to register → the lead note tells the team to register it and call", async () => {
-    await post({ domain: "ravitraders.co.in", domainNew: true });
-    expect(String(leadRow().notes)).toMatch(/Domain: ravitraders\.co\.in — NEW: register it for the buyer and call them/);
+  /* R-1977: an ANNUAL new domain is now priced live and bought with the order
+     (route.domain-r1977.test.ts); a MONTHLY order still hands it to the team, billed separately. */
+  it("a new domain on a monthly order → the lead note tells the team to register it and bill it separately", async () => {
+    await post({ domain: "ravitraders.co.in", domainNew: true, commitment: "monthly" });
+    expect(String(leadRow().notes)).toMatch(/Domain: ravitraders\.co\.in — NEW, monthly order: register it for the buyer and bill it separately/);
     // The customer's quote/PDF notes do not carry the internal instruction.
     expect(String(quoteRow().notes)).not.toMatch(/NEW: register/);
   });

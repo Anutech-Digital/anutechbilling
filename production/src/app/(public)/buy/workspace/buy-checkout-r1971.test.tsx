@@ -114,8 +114,11 @@ describe("R-1971 inline checkout", () => {
     expect(calls.some((c) => c.url === "/api/public/checkout/workspace")).toBe(false);
   });
 
-  it("step 1 needs a domain; 'I need a new domain' sends name + ending as a new domain", async () => {
+  /* R-1977: on ANNUAL a new domain is searched live and bought with the order (new-domain-r1977
+     .test.tsx); on MONTHLY the name + ending go to the team, billed separately — as here. */
+  it("step 1 needs a domain; on Monthly 'I need a new domain' sends name + ending as a new domain", async () => {
     page({ initialTierId: "starter", initialSeats: 1 });
+    fireEvent.click(screen.getAllByRole("button", { name: "Monthly" })[0]);
     fireEvent.click(within(checkout()).getByRole("button", { name: "Continue" }));
     expect(within(checkout()).getByText("Enter a domain like yourcompany.in")).toBeTruthy();
     fireEvent.click(within(checkout()).getByRole("radio", { name: /I need a new domain/ }));

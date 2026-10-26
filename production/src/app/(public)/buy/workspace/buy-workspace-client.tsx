@@ -23,7 +23,7 @@ import { SiteHeader } from "./_parts/site-header";
 import { Hero } from "./_parts/hero";
 import { PlanCards, CompareTable } from "./_parts/plan-cards";
 import { WhyUs, AfterYouPay, Faq, SupportBand, SiteFooter, TestModeBar } from "./_parts/info-sections";
-import { Checkout } from "./_parts/checkout";
+import { Checkout, canPayOnline } from "./_parts/checkout";
 import { SamePrice } from "./_parts/same-price";
 import { InvoicePreview, PhoneBar } from "./_parts/order-summary";
 import { orderTotals } from "./_parts/checkout-form";
@@ -428,7 +428,7 @@ function BuyWorkspaceBody({
   })() : null;
   const promo = promoOff > 0 ? { label: promoLabel, off: promoOff } : null;
 
-  const co = useCheckout({ planId: plan.id, seats, sum, promoOff });
+  const co = useCheckout({ planId: plan.id, seats, sum, promoOff, billing, canBuy: canPayOnline(plan, seats, sum, onlinePay) });
 
   const goCheckout = () => goTo("checkout", { instant: true });
   /* R-1975: every buy button (header Buy now, Continue to checkout, a plan's Choose, the phone
