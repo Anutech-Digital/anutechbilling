@@ -14,6 +14,7 @@ import { DomainYears } from "@/site/components/cart/DomainYears";
 import { BundleNote, LinePrice } from "@/site/components/cart/LinePrice";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
 import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
+import { cartCheckoutHref, isWorkspaceLine } from "./workspace-line";
 
 export function CartDrawer() {
   const cart = useCart();
@@ -22,8 +23,12 @@ export function CartDrawer() {
 
   const t = cart.totals;
   const hostingWarning = hostingLimitWarning(cart.lines);
-  const cta =
-    cart.lines.length === 1
+  /* R-1966: a Google Workspace line is paid in its own Buy now dialog (workspace-line.ts). */
+  const checkoutHref = cartCheckoutHref(cart.lines);
+  const workspaceFirst = checkoutHref !== "/checkout" && cart.lines.some((l) => !isWorkspaceLine(l));
+  const cta = workspaceFirst
+    ? "Checkout · Google Workspace first"
+    : cart.lines.length === 1
       ? `Checkout · ${rupee(t.payable)}`
       : `Checkout ${cart.lines.length} items · ${rupee(t.payable)}`;
 
@@ -124,12 +129,17 @@ export function CartDrawer() {
               {hostingWarning}
             </div>
           )}
+          {workspaceFirst && (
+            <div className="meta" style={{ marginTop: 10 }}>
+              Google Workspace is paid on its own step. Your other items stay in the cart for checkout after it.
+            </div>
+          )}
           <button
             className="btn btn-primary"
             style={{ width: "100%", marginTop: 10 }}
             onClick={() => {
               cart.closeDrawer();
-              router.push("/checkout" as never);
+              router.push(checkoutHref as never);
             }}
           >
             {cta}

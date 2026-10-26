@@ -49,6 +49,13 @@ import {
   SHOW_PREMIER_PARTNER, PARTNER_LINE, PARTNER_BADGE, PARTNER_SHORT,
 } from "@/site/lib/config";
 import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
+/* R-1966: the website's ONE cart (header badge + drawer) — the same provider the (marketing) site uses. */
+import "@/site/site.css";
+import { CartProvider, useCart } from "@/site/components/cart/CartProvider";
+import { CartDrawer } from "@/site/components/cart/CartDrawer";
+import { HeaderCartLink } from "@/site/components/cart/HeaderCartLink";
+import { workspaceCartLine } from "@/site/components/cart/workspace-line";
+import { BUY_TIERS } from "@/lib/checkout/buy-link";
 
 // ──────────────────────────────────────────────────────────────────────
 // Site promo — fetched from /api/public/site-promo/current. Updates as
@@ -744,15 +751,15 @@ function FounderHero({ waMessage }: { waMessage: string }) {
 
         {WHATSAPP_READY ? (
           <>
-            {/* Dominant WhatsApp button — the page's primary action */}
+            {/* R-1966: a secondary (outlined) WhatsApp button — "Buy now" is the page's main action. */}
             <a
               href={whatsappLink(waMessage)}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2.5 w-full py-3.5 rounded-xl font-medium text-paper text-base transition-transform hover:scale-[1.02] mb-2.5"
-              style={{ background: "#25D366", boxShadow: "0 10px 24px rgba(37,211,102,0.30)" }}
+              className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl font-medium text-ink text-base bg-white border-2 transition-colors hover:bg-paper-2 mb-2.5"
+              style={{ borderColor: "#25D366" }}
             >
-              <Icon name="whatsapp" size={20} className="text-paper" />
+              <Icon name="whatsapp" size={20} style={{ color: "#25D366" }} />
               WhatsApp {phoneDisplay()}
             </a>
 
@@ -768,9 +775,9 @@ function FounderHero({ waMessage }: { waMessage: string }) {
         ) : (
           <a
             href={`mailto:${COMPANY.supportEmail}?subject=${encodeURIComponent("Google Workspace quote")}&body=${encodeURIComponent(waMessage)}`}
-            className="flex items-center justify-center gap-2.5 w-full py-3.5 rounded-xl font-medium text-paper text-base bg-ink mb-2.5"
+            className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl font-medium text-ink text-base bg-white border-2 border-hairline hover:bg-paper-2 transition-colors mb-2.5"
           >
-            <Icon name="mail" size={20} className="text-paper" />
+            <Icon name="mail" size={20} />
             Email {COMPANY.supportEmail}
           </a>
         )}
@@ -1209,7 +1216,25 @@ function GoogleCalendarIcon({ size = 32 }: { size?: number }) {
 // ──────────────────────────────────────────────────────────────────────
 // Page
 // ──────────────────────────────────────────────────────────────────────
-export function BuyWorkspaceClient({
+type BuyWorkspaceProps = Parameters<typeof BuyWorkspaceBody>[0];
+
+/**
+ * R-1966: the page inside the website cart — "Add to cart" puts the edition + users in the same
+ * cart as hosting and domains (header badge, drawer); the drawer is drawn in the site's own
+ * styles (`.anutech-site`), as on every (marketing) page.
+ */
+export function BuyWorkspaceClient(props: BuyWorkspaceProps) {
+  return (
+    <CartProvider>
+      <BuyWorkspaceBody {...props} />
+      <div className="anutech-site">
+        <CartDrawer />
+      </div>
+    </CartProvider>
+  );
+}
+
+function BuyWorkspaceBody({
   catalogItems = [],
   paymentMode = "simulation",
   initialTierId,
@@ -1276,6 +1301,22 @@ export function BuyWorkspaceClient({
   const [seats, setSeats] = React.useState<number>(initialSeats ?? 10);
   const selectedTierObj = TIERS.find((t) => t.id === selectedTierId) ?? TIERS[0];
   const calc = React.useMemo(() => calcForTier(selectedTierObj, seats), [selectedTierObj, seats]);
+  /* R-1966: "Buy now" is the page's main action everywhere. It opens the Buy now dialog (the
+     one way to pay for Workspace — the server prices it from the catalogue). With online
+     payment off (production before Razorpay go-live) it is honest about it: the button says
+     "Get a GST quote" and opens the quote form on the same edition and users (R-157). */
+  const cart = useCart();
+  const canPayOnline = (t: Tier) => onlineBuyEnabled && t.annualPrice != null;
+  const buyLabel = (t: Tier) => (canPayOnline(t) ? "Buy now" : "Get a GST quote");
+  const buy = (t: Tier) => (canPayOnline(t) ? setBuyNowTier(t) : setSelectedTier(t));
+  /* "Add to cart" — any edition with a public annual price, in every payment mode (the cart's
+     Checkout brings the visitor back to this dialog, or the quote form while payment is off). */
+  const canCart = (t: Tier) =>
+    t.annualPrice != null && !isPublicPriceHiddenTier(t.id) && (BUY_TIERS as readonly string[]).includes(t.id);
+  const addToCart = (t: Tier) => {
+    if (!canCart(t) || t.annualPrice == null) return;
+    cart.add(workspaceCartLine({ tierId: t.id, tierName: t.name, seats, ratePerUserMonth: t.promoPrice ?? t.annualPrice }));
+  };
   /* Arrived from "Buy now": open the Razorpay dialog once, on that edition — only when this
      page can actually take the payment and the edition has an annual online price. */
   const openedFromCard = React.useRef(false);
@@ -1337,9 +1378,12 @@ export function BuyWorkspaceClient({
           >
             <span style={{ fontSize: 11 }}>★</span> {PARTNER_BADGE}
           </div>
-          <Button asChild variant="primary" size="sm">
-            <a href="#enquiry">Get started</a>
-          </Button>
+          <div className="flex items-center gap-2 shrink-0">
+            <HeaderCartLink />
+            <Button variant="primary" size="sm" onClick={() => buy(selectedTierObj)}>
+              {buyLabel(selectedTierObj)}
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -1557,44 +1601,54 @@ export function BuyWorkspaceClient({
                     )}
                   </div>
 
-                  {/* Buy now button — fills the empty right side of the calculator */}
-                  {selectedTierObj.annualPrice != null && onlineBuyEnabled && (
-                    <button
-                      type="button"
-                      onClick={() => setBuyNowTier(selectedTierObj)}
-                      className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md font-medium transition-all bg-amber text-paper hover:bg-amber/90 active:bg-amber/80 shadow-md hover:shadow-lg h-10 px-5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2"
-                    >
-                      <Icon name="zap" size={14} />
-                      Buy now
-                    </button>
-                  )}
                 </div>
               )}
             </div>
 
-            {/* Dual CTA — WhatsApp first (primary, Indian SMEs' fastest path),
-                form second. Both pre-fill the seat count so no information is lost. */}
-            <div className="flex flex-col sm:flex-row gap-3 mb-3">
+            {/* R-1966: ONE main action — Buy now (big, first) — then Add to cart beside it. The
+                quote paths are the quieter second row: WhatsApp no longer outshouts Buy now on a
+                phone. Every path keeps the seat count. */}
+            <div className="flex flex-col sm:flex-row gap-3 mb-3" data-testid="hero-actions">
+              <button
+                type="button"
+                onClick={() => buy(selectedTierObj)}
+                className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg font-semibold transition-all bg-amber text-paper hover:bg-amber/90 active:bg-amber/80 shadow-md hover:shadow-lg h-12 px-7 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2"
+              >
+                {canPayOnline(selectedTierObj) && <Icon name="zap" size={16} />}
+                {buyLabel(selectedTierObj)}
+              </button>
+              {canCart(selectedTierObj) && (
+                <Button variant="default" size="lg" onClick={() => addToCart(selectedTierObj)}>
+                  <Icon name="cart" size={16} className="mr-1.5" />
+                  Add to cart
+                </Button>
+              )}
+            </div>
+            {(WHATSAPP_READY || canPayOnline(selectedTierObj)) && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3 text-sm">
+              <span className="text-ink-3">Prefer a quote first?</span>
               {WHATSAPP_READY && (
                 <a
                   href={whatsappLink(waMessage)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center justify-center gap-2 px-6 h-12 rounded-lg font-medium text-paper transition-transform hover:scale-[1.02] text-base"
-                  style={{ background: "#25D366", boxShadow: "0 8px 20px rgba(37,211,102,0.30)" }}
+                  className="inline-flex items-center gap-1.5 font-medium text-ink hover:text-amber underline underline-offset-4 decoration-dotted"
                 >
-                  <Icon name="whatsapp" size={20} className="text-paper" />
-                  WhatsApp us for a quote
+                  <Icon name="whatsapp" size={15} style={{ color: "#25D366" }} />
+                  WhatsApp us
                 </a>
               )}
-              <Button
-                variant="default"
-                size="lg"
-                onClick={() => setSelectedTier(selectedTierObj)}
-              >
-                Email me a GST quote
-              </Button>
+              {canPayOnline(selectedTierObj) && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedTier(selectedTierObj)}
+                  className="font-medium text-ink hover:text-amber underline underline-offset-4 decoration-dotted"
+                >
+                  Email me a GST quote
+                </button>
+              )}
             </div>
+            )}
 
             {/* Tertiary trial CTA — small, low-commit. "No card needed" is the
                 key SME hesitation killer; the trial-length promise is industry-standard. */}
@@ -1770,6 +1824,8 @@ export function BuyWorkspaceClient({
               onBuyNow={
                 tier.annualPrice != null && onlineBuyEnabled ? () => setBuyNowTier(tier) : undefined
               }
+              /* R-1966: the edition + the calculator's users into the website cart. */
+              onAddToCart={canCart(tier) ? () => addToCart(tier) : undefined}
             />
           ))}
         </div>
@@ -1904,14 +1960,21 @@ export function BuyWorkspaceClient({
           <p className="text-base text-ink-3 mb-6 leading-relaxed">
             Tell us how many users and we&apos;ll send a GST quote {SLA.quote}.
           </p>
-          <Button
-            variant="primary"
-            size="lg"
-            iconRight="arrow_right"
-            onClick={() => setSelectedTier(TIERS[1])}
-          >
-            Get a custom quote
-          </Button>
+          {/* R-1966: Buy now first (the edition + users from the calculator); the quote beside it. */}
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            {canPayOnline(selectedTierObj) && (
+              <Button variant="primary" size="lg" iconRight="arrow_right" onClick={() => buy(selectedTierObj)}>
+                Buy now
+              </Button>
+            )}
+            <Button
+              variant={canPayOnline(selectedTierObj) ? "default" : "primary"}
+              size="lg"
+              onClick={() => setSelectedTier(TIERS[1])}
+            >
+              Get a custom quote
+            </Button>
+          </div>
         </Card>
       </section>
 
@@ -1957,6 +2020,7 @@ export function BuyWorkspaceClient({
           tier={selectedTier}
           billing={billing}
           initialSeats={seats}
+          paymentSoon={!onlineBuyEnabled}
           onClose={() => setSelectedTier(null)}
         />
       )}
@@ -1994,7 +2058,7 @@ export function BuyWorkspaceClient({
 // Pricing card
 // ──────────────────────────────────────────────────────────────────────
 function PricingCard({
-  tier, billing, onSelect, onBuyNow,
+  tier, billing, onSelect, onBuyNow, onAddToCart,
 }: {
   tier: Tier;
   billing: "monthly" | "annual";
@@ -2003,6 +2067,8 @@ function PricingCard({
    *  primary CTA is shown above the "Get a quote" secondary CTA. Enterprise
    *  tier (no price) hides this regardless. */
   onBuyNow?: () => void;
+  /** R-1966: present for an edition the website cart can hold (annual, public price). */
+  onAddToCart?: () => void;
 }) {
   const price = billing === "monthly" ? tier.monthlyPrice : tier.annualPrice;
   const promo = billing === "annual" ? tier.promoPrice : null;
@@ -2102,22 +2168,38 @@ function PricingCard({
               <Icon name="zap" size={14} className="mr-1.5" />
               Buy now — pay online
             </Button>
+            {onAddToCart && (
+              <Button variant="default" className="w-full justify-center" onClick={onAddToCart}>
+                <Icon name="cart" size={14} className="mr-1.5" />
+                Add to cart
+              </Button>
+            )}
+            <button
+              type="button"
+              onClick={onSelect}
+              className="w-full text-center text-sm text-ink-2 hover:text-amber underline underline-offset-4 decoration-dotted py-1"
+            >
+              Or get a GST quote first
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
             <Button
-              variant="default"
+              variant={tier.isPopular ? "primary" : "default"}
               className="w-full justify-center"
               onClick={onSelect}
             >
-              Or get a GST quote first
+              {tier.cta}
             </Button>
+            {/* R-1966: Add to cart also while online payment is off — the cart's Checkout then
+                opens the GST-quote form on this edition (no dead end). */}
+            {onAddToCart && price !== null && billing === "annual" && (
+              <Button variant="default" className="w-full justify-center" onClick={onAddToCart}>
+                <Icon name="cart" size={14} className="mr-1.5" />
+                Add to cart
+              </Button>
+            )}
           </div>
-        ) : (
-          <Button
-            variant={tier.isPopular ? "primary" : "default"}
-            className="w-full justify-center"
-            onClick={onSelect}
-          >
-            {tier.cta}
-          </Button>
         )}
       </div>
 
@@ -2423,12 +2505,14 @@ function TrialDialog({
 }
 
 function EnquiryDialog({
-  tier, billing, initialSeats, onClose,
+  tier, billing, initialSeats, onClose, paymentSoon = false,
 }: {
   tier: Tier;
   billing: "monthly" | "annual";
   initialSeats: number;
   onClose: () => void;
+  /** R-1966: online payment is off on this site (before Razorpay go-live) — say so, with the way to buy today. */
+  paymentSoon?: boolean;
 }) {
   const {
     register,
@@ -2482,6 +2566,11 @@ function EnquiryDialog({
               <p className="text-sm text-ink-3 mt-1">
                 <span className="font-medium">{tier.name}</span> · {billing}
               </p>
+              {paymentSoon && (
+                <p role="note" className="text-sm text-ink-2 mt-3 rounded-md bg-amber-soft/40 border border-amber/30 px-3 py-2">
+                  Online payment opens soon. Send your details and we&apos;ll email your GST quote {SLA.quote}.
+                </p>
+              )}
             </div>
             <button
               onClick={onClose}

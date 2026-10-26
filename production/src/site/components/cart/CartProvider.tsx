@@ -19,8 +19,9 @@ import { SEVERAL_HOSTING_PLANS_READY } from "@/lib/checkout/hosting-limit";
 import { MAILBOX_YR } from "@/site/lib/data/domains-landing";
 import { cartPricesFromCatalog, repriceCartLines, type CartPrices, type PriceChange } from "@/site/lib/cart-reprice";
 import type { DomainRenewals } from "@/site/lib/renewal-line";
+import { CART_STORAGE_KEY, isWorkspaceLine } from "./workspace-line";
 
-const STORAGE_KEY = "anutech.cart.v1";
+const STORAGE_KEY = CART_STORAGE_KEY;
 const NO_DRAWER_ROUTES = ["/cart", "/checkout", "/done"];
 /** R-1797: the pages that show a total to pay — they re-price the cart from the price book. */
 const REPRICE_ROUTES = ["/cart", "/checkout"];
@@ -235,6 +236,13 @@ export function CartProvider({ children, domainRenewals = NO_RENEWALS }: { child
         /* A hosting plan is one account on one domain, so a second Starter is a second
            website, not a quantity of 2 (R-032, 1 Oct 2026): it gets its own line, and its own
            domain box at checkout. Only once several plans can be set up in one order. */
+        /* R-1966: one Google Workspace order at a time (one Google domain, one edition) — a
+           Workspace add REPLACES the Workspace line with the edition + users just chosen. */
+        if (isWorkspaceLine(line)) {
+          const ws = [...prev.filter((l) => !isWorkspaceLine(l)), { ...line, qty: Math.max(1, line.qty ?? 1), key: `${line.label}-${Date.now()}-${prev.length}` }];
+          save(ws);
+          return ws;
+        }
         const ownLine = SEVERAL_HOSTING_PLANS_READY && (line.sku ?? "").startsWith("hosting:");
         const existing = ownLine ? undefined : prev.find((l) => l.label === line.label && l.unitPrice === line.unitPrice);
         const single = isSingleUnit(line);
