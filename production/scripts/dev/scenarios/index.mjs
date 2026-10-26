@@ -120,7 +120,7 @@ export const SCENARIOS = [
     expect: { vendors: 0, expenses: 2, bills: 0, txns: 0, prepaid: 0, paymentLines: 0, aliases: 0, duplicateBillNos: 0,
               leads: 6, quotes: 5, invoices: 2, payments: 6, subscriptions: 1, campaigns: 2, adDays: 3 },
     pages: [
-      { path: "marketing-reports", for: "R-1980 ROAS & CAC → This month → Sales by campaign: Workspace Oct ₹6,000 / ₹11,000 / 1.83× / CAC ₹3,000 · Google Search ₹4,000 / ₹20,000 / 5.00× · 'Not from an ad campaign' also holds the E2E company's other orders (Epsilon adds ₹2,000 to it)" },
+      { path: "marketing-reports", for: "R-1980 ROAS & CAC → This month → Sales by campaign: Workspace Oct ₹6,000 / ₹11,000 / 1.83× / CAC ₹3,000 · Google Search ₹4,000 / ₹20,000 / 5.00× · Total ROAS 3.10× (campaigns only) · funnel Ad clicks 330 · 'Not from an ad campaign' also holds the E2E company's other orders (Epsilon adds ₹2,000 to it)" },
       { path: "online-orders", for: "R-1980 Ad source column: SCN Workspace Oct · Facebook / Instagram Ads on Alpha, Beta, Gamma; SCN Google Search · Google Ads on Delta and Zeta; a dash on Epsilon" },
     ],
   },

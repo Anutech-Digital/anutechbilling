@@ -104,7 +104,11 @@ export function CampaignSalesTable({ range }: { range: RangeKey }) {
                 <td className={cn(num, "font-semibold")}>{data.totals.leads}</td>
                 <td className={cn(num, "font-semibold")}>{data.totals.paidOrders}</td>
                 <td className={cn(num, "font-semibold")}>{rupee(data.totals.revenue)}</td>
-                <td className={cn(num, "font-semibold")}>{data.totals.roas === null ? "—" : `${data.totals.roas.toFixed(2)}×`}</td>
+                <td className={cn(num, "font-semibold")}>
+                  {data.totals.roas === null ? "—" : `${data.totals.roas.toFixed(2)}×`}
+                  {/* R-1980: the ads' return — orders no campaign brought are not in it. */}
+                  <p className="text-2xs font-normal text-ink-3">campaigns only</p>
+                </td>
                 <td className={num} />
               </tr>
             </tfoot>

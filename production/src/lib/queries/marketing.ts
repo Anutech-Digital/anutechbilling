@@ -196,18 +196,26 @@ export async function fetchMarketingReport(supabase: SupabaseClient<Database>, r
       // ── Platform-reported spend beside the books (migration 20260927260000) ──
       // The books stay the source above; this only NAMES a disagreement, so a month whose
       // Google invoice is not booked yet does not silently read as "CAC improved".
+      /* R-1980: clicks the connected ad accounts reported in the range — the funnel's first step.
+         null = no ad-account row at all (not measured), never a zero. */
+      let adClicks: number | null = null;
       {
         const [{ data: accs }, { data: daily }] = await Promise.all([
           supabase.from("ad_accounts").select("id, platform"),
           // Primary key (ad_account_id, day, campaign_id) is the total order.
-          settle(fetchAllRows((from, to) => supabase.from("ad_spend_daily").select("ad_account_id, spend")
+          settle(fetchAllRows((from, to) => supabase.from("ad_spend_daily").select("ad_account_id, spend, clicks")
             .gte("day", range.start).lt("day", range.end)
             .order("ad_account_id", { ascending: true }).order("day", { ascending: true }).order("campaign_id", { ascending: true })
             .range(from, to))),
         ]);
         const platformOf = new Map((accs ?? []).map((a) => [a.id, a.platform as string]));
         const reported = new Map<string, number>();
-        for (const r of daily ?? []) { const p = platformOf.get(r.ad_account_id); if (p) reported.set(p, (reported.get(p) ?? 0) + Number(r.spend)); }
+        for (const r of daily ?? []) {
+          const p = platformOf.get(r.ad_account_id);
+          if (!p) continue;
+          reported.set(p, (reported.get(p) ?? 0) + Number(r.spend));
+          adClicks = (adClicks ?? 0) + (Number(r.clicks) || 0);
+        }
         for (const [p, plat] of reported) {
           const booked = spend.filter((x) => x.channel === p).reduce((a, x) => a + x.rupees, 0);
           const label = p === "google-ads" ? "Google Ads" : "Meta Ads";
@@ -301,12 +309,19 @@ export async function fetchMarketingReport(supabase: SupabaseClient<Database>, r
       const q2w = quoteCount > 0 ? wonCount / quoteCount : null;
 
       const funnel: FunnelStep[] = [
-        {
-          key: "clicks", label: "Ad clicks", count: null, available: false,
-          conversion: null, benchmark: null, bottleneck: false,
-          note: "Not measured — no ad-platform integration records clicks. Shown as unavailable rather than zero, "
-              + "because zero would claim nobody clicked.",
-        },
+        adClicks !== null
+          ? {
+              key: "clicks", label: "Ad clicks", count: adClicks, available: true,
+              conversion: null, benchmark: null, bottleneck: false,
+              /* Leads also come from outside the ads, so no clicks → leads rate is claimed. */
+              note: "From the connected ad accounts (Google / Meta). Leads below also include enquiries that did not come from an ad.",
+            }
+          : {
+              key: "clicks", label: "Ad clicks", count: null, available: false,
+              conversion: null, benchmark: null, bottleneck: false,
+              note: "Not measured — no ad account is connected and synced. Shown as unavailable rather than zero, "
+                  + "because zero would claim nobody clicked.",
+            },
         {
           key: "leads", label: "Leads captured", count: leadCount, available: true,
           conversion: null, benchmark: null, bottleneck: false, note: null,
