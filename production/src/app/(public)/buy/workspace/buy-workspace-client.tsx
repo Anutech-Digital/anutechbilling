@@ -429,8 +429,12 @@ function BuyWorkspaceBody({
 
   const co = useCheckout({ planId: plan.id, seats, sum, promoOff });
 
-  const goCheckout = () => goTo("checkout");
-  const choose = (id: BuyPlan["id"]) => { setPlanId(id); window.setTimeout(goCheckout, 30); };
+  const goCheckout = () => goTo("checkout", { instant: true });
+  /* R-1975: every buy button (header Buy now, Continue to checkout, a plan's Choose, the phone
+     bar) opens the PAY checkout — a trial started earlier must not keep the buyer in trial mode.
+     Only "Start free trial" sets trial; the checkout's "Pay now instead" switches back. */
+  const goPay = () => { co.setMode("pay"); window.setTimeout(goCheckout, 30); };
+  const choose = (id: BuyPlan["id"]) => { setPlanId(id); goPay(); };
   const onNav = (id: string) => {
     if (id === "compare") { setCompareOpen(true); window.setTimeout(() => goTo("compare"), 30); return; }
     goTo(id);
@@ -456,8 +460,8 @@ function BuyWorkspaceBody({
   const card = {
     plans, plan, onPick: setPlanId, seats, onSeats: setSeats, billing, onBilling: setBilling,
     monthlyOk, savePct, sum, promo: heroPromo,
-    onContinue: goCheckout,
-    onQuote: goCheckout,
+    onContinue: goPay,
+    onQuote: goPay,
   };
   const quoted = plan.custom || plan.priceHidden || !sum || seats > BUSINESS_MAX_USERS;
   const barTotal = quoted ? (plan.custom || seats > BUSINESS_MAX_USERS ? "Enterprise quote" : "GST quote") : rupee(co.totals?.total ?? 0);
@@ -465,7 +469,7 @@ function BuyWorkspaceBody({
   return (
     <div className="min-h-screen bg-paper text-ink pb-[76px] min-[820px]:pb-0">
       {isSimulation && <TestModeBar />}
-      <SiteHeader brand={brand} contact={contact} onNav={onNav} onBuy={goCheckout} />
+      <SiteHeader brand={brand} contact={contact} onNav={onNav} onBuy={goPay} />
       {sitePromo && <SitePromoBanner promo={sitePromo} />}
       <main>
         <Hero card={card} onPlans={() => goTo("plans")} onTrial={startTrial} trialOk />
@@ -488,7 +492,7 @@ function BuyWorkspaceBody({
         <SupportBand brand={brand} contact={contact} waMessage={waMessage} onQuote={goCheckout} />
       </main>
       <SiteFooter brand={brand} />
-      <PhoneBar plan={plan} seats={seats} billing={billing} total={barTotal} onCheckout={goCheckout} />
+      <PhoneBar plan={plan} seats={seats} billing={billing} total={barTotal} inclGst={!quoted} onCheckout={goPay} />
     </div>
   );
 }

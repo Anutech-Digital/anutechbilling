@@ -33,7 +33,7 @@ import { checkoutPaymentMode } from "@/lib/checkout/checkout-payment-mode";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { PARTNER_LINE } from "@/site/lib/config";
 import { websiteTenantId } from "@/lib/website-tenant";
-import { brandFromTenant, type BuyBrand } from "./_parts/brand";
+import { fetchBuyBrand } from "./_parts/fetch-brand";
 
 /* R-1499: tenant read per call (websiteTenantId) — outside production an unset BUY_PAGE_TENANT_ID
    shows nothing (and logs why), never the live tenant's data. */
@@ -52,27 +52,6 @@ export async function generateMetadata(): Promise<Metadata> {
 export const dynamic = "force-dynamic";
 
 const READ_TIMEOUT_MS = 3_000;
-
-/**
- * R-1970: the company the page sells as — the website tenant's own row (name, logo, GSTIN,
- * address, state, phone). A failed or slow read shows a neutral header, never another name.
- */
-async function fetchBuyBrand(): Promise<BuyBrand | null> {
-  const tenantId = websiteTenantId();
-  if (!tenantId) return null;
-  try {
-    const { data, error } = await createAdminClient()
-      .from("tenants")
-      .select("name, logo_url, gstin, address, pin_code, state, state_code, phone, email")
-      .eq("id", tenantId)
-      .abortSignal(AbortSignal.timeout(READ_TIMEOUT_MS))
-      .maybeSingle();
-    if (error) { console.warn("[buy/workspace] tenant brand read failed:", error.message); return null; }
-    return brandFromTenant(data);
-  } catch {
-    return null;
-  }
-}
 
 async function fetchGoogleWorkspaceItems(): Promise<CatalogItem[]> {
   const BUY_PAGE_TENANT_ID = websiteTenantId();

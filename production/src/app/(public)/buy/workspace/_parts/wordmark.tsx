@@ -48,11 +48,23 @@ export function ChaiCup() {
   );
 }
 
-/** Scroll a section into view under the sticky header. */
-export function goTo(id: string): void {
+/**
+ * Scroll a section into view under the sticky header.
+ * R-1975: `instant` jumps there at once (the checkout is a long way down — a smooth scroll took
+ * ~6 s and paused half-way in the v2 audit) and moves keyboard / screen-reader focus to the
+ * section's first heading, so the visitor lands on "Checkout" and hears it.
+ */
+export function goTo(id: string, opts: { instant?: boolean } = {}): void {
   if (typeof window === "undefined") return;
   const el = document.getElementById(id);
   if (!el) return;
   const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 70, behavior: reduce ? "auto" : "smooth" });
+  window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 70, behavior: reduce || opts.instant ? "auto" : "smooth" });
+  if (opts.instant) {
+    const h = el.querySelector<HTMLElement>("h2");
+    if (h) {
+      if (!h.hasAttribute("tabindex")) h.setAttribute("tabindex", "-1");
+      h.focus({ preventScroll: true });
+    }
+  }
 }

@@ -153,12 +153,16 @@ export function InvoicePreview(p: Pick<SummaryProps, "plan" | "seats" | "billing
 }
 
 /** Phone (< 820px): plan, users, billing, the total and the one next step, always in reach. */
-export function PhoneBar({ plan, seats, billing, total, onCheckout }: { plan: BuyPlan; seats: number; billing: Billing; total: string; onCheckout: () => void }) {
+export function PhoneBar({ plan, seats, billing, total, inclGst = false, onCheckout }: { plan: BuyPlan; seats: number; billing: Billing; total: string; inclGst?: boolean; onCheckout: () => void }) {
   return (
     <div className="min-[820px]:hidden fixed inset-x-0 bottom-0 z-50 bg-white border-t border-hairline shadow-[0_-8px_24px_rgba(26,24,21,0.08)] px-4 py-2.5 flex items-center gap-3" data-testid="phone-bar">
       <div className="flex-1 min-w-0">
         <div className="text-xs text-ink-3 truncate">{plan.short} · {usersLabel(seats)}{plan.custom ? "" : ` · ${billing}`}</div>
-        <div className="font-serif text-[22px] leading-tight">{total}</div>
+        {/* R-1975: the hero headline is before GST; this total is with it — say so. */}
+        <div className="leading-tight whitespace-nowrap">
+          <span className="font-serif text-[22px]">{total}</span>
+          {inclGst && <span className="text-xs text-ink-3 ml-1.5">incl. GST</span>}
+        </div>
       </div>
       <button type="button" onClick={onCheckout} className="h-12 px-5 rounded-[10px] bg-amber text-white text-[15px] font-semibold shrink-0">
         {plan.custom ? "Get quote" : "Checkout"}
