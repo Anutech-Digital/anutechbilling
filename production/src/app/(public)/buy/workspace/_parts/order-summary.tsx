@@ -32,7 +32,8 @@ interface SummaryProps {
 export function summaryLines({ seats, billing, sum, promo, co, brand }: Pick<SummaryProps, "seats" | "billing" | "sum" | "promo" | "co" | "brand">) {
   if (!sum || !co.totals) return null;
   const lines: Array<{ label: string; value: string; tone?: "good" | "muted" }> = [
-    { label: `${usersLabel(seats)} × ${billing === "annual" ? "12 months" : "1 month"}`, value: rupee(sum.subtotal) },
+    /* R-1986 follow-up (Pardeep): the rate is on the line — "10 users × ₹270/user/month × 12 months". */
+    { label: `${usersLabel(seats)} × ${rupee(sum.rate)}/user/month × ${billing === "annual" ? "12 months" : "1 month"}`, value: rupee(sum.subtotal) },
   ];
   if (promo && promo.off > 0) lines.push({ label: promo.label, value: `− ${rupee(Math.min(promo.off, sum.subtotal))}`, tone: "good" });
   if (co.coupon && co.totals.coupon > 0) lines.push({ label: `Coupon ${co.coupon.code}`, value: `− ${rupee(co.totals.coupon)}`, tone: "good" });

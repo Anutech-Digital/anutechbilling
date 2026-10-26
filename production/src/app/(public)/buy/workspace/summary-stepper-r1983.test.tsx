@@ -60,7 +60,7 @@ describe("R-1983 users and billing in the order summary", () => {
     expect(seatsBox().value).toBe("11");
     // 11 × 1,080 × 12 = 1,42,560 + 25,661 = 1,68,221
     expect(sumTotal()).toBe("₹1,68,221");
-    expect(within(summary()).getByText("11 users × 12 months")).toBeTruthy();
+    expect(within(summary()).getByText("11 users × ₹1,080/user/month × 12 months")).toBeTruthy();
     expect((document.getElementById("hero-seats") as HTMLInputElement).value).toBe("11");
     expect(screen.getByTestId("phone-bar").textContent).toContain("₹1,68,221");
     fireEvent.click(within(summary()).getByRole("button", { name: "Fewer users" }));
@@ -80,7 +80,7 @@ describe("R-1983 users and billing in the order summary", () => {
     fireEvent.click(within(summary()).getByRole("button", { name: "Monthly" }));
     // 10 × 1,300 = 13,000 + 2,340 = 15,340
     expect(sumTotal()).toBe("₹15,340");
-    expect(within(summary()).getByText("10 users × 1 month")).toBeTruthy();
+    expect(within(summary()).getByText("10 users × ₹1,300/user/month × 1 month")).toBeTruthy();
     const heroMonthly = screen.getAllByRole("button", { name: "Monthly" }).filter((b) => !summary().contains(b));
     expect(heroMonthly.every((b) => b.getAttribute("aria-pressed") === "true")).toBe(true);
   });

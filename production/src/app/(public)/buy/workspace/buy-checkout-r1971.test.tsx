@@ -84,7 +84,7 @@ describe("R-1971 inline checkout", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Monthly" })[0]);
     fillSteps("27");
     const s = summary();
-    expect(within(s).getByText("2 users × 1 month")).toBeTruthy();
+    expect(within(s).getByText("2 users × ₹1,300/user/month × 1 month")).toBeTruthy();
     expect(within(s).getByText("IGST 18%")).toBeTruthy();
     expect(within(s).getByText("₹468")).toBeTruthy();
     expect(within(s).getByTestId("summary-total").textContent).toBe("₹3,068");
