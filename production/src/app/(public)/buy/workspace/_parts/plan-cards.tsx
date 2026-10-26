@@ -8,7 +8,8 @@ import * as React from "react";
 import { SLA } from "@/site/lib/config";
 import { rupee } from "@/lib/utils";
 import { BillingToggle } from "./hero";
-import { BUSINESS_MAX_USERS, COMPARE_ROWS, PLAN_COPY, clampSeats, planRate, planSum, usersLabel, type Billing, type BuyPlan } from "./plans";
+import { PlanMedia } from "./plan-media";
+import { BUSINESS_MAX_USERS, COMPARE_ROWS, PLAN_COPY, PLAN_MEDIA, clampSeats, planRate, planSum, usersLabel, type Billing, type BuyPlan } from "./plans";
 import { GoogleWorkspaceWordmark } from "./wordmark";
 import { priceHeadline } from "../price-headline";
 import { whatsappHref, type BuyContact } from "./brand";
@@ -124,7 +125,11 @@ export function PlanCards({
                   )}
                 </div>
               ) : (
-                <div className="text-[13px] text-ink-3 min-h-5 mt-2">{annual ? "Billed yearly · 12-month plan" : "Billed monthly"}</div>
+                <div>
+                  <div className="text-[13px] text-ink-3 min-h-5 mt-2">{annual ? "Billed yearly · 12-month plan" : "Billed monthly"}</div>
+                  {/* R-1988: the plan's video (lite, click to play) or three highlights */}
+                  <PlanMedia media={PLAN_MEDIA[p.id]} highlights={p.features} />
+                </div>
               )}
               <div className="text-[13px] text-ink-2 px-3 py-2.5 bg-paper rounded-lg mt-3 mb-4 font-mono leading-[2]"
                 data-testid={`plan-total-${p.id}`} data-working={over ? "" : head?.working ?? ""}>

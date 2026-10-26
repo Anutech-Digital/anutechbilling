@@ -222,7 +222,8 @@ const nextConfig = {
                  URL never leaves the browser, so this opens no way to send data out. script-src
                  is untouched (wasm compiles under 'wasm-unsafe-eval' in production — R-738). */
               `connect-src 'self' data: ${supaConnect} https://api.razorpay.com https://lumberjack.razorpay.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://www.googletagmanager.com https://www.googleadservices.com https://www.google.com https://googleads.g.doubleclick.net`,
-              "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://challenges.cloudflare.com https://td.doubleclick.net https://www.googletagmanager.com",
+              /* R-1988: the plan cards' click-to-play video — the privacy-enhanced nocookie player only. */
+              "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://challenges.cloudflare.com https://td.doubleclick.net https://www.googletagmanager.com https://www.youtube-nocookie.com",
               "object-src 'none'",
               "base-uri 'self'",
               "form-action 'self'",

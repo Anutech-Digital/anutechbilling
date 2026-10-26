@@ -77,3 +77,13 @@ describe("CSP script-src (R-738)", () => {
     expect(d.get("connect-src")).toEqual(expect.arrayContaining(["https://api.razorpay.com", "https://*.ingest.sentry.io"]));
   });
 });
+
+/* R-1988: the plan cards' click-to-play video frames in from youtube-nocookie.com only. */
+describe("R-1988 CSP: YouTube nocookie player", () => {
+  it("frame-src allows https://www.youtube-nocookie.com, not www.youtube.com", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const d = await directives();
+    expect(d.get("frame-src")).toContain("https://www.youtube-nocookie.com");
+    expect(d.get("frame-src")).not.toContain("https://www.youtube.com");
+  });
+});

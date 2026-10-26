@@ -72,6 +72,17 @@ export const PLAN_COPY: Record<PlanId, PlanCopy> = {
   },
 };
 
+/**
+ * R-1988 (Pardeep, 26 Oct 2026): a short video per priced plan card — ONLY links Pardeep gives
+ * (never a guessed id). "Workspace feature drop: 4 new ways to help you do your best work", Google
+ * Workspace's own channel (https://www.youtube.com/watch?v=iBmcvcgXUgE) — on both Starter and
+ * Standard until he gives one per plan. A plan with no entry shows three feature highlights.
+ */
+export const PLAN_MEDIA: Partial<Record<PlanId, { youtubeId: string; title: string }>> = {
+  starter: { youtubeId: "iBmcvcgXUgE", title: "Workspace feature drop" },
+  standard: { youtubeId: "iBmcvcgXUgE", title: "Workspace feature drop" },
+};
+
 const ORDER: PlanId[] = ["starter", "standard", "plus", "enterprise"];
 
 /** The tiers the page built from the catalogue, as plans — in Starter → Enterprise order. */
