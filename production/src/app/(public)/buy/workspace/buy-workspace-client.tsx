@@ -24,6 +24,7 @@ import { Hero } from "./_parts/hero";
 import { PlanCards, CompareTable } from "./_parts/plan-cards";
 import { WhyUs, AfterYouPay, Faq, SupportBand, SiteFooter, TestModeBar } from "./_parts/info-sections";
 import { Checkout } from "./_parts/checkout";
+import { SamePrice } from "./_parts/same-price";
 import { InvoicePreview, PhoneBar } from "./_parts/order-summary";
 import { orderTotals } from "./_parts/checkout-form";
 import { useCheckout } from "./_parts/use-checkout";
@@ -478,6 +479,7 @@ function BuyWorkspaceBody({
           monthlyOk={monthlyOk} savePct={savePct} onChoose={choose}
         />
         <CompareTable open={compareOpen} onToggle={() => setCompareOpen((o) => !o)} />
+        <SamePrice plans={plans} plan={plan} billing={billing} brand={brand} />
         <WhyUs brand={brand}>
           <InvoicePreview plan={plan} seats={seats} billing={billing} sum={sum} promo={promo} co={co} brand={brand} />
         </WhyUs>
