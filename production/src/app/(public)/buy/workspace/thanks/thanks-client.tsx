@@ -27,6 +27,8 @@ import type { OrderPaymentState } from "@/lib/checkout/order-payment-state";
 
 export interface ThanksOrder {
   quoteId:        string;
+  /** R-1977: a new domain bought with this order (registered in the buyer's name after payment). */
+  newDomain?:     string | null;
   /** R-1971: the GST invoice number for this order, once issued. */
   invoiceNumber?: string | null;
   customerName:   string;
@@ -252,6 +254,12 @@ function OrderView({ order, isSimulation, brand }: { order: ThanksOrder; isSimul
                 <span className="text-ink-3 sm:text-2xs sm:uppercase sm:tracking-wider sm:font-semibold sm:block sm:mb-0.5">Seats</span>
                 <span className="text-ink font-medium">{order.seats} {order.seats === 1 ? "user" : "users"}</span>
               </div>
+              {order.newDomain && (
+                <div className="flex justify-between gap-3 sm:block" data-testid="thanks-domain">
+                  <span className="text-ink-3 sm:text-2xs sm:uppercase sm:tracking-wider sm:font-semibold sm:block sm:mb-0.5">Domain</span>
+                  <span className="text-ink font-medium text-right sm:text-left"><span className="font-mono">{order.newDomain}</span> — registering, we will confirm by email</span>
+                </div>
+              )}
               <div className="flex justify-between sm:block">
                 <span className="text-ink-3 sm:text-2xs sm:uppercase sm:tracking-wider sm:font-semibold sm:block sm:mb-0.5">Status</span>
                 <span className={`font-medium inline-flex items-center gap-1.5 ${isFullyPaid ? "text-emerald" : "text-amber-ink"}`}>

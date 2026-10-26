@@ -14,9 +14,10 @@ import { normalizeGstinInput } from "@/site/lib/checkout-details";
 import { buyNowSchema, BUY_ANNUAL_NOTE, BUY_TERMS_ERROR } from "../buy-now-schema";
 import { stateName, whatsappHref, type BuyBrand, type BuyContact } from "./brand";
 import {
-  NEW_DOMAIN_TLDS, STATE_OPTIONS, checkoutBody, domainValue, orderCompany, stateFromGstin,
-  type BuyerField, type NewDomainTld, type PayMethod,
+  STATE_OPTIONS, buyerErrors, checkoutBody, domainValue, orderCompany, stateFromGstin,
+  type BuyerField, type PayMethod,
 } from "./checkout-form";
+import { NewDomainSearch } from "./new-domain";
 import { BUSINESS_MAX_USERS, type Billing, type BuyPlan, type PlanSum } from "./plans";
 import { payOrder, requestQuote, startTrial, type SubmitContext } from "./submit-order";
 import { OrderSummary } from "./order-summary";
@@ -120,6 +121,13 @@ export function Checkout(p: CheckoutProps) {
     try {
       if (mode === "trial") { await startTrial(ctx(), () => void place()); return; }
       if (mode === "quote") { await requestQuote(ctx(), () => void place()); return; }
+      /* R-1977: billing may have changed to Annual after step 1 — a domain bought now must be
+         one picked from the live search, with the owner's address. Send the buyer back to fix it. */
+      if (co.buysDomain && !co.domain.picked) { co.setStep(1); co.setErrors({ newName: "Press Check, then choose an available domain" }); return; }
+      if (co.buysDomain) {
+        const e = buyerErrors(co.buyer, true);
+        if (Object.keys(e).length) { co.setStep(2); co.setErrors(e); return; }
+      }
       const body = checkoutBody({ plan, seats: p.seats, billing: p.billing, domain: co.domain, buyer: co.buyer, couponCode: co.coupon?.code ?? null, simulate: p.isSimulation });
       /* The same rules as the old Buy now form (R-173 state, R-226 terms, R-227 GSTIN, R-232). */
       const check = buyNowSchema.safeParse(body);
@@ -168,7 +176,9 @@ export function Checkout(p: CheckoutProps) {
             {enterprise ? <EnterprisePanel contact={p.contact} waMessage={p.waMessage} seats={p.seats} /> : (
               <>
                 <StepCard n={1} step={co.step} title="Your domain" onEdit={() => co.setStep(1)}
-                  summary={co.step > 1 ? `${domain} · ${co.domain.mode === "new" ? "new — we register it" : "you own it"}` : "Use your own or ask us to register a new one"}>
+                  summary={co.step > 1
+                    ? `${domain} · ${co.domain.mode === "new" ? (co.buysDomain && co.domain.picked ? `new — ${rupee(co.domain.picked.price)} for 1 year, registered after payment` : "new — we register it") : "you own it"}`
+                    : "Use your own or ask us to register a new one"}>
                   <div role="radiogroup" aria-label="Domain" className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-2.5 mb-5">
                     {([["existing", "I already have a domain", "e.g. yourcompany.in — keep your website as it is"], ["new", "I need a new domain", "We register it and connect it for you"]] as const).map(([m, t, s]) => (
                       <button key={m} type="button" role="radio" aria-checked={co.domain.mode === m}
@@ -189,21 +199,8 @@ export function Checkout(p: CheckoutProps) {
                       <p className="text-[13px] text-ink-3 leading-relaxed m-0">After payment we verify ownership with one DNS record — on a call, with you. Your website keeps working; only email moves to Google.</p>
                     </>
                   ) : (
-                    <>
-                      <label htmlFor="buy-newdomain" className="block text-[13px] font-semibold text-ink-2 mb-1.5">The domain you want</label>
-                      <div className="flex gap-2 flex-wrap">
-                        <input id="buy-newdomain" value={co.domain.newName} placeholder="yourcompany" autoComplete="off" aria-invalid={!!co.errors.newName} aria-describedby="buy-newdomain-err"
-                          onChange={(e) => { co.setDomain({ ...co.domain, newName: e.target.value }); co.setErrors({}); }}
-                          className={`${input(co.errors.newName)} flex-[1_1_200px] w-auto min-w-0 font-mono`} />
-                        <label htmlFor="buy-tld" className="sr-only">Domain ending</label>
-                        <select id="buy-tld" value={co.domain.tld} onChange={(e) => co.setDomain({ ...co.domain, tld: e.target.value as NewDomainTld })}
-                          className="h-12 px-3 text-[15px] border border-hairline rounded-[10px] bg-paper">
-                          {NEW_DOMAIN_TLDS.map((t) => <option key={t} value={t}>{t}</option>)}
-                        </select>
-                      </div>
-                      <Err id="buy-newdomain-err" msg={co.errors.newName} />
-                      <p className="text-[13px] text-ink-3 leading-relaxed m-0">We&apos;ll register it for you — we&apos;ll call you to confirm the name and its price before it is bought.</p>
-                    </>
+                    <NewDomainSearch value={co.domain} onChange={co.setDomain} error={co.errors.newName}
+                      onClearError={() => co.setErrors({})} billsWithOrder={co.buysDomain} />
                   )}
                   <button type="button" onClick={co.next1} className={`${amberBtn} mt-5`}>Continue</button>
                 </StepCard>
@@ -238,6 +235,14 @@ export function Checkout(p: CheckoutProps) {
                       </select>
                       <Err id="buy-stateCode-err" msg={co.errors.stateCode} />
                     </div>
+                    {/* R-1977: the registry records the new domain's owner address (owner decision 22). */}
+                    {co.buysDomain && (
+                      <>
+                        {field("addressLine1", <>Address <span className="font-normal text-ink-3">(the domain is registered to it)</span></>, { autoComplete: "street-address" })}
+                        {field("city", "City", { autoComplete: "address-level2" })}
+                        {field("pinCode", "PIN code", { inputMode: "numeric", autoComplete: "postal-code", maxLength: 6, placeholder: "110085" })}
+                      </>
+                    )}
                   </div>
                   <button type="button" onClick={co.next2} className={`${amberBtn} mt-2`}>{mode === "quote" ? "Continue" : "Continue to payment"}</button>
                 </StepCard>

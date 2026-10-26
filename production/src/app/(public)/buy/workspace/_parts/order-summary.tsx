@@ -36,6 +36,13 @@ export function summaryLines({ seats, billing, sum, promo, co, brand }: Pick<Sum
   ];
   if (promo && promo.off > 0) lines.push({ label: promo.label, value: `− ${rupee(Math.min(promo.off, sum.subtotal))}`, tone: "good" });
   if (co.coupon && co.totals.coupon > 0) lines.push({ label: `Coupon ${co.coupon.code}`, value: `− ${rupee(co.totals.coupon)}`, tone: "good" });
+  /* R-1977: the new domain — after the discounts (they never apply to it), before GST. */
+  const picked = co.domain.mode === "new" ? co.domain.picked : null;
+  if (picked && co.totals.domain > 0) {
+    lines.push({ label: `Domain ${picked.domain} · 1 year${picked.testPrice ? " (TEST price)" : ""}`, value: rupee(co.totals.domain) });
+  } else if (picked && billing === "monthly") {
+    lines.push({ label: `Domain ${picked.domain} · billed separately`, value: "—", tone: "muted" });
+  }
   for (const g of gstLines(co.totals.gst, co.buyerState, brand?.stateCode ?? null)) lines.push({ label: g.label, value: rupee(g.amount), tone: "muted" });
   return lines;
 }

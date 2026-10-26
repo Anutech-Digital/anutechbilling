@@ -7,15 +7,15 @@
 import * as React from "react";
 import { checkCoupon, recheckCoupon, type AppliedCoupon } from "../coupon-check";
 import {
-  EMPTY_BUYER, EMPTY_DOMAIN, buyerErrors, buyerStateCode, domainErrors, orderTotals,
+  EMPTY_BUYER, EMPTY_DOMAIN, buyerErrors, buyerStateCode, domainCharge, domainErrors, orderTotals,
   type BuyerDetails, type BuyerField, type CheckoutMode, type DomainChoice, type PayMethod,
 } from "./checkout-form";
-import type { PlanSum } from "./plans";
+import type { Billing, PlanSum } from "./plans";
 
 export type Step = 1 | 2 | 3;
 export type FieldErrors = Partial<Record<BuyerField | "domain" | "newName" | "agree", string>>;
 
-export function useCheckout({ planId, seats, sum, promoOff }: { planId: string; seats: number; sum: PlanSum | null; promoOff: number }) {
+export function useCheckout({ planId, seats, sum, promoOff, billing = "annual", canBuy = true }: { planId: string; seats: number; sum: PlanSum | null; promoOff: number; billing?: Billing; canBuy?: boolean }) {
   const [step, setStep] = React.useState<Step>(1);
   const [mode, setMode] = React.useState<CheckoutMode>("pay");
   const [domain, setDomain] = React.useState<DomainChoice>(EMPTY_DOMAIN);
@@ -31,7 +31,10 @@ export function useCheckout({ planId, seats, sum, promoOff }: { planId: string; 
   const [couponError, setCouponError] = React.useState<string | null>(null);
   const [couponBusy, setCouponBusy] = React.useState(false);
   const afterPromo = sum ? Math.max(0, sum.subtotal - Math.min(promoOff, sum.subtotal)) : 0;
-  const totals = sum ? orderTotals(sum.subtotal, promoOff, coupon?.discount ?? 0) : null;
+  /* R-1977: a new domain bought with an annual order adds its (shown) live price; the server prices it again. */
+  const domainPrice = domainCharge(domain, billing, mode, canBuy);
+  const buysDomain = canBuy && domain.mode === "new" && billing === "annual" && mode === "pay";
+  const totals = sum ? orderTotals(sum.subtotal, promoOff, coupon?.discount ?? 0, domainPrice) : null;
 
   const seq = React.useRef(0);
   React.useEffect(() => {
@@ -80,14 +83,14 @@ export function useCheckout({ planId, seats, sum, promoOff }: { planId: string; 
     setErrors((e) => { const n = { ...e }; delete n[k]; return n; });
   }
   function next1(): boolean {
-    const e = domainErrors(domain);
+    const e = domainErrors(domain, buysDomain);
     setErrors(e);
     if (Object.keys(e).length) return false;
     setStep(2);
     return true;
   }
   function next2(): boolean {
-    const e = buyerErrors(buyer);
+    const e = buyerErrors(buyer, buysDomain);
     setErrors(e);
     if (Object.keys(e).length) return false;
     setStep(3);
@@ -98,6 +101,7 @@ export function useCheckout({ planId, seats, sum, promoOff }: { planId: string; 
     step, setStep, mode, setMode, domain, setDomain, buyer, setField, method, setMethod,
     agree, setAgree, errors, setErrors, busy, setBusy, next1, next2,
     buyerState: buyerStateCode(buyer),
+    buysDomain,
     coupon, couponInput, setCouponInput, couponError, couponBusy, applyCoupon, removeCoupon,
     totals,
   };
