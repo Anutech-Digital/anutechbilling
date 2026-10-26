@@ -49,6 +49,7 @@ import { toast } from "sonner";
 import type { Route } from "next";
 import { recordBillHref } from "../bills/add-from-url";
 import { isCarryOverClick, clearStraySelection } from "./vendor-popup";
+import { VendorStatementView } from "./vendor-statement-view";
 
 const VENDOR_SUPPLIED_PRODUCTS = [
   "Google Workspace & GCP",
@@ -589,6 +590,8 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
   const payments = useVendorPayments(vendor.id, bills, vExpenses);
   const [detailBill, setDetailBill] = React.useState<VendorBill | null>(null);
   const [detailExpense, setDetailExpense] = React.useState<ExpenseRow | null>(null);
+  /* R-1921: the dated running statement (bill, payment, TDS, advance) next to the lists. */
+  const [view, setView] = React.useState<"bills" | "statement">("bills");
   const prods = parseSuppliedProducts(vendor.notes);
   /* R-1511: the click that opened this popup must not leave the header half-selected. */
   const openedAt = React.useRef(Date.now());
@@ -598,7 +601,7 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
     <>
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent
-        className="md:!max-w-lg"
+        className="md:!max-w-2xl"
         onMouseDownCapture={(e) => { if (isCarryOverClick(e.detail, Date.now() - openedAt.current)) e.preventDefault(); }}
       >
         <DialogHeader>
@@ -639,8 +642,19 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
           )}
         </div>
 
+        <div role="group" aria-label="Show" className="inline-flex self-start rounded-lg border border-hairline p-0.5 bg-paper-2/60">
+          {([["bills", "Bills & payments"], ["statement", "Statement"]] as const).map(([v, label]) => (
+            <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber ${view === v ? "bg-paper text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
         <div className="max-h-[55vh] overflow-y-auto -mx-1 px-1 space-y-4">
-          {isLoading ? (
+          {view === "statement" ? (
+            <VendorStatementView vendorId={vendor.id} />
+          ) : isLoading ? (
             <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-12" />)}</div>
           ) : (bills ?? []).length === 0 && (vExpenses ?? []).length === 0 ? (
             <div className="py-6 text-center space-y-3">
@@ -713,7 +727,7 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
             )}
           </>
           )}
-          {!isLoading && <VendorPaymentsList rows={payments.data} loading={payments.isLoading} error={payments.isError ? payments.error : null} onRetry={() => void payments.refetch()} />}
+          {view === "bills" && !isLoading && <VendorPaymentsList rows={payments.data} loading={payments.isLoading} error={payments.isError ? payments.error : null} onRetry={() => void payments.refetch()} />}
         </div>
 
         <DialogFooter className="gap-2">
