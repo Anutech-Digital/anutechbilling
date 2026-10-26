@@ -32,6 +32,7 @@ import { isBotUserAgent } from "@/lib/quotes/quote-intent";
 import { maybeAlertHotLead, recordQuoteView } from "@/lib/quotes/quote-views.server";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
+import { publicQuoteVisible } from "./visibility";
 
 export const dynamic = "force-dynamic"; // never cache — quotes change state
 
@@ -84,12 +85,9 @@ export default async function QuoteAcceptPage(props: Props) {
 
   // Authorization: unguessable ?t=<token> must match. No token → "not found"
   // (identical to a missing quote, so ids can't be enumerated). (SEC-1)
-  if (!quoteTokenMatches(searchParams.t, quote.public_token)) {
-    notFound();
-  }
-
-  // Don't expose draft quotes via public link — they're not meant for customer eyes
-  if (quote.status === "draft") {
+  // Don't expose draft quotes via public link — they're not meant for customer eyes.
+  // One rule (visibility.ts) so R-1956's test can prove a copied link opens.
+  if (!publicQuoteVisible(quote, searchParams.t)) {
     notFound();
   }
 
