@@ -94,24 +94,27 @@ export function CampaignSalesTable({ range }: { range: RangeKey }) {
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((r) => <Row key={r.key} r={r} />)}
+              {data.rows.filter((r) => r.key !== NO_CAMPAIGN).map((r) => <Row key={r.key} r={r} />)}
             </tbody>
-            <tfoot className="bg-paper-2 border-t border-hairline-strong">
+            {/* R-1984: the total covers the ad campaigns only, in every column — so its Revenue ÷ Spend is
+                its ROAS. Money no campaign brought sits below it, with no ROAS: no ad spend bought it. */}
+            <tbody className="bg-paper-2 border-y border-hairline-strong">
               <tr>
-                <td className="px-3 py-2.5 text-sm font-semibold text-ink">Total</td>
-                <td className={cn(num, "font-semibold")}>{rupee(data.totals.spend)}</td>
-                <td className={cn(num, "font-semibold")}>{data.totals.clicks.toLocaleString("en-IN")}</td>
-                <td className={cn(num, "font-semibold")}>{data.totals.leads}</td>
-                <td className={cn(num, "font-semibold")}>{data.totals.paidOrders}</td>
-                <td className={cn(num, "font-semibold")}>{rupee(data.totals.revenue)}</td>
-                <td className={cn(num, "font-semibold")}>
-                  {data.totals.roas === null ? "—" : `${data.totals.roas.toFixed(2)}×`}
-                  {/* R-1980: the ads' return — orders no campaign brought are not in it. */}
-                  <p className="text-2xs font-normal text-ink-3">campaigns only</p>
-                </td>
-                <td className={num} />
+                <td className="px-3 py-2.5 text-sm font-semibold text-ink">Ads total</td>
+                <td className={cn(num, "font-semibold")}>{rupee(data.adTotals.spend)}</td>
+                <td className={cn(num, "font-semibold")}>{data.adTotals.clicks.toLocaleString("en-IN")}</td>
+                <td className={cn(num, "font-semibold")}>{data.adTotals.leads}</td>
+                <td className={cn(num, "font-semibold")}>{data.adTotals.paidOrders}</td>
+                <td className={cn(num, "font-semibold")}>{rupee(data.adTotals.revenue)}</td>
+                <td className={cn(num, "font-semibold")}>{data.adTotals.roas === null ? "—" : `${data.adTotals.roas.toFixed(2)}×`}</td>
+                <td className={cn(num, "font-semibold")}>{data.adTotals.cac === null ? "—" : rupee(data.adTotals.cac)}</td>
               </tr>
-            </tfoot>
+            </tbody>
+            {data.rows.some((r) => r.key === NO_CAMPAIGN) && (
+              <tbody>
+                {data.rows.filter((r) => r.key === NO_CAMPAIGN).map((r) => <Row key={r.key} r={r} />)}
+              </tbody>
+            )}
           </table>
         </div>
       )}
