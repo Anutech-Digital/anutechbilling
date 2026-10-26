@@ -148,6 +148,12 @@ export function SendQuoteDialog({
           out, res, role: currentUser?.role, quoteId, onQuotePage: true,
           /* Plain navigation: the sheet is also rendered outside the app router in tests. */
           navigate: (href) => { onOpenChange(false); window.location.assign(href); },
+          /* R-1956: "Copy link instead" marked the draft sent — the page behind shows it. */
+          onMarkedSent: () => {
+            qc.invalidateQueries({ queryKey: ["quotes"] });
+            qc.invalidateQueries({ queryKey: ["quotes", quoteId] });
+            qc.invalidateQueries({ queryKey: ["leads"] });
+          },
         });
       }
     },
