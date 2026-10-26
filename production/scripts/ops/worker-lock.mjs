@@ -52,6 +52,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { restoreBuildInfo, saveBuildInfo, dropBuildInfo, parseTscFlags, TSC_FULL_STEP } from "./worker-tsc-cache.mjs";
 import { execSync, execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites } from "./push-guard-suites.mjs";
@@ -236,14 +237,32 @@ export function tscEnv(env = process.env) {
   return { ...env, NODE_OPTIONS: [...kept, TSC_HEAP_FLAG].join(" ") };
 }
 
-function tscWithTurn(card) {
+/**
+ * R-1960 (26 Oct 2026): the default type-check reuses a shared tsc build info (worker-tsc-cache.mjs) —
+ * a fresh worktree no longer starts cold (525 s measured). Same `tsc --noEmit -p .`, same files, same
+ * strictness: tsc re-checks every changed file and every importer whose types it affects.
+ * `full: true` (`--full-tsc`) is the old cold check (`--incremental false`, no cache read or written).
+ */
+export function tscStepsFor({ full = false } = {}) {
+  return full ? [TSC_STEPS[0], TSC_FULL_STEP] : TSC_STEPS;
+}
+
+function tscWithTurn(card, { full = false } = {}) {
   return withTurn("heavy", card, "type-check kar raha hai", async () => {
-    for (const step of TSC_STEPS) {
+    const root = process.cwd();
+    if (full) { dropBuildInfo(root); console.log("  tsc: --full-tsc — poora check, cache ke bina"); }
+    else {
+      const r = restoreBuildInfo(root);
+      console.log(r.restored ? `  tsc: incremental — shared cache se shuru (${r.from})`
+        : `  tsc: incremental — ${r.reason === "own" ? "is worktree ki apni build info" : `shared cache nahi (${r.reason}), is baar poora chalega`}`);
+    }
+    for (const step of tscStepsFor({ full })) {
       const t0 = Date.now();
       try { sh(step, tscEnv()); }
       catch (e) { console.error(`✗ ${step} fail:\n` + String(e.stdout ?? "").slice(0, 2000) + String(e.stderr ?? "").slice(-800)); return false; }
       console.log(`  ${step}: ${((Date.now() - t0) / 1000).toFixed(1)} s`);
     }
+    if (!full) { const w = saveBuildInfo(root); if (!w.saved) console.log(`  (tsc cache save nahi hua: ${w.reason})`); }
     return true;
   });
 }
@@ -306,7 +325,7 @@ async function pushWithTurn(card, ciFlags = {}) {
       .split("\n").map((l) => l.trim()).filter(Boolean).map((l) => { const i = l.indexOf(" "); return { sha: l.slice(0, i), subject: l.slice(i + 1) }; }));
     if (!plan.ok) { console.error(plan.message); process.exit(1); }
     if (plan.foreign.length) console.log(`(dhyan: is push me doosre card ke commit bhi hain:\n   ${plan.foreign.join("\n   ")})`);
-    if (!(await tscWithTurn(card))) { console.error("✗ Rebase ke baad tsc fail — push nahi hua."); process.exit(1); }
+    if (!(await tscWithTurn(card, { full: ciFlags.fullTsc }))) { console.error("✗ Rebase ke baad tsc fail — push nahi hua."); process.exit(1); }
     const failed = await runGuardSuites(card);
     if (failed.length) {
       console.error("✗ Guard test fail — push NAHI hua (repo-scan/ratchet test, shayad tumhare area ke bahar ka):");
@@ -960,7 +979,7 @@ function main(argv) {
   if (cmd === "push") {
     const ciFlags = parseCiFlags(rest);
     enforceCard(card, "push", cardFlags);
-    return pushWithTurn(card, { ...ciFlags, allowOutside, cardPath: cardFlags.cardPath });
+    return pushWithTurn(card, { ...ciFlags, fullTsc: parseTscFlags(rest).full, allowOutside, cardPath: cardFlags.cardPath });
   }
   if (cmd === "ci") {
     /* R-1936: wait for this card's CI + SQL tests runs; exit 0 green, 7 red, 8 timeout. */
@@ -981,7 +1000,7 @@ function main(argv) {
     if (!r.ok) process.exit(5);
     return;
   }
-  if (cmd === "tsc") return tscWithTurn(card).then((ok) => { if (ok) console.log("✓ tsc green"); else process.exit(1); });
+  if (cmd === "tsc") return tscWithTurn(card, parseTscFlags(rest)).then((ok) => { if (ok) console.log("✓ tsc green"); else process.exit(1); });
   if (cmd === "prep") return prep(card, rest);
   if (cmd === "release") {
     fs.rmSync(lockFile(card), { force: true });
@@ -998,7 +1017,7 @@ function main(argv) {
     console.log(r.message);
     return;
   }
-  console.error("claim | check | push | ci | sql-related | wip | resume | tsc | prep | release | list | guard-push   (claim/push need --card <card.json>)");
+  console.error("claim | check | push | ci | sql-related | wip | resume | tsc | prep | release | list | guard-push   (claim/push need --card <card.json>; tsc/push take --full-tsc)");
   process.exit(1);
 }
 
