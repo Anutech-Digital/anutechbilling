@@ -13,7 +13,10 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, PARTNER_BADGE } from "@/site/lib/config";
+import { COMPANY, SLA, WHATSAPP_READY } from "@/site/lib/config";
+import { BrandMark } from "../_parts/site-header";
+import { SiteFooter } from "../_parts/info-sections";
+import { buyContact, type BuyBrand } from "../_parts/brand";
 import { mailtoLink, phoneDisplay, whatsappLink } from "./support-links";
 import { ConfirmPaymentView } from "./confirm-payment-view";
 import { forgetWorkspacePayment } from "./payment-handoff";
@@ -63,9 +66,12 @@ export function ThanksClient({
   order,
   isSimulation,
   orderRef,
+  brand = null,
 }: {
   order: ThanksOrder | null;
   isSimulation: boolean;
+  /** R-1975: the website tenant (name, logo, GSTIN, address, phone) — the buy page reads the same row. */
+  brand?: BuyBrand | null;
   /** R-1625: the order number from the address. With no order to show yet, the page looks for
    *  the Razorpay payment the buy page kept for THIS order and asks our server to confirm it. */
   orderRef?: string;
@@ -74,7 +80,7 @@ export function ThanksClient({
     return <ConfirmPaymentView quoteId={orderRef} notFound={<OrderNotFound />} />;
   }
   if (!order) return <OrderNotFound />;
-  return <OrderView order={order} isSimulation={isSimulation} />;
+  return <OrderView order={order} isSimulation={isSimulation} brand={brand} />;
 }
 
 /** Fallback view — quote not found, not paid, or guessed wrong ID (and no payment of ours to confirm). */
@@ -122,7 +128,9 @@ function OrderNotFound() {
     );
 }
 
-function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: boolean }) {
+function OrderView({ order, isSimulation, brand }: { order: ThanksOrder; isSimulation: boolean; brand: BuyBrand | null }) {
+  /* R-1975: the call link uses the tenant phone first, then the site number (the buy page rule). */
+  const tel = buyContact(brand).tel;
   /* R-1625: arriving from Razorpay — undo any scroll lock it left (§24), and drop the kept
      payment once this order shows as paid. */
   React.useEffect(() => {
@@ -167,27 +175,10 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
         </div>
       )}
 
-      {/* ── Header ── */}
+      {/* ── Header — R-1975: the website tenant's name and logo (the buy page's BrandMark) ── */}
       <header className="border-b border-hairline bg-paper">
         <div className="max-w-[1080px] mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/buy/workspace" className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-ink text-paper rounded-md grid place-items-center font-serif text-lg flex-shrink-0">
-              R
-            </div>
-            <div className="hidden sm:block">
-              <div className="font-serif text-base leading-none">ANUTECH DIGITAL</div>
-              <div className="text-3xs text-ink-3 mt-1">Cloud Reseller · India</div>
-            </div>
-          </Link>
-          <div
-            className="hidden md:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-3xs font-semibold border border-[#FBBF24]"
-            style={{
-              background: "linear-gradient(135deg, #1A1815 0%, #2D2418 100%)",
-              color:      "#FCD34D",
-            }}
-          >
-            <span style={{ fontSize: 11 }}>★</span> {PARTNER_BADGE}
-          </div>
+          <BrandMark brand={brand} />
         </div>
       </header>
 
@@ -214,7 +205,7 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
             Welcome aboard, {firstName}.
           </h1>
           <p className="text-base md:text-lg text-ink-3 leading-relaxed max-w-2xl mx-auto">
-            Your <GWInline /> order is confirmed. Our team will call or WhatsApp you
+            Your <GWInline /> order is confirmed. Our team will call or WhatsApp you{" "}
             {SLA.firstReply} ({SLA.hours}) to verify your domain and start
             the setup.
           </p>
@@ -372,10 +363,10 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
           )}
 
           <div className="text-xs text-ink-3 flex flex-wrap gap-x-4 gap-y-1 items-center justify-center">
-            {WHATSAPP_READY && (
-              <a href={`tel:+${WHATSAPP_NUMBER}`} className="inline-flex items-center gap-1.5 hover:text-ink transition-colors">
+            {tel && (
+              <a href={tel.href} className="inline-flex items-center gap-1.5 hover:text-ink transition-colors">
                 <Icon name="phone" size={12} />
-                Call {phoneDisplay()}
+                Call {tel.display}
               </a>
             )}
             <a href={mailtoLink(`Re: order ${order.quoteId}`)}
@@ -391,20 +382,13 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
         </div>
       </section>
 
-      {/* ── Footer ── */}
-      <footer className="py-8 text-center text-xs text-ink-3">
-        <div className="max-w-[800px] mx-auto px-6 space-y-1">
-          <div>
-            ANUTECH DIGITAL PVT LTD · {COMPANY.partnerLine} ·
-            GSTIN registered · Indian SMEs trust us with their email.
-          </div>
-          <div>
-            <Link href="/buy/workspace" className="hover:text-ink underline underline-offset-2">
-              Back to buy page
-            </Link>
-          </div>
-        </div>
-      </footer>
+      <div className="py-6 text-center text-sm">
+        <Link href="/buy/workspace" className="text-amber-ink underline underline-offset-2 hover:text-amber">
+          Back to buy page
+        </Link>
+      </div>
+      {/* R-1975: the buy page's own footer — tenant name, address, GSTIN, legal links. */}
+      <SiteFooter brand={brand} />
     </div>
   );
 }

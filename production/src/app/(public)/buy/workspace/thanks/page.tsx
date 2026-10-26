@@ -21,11 +21,16 @@ import type { Metadata } from "next";
 import { ThanksClient } from "./thanks-client";
 import { fetchOrder } from "./fetch-order";
 import { SLA } from "@/site/lib/config";
+import { fetchBuyBrand } from "../_parts/fetch-brand";
 
-export const metadata: Metadata = {
-  title: { absolute: "Order confirmed · Anutech Digital" },
-  description: `Your Google Workspace order is confirmed. Our team will call or WhatsApp you ${SLA.firstReply} to verify your domain.`,
-};
+/* R-1975: the title names the website tenant (its own row), like the buy page — never typed. */
+export async function generateMetadata(): Promise<Metadata> {
+  const brand = await fetchBuyBrand();
+  return {
+    title: { absolute: brand ? `Order confirmed · ${brand.name}` : "Order confirmed" },
+    description: `Your Google Workspace order is confirmed. Our team will call or WhatsApp you ${SLA.firstReply} to verify your domain.`,
+  };
+}
 
 // Don't cache — different visitor = different order
 export const dynamic = "force-dynamic";
@@ -37,11 +42,14 @@ export default async function ThanksPage(
 ) {
   const searchParams = await props.searchParams;
   const quoteId = (searchParams.order ?? "").trim();
-  const order   = quoteId ? await fetchOrder(quoteId, searchParams.t?.trim()) : null;
+  const [order, brand] = await Promise.all([
+    quoteId ? fetchOrder(quoteId, searchParams.t?.trim()) : Promise.resolve(null),
+    fetchBuyBrand(),
+  ]);
   const isSim   = searchParams.sim === "1";
 
   /* R-1625: with no paid order yet (the webhook not in), the client confirms the Razorpay
      payment the buy page kept for this order number — the number is only a lookup key into the
      buyer's own sessionStorage; nothing is shown from it until our server confirms. */
-  return <ThanksClient order={order} isSimulation={isSim} orderRef={quoteId || undefined} />;
+  return <ThanksClient order={order} isSimulation={isSim} orderRef={quoteId || undefined} brand={brand} />;
 }

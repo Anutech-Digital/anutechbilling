@@ -149,8 +149,15 @@ export function Checkout(p: CheckoutProps) {
   return (
     <section id="checkout" className="bg-paper-2 border-y border-hairline scroll-mt-16">
       <div className="max-w-[1200px] mx-auto px-4 sm:px-5 py-16">
-        <h2 className="font-serif font-normal text-[clamp(30px,3.6vw,42px)] leading-[1.1] mb-2">{mode === "trial" ? "Start your free trial" : "Checkout"}</h2>
-        <p className="text-base text-ink-2 mb-8">Three short steps. No account needed — we set up your admin login with you after {mode === "trial" ? "you start" : "payment"}.</p>
+        <h2 tabIndex={-1} className="font-serif font-normal text-[clamp(30px,3.6vw,42px)] leading-[1.1] mb-2 outline-none">{mode === "trial" ? "Start your free trial" : "Checkout"}</h2>
+        <p className={`text-base text-ink-2 ${mode === "trial" ? "mb-2" : "mb-8"}`}>Three short steps. No account needed — we set up your admin login with you after {mode === "trial" ? "you start" : "payment"}.</p>
+        {/* R-1975: in trial mode the way back to paying is here from step 1, not only on step 3. */}
+        {mode === "trial" && (
+          <p className="text-sm text-ink-2 mb-8">
+            Ready to buy today?{" "}
+            <button type="button" onClick={() => co.setMode("pay")} className="min-h-11 font-semibold text-amber-ink underline underline-offset-[3px]">Pay now instead</button>
+          </p>
+        )}
         <div className="flex flex-wrap gap-6 items-start">
           <div className="flex-[1_1_520px] min-w-0 flex flex-col gap-3">
             {enterprise ? <EnterprisePanel contact={p.contact} waMessage={p.waMessage} seats={p.seats} /> : (
@@ -272,10 +279,10 @@ export function Checkout(p: CheckoutProps) {
                     className="w-full h-14 rounded-xl bg-amber text-white text-[17px] font-bold hover:bg-amber-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2 disabled:opacity-60">
                     {busy ? "Please wait…" : payLabel}
                   </button>
-                  {(payable || co.mode === "trial") && (
+                  {payable && co.mode !== "trial" && (
                     <div className="flex justify-center mt-3">
-                      <button type="button" onClick={() => co.setMode(co.mode === "trial" ? "pay" : "trial")} className="min-h-11 text-sm text-amber-ink underline underline-offset-[3px]">
-                        {co.mode === "trial" ? "Buy now instead" : `Not ready? Start a ${WORKSPACE_TRIAL_DAYS}-day free trial instead`}
+                      <button type="button" onClick={() => co.setMode("trial")} className="min-h-11 text-sm text-amber-ink underline underline-offset-[3px]">
+                        {`Not ready? Start a ${WORKSPACE_TRIAL_DAYS}-day free trial instead`}
                       </button>
                     </div>
                   )}
