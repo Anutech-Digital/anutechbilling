@@ -46,6 +46,8 @@
  *
  * R-1936: push also refuses on a red manager-pardeep CI (exit 7; --fixes-red / --owner-override) and on a
  * red related SQL test (exit 5). `ci <CARD>` waits for the sha's CI + SQL runs (exit 0 / 7 red / 8 timeout).
+ * R-1958: check + push (before AND after the rebase) refuse with exit 9 a change that undoes other cards'
+ * work — outside the claim, an old migration touched, a revert (worker-lock-guards.mjs; --allow-outside <path>).
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -53,6 +55,7 @@ import path from "node:path";
 import { execSync, execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites } from "./push-guard-suites.mjs";
+import { enforceScope, parseScopeFlags } from "./worker-lock-guards.mjs";
 
 export const LOCK_DIR = process.env.WORKER_LOCK_DIR || path.join(os.homedir(), ".claude", "worker-locks");
 
@@ -276,6 +279,9 @@ export function runGuardSuites(card) {
 }
 
 async function pushWithTurn(card, ciFlags = {}) {
+  /* R-1958: before the rebase (and again after it) — nothing of another card's may be undone. */
+  const scope = (exit) => enforceScope(card, "commits", { lockDir: LOCK_DIR, allowOutside: ciFlags.allowOutside, cardPath: ciFlags.cardPath, exit });
+  scope();
   /* R-1936: SQL tests of the migrations this push changes — on the local DB, before the push turn. */
   relatedSqlGate(card, { skip: ciFlags.skipRelatedSql });
   await withTurn("push", card, "push kar raha hai", async () => {
@@ -291,6 +297,7 @@ async function pushWithTurn(card, ciFlags = {}) {
     if (!upToDate) {
       try { sh("git rebase -q --rebase-merges anutech/manager-pardeep"); }
       catch { try { sh("git rebase --abort"); } catch {} console.error("✗ Rebase me CONFLICT — kisi aur ka code isi jagah badla. Ruko, owner ko batao. Khud se mat sulajhao."); process.exit(2); }
+      scope((c) => { fs.rmSync(path.join(LOCK_DIR, "_push-turn.json"), { force: true }); process.exit(c); });
     }
     /* R-910: the Auth.js/gateway code imports a Prisma client that is generated, not committed. */
     if (fs.existsSync("prisma/schema.prisma")) { try { sh("npx prisma generate"); } catch (e) { console.error("✗ prisma generate fail — push nahi hua.\n" + String(e.stderr ?? e.message ?? "").slice(-800)); process.exit(1); } }
@@ -901,7 +908,8 @@ function enforceCard(card, stage, flags) {
 function main(argv) {
   const [cmd, rawCard, ...args] = argv;
   const card = rawCard?.toUpperCase();
-  const { rest, ...cardFlags } = parseCardFlags(args);
+  const { rest: scopeRest, allowOutside } = parseScopeFlags(args);
+  const { rest, ...cardFlags } = parseCardFlags(scopeRest);
   fs.mkdirSync(LOCK_DIR, { recursive: true });
 
   if (cmd === "list") {
@@ -943,6 +951,7 @@ function main(argv) {
     const files = changedFiles();
     const conflicts = findConflicts(card, files, readLocks());
     if (conflicts.length) report(conflicts);
+    enforceScope(card, "worktree", { lockDir: LOCK_DIR, allowOutside, cardPath: cardFlags.cardPath });
     me.files = [...new Set([...(me.files ?? []), ...files])];
     fs.writeFileSync(f, JSON.stringify(me, null, 2));
     console.log(`✓ ${files.length} badli files — kisi aur worker se takraav nahi.`);
@@ -951,7 +960,7 @@ function main(argv) {
   if (cmd === "push") {
     const ciFlags = parseCiFlags(rest);
     enforceCard(card, "push", cardFlags);
-    return pushWithTurn(card, ciFlags);
+    return pushWithTurn(card, { ...ciFlags, allowOutside, cardPath: cardFlags.cardPath });
   }
   if (cmd === "ci") {
     /* R-1936: wait for this card's CI + SQL tests runs; exit 0 green, 7 red, 8 timeout. */
