@@ -77,10 +77,10 @@ describe("R-1986 plan cards: Buy <Google plan name>", () => {
     }
   });
 
-  it("Plus keeps 'Get a quote', Enterprise keeps 'Request a quote'", () => {
+  it("Plus and Enterprise both say 'Get a quote'", () => {
     page();
     expect(within(card("Business Plus")).getByRole("button", { name: "Get a quote" })).toBeTruthy();
-    expect(within(card("Enterprise")).getByRole("button", { name: "Request a quote" })).toBeTruthy();
+    expect(within(card("Enterprise")).getByRole("button", { name: "Get a quote" })).toBeTruthy();
   });
 });
 
@@ -113,7 +113,7 @@ describe("R-1986 Plus / Enterprise: Talk to sales", () => {
   it("the quote buttons and the 'Written GST quote' line stay", () => {
     withPhone();
     expect(within(card("Business Plus")).getByRole("button", { name: "Get a quote" })).toBeTruthy();
-    expect(within(card("Enterprise")).getByRole("button", { name: "Request a quote" })).toBeTruthy();
+    expect(within(card("Enterprise")).getByRole("button", { name: "Get a quote" })).toBeTruthy();
     expect(card("Business Plus").textContent).toMatch(/Written GST quote within 1 working day/);
   });
 
@@ -121,5 +121,25 @@ describe("R-1986 Plus / Enterprise: Talk to sales", () => {
     withPhone();
     expect(screen.queryByTestId("plan-sales-starter")).toBeNull();
     expect(screen.queryByTestId("plan-sales-standard")).toBeNull();
+  });
+});
+
+/* R-1986 (Pardeep): the buttons and feature lists line up across the 4 cards — each card is 8 rows
+   of one grid (subgrid) from sm up, so text length above the button cannot push it down. */
+describe("R-1986 plan cards line up", () => {
+  it("every card is a subgrid spanning 8 rows: wordmark, name, blurb, price, contact, total, button, features", () => {
+    page();
+    const grid = screen.getByTestId("plan-grid");
+    expect(grid.className).toMatch(/sm:gap-y-0/);
+    const cards = within(grid).getAllByRole("article");
+    expect(cards).toHaveLength(4);
+    for (const c of cards) {
+      expect(c.className).toMatch(/sm:grid-rows-subgrid/);
+      expect(c.className).toMatch(/sm:row-span-8/);
+      const inFlow = [...c.children].filter((el) => !el.className.includes("absolute"));
+      expect(inFlow).toHaveLength(8);
+      expect(inFlow[6].tagName).toBe("BUTTON");
+      expect(inFlow[7].tagName).toBe("UL");
+    }
   });
 });

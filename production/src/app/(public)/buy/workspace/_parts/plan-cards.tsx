@@ -45,7 +45,10 @@ export function PlanCards({
         {monthlyOk && <BillingToggle billing={billing} onBilling={onBilling} savePct={savePct} compact />}
       </div>
 
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] gap-4">
+      {/* R-1986 (Pardeep): the buttons and the feature lists line up across the cards whatever the
+          text above them — each card spans 8 rows of ONE grid (subgrid), so a row is as tall as its
+          tallest card. Phone: the cards stack, a plain column. */}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] gap-4 sm:gap-y-0" data-testid="plan-grid">
         {plans.map((p) => {
           const sel = p.id === selectedId;
           const rate = planRate(p, billing);
@@ -58,12 +61,12 @@ export function PlanCards({
               : `${rupee(sum?.subtotal ?? 0)}${annual ? "/year" : "/month"} + GST`;
           /* R-1986 (Pardeep): a priced plan's button says what it does — "Buy Business Starter" —
              picks the plan and opens the PAY checkout (R-1975: never the trial). */
-          const cta = quote ? (p.custom ? "Request a quote" : "Get a quote") : `Buy ${p.name}`;
+          const cta = quote ? "Get a quote" : `Buy ${p.name}`; // R-1986: both quoted plans say "Get a quote"
           return (
             <article
               key={p.id}
               aria-label={p.name}
-              className={`relative flex flex-col bg-white rounded-[14px] p-[22px] border-2 ${
+              className={`relative flex flex-col sm:grid sm:grid-rows-subgrid sm:row-span-8 sm:mb-4 bg-white rounded-[14px] p-[22px] border-2 ${
                 sel ? "border-amber shadow-[0_16px_32px_-16px_rgba(194,65,12,0.35)]" : "border-hairline"
               }`}
             >
