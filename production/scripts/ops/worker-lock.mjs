@@ -46,7 +46,8 @@
  * `--no-card-check` skips this ONLY for R-9xx manager cards. Exit 6 = card contract missing / no --card.
  *
  * R-1936: push also refuses on a red manager-pardeep CI (exit 7; --fixes-red / --owner-override) and on a
- * red related SQL test (exit 5). `ci <CARD>` waits for the sha's CI + SQL runs (exit 0 / 7 red / 8 timeout).
+ * red related SQL test (exit 5; R-1955: also a red that cannot be compared because the card's migration is
+ * already on the local DB — "not proven", logged; see worker-lock-sql.mjs). `ci <CARD>` waits for the sha's CI + SQL runs (exit 0 / 7 red / 8 timeout).
  * R-1958: check + push (before AND after the rebase) refuse with exit 9 a change that undoes other cards'
  * work — outside the claim, an old migration touched, a revert (worker-lock-guards.mjs; --allow-outside <path>).
  */
@@ -58,6 +59,8 @@ import { execSync, execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites } from "./push-guard-suites.mjs";
 import { enforceScope, parseScopeFlags } from "./worker-lock-guards.mjs";
+import { runRelatedSql } from "./worker-lock-sql.mjs";
+export { migrationDefines, relatedSqlTests, deployPeek, sqlTestSafe, relatedTestScript, runRelatedSql } from "./worker-lock-sql.mjs";
 
 export const LOCK_DIR = process.env.WORKER_LOCK_DIR || path.join(os.homedir(), ".claude", "worker-locks");
 
@@ -764,91 +767,7 @@ export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = CI_DE
   }
 }
 
-/* ── Related SQL tests before the push ───────────────────────────────────────────────────── */
-
-/** Functions / tables / views a migration creates or replaces (lower case, no schema). */
-export function migrationDefines(sql) {
-  const names = new Set();
-  const src = String(sql ?? "").replace(/--[^\n]*/g, "");
-  const id = String.raw`(?:"?[a-z_][a-z0-9_]*"?\.)?"?([a-z_][a-z0-9_]*)"?`;
-  const res = [
-    new RegExp(String.raw`create\s+(?:or\s+replace\s+)?function\s+${id}`, "gi"),
-    new RegExp(String.raw`create\s+(?:unlogged\s+)?table\s+(?:if\s+not\s+exists\s+)?${id}`, "gi"),
-    new RegExp(String.raw`create\s+(?:or\s+replace\s+)?(?:materialized\s+)?view\s+(?:if\s+not\s+exists\s+)?${id}`, "gi"),
-  ];
-  for (const re of res) for (const m of src.matchAll(re)) names.add(m[1].toLowerCase());
-  return [...names];
-}
-
-/** The test files (of [{file, src}]) that mention any of the names as a whole word. */
-export function relatedSqlTests(names, tests) {
-  if (!names.length) return [];
-  const res = names.map((n) => new RegExp(String.raw`(^|[^a-z0-9_])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9_]|$)`, "i"));
-  return tests.filter((t) => res.some((re) => re.test(t.src))).map((t) => ({ ...t, hits: names.filter((n, i) => res[i].test(t.src)) }));
-}
-
-/** First-line `-- deploy-peek: <SQL boolean>` of a migration, or null. */
-export function deployPeek(sql) {
-  const m = /^\s*--\s*deploy-peek:\s*(.+)$/m.exec(String(sql ?? "").split("\n").slice(0, 3).join("\n"));
-  return m ? m[1].trim() : null;
-}
-
-/** Same safety rule as scripts/test-sql.mjs: ends in rollback, never commits. */
-export function sqlTestSafe(src) {
-  return /^\s*rollback\s*;/im.test(src) && !/^\s*commit\s*;/im.test(src);
-}
-
-/** One script: begin; the not-yet-applied migrations (their own begin;/commit; lines dropped); the test (ends in rollback). */
-export function relatedTestScript(pendingMigrations, testSrc) {
-  const mig = pendingMigrations.map((m) => `-- migration ${m.file}\n` + m.src.replace(/^\s*(begin|commit)\s*;\s*$/gim, "-- ($1 dropped: one rolled-back transaction)")).join("\n\n");
-  return `begin;\n${mig}\n\n${testSrc}\n`;
-}
-
-/**
- * Run the SQL tests related to the changed migrations on the LOCAL DB. deps:
- *   changed: [{file, src}] migrations this push adds/changes; tests: [{file, src}] supabase/tests/*.sql;
- *   psql(sql) => {status, out} (null when no local DB).
- * Returns { ok, skipped?, ran: [{file, ok, why?}], message }.
- */
-export function runRelatedSql({ changed, tests, psql }) {
-  if (!changed.length) return { ok: true, skipped: true, ran: [], message: "(koi migration nahi badli — related SQL tests nahi)" };
-  const names = [...new Set(changed.flatMap((m) => migrationDefines(m.src)))];
-  const related = relatedSqlTests(names, tests);
-  if (!related.length) return { ok: true, skipped: true, ran: [], message: `(badli migrations [${names.join(", ") || "kuch nahi banaya"}] ka koi SQL test nahi mila)` };
-  if (!psql) return { ok: true, skipped: true, ran: [], message: `⚠ local DB nahi chal raha — ${related.length} related SQL test chhode (${related.map((t) => t.file).join(", ")}). CI ka "SQL tests" dekhna.` };
-  if (changed.some((m) => /\bconcurrently\b/i.test(m.src.replace(/--[^\n]*/g, "")))) {
-    return { ok: true, skipped: true, ran: [], message: "⚠ migration me CONCURRENTLY hai (transaction me nahi chalta) — related SQL tests chhode; CI dekhna." };
-  }
-  /* A migration whose deploy-peek is already true on the local DB is applied — run the test on top of it. */
-  const pending = [];
-  for (const m of changed) {
-    const peek = deployPeek(m.src);
-    let applied = false;
-    if (peek) { const r = psql(`select case when (${peek}) then 'PEEK_APPLIED' else 'PEEK_PENDING' end;`); applied = r.status === 0 && /PEEK_APPLIED/.test(r.out); }
-    if (!applied) pending.push(m);
-  }
-  const ran = [];
-  for (const t of related) {
-    if (!sqlTestSafe(t.src)) { ran.push({ file: t.file, ok: false, why: "rollback se khatam nahi hoti / commit karti hai (CI ka runner bhi mana karega)" }); continue; }
-    const r = psql(relatedTestScript(pending, t.src));
-    if (r.status === 0) { ran.push({ file: t.file, ok: true }); continue; }
-    const why = (String(r.out).match(/ERROR:[^\n]{0,300}/g) ?? [String(r.out).slice(-300)]).slice(0, 3).join(" | ");
-    /* Red WITH the new migration but also red WITHOUT it = the local DB was already broken for this test
-       (leftover rows, a missing older migration) — not this push's doing. Warn, don't block; CI decides. */
-    if (pending.length && psql(relatedTestScript([], t.src)).status !== 0) { ran.push({ file: t.file, ok: true, localRed: true, why }); continue; }
-    ran.push({ file: t.file, ok: false, why });
-  }
-  const bad = ran.filter((x) => !x.ok);
-  const localRed = ran.filter((x) => x.localRed);
-  const head = `related SQL tests (${names.join(", ")}): ${ran.length - bad.length - localRed.length}/${ran.length} hare` + (pending.length ? `, ${pending.length} nayi migration ke saath (rollback)` : "");
-  return {
-    ok: !bad.length, ran,
-    message: (bad.length ? "✗ " : "✓ ") + head +
-      localRed.map((b) => `\n   ⚠ ${b.file}: migration ke bina bhi local DB par laal (local DB ki purani gadbad, is push ki nahi) — ${b.why}`).join("") +
-      bad.map((b) => `\n   ✗ ${b.file}: ${b.why}`).join("") +
-      (bad.length && !pending.length ? "\n   (migration local DB par pehle se lagi hai. Agar ye test migration ke bina bhi laal tha — local DB ki purani gadbad — to owner se poochh kar --skip-related-sql, log hota hai.)" : ""),
-  };
-}
+/* ── Related SQL tests before the push: pure logic in worker-lock-sql.mjs (R-1955) ──────────── */
 
 /** Real deps for runRelatedSql, from the worktree's production/ folder. */
 function relatedSqlDeps() {
@@ -881,9 +800,15 @@ function relatedSqlGate(card, { skip = false } = {}) {
   try { r = runRelatedSql(relatedSqlDeps()); }
   catch (e) { console.log(`⚠ related SQL tests nahi chal paaye (${String(e?.message ?? e).split("\n")[0].slice(0, 200)}) — chhode, CI dekhna.`); return; }
   if (r.ok) { console.log(r.message); return; }
-  console.error(r.message);
+  logNotProven(card, r);
+  console.error(r.message.replaceAll("<CARD>", card));
   console.error(`✗ ${card}: badli migration ka SQL test laal — push NAHI hua. Theek karo (test dheela mat karo), phir dobara push.`);
   process.exit(5);
+}
+
+/** R-1955: a red related test that could not be compared (migration already on the local DB) is logged, never silent. */
+export function logNotProven(card, r) {
+  if (r.notProven?.length) appendCiLog({ at: new Date().toISOString(), card, how: "related-sql-not-proven", tests: r.notProven, applied: r.applied });
 }
 
 export const CI_LOG = () => path.join(LOCK_DIR, "_ci-gate.log");
@@ -1095,7 +1020,8 @@ function main(argv) {
   }
   if (cmd === "sql-related") {
     const r = runRelatedSql(relatedSqlDeps());
-    (r.ok ? console.log : console.error)(r.message);
+    if (!r.ok) logNotProven(card, r);
+    (r.ok ? console.log : console.error)(r.message.replaceAll("<CARD>", card ?? "<CARD>"));
     if (!r.ok) process.exit(5);
     return;
   }
