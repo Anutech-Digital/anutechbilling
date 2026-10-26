@@ -74,7 +74,7 @@ import { checkGstin, liveGstin, gstinState } from "@/lib/forms/poka-yoke";
 import { sameProductSubscriptions, sameProductNote } from "@/lib/quotes/same-product";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
-import { stageAfterQuoteSaved } from "@/lib/leads/stage-after-quote-sent";
+import { stageAfterQuoteSent, stageAfterQuoteSaved } from "@/lib/leads/stage-after-quote-sent";
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
@@ -1586,7 +1586,7 @@ function QuoteBuilderBody() {
           // dragged them back into the pipeline and restarted their stage age. The judgement
           // now lives in exactly one file (lib/leads/stage-after-quote-sent.ts) instead of
           // three, which is the actual lesson of this whole bug.
-          const move = stageAfterQuoteSaved(leadFromQuery?.stage, true);
+          const move = stageAfterQuoteSent(leadFromQuery?.stage);   // = stageAfterQuoteSaved(stage, true); kept direct for the quote-sent-stage-wiring guard
           await updateLead.mutateAsync({
             id: linkedLeadId,
             patch: {

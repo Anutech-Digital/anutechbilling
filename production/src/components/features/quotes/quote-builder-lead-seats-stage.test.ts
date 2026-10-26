@@ -13,9 +13,12 @@ describe("R-1959: quote builder — one seats helper and one stage rule for ever
   it("the new prospect lead and the existing-lead update both use leadSeatCount", () => {
     expect((src.match(/leadSeatCount\(lineItems\)/g) ?? []).length).toBeGreaterThanOrEqual(3);
   });
-  it("the existing lead moves through stageAfterQuoteSaved for a draft as well as a send", () => {
-    expect(src).toMatch(/stageAfterQuoteSaved\(leadFromQuery\?\.stage,\s*true\)/);
+  it("the existing lead moves on a draft (stageAfterQuoteSaved) as well as on a send", () => {
+    /* A send keeps the direct stageAfterQuoteSent call that quote-sent-stage-wiring.test.ts
+       pins (stageAfterQuoteSaved(stage, true) is exactly that); a draft goes through
+       stageAfterQuoteSaved(stage, false) — New → Contacted, never backward. */
+    expect(src).toMatch(/stageAfterQuoteSent\(leadFromQuery\?\.stage\)/);
     expect(src).toMatch(/stageAfterQuoteSaved\(leadFromQuery\?\.stage,\s*false\)/);
-    expect(src).not.toMatch(/stageAfterQuoteSent\(/);
+    expect(src).toMatch(/draftMove\.nextStage !== null && \{ stage: draftMove\.nextStage \}/);
   });
 });
