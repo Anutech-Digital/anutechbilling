@@ -8,7 +8,9 @@ import { rupee } from "@/lib/utils";
 import { SLA } from "@/site/lib/config";
 import { stateName, whatsappHref, type BuyBrand, type BuyContact } from "./brand";
 import { gstLines, orderCompany } from "./checkout-form";
-import { BUSINESS_MAX_USERS, usersLabel, type Billing, type BuyPlan, type PlanSum } from "./plans";
+import { BUSINESS_MAX_USERS, clampSeats, usersLabel, type Billing, type BuyPlan, type PlanSum } from "./plans";
+import { BillingToggle } from "./hero";
+import { GOOGLE_TRIAL_MAX_USERS } from "@/lib/trials/start-from-quote";
 import type { CheckoutState } from "./use-checkout";
 
 const addDays = (days: number) =>
@@ -19,6 +21,12 @@ interface SummaryProps {
   promo: { label: string; off: number } | null;
   co: CheckoutState; brand: BuyBrand | null; contact: BuyContact; waMessage: string;
   onChangePlan: () => void;
+  /** R-1983: change users / billing right here — the page's ONE state (hero card, plan cards and
+   *  phone bar read the same), so every number moves together. Omitted → read-only summary. */
+  onSeats?: (n: number) => void;
+  onBilling?: (b: Billing) => void;
+  monthlyOk?: boolean;
+  savePct?: number;
 }
 
 export function summaryLines({ seats, billing, sum, promo, co, brand }: Pick<SummaryProps, "seats" | "billing" | "sum" | "promo" | "co" | "brand">) {
@@ -48,6 +56,7 @@ export function OrderSummary(p: SummaryProps) {
       <div className="text-[13px] text-ink-3 mt-0.5 mb-4">
         {usersLabel(p.seats)}{quoted ? " · quoted separately" : annual ? " · Annual, billed yearly" : " · Monthly, billed every month"}
       </div>
+      {p.onSeats && <SummaryControls {...p} onSeats={p.onSeats} trial={trial} />}
       {quoted || !lines || !co.totals ? (
         <p className="text-sm text-ink-2 m-0">A written GST quote — no online payment for this order.</p>
       ) : (
@@ -167,6 +176,45 @@ export function PhoneBar({ plan, seats, billing, total, inclGst = false, onCheck
       <button type="button" onClick={onCheckout} className="h-12 px-5 rounded-[10px] bg-amber text-white text-[15px] font-semibold shrink-0">
         {plan.custom ? "Get quote" : "Checkout"}
       </button>
+    </div>
+  );
+}
+
+/**
+ * R-1983: users − [n] + and (when monthly is offered) Annual / Monthly inside the order summary.
+ * More than 300 users → the Enterprise message (the checkout turns into the quote panel);
+ * on a trial at most Google's 10 users.
+ */
+function SummaryControls(p: SummaryProps & { onSeats: (n: number) => void; trial: boolean }) {
+  const max = p.trial ? GOOGLE_TRIAL_MAX_USERS : undefined;
+  const set = (n: number) => p.onSeats(max ? Math.min(clampSeats(n), max) : clampSeats(n));
+  const btn = "w-11 h-11 shrink-0 border border-hairline bg-paper rounded-[10px] text-xl text-ink disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber";
+  return (
+    <div className="mb-4 flex flex-col gap-2.5">
+      <div className="flex items-center gap-2">
+        <label htmlFor="summary-seats" className="text-[13px] font-semibold text-ink-2 mr-auto">Users<span className="sr-only"> in this order</span></label>
+        <button type="button" aria-label="Fewer users" onClick={() => set(p.seats - 1)} className={btn}>−</button>
+        <input
+          id="summary-seats"
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={max}
+          value={p.seats}
+          onChange={(e) => set(Number(e.target.value))}
+          className="w-[72px] h-11 text-center font-serif text-[20px] border border-hairline rounded-[10px] bg-paper text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+        />
+        <button type="button" aria-label="More users" onClick={() => set(p.seats + 1)} className={btn}>+</button>
+      </div>
+      {p.trial && p.seats >= GOOGLE_TRIAL_MAX_USERS && (
+        <p role="status" className="text-[13px] text-ink-2 m-0">Google allows at most {GOOGLE_TRIAL_MAX_USERS} users on a trial — add the rest after you buy.</p>
+      )}
+      {!p.trial && !p.plan.custom && p.seats > BUSINESS_MAX_USERS && (
+        <p role="status" className="text-[13px] text-amber-ink bg-amber-soft rounded-lg px-3 py-2 m-0">Over {BUSINESS_MAX_USERS} users is Enterprise — a written quote, no online payment.</p>
+      )}
+      {p.monthlyOk && p.onBilling && !p.plan.custom && !p.plan.priceHidden && (
+        <BillingToggle billing={p.billing} onBilling={p.onBilling} savePct={p.savePct ?? 0} />
+      )}
     </div>
   );
 }
