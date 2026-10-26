@@ -135,6 +135,11 @@ describe("R-1980 campaignSalesReport — the ads-month scenario, worked by hand"
     expect(r.unmatchedSpend).toBe(0);
   });
 
+  it("total ROAS is the ADS' return: campaign revenue 31,000 ÷ spend 10,000 = 3.10 — never the no-campaign money (localhost check, 26 Oct)", () => {
+    expect(r.totals.adRevenue).toBe(31000);
+    expect(r.totals.roas).toBe(3.1);
+  });
+
   it("platform spend that matches no campaign code is reported, never dropped", () => {
     const f = fixture();
     f.spendDays.push({ platform: "google-ads", day: D(4), campaign_id: "X9", campaign_name: "Brand old", spend: 700, clicks: 5, impressions: 50 });

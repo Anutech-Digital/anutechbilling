@@ -150,7 +150,14 @@ export interface CampaignSalesRow {
 
 export interface CampaignSalesReport {
   rows: CampaignSalesRow[];
-  totals: { spend: number; clicks: number; impressions: number; leads: number; paidOrders: number; received: number; refunded: number; revenue: number; roas: number | null };
+  totals: {
+    spend: number; clicks: number; impressions: number; leads: number; paidOrders: number;
+    received: number; refunded: number; revenue: number;
+    /** Revenue of the campaign rows only — what the ads brought. */
+    adRevenue: number;
+    /** adRevenue ÷ spend — the no-campaign row never inflates it. */
+    roas: number | null;
+  };
   /** Platform spend whose campaign matches no utm code (shown as its own rows, counted here too). */
   unmatchedSpend: number;
 }
@@ -358,12 +365,16 @@ export function campaignSalesReport(input: CampaignSalesInput): CampaignSalesRep
   const sum = (f: (r: CampaignSalesRow) => number) => rows.reduce((s, r) => s + f(r), 0);
   const spend = r2(sum((r) => r.spend));
   const revenue = sum((r) => r.revenue);
+  /* The ads' return counts only money a campaign brought. Dividing ALL revenue (orders no ad
+     brought too) by ad spend read 38× on localhost for ads that returned 3.1× (26 Oct). */
+  const adRevenue = rows.filter((r) => r.key !== NO_CAMPAIGN).reduce((s, r) => s + r.revenue, 0);
   return {
     rows,
     totals: {
       spend, clicks: sum((r) => r.clicks), impressions: sum((r) => r.impressions), leads: sum((r) => r.leads),
       paidOrders: sum((r) => r.paidOrders), received: sum((r) => r.received), refunded: sum((r) => r.refunded), revenue,
-      roas: spend > 0 ? r2(revenue / spend) : null,
+      adRevenue,
+      roas: spend > 0 ? r2(adRevenue / spend) : null,
     },
     unmatchedSpend: r2(unmatchedSpend),
   };
