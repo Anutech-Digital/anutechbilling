@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'meta_capi_token')
 -- deploy-key: r1979metapixelsecrets
--- 20261026162526_r1979_meta_pixel_secrets.sql
+-- 20261026174905_r1979_meta_pixel_secrets.sql
 --
 -- R-1979 (26 Oct 2026, goal G-ADS): Meta Pixel + Conversions API settings per tenant, on
 -- tenant_secrets — the table every per-tenant integration credential already lives in, RLS

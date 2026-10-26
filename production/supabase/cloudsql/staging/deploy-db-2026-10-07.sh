@@ -263,6 +263,7 @@ MIGS=(
   "r1978quoteadattribution|20261026121125_r1978_quote_ad_attribution.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'quotes' and column_name = 'utm_content') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'leads' and column_name = 'utm_term')"
   "r1981couponcampaign|20261026154613_r1981_lead_source_website_coupon_campaign.sql|resellersos_migration|(exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'coupons' and column_name = 'campaign_id') and exists(select 1 from pg_proc where proname = 'lead_source_key' and pronamespace = 'public'::regnamespace and prosrc like '%website-order%'))"
   "r1921vendorstatementageing|20261026171338_r1921_vendor_statement_payables_ageing.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.vendor_statement(uuid)') and prosrc like '%R-1921%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.payables_ageing()') and prosrc like '%R-1921%')"
+  "r1979metapixelsecrets|20261026174905_r1979_meta_pixel_secrets.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'meta_capi_token')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

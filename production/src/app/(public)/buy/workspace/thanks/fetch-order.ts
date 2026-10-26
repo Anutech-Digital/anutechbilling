@@ -83,6 +83,7 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
   return {
     quoteId:        data.id,
     newDomain,
+    planLabel:      data.plan ?? null, // R-1979: Meta content_ids
     invoiceNumber:  (inv as { id?: string } | null)?.id ?? null,
     customerName:   data.customer_name ?? "",
     tierName,

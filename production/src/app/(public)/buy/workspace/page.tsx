@@ -34,6 +34,7 @@ import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { PARTNER_LINE } from "@/site/lib/config";
 import { websiteTenantId } from "@/lib/website-tenant";
 import { fetchBuyBrand } from "./_parts/fetch-brand";
+import { websitePixelId } from "@/lib/meta/pixel-id.server";
 
 /* R-1499: tenant read per call (websiteTenantId) — outside production an unset BUY_PAGE_TENANT_ID
    shows nothing (and logs why), never the live tenant's data. */
@@ -133,7 +134,7 @@ export default async function BuyWorkspacePage(props: {
 }) {
   const pick = parseBuyParams(await props.searchParams);
   // Both reads at once (R-027) — each is capped, so the page waits at most ~3 s, not the sum.
-  const [catalogItems, { configured, keyId }, brand] = await Promise.all([fetchGoogleWorkspaceItems(), isRazorpayConfigured(), fetchBuyBrand()]);
+  const [catalogItems, { configured, keyId }, brand, metaPixelId] = await Promise.all([fetchGoogleWorkspaceItems(), isRazorpayConfigured(), fetchBuyBrand(), websitePixelId()]);
   // Live when Razorpay is fully configured. When it isn't:
   //  · non-prod (or ALLOW_SIMULATED_CHECKOUT=1) → "simulation": Buy now stays
   //    visible for Pardeep to walk the full pipeline, clearly TEST-MODE banded.
@@ -154,6 +155,7 @@ export default async function BuyWorkspacePage(props: {
       initialSeats={pick.seats ?? undefined}
       openBuy={pick.openBuy}
       initialCoupon={pick.coupon ?? undefined}
+      metaPixelId={metaPixelId}
       brand={brand}
     />
   );

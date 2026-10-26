@@ -11,6 +11,7 @@ import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY } from "@/site/lib/config";
 import { postJson, NOT_REACHED } from "../post-json";
 import { landingForForm } from "@/site/lib/ad-attribution";
+import { fbpCookie, metaConsent } from "@/site/lib/meta-pixel";
 import { thanksUrl } from "../thanks/thanks-url";
 import { saveWorkspacePayment } from "../thanks/payment-handoff";
 import { buyerStateCode, domainValue, orderCompany, type BuyerDetails, type DomainChoice, type PayMethod } from "./checkout-form";
@@ -103,7 +104,7 @@ export async function payOrder(
   retry: () => void,
 ): Promise<void> {
   const { ts } = ctx;
-  const r = await postJson<CheckoutApiResponse>("/api/public/checkout/workspace", { ...body, ...landingForForm() }, ts.headers); // R-1978: the ad, with the order
+  const r = await postJson<CheckoutApiResponse>("/api/public/checkout/workspace", { ...body, ...landingForForm(), metaConsent: metaConsent(), fbp: fbpCookie() }, ts.headers); // R-1978 the ad; R-1979 Meta consent + _fbp
   ts.reset(); // R-737: a token works once
   if (!r.reached) { notReached("No money was taken.", retry); return; }
   const json = r.json;
@@ -128,7 +129,8 @@ export async function payOrder(
     description: `Google Workspace ${json.tierName ?? ctx.plan.name} · ${json.seats ?? ctx.seats} users (${ctx.billing})`,
     order_id: json.orderId,
     prefill: { name: ctx.buyer.name, email: ctx.buyer.email, contact: ctx.buyer.phone, method },
-    notes: { quoteId: json.quoteId ?? "", leadId: json.leadId ?? "", domain: domainValue(ctx.domain) },
+    /* R-1979: the webhook sends Meta's server Purchase only when metaConsent is "1". */
+    notes: { quoteId: json.quoteId ?? "", leadId: json.leadId ?? "", domain: domainValue(ctx.domain), metaConsent: metaConsent() ? "1" : "0", fbp: fbpCookie() ?? "" },
     /* R-1116: the storefront blue — site.css --primary, like /checkout (Razorpay takes a hex). */
     theme: { color: "#1668E3" },
     handler: (resp) => {

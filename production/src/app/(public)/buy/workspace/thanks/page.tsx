@@ -22,6 +22,7 @@ import { ThanksClient } from "./thanks-client";
 import { fetchOrder } from "./fetch-order";
 import { SLA } from "@/site/lib/config";
 import { fetchBuyBrand } from "../_parts/fetch-brand";
+import { websitePixelId } from "@/lib/meta/pixel-id.server";
 
 /* R-1975: the title names the website tenant (its own row), like the buy page — never typed. */
 export async function generateMetadata(): Promise<Metadata> {
@@ -44,14 +45,15 @@ export default async function ThanksPage(
 ) {
   const searchParams = await props.searchParams;
   const quoteId = (searchParams.order ?? "").trim();
-  const [order, brand] = await Promise.all([
+  const [order, brand, metaPixelId] = await Promise.all([
     quoteId ? fetchOrder(quoteId, searchParams.t?.trim()) : Promise.resolve(null),
     fetchBuyBrand(),
+    websitePixelId(),
   ]);
   const isSim   = searchParams.sim === "1";
 
   /* R-1625: with no paid order yet (the webhook not in), the client confirms the Razorpay
      payment the buy page kept for this order number — the number is only a lookup key into the
      buyer's own sessionStorage; nothing is shown from it until our server confirms. */
-  return <ThanksClient order={order} isSimulation={isSim} orderRef={quoteId || undefined} brand={brand} />;
+  return <ThanksClient order={order} isSimulation={isSim} orderRef={quoteId || undefined} brand={brand} metaPixelId={metaPixelId} />;
 }

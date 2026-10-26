@@ -1,5 +1,5 @@
 -- R-1979 (26 Oct 2026, G-ADS): Meta Pixel settings on tenant_secrets.
--- Migration 20261026162526_r1979_meta_pixel_secrets.sql. Self-asserting, ONE transaction,
+-- Migration 20261026174905_r1979_meta_pixel_secrets.sql. Self-asserting, ONE transaction,
 -- rolled back. Run on a dev/test DB only.
 -- Proves (fails without the migration — the columns do not exist):
 --   A. a tenant's pixel id, sealed CAPI token and test code are stored per tenant;

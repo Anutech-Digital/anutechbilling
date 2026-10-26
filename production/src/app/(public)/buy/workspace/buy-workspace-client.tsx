@@ -30,6 +30,8 @@ import { orderTotals } from "./_parts/checkout-form";
 import { useCheckout } from "./_parts/use-checkout";
 import { rupee } from "@/lib/utils";
 import { landingForForm } from "@/site/lib/ad-attribution";
+import { MetaPixel, trackMeta } from "@/site/lib/meta-pixel";
+import { contentIdForPlan } from "@/lib/meta/pixel-ids";
 
 
 // ──────────────────────────────────────────────────────────────────────
@@ -382,7 +384,10 @@ function BuyWorkspaceBody({
   openBuy = false,
   brand = null,
   initialCoupon,
+  metaPixelId = null,
 }: {
+  /** R-1979: the website tenant's Meta Pixel id — no id, no Meta script or event. */
+  metaPixelId?: string | null;
   /** R-1978: ?coupon=CODE on the buy link — filled in and checked on arrival. */
   initialCoupon?: string;
   /** R-120: edition and seats chosen on the home card (lib/checkout/buy-link.ts). */
@@ -481,6 +486,22 @@ function BuyWorkspaceBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the price is known
   }, [initialCoupon, sum]);
 
+  /* R-1979: Meta events (only when the pixel loaded — an id and "Accept all"; trackMeta is a
+     no-op otherwise). ViewContent once; InitiateCheckout when step 1 is done; AddPaymentInfo when
+     the payment step opens. value = pre-GST, INR; content_ids = the plan. */
+  const metaFired = React.useRef<Set<string>>(new Set());
+  const metaOnce = (event: "ViewContent" | "InitiateCheckout" | "AddPaymentInfo") => {
+    if (metaFired.current.has(event)) return;
+    metaFired.current.add(event);
+    trackMeta(event, { content_ids: contentIdForPlan(`google-workspace-${plan.id}`), content_type: "product", value: sum?.subtotal ?? 0, currency: "INR", num_items: seats });
+  };
+  React.useEffect(() => { metaOnce("ViewContent"); /* eslint-disable-next-line react-hooks/exhaustive-deps -- once */ }, []);
+  React.useEffect(() => {
+    if (co.step >= 2) metaOnce("InitiateCheckout");
+    if (co.step === 3 && co.mode === "pay") metaOnce("AddPaymentInfo");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- on step / mode changes
+  }, [co.step, co.mode]);
+
   /* Arrived from a "Buy now" elsewhere (?buy=1): straight to checkout, once. */
   const arrived = React.useRef(false);
   React.useEffect(() => {
@@ -504,6 +525,7 @@ function BuyWorkspaceBody({
 
   return (
     <div className="min-h-screen bg-paper text-ink pb-[76px] min-[820px]:pb-0">
+      <MetaPixel pixelId={metaPixelId} />
       {isSimulation && <TestModeBar />}
       <SiteHeader brand={brand} contact={contact} onNav={onNav} onBuy={goPay} />
       {sitePromo && <SitePromoBanner promo={sitePromo} />}
