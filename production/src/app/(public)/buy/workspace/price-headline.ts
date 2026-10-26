@@ -30,6 +30,8 @@ export function priceHeadline(i: HeadlineInput) {
     bigSuffix: annual ? "/year + GST" : "/month + GST",
     was: i.wasSubtotal != null && i.wasSubtotal > i.subtotal ? inr(i.wasSubtotal) : null,
     breakdown: `${inr(i.rate)}/user/month × ${users}${annual ? " × 12" : ""} · ${billed}`,
+    /** R-1986: the sum written out, for the plan cards — "₹270/user/month × 10 users × 12 = ₹32,400/year + GST". */
+    working: `${inr(i.rate)}/user/month × ${users}${annual ? " × 12" : ""} = ${inr(i.subtotal)}${annual ? "/year + GST" : "/month + GST"}`,
     gstLine: `+ ${inr(i.gst)} GST (18%) · Total ${inr(i.total)}`,
   };
 }

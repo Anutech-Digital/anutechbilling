@@ -10,6 +10,7 @@ import { rupee } from "@/lib/utils";
 import { BillingToggle } from "./hero";
 import { BUSINESS_MAX_USERS, COMPARE_ROWS, PLAN_COPY, planRate, planSum, usersLabel, type Billing, type BuyPlan } from "./plans";
 import { GoogleWorkspaceWordmark } from "./wordmark";
+import { priceHeadline } from "../price-headline";
 import { whatsappHref, type BuyContact } from "./brand";
 
 /** R-1986: the WhatsApp text for a quoted plan — names the plan and the users, like the page's other WhatsApp links. */
@@ -58,7 +59,10 @@ export function PlanCards({
             ? `Written GST quote ${SLA.quote}`
             : seats > BUSINESS_MAX_USERS
               ? `Max ${BUSINESS_MAX_USERS} users — see Enterprise`
-              : `${rupee(sum?.subtotal ?? 0)}${annual ? "/year" : "/month"} + GST`;
+              : sum
+                /* R-1986: the working, from the hero card's own helper (price-headline.ts) — the two never disagree. */
+                ? priceHeadline({ rate: sum.rate, seats, billing, subtotal: sum.subtotal, gst: sum.gst, total: sum.total }).working
+                : "";
           /* R-1986 (Pardeep): a priced plan's button says what it does — "Buy Business Starter" —
              picks the plan and opens the PAY checkout (R-1975: never the trial). */
           const cta = quote ? "Get a quote" : `Buy ${p.name}`; // R-1986: both quoted plans say "Get a quote"

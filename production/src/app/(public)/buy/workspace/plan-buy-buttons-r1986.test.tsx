@@ -143,3 +143,23 @@ describe("R-1986 plan cards line up", () => {
     }
   });
 });
+
+/* R-1986 (Pardeep): the grey total box shows the working, from the hero card's helper. */
+describe("R-1986 plan card total box shows the working", () => {
+  const box = (name: string) => card(name).querySelector(".font-mono")?.textContent;
+  it("annual, 10 users: '₹270/user/month × 10 users × 12 = ₹32,400/year + GST'", () => {
+    render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={BRAND} initialSeats={10} />);
+    expect(box("Business Starter")).toBe("₹270/user/month × 10 users × 12 = ₹32,400/year + GST");
+    expect(box("Business Standard")).toBe("₹1,080/user/month × 10 users × 12 = ₹1,29,600/year + GST");
+  });
+  it("monthly, 10 users: '₹325/user/month × 10 users = ₹3,250/month + GST'", () => {
+    render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={BRAND} initialSeats={10} />);
+    fireEvent.click(within(plans()).getByRole("button", { name: "Monthly" }));
+    expect(box("Business Starter")).toBe("₹325/user/month × 10 users = ₹3,250/month + GST");
+  });
+  it("the same words as the hero price card's helper", async () => {
+    const { priceHeadline } = await import("./price-headline");
+    expect(priceHeadline({ rate: 270, seats: 10, billing: "annual", subtotal: 32400, gst: 5832, total: 38232 }).working)
+      .toBe("₹270/user/month × 10 users × 12 = ₹32,400/year + GST");
+  });
+});
