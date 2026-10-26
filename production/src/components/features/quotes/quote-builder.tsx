@@ -74,7 +74,7 @@ import { checkGstin, liveGstin, gstinState } from "@/lib/forms/poka-yoke";
 import { sameProductSubscriptions, sameProductNote } from "@/lib/quotes/same-product";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
-import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
+import { stageAfterQuoteSent, stageAfterQuoteSaved } from "@/lib/leads/stage-after-quote-sent";
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
@@ -106,7 +106,7 @@ import { lineCostUnknown, fillUnknownCosts } from "@/lib/quotes/line-cost";
 import { matchCatalogItemForPlan } from "@/lib/quotes/lead-plan-match";
 import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice, markOneTimeLines } from "@/lib/quotes/line-commit-choice";
 import { leadLinePrice } from "./lead-line-commitment";
-import { quoteSeatCount } from "@/lib/quotes/seat-lines";
+import { leadSeatCount } from "@/lib/quotes/seat-lines";
 import { isTermLine, lineForYears } from "./domain-term";
 import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
@@ -1489,7 +1489,9 @@ function QuoteBuilderBody() {
          already read it. Made once per screen (the ref), never for a picked customer. */
       let prospectLeadId: string | null = prospectLeadRef.current;
       if (typedProspect && !linkedLeadId && !prospectLeadId && hasProspectContact({ email: prospectEmail, phone: prospectPhone, gstin: prospectGstin })) {
-        const seats = quoteSeatCount(lineItems) ?? 0;
+        /* R-1959: leadSeatCount — a custom line (no commitment) on an empty catalogue still
+           gives the lead its seats; quoteSeatCount alone gave null → Seats "—". */
+        const seats = leadSeatCount(lineItems);
         const row = prospectLeadRow({
           name: resolvedCustomerName,
           contact: { email: prospectEmail, phone: prospectPhone, gstin: prospectGstin },
@@ -1547,7 +1549,7 @@ function QuoteBuilderBody() {
         /* R-389 (F7): licence lines only — support / one-time services are not seats
            (Q-FBB9-27-0013 saved 27 for 25 Workspace seats). A quote with no licence line
            keeps the old total so the column is never newly empty. */
-        seats:         quoteSeatCount(lineItems) ?? lineItems.reduce((s, l) => s + l.qty, 0),
+        seats:         leadSeatCount(lineItems) ?? lineItems.reduce((s, l) => s + l.qty, 0),
         plan:          lineItems[0]?.name ?? null,
         // Direct invoice: a one-time invoice must NOT create a subscription on
         // payment; a recurring one should. Ignored for normal quotes.
@@ -1578,13 +1580,13 @@ function QuoteBuilderBody() {
       // Leads (raw) tab forever.
       if (isLeadMode && linkedLeadId && status === "sent" && wentOut) {
         try {
-          const totalSeats = quoteSeatCount(lineItems) ?? 0;   // R-389 (F7): licence lines only
+          const totalSeats = leadSeatCount(lineItems) ?? 0;   // R-389 (F7) + R-1959: licence lines, else the product lines
           // Forward-only, through the same rule the two server-side send paths use. This line
           // was `stage: "quote"` unconditionally — which, on an upsell quote to a WON customer,
           // dragged them back into the pipeline and restarted their stage age. The judgement
           // now lives in exactly one file (lib/leads/stage-after-quote-sent.ts) instead of
           // three, which is the actual lesson of this whole bug.
-          const move = stageAfterQuoteSent(leadFromQuery?.stage);
+          const move = stageAfterQuoteSent(leadFromQuery?.stage);   // = stageAfterQuoteSaved(stage, true); kept direct for the quote-sent-stage-wiring guard
           await updateLead.mutateAsync({
             id: linkedLeadId,
             patch: {
@@ -1611,8 +1613,17 @@ function QuoteBuilderBody() {
         }
       } else if ((isLeadMode && linkedLeadId && status === "draft") || (isLeadMode && linkedLeadId && !wentOut)) {
         // For drafts: still persist contact-info edits to the lead so they
-        // don't get lost when the user comes back. Stage stays as-is.
+        // don't get lost when the user comes back.
+        /* R-1959: a draft is contact — a New lead moves to Contacted (stageAfterQuoteSaved, the
+           same rule as a new prospect lead; never backward). Seats / plan fill in only
+           where the lead has none yet: a draft must not overwrite what the owner typed, but a
+           lead made with no seats must not stay "—" for a 10-seat quote (Pardeep, localhost). */
+        const draftMove = stageAfterQuoteSaved(leadFromQuery?.stage, false);
+        const draftSeats = leadSeatCount(lineItems);
         const contactPatch = {
+          ...(draftMove.nextStage !== null && { stage: draftMove.nextStage }),
+          ...(leadFromQuery && leadFromQuery.seats == null && draftSeats !== null && { seats: draftSeats }),
+          ...(leadFromQuery && !leadFromQuery.plan && lineItems[0]?.name && { plan: lineItems[0].name }),
           ...(leadCompany !== leadCompanyInit && leadCompany.trim() && { company:       leadCompany.trim()  }),
           ...(leadContact !== leadContactInit                       && { contact_name:  leadContact || null }),
           ...(leadPhone   !== leadPhoneInit                         && { contact_phone: leadPhone   || null }),

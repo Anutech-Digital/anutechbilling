@@ -87,3 +87,28 @@ export function stageAfterQuoteSent(currentStage: string | null | undefined): St
     reason: `stage "${stage}" is not one this rule knows, so it was left alone`,
   };
 }
+
+export interface StageAfterQuoteSaved {
+  /** The stage to write, or null to leave it alone. */
+  nextStage: "quote" | "contact" | null;
+  reason: string;
+}
+
+/**
+ * R-1959 — a quote was SAVED for this lead (draft or sent). The one rule both builder paths
+ * use: the new prospect lead (prospectLeadRow) and the existing lead.
+ *
+ * Pardeep, localhost: a draft quote was made for a New lead and the lead stayed at New. Making
+ * a quote for someone is contact, so a draft moves New → Contacted. A sent quote is exactly
+ * stageAfterQuoteSent. Forward only: a draft never touches contact / demo / trial / quote /
+ * won / lost, a missing stage or one this rule does not know.
+ */
+export function stageAfterQuoteSaved(currentStage: string | null | undefined, sent: boolean): StageAfterQuoteSaved {
+  if (sent) return stageAfterQuoteSent(currentStage);
+  const stage = (currentStage ?? "").trim().toLowerCase();
+  if (stage === "new") {
+    return { nextStage: "contact", reason: "a quote was drafted, so the lead moved from New to Contacted" };
+  }
+  if (!stage) return { nextStage: null, reason: "the lead has no stage recorded, so nothing was moved" };
+  return { nextStage: null, reason: `a draft quote does not move a lead that is already at ${stage}` };
+}
