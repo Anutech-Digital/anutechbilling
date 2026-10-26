@@ -32,7 +32,7 @@
  * typecheck + push. A rebase conflict aborts and stops (exit 2) — never resolved by force.
  *
  * Exit 0 = go. Exit 2 = conflict (message names the other card). Exit 5 = push guard test failed
- * (R-385: repo-scan/ratchet suites in push-guard-suites.mjs). Exit 3 = MAX_WORKERS (4) already
+ * (R-385: repo-scan/ratchet suites in push-guard-suites.mjs). Exit 3 = maxWorkersAt() (2 by day, 3 by night) already
  * running. Either way: stop, do not work around it.
  *
  * R-842 (11 Oct) — board v76 card contract, enforced here instead of by cleanup (400+ cards lacked fields).
@@ -93,11 +93,12 @@ export const MAX_WORKERS = Number(process.env.WORKER_MAX || 4);
 /**
  * Pardeep (6 Oct night): the local app crawled while 4 workers type-checked. While he works
  * (09:00–21:59 IST) only 2 workers run; at night 4. WORKER_MAX still overrides.
+ * R-1960 (26 Oct 2026): night cap 4 → 3 — 4 parallel tsc runs took the laptop to ~90 node processes.
  */
 export function maxWorkersAt(date) {
   if (process.env.WORKER_MAX) return Number(process.env.WORKER_MAX);
   const h = Number(new Date(date).toLocaleString("en-US", { timeZone: "Asia/Kolkata", hour: "numeric", hour12: false })) % 24;
-  return h >= 9 && h < 22 ? 2 : 4;
+  return h >= 9 && h < 22 ? 2 : 3;
 }
 
 /** True when another worker may not start: the live locks (other cards) already fill every slot. */
@@ -251,12 +252,13 @@ function tscWithTurn(card, { full = false } = {}) {
   return withTurn("heavy", card, "type-check kar raha hai", async () => {
     const root = process.cwd();
     if (full) { dropBuildInfo(root); console.log("  tsc: --full-tsc — poora check, cache ke bina"); }
-    else {
-      const r = restoreBuildInfo(root);
-      console.log(r.restored ? `  tsc: incremental — shared cache se shuru (${r.from})`
-        : `  tsc: incremental — ${r.reason === "own" ? "is worktree ki apni build info" : `shared cache nahi (${r.reason}), is baar poora chalega`}`);
-    }
     for (const step of tscStepsFor({ full })) {
+      /* The cache key includes the route types, so restore only after `next typegen` wrote them. */
+      if (!full && step === TSC_STEPS[TSC_STEPS.length - 1]) {
+        const r = restoreBuildInfo(root);
+        console.log(r.restored ? `  tsc: incremental — shared cache se shuru (${r.from})`
+          : `  tsc: incremental — ${r.reason === "own" ? "is worktree ki apni build info" : `in route types ka shared cache nahi (${r.reason}), is baar poora chalega`}`);
+      }
       const t0 = Date.now();
       try { sh(step, tscEnv()); }
       catch (e) { console.error(`✗ ${step} fail:\n` + String(e.stdout ?? "").slice(0, 2000) + String(e.stderr ?? "").slice(-800)); return false; }
@@ -953,7 +955,7 @@ function main(argv) {
     if (broad.length) { console.error(`✗ Bahut bada area: ${broad.join(", ")} — page/lib ka folder ya file do (kam se kam 3 hisse, jaise src/lib/deals).`); process.exit(1); }
     const locks = readLocks();
     if (queueFull(card, locks)) {
-      console.error(`✗ PEHLE SE ${MAX_WORKERS} WORKER chal rahe hain (${locks.map((l) => l.card).join(", ")}) — computer hang na ho, isliye ruko.`);
+      console.error(`✗ PEHLE SE ${maxWorkersAt(Date.now())} WORKER chal rahe hain (${locks.map((l) => l.card).join(", ")}) — computer hang na ho, isliye ruko.`);
       console.error("Owner ko batao: \"Ek worker khatam hone ke baad ye card chalaiye.\" Lock ko haath mat lagao.");
       process.exit(3);
     }
