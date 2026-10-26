@@ -10,8 +10,8 @@ import { checkScope, enforceScope, parseScopeFlags, claimedAreas, scopePath, par
  * few commands checkScope runs; every rule must refuse, a normal card must pass, generated files pass.
  */
 type Change = [status: string, file: string];
-type Hist = { sha: string; subject: string; added: string[]; before?: string };
-type Scenario = { changes: Change[]; merges?: boolean; history?: Record<string, Hist[]>; removed?: Record<string, string[]>; now?: Record<string, string> };
+type Hist = { sha: string; subject: string; added: string[]; removed?: string[]; before?: string };
+type Scenario = { changes: Change[]; merges?: boolean; history?: Record<string, Hist[]>; removed?: Record<string, string[]>; readded?: Record<string, string[]>; now?: Record<string, string>; addedBy?: Record<string, string> };
 
 function fakeGit(sc: Scenario) {
   const calls: string[][] = [];
@@ -22,9 +22,10 @@ function fakeGit(sc: Scenario) {
     if (cmd === "merge-base") return "BASE\n";
     if (cmd === "rev-list") return sc.merges ? "m1\n" : "";
     if (cmd === "diff" && args.includes("--name-status")) return sc.changes.map(([s, f]) => `${s}\0${f}\0`).join("");
-    if (cmd === "diff") return (sc.removed?.[file] ?? []).map((l) => `-${l}`).join("\n") + "\n";
+    if (cmd === "diff") return [...(sc.removed?.[file] ?? []).map((l) => `-${l}`), ...(sc.readded?.[file] ?? []).map((l) => `+${l}`)].join("\n") + "\n";
+    if (cmd === "log" && args.includes("--diff-filter=A")) return (sc.addedBy?.[file] ?? "") + "\n";
     if (cmd === "log") {
-      return (sc.history?.[file] ?? []).map((h) => `\x1e${h.sha}\t${h.subject}\n\ndiff --git a/${file} b/${file}\n+++ b/${file}\n` + h.added.map((l) => `+${l}`).join("\n") + "\n").join("");
+      return (sc.history?.[file] ?? []).map((h) => `\x1e${h.sha}\t${h.subject}\n\ndiff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n` + [...(h.removed ?? []).map((l) => `-${l}`), ...h.added.map((l) => `+${l}`)].join("\n") + "\n").join("");
     }
     if (cmd === "rev-parse" || cmd === "hash-object") {
       const spec = cmd === "hash-object" ? `HEAD:${file}` : args[1];
@@ -90,6 +91,10 @@ describe("R-1958 scope guard — a change must not undo other cards' work", () =
     ] }).git, areas: ["supabase/migrations/20261020000000_old.sql"] });
     expect(r.ok).toBe(false);
     expect(r.refused.map((x: { rule: string }) => x.rule)).toEqual(["migration", "migration", "migration"]);
+    const ownMig = "production/supabase/migrations/20261025000000_r1958.sql";
+    const own = checkScope("R-1958", { git: fakeGit({ changes: [["M", ownMig]], addedBy: { [ownMig]: "R-1958: first push" } }).git, areas: [] });
+    expect(own.ok).toBe(true);
+    expect(own.warnings.join("\n")).toMatch(/isi card ki pichhli push wali migration/);
     expect(parseNameStatus("R100\0production/supabase/migrations/a.sql\0production/supabase/migrations/b.sql\0")).toEqual([
       { status: "D", file: "production/supabase/migrations/a.sql" }, { status: "A", file: "production/supabase/migrations/b.sql" },
     ]);
@@ -103,12 +108,23 @@ describe("R-1958 scope guard — a change must not undo other cards' work", () =
     expect(r.refused[0].why).toMatch(/R-1915 commit aaaa1111/);
   });
 
-  it("rule 3: deleting at least half (and 3+) of the lines another card added in the last 7 days is refused", () => {
+  it("rule 3: deleting another card's recent lines AND bringing back what it removed is refused", () => {
     const f = "production/src/lib/deals/deal-rules.ts";
     const added = ["const a = applyRounding(total);", "if (isSplitBilled(sub)) return null;", "return quoteFor(periodStart, periodEnd);", "logRenewal(sub.id, period);"];
-    const r = run({ changes: [["M", f]], history: { [f]: [{ sha: "cccc2222dddd", subject: "R-1952: split billing", added, before: "blob-x" }] }, removed: { [f]: added.slice(0, 3) } });
+    const old = ["return quoteFor(start, start + 365);"];
+    const r = run({ changes: [["M", f]], history: { [f]: [{ sha: "cccc2222dddd", subject: "R-1952: split billing", added, removed: old, before: "blob-x" }] }, removed: { [f]: added.slice(0, 3) }, readded: { [f]: old } });
     expect(r.ok).toBe(false);
-    expect(r.refused[0].why).toMatch(/R-1952 commit cccc2222.*3\/4 nayi lines/);
+    expect(r.refused[0].why).toMatch(/R-1952 commit cccc2222.*3\/4 nayi lines hata di, aur uski hatayi 1 purani lines wapas/);
+    /* a commit that only ADDED lines (e.g. a new component): deleting 80%+ of them is a revert */
+    const pure = run({ changes: [["D", f]], history: { [f]: [{ sha: "eeee", subject: "R-1899: statement row", added }] }, removed: { [f]: added } });
+    expect(pure.refused[0].why).toMatch(/R-1899 commit eeee.*4\/4 nayi lines/);
+  });
+
+  it("rule 3: a refactor of another card's recent lines (its old lines NOT brought back) passes — the real R-1952-over-R-1915 shape", () => {
+    const f = "production/src/lib/deals/deal-rules.ts";
+    const added = ["const toPay = expenseStillOwed(expense);", "const paidPart = expense.paid_amount ?? 0;", "{(expense.advance_applied ?? 0) > 0 || paidPart > 0", "? ` (bill ${rupee(expense.amount)})`"];
+    const r = run({ changes: [["M", f]], history: { [f]: [{ sha: "1a77e72a", subject: "WIP R-1915: screens", added, removed: ["const toPay = expense.amount;"] }] }, removed: { [f]: added }, readded: { [f]: ["const toPay = expenseCashDue(expense);"] } });
+    expect(r.ok).toBe(true);
   });
 
   it("rule 3: editing a couple of another card's lines, or my own card's lines, is not a revert", () => {

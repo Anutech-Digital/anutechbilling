@@ -17,7 +17,10 @@
  *                deleted or renamed. New migrations are fine.
  *   3. revert  — a changed file is back to the exact version from before another card's commit of the
  *                last 7 days, or the diff deletes at least half (and at least 3) of the lines another
- *                card's commit added in the last 7 days.
+ *                card's commit added in the last 7 days AND brings back what that commit removed (a
+ *                commit that only added: 80% of its lines deleted). Checked on 80 real manager-pardeep
+ *                commits: a plain refactor of another card's lines (R-1952 over R-1915) passes.
+ *                The card's OWN earlier migration (e.g. a re-stamp) only warns under rule 2.
  *
  * Rules 1 and 3 only warn when the range holds merge commits (a manager merge, not a worker card).
  * Escape: `--allow-outside <path>` (repeatable) skips all three rules for that path; every use is logged
@@ -87,22 +90,42 @@ export function parseNameStatus(out) {
 
 const meaningful = (l) => { const t = l.trim(); return t.length >= 6 && /[a-z0-9]/i.test(t) ? t : null; };
 
-/** `git log -p -U0 --format=%x1e%H%x09%s` → [{sha, subject, added: Set<trimmed line>}]. */
+/** Trimmed meaningful lines a unified diff adds and removes: { added: Set, removed: Set }. */
+export function diffLines(diff) {
+  const added = new Set(), removed = new Set();
+  for (const l of String(diff ?? "").split(/\r?\n/)) {
+    if (l.startsWith("+++") || l.startsWith("---")) continue;
+    const t = (l[0] === "+" || l[0] === "-") ? meaningful(l.slice(1)) : null;
+    if (t) (l[0] === "+" ? added : removed).add(t);
+  }
+  return { added, removed };
+}
+export const removedLines = (diff) => diffLines(diff).removed;
+
+/** `git log -p -U0 --format=%x1e%H%x09%s` → [{sha, subject, added: Set, removed: Set}]. */
 export function parseLogPatches(out) {
   return String(out ?? "").split("\x1e").filter((c) => c.trim()).map((chunk) => {
     const lines = chunk.split(/\r?\n/);
     const [sha, ...subj] = lines[0].split("\t");
-    const added = new Set();
-    for (const l of lines.slice(1)) if (l.startsWith("+") && !l.startsWith("+++")) { const t = meaningful(l.slice(1)); if (t) added.add(t); }
-    return { sha: sha.trim(), subject: subj.join("\t").trim(), added };
+    return { sha: sha.trim(), subject: subj.join("\t").trim(), ...diffLines(lines.slice(1).join("\n")) };
   });
 }
 
-/** Trimmed meaningful lines a unified diff removes. */
-export function removedLines(diff) {
-  const out = new Set();
-  for (const l of String(diff ?? "").split(/\r?\n/)) if (l.startsWith("-") && !l.startsWith("---")) { const t = meaningful(l.slice(1)); if (t) out.add(t); }
-  return out;
+/**
+ * Line-level revert of commit `c` by my diff `mine`. A refactor of another card's new lines is NOT a
+ * revert; a revert also brings back what that commit took out. So: I delete ≥ half (and ≥ 3) of c's
+ * new lines AND (c removed lines → I re-add ≥ half of them; c only added → I delete ≥ 80% of them).
+ * Returns { hit, of } or null.
+ */
+export function lineRevert(c, mine) {
+  if (!c.added.size) return null;
+  const hit = [...c.added].filter((l) => mine.removed.has(l)).length;
+  if (hit < 3 || hit * 2 < c.added.size) return null;
+  if (c.removed.size) {
+    const back = [...c.removed].filter((l) => mine.added.has(l)).length;
+    return back * 2 >= c.removed.size ? { hit, of: c.added.size, back } : null;
+  }
+  return hit * 5 >= c.added.size * 4 ? { hit, of: c.added.size } : null;
 }
 
 export const cardOf = (subject) => (/\b(R-\d+)\b/i.exec(String(subject)) ?? [])[1]?.toUpperCase() ?? null;
@@ -126,12 +149,11 @@ export function revertOf(card, file, status, { git, base, mode, sinceDays = REVE
       if (now && before && now === before) return `file wapas ${cardOf(c.subject) ?? "doosre"} commit ${c.sha.slice(0, 8)} ("${c.subject.slice(0, 60)}") se PEHLE wale roop me — us card ka kaam ulat jaayega`;
     }
   }
-  let removed;
-  try { removed = removedLines(git(["diff", "--no-color", "--no-ext-diff", "-U0", ...range, "--", file])); } catch { return null; }
+  let mine;
+  try { mine = diffLines(git(["diff", "--no-color", "--no-ext-diff", "-U0", ...range, "--", file])); } catch { return null; }
   for (const c of commits) {
-    if (!c.added.size) continue;
-    const hit = [...c.added].filter((l) => removed.has(l)).length;
-    if (hit >= 3 && hit * 2 >= c.added.size) return `${cardOf(c.subject) ?? "doosre"} commit ${c.sha.slice(0, 8)} ("${c.subject.slice(0, 60)}") ki ${hit}/${c.added.size} nayi lines hata di (pichhle ${sinceDays} din ka kaam)`;
+    const r = lineRevert(c, mine);
+    if (r) return `${cardOf(c.subject) ?? "doosre"} commit ${c.sha.slice(0, 8)} ("${c.subject.slice(0, 60)}") ki ${r.hit}/${r.of} nayi lines hata di${r.back ? `, aur uski hatayi ${r.back} purani lines wapas` : ""} (pichhle ${sinceDays} din ka kaam)`;
   }
   return null;
 }
@@ -155,7 +177,12 @@ export function checkScope(card, { git, areas = [], allowOutside = [], mode = "c
     const p = scopePath(c.file);
     if (allowOutside.some((a) => within(a, p))) { allowedUsed.push(p); continue; }
     if (isMigration(p)) {
-      if (c.status !== "A") refuse("migration", c, "purani migration badli/hatayi — deploy ho chuki migration kabhi mat chhuo; nayi migration likho");
+      if (c.status === "A") continue;
+      /* The card's OWN migration from an earlier push (not yet deployed, e.g. a re-stamp) only warns. */
+      let addedBy = null;
+      try { addedBy = cardOf(git(["log", "--diff-filter=A", "--format=%s", "-1", base, "--", c.file])); } catch {}
+      if (addedBy === id) warnings.push(`⚠ [migration] ${p} (${c.status}) — isi card ki pichhli push wali migration; deploy ho chuki ho to nayi migration likho`);
+      else refuse("migration", c, `purani migration${addedBy ? ` (${addedBy} ki)` : ""} badli/hatayi — deploy ho chuki migration kabhi mat chhuo; nayi migration likho`);
       continue;
     }
     if (isGenerated(p)) continue;
