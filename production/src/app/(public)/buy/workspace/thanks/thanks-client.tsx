@@ -17,7 +17,7 @@ import { COMPANY, SLA, WHATSAPP_READY } from "@/site/lib/config";
 import { BrandMark } from "../_parts/site-header";
 import { SiteFooter } from "../_parts/info-sections";
 import { buyContact, type BuyBrand } from "../_parts/brand";
-import { MetaPixel, trackMeta } from "@/site/lib/meta-pixel";
+import { MetaPixel, trackMeta, metaConsent, fbpCookie } from "@/site/lib/meta-pixel";
 import { contentIdForPlan, purchaseEventId } from "@/lib/meta/pixel-ids";
 import { mailtoLink, phoneDisplay, whatsappLink } from "./support-links";
 import { ConfirmPaymentView } from "./confirm-payment-view";
@@ -74,7 +74,10 @@ export function ThanksClient({
   orderRef,
   brand = null,
   metaPixelId = null,
+  orderToken,
 }: {
+  /** R-1979: the order's secret token from the address — the server Purchase request proves the order with it. */
+  orderToken?: string;
   /** R-1979: the website tenant's Meta Pixel id (no id → no script, no event). */
   metaPixelId?: string | null;
   order: ThanksOrder | null;
@@ -89,7 +92,7 @@ export function ThanksClient({
     return <ConfirmPaymentView quoteId={orderRef} notFound={<OrderNotFound />} />;
   }
   if (!order) return <OrderNotFound />;
-  return <><MetaPixel pixelId={metaPixelId} /><OrderView order={order} isSimulation={isSimulation} brand={brand} /></>;
+  return <><MetaPixel pixelId={metaPixelId} /><OrderView order={order} isSimulation={isSimulation} brand={brand} orderToken={orderToken} /></>;
 }
 
 /** Fallback view — quote not found, not paid, or guessed wrong ID (and no payment of ours to confirm). */
@@ -137,7 +140,7 @@ function OrderNotFound() {
     );
 }
 
-function OrderView({ order, isSimulation, brand }: { order: ThanksOrder; isSimulation: boolean; brand: BuyBrand | null }) {
+function OrderView({ order, isSimulation, brand, orderToken }: { order: ThanksOrder; isSimulation: boolean; brand: BuyBrand | null; orderToken?: string }) {
   /* R-1975: the call link uses the tenant phone first, then the site number (the buy page rule). */
   const tel = buyContact(brand).tel;
   /* R-1625: arriving from Razorpay — undo any scroll lock it left (§24), and drop the kept
@@ -157,8 +160,17 @@ function OrderView({ order, isSimulation, brand }: { order: ThanksOrder; isSimul
         content_type: "product",
         num_items: order.seats,
       }, purchaseEventId(order.quoteId));
+      /* R-1979: and the server's Conversions API Purchase (same event id) — only with consent; a
+         simulated order already sent it from the checkout route. Fire-and-forget. */
+      if (!isSimulation && orderToken && metaConsent()) {
+        void fetch("/api/public/checkout/workspace/meta-purchase", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ quoteId: order.quoteId, t: orderToken, consent: true, fbp: fbpCookie(), pageUrl: window.location.origin + window.location.pathname }),
+        }).catch(() => { /* Meta is never in the way of the page */ });
+      }
     }
     return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per payment state (R-1979 events included)
   }, [order.paymentState]);
 
   /* R-1624: 'invoiced' (the GST invoice issued right after payment) is paid in full when the

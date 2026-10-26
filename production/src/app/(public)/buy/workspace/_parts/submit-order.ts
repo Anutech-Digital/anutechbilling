@@ -129,8 +129,7 @@ export async function payOrder(
     description: `Google Workspace ${json.tierName ?? ctx.plan.name} · ${json.seats ?? ctx.seats} users (${ctx.billing})`,
     order_id: json.orderId,
     prefill: { name: ctx.buyer.name, email: ctx.buyer.email, contact: ctx.buyer.phone, method },
-    /* R-1979: the webhook sends Meta's server Purchase only when metaConsent is "1". */
-    notes: { quoteId: json.quoteId ?? "", leadId: json.leadId ?? "", domain: domainValue(ctx.domain), metaConsent: metaConsent() ? "1" : "0", fbp: fbpCookie() ?? "" },
+    notes: { quoteId: json.quoteId ?? "", leadId: json.leadId ?? "", domain: domainValue(ctx.domain) },
     /* R-1116: the storefront blue — site.css --primary, like /checkout (Razorpay takes a hex). */
     theme: { color: "#1668E3" },
     handler: (resp) => {

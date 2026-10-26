@@ -55,5 +55,5 @@ export default async function ThanksPage(
   /* R-1625: with no paid order yet (the webhook not in), the client confirms the Razorpay
      payment the buy page kept for this order number — the number is only a lookup key into the
      buyer's own sessionStorage; nothing is shown from it until our server confirms. */
-  return <ThanksClient order={order} isSimulation={isSim} orderRef={quoteId || undefined} brand={brand} metaPixelId={metaPixelId} />;
+  return <ThanksClient order={order} isSimulation={isSim} orderRef={quoteId || undefined} brand={brand} metaPixelId={metaPixelId} orderToken={searchParams.t?.trim() || undefined} />;
 }

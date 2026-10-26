@@ -107,3 +107,25 @@ describe("R-1979 Purchase on the thanks page", () => {
     expect((window.fbq?.queue ?? []).some((q) => q[1] === "Purchase")).toBe(false);
   });
 });
+
+describe("R-1979 thanks page asks the server for the Conversions API Purchase", () => {
+  const ORDER: ThanksOrder = {
+    quoteId: "Q-T-27-0001", invoiceNumber: null, customerName: "Ravi Traders", tierName: "Business Starter",
+    seats: 1, amount: 3823, subtotal: 3240, paymentStatus: "received", paymentState: "paid",
+    amountReceived: 3823, paymentDate: null, planLabel: "google-workspace-starter",
+  };
+  const metaPosts = () => calls.filter((c) => c.url === "/api/public/checkout/workspace/meta-purchase");
+  it("paid, consent, live order → POST with the quote, its token and _fbp", async () => {
+    window.localStorage.setItem(CONSENT_KEY, "all");
+    render(<ThanksClient order={ORDER} isSimulation={false} brand={null} metaPixelId={PIXEL} orderToken="tok-123456789" />);
+    await waitFor(() => expect(metaPosts()).toHaveLength(1));
+    expect(metaPosts()[0].body).toMatchObject({ quoteId: "Q-T-27-0001", t: "tok-123456789", consent: true, fbp: "fb.1.111.222" });
+  });
+  it("no consent, or a simulated order (the route already sent it) → no POST", () => {
+    render(<ThanksClient order={ORDER} isSimulation={false} brand={null} metaPixelId={PIXEL} orderToken="tok-123456789" />);
+    cleanup();
+    window.localStorage.setItem(CONSENT_KEY, "all");
+    render(<ThanksClient order={ORDER} isSimulation={true} brand={null} metaPixelId={PIXEL} orderToken="tok-123456789" />);
+    expect(metaPosts()).toHaveLength(0);
+  });
+});
