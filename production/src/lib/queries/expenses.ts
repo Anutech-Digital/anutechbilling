@@ -15,6 +15,7 @@ import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Database, ExpenseRow } from "@/lib/supabase/database.types";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { expenseStillOwed } from "@/lib/accounting/vendor-account";
+import { expenseCashDue } from "@/lib/payables/still-due";
 
 type ExpenseInsert = Database["public"]["Tables"]["expenses"]["Insert"];
 type ExpenseUpdate = Database["public"]["Tables"]["expenses"]["Update"];
@@ -563,8 +564,9 @@ export function useMarkExpensePaid() {
       const expense = data as Expense;
 
       /* R-1913: the part already settled from the vendor's advance did not leave the cash box.
-         R-1915: nor the part already paid from the bank. */
-      const cashOut = expenseStillOwed(expense);
+         R-1915: nor the part already paid from the bank. R-1952: nor its TDS (paid to the
+         government by challan) — the cash box pays the vendor the rest only. */
+      const cashOut = expenseCashDue(expense);
       if (input.pettyCashAccountId && cashOut > 0) {
         const { data: txn, error: txnErr } = await supabase.from("bank_transactions").insert({
           tenant_id:        expense.tenant_id,
