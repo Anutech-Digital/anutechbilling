@@ -192,9 +192,30 @@ describe("summarise + payArgs", () => {
       transactionId: "t5", vendorId: null, newVendor: { name: " Meta Ads India ", gstin: "", pan: "aagcm1866c", tdsSection: null },
       items: [], newBill: null, advance: 15000, advanceCategory: "Advertising", bankCharge: 0, note: null,
     });
-    expect(args.p_new_vendor).toEqual({ name: "Meta Ads India", gstin: null, pan: "AAGCM1866C", tds_section: null });
+    expect(args.p_new_vendor).toEqual({
+      name: "Meta Ads India", gstin: null, pan: "AAGCM1866C", tds_section: null, bank_account_no: null, bank_ifsc: null, upi_id: null,
+    });
     expect(args.p_advance).toBe(15000);
     expect(args.p_advance_category).toBe("Advertising");
+  });
+  it("R-1918: a new vendor from the bank line carries its account no, IFSC and UPI id to the server", () => {
+    const args = payArgs({
+      transactionId: "t6", vendorId: null,
+      newVendor: { name: "Sharma Associates", gstin: null, pan: null, tdsSection: "194J", accountNo: "5010 0123 4567 89", ifsc: " hdfc0001234 ", upi: " Sharma@OkHdfcBank " },
+      items: [], newBill: null, advance: 5000, advanceCategory: "Other", bankCharge: 0, note: null,
+    });
+    expect(args.p_new_vendor).toEqual({
+      name: "Sharma Associates", gstin: null, pan: null, tds_section: "194J",
+      bank_account_no: "50100123456789", bank_ifsc: "HDFC0001234", upi_id: "sharma@okhdfcbank",
+    });
+  });
+  it("R-1918: an IFSC without the account number is not sent (they go together — R-1905)", () => {
+    const args = payArgs({
+      transactionId: "t7", vendorId: null,
+      newVendor: { name: "Sharma Associates", gstin: null, pan: null, tdsSection: null, accountNo: "", ifsc: "HDFC0001234", upi: "" },
+      items: [], newBill: null, advance: 5000, advanceCategory: "Other", bankCharge: 0, note: null,
+    });
+    expect(args.p_new_vendor).toMatchObject({ bank_account_no: null, bank_ifsc: null, upi_id: null });
   });
   it("a new expense bill with GST input and TDS", () => {
     const args = payArgs({

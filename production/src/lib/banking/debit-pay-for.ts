@@ -24,6 +24,7 @@
 import { customerNameTokens, narrationNames } from "@/lib/accounting/credit-match";
 import { tdsDecision, panFromGstin } from "@/lib/accounting/tds-deductor";
 import { rupee, formatDate } from "@/lib/utils";
+import { cleanAccountNo, cleanIfsc } from "@/lib/banking/bank-details";
 
 /* ─── Vendors ────────────────────────────────────────────────────────────────────────── */
 
@@ -329,7 +330,12 @@ export const newBillTotal = (b: Pick<NewBillDraft, "taxable" | "gst">) => Math.m
 export interface PayInput {
   transactionId: string;
   vendorId: string | null;
-  newVendor: { name: string; gstin: string | null; pan: string | null; tdsSection: string | null } | null;
+  /** R-1918: accountNo / ifsc / upi — pre-filled from the bank narration, saved on the vendor so
+   *  the next line from it is guessed. */
+  newVendor: {
+    name: string; gstin: string | null; pan: string | null; tdsSection: string | null;
+    accountNo?: string | null; ifsc?: string | null; upi?: string | null;
+  } | null;
   /** Bills: gross settled (cash + TDS) and the TDS on it. */
   items: ReadonlyArray<{ item: VendorOpenItem; cash: number; tds: number; section: string | null }>;
   newBill: (NewBillDraft & { tds: number; tdsSection: string | null }) | null;
@@ -337,6 +343,17 @@ export interface PayInput {
   advanceCategory: string | null;
   bankCharge: number;
   note: string | null;
+}
+
+/** R-1918: the new vendor's bank details for the server. The IFSC goes only with an account
+ *  number (R-1905: they are a pair; a payment run needs both). */
+function newVendorBank(v: NonNullable<PayInput["newVendor"]>) {
+  const acc = cleanAccountNo(v.accountNo ?? "") || null;
+  return {
+    bank_account_no: acc,
+    bank_ifsc: acc ? cleanIfsc(v.ifsc ?? "") || null : null,
+    upi_id: (v.upi ?? "").trim().toLowerCase() || null,
+  };
 }
 
 /** The arguments of reconcile_bank_debit_to_vendor — exported so the tests pin what reaches the server. */
@@ -350,6 +367,7 @@ export function payArgs(i: PayInput) {
       gstin: i.newVendor.gstin?.trim().toUpperCase() || null,
       pan: i.newVendor.pan?.trim().toUpperCase() || null,
       tds_section: i.newVendor.tdsSection || null,
+      ...newVendorBank(i.newVendor),
     },
     p_items: i.items.filter((x) => x.cash > 0).map((x) => ({
       source: x.item.source,
