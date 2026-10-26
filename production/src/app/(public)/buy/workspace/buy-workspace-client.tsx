@@ -29,6 +29,7 @@ import { InvoicePreview, PhoneBar } from "./_parts/order-summary";
 import { orderTotals } from "./_parts/checkout-form";
 import { useCheckout } from "./_parts/use-checkout";
 import { rupee } from "@/lib/utils";
+import { landingForForm } from "@/site/lib/ad-attribution";
 
 
 // ──────────────────────────────────────────────────────────────────────
@@ -380,7 +381,10 @@ function BuyWorkspaceBody({
   initialSeats,
   openBuy = false,
   brand = null,
+  initialCoupon,
 }: {
+  /** R-1978: ?coupon=CODE on the buy link — filled in and checked on arrival. */
+  initialCoupon?: string;
   /** R-120: edition and seats chosen on the home card (lib/checkout/buy-link.ts). */
   initialTierId?: string;
   initialSeats?: number;
@@ -462,6 +466,20 @@ function BuyWorkspaceBody({
     if (plan.custom || plan.priceHidden) setPlanId("standard");
     window.setTimeout(goCheckout, 30);
   };
+
+  /* R-1978: remember the ad this visit landed from (first touch, sessionStorage) — every order,
+     trial and quote then sends it, whatever the address bar says later. */
+  React.useEffect(() => { landingForForm(); }, []);
+
+  /* R-1978: ?coupon=CODE — fill the box and check it once the basket has a price. */
+  const couponTried = React.useRef(false);
+  React.useEffect(() => {
+    if (couponTried.current || !initialCoupon || !sum) return;
+    couponTried.current = true;
+    co.setCouponInput(initialCoupon);
+    void co.applyCoupon(initialCoupon);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the price is known
+  }, [initialCoupon, sum]);
 
   /* Arrived from a "Buy now" elsewhere (?buy=1): straight to checkout, once. */
   const arrived = React.useRef(false);

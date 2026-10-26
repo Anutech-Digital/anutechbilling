@@ -388,6 +388,9 @@ export async function POST(request: NextRequest) {
 
     // ── Insert lead at stage='quote' (intent to buy = qualified) ──────────
     const leadId      = "L-" + Date.now().toString(36).toUpperCase();
+    /* R-1978: the ad that brought this order (cleaned — lib/marketing/utm.ts), written on the lead
+       AND on the quote: a paid order's subscription reads it through subscriptions.quote_id. */
+    const attribution = captureFromRequest(request, body as Record<string, unknown>);
     const planLabel   = `google-workspace-${tierId}`;
     const sourceTag   = isSimulation ? "buy-workspace-direct-sim" : "buy-workspace-direct";
     const leadNotes   = [
@@ -416,8 +419,8 @@ export async function POST(request: NextRequest) {
       value:         subtotal,
       stage:         "quote",
       source:        sourceTag,
-      // Migration 0232 — inbound attribution. Nulls when nothing was captured.
-      ...captureFromRequest(request, body as Record<string, unknown>),
+      // Migration 0232 — inbound attribution. Nulls when nothing was captured. R-1978: + utm_content/utm_term.
+      ...attribution,
       domain:        cleanDomain,        // structured — flows lead→quote→subscription
       notes:         leadNotes,
       // R-173: copied to the customer by record_payment; generate_invoice needs state_code.
@@ -539,6 +542,7 @@ export async function POST(request: NextRequest) {
       created_date:   createdDate,
       expires_date:   expiresDate,
       notes:          quoteNotes,
+      ...attribution, // R-1978
       /* R-1967: a monthly (flex) order is billed each month — the PDF says PAYABLE EACH MONTH,
          like the enquiry route's flex draft. The annual order row is written exactly as before. */
       ...(isMonthly ? { billing_cycle: "monthly" } : {}),
