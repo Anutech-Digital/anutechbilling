@@ -54,6 +54,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MarginPill, computeMargin } from "@/components/features/margin-pill";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { AddLineItemDialog } from "@/components/features/quotes/add-line-item-dialog";
+import { OneTimeLicenceNote } from "@/components/features/quotes/one-time-licence-note";
 import { BulkDomainsDialog } from "@/components/features/quotes/bulk-domains-dialog";
 import { domainLineYears } from "@/lib/provisioning/products";
 import { ViewDomainsDialog } from "@/components/features/quotes/view-domains-dialog";
@@ -2469,6 +2470,7 @@ function QuoteBuilderBody() {
                       >
                         {COMMIT_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                       </select>
+                      <OneTimeLicenceNote line={line} className="mt-0.5 block" />
                     </label>
                   </div>
                   <LineBandNote line={line} catalog={catalog} />
@@ -2640,6 +2642,7 @@ function QuoteBuilderBody() {
                             {COMMIT_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                           </select>
                         </div>
+                        <OneTimeLicenceNote line={line} className="basis-full order-last" />
                         <div className="flex items-center gap-1">
                           <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Starts</span>
                           <input

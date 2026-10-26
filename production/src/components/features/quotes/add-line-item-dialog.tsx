@@ -3,7 +3,7 @@
  *
  * Two tabs:
  *   1. From catalog (shows items table, click "Add")
- *   2. Custom (free-form name, qty, rate, cost)
+ *   2. Custom (free-form name, qty, rate, cost, billing term — R-1963)
  */
 "use client";
 
@@ -35,6 +35,15 @@ import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { rupee } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { formatForeign } from "@/lib/currency";
+import {
+  COMMIT_CHOICES,
+  COMMIT_CHOICE_HINT,
+  COMMIT_CHOICE_RATE_UNIT,
+  commitmentForChoice,
+  looksLikeSubscription,
+  suggestCommitChoice,
+  type CommitChoice,
+} from "@/lib/quotes/line-commit-choice";
 import type { QuoteLineItem, Item } from "@/lib/supabase/database.types";
 
 interface AddLineItemDialogProps {
@@ -61,6 +70,9 @@ const customSchema = z.object({
   // round to canonical ₹ integers on save (books always stay ₹).
   rate: z.coerce.number().min(0),
   cost: z.coerce.number().min(0),
+  // R-1963: how the line is billed — the builder's own One-time / Monthly flex / Annual (1-yr).
+  // It used to be missing, so a typed licence was saved one_time (no subscription, no renewal).
+  billing: z.enum(["one_time", "monthly", "annual"]),
 });
 type CustomData = z.infer<typeof customSchema>;
 
@@ -103,15 +115,26 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
     handleSubmit,
     watch,
     reset,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<CustomData>({
     resolver: zodResolver(customSchema),
-    defaultValues: { qty: 10, rate: 0, cost: 0 },
+    defaultValues: { qty: 10, rate: 0, cost: 0, billing: "one_time" },
   });
+
+  // R-1963: the term follows the name ("… (1 year)", "Business Starter", "/month") until the
+  // user picks one themselves — then typing never overwrites their choice.
+  const billingPicked = React.useRef(false);
+  const customName = watch("name") ?? "";
+  const customBilling = (watch("billing") ?? "one_time") as CommitChoice;
+  React.useEffect(() => {
+    if (!billingPicked.current) setValue("billing", suggestCommitChoice(customName));
+  }, [customName, setValue]);
 
   React.useEffect(() => {
     if (!open) {
       reset();
+      billingPicked.current = false;
       setSearch("");
       setTab("catalog");
     } else if (initialSearch) {
@@ -167,12 +190,16 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
     // just rounds to an integer. QuoteLineItem.rate/cost are canonical ₹/seat/year.
     const rateInr = usdEntry ? Math.round(data.rate * fx!) : Math.round(data.rate);
     const costInr = usdEntry ? Math.round(data.cost * fx!) : Math.round(data.cost);
+    // R-1963: the picked term rides on the line like a catalogue line's (R-369: the typed rate
+    // is per month for Monthly flex, per year for Annual, once for One-time — stored as typed).
+    const commitment = commitmentForChoice(data.billing);
     onAdd({
       id: crypto.randomUUID(),
       name: data.name,
       qty: data.qty,
       rate: rateInr,
       cost: costInr,
+      ...(commitment ? { commitment } : {}),
     });
     onOpenChange(false);
   };
@@ -358,6 +385,7 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
                   min={0}
                   step={usdEntry ? "0.01" : "1"}
                   prefix={usdEntry ? "$" : "₹"}
+                  helper={COMMIT_CHOICE_RATE_UNIT[customBilling]}
                   error={errors.rate?.message}
                   {...register("rate", { valueAsNumber: true })}
                 />
@@ -375,6 +403,25 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
                 />
               </FormField>
             </div>
+
+            {/* R-1963: how this line is billed — the same three terms as the line's Commit select. */}
+            <FormField label="Billing" required htmlFor="custom-billing">
+              <select
+                id="custom-billing"
+                aria-describedby="custom-billing-hint"
+                className="w-full px-2.5 py-2 text-sm border border-hairline rounded-md bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
+                {...register("billing", { onChange: () => { billingPicked.current = true; } })}
+              >
+                {COMMIT_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+              {customBilling === "one_time" && looksLikeSubscription(customName) ? (
+                <p id="custom-billing-hint" role="alert" className="mt-1 text-xs text-amber-ink">
+                  This looks like a subscription plan. One-time makes no subscription and no renewal when the quote is accepted.
+                </p>
+              ) : (
+                <p id="custom-billing-hint" className="mt-1 text-xs text-ink-3">{COMMIT_CHOICE_HINT[customBilling]}</p>
+              )}
+            </FormField>
 
             {/* USD entry: make the ₹-books conversion explicit so it's never a surprise */}
             {usdEntry && customRate > 0 && (
