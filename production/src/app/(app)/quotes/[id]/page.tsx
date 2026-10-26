@@ -70,6 +70,7 @@ import { paletteMayOpen } from "@/components/layout/palette-access";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
 import { copyLinkMarkingSent } from "@/components/features/quotes/failed-send-toast";
+import { openWhatsAppMarkingSent, markSentBeforeShare } from "@/components/features/quotes/share-marking-sent";
 import { markQuoteSent } from "@/lib/quotes/mark-quote-sent";
 import { PayQrNotice } from "@/components/features/quotes/pay-qr-notice";
 import SendWhatsAppDialog from "@/components/features/whatsapp/send-whatsapp-dialog";
@@ -881,13 +882,19 @@ export default function QuoteDetailPage() {
     const link = isMobile
       ? `https://wa.me/${digits}?text=${q}`
       : `https://web.whatsapp.com/send?phone=${digits}&text=${q}`;
-    // Open WhatsApp synchronously (inside the click gesture) so pop-up blockers
-    // don't eat it, THEN download the PDF for the owner to attach.
-    window.open(link, "_blank", "noopener,noreferrer");
+    /* R-1961: the message carries the accept link, and the accept page hides drafts — so a draft
+       is marked sent first (mark-sent route, approval gate included), the same step as the
+       copy-link button. The helper opens the tab inside this click (pop-up blockers) and points it
+       at WhatsApp only when that worked; a refusal closes it, shows the reason, and no PDF downloads.
+       No await before this call — it must run in the click itself. */
     setSharingWa(true);
+    const shared = await openWhatsAppMarkingSent({
+      quoteId: quote.id, quoteStatus: quote.status, url: link, onMarkedSent: afterMarkedSent,
+    });
+    if (shared.refused) { setSharingWa(false); return; }
     try {
       await downloadQuotePdfFile();
-      toast.success("Quote PDF downloaded", {
+      toast.success(shared.markedSent ? "Quote marked as sent · PDF downloaded" : "Quote PDF downloaded", {
         description: "Attach this PDF in the WhatsApp chat.",
       });
     } catch (err) {
@@ -2140,6 +2147,11 @@ export default function QuoteDetailPage() {
           title={`Send quote ${quote.id} via WhatsApp`}
           attachQuoteId={quote.id}
           attachQuoteLabel={`Quote-${quote.id}.pdf`}
+          /* R-1961: the message carries the accept link and the accept page hides drafts — a draft
+             is marked sent first (same step as the copy-link button); a refusal shows why, sends nothing. */
+          beforeSend={async () => (await markSentBeforeShare({
+            quoteId: quote.id, quoteStatus: quote.status, channel: "whatsapp-dialog", onMarkedSent: afterMarkedSent,
+          })).ok}
           // Preview the PDF in a new tab — uses the SAME renderer as
           // Download PDF + the server-side WhatsApp send path, so what
           // Pardeep reviews is exactly what the customer will receive.

@@ -49,11 +49,15 @@ interface Props {
    *  attachment card (anywhere except the checkbox) calls this so the
    *  host can preview the actual PDF before sending. */
   onPreviewAttachment?: () => void | Promise<void>;
+  /** R-1961: runs on Send before anything goes out; false = stop (the host already showed why).
+   *  The quote page uses it to mark a draft sent first — the message carries the accept link,
+   *  and the accept page hides drafts. */
+  beforeSend?: () => Promise<boolean>;
 }
 
 export default function SendWhatsAppDialog({
   open, onOpenChange, defaultTo = "", defaultText = "", related, title,
-  attachQuoteId, attachQuoteLabel, onPreviewAttachment,
+  attachQuoteId, attachQuoteLabel, onPreviewAttachment, beforeSend,
 }: Props) {
   const [to,        setTo]        = React.useState(defaultTo);
   const [text,      setText]      = React.useState(defaultText);
@@ -61,6 +65,7 @@ export default function SendWhatsAppDialog({
   // typically why the caller opened this dialog. User can untick.
   const [attachOn,   setAttachOn]   = React.useState<boolean>(Boolean(attachQuoteId));
   const [previewing, setPreviewing] = React.useState(false);
+  const [preparing,  setPreparing]  = React.useState(false);
   const send = useSendWhatsApp();
 
   // Sync defaults when re-opened
@@ -76,6 +81,12 @@ export default function SendWhatsAppDialog({
     if (!to.trim() || !text.trim()) {
       toast.error("Recipient + message required");
       return;
+    }
+    if (beforeSend) {
+      setPreparing(true);
+      let go = false;
+      try { go = await beforeSend(); } finally { setPreparing(false); }
+      if (!go) return;
     }
     try {
       await send.mutateAsync({
@@ -199,7 +210,7 @@ export default function SendWhatsAppDialog({
         </div>
 
         <SheetFooter>
-          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={send.isPending}>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={send.isPending || preparing}>
             Cancel
           </Button>
           <Button
@@ -207,7 +218,7 @@ export default function SendWhatsAppDialog({
             variant="primary"
             icon="send"
             onClick={onSubmit}
-            loading={send.isPending}
+            loading={send.isPending || preparing}
             disabled={!to.trim() || !text.trim()}
           >
             Send
