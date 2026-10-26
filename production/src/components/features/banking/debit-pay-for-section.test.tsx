@@ -311,3 +311,50 @@ describe("R-1915 — expense bill part payment", () => {
     expect(saveButton().disabled).toBe(false);
   });
 });
+
+describe("R-1918 — new vendor from the bank line", () => {
+  it("UPI line from an unknown payee: one click adds it with name, IFSC and UPI id pre-filled; all reach the server", async () => {
+    state.pay.mockResolvedValue(result({ vendor_name: "Kapoor Legal", vendor_created: true, advance: { id: "a1", amount: 3000, category: "Other" } }));
+    render(<DebitPayForSection transaction={txn(3000, "UPI-KAPOOR LEGAL-kapoorlegal@okhdfcbank-HDFC0001234-529912345680-FEES")} onDone={() => {}} />);
+    expect((screen.getByLabelText("Vendor paid") as HTMLSelectElement).value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Add “Kapoor Legal” as a new vendor" }));
+    expect((screen.getByLabelText("New vendor name") as HTMLInputElement).value).toBe("Kapoor Legal");
+    expect((screen.getByLabelText("IFSC (optional)") as HTMLInputElement).value).toBe("HDFC0001234");
+    expect((screen.getByLabelText("UPI ID (optional)") as HTMLInputElement).value).toBe("kapoorlegal@okhdfcbank");
+    expect(screen.getByText(/Filled from the bank line: name, IFSC, UPI ID/)).toBeTruthy();
+    expect(screen.getByText(/Saved together with the account number/)).toBeTruthy();
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0].newVendor).toMatchObject({ name: "Kapoor Legal", ifsc: "HDFC0001234", upi: "kapoorlegal@okhdfcbank", accountNo: null });
+  });
+
+  it("card example — NEFT DR with a masked tail: '＋ New vendor' pre-fills name + IFSC, the account box asks for the full number ending 4521", async () => {
+    state.pay.mockResolvedValue(result({ vendor_name: "Sharma Traders", vendor_created: true }));
+    render(<DebitPayForSection transaction={txn(4000, "NEFT DR-HDFC0001234-SHARMA TRADERS-XXXXXX4521")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Vendor paid"), { target: { value: "__new_vendor__" } });
+    expect((screen.getByLabelText("New vendor name") as HTMLInputElement).value).toBe("Sharma Traders");
+    expect((screen.getByLabelText("IFSC (optional)") as HTMLInputElement).value).toBe("HDFC0001234");
+    const acc = screen.getByLabelText("Account number (optional)") as HTMLInputElement;
+    expect(acc.value).toBe("");
+    expect(acc.placeholder).toBe("Account number (ends 4521)");
+    fireEvent.change(acc, { target: { value: "50100123459999" } });
+    expect(screen.getByText(/ends with 4521 — check this number/)).toBeTruthy();
+    fireEvent.change(acc, { target: { value: "50100123454521" } });
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0].newVendor).toMatchObject({ name: "Sharma Traders", accountNo: "50100123454521", ifsc: "HDFC0001234" });
+  });
+
+  it("a wrong UPI id or account number blocks the save with the field's own words", () => {
+    render(<DebitPayForSection transaction={txn(4000, "CARD SOMETHING")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Vendor paid"), { target: { value: "__new_vendor__" } });
+    fireEvent.change(screen.getByLabelText("New vendor name"), { target: { value: "Some Vendor" } });
+    fireEvent.change(screen.getByLabelText("UPI ID (optional)"), { target: { value: "not-a-upi" } });
+    expect(screen.getByText(/This UPI ID looks wrong/)).toBeTruthy();
+    expect(saveButton().disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("UPI ID (optional)"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Account number (optional)"), { target: { value: "12AB" } });
+    expect(screen.getByText(/digits only/)).toBeTruthy();
+    expect(saveButton().disabled).toBe(true);
+  });
+});
