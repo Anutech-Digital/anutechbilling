@@ -24,7 +24,7 @@ const KNOWN: Record<string, number> = {
   "app/(app)/vault/personal/banking/page.tsx": 1,
   "app/(app)/vault/personal/expenses/page.tsx": 2,
   "app/(app)/vault/personal/wealth/page.tsx": 1,
-  "app/(public)/buy/workspace/buy-workspace-client.tsx": 26,
+  "app/(public)/buy/workspace/buy-workspace-client.tsx": 23,
   "app/(public)/buy/workspace/thanks/thanks-client.tsx": 1,
   "app/api/ai/plan-project/route.ts": 1,
   "app/api/dms/upgrade-request/route.ts": 1,

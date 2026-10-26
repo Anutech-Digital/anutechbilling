@@ -27,7 +27,7 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("quotes")
-    .select("id, tenant_id, public_token, customer_name, plan, seats, amount, payment_status, payment_received_at, line_items, created_date")
+    .select("id, tenant_id, public_token, customer_name, plan, seats, amount, subtotal, payment_status, payment_received_at, line_items, created_date")
     .eq("id", quoteId)
     .eq("tenant_id", BUY_PAGE_TENANT_ID)
     /* "invoiced" too (R-120): the GST invoice is issued straight after record_payment (webhook
@@ -65,6 +65,7 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
     tierName,
     seats:          data.seats ?? 0,
     amount:         data.amount ?? 0,
+    subtotal:       data.subtotal ?? null,
     paymentStatus:  data.payment_status ?? "awaiting",
     paymentState:   orderPaymentState({ paymentStatus: data.payment_status, amount: data.amount, received: amountReceived }),
     amountReceived,
