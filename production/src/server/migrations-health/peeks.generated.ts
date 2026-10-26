@@ -237,4 +237,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r1921vendorstatementageing", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.vendor_statement(uuid)') and prosrc like '%R-1921%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.payables_ageing()') and prosrc like '%R-1921%')" },
   { key: "r1979metapixelsecrets", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'meta_capi_token')" },
   { key: "r1993projectpaymentbankline", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.record_project_payment(uuid,integer,text,text,date,uuid)') and prosrc like '%R-1993%')" },
+  { key: "r1992bsprojecttdsadvance", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-1992%')" },
 ];
