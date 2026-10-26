@@ -32,6 +32,7 @@ import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { CONTACT_FOR_PRICING, isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
 import { tierAnnualPrice, annualTotals } from "./tier-price";
+import { priceHeadline } from "./price-headline";
 import { workspaceGstLabel } from "./gst-heads";
 import { postJson, NOT_REACHED } from "./post-json";
 import { checkCoupon, recheckCoupon, type AppliedCoupon } from "./coupon-check";
@@ -1298,6 +1299,18 @@ export function BuyWorkspaceClient({
   const heroPostPromoSubtot = Math.max(0, calc.annual - sitePromoDiscount);
   const heroFinalGst        = Math.round(heroPostPromoSubtot * 0.18);
   const heroFinalTotal      = heroPostPromoSubtot + heroFinalGst;
+  /* R-1965: the calculator leads with the pre-GST yearly total; GST + total on their own line.
+     Display only — the same sums as above (and as checkout) are just worded. */
+  const heroPromoOn = !!sitePromo && sitePromoDiscount > 0;
+  const headline = calc.isCustom ? null : priceHeadline({
+    rate: selectedTierObj.promoPrice ?? selectedTierObj.annualPrice ?? 0,
+    seats,
+    billing: "annual",
+    subtotal: heroPromoOn ? heroPostPromoSubtot : calc.annual,
+    gst: heroPromoOn ? heroFinalGst : calc.gst,
+    total: heroPromoOn ? heroFinalTotal : calc.total,
+    wasSubtotal: heroPromoOn ? calc.annual : undefined,
+  });
 
   const waMessage = calc.isCustom
     ? `Hi, I'm interested in Google Workspace Enterprise for ${seats} user${seats === 1 ? "" : "s"}. Can you send a custom quote?`
@@ -1510,30 +1523,25 @@ export function BuyWorkspaceClient({
                     and support needs. Tell us your seat count — we&apos;ll send a tailored quote.
                   </div>
                 </div>
-              ) : (
+              ) : headline && (
                 <div className="flex items-end justify-between gap-3 flex-wrap">
-                  <div>
-                    <div className="flex items-baseline gap-2">
-                      {sitePromo && sitePromoDiscount > 0 ? (
-                        <>
-                          <span className="font-serif text-3xl md:text-4xl text-ink leading-none">
-                            ₹{heroFinalTotal.toLocaleString("en-IN")}
-                          </span>
-                          <span className="font-mono text-sm text-ink-3 line-through">
-                            ₹{calc.total.toLocaleString("en-IN")}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="font-serif text-3xl md:text-4xl text-ink leading-none">
-                          ₹{calc.total.toLocaleString("en-IN")}
+                  <div className="min-w-0">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <span className="font-serif text-3xl md:text-4xl text-ink leading-none">
+                        {headline.big}
+                      </span>
+                      {headline.was && (
+                        <span className="font-mono text-sm text-ink-3 line-through">
+                          {headline.was}
                         </span>
                       )}
-                      <span className="text-sm text-ink-3">/year incl 18% GST</span>
+                      <span className="text-sm text-ink-3">{headline.bigSuffix}</span>
                     </div>
                     <div className="text-xs text-ink-3 mt-1.5">
-                      Effective ₹{(seats > 0
-                        ? Math.round((sitePromo && sitePromoDiscount > 0 ? heroFinalTotal : calc.total) / (seats * 12))
-                        : 0).toLocaleString("en-IN")}/user/month · incl GST · single annual invoice
+                      {headline.breakdown}
+                    </div>
+                    <div className="text-xs text-ink-3 mt-0.5 font-mono">
+                      {headline.gstLine}
                     </div>
                     {sitePromo && sitePromoDiscount > 0 && (
                       <div className="text-sm text-amber-ink font-medium mt-2 inline-flex items-center gap-1.5">

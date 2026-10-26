@@ -26,6 +26,8 @@ export interface ThanksOrder {
   tierName:       string;
   seats:          number;
   amount:         number;
+  /** R-1965: the quote's pre-GST amount, to split the paid total into amount + GST; null on old rows. */
+  subtotal?:      number | null;
   paymentStatus:  string;
   /** R-1624: from lib/checkout/order-payment-state — never read payment_status here. */
   paymentState:   OrderPaymentState;
@@ -132,6 +134,10 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
   const statusLabel    = isFullyPaid ? "Paid in full" : order.paymentState === "part-paid" ? "Partially paid" : "Awaiting payment";
   const firstName      = order.customerName.split(/[\s,&]/)[0] || "there";
   const amountFmt      = `₹${order.amount.toLocaleString("en-IN")}`;
+  /* R-1965: same wording as the buy page — the pre-GST amount + GST (18%) under the paid total. */
+  const gstSplit       = order.subtotal != null && order.subtotal > 0 && order.subtotal < order.amount
+    ? `₹${order.subtotal.toLocaleString("en-IN")} + ₹${(order.amount - order.subtotal).toLocaleString("en-IN")} GST (18%)`
+    : null;
   const waSupportMsg   = `Hi, I just placed order ${order.quoteId} (${order.tierName}, ${order.seats} users). Wanted to confirm next steps for domain verification.`;
 
   return (
@@ -227,7 +233,7 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
                 <div className="font-serif text-3xl text-ink leading-none">
                   {amountFmt}
                 </div>
-                <div className="text-2xs text-ink-3 mt-1">incl 18% GST</div>
+                <div className="text-2xs text-ink-3 mt-1">{gstSplit ?? "incl 18% GST"}</div>
               </div>
             </div>
 
