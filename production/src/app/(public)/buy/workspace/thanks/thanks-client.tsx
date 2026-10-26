@@ -17,6 +17,7 @@ import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, PARTNER_BADGE } from "@/
 import { mailtoLink, phoneDisplay, whatsappLink } from "./support-links";
 import { ConfirmPaymentView } from "./confirm-payment-view";
 import { forgetWorkspacePayment } from "./payment-handoff";
+import { dropWorkspaceLinesFromStoredCart } from "@/site/components/cart/workspace-line";
 import { settlePageScroll } from "@/lib/ui/scroll-lock";
 import { rupee } from "@/lib/utils";
 import type { OrderPaymentState } from "@/lib/checkout/order-payment-state";
@@ -125,7 +126,8 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
   React.useEffect(() => {
     settlePageScroll();
     const t = window.setTimeout(settlePageScroll, 1000);
-    if (order.paymentState === "paid") forgetWorkspacePayment();
+    /* R-1966: the Workspace line in the website cart is now paid — take it out of the cart. */
+    if (order.paymentState === "paid") { forgetWorkspacePayment(); dropWorkspaceLinesFromStoredCart(); }
     return () => window.clearTimeout(t);
   }, [order.paymentState]);
 
