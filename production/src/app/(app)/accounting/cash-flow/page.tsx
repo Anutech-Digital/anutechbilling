@@ -24,6 +24,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useBalanceSheetAuto } from "@/lib/queries/balance-sheet";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { Icon } from "@/components/ui/icon";
+import { STATEMENT_ROW } from "@/components/ui/statement-row";
 import { CashFlowMonthSheet } from "@/components/features/accounting/cash-flow-month-sheet";
 import { cashFlowByActivity } from "@/lib/accounting/cash-flow-lines";
 import { loadCashFlow, type CashFlowData } from "./load";
@@ -167,14 +168,14 @@ export default function CashFlowPage() {
           <table className="w-full text-sm">
             <tbody className="divide-y divide-hairline">
               {byActivity.map((g) => (
-                <tr key={g.activity} className={g.activity === "transfer" || g.activity === "unreconciled" ? "text-ink-3" : ""}>
+                <tr key={g.activity} className={`${STATEMENT_ROW} ${g.activity === "transfer" || g.activity === "unreconciled" ? "text-ink-3" : ""}`}>
                   <td className="py-1.5 pr-3">{g.label}<span className="ml-1 text-xs text-ink-3">({g.count})</span></td>
                   <td className="py-1.5 px-2 text-right font-mono tabular-nums text-emerald">{g.cashIn ? rupee(g.cashIn) : "—"}</td>
                   <td className="py-1.5 px-2 text-right font-mono tabular-nums text-rose">{g.cashOut ? rupee(g.cashOut) : "—"}</td>
                   <td className={`py-1.5 pl-2 text-right font-mono tabular-nums font-semibold ${g.net >= 0 ? "text-emerald" : "text-rose"}`}>{g.net < 0 ? "−" : ""}{rupee(Math.abs(g.net))}</td>
                 </tr>
               ))}
-              <tr className="font-semibold text-ink">
+              <tr className={`${STATEMENT_ROW} font-semibold text-ink`}>
                 <td className="py-1.5 pr-3">Net change in cash</td>
                 <td className="py-1.5 px-2 text-right font-mono tabular-nums">{rupee(totals.cashIn)}</td>
                 <td className="py-1.5 px-2 text-right font-mono tabular-nums">{rupee(totals.cashOut)}</td>
@@ -250,7 +251,7 @@ export default function CashFlowPage() {
                     key={r.ym}
                     data-keyboard-route="inner-control"
                     onClick={() => setOpenYm(r.ym)}
-                    className="hover:bg-paper-2/40 cursor-pointer"
+                    className={`${STATEMENT_ROW} cursor-pointer`}
                     title="Click to see this month's bank lines"
                   >
                     <td className="px-3 py-2.5 font-medium text-ink whitespace-nowrap">
@@ -283,7 +284,7 @@ export default function CashFlowPage() {
                 ))}
               </tbody>
               <tfoot>
-                <tr className="border-t-2 border-ink bg-paper-2/40 font-semibold">
+                <tr className={`${STATEMENT_ROW} border-t-2 border-ink bg-paper-2/40 font-semibold`}>
                   <td className="px-3 py-2.5 text-sm" colSpan={2}>Total</td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-emerald">{rupee(totals.cashIn)}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums">{rupee(totals.cashOut)}</td>
