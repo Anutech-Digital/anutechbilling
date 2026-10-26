@@ -15,7 +15,45 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 import { rupee, formatDate } from "@/lib/utils";
 import type { BankTransactionRow } from "@/lib/queries/bank";
-import { useUnreconcileImpact, useUnreconcileBankTxn } from "@/lib/queries/unreconcile";
+import {
+  useUnreconcileImpact, useUnreconcileBankTxn, vendorUndoLegLine, blockHrefLabel, type VendorUndoPreview,
+} from "@/lib/queries/unreconcile";
+
+/**
+ * R-1920: a vendor-payment line — every leg it reverses, from the server's dry run of the same
+ * un-match, so the owner sees it before the click. A refusal (later payment, used advance,
+ * deposited TDS) shows instead of the confirm, with the page to fix it on.
+ */
+function VendorUndoPreviewBlock({ preview }: { preview: VendorUndoPreview }) {
+  return (
+    <div className="space-y-3 text-sm text-ink-2">
+      <p>
+        This line paid <b>{preview.vendor_name ?? "a vendor"}</b>. {preview.blocked ? "Un-reconciling it would:" : "Un-reconciling it will:"}
+      </p>
+      <ul className="space-y-1.5" aria-label="What goes back">
+        {preview.legs.map((leg) => (
+          <li key={leg.id} className="flex items-start gap-2">
+            <span aria-hidden="true" className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-ink-3" />
+            <span>
+              {vendorUndoLegLine(leg)}
+              {!leg.removed && leg.doc_type !== "advance" ? (
+                <> · <Link href={leg.href as never} className="text-amber-ink underline">view</Link></>
+              ) : null}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {preview.blocked ? (
+        <div role="alert" className="rounded-md border border-amber/50 bg-amber-soft/25 p-3 text-[13px] leading-snug">
+          <b className="block">This line cannot be un-reconciled yet.</b>
+          {preview.block_message}
+        </div>
+      ) : (
+        <p className="text-xs text-ink-3">The bank line goes back to &quot;Unmatched&quot;.</p>
+      )}
+    </div>
+  );
+}
 
 export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | null; onClose: () => void }) {
   const { data: impact, isLoading } = useUnreconcileImpact(txn);
@@ -90,6 +128,8 @@ export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | 
             Only the bank line is freed — the project payment stays. If that payment was wrong, remove it from the{" "}
             <Link href={`/projects/${impact.projectId}`} className="text-amber-ink underline">project page</Link>.
           </p>
+        ) : impact?.kind === "vendor-payment" ? (
+          <VendorUndoPreviewBlock preview={impact.preview} />
         ) : (
           <p className="text-sm text-ink-2">
             The line goes back to &quot;Unmatched&quot;. Any capital / loan, tax challan or prepaid advance created from this line is removed too;
@@ -99,9 +139,17 @@ export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | 
 
         <DialogFooter>
           <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
-          {impact?.kind === "advance" && impact.usedOrRefunded > 0 ? null : (
+          {impact?.kind === "advance" && impact.usedOrRefunded > 0 ? null
+          : impact?.kind === "vendor-payment" && impact.preview.blocked ? (
+            /* R-1920: refused — the next step is fixing what depends on it, not un-reconciling. */
+            impact.preview.block_href ? (
+              <Button asChild variant="primary">
+                <Link href={impact.preview.block_href as never} onClick={onClose}>{blockHrefLabel(impact.preview.block_href)}</Link>
+              </Button>
+            ) : null
+          ) : (
             <Button type="button" variant="danger" loading={unreconcile.isPending} disabled={isLoading} onClick={confirm}>
-              Un-reconcile{impact?.kind === "bank-sale" && undoSale ? " & sale palto" : impact?.kind === "advance" ? " & remove advance" : ""}
+              Un-reconcile{impact?.kind === "bank-sale" && undoSale ? " & sale palto" : impact?.kind === "advance" ? " & remove advance" : impact?.kind === "vendor-payment" ? " & reverse" : ""}
             </Button>
           )}
         </DialogFooter>
