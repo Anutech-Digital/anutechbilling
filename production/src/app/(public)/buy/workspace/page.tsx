@@ -153,6 +153,7 @@ export default async function BuyWorkspacePage(props: {
       initialTierId={pick.tier ?? undefined}
       initialSeats={pick.seats ?? undefined}
       openBuy={pick.openBuy}
+      initialCoupon={pick.coupon ?? undefined}
       brand={brand}
     />
   );

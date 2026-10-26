@@ -7471,8 +7471,10 @@ export type Database = {
           trial_started_at: string | null
           updated_at: string
           utm_campaign: string | null
+          utm_content: string | null
           utm_medium: string | null
           utm_source: string | null
+          utm_term: string | null
           value: number | null
           wbraid: string | null
         }
@@ -7530,8 +7532,10 @@ export type Database = {
           trial_started_at?: string | null
           updated_at?: string
           utm_campaign?: string | null
+          utm_content?: string | null
           utm_medium?: string | null
           utm_source?: string | null
+          utm_term?: string | null
           value?: number | null
           wbraid?: string | null
         }
@@ -7589,8 +7593,10 @@ export type Database = {
           trial_started_at?: string | null
           updated_at?: string
           utm_campaign?: string | null
+          utm_content?: string | null
           utm_medium?: string | null
           utm_source?: string | null
+          utm_term?: string | null
           value?: number | null
           wbraid?: string | null
         }
@@ -10054,8 +10060,10 @@ export type Database = {
           exchange_rate: number
           expires_date: string | null
           extension_months: number
+          fbclid: string | null
           fx_date: string | null
           fx_source: string | null
+          gclid: string | null
           hot_lead_alerted_at: string | null
           id: string
           invoice_id: string | null
@@ -10063,6 +10071,7 @@ export type Database = {
           is_extension: boolean
           is_one_off: boolean
           is_renewal: boolean
+          landing_page_url: string | null
           lead_id: string | null
           line_items: Json | null
           notes: string | null
@@ -10080,6 +10089,7 @@ export type Database = {
           prospect_state: string | null
           prospect_state_code: string | null
           public_token: string
+          referrer_url: string | null
           rejected_note: string | null
           rejected_reason: string | null
           renewal_subscription_id: string | null
@@ -10093,9 +10103,15 @@ export type Database = {
           superseded_by: string | null
           tax_rate: number | null
           tenant_id: string
+          wbraid: string | null
           terms_conditions: string | null
           total_cost: number | null
           updated_at: string
+          utm_term: string | null
+          utm_content: string | null
+          utm_campaign: string | null
+          utm_medium: string | null
+          utm_source: string | null
         }
         Insert: {
           add_seats_mrr_added?: number | null
@@ -10130,8 +10146,10 @@ export type Database = {
           exchange_rate?: number
           expires_date?: string | null
           extension_months?: number
+          fbclid?: string | null
           fx_date?: string | null
           fx_source?: string | null
+          gclid?: string | null
           hot_lead_alerted_at?: string | null
           id: string
           invoice_id?: string | null
@@ -10139,6 +10157,7 @@ export type Database = {
           is_extension?: boolean
           is_one_off?: boolean
           is_renewal?: boolean
+          landing_page_url?: string | null
           lead_id?: string | null
           line_items?: Json | null
           notes?: string | null
@@ -10156,6 +10175,7 @@ export type Database = {
           prospect_state?: string | null
           prospect_state_code?: string | null
           public_token?: string
+          referrer_url?: string | null
           rejected_note?: string | null
           rejected_reason?: string | null
           renewal_subscription_id?: string | null
@@ -10169,9 +10189,15 @@ export type Database = {
           superseded_by?: string | null
           tax_rate?: number | null
           tenant_id: string
+          wbraid?: string | null
           terms_conditions?: string | null
           total_cost?: number | null
           updated_at?: string
+          utm_term?: string | null
+          utm_content?: string | null
+          utm_campaign?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
         }
         Update: {
           add_seats_mrr_added?: number | null
@@ -10206,8 +10232,10 @@ export type Database = {
           exchange_rate?: number
           expires_date?: string | null
           extension_months?: number
+          fbclid?: string | null
           fx_date?: string | null
           fx_source?: string | null
+          gclid?: string | null
           hot_lead_alerted_at?: string | null
           id?: string
           invoice_id?: string | null
@@ -10215,6 +10243,7 @@ export type Database = {
           is_extension?: boolean
           is_one_off?: boolean
           is_renewal?: boolean
+          landing_page_url?: string | null
           lead_id?: string | null
           line_items?: Json | null
           notes?: string | null
@@ -10232,6 +10261,7 @@ export type Database = {
           prospect_state?: string | null
           prospect_state_code?: string | null
           public_token?: string
+          referrer_url?: string | null
           rejected_note?: string | null
           rejected_reason?: string | null
           renewal_subscription_id?: string | null
@@ -10245,9 +10275,15 @@ export type Database = {
           superseded_by?: string | null
           tax_rate?: number | null
           tenant_id?: string
+          wbraid?: string | null
           terms_conditions?: string | null
           total_cost?: number | null
           updated_at?: string
+          utm_term?: string | null
+          utm_content?: string | null
+          utm_campaign?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
         }
         Relationships: [
           {

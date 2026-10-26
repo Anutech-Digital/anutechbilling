@@ -103,7 +103,7 @@ export function OrderSummary(p: SummaryProps) {
                     autoComplete="off"
                     className="flex-1 min-w-0 h-11 px-3 text-sm font-mono uppercase border border-hairline rounded-[10px] bg-paper focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
                   />
-                  <button type="button" onClick={co.applyCoupon} aria-busy={co.couponBusy} className="h-11 px-4 rounded-[10px] border border-hairline-strong text-sm font-semibold hover:bg-paper-2 disabled:opacity-50">
+                  <button type="button" onClick={() => void co.applyCoupon()} aria-busy={co.couponBusy} className="h-11 px-4 rounded-[10px] border border-hairline-strong text-sm font-semibold hover:bg-paper-2 disabled:opacity-50">
                     {co.couponBusy ? "Checking…" : "Apply"}
                   </button>
                 </div>

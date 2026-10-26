@@ -53,9 +53,9 @@ export function useCheckout({ planId, seats, sum, promoOff, billing = "annual", 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-check on plan / users / bill size only
   }, [planId, seats, afterPromo]);
 
-  async function applyCoupon() {
+  async function applyCoupon(codeIn?: string) {
     if (couponBusy) return; // a check is already running — the button says "Checking…"
-    const code = couponInput.trim().toUpperCase();
+    const code = (typeof codeIn === "string" ? codeIn : couponInput).trim().toUpperCase();
     if (code.length < 2) { setCouponError("Enter a code first"); return; }
     seq.current++;
     setCouponBusy(true);

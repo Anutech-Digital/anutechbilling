@@ -32,11 +32,15 @@ export function buyWorkspaceHref(edition: string, seats: number): string | null 
 /** Read the page's search params back; anything unexpected is ignored, never trusted. */
 export function parseBuyParams(sp: Record<string, string | string[] | undefined>): {
   tier: BuyTier | null; seats: number | null; openBuy: boolean;
+  /** R-1978: ?coupon=CODE from an ad or a mail — only a clean code (A–Z, 0–9, - _), upper-cased. */
+  coupon: string | null;
 } {
   const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
   const t = one(sp.tier);
   const tier = (BUY_TIERS as readonly string[]).includes(t) ? (t as BuyTier) : null;
   const s = Number.parseInt(one(sp.seats), 10);
   const seats = Number.isFinite(s) && s >= 1 ? Math.min(MAX_ONLINE_SEATS, s) : null;
-  return { tier, seats, openBuy: one(sp.buy) === "1" && tier !== null };
+  const c = one(sp.coupon).trim().toUpperCase();
+  const coupon = /^[A-Z0-9_-]{2,40}$/.test(c) ? c : null;
+  return { tier, seats, openBuy: one(sp.buy) === "1" && tier !== null, coupon };
 }
