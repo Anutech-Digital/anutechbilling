@@ -43,6 +43,7 @@ import { loadLeadOwner } from "@/lib/email/lead-owner.server";
 import { BUY_COMMITMENTS, buildOrderLines, type CatalogPriceRow } from "./pricing";
 import { PLUS_NOT_SOLD_ONLINE, isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
 import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
+import { reportPurchaseToMeta } from "@/lib/meta/capi.server";
 import { splitDomain } from "@/lib/domains/live-lookup";
 import { priceDomainLines } from "@/lib/checkout/cart-checkout";
 import { normalisePhone, splitName, type Registrant } from "@/lib/provisioning/domain-registration";
@@ -574,6 +575,16 @@ export async function POST(request: NextRequest) {
       }
       // The same automatic GST invoice the webhook issues for a real payment (R-079).
       await issueInvoiceForOnlinePayment(admin, { quoteId, tenantId: BUY_PAGE_TENANT_ID, logTag: "[checkout/workspace] simulated" });
+      /* R-1979: the server Purchase to Meta (deduped with the browser by event_id) — only with the
+         buyer's cookie consent and a configured pixel; never fails the order (it never throws). */
+      await reportPurchaseToMeta(admin, {
+        quoteId, tenantId: BUY_PAGE_TENANT_ID,
+        consent: (body as { metaConsent?: unknown }).metaConsent === true,
+        fbp: typeof (body as { fbp?: unknown }).fbp === "string" ? String((body as { fbp?: unknown }).fbp).slice(0, 100) : null,
+        sourceUrl: typeof (body as { pageUrl?: unknown }).pageUrl === "string" ? String((body as { pageUrl?: unknown }).pageUrl).slice(0, 400) : null,
+        clientIp: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || null,
+        userAgent: request.headers.get("user-agent"),
+      });
 
       // Best-effort confirmation emails — clearly tagged [TEST] in subject.
       const amountFmt = `₹${amount.toLocaleString("en-IN")}`;

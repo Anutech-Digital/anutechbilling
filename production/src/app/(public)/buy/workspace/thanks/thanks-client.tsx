@@ -17,6 +17,8 @@ import { COMPANY, SLA, WHATSAPP_READY } from "@/site/lib/config";
 import { BrandMark } from "../_parts/site-header";
 import { SiteFooter } from "../_parts/info-sections";
 import { buyContact, type BuyBrand } from "../_parts/brand";
+import { MetaPixel, trackMeta, metaConsent, fbpCookie } from "@/site/lib/meta-pixel";
+import { contentIdForPlan, purchaseEventId } from "@/lib/meta/pixel-ids";
 import { mailtoLink, phoneDisplay, whatsappLink } from "./support-links";
 import { ConfirmPaymentView } from "./confirm-payment-view";
 import { forgetWorkspacePayment } from "./payment-handoff";
@@ -27,6 +29,8 @@ import type { OrderPaymentState } from "@/lib/checkout/order-payment-state";
 
 export interface ThanksOrder {
   quoteId:        string;
+  /** R-1979: the quote's plan label ("google-workspace-starter"), for Meta's content_ids. */
+  planLabel?:     string | null;
   /** R-1977: a new domain bought with this order (registered in the buyer's name after payment). */
   newDomain?:     string | null;
   /** R-1971: the GST invoice number for this order, once issued. */
@@ -69,7 +73,13 @@ export function ThanksClient({
   isSimulation,
   orderRef,
   brand = null,
+  metaPixelId = null,
+  orderToken,
 }: {
+  /** R-1979: the order's secret token from the address — the server Purchase request proves the order with it. */
+  orderToken?: string;
+  /** R-1979: the website tenant's Meta Pixel id (no id → no script, no event). */
+  metaPixelId?: string | null;
   order: ThanksOrder | null;
   isSimulation: boolean;
   /** R-1975: the website tenant (name, logo, GSTIN, address, phone) — the buy page reads the same row. */
@@ -82,7 +92,7 @@ export function ThanksClient({
     return <ConfirmPaymentView quoteId={orderRef} notFound={<OrderNotFound />} />;
   }
   if (!order) return <OrderNotFound />;
-  return <OrderView order={order} isSimulation={isSimulation} brand={brand} />;
+  return <><MetaPixel pixelId={metaPixelId} /><OrderView order={order} isSimulation={isSimulation} brand={brand} orderToken={orderToken} /></>;
 }
 
 /** Fallback view — quote not found, not paid, or guessed wrong ID (and no payment of ours to confirm). */
@@ -130,7 +140,7 @@ function OrderNotFound() {
     );
 }
 
-function OrderView({ order, isSimulation, brand }: { order: ThanksOrder; isSimulation: boolean; brand: BuyBrand | null }) {
+function OrderView({ order, isSimulation, brand, orderToken }: { order: ThanksOrder; isSimulation: boolean; brand: BuyBrand | null; orderToken?: string }) {
   /* R-1975: the call link uses the tenant phone first, then the site number (the buy page rule). */
   const tel = buyContact(brand).tel;
   /* R-1625: arriving from Razorpay — undo any scroll lock it left (§24), and drop the kept
@@ -140,7 +150,27 @@ function OrderView({ order, isSimulation, brand }: { order: ThanksOrder; isSimul
     const t = window.setTimeout(settlePageScroll, 1000);
     /* R-1966: the Workspace line in the website cart is now paid — take it out of the cart. */
     if (order.paymentState === "paid") { forgetWorkspacePayment(); dropWorkspaceLinesFromStoredCart(); }
+    /* R-1979: Meta Purchase — same event id as the server's Conversions API event, so Meta counts
+       it once; value before GST. A no-op without the pixel (no id or no "Accept all"). */
+    if (order.paymentState === "paid") {
+      trackMeta("Purchase", {
+        value: order.subtotal ?? Math.round(order.amount / 1.18),
+        currency: "INR",
+        content_ids: contentIdForPlan(order.planLabel ?? null),
+        content_type: "product",
+        num_items: order.seats,
+      }, purchaseEventId(order.quoteId));
+      /* R-1979: and the server's Conversions API Purchase (same event id) — only with consent; a
+         simulated order already sent it from the checkout route. Fire-and-forget. */
+      if (!isSimulation && orderToken && metaConsent()) {
+        void fetch("/api/public/checkout/workspace/meta-purchase", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ quoteId: order.quoteId, t: orderToken, consent: true, fbp: fbpCookie(), pageUrl: window.location.origin + window.location.pathname }),
+        }).catch(() => { /* Meta is never in the way of the page */ });
+      }
+    }
     return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per payment state (R-1979 events included)
   }, [order.paymentState]);
 
   /* R-1624: 'invoiced' (the GST invoice issued right after payment) is paid in full when the
