@@ -21,6 +21,12 @@
  *                commit that only added: 80% of its lines deleted). Checked on 80 real manager-pardeep
  *                commits: a plain refactor of another card's lines (R-1952 over R-1915) passes.
  *                The card's OWN earlier migration (e.g. a re-stamp) only warns under rule 2.
+ *                RESTORE (R-1964): undoing a commit Y is allowed (a note, not exit 9) when the file comes
+ *                back to exactly Y's parent version AND Y itself had put the file back to the version from
+ *                before an older other-card commit X (Y = an exact revert of X) AND X was not itself such
+ *                a revert. Proved from blob hashes in git history only — never from a commit message — so
+ *                re-reverting a restore (revert of a revert of a revert) is still exit 9. The R-1962 shape:
+ *                R-1899 (X) → c0159d00 / R-1905 (Y, put X's files back) → R-1962 brings X's version back.
  *
  * Rules 1 and 3 only warn when the range holds merge commits (a manager merge, not a worker card).
  * Escape: `--allow-outside <path>` (repeatable) skips all three rules for that path; every use is logged
@@ -130,8 +136,35 @@ export function lineRevert(c, mine) {
 
 export const cardOf = (subject) => (/\b(R-\d+)\b/i.exec(String(subject)) ?? [])[1]?.toUpperCase() ?? null;
 
-/** Rule 3 for one file. Returns a "why" string, or null when nothing of another card's is undone. */
-export function revertOf(card, file, status, { git, base, mode, sinceDays = REVERT_DAYS }) {
+/**
+ * R-1964: commit `c` (one of `commits`, newest first) is an exact revert when its version of `file` is
+ * the version from before an OLDER commit `x` of another card (x also inside the 7-day window).
+ * Returns that `x`, or null. Blob hashes only.
+ */
+function exactRevertTarget(c, commits, file, blob) {
+  const after = blob(`${c.sha}:${file}`);
+  if (!after) return null;
+  return commits.slice(commits.indexOf(c) + 1)
+    .find((x) => cardOf(x.subject) !== cardOf(c.subject) && blob(`${x.sha}^:${file}`) === after) ?? null;
+}
+
+/**
+ * R-1964: my change restores what `c` wrongly reverted — the file is back to exactly c's parent version,
+ * c had put it back to before an older card's commit X, and X was original work (not itself a revert).
+ * Returns X, or null.
+ */
+function restoredFrom(c, commits, file, blob, now) {
+  if (!now || blob(`${c.sha}^:${file}`) !== now) return null;
+  const x = exactRevertTarget(c, commits, file, blob);
+  if (!x || exactRevertTarget(x, commits, file, blob)) return null;
+  return x;
+}
+
+/**
+ * Rule 3 for one file. Returns a "why" string, or null when nothing of another card's is undone.
+ * `notes` (optional array) gets one line per allowed RESTORE (R-1964).
+ */
+export function revertOf(card, file, status, { git, base, mode, sinceDays = REVERT_DAYS, notes = null }) {
   const id = String(card).toUpperCase();
   let commits;
   try {
@@ -140,18 +173,31 @@ export function revertOf(card, file, status, { git, base, mode, sinceDays = REVE
   } catch { return null; }
   if (!commits.length) return null;
   const range = mode === "commits" ? [base, "HEAD"] : [base];
+  const blobs = new Map();
+  const blob = (spec) => {
+    if (!blobs.has(spec)) { let v = null; try { v = git(["rev-parse", spec]).trim() || null; } catch {} blobs.set(spec, v); }
+    return blobs.get(spec);
+  };
+  const restored = new Set();
   if (status === "M") {
     let now = null;
     try { now = (mode === "commits" ? git(["rev-parse", `HEAD:${file}`]) : git(["hash-object", "--", file])).trim(); } catch {}
     for (const c of commits) {
-      let before = null;
-      try { before = git(["rev-parse", `${c.sha}^:${file}`]).trim(); } catch {}
-      if (now && before && now === before) return `file wapas ${cardOf(c.subject) ?? "doosre"} commit ${c.sha.slice(0, 8)} ("${c.subject.slice(0, 60)}") se PEHLE wale roop me — us card ka kaam ulat jaayega`;
+      const before = blob(`${c.sha}^:${file}`);
+      if (!(now && before && now === before)) continue;
+      const x = restoredFrom(c, commits, file, blob, now);
+      if (x) {
+        restored.add(c.sha);
+        notes?.push(`ℹ [restore] ${scopePath(file)} — ${cardOf(x.subject) ?? "doosre"} commit ${x.sha.slice(0, 8)} ka kaam wapas; ${cardOf(c.subject) ?? "doosre"} commit ${c.sha.slice(0, 8)} ne use hata diya tha (git history se pakka) — revert nahi gina`);
+        continue;
+      }
+      return `file wapas ${cardOf(c.subject) ?? "doosre"} commit ${c.sha.slice(0, 8)} ("${c.subject.slice(0, 60)}") se PEHLE wale roop me — us card ka kaam ulat jaayega`;
     }
   }
   let mine;
   try { mine = diffLines(git(["diff", "--no-color", "--no-ext-diff", "-U0", ...range, "--", file])); } catch { return null; }
   for (const c of commits) {
+    if (restored.has(c.sha)) continue;
     const r = lineRevert(c, mine);
     if (r) return `${cardOf(c.subject) ?? "doosre"} commit ${c.sha.slice(0, 8)} ("${c.subject.slice(0, 60)}") ki ${r.hit}/${r.of} nayi lines hata di${r.back ? `, aur uski hatayi ${r.back} purani lines wapas` : ""} (pichhle ${sinceDays} din ka kaam)`;
   }
@@ -170,7 +216,7 @@ export function checkScope(card, { git, areas = [], allowOutside = [], mode = "c
   const changes = parseNameStatus(git(["diff", "--name-status", "-z", "--no-renames", ...range]));
   let merges = false;
   try { merges = git(["rev-list", "--merges", `${base}..HEAD`]).trim().length > 0; } catch {}
-  const refused = [], warnings = [], allowedUsed = [];
+  const refused = [], warnings = [], allowedUsed = [], restored = [];
   const refuse = (rule, c, why) => (merges && rule !== "migration" ? warnings.push(`⚠ [${rule}] ${scopePath(c.file)} — ${why} (merge commit hai, sirf chetavni)`) : refused.push({ rule, file: c.file, status: c.status, why }));
   if (!claimed.length) warnings.push(`⚠ ${id}: claim ke areas nahi mile (lock nahi?) — "area ke bahar" jaanch nahi hui, sirf migration + revert jaanch.`);
   for (const c of changes) {
@@ -192,7 +238,7 @@ export function checkScope(card, { git, areas = [], allowOutside = [], mode = "c
       if (!testNextToClaim(p, claimed)) { refuse("area", c, `card ke claim ke bahar (${c.status === "D" ? "hatayi" : "badli"})`); continue; }
     }
     if (c.status === "M" || c.status === "D") {
-      const why = revertOf(id, c.file, c.status, { git, base, mode, sinceDays });
+      const why = revertOf(id, c.file, c.status, { git, base, mode, sinceDays, notes: restored });
       if (why) refuse("revert", c, why);
     }
   }
@@ -207,7 +253,7 @@ export function checkScope(card, { git, areas = [], allowOutside = [], mode = "c
     lines.push(`   Sach me card ko ye file badalni hai → claim me jodo, ya --allow-outside <path> (log hota hai; card ke liveLog me bhi likho).`);
   }
   if (allowedUsed.length) lines.push(`⚠ --allow-outside se chhodi: ${allowedUsed.join(", ")} (log me likha)`);
-  return { ok, refused, warnings, allowedUsed, message: [...lines, ...warnings].join("\n") };
+  return { ok, refused, warnings, allowedUsed, restored, message: [...lines, ...restored, ...warnings].join("\n") };
 }
 
 /** Pull `--allow-outside <path>` / `--allow-outside=<path>` (repeatable) out of the args. */
