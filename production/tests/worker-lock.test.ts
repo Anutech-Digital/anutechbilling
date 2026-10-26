@@ -83,8 +83,8 @@ describe("worker locks (two workers must never build in the same files)", () => 
   it("2 workers while Pardeep works (09:00–21:59 IST), 4 at night", () => {
     expect(maxWorkersAt("2026-10-07T03:30:00Z")).toBe(2); // 09:00 IST
     expect(maxWorkersAt("2026-10-07T16:29:00Z")).toBe(2); // 21:59 IST
-    expect(maxWorkersAt("2026-10-07T16:30:00Z")).toBe(4); // 22:00 IST
-    expect(maxWorkersAt("2026-10-06T21:00:00Z")).toBe(4); // 02:30 IST
+    expect(maxWorkersAt("2026-10-07T16:30:00Z")).toBe(3); // 22:00 IST (R-1960: night cap 3)
+    expect(maxWorkersAt("2026-10-06T21:00:00Z")).toBe(3); // 02:30 IST
   });
 });
 
@@ -237,7 +237,7 @@ describe("tsc heap (R-1827)", () => {
   it("every TSC_STEPS child is spawned with tscEnv()", () => {
     const src = readFileSync(path.join(root, "scripts", "ops", "worker-lock.mjs"), "utf8");
     const at = src.indexOf("function tscWithTurn");
-    const body = src.slice(at, at + 1400);
+    const body = src.slice(at, at + 2000);
     expect(body).toMatch(/for \(const step of tscStepsFor\(\{ full \}\)\)/); // R-1960: TSC_STEPS, or the cold step with --full-tsc
     expect(body).toMatch(/sh\(step, tscEnv\(\)\)/);
   });

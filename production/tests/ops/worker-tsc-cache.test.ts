@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 // @ts-expect-error — plain .mjs ops script, no types
-import { restoreBuildInfo, saveBuildInfo, dropBuildInfo, cacheFile, parseTscFlags, BUILD_INFO, TSC_FULL_STEP } from "../../scripts/ops/worker-tsc-cache.mjs";
+import { restoreBuildInfo, saveBuildInfo, dropBuildInfo, cacheFile, pruneCache, parseTscFlags, BUILD_INFO, TSC_FULL_STEP } from "../../scripts/ops/worker-tsc-cache.mjs";
 // @ts-expect-error — plain .mjs ops script, no types
 import { tscStepsFor, TSC_STEPS } from "../../scripts/ops/worker-lock.mjs";
 
@@ -74,7 +74,7 @@ describe("R-1960 shared tsc build info", () => {
     expect(r.out).toMatch(/a\.ts\(2,\d+\): error TS2322/);
   });
 
-  it("an error only in an UNCHANGED importer (b.ts, and c.ts two hops away) is caught too", () => {
+  it("an error only in an UNCHANGED importer (b.ts) is caught too", () => {
     const wt = worktree("wt-importer");
     /* Only a.ts changes; it compiles on its own. b.ts and c.ts are byte-identical to the cached run. */
     fs.writeFileSync(path.join(wt, "a.ts"), "export function price(amount: number): string { return String(amount * 2); }\n");
@@ -107,6 +107,52 @@ describe("R-1960 shared tsc build info", () => {
     expect(restoreBuildInfo(wt, { dir: cache })).toEqual({ restored: false, reason: "own" });
     dropBuildInfo(wt);
     expect(fs.existsSync(path.join(wt, BUILD_INFO))).toBe(false);
+  });
+});
+
+/* Measured 26 Oct: a build info from a base with one route fewer gave a 704 s run (cold is 525 s) —
+   .next/types/routes.d.ts is a GLOBAL file, so any change re-checks everything. The key therefore
+   includes the generated route types: a different route set never restores, it runs cold and saves
+   under its own key. */
+describe("R-1960 cache key follows the generated route types", () => {
+  function withRoutes(name: string, routes: string) {
+    const wt = worktree(name);
+    fs.mkdirSync(path.join(wt, ".next", "types"), { recursive: true });
+    fs.writeFileSync(path.join(wt, ".next", "types", "routes.d.ts"), routes);
+    return wt;
+  }
+
+  it("same route types → same key; one route more → a different key, so no restore", () => {
+    const a = withRoutes("wt-routes-a", 'type R = "/a";\n');
+    const b = withRoutes("wt-routes-b", 'type R = "/a";\n');
+    const c = withRoutes("wt-routes-c", 'type R = "/a" | "/b";\n');
+    expect(cacheFile(a, cache)).toBe(cacheFile(b, cache));
+    expect(cacheFile(c, cache)).not.toBe(cacheFile(a, cache));
+    saveBuildInfo(a, { dir: cache }); // nothing written yet in a → no-op
+    fs.writeFileSync(path.join(a, BUILD_INFO), "{}");
+    expect(saveBuildInfo(a, { dir: cache }).saved).toBe(true);
+    expect(restoreBuildInfo(b, { dir: cache }).restored).toBe(true);
+    expect(restoreBuildInfo(c, { dir: cache })).toEqual({ restored: false, reason: "empty" });
+  });
+
+  it("keeps only the newest CACHE_KEEP shared files", () => {
+    const dir = path.join(tmp, "prune");
+    fs.mkdirSync(dir);
+    for (let i = 0; i < 5; i++) {
+      const f = path.join(dir, `tsc-00000000000${i}.tsbuildinfo`);
+      fs.writeFileSync(f, "{}");
+      fs.utimesSync(f, new Date(1_000_000 + i * 1000), new Date(1_000_000 + i * 1000));
+    }
+    fs.writeFileSync(path.join(dir, "other.txt"), "x");
+    pruneCache(dir, 2);
+    expect(fs.readdirSync(dir).sort()).toEqual(["other.txt", "tsc-000000000003.tsbuildinfo", "tsc-000000000004.tsbuildinfo"]);
+  });
+
+  it("worker-lock restores only after `next typegen` (the key needs the fresh route types)", () => {
+    const src = fs.readFileSync(path.resolve("scripts/ops/worker-lock.mjs"), "utf8");
+    const body = src.slice(src.indexOf("function tscWithTurn"), src.indexOf("function tscWithTurn") + 2000);
+    expect(body).toMatch(/if \(!full && step === TSC_STEPS\[TSC_STEPS\.length - 1\]\) \{\s*const r = restoreBuildInfo\(root\)/);
+    expect(body.indexOf("saveBuildInfo(root)")).toBeGreaterThan(body.indexOf("sh(step, tscEnv())"));
   });
 });
 
