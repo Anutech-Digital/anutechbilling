@@ -5,16 +5,23 @@
  * (DECISIONS 4): a card's button picks the plan and goes to checkout on this page.
  */
 import * as React from "react";
-import { CONTACT_FOR_PRICING } from "@/lib/catalog/public-price-policy";
 import { SLA } from "@/site/lib/config";
 import { rupee } from "@/lib/utils";
 import { BillingToggle } from "./hero";
-import { BUSINESS_MAX_USERS, COMPARE_ROWS, planRate, planSum, usersLabel, type Billing, type BuyPlan } from "./plans";
+import { BUSINESS_MAX_USERS, COMPARE_ROWS, PLAN_COPY, planRate, planSum, usersLabel, type Billing, type BuyPlan } from "./plans";
 import { GoogleWorkspaceWordmark } from "./wordmark";
+import { whatsappHref, type BuyContact } from "./brand";
+
+/** R-1986: the WhatsApp text for a quoted plan — names the plan and the users, like the page's other WhatsApp links. */
+export function salesWhatsappMessage(planName: string, seats: number): string {
+  return `Hi, I'd like a Google Workspace ${planName} quote for ${usersLabel(seats)}.`;
+}
 
 export function PlanCards({
-  plans, selectedId, seats, billing, onBilling, monthlyOk, savePct, onChoose,
+  plans, selectedId, seats, billing, onBilling, monthlyOk, savePct, onChoose, contact = { tel: null, whatsapp: null },
 }: {
+  /** R-1986: the tenant phone / site WhatsApp (buyContact) for the "Talk to sales" cards. */
+  contact?: BuyContact;
   plans: BuyPlan[];
   selectedId: BuyPlan["id"];
   seats: number;
@@ -49,7 +56,9 @@ export function PlanCards({
             : seats > BUSINESS_MAX_USERS
               ? `Max ${BUSINESS_MAX_USERS} users — see Enterprise`
               : `${rupee(sum?.subtotal ?? 0)}${annual ? "/year" : "/month"} + GST`;
-          const cta = quote ? (p.custom ? "Request a quote" : "Get a quote") : sel ? `Continue with ${p.short}` : `Choose ${p.short}`;
+          /* R-1986 (Pardeep): a priced plan's button says what it does — "Buy Business Starter" —
+             picks the plan and opens the PAY checkout (R-1975: never the trial). */
+          const cta = quote ? (p.custom ? "Request a quote" : "Get a quote") : `Buy ${p.name}`;
           return (
             <article
               key={p.id}
@@ -66,7 +75,8 @@ export function PlanCards({
               <p className="text-sm text-ink-3 leading-normal min-h-[42px] mb-4">{p.blurb}</p>
               <div className="flex items-baseline gap-2 flex-wrap" data-testid={`plan-price-${p.id}`}>
                 {quote ? (
-                  <span className={`font-serif leading-none ${p.custom ? "text-[38px]" : "text-2xl"}`}>{p.custom ? "Custom" : CONTACT_FOR_PRICING}</span>
+                  /* R-1986 (Pardeep): Plus (price hidden, R-328) and Enterprise — "Talk to sales", no figure. */
+                  <span className="font-serif text-[30px] leading-none">Talk to sales</span>
                 ) : (
                   <>
                     <span className="font-serif text-[38px] leading-none">{rupee(rate)}</span>
@@ -74,13 +84,25 @@ export function PlanCards({
                   </>
                 )}
               </div>
-              <div className="text-[13px] text-ink-3 min-h-5 mt-2">{quote ? "" : annual ? "Billed yearly · 12-month plan" : "Billed monthly"}</div>
+              {quote ? (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2.5 text-[14px]" data-testid={`plan-sales-${p.id}`}>
+                  {contact.tel && (
+                    <a href={contact.tel.href} className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px] whitespace-nowrap">Call {contact.tel.display}</a>
+                  )}
+                  {contact.whatsapp && (
+                    <a href={whatsappHref(contact.whatsapp, salesWhatsappMessage(p.name, seats))} target="_blank" rel="noopener noreferrer"
+                      className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px]">WhatsApp us</a>
+                  )}
+                </div>
+              ) : (
+                <div className="text-[13px] text-ink-3 min-h-5 mt-2">{annual ? "Billed yearly · 12-month plan" : "Billed monthly"}</div>
+              )}
               <div className="text-[13px] text-ink-2 px-3 py-2.5 bg-paper rounded-lg mt-3 mb-4 font-mono">{totalLine}</div>
               <button
                 type="button"
                 onClick={() => onChoose(p.id)}
                 className={`w-full min-h-[46px] rounded-[10px] text-[15px] font-semibold border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2 ${
-                  sel && !quote ? "bg-amber border-amber text-white hover:bg-amber-ink" : "bg-white border-hairline-strong text-ink hover:bg-paper-2"
+                  !quote ? "bg-amber border-amber text-white hover:bg-amber-ink" : "bg-white border-hairline-strong text-ink hover:bg-paper-2"
                 }`}
               >
                 {cta}
@@ -124,7 +146,7 @@ export function CompareTable({ open, onToggle }: { open: boolean; onToggle: () =
             <thead>
               <tr className="bg-paper-2">
                 <th scope="col" className="text-left px-4 py-3.5 font-semibold w-[34%]">Feature</th>
-                {["Starter", "Standard", "Plus", "Enterprise"].map((h) => (
+                {(["starter", "standard", "plus", "enterprise"] as const).map((id) => PLAN_COPY[id].name).map((h) => (
                   <th key={h} scope="col" className="px-2.5 py-3.5 font-semibold">{h}</th>
                 ))}
               </tr>

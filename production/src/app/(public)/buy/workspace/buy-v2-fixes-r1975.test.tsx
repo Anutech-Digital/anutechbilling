@@ -76,7 +76,7 @@ describe("R-1975 buy buttons always open the pay checkout", () => {
     page();
     startTrial();
     const plans = document.getElementById("plans") as HTMLElement;
-    fireEvent.click(within(plans).getAllByRole("button", { name: /^(Choose|Continue with) / })[0]);
+    fireEvent.click(within(plans).getAllByRole("button", { name: /^Buy Business / })[0]);
     vi.advanceTimersByTime(100);
     expect(heading().textContent).toBe("Checkout");
   });

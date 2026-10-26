@@ -66,17 +66,17 @@ describe("R-1970 /buy/workspace v2", () => {
     expect(hrefs).toEqual(["/privacy-policy", "/terms-and-conditions", "/refund", "/contact"]);
   });
 
-  it("plan cards: Annual 270 / 1,080, Monthly 325 / 1,300; Plus is a quote (R-328); Enterprise custom", () => {
+  it("plan cards: Annual 270 / 1,080, Monthly 325 / 1,300; Plus is a quote (R-328); Enterprise quoted — both 'Talk to sales' (R-1986)", () => {
     page();
     expect(priceOf("starter")).toContain("₹270");
     expect(priceOf("standard")).toContain("₹1,080");
-    expect(priceOf("plus")).toBe("Contact us for pricing");
-    expect(priceOf("enterprise")).toBe("Custom");
+    expect(priceOf("plus")).toBe("Talk to sales");
+    expect(priceOf("enterprise")).toBe("Talk to sales");
     const plans = document.getElementById("plans") as HTMLElement;
     fireEvent.click(within(plans).getByRole("button", { name: "Monthly" }));
     expect(priceOf("starter")).toContain("₹325");
     expect(priceOf("standard")).toContain("₹1,300");
-    expect(priceOf("plus")).toBe("Contact us for pricing");
+    expect(priceOf("plus")).toBe("Talk to sales");
     expect(within(plans).getByRole("button", { name: "Monthly" }).getAttribute("aria-pressed")).toBe("true");
   });
 
@@ -109,8 +109,8 @@ describe("R-1970 /buy/workspace v2", () => {
   it("a11y: plan, users and billing toggles say which is on; FAQ and compare say open/closed", () => {
     page({ initialTierId: "standard" });
     const plan = screen.getByRole("group", { name: "Plan" });
-    expect(within(plan).getByRole("button", { name: "Standard" }).getAttribute("aria-pressed")).toBe("true");
-    expect(within(plan).getByRole("button", { name: "Starter" }).getAttribute("aria-pressed")).toBe("false");
+    expect(within(plan).getByRole("button", { name: "Business Standard" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(plan).getByRole("button", { name: "Business Starter" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByLabelText("Users")).toBeTruthy();
     const compare = screen.getByRole("button", { name: /Compare all features/ });
     expect(compare.getAttribute("aria-expanded")).toBe("false");

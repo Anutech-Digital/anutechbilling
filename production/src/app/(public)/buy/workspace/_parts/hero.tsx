@@ -75,8 +75,10 @@ export function PriceCard(p: PriceCardProps) {
       <p id="hero-plan-label" className="text-xs font-semibold text-ink-2 mb-2">Plan</p>
       <div role="group" aria-labelledby="hero-plan-label" className="grid gap-1 p-1 bg-paper-2 rounded-[10px] mb-[18px]" style={{ gridTemplateColumns: `repeat(${p.plans.length}, minmax(0, 1fr))` }}>
         {p.plans.map((x) => (
-          <button key={x.id} type="button" aria-pressed={x.id === p.plan.id} onClick={() => p.onPick(x.id)} className={`${seg(x.id === p.plan.id)} min-h-11 px-1 py-1.5`}>
-            {x.short}
+          /* R-1986: Google's full name; on a phone (four in a row) the short one, same button name. */
+          <button key={x.id} type="button" aria-pressed={x.id === p.plan.id} aria-label={x.name} onClick={() => p.onPick(x.id)} className={`${seg(x.id === p.plan.id)} min-h-11 px-1 py-1.5 leading-tight`}>
+            <span aria-hidden className="hidden sm:inline">{x.name}</span>
+            <span aria-hidden className="sm:hidden">{x.short}</span>
           </button>
         ))}
       </div>
