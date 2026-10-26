@@ -10,7 +10,7 @@ import { checkScope, enforceScope, parseScopeFlags, claimedAreas, scopePath, par
  * few commands checkScope runs; every rule must refuse, a normal card must pass, generated files pass.
  */
 type Change = [status: string, file: string];
-type Hist = { sha: string; subject: string; added: string[]; removed?: string[]; before?: string };
+type Hist = { sha: string; subject: string; added: string[]; removed?: string[]; before?: string; after?: string };
 type Scenario = { changes: Change[]; merges?: boolean; history?: Record<string, Hist[]>; removed?: Record<string, string[]>; readded?: Record<string, string[]>; now?: Record<string, string>; addedBy?: Record<string, string> };
 
 function fakeGit(sc: Scenario) {
@@ -33,6 +33,8 @@ function fakeGit(sc: Scenario) {
       if (rev === "HEAD") return (sc.now?.[f] ?? "blob-now") + "\n";
       const h = (sc.history?.[f] ?? []).find((x) => `${x.sha}^` === rev);
       if (h?.before) return h.before + "\n";
+      const a = (sc.history?.[f] ?? []).find((x) => x.sha === rev);
+      if (a?.after) return a.after + "\n";
       throw new Error("no such path");
     }
     throw new Error("unexpected git " + args.join(" "));
@@ -134,6 +136,67 @@ describe("R-1958 scope guard — a change must not undo other cards' work", () =
     expect(two.ok).toBe(true);
     const own = run({ changes: [["M", f]], now: { [f]: "blob-old" }, history: { [f]: [{ sha: "c2", subject: "WIP R-1958: first try", added, before: "blob-old" }] }, removed: { [f]: added } });
     expect(own.ok).toBe(true);
+  });
+
+  /*
+   * R-1964 — the real R-1962 shape (blob hashes from the repo, 26 Oct): R-1899 (ea82e098) changed
+   * bs-lines.tsx 295ebb52 → 407eaf0e; c0159d00 (R-1905) put it back to 295ebb52; R-1962 brought 407eaf0e back.
+   */
+  const RF = "production/src/app/(app)/accounting/balance-sheet/bs-lines.tsx";
+  const X_ADDED = ["<StatementRow href={drillHref(line)} amount={line.amount}>", "const rowLabel = line.label ?? line.code;", "<StatementRow.Cell>{rowLabel}</StatementRow.Cell>"];
+  const X_REMOVED = ["<tr className=\"hover:bg-muted\" onClick={() => go(line)}>", "<td>{line.label}</td>"];
+  const X = { sha: "ea82e098aa", subject: "R-1899: whole statement row highlights on hover and keyboard focus", added: X_ADDED, removed: X_REMOVED, before: "295ebb52", after: "407eaf0e" };
+  const Y = { sha: "c0159d00bb", subject: "R-1905: each bank field says what is wrong with it; UPI ID optional", added: X_REMOVED, removed: X_ADDED, before: "407eaf0e", after: "295ebb52" };
+  const restoreRun = (card: string, sc: Scenario) => checkScope(card, { git: fakeGit(sc).git, areas: ["src/app/(app)/accounting"] });
+  const exitCodes = (card: string, sc: Scenario) => {
+    const codes: number[] = [];
+    const dir = mkdtempSync(path.join(os.tmpdir(), "r1964-"));
+    writeFileSync(path.join(dir, `${card}.json`), JSON.stringify({ card, areas: ["src/app/(app)/accounting"] }));
+    enforceScope(card, "commits", { lockDir: dir, git: fakeGit(sc).git, exit: (c: number) => { codes.push(c); } });
+    return codes;
+  };
+
+  it("R-1964: bringing back a card's version that a later commit had wrongly reverted is a RESTORE — passes with a note", () => {
+    const sc: Scenario = { changes: [["M", RF]], now: { [RF]: "407eaf0e" }, history: { [RF]: [Y, X] }, removed: { [RF]: X_REMOVED }, readded: { [RF]: X_ADDED } };
+    const r = restoreRun("R-1962", sc);
+    expect(r.refused).toEqual([]);
+    expect(r.ok).toBe(true);
+    expect(r.restored).toHaveLength(1);
+    expect(r.message).toMatch(/\[restore\] src\/app\/\(app\)\/accounting\/balance-sheet\/bs-lines\.tsx — R-1899 commit ea82e098 ka kaam wapas; R-1905 commit c0159d00/);
+    expect(exitCodes("R-1962", sc)).toEqual([]);
+  });
+
+  it("R-1964: the true revert itself (c0159d00 putting R-1899's file back) is still exit 9", () => {
+    const sc: Scenario = { changes: [["M", RF]], now: { [RF]: "295ebb52" }, history: { [RF]: [X] }, removed: { [RF]: X_ADDED }, readded: { [RF]: X_REMOVED } };
+    const r = restoreRun("R-1905", sc);
+    expect(r.ok).toBe(false);
+    expect(r.restored).toEqual([]);
+    expect(r.refused[0].rule).toBe("revert");
+    expect(r.refused[0].why).toMatch(/R-1899 commit ea82e098/);
+    expect(exitCodes("R-1905", sc)).toEqual([SCOPE_EXIT]);
+  });
+
+  it("R-1964: a 'restore' by commit message only is still exit 9 — Y must really have put X's file back (blob hashes)", () => {
+    /* Y is genuine work of its own here (its version is NOT X's parent version), whatever its subject says */
+    const Yreal = { ...Y, subject: "R-1905: revert of ea82e098 (restore R-1899)", after: "aaaa0000" };
+    const r = restoreRun("R-1962", { changes: [["M", RF]], now: { [RF]: "407eaf0e" }, history: { [RF]: [Yreal, X] }, removed: { [RF]: X_REMOVED }, readded: { [RF]: X_ADDED } });
+    expect(r.ok).toBe(false);
+    expect(r.refused[0].why).toMatch(/R-1905 commit c0159d00/);
+  });
+
+  it("R-1964: reverting the restore again (revert of a revert of a revert) is still exit 9", () => {
+    const R = { sha: "069461c8cc", subject: "R-1962: bring back R-1899's statement row highlight", added: X_ADDED, removed: X_REMOVED, before: "295ebb52", after: "407eaf0e" };
+    const r = restoreRun("R-1999", { changes: [["M", RF]], now: { [RF]: "295ebb52" }, history: { [RF]: [R, Y, X] }, removed: { [RF]: X_ADDED }, readded: { [RF]: X_REMOVED } });
+    expect(r.ok).toBe(false);
+    expect(r.refused[0].why).toMatch(/R-1962 commit 069461c8/);
+  });
+
+  it("R-1964: a restore does not hide a LATER card's work being undone on the same file", () => {
+    const zAdded = ["const total = sumLines(lines, { roundTo: 2 });", "if (!lines.length) return <EmptyState />;", "const footer = renderFooter(total, period);"];
+    const Z = { sha: "dddd3333", subject: "R-1950: balance sheet footer", added: zAdded, removed: [], before: "295ebb52", after: "5555zzzz" };
+    const r = restoreRun("R-1962", { changes: [["M", RF]], now: { [RF]: "407eaf0e" }, history: { [RF]: [Z, Y, X] }, removed: { [RF]: [...X_REMOVED, ...zAdded] }, readded: { [RF]: X_ADDED } });
+    expect(r.ok).toBe(false);
+    expect(r.refused[0].why).toMatch(/R-1950 commit dddd3333/);
   });
 
   it("no claimed areas known (no lock) → rule 1 only warns, the old behaviour; migrations are still refused", () => {
