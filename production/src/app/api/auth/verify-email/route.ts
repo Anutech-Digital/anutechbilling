@@ -15,6 +15,8 @@ import { trustedOrigin } from "@/lib/app-url";
 import { createAdminClient } from "@/lib/supabase/server";
 import { confirmEmailToken } from "@/lib/auth/email-verification";
 import { routeVerifiedSignupToCompany } from "@/lib/auth/tenant-match";
+import { landingAfterVerify } from "@/lib/auth/verify-landing";
+import { startSessionAfterVerify } from "@/server/auth/email-link";
 import { rateLimit, clientIp } from "@/lib/security/rate-limit";
 
 export async function POST(request: NextRequest) {
@@ -44,7 +46,24 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, email: result.email, joinRequestedTo });
+  /* R-1926 (OB-5): the link proved the mailbox and was spent above, so sign the person in
+     here and send a new owner straight to the setup wizard — no password retype. Only for
+     someone with a workspace of their own; a parked join request gets no session. */
+  let signedIn = false;
+  let next: string | undefined;
+  if (result.userId && !joinRequestedTo) {
+    try {
+      const landing = await landingAfterVerify(admin, result.userId);
+      if (landing && (await startSessionAfterVerify({ userId: result.userId, email: result.email }))) {
+        signedIn = true;
+        next = landing;
+      }
+    } catch (e) {
+      console.warn("[verify-email] R-1926 sign-in skipped:", (e as Error).message);
+    }
+  }
+
+  return NextResponse.json({ ok: true, email: result.email, joinRequestedTo, signedIn, ...(next ? { next } : {}) });
 }
 
 /** Public host for links in outbound alerts — never the container's internal address. */

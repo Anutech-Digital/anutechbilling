@@ -26,7 +26,8 @@ import "server-only";
 import { clientIp } from "@/lib/security/rate-limit";
 import { createAdminClient } from "@/lib/supabase/server";
 
-export type LoginMethod = "password" | "google" | "session";
+/** R-1926: "email_link" = signed in by the signup confirm link (server/auth/email-link.ts). */
+export type LoginMethod = "password" | "google" | "session" | "email_link";
 
 export interface LoginActivityRow {
   tenant_id: string;
