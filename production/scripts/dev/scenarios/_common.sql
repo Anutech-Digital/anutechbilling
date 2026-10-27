@@ -121,6 +121,84 @@ begin
 end
 $f$;
 
+/* R-1998 — project scenarios (project-receipts). Found from the scope's `docs`: customer ids and
+   project ids listed there, plus everything a tester's Save makes from them — split instalments,
+   project payments (bank + 'tds'), the invoices raised on the instalments or for those customers,
+   and their TDS receivable rows. Other scenarios list none of these, so for them every count is 0. */
+create function pg_temp.scn_project_scope(p_tenant uuid, p_docs text[])
+returns table(kind text, id text)
+language sql stable as $f$
+  with c as (
+    select x.id from public.customers x where x.tenant_id = p_tenant and x.id::text = any(p_docs)
+  ), pr as (
+    select x.id from public.project_sales x
+     where x.tenant_id = p_tenant and (x.id::text = any(p_docs) or x.customer_id in (select id from c))
+  ), m as (
+    select x.id, x.invoice_id from public.project_milestones x where x.tenant_id = p_tenant and x.project_id in (select id from pr)
+  ), pp as (
+    select x.id from public.project_payments x where x.tenant_id = p_tenant and x.project_id in (select id from pr)
+  ), i as (
+    select x.id from public.invoices x
+     where x.tenant_id = p_tenant and (x.id in (select invoice_id from m) or x.customer_id in (select id from c))
+  ), t as (
+    select x.id from public.tds_receivable x
+     where x.tenant_id = p_tenant and (x.invoice_id in (select id from i) or x.customer_id in (select id from c))
+  )
+  select 'customer', id::text from c
+  union all select 'project', id::text from pr
+  union all select 'milestone', id::text from m
+  union all select 'projectPayment', id::text from pp
+  union all select 'projectInvoice', id from i
+  union all select 'tds', id from t
+$f$;
+
+create function pg_temp.scn_project_count(p_tenant uuid, p_docs text[])
+returns jsonb
+language sql stable as $f$
+  with s as (select * from pg_temp.scn_project_scope(p_tenant, p_docs))
+  select jsonb_build_object(
+    'customers',       (select count(*) from s where kind = 'customer'),
+    'projects',        (select count(*) from s where kind = 'project'),
+    'milestones',      (select count(*) from s where kind = 'milestone'),
+    'projectPayments', (select count(*) from s where kind = 'projectPayment'),
+    'projectInvoices', (select count(*) from s where kind = 'projectInvoice'),
+    'tdsRows',         (select count(*) from s where kind = 'tds')
+  )
+$f$;
+
+create function pg_temp.scn_project_clear(p_tenant uuid, p_docs text[])
+returns jsonb
+language plpgsql as $f$
+declare
+  got jsonb := pg_temp.scn_project_count(p_tenant, p_docs);
+  ids record;
+  proj_tables text[] := array['tds_receivable', 'project_payments', 'project_milestones', 'invoices', 'project_sales', 'customers'];
+begin
+  if (select sum(v::int) from jsonb_each_text(got) as t(k, v)) = 0 then
+    return got;
+  end if;
+  select coalesce(array_agg(id::uuid) filter (where kind = 'customer'), '{}')       as c,
+         coalesce(array_agg(id::uuid) filter (where kind = 'project'), '{}')        as pr,
+         coalesce(array_agg(id::uuid) filter (where kind = 'projectPayment'), '{}') as pp,
+         coalesce(array_agg(id) filter (where kind = 'projectInvoice'), '{}')       as i,
+         coalesce(array_agg(id) filter (where kind = 'tds'), '{}')                  as t
+    into ids
+    from pg_temp.scn_project_scope(p_tenant, p_docs);
+
+  -- Same reason as scn_clear below: test data being taken away, not a user's action.
+  execute (select string_agg(format('alter table public.%I disable trigger user', tbl), '; ') from unnest(proj_tables) tbl);
+  delete from public.tds_receivable where id = any(ids.t);
+  delete from public.project_payments where id = any(ids.pp);
+  update public.project_milestones set invoice_id = null where project_id = any(ids.pr) and invoice_id is not null;
+  delete from public.invoices where id = any(ids.i);
+  delete from public.project_milestones where project_id = any(ids.pr);
+  delete from public.project_sales where id = any(ids.pr);
+  delete from public.customers where id = any(ids.c);
+  execute (select string_agg(format('alter table public.%I enable trigger user', tbl), '; ') from unnest(proj_tables) tbl);
+  return got;
+end
+$f$;
+
 create function pg_temp.scn_scope(p_tenant uuid, p_vendors uuid[], p_txns uuid[], p_docs text[], p_names text[], p_upis text[])
 returns table(kind text, id text)
 language sql stable as $f$
@@ -174,6 +252,7 @@ language sql stable as $f$
         union all
         select bill_no from public.vendor_bills where tenant_id = p_tenant and bill_no like 'SCN-%' group by bill_no having count(*) > 1) d)
   ) || pg_temp.scn_sales_count(p_tenant, p_docs)  -- R-1980: leads, quotes, invoices, payments, …
+    || pg_temp.scn_project_count(p_tenant, p_docs)  -- R-1998: customers, projects, instalments, …
 $f$;
 
 create function pg_temp.scn_clear(p_tenant uuid, p_vendors uuid[], p_txns uuid[], p_docs text[], p_names text[], p_upis text[])
@@ -181,9 +260,12 @@ returns jsonb
 language plpgsql as $f$
 declare
   v uuid[]; e text[]; b text[]; t uuid[]; p uuid[]; docs text[]; runs uuid[];
+  proj jsonb;
   scn_tables text[] := array['vendor_advance_applications', 'bank_vendor_payment_lines', 'bank_transactions',
     'payment_run_items', 'payment_runs', 'vendor_narration_aliases', 'expenses', 'vendor_bills', 'prepaid_advances', 'vendors'];
 begin
+  -- R-1998: projects first — their payments point at the scenario bank lines removed below
+  proj := pg_temp.scn_project_clear(p_tenant, p_docs);
   select coalesce(array_agg(id::uuid) filter (where kind = 'vendor'),  '{}'),
          coalesce(array_agg(id)       filter (where kind = 'expense'), '{}'),
          coalesce(array_agg(id)       filter (where kind = 'bill'),    '{}'),
@@ -225,6 +307,7 @@ begin
   execute (select string_agg(format('alter table public.%I enable trigger user', tbl), '; ') from unnest(scn_tables) tbl);
   return jsonb_build_object('vendors', cardinality(v), 'expenses', cardinality(e), 'bills', cardinality(b),
                             'txns', cardinality(t), 'prepaid', cardinality(p))
-         || pg_temp.scn_sales_clear(p_tenant, p_docs);  -- R-1980: after the expenses, so a campaign's bills are gone first
+         || pg_temp.scn_sales_clear(p_tenant, p_docs)  -- R-1980: after the expenses, so a campaign's bills are gone first
+         || proj;
 end
 $f$;

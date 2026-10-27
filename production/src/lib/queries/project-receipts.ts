@@ -302,6 +302,8 @@ export interface AllocateProjectReceiptInput {
   receivedAt?: string | null;
   /** Defaults to the bank line's UTR on the server. */
   reference?: string | null;
+  /** R-1998: the customer withheld TDS — then the kists add up to bank line + TDS (R-1996). */
+  tds?: { section: string; ratePct: number; amount: number } | null;
 }
 
 export interface AllocateProjectReceiptResult {
@@ -328,22 +330,41 @@ export function allocateProjectReceiptArgs(input: AllocateProjectReceiptInput) {
 }
 
 /**
+ * R-1998: which RPC Save calls. No TDS → allocate_project_receipt (R-1995, 5 arguments); TDS →
+ * allocate_project_receipt_with_tds (R-1996), which splits the TDS pro-rata across the kists.
+ */
+export function allocateProjectReceiptCall(input: AllocateProjectReceiptInput) {
+  const args = allocateProjectReceiptArgs(input);
+  if (input.tds && input.tds.amount > 0) {
+    return {
+      fn: "allocate_project_receipt_with_tds" as const,
+      args: {
+        ...args,
+        p_tds: { section: input.tds.section, rate_pct: input.tds.ratePct, amount: Math.round(input.tds.amount) },
+      },
+    };
+  }
+  return { fn: "allocate_project_receipt" as const, args };
+}
+
+/**
  * Save one receipt across many instalments — payments, splits, invoices and the bank line
  * reconcile in ONE transaction (allocate_project_receipt): all of it, or nothing.
- * The instalment-list screen that calls it is R-1998.
+ * The instalment list in the reconcile dialog calls it (R-1998, project-payment-section.tsx).
  */
 export function useAllocateProjectReceipt() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: AllocateProjectReceiptInput): Promise<AllocateProjectReceiptResult> => {
       const supabase = createClient();
-      const { data, error } = await supabase.rpc("allocate_project_receipt" as never, allocateProjectReceiptArgs(input) as never);
+      const call = allocateProjectReceiptCall(input);
+      const { data, error } = await supabase.rpc(call.fn as never, call.args as never);
       if (error) throw error;
       return data as unknown as AllocateProjectReceiptResult;
     },
     onSuccess: (res) => {
       for (const k of ["project_sales", "project_milestones", "project_payments", "invoices", "bank_transactions",
-                       "bank_accounts", "accounting", "balance-sheet"]) {
+                       "bank_accounts", "accounting", "balance-sheet", "tds_receivable"]) {
         qc.invalidateQueries({ queryKey: [k] });
       }
       const invoices = res.allocations.filter((a) => a.invoice_id).length;
