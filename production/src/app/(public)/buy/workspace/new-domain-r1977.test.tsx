@@ -132,13 +132,16 @@ describe("R-1977 new domain: live search, live price, in the order", () => {
     expect(within(summary()).getByTestId("summary-total").textContent).toBe("₹3,823");
   });
 
-  it("Monthly: the domain is billed separately; the Workspace monthly total is unchanged (₹325 + ₹59 = ₹384)", async () => {
+  /* R-1985 (owner decision): Monthly + new domain is ONE payment — the month (₹325 + ₹59) and the
+     domain on its own GST invoice (₹649 + ₹117), GST rounded per invoice as the two quotes are. */
+  it("Monthly: the domain is in the same payment, on its own GST invoice — ₹384 + ₹766 = ₹1,150", async () => {
     page();
     fireEvent.click(screen.getAllByRole("button", { name: "Monthly" })[0]);
     await searchRavi();
     const s = summary();
-    expect(within(s).getByText("Domain ravitraders.in · billed separately")).toBeTruthy();
-    expect(within(s).getByTestId("summary-total").textContent).toBe("₹384");
+    expect(within(s).getByText("Domain ravitraders.in · 1 year · own GST invoice")).toBeTruthy();
+    expect(within(s).queryByText(/billed separately/)).toBeNull();
+    expect(within(s).getByTestId("summary-total").textContent).toBe("₹1,150");
   });
 
   it("annual without a new domain: ₹3,823, unchanged", () => {

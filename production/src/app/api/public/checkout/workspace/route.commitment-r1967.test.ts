@@ -157,11 +157,13 @@ describe("R-1971 inline checkout → the same route", { timeout: 60_000 }, () =>
   });
 
   /* R-1977: an ANNUAL new domain is now priced live and bought with the order
-     (route.domain-r1977.test.ts); a MONTHLY order still hands it to the team, billed separately. */
-  it("a new domain on a monthly order → the lead note tells the team to register it and bill it separately", async () => {
-    await post({ domain: "ravitraders.co.in", domainNew: true, commitment: "monthly" });
-    expect(String(leadRow().notes)).toMatch(/Domain: ravitraders\.co\.in — NEW, monthly order: register it for the buyer and bill it separately/);
-    // The customer's quote/PDF notes do not carry the internal instruction.
-    expect(String(quoteRow().notes)).not.toMatch(/NEW: register/);
+     (route.domain-r1977.test.ts). R-1985: a MONTHLY order books it too, on its own quote
+     (route.monthly-domain-r1985.test.ts) — never handed off "billed separately" any more. */
+  it("a new domain on a monthly order is booked, not billed separately — the registrant's address is asked first", async () => {
+    const res = await post({ domain: "ravitraders.co.in", domainNew: true, commitment: "monthly" });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { needAddress?: boolean }).needAddress).toBe(true);
+    expect(leadRow()).toBeUndefined();
+    expect(quoteRow()).toBeUndefined();
   });
 });
