@@ -3,7 +3,7 @@
    kist 2); ₹2,12,400 in the bank + ₹23,600 TDS for both kists; more money than is due. */
 import { describe, expect, it } from "vitest";
 import {
-  fifoAllocate, receiptCheck, pickProjectForReceipt, projectReceiptPayload,
+  fifoAllocate, receiptCheck, pickProjectForReceipt, projectReceiptPayload, hintLink,
 } from "./project-receipt-allocation";
 
 const kists = [
@@ -98,5 +98,18 @@ describe("projectReceiptPayload — what Save sends", () => {
       tds: null, receivedAt: null, reference: null,
     });
     expect(p.tds).toBeNull();
+  });
+});
+
+describe("hintLink — the RPC's hint as the 'what to do next' link (§24)", () => {
+  it("banking / project / projects", () => {
+    expect(hintLink("/accounting/banking")).toEqual({ href: "/accounting/banking", label: "Open Banking" });
+    expect(hintLink("/projects/abc")).toEqual({ href: "/projects/abc", label: "Open the project" });
+    expect(hintLink("/projects")).toEqual({ href: "/projects", label: "Open Projects" });
+  });
+  it("no hint, or not an app path → no link", () => {
+    expect(hintLink(undefined)).toBeNull();
+    expect(hintLink("https://evil.example")).toBeNull();
+    expect(hintLink("//evil.example")).toBeNull();
   });
 });

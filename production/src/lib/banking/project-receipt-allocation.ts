@@ -96,3 +96,16 @@ export function projectReceiptPayload(input: {
     reference: input.reference,
   };
 }
+
+/**
+ * The RPC's `hint` (an app path, e.g. '/accounting/banking' or '/projects/<id>') as the
+ * "what to do next" link under the error (§24). Anything that is not an in-app path → no link.
+ */
+export function hintLink(hint: string | null | undefined): { href: string; label: string } | null {
+  const h = (hint ?? "").trim();
+  if (!h.startsWith("/") || h.startsWith("//")) return null;
+  if (h.startsWith("/accounting/banking")) return { href: h, label: "Open Banking" };
+  if (/^\/projects\/[^/]+/.test(h)) return { href: h, label: "Open the project" };
+  if (h === "/projects") return { href: h, label: "Open Projects" };
+  return { href: h, label: "Open" };
+}
