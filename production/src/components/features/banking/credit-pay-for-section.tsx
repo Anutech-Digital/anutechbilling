@@ -74,10 +74,15 @@ interface Props {
 }
 
 type Mode = "item" | "sale" | "advance";
-const MODES: ReadonlyArray<readonly [Mode, string]> = [
-  ["item", "An open quote / invoice"],
-  ["sale", "A new sale (no quote yet)"],
-  ["advance", "Advance — nothing to invoice yet"],
+/* R-2025 (0) — Pardeep 27 Oct: after picking the customer NOTHING is pre-chosen. "A new sale" used
+   to be pre-selected when the customer had nothing open, so one Save booked a sale + GST invoice +
+   subscription on money that was really an advance. Each choice now says what it will do, and Save
+   stays locked until one is picked. Only the Suggestion card's "Change" (R-2007, a confident guess
+   the owner opened on purpose) arrives with the open item already ticked. */
+const MODES: ReadonlyArray<readonly [Mode, string, string]> = [
+  ["item", "An open quote / invoice", "Pays the quote → service starts + GST invoice"],
+  ["sale", "A new sale (no quote yet)", "Records a sale → GST invoice + subscription"],
+  ["advance", "Advance — nothing to invoice yet", "Customer credit, no invoice — use it on the next bill"],
 ];
 
 const selectCls =
@@ -108,14 +113,16 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
   /* ── 2. What for ─────────────────────────────────────────────────────────────── */
   const { data: items, isLoading: itemsLoading } = useBankCreditOpenItems(customerId || null);
-  const [mode, setMode] = React.useState<Mode>("item");
+  const [mode, setMode] = React.useState<Mode | null>(null);
   const [pickKey, setPickKey] = React.useState("");
+  /* A new customer or bank line → no choice made yet (R-2025 (0)). */
+  React.useEffect(() => { setMode(null); }, [customerId, transaction.id]);
   React.useEffect(() => {
     if (!items) return;
     const fromCard = suggested ? items.find((i) => itemKey(i) === suggested.itemKey) ?? null : null;
     const pre = fromCard ?? preselectItem(items, credit);
     setPickKey(pre ? itemKey(pre) : "");
-    setMode(items.length > 0 ? "item" : "sale");
+    if (fromCard) setMode("item");
   }, [items, credit, suggested]);
   const picked = (items ?? []).find((i) => itemKey(i) === pickKey) ?? null;
 
@@ -161,11 +168,11 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const tdsAmount = check ? tdsToRecord(check, shortChoice) : 0;
   const tdsRate = check ? tdsRateToRecord(check, taxable) : null;
   const saleInvalid = lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0)) || preview.taxable <= 0 || saleTermsMixed(lines);
-  const canSave = Boolean(customerId) && !busy && !datesBad
+  const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad
     && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : true);
 
   const save = async () => {
-    if (!canSave) return;
+    if (!canSave || mode === null) return;
     const subArgs = {
       createSubscription: makesSub ? createSub : null,
       subStart: makesSub && createSub ? subStart : null,
@@ -254,20 +261,25 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         <>
           {/* 2. What for */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5" role="group" aria-label="What this money is for">
-            {MODES.map(([k, label]) => (
+            {MODES.map(([k, label, effect]) => (
               <button
                 key={k}
                 type="button"
                 aria-pressed={mode === k}
+                aria-label={label}
+                aria-describedby={`payfor-mode-${k}`}
                 onClick={() => setMode(k)}
-                className={`rounded-md border px-2 py-1.5 text-xs font-medium text-left ${mode === k ? "border-amber bg-amber/10 text-amber-ink" : "border-hairline text-ink-2"}`}
+                className={`rounded-md border px-2 py-1.5 text-xs text-left ${mode === k ? "border-amber bg-amber/10 text-amber-ink" : "border-hairline bg-paper text-ink-2"}`}
               >
-                {label}
+                <span className="block font-medium">{label}</span>
+                <span id={`payfor-mode-${k}`} className="block text-ink-3 mt-0.5">{effect}</span>
               </button>
             ))}
           </div>
 
-          {mode === "advance" ? (
+          {mode === null ? (
+            <p className="text-xs text-ink-3">Choose what this money is for — nothing is booked until you do.</p>
+          ) : mode === "advance" ? (
             <p className="text-xs text-ink-2 bg-paper rounded-md border border-hairline px-2.5 py-2">
               The whole {rupee(credit)} is kept as {customer?.name ?? "the customer"}&apos;s advance credit, with a receipt voucher.
               Nothing is invoiced now — it is offered when you record their next payment.
@@ -333,7 +345,9 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
               className="whitespace-normal h-auto min-h-8 py-1.5 text-left max-w-full">
 
               {relink ? "Relink: " : ""}
-              {mode === "item"
+              {mode === null
+                ? "Choose what this money is for"
+                : mode === "item"
                 ? picked ? `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile` : "Pick what it pays"
                 : mode === "sale"
                   ? `Record sale & reconcile ${rupee(credit)}`

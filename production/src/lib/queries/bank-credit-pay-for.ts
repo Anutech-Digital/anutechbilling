@@ -19,6 +19,7 @@ import { toastInvoiceIssueError } from "@/lib/queries/invoices";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import type { OldOneOffBooking, OpenItem, PayForResult, SaleLine } from "@/lib/banking/credit-pay-for";
 import { saleLinesPayload } from "@/lib/banking/credit-pay-for";
+import { ADVANCE_PAYMENT_NOTE_PREFIX, advancePaymentIds } from "@/lib/banking/bank-row-label";
 
 /* The generated types do not know the R-1838 functions yet (migration not applied there). */
 type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }> };
@@ -208,5 +209,36 @@ export function useNewSaleFromBankCredit() {
     },
     onSuccess: after,
     onError: onPayError,
+  });
+}
+
+/* ─── R-2025 (0): which reconciled bank lines are customer ADVANCES (row badge "Advance") ─── */
+
+/** The payment ids (matched_to_id of "payment" lines) that are R-1863 advances — read-only. */
+export function useBankAdvancePaymentIds(paymentIds: readonly string[]) {
+  const ids = [...new Set(paymentIds)].sort();
+  return useQuery({
+    queryKey: ["bank_advance_payment_ids", ids] as const,
+    enabled: ids.length > 0,
+    queryFn: async (): Promise<Set<string>> => {
+      const sb = createClient();
+      const pays: Array<{ id: string; quote_id: string | null; notes: string | null }> = [];
+      for (let i = 0; i < ids.length; i += 150) {
+        const { data, error } = await sb.from("payments").select("id, quote_id, notes")
+          .in("id", ids.slice(i, i + 150)).like("notes", `${ADVANCE_PAYMENT_NOTE_PREFIX}%`);
+        if (error) throw error;
+        pays.push(...((data ?? []) as typeof pays));
+      }
+      const quoteIds = [...new Set(pays.map((p) => p.quote_id).filter((q): q is string => Boolean(q)))];
+      if (quoteIds.length === 0) return new Set();
+      const quotes: Array<{ id: string; plan: string | null; amount: number | null; invoice_id: string | null; line_items: unknown }> = [];
+      for (let i = 0; i < quoteIds.length; i += 150) {
+        const { data, error } = await sb.from("quotes").select("id, plan, amount, invoice_id, line_items").in("id", quoteIds.slice(i, i + 150));
+        if (error) throw error;
+        quotes.push(...((data ?? []) as unknown as typeof quotes));
+      }
+      return advancePaymentIds(pays, quotes.map((q) => ({ ...q, amount: Number(q.amount) || 0 })));
+    },
+    staleTime: 30_000,
   });
 }
