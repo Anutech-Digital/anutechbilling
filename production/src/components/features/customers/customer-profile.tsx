@@ -82,6 +82,7 @@ import { recordPhoneOf } from "@/lib/customers/record-phone";
 import { buildCustomerStatement, statementBalanceText, statementPayments, useCustomerNotes } from "@/components/features/customers/customer-statement";
 import { RecordTable, RowLink } from "@/components/features/customers/customer-record-table";
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
+import { advanceTxnView, isPaymentTxn } from "@/components/features/customers/advance-txn";
 
 export interface CustomerProfileProps {
   customerId: string;
@@ -263,7 +264,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
     ...customerPayments.map((p) => ({ date: p.status === "refunded" ? (p.refunded_at ?? p.received_at) : p.received_at, type: p.status === "refunded" ? ("Refund" as const) : ("Payment" as const), ref: p.receipt_voucher_no ?? p.id, amount: p.amount, status: p.status, href: txnHref({ kind: "payment", quoteId: p.quote_id, customerId: params.id }, linkOpts), payId: p.id })),
     // Project milestone receipts — show as Payment rows so they're not invisible.
     ...projPayments.map((p) => ({ date: p.received_at, type: "Payment" as const, ref: p.reference?.trim() || p.project_title, amount: p.amount, status: p.bank_txn_id ? "reconciled" : "received", href: txnHref({ kind: "projectPayment", invoiceId: p.invoice_id ?? null, projectId: p.project_id }, linkOpts) })),
-    ...allQuotes.map((q) => ({ date: q.created_date, type: "Quote" as const, ref: q.id, amount: q.amount, status: q.status, href: txnHref({ kind: "quote", quoteId: q.id }, linkOpts) })),
+    /* R-2033: an R-1863 advance holder is the customer's advance, not a ₹0 quote. */
+    ...allQuotes.map((q) => ({ date: q.created_date, type: "Quote" as "Quote" | "Advance", ref: q.id, amount: q.amount, status: q.status, href: txnHref({ kind: "quote", quoteId: q.id }, linkOpts), ...advanceTxnView(q, allPayments ?? [], creditRows ?? []) })),
     /* R-006: the status reads in QUOTE language ("Quotation" / "Accepted" / "Declined")
        because this row is the project's quotation as well as the project. The raw
        `quoted` / `active` wording made no sense under a Quotes heading. */
@@ -276,7 +278,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const invoiceProject = projPay?.invoiceProject ?? {};
   type HRow = {
     key: string; parentKey: string | null; indent: number;
-    date: string; type: "Invoice" | "Payment" | "Refund" | "Quote" | "Project";
+    date: string; type: "Invoice" | "Payment" | "Refund" | "Quote" | "Advance" | "Project";
     ref: string; amount: number; status: string; due?: number;
     /** R-1521: where this row's document lives (null = nothing this role can open). */
     href: string | null;
@@ -314,7 +316,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
     hierRows.push({ key: `cpay:${p.id}`, parentKey: null, indent: 0, date: p.status === "refunded" ? (p.refunded_at ?? p.received_at) : p.received_at, type: p.status === "refunded" ? "Refund" : "Payment", ref: p.receipt_voucher_no ?? p.id, amount: p.amount, status: p.status, payId: p.id, href: txnHref({ kind: "payment", quoteId: p.quote_id, customerId: params.id }, linkOpts) });
   }
   for (const q of allQuotes) {
-    hierRows.push({ key: `q:${q.id}`, parentKey: null, indent: 0, date: q.created_date, type: "Quote", ref: q.id, amount: q.amount, status: q.status, href: txnHref({ kind: "quote", quoteId: q.id }, linkOpts) });
+    hierRows.push({ key: `q:${q.id}`, parentKey: null, indent: 0, date: q.created_date, type: "Quote", ref: q.id, amount: q.amount, status: q.status, href: txnHref({ kind: "quote", quoteId: q.id }, linkOpts), ...advanceTxnView(q, allPayments ?? [], creditRows ?? []) });
   }
   // Which rows are parents (have children) + parent lookup for the collapse walk.
   const parentOf: Record<string, string | null> = {};
@@ -384,7 +386,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
     : `${Math.max(tenureDays, 0)}d`;
 
   const TXN_BADGE: Record<string, "info" | "success" | "danger" | "muted" | "warning"> = {
-    Invoice: "info", Payment: "success", Refund: "danger", Quote: "muted", Project: "warning",
+    Invoice: "info", Payment: "success", Refund: "danger", Quote: "muted", Advance: "success", Project: "warning",
   };
 
   /* Transactions segment filter — invoices / quotes / payments each on their own.
@@ -398,14 +400,14 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
     txnFilter === "all" ? true
     : txnFilter === "invoices" ? type === "Invoice"
     : txnFilter === "quotes"   ? isQuoteish(type)
-    : txnFilter === "payments" ? (type === "Payment" || type === "Refund")
+    : txnFilter === "payments" ? isPaymentTxn(type)   // R-2033: an Advance counts here
     : txnFilter === "projects" ? type === "Project"
     : true;
   const txnSegments = [
     { id: "all" as const,      label: "All",      n: txns.length },
     { id: "invoices" as const, label: "Invoices", n: txns.filter((t) => t.type === "Invoice").length },
     { id: "quotes" as const,   label: "Quotes",   n: txns.filter((t) => isQuoteish(t.type)).length },
-    { id: "payments" as const, label: "Payments", n: txns.filter((t) => t.type === "Payment" || t.type === "Refund").length },
+    { id: "payments" as const, label: "Payments", n: txns.filter((t) => isPaymentTxn(t.type)).length },
     { id: "projects" as const, label: "Projects", n: txns.filter((t) => t.type === "Project").length },
   ].filter((s) => s.id === "all" || s.n > 0);
   const filteredTxns = txns.filter((t) => txnInFilter(t.type));
