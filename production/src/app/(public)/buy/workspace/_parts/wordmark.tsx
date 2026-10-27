@@ -4,7 +4,12 @@
  */
 const GOOGLE = { blue: "#4285F4", red: "#EA4335", yellow: "#FBBC04", green: "#34A853", grey: "#5F6368" } as const;
 
-export function GoogleWorkspaceWordmark({ workspaceWeight }: { workspaceWeight?: number }) {
+/**
+ * R-2018: `tone="dark"` for a dark background (the /buy/workspace hero) — the Google letters keep
+ * their colours, "Workspace" turns white (Google's grey #5F6368 disappears on dark). Default is the
+ * light version, unchanged everywhere else.
+ */
+export function GoogleWorkspaceWordmark({ workspaceWeight, tone = "light" }: { workspaceWeight?: number; tone?: "light" | "dark" }) {
   return (
     <span className="whitespace-nowrap">
       <span style={{ color: GOOGLE.blue }}>G</span>
@@ -13,7 +18,7 @@ export function GoogleWorkspaceWordmark({ workspaceWeight }: { workspaceWeight?:
       <span style={{ color: GOOGLE.blue }}>g</span>
       <span style={{ color: GOOGLE.green }}>l</span>
       <span style={{ color: GOOGLE.red }}>e</span>{" "}
-      <span style={{ color: GOOGLE.grey, fontWeight: workspaceWeight }}>Workspace</span>
+      <span style={{ color: tone === "dark" ? "#FFFFFF" : GOOGLE.grey, fontWeight: workspaceWeight }}>Workspace</span>
     </span>
   );
 }

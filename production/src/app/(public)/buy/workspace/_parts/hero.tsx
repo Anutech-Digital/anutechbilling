@@ -41,9 +41,13 @@ function motionWelcome(): boolean {
 }
 
 /**
- * R-1990: muted, looping, inline video at half speed, behind a 10% black layer. The poster is the
- * first paint (and all a reduced-motion / Save-Data visitor gets); the video only starts after
- * mount, so it never holds up the page.
+ * R-1990: muted, looping, inline video at half speed. The poster is the first paint (and all a
+ * reduced-motion / Save-Data visitor gets); the video only starts after mount, so it never holds
+ * up the page.
+ * R-2018: the layer over it is the brand ink, not 10% black — white text sits straight on it.
+ * lg+: 80% across the text column (left 60%), fading to 50% behind the white price card; below lg
+ * the text stacks full-width, so a flat 80%. Measured worst frame = pure white → 80% ink keeps
+ * every hero text at 4.5:1 or more (hero-dark-r2018.test.tsx).
  */
 function HeroBackground() {
   const [play, setPlay] = React.useState(false);
@@ -69,10 +73,13 @@ function HeroBackground() {
         /* eslint-disable-next-line @next/next/no-img-element -- the poster is the hero's first paint */
         <img data-testid="hero-poster" src={HERO_VIDEO.poster} alt="" fetchPriority="high" className="absolute inset-0 w-full h-full object-cover" />
       )}
-      <div data-testid="hero-dim" className="absolute inset-0 bg-black/10" />
+      <div data-testid="hero-dim" className="absolute inset-0 bg-ink/80 lg:bg-transparent lg:bg-gradient-to-r lg:from-ink/80 lg:via-ink/80 lg:via-60% lg:to-ink/50" />
     </div>
   );
 }
+
+/** R-2018: a keyboard focus ring that shows on the dark hero (white ring, ink gap). */
+const DARK_FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-ink";
 
 const CHECKS = ["GST tax invoice, ITC-ready", "UPI, cards and netbanking", "Domain + DNS setup included", "Hindi + English phone support"];
 
@@ -120,7 +127,7 @@ export function PriceCard(p: PriceCardProps) {
     wasSubtotal: p.promo?.was,
   }) : null;
   return (
-    <div className="flex-[1_1_360px] max-w-[460px] min-w-0 bg-white border border-hairline rounded-2xl p-6 shadow-[0_24px_48px_-24px_rgba(26,24,21,0.18)]">
+    <div className="flex-[1_1_360px] max-w-[460px] min-w-0 bg-white border border-hairline rounded-2xl p-6 shadow-[0_24px_48px_-24px_rgba(0,0,0,0.45)]">
       <div className="flex justify-between items-baseline mb-4">
         <h2 className="font-serif text-[22px] font-normal m-0">Your price</h2>
         <span className="text-xs text-ink-3">Live estimate</span>
@@ -223,46 +230,45 @@ export function Hero({ card, onPlans, onTrial, trialOk }: { card: PriceCardProps
     <section data-testid="hero" className="relative isolate border-b border-hairline">
       <HeroBackground />
       <div className="max-w-[1200px] mx-auto px-4 sm:px-5 pt-14 pb-16 flex flex-wrap gap-12 items-center">
-        {/* R-1990: the text sits on a light paper panel — over the video alone (10% black) dark text
-            measured 1.04:1 at worst; through the panel the darkest point keeps ink-2 above 4.5:1. */}
-        <div data-testid="hero-text" className="flex-[1_1_440px] min-w-0 bg-paper/85 backdrop-blur-sm rounded-2xl p-5 sm:p-7">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 border border-hairline-strong rounded-full text-xs text-ink-2 font-medium mb-5">
-            <span aria-hidden className="w-2 h-2 rounded-full bg-emerald" />
-            <span className="font-bold"><GoogleWorkspaceWordmark /></span> reseller since 2014
+        {/* R-2018 (reverses R-1990's paper panel): white text straight on the dark ink layer. */}
+        <div data-testid="hero-text" className="flex-[1_1_440px] min-w-0">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 border border-white/25 bg-ink/40 rounded-full text-xs text-white font-medium mb-5">
+            <span aria-hidden className="w-2 h-2 rounded-full bg-emerald-300" />
+            <span className="font-bold"><GoogleWorkspaceWordmark tone="dark" /></span> reseller since 2014
           </div>
-          <h1 className="font-serif font-normal text-[clamp(36px,5vw,56px)] leading-[1.04] tracking-[-0.01em] mb-[18px] [text-wrap:balance]">
-            <GoogleWorkspaceWordmark /> for your business.{" "}
-            <span className="text-amber">Ready before your chai gets <span className="whitespace-nowrap">cold.<ChaiCup /></span></span>
+          <h1 className="font-serif font-normal text-white text-[clamp(36px,5vw,56px)] leading-[1.04] tracking-[-0.01em] mb-[18px] [text-wrap:balance]">
+            <GoogleWorkspaceWordmark tone="dark" /> for your business.{" "}
+            <span className="text-orange-300">Ready before your chai gets <span className="whitespace-nowrap">cold.<ChaiCup /></span></span>
           </h1>
-          <p className="text-[17px] leading-relaxed text-ink-2 mb-7 max-w-[540px]">
+          <p className="text-[17px] leading-relaxed text-white/85 mb-7 max-w-[540px]">
             Professional email on your own domain, plus Drive, Meet, Docs and Gemini. Pay in rupees by UPI, card or
             netbanking, get a GST invoice, and we configure everything with you on a call.
           </p>
           <div className="flex flex-wrap gap-3 mb-7">
-            <button type="button" onClick={onPlans} className="h-12 px-[22px] rounded-[10px] bg-ink text-paper text-[15px] font-semibold hover:bg-ink-2">
+            <button type="button" onClick={onPlans} className={`h-12 px-[22px] rounded-[10px] bg-amber text-white text-[15px] font-semibold hover:bg-amber-ink ${DARK_FOCUS}`}>
               See plans and prices
             </button>
             {trialOk && (
-              <button type="button" onClick={onTrial} className="h-12 px-[22px] rounded-[10px] border border-hairline-strong text-ink text-[15px] font-semibold hover:bg-paper-2">
+              <button type="button" onClick={onTrial} className={`h-12 px-[22px] rounded-[10px] border border-white/70 text-white text-[15px] font-semibold hover:bg-white/10 ${DARK_FOCUS}`}>
                 Start {WORKSPACE_TRIAL_DAYS}-day free trial
               </button>
             )}
           </div>
           <ul className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-x-5 gap-y-2.5 max-w-[560px] list-none p-0 m-0">
             {CHECKS.map((c) => (
-              <li key={c} className="flex gap-2 text-sm text-ink-2"><span aria-hidden className="text-emerald font-bold">✓</span>{c}</li>
+              <li key={c} className="flex gap-2 text-sm text-white/85"><span aria-hidden className="text-emerald-300 font-bold">✓</span>{c}</li>
             ))}
           </ul>
-          <div className="mt-8 pt-6 border-t border-hairline max-w-[560px]">
-            <p className="text-xs font-semibold tracking-[0.08em] text-ink-2 mb-3.5">EVERY PLAN INCLUDES</p>
+          <div className="mt-8 pt-6 border-t border-white/20 max-w-[560px]">
+            <p className="text-xs font-semibold tracking-[0.08em] text-white/70 mb-3.5">EVERY PLAN INCLUDES</p>
             <ul className="flex flex-wrap gap-2.5 list-none p-0 m-0">
               {APPS.map((a) => (
                 <li key={a.name} className="flex flex-col items-center gap-1.5 w-[60px]">
-                  <span className="w-[52px] h-[52px] rounded-[14px] bg-white border border-hairline grid place-items-center shadow-[0_4px_10px_-6px_rgba(26,24,21,0.2)]">
+                  <span className="w-[52px] h-[52px] rounded-[14px] bg-white grid place-items-center shadow-[0_4px_10px_-6px_rgba(0,0,0,0.5)]">
                     {/* eslint-disable-next-line @next/next/no-img-element -- small static icon */}
                     <img src={a.src} alt="" width={28} height={28} className="w-7 h-7 object-contain" />
                   </span>
-                  <span className="text-xs text-ink-2">{a.name}</span>
+                  <span className="text-xs text-white/85">{a.name}</span>
                 </li>
               ))}
             </ul>
