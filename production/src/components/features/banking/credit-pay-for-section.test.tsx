@@ -75,7 +75,8 @@ describe("R-1838 CreditPayForSection", () => {
     }));
     renderIt(35400);
     expect((screen.getByLabelText("Customer who paid") as HTMLSelectElement).value).toBe("c1");
-    expect(screen.getByText(/Guessed from the bank line says “acme”/)).toBeTruthy();
+    /* R-2007: the reason names every word only Acme has ("acme traders"). */
+    expect(screen.getByText(/Guessed from the bank line says “acme traders”/)).toBeTruthy();
     expect(screen.getByRole("radio", { checked: true }).textContent).toContain("Renewal");
     expect(screen.queryByText("Create subscription")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Record ₹35,400 on Q-REN & reconcile" }));

@@ -134,9 +134,8 @@ describe("R-1866 DebitPayForSection", () => {
     state.pay.mockResolvedValue(result({ vendor_name: "Google Cloud India" }));
     render(<DebitPayForSection transaction={txn(10000, "NEFT GOOGLE PART")} onDone={() => {}} />);
     const box = screen.getByLabelText(/^Pay Bill G-2 · /) as HTMLInputElement;
-    expect(box.checked).toBe(false);          // 10,000 ≠ 23,600 — nothing pre-ticked
-    expect(saveButton().disabled).toBe(true);
-    fireEvent.click(box);
+    /* R-2007: the vendor's ONLY open bill and less money than it needs → pre-ticked as a part payment. */
+    expect(box.checked).toBe(true);
     expect(screen.getByText(/part payment — ₹13,600 stays due/)).toBeTruthy();
     fireEvent.click(saveButton());
     await screen.findByText("Done — this bank line is reconciled");
@@ -199,7 +198,8 @@ describe("R-1866 DebitPayForSection", () => {
     state.items.v3 = [IM2];
     state.q194.v3 = q(null);
     const { rerender } = render(<DebitPayForSection transaction={txn(2359000, "NEFT INGRAM MICRO IM-2")} onDone={() => {}} />);
-    fireEvent.click(screen.getByLabelText(/^Pay Bill IM-2 · /));
+    /* R-2007: the only open bill, bank less than it → already ticked (part payment until the TDS is known). */
+    expect((screen.getByLabelText(/^Pay Bill IM-2 · /) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByText(/turnover last financial year was/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Yes, above ₹10 crore/ }));
     expect(state.setBuyer).toHaveBeenCalledWith(true);
@@ -218,6 +218,7 @@ describe("R-1866 DebitPayForSection", () => {
   it("parts that do not make the bank amount cannot be saved", () => {
     state.items.v2 = [G2];
     render(<DebitPayForSection transaction={txn(10000, "NEFT GOOGLE")} onDone={() => {}} />);
+    fireEvent.click(screen.getByLabelText(/^Pay Bill G-2 · /));   // untick the pre-ticked part payment (R-2007)
     fireEvent.change(screen.getByLabelText("Advance to vendor"), { target: { value: "4000" } });
     expect(screen.getByText(/₹6,000 of the ₹10,000 is not placed yet/)).toBeTruthy();
     expect(saveButton().disabled).toBe(true);

@@ -12,6 +12,10 @@
  *      the chosen form's Save + the amount check.
  *
  * Only the layout changed in R-2006 — every booking handler / RPC below is as it was.
+ *
+ * R-2007: above the tiles, a Suggestion card when there is ONE confident answer
+ * (reconcile-suggestion-card.tsx): "Looks right — reconcile" books it through the matching
+ * section's own save; "Change" (or any tile) opens that tile with the same values filled in.
  */
 "use client";
 
@@ -71,7 +75,8 @@ import { useComplianceProfile } from "@/lib/compliance/profile";
 import { ownerEquityWords } from "@/lib/accounting/owner-equity";
 import { expenseGuard, sameVendor, type VendorFocus } from "@/lib/banking/vendor-line-guard";
 import { matchCreditToInvoices } from "@/lib/banking/invoice-credit-match";
-import { guessCustomer } from "@/lib/banking/credit-pay-for";
+import { guessCustomer, itemKey as creditItemKey } from "@/lib/banking/credit-pay-for";
+import { useReconcileSuggestion, SuggestionCard, logSuggestion } from "@/components/features/banking/reconcile-suggestion-card";
 import {
   WhoTiles, ChosenTileBar, ReconcileFooter, SectionSlot, tileLabel,
   type WhoTile, type FooterSave,
@@ -225,7 +230,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   React.useEffect(() => { setVendorFocus(null); }, [transaction?.id]);
   /* R-2006: which "Who is this money for?" tile is open. Until the operator picks one, a guess
      (vendor / customer / government / salary) opens its tile by itself. */
-  const [tile, setTile] = React.useState<WhoTile | null>(null);
+  const [chosenTile, setTile] = React.useState<WhoTile | null>(null);
   const [tileTouched, setTileTouched] = React.useState(false);
   React.useEffect(() => { setTile(null); setTileTouched(false); }, [transaction?.id]);
   const pickTile = (t: WhoTile | null) => { setTile(t); setTileTouched(true); };
@@ -302,6 +307,40 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      instead of sending the operator off to the projects page. */
   const [showProject, setShowProject]   = React.useState(false);
   const [projCustomer, setProjCustomer] = React.useState("");
+
+  /* R-2007: the Suggestion card — ONE confident answer (customer → project instalments / open
+     item; vendor → its bill), booked by that section's own save. Shown until the owner picks a
+     tile or presses Change; while it shows, the tiles show with its tile pre-selected and no form
+     open below. "Change" opens that tile with the same values filled in. */
+  const sug = useReconcileSuggestion({ transaction, customers: customers ?? [], openInvoices });
+  const [sugGone, setSugGone] = React.useState(false);
+  /* Change → what the sections start from (the project's TDS; the open item to tick). */
+  const [projTds, setProjTds] = React.useState<{ sectionKey: string; amount: number } | null>(null);
+  const [creditSuggested, setCreditSuggested] = React.useState<{ itemKey: string; tds: boolean } | null>(null);
+  React.useEffect(() => { setSugGone(false); setProjTds(null); setCreditSuggested(null); }, [transaction?.id]);
+  /* A payment already recorded in the books that matches this line ("Suggested matches") wins —
+     booking a fresh receipt next to it would count the money twice, so no card then. */
+  const recordedMatch = sugLoading || (suggestions?.length ?? 0) > 0;
+  const suggestion = !sugGone && !tileTouched && !payForDone && !recordedMatch ? sug.suggestion : null;
+  /* The tile whose form is open: none while the card shows. */
+  const tile = suggestion ? null : chosenTile;
+  const changeSuggestion = (to?: WhoTile) => {
+    if (!suggestion || !transaction) return;
+    logSuggestion("change", transaction.id, suggestion);
+    setSugGone(true);
+    const target = to ?? suggestion.tile;
+    if (target === "customer" && suggestion.kind === "project") {
+      setProjCustomer(suggestion.customerId);
+      setProjTds(suggestion.tds ? { sectionKey: suggestion.tds.sectionKey, amount: suggestion.tds.amount } : null);
+      setShowProject(true);
+    } else if (target === "customer" && suggestion.kind === "item") {
+      setCreditSuggested({ itemKey: creditItemKey(suggestion.item), tds: Boolean(suggestion.tds) });
+    }
+    pickTile(target);
+  };
+  const acceptSuggestion = async () => {
+    if (await sug.accept()) onOpenChange(false);
+  };
   React.useEffect(() => {
     setShowProject(false); setProjCustomer(""); setCreatedCustomer(null); setPayForDone(false);
   }, [transaction?.id]);
@@ -560,6 +599,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     : tile === "employee" && !isCredit && salaryHint ? salarySave
     : null;
   const footerHint = payForDone ? "booked"
+    : suggestion ? "check the suggestion above, or pick who this money is for"
     : !tile ? "pick who this money is for"
     : "save with the button in the form above";
 
@@ -793,6 +833,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
               onNewCustomer={() => setNewCustomerOpen(true)}
               onCancel={() => setShowProject(false)}
               onDone={() => { setShowProject(false); onOpenChange(false); }}
+              initialTds={projTds}
             />
           </div>
         ) : (
@@ -801,6 +842,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
             customers={customers ?? []}
             onNewCustomer={() => setNewCustomerOpen(true)}
             pickedCustomerId={createdCustomer}
+            suggested={creditSuggested}
             onProjectPayment={(id) => { setProjCustomer(id); setShowProject(true); }}
             onSaved={() => setPayForDone(true)}
             onDone={() => onOpenChange(false)}
@@ -1216,17 +1258,32 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
               </div>
             </div>
 
+            {/* R-2007: one confident answer → the Suggestion card, at the top. */}
+            {suggestion && (
+              <SuggestionCard
+                suggestion={suggestion}
+                accepting={sug.accepting}
+                onAccept={() => { void acceptSuggestion(); }}
+                onChange={() => changeSuggestion()}
+              />
+            )}
+
             {/* No suggestion → one small line, not a box. */}
-            {!sugLoading && !hasSuggestions && !payForDone && (
+            {!suggestion && !sugLoading && !hasSuggestions && !payForDone && (
               <p className="text-xs text-ink-3 inline-flex items-center gap-1.5">
                 <Icon name="info" size={12} />
                 No close matches in your books (±₹100, ±7 days).
               </p>
             )}
 
-            {/* 2. Who is this money for? → only the chosen tile's section */}
+            {/* 2. Who is this money for? → only the chosen tile's section. With a suggestion its
+                tile is pre-selected; picking any tile (or Change) opens that tile's form. */}
             {tile === null ? (
-              <WhoTiles isCredit={isCredit} value={tile} onPick={pickTile} />
+              <WhoTiles
+                isCredit={isCredit}
+                value={suggestion ? suggestion.tile : null}
+                onPick={suggestion ? (t) => changeSuggestion(t) : pickTile}
+              />
             ) : (
               <ChosenTileBar label={tileLabel(isCredit, tile)} onChange={payForDone ? undefined : () => pickTile(null)} />
             )}

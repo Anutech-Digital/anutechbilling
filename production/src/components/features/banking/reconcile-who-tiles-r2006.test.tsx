@@ -48,6 +48,12 @@ vi.mock("@/lib/queries/referral-commissions", () => ({ useReferralCommissions: (
 vi.mock("@/lib/compliance/profile", () => ({ useComplianceProfile: () => ({ data: { businessType: "pvt_ltd" } }) }));
 vi.mock("@/components/features/customers/add-customer-form", () => ({ AddCustomerForm: () => null }));
 vi.mock("@/components/features/banking/project-payment-section", () => ({ ProjectPaymentSection: () => null }));
+/* R-2007's Suggestion card has its own test (reconcile-suggestion-r2007.test.tsx); none here. */
+vi.mock("@/components/features/banking/reconcile-suggestion-card", () => ({
+  useReconcileSuggestion: () => ({ suggestion: null, accept: async () => false, accepting: false }),
+  SuggestionCard: () => null,
+  logSuggestion: () => {},
+}));
 vi.mock("@/components/features/banking/credit-pay-for-section", () => ({
   CreditPayForSection: () => <section aria-label="Customer payment form">Who paid?</section>,
 }));

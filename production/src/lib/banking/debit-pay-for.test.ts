@@ -166,6 +166,18 @@ describe("preselect", () => {
     expect(preselect([B1, cogs({ doc_id: "B9" })], 11800, plan).keys).toEqual([]);
     expect(preselect([cogs({ in_run: "PR-202610-001" })], 11800, plan).keys).toEqual([]);
   });
+  /* R-2007 (localhost 27 Oct): Google ₹5,000 line, bill SCN-G-20 ₹11,800 due — nothing was ticked
+     and the sheet said "₹5,000 not placed yet". */
+  it("the vendor's ONLY open bill and the bank paid less → that bill ticked (part payment)", () => {
+    const g20 = cogs({ doc_id: "BILL-SCN-G-20", bill_no: "SCN-G-20", amount_due: 11800 });
+    expect(preselect([g20], 5000, () => new Map())).toEqual({ keys: [itemKey(g20)], noTds: false });
+    const a = allocateOldestFirst([g20], 5000, new Map());
+    expect(a.cashByKey.get(itemKey(g20))).toBe(5000);
+    expect(a.left).toBe(0);
+  });
+  it("two open bills and less than either → still none (the owner picks)", () => {
+    expect(preselect([B1, cogs({ doc_id: "B9" })], 5000, () => new Map()).keys).toEqual([]);
+  });
 });
 
 describe("summarise + payArgs", () => {

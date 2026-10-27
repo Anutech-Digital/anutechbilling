@@ -344,6 +344,12 @@ export function preselect(
   for (const [cash, noTds] of tries) {
     if (open.length > 1 && cash(open) === debit) return { keys: open.map(itemKey), noTds };
   }
+  /* R-2007 (localhost 27 Oct: Google ₹5,000 on bill SCN-G-20 ₹11,800 — nothing ticked): the
+     vendor's ONLY open bill, a bill that can be part-paid, and the bank paid less than it needs →
+     that bill, as a part payment of the bank amount. */
+  if (open.length === 1 && !isRecorded(open[0]) && open[0].can_part && debit > 0 && debit < net(open)) {
+    return { keys: [itemKey(open[0])], noTds: false };
+  }
   return { keys: [], noTds: false };
 }
 

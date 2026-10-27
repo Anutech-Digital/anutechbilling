@@ -54,12 +54,14 @@ interface Props {
   onNewCustomer: () => void;
   onCancel: () => void;
   onDone: () => void;
+  /** R-2007: the Suggestion card's TDS — "Change" opens this section with it filled in. */
+  initialTds?: { sectionKey: string; amount: number } | null;
 }
 
 /** One instalment row as the owner sees and edits it. */
 interface RowState { on: boolean; amount: string; invoice: boolean }
 
-export function ProjectPaymentSection({ txn, amount, customers, customerId, onCustomerChange, onNewCustomer, onCancel, onDone }: Props) {
+export function ProjectPaymentSection({ txn, amount, customers, customerId, onCustomerChange, onNewCustomer, onCancel, onDone, initialTds }: Props) {
   const { data: projects, isLoading } = useOpenProjects(true);
   const book = useBookBankCreditAsProjectPayment();
   const allocate = useAllocateProjectReceipt();
@@ -72,10 +74,11 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
   /* Book the whole receipt as ONE new milestone on the picked project (paid-in-full project, or separate work). */
   const [addMilestone, setAddMilestone] = React.useState(false);
   const [newMsLabel, setNewMsLabel] = React.useState("Additional payment");
-  const [tdsOn, setTdsOn] = React.useState(false);
-  const [tdsKey, setTdsKey] = React.useState(TDS_SECTIONS[0].key);
-  /* The TDS amount follows the section until the owner types the one on the customer's Form 16A. */
-  const [tdsTyped, setTdsTyped] = React.useState<string | null>(null);
+  const [tdsOn, setTdsOn] = React.useState(Boolean(initialTds));
+  const [tdsKey, setTdsKey] = React.useState(initialTds?.sectionKey ?? TDS_SECTIONS[0].key);
+  /* The TDS amount follows the section until the owner types the one on the customer's Form 16A.
+     R-2007: a suggestion's TDS starts as typed (2,36,000 − 2,12,400 = 23,600). */
+  const [tdsTyped, setTdsTyped] = React.useState<string | null>(initialTds ? String(initialTds.amount) : null);
   /* null = the instalments follow FIFO; set once the owner ticks, unticks or edits a row. */
   const [manual, setManual] = React.useState<Record<string, RowState> | null>(null);
   const [saveError, setSaveError] = React.useState<{ text: string; link: { href: string; label: string } | null } | null>(null);

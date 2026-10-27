@@ -18,7 +18,7 @@
  *   saleLineFromItem   — a catalogue product → seats + unit price for the new-sale editor
  *   resultLines        — what happened, in the owner's words, after the save
  */
-import { nameOverlap } from "@/lib/accounting/credit-match";
+import { customerNameTokens, narrationNames } from "@/lib/accounting/credit-match";
 import { tdsRateFor } from "@/lib/banking/invoice-credit-match";
 import { billingUnitOf, defaultQtyForUnit, isPerSeat } from "@/lib/catalog/billing-unit";
 import { catalogLineListRate } from "@/lib/quotes/catalog-line";
@@ -88,21 +88,34 @@ export interface CustomerLite { id: string; name: string }
 
 export interface CustomerGuess { customerId: string; reason: string }
 
+/** R-2007: words in many company names that never tell one customer from another (on top of
+ *  credit-match's NAME_NOISE: pvt, ltd, co, technologies, …). */
+const GENERIC_NAME_WORDS = new Set(["india", "indian", "group", "global", "international", "industries"]);
+
 /**
- * Who paid. Only a single, unambiguous answer: a narration word shared with exactly ONE
- * customer's name, else the customer of a "certain" open-invoice match (name or invoice no. in
- * the narration AND the amount fits). Two customers sharing the word → no guess; the operator
- * picks. A wrong guess posts a receipt to the wrong customer, which is worse than no guess.
+ * Who paid. Only a single, unambiguous answer:
+ *   1. R-2007: the ONE customer whose name shares a DISTINCTIVE word with the narration — a word
+ *      no other customer's name has. Shared words ("SCN" in "SCN Acme Website Co" and "SCN Bharat
+ *      Apps") and generic ones (PVT, LTD, CO, INDIA, TECHNOLOGIES) do not count, so
+ *      "SCN BHARAT APPS-KIST 1 2" → SCN Bharat Apps. Two customers with their own word each → none.
+ *   2. Else the customer of a "certain" open-invoice match (name or invoice no. in the narration
+ *      AND the amount fits).
+ * Anything else → no guess; the operator picks. A wrong guess posts a receipt to the wrong
+ * customer, which is worse than no guess.
  */
 export function guessCustomer(
   credit: { description: string | null },
   customers: readonly CustomerLite[],
   invoiceMatches: ReadonlyArray<{ customerName: string | null; confidence: string }> = [],
 ): CustomerGuess | null {
-  const hits = customers
-    .map((c) => ({ c, word: nameOverlap(credit.description, c.name) }))
-    .filter((h): h is { c: CustomerLite; word: string } => h.word !== null);
-  if (hits.length === 1) return { customerId: hits[0].c.id, reason: `the bank line says “${hits[0].word}”` };
+  const words = new Set(narrationNames(credit.description));
+  const named = customers.map((c) => ({ c, toks: [...new Set(customerNameTokens(c.name))].filter((t) => !GENERIC_NAME_WORDS.has(t)) }));
+  const howMany = new Map<string, number>();
+  for (const n of named) for (const t of n.toks) howMany.set(t, (howMany.get(t) ?? 0) + 1);
+  const own = named
+    .map((n) => ({ c: n.c, words: n.toks.filter((t) => words.has(t) && howMany.get(t) === 1) }))
+    .filter((h) => h.words.length > 0);
+  if (own.length === 1) return { customerId: own[0].c.id, reason: `the bank line says “${own[0].words.join(" ")}”` };
 
   const certain = invoiceMatches.filter((m) => m.confidence === "certain");
   if (certain.length === 1 && certain[0].customerName) {

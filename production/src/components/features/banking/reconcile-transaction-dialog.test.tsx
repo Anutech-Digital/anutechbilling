@@ -52,6 +52,12 @@ vi.mock("@/lib/queries/tax-payments", () => ({ useBookBankTxnAsTax: mutation }))
 vi.mock("@/lib/queries/salary-from-bank", () => ({ useBookSalaryLines: mutation }));
 vi.mock("@/lib/queries/prepaid-advances", () => ({ usePrepaidAdvances: () => ({ data: [] }) }));
 vi.mock("@/lib/queries/referral-commissions", () => ({ useReferralCommissions: () => ({ data: [] }) }));
+/* R-2007's Suggestion card has its own test (reconcile-suggestion-r2007.test.tsx); none here. */
+vi.mock("@/components/features/banking/reconcile-suggestion-card", () => ({
+  useReconcileSuggestion: () => ({ suggestion: null, accept: async () => false, accepting: false }),
+  SuggestionCard: () => null,
+  logSuggestion: () => {},
+}));
 vi.mock("@/lib/compliance/profile", () => ({ useComplianceProfile: () => ({ data: { businessType: "pvt_ltd" } }) }));
 vi.mock("@/components/features/customers/add-customer-form", () => ({ AddCustomerForm: () => null }));
 vi.mock("@/components/features/banking/project-payment-section", () => ({ ProjectPaymentSection: () => null }));
