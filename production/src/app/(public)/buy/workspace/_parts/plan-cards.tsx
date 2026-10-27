@@ -118,7 +118,7 @@ export function PlanCards({
                   </div>
                 </div>
               ) : (
-                /* R-1988: the plan's video (lite, click to play) or three highlights — right under the
+                /* R-1988/R-2031: the plan's image (Workspace apps) or three highlights — right under the
                    description (R-2030: the rate moved into the box below). */
                 <PlanMedia media={PLAN_MEDIA[p.id]} highlights={p.features} />
               )}

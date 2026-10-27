@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 /**
  * R-1988 (Pardeep, 26 Oct 2026): the empty space in the priced plan cards holds a media slot.
- *   - A plan with a YouTube link (PLAN_MEDIA — Pardeep's own link, never a guessed id): a lite
- *     embed — only the thumbnail (i.ytimg.com) on load, no YouTube script, frame or request; a
- *     click loads the youtube-nocookie.com player in place. Button: "Play video: <title>".
- *   - A plan without one: three feature highlights.
- *   - CSP lets the nocookie player frame in.
+ * R-2031 (Pardeep, 27 Oct 2026, "this image goes in place of 1"): the slot on Business Starter and
+ * Business Standard is Pardeep's "Google Workspace + apps" image (public/buy/workspace-apps.webp) —
+ * no YouTube video, no YouTube thumbnail, no iframe. Same 16:9 slot, so cards and buttons stay aligned.
+ *   - A plan without media: three feature highlights.
  */
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup, screen, fireEvent, within } from "@testing-library/react";
+import { render, cleanup, screen, within } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/buy/workspace",
@@ -19,7 +20,7 @@ vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), succe
 
 import { BuyWorkspaceClient, type CatalogItem } from "./buy-workspace-client";
 import { PLAN_MEDIA } from "./_parts/plans";
-import { PlanMedia, youtubeId } from "./_parts/plan-media";
+import { PlanMedia } from "./_parts/plan-media";
 
 const row = (id: string, name: string, annual: number, monthly: number): CatalogItem => ({
   id, name, msrp: annual, wholesale: 0, margin_pct: null, is_active: true,
@@ -27,6 +28,8 @@ const row = (id: string, name: string, annual: number, monthly: number): Catalog
 });
 const CATALOG = [row("s", "Google Workspace Business Starter", 270, 325), row("d", "Google Workspace Business Standard", 1080, 1300),
   { id: "p", name: "Google Workspace Business Plus", msrp: 0, wholesale: 0, margin_pct: null, is_active: true, prices: {} } as CatalogItem];
+
+const ALT = "Google Workspace apps: Gmail, Drive, Docs, Sheets, Slides, Meet, Calendar";
 
 let fetched: string[] = [];
 beforeEach(() => {
@@ -38,46 +41,46 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const card = (name: string) => within(document.getElementById("plans") as HTMLElement).getByRole("article", { name });
 
-describe("R-1988 plan card media slot", () => {
-  it("Pardeep's video (iBmcvcgXUgE) on Business Starter and Business Standard — no playlist / index", () => {
-    expect(PLAN_MEDIA.starter?.youtubeId).toBe("iBmcvcgXUgE");
-    expect(PLAN_MEDIA.standard?.youtubeId).toBe("iBmcvcgXUgE");
+describe("R-2031 plan card media slot: Pardeep's Workspace apps image", () => {
+  it("Business Starter and Standard use /buy/workspace-apps.webp; Plus / Enterprise none", () => {
+    expect(PLAN_MEDIA.starter?.src).toBe("/buy/workspace-apps.webp");
+    expect(PLAN_MEDIA.standard?.src).toBe("/buy/workspace-apps.webp");
     expect(PLAN_MEDIA.plus).toBeUndefined();
     expect(PLAN_MEDIA.enterprise).toBeUndefined();
   });
 
-  it("on load: only the thumbnail — no iframe, no YouTube script, no YouTube request", () => {
+  it("the image file is in public/ (served at /buy/workspace-apps.webp)", () => {
+    const f = path.join(process.cwd(), "public", "buy", "workspace-apps.webp");
+    expect(fs.existsSync(f)).toBe(true);
+    expect(fs.readFileSync(f).subarray(8, 12).toString()).toBe("WEBP");
+  });
+
+  it("on the card: the image — fixed width/height, lazy, the apps alt text; no video, no YouTube", () => {
     render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={null} />);
-    const c = card("Business Starter");
-    const play = within(c).getByRole("button", { name: "Play video: Workspace feature drop" });
-    expect(play.querySelector("img")?.getAttribute("src")).toBe("https://i.ytimg.com/vi/iBmcvcgXUgE/hqdefault.jpg");
+    for (const name of ["Business Starter", "Business Standard"]) {
+      const img = within(card(name)).getByRole("img", { name: ALT });
+      expect(img.getAttribute("src")).toBe("/buy/workspace-apps.webp");
+      expect(img.getAttribute("width")).toBe("1536");
+      expect(img.getAttribute("height")).toBe("1024");
+      expect(img.getAttribute("loading")).toBe("lazy");
+      expect(within(card(name)).queryByRole("button", { name: /Play video/ })).toBeNull();
+    }
     expect(document.querySelector("iframe")).toBeNull();
-    expect(document.querySelector('script[src*="youtube"]')).toBeNull();
+    expect(document.querySelector('img[src*="ytimg"], script[src*="youtube"]')).toBeNull();
     expect(fetched.filter((u) => /youtube|ytimg/.test(u))).toEqual([]);
   });
 
-  it("click → the youtube-nocookie player loads in place, autoplaying", () => {
+  it("the slot keeps the old 16:9 size, so the cards and buttons stay aligned", () => {
     render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={null} />);
-    const c = card("Business Standard");
-    fireEvent.click(within(c).getByRole("button", { name: "Play video: Workspace feature drop" }));
-    const f = c.querySelector("iframe") as HTMLIFrameElement;
-    expect(f.getAttribute("src")).toBe("https://www.youtube-nocookie.com/embed/iBmcvcgXUgE?autoplay=1&rel=0");
-    expect(f.getAttribute("title")).toBe("Workspace feature drop");
-    expect(within(c).queryByRole("button", { name: /^Play video/ })).toBeNull();
+    const slot = within(card("Business Starter")).getByTestId("plan-media");
+    expect(slot.className).toMatch(/\baspect-video\b/);
+    expect(slot.className).toMatch(/\bw-full\b/);
   });
 
-  it("no link → three feature highlights", () => {
+  it("no media → three feature highlights", () => {
     render(<PlanMedia media={undefined} highlights={["Custom email @yourcompany", "30 GB per user", "Gemini in Gmail", "extra"]} />);
     const items = screen.getAllByRole("listitem").map((li) => li.lastElementChild?.textContent);
     expect(items).toEqual(["Custom email @yourcompany", "30 GB per user", "Gemini in Gmail"]);
-  });
-
-  it("a malformed id is never embedded (highlights instead)", () => {
-    expect(youtubeId("iBmcvcgXUgE")).toBe("iBmcvcgXUgE");
-    expect(youtubeId("https://evil.example/x")).toBeNull();
-    render(<PlanMedia media={{ youtubeId: "bad id!", title: "x" }} highlights={["a", "b", "c"]} />);
-    expect(screen.queryByRole("button", { name: /Play video/ })).toBeNull();
-    expect(screen.getAllByRole("listitem")).toHaveLength(3);
   });
 
   it("Plus and Enterprise (quoted) get no media slot", () => {

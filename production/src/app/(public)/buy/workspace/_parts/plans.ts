@@ -73,14 +73,19 @@ export const PLAN_COPY: Record<PlanId, PlanCopy> = {
 };
 
 /**
- * R-1988 (Pardeep, 26 Oct 2026): a short video per priced plan card — ONLY links Pardeep gives
- * (never a guessed id). "Workspace feature drop: 4 new ways to help you do your best work", Google
- * Workspace's own channel (https://www.youtube.com/watch?v=iBmcvcgXUgE) — on both Starter and
- * Standard until he gives one per plan. A plan with no entry shows three feature highlights.
+ * R-1988 (Pardeep, 26 Oct 2026): the media slot per priced plan card. R-2031 (27 Oct): Pardeep's
+ * "Google Workspace + apps" image (public/buy/workspace-apps.webp, 1536×1024) on both Starter and
+ * Standard in place of the YouTube video. A plan with no entry shows three feature highlights.
  */
-export const PLAN_MEDIA: Partial<Record<PlanId, { youtubeId: string; title: string }>> = {
-  starter: { youtubeId: "iBmcvcgXUgE", title: "Workspace feature drop" },
-  standard: { youtubeId: "iBmcvcgXUgE", title: "Workspace feature drop" },
+const WORKSPACE_APPS_IMAGE = {
+  src: "/buy/workspace-apps.webp",
+  width: 1536,
+  height: 1024,
+  alt: "Google Workspace apps: Gmail, Drive, Docs, Sheets, Slides, Meet, Calendar",
+} as const;
+export const PLAN_MEDIA: Partial<Record<PlanId, { src: string; width: number; height: number; alt: string }>> = {
+  starter: WORKSPACE_APPS_IMAGE,
+  standard: WORKSPACE_APPS_IMAGE,
 };
 
 const ORDER: PlanId[] = ["starter", "standard", "plus", "enterprise"];
