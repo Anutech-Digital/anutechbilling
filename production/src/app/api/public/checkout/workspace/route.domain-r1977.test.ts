@@ -6,9 +6,9 @@
  * the same provisioning registers it. Unavailable → refused; lookup down → refused, nothing
  * saved (§24: the message names the next step). Workspace money is untouched; the domain is
  * never discounted by the site promo or the coupon; GST is on the whole taxable value.
- * Monthly (flex): the domain is NOT charged on that order (its first month is invoiced as a
- * subscription instalment, which would leave the domain without a GST invoice) — the lead
- * note asks the team to bill it separately (needsDecision on the card).
+ * Monthly (flex): R-1985 (owner decision) — the domain is charged in the same payment but on
+ * its OWN quote and GST invoice (route.monthly-domain-r1985.test.ts); the Workspace quote stays
+ * exactly the monthly order.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -165,13 +165,14 @@ describe("R-1977 new domain on the Workspace checkout", { timeout: 60_000 }, () 
     expect(quoteRow().line_items).toHaveLength(1);
   });
 
-  it("Monthly (flex) + new domain → the domain is not charged on this order; the team bills it separately", async () => {
+  it("Monthly (flex) + new domain → the Workspace quote is unchanged; the domain is priced live for its own quote (R-1985)", async () => {
     await post({ domainNew: true, ...ADDRESS, commitment: "monthly" });
-    expect(db.lookups).toHaveLength(0);
+    expect(db.lookups).toEqual([{ name: "ravitraders", tlds: ["in"] }]);
     const q = quoteRow();
     expect(q.amount).toBe(384); // 1 × ₹325 + GST ₹59 — unchanged monthly money
     expect(q.line_items).toHaveLength(1);
-    expect(String(leadRow().notes)).toMatch(/ravitraders\.in.*NEW.*monthly.*bill it separately/i);
+    expect(String(leadRow().notes)).toMatch(/ravitraders\.in — NEW: bought with this order, on its own GST invoice/);
+    expect(String(leadRow().notes)).not.toMatch(/separately/);
   });
 
   it("a malformed new domain is refused before anything is saved", async () => {
