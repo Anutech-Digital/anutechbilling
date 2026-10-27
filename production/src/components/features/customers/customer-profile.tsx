@@ -27,6 +27,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useCustomer, useDeleteCustomer, useSetCustomerActive, useCustomerOpenCredit, customerDeleteBlockReason } from "@/lib/queries/customers";
+import { useCustomerCreditRows, openAdvanceLines } from "@/lib/queries/customer-advances";
+import { AdvanceAvailableCard } from "./advance-available-card";
 import { useCustomerGroups } from "@/lib/queries/customer-groups";
 import { useCustomerSubscriptions } from "@/lib/queries/subscriptions";
 import { CustomerContactsCard } from "@/components/features/customers/customer-contacts-card";
@@ -116,6 +118,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const { data: projects } = projectsQ;
   const { data: projPay } = projPayQ;
   const { data: openCredit } = useCustomerOpenCredit(params.id);
+  const { data: creditRows } = useCustomerCreditRows(params.id);   // R-2023: the RVs behind it
   /* R-1682: credit / debit notes belong on the Statement. */
   const { data: customerNotes } = useCustomerNotes(params.id);
   /* R-1121: this customer's payments only (theirs, or on their quotes) — not every payment. */
@@ -516,15 +519,9 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
         )}
       </div>
 
-      {/* Advance credit held (from an earlier overpayment) — adjustable against the next bill */}
-      {(openCredit ?? 0) > 0 && (
-        <div className="mb-4 flex items-center gap-2 rounded-md border border-emerald/30 bg-emerald-soft/40 px-3 py-2 text-sm">
-          <Icon name="rupee" size={15} className="text-emerald flex-shrink-0" />
-          <span className="text-ink">
-            <b>{rupee(openCredit ?? 0)}</b> advance credit — will be offered to adjust against this customer's next payment.
-          </span>
-        </div>
-      )}
+      {/* R-2023: advance held (R-1863 bank advance / earlier overpayment) — with the receipt
+          vouchers it came from; used on the next bill through Record payment → "Use advance". */}
+      <AdvanceAvailableCard total={openCredit ?? 0} lines={openAdvanceLines(creditRows ?? [])} />
 
       {/* Next-best-action — not while the records it reads are unknown (R-1807). */}
       {!moneyFailed && (

@@ -68,6 +68,8 @@ import { quoteContact } from "@/lib/quotes/quote-contact";
 import { addGstinHref, buyerGstinMissing, quoteBuyerGstin } from "@/lib/quotes/buyer-gstin";
 import { paletteMayOpen } from "@/components/layout/palette-access";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
+import { CustomerAdvanceView } from "@/components/features/quotes/customer-advance-view";
+import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
 import { copyLinkMarkingSent } from "@/components/features/quotes/failed-send-toast";
 import { openWhatsAppMarkingSent, markSentBeforeShare } from "@/components/features/quotes/share-marking-sent";
@@ -645,6 +647,33 @@ export default function QuoteDetailPage() {
           }
         />
       </div>
+    );
+  }
+
+  /* R-2023: an R-1863 customer advance is not a sale — its own page (no stepper, no Generate
+     GST Invoice); it is used through Record payment → "Use advance" on the next bill. */
+  if (isCustomerAdvanceQuote(quote) && quote.status !== "rejected") {
+    return (
+      <CustomerAdvanceView quote={quote} payments={paymentHistory ?? []} onOpenReceipt={setReceiptPayment}>
+        {me && receiptPayment && (
+          <ReceiptVoucherDialog
+            open={!!receiptPayment}
+            onOpenChange={(open) => !open && setReceiptPayment(null)}
+            payment={receiptPayment}
+            customerName={customer?.name ?? quote.customer_name}
+            customerGstin={customer?.gstin}
+            customerEmail={customer?.contact_email}
+            tenantName={me.tenantName}
+            tenantGstin={me.tenantGstin}
+            tenantEmail={me.tenantEmail}
+            tenantPhone={me.tenantPhone}
+            tenantAddress={me.tenantAddress}
+            tenantState={me.tenantState}
+            interState={interState}
+            quoteId={quote.id}
+          />
+        )}
+      </CustomerAdvanceView>
     );
   }
 
