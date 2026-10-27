@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import type { BankTransactionRow } from "@/lib/queries/bank";
-import type { UnreconcileImpact, VendorUndoLeg, VendorUndoPreview } from "@/lib/queries/unreconcile";
+import type { UnreconcileImpact, VendorUndoLeg, VendorUndoPreview, ProjectUndoRow, ProjectUndoPreview } from "@/lib/queries/unreconcile";
 
 const mutateAsync = vi.fn();
 let impact: UnreconcileImpact | undefined;
@@ -21,7 +21,7 @@ vi.mock("next/link", () => ({
 }));
 
 import { UnreconcileDialog } from "./unreconcile-dialog";
-import { vendorUndoLegLine } from "@/lib/queries/unreconcile";
+import { vendorUndoLegLine, projectUndoRowLine, projectUndoneToast } from "@/lib/queries/unreconcile";
 
 const txn = {
   id: "t1", tenant_id: "x", bank_account_id: "acc-1", txn_date: "2026-10-05", description: "NEFT SHARMA ASSOCIATES",
@@ -89,5 +89,75 @@ describe("R-1920 vendorUndoLegLine", () => {
       .toBe("Bill G-77 (₹11,800), created from this line, is deleted");
     expect(vendorUndoLegLine(leg({ kind: "new_bill", doc_type: "vendor_bill", doc_no: "G-77", cash: 5000, tds_amount: 0, after_status: "partial", after_paid: 6800 })))
       .toBe("Bill G-77 goes back to Part paid (₹6,800 paid stays) — ₹5,000 from this line comes off");
+  });
+});
+
+/* R-1999 — Banking → a line booked to the WRONG project → Un-reconcile: the dialog lists every kist
+   the line paid (R-1995 shares one line across several; R-1996 adds TDS), from the server's dry run
+   (project_receipt_undo_preview). The whole booking goes back; each invoice stays, due again (D3). */
+const kist = (over: Partial<ProjectUndoRow>): ProjectUndoRow => ({
+  milestone_id: "m1", label: "Kist 1", project_id: "p1", project_title: "App build", customer_name: "Demo Client",
+  total: 118000, bank: 106200, tds: 11800, before_paid: 118000, before_status: "paid",
+  invoice_id: "INV-0001", invoice_status_before: "paid", after_paid: 0, after_status: "invoiced",
+  invoice_status_after: "pending", href: "/projects/p1", ...over,
+});
+const projectPreview = (over: Partial<ProjectUndoPreview>): ProjectUndoPreview => ({
+  txn_id: "t2", credit: 212400, txn_date: "2026-10-16", customer_name: "Demo Client", project_title: "App build",
+  rows: [kist({}), kist({ milestone_id: "m2", label: "Kist 2", invoice_id: "INV-0002" })],
+  bank_total: 212400, tds_total: 23600, blocked: false, block_message: null, block_href: null, ...over,
+});
+const projectTxn = { ...txn, id: "t2", debit: 0, credit: 212400, matched_to_type: "project", matched_to_id: "pp1" } as unknown as BankTransactionRow;
+
+describe("R-1999 un-reconcile a project receipt — whole booking, invoices stay", () => {
+  it("lists BOTH kists with TDS, each back to Invoiced and its invoice due again; confirm un-reconciles", async () => {
+    impact = { kind: "project", preview: projectPreview({}) };
+    const onClose = vi.fn();
+    render(<UnreconcileDialog txn={projectTxn} onClose={onClose} />);
+    const items = screen.getAllByRole("listitem").map((li) => li.textContent);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toContain("Kist 1 (App build): ₹1,06,200 payment + ₹11,800 TDS removed — back to Invoiced; invoice INV-0001 stays, ₹1,18,000 due again");
+    expect(items[1]).toContain("invoice INV-0002 stays, ₹1,18,000 due again");
+    expect(screen.getByText(/No credit note/)).toBeTruthy();
+    expect(screen.queryByText(/remove it from the/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Un-reconcile & reverse" }));
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(mutateAsync).toHaveBeenCalledWith({ txnId: "t2", undoSale: false });
+  });
+
+  it("a refusal (TDS certificate already in) shows the reason and the TDS page — no confirm", () => {
+    impact = {
+      kind: "project",
+      preview: projectPreview({
+        rows: [kist({ after_paid: undefined, after_status: undefined, invoice_status_after: undefined })],
+        blocked: true,
+        block_message: "The ₹11800 TDS on this receipt (TDS-1) is already marked \"cert received\" on TDS receivable.",
+        block_href: "/accounting/tds-receivable",
+      }),
+    };
+    render(<UnreconcileDialog txn={projectTxn} onClose={vi.fn()} />);
+    expect(screen.getByRole("alert").textContent).toContain("cert received");
+    expect(screen.queryByRole("button", { name: /Un-reconcile/ })).toBeNull();
+    expect(screen.getByRole("link", { name: "Open TDS receivable" }).getAttribute("href")).toBe("/accounting/tds-receivable");
+    expect(screen.getAllByRole("listitem")[0].textContent).toContain("Kist 1 (App build): ₹1,06,200 payment + ₹11,800 TDS removed");
+  });
+
+  it("a refusal with no page (only an owner or accountant may remove payments) shows no button to go on", () => {
+    impact = { kind: "project", preview: projectPreview({ blocked: true, block_message: "Only an owner or accountant can remove a payment — ask them to un-reconcile this line.", block_href: null }) };
+    render(<UnreconcileDialog txn={projectTxn} onClose={vi.fn()} />);
+    expect(screen.getByRole("alert").textContent).toContain("owner or accountant");
+    expect(screen.queryByRole("button", { name: /Un-reconcile/ })).toBeNull();
+  });
+});
+
+describe("R-1999 projectUndoRowLine / projectUndoneToast", () => {
+  it("a kist with no invoice goes back to Pending; a part-paid kist keeps the rest", () => {
+    expect(projectUndoRowLine(kist({ tds: 0, bank: 5000, invoice_id: null, after_status: "pending" })))
+      .toBe("Kist 1 (App build): ₹5,000 payment removed — back to Pending");
+    expect(projectUndoRowLine(kist({ tds: 0, bank: 50000, after_paid: 68000, after_status: "invoiced" })))
+      .toBe("Kist 1 (App build): ₹50,000 payment removed — back to Invoiced; invoice INV-0001 stays, ₹50,000 due again");
+  });
+  it("the toast names the money and the invoice due again", () => {
+    expect(projectUndoneToast(118000, 0, ["INV-9"])).toBe("Un-reconciled · project payment ₹1,18,000 removed · invoice INV-9 is due again");
+    expect(projectUndoneToast(212400, 23600, ["A", "B"])).toBe("Un-reconciled · project payment ₹2,12,400 + ₹23,600 TDS removed · 2 invoices are due again");
   });
 });

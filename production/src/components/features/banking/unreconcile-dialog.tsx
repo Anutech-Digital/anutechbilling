@@ -6,6 +6,8 @@
  * default: without it the invoice stays, and booking the line again counts the same money
  * twice. An issued invoice is reversed with a full credit note (a draft is voided) — an
  * issued tax invoice cannot vanish from the series (migration 20260927140000).
+ * R-1999: a project-receipt line lists every kist it paid (bank + TDS) and what goes back; the
+ * invoices stay, due again (D3). A refusal shows with the page to fix it on.
  */
 "use client";
 
@@ -16,7 +18,8 @@ import { Button } from "@/components/ui/button";
 import { rupee, formatDate } from "@/lib/utils";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import {
-  useUnreconcileImpact, useUnreconcileBankTxn, vendorUndoLegLine, blockHrefLabel, type VendorUndoPreview,
+  useUnreconcileImpact, useUnreconcileBankTxn, vendorUndoLegLine, blockHrefLabel, projectUndoRowLine,
+  type VendorUndoPreview, type ProjectUndoPreview,
 } from "@/lib/queries/unreconcile";
 
 /**
@@ -50,6 +53,44 @@ function VendorUndoPreviewBlock({ preview }: { preview: VendorUndoPreview }) {
         </div>
       ) : (
         <p className="text-xs text-ink-3">The bank line goes back to &quot;Unmatched&quot;.</p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * R-1999: a project-receipt line — every kist it paid, from the server's dry run of the same
+ * un-reconcile. The whole booking goes back in one step (payments, TDS, kist status); each invoice
+ * stays and is due again (Pardeep's D3: no credit note, the GST series is never broken).
+ */
+function ProjectUndoPreviewBlock({ preview }: { preview: ProjectUndoPreview }) {
+  return (
+    <div className="space-y-3 text-sm text-ink-2">
+      <p>
+        This line paid <b>{preview.project_title ?? "a project"}</b>
+        {preview.customer_name ? <> ({preview.customer_name})</> : null}.{" "}
+        {preview.rows.length === 0 ? "No project payment is left on it — only the bank line is freed."
+          : preview.blocked ? "Un-reconciling it would:" : "Un-reconciling it will:"}
+      </p>
+      <ul className="space-y-1.5" aria-label="What goes back">
+        {preview.rows.map((row) => (
+          <li key={row.milestone_id} className="flex items-start gap-2">
+            <span aria-hidden="true" className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-ink-3" />
+            <span>
+              {projectUndoRowLine(row)} · <Link href={row.href as never} className="text-amber-ink underline">view</Link>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {preview.blocked ? (
+        <div role="alert" className="rounded-md border border-amber/50 bg-amber-soft/25 p-3 text-[13px] leading-snug">
+          <b className="block">This line cannot be un-reconciled yet.</b>
+          {preview.block_message}
+        </div>
+      ) : (
+        <p className="text-xs text-ink-3">
+          No credit note — each invoice keeps its number. The bank line goes back to &quot;Unmatched&quot;, ready to book to the right project.
+        </p>
       )}
     </div>
   );
@@ -122,12 +163,7 @@ export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | 
             The receipt was recorded separately, so it stays — only the bank line is freed.
           </p>
         ) : impact?.kind === "project" ? (
-          <p className="text-sm text-ink-2">
-            This line is linked to the {rupee(impact.amount)} payment for &quot;{impact.milestoneLabel}&quot; of <b>{impact.projectTitle}</b>
-            {impact.invoiceId ? <> (invoice <span className="font-mono">{impact.invoiceId}</span>)</> : null}.
-            Only the bank line is freed — the project payment stays. If that payment was wrong, remove it from the{" "}
-            <Link href={`/projects/${impact.projectId}`} className="text-amber-ink underline">project page</Link>.
-          </p>
+          <ProjectUndoPreviewBlock preview={impact.preview} />
         ) : impact?.kind === "vendor-payment" ? (
           <VendorUndoPreviewBlock preview={impact.preview} />
         ) : (
@@ -140,7 +176,7 @@ export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | 
         <DialogFooter>
           <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
           {impact?.kind === "advance" && impact.usedOrRefunded > 0 ? null
-          : impact?.kind === "vendor-payment" && impact.preview.blocked ? (
+          : (impact?.kind === "vendor-payment" || impact?.kind === "project") && impact.preview.blocked ? (
             /* R-1920: refused — the next step is fixing what depends on it, not un-reconciling. */
             impact.preview.block_href ? (
               <Button asChild variant="primary">
@@ -149,7 +185,7 @@ export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | 
             ) : null
           ) : (
             <Button type="button" variant="danger" loading={unreconcile.isPending} disabled={isLoading} onClick={confirm}>
-              Un-reconcile{impact?.kind === "bank-sale" && undoSale ? " & sale palto" : impact?.kind === "advance" ? " & remove advance" : impact?.kind === "vendor-payment" ? " & reverse" : ""}
+              Un-reconcile{impact?.kind === "bank-sale" && undoSale ? " & sale palto" : impact?.kind === "advance" ? " & remove advance" : impact?.kind === "vendor-payment" || impact?.kind === "project" ? " & reverse" : ""}
             </Button>
           )}
         </DialogFooter>

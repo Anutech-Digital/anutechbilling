@@ -74,6 +74,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   r1762_lead_money: "does the deal have money — any invoice that is not void blocks leaving Won",
   today_inbox: "overdue balances — includes opening invoices on purpose",
   unreconcile_bank_receipt: "money in",
+  project_receipt_undo_preview: "R-1999: one invoice status by id per kist, before / after a rolled-back dry run of un-reconciling a project line — not GST or revenue",
   waive_late_charges: "late fee",
   // R-1739's own functions
   _opening_invoice_settle: "keeps an opening invoice's paid amount",
