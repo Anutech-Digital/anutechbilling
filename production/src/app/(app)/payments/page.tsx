@@ -8,6 +8,7 @@ import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { PAYMENT_FOCI, paymentInFocus, projectReceivedInMonth, type PaymentFocus } from "@/lib/payments/focus";
 import { quoteInFocus } from "@/lib/quotes/focus";
+import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { FocusBanner } from "@/components/shared/focus-banner";
 import { PAYMENT_TABS } from "@/lib/navigation/drilldown";
 import Link from "next/link";
@@ -126,7 +127,7 @@ function PaymentsPageInner() {
   const [tab, setTab]       = useUrlChoice<"all" | "received" | "refunded">("tab", PAYMENT_TABS, "all"); // R-118
   /* R-118: "Collected MTD"'s own set (lib/payments/focus.ts) — "" = none. */
   const [focus, setFocus]   = useUrlChoice<PaymentFocus>("focus", PAYMENT_FOCI, "");
-  const [view, setView]     = React.useState<"all" | "subscription" | "project">("all");
+  const [view, setView]     = React.useState<"all" | "subscription" | "advance" | "project">("all");
   const [search, setSearch] = React.useState("");
   const [helpOpen, setHelpOpen] = React.useState(false);
 
@@ -196,11 +197,13 @@ function PaymentsPageInner() {
 
   // Build a lookup: quoteId → quote (status context + its GST invoice)
   const quoteById = React.useMemo(() => {
-    const m = new Map<string, { paymentStatus: string; invoiceId: string | null }>();
+    const m = new Map<string, { paymentStatus: string; invoiceId: string | null; advance: boolean }>();
     for (const q of quotes ?? []) {
       m.set(q.id, {
         paymentStatus: q.payment_status,
         invoiceId:     q.invoice_id,
+        /* R-2023: an R-1863 customer advance — its own tag, not a subscription sale. */
+        advance:       isCustomerAdvanceQuote(q),
       });
     }
     return m;
@@ -250,12 +253,20 @@ function PaymentsPageInner() {
   // (R-024), so a fresh array on every render would undo "Load more" (R-215).
   /* The customer filter is already applied in `scoped` (customer-scope.ts: by the payment's
      own customer_id, falling back to the customer on its quote for pre-conversion receipts). */
+  /* R-2023: customer advances (R-1863) live under their own "Advance" view, not "Subscription". */
+  const isAdvancePay = React.useCallback(
+    (p: { quote_id?: string | null }) => !!p.quote_id && quoteById.get(p.quote_id)?.advance === true,
+    [quoteById],
+  );
+  const advanceCount = React.useMemo(() => scopedPayments.filter(isAdvancePay).length, [scopedPayments, isAdvancePay]);
   const filtered = React.useMemo(() => scopedPayments.filter((p) => {
+    if (view === "subscription" && isAdvancePay(p)) return false;
+    if (view === "advance" && !isAdvancePay(p)) return false;
     if (tab !== "all" && p.status !== tab) return false;
     if (focus && !paymentInFocus(p, focus)) return false;   // the tile's own predicate
     /* R-1639: also the receipt voucher no. and the invoice number (payment-search.ts). */
     return paymentMatchesSearch(p, search, { customerName: customerOf(p).customerName, invoiceNumber: invoiceOf(p).invoiceNumber });
-  }), [scopedPayments, tab, focus, customerOf, invoiceOf, search]);
+  }), [scopedPayments, view, isAdvancePay, tab, focus, customerOf, invoiceOf, search]);
 
   /* R-215: the list is on the shared DataTable — header sort, and R-104's "paint 50 at a
      time" now comes from its pageSize. Tab counts, KPIs, "collected" and the CSV export
@@ -311,7 +322,8 @@ function PaymentsPageInner() {
     : null;
 
   // Awaiting-invoice: quotes with payment_status = 'received' (fully paid, no invoice yet)
-  const awaitingInvoiceQuotes = scoped.quotes.filter((q) => q.payment_status === "received");
+  /* R-2023: a customer advance has nothing to invoice — not counted here (same rule as the badge). */
+  const awaitingInvoiceQuotes = scoped.quotes.filter((q) => q.payment_status === "received" && !isCustomerAdvanceQuote(q));
   const awaitingInvoiceTotal = awaitingInvoiceQuotes.reduce((s, q) => s + (q.amount ?? 0), 0);
 
   // Partial payments — R-1710: part-paid by money, also once invoiced (the /quotes?focus=partial set).
@@ -393,10 +405,11 @@ function PaymentsPageInner() {
       <TabBar
         className="overflow-y-hidden"
         value={view}
-        onChange={(v) => setView(v as "all" | "subscription" | "project")}
+        onChange={(v) => setView(v as "all" | "subscription" | "advance" | "project")}
         items={[
           { id: "all",          label: "All payments", count: (scopedPayments.length + projPays.length) || undefined },
-          { id: "subscription", label: "Subscription", count: scopedPayments.length || undefined },
+          { id: "subscription", label: "Subscription", count: (scopedPayments.length - advanceCount) || undefined },
+          ...(advanceCount > 0 || view === "advance" ? [{ id: "advance", label: "Advance", count: advanceCount || undefined }] : []),
           { id: "project",      label: "Project",      count: projPays.length || undefined },
         ]}
       />
@@ -421,7 +434,7 @@ function PaymentsPageInner() {
         </div>
       )}
 
-      {(view === "subscription" || view === "all") && (<>
+      {(view === "subscription" || view === "advance" || view === "all") && (<>
       {/* Collapsible Payments Analytics Banner */}
       {!isLoading && payments && (
         <div className="mb-4 bg-paper border border-hairline rounded-lg overflow-hidden transition-all shadow-xs">
@@ -982,7 +995,7 @@ function PaymentRowView({
   rowRef,
 }: {
   p: Payment;
-  ctx?: { paymentStatus: string; invoiceId: string | null };
+  ctx?: { paymentStatus: string; invoiceId: string | null; advance?: boolean };
   /** R-1745: whose payment it is (lib/payments/payment-customer.ts). */
   who: PaymentCustomer;
   /** R-1747: which invoice it is on (lib/payments/payment-customer.ts paymentInvoiceLookup). */
@@ -1131,6 +1144,9 @@ function PaymentRowView({
         </div>
       </td>
       <td className="px-3 py-2.5 align-top">
+        {ctx?.advance && (
+          <Badge kind="info" className="mb-1" data-testid="advance-tag">Advance</Badge>
+        )}
         {p.status === "received" ? (
           <Badge kind="success" dot>received</Badge>
         ) : (

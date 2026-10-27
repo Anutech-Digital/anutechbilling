@@ -78,6 +78,7 @@ import { domainConflictMessage } from "@/lib/quotes/payment-domain";
 import { deskPaymentTagArgs, isReplayResult, replayToast } from "@/lib/payments/record-payment-replay";
 import { instalmentPaymentLines, type InstalmentPaymentResult } from "@/lib/payments/instalment-payment";
 import { splitExpectation, splitPaymentToast, splitOutcomeSentence, type SplitExpectation, type InstalmentRaiseResult } from "@/lib/payments/split-expected";
+import { advanceToUse } from "@/lib/quotes/customer-advance";
 
 const schema = z.object({
   /* R-449: ₹0 used to stop the form with no message — the browser's own min=1 check
@@ -99,8 +100,11 @@ const schema = z.object({
   tdsSection:   z.string().optional(),
   tdsRatePct:   z.coerce.number().min(0).max(100).optional(),
   customerTan:  z.string().optional(),
+  /* R-2023: the customer's advance used on this bill ("Use advance"). Set by the sheet, not typed
+     here. With it, ₹0 in bank is fine — the advance alone may pay the bill. */
+  creditApplied: z.coerce.number().min(0).optional(),
 }).superRefine((d, ctx) => {
-  if (d.amount < 1 && !d.tdsDeducted) {
+  if (d.amount < 1 && !d.tdsDeducted && !((d.creditApplied ?? 0) > 0)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["amount"], message: "Amount must be more than ₹0." });
   }
   // Reference sanity — block junk like "dfg" / "asfdgdfgsdfgds". A real UTR /
@@ -180,6 +184,53 @@ export function applyTdsSuggestion(
   form.setValue("tdsDeducted", true, { shouldDirty: true });
   form.setValue("tdsSection", m.section, { shouldDirty: true });
   form.setValue("tdsRatePct", m.ratePct, { shouldDirty: true, shouldValidate: true });
+}
+
+/** R-2023: "Use advance — ₹X available" on the Record payment sheet. Ticked = the most that fits
+ *  (the bill or the advance, whichever is less); the amount can be lowered to use only part. */
+export function UseAdvanceBox({ available, checked, applied, onCheckedChange, onAmountChange }: {
+  available: number;
+  checked: boolean;
+  applied: number;
+  onCheckedChange: (v: boolean) => void;
+  onAmountChange: (n: number | null) => void;
+}) {
+  return (
+    <div className="rounded-md border border-emerald/30 bg-emerald-soft/40 px-3 py-2.5 text-xs">
+      <label className="flex items-start gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={checked}
+          onChange={(e) => onCheckedChange(e.target.checked)}
+        />
+        <div className="flex-1">
+          <div className="font-medium text-ink">Use advance — {rupee(available)} available</div>
+          <div className="text-ink-3 mt-0.5">
+            {checked
+              ? `${rupee(applied)} of the advance pays this bill — the customer pays that much less in cash.`
+              : "This customer paid ahead (an advance or an earlier overpayment). Tick to use it on this bill."}
+          </div>
+        </div>
+      </label>
+      {checked && (
+        <label className="mt-2 flex items-center gap-2 pl-5">
+          <span className="text-ink-2">Use ₹</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            step={1}
+            aria-label="Advance to use (₹)"
+            className="w-28 rounded border border-hairline bg-paper px-2 py-1 text-xs tabular-nums"
+            value={applied}
+            onChange={(e) => onAmountChange(e.target.value === "" ? 0 : Number(e.target.value))}
+          />
+          <span className="text-ink-3">{applied < available ? `${rupee(available - applied)} stays as advance` : "whole advance used"}</span>
+        </label>
+      )}
+    </div>
+  );
 }
 
 /** R-1520: "The remaining ₹25,500 may be TDS (194J 10%) — was TDS deducted?" + one button.
@@ -452,7 +503,17 @@ export function RecordPaymentDialog({
 
   // Advance credit applied to this payment — capped at the remaining balance
   // (can't apply more credit than is owed). Reduces the cash the customer needs.
-  const appliedCreditAmount  = applyCredit ? Math.min(availableCredit, remaining) : 0;
+  /* R-2023: "Use advance" — the whole advance that fits by default, or the part the person
+     types (partial use). Never more than the advance nor the bill (customer-advance.ts). */
+  const [typedCredit, setTypedCredit] = React.useState<number | null>(null);
+  React.useEffect(() => { if (!open) setTypedCredit(null); }, [open]);
+  const appliedCreditAmount  = applyCredit
+    ? advanceToUse({ available: availableCredit, owed: remaining, typed: typedCredit })
+    : 0;
+  React.useEffect(() => {
+    setValue("creditApplied", appliedCreditAmount);
+    if (isSubmitted) void trigger("amount");
+  }, [appliedCreditAmount, setValue, trigger, isSubmitted]);
 
   // When TDS is checked, "amount received" represents the BANK amount
   // (post-TDS). The amount we record_payment with is amount + TDS + any advance
@@ -566,6 +627,7 @@ export function RecordPaymentDialog({
       tdsSection:   tdsOnly?.section ?? customerTdsDefaults.section,
       tdsRatePct:   tdsOnly?.ratePct ?? customerTdsDefaults.ratePct,
       customerTan:  customerTdsDefaults.tan ?? "",
+      creditApplied: 0,              // R-2023: "Use advance" starts unticked on every open.
     });
     if (tdsOnly) setMethod("other");
     setAmountEdited(false);
@@ -1195,26 +1257,16 @@ export function RecordPaymentDialog({
             </div>
           </div>
 
-          {/* Advance credit — this customer overpaid before; adjust it here */}
+          {/* Advance credit — this customer paid ahead (R-1863 advance / overpayment); use it here.
+              R-2023: "Use advance", partial allowed — the ONE way an advance is used. */}
           {availableCredit > 0 && customerId && (
-            <div className="rounded-md border border-emerald/30 bg-emerald-soft/40 px-3 py-2.5 text-xs">
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={applyCredit}
-                  onChange={(e) => { setApplyCredit(e.target.checked); setAmountEdited(false); }}
-                />
-                <div className="flex-1">
-                  <div className="font-medium text-ink">Apply advance credit — {rupee(availableCredit)} available</div>
-                  <div className="text-ink-3 mt-0.5">
-                    {applyCredit
-                      ? `${rupee(appliedCreditAmount)} adjusted against this quote — the customer pays that much less in cash.`
-                      : "This customer overpaid earlier. Tick to adjust it against this bill."}
-                  </div>
-                </div>
-              </label>
-            </div>
+            <UseAdvanceBox
+              available={availableCredit}
+              checked={applyCredit}
+              applied={appliedCreditAmount}
+              onCheckedChange={(v) => { setApplyCredit(v); setTypedCredit(null); setAmountEdited(false); }}
+              onAmountChange={(n) => { setTypedCredit(n); setAmountEdited(false); }}
+            />
           )}
 
           {/* Warning for over-payment */}

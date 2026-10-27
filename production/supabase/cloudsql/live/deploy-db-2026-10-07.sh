@@ -270,6 +270,8 @@ MIGS=(
   "r1996allocateprojectreceipttds|20261027005624_r1996_allocate_project_receipt_tds.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.allocate_project_receipt_with_tds(uuid,uuid,jsonb,jsonb,date,text)') and prosrc like '%R-1996%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.allocate_project_receipt(uuid,uuid,jsonb,date,text)') and prosrc like '%R-1996%')"
   "r1999projectreceiptundo|20261027012329_r1999_project_receipt_undo.sql|resellersos_migration|to_regprocedure('public.project_receipt_undo_preview(uuid)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.unreconcile_bank_receipt(uuid,boolean)') and prosrc like '%R-1999%')"
   "r2010consentevents|20261027070332_r2010_consent_events.sql|resellersos_migration|to_regclass('public.consent_events') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'consent_events' and policyname = 'r2010_owner_reads')"
+  "r2023customeradvance|20261027110130_r2023_customer_advance.sql|resellersos_migration|to_regprocedure('public.is_customer_advance_quote(text,integer,text,jsonb)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.generate_invoice(text)') and prosrc like '%R-2023%')"
+  "r2023navbadgesadvance|20261027110131_r2023_nav_badges_advance.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.nav_badges(text[])') and prosrc like '%R-2023%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
