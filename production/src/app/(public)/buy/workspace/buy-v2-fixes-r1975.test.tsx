@@ -115,7 +115,7 @@ describe("R-1975 buy buttons always open the pay checkout", () => {
 });
 
 const ORDER: ThanksOrder = {
-  quoteId: "Q-T-27-0001", invoiceNumber: null, customerName: "Ravi Traders", tierName: "Business Standard",
+  quoteId: "Q-T-27-0001", invoiceNumber: null, customerName: "Ravi Traders", buyerFirstName: "Ravi" /* R-2009: greeting = buyer, not company */, tierName: "Business Standard",
   seats: 2, amount: 3068, subtotal: 2600, paymentStatus: "received", paymentState: "paid",
   amountReceived: 3068, paymentDate: null,
 };

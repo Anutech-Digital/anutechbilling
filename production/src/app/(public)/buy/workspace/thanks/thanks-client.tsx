@@ -37,7 +37,10 @@ export interface ThanksOrder {
   invoiceNumber?: string | null;
   /** R-1985: a monthly order's new domain is on its own GST invoice (same payment). */
   domainInvoiceNumber?: string | null;
+  /** The company (quotes.customer_name) — shown on the COMPANY line, never as the greeting. */
   customerName:   string;
+  /** R-2009: the buyer's first name from checkout's "Your name" (the lead's contact_name); null → greet with no name. */
+  buyerFirstName?: string | null;
   tierName:       string;
   seats:          number;
   amount:         number;
@@ -179,7 +182,8 @@ function OrderView({ order, isSimulation, brand, orderToken }: { order: ThanksOr
      money says so — the state comes from orderPaymentState, one mapping for every reader. */
   const isFullyPaid    = order.paymentState === "paid";
   const statusLabel    = isFullyPaid ? "Paid in full" : order.paymentState === "part-paid" ? "Partially paid" : "Awaiting payment";
-  const firstName      = order.customerName.split(/[\s,&]/)[0] || "there";
+  /* R-2009: the buyer's own first name — never the company's first word ("Welcome aboard, Gupta."). */
+  const firstName      = order.buyerFirstName?.trim() || null;
   const amountFmt      = `₹${order.amount.toLocaleString("en-IN")}`;
   /* R-1965: same wording as the buy page — the pre-GST amount + GST (18%) under the paid total. */
   const gstSplit       = order.subtotal != null && order.subtotal > 0 && order.subtotal < order.amount
@@ -236,7 +240,7 @@ function OrderView({ order, isSimulation, brand, orderToken }: { order: ThanksOr
             {isFullyPaid ? "Payment received" : "Order placed"}
           </div>
           <h1 className="font-serif text-3xl md:text-5xl leading-[1.05] tracking-tight mb-3">
-            Welcome aboard, {firstName}.
+            {firstName ? `Welcome aboard, ${firstName}.` : "Welcome aboard."}
           </h1>
           <p className="text-base md:text-lg text-ink-3 leading-relaxed max-w-2xl mx-auto">
             Your <GWInline /> order is confirmed. Our team will call or WhatsApp you{" "}

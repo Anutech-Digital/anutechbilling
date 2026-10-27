@@ -92,6 +92,15 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
     ? await admin.from("invoices").select("id").eq("tenant_id", BUY_PAGE_TENANT_ID).eq("quote_id", dom.quoteId)
         .order("created_at", { ascending: true }).limit(1).maybeSingle()
     : { data: null };
+  /* R-2009: greet the buyer by the first name typed in checkout's "Your name" — both the buy page
+     and the cart checkout save it on the order's lead (contact_name). Same tenant only, and only
+     the first word leaves this function: no surname, email or phone reaches the page. */
+  let buyerFirstName: string | null = null;
+  if (row.lead_id) {
+    const { data: lead } = await admin.from("leads").select("contact_name")
+      .eq("id", row.lead_id).eq("tenant_id", BUY_PAGE_TENANT_ID).maybeSingle();
+    buyerFirstName = firstNameOf((lead as { contact_name?: string | null } | null)?.contact_name);
+  }
   const amount = (data.amount ?? 0) + (dom?.amount ?? 0);
   const received = amountReceived === null || (dom && dom.received === null) ? null : amountReceived + (dom?.received ?? 0);
 
@@ -102,6 +111,7 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
     planLabel:      data.plan ?? null, // R-1979: Meta content_ids
     invoiceNumber,
     customerName:   data.customer_name ?? "",
+    buyerFirstName,
     tierName,
     seats:          data.seats ?? 0,
     amount,
@@ -112,4 +122,10 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
     amountReceived: received,
     paymentDate:    data.payment_received_at ?? data.created_date ?? null,
   };
+}
+
+/** R-2009: first word of a person's name, at most 40 characters; blank -> null. */
+export function firstNameOf(name: string | null | undefined): string | null {
+  const first = String(name ?? "").trim().split(/[\s,&]+/)[0] ?? "";
+  return first ? first.slice(0, 40) : null;
 }
