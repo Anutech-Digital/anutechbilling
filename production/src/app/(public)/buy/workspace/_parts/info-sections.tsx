@@ -8,6 +8,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { SLA, PARTNER_LINE } from "@/site/lib/config";
+import { CookieSettingsButton } from "@/site/components/chrome/ConsentBanner";
 import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 import { AFTER_PAY_STEPS } from "./plans";
 import { stateName, whatsappHref, type BuyBrand, type BuyContact } from "./brand";
@@ -192,6 +193,8 @@ export function SiteFooter({ brand }: { brand: BuyBrand | null }) {
           {FOOTER_LINKS.map((l) => (
             <Link key={l.href} href={l.href} className="text-amber-ink underline underline-offset-[3px] hover:text-amber">{l.label}</Link>
           ))}
+          {/* R-2010: change or withdraw cookie consent — as easy as giving it. */}
+          <CookieSettingsButton className="text-amber-ink underline underline-offset-[3px] hover:text-amber" />
         </nav>
       </div>
     </footer>

@@ -44,6 +44,8 @@ import { BUY_COMMITMENTS, buildOrderLines, type CatalogPriceRow } from "./pricin
 import { PLUS_NOT_SOLD_ONLINE, isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
 import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { reportPurchaseToMeta } from "@/lib/meta/capi.server";
+import { recordCheckoutConsent } from "@/app/api/public/consent/record.server";
+import { clientIp } from "@/lib/security/rate-limit";
 import { splitDomain } from "@/lib/domains/live-lookup";
 import { priceDomainLines } from "@/lib/checkout/cart-checkout";
 import { normalisePhone, splitName, type Registrant } from "@/lib/provisioning/domain-registration";
@@ -551,6 +553,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Could not save quote. Please retry." }, { status: 500 });
     }
     const publicToken = inserted.public_token;
+
+    /* R-2010 (G-DPDP): tie this browser's cookie-consent record to the lead + quote, with the
+       choice in force now. Insert-only, never fails the order (it never throws). */
+    await recordCheckoutConsent(admin, {
+      tenantId: BUY_PAGE_TENANT_ID, anonId: (body as { consentAnonId?: unknown }).consentAnonId, leadId, quoteId,
+      metaConsent: (body as { metaConsent?: unknown }).metaConsent === true,
+      ip: clientIp(request.headers), userAgent: request.headers.get("user-agent"),
+    });
 
     /* R-1985: monthly + new domain → the domain's own quote, on the same lead. The order total is
        the two quotes' totals; the coupon and the site promo stayed on the Workspace (above). */

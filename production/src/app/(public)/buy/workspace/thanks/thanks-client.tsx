@@ -18,6 +18,7 @@ import { BrandMark } from "../_parts/site-header";
 import { SiteFooter } from "../_parts/info-sections";
 import { buyContact, type BuyBrand } from "../_parts/brand";
 import { MetaPixel, trackMeta, metaConsent, fbpCookie } from "@/site/lib/meta-pixel";
+import { ConsentBanner } from "@/site/components/chrome/ConsentBanner";
 import { contentIdForPlan, purchaseEventId } from "@/lib/meta/pixel-ids";
 import { mailtoLink, phoneDisplay, whatsappLink } from "./support-links";
 import { ConfirmPaymentView } from "./confirm-payment-view";
@@ -97,7 +98,8 @@ export function ThanksClient({
     return <ConfirmPaymentView quoteId={orderRef} notFound={<OrderNotFound />} />;
   }
   if (!order) return <OrderNotFound />;
-  return <><MetaPixel pixelId={metaPixelId} /><OrderView order={order} isSimulation={isSimulation} brand={brand} orderToken={orderToken} /></>;
+  /* R-2010: the same consent banner wherever the Pixel can load. */
+  return <><MetaPixel pixelId={metaPixelId} /><ConsentBanner /><OrderView order={order} isSimulation={isSimulation} brand={brand} orderToken={orderToken} /></>;
 }
 
 /** Fallback view — quote not found, not paid, or guessed wrong ID (and no payment of ours to confirm). */

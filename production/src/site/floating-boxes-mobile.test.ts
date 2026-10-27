@@ -50,7 +50,10 @@ describe("floating boxes on a phone", () => {
   });
 
   it("the consent banner fits a 375px screen (no maxWidth 360 hanging off the edge)", () => {
+    /* R-2010: the banner moved to its own file (shared with the /buy pages). */
+    const banner = read("src/site/components/chrome/ConsentBanner.tsx");
     expect(chrome).not.toMatch(/left: 22, bottom: 22, zIndex: 95, maxWidth: 360/);
-    expect(chrome).toMatch(/@media \(max-width: 979px\) \{\s*\.consent-banner \{ left: 12px; right: 12px; bottom: 12px; max-width: none; \}/);
+    expect(banner).not.toMatch(/left: 22, bottom: 22, zIndex: 95, maxWidth: 360/);
+    expect(banner).toMatch(/@media \(max-width: 979px\) \{\s*\.consent-banner \{ left: 12px; right: 12px; bottom: 12px; max-width: none;/);
   });
 });

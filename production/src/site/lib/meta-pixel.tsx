@@ -8,11 +8,14 @@
  *   - PageView on load; trackMeta() sends ViewContent / InitiateCheckout / AddPaymentInfo /
  *     Purchase with an eventID, so the server's Conversions API event of the same action is
  *     deduplicated by Meta (lib/meta/pixel-ids.ts purchaseEventId).
+ *   - R-2010: follows the choice LIVE (site/lib/consent.ts): "Accept all" in the banner loads it
+ *     at once; "Only necessary" from Cookie settings tells Meta to revoke and sends nothing more.
  */
 import * as React from "react";
 import { cleanPixelId, type MetaEventName } from "@/lib/meta/pixel-ids";
+import { CONSENT_KEY, onConsentChange } from "@/site/lib/consent";
 
-export const CONSENT_KEY = "anutech.consent.v1";
+export { CONSENT_KEY };
 const SCRIPT_SRC = "https://connect.facebook.net/en_US/fbevents.js";
 
 type Fbq = ((...args: unknown[]) => void) & { queue?: unknown[][]; loaded?: boolean; version?: string; push?: unknown; callMethod?: (...a: unknown[]) => void };
@@ -28,6 +31,16 @@ export function fbpCookie(): string | null {
   if (typeof document === "undefined") return null;
   const m = /(?:^|;\s*)_fbp=([^;]+)/.exec(document.cookie);
   return m ? decodeURIComponent(m[1]) : null;
+}
+
+/** R-2010: on withdrawal, remove the _fbp cookie Meta's script set on this site. */
+function dropFbpCookie(): void {
+  try {
+    const host = window.location.hostname;
+    const parts = host.split(".");
+    const domains = ["", host, "." + (parts.length > 2 ? parts.slice(-2).join(".") : host)];
+    for (const d of domains) document.cookie = `_fbp=; Max-Age=0; path=/${d ? `; domain=${d}` : ""}`;
+  } catch { /* ignore */ }
 }
 
 /** Install the fbq queue + script once (Meta's base code, without inline script). */
@@ -51,7 +64,9 @@ function installFbq(pixelId: string): void {
 
 /** Send a browser event — nothing when the pixel is not loaded (no id, no consent). */
 export function trackMeta(event: MetaEventName, params?: Record<string, unknown>, eventId?: string): void {
-  if (typeof window === "undefined" || !window.fbq) return;
+  /* R-2010: a visitor who withdrew keeps Meta's script in memory until the next page — so the
+     choice is checked on EVERY event, not only when the script loads. */
+  if (typeof window === "undefined" || !window.fbq || !metaConsent()) return;
   try {
     window.fbq("track", event, params ?? {}, eventId ? { eventID: eventId } : undefined);
   } catch { /* an ad script must never break the page */ }
@@ -60,9 +75,18 @@ export function trackMeta(event: MetaEventName, params?: Record<string, unknown>
 export function MetaPixel({ pixelId }: { pixelId: string | null | undefined }) {
   const id = cleanPixelId(pixelId);
   React.useEffect(() => {
-    if (!id || !metaConsent()) return;
-    installFbq(id);
-    trackMeta("PageView");
+    if (!id) return;
+    if (metaConsent()) { installFbq(id); trackMeta("PageView"); }
+    return onConsentChange((choice) => {
+      if (choice === "all") {
+        if (window.fbq) { try { window.fbq("consent", "grant"); } catch { /* ignore */ } }
+        else installFbq(id);
+        trackMeta("PageView");
+      } else if (window.fbq) {
+        try { window.fbq("consent", "revoke"); } catch { /* ignore */ }
+        dropFbpCookie();
+      }
+    });
   }, [id]);
   return null;
 }
