@@ -377,8 +377,26 @@ describe("R-2019 goal (Pardeep 27 Oct: 'the moment a user clicks the ad … must
   it("5. the consent banner sits above the sticky bar on the phone, kept short", () => {
     phone({ intent: "new" });
     const css = Array.from(document.querySelectorAll("style")).map((s) => s.textContent).join("\n");
-    expect(css).toContain(".m-buy .consent-banner{bottom:calc(var(--m-bar-h,0px) + 12px);max-height:34vh}");
+    // R-2022: no 34vh box scrolling over the first question — the short banner sits above the
+    // bar, and only an expanded Details may grow (up to the space above the bar).
+    expect(css).toContain(".m-buy .consent-banner{bottom:calc(var(--m-bar-h,0px) + 8px);max-height:calc(100vh - var(--m-bar-h,0px) - 72px)}");
+    expect(css).not.toContain("34vh");
     expect(document.querySelector(".m-buy [data-m-bar]")).toBeTruthy();
+  });
+
+  it("R-2022: one tap on 'Only necessary' does not also choose the card under it", async () => {
+    const mem = new Map<string, string>();
+    Object.defineProperty(window, "localStorage", { value: { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v), removeItem: (k: string) => void mem.delete(k) }, configurable: true });
+    phone();
+    const banner = screen.getByRole("region", { name: /cookie/i });
+    vi.spyOn(banner, "getBoundingClientRect").mockReturnValue({ left: 12, right: 363, top: 560, bottom: 688, width: 351, height: 128, x: 12, y: 560, toJSON: () => ({}) } as DOMRect);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Only necessary" }), { clientX: 120, clientY: 660 }); });
+    expect(screen.queryByRole("region", { name: /cookie/i })).toBeNull();
+    // the phone's synthesised second click lands on the intent card now under the finger
+    fireEvent.click(screen.getByRole("radio", { name: /New Google Workspace/ }), { clientX: 120, clientY: 660 });
+    expect(screen.getByRole("radio", { name: /New Google Workspace/ }).getAttribute("aria-checked")).toBe("false");
+    expect(new URLSearchParams(window.location.search).get("intent")).toBeNull();
+    window.localStorage.removeItem(CONSENT_KEY);
   });
 
   it("9. funnel events only with 'Accept all'; nothing personal", () => {

@@ -33,10 +33,12 @@ import { trackFunnel } from "./funnel";
 
 /**
  * R-2019 goal 5: only the consent banner may overlay — on the phone it sits ABOVE the sticky
- * Continue bar (never over it) and is kept short (scrolls inside), so the first question stays
- * readable. Scoped to this page; the shared banner is unchanged everywhere else.
+ * Continue bar (never over it), so the first question stays readable. Scoped to this page.
+ * R-2022: no 34vh cap any more (it hid both buttons inside a scroll) — the shared banner is now
+ * one short line + Details + the two buttons on a phone; only an opened Details may grow, up to
+ * the space above the bar, and then only its text scrolls (the buttons stay in view).
  */
-const CONSENT_ON_PHONE = ".m-buy .consent-banner{bottom:calc(var(--m-bar-h,0px) + 12px);max-height:34vh}";
+const CONSENT_ON_PHONE = ".m-buy .consent-banner{bottom:calc(var(--m-bar-h,0px) + 8px);max-height:calc(100vh - var(--m-bar-h,0px) - 72px)}";
 
 /** Continue without an answer: bring the first question into view and give it focus. */
 export function goToIntent(): void {
