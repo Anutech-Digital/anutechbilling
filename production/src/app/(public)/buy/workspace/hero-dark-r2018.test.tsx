@@ -21,7 +21,14 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), message: vi.fn() }) }));
 
-import { BuyWorkspaceClient } from "./buy-workspace-client";
+import { BuyWorkspaceClient, type CatalogItem } from "./buy-workspace-client";
+
+/* R-2027: the page is priced only from the catalogue — the test passes one, as page.tsx does. */
+const CATALOG: CatalogItem[] = [
+  { id: "s", name: "Google Workspace Business Starter", msrp: 270, wholesale: 0, margin_pct: null, is_active: true, prices: { annual: { msrp: 270, wholesale: 0 }, monthly: { msrp: 325, wholesale: 0 } } },
+  { id: "d", name: "Google Workspace Business Standard", msrp: 1080, wholesale: 0, margin_pct: null, is_active: true, prices: { annual: { msrp: 1080, wholesale: 0 }, monthly: { msrp: 1300, wholesale: 0 } } },
+  { id: "p", name: "Google Workspace Business Plus", msrp: 0, wholesale: 0, margin_pct: null, is_active: true, prices: {} },
+];
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
@@ -31,7 +38,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const hero = () => document.querySelector("[data-testid=hero]") as HTMLElement;
-const show = () => render(<BuyWorkspaceClient paymentMode="simulation" brand={null} />);
+const show = () => render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={null} />);
 
 describe("R-2018 dark hero, white text straight on the video", () => {
   it("no light panel behind the hero text", () => {

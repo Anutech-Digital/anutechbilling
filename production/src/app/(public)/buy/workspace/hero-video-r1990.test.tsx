@@ -23,7 +23,14 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), message: vi.fn() }) }));
 
-import { BuyWorkspaceClient } from "./buy-workspace-client";
+import { BuyWorkspaceClient, type CatalogItem } from "./buy-workspace-client";
+
+/* R-2027: the page is priced only from the catalogue — the test passes one, as page.tsx does. */
+const CATALOG: CatalogItem[] = [
+  { id: "s", name: "Google Workspace Business Starter", msrp: 270, wholesale: 0, margin_pct: null, is_active: true, prices: { annual: { msrp: 270, wholesale: 0 }, monthly: { msrp: 325, wholesale: 0 } } },
+  { id: "d", name: "Google Workspace Business Standard", msrp: 1080, wholesale: 0, margin_pct: null, is_active: true, prices: { annual: { msrp: 1080, wholesale: 0 }, monthly: { msrp: 1300, wholesale: 0 } } },
+  { id: "p", name: "Google Workspace Business Plus", msrp: 0, wholesale: 0, margin_pct: null, is_active: true, prices: {} },
+];
 import { HERO_VIDEO } from "./_parts/hero";
 
 const PUBLIC = join(__dirname, "..", "..", "..", "..", "..", "public");
@@ -55,7 +62,7 @@ describe("R-1990 hero background video", () => {
   });
 
   it("video: muted, autoplay, loop, playsinline, poster; slowed to 0.5 when it loads; dark ink layer (R-2018); no sound", () => {
-    render(<BuyWorkspaceClient paymentMode="simulation" brand={null} />);
+    render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={null} />);
     const v = hero().querySelector("video") as HTMLVideoElement;
     expect(v).toBeTruthy();
     expect(v.muted).toBe(true);
@@ -71,20 +78,20 @@ describe("R-1990 hero background video", () => {
 
   it("reduced motion → poster only, no video", () => {
     reduce = true;
-    render(<BuyWorkspaceClient paymentMode="simulation" brand={null} />);
+    render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={null} />);
     expect(hero().querySelector("video")).toBeNull();
     expect(hero().querySelector("img[data-testid=hero-poster]")?.getAttribute("src")).toBe("/media/hero-workspace.jpg");
   });
 
   it("Save-Data → poster only", () => {
     saveData = true;
-    render(<BuyWorkspaceClient paymentMode="simulation" brand={null} />);
+    render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={null} />);
     expect(hero().querySelector("video")).toBeNull();
     expect(hero().querySelector("img[data-testid=hero-poster]")).toBeTruthy();
   });
 
   it("content on top: no panel behind the text (R-2018), the price card stays white, the hero has no own background", () => {
-    render(<BuyWorkspaceClient paymentMode="simulation" brand={null} />);
+    render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={null} />);
     expect(hero().className).not.toMatch(/\bbg-(paper|white)\b/);
     expect(screen.getByTestId("hero-text").className).not.toMatch(/bg-paper/);
     expect(screen.getByRole("heading", { level: 2, name: "Your price" }).closest("div.bg-white")).toBeTruthy();

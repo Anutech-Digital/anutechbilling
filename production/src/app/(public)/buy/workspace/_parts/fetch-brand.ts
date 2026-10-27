@@ -16,27 +16,25 @@ import { cache } from "react";
 import { createAdminClient } from "@/lib/supabase/server";
 import { websiteTenantId } from "@/lib/website-tenant";
 import { brandFromTenant, type BuyBrand, type TenantBrandRow } from "./brand";
+import { lastGoodCache, readWithRetry, retryBudgetMs, type ReadOutcome, type RetryPlan } from "./cold-read";
 
 /** The columns the page shows — nothing else leaves the tenants row (the public endpoint too). */
 export const BRAND_COLUMNS = "name, logo_url, gstin, address, pin_code, state, state_code, phone, email";
 
-const FIRST_TRY_MS = 2_500;
-const RETRY_PAUSE_MS = 250;
-const SECOND_TRY_MS = 3_000;
+/** One retry after a short pause (R-2024) — the same helper as the price list (R-2027, cold-read.ts). */
+const BRAND_RETRY: RetryPlan = { tries: [2_500, 3_000], pauseMs: 250 };
 /** Both tries and the pause — the page waits at most this long for the brand. */
-export const BRAND_READ_BUDGET_MS = FIRST_TRY_MS + RETRY_PAUSE_MS + SECOND_TRY_MS;
+export const BRAND_READ_BUDGET_MS = retryBudgetMs(BRAND_RETRY);
 
 const CACHE_TTL_MS = 30 * 60_000;
 /** Last good brand per tenant id (this server process only). */
-const lastGood = new Map<string, { brand: BuyBrand; at: number }>();
+const lastGood = lastGoodCache<BuyBrand>(CACHE_TTL_MS);
 
 export function __resetBuyBrandCacheForTests(): void { lastGood.clear(); }
 
-type ReadOutcome = { ok: true; brand: BuyBrand | null } | { ok: false };
-
 type BrandClient = Pick<ReturnType<typeof createAdminClient>, "from">;
 
-async function readOnce(client: BrandClient, tenantId: string, timeoutMs: number, attempt: number): Promise<ReadOutcome> {
+async function readOnce(client: BrandClient, tenantId: string, timeoutMs: number, attempt: number): Promise<ReadOutcome<BuyBrand | null>> {
   const started = Date.now();
   try {
     const { data, error } = await client
@@ -49,7 +47,7 @@ async function readOnce(client: BrandClient, tenantId: string, timeoutMs: number
       console.warn(`[buy/workspace] tenant brand read failed (try ${attempt}, ${Date.now() - started} ms):`, error.message);
       return { ok: false };
     }
-    return { ok: true, brand: brandFromTenant(data as TenantBrandRow | null) };
+    return { ok: true, value: brandFromTenant(data as TenantBrandRow | null) };
   } catch (e) {
     console.warn(`[buy/workspace] tenant brand read failed (try ${attempt}, ${Date.now() - started} ms):`, e instanceof Error ? e.message : String(e));
     return { ok: false };
@@ -66,21 +64,16 @@ export async function readBuyBrand(client: () => BrandClient = createAdminClient
   if (!tenantId) return null;
   const admin = client();
   const started = Date.now();
-  let out = await readOnce(admin, tenantId, FIRST_TRY_MS, 1);
-  if (!out.ok) {
-    await new Promise((r) => setTimeout(r, RETRY_PAUSE_MS));
-    const left = BRAND_READ_BUDGET_MS - (Date.now() - started);
-    if (left > 250) out = await readOnce(admin, tenantId, Math.min(SECOND_TRY_MS, left), 2);
-  }
+  const out = await readWithRetry((ms, n) => readOnce(admin, tenantId, ms, n), BRAND_RETRY);
   if (out.ok) {
-    if (out.brand) lastGood.set(tenantId, { brand: out.brand, at: Date.now() });
+    if (out.value) lastGood.set(tenantId, out.value);
     else lastGood.delete(tenantId);   // the row answered without a name: no stale brand over it
-    return out.brand;
+    return out.value;
   }
   const hit = lastGood.get(tenantId);
-  if (hit && Date.now() - hit.at <= CACHE_TTL_MS) {
-    console.warn(`[buy/workspace] tenant brand: both reads failed in ${Date.now() - started} ms — showing the last good brand from ${Math.round((Date.now() - hit.at) / 1000)} s ago`);
-    return hit.brand;
+  if (hit) {
+    console.warn(`[buy/workspace] tenant brand: both reads failed in ${Date.now() - started} ms — showing the last good brand from ${Math.round(hit.ageMs / 1000)} s ago`);
+    return hit.value;
   }
   return null;
 }

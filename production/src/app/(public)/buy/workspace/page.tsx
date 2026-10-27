@@ -17,6 +17,10 @@
  * everything), we still render the page with a friendly "contact us" message
  * instead of an empty product grid.
  *
+ * R-2027 (27 Oct 2026): the price read is _parts/fetch-catalog.ts — retries with backoff (~6 s),
+ * the tenant's last good list (10 min), else null: the page then shows "Loading prices…" with Buy
+ * locked and loads the prices itself. No typed fallback prices anywhere on this page.
+ *
  * R-027 (5 Oct 2026): the QA check timed out (20 s) on the test service. Measured: 8–10 s on
  * a freshly started instance (staging right after a push, the idle test service), 0.2–0.8 s
  * once warm. The page then ran its two database reads ONE AFTER THE OTHER with no limit, so a
@@ -26,17 +30,17 @@
 import { Metadata } from "next";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/server";
-import { BuyWorkspaceClient, type CatalogItem } from "./buy-workspace-client";
+import { BuyWorkspaceClient } from "./buy-workspace-client";
 import { BuyMobileClient } from "./_mobile/buy-mobile-client";
 import { buyViewFor } from "./_mobile/device";
 import { parseBuyParams } from "@/lib/checkout/buy-link";
-import { isPublicPriceHidden } from "@/lib/catalog/public-price-policy";
 import { simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
 import { checkoutPaymentMode } from "@/lib/checkout/checkout-payment-mode";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { PARTNER_LINE } from "@/site/lib/config";
 import { websiteTenantId } from "@/lib/website-tenant";
 import { fetchBuyBrand } from "./_parts/fetch-brand";
+import { fetchBuyCatalog } from "./_parts/fetch-catalog";
 import { websitePixelId } from "@/lib/meta/pixel-id.server";
 
 /* R-1499: tenant read per call (websiteTenantId) — outside production an unset BUY_PAGE_TENANT_ID
@@ -56,48 +60,6 @@ export async function generateMetadata(): Promise<Metadata> {
 export const dynamic = "force-dynamic";
 
 const READ_TIMEOUT_MS = 3_000;
-
-async function fetchGoogleWorkspaceItems(): Promise<CatalogItem[]> {
-  const BUY_PAGE_TENANT_ID = websiteTenantId();
-  if (!BUY_PAGE_TENANT_ID) {
-    console.error("[buy/workspace] BUY_PAGE_TENANT_ID is not set — set it in .env.local to your local workspace id (R-1499).");
-    return [];
-  }
-  const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("items")
-    .select("id, name, msrp, wholesale, margin_pct, prices, is_active")
-    .eq("tenant_id", BUY_PAGE_TENANT_ID)
-    .eq("vendor", "google")
-    .eq("kind",   "main")
-    .eq("is_active", true)
-    .ilike("name", "Google Workspace%")
-    .order("msrp", { ascending: true })
-    .abortSignal(AbortSignal.timeout(READ_TIMEOUT_MS));
-
-  if (error) {
-    console.error("[buy/workspace] catalog fetch failed:", error);
-    return [];
-  }
-  return ((data ?? []) as CatalogItem[]).map(publicBuyRow);
-}
-
-/**
- * What of a catalogue row may reach the visitor's browser (these props are serialised into the
- * page). R-328: Business Plus keeps its card but carries NO price ("Contact us for pricing").
- * Wholesale and margin are our cost — the client never reads them, so they never leave.
- */
-function publicBuyRow(row: CatalogItem): CatalogItem {
-  const hidden = isPublicPriceHidden(row.name);
-  const strip = (t?: { msrp: number; wholesale: number }) => (t ? { msrp: hidden ? 0 : t.msrp, wholesale: 0 } : undefined);
-  return {
-    ...row,
-    msrp: hidden ? 0 : row.msrp,
-    wholesale: 0,
-    margin_pct: null,
-    prices: hidden ? {} : { ...(row.prices?.annual ? { annual: strip(row.prices.annual) } : {}), ...(row.prices?.monthly ? { monthly: strip(row.prices.monthly) } : {}) },
-  };
-}
 
 /**
  * True only when BOTH Razorpay key id AND secret are configured —
@@ -140,8 +102,8 @@ export default async function BuyWorkspacePage(props: {
   /* R-2020 (R-2019 decision 1): a phone gets the one-screen-at-a-time flow, a laptop the v2 page —
      decided here, so only one of the two client trees is sent. ?view=mobile|desktop overrides. */
   const view = buyViewFor(await headers(), typeof sp.view === "string" ? sp.view : null);
-  // Both reads at once (R-027) — each is capped, so the page waits for the slowest, not the sum (the brand: ~6 s with its one retry, R-2024).
-  const [catalogItems, { configured, keyId }, brand, metaPixelId] = await Promise.all([fetchGoogleWorkspaceItems(), isRazorpayConfigured(), fetchBuyBrand(), websitePixelId()]);
+  // Both reads at once (R-027) — each is capped, so the page waits for the slowest, not the sum (brand and prices: ~6 s with their retries, R-2024 / R-2027).
+  const [catalogItems, { configured, keyId }, brand, metaPixelId] = await Promise.all([fetchBuyCatalog(), isRazorpayConfigured(), fetchBuyBrand(), websitePixelId()]);
   // Live when Razorpay is fully configured. When it isn't:
   //  · non-prod (or ALLOW_SIMULATED_CHECKOUT=1) → "simulation": Buy now stays
   //    visible for Pardeep to walk the full pipeline, clearly TEST-MODE banded.

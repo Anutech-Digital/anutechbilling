@@ -53,7 +53,7 @@ export function BrandMark({ brand, pending = false }: { brand: BuyBrand | null; 
 }
 
 export function SiteHeader({
-  brand, brandPending = false, contact, onNav, onBuy,
+  brand, brandPending = false, contact, onNav, onBuy, buyLoading: loading = false,
 }: {
   brand: BuyBrand | null;
   /** R-2024: the brand is still being fetched — show a placeholder, not the neutral name. */
@@ -61,6 +61,8 @@ export function SiteHeader({
   contact: BuyContact;
   onNav: (id: string) => void;
   onBuy: () => void;
+  /** R-2027: no catalogue prices yet — Buy is locked and its label says why. */
+  buyLoading?: boolean;
 }) {
   return (
     <header className="sticky top-0 z-40 bg-paper/95 backdrop-blur-sm border-b border-hairline">
@@ -87,9 +89,10 @@ export function SiteHeader({
           <button
             type="button"
             onClick={onBuy}
-            className="h-10 px-[18px] rounded-lg bg-amber text-white text-sm font-semibold whitespace-nowrap hover:bg-amber-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2"
+            disabled={loading}
+            className="h-10 px-[18px] rounded-lg bg-amber text-white text-sm font-semibold whitespace-nowrap hover:bg-amber-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-amber"
           >
-            Buy now
+            {loading ? "Loading prices…" : "Buy now"}
           </button>
         </div>
       </div>
