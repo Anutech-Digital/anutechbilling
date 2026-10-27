@@ -37,6 +37,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   bank_old_one_off_bookings: "R-1863: lists bank lines booked as a one-off bank sale with their own invoice (only those reached through the line's payment → quote), to relink them",
   reconcile_bank_credit_to_item: "R-1838: records a bank receipt on the picked invoice via record_desk_payment / record_instalment_payment",
   activate_quote_on_credit: "quote → our invoice",
+  allocate_project_receipt: "payments on projects; sets paid_amount on the project invoice it raises (R-1995)",
   bill_late_charges: "late fee on an overdue balance (a new debit note of ours)",
   delete_customer: "refuses while invoices exist",
   delete_project_invoice: "draft project invoices only",

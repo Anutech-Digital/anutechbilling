@@ -282,3 +282,74 @@ export function useBookBankCreditAsProjectPayment() {
     onError: (err) => toastError(err, { fallback: "Could not book the project payment" }),
   });
 }
+
+/* ── R-1995: one bank receipt → many instalments, one atomic RPC ────────────────────────────── */
+
+/** One ticked instalment: how much of the receipt goes on it (GST-inclusive ₹). */
+export interface ProjectReceiptAllocation {
+  milestoneId: string;
+  amount: number;
+  /** Raise the tax invoice for this instalment (a part payment is split first, so the invoice is for the money received). */
+  raiseInvoice: boolean;
+}
+
+export interface AllocateProjectReceiptInput {
+  bankTxnId: string;
+  projectId: string;
+  /** In the order to book them — the instalment list sends oldest first (FIFO, R-1998). */
+  allocations: ProjectReceiptAllocation[];
+  /** Defaults to the bank line's date on the server. */
+  receivedAt?: string | null;
+  /** Defaults to the bank line's UTR on the server. */
+  reference?: string | null;
+}
+
+export interface AllocateProjectReceiptResult {
+  bank_txn_id: string;
+  project_id: string;
+  total: number;
+  allocations: { milestone_id: string; from_milestone_id: string; amount: number; payment_id: string; invoice_id: string | null }[];
+}
+
+/**
+ * The RPC's arguments. Only ticked lines with money go; the server still checks everything
+ * (line not already reconciled, total = the line, no instalment above its balance).
+ */
+export function allocateProjectReceiptArgs(input: AllocateProjectReceiptInput) {
+  return {
+    p_bank_txn_id: input.bankTxnId,
+    p_project_id: input.projectId,
+    p_allocations: input.allocations
+      .filter((a) => a.amount > 0)
+      .map((a) => ({ milestone_id: a.milestoneId, amount: Math.round(a.amount), raise_invoice: a.raiseInvoice })),
+    p_received_at: input.receivedAt ?? null,
+    p_reference: input.reference?.trim() ? input.reference.trim() : null,
+  };
+}
+
+/**
+ * Save one receipt across many instalments — payments, splits, invoices and the bank line
+ * reconcile in ONE transaction (allocate_project_receipt): all of it, or nothing.
+ * The instalment-list screen that calls it is R-1998.
+ */
+export function useAllocateProjectReceipt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AllocateProjectReceiptInput): Promise<AllocateProjectReceiptResult> => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("allocate_project_receipt" as never, allocateProjectReceiptArgs(input) as never);
+      if (error) throw error;
+      return data as unknown as AllocateProjectReceiptResult;
+    },
+    onSuccess: (res) => {
+      for (const k of ["project_sales", "project_milestones", "project_payments", "invoices", "bank_transactions",
+                       "bank_accounts", "accounting", "balance-sheet"]) {
+        qc.invalidateQueries({ queryKey: [k] });
+      }
+      const invoices = res.allocations.filter((a) => a.invoice_id).length;
+      toast.success(`Receipt booked on ${res.allocations.length} instalment${res.allocations.length === 1 ? "" : "s"}`
+        + (invoices ? ` · ${invoices} invoice${invoices === 1 ? "" : "s"} raised` : "") + " & reconciled");
+    },
+    onError: (err) => toastError(err, { fallback: "Could not book the project receipt" }),
+  });
+}

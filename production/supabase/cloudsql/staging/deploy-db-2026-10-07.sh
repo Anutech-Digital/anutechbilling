@@ -266,6 +266,7 @@ MIGS=(
   "r1979metapixelsecrets|20261026181411_r1979_meta_pixel_secrets.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'meta_capi_token')"
   "r1993projectpaymentbankline|20261026183034_r1993_project_payment_bank_line_guards.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_project_payment(uuid,integer,text,text,date,uuid)') and prosrc like '%R-1993%')"
   "r1992bsprojecttdsadvance|20261026235600_r1992_balance_sheet_project_tds_advance.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-1992%')"
+  "r1995allocateprojectreceipt|20261027000541_r1995_allocate_project_receipt.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.allocate_project_receipt(uuid,uuid,jsonb,date,text)') and prosrc like '%R-1995%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
