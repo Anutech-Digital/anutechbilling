@@ -34,7 +34,7 @@ import { useVendorTdsThisFy, EXPENSE_CATEGORIES } from "@/lib/queries/expenses";
 import { VENDOR_BILL_CATEGORIES, attachBillFile } from "@/lib/queries/vendor-bills";
 import { readBillFile, checkBillFile, type BillRead } from "@/lib/accounting/bill-reader";
 import { buyerWarningText } from "@/app/api/ai/extract-bill/buyer-check";
-import { billVendorCheck, newBillFromRead } from "@/lib/banking/bill-read-new-bill";
+import { billVendorCheck, newBillFromRead, newVendorFromRead } from "@/lib/banking/bill-read-new-bill";
 import { TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import { useVendorOpenItems, usePayVendorFromBankDebit, useVendor194q, useSet194qBuyer, useVendorNarrationAliases } from "@/lib/queries/bank-debit-pay-for";
@@ -235,8 +235,20 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
     if (billVendor.match) { pickVendor(billVendor.match.id); return; }
     setVendorId(NEW_VENDOR);
     setTouched(true);
-    setNv({ ...EMPTY_NV, name: billVendor.readName, gstin: billVendor.readGstin ?? "" });
+    const fromBill = billRead ? newVendorFromRead({ ...EMPTY_NV, name: billVendor.readName }, billRead.fields) : {};
+    setNv({ ...EMPTY_NV, name: billVendor.readName, gstin: fromBill.gstin ?? "", pan: fromBill.pan ?? "" });
   };
+  /* R-2005 follow-up: a new vendor typed on the line gets the bill's GSTIN + PAN in its empty
+     fields, once per uploaded bill — saved on the vendor by the same new-vendor path (R-1918). */
+  const nvFromBill = isNew && billRead ? newVendorFromRead(nv, billRead.fields) : {};
+  const gstinFilledFor = React.useRef<BillRead | null>(null);
+  React.useEffect(() => {
+    if (!isNew || !billRead || gstinFilledFor.current === billRead) return;
+    const p = newVendorFromRead(nv, billRead.fields);
+    if (!p.gstin) return;
+    gstinFilledFor.current = billRead;
+    setNv((n) => ({ ...n, gstin: n.gstin.trim() ? n.gstin : p.gstin ?? "", pan: n.pan.trim() ? n.pan : p.pan ?? n.pan }));
+  }, [isNew, billRead, nv]);
   const buyerBlock = showNew && Boolean(billRead?.buyer) && !buyerOk;
   const billTotal = newBillTotal(bill);
   const billTds = bill.kind === "expense" ? newBillTds(Math.round(bill.taxable || 0), tdsOpts) : { tds: 0, section: null, reason: null };
@@ -380,6 +392,9 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
           <Input aria-label="New vendor name" placeholder="Vendor name" value={nv.name} onChange={(e) => setNv({ ...nv, name: e.target.value })} className="sm:col-span-2" />
           <Input aria-label="GSTIN (optional)" placeholder="GSTIN (optional)" value={nv.gstin} onChange={(e) => setNv({ ...nv, gstin: e.target.value.toUpperCase() })} />
           <Input aria-label="PAN (optional)" placeholder="PAN (optional)" value={nv.pan} onChange={(e) => setNv({ ...nv, pan: e.target.value.toUpperCase() })} />
+          {nvFromBill.badGstin && (
+            <p className="text-xs text-amber-ink sm:col-span-2">The bill&apos;s GSTIN {nvFromBill.badGstin} fails the GSTIN check digit — type the GSTIN from the bill.</p>
+          )}
           <div className="space-y-0.5">
             <Input aria-label="Account number (optional)" inputMode="numeric" value={nv.accountNo}
               placeholder={fromLine.accountTail ? `Account number (ends ${fromLine.accountTail})` : "Account number (optional)"}

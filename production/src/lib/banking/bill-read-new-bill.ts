@@ -5,6 +5,7 @@
  */
 import { normaliseCompanyName } from "@/app/api/ai/extract-bill/buyer-check";
 import type { BillRead } from "@/lib/accounting/bill-reader";
+import { isValidGstin } from "@/lib/utils";
 import type { NewBillDraft, VendorLite } from "./debit-pay-for";
 
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
@@ -95,4 +96,23 @@ export function billVendorCheck(
     : vendors.find((v) => sameName(v.name, readName)) ?? null;
   if (current?.id && match?.id === current.id) return null;
   return { readName: readName || match?.name || readGstin || "", readGstin, match };
+}
+
+/**
+ * R-2005 follow-up (Pardeep, 27 Oct): a new vendor added on the line gets the bill's GSTIN — and the
+ * PAN inside it (characters 3–12) — in the fields still empty; never over what was typed. Only a
+ * GSTIN whose check digit is right (a wrong one is named instead), and only when the bill is from
+ * this vendor (a bill from someone else is the mismatch warning's job). The vendor's state follows
+ * from the GSTIN in the database (reconcile_bank_debit_to_vendor).
+ */
+export function newVendorFromRead(
+  nv: { name: string; gstin: string; pan: string },
+  fields: Record<string, unknown>,
+): { gstin?: string; pan?: string; badGstin?: string } {
+  const g = str(fields.vendor_gstin).replace(/\s+/g, "").toUpperCase();
+  if (!g || nv.gstin.trim()) return {};
+  const readName = str(fields.vendor_name);
+  if (nv.name.trim() && readName && !sameName(nv.name, readName)) return {};
+  if (!isValidGstin(g)) return { badGstin: g };
+  return nv.pan.trim() ? { gstin: g } : { gstin: g, pan: g.slice(2, 12) };
 }

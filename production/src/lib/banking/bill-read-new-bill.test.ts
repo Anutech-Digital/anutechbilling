@@ -2,7 +2,7 @@
    money-out bank line, and says when the bill's vendor is not the vendor picked for the line. */
 import { describe, expect, it } from "vitest";
 
-import { billVendorCheck, newBillFromRead } from "./bill-read-new-bill";
+import { billVendorCheck, newBillFromRead, newVendorFromRead } from "./bill-read-new-bill";
 import type { NewBillDraft, VendorLite } from "./debit-pay-for";
 
 const CATS = { expense: ["Professional Services", "Advertising", "Other"], cogs: ["COGS-Workspace", "COGS-Other"] } as const;
@@ -79,5 +79,26 @@ describe("R-2005 billVendorCheck", () => {
   it("a new vendor typed in the line is compared by name and GSTIN too", () => {
     expect(billVendorCheck({ vendor_name: "Bansal Traders" }, { name: "Bansal Traders", gstin: "" }, V)).toBeNull();
     expect(billVendorCheck({ vendor_name: "Bansal Print House" }, { name: "Bansal Traders", gstin: "" }, V)?.match?.id).toBe("v4");
+  });
+});
+
+describe("R-2005 newVendorFromRead — the bill's GSTIN on a new vendor", () => {
+  const nv = (o: Partial<{ name: string; gstin: string; pan: string }> = {}) => ({ name: "Bansal Press", gstin: "", pan: "", ...o });
+  it("valid GSTIN, same name → GSTIN and PAN (characters 3–12) for the empty fields", () => {
+    expect(newVendorFromRead(nv(), { vendor_name: "M/s Bansal Press", vendor_gstin: " 07aahfb1234c1z4 " })).toEqual({ gstin: "07AAHFB1234C1Z4", pan: "AAHFB1234C" });
+  });
+  it("never overwrites what was typed", () => {
+    expect(newVendorFromRead(nv({ gstin: "07ABDCA0298H1ZP" }), { vendor_name: "Bansal Press", vendor_gstin: "07AAHFB1234C1Z4" })).toEqual({});
+    expect(newVendorFromRead(nv({ pan: "ABCDE1234F" }), { vendor_name: "Bansal Press", vendor_gstin: "07AAHFB1234C1Z4" })).toEqual({ gstin: "07AAHFB1234C1Z4" });
+  });
+  it("a wrong check digit fills nothing and is named", () => {
+    expect(newVendorFromRead(nv(), { vendor_name: "Bansal Press", vendor_gstin: "07AAHFB1234C1Z5" })).toEqual({ badGstin: "07AAHFB1234C1Z5" });
+  });
+  it("the bill is from another vendor (the mismatch warning handles it) → nothing", () => {
+    expect(newVendorFromRead(nv(), { vendor_name: "Sharma Associates", vendor_gstin: "07AAHFB1234C1Z4" })).toEqual({});
+  });
+  it("no name typed yet → the bill's GSTIN still fills; no GSTIN read → nothing", () => {
+    expect(newVendorFromRead(nv({ name: "" }), { vendor_name: "Bansal Press", vendor_gstin: "07AAHFB1234C1Z4" })).toEqual({ gstin: "07AAHFB1234C1Z4", pan: "AAHFB1234C" });
+    expect(newVendorFromRead(nv(), { vendor_name: "Bansal Press" })).toEqual({});
   });
 });

@@ -142,7 +142,7 @@ describe("R-2005 Reconcile money-out — Upload bill on 'The bill is not in the 
   });
 
   it("the bill's vendor is not in the master → add it as a new vendor, name and GSTIN from the bill (R-1918 path)", async () => {
-    answer(200, { fields: { ...BANSAL, vendor_name: "Bansal Traders", vendor_gstin: "07AAACB0000B1Z2" } });
+    answer(200, { fields: { ...BANSAL, vendor_name: "Bansal Traders", vendor_gstin: "07AAACB0000B1ZX" } });
     render(<DebitPayForSection transaction={txn(7080, "IMPS SHARMA ASSOCIATES FEES")} onDone={() => {}} />);
     openNewBill();
     upload(pdf());
@@ -150,7 +150,8 @@ describe("R-2005 Reconcile money-out — Upload bill on 'The bill is not in the 
     fireEvent.click(screen.getByRole("button", { name: "Add Bansal Traders as a new vendor" }));
     expect((screen.getByLabelText("Vendor paid") as HTMLSelectElement).value).toBe("__new_vendor__");
     expect(val("New vendor name")).toBe("Bansal Traders");
-    expect(val("GSTIN (optional)")).toBe("07AAACB0000B1Z2");
+    expect(val("GSTIN (optional)")).toBe("07AAACB0000B1ZX");
+    expect(val("PAN (optional)")).toBe("AAACB0000B");
     expect(val("Bill number")).toBe("BPH-77");
   });
 
@@ -186,5 +187,66 @@ describe("R-2005 Reconcile money-out — Upload bill on 'The bill is not in the 
     fireEvent.click(saveButton());
     await screen.findByText("Done — this bank line is reconciled");
     expect(await screen.findByText(/The file bansal-bph-77\.pdf could not be attached — open the bill and attach it there\./)).toBeTruthy();
+  });
+});
+
+/* R-2005 follow-up (Pardeep, 27 Oct localhost 04:44Z): "Add Bansal Print House" as a new vendor →
+   Upload bill → payment saved, but Vendors → Bansal Print House had no GSTIN. The bill's GSTIN
+   (valid check digit only) fills the new vendor's empty GSTIN and PAN and goes in the save. */
+describe("R-2005 new vendor — the bill's GSTIN is saved on it", () => {
+  const PRESS = { ...BANSAL, vendor_name: "Bansal Press", vendor_gstin: "07AAHFB1234C1Z4" };
+  const newVendor = (name: string) => {
+    fireEvent.change(screen.getByLabelText("Vendor paid"), { target: { value: "__new_vendor__" } });
+    fireEvent.change(screen.getByLabelText("New vendor name"), { target: { value: name } });
+  };
+
+  it("new vendor typed, then the bill uploaded → GSTIN and PAN filled from the bill; the save carries them", async () => {
+    answer(200, { fields: PRESS });
+    state.pay.mockResolvedValue(result({ vendor_id: "vn", vendor_name: "Bansal Press", vendor_created: true }));
+    render(<DebitPayForSection transaction={txn(7080, "NEFT DR 7080 PAYMENT")} onDone={() => {}} />);
+    newVendor("Bansal Press");
+    openNewBill();
+    upload(pdf());
+    await waitFor(() => expect(val("GSTIN (optional)")).toBe("07AAHFB1234C1Z4"));
+    expect(val("PAN (optional)")).toBe("AAHFB1234C");
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0].newVendor).toMatchObject({ name: "Bansal Press", gstin: "07AAHFB1234C1Z4", pan: "AAHFB1234C" });
+  });
+
+  it("what the owner typed is never overwritten", async () => {
+    answer(200, { fields: PRESS });
+    render(<DebitPayForSection transaction={txn(7080, "NEFT DR 7080 PAYMENT")} onDone={() => {}} />);
+    newVendor("Bansal Press");
+    fireEvent.change(screen.getByLabelText("GSTIN (optional)"), { target: { value: "07ABDCA0298H1ZP" } });
+    openNewBill();
+    upload(pdf());
+    await waitFor(() => expect(val("Bill number")).toBe("BPH-77"));
+    expect(val("GSTIN (optional)")).toBe("07ABDCA0298H1ZP");
+    expect(val("PAN (optional)")).toBe("");
+  });
+
+  it("a GSTIN whose check digit is wrong is not filled — the form says to type it from the bill", async () => {
+    answer(200, { fields: { ...PRESS, vendor_gstin: "07AAHFB1234C1Z5" } });
+    render(<DebitPayForSection transaction={txn(7080, "NEFT DR 7080 PAYMENT")} onDone={() => {}} />);
+    newVendor("Bansal Press");
+    openNewBill();
+    upload(pdf());
+    expect(await screen.findByText("The bill's GSTIN 07AAHFB1234C1Z5 fails the GSTIN check digit — type the GSTIN from the bill.")).toBeTruthy();
+    expect(val("GSTIN (optional)")).toBe("");
+  });
+
+  it("'Add as a new vendor' from the mismatch warning → the save carries the bill's GSTIN", async () => {
+    answer(200, { fields: { ...BANSAL, vendor_name: "Bansal Traders", vendor_gstin: "07AAACB0000B1ZX" } });
+    state.pay.mockResolvedValue(result({ vendor_id: "vn", vendor_name: "Bansal Traders", vendor_created: true }));
+    render(<DebitPayForSection transaction={txn(7080, "IMPS SHARMA ASSOCIATES FEES")} onDone={() => {}} />);
+    openNewBill();
+    upload(pdf());
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Add Bansal Traders as a new vendor" }));
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0].newVendor).toMatchObject({ name: "Bansal Traders", gstin: "07AAACB0000B1ZX", pan: "AAACB0000B" });
   });
 });
