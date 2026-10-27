@@ -38,6 +38,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   reconcile_bank_credit_to_item: "R-1838: records a bank receipt on the picked invoice via record_desk_payment / record_instalment_payment",
   activate_quote_on_credit: "quote → our invoice",
   allocate_project_receipt: "payments on projects; sets paid_amount on the project invoice it raises (R-1995)",
+  allocate_project_receipt_with_tds: "payments on projects + the customer's TDS; sets paid_amount on the project invoice it raises (R-1996; allocate_project_receipt calls it)",
   bill_late_charges: "late fee on an overdue balance (a new debit note of ours)",
   delete_customer: "refuses while invoices exist",
   delete_project_invoice: "draft project invoices only",

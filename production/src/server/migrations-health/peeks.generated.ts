@@ -239,4 +239,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r1993projectpaymentbankline", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.record_project_payment(uuid,integer,text,text,date,uuid)') and prosrc like '%R-1993%')" },
   { key: "r1992bsprojecttdsadvance", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-1992%')" },
   { key: "r1995allocateprojectreceipt", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.allocate_project_receipt(uuid,uuid,jsonb,date,text)') and prosrc like '%R-1995%')" },
+  { key: "r1996allocateprojectreceipttds", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.allocate_project_receipt_with_tds(uuid,uuid,jsonb,jsonb,date,text)') and prosrc like '%R-1996%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.allocate_project_receipt(uuid,uuid,jsonb,date,text)') and prosrc like '%R-1996%')" },
 ];
