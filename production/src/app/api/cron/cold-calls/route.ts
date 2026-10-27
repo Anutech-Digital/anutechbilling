@@ -8,7 +8,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
-import { gatedCron } from "@/lib/automation/cron-gate";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import { resolveTelecallProvider } from "@/lib/telecall/provider";
 import { listTenantsForJobs, withJobsTenant } from "@/server/db/jobs";
 import { runCampaignTick, type Run } from "@/server/coldcall/coldcall.server";
@@ -33,6 +33,9 @@ async function handle(req: NextRequest) {
   let campaigns = 0, placed = 0, finished = 0, failed = 0;
   const errors: string[] = [];
   for (const tenantId of await listTenantsForJobs()) {
+    /* R-897 / R-1818: only the companies this pass may work on — the ones with AI cold calls on
+       (scheduled), or the caller's own company (Run now). Was missing: every company was called. */
+    if (!cronTenantAllowed(tenantId)) continue;
     const run: Run = (fn) => withJobsTenant(tenantId, fn);
     const running = await run((tx) => tx.cold_call_campaigns.findMany({
       where: { status: { in: ["running"] } }, select: { id: true },

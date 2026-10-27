@@ -42,7 +42,7 @@ export interface ResolveProductArgs {
   /** The mail as every other reader sees it — subject included, via `withSubject`. */
   text: string;
   catalogue: CatalogueEntry[];
-  gemini: { apiKey: string | null; model: string };
+  gemini: { apiKey: string | null; model: string; tenantId: string | null };
 }
 
 export interface ResolvedProduct {
@@ -75,6 +75,7 @@ export async function resolveProduct(
     const picked = await match({
       apiKey: args.gemini.apiKey,
       model: args.gemini.model,
+      tenantId: args.gemini.tenantId,
       text: args.text,
       catalogue: args.catalogue,
     });

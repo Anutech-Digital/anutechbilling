@@ -14,6 +14,7 @@ import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { panFromGstin } from "@/lib/accounting/tds-deductor";
 import { TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
 import type { createClient } from "@/lib/supabase/client";
+import { fetchCogsBillTds } from "@/lib/queries/cogs-bill-tds";
 
 export async function read26Q(supabase: ReturnType<typeof createClient>, range: { from: string; to: string }) {
   const [exps, comms] = await Promise.all([
@@ -33,9 +34,11 @@ export async function read26Q(supabase: ReturnType<typeof createClient>, range: 
       .order("id", { ascending: true })
       .range(from, to)),
   ]);
+  /* R-1891: 194Q TDS on goods (COGS) bills paid from the bank — on the payment row, dated the day deducted. */
+  const goods = await fetchCogsBillTds(supabase, range);
   const [vends, partners] = await Promise.all([
-    fetchAllRowsIn(exps.map((e) => e.vendor_id), (run, from, to) => supabase
-      .from("vendors").select("id, gstin, pan").in("id", run)
+    fetchAllRowsIn([...exps.map((e) => e.vendor_id), ...goods.map((g) => g.vendor_id)], (run, from, to) => supabase
+      .from("vendors").select("id, name, gstin, pan").in("id", run)
       .order("id", { ascending: true })
       .range(from, to)),
     fetchAllRowsIn(comms.map((c) => c.partner_id), (run, from, to) => supabase
@@ -43,7 +46,7 @@ export async function read26Q(supabase: ReturnType<typeof createClient>, range: 
       .order("id", { ascending: true })
       .range(from, to)),
   ]);
-  return { exps, vends, comms, partners };
+  return { exps, vends, comms, partners, goods };
 }
 
 /** Section 194H — commission / brokerage (lib/accounting/tds-rates.ts). */
@@ -79,7 +82,17 @@ export function build26QRows(read: Awaited<ReturnType<typeof read26Q>>): { rows:
       c.tds_amount ?? 0,
     ];
   });
-  const rows = [...expRows, ...commRows]
+  /* R-1891: 194Q on goods bills — amount = the part above ₹50 lakh the TDS was worked on. */
+  const nameByVid = new Map(read.vends.map((v) => [v.id, (v as { name?: string | null }).name ?? null]));
+  const goodsRows = (read.goods ?? []).map((g): Row26Q => [
+    (g.vendor_id ? nameByVid.get(g.vendor_id) : null) ?? "—",
+    g.vendor_id ? panByVid.get(g.vendor_id) ?? "" : "",
+    g.tds_section ?? "194Q",
+    g.tds_on ?? "",
+    g.tds_base ?? 0,
+    g.tds_amount ?? 0,
+  ]);
+  const rows = [...expRows, ...commRows, ...goodsRows]
     .sort((a, b) => a[0].localeCompare(b[0]) || a[3].localeCompare(b[3]));
   return {
     rows,

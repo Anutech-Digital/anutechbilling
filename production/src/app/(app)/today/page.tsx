@@ -28,6 +28,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useComplianceLog, toFiledMap, useTdsMonths } from "@/lib/queries/compliance";
 import { noTdsDeductedPredicate } from "@/lib/compliance/tds-not-applicable";
 import { useComplianceProfile } from "@/lib/compliance/profile";
+import { useCompliancePeople } from "@/lib/compliance/people-query";
 import { useTodayDealItems } from "@/lib/queries/deals";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canSeeDeals } from "@/lib/deals/access";
@@ -120,15 +121,17 @@ export default function TodayPage() {
   /* R-325: business type + GST mode (R-262). Not loaded / not migrated → undefined → the
      original Pvt Ltd, monthly-GST list, so a slow or failed read never hides a deadline. */
   const profile = useComplianceProfile();
+  /* R-1857: directors' DSC expiry (30 days ahead), DIR-3 KYC and details-change rows. */
+  const people = useCompliancePeople(profile.data?.businessType);
   const complianceItems = React.useMemo(
     () => (compliance.data
       ? complianceTodayItems(
           new Date(), toFiledMap(compliance.data),
           tdsMonths.data ? noTdsDeductedPredicate(tdsMonths.data, tdsToday) : undefined,
-          profile.data,
+          people?.length ? { businessType: null, gstFiling: null, ...profile.data, people } : profile.data,
         )
       : []),
-    [compliance.data, tdsMonths.data, tdsToday, profile.data],
+    [compliance.data, tdsMonths.data, tdsToday, profile.data, people],
   );
   /* R-1531: Bills of Supply after the GST effective date → revised tax invoices (31(3)(a)). */
   const revised = useRevisedInvoiceReminder();

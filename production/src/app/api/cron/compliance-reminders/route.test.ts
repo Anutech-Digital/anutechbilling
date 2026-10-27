@@ -97,3 +97,32 @@ describe("compliance-reminders cron reads the business profile (R-325)", () => {
     expect(sendEmail).not.toHaveBeenCalled();
   });
 });
+
+describe("compliance-reminders cron reads the directors register (R-1857)", () => {
+  it("a director's DSC 20 days away gets its 30-day reminder, by name; another company's director does not", async () => {
+    db.current = fakePostgrest({
+      ...seed([
+        { id: "T-pvt", name: "Pvt", business_type: "pvt_ltd", gst_filing: "monthly" },
+        { id: "T-prop", name: "Prop", business_type: "proprietor", gst_filing: "monthly" },
+      ]),
+      company_directors: [
+        { tenant_id: "T-pvt", name: "Asha Rao", din: "01234567", ceased_on: null, dsc_expiry: "2026-11-11", last_kyc_year: 2025, kyc_details_changed_on: "2026-10-20" },
+        { tenant_id: "T-prop", name: "Not Mine", din: "09999999", ceased_on: null, dsc_expiry: "2026-11-11", last_kyc_year: 2025, kyc_details_changed_on: null },
+      ],
+      firm_partners: [],
+    }).client;
+    const body = await (await GET(req())).json();
+    expect(body.errors).toEqual([]);
+    const pvt = (body.details as (Detail & { daysBefore: number })[]).filter((d) => d.tenant === "Pvt");
+    expect(pvt.find((d) => d.obligation === "roc_dsc:01234567")?.daysBefore).toBe(30);
+    expect(pvt.some((d) => d.obligation === "roc_dir3kyc_update:01234567")).toBe(true);
+    expect(obligationsOf(body.details, "Prop").some((k) => k.includes("09999999"))).toBe(false);
+  });
+
+  it("no directors table yet → the run still works (common DIR-3 KYC row, no person rows)", async () => {
+    db.current = fakePostgrest(seed([{ id: "T-pvt", name: "Pvt", business_type: "pvt_ltd", gst_filing: "monthly" }])).client;
+    const body = await (await GET(req())).json();
+    expect(body.errors).toEqual([]);
+    expect(obligationsOf(body.details, "Pvt")).toContain("roc_aoc4");
+  });
+});

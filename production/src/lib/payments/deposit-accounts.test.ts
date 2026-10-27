@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import {
   PAYMENT_METHODS,
+  defaultCashAccountId,
   defaultDepositAccountId,
   depositAccountLabel,
   depositAccounts,
@@ -99,5 +100,31 @@ describe("usualDepositAccountId (R-1730)", () => {
   it("cash → the one cash account; other → nothing", () => {
     expect(usualDepositAccountId([T1, T2, CASH], "cash", [T1.id])).toBe(CASH.id);
     expect(usualDepositAccountId([T1], "other", [T1.id])).toBe("");
+  });
+});
+
+/* R-1834 — every company has an auto "Petty Cash" (migration 20261024101339). Cash starts on it. */
+describe("defaultCashAccountId (R-1834)", () => {
+  const PETTY: DepositAccount  = { id: "66666666-6666-4666-8666-666666666666", name: "Petty Cash", bank_name: "Cash in hand", account_type: "cash", is_active: true, is_default_petty_cash: true };
+  const BRANCH: DepositAccount = { id: "77777777-7777-4777-8777-777777777777", name: "Branch cash box", bank_name: "Cash in hand", account_type: "cash", is_active: true };
+  it("the only cash account, whatever its name", () => {
+    expect(defaultCashAccountId([HDFC, CASH])).toBe(CASH.id);
+    expect(defaultCashAccountId([HDFC, PETTY])).toBe(PETTY.id);
+  });
+  it("several cash accounts → the auto Petty Cash (it was 'Not sure yet' before)", () => {
+    expect(defaultCashAccountId([BRANCH, HDFC, PETTY])).toBe(PETTY.id);
+    expect(defaultDepositAccountId([BRANCH, HDFC, PETTY], "cash")).toBe(PETTY.id);
+    expect(usualDepositAccountId([BRANCH, HDFC, PETTY], "cash", [BRANCH.id, BRANCH.id])).toBe(PETTY.id);
+  });
+  it("several hand-made cash accounts and no auto one → nothing (a wrong tag is worse than none)", () => {
+    expect(defaultCashAccountId([BRANCH, CASH])).toBe("");
+  });
+  it("a closed Petty Cash is never picked; no cash account → nothing", () => {
+    expect(defaultCashAccountId([BRANCH, { ...PETTY, is_active: false }])).toBe(BRANCH.id);
+    expect(defaultCashAccountId([HDFC])).toBe("");
+    expect(defaultCashAccountId(undefined)).toBe("");
+  });
+  it("bank methods never land on Petty Cash", () => {
+    expect(defaultDepositAccountId([HDFC, PETTY], "upi")).toBe(HDFC.id);
   });
 });

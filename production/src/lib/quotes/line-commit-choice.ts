@@ -46,3 +46,58 @@ export function markOneTimeLines(lines: readonly QuoteLineItem[]): QuoteLineItem
     return rest.commitment ? rest : { ...rest, one_time: true };
   });
 }
+
+/* R-1963 (26 Oct 2026): a licence typed as a Custom item (empty catalogue, "Add my own item")
+   had no commitment, so markOneTimeLines saved it as one_time — accepting "Google Workspace
+   Business Starter (1 year)" × 10 made no subscription and no renewal. The Custom item form
+   now asks the term (the same three choices as the line's select) and pre-fills it from the
+   name; the user still sees and can change it. Name only — the default qty (10) says nothing. */
+const ONE_TIME_WORDS = /\b(one[\s-]?time|once|setup|set-up|migration|installation|onboarding fee)\b/i;
+const MONTHLY_WORDS = /(\/\s*(mo|month)\b|\bper\s+month\b|\bmonthly\b|\(\s*1\s*month\s*\)|\bmonth[\s-]?to[\s-]?month\b)/i;
+const YEARLY_WORDS = new RegExp(
+  [
+    String.raw`\/\s*(yr|year)\b`,
+    String.raw`\bper\s+(year|annum|user|seat|licen[cs]e|mailbox)\b`,
+    String.raw`\byearly\b`,
+    String.raw`\bannual(ly)?\b`,
+    String.raw`\b\d+\s*years?\b`,
+    String.raw`\bseats?\b`,
+    String.raw`\blicen[cs]es?\b`,
+    String.raw`\bsubscription\b`,
+    String.raw`\bworkspace\b`,
+    String.raw`\bbusiness\s+(starter|standard|plus|basic|premium)\b`,
+    String.raw`\b(microsoft|office)\s*365\b`,
+    String.raw`\b[mo]365\b`,
+    String.raw`\bzoho\s+(mail|workplace|one)\b`,
+    String.raw`\benterprise\s+(standard|plus|e3|e5)\b`,
+  ].join("|"),
+  "i",
+);
+
+/** The term a Custom item's name suggests: monthly, annual, or one-time when nothing says so. */
+export function suggestCommitChoice(name: string): CommitChoice {
+  const n = (name ?? "").trim();
+  if (!n || ONE_TIME_WORDS.test(n)) return "one_time";
+  if (MONTHLY_WORDS.test(n)) return "monthly";
+  if (YEARLY_WORDS.test(n)) return "annual";
+  return "one_time";
+}
+
+/** A name that reads like a plan billed by term — saving it One-time deserves a warning. */
+export function looksLikeSubscription(name: string): boolean {
+  return suggestCommitChoice(name) !== "one_time";
+}
+
+/** What each choice means for the customer once the quote is accepted — one line, plain. */
+export const COMMIT_CHOICE_HINT: Readonly<Record<CommitChoice, string>> = {
+  one_time: "Charged once — no subscription or renewal.",
+  monthly: "Becomes a monthly subscription when the quote is accepted.",
+  annual: "Becomes a yearly subscription with a renewal when the quote is accepted.",
+};
+
+/** The unit the typed rate is in for each choice (R-369: monthly ₹/month, annual ₹/year). */
+export const COMMIT_CHOICE_RATE_UNIT: Readonly<Record<CommitChoice, string>> = {
+  one_time: "per unit, once",
+  monthly: "per unit per month",
+  annual: "per unit per year",
+};

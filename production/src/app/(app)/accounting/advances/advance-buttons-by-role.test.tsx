@@ -37,7 +37,7 @@ vi.mock("@/lib/queries/advances", () => {
 vi.mock("@/lib/queries/payroll", () => ({ useEmployees: () => ({ data: [] }) }));
 vi.mock("@/lib/queries/bank", () => ({ useBankAccounts: () => ({ data: [] }) }));
 vi.mock("@/lib/queries/vendor-bills", () => ({ getBillAttachmentUrl: vi.fn() }));
-vi.mock("@/components/features/accounting/add-expense-dialog", () => ({ AddExpenseDialog: () => null }));
+vi.mock("./add-bills-dialog", () => ({ AddBillsDialog: () => null }));
 
 import EmployeeAdvancesPage from "./page";
 
@@ -60,7 +60,7 @@ describe("R-857 advance money buttons follow the RPC role rule", () => {
     expect(b.settle).not.toBeNull();
   });
 
-  it("billing sees none of them, is told who can, and keeps Record expense / Edit / Delete", () => {
+  it("billing sees none of them, is told who can, and keeps Add bills / Edit / Delete", () => {
     state.role = "billing";
     render(<EmployeeAdvancesPage />);
     const b = moneyButtons();
@@ -68,7 +68,7 @@ describe("R-857 advance money buttons follow the RPC role rule", () => {
     expect(b.topUp).toBeNull();
     expect(b.settle).toBeNull();
     expect(screen.getByText(/Only an owner, manager or accountant can give, top up or settle an advance/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Record expense/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Add bills/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Edit advance for Ravi" })).toBeTruthy();
   });
 

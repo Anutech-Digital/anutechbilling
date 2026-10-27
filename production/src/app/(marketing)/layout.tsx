@@ -52,13 +52,15 @@ import { websiteTenantId } from "@/lib/website-tenant";
 import { getSiteTldPrices } from "@/site/lib/live-tld-pricing";
 import { domainTeaser } from "@/site/lib/data/domain-teaser";
 import { domainRenewals } from "@/site/lib/renewal-line";
+import { MetaPixel } from "@/site/lib/meta-pixel";
+import { websitePixelId } from "@/lib/meta/pixel-id.server";
 
 
 export default async function MarketingLayout({ children }: { children: React.ReactNode }) {
   /* R-076: the header's "Mailboxes from ₹…" teaser reads the live catalogue (10-min cache,
      typed fallback if the app is unreachable) — the same figure the home page shows. */
   /* R-1797: the Anutech Mail mailbox in that teaser from the price book (60 s cache). */
-  const [workspace, tlds, book] = await Promise.all([fetchLiveWorkspace(), getSiteTldPrices(), getPriceBook(websiteTenantId())]);
+  const [workspace, tlds, book, pixelId] = await Promise.all([fetchLiveWorkspace(), getSiteTldPrices(), getPriceBook(websiteTenantId()), websitePixelId()]);
   const emailFrom = emailFromRate(mergeEditions(workspace), bookMailboxMonthly(book));
   /* R-1599: the Domains menu teaser is the live .in price (same 10-min cache), never TLDS. */
   const domains = domainTeaser(tlds);
@@ -77,6 +79,8 @@ export default async function MarketingLayout({ children }: { children: React.Re
         {/* R-1498: the ONE floating launcher — its menu offers the AI chat and WhatsApp. */}
         <AgentChat />
         <ConsentBanner />
+        {/* R-1979: Meta Pixel — nothing without a pixel id or without "Accept all". */}
+        <MetaPixel pixelId={pixelId} />
         <CartDrawer />
       </CartProvider>
     </div>

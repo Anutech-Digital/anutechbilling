@@ -51,6 +51,8 @@ interface CreateCouponInput {
   max_seats?:        number | null;
   max_redemptions?:  number | null;
   valid_until?:      string | null;
+  /** R-1981: the marketing campaign this code was made for (optional). */
+  campaign_id?:      string | null;
 }
 
 export function useCreateCoupon() {
@@ -78,6 +80,7 @@ export function useCreateCoupon() {
           max_seats:         input.max_seats        ?? null,
           max_redemptions:   input.max_redemptions  ?? null,
           valid_until:       input.valid_until      ?? null,
+          campaign_id:       input.campaign_id      ?? null,
           is_active:         true,
           created_by:        auth.user.id,
         })

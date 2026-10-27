@@ -139,13 +139,18 @@ function CompanyPending() {
   );
 }
 
-export function CompanySection({ role }: { role: string | null | undefined }) {
+export function CompanySection({ role, showSubscriptions = true }: {
+  role: string | null | undefined;
+  /** R-1862: false for a one-time business with no subscription — no Trials / MRR / Renewals /
+   *  Waiting to activate rows (their pages still open from Ctrl+K). Default true. */
+  showSubscriptions?: boolean;
+}) {
   if (role === undefined) return <CompanyPending />;
   if (!role || !COMPANY_ROLES.has(role)) return null;
-  return <CompanyCards />;
+  return <CompanyCards showSubscriptions={showSubscriptions} />;
 }
 
-function CompanyCards() {
+function CompanyCards({ showSubscriptions }: { showSubscriptions: boolean }) {
   // One instant per mount, so the leads query key is stable across renders.
   const [since] = React.useState(() => istMonthStartUtc().toISOString());
 
@@ -188,8 +193,10 @@ function CompanyCards() {
             hint="This month, any stage" {...state(leads)} />
           <Metric href="/lead-gen" label="From the website" value={growth?.fromWebsite ?? null}
             hint="Enquiry, buy and trial forms" {...state(leads)} />
-          <Metric href="/subscriptions" label="Trials started" value={trialsStarted} withHint
-            hint={running.data ? `${running.data.length} running now` : undefined} {...state(trials)} />
+          {showSubscriptions && (
+            <Metric href="/subscriptions" label="Trials started" value={trialsStarted} withHint
+              hint={running.data ? `${running.data.length} running now` : undefined} {...state(trials)} />
+          )}
         </FunctionCard>
 
         <FunctionCard title="Sales">
@@ -214,12 +221,18 @@ function CompanyCards() {
 
         <FunctionCard title="Customers & Ops">
           <Metric href="/customers" label="New customers" value={newCustomers} {...state(customers)} />
-          <Metric href={drillHref("subsActive")} label="Monthly revenue (MRR)" value={money$(subSummary?.mrr)} withHint
-            hint={subSummary ? plural(subSummary.activeCount, "active subscription", "active subscriptions") : undefined} {...state(subs)} />
-          <Metric href={drillHref("subsExpiring")} label="Renewals in 30 days" value={subSummary?.renewalsDue.count ?? null} withHint
-            hint={subSummary ? `${money$(subSummary.renewalsDue.value)} a month` : undefined} {...state(subs)} />
+          {showSubscriptions && (
+            <>
+              <Metric href={drillHref("subsActive")} label="Monthly revenue (MRR)" value={money$(subSummary?.mrr)} withHint
+                hint={subSummary ? plural(subSummary.activeCount, "active subscription", "active subscriptions") : undefined} {...state(subs)} />
+              <Metric href={drillHref("subsExpiring")} label="Renewals in 30 days" value={subSummary?.renewalsDue.count ?? null} withHint
+                hint={subSummary ? `${money$(subSummary.renewalsDue.value)} a month` : undefined} {...state(subs)} />
+            </>
+          )}
           <Metric href="/support" label="Open tickets" value={openTickets} {...state(tickets)} />
-          <Metric href="/provisioning" label="Waiting to activate" value={waiting} {...state(queue)} />
+          {showSubscriptions && (
+            <Metric href="/provisioning" label="Waiting to activate" value={waiting} {...state(queue)} />
+          )}
         </FunctionCard>
       </div>
     </section>

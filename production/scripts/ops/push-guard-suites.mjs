@@ -6,6 +6,9 @@
  * repo source (a11y label ratchet, the invoice-link "View invoice" guard). `vitest related` does
  * not find them because they import nothing from the changed file; they read it with
  * readFileSync/readdirSync. So these run on every push. Measured 7 Oct: 49 files, ~40 s.
+ * R-1817 (24 Oct): 70 files, 43–124 s (machine load); gemini.test.ts alone was 33–55 s of real
+ * retry/breaker timers — its two repo scans now live in gemini-one-door.test.ts. Keep each listed
+ * file a pure scan; a suite that sleeps or renders belongs in CI, not here.
  *
  * Adding one: a test that walks src/ (readdirSync/glob) or is a *ratchet* belongs here.
  * tests/push-guard-suites.test.ts fails if a listed file is gone or a *ratchet* test is missing.
@@ -51,7 +54,8 @@ export const PUSH_GUARD_SUITES = [
   "src/components/providers/no-native-confirm.test.ts",
   "src/components/ui/button-hover.test.tsx",
   "src/lib/ai/autonomy-chokepoint.test.ts",
-  "src/lib/ai/gemini.test.ts",
+  "src/lib/ai/gemini-one-door.test.ts", // R-1817: only the scans; gemini.test.ts (~35 s of real retry timers) runs in CI
+  "src/lib/automation/cron-tenant-gate-scan.test.ts", // R-1818: every company-scoped cron asks cronTenantAllowed()
   "src/lib/app-url-fallback.test.ts",
   // R-1592 (18 Oct): repo-wide scans only CI ran — dd34789d (R-1598) broke the R-723 raw-host scan
   // past the push gate and CI stayed red ~2 h.
@@ -59,6 +63,7 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/nav-route-guard.test.ts",
   "src/lib/queries/__tests__/money-read-scan.test.ts",
   "tests/secret-scan.test.ts",
+  "tests/radix-single-copy.test.ts", // R-1822: one copy of each Radix package (two = Esc/dropdown-in-dialog freeze)
   "src/lib/auth/no-passwords-in-source.test.ts",
   "src/lib/security/no-public-admin-env.test.ts", // R-730: admin allowlists never NEXT_PUBLIC_
   "src/lib/email/no-hardcoded-recipient.test.ts",
@@ -88,6 +93,18 @@ export const PUSH_GUARD_SUITES = [
   "src/site/plus-price-hidden.test.ts",
   "src/site/silent-disabled-buttons.test.ts",
   "src/site/support-page.test.ts",
+  // R-1973 (26 Oct): src/site scans CI ran but the push did not — 8ca1bcbe went red on
+  // page-metadata (R-1479 "no two indexable routes share a title"). All ten together ~5 s.
+  "src/site/page-metadata.test.ts",
+  "src/site/about-link-and-titles.test.ts",
+  "src/site/anchor-links.test.ts",
+  "src/site/claims-truth.test.ts",
+  "src/site/honest-claims.test.ts",
+  "src/site/box-padding.test.ts",
+  "src/site/phone-width.test.ts",
+  "src/site/site-price-display.test.ts",
+  "src/site/lib/public-metadata-r1631.test.ts",
+  "src/site/lib/site-split.test.ts",
   // ── repo-wide file scans ──
   "tests/ops/deploy-targets.test.ts", // R-1604: only live + staging deploy targets
 ];

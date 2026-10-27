@@ -131,6 +131,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ id: str
   const parsed = await geminiJson<Partial<Draft>>({
     apiKey: gemini.apiKey,
     model: gemini.model,
+    tenantId: gemini.tenantId,
     system: REPLY_SYSTEM_PROMPT,
     user: ctx.contextText,
     temperature: 0.6,

@@ -28,6 +28,8 @@ vi.mock("@/lib/queries/expenses", async (importOriginal) => {
 });
 vi.mock("@/lib/queries/marketing-campaigns", () => ({ useCampaignOptions: () => ({ data: [] }) }));
 vi.mock("@/lib/queries/payroll", () => ({ useEmployees: () => ({ data: [] }) }));
+/* R-1846: the owner-salary caution reads the business type / partners — not part of these tests. */
+vi.mock("@/components/features/accounting/owner-pay-caution", () => ({ OwnerPayCautionBox: () => null }));
 vi.mock("@/lib/queries/bank", () => ({ useBankAccounts: () => ({ data: [] }) }));
 vi.mock("@/lib/queries/vendors", () => ({ useVendors: () => ({ data: [] }), ensureVendor: vi.fn(async () => null) }));
 vi.mock("@/lib/queries/reimbursements", () => ({ useAddReimbursement: () => ({ mutateAsync: vi.fn() }) }));

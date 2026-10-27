@@ -79,6 +79,16 @@ const nextConfig = {
   experimental: {
     cpus: 3,
     webpackMemoryOptimizations: true,
+    /* R-1836, 24 Oct 2026: Next's dev-only "segment explorer" (devtools panel) wraps every
+       layout/page/loading/error segment in extra SegmentViewNode components. On the first,
+       cold load of a route in `next dev --turbopack` the browser often hydrated the shell
+       without one of those wrappers, so React's useId tree differed from the server's and
+       every Radix id in the shell (sidebar account menu, Demo data, More) mismatched —
+       "A tree hydrated but some attributes…" on /customers/<id>, /accounting/pnl, /quotes,
+       /leads: 4 of 6 cold pages red, 0 of 6 with this off (same server, same code). Not a
+       time/IST value. Dev only — production never renders the explorer — and we do not use
+       the panel, so off; the local smoke check stays meaningful. */
+    devtoolSegmentExplorer: false,
   },
   images: {
     /* Deep study 27 Sep 2026: next 14.2.35 carries an unauthenticated RCE advisory in the
@@ -115,6 +125,10 @@ const nextConfig = {
     return [
       { source: "/vendor-portal", destination: "/accounting/vendors", permanent: false },
       { source: "/vendor-portal/:path*", destination: "/accounting/vendors", permanent: false },
+      /* R-1827 (24 Oct 2026): /google-workspace had no page (404 on staging) — the Google Workspace
+         page is /lp/google-workspace. Exact path only, so /google-workspace/pricing keeps its own page.
+         Runs before middleware: on reselleros.anutech.in the /lp path then 301s on to anutech.in. */
+      { source: "/google-workspace", destination: "/lp/google-workspace", permanent: true },
     ];
   },
   async headers() {
@@ -192,7 +206,7 @@ const nextConfig = {
                  the Ads tag) would need the nonce threaded through. Not a clean switch; recorded on
                  R-738 as the follow-up. Styles keep 'unsafe-inline' (Tailwind/Radix inline styles).
                  Pinned by src/security-headers.test.ts. */
-              `script-src 'self' 'unsafe-inline' ${isDev ? "'unsafe-eval'" : "'wasm-unsafe-eval'"} https://checkout.razorpay.com https://challenges.cloudflare.com https://www.googletagmanager.com https://www.googleadservices.com`,
+              `script-src 'self' 'unsafe-inline' ${isDev ? "'unsafe-eval'" : "'wasm-unsafe-eval'"} https://checkout.razorpay.com https://challenges.cloudflare.com https://www.googletagmanager.com https://www.googleadservices.com https://connect.facebook.net`,
               /* worker-src (R-525, 9 Oct 2026): without it the browser falls back to script-src,
                  which has no blob:, so the PDF renderer's blob: worker was refused and quote
                  "Download PDF" spun forever in the production build. blob: goes on WORKERS only —
@@ -207,8 +221,10 @@ const nextConfig = {
                  Download PDF logged a CSP violation and AI Help showed "API FAILED". A data:
                  URL never leaves the browser, so this opens no way to send data out. script-src
                  is untouched (wasm compiles under 'wasm-unsafe-eval' in production — R-738). */
-              `connect-src 'self' data: ${supaConnect} https://api.razorpay.com https://lumberjack.razorpay.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://www.googletagmanager.com https://www.googleadservices.com https://www.google.com https://googleads.g.doubleclick.net`,
-              "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://challenges.cloudflare.com https://td.doubleclick.net https://www.googletagmanager.com",
+              `connect-src 'self' data: ${supaConnect} https://api.razorpay.com https://lumberjack.razorpay.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://www.googletagmanager.com https://www.googleadservices.com https://www.google.com https://googleads.g.doubleclick.net https://www.facebook.com https://connect.facebook.net`,
+              /* R-1979: Meta Pixel — fbevents.js from connect.facebook.net (script-src above), its events to www.facebook.com (img-src https: already). Loaded only with a pixel id AND "Accept all". */
+              /* R-1988: the plan cards' click-to-play video — the privacy-enhanced nocookie player only. */
+              "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://challenges.cloudflare.com https://td.doubleclick.net https://www.googletagmanager.com https://www.youtube-nocookie.com",
               "object-src 'none'",
               "base-uri 'self'",
               "form-action 'self'",

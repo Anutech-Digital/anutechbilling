@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import type { CampaignTemplateRow } from "@/lib/supabase/database.types";
 import Link from "next/link";
-import { useSaveTemplate, unknownVariables } from "@/lib/queries/campaign-templates";
+import { useSaveTemplate, unknownVariables, usePreviewSender } from "@/lib/queries/campaign-templates";
 import { addDaysISO, istToday } from "@/lib/dates/ist";
 import { LEAD_SOURCES } from "@/lib/leads/lead-sources";
 
@@ -62,6 +62,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
     [recipients],
   );
   const hasPreset = presetRecipients.length > 0;
+  const sender = usePreviewSender(); // R-1924: the logged-in company, never a fixed name
   const [stages, setStages]   = React.useState<string[]>(["new", "contact"]);
   /* Empty = every source. "Only AI Lead Finder leads" was impossible to pick before (29 Sep). */
   const [sources, setSources] = React.useState<string[]>([]);
@@ -153,12 +154,12 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
     return bodyHtml
       .replace(/\{\{name\}\}/g, "Ramesh")
       .replace(/\{\{company\}\}/g, "Acme Pvt Ltd")
-      .replace(/\{\{sender\}\}/g, "Anutech Digital")
+      .replace(/\{\{sender\}\}/g, sender)
       .replace(/\{\{pitch\}\}/g, "Your clinic is still on Gmail — an email on your own domain (info@yourclinic.in) builds patients' trust.")
       .replace(/\{\{offer_code\}\}/g, offerEnabled ? (offerCode || "SAMPLE") : "SAMPLE")
       .replace(/\{\{discount\}\}/g, offerEnabled ? String(offerDiscount || "10") : "10")
       .replace(/\{\{expires\}\}/g, offerEnabled ? new Date(offerExpires).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "31 May 2026");
-  }, [bodyHtml, offerCode, offerDiscount, offerExpires, offerEnabled]);
+  }, [bodyHtml, sender, offerCode, offerDiscount, offerExpires, offerEnabled]);
 
   function loadTemplate(t: CampaignTemplateRow) {
     setName(t.name);

@@ -143,6 +143,21 @@ export default function BankingPage() {
           />
         </Card>
       ) : (
+        <>
+        {/* R-1834: every company starts with a Petty Cash, so the "no accounts" state above no
+            longer shows — keep its next step for a company that has only cash so far. */}
+        {canWrite && accounts.every((a) => a.account_type === "cash") && (
+          <Card className="mb-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-sm text-ink-2">
+                Only cash so far. Add your bank account to import its statement and to withdraw cash into Petty Cash.
+              </p>
+              <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
+                Add bank account
+              </Button>
+            </div>
+          </Card>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {accounts.map((acc) => (
             <BankAccountCard
@@ -154,6 +169,7 @@ export default function BankingPage() {
             />
           ))}
         </div>
+        </>
       )}
 
       {/* Add + Edit share one form (edit passes the account). */}
@@ -276,7 +292,7 @@ function BankAccountCard({
           {account.account_type === "cash" && balance < 0 && (
             <div className="mt-2 flex items-start gap-1.5 rounded-md bg-rose/10 px-2 py-1.5 text-xs text-rose">
               <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
-              <span>Cash can&apos;t be negative — you likely missed a cash deposit/top-up. Add it via <b>Move money</b>, or reconcile the missing entry.</span>
+              <span>Cash can&apos;t be negative — more cash was spent than came in. Next step: <b>Move money / withdraw</b> (top of this page) → withdraw from your bank account into this cash account for the cash you took out.</span>
             </div>
           )}
           <p className="text-xs text-ink-3 mt-1 inline-flex items-center gap-1">

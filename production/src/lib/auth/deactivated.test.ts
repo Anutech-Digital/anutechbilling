@@ -14,6 +14,23 @@ describe("isDeactivated", () => {
   });
 });
 
+describe("isDeactivated — R-1896 login end date (employee exit)", () => {
+  it("works through access_ends_on (IST), off from the next day", () => {
+    const row = { is_active: true, access_ends_on: "2026-10-15" };
+    expect(isDeactivated(row, new Date("2026-10-14T06:00:00Z"))).toBe(false);
+    expect(isDeactivated(row, new Date("2026-10-15T06:00:00Z"))).toBe(false);
+    expect(isDeactivated(row, new Date("2026-10-16T06:00:00Z"))).toBe(true);
+  });
+  it("no end date → unchanged", () => {
+    expect(isDeactivated({ is_active: true, access_ends_on: null }, new Date("2026-10-16T06:00:00Z"))).toBe(false);
+  });
+  it("uses the IST day — 15 Oct 23:00 UTC is already 16 Oct in India", () => {
+    const row = { is_active: true, access_ends_on: "2026-10-15" };
+    expect(isDeactivated(row, new Date("2026-10-15T23:00:00Z"))).toBe(true);
+    expect(isDeactivated(row, new Date("2026-10-15T12:00:00Z"))).toBe(false);
+  });
+});
+
 describe("isActiveOwner", () => {
   it("owner + active only", () => {
     expect(isActiveOwner({ role: "owner", is_active: true })).toBe(true);

@@ -8,6 +8,8 @@
  *   - Main 1.55fr 1fr grid of drag-reorderable widgets:
  *     LEFT  → Today's Focus + Recent Activity + Pipeline by Stage
  *     RIGHT → Chase the cash + Renewals + Trials + Leaderboard + Coming Up + Health
+ *   - R-1862: "What do you sell?" = One-time and no subscription yet → Open projects in place of
+ *     MRR, no Renewals · 30d count, no Renewals / Trials panels (sell-mode-dashboard.ts).
  */
 "use client";
 
@@ -58,6 +60,9 @@ import { leadTitle } from "@/lib/leads/display-name";
 import { LEAD_STAGES } from "@/lib/leads/stage-meta";
 import { COPY } from "@/lib/copy";
 import { toChaseSummary, chaseNote } from "@/lib/accounting/receivables-due";
+import { DEFAULT_SELL_MODE } from "@/lib/sell-mode";
+import { useActiveProjectSales, useSellMode } from "@/lib/queries/sell-mode";
+import { leadsWithProjects, panelAvailable, summarizeOpenProjects } from "@/components/features/dashboard/sell-mode-dashboard";
 
 // ============================================================
 // Helpers
@@ -120,6 +125,15 @@ export default function DashboardPage() {
   /* Getting-started ke "Load your price list" kadam ke liye — khali catalogue
      naye tenant ka pehla deadend tha (audit B2). */
   const { data: catalogItems, isSuccess: catalogLoaded }  = useItems();
+
+  /* R-1862: "What do you sell?" (lib/sell-mode.ts). A one-time business with no subscription
+     sees Open projects instead of MRR and no Renewals / Trials panels; a subscription on file
+     brings them back. Both / Subscriptions: as before. */
+  const { data: sell } = useSellMode();
+  const sellMode = sell?.mode ?? DEFAULT_SELL_MODE;
+  const projectsFirst = leadsWithProjects(sellMode, subscriptions ? subscriptions.length > 0 : undefined);
+  const activeProjectsQ = useActiveProjectSales(projectsFirst);
+  const openProjects = summarizeOpenProjects(activeProjectsQ.data ?? []);
 
   // Draggable-card order per column (persisted). Starts at the default order;
   // snaps to the saved order after mount (avoids hydration mismatch).
@@ -541,7 +555,9 @@ export default function DashboardPage() {
   };
 
   // Effective visible order = saved order (minus unavailable) + any new widgets.
-  const availIds = (all: string[]) => all.filter((id) => (id !== "chase" || hasChase) && widgets[id]);
+  /* R-1862: the user's saved drag order is kept — Renewals / Trials just drop out for projects-first. */
+  const availIds = (all: string[]) =>
+    all.filter((id) => (id !== "chase" || hasChase) && panelAvailable(id, projectsFirst) && widgets[id]);
   const mergeOrder = (saved: string[], all: string[]) => {
     const a = availIds(all);
     return [...saved.filter((id) => a.includes(id)), ...a.filter((id) => !saved.includes(id))];
@@ -598,7 +614,7 @@ export default function DashboardPage() {
 
       {/* Company — this month by function (growth, sales, money, customers & ops), every
           number a link to its screen. Owners and managers only; see company-section.tsx. */}
-      <CompanySection role={currentUser?.role} />
+      <CompanySection role={currentUser?.role} showSubscriptions={!projectsFirst} />
 
       {/* Money-health — silent when everything works, so its appearance means
           "stop and read". Placed above onboarding because a payment that is
@@ -629,6 +645,7 @@ export default function DashboardPage() {
         hasQuote={(quotes?.length ?? 0) > 0}
         hasSale={(subscriptions?.length ?? 0) > 0}
         workspaceName={currentUser?.tenantName ?? ""}
+        sellMode={sellMode}
         ready={Boolean(currentUser) && catalogLoaded && customersQ.isSuccess && quotesQ.isSuccess && subscriptionsQ.isSuccess}
       />
 
@@ -639,6 +656,7 @@ export default function DashboardPage() {
         draftQuotesCount={draftQuotes}
         pendingCollectValue={toCollect}
         pendingCollectNote={chaseNote(chase)}
+        showRenewals={!projectsFirst}
       />
 
       {/* KPI — money-first, 2-tier. The three ₹ metrics get big coloured tiles
@@ -666,6 +684,20 @@ export default function DashboardPage() {
           icon="target"
           href={dealStrip ? drillHref("dealsOpen") : drillHref("leadsActive")}
         />
+        {projectsFirst ? (
+          /* R-1862: one-time business — the projects being delivered, in place of ₹0 MRR. */
+          <KPI
+            label="Open projects"
+            value={activeProjectsQ.data ? rupee(openProjects.value, { compact: true }) : "—"}
+            accent={openProjects.value > 0 ? "emerald" : "ink"}
+            trend={openProjects.count === 0
+              ? "No active projects"
+              : `${openProjects.count} active project${openProjects.count === 1 ? "" : "s"}`}
+            trendKind={openProjects.count > 0 ? "up" : "neutral"}
+            icon="package"
+            href="/projects"
+          />
+        ) : (
         <KPI
           label="Monthly revenue"
           value={subscriptions ? rupee(activeMRR, { compact: true }) : "—"}
@@ -680,18 +712,21 @@ export default function DashboardPage() {
           icon="rupee"
           href={drillHref("subsActive")}
         />
+        )}
       </div>
       <StatStrip
         className="mb-6"
         items={[
           { label: "Customers", value: totalCustomers, href: "/customers" },
           { label: "Drafts to send", value: draftQuotes, href: drillHref("quotesDraft") },
-          {
+          /* R-1862: one fact, one place — the Open projects tile above already carries the count,
+             so a one-time business gets no third count here instead of "Renewals · 30d: 0". */
+          ...(projectsFirst ? [] : [{
             label: "Renewals · 30d",
             value: enrichedRenewals.length,
-            tone: urgentRenewals.length > 0 ? "rose" : undefined,
+            tone: urgentRenewals.length > 0 ? ("rose" as const) : undefined,
             href: drillHref("subsExpiring"),
-          },
+          }]),
         ]}
       />
 

@@ -31,6 +31,15 @@ const OPERATOR_SEND = strip(
 const AUTO_SEND = strip(
   readFileSync(join(SRC, "lib", "quotes", "send-auto-quote.ts"), "utf8"),
 );
+/* R-1956: "Mark as sent" moved out of the quote page's browser code into ONE server route,
+   shared with "Copy customer link" on a draft and the refused-send toast's "Copy link
+   instead". The assertions that pinned it on the page follow it here, unchanged in strength. */
+const MARK_SENT = strip(
+  readFileSync(join(SRC, "app", "api", "quotes", "[id]", "mark-sent", "route.ts"), "utf8"),
+);
+const QUOTE_PAGE = strip(
+  readFileSync(join(SRC, "app", "(app)", "quotes", "[id]", "page.tsx"), "utf8"),
+);
 
 describe("both send paths apply the stage rule", () => {
   it("the operator's Send button moves the lead", () => {
@@ -54,7 +63,7 @@ describe("both send paths apply the stage rule", () => {
   it("both scope the stage write to the tenant", () => {
     /* CLAUDE.md §4 — an app-layer check alone is not isolation, and these run on the ADMIN
        client, which bypasses RLS entirely. The explicit filter IS the boundary. */
-    for (const [name, code] of [["operator", OPERATOR_SEND], ["auto", AUTO_SEND]] as const) {
+    for (const [name, code] of [["operator", OPERATOR_SEND], ["auto", AUTO_SEND], ["mark-sent", MARK_SENT]] as const) {
       const block = code.slice(code.indexOf("stageAfterQuoteSent("));
       expect(block, name).toMatch(/from\("leads"\)[\s\S]{0,220}\.eq\("tenant_id"/);
     }
@@ -63,7 +72,7 @@ describe("both send paths apply the stage rule", () => {
   it("both check the error on the stage write", () => {
     /* Today's other lesson (L84): supabase-js does not throw, so an unchecked update reports
        success while the board stays wrong — which is the very symptom being fixed. */
-    for (const [name, code] of [["operator", OPERATOR_SEND], ["auto", AUTO_SEND]] as const) {
+    for (const [name, code] of [["operator", OPERATOR_SEND], ["auto", AUTO_SEND], ["mark-sent", MARK_SENT]] as const) {
       expect(code, name).toMatch(/const \{ error: stageErr \} = await/);
     }
   });
@@ -160,6 +169,12 @@ describe("every writer of a sent quote is accounted for", () => {
     "client.ts":                 "WhatsApp message status, not a quote",
     "whatsapp-reminders.server.ts": "S28 WhatsApp reminder LOG status, not a quote",
     "database.types.ts":         "generated types",
+    /* R-1956: the quote page no longer marks a quote sent itself (that is the mark-sent route,
+       which applies the rule). What is left is R-452's "Reopen" of a REJECTED quote, which by
+       design does not touch the lead — if it was marked Lost, reviving it is a choice made on
+       the lead. Path-keyed: every other page.tsx is still scanned. */
+    [`quote-page:${join("(app)", "quotes", "[id]", "page.tsx")}`]:
+      "R-452 Reopen of a rejected quote — leaves the lead alone by design",
   };
 
   it("no unaccounted-for path marks a quote sent without moving the lead", () => {
@@ -201,17 +216,19 @@ describe("every writer of a sent quote is accounted for", () => {
   });
 
   it("the Mark-as-sent button applies the rule and refreshes the board", () => {
-    const page = strip(readFileSync(join(SRC, "app", "(app)", "quotes", "[id]", "page.tsx"), "utf8"));
-    expect(page).toContain("stageAfterQuoteSent(lead?.stage)");
+    /* R-1956: the button calls the mark-sent route, which applies the rule to the lead's stage
+       read from the database at that moment (R-443). */
+    expect(QUOTE_PAGE).toContain("markQuoteSent(params.id)");
+    expect(MARK_SENT).toMatch(/stageAfterQuoteSent\(\(leadRow as \{ stage\?: string \| null \} \| null\)\?\.stage\)/);
     /* Moving the stage and not invalidating the leads cache reproduces the reported symptom
        exactly — the write lands, the board the operator walks to still shows the old column. */
-    expect(page).toMatch(/invalidateQueries\(\{ queryKey: \["leads"\] \}\)/);
+    expect(QUOTE_PAGE).toMatch(/invalidateQueries\(\{ queryKey: \["leads"\] \}\)/);
   });
 
   it("the Mark-as-sent write is row-count checked", () => {
     /* Without .select("id") an RLS refusal toasts success over an unchanged quote — L84. */
-    const page = strip(readFileSync(join(SRC, "app", "(app)", "quotes", "[id]", "page.tsx"), "utf8"));
-    expect(page).toMatch(/update\(\{ status: "sent" \}\)\.eq\("id", params\.id\)\.select\("id"\)/);
+    expect(MARK_SENT).toMatch(/\.update\(\{ status: "sent" \}\)\s*\.eq\("id", quote\.id\)[\s\S]{0,120}\.select\("id"\)/);
+    expect(MARK_SENT).toMatch(/if \(!flipped \|\| flipped\.length === 0\)/);
   });
 });
 
@@ -267,15 +284,11 @@ describe("every stage move leaves a trace on the timeline", () => {
      person moved it or the app did. And it is the L98 shape a fourth time: a rule reaching
      three call sites out of four, introduced by me hours after writing L98 down. */
 
-  const PAGE = strip(
-    readFileSync(join(SRC, "app", "(app)", "quotes", "[id]", "page.tsx"), "utf8"),
-  );
-
   it("all four senders write a stage activity row", () => {
     for (const [name, code] of [
       ["operator route", OPERATOR_SEND],
       ["auto send", AUTO_SEND],
-      ["mark as sent", PAGE],
+      ["mark as sent", MARK_SENT],
     ] as const) {
       expect(code, name).toMatch(/kind:\s*"stage"/);
     }
@@ -286,20 +299,22 @@ describe("every stage move leaves a trace on the timeline", () => {
 
   it("the mark-as-sent row names the quote and carries the rule's reason", () => {
     /* "stage changed" on a timeline is not history. Which quote, and why, is. */
-    expect(PAGE).toMatch(/marked as sent — \$\{move\.reason\}/);
+    expect(MARK_SENT).toMatch(/marked as sent — \$\{move\.reason\}/);
   });
 
   it("a failed history write does not report the whole action as failed", () => {
-    /* The quote is sent and the stage moved before this runs. Throwing here would say "could
-       not mark as sent" over two successful writes, and the operator would press it again. */
-    const block = PAGE.slice(PAGE.indexOf('kind:   "stage"'));
-    expect(block).toMatch(/^\s*[\s\S]{0,200}?\}\);\s*\} catch \{/m);
+    /* The quote is sent and the stage moved before this runs. Failing here would say "could
+       not mark as sent" over two successful writes, and the operator would press it again.
+       R-1956: in the route, the activity error is logged and the answer is still 200. */
+    const block = MARK_SENT.slice(MARK_SENT.indexOf('p_kind:    "stage"'));
+    expect(block).toMatch(/^[\s\S]{0,200}?\}\);\s*if \(actErr\) logDbError\(/);
+    expect(block.slice(0, block.indexOf("const out"))).not.toMatch(/return NextResponse/);
   });
 
   it("logs through the RPC, not a direct insert", () => {
-    /* So tenant_id comes from the server. A client-side insert into lead_activities would put
-       the tenant boundary in a React component — CLAUDE.md §4. */
-    expect(PAGE).toContain("useLogLeadActivity");
-    expect(PAGE).not.toMatch(/from\("lead_activities"\)\s*\.insert/);
+    /* So tenant_id comes from the server, not from the caller. */
+    expect(MARK_SENT).toContain('rpc("log_lead_activity"');
+    expect(MARK_SENT).not.toMatch(/from\("lead_activities"\)\s*\.insert/);
+    expect(QUOTE_PAGE).not.toMatch(/from\("lead_activities"\)\s*\.insert/);
   });
 });

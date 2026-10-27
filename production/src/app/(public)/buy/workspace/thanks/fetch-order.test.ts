@@ -15,6 +15,8 @@ const db = vi.hoisted(() => ({
   calls: 0,
   filters: [] as { op: string; col: string; val: unknown }[],
   paymentFilters: [] as { op: string; col: string; val: unknown }[],
+  invoice: null as { id: string } | null,
+  invoiceFilters: [] as { op: string; col: string; val: unknown }[],
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createAdminClient: () => {
@@ -31,7 +33,15 @@ vi.mock("@/lib/supabase/server", () => ({
       eq: (col: string, val: unknown) => { db.paymentFilters.push({ op: "eq", col, val }); return pay; },
       then: (ok: (v: { data: { amount: number }[]; error: null }) => unknown) => Promise.resolve({ data: db.payments, error: null }).then(ok),
     };
-    return { from: (table: string) => (table === "payments" ? pay : chain) };
+    /* R-1971: the GST invoice number for the order (invoices by quote_id). */
+    const inv = {
+      select: () => inv,
+      eq: (col: string, val: unknown) => { db.invoiceFilters.push({ op: "eq", col, val }); return inv; },
+      order: () => inv,
+      limit: () => inv,
+      maybeSingle: async () => ({ data: db.invoice, error: null }),
+    };
+    return { from: (table: string) => (table === "payments" ? pay : table === "invoices" ? inv : chain) };
   },
 }));
 
@@ -54,6 +64,22 @@ beforeEach(() => {
   db.calls = 0;
   db.filters = [];
   db.paymentFilters = [];
+  db.invoice = null;
+  db.invoiceFilters = [];
+});
+
+describe("R-1971: the thanks page shows the GST invoice number", () => {
+  it("an issued invoice for this quote (same tenant) → its number; none yet → null", async () => {
+    db.invoice = { id: "INV-T-27-0007" };
+    const o = await fetchOrder("Q-2026-27-0042", TOKEN);
+    expect(o?.invoiceNumber).toBe("INV-T-27-0007");
+    expect(db.invoiceFilters).toEqual(expect.arrayContaining([
+      { op: "eq", col: "quote_id", val: "Q-2026-27-0042" },
+      { op: "eq", col: "tenant_id", val: process.env.BUY_PAGE_TENANT_ID },
+    ]));
+    db.invoice = null;
+    expect((await fetchOrder("Q-2026-27-0042", TOKEN))?.invoiceNumber).toBeNull();
+  });
 });
 
 describe("R-1624: the order's payment state comes from orderPaymentState, not 'received' alone", () => {
@@ -130,7 +156,8 @@ describe("the buy page sends the token", () => {
     expect(thanksUrl("Q-2026-27-0042", TOKEN, true)).toBe(`/buy/workspace/thanks?order=Q-2026-27-0042&t=${TOKEN}&sim=1`);
   });
   it("both redirects on the buy page use thanksUrl with the route's publicToken", () => {
-    const src = readFileSync(join(process.cwd(), "src/app/(public)/buy/workspace/buy-workspace-client.tsx"), "utf8");
+    /* R-1971: the buy page's checkout is inline now — the submit logic lives in _parts/submit-order.ts. */
+    const src = readFileSync(join(process.cwd(), "src/app/(public)/buy/workspace/_parts/submit-order.ts"), "utf8");
     expect(src.match(/thanksUrl\(json\.quoteId, json\.publicToken, (true|false)\)/g)).toHaveLength(2);
     expect(src).not.toMatch(/\/buy\/workspace\/thanks\?order=/);
   });
@@ -138,5 +165,19 @@ describe("the buy page sends the token", () => {
     const src = readFileSync(join(process.cwd(), "src/app/api/public/checkout/workspace/route.ts"), "utf8");
     expect(src).toMatch(/\.select\("public_token"\)\.single\(\)/);
     expect(src.match(/^\s+publicToken,$/gm)).toHaveLength(2);
+  });
+});
+
+describe("R-1986: the thanks page names the plan as the buy page does", () => {
+  it("a buy-page order (plan google-workspace-starter) → 'Business Starter'", async () => {
+    db.row = { ...paidRow(), plan: "google-workspace-starter", line_items: [{ name: "Google Workspace Starter" }] };
+    expect((await fetchOrder("Q-2026-27-0042", TOKEN))?.tierName).toBe("Business Starter");
+  });
+  it("a monthly buy-page order → 'Business Standard — monthly'", async () => {
+    db.row = { ...paidRow(), plan: "google-workspace-standard", line_items: [{ name: "Google Workspace Business Standard — monthly (flex)" }] };
+    expect((await fetchOrder("Q-2026-27-0042", TOKEN))?.tierName).toBe("Business Standard — monthly");
+  });
+  it("another quote keeps its line name", async () => {
+    expect((await fetchOrder("Q-2026-27-0042", TOKEN))?.tierName).toBe("Business Starter");
   });
 });

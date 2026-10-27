@@ -22,7 +22,8 @@ export function groupOf(matchedToType: string | null): PaidGroup | null {
   switch (matchedToType) {
     case null:                  return "unreconciled";
     case "expense":
-    case "vendor_bill":         return "vendors";
+    case "vendor_bill":
+    case "vendor_payment":      return "vendors";   // R-1866
     case "salary":
     case "split":               return "salaries";
     case "statutory":           return "statutory";

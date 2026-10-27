@@ -20,9 +20,11 @@ describe("R-1109 workspaceGstLabel", () => {
 });
 
 describe("R-1109 wiring", () => {
-  const src = readFileSync("src/app/(public)/buy/workspace/buy-workspace-client.tsx", "utf8");
-  it("the dialog no longer hard-codes CGST 9% + SGST 9%", () => {
-    expect(src).not.toMatch(/\+ GST 18% \(CGST 9% \+ SGST 9%\)/);
-    expect(src).toMatch(/workspaceGstLabel\(/);
+  /* R-1971: the inline checkout's summary and invoice preview split GST by the buyer's state
+     against the website tenant's (_parts/checkout-form.ts gstLines) — never a fixed CGST+SGST. */
+  const summary = readFileSync("src/app/(public)/buy/workspace/_parts/order-summary.tsx", "utf8");
+  it("the checkout no longer hard-codes CGST 9% + SGST 9%", () => {
+    expect(summary).not.toMatch(/\+ GST 18% \(CGST 9% \+ SGST 9%\)/);
+    expect(summary).toMatch(/gstLines\(co\.totals\.gst, co\.buyerState, brand\?\.stateCode \?\? null\)/);
   });
 });

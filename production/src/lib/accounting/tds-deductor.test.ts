@@ -62,6 +62,11 @@ describe("tdsDecision", () => {
     expect(tdsDecision({ section: "194Q", base: 1_000_000, fyBaseSoFar: 5_000_000, fyBaseWithoutTds: 0, pan: null }).ratePct).toBe(5);
   });
 
+  it("R-1891: the 194Q no-PAN reason says 5%, not 20%", () => {
+    const d = tdsDecision({ section: "194Q", base: 1_000_000, fyBaseSoFar: 5_000_000, fyBaseWithoutTds: 0, pan: null });
+    expect(d.reason).toContain("No PAN → s.206AA 5%");
+    expect(d.reason).not.toContain("20%");
+  });
   it("194Q taxes only the part above ₹50L, never catches up", () => {
     const d = tdsDecision({ section: "194Q", base: 1_000_000, fyBaseSoFar: 4_500_000, fyBaseWithoutTds: 4_500_000, pan: CO });
     expect(d.applies).toBe(true);

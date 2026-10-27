@@ -44,6 +44,8 @@ import { Icon } from "@/components/ui/icon";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenRoute } from "./route-access";
 import { buildSetupSteps, setupLoading, type SetupFacts } from "./setup-checklist";
+import { firstProductStep } from "./sell-mode-dashboard";
+import { DEFAULT_SELL_MODE, type SellMode } from "@/lib/sell-mode";
 
 interface Step {
   id:    string;
@@ -61,7 +63,7 @@ const GROUP_TITLE: Record<Step["group"], string> = {
 };
 
 export function GettingStartedCard({
-  setup, hasCustomer, hasCatalog, hasQuote, hasSale, workspaceName, ready = true,
+  setup, hasCustomer, hasCatalog, hasQuote, hasSale, workspaceName, ready = true, sellMode = DEFAULT_SELL_MODE,
 }: {
   /**
    * False while any of the facts above is still loading. Until then the card renders nothing:
@@ -82,6 +84,8 @@ export function GettingStartedCard({
   hasQuote:     boolean;
   hasSale:      boolean;
   workspaceName: string;
+  /** R-1862: "What do you sell?" — decides where the first-product step opens. Default Both. */
+  sellMode?:    SellMode;
 }) {
   const { data: me } = useCurrentUser();
   const role = me?.role ?? null;
@@ -98,7 +102,8 @@ export function GettingStartedCard({
   const askOwner = role === "manager" && allSetup.some((s) => !s.done);
   const saleSteps: Step[] = [
     { id: "customer", group: "sale", label: "Add your first customer",   hint: "Or import from CSV — takes a minute.",                         href: "/customers",  cta: "Add customer", done: hasCustomer },
-    { id: "catalog",  group: "sale", label: "Load your price list",      hint: "One click seeds 7 products + 8 add-ons — edit rates anytime.", href: "/items",      cta: "Load catalog", done: hasCatalog },
+    /* R-1862: a one-time business adds its first one-time product (Products → One-time tab). */
+    { id: "catalog",  group: "sale", ...firstProductStep(sellMode), done: hasCatalog },
     { id: "quote",    group: "sale", label: "Create your first quote",   hint: "Pick from your catalog, send on WhatsApp/email.",              href: "/quotes/new", cta: "New quote",    done: hasQuote },
     { id: "sale",     group: "sale", label: "Record your first payment", hint: "When a customer pays, the sale + invoice happen here.",        href: "/quotes",     cta: "View quotes",  done: hasSale },
   ];

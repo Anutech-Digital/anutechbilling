@@ -22,13 +22,17 @@ import { read24Q } from "./tds-24q";
 import { HrPageShell } from "../payroll/screens";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { SalaryStatusCell, SalaryBankLinkAction } from "../payroll/salary-status-cell";
+import { salaryPayState, salaryBankLineKey } from "@/lib/payroll/salary-status";
+import { salaryBankLink, type SalaryBankLink } from "@/lib/payroll/salary-bank-link";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canWriteMoney } from "@/lib/nav";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { rupee, formatDate, toTitleCase } from "@/lib/utils";
 import { formatMonthLabel, fyStartYear, fyLabelOfYear, istToday } from "@/lib/dates/ist";
-import { useEmployees, useSalaryPayments, useEmployeeSalaryHistory, type SalaryPayment } from "@/lib/queries/payroll";
+import { useEmployees, useSalaryPayments, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines, useSalaryBankLines, type SalaryPayment } from "@/lib/queries/payroll";
 import { ctcFromEmployee } from "@/lib/payroll/ctc";
 import { fyPayslipActuals } from "@/lib/payroll/ctc-register";
 import { form16Working, fyStartOfPeriod, fyLabelOf, taxYearFor, type Form16Working } from "@/lib/payroll/income-tax";
@@ -55,14 +59,26 @@ function quarterOf(period: string): { periods: string[]; label: string } {
   const qNum = startMonth === 4 ? 1 : startMonth === 7 ? 2 : startMonth === 10 ? 3 : 4;
   return { periods, label: `Q${qNum} FY${fyLabelOfYear(fyStartYear(period))}` };
 }
-function statusBadge(s: SalaryPayment["paid_status"]) {
+/* R-1831: the status words come from lib/payroll/salary-status.ts (shared with Payroll). */
+const statusText = (p: SalaryPayment) => salaryPayState(p).label;
+const num = (n: number) => (n > 0 ? rupee(n) : <span className="text-ink-3">—</span>);
+
+/* R-1895: the nets to look up an unlinked bank line for — unpaid salaries (Link now) and a Paid
+   salary with no bank line on record (its Match opens that line's reconcile). */
+const waitingNets = (rows: SalaryPayment[]) =>
+  rows.filter((p) => p.paid_amount === 0 || (p.paid_status === "paid" && !p.reconciled_txn_id)).map((p) => p.net);
+
+/** R-1895: status badge + the bank-line link under it ("Bank line" / "Not matched to bank · Match"). */
+function StatusWithBankLink({ p, link, waitingLines, canWrite }: {
+  p: SalaryPayment; link: SalaryBankLink; waitingLines?: Map<number, string>; canWrite: boolean;
+}) {
   return (
-    <Badge kind={s === "paid" ? "success" : "warning"} size="sm" dot>
-      {s === "paid" ? "Paid" : s === "partial" ? "Partial" : "Awaiting reconcile"}
-    </Badge>
+    <div className="flex flex-col items-start gap-0.5">
+      <SalaryStatusCell p={p} waitingLines={waitingLines} canWrite={canWrite} size="sm" />
+      <SalaryBankLinkAction link={link} canWrite={canWrite} />
+    </div>
   );
 }
-const num = (n: number) => (n > 0 ? rupee(n) : <span className="text-ink-3">—</span>);
 
 /** Money columns shared by header, rows, totals and CSV — one source of truth. */
 const COLS: { key: keyof SalaryPayment; label: string }[] = [
@@ -89,7 +105,7 @@ export default function SalaryRegisterPage() {
   return (
     <HrPageShell
       title="Salary Register"
-      sub="The salary you actually paid — gross, statutory deductions and net in-hand. Print or export for your CA."
+      sub="Each month's salary — gross, statutory deductions, net in-hand — and whether the bank has paid it. Print or export for your CA."
     >
       <Suspense fallback={null}>
         <SalaryRegisterInner />
@@ -130,6 +146,10 @@ function MonthRegister() {
   const empById = new Map((empQ.data ?? []).map((e) => [e.id, e]));
   const rows = (payQ.data ?? []).slice().sort((a, b) =>
     (empById.get(a.employee_id)?.name ?? "").localeCompare(empById.get(b.employee_id)?.name ?? ""));
+  const canWrite = canWriteMoney(useCurrentUser().data?.role);
+  const { data: waitingLines } = useUnlinkedSalaryBankLines(waitingNets(rows), `${period}-01`);
+  const { data: bankLines } = useSalaryBankLines(rows);
+  const linkOf = (p: SalaryPayment) => salaryBankLink(p, bankLines?.get(p.id), waitingLines?.get(salaryBankLineKey(p.net)));
 
   const exportCsv = () => {
     downloadCsv(
@@ -139,7 +159,7 @@ function MonthRegister() {
         const e = empById.get(p.employee_id);
         return [
           toTitleCase(e?.name ?? "Employee"), e?.designation ?? "",
-          ...COLS.map((c) => p[c.key] as number), p.net, p.paid_status, p.pay_date ?? "",
+          ...COLS.map((c) => p[c.key] as number), p.net, statusText(p), p.pay_date ?? "",
         ];
       }),
     );
@@ -257,7 +277,7 @@ function MonthRegister() {
             registerTab === "paid" ? "bg-paper text-primary shadow-2xs font-extrabold" : "text-ink-3 hover:text-ink"
           }`}
         >
-          🧾 Paid Salary Register
+          🧾 Salary Register
         </button>
         <button
           type="button"
@@ -389,7 +409,7 @@ function MonthRegister() {
                     </td>
                     {COLS.map((c) => <td key={c.key} className="px-3 py-2.5 text-right font-mono tabular-nums text-ink-2">{num(p[c.key] as number)}</td>)}
                     <td className="px-3 py-2.5 text-right font-mono tabular-nums font-semibold text-ink">{rupee(p.net)}</td>
-                    <td className="px-3 py-2.5">{statusBadge(p.paid_status)}</td>
+                    <td className="px-3 py-2.5"><StatusWithBankLink p={p} link={linkOf(p)} waitingLines={waitingLines} canWrite={canWrite} /></td>
                   </tr>
                 );
               })}
@@ -399,7 +419,7 @@ function MonthRegister() {
         </Card>
       )}
       <p className="mt-3 text-xs text-ink-3">
-        Net pay = Gross − LOP − TDS − PF − ESI − other. These are the real amounts paid — the same figures your CA files.
+        Net pay = Gross − LOP − TDS − PF − ESI − other — the salary booked for the month, the figures your CA files. Status shows whether the bank has paid it.
       </p>
         </>
       )}
@@ -414,6 +434,14 @@ function EmployeeRegister({ employeeId }: { employeeId: string }) {
   const histQ = useEmployeeSalaryHistory(employeeId);
   const emp = (empQ.data ?? []).find((e) => e.id === employeeId);
   const rows = (histQ.data ?? []).slice().sort((a, b) => a.period.localeCompare(b.period));
+  const canWrite = canWriteMoney(useCurrentUser().data?.role);
+  const { data: waitingLines } = useUnlinkedSalaryBankLines(
+    waitingNets(rows),
+    rows.length ? `${rows[0].period}-01` : null,
+  );
+  /* R-1895: a Paid month opens the bank-statement line that paid it (mouse or Enter). */
+  const { data: bankLines } = useSalaryBankLines(rows);
+  const linkOf = (p: SalaryPayment) => salaryBankLink(p, bankLines?.get(p.id), waitingLines?.get(salaryBankLineKey(p.net)));
 
   /* Form 16 Part B working for one FY — the latest FY with a payslip by default. */
   const fyOptions = React.useMemo(() => Array.from(new Set(rows.map((p) => fyStartOfPeriod(p.period)))).sort((a, b) => b - a), [rows]);
@@ -450,7 +478,7 @@ function EmployeeRegister({ employeeId }: { employeeId: string }) {
     downloadCsv(
       `Salary-Register-${toTitleCase(emp?.name ?? "employee").replace(/\s+/g, "-")}.csv`,
       ["Month", "Pay date", ...COLS.map((c) => c.label), "Net pay", "Status"],
-      rows.map((p) => [monthLabel(p.period), p.pay_date ?? "", ...COLS.map((c) => p[c.key] as number), p.net, p.paid_status]),
+      rows.map((p) => [monthLabel(p.period), p.pay_date ?? "", ...COLS.map((c) => p[c.key] as number), p.net, statusText(p)]),
     );
   };
 
@@ -529,15 +557,28 @@ function EmployeeRegister({ employeeId }: { employeeId: string }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-hairline">
-              {rows.map((p) => (
-                <tr key={p.id} className="hover:bg-paper-2/40">
+              {rows.map((p) => {
+                const link = linkOf(p);
+                const href = link.kind === "open" ? link.href : null;
+                const open = () => { if (href) router.push(href as never); };
+                return (
+                <tr
+                  key={p.id}
+                  className={`hover:bg-paper-2/40 ${href ? "cursor-pointer" : ""}`}
+                  {...(href ? {
+                    role: "link", tabIndex: 0, title: "Open the bank-statement line that paid this salary",
+                    onClick: open,
+                    onKeyDown: (ev: React.KeyboardEvent) => { if (ev.key === "Enter") { ev.preventDefault(); open(); } },
+                  } : {})}
+                >
                   <td className="px-3 py-2.5 font-medium text-ink whitespace-nowrap">{monthLabel(p.period)}</td>
                   <td className="px-3 py-2.5 text-ink-2 whitespace-nowrap">{p.pay_date ? formatDate(p.pay_date) : "—"}</td>
                   {COLS.map((c) => <td key={c.key} className="px-3 py-2.5 text-right font-mono tabular-nums text-ink-2">{num(p[c.key] as number)}</td>)}
                   <td className="px-3 py-2.5 text-right font-mono tabular-nums font-semibold text-ink">{rupee(p.net)}</td>
-                  <td className="px-3 py-2.5">{statusBadge(p.paid_status)}</td>
+                  <td className="px-3 py-2.5"><StatusWithBankLink p={p} link={link} waitingLines={waitingLines} canWrite={canWrite} /></td>
                 </tr>
-              ))}
+                );
+              })}
               <TotalsRow label={`${rows.length} month${rows.length > 1 ? "s" : ""}`} rows={rows} leadSpan={2} />
             </tbody>
           </table>

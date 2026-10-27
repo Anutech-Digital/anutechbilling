@@ -16,6 +16,7 @@ import type { Database } from "./database.types";
 import { gatewayEnabled, gatewayFetch } from "@/server/postgrest/fetch";
 import { isUnreachableError, resilientFetch } from "./resilient-fetch";
 import { isDeactivated } from "@/lib/auth/deactivated";
+import { readSessionUser } from "@/lib/auth/session-user";
 
 /* R-710: the middleware runs on every request, so it gets a short leash — 4 s per attempt,
    one retry — instead of undici's 10 s connect timeout. auth-js does not retry getUser(). */
@@ -100,11 +101,9 @@ export async function updateSession(request: NextRequest): Promise<SessionResult
   if (user) {
     const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
     needsMfa = aal?.nextLevel === "aal2" && aal?.currentLevel !== "aal2";
-    const { data: me, error: meErr } = await supabase
-      .from("users")
-      .select("role, can_view_deals, is_active")
-      .eq("id", user.id)
-      .maybeSingle();
+    /* R-1896: + access_ends_on (employee exit), with a fallback if the column is not there yet. */
+    const { data: me, error: meErr } = await readSessionUser((cols) =>
+      supabase.from("users").select(cols).eq("id", user.id).maybeSingle());
     /* R-710: an unknown role must not read as "no role" — the role guard below skips a null
        role, so a sales login would see every page during a blip. Report it as unreachable. */
     if (meErr && isUnreachableError(meErr)) {

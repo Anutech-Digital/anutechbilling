@@ -76,6 +76,16 @@ describe("R-1820: the contact masker covers every phone / email column", () => {
     });
   }
 
+  it("R-1850: a director's email / phone (company_directors) is masked too", () => {
+    const sql = readFileSync(join(ROOT, "supabase/migrations/20261024205900_r1850_company_directors.sql"), "utf8");
+    const body = sql.match(/create table if not exists public\.company_directors \(([\s\S]*?)\n\);/)?.[1] ?? "";
+    const cols = body.split("\n").map((l) => l.trim().match(/^([a-z_0-9]+)\s+[a-z]/)?.[1]).filter((c): c is string => Boolean(c) && c !== "constraint");
+    expect(cols).toContain("din");
+    const contacty = cols.filter((c) => CONTACTY.test(c));
+    expect(contacty).toEqual(["email", "phone"]);
+    for (const c of contacty) expect(maskedColumns("company_directors")).toContain(c);
+  });
+
   it("customers.contact_persons (people's emails / phones inside a jsonb list) is masked", () => {
     expect(CONTACT_JSON_COLUMNS.customers).toContain("contact_persons");
     expect(maskedColumns("customers")).toContain("contact_persons");

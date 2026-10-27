@@ -32,7 +32,8 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { useConfirm } from "@/components/providers/confirm-provider";
-import { useVendors, useUpsertVendor, useDeleteVendor, useBillsByVendor, useExpensesByVendor, type Vendor } from "@/lib/queries/vendors";
+import { useVendors, useUpsertVendor, useDeleteVendor, useBillsByVendor, useExpensesByVendor, useVendorPayments, type Vendor } from "@/lib/queries/vendors";
+import { isOpenExpenseBill, expenseBillDue, vendorBalance, balanceWords, type VendorPaymentRow } from "@/lib/accounting/vendor-account";
 import type { VendorBill } from "@/lib/queries/vendor-bills";
 import { BillDetailDialog } from "@/components/features/accounting/bill-detail-dialog";
 import { AddExpenseDialog } from "@/components/features/accounting/add-expense-dialog";
@@ -41,13 +42,14 @@ import { VENDOR_BILL_CATEGORIES } from "@/lib/queries/vendor-bills";
 import { rupee, formatDate, GST_STATE_BY_CODE, gstStateFromGstin, foreignAmount, formatForeignAmount } from "@/lib/utils";
 import { newestFirst } from "@/lib/sort/newest-first";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
-import { IFSC_RE, ACCOUNT_RE, UPI_RE, cleanAccountNo, cleanIfsc } from "@/lib/payables/payment-run";
+import { checkBankDetails, bankToast, type BankField } from "@/lib/banking/bank-details";
 import { panFromGstin, isPan, deducteeTypeFromPan, DEDUCTEE_LABEL } from "@/lib/accounting/tds-deductor";
 import { UDYAM_RE } from "@/lib/accounting/msme";
 import { toast } from "sonner";
 import type { Route } from "next";
 import { recordBillHref } from "../bills/add-from-url";
 import { isCarryOverClick, clearStraySelection } from "./vendor-popup";
+import { VendorStatementView } from "./vendor-statement-view";
 
 const VENDOR_SUPPLIED_PRODUCTS = [
   "Google Workspace & GCP",
@@ -217,9 +219,10 @@ export default function VendorsPage() {
                         {v.outstanding > 0
                           ? <span className="font-serif text-[15px] font-semibold text-rose">{rupee(v.outstanding)}</span>
                           : <span className="text-emerald">✓</span>}
-                        {v.billCurrency && v.outstanding > 0 && (
+                        {v.billCurrency && v.outstanding > 0 && v.expenseBillsOutstanding === 0 && (
                           <div className="text-xs font-normal text-rose/70">{formatForeignAmount(v.billCurrency, v.foreignOutstanding)}</div>
                         )}
+                        {v.advance > 0 && <div className="text-xs text-emerald">Advance {rupee(v.advance)}</div>}
                       </td>
                       <td className="px-2 py-2.5 align-top" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end">
@@ -255,9 +258,10 @@ export default function VendorsPage() {
                         {v.outstanding > 0
                           ? <span className="font-serif text-lg text-rose">{rupee(v.outstanding, { compact: true })}</span>
                           : <span className="text-emerald text-sm">✓ clear</span>}
-                        {v.billCurrency && v.outstanding > 0 && (
+                        {v.billCurrency && v.outstanding > 0 && v.expenseBillsOutstanding === 0 && (
                           <div className="text-xs text-rose/70">{formatForeignAmount(v.billCurrency, v.foreignOutstanding)}</div>
                         )}
+                        {v.advance > 0 && <div className="text-xs text-emerald">Advance {rupee(v.advance, { compact: true })}</div>}
                       </div>
                     </div>
 
@@ -326,6 +330,15 @@ function VendorActions({
   );
 }
 
+/** R-1905: the input ids of the bank fields — Save focuses the first wrong one. */
+const BANK_INPUT_ID: Record<BankField, string> = { accountNo: "vendors-bank-no", ifsc: "vendors-bank-ifsc", upi: "vendors-upi" };
+
+/** R-1905: a red line under a bank field saying what is wrong with it. */
+function BankFieldError({ id, msg }: { id: string; msg: string | undefined }) {
+  if (!msg) return null;
+  return <p id={id} role="alert" className="text-xs text-rose leading-snug">{msg}</p>;
+}
+
 function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void }) {
   const save = useUpsertVendor();
   const [name, setName] = React.useState(vendor?.name ?? "");
@@ -348,9 +361,20 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
   const [bankNo, setBankNo] = React.useState(vendor?.bank_account_no ?? "");
   const [bankIfsc, setBankIfsc] = React.useState(vendor?.bank_ifsc ?? "");
   const [upiId, setUpiId] = React.useState(vendor?.upi_id ?? "");
-  const bankNoBad = !!bankNo.trim() && !ACCOUNT_RE.test(cleanAccountNo(bankNo));
-  const ifscBad = !!bankIfsc.trim() && !IFSC_RE.test(cleanIfsc(bankIfsc));
-  const upiBad = !!upiId.trim() && !UPI_RE.test(upiId.trim());
+  /* R-1905: each bank field says what is wrong with IT, under the field — shown once the
+     field is left (blur) or Save is pressed. An empty UPI ID never blocks Save. */
+  const bankCheck = checkBankDetails({ accountNo: bankNo, ifsc: bankIfsc, upi: upiId });
+  const [bankTouched, setBankTouched] = React.useState<Partial<Record<BankField, boolean>>>({});
+  const [triedSave, setTriedSave] = React.useState(false);
+  const bankError = (f: BankField) => {
+    const msg = bankCheck.errors[f];
+    if (!msg) return undefined;
+    /* A pairing message ("Add the IFSC that goes with…") waits for Save — while the owner is
+       still filling the account number it would only nag. A wrong value shows on blur. */
+    const pairing = f === "ifsc" ? !bankIfsc.trim() : f === "accountNo" ? !bankNo.trim() : false;
+    return triedSave || (bankTouched[f] && !pairing) ? msg : undefined;
+  };
+  const touchBank = (f: BankField) => () => setBankTouched((t) => ({ ...t, [f]: true }));
   const [notes, setNotes] = React.useState(() => {
     if (!vendor?.notes) return "";
     return vendor.notes.replace(/\[Supplied Products: .*?\]/, "").trim();
@@ -388,10 +412,11 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
       });
       return;
     }
-    if (bankNoBad || ifscBad || upiBad || (!!bankNo.trim() !== !!bankIfsc.trim())) {
-      toast.error("Bank details are not complete", {
-        description: bankNo.trim() && !bankIfsc.trim() ? "Add the IFSC with the account number." : !bankNo.trim() && bankIfsc.trim() ? "Add the account number with the IFSC." : "Check the account number, IFSC or UPI ID.",
-      });
+    const bankMsg = bankToast(bankCheck);
+    if (bankMsg) {
+      setTriedSave(true);
+      toast.error(bankMsg.title, { description: bankMsg.description });
+      document.getElementById(BANK_INPUT_ID[bankCheck.first!])?.focus();
       return;
     }
     try {
@@ -462,14 +487,17 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
               <FormField htmlFor="vendors-bank-name" label="Account holder name">
                 <Input id="vendors-bank-name" value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="As on the cheque" />
               </FormField>
-              <FormField htmlFor="vendors-bank-no" label="Account number" hint={bankNoBad ? "6–18 digits" : undefined}>
-                <Input id="vendors-bank-no" value={bankNo} onChange={(e) => setBankNo(e.target.value)} inputMode="numeric" autoComplete="off" placeholder="e.g. 50200012345678" className="font-mono" />
+              <FormField htmlFor="vendors-bank-no" label="Account number">
+                <Input id="vendors-bank-no" value={bankNo} onChange={(e) => setBankNo(e.target.value)} onBlur={touchBank("accountNo")} inputMode="numeric" autoComplete="off" placeholder="e.g. 50200012345678" className="font-mono" aria-invalid={!!bankError("accountNo")} aria-describedby={bankError("accountNo") ? "vendors-bank-no-error" : undefined} />
+                <BankFieldError id="vendors-bank-no-error" msg={bankError("accountNo")} />
               </FormField>
-              <FormField htmlFor="vendors-bank-ifsc" label="IFSC" hint={ifscBad ? "11 characters, 5th is 0 — e.g. HDFC0001234" : undefined}>
-                <Input id="vendors-bank-ifsc" value={bankIfsc} onChange={(e) => setBankIfsc(e.target.value.toUpperCase())} maxLength={11} placeholder="HDFC0001234" className="font-mono uppercase" />
+              <FormField htmlFor="vendors-bank-ifsc" label="IFSC">
+                <Input id="vendors-bank-ifsc" value={bankIfsc} onChange={(e) => setBankIfsc(e.target.value.toUpperCase())} onBlur={touchBank("ifsc")} maxLength={11} placeholder="HDFC0001234" className="font-mono uppercase" aria-invalid={!!bankError("ifsc")} aria-describedby={bankError("ifsc") ? "vendors-bank-ifsc-error" : undefined} />
+                <BankFieldError id="vendors-bank-ifsc-error" msg={bankError("ifsc")} />
               </FormField>
-              <FormField htmlFor="vendors-upi" label="UPI ID (if no account)" hint={upiBad ? "e.g. name@okhdfcbank" : undefined}>
-                <Input id="vendors-upi" value={upiId} onChange={(e) => setUpiId(e.target.value.trim())} placeholder="name@okhdfcbank" />
+              <FormField htmlFor="vendors-upi" label="UPI ID (optional, if no bank account)">
+                <Input id="vendors-upi" value={upiId} onChange={(e) => setUpiId(e.target.value.trim())} onBlur={touchBank("upi")} placeholder="name@okhdfcbank" aria-invalid={!!bankError("upi")} aria-describedby={bankError("upi") ? "vendors-upi-error" : undefined} />
+                <BankFieldError id="vendors-upi-error" msg={bankError("upi")} />
               </FormField>
             </div>
           </div>
@@ -559,8 +587,11 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
 function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClose: () => void; onEdit: () => void }) {
   const { data: bills, isLoading } = useBillsByVendor(vendor.id);
   const { data: vExpenses } = useExpensesByVendor(vendor.id);
+  const payments = useVendorPayments(vendor.id, bills, vExpenses);
   const [detailBill, setDetailBill] = React.useState<VendorBill | null>(null);
   const [detailExpense, setDetailExpense] = React.useState<ExpenseRow | null>(null);
+  /* R-1921: the dated running statement (bill, payment, TDS, advance) next to the lists. */
+  const [view, setView] = React.useState<"bills" | "statement">("bills");
   const prods = parseSuppliedProducts(vendor.notes);
   /* R-1511: the click that opened this popup must not leave the header half-selected. */
   const openedAt = React.useRef(Date.now());
@@ -570,7 +601,7 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
     <>
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent
-        className="md:!max-w-lg"
+        className="md:!max-w-2xl"
         onMouseDownCapture={(e) => { if (isCarryOverClick(e.detail, Date.now() - openedAt.current)) e.preventDefault(); }}
       >
         <DialogHeader>
@@ -581,8 +612,7 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
           </DialogTitle>
           <DialogDescription>
             {vendor.docCount} {vendor.docCount === 1 ? "entry" : "entries"} · {rupee(vendor.totalSpend)}
-            {vendor.billCurrency ? ` (${formatForeignAmount(vendor.billCurrency, vendor.foreignBilled)})` : ""} spent ·{" "}
-            <b className={vendor.outstanding > 0 ? "text-rose" : "text-emerald"}>{vendor.outstanding > 0 ? `${rupee(vendor.outstanding)} due` : "all settled"}</b>
+            {vendor.billCurrency ? ` (${formatForeignAmount(vendor.billCurrency, vendor.foreignBilled)})` : ""} spent
             {vendor.billCount > 0 && vendor.expenseCount > 0 && (
               <span className="text-ink-3"> · {vendor.billCount} COGS bill{vendor.billCount === 1 ? "" : "s"} + {vendor.expenseCount} expense{vendor.expenseCount === 1 ? "" : "s"}</span>
             )}
@@ -593,6 +623,8 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
             )}
           </DialogDescription>
         </DialogHeader>
+
+        <VendorBalanceBox vendor={vendor} />
 
         {/* Supplied Products Portfolio Section */}
         <div className="p-3 bg-paper-2/60 border border-hairline rounded-xl space-y-1.5">
@@ -610,8 +642,19 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
           )}
         </div>
 
+        <div role="group" aria-label="Show" className="inline-flex self-start rounded-lg border border-hairline p-0.5 bg-paper-2/60">
+          {([["bills", "Bills & payments"], ["statement", "Statement"]] as const).map(([v, label]) => (
+            <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber ${view === v ? "bg-paper text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
         <div className="max-h-[55vh] overflow-y-auto -mx-1 px-1 space-y-4">
-          {isLoading ? (
+          {view === "statement" ? (
+            <VendorStatementView vendorId={vendor.id} />
+          ) : isLoading ? (
             <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-12" />)}</div>
           ) : (bills ?? []).length === 0 && (vExpenses ?? []).length === 0 ? (
             <div className="py-6 text-center space-y-3">
@@ -670,7 +713,11 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
                     </div>
                     <div className="text-right shrink-0">
                       <p className="font-mono text-sm font-semibold text-ink">{fx ? <>{fx} <span className="text-xs font-normal text-ink-3">({rupee(e.amount)})</span></> : rupee(e.amount)}</p>
-                      {e.gst_paid > 0 && (() => { const gfx = foreignAmount(e.currency, e.gst_paid, e.fx_rate); return <p className="text-xs text-emerald">+{gfx ?? rupee(e.gst_paid)} GST{gfx ? ` (${rupee(e.gst_paid)})` : ""}</p>; })()}
+                      {e.gst_paid > 0 && (() => { const gfx = foreignAmount(e.currency, e.gst_paid, e.fx_rate); return <p className="text-xs text-ink-3">incl. {gfx ?? rupee(e.gst_paid)} GST{gfx ? ` (${rupee(e.gst_paid)})` : ""}</p>; })()}
+                      {/* R-1868: an unpaid expense bill is owed, like a COGS bill. */}
+                      {isOpenExpenseBill(e)
+                        ? <p className="text-xs text-rose">{rupee(expenseBillDue(e))} due</p>
+                        : e.paid ? <p className="text-xs text-emerald">paid</p> : null}
                     </div>
                   </li>
                   );
@@ -680,6 +727,7 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
             )}
           </>
           )}
+          {view === "bills" && !isLoading && <VendorPaymentsList rows={payments.data} loading={payments.isLoading} error={payments.isError ? payments.error : null} onRetry={() => void payments.refetch()} />}
         </div>
 
         <DialogFooter className="gap-2">
@@ -698,5 +746,72 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
     {detailBill && <BillDetailDialog bill={detailBill} onClose={() => setDetailBill(null)} />}
     {detailExpense && <AddExpenseDialog expense={detailExpense} onClose={() => setDetailExpense(null)} />}
     </>
+  );
+}
+
+/**
+ * R-1868: the vendor's balance in one line — open bills (COGS + unpaid expense bills) less the
+ * advance still with them — and the next step: pay the bills, or use the advance on a bill.
+ */
+function VendorBalanceBox({ vendor }: { vendor: Vendor }) {
+  const b = vendorBalance(vendor.outstanding, vendor.advance);
+  const w = balanceWords(b);
+  const toneCls = w.tone === "rose" ? "text-rose" : w.tone === "emerald" ? "text-emerald" : "text-ink";
+  const split = [
+    vendor.billsOutstanding > 0 ? `COGS bills ${rupee(vendor.billsOutstanding)}` : null,
+    vendor.expenseBillsOutstanding > 0 ? `expense bills ${rupee(vendor.expenseBillsOutstanding)}` : null,
+  ].filter(Boolean).join(" + ");
+  const next = b.advance > 0 && b.bills > 0
+    ? { href: "/accounting/prepaid", label: "Use advance on a bill", icon: "wallet" as const }
+    : b.state === "owe" ? { href: "/accounting/payment-runs", label: "Pay these bills", icon: "rupee" as const }
+    : b.state === "advance" ? { href: "/accounting/prepaid", label: "See the advance", icon: "wallet" as const }
+    : null;
+  return (
+    <section aria-label="Balance" className="rounded-xl border border-hairline bg-paper-2/60 p-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="min-w-0">
+        <p className={`font-serif text-lg font-semibold ${toneCls}`}>{w.headline}</p>
+        {(w.detail || (b.state === "owe" && split)) && <p className="text-xs text-ink-3">{w.detail ?? split}</p>}
+      </div>
+      {next && (
+        <Button asChild size="sm" variant="default" icon={next.icon} className="w-full sm:w-auto">
+          <Link href={next.href as Route}>{next.label}</Link>
+        </Button>
+      )}
+    </section>
+  );
+}
+
+/** R-1868: payments made to the vendor — bank lines (with the TDS withheld) and bills paid outside the bank. */
+function VendorPaymentsList({ rows, loading, error, onRetry }: {
+  rows: VendorPaymentRow[] | undefined; loading: boolean; error: unknown; onRetry: () => void;
+}) {
+  return (
+    <div>
+      <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1 px-1">Payments</p>
+      {loading ? (
+        <Skeleton className="h-10" />
+      ) : error ? (
+        <LoadError what="Payments" error={error} onRetry={onRetry} />
+      ) : (rows ?? []).length === 0 ? (
+        <p className="text-xs text-ink-3 px-1 py-2">No payments to this vendor yet.</p>
+      ) : (
+        <ul className="divide-y divide-hairline">
+          {(rows ?? []).map((p) => (
+            <li key={p.key}>
+              <Link href={p.href as Route} className="flex items-center justify-between gap-3 py-2.5 -mx-1 px-1 rounded-md hover:bg-paper-2/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+                <div className="min-w-0">
+                  <p className="text-sm text-ink truncate">{p.what}</p>
+                  <p className="text-xs text-ink-3 truncate">{formatDate(p.date)} · {p.via}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="font-mono text-sm font-semibold text-ink">{rupee(p.cash)}</p>
+                  {p.tds > 0 && <p className="text-xs text-ink-3">+ TDS {rupee(p.tds)}</p>}
+                </div>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

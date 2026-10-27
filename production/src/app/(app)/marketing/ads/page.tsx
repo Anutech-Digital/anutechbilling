@@ -45,7 +45,6 @@ const MSG: Record<string, { ok: boolean; text: string }> = {
   connected_syncfailed: { ok: false, text: "Account connected, but the first sync failed — the reason is shown below." },
   denied: { ok: false, text: "Permission was denied." },
   noscope: { ok: false, text: "The Google Ads checkbox was not ticked — connect again." },
-  nodevtoken: { ok: false, text: "Google connected, but GOOGLE_ADS_DEVELOPER_TOKEN is not set — accounts cannot be read." },
   noaccounts: { ok: false, text: "This login has no ad account — connect with the email that runs your ads." },
   badstate: { ok: false, text: "The sign-in expired — connect again." },
   notconfigured: { ok: false, text: "App keys are not set." },
@@ -325,7 +324,7 @@ function PlatformCard({ platform, status, accounts, onToggle }: { platform: AdPl
   const expiry = !isG ? status?.meta.tokenExpiresAt : null;
   const expiringSoon = expiry ? Date.parse(expiry) - Date.now() < 7 * 86_400_000 : false;
   const setupNote = isG
-    ? (!configured ? "Google OAuth keys are not set." : !status?.google.devToken ? "GOOGLE_ADS_DEVELOPER_TOKEN is not set (Ads manager account → API Center)." : null)
+    ? (!configured ? "Google OAuth keys are not set." : null)
     : (!configured ? "META_APP_ID / META_APP_SECRET are not set (Meta app with Marketing API, ads_read)." : null);
   return (
     <Card className="p-4">
@@ -339,7 +338,7 @@ function PlatformCard({ platform, status, accounts, onToggle }: { platform: AdPl
           <p className="text-xs text-ink-3 mt-0.5">{setupNote ?? (isG && status?.google.email ? status.google.email : connected ? `${accounts.length} account` : "Connect with the login that runs your ads.")}</p>
           {isG && status?.google.lastError && <p className="text-xs text-rose-ink mt-1">{status.google.lastError}</p>}
         </div>
-        {configured && (!isG || status?.google.devToken) ? (
+        {configured ? (
           <Button asChild size="sm" variant={connected ? "outline" : "primary"}><a href={connectHref}>{connected ? "Reconnect" : "Connect"}</a></Button>
         ) : <Button size="sm" variant="ghost" disabled>Setup</Button>}
       </div>

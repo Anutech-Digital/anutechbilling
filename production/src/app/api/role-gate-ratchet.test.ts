@@ -71,9 +71,10 @@ const ROLE_GATE = new RegExp([
   // R-1776: every Cold Calling route starts with coldCallContext() (src/server/coldcall/route-context.ts),
   // which returns 403 unless the users row's role is in COLD_CALL_ROLES — fail-closed, like mayOpenPage.
   String.raw`\bcoldCallContext\s*\(`,
-  // R-1792: every Marketing budget route starts with budgetContext() (src/server/marketing-budget/
-  // budget.server.ts), which returns 403 unless the role is in BUDGET_ROLES; each write route then
-  // checks canAskBudget / canApproveBudget / canPay, and the database triggers check again.
+  // R-1792 (merged 24 Oct 2026): every Marketing budget route starts with budgetContext()
+  // (src/server/marketing-budget/budget.server.ts) — 403 unless the users row's role is in
+  // BUDGET_ROLES (owner, marketing, billing, accountant); who may approve / pay is then checked
+  // per route (canApproveBudget / canPay / canAskBudget) and again by the DB triggers.
   String.raw`\bbudgetContext\s*\(`,
 ].join("|"));
 
@@ -99,6 +100,7 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
   "public/cart-coupon": "website cart",
   "public/checkout/cart": "website checkout",
   "public/checkout/workspace": "website checkout",
+  "public/consent": "website cookie banner — insert-only consent record, per-IP rate limit (R-2010)",
   "public/checkout/verify": "website checkout's return from Razorpay — bounded by the Razorpay signature (R-1596)",
   "public/coupons/validate": "website cart",
   "public/demo-session": "anonymous demo (R-524)",
@@ -119,6 +121,8 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
   "push/unsubscribe": "the caller's own push endpoint",
   "push/test": "a test push to the caller's own device",
   "settings/change-password": "the caller's own password",
+  "settings/mobile/send": "R-1903: a code to verify the caller's OWN mobile — request_phone_otp acts only on the caller's users row",
+  "settings/mobile/verify": "R-1903: checks the caller's OWN code — verify_phone_otp reads and writes only the caller's rows",
   "vault/personal/pin": "the caller's own personal-vault PIN",
   "aa/setu/callback": "Setu redirects the bank's browser here; it only flips the consent row the state token names",
   // R-1470

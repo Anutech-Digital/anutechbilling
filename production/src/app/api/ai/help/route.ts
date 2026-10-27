@@ -133,6 +133,7 @@ ${what}` };
   const ask = (dataTools: string | null, toolResults: string | null) => geminiJson<unknown>({
     apiKey,
     model: gemini.model,
+    tenantId: gemini.tenantId,
     system: helpSystemPrompt({ pagePath: pagePath ?? null, userName: me?.full_name ?? null, role: me?.role ?? null, mode, pagePurpose: pagePurpose(pagePath), testHistory, dataTools }),
     user: helpUserTurn(messages, {
       trail: trail.length ? trailForPrompt(trail) : null,

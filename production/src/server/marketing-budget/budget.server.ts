@@ -1,7 +1,7 @@
 /**
  * Marketing budget & payments (R-1792) — reads and writes, through RLS (withTenant).
  *
- * The rules that move money live in the database (migration 20261024063200): only the owner
+ * The rules that move money live in the database (migration 20261023120000): only the owner
  * approves, a payment must fit what is left, only billing / owner mark it paid. This file asks
  * for those changes and turns the database's refusal into the sentence a person reads.
  */

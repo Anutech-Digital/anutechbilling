@@ -16,7 +16,15 @@ import { Icon } from "@/components/ui/icon";
 import { Label } from "@/components/ui/label";
 import { useSendWhatsApp } from "@/lib/queries/whatsapp";
 
-export type WhatsAppCategory = "quote" | "invoice" | "renewal" | "welcome" | "custom";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import {
+  buildWhatsAppTemplates,
+  senderFromUser,
+  type WhatsAppCategory,
+  type WhatsAppTemplateVars,
+} from "@/lib/whatsapp/action-templates";
+
+export type { WhatsAppCategory };
 
 export interface WhatsAppActionDialogProps {
   open: boolean;
@@ -26,17 +34,7 @@ export interface WhatsAppActionDialogProps {
   companyName?: string | null;
   category?: WhatsAppCategory;
   /** Context variables to populate templates */
-  vars?: {
-    quoteNumber?: string;
-    invoiceNumber?: string;
-    amount?: string;
-    dueDate?: string;
-    domain?: string;
-    productName?: string;
-    seats?: number;
-    link?: string;
-    bankDetails?: string;
-  };
+  vars?: WhatsAppTemplateVars;
 }
 
 export function WhatsAppActionDialog({
@@ -61,51 +59,13 @@ export function WhatsAppActionDialog({
     return p;
   }, [phone]);
 
-  // Template generators
-  const templates = React.useMemo(() => {
-    const cName = recipientName || companyName || "Valued Client";
-    const co = companyName || "your organization";
-
-    return {
-      quote: `Hi ${cName},\n\n` +
-        `Greetings from Anutech Digital! 🚀\n\n` +
-        `We have generated Quote *${vars.quoteNumber || "Q-2026-XXXX"}* for ${co}.\n` +
-        `• *Plan/Product:* ${vars.productName || "Google Workspace / M365"}\n` +
-        `• *Seats:* ${vars.seats || 10} licenses\n` +
-        `• *Total Value:* ${vars.amount || "₹XX,XXX"}\n\n` +
-        `You can view, download, and approve your quote online here:\n${vars.link || "https://anutechbilling.com/quote"}\n\n` +
-        `Please let us know if you need any adjustments or custom licensing terms!`,
-
-      invoice: `Hi ${cName},\n\n` +
-        `Hope you are having a productive day!\n\n` +
-        `This is a gentle payment reminder for GST Invoice *${vars.invoiceNumber || "INV-XXXX"}* issued to ${co}.\n` +
-        `• *Amount Due:* *${vars.amount || "₹XX,XXX"}*\n` +
-        `• *Due Date:* ${vars.dueDate || "Immediate"}\n\n` +
-        `*Bank Details for RTGS/NEFT/UPI:*\n` +
-        `Bank: ICICI Bank Ltd\n` +
-        `A/c Name: Anutech Digital Solutions\n` +
-        `A/c No: 002105001928\n` +
-        `IFSC: ICIC0000021\n` +
-        `UPI ID: anutech@icici\n\n` +
-        `Kindly share the transaction UTR once processed. Thank you!`,
-
-      renewal: `Hi ${cName},\n\n` +
-        `⚠️ *Subscription Expiration Warning*\n\n` +
-        `Your subscription for *${vars.domain || co}* (${vars.productName || "Cloud Service"}) is due for renewal on *${vars.dueDate || "soon"}*.\n\n` +
-        `To avoid service interruption, admin lockout, or email bounce, please confirm your renewal quote *${vars.quoteNumber || "Q-XXXX"}* (${vars.amount || "₹XX,XXX"}).\n\n` +
-        `Quick Link: ${vars.link || "https://anutechbilling.com/renewals"}\n\n` +
-        `Reply YES to auto-renew or call us at +91 98765 43210.`,
-
-      welcome: `Hi ${cName},\n\n` +
-        `🎉 Welcome to Anutech Digital!\n\n` +
-        `Your service provisioning for *${co}* is now COMPLETE.\n` +
-        `• *Domain/Tenant:* ${vars.domain || "Your Workspace"}\n` +
-        `• *Licenses Active:* ${vars.seats || 10} seats\n\n` +
-        `Your admin console is active. For technical support or license additions, reply to this chat or email support@anutechdigital.com.`,
-
-      custom: `Hi ${cName},\n\n`,
-    };
-  }, [recipientName, companyName, vars]);
+  // Presets speak for the logged-in company (R-1924): its own name, bank, UPI, email, phone.
+  const { data: me } = useCurrentUser();
+  const sender = React.useMemo(() => senderFromUser(me), [me]);
+  const templates = React.useMemo(
+    () => buildWhatsAppTemplates({ recipientName, companyName, vars, sender }),
+    [recipientName, companyName, vars, sender],
+  );
 
   // Sync message when category or template changes
   React.useEffect(() => {

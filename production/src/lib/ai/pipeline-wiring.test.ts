@@ -93,6 +93,7 @@ describe("the qualifier is penniless BY CONSTRUCTION, not by instruction", () =>
       "model",
       "recordedProduct",
       "recordedSeats",
+      "tenantId",   // R-1877: only the key of the monthly AI-cap counter — no money in it
     ]);
   });
 

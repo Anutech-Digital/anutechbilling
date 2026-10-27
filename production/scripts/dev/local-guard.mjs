@@ -124,3 +124,34 @@ export function localSupabase(cwd, env = process.env) {
   if (why) return { reason: why };
   return { url, service };
 }
+
+/* ── R-1957: test scenarios (scripts/dev/scenario.mjs) ──────────────────────────────────────── */
+
+/** The local Supabase DB container `npx supabase start` runs ("supabase_db_resellerosv3"). */
+const LOCAL_DB_CONTAINER = /^supabase_db_[A-Za-z0-9_-]+$/;
+
+/**
+ * Why scenario data must NOT be written, or null when the target is this laptop's docker DB.
+ * Refuses: NODE_ENV=production; no / not-a-Supabase-DB container; and any database or Supabase
+ * URL in the env (or production/.env.local) that is not local — then the app on localhost:3001
+ * would not be reading the docker DB, so loading test data there is pointless at best.
+ * Hard-coded: no flag or env var turns a refusal off.
+ * @param {{ nodeEnv?: string | null, container?: string | null, urls?: Array<string | null | undefined> }} p
+ */
+export function scenarioTargetReason({ nodeEnv, container, urls = [] } = {}) {
+  if (String(nodeEnv ?? "").trim().toLowerCase() === "production") {
+    return "NODE_ENV is production — scenarios are local test data only";
+  }
+  if (!container || !String(container).trim()) {
+    return "no local Supabase DB container (supabase_db_*) is running — start it with `npx supabase start`";
+  }
+  if (!LOCAL_DB_CONTAINER.test(String(container).trim())) {
+    return `container "${container}" is not a local Supabase DB (supabase_db_* only)`;
+  }
+  for (const u of urls) {
+    if (u == null || !String(u).trim()) continue;
+    const why = dbUrlLocalReason(u);
+    if (why) return `${why} — the app is not on the local DB, refusing`;
+  }
+  return null;
+}

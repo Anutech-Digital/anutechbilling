@@ -34,10 +34,6 @@ const ALLOWED: Record<string, string> = {
     "trialMixed shows its own amber alert with a Back-to-cart button right above",
   "src/app/(marketing)/checkout/page.tsx|trialMixed":
     "same trialMixed alert, above the Continue button",
-  "src/app/(public)/buy/workspace/buy-workspace-client.tsx|seats <= 1":
-    "the minus of a seat stepper already showing 1 — the number is the explanation",
-  "src/app/(public)/buy/workspace/buy-workspace-client.tsx|validatingCoupon || couponInput.trim().length < 2":
-    "Apply beside an empty coupon box",
   "src/site/components/agent/AgentChat.tsx|busy || !input.trim()":
     "Send beside an empty message box",
   "src/site/components/ssl/CertCards.tsx|c.cta === \"Included\"":

@@ -57,6 +57,7 @@
 // Roles live in one place now — see src/lib/auth/roles.ts for why. Re-exported
 // so the many `import { UserRole } from "@/lib/nav"` call sites keep working.
 import type { UserRole } from "@/lib/auth/roles";
+import type { SellMode } from "@/lib/sell-mode";
 export type { UserRole };
 
 export interface NavItem {
@@ -100,6 +101,31 @@ export interface NavItem {
    * another section's crumb (nav-s30.test.ts).
    */
   crumbSection?: string;
+  /**
+   * R-1861: the "What do you sell?" answers (lib/sell-mode.ts) this row belongs up front for.
+   * Omit = every answer. Read ONLY by visibleForSellMode() for the sidebar / mobile drawer —
+   * never by filterNavForRole, so the route guard, Ctrl+K and homeForRole ignore it and a
+   * hidden row's page still opens (nav-sell-mode.test.ts).
+   */
+  sellModes?: SellMode[];
+}
+
+/** R-1861: rows that belong to a business that sells subscriptions. */
+const SUBSCRIPTION_SELL_MODES: SellMode[] = ["subscriptions", "both"];
+
+/**
+ * R-1861 — does this row show in the menu for this answer? Hide, never block: a tagged row
+ * comes back when the user turned on "Show all modules" or the workspace has that kind of
+ * data (≥1 subscription). Roles are applied before this (filterNavForRole) — this only
+ * narrows what the role already sees.
+ */
+export function visibleForSellMode(
+  item: NavItem,
+  mode: SellMode,
+  opts: { showAll?: boolean; hasData?: boolean },
+): boolean {
+  if (!item.sellModes || opts.showAll || opts.hasData) return true;
+  return item.sellModes.includes(mode);
 }
 
 export interface NavSection {
@@ -358,6 +384,22 @@ export const ROLE_HOME: Record<UserRole, string> = {
   marketing:    "/marketing",
 };
 
+/**
+ * R-1837 (24 Oct 2026): where this role lands — after login, on "/", and when the app's generic
+ * landing ("/dashboard", the login default and every "Back to dashboard" link) is not theirs.
+ * isRouteAllowed is the one rule: ROLE_HOME[role] if the role may open it, else the first page
+ * of its own menu. So a home that drifts out of the menu can never start a redirect loop, and a
+ * role without /dashboard never meets a "You don't have access" toast just for signing in.
+ */
+export function homeForRole(role: UserRole, opts: NavFilterOpts = {}): string {
+  const home = ROLE_HOME[role];
+  if (home && isRouteAllowed(role, home, opts)) return home;
+  return allowedRoutesForRole(role, opts).find((href) => isRouteAllowed(role, href, opts)) ?? "/dashboard";
+}
+
+/** The generic landing page: a role that cannot open it is sent home WITHOUT ?denied (R-1837). */
+export const GENERIC_HOME = "/dashboard";
+
 // ============================================================
 // Internal app nav (the main sidebar for resellers)
 // ============================================================
@@ -450,6 +492,8 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/attendance/kiosk": "Runs on the office kiosk device, not in a person's menu",
   "/platform": "Founder-only cross-tenant view; any other owner would be refused by the server",
   "/aa/simulate-approval": "Mock consent screen for the bank-statement (Account Aggregator) test flow",
+  /* R-1849: admitted by the Balance Sheet row (prefix); billing denied with it. */
+  "/accounting/balance-sheet/profit-split": "Year-end profit split of a partnership; opened from Balance Sheet → partners' capital accounts",
   /* R-384 (7 Oct 2026, owner decision): one menu row "Products" (/items) instead of three. */
   "/items/subscriptions": "Subscriptions tab of Products (/items) — the menu row opens the page, the tab links here",
   "/items/products": "One-time products tab of Products (/items) — the menu row opens the page, the tab links here",
@@ -473,7 +517,7 @@ export const APP_NAV: NavSection[] = [
       { id: "ai-entry",  href: "/ai-entry",  label: "AI Entry",  icon: "sparkles", roles: ["owner", "manager", "sales", "billing"], hint: "Paste a chat, note, bill or card — AI fills the entry" },
       { id: "whatsapp",  href: "/whatsapp",        label: "WhatsApp Inbox",      icon: "whatsapp", roles: ["owner", "manager", "billing", "support", "delivery"] },
       { id: "support",   href: "/support",         label: "Support Desk",        icon: "ticket",   roles: ["owner", "manager", "billing", "support", "delivery"] },
-      { id: "provisioning", href: "/provisioning", label: "Activation Queue", icon: "package", roles: ["owner", "manager", "support", "delivery"], hint: "Seats a customer has paid for that nobody has turned on yet." },
+      { id: "provisioning", href: "/provisioning", label: "Activation Queue", icon: "package", roles: ["owner", "manager", "support", "delivery"], sellModes: SUBSCRIPTION_SELL_MODES, hint: "Seats a customer has paid for that nobody has turned on yet." },
       /* R-1516: a daily queue (who owes money, whom to chase today), shown in the Billing app (nav-apps.ts).
          Sales sees only its own customers' money (RLS). Bill already holds 8 rows, the cap. */
       { id: "collections", href: "/collections", label: "Payment Follow-up", icon: "phone", roles: [...SALES_READ, "sales"], crumbSection: "Billing", hint: "Who owes money, promises to pay, today's follow-ups" },
@@ -520,6 +564,8 @@ export const APP_NAV: NavSection[] = [
           { id: "marketing-budget", href: "/marketing/budget", label: "Budget & Payments", icon: "wallet", roles: ["owner", "marketing", "billing", "accountant"], hint: "Marketing asks for a budget, the owner approves, billing pays up to it" },
         ],
         directory: [
+          /* R-1879 (25 Oct 2026, epic R-1874): one line → a Google + Meta ad plan, step by step. */
+          { id: "marketing-copilot", href: "/marketing/copilot", label: "Campaign Co-pilot", icon: "sparkles", roles: OMK, group: "Plan & spend", hint: "Write one line — the AI drafts a Google Ads + Meta plan" },
           { id: "marketing-campaigns", href: "/marketing/campaigns", label: "Campaign budgets", icon: "target", roles: OMK, group: "Plan & spend", hint: "Each campaign's budget, dates and target, with spend and leads" },
           { id: "marketing-spend", href: "/marketing/spend",   label: "Spend",          icon: "wallet", roles: OMK, group: "Plan & spend" },
           { id: "marketing-roas",  href: "/marketing/reports", label: "ROAS & CAC",     icon: "chart",  roles: OMK, group: "Plan & spend" },
@@ -570,8 +616,8 @@ export const APP_NAV: NavSection[] = [
         ],
       },
       { id: "quotes",        href: "/quotes",        label: "Quotes",            icon: "file",    roles: ["owner", "manager", "sales"], crumbSection: "Sales" },
-      { id: "subscriptions", href: "/subscriptions", label: "Subscriptions",     icon: "refresh", roles: OMB },
-      { id: "renewals",      href: "/renewals",      label: "Renewals",          icon: "clock",   roles: ["owner", "manager", "billing", "support"] },
+      { id: "subscriptions", href: "/subscriptions", label: "Subscriptions",     icon: "refresh", roles: OMB, sellModes: SUBSCRIPTION_SELL_MODES },
+      { id: "renewals",      href: "/renewals",      label: "Renewals",          icon: "clock",   roles: ["owner", "manager", "billing", "support"], sellModes: SUBSCRIPTION_SELL_MODES },
       { id: "invoices",      href: "/invoices",      label: "Invoices",          icon: "receipt", roles: SALES_READ },
       /* Online Orders was a child of this row until 6 Oct 2026 — moved to Sell (R-204). */
       { id: "payments",      href: "/payments",      label: "Payments Received", icon: "rupee",   roles: SALES_READ },
@@ -677,7 +723,7 @@ export const APP_NAV: NavSection[] = [
           { id: "day-book",            href: "/accounting/day-book",      label: "Day Book",            icon: "calendar", roles: BOOKS, group: "Financial statements" },
           { id: "profitability",       href: "/accounting/profitability", label: "Customer Profitability", icon: "trending_up", roles: BOOKS, group: "Business" },
           { id: "profit-by-product",   href: "/reports/profit",           label: "Profit by Product",   icon: "chart", roles: OM, group: "Business" },
-          { id: "saas-metrics",        href: "/accounting/saas-metrics",  label: "SaaS Metrics (MRR)",  icon: "refresh", roles: OM, group: "Business" },
+          { id: "saas-metrics",        href: "/accounting/saas-metrics",  label: "SaaS Metrics (MRR)",  icon: "refresh", roles: OM, group: "Business", sellModes: SUBSCRIPTION_SELL_MODES },
           { id: "purchases-report",    href: "/reports/purchases",        label: "Purchases Report",    icon: "cart", roles: BOOKS, group: "Business" },
           { id: "gst-owner",           href: "/accounting/gst",           label: "GST Reports",         icon: "file", roles: BOOKS, group: "Tax" },
           { id: "tds-owner",           href: "/accounting/tds-receivable",label: "TDS Receivable",      icon: "rupee", roles: BOOKS, group: "Tax" },

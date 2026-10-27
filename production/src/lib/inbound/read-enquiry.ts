@@ -46,7 +46,7 @@ export interface ReadEnquiryArgs {
   body: string;
   /** `body` with the subject prefixed — what the model is shown. See `withSubject`. */
   bodyWithSubject: string;
-  gemini: { apiKey: string | null; model: string };
+  gemini: { apiKey: string | null; model: string; tenantId: string | null };
 }
 
 export interface EnquiryFacts {

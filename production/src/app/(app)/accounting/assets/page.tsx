@@ -1,9 +1,11 @@
 /**
- * Assets & EMIs — things bought on financing (vehicle, equipment, …).
+ * Assets & EMIs — things bought on EMI / a loan (laptop, car, server, phone…).
  *
- * Record a purchase once (asset + down payment + loan); then each month just
- * "Pay EMI". The app posts the cash out, reduces the loan, expenses any
- * interest, and keeps the Balance Sheet right — no manual ledger juggling.
+ * R-1864: "Bought on EMI / loan" records the asset (register, depreciation), the loan and its
+ * reducing-balance schedule in one step (components/features/accounting/emi-loan-dialogs.tsx).
+ * Each EMI is reconciled from the bank statement (Banking → Reconcile → EMI / loan repayment,
+ * or Auto-reconcile) or paid here; principal reduces the loan, interest goes to the P&L.
+ * Purchases recorded before R-1864 (no schedule) keep Pay EMI + history below.
  */
 "use client";
 
@@ -25,10 +27,11 @@ import { rupee, formatDate } from "@/lib/utils";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { FixedAssetRegister } from "@/components/features/accounting/fixed-asset-register";
 import {
-  useEmiPurchases, useRecordEmiPurchase, useRecordEmiPayment, useEmiPayments,
-  EMI_CATEGORY_LABEL, type EmiPurchase, type EmiCategory,
+  useEmiPurchases, useRecordEmiPayment, useEmiPayments,
+  EMI_CATEGORY_LABEL, type EmiPurchase,
 } from "@/lib/queries/emi";
 import { istToday } from "@/lib/dates/ist";
+import { EmiPurchaseDialog, EmiScheduleDialog } from "@/components/features/accounting/emi-loan-dialogs";
 
 function todayISO(): string {
   return istToday();
@@ -40,6 +43,11 @@ export default function AssetsPage() {
   const [addOpen, setAddOpen] = React.useState(false);
   const [payFor, setPayFor] = React.useState<EmiPurchase | null>(null);
   const [historyFor, setHistoryFor] = React.useState<EmiPurchase | null>(null);
+  const [scheduleFor, setScheduleFor] = React.useState<string | null>(null);
+  /* A loan with a schedule (R-1864) opens it; an older purchase keeps Pay EMI + history. */
+  const openPay = (p: EmiPurchase) => (p.first_emi_on ? setScheduleFor(p.id) : setPayFor(p));
+  const openHistory = (p: EmiPurchase) => (p.first_emi_on ? setScheduleFor(p.id) : setHistoryFor(p));
+  const scheduled = scheduleFor ? (q.data ?? []).find((r) => r.id === scheduleFor) : undefined;
 
   const rows = q.data ?? [];
   const assetValue   = rows.reduce((s, r) => s + r.total_cost, 0);
@@ -53,11 +61,11 @@ export default function AssetsPage() {
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Accounting</p>
           <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Assets &amp; EMIs</h1>
           <p className="text-sm text-ink-3 mt-1">
-            Things bought on financing — record once, then just pay each EMI. The asset and the outstanding loan show on your Balance Sheet automatically.
+            Bought on EMI or a loan — record it once. Each EMI in the bank statement is split into principal (reduces the loan) and interest (P&amp;L); the asset is depreciated in the register.
           </p>
         </div>
         <Button variant="primary" icon="plus" className="hidden md:inline-flex" onClick={() => setAddOpen(true)}>
-          Record purchase
+          Bought on EMI / loan
         </Button>
       </div>
 
@@ -79,8 +87,8 @@ export default function AssetsPage() {
           <EmptyState
             icon="cart"
             title="No financed purchases yet"
-            body="Bought a vehicle or equipment part-cash, part-EMI? Record it here — the app handles the asset, the loan and every EMI."
-            action={<Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Record a purchase</Button>}
+            body="Bought a laptop, vehicle or equipment on EMI or a loan? Record it here — the asset, the loan and the EMI schedule in one step."
+            action={<Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Bought on EMI / loan</Button>}
           />
         </Card>
       ) : (
@@ -118,9 +126,9 @@ export default function AssetsPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-0.5">
                         {p.status === "active" && p.outstanding > 0 && (
-                          <Button variant="ghost" size="sm" onClick={() => setPayFor(p)}>Pay EMI</Button>
+                          <Button variant="ghost" size="sm" onClick={() => openPay(p)}>{p.first_emi_on ? "Schedule" : "Pay EMI"}</Button>
                         )}
-                        <button type="button" title="EMI history" onClick={() => setHistoryFor(p)} className="rounded p-1.5 text-ink-3 hover:bg-paper-2 hover:text-ink">
+                        <button type="button" title="EMI history" onClick={() => openHistory(p)} className="rounded p-1.5 text-ink-3 hover:bg-paper-2 hover:text-ink">
                           <Icon name="clock" size={15} />
                         </button>
                       </div>
@@ -148,9 +156,9 @@ export default function AssetsPage() {
                     <Badge kind={p.status === "closed" ? "success" : "warning"} dot>{p.status === "closed" ? "Cleared" : "Active"}</Badge>
                     <div className="flex items-center gap-0.5">
                       {p.status === "active" && p.outstanding > 0 && (
-                        <Button variant="ghost" size="sm" onClick={() => setPayFor(p)}>Pay EMI</Button>
+                        <Button variant="ghost" size="sm" onClick={() => openPay(p)}>{p.first_emi_on ? "Schedule" : "Pay EMI"}</Button>
                       )}
-                      <button type="button" aria-label="EMI history" onClick={() => setHistoryFor(p)} className="rounded p-1.5 text-ink-3 hover:bg-paper-2 hover:text-ink">
+                      <button type="button" aria-label="EMI history" onClick={() => openHistory(p)} className="rounded p-1.5 text-ink-3 hover:bg-paper-2 hover:text-ink">
                         <Icon name="clock" size={15} />
                       </button>
                     </div>
@@ -164,8 +172,9 @@ export default function AssetsPage() {
 
       <FixedAssetRegister />
 
-      <FAB icon="plus" label="Purchase" onClick={() => setAddOpen(true)} ariaLabel="Record purchase" />
-      {addOpen && <PurchaseDialog onClose={() => setAddOpen(false)} />}
+      <FAB icon="plus" label="EMI / loan" onClick={() => setAddOpen(true)} ariaLabel="Bought on EMI / loan" />
+      {addOpen && <EmiPurchaseDialog onClose={() => setAddOpen(false)} />}
+      {scheduled && <EmiScheduleDialog purchase={scheduled} onClose={() => setScheduleFor(null)} />}
       {payFor && <PayEmiDialog purchase={payFor} onClose={() => setPayFor(null)} />}
       {historyFor && <EmiHistoryDialog purchase={historyFor} onClose={() => setHistoryFor(null)} />}
     </div>
@@ -178,120 +187,6 @@ function KPI({ label, value, tone }: { label: string; value: string; tone?: "amb
       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">{label}</div>
       <div className={`font-serif text-xl md:text-2xl leading-tight ${tone === "amber" ? "text-amber" : "text-ink"}`}>{value}</div>
     </Card>
-  );
-}
-
-function PurchaseDialog({ onClose }: { onClose: () => void }) {
-  const accountsQ = useBankAccounts();
-  const record    = useRecordEmiPurchase();
-  const accounts  = (accountsQ.data ?? []).filter((a) => a.is_active);
-
-  const [name, setName]       = React.useState("");
-  const [category, setCategory] = React.useState<EmiCategory>("vehicle");
-  const [total, setTotal]     = React.useState("");
-  const [down, setDown]       = React.useState("");
-  const [emiCount, setEmiCount] = React.useState("12");
-  const [emiAmount, setEmiAmount] = React.useState("");
-  const [emiTouched, setEmiTouched] = React.useState(false);
-  const [date, setDate]       = React.useState(todayISO());
-  const [accountId, setAccountId] = React.useState("");
-  const [lender, setLender]   = React.useState("");
-
-  React.useEffect(() => { if (!accountId && accounts.length > 0) setAccountId(accounts[0].id); }, [accounts, accountId]);
-
-  const totalN = Math.max(0, Math.round(Number(total) || 0));
-  const downN  = Math.max(0, Math.round(Number(down) || 0));
-  const countN = Math.max(0, Math.round(Number(emiCount) || 0));
-  const financed = Math.max(0, totalN - downN);
-  // Suggested EMI = financed / count, unless user typed their own (with interest).
-  const suggestedEmi = countN > 0 ? Math.round(financed / countN) : 0;
-  const emiN = emiTouched ? Math.max(0, Math.round(Number(emiAmount) || 0)) : suggestedEmi;
-
-  const valid = name.trim().length > 0 && totalN > 0 && downN <= totalN && (downN === 0 || Boolean(accountId));
-
-  async function submit() {
-    if (!valid) return;
-    await record.mutateAsync({
-      name: name.trim(), category, totalCost: totalN, downPayment: downN,
-      emiCount: countN, emiAmount: emiN, purchasedOn: date,
-      downAccountId: downN > 0 ? accountId : null, lender: lender.trim() || null,
-    });
-    onClose();
-  }
-
-  return (
-    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="md:!max-w-md">
-        <DialogHeader>
-          <DialogTitle>Record a purchase (EMI)</DialogTitle>
-          <DialogDescription>Part cash, part EMI. The asset, down payment and loan are all recorded in one go.</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3 max-h-[62vh] overflow-y-auto pr-1">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2 sm:col-span-1">
-              <label htmlFor="assets-item" className="block text-xs font-medium text-ink-2 mb-1">Item</label>
-              <Input id="assets-item" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Motorcycle" autoFocus />
-            </div>
-            <div className="col-span-2 sm:col-span-1">
-              <label htmlFor="assets-category" className="block text-xs font-medium text-ink-2 mb-1">Category</label>
-              <select id="assets-category" value={category} onChange={(e) => setCategory(e.target.value as EmiCategory)} className={selectCls}>
-                {(Object.keys(EMI_CATEGORY_LABEL) as EmiCategory[]).map((c) => <option key={c} value={c}>{EMI_CATEGORY_LABEL[c]}</option>)}
-              </select>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="assets-total-cost" className="block text-xs font-medium text-ink-2 mb-1">Total cost (₹)</label>
-              <Input id="assets-total-cost" type="number" min={1} value={total} onChange={(e) => setTotal(e.target.value)} placeholder="e.g. 500000" />
-            </div>
-            <div>
-              <label htmlFor="assets-down-payment" className="block text-xs font-medium text-ink-2 mb-1">Down payment (₹)</label>
-              <Input id="assets-down-payment" type="number" min={0} value={down} onChange={(e) => setDown(e.target.value)} placeholder="e.g. 200000" />
-            </div>
-          </div>
-          {downN > 0 && (
-            <div>
-              <label htmlFor="assets-down-payment-from" className="block text-xs font-medium text-ink-2 mb-1">Down payment from</label>
-              <select id="assets-down-payment-from" value={accountId} onChange={(e) => setAccountId(e.target.value)} className={selectCls}>
-                {accounts.length === 0 && <option value="">Add an account in Banking</option>}
-                {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </div>
-          )}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="assets-no-of-emis" className="block text-xs font-medium text-ink-2 mb-1">No. of EMIs</label>
-              <Input id="assets-no-of-emis" type="number" min={0} value={emiCount} onChange={(e) => setEmiCount(e.target.value)} />
-            </div>
-            <div>
-              <label htmlFor="assets-emi-amount" className="block text-xs font-medium text-ink-2 mb-1">EMI amount (₹)</label>
-              <Input id="assets-emi-amount" type="number" min={0} value={emiTouched ? emiAmount : String(suggestedEmi || "")} onChange={(e) => { setEmiTouched(true); setEmiAmount(e.target.value); }} />
-            </div>
-          </div>
-          <div>
-            <label htmlFor="assets-financier-lender-optional" className="block text-xs font-medium text-ink-2 mb-1">Financier / lender (optional)</label>
-            <Input id="assets-financier-lender-optional" value={lender} onChange={(e) => setLender(e.target.value)} placeholder="e.g. HDFC Bank" />
-          </div>
-          <div>
-            <label htmlFor="assets-purchase-date" className="block text-xs font-medium text-ink-2 mb-1">Purchase date</label>
-            <Input id="assets-purchase-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          </div>
-
-          <div className="rounded-md bg-paper-2/50 p-3 text-sm space-y-1">
-            <Row label="Total cost (asset)" value={rupee(totalN)} />
-            <Row label="− Down payment (cash now)" value={`−${rupee(downN)}`} />
-            <div className="flex items-center justify-between pt-1 border-t border-hairline font-semibold text-ink">
-              <span>Loan (financed)</span><span className="font-mono">{rupee(financed)}</span>
-            </div>
-            {emiN > 0 && countN > 0 && <p className="text-xs text-ink-3">≈ {rupee(emiN)} × {countN} EMIs</p>}
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={record.isPending}>Cancel</Button>
-          <Button variant="primary" loading={record.isPending} disabled={!valid} onClick={submit}>Record</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 

@@ -19,6 +19,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { anthropicEnvKey, anthropicModel, claudeJson, isClaudeKey, resolveAiProvider, type AiProvider } from "./claude";
+import { reserveAiCall, recordAiTokens } from "./usage-cap";
 
 export interface GeminiConfig {
   /**
@@ -35,6 +36,8 @@ export interface GeminiConfig {
   geminiModel: string;
   /** True when the Gemini key is this workspace's own (Settings → Integrations), not the server's. */
   tenantGeminiKey: boolean;
+  /** R-1877: the company this config was resolved for — pass it on to geminiJson (monthly AI cap). */
+  tenantId: string | null;
 }
 
 /**
@@ -116,9 +119,10 @@ export async function resolveGeminiConfig(
   /* R-1759: the workspace's Gemini key matters only when Gemini runs; Claude has a server key only. */
   const claudeKey = anthropicEnvKey();
   const provider = resolveAiProvider({ choice: process.env.AI_PROVIDER, hasGemini: Boolean(key), hasClaude: Boolean(claudeKey) });
+  const forTenant = tenantId ?? null;
   return provider === "claude"
-    ? { apiKey: claudeKey, model: anthropicModel(), provider, geminiKey: key, geminiModel: model, tenantGeminiKey }
-    : { apiKey: key, model, provider, geminiKey: key, geminiModel: model, tenantGeminiKey };
+    ? { apiKey: claudeKey, model: anthropicModel(), provider, geminiKey: key, geminiModel: model, tenantGeminiKey, tenantId: forTenant }
+    : { apiKey: key, model, provider, geminiKey: key, geminiModel: model, tenantGeminiKey, tenantId: forTenant };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -264,8 +268,22 @@ export interface GeminiJsonArgs {
   attachments?: readonly { mimeType: string; base64: string }[];
   temperature?: number;
   timeoutMs?: number;
-  /** Prefix for server logs, e.g. "ai/draft-followup". */
+  /** Prefix for server logs, e.g. "ai/draft-followup". Also the `feature` the call is counted under (R-1877). */
   label: string;
+  /**
+   * R-1877: the company this call is for. It is counted against that company's monthly AI cap
+   * BEFORE the provider is asked, and refused when the cap is used up (onFailure gets the
+   * reason). `null` only for work that belongs to no company — then nothing is counted.
+   * Required on purpose: a new caller cannot forget it and slip past the cap.
+   */
+  tenantId: string | null;
+  /**
+   * R-1877: called (with the same reason onFailure gets) when the call was refused because the
+   * company's monthly AI cap is used up — so a route can answer 429 instead of a stub.
+   */
+  onCapReached?: (message: string) => void;
+  /** Internal (R-1877): tokens the provider reported, summed by geminiJson. */
+  __usage?: (u: { inputTokens: number; outputTokens: number }) => void;
   /**
    * Called with a human-readable reason on every failure path. Optional so existing callers
    * are unchanged — but any caller that shows a failure to a person should pass it, because
@@ -300,8 +318,38 @@ function geminiSwitchable(code: string): boolean {
  * no AI failure can break a core flow. This never throws.
  */
 export async function geminiJson<T>(args: GeminiJsonArgs): Promise<T | null> {
+  if (!args.tenantId) return askAi<T>(args);
+  /* R-1877: the company's monthly cap, BEFORE any provider is asked (and before any fallback). */
+  const gate = await reserveAiCall(args.tenantId, args.label, isServerAiKey(args.apiKey));
+  if (!gate.allowed) {
+    console.warn(`[${args.label}] AI cap reached for ${args.tenantId} (${gate.used}/${gate.cap}) — not called`);
+    args.onCapReached?.(gate.message);
+    args.onFailure?.(gate.message);
+    return null;
+  }
+  let inputTokens = 0;
+  let outputTokens = 0;
+  const value = await askAi<T>({
+    ...args,
+    __usage: (u) => { inputTokens += u.inputTokens; outputTokens += u.outputTokens; },
+  });
+  await recordAiTokens(args.tenantId, args.label, { inputTokens, outputTokens });
+  return value;
+}
+
+/**
+ * R-1877: true when this key is the SERVER's (Anutech pays) — then the company's cap applies.
+ * A company's own Gemini key (Settings → Integrations → AI) is counted but never refused.
+ */
+export function isServerAiKey(apiKey: string | null | undefined): boolean {
+  if (isClaudeKey(apiKey)) return true;
+  const server = valid(process.env.GEMINI_API_KEY);
+  return Boolean(server && apiKey && apiKey.trim() === server);
+}
+
+async function askAi<T>(args: GeminiJsonArgs): Promise<T | null> {
   if (isClaudeKey(args.apiKey)) {
-    const r = await claudeJson<T>(args);
+    const r = await claudeJson<T>({ ...args, onUsage: args.__usage });
     if (r.ok) return r.value;
     const geminiKey = valid(process.env.GEMINI_API_KEY);
     if (r.switchable && geminiKey) {
@@ -326,7 +374,7 @@ export async function geminiJson<T>(args: GeminiJsonArgs): Promise<T | null> {
   const claudeKey = anthropicEnvKey();
   if (claudeKey && geminiSwitchable(failCode)) {
     console.warn(`[${args.label}] gemini ${failCode} → trying claude`);
-    const r = await claudeJson<T>({ ...args, apiKey: claudeKey, model: anthropicModel() });
+    const r = await claudeJson<T>({ ...args, apiKey: claudeKey, model: anthropicModel(), onUsage: args.__usage });
     if (r.ok) return r.value;
     args.onFailure?.(`${geminiWhy} Claude was tried instead and also failed: ${r.reason}`);
     return null;
@@ -434,7 +482,13 @@ async function geminiDirect<T>(args: GeminiJsonArgs & { __fail?: (code: string) 
       return null;
     }
 
-    const data = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+    const data = (await res.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+    };
+    if (data.usageMetadata) {
+      args.__usage?.({ inputTokens: data.usageMetadata.promptTokenCount ?? 0, outputTokens: data.usageMetadata.candidatesTokenCount ?? 0 });
+    }
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!raw) {
       recordFailure(now);
@@ -507,7 +561,22 @@ async function geminiDirect<T>(args: GeminiJsonArgs & { __fail?: (code: string) 
  * (lib/leads/lead-finder.ts `parseDiscovery`). Throws with a human reason — the one caller
  * (AI Lead Finder) records it on the run, where the owner reads it. Same breaker as geminiJson.
  */
-export async function geminiGroundedText(args: { apiKey: string; model: string; system: string; user: string; temperature?: number; timeoutMs?: number; label: string }): Promise<string | null> {
+export async function geminiGroundedText(args: { apiKey: string; model: string; system: string; user: string; temperature?: number; timeoutMs?: number; label: string; tenantId: string | null }): Promise<string | null> {
+  /* R-1877: same monthly cap as geminiJson, checked before the call. The key that will be
+     used decides whether the cap applies (Claude key → the server's Gemini key below). */
+  const tenantId = args.tenantId;
+  if (tenantId) {
+    const gate = await reserveAiCall(tenantId, args.label, isServerAiKey(args.apiKey));
+    if (!gate.allowed) throw new Error(gate.message);
+  }
+  const text = await groundedText({
+    ...args,
+    onUsage: tenantId ? (u) => recordAiTokens(tenantId, args.label, u) : undefined,
+  });
+  return text;
+}
+
+async function groundedText(args: { apiKey: string; model: string; system: string; user: string; temperature?: number; timeoutMs?: number; label: string; onUsage?: (u: { inputTokens: number; outputTokens: number }) => Promise<void> }): Promise<string | null> {
   /* R-1759: web search stays on Gemini (Google Search grounding). When Claude runs, the
      server's Gemini key is used for this one call if there is one; otherwise a clear reason —
      the Lead Finder shows it on the run instead of "found no companies". */
@@ -537,8 +606,11 @@ export async function geminiGroundedText(args: { apiKey: string; model: string; 
     if (res.status === 400 && /google_search|tool/i.test(body)) throw new Error(`Google Search grounding does not work on this Gemini model (${args.model}). Set GEMINI_MODEL to gemini-flash-latest in env.`);
     throw new Error(failureReason(res.status, body));
   }
-  const data = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+  const data = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } };
   breaker.failures = 0;
+  if (data.usageMetadata) {
+    await args.onUsage?.({ inputTokens: data.usageMetadata.promptTokenCount ?? 0, outputTokens: data.usageMetadata.candidatesTokenCount ?? 0 });
+  }
   return (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("\n") || null;
 }
 

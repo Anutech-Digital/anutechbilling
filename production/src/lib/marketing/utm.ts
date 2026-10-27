@@ -38,6 +38,9 @@ export interface UtmCapture {
   utm_source: string | null;
   utm_medium: string | null;
   utm_campaign: string | null;
+  /** R-1978: which ad / creative (Meta: the ad) and the keyword — utm_content / utm_term. */
+  utm_content: string | null;
+  utm_term: string | null;
   referrer_url: string | null;
   landing_page_url: string | null;
   /**
@@ -62,7 +65,7 @@ export interface UtmCapture {
 }
 
 export const EMPTY_UTM: UtmCapture = {
-  utm_source: null, utm_medium: null, utm_campaign: null,
+  utm_source: null, utm_medium: null, utm_campaign: null, utm_content: null, utm_term: null,
   referrer_url: null, landing_page_url: null,
   gclid: null, wbraid: null, fbclid: null,
 };
@@ -114,6 +117,8 @@ export function captureUtm(input: {
   const utm_source   = clean(p?.get("utm_source"),   MAX_PARAM);
   const utm_medium   = clean(p?.get("utm_medium"),   MAX_PARAM);
   const utm_campaign = clean(p?.get("utm_campaign"), MAX_PARAM);
+  const utm_content  = clean(p?.get("utm_content"),  MAX_PARAM);
+  const utm_term     = clean(p?.get("utm_term"),     MAX_PARAM);
 
   // Landing page: origin + path, plus ONLY the utm params. See decision 1.
   let landing_page_url: string | null = null;
@@ -138,7 +143,7 @@ export function captureUtm(input: {
   }
 
   return {
-    utm_source, utm_medium, utm_campaign, referrer_url, landing_page_url,
+    utm_source, utm_medium, utm_campaign, utm_content, utm_term, referrer_url, landing_page_url,
     // Click ids are read from the landing URL only. They are opaque platform
     // identifiers, not personal data, so they are kept in full.
     gclid:  clean(p?.get("gclid"),  MAX_PARAM),

@@ -132,7 +132,8 @@ begin
   /* …but reading the bank list is still allowed. Narrowing that is a separate product
      decision (see the migration header), and asserting it here is what stops somebody
      "completing" the rule without asking. */
-  select count(*) into v_n from public.bank_accounts;
+  -- R-1834: every company also has its auto Petty Cash; count the account this test made.
+  select count(*) into v_n from public.bank_accounts where not is_default_petty_cash;
   if v_n <> 1 then raise exception 'FAIL 8: a sales login lost READ on bank_accounts — not what S41 asked for'; end if;
 
   -- accountant: MAY change it. This is the half that keeps the rule alive.

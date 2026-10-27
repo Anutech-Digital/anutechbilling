@@ -36,9 +36,9 @@ import { Button } from "@/components/ui/button";
 import { useCreateBankAccount, useUpdateBankAccount, type BankAccountRow } from "@/lib/queries/bank";
 import { istToday } from "@/lib/dates/ist";
 
-// Indian IFSC pattern: 4 alphabetic (bank) + 0 + 6 alphanumeric (branch).
-// Example: HDFC0001234. Case-insensitive when typed; we uppercase on submit.
-const IFSC_REGEX = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+// Indian IFSC: 4 letters (bank) + 0 + 6 letters/digits (branch). The rule and its message
+// live in lib/banking/bank-details (R-1905) — one message everywhere.
+import { ifscProblem } from "@/lib/banking/bank-details";
 
 const COMMON_INDIAN_BANKS = [
   "HDFC Bank",
@@ -76,8 +76,9 @@ const schema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["bank_name"], message: "Bank required" });
     if (!/^\d{4}$/.test(val.account_number_last4 ?? ""))
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["account_number_last4"], message: "Last 4 digits only" });
-    if (!IFSC_REGEX.test((val.ifsc ?? "").toUpperCase().trim()))
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["ifsc"], message: "Invalid IFSC (e.g. HDFC0001234)" });
+    const ifscBad = (val.ifsc ?? "").trim() ? ifscProblem(val.ifsc ?? "") : "Add the IFSC, e.g. HDFC0001234";
+    if (ifscBad)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["ifsc"], message: ifscBad });
   }
 });
 

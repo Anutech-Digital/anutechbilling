@@ -30,7 +30,11 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { fetchAllRows, errorMessage, type PageQuery } from "@/lib/ops/fetch-all";
-import { buildComplianceRows } from "@/lib/compliance/obligations";
+import { buildComplianceRows, type BusinessType } from "@/lib/compliance/obligations";
+import {
+  peopleFromDirectors, peopleFromPartners,
+  type CompliancePerson, type DirectorPersonRow, type PartnerPersonRow,
+} from "@/lib/compliance/people";
 import { isMissingColumnError, profileFromRow, type PgErrorLike } from "@/lib/compliance/profile-row";
 import { dueReminders, renderReminder, type PlannedReminder } from "@/lib/compliance/reminders";
 import { noTdsDeductedPredicate, tdsLookbackFrom, tdsMonthsFrom } from "@/lib/compliance/tds-not-applicable";
@@ -64,6 +68,32 @@ interface RunResult {
   no_recipients: number;
   errors: { tenant: string; message: string }[];
   details: Sent[];
+}
+
+type AdminClient = ReturnType<typeof createAdminClient>;
+
+/**
+ * R-1857: the directors register (Pvt Ltd / type not set) or the LLP's designated partners.
+ * A failed read (table not migrated yet, a permission change) returns undefined → the tenant
+ * keeps the common DIR-3 KYC reminder; it never stops the tenant's other reminders.
+ */
+async function loadCompliancePeople(
+  supabase: AdminClient, tenantId: string, businessType: BusinessType | null,
+): Promise<CompliancePerson[] | undefined> {
+  const type = businessType ?? "pvt_ltd";
+  if (type === "pvt_ltd") {
+    const base = "name, din, ceased_on, dsc_expiry, last_kyc_year";
+    let res = await supabase.from("company_directors" as never).select(`${base}, kyc_details_changed_on`).eq("tenant_id", tenantId);
+    if (res.error && /kyc_details_changed_on/.test(res.error.message ?? "")) {
+      res = await supabase.from("company_directors" as never).select(base).eq("tenant_id", tenantId);
+    }
+    return res.error || !res.data ? undefined : peopleFromDirectors(res.data as unknown as DirectorPersonRow[]);
+  }
+  if (type === "llp") {
+    const res = await supabase.from("firm_partners" as never).select("name, din_dpin, is_designated, left_on").eq("tenant_id", tenantId);
+    return res.error || !res.data ? undefined : peopleFromPartners(res.data as unknown as PartnerPersonRow[]);
+  }
+  return undefined;
 }
 
 /* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
@@ -187,7 +217,7 @@ async function handle(req: Request) {
       // its "Deposit TDS" reminder is not sent. If the TDS read fails, every
       // month counts as before — a stray reminder beats a missed deadline.
       const lookback = tdsLookbackFrom(today);
-      const [tdsSal, tdsExp, tdsComm] = await Promise.all([
+      const [tdsSal, tdsExp, tdsComm, tdsGoods] = await Promise.all([
         supabase.from("salary_payments").select("period, tds")
           .eq("tenant_id", tenant.id).gte("period", lookback.slice(0, 7)).gt("tds", 0),
         supabase.from("expenses").select("expense_date, tds_amount")
@@ -195,12 +225,24 @@ async function handle(req: Request) {
         // R-1580: TDS on partner commissions (194H) is a deposit too.
         supabase.from("referral_commissions").select("earned_date, tds_amount, status")
           .eq("tenant_id", tenant.id).gte("earned_date", lookback).gt("tds_amount", 0).neq("status", "cancelled"),
+        // R-1891: 194Q TDS on goods bills paid from the bank (on the payment row, not an expense).
+        supabase.from("bank_vendor_payment_lines" as never).select("tds_on, tds_amount")
+          .eq("tenant_id", tenant.id).in("kind", ["bill", "new_bill"]).gte("tds_on", lookback).gt("tds_amount", 0) as unknown as
+          PromiseLike<{ data: { tds_on: string | null; tds_amount: number }[] | null; error: unknown }>,
       ]);
-      const notApplicable = tdsSal.error || tdsExp.error || tdsComm.error
+      const notApplicable = tdsSal.error || tdsExp.error || tdsComm.error || tdsGoods.error
         ? undefined
-        : noTdsDeductedPredicate(tdsMonthsFrom(tdsSal.data, tdsExp.data, tdsComm.data), today);
+        : noTdsDeductedPredicate(tdsMonthsFrom(tdsSal.data,
+            [...(tdsExp.data ?? []), ...(tdsGoods.data ?? []).map((g) => ({ expense_date: g.tds_on, tds_amount: g.tds_amount }))],
+            tdsComm.data), today);
 
-      const rows = buildComplianceRows(today, filed, undefined, notApplicable, profileFromRow(tenant, null));
+      /* R-1857: each director (LLP: designated partner) gets their own DIR-3 KYC row, a DSC
+         expiry reminder 30 days ahead and a "details changed → 30 days" row — the same rows
+         the ROC calendar and Today show. Unreadable register → the one common row, as before. */
+      const profile = profileFromRow(tenant, null);
+      const kycPeople = await loadCompliancePeople(supabase, tenant.id, profile.businessType);
+      const rows = buildComplianceRows(today, filed, undefined, notApplicable,
+        kycPeople?.length ? { ...profile, people: kycPeople } : profile);
       // A rung counts as done for the tenant only once EVERY recipient has it —
       // otherwise adding a CA halfway through a window would never reach them.
       const plans: PlannedReminder[] = dueReminders(rows, (o, p, d) =>

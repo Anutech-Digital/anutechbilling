@@ -11,7 +11,24 @@ function fakeAdmin(rows: Array<Record<string, unknown>> = []) {
     select: () => ({
       eq: (_c: string, v: string) => ({ maybeSingle: async () => ({ data: rows.find((r) => r.token_hash === v) ?? null, error: null }) }),
     }),
-    update: (patch: Record<string, unknown>) => ({ eq: async (_c: string, id: string) => { const r = rows.find((x) => x.id === id); if (r) Object.assign(r, patch); return { error: null }; } }),
+    /* R-1926: a thenable builder — .eq(col, v) / .is(col, null) filter, .select() returns the
+       changed rows — so a conditional "claim if unused" update behaves like PostgREST's. */
+    update: (patch: Record<string, unknown>) => {
+      const filters: Array<(r: Record<string, unknown>) => boolean> = [];
+      const run = async () => {
+        await Promise.resolve();
+        const hit = rows.filter((r) => filters.every((f) => f(r)));
+        hit.forEach((r) => Object.assign(r, patch));
+        return { data: hit.map((r) => ({ id: r.id })), error: null };
+      };
+      const b: Record<string, unknown> = {
+        eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return b; },
+        is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return b; },
+        select: () => run(),
+        then: (ok: (v: unknown) => unknown, bad: (e: unknown) => unknown) => run().then(ok, bad),
+      };
+      return b;
+    },
   };
   const admin = {
     from: () => table,
@@ -19,6 +36,25 @@ function fakeAdmin(rows: Array<Record<string, unknown>> = []) {
   };
   return { admin: admin as never, rows, confirmed };
 }
+
+describe("R-1926: the confirm link is spent exactly once (it now also signs in)", () => {
+  it("two opens of the same link at the same moment: only one confirms", async () => {
+    const t = newToken();
+    const f = fakeAdmin([{ id: "1", user_id: "u1", email: "a@x.in", token_hash: hashToken(t), expires_at: new Date(Date.now() + 3600_000).toISOString(), used_at: null }]);
+    const [a, b] = await Promise.all([confirmEmailToken(f.admin, t), confirmEmailToken(f.admin, t)]);
+    expect([a, b].filter((r) => r.ok)).toHaveLength(1);
+    expect([a, b].filter((r) => !r.ok)).toEqual([{ ok: false, reason: "used" }]);
+    expect(f.confirmed).toEqual(["u1"]);
+  });
+
+  it("if confirming the account fails, the link is given back (can be tried again)", async () => {
+    const t = newToken();
+    const f = fakeAdmin([{ id: "1", user_id: "u1", email: "a@x.in", token_hash: hashToken(t), expires_at: new Date(Date.now() + 3600_000).toISOString(), used_at: null }]);
+    (f.admin as unknown as { auth: { admin: { updateUserById: unknown } } }).auth.admin.updateUserById = async () => ({ error: { message: "down" } });
+    expect(await confirmEmailToken(f.admin, t)).toEqual({ ok: false, reason: "error" });
+    expect(f.rows[0].used_at).toBeNull();
+  });
+});
 
 describe("email verification (R-048)", () => {
   it("tokens are random and only their hash is stored", async () => {

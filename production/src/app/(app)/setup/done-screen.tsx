@@ -2,6 +2,10 @@
  * R-260 — setup wizard's last screen. Every status row comes from real data
  * (tenant fields + the same integration GETs as Settings → Integrations) via
  * buildDoneChecklist; nothing here is hard-coded.
+ *
+ * R-1927 (G-ONBOARD OB-6): the next step is the first quote — "Create your first quote" is
+ * the primary button. Razorpay, Google and WhatsApp were wizard steps before the quote; they
+ * are now the "Later" rows here.
  */
 "use client";
 
@@ -59,33 +63,35 @@ export function StepDone() {
 
       <h2 className="font-serif text-3xl text-ink">Setup done.</h2>
       <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-ink-3">
-        Here&apos;s what&apos;s ready and what&apos;s left. Everything below can be finished later.
+        Send your first quote now. Everything below can be finished later.
       </p>
 
+      {/* R-1927: the first quote is the next step — primary, right under the heading. */}
+      <div className="mt-6 flex flex-wrap justify-center gap-2">
+        <Button variant="primary" asChild>
+          <Link href="/quotes/new">
+            <Icon name="file" size={14} />
+            Create your first quote
+          </Link>
+        </Button>
+        <Button variant="default" asChild>
+          <Link href="/dashboard">
+            <Icon name="home" size={14} />
+            Open dashboard
+          </Link>
+        </Button>
+      </div>
+
       {/* Status checklist — R-260: from real data, one column on phones */}
-      <ul className="mx-auto mt-6 grid max-w-md grid-cols-1 gap-2.5 text-left sm:grid-cols-2">
-        {doneChecklist.map((it) => {
-          const s = STATUS_ICON[it.status];
-          return (
-            <li key={it.id} className="flex items-start gap-2 text-sm">
-              <span
-                className={cn("mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white", s.className)}
-              >
-                <Icon name={s.icon} size={10} />
-                <span className="sr-only">{s.sr}</span>
-              </span>
-              <div className="min-w-0">
-                <p className="font-medium text-ink">{it.status === "checking" ? `${it.label} · checking…` : it.label}</p>
-                {it.note && (
-                  it.href
-                    ? <Link href={it.href as never} className="text-xs text-ink-3 underline underline-offset-2 hover:text-amber-ink">{it.note}</Link>
-                    : <p className="text-xs text-ink-3">{it.note}</p>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+      <ChecklistRows className="mt-6" items={doneChecklist.filter((it) => !it.later)} />
+
+      {/* R-1927: optional integrations — finished later, never before the first quote. */}
+      <div className="mx-auto mt-6 max-w-md text-left">
+        <p className="mb-2.5 text-3xs font-bold uppercase tracking-widest text-ink-3">
+          Later
+        </p>
+        <ChecklistRows items={doneChecklist.filter((it) => it.later)} />
+      </div>
 
       {/* Next steps — links that open the page (the old checkboxes saved nothing). */}
       <div className="mx-auto mt-6 max-w-md rounded-xl border border-hairline bg-paper-2 p-4 text-left">
@@ -107,20 +113,7 @@ export function StepDone() {
         </ul>
       </div>
 
-      {/* CTAs */}
-      <div className="mt-6 flex flex-wrap justify-center gap-2">
-        <Button variant="primary" asChild>
-          <Link href="/dashboard">
-            <Icon name="home" size={14} />
-            Open dashboard
-          </Link>
-        </Button>
-        <Button variant="default" asChild>
-          <Link href="/quotes/new">
-            <Icon name="file" size={14} />
-            Send first quote
-          </Link>
-        </Button>
+      <div className="mt-4 flex justify-center">
         <Button variant="ghost" asChild>
           <Link href="/settings">
             <Icon name="settings" size={14} />
@@ -129,5 +122,34 @@ export function StepDone() {
         </Button>
       </div>
     </div>
+  );
+}
+
+/** Status rows — one column on phones (R-260), two from sm. */
+function ChecklistRows({ items, className }: { items: ChecklistItem[]; className?: string }) {
+  return (
+    <ul className={cn("mx-auto grid max-w-md grid-cols-1 gap-2.5 text-left sm:grid-cols-2", className)}>
+      {items.map((it) => {
+        const s = STATUS_ICON[it.status];
+        return (
+          <li key={it.id} className="flex items-start gap-2 text-sm">
+            <span
+              className={cn("mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white", s.className)}
+            >
+              <Icon name={s.icon} size={10} />
+              <span className="sr-only">{s.sr}</span>
+            </span>
+            <div className="min-w-0">
+              <p className="font-medium text-ink">{it.status === "checking" ? `${it.label} · checking…` : it.label}</p>
+              {it.note && (
+                it.href
+                  ? <Link href={it.href as never} className="text-xs text-ink-3 underline underline-offset-2 hover:text-amber-ink">{it.note}</Link>
+                  : <p className="text-xs text-ink-3">{it.note}</p>
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

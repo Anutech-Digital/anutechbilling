@@ -9,6 +9,7 @@
  */
 import { quoteRecipient } from "@/lib/quotes/send-quote-email";
 import { checkGstin, liveGstin } from "@/lib/forms/poka-yoke";
+import { stageAfterQuoteSaved } from "@/lib/leads/stage-after-quote-sent";
 
 export interface ProspectContact {
   email: string;
@@ -63,8 +64,9 @@ export function prospectLeadRow(input: {
     state_code: input.stateCode || null,
     state: input.stateCode ? input.stateName : null,
     country: input.country.trim() || "India",
-    /* A sent quote puts the lead at Quote Sent, the same stage the lead-mode path moves to. */
-    stage: input.sent ? ("quote" as const) : ("new" as const),
+    /* R-1959: the same rule as the lead-mode path (stageAfterQuoteSaved) — a sent quote puts
+       the lead at Quote Sent; a draft is contact, so it starts at Contacted, not New. */
+    stage: stageAfterQuoteSaved("new", input.sent).nextStage ?? ("new" as const),
     source: "manual",
     plan: input.plan,
     seats: input.seats && input.seats > 0 ? input.seats : null,

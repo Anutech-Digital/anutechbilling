@@ -33,6 +33,7 @@ import {
   STARTER_WA_TEMPLATES, PARAM_FIELDS, isValidTemplateName, paramCount, templateProblem,
   renderBody, slotValues, normalizeWaPhone, type ParamField,
 } from "@/lib/marketing/whatsapp-broadcast";
+import { usePreviewSender } from "@/lib/queries/campaign-templates";
 import {
   useWaTemplates, useSaveWaTemplate, useDeleteWaTemplate, useSyncWaTemplates,
   useWaOptOuts, useAddWaOptOut, useRemoveWaOptOut, useWaBroadcasts,
@@ -247,6 +248,7 @@ function TemplatesTab() {
 
 function TemplateDialog({ draft, onClose }: { draft: Draft; onClose: () => void }) {
   const save = useSaveWaTemplate();
+  const sender = usePreviewSender(); // R-1924: sample shows the logged-in company
   const [d, setD] = React.useState<Draft>(draft);
   const n = paramCount(d.body);
   // Keep the field list as long as the slot count.
@@ -255,7 +257,7 @@ function TemplateDialog({ draft, onClose }: { draft: Draft; onClose: () => void 
       : { ...cur, param_map: Array.from({ length: n }, (_, i) => cur.param_map[i] ?? "first_name") });
   }, [n]);
   const problem = !isValidTemplateName(d.name) ? "Name: lowercase letters, numbers and _ only (e.g. festival_offer)." : templateProblem(d.body, d.param_map);
-  const sample = renderBody(d.body, slotValues(d.param_map, { first_name: "Deepak", company: "Demo Co", sender: "Anutech" }));
+  const sample = renderBody(d.body, slotValues(d.param_map, { first_name: "Deepak", company: "Demo Co", sender }));
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

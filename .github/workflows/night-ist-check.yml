@@ -1,0 +1,74 @@
+# Night IST check — R-1826 (24 Oct 2026)
+#
+# ─── WHY ────────────────────────────────────────────────────────────────────
+# R-1653, R-1716 and R-1816 only showed for records made between 00:00 and 05:30 IST, when the
+# UTC day is still yesterday. Every test runs in daytime, so this one runs at 01:00 IST
+# (19:30 UTC) against STAGING: it logs into E2E Test Co, saves one draft quote, checks the
+# database gave it today's IST date, and deletes it. Red = a date default is on the UTC day again.
+#
+# ─── WHAT IT TOUCHES ────────────────────────────────────────────────────────
+# Staging only (the script refuses any host without "staging" in its name, and any tenant but
+# E2E Test Co f588b89d-…). One draft quote, id NIGHT-IST-<stamp>, deleted at the end. No
+# invoice, payment or GST document; no quote number is used.
+#
+# ─── NEEDS (repo Settings → Secrets and variables → Actions) ───────────────
+#   secrets.SMOKE_EMAIL, secrets.SMOKE_PASSWORD   the E2E Test Co login on staging
+#   vars.STAGING_URL (optional)                   defaults to the staging Cloud Run URL below
+# Without the secrets the run says so and stops green-but-skipped (no false alarm).
+name: Night IST check
+
+on:
+  schedule:
+    - cron: "30 19 * * *"   # 01:00 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: night-ist-check
+  cancel-in-progress: false
+
+jobs:
+  night-ist-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preflight — login configured?
+        id: preflight
+        env:
+          SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+        run: |
+          if [ -z "$SMOKE_EMAIL" ] || [ -z "$SMOKE_PASSWORD" ]; then
+            echo "::warning::SMOKE_EMAIL / SMOKE_PASSWORD not set — night IST check skipped."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.preflight.outputs.configured == 'true'
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: production/package-lock.json
+
+      - name: Install dependencies + Chromium
+        if: steps.preflight.outputs.configured == 'true'
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Night IST check (staging)
+        if: steps.preflight.outputs.configured == 'true'
+        env:
+          SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+          STAGING_URL: ${{ vars.STAGING_URL || 'https://resellersos-staging-njvk4nxhdq-as.a.run.app' }}
+        run: node scripts/ops/night-ist-check.mjs "$STAGING_URL"

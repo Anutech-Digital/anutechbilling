@@ -46,8 +46,17 @@ export function PrimaryContactLine({ contact, onAddContact }: {
     >
       <span className="inline-flex items-center gap-1.5 min-w-0">
         <Icon name="user" size={13} className="text-ink-3 flex-shrink-0" />
-        <span className="font-medium text-ink break-words">{contact.name}</span>
+        {contact.name && <span className="font-medium text-ink break-words">{contact.name}</span>}
         {contact.title && <span className="text-ink-3">· {contact.title}</span>}
+        {/* R-1894: not a contact person — what is typed on the customer record. */}
+        {contact.fromRecord && (
+          <span
+            className="text-2xs text-ink-3"
+            title="Saved on the customer record, not as a contact person. Use Save as contact in the Contacts card."
+          >
+            {contact.name ? "· On the customer record" : "On the customer record"}
+          </span>
+        )}
       </span>
       {tel && isMaskedContact(tel) && (
         <span className="inline-flex items-center gap-1 text-ink-3 tabular-nums" title={hidden}>

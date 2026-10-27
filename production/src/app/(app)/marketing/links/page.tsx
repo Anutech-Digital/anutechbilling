@@ -29,7 +29,7 @@ import { useTrackingLinks, useCreateTrackingLink, useDeleteTrackingLink } from "
 import { useCampaignOptions } from "@/lib/queries/marketing-campaigns";
 
 /* A link is for a real channel — not for "Added manually" or "CSV import". */
-const LINK_CHANNELS = LEAD_SOURCES.filter((s) => !["manual", "csv", "tele-calling", "walk-in", "email-inbound", "buy-workspace-v2", "enquiry-form"].includes(s.value));
+const LINK_CHANNELS = LEAD_SOURCES.filter((s) => !s.auto && !["manual", "csv", "tele-calling", "walk-in", "email-inbound", "buy-workspace-v2", "enquiry-form"].includes(s.value));
 
 function siteOrigin(): string {
   const env = process.env.NEXT_PUBLIC_APP_URL?.trim();

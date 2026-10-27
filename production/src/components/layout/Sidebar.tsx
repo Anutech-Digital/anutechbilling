@@ -24,7 +24,10 @@ import {
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { type UserRole, type NavItem } from "@/lib/nav";
-import { buildSidebarApps, appForPath, withoutDistributorOnly } from "@/lib/nav-apps";
+import { buildSidebarApps, appForPath, forSellMode, withoutDistributorOnly } from "@/lib/nav-apps";
+import { DEFAULT_SELL_MODE, sellsSubscriptions } from "@/lib/sell-mode";
+import { useHasSubscriptions, useSellMode, useShowAllModules } from "@/lib/queries/sell-mode";
+import { Switch } from "@/components/ui/switch";
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import type { TenantWithParent } from "@/lib/supabase/database.types";
@@ -67,10 +70,23 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
     staleTime: 5 * 60 * 1000,
   });
   const isDistributor = hierarchy === undefined ? undefined : hierarchy?.tier === "distributor";
+  /* R-1861: "What do you sell?" hides rows from THIS menu only — the route guard and Ctrl+K
+     still have them. A subscription on file, or the user's "Show all modules", brings them back. */
+  const { data: sell } = useSellMode();
+  const sellMode = sell?.mode ?? DEFAULT_SELL_MODE;
+  const answerHides = !sellsSubscriptions(sellMode);
+  const hasSubscriptions = useHasSubscriptions(answerHides);
+  const [showAll, setShowAll] = useShowAllModules();
   const model = React.useMemo(
-    () => withoutDistributorOnly(buildSidebarApps(role), role, isDistributor),
-    [role, isDistributor],
+    () => forSellMode(
+      withoutDistributorOnly(buildSidebarApps(role), role, isDistributor),
+      sellMode,
+      { showAll, hasData: hasSubscriptions },
+    ),
+    [role, isDistributor, sellMode, showAll, hasSubscriptions],
   );
+  /* The toggle only when the answer would hide something (once a subscription exists, nothing is). */
+  const offerShowAll = answerHides && hasSubscriptions === false;
   const routeApp = appForPath(model, pathname);
   const [pickedApp, setPickedApp] = React.useState<string | null>(null);
   // The last app the route pointed at — so a pinned page (/dashboard) or a page outside the
@@ -369,6 +385,17 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
               </div>
             )}
           </>
+        )}
+
+        {/* R-1861: per user — the company's "What do you sell?" answer is only the default. */}
+        {offerShowAll && !collapsed && (
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-hairline px-3 pt-3 pb-1">
+            <label htmlFor="show-all-modules" className="text-xs text-ink-2">
+              Show all modules
+              <span className="block text-3xs text-ink-3">Subscriptions, Renewals, Activation Queue</span>
+            </label>
+            <Switch id="show-all-modules" checked={showAll} onCheckedChange={setShowAll} />
+          </div>
         )}
 
         {/* Founder-only — cross-tenant signups. Gated by the platform-admin

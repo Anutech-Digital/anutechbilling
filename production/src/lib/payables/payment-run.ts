@@ -121,13 +121,8 @@ export function bankFileRows(runNo: string, items: readonly RunItem[], vendors: 
 
 // ─── Form checks (the DB checks the same; these give the message before the save) ────────
 
-export const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
-export const ACCOUNT_RE = /^[0-9]{6,18}$/;
-export const UPI_RE = /^[A-Za-z0-9._-]{2,64}@[A-Za-z][A-Za-z0-9.-]{1,64}$/;
-
-/** "50100 1234 5678" → "5010012345678"; "hdfc0001234" → "HDFC0001234". */
-export const cleanAccountNo = (s: string) => s.replace(/[\s-]/g, "");
-export const cleanIfsc = (s: string) => s.trim().toUpperCase();
+// R-1905: the rules and their messages live in one place, lib/banking/bank-details.
+export { IFSC_RE, ACCOUNT_RE, UPI_RE, cleanAccountNo, cleanIfsc } from "@/lib/banking/bank-details";
 
 /** Show only the last 4 digits of an account number on screens that are not the vendor form. */
 export const maskAccount = (n: string | null | undefined) => (n ? `••••${n.slice(-4)}` : "—");

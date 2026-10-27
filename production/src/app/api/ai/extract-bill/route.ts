@@ -61,6 +61,7 @@ export async function POST(request: NextRequest) {
   const ai = await readBillWithGemini({
     apiKey:   gemini.apiKey,
     model:    gemini.model,
+    tenantId: gemini.tenantId,
     mimeType: parsed.mimeType,
     base64:   parsed.fileBase64,
   });

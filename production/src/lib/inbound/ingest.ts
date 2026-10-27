@@ -88,7 +88,7 @@ function parseFrom(raw: string): { name: string; email: string } {
 }
 
 /** Ask Gemini to classify + extract. Returns null on any failure (caller stubs). */
-async function extractWithGemini(apiKey: string, model: string, subject: string, from: string, body: string): Promise<ExtractedLead | null> {
+async function extractWithGemini(apiKey: string, model: string, tenantId: string | null, subject: string, from: string, body: string): Promise<ExtractedLead | null> {
   const system =
     "You triage forwarded B2B emails for a cloud-software reseller (Google Workspace, " +
     "Microsoft 365, Zoho). Decide if the email is a GENUINE sales/product enquiry from a " +
@@ -115,7 +115,7 @@ async function extractWithGemini(apiKey: string, model: string, subject: string,
 
      Ab ek hi darwaza: lib/ai/gemini.ts. */
   const p = await geminiJson<Partial<ExtractedLead>>({
-    apiKey, model, system, user,
+    apiKey, model, tenantId, system, user,
     temperature: 0.2,
     label: "inbound-email/extract",
   });
@@ -446,7 +446,7 @@ export async function ingestInboundEmail(body: Record<string, unknown>): Promise
     let extracted: unknown = null;
     if (gem.apiKey) {
       const ai = await readBillWithGemini({
-        apiKey: gem.apiKey, model: gem.model,
+        apiKey: gem.apiKey, model: gem.model, tenantId: gem.tenantId,
         mimeType: attachment.mimeType, base64: attachment.base64,
       });
       if (ai) extracted = sanitizeExtractedBill(ai);
@@ -535,7 +535,7 @@ export async function ingestInboundEmail(body: Record<string, unknown>): Promise
 
   // ── 4. Extract + classify (Gemini, or stub fallback) ───────────────────
   const gemini = await resolveGeminiConfig(admin, tenantId);
-  const ai = gemini.apiKey ? await extractWithGemini(gemini.apiKey, gemini.model, subject, rawFrom, text) : null;
+  const ai = gemini.apiKey ? await extractWithGemini(gemini.apiKey, gemini.model, gemini.tenantId, subject, rawFrom, text) : null;
   const extracted: ExtractedLead = ai ?? {
     isEnquiry:   true, // no AI → don't silently drop; let the operator triage
     company:     fromEmail.split("@")[1]?.split(".")[0] || fromName || "Email lead",

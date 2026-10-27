@@ -25,7 +25,7 @@ const never = matcher(async () => { throw new Error("model ko bulaya hi nahi jan
 const STARTER = { id: "i1", name: "Google Workspace Business Starter" };
 const STANDARD = { id: "i2", name: "Google Workspace Business Standard" };
 const CATALOGUE = [STARTER, STANDARD];
-const GEMINI = { apiKey: "k", model: "m" };
+const GEMINI = { apiKey: "k", model: "m", tenantId: null };
 
 const REAL_REPLY = "mujhe 48 email id google workspace starter ke liye qutoe chahiye monthly par";
 
@@ -91,7 +91,7 @@ describe("kabhi phenkta nahi — enquiry ke raaste me nahi aana", () => {
   it("bina key, khaali catalogue, khaali matn — teeno par model bulaya hi nahi jata", async () => {
     calls = 0;
     for (const args of [
-      { exact: null, text: REAL_REPLY, catalogue: CATALOGUE, gemini: { apiKey: null, model: "m" } },
+      { exact: null, text: REAL_REPLY, catalogue: CATALOGUE, gemini: { apiKey: null, model: "m", tenantId: null } },
       { exact: null, text: REAL_REPLY, catalogue: [], gemini: GEMINI },
       { exact: null, text: "   ", catalogue: CATALOGUE, gemini: GEMINI },
     ]) {

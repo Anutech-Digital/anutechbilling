@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { cn, rupee } from "@/lib/utils";
 import { useCreateCoupon } from "@/lib/queries/coupons";
+import { useCampaignOptions } from "@/lib/queries/marketing-campaigns";
 
 interface Props {
   open: boolean;
@@ -39,12 +40,16 @@ export default function CreateCouponDialog({ open, onOpenChange }: Props) {
   const [maxSeats,        setMaxSeats]        = React.useState("");
   const [maxRedemptions,  setMaxRedemptions]  = React.useState("");
   const [validUntil,      setValidUntil]      = React.useState("");
+  /* R-1981: which marketing campaign this code belongs to (optional) — Marketing → Campaigns.
+     Cancelled campaigns are not offered. */
+  const [campaignId,      setCampaignId]      = React.useState("");
+  const campaigns = (useCampaignOptions().data ?? []).filter((c) => !c.cancelled);
 
   const reset = () => {
     setCode(""); setDescription("");
     setDiscountType("percent"); setDiscountValue("10");
     setTier(""); setMinSeats("1"); setMaxSeats("");
-    setMaxRedemptions(""); setValidUntil("");
+    setMaxRedemptions(""); setValidUntil(""); setCampaignId("");
   };
 
   const submitting = create.isPending;
@@ -82,6 +87,7 @@ export default function CreateCouponDialog({ open, onOpenChange }: Props) {
         max_seats:        maxSeats        ? Number(maxSeats)        : null,
         max_redemptions:  maxRedemptions  ? Number(maxRedemptions)  : null,
         valid_until:      validUntil      || null,
+        campaign_id:      campaignId      || null,
       });
       toast.success(`Coupon ${cleanCode} created`);
       reset();
@@ -258,6 +264,23 @@ export default function CreateCouponDialog({ open, onOpenChange }: Props) {
             <p className="text-xs text-ink-3 mt-1">Leave blank for no expiry</p>
           </div>
         </div>
+
+        {campaigns.length > 0 && (
+          <div className="mb-4">
+            <Label htmlFor="create-coupon-campaign">Campaign (optional)</Label>
+            <select id="create-coupon-campaign"
+              value={campaignId}
+              onChange={(e) => setCampaignId(e.target.value)}
+              className="w-full text-sm bg-paper border border-hairline rounded px-3 h-10 focus:outline-none focus:ring-1 focus:ring-amber"
+            >
+              <option value="">No campaign</option>
+              {campaigns.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <p className="text-xs text-ink-3 mt-1">Links this code to a campaign in Marketing → Campaigns.</p>
+          </div>
+        )}
 
         <div className="bg-paper-2 rounded-md p-3 mb-4 text-xs text-ink-3 leading-relaxed">
           <p className="font-medium text-ink-2 mb-1">Where it works:</p>

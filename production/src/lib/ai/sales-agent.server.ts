@@ -354,6 +354,7 @@ async function observeDomain(
 async function runQualifier(args: {
   apiKey: string;
   model: string;
+  tenantId: string | null;
   company: string;
   recordedProduct: string | null;
   recordedSeats: number | null;
@@ -362,6 +363,7 @@ async function runQualifier(args: {
 }): Promise<Qualification | null> {
   const raw = await geminiJson<unknown>({
     apiKey: args.apiKey,
+    tenantId: args.tenantId,
     model: args.model,
     system: QUALIFIER_SYSTEM_PROMPT,
     user: qualifierUserPrompt({
@@ -473,6 +475,7 @@ export async function runSalesAgent(args: {
   const qualification = await runQualifier({
     apiKey: cfg.apiKey,
     model: cfg.model,
+    tenantId: cfg.tenantId,
     company: args.lead.company,
     recordedProduct: args.lead.plan,
     recordedSeats: args.lead.seats,
@@ -530,6 +533,7 @@ export async function runSalesAgent(args: {
   const raw = await geminiJson<unknown>({
     apiKey: cfg.apiKey,
     model: cfg.model,
+    tenantId: cfg.tenantId,
     system: prompt.system,
     user: prompt.user,
     /* Low, not zero. Zero makes every reply to a similar enquiry word-for-word identical,

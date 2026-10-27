@@ -60,7 +60,7 @@ import { amountInIndianWords } from "@/lib/accounting/amount-words";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { canonicalSource, sourceOptions } from "@/lib/leads/lead-sources";
+import { canonicalSource, sourceForSave, sourceOptions } from "@/lib/leads/lead-sources";
 import { autoDealValue, dealFormErrors, needsDealDetails, type DealFormField } from "@/lib/leads/deal-rules";
 import { CustomerCombobox } from "@/components/features/customers/customer-combobox";
 import { useCustomers } from "@/lib/queries/customers";
@@ -728,7 +728,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
         seats:          seatsVal,
         value:          valueVal,
         stage:          data.stage,
-        source:         data.source,
+        source:         isEditing ? sourceForSave(data.source, editingLead?.source) : data.source,
         priority:       data.priority,
         follow_up_date: data.follow_up_date || null,
         expected_close_date: data.expected_close_date || null,

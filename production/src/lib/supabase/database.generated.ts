@@ -2180,6 +2180,7 @@ export type Database = {
           id: string
           ifsc: string | null
           is_active: boolean
+          is_default_petty_cash: boolean
           name: string
           notes: string | null
           opening_balance: number
@@ -2195,6 +2196,7 @@ export type Database = {
           id?: string
           ifsc?: string | null
           is_active?: boolean
+          is_default_petty_cash?: boolean
           name: string
           notes?: string | null
           opening_balance?: number
@@ -2210,6 +2212,7 @@ export type Database = {
           id?: string
           ifsc?: string | null
           is_active?: boolean
+          is_default_petty_cash?: boolean
           name?: string
           notes?: string | null
           opening_balance?: number
@@ -3423,6 +3426,7 @@ export type Database = {
         Row: {
           applies_to_tier: string | null
           applies_to_vendor: string | null
+          campaign_id: string | null
           code: string
           created_at: string
           created_by: string | null
@@ -3442,6 +3446,7 @@ export type Database = {
         Insert: {
           applies_to_tier?: string | null
           applies_to_vendor?: string | null
+          campaign_id?: string | null
           code: string
           created_at?: string
           created_by?: string | null
@@ -3461,6 +3466,7 @@ export type Database = {
         Update: {
           applies_to_tier?: string | null
           applies_to_vendor?: string | null
+          campaign_id?: string | null
           code?: string
           created_at?: string
           created_by?: string | null
@@ -3478,6 +3484,13 @@ export type Database = {
           valid_until?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "coupons_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "marketing_campaigns"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "coupons_tenant_id_fkey"
             columns: ["tenant_id"]
@@ -5057,6 +5070,10 @@ export type Database = {
           emergency_contact_phone: string | null
           esi_applicable: boolean
           esi_no: string | null
+          exit_date: string | null
+          exit_note: string | null
+          exit_reason: string | null
+          exit_started_at: string | null
           face_enrolled_at: string | null
           face_ref_path: string | null
           id: string
@@ -5072,6 +5089,7 @@ export type Database = {
           phone: string | null
           pin_hash: string | null
           pin_set: boolean | null
+          resignation_date: string | null
           tenant_id: string
           updated_at: string
         }
@@ -5091,6 +5109,10 @@ export type Database = {
           emergency_contact_phone?: string | null
           esi_applicable?: boolean
           esi_no?: string | null
+          exit_date?: string | null
+          exit_note?: string | null
+          exit_reason?: string | null
+          exit_started_at?: string | null
           face_enrolled_at?: string | null
           face_ref_path?: string | null
           id?: string
@@ -5106,6 +5128,7 @@ export type Database = {
           phone?: string | null
           pin_hash?: string | null
           pin_set?: boolean | null
+          resignation_date?: string | null
           tenant_id: string
           updated_at?: string
         }
@@ -5125,6 +5148,10 @@ export type Database = {
           emergency_contact_phone?: string | null
           esi_applicable?: boolean
           esi_no?: string | null
+          exit_date?: string | null
+          exit_note?: string | null
+          exit_reason?: string | null
+          exit_started_at?: string | null
           face_enrolled_at?: string | null
           face_ref_path?: string | null
           id?: string
@@ -5140,6 +5167,7 @@ export type Database = {
           phone?: string | null
           pin_hash?: string | null
           pin_set?: boolean | null
+          resignation_date?: string | null
           tenant_id?: string
           updated_at?: string
         }
@@ -5249,6 +5277,7 @@ export type Database = {
       }
       expenses: {
         Row: {
+          advance_applied: number
           amount: number
           attachment_url: string | null
           bank_account_id: string | null
@@ -5270,6 +5299,7 @@ export type Database = {
           line_items: Json
           notes: string | null
           paid: boolean
+          paid_amount: number
           paid_date: string | null
           payment_method: string | null
           prepaid_advance_id: string | null
@@ -5286,6 +5316,7 @@ export type Database = {
           vendor_name: string | null
         }
         Insert: {
+          advance_applied?: number
           amount: number
           attachment_url?: string | null
           bank_account_id?: string | null
@@ -5307,6 +5338,7 @@ export type Database = {
           line_items?: Json
           notes?: string | null
           paid?: boolean
+          paid_amount?: number
           paid_date?: string | null
           payment_method?: string | null
           prepaid_advance_id?: string | null
@@ -5323,6 +5355,7 @@ export type Database = {
           vendor_name?: string | null
         }
         Update: {
+          advance_applied?: number
           amount?: number
           attachment_url?: string | null
           bank_account_id?: string | null
@@ -5344,6 +5377,7 @@ export type Database = {
           line_items?: Json
           notes?: string | null
           paid?: boolean
+          paid_amount?: number
           paid_date?: string | null
           payment_method?: string | null
           prepaid_advance_id?: string | null
@@ -7447,8 +7481,10 @@ export type Database = {
           trial_started_at: string | null
           updated_at: string
           utm_campaign: string | null
+          utm_content: string | null
           utm_medium: string | null
           utm_source: string | null
+          utm_term: string | null
           value: number | null
           wbraid: string | null
         }
@@ -7506,8 +7542,10 @@ export type Database = {
           trial_started_at?: string | null
           updated_at?: string
           utm_campaign?: string | null
+          utm_content?: string | null
           utm_medium?: string | null
           utm_source?: string | null
+          utm_term?: string | null
           value?: number | null
           wbraid?: string | null
         }
@@ -7565,8 +7603,10 @@ export type Database = {
           trial_started_at?: string | null
           updated_at?: string
           utm_campaign?: string | null
+          utm_content?: string | null
           utm_medium?: string | null
           utm_source?: string | null
+          utm_term?: string | null
           value?: number | null
           wbraid?: string | null
         }
@@ -10030,8 +10070,10 @@ export type Database = {
           exchange_rate: number
           expires_date: string | null
           extension_months: number
+          fbclid: string | null
           fx_date: string | null
           fx_source: string | null
+          gclid: string | null
           hot_lead_alerted_at: string | null
           id: string
           invoice_id: string | null
@@ -10039,6 +10081,7 @@ export type Database = {
           is_extension: boolean
           is_one_off: boolean
           is_renewal: boolean
+          landing_page_url: string | null
           lead_id: string | null
           line_items: Json | null
           notes: string | null
@@ -10056,6 +10099,7 @@ export type Database = {
           prospect_state: string | null
           prospect_state_code: string | null
           public_token: string
+          referrer_url: string | null
           rejected_note: string | null
           rejected_reason: string | null
           renewal_subscription_id: string | null
@@ -10069,9 +10113,15 @@ export type Database = {
           superseded_by: string | null
           tax_rate: number | null
           tenant_id: string
+          wbraid: string | null
           terms_conditions: string | null
           total_cost: number | null
           updated_at: string
+          utm_term: string | null
+          utm_content: string | null
+          utm_campaign: string | null
+          utm_medium: string | null
+          utm_source: string | null
         }
         Insert: {
           add_seats_mrr_added?: number | null
@@ -10106,8 +10156,10 @@ export type Database = {
           exchange_rate?: number
           expires_date?: string | null
           extension_months?: number
+          fbclid?: string | null
           fx_date?: string | null
           fx_source?: string | null
+          gclid?: string | null
           hot_lead_alerted_at?: string | null
           id: string
           invoice_id?: string | null
@@ -10115,6 +10167,7 @@ export type Database = {
           is_extension?: boolean
           is_one_off?: boolean
           is_renewal?: boolean
+          landing_page_url?: string | null
           lead_id?: string | null
           line_items?: Json | null
           notes?: string | null
@@ -10132,6 +10185,7 @@ export type Database = {
           prospect_state?: string | null
           prospect_state_code?: string | null
           public_token?: string
+          referrer_url?: string | null
           rejected_note?: string | null
           rejected_reason?: string | null
           renewal_subscription_id?: string | null
@@ -10145,9 +10199,15 @@ export type Database = {
           superseded_by?: string | null
           tax_rate?: number | null
           tenant_id: string
+          wbraid?: string | null
           terms_conditions?: string | null
           total_cost?: number | null
           updated_at?: string
+          utm_term?: string | null
+          utm_content?: string | null
+          utm_campaign?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
         }
         Update: {
           add_seats_mrr_added?: number | null
@@ -10182,8 +10242,10 @@ export type Database = {
           exchange_rate?: number
           expires_date?: string | null
           extension_months?: number
+          fbclid?: string | null
           fx_date?: string | null
           fx_source?: string | null
+          gclid?: string | null
           hot_lead_alerted_at?: string | null
           id?: string
           invoice_id?: string | null
@@ -10191,6 +10253,7 @@ export type Database = {
           is_extension?: boolean
           is_one_off?: boolean
           is_renewal?: boolean
+          landing_page_url?: string | null
           lead_id?: string | null
           line_items?: Json | null
           notes?: string | null
@@ -10208,6 +10271,7 @@ export type Database = {
           prospect_state?: string | null
           prospect_state_code?: string | null
           public_token?: string
+          referrer_url?: string | null
           rejected_note?: string | null
           rejected_reason?: string | null
           renewal_subscription_id?: string | null
@@ -10221,9 +10285,15 @@ export type Database = {
           superseded_by?: string | null
           tax_rate?: number | null
           tenant_id?: string
+          wbraid?: string | null
           terms_conditions?: string | null
           total_cost?: number | null
           updated_at?: string
+          utm_term?: string | null
+          utm_content?: string | null
+          utm_campaign?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
         }
         Relationships: [
           {
@@ -13273,6 +13343,7 @@ export type Database = {
       }
       users: {
         Row: {
+          access_ends_on: string | null
           attendance_checkout_reminder_at: string
           attendance_reminders_enabled: boolean
           avatar_url: string | null
@@ -13293,6 +13364,7 @@ export type Database = {
           tenant_id: string
         }
         Insert: {
+          access_ends_on?: string | null
           attendance_checkout_reminder_at?: string
           attendance_reminders_enabled?: boolean
           avatar_url?: string | null
@@ -13313,6 +13385,7 @@ export type Database = {
           tenant_id: string
         }
         Update: {
+          access_ends_on?: string | null
           attendance_checkout_reminder_at?: string
           attendance_reminders_enabled?: boolean
           avatar_url?: string | null
@@ -14497,6 +14570,7 @@ export type Database = {
         Args: { p_account_id: string; p_after?: string; p_limit?: number }
         Returns: Json
       }
+      backfill_default_petty_cash: { Args: never; Returns: number }
       backup_all_tenants: { Args: { p_label?: string }; Returns: Json }
       backup_tenant: {
         Args: { p_label?: string; p_tenant: string }
@@ -14607,6 +14681,10 @@ export type Database = {
         Returns: Json
       }
       can_see_record: { Args: { p_owner: string }; Returns: boolean }
+      cancel_employee_exit: {
+        Args: { p_employee_id: string }
+        Returns: undefined
+      }
       cancel_payment_run: { Args: { p_run_id: string }; Returns: undefined }
       cancel_subscription: {
         Args: {
@@ -16003,6 +16081,16 @@ export type Database = {
       split_project_milestone: {
         Args: { p_amount: number; p_label: string; p_milestone_id: string }
         Returns: string
+      }
+      start_employee_exit: {
+        Args: {
+          p_employee_id: string
+          p_last_day: string
+          p_note?: string
+          p_reason: string
+          p_resignation_date?: string
+        }
+        Returns: Json
       }
       submit_expense_claim: {
         Args: {

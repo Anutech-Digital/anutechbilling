@@ -10,20 +10,22 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
-import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { fetchAllRows, type PageQuery } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { guardErrorToast } from "@/lib/ui/guard-toast";
 import type { Database } from "@/lib/supabase/database.types";
 import { statutoryDues, type DuesSummary } from "@/lib/accounting/tds-deductor";
 import { monthBounds } from "@/lib/dates/ist";
+import { fetchCogsBillTds } from "@/lib/queries/cogs-bill-tds";
+import { resolveSalaryBankLines, salariesNeedingBankLine, type BankLineFacts, type BankLineRef } from "@/lib/payroll/salary-bank-link";
 
 /** R-607: no pin_hash — members cannot read it (20261010010000). Use `pin_set`. */
 export type Employee = Omit<Database["public"]["Tables"]["employees"]["Row"], "pin_hash">;
 
 /** Every employees column a member may read: all but pin_hash. Kept explicit because
  *  `select("*")` now fails with "permission denied" (column grants). */
-const EMPLOYEE_COLUMNS = "id, tenant_id, name, monthly_gross, joining_date, leave_allowance, pan, pf_no, esi_no, is_active, notes, created_at, updated_at, email, phone, designation, date_of_birth, address, emergency_contact_name, emergency_contact_phone, esi_applicable, pf_applicable, biometric_id, attendance_consent_at, attendance_consent_source, face_enrolled_at, face_ref_path, basic_monthly, da_monthly, pin_set, attendance_anywhere";
+const EMPLOYEE_COLUMNS = "id, tenant_id, name, monthly_gross, joining_date, leave_allowance, pan, pf_no, esi_no, is_active, notes, created_at, updated_at, email, phone, designation, date_of_birth, address, emergency_contact_name, emergency_contact_phone, esi_applicable, pf_applicable, biometric_id, attendance_consent_at, attendance_consent_source, face_enrolled_at, face_ref_path, basic_monthly, da_monthly, pin_set, attendance_anywhere, exit_date, exit_reason, resignation_date, exit_note, exit_started_at";
 export type LeaveEntry = Database["public"]["Tables"]["leave_entries"]["Row"];
 export type SalaryPayment = Database["public"]["Tables"]["salary_payments"]["Row"];
 export type Attendance = Database["public"]["Tables"]["attendance"]["Row"];
@@ -89,6 +91,50 @@ export function useUpsertEmployee() {
       toast.success("Employee saved");
     },
     onError: (err) => toastError(err),
+  });
+}
+
+/** R-1896 — owner starts an exit: last working day + reason on the employee, and their linked
+ *  login ends after that IST day (users.access_ends_on). One RPC, one transaction. */
+export function useStartEmployeeExit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { employeeId: string; lastDay: string; reason: string; resignationDate?: string | null; note?: string | null }) => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("start_employee_exit", {
+        p_employee_id: input.employeeId,
+        p_last_day: input.lastDay,
+        p_reason: input.reason,
+        ...(input.resignationDate ? { p_resignation_date: input.resignationDate } : {}),
+        ...(input.note ? { p_note: input.note } : {}),
+      });
+      if (error) throw error;
+      return data as { logins_ending?: number } | null;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["employees"] });
+      qc.invalidateQueries({ queryKey: ["team"] });
+      toast.success("Exit started");
+    },
+    onError: (err) => toastError(err, { fallback: "Could not start the exit." }),
+  });
+}
+
+/** R-1896 — owner undoes an exit (a mistake, or they stay on). Their login works again. */
+export function useCancelEmployeeExit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (employeeId: string) => {
+      const supabase = createClient();
+      const { error } = await supabase.rpc("cancel_employee_exit", { p_employee_id: employeeId });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["employees"] });
+      qc.invalidateQueries({ queryKey: ["team"] });
+      toast.success("Exit cancelled");
+    },
+    onError: (err) => toastError(err, { fallback: "Could not cancel the exit." }),
   });
 }
 
@@ -326,6 +372,69 @@ export function useSalaryPayments(period?: string) {
 }
 
 
+/**
+ * R-1831: unlinked money-out bank lines whose amount equals one of these salaries' net —
+ * the fact behind "Paid — link bank line" (lib/payroll/salary-status.ts). Keyed by whole
+ * rupees → the account holding the line, so the next-step button can open that account's
+ * reconcile with ?match=<net> (the bank page's existing deep link). Only lines on or after
+ * `since` (the first salary month's first day) count — an older line cannot pay this month.
+ */
+export function useUnlinkedSalaryBankLines(nets: number[], since: string | null) {
+  const amounts = [...new Set(nets.filter((n) => n > 0).map((n) => Math.round(n)))].sort((a, b) => a - b);
+  return useQuery({
+    queryKey: ["bank_transactions", "unlinked-salary-amounts", since ?? "", amounts.join(",")],
+    enabled: amounts.length > 0 && Boolean(since),
+    queryFn: async (): Promise<Map<number, string>> => {
+      const supabase = createClient();
+      const rows = await fetchAllRows<{ id: string; debit: number; bank_account_id: string }>((from, to) => supabase
+        .from("bank_transactions")
+        .select("id, debit, bank_account_id")
+        .is("matched_to_type", null)
+        .in("debit", amounts)
+        .gte("txn_date", since!)
+        .order("id", { ascending: true })
+        .range(from, to));
+      const byAmount = new Map<number, string>();
+      for (const r of rows) {
+        const k = Math.round(r.debit);
+        if (!byAmount.has(k)) byAmount.set(k, r.bank_account_id);
+      }
+      return byAmount;
+    },
+    staleTime: 30_000,
+  });
+}
+
+/** R-1895: salary id → the bank line that paid it (account + line id), for the Salary Register's
+ *  "open the bank line" link. reconciled_txn_id first; else a line matched to the salary or its
+ *  expense (lib/payroll/salary-bank-link). Only paid / partial salaries are looked up. */
+export function useSalaryBankLines(rows: readonly SalaryPayment[]) {
+  const need = salariesNeedingBankLine(rows);
+  const txnIds = [...new Set(need.map((p) => p.reconciled_txn_id).filter((x): x is string => !!x))].sort();
+  const loose = need.filter((p) => !p.reconciled_txn_id);
+  const salIds = loose.map((p) => p.id).sort();
+  const expIds = loose.map((p) => p.expense_id).filter((x): x is string => !!x).sort();
+  return useQuery({
+    queryKey: ["salary-payments", "bank-lines", txnIds.join(","), salIds.join(","), expIds.join(",")],
+    enabled: need.length > 0,
+    queryFn: async (): Promise<Map<string, BankLineRef>> => {
+      const supabase = createClient();
+      const cols = "id, bank_account_id, txn_date, matched_to_type, matched_to_id";
+      const chunks = (xs: readonly string[], n = 150) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+      const reads: Promise<BankLineFacts[]>[] = [
+        ...chunks(txnIds).map((ids) => fetchAllRows<BankLineFacts>((from, to) => supabase.from("bank_transactions").select(cols)
+          .in("id", ids).order("id", { ascending: true }).range(from, to))),
+        ...chunks(salIds).map((ids) => fetchAllRows<BankLineFacts>((from, to) => supabase.from("bank_transactions").select(cols)
+          .eq("matched_to_type", "salary").in("matched_to_id", ids).order("id", { ascending: true }).range(from, to))),
+        ...chunks(expIds).map((ids) => fetchAllRows<BankLineFacts>((from, to) => supabase.from("bank_transactions").select(cols)
+          .eq("matched_to_type", "expense").in("matched_to_id", ids).order("id", { ascending: true }).range(from, to))),
+      ];
+      return resolveSalaryBankLines(need, (await Promise.all(reads)).flat());
+    },
+    staleTime: 30_000,
+  });
+}
+
 /** Salaries not yet fully cleared (unpaid or partially paid), with the still-
  *  owed remaining amount — fed to the reconcile dialog so a money-out bank line
  *  can be applied (fully or partially) to a chosen salary. */
@@ -425,7 +534,8 @@ export function usePaySalary() {
       qc.invalidateQueries({ queryKey: ["bank_accounts"] });
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["statutory-dues"] });
-      toast.success("Salary paid");
+      /* R-1831: this books the salary — it reads Paid once its bank line is linked. */
+      toast.success("Salary booked", { description: "It shows as Paid once its bank line is linked." });
     },
     onError: (err) => toastError(err),
   });
@@ -482,12 +592,30 @@ export async function fetchStatutoryDues(supabase: ReturnType<typeof createClien
     fetchAllRows<{ tds_amount: number | null }>((from, to) => supabase.from("referral_commissions")
       .select("tds_amount").gt("tds_amount", 0).neq("status", "cancelled").order("id", { ascending: true }).range(from, to)),
   ]);
+  /* R-1891: 194Q TDS deducted when a COGS (goods) bill was paid from the bank — on the payment
+     row, not on an expense. Same rule as report_balance_sheet.dues_vendor_tds. */
+  const bt = await fetchCogsBillTds(supabase);
+  /* R-1849: TDS on partners' interest + remuneration (194T / 393(3)) from a posted year-end
+     split. Same rule as report_balance_sheet.dues_vendor_tds. Before the migration: none. */
+  const pt = await fetchPartnerSplitTds(supabase);
   const sumTds = (rows: { tds_amount: number | null }[]) => rows.reduce((s, r) => s + (r.tds_amount ?? 0), 0);
   return statutoryDues({
     salaries: sal,
-    vendorTds: sumTds(vt) + sumTds(ct),
+    vendorTds: sumTds(vt) + sumTds(ct) + sumTds(bt) + pt,
     paid,
   });
+}
+
+/** R-1849: Σ TDS on posted partner splits. A missing table (code before the migration) = 0. */
+export async function fetchPartnerSplitTds(supabase: ReturnType<typeof createClient>): Promise<number> {
+  try {
+    const rows = await fetchAllRows<{ tds: number | null }>((from, to) => supabase.from("partner_appropriation_lines" as never)
+      .select("tds").gt("tds", 0).order("id", { ascending: true }).range(from, to) as unknown as PageQuery<{ tds: number | null }>);
+    return rows.reduce((s, r) => s + (Number(r.tds) || 0), 0);
+  } catch (e) {
+    if (/partner_appropriation/.test(String((e as Error)?.message ?? e)) && /(does not exist|could not find|schema cache)/i.test(String((e as Error)?.message ?? e))) return 0;
+    throw e;
+  }
 }
 
 export function useStatutoryDues() {

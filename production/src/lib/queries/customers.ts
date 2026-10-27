@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { attachPrimaryContact } from "@/lib/contacts/attach";
+import { recordPhoneOf } from "@/lib/customers/record-phone";
 import { searchableColumns } from "@/lib/contacts/search-columns";
 import { requireTenantId } from "@/lib/queries/require-tenant";
 import type { Customer, Database } from "@/lib/supabase/database.types";
@@ -312,7 +313,10 @@ export function useCreateCustomer() {
           customerId: data.id,
           name: personName,
           email: input.contact_email ?? null,
-          phone: input.contact_phone ?? null,
+          /* R-1893: the primary contact is the one home of the number — mobile first, else
+             the phone. It got contact_phone only, so a mobile-only customer had a contact
+             with no phone and the profile showed none. */
+          phone: recordPhoneOf(input),
           role: "poc",
           company: input.name ?? null,
         });
@@ -359,6 +363,9 @@ export function useUpdateCustomer() {
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["customers"] });
       qc.invalidateQueries({ queryKey: ["customers", data.id] });
+      /* R-1893: a changed phone / mobile is copied to the primary contact by the database
+         (trg_r1893_sync_primary_contact_phone) — re-read the contacts so the profile shows it. */
+      qc.invalidateQueries({ queryKey: ["contacts"] });
       toast.success("Customer updated");
     },
     onError: (err) => toastError(err),

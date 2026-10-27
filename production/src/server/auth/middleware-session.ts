@@ -7,6 +7,7 @@ import "server-only";
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { isDeactivated } from "@/lib/auth/deactivated";
+import { readSessionUser } from "@/lib/auth/session-user";
 import { auth } from "./authjs";
 
 export async function authjsMiddlewareSession(request: NextRequest) {
@@ -17,7 +18,8 @@ export async function authjsMiddlewareSession(request: NextRequest) {
 
   const needsMfa = session.mfaEnrolled && session.aal !== "aal2";
   const supabase = createClient();
-  const { data: me } = await supabase.from("users").select("role, can_view_deals, is_active").eq("id", userId).maybeSingle();
+  /* R-1896: + access_ends_on (employee exit), with a fallback if the column is not there yet. */
+  const { data: me } = await readSessionUser((cols) => supabase.from("users").select(cols).eq("id", userId).maybeSingle());
   let role = (me?.role as string | null) ?? null;
   if (!me) {
     const { data: appr } = await supabase.from("academy_apprentices").select("id").eq("user_id", userId).maybeSingle();

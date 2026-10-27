@@ -105,7 +105,9 @@ describe("case 3 — the email fails: not shown as emailed, retry kept", () => {
   it("the builder stays on the page and offers Try again", () => {
     const src = readFileSync(join(process.cwd(), "src/components/features/quotes/quote-builder.tsx"), "utf8");
     expect(src).toMatch(/if \(emailFailed\) return;/);
-    expect(src).toMatch(/label: "Try again"/);
+    // R-1922: the buttons come from failedSendButtons ("Try again" for any failure that is not a
+    // refusal with its own fix — refused-send-r1922.test.ts); the builder passes the retry.
+    expect(src).toMatch(/showFailedSendToast\(\{[\s\S]*?onRetry:/);
   });
 
   it("a stubbed send (no email server) does not claim a real email", () => {

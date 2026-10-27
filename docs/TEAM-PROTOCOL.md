@@ -84,6 +84,22 @@ What stays with people (not the queue): Pardeep — owner decisions (price, disc
 
 Measured for the trial (end of week): hours from claim to merge per card, merge conflicts, times someone waited on someone.
 
+### Picking up a stopped card — any member, any machine (25 Oct 2026, R-1898)
+
+Pardeep: "kisi bhi team member ke Claude Code se kisi bhi team member ka ruka kaam aage badhe" — and the other way round. Before this, worktrees, WIP commits, worker locks and the handoff notes lived only on Pardeep's laptop, so a stopped card could only be continued there. The method:
+
+1. **The board card is the truth.** While a card is `doing` it carries `claimedBy`, a liveLog whose every line says what is done and what is next, and a `branch` field (`wip/<card lowercase>`, e.g. `wip/r-1898`) once WIP has been pushed. Nothing a resumer needs may live only in a session temp folder or on one laptop.
+2. **Half-done work is on GitHub.** At each green step the worker commits (`WIP <CARD>: …` is fine) and runs `node scripts/ops/worker-lock.mjs wip <CARD>` from the worktree's `production/`. It pushes HEAD to `anutech` `wip/<card>` — creating it, or moving it with `--force-with-lease` on that one branch only. It refuses any other branch name and never touches `manager-pardeep`, `main`, `deploy`, `staging` or another card's branch; it prints the `branch` value to set on the card (the script cannot write the board).
+3. **Stopping:** `wip` push, then a last liveLog line "STOPPED at <step>; done …; next: <exact next command>; branch wip/<card>; lock released", and release the laptop lock. The 60-min auto-free may then put the card back in `list` — the `branch` field and liveLog stay.
+4. **Resuming (anyone):** read the card; from the main clone's `production/` run `node scripts/ops/worker-lock.mjs resume <CARD> <new worktree path>` — it fetches `anutech/wip/<card>`, creates the worktree on branch `w-<card>` from it and prints the next steps. Re-claim the card in your own person's name (`status: doing`, `claimedBy`, `claimedAt` from `date -u`), add liveLog "picked up from <person> — …", and continue from the last "next". Never resume over a card someone else has in `doing` with a fresh liveLog — ask them first.
+5. **Finishing** is unchanged: gate, then `worker-lock.mjs push <CARD>` (rebase on `anutech/manager-pardeep`, tsc, guard tests, secret scan, push). The wip branch is never merged by hand; clear `branch` on the card when it goes to `review`.
+
+**Locks across machines.** The laptop lock (`~/.claude/worker-locks`) only stops two workers on the same machine from touching the same files. Across machines the lock is the board: claim on the card before any code, and do not take a card whose `files` overlap a card someone else has in `doing`.
+
+**Push guard.** `worker-lock.mjs guard-push` checks the refs a push sends (git pre-push stdin): a `wip/*` ref only from the `wip` command and only that card's own branch; `manager-pardeep` only from `push`. To make a plain `git push` obey it on your laptop, add a `pre-push` hook running `node production/scripts/ops/worker-lock.mjs guard-push` — optional, per laptop.
+
+Full worker steps: [`docs/WORKER-STEPS.md`](WORKER-STEPS.md).
+
 ## Testing — 30 Sep 2026
 
 Testing is automatic first: see [`docs/QA-SYSTEM.md`](QA-SYSTEM.md) (CI on every push, E2E, daily AI QA on the

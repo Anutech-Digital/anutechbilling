@@ -24,21 +24,32 @@
  * the "contact us" grid or quote-only checkout instead of hanging the page.
  */
 import { Metadata } from "next";
+import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/server";
 import { BuyWorkspaceClient, type CatalogItem } from "./buy-workspace-client";
+import { BuyMobileClient } from "./_mobile/buy-mobile-client";
+import { buyViewFor } from "./_mobile/device";
 import { parseBuyParams } from "@/lib/checkout/buy-link";
 import { isPublicPriceHidden } from "@/lib/catalog/public-price-policy";
 import { simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
+import { checkoutPaymentMode } from "@/lib/checkout/checkout-payment-mode";
+import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { PARTNER_LINE } from "@/site/lib/config";
 import { websiteTenantId } from "@/lib/website-tenant";
+import { fetchBuyBrand } from "./_parts/fetch-brand";
+import { websitePixelId } from "@/lib/meta/pixel-id.server";
 
 /* R-1499: tenant read per call (websiteTenantId) — outside production an unset BUY_PAGE_TENANT_ID
    shows nothing (and logs why), never the live tenant's data. */
 
-export const metadata: Metadata = {
-  title: { absolute: "Buy Google Workspace · Anutech Digital" },
-  description: `Google Workspace pricing for India. Annual GST invoice, hand-held migration, Hindi + English support. ${PARTNER_LINE}.`,
-};
+/* R-1970 (DECISIONS 1): the title names the website tenant, read from its row — never typed. */
+export async function generateMetadata(): Promise<Metadata> {
+  const brand = await fetchBuyBrand();
+  return {
+    title: { absolute: brand ? `Buy Google Workspace · ${brand.name}` : "Buy Google Workspace" },
+    description: `Google Workspace pricing for India. GST invoice, hand-held migration, Hindi + English support. ${PARTNER_LINE}.`,
+  };
+}
 
 // Don't cache for the SSR — Pardeep needs price/enablement edits in the
 // catalog to reflect on the buy page within seconds.
@@ -95,7 +106,7 @@ function publicBuyRow(row: CatalogItem): CatalogItem {
  * in simulation mode (lead → quote → record_payment pipeline + emails,
  * no Razorpay widget). Lets us ship the buy flow safely before KYC.
  */
-async function isRazorpayConfigured(): Promise<boolean> {
+async function isRazorpayConfigured(): Promise<{ configured: boolean; keyId: string }> {
   const BUY_PAGE_TENANT_ID = websiteTenantId();
   // Per-tenant first
   if (BUY_PAGE_TENANT_ID) try {
@@ -106,7 +117,10 @@ async function isRazorpayConfigured(): Promise<boolean> {
       .eq("tenant_id", BUY_PAGE_TENANT_ID)
       .abortSignal(AbortSignal.timeout(READ_TIMEOUT_MS))
       .maybeSingle();
-    if (data?.razorpay_key_id && data.razorpay_key_secret) return true;
+    /* R-1769: the key id decides live vs test (simulation), so read it unsealed — the same
+       way the order route does. */
+    const secrets = decryptTenantSecrets(data);
+    if (secrets?.razorpay_key_id && secrets.razorpay_key_secret) return { configured: true, keyId: secrets.razorpay_key_id };
   } catch { /* fall through to env */ }
 
   const keyId =
@@ -114,16 +128,20 @@ async function isRazorpayConfigured(): Promise<boolean> {
     process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID?.trim() ||
     "";
   const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim() || "";
-  return Boolean(keyId) && Boolean(keySecret);
+  return { configured: Boolean(keyId) && Boolean(keySecret), keyId };
 }
 
 export default async function BuyWorkspacePage(props: {
   /* R-120: ?tier=&seats=&buy=1 from the home edition card — open on that edition, ready to pay. */
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const pick = parseBuyParams(await props.searchParams);
+  const sp = await props.searchParams;
+  const pick = parseBuyParams(sp);
+  /* R-2020 (R-2019 decision 1): a phone gets the one-screen-at-a-time flow, a laptop the v2 page —
+     decided here, so only one of the two client trees is sent. ?view=mobile|desktop overrides. */
+  const view = buyViewFor(await headers(), typeof sp.view === "string" ? sp.view : null);
   // Both reads at once (R-027) — each is capped, so the page waits at most ~3 s, not the sum.
-  const [catalogItems, configured] = await Promise.all([fetchGoogleWorkspaceItems(), isRazorpayConfigured()]);
+  const [catalogItems, { configured, keyId }, brand, metaPixelId] = await Promise.all([fetchGoogleWorkspaceItems(), isRazorpayConfigured(), fetchBuyBrand(), websitePixelId()]);
   // Live when Razorpay is fully configured. When it isn't:
   //  · non-prod (or ALLOW_SIMULATED_CHECKOUT=1) → "simulation": Buy now stays
   //    visible for Pardeep to walk the full pipeline, clearly TEST-MODE banded.
@@ -131,19 +149,27 @@ export default async function BuyWorkspacePage(props: {
   //    so a REAL customer never sees a "Simulate payment" button on a public
   //    storefront before Razorpay go-live. They get "Get a GST quote" instead.
   // R-079: never on a production deployment, whatever ALLOW_SIMULATED_CHECKOUT says — same gate as the route.
-  const allowSim = simulatedPaymentAllowed();
-  const paymentMode: "live" | "simulation" | "disabled" = configured
-    ? "live"
-    : allowSim
-      ? "simulation"
-      : "disabled";
+  // R-1769: the same rule as the cart checkout — a laptop simulates even with Razorpay TEST keys.
+  const paymentMode = checkoutPaymentMode({
+    razorpayConfigured: configured,
+    simulationAllowed: simulatedPaymentAllowed({ razorpayKeyId: keyId }),
+  });
+  if (view === "mobile") {
+    return (
+      <BuyMobileClient catalogItems={catalogItems} paymentMode={paymentMode} brand={brand} metaPixelId={metaPixelId} initialSearch={sp} />
+    );
+  }
   return (
     <BuyWorkspaceClient
       catalogItems={catalogItems}
       paymentMode={paymentMode}
       initialTierId={pick.tier ?? undefined}
       initialSeats={pick.seats ?? undefined}
+      initialBilling={sp.billing === "monthly" ? "monthly" : undefined}
       openBuy={pick.openBuy}
+      initialCoupon={pick.coupon ?? undefined}
+      metaPixelId={metaPixelId}
+      brand={brand}
     />
   );
 }

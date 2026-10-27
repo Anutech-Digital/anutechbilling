@@ -46,7 +46,7 @@ type LeadCtx = {
   notes: string | null;
 };
 
-async function classifyWithGemini(apiKey: string, model: string, leads: LeadCtx[]): Promise<Verdict[] | null> {
+async function classifyWithGemini(apiKey: string, model: string, tenantId: string | null, leads: LeadCtx[]): Promise<Verdict[] | null> {
   const system =
     "You are a spam/junk-lead detector for an Indian cloud-software reseller's CRM " +
     "(they sell Google Workspace, Microsoft 365, Zoho to SME businesses). " +
@@ -82,7 +82,7 @@ async function classifyWithGemini(apiKey: string, model: string, leads: LeadCtx[
     /* Pehle yahan apna `fetch` tha — geminiJson ki hu-ba-hu copy, uski suraksha ke bina:
        na timeout, na circuit breaker, na retry. Dekho lib/ai/gemini.ts. */
     const arr = await geminiJson<Array<Partial<Verdict>>>({
-      apiKey, model, system, user, temperature: 0, label: "ai/classify-junk",
+      apiKey, model, tenantId, system, user, temperature: 0, label: "ai/classify-junk",
     });
     if (!arr || !Array.isArray(arr)) return null;
     // Keep only well-formed rows whose id matched an input lead.
@@ -130,7 +130,7 @@ export async function POST(request: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!leads || leads.length === 0) return NextResponse.json({ verdicts: [], mode: "stub" });
 
-  const ai = gemini.apiKey ? await classifyWithGemini(gemini.apiKey, gemini.model, leads as LeadCtx[]) : null;
+  const ai = gemini.apiKey ? await classifyWithGemini(gemini.apiKey, gemini.model, me?.tenant_id ?? null, leads as LeadCtx[]) : null;
 
   // Deterministic fallback (also fills any lead the model skipped) — reuses the
   // SAME heuristic the leads page uses, so behaviour matches when no key is set.

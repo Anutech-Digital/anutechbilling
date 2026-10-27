@@ -112,13 +112,13 @@ describe("draftReminder", () => {
 
   it("no Gemini key → the template, and the AI is never called", async () => {
     const ai = vi.fn();
-    const d = await draftReminder(ctx, { apiKey: null, model: "m" }, ai);
+    const d = await draftReminder(ctx, { apiKey: null, model: "m", tenantId: null }, ai);
     expect(ai).not.toHaveBeenCalled();
     expect(d).toEqual({ ...buildReminderTemplate(ctx), mode: "template", note: NOTE_NO_KEY });
   });
 
   it("the AI does not answer → the template, saying so", async () => {
-    const d = await draftReminder(ctx, { apiKey: "k", model: "m" }, vi.fn().mockResolvedValue(null));
+    const d = await draftReminder(ctx, { apiKey: "k", model: "m", tenantId: null }, vi.fn().mockResolvedValue(null));
     expect(d.mode).toBe("template");
     expect(d.note).toBe(NOTE_AI_DOWN);
   });
@@ -126,7 +126,7 @@ describe("draftReminder", () => {
   it("an AI draft that names an amount not on the bills is thrown away", async () => {
     const ai = vi.fn().mockResolvedValue({ subject: "Reminder", message: "Hi Rahul, ₹7,25,000 is pending." });
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const d = await draftReminder(ctx, { apiKey: "k", model: "m" }, ai);
+    const d = await draftReminder(ctx, { apiKey: "k", model: "m", tenantId: null }, ai);
     spy.mockRestore();
     expect(d.mode).toBe("template");
     expect(d.note).toBe(NOTE_AI_BLOCKED);
@@ -135,7 +135,7 @@ describe("draftReminder", () => {
 
   it("a clean AI draft is returned as written, with the facts in the prompt", async () => {
     const ai = vi.fn().mockResolvedValue({ subject: "Payment due", message: "Hi Rahul, gentle reminder: ₹72,500 pending (12 days)." });
-    const d = await draftReminder(ctx, { apiKey: "k", model: "m" }, ai);
+    const d = await draftReminder(ctx, { apiKey: "k", model: "m", tenantId: null }, ai);
     expect(d).toEqual({ subject: "Payment due", message: "Hi Rahul, gentle reminder: ₹72,500 pending (12 days).", mode: "gemini", note: null });
     const args = ai.mock.calls[0][0] as { user: string; system: string };
     expect(args.user).toContain("Total pending: ₹72,500");

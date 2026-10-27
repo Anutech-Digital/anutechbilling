@@ -35,6 +35,8 @@ export type TodayKind =
   | "invoice_overdue"
   | "payment_failed"
   | "compliance"
+  /* R-1857: a director's / designated partner's DIR-3 KYC, DSC expiry or details change. */
+  | "compliance_people"
   /* Built in code from open deals — lib/today/deals.ts. */
   | "deal_overdue"
   | "deal_quote_stale"
@@ -67,6 +69,7 @@ export const TODAY_KIND_META: Record<TodayKind, { label: string; icon: string }>
   invoice_overdue: { label: "Overdue",       icon: "receipt" },
   payment_failed:  { label: "Autopay",       icon: "alert" },
   compliance:      { label: "GST / TDS",     icon: "calendar" },
+  compliance_people: { label: "Director KYC / DSC", icon: "users" },
   deal_overdue:     { label: "Deal late",       icon: "trending_up" },
   deal_quote_stale: { label: "Quote follow-up", icon: "mail" },
   deal_closing:     { label: "Closing",         icon: "target" },
@@ -104,21 +107,28 @@ export function complianceTodayItems(
   notApplicable?: (obligationKey: string, periodKey: string) => boolean,
   profile?: ComplianceProfile,
 ): TodayItem[] {
-  return buildComplianceRows(today, filed, TODAY_COMPLIANCE_CATEGORIES, notApplicable, profile)
-    .filter((r) => r.status !== "filed" && r.status !== "not_applicable" && r.daysToDue <= COMPLIANCE_WINDOW_DAYS)
-    .map((r) => ({
-      kind: "compliance",
-      id: `${r.ob.key}|${r.inst.periodKey}`,
-      title:
-        (r.daysToDue < 0
-          ? `${r.ob.name} — ${r.inst.periodLabel} · ${-r.daysToDue}d LATE`
+  /* R-1857: person rows (a director's DIR-3 KYC / DSC expiry / details change) are ROC, but they
+     come to Today too — inside their own window (30 days for a DSC), linking to the ROC calendar. */
+  return buildComplianceRows(today, filed, undefined, notApplicable, profile)
+    .filter((r) => (r.ob.person ? true : TODAY_COMPLIANCE_CATEGORIES.includes(r.ob.category)))
+    .filter((r) => r.status !== "filed" && r.status !== "not_applicable"
+      && r.daysToDue <= (r.ob.person ? (r.ob.remindDays ?? COMPLIANCE_WINDOW_DAYS) : COMPLIANCE_WINDOW_DAYS))
+    .map((r) => {
+      /* A person row's name already says who and what ("Renew DSC — Asha Rao (DIN …)"). */
+      const what = r.ob.person ? r.ob.name : `${r.ob.name} — ${r.inst.periodLabel}`;
+      return {
+        kind: r.ob.person ? "compliance_people" : "compliance",
+        id: `${r.ob.key}|${r.inst.periodKey}`,
+        title: r.daysToDue < 0
+          ? `${what} · ${-r.daysToDue}d LATE`
           : r.daysToDue === 0
-            ? `${r.ob.name} — ${r.inst.periodLabel} · due today`
-            : `${r.ob.name} — ${r.inst.periodLabel} · due in ${r.daysToDue}d`),
-      due_at: istMidnightISO(r.inst.dueDate),
-      priority: r.daysToDue < 0 ? 88 : r.daysToDue <= 3 ? 78 : 62,
-      href: "/compliance",
-    }));
+            ? `${what} · due today`
+            : `${what} · due in ${r.daysToDue}d`,
+        due_at: istMidnightISO(r.inst.dueDate),
+        priority: r.daysToDue < 0 ? 88 : r.daysToDue <= 3 ? 78 : 62,
+        href: r.ob.person ? "/compliance/roc" : "/compliance",
+      };
+    });
 }
 
 /** Same order as today_inbox()'s final ORDER BY. Returns a new array. */

@@ -30,6 +30,8 @@ import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createClient } from "@/lib/supabase/client";
 import { onlySaleInvoices } from "@/lib/accounting/sale-documents";
+import { DIRECTOR_REMUNERATION_CATEGORY, SALARIES_CATEGORY, pnlCategoryOf } from "@/lib/accounting/director-remuneration";
+import { fetchDirectorPayroll } from "@/lib/queries/director-payroll";
 import { rupee, formatDate } from "@/lib/utils";
 
 export type PnLDrillKind = "revenue" | "cogs" | "expenses";
@@ -123,15 +125,21 @@ function useDrilldown(kind: PnLDrillKind | null, range: { from: string; to: stri
       }
 
       // expenses
+      /* R-1852: a director-employee's payroll is on the P&L's Director's Remuneration line, so
+         that line's drill-down lists it and the Salaries one does not — the rows add up to the line. */
+      const payLine = expenseCategory === SALARIES_CATEGORY || expenseCategory === DIRECTOR_REMUNERATION_CATEGORY;
+      const directorIds = new Set(payLine ? (await fetchDirectorPayroll(supabase)).map((p) => p.id) : []);
       let q = supabase
         .from("expenses")
         .select("id, category, vendor_name, description, expense_date, amount, payment_method")
         .gte("expense_date", range.from)
         .lte("expense_date", range.to);
-      if (expenseCategory) q = q.eq("category", expenseCategory);
+      if (payLine) q = q.in("category", [SALARIES_CATEGORY, DIRECTOR_REMUNERATION_CATEGORY]);
+      else if (expenseCategory) q = q.eq("category", expenseCategory);
       const { data, error } = await q.order("expense_date", { ascending: false });
       if (error) throw error;
-      return (data ?? []).map((e) => {
+      const rows = payLine ? (data ?? []).filter((e) => pnlCategoryOf(e, directorIds) === expenseCategory) : (data ?? []);
+      return rows.map((e) => {
         // Primary = who we paid (the employee for salaries, the vendor otherwise)
         // so grouping buckets by payee — e.g. each employee's salary total —
         // instead of one giant "Salaries" bucket. Category + period go in the
@@ -141,7 +149,7 @@ function useDrilldown(kind: PnLDrillKind | null, range: { from: string; to: stri
           id:      e.id,
           date:    e.expense_date,
           primary: e.vendor_name || e.category || "Expense",
-          sub:     [e.category, period || e.payment_method].filter(Boolean).join(" · ") || "—",
+          sub:     [directorIds.has(e.id) ? `${DIRECTOR_REMUNERATION_CATEGORY} (payroll)` : e.category, period || e.payment_method].filter(Boolean).join(" · ") || "—",
           amount:  e.amount ?? 0,
         };
       });

@@ -124,12 +124,12 @@ function stored(scan: SiteScan): ContactResult { const { snippets: _s, ...c } = 
  * it is written in the snippets sent for that company; otherwise a first.last@ email gives a
  * name marked "from: email". Without an AI key only the email rule runs.
  */
-export async function attachPersons(ai: { apiKey: string; model: string } | null, items: { company: string; scan: SiteScan }[], onFailure?: (why: string) => void): Promise<void> {
+export async function attachPersons(ai: { apiKey: string; model: string; tenantId: string | null } | null, items: { company: string; scan: SiteScan }[], onFailure?: (why: string) => void): Promise<void> {
   const ask = items.map((x, i) => ({ i, company: x.company, snippets: x.scan.snippets.map((s) => s.text) })).filter((x) => x.snippets.length);
   let picked: { i: number; name: string | null; role: string | null }[] = [];
   if (ai?.apiKey && ask.length) {
     const pp = personPrompt(ask);
-    const res = await geminiJson<unknown>({ apiKey: ai.apiKey, model: ai.model, system: pp.system, user: pp.user, temperature: 0, timeoutMs: 30_000, label: "leads/finder-person", onFailure });
+    const res = await geminiJson<unknown>({ apiKey: ai.apiKey, model: ai.model, tenantId: ai.tenantId, system: pp.system, user: pp.user, temperature: 0, timeoutMs: 30_000, label: "leads/finder-person", onFailure });
     if (Array.isArray(res)) picked = res.filter((r): r is { i: number; name: string | null; role: string | null } => !!r && typeof (r as { i?: unknown }).i === "number");
   }
   items.forEach((x, i) => {
@@ -169,7 +169,7 @@ export async function enrichCandidateContacts(admin: Admin, tenantId: string, op
   }
   const ai = await resolveGeminiConfig(admin, tenantId);
   const { data: names } = await admin.from("lead_finder_candidates").select("id, company").in("id", todo.map((c) => c.id));
-  await attachPersons(ai.apiKey ? { apiKey: ai.apiKey, model: ai.model } : null,
+  await attachPersons(ai.apiKey ? { apiKey: ai.apiKey, model: ai.model, tenantId: ai.tenantId } : null,
     scans.map((x) => ({ company: names?.find((n) => n.id === x.c.id)?.company ?? x.c.domain, scan: x.scan })));
 
   let found = 0, removed = 0;
@@ -232,7 +232,7 @@ export async function searchPeople(admin: Admin, tenantId: string, opts: { ids?:
   for (let i = 0; i < todo.length; i += 3) {
     await Promise.all(todo.slice(i, i + 3).map(async (c) => {
       const pp = personSearchPrompt({ company: c.company, domain: c.domain, city: c.city });
-      const text = await geminiGroundedText({ apiKey: ai.apiKey!, model: ai.model, system: pp.system, user: pp.user, temperature: 0, timeoutMs: 45_000, label: "leads/finder-person-search" }).catch(() => null);
+      const text = await geminiGroundedText({ apiKey: ai.apiKey!, model: ai.model, tenantId: ai.tenantId, system: pp.system, user: pp.user, temperature: 0, timeoutMs: 45_000, label: "leads/finder-person-search" }).catch(() => null);
       let hit = parsePersonSearch(text, c.company);
       // Open the cited page: a made-up link (it happened — a Tracxn 404) takes its name with it.
       let verified = false;
@@ -297,7 +297,7 @@ export async function runLeadFinder(admin: Admin, tenantId: string, profileId: s
     // Ask for well over the cap: some are duplicates, and about a third publish no phone/email.
     const want = Math.min(60, Math.ceil(p.daily_limit * 2.5));
     const dp = discoveryPrompt(p, [...known].slice(-150), want);
-    const text = await geminiGroundedText({ apiKey: cfg.apiKey, model: cfg.model, system: dp.system, user: dp.user, label: "leads/finder-discovery" });
+    const text = await geminiGroundedText({ apiKey: cfg.apiKey, model: cfg.model, tenantId: cfg.tenantId, system: dp.system, user: dp.user, label: "leads/finder-discovery" });
     const found: DiscoveredCompany[] = parseDiscovery(text);
     result.discovered = found.length;
     if (found.length === 0) { await finish(false, "Gemini found no companies — make the profile more specific (city + industry)."); return result; }
@@ -327,11 +327,11 @@ export async function runLeadFinder(admin: Admin, tenantId: string, profileId: s
 
     // Who to ask for — one AI call for the reachable ones; unreachable go to Rejected anyway.
     const withContact = extras.map((x, k) => ({ company: inputs[k].company, scan: x.contact })).filter((x) => reachable(x.scan));
-    await attachPersons(cfg.apiKey ? { apiKey: cfg.apiKey, model: cfg.model } : null, withContact, (why) => result.errors.push(`Contact person skip: ${why}`));
+    await attachPersons(cfg.apiKey ? { apiKey: cfg.apiKey, model: cfg.model, tenantId: cfg.tenantId } : null, withContact, (why) => result.errors.push(`Contact person skip: ${why}`));
 
     const baselines = inputs.map(baselineScore);
     const sp = scoringPrompt(inputs, baselines);
-    const ai = inputs.length ? await geminiJson<unknown>({ apiKey: cfg.apiKey, model: cfg.model, system: sp.system, user: sp.user, temperature: 0.3, timeoutMs: 45_000, label: "leads/finder-score", onFailure: (why) => result.errors.push(`AI scoring skip: ${why}`) }) : null;
+    const ai = inputs.length ? await geminiJson<unknown>({ apiKey: cfg.apiKey, model: cfg.model, tenantId: cfg.tenantId, system: sp.system, user: sp.user, temperature: 0.3, timeoutMs: 45_000, label: "leads/finder-score", onFailure: (why) => result.errors.push(`AI scoring skip: ${why}`) }) : null;
     const scores = mergeScores(inputs, baselines, ai);
 
     const rows = inputs.map((inp, k) => {

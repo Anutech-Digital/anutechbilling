@@ -13,6 +13,7 @@ import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { errorMessage, fetchAllRows, type PageQuery } from "@/lib/ops/fetch-all";
 import type { Payable, PayableSource, RunItem, VendorBank } from "@/lib/payables/payment-run";
+import { expenseCashDue } from "@/lib/payables/still-due";
 
 export interface PaymentRun {
   id: string;
@@ -58,9 +59,10 @@ export async function fetchPayables(supabase: Client): Promise<Payable[]> {
     fetchAllRows<{
       id: string; bill_no: string | null; vendor_id: string | null; vendor_name: string | null; category: string; expense_date: string;
       due_date: string | null; amount: number | null; currency: string | null; paid: boolean;
+      tds_amount: number | null; advance_applied: number | null; paid_amount: number | null;
     }>((from, to) => supabase.from("expenses")
-      .select("id, bill_no, vendor_id, vendor_name, category, expense_date, due_date, amount, currency, paid")
-      .eq("paid", false).order("id", { ascending: true }).range(from, to)).catch((e) => { throw asError(e); }),
+      .select("id, bill_no, vendor_id, vendor_name, category, expense_date, due_date, amount, currency, paid, tds_amount, advance_applied, paid_amount")
+      .eq("paid", false).is("reconciled_txn_id", null).order("id", { ascending: true }).range(from, to)).catch((e) => { throw asError(e); }),
     // A failed MSME read leaves deadlines blank, as before — it never blocks the payables list.
     fetchAllRows<MsmeRow>((from, to) => supabase.rpc("msme_payables_aging", {})
       .order("source", { ascending: true }).order("doc_id", { ascending: true }).range(from, to) as unknown as PageQuery<MsmeRow>)
@@ -77,7 +79,9 @@ export async function fetchPayables(supabase: Client): Promise<Payable[]> {
       billDate: b.bill_date, dueDate: b.due_date, outstanding: owed, msmeDeadline: m?.deadline ?? null, msmeOverLimit: !!m?.over_limit });
   }
   for (const e of exps) {
-    const owed = Math.max(0, Number(e.amount ?? 0));
+    /* R-1952: the rest — less TDS, the vendor advance applied and the bank parts paid; the run
+       pays exactly this (create_payment_run refuses anything else for an expense bill). */
+    const owed = expenseCashDue(e);
     if (!owed || !inr(e.currency)) continue;
     const m = msmeBy.get(`expense:${e.id}`);
     out.push({ source: "expense", docId: e.id, docRef: e.bill_no, vendorId: e.vendor_id, vendorName: e.vendor_name || e.category,

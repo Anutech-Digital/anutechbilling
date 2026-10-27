@@ -27,6 +27,8 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { daysElapsedInPeriod, prorateSalary } from "@/lib/payroll/proration";
+import { exitPayDays, onPayrollFor, employmentStatus } from "@/lib/payroll/exit";
+import { StartExitDialog } from "@/components/features/payroll/start-exit-dialog";
 import { nationalHolidaysForYear, FIXED_NATIONAL_HOLIDAYS, indiaPublicHolidaysForYear } from "@/lib/payroll/holidays-india";
 import { computeEsi, isEsiEligible, esiStickyCovered, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
 import { computePf, pfWage, pfWageCeiling, PF_EMPLOYER_RATE } from "@/lib/payroll/pf";
@@ -43,12 +45,14 @@ import { downloadPayslipPDF } from "@/lib/pdf";
 import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 import { toastError } from "@/lib/errors/toast-error";
 import { periodLabel } from "@/lib/payroll/period-label";
+import { SalaryStatusCell } from "./salary-status-cell";
+import { salaryPayState } from "@/lib/payroll/salary-status";
 import { toast } from "sonner";
 import {
-  useEmployees, useUpsertEmployee, useDeleteEmployee, useSetEmployeePin,
+  useEmployees, useUpsertEmployee, useDeleteEmployee, useSetEmployeePin, useCancelEmployeeExit,
   useLeaveEntries, useCreateLeaveEntry, useDeleteLeaveEntry,
   useHolidays, useCreateHoliday, useDeleteHoliday,
-  useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useEmployeeSalaryHistory,
+  useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines,
   useStatutoryDues, usePayStatutoryDues,
   useAttendance, useAttendanceNetwork, useSetAttendanceNetwork, getSelfieUrl, useSetAttendanceAnywhere, useCorrectAttendance,
   LEAVE_TYPE_LABEL,
@@ -56,6 +60,10 @@ import {
 } from "@/lib/queries/payroll";
 import { useOwnerSetConsent, useMarkAttendanceReviewed } from "@/lib/queries/my-attendance";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
+import { useComplianceProfile } from "@/lib/compliance/profile";
+import { useFirmPartners } from "@/lib/queries/partners";
+import { showsPartnersRegister } from "@/lib/accounting/partners";
+import { employeeOwnerCaution } from "@/lib/accounting/owner-salary-guard";
 import { buildCorrection, isoToIstHhmm } from "@/lib/attendance/ist-time";
 import { leaveDaysInMonth, presentByDate, presentSummary, suggestedLopDays } from "@/lib/attendance/lop";
 import { DEFAULT_SHIFT, dayStatus, formatGap } from "@/lib/attendance/shift";
@@ -186,11 +194,26 @@ export function EmployeesTab() {
   const leaveQ = useLeaveEntries();
   const del = useDeleteEmployee();
   const confirm = useConfirm();
-  const canWrite = canWriteMoney(useCurrentUser().data?.role);
+  const myRole = useCurrentUser().data?.role;
+  const canWrite = canWriteMoney(myRole);
+  /* R-1896: an exit ends the person's login — owner only (the RPC refuses anyone else). */
+  const isOwner = myRole === "owner";
+  const cancelExit = useCancelEmployeeExit();
   const [edit, setEdit] = React.useState<Employee | null | "new">(null);
   const [viewEmp, setViewEmp] = React.useState<Employee | null>(null);
   const [offerEmp, setOfferEmp] = React.useState<Employee | null>(null);
+  const [exitEmp, setExitEmp] = React.useState<Employee | null>(null);
   const rows = q.data ?? [];
+
+  const confirmCancelExit = async (e: Employee) => {
+    if (await confirm({
+      title: `Cancel ${e.name}'s exit?`,
+      body: "They stay on: the last working day is cleared and their login keeps working.",
+      confirmLabel: "Cancel exit",
+    })) {
+      cancelExit.mutate(e.id);
+    }
+  };
 
   const confirmDelete = async (e: Employee) => {
     if (await confirm({
@@ -280,9 +303,9 @@ export function EmployeesTab() {
                         <span className="text-ink-3"> / {allowance}</span>
                         {prorated && <span className="ml-1 text-3xs uppercase tracking-wide text-ink-3 font-sans not-italic" title={leaveTitle}>pro-rata</span>}
                       </td>
-                      <td className="px-4 py-3"><Badge kind={e.is_active ? "success" : "muted"} dot>{e.is_active ? "Active" : "Inactive"}</Badge></td>
+                      <td className="px-4 py-3"><EmployeeStatusBadge e={e} /></td>
                       <td className="px-4 py-3 text-right" onClick={(ev) => ev.stopPropagation()}>
-                        <EmployeeRowMenu e={e} canWrite={canWrite} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} />
+                        <EmployeeRowMenu e={e} canWrite={canWrite} isOwner={isOwner} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} onStartExit={setExitEmp} onCancelExit={confirmCancelExit} />
                       </td>
                     </tr>
                   );
@@ -328,8 +351,8 @@ export function EmployeesTab() {
                       {e.joining_date ? `Joined ${formatDate(e.joining_date)}` : "Not joined yet"} · Paid leave {left}/{allowance}{prorated ? " (pro-rata)" : ""}
                     </div>
                     <div className="flex items-center justify-between gap-2" onClick={(ev) => ev.stopPropagation()}>
-                      <Badge kind={e.is_active ? "success" : "muted"} dot>{e.is_active ? "Active" : "Inactive"}</Badge>
-                      <EmployeeRowMenu e={e} canWrite={canWrite} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} />
+                      <EmployeeStatusBadge e={e} />
+                      <EmployeeRowMenu e={e} canWrite={canWrite} isOwner={isOwner} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} onStartExit={setExitEmp} onCancelExit={confirmCancelExit} />
                     </div>
                   </Card>
                 </li>
@@ -341,6 +364,7 @@ export function EmployeesTab() {
       {canWrite && <FAB icon="plus" label="Add employee" onClick={() => setEdit("new")} ariaLabel="Add employee" />}
       {edit !== null && <EmployeeDialog employee={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
       {offerEmp && <OfferLetterDialog employee={offerEmp} onClose={() => setOfferEmp(null)} />}
+      {exitEmp && isOwner && <StartExitDialog employee={exitEmp} onClose={() => setExitEmp(null)} />}
       <EmployeeDetailDrawer
         employee={viewEmp ? (rows.find((r) => r.id === viewEmp.id) ?? viewEmp) : null}
         open={viewEmp !== null}
@@ -352,13 +376,25 @@ export function EmployeesTab() {
 }
 
 /** Row overflow menu — one clean "…" control replacing crowded inline buttons. */
-function EmployeeRowMenu({ e, canWrite, onView, onOffer, onEdit, onDelete }: {
+/** R-1896: Active / Leaving <last day> / Exited <last day> / Inactive — read from exit_date
+ *  against today (IST), so "Exited" appears on its own the day after the last day. */
+function EmployeeStatusBadge({ e }: { e: Employee }) {
+  const s = employmentStatus(e, todayISO());
+  if (s === "exiting") return <span title={`Last working day ${formatDate(e.exit_date!)}`}><Badge kind="warning" dot>Leaving {formatDate(e.exit_date!)}</Badge></span>;
+  if (s === "exited") return <span title={`Last working day ${formatDate(e.exit_date!)}`}><Badge kind="muted" dot>Exited {formatDate(e.exit_date!)}</Badge></span>;
+  return <Badge kind={s === "active" ? "success" : "muted"} dot>{s === "active" ? "Active" : "Inactive"}</Badge>;
+}
+
+function EmployeeRowMenu({ e, canWrite, isOwner, onView, onOffer, onEdit, onDelete, onStartExit, onCancelExit }: {
   e: Employee;
   canWrite: boolean;
+  isOwner: boolean;
   onView: (e: Employee) => void;
   onOffer: (e: Employee) => void;
   onEdit: (e: Employee) => void;
   onDelete: (e: Employee) => void;
+  onStartExit: (e: Employee) => void;
+  onCancelExit: (e: Employee) => void;
 }) {
   return (
     <DropdownMenu modal={false}>
@@ -383,6 +419,15 @@ function EmployeeRowMenu({ e, canWrite, onView, onOffer, onEdit, onDelete }: {
             <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => onEdit(e)}>
               <Icon name="edit" size={15} /> Edit profile &amp; salary
             </DropdownMenuItem>
+            {isOwner && (e.exit_date ? (
+              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => onCancelExit(e)}>
+                <Icon name="refresh" size={15} /> Cancel exit
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => onStartExit(e)}>
+                <Icon name="logout" size={15} /> Start exit
+              </DropdownMenuItem>
+            ))}
             <DropdownMenuSeparator />
             <DropdownMenuItem destructive className="gap-2.5 py-2 cursor-pointer" onClick={() => onDelete(e)}>
               <Icon name="trash" size={15} /> Delete employee
@@ -421,6 +466,11 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [email, setEmail] = React.useState(employee?.email ?? "");
   const [phone, setPhone] = React.useState(employee?.phone ?? "");
   const [designation, setDesignation] = React.useState(employee?.designation ?? "");
+  /* R-1846: the proprietor / a partner added as staff — their pay is drawings, not salary. Caution only. */
+  const router = useRouter();
+  const businessType = useComplianceProfile().data?.businessType ?? null;
+  const firmPartners = useFirmPartners(showsPartnersRegister(businessType));
+  const ownerCaution = employeeOwnerCaution({ businessType, name, designation, partners: firmPartners.data ?? [] });
   const [dob, setDob] = React.useState(employee?.date_of_birth ?? "");
   const [address, setAddress] = React.useState(employee?.address ?? "");
   const [ecName, setEcName] = React.useState(employee?.emergency_contact_name ?? "");
@@ -550,6 +600,15 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                 <Field htmlFor="payroll-designation" label="Designation">
                   <Input id="payroll-designation" value={designation} onChange={(e) => setDesignation(e.target.value)} placeholder="e.g. Sales Executive" />
                 </Field>
+                {ownerCaution && (
+                  <div role="status" data-testid="owner-pay-caution" className="sm:col-span-2 rounded-md border border-amber/50 bg-amber-soft px-3 py-2.5 text-xs text-ink-2 space-y-2">
+                    <p className="font-semibold text-amber-ink">{ownerCaution.title}</p>
+                    <p className="leading-relaxed">{ownerCaution.body}</p>
+                    <Button type="button" size="sm" onClick={() => { onClose(); router.push("/accounting/balance-sheet#drawings" as never); }}>
+                      Record drawings on the Balance Sheet
+                    </Button>
+                  </div>
+                )}
                 <Field htmlFor="payroll-date-of-birth" label="Date of birth">
                   <Input id="payroll-date-of-birth" type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
                 </Field>
@@ -917,7 +976,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                 Active employee
               </label>
               {!active && (employee?.is_active ?? true) && (
-                <p className="text-xs text-amber-ink -mt-1">Before marking inactive, check the <b>Exit checklist</b> in the profile — devices / logins returned, advance settled, full &amp; final.</p>
+                <p className="text-xs text-amber-ink -mt-1">Someone leaving? Use <b>Start exit</b> in their ⋯ menu instead — it sets the last working day, pays that month pro-rata, stops payroll after it and ends their login.</p>
               )}
             </section>
           )}
@@ -987,8 +1046,15 @@ export function PayrollTab() {
   const holQ = useHolidays();
   const shiftQ = useShiftRules();
 
-  const employees = (empQ.data ?? []).filter((e) => e.is_active);
+  /* R-1896: by month, not by today — a leaver stays in their exit month (final salary) and is
+     out of every month after it; someone who joins later is not in earlier months. */
+  const employees = (empQ.data ?? []).filter((e) => onPayrollFor(e, period));
   const paidByEmp = new Map((payQ.data ?? []).map((p) => [p.employee_id, p]));
+  /* R-1831: unlinked bank lines of a salary's exact net → "Paid — link bank line". */
+  const { data: waitingLines } = useUnlinkedSalaryBankLines(
+    (payQ.data ?? []).filter((p) => p.paid_amount === 0).map((p) => p.net),
+    `${period}-01`,
+  );
   const totalNet = (payQ.data ?? []).reduce((s, p) => s + p.net, 0);
   const acctName = new Map((accountsQ.data ?? []).map((a) => [a.id, a.name]));
   // Summary: full monthly cost (all active gross) vs what's actually been run.
@@ -1034,14 +1100,17 @@ export function PayrollTab() {
           <div className="min-w-0">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Run this month (net)</div>
             <div className="font-serif text-xl sm:text-2xl text-ink leading-tight mt-1 tabular-nums break-words">{rupee(totalNet)}</div>
-            <div className="text-xs text-ink-3 mt-0.5">{runCount} of {employees.length} paid</div>
+            {/* R-1831: "run" = booked; paid only once the bank line is linked — the row badges say which. */}
+            <div className="text-xs text-ink-3 mt-0.5">
+              {runCount} of {employees.length} run · {(payQ.data ?? []).filter((p) => salaryPayState(p).key === "paid").length} paid from the bank
+            </div>
           </div>
           <div className="min-w-0 col-span-2 sm:col-span-1">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Still to run</div>
             <div className={cn("font-serif text-xl sm:text-2xl leading-tight mt-1 tabular-nums", employees.length - runCount > 0 ? "text-amber-ink" : "text-emerald")}>
               {employees.length - runCount}
             </div>
-            <div className="text-xs text-ink-3 mt-0.5">{employees.length - runCount > 0 ? "employees pending" : "everyone paid 🎉"}</div>
+            <div className="text-xs text-ink-3 mt-0.5">{employees.length - runCount > 0 ? "employees pending" : "everyone's salary is run"}</div>
           </div>
         </div>
       </Card>
@@ -1144,15 +1213,8 @@ export function PayrollTab() {
                         <div className="flex items-center justify-end gap-2">
                           {p ? (
                             <>
-                              {p.paid_status === "paid" ? (
-                                <Badge kind="success" dot>Paid</Badge>
-                              ) : p.paid_status === "partial" ? (
-                                <Badge kind="warning" dot title={`Partly paid — ${rupee(p.net - p.paid_amount)} still owed. Reconcile another bank line to clear the balance.`}>
-                                  Partial · {rupee(p.paid_amount)}/{rupee(p.net)}
-                                </Badge>
-                              ) : (
-                                <Badge kind="warning" dot title="Payroll run — awaiting the bank debit to be reconciled">Awaiting reconcile</Badge>
-                              )}
+                              {/* R-1831: status from facts — one helper with the Salary Register. */}
+                              <SalaryStatusCell p={p} waitingLines={waitingLines} canWrite={canWrite} showAmounts />
                               <PayrollRowMenu
                                 e={e} p={p} canWrite={canWrite} me={meQ.data ?? null}
                                 paidVia={p.bank_account_id ? acctName.get(p.bank_account_id) ?? null : null}
@@ -1220,15 +1282,7 @@ export function PayrollTab() {
                     <div className="flex items-center justify-between gap-2">
                       {p ? (
                         <>
-                          {p.paid_status === "paid" ? (
-                            <Badge kind="success" dot>Paid</Badge>
-                          ) : p.paid_status === "partial" ? (
-                            <Badge kind="warning" dot title={`Partly paid — ${rupee(p.net - p.paid_amount)} still owed. Reconcile another bank line to clear the balance.`}>
-                              Partial · {rupee(p.paid_amount)}/{rupee(p.net)}
-                            </Badge>
-                          ) : (
-                            <Badge kind="warning" dot title="Payroll run — awaiting the bank debit to be reconciled">Awaiting reconcile</Badge>
-                          )}
+                          <SalaryStatusCell p={p} waitingLines={waitingLines} canWrite={canWrite} showAmounts />
                           <PayrollRowMenu
                             e={e} p={p} canWrite={canWrite} me={meQ.data ?? null}
                             paidVia={p.bank_account_id ? acctName.get(p.bank_account_id) ?? null : null}
@@ -1353,12 +1407,8 @@ function EmployeePayrollYearDialog({
                         <td className="px-3 py-2 text-right">
                           {!p ? (
                             <span className="text-xs text-ink-3">Not run</span>
-                          ) : p.paid_status === "paid" ? (
-                            <Badge kind="success" size="sm" dot>Paid</Badge>
-                          ) : p.paid_status === "partial" ? (
-                            <Badge kind="warning" size="sm" dot>Partial</Badge>
                           ) : (
-                            <Badge kind="warning" size="sm" dot>Unpaid</Badge>
+                            <SalaryStatusCell p={p} canWrite={false} size="sm" />
                           )}
                         </td>
                       </tr>
@@ -1501,7 +1551,12 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
 
   // Don't auto-pay days that haven't happened yet: for a not-yet-complete month
   // the salary defaults to only the days elapsed so far (owner can pay full).
-  const payPeriod = daysElapsedInPeriod(period, todayISO());
+  /* R-1896: in the exit month pay only up to the last working day. */
+  const exitPay = exitPayDays(employee, period);
+  const monthSoFar = daysElapsedInPeriod(period, todayISO());
+  const payPeriod = exitPay
+    ? { elapsed: Math.min(monthSoFar.elapsed, exitPay.days), daysInMonth: monthSoFar.daysInMonth, complete: false }
+    : monthSoFar;
   const proratedDefault = prorateSalary(employee.monthly_gross, payPeriod.elapsed, payPeriod.daysInMonth);
   const [gross, setGross]   = React.useState(String(payPeriod.complete ? employee.monthly_gross : proratedDefault));
   const [bonus, setBonus]   = React.useState("0");
@@ -1591,7 +1646,11 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
     const monthStart = new Date(Date.UTC(yy, mm - 1, 1));
     const monthEnd = new Date(Date.UTC(yy, mm, 0));
     const todayUTC = new Date(todayISO() + "T00:00:00Z");
-    const rangeEnd = todayUTC < monthEnd ? todayUTC : monthEnd;
+    /* R-1896: days after the last working day are not absences. */
+    const exitDay = exitPayDays(employee, period)?.lastDay;
+    const lastDayUTC = exitDay ? new Date(exitDay + "T00:00:00Z") : monthEnd;
+    const capEnd = lastDayUTC < monthEnd ? lastDayUTC : monthEnd;
+    const rangeEnd = todayUTC < capEnd ? todayUTC : capEnd;
     const rangeStart = employee.joining_date && employee.joining_date > `${period}-01`
       ? new Date(employee.joining_date + "T00:00:00Z") : monthStart;
     // Company holidays + auto national gazetted holidays (26 Jan / 15 Aug / 2 Oct).
@@ -1658,10 +1717,12 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
               <Input id="payroll-salary-to-pay" type="number" min={0} value={gross} onChange={(e) => setGross(e.target.value)} />
               {!payPeriod.complete && (
                 <p className="text-xs text-ink-3 mt-1">
-                  {proratedDefault > 0
+                  {exitPay
+                    ? <>Final month — prorated to <b>{payPeriod.elapsed} of {payPeriod.daysInMonth} days</b>, last working day {formatDate(exitPay.lastDay)}.</>
+                    : proratedDefault > 0
                     ? <>Prorated to <b>{payPeriod.elapsed} of {payPeriod.daysInMonth} days</b> (till today) — days not yet worked aren&apos;t paid.</>
                     : <>This month hasn&apos;t started yet — enter an amount to pay in advance.</>}
-                  {grossN !== employee.monthly_gross && (
+                  {!exitPay && grossN !== employee.monthly_gross && (
                     <>{" "}<button type="button" className="text-amber-ink font-medium hover:underline" onClick={() => setGross(String(employee.monthly_gross))}>Pay full month ({rupee(employee.monthly_gross)})</button></>
                   )}
                 </p>

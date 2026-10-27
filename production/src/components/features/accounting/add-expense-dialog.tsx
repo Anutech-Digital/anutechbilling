@@ -50,16 +50,19 @@ import { compactName } from "@/lib/banking/salary-lines";
 import { TDS_SECTION_RATES, tdsBase } from "@/lib/accounting/tds-rates";
 import { tdsDecision, panFromGstin } from "@/lib/accounting/tds-deductor";
 import { useBankAccounts } from "@/lib/queries/bank";
+import { defaultCashAccountId } from "@/lib/payments/deposit-accounts";
 import { useVendors, ensureVendor } from "@/lib/queries/vendors";
 import { useAddReimbursement } from "@/lib/queries/reimbursements";
 import { toast } from "sonner";
 import { uploadBillAttachment } from "@/lib/queries/vendor-bills";
 import { useConfirm } from "@/components/providers/confirm-provider";
-import { buyerConfirmedNote, buyerWarningText, isBuyerMismatch, resaleProduct, type BuyerMismatch } from "@/app/api/ai/extract-bill/buyer-check";
+import { buyerConfirmedNote, buyerWarningText, type BuyerMismatch } from "@/app/api/ai/extract-bill/buyer-check";
+import { checkBillFile, readBillFile } from "@/lib/accounting/bill-reader";
 import { AddVendorBillDialog, BillReadWarnings, type VendorBillPrefill } from "@/components/features/accounting/add-vendor-bill-dialog";
 import { expenseCategoryError } from "@/lib/accounting/expense-category";
 import { istToday } from "@/lib/dates/ist";
 import { useEmployeeAdvances, EMPLOYEE_ADVANCE_METHOD } from "@/lib/queries/advances";
+import { OwnerPayCautionBox } from "@/components/features/accounting/owner-pay-caution";
 import { lastUsedCategory, moreNeeded } from "@/app/(app)/accounting/expenses/expense-form";
 import { buildExpenseNote, lineCategoryFromBill, paidFromBill, rcmSuggested } from "@/app/(app)/accounting/expenses/bill-autofill";
 
@@ -77,9 +80,6 @@ function AiMark({ field, on }: { field: string; on: boolean }) {
     </span>
   );
 }
-
-/** R-1744: what the bill reader can read — the same types /api/ai/extract-bill accepts. */
-const BILL_FILE = /^(image\/(png|jpe?g|webp|heic|heif)|application\/pdf)$/i;
 
 const CURRENCY_OPTIONS = ["INR", "USD", "EUR", "GBP", "AED", "SGD", "AUD", "CAD"] as const;
 
@@ -136,7 +136,10 @@ export function AddExpenseDialog({
   const { data: bankAccounts } = useBankAccounts();
   const cashAccounts = (bankAccounts ?? []).filter((a) => a.account_type === "cash");
   const bankOnlyAccounts = (bankAccounts ?? []).filter((a) => a.account_type !== "cash");
-  const [pettyCashAccountId, setPettyCashAccountId] = React.useState<string>("");
+  /* R-1834: Cash starts on the company's Petty Cash (the only cash account, or the auto one among
+     several). null = not touched yet → that default; "" = "Don't deduct from petty cash". */
+  const [pettyCashPick, setPettyCashAccountId] = React.useState<string | null>(null);
+  const pettyCashAccountId = isEdit ? "" : (pettyCashPick ?? defaultCashAccountId(bankAccounts));
   /* Staff advances still open — "Paid by → Employee advance" lists them with what is left. */
   const { data: allAdvances } = useEmployeeAdvances();
   const [advanceId, setAdvanceId] = React.useState<string>(
@@ -364,31 +367,17 @@ export function AddExpenseDialog({
 
   async function handleBillFile(file: File) {
     setAiError(null); setAiNote(null); setPending(null); setAiBuyer(null); setAiProforma(false);
-    if (!BILL_FILE.test(file.type)) { setAiError("Drop a PDF or a photo (JPG/PNG) of the bill."); return; }
-    if (file.size > 8 * 1024 * 1024) { setAiError("File is too big (max 8 MB) — try a smaller photo."); return; }
+    /* R-2005: the one bill reader (lib/accounting/bill-reader.ts) — same check, route and words
+       as Add COGS Bill and the bank Reconcile "record the bill now". R-1744: no Gemini key for
+       this company → it says so plainly; the form stays manual. */
+    const bad = checkBillFile(file);
+    if (bad) { setAiError(bad); return; }
     setAttachFile(file);   // keep it — attaches to the expense on save (proof)
     setReading(true);
     try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload  = () => resolve((r.result as string).split(",")[1] ?? "");
-        r.onerror = () => reject(new Error("read failed"));
-        r.readAsDataURL(file);
-      });
-      const res = await fetch("/api/ai/extract-bill", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ fileBase64: base64, mimeType: file.type }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        /* R-1744: no Gemini key for this company → say so plainly; the form stays manual. */
-        setAiError(json.code === "ai_not_configured"
-          ? "AI bill reading is not set up for your company (Settings → Integrations → AI). Fill the form by hand — the bill will still be attached."
-          : (json.error ?? "Couldn't read the bill — fill the fields yourself. 📎 The bill will still be attached."));
-        return;
-      }
-      const f = json.fields as Record<string, unknown>;
+      const out = await readBillFile(file);
+      if (!out.ok) { setAiError(out.error); return; }
+      const f = out.read.fields;
       const cur = String(f.currency ?? "INR").toUpperCase();
       /* Teeno ALAG bhi rakhe jate hain, sirf jod kar nahi. `gst` kul hai (form aur
          `gst_paid` usi par chalte hain), aur igst/cgst/sgst wo naapa hua batwara hai jo
@@ -422,12 +411,12 @@ export function AddExpenseDialog({
         paidStatus:  typeof f.paid_status === "string" ? f.paid_status : undefined,
         paymentMode: typeof f.payment_mode === "string" ? f.payment_mode : undefined,
         proforma:    f.document_type === "proforma",
-        buyer:       isBuyerMismatch(f.buyer_mismatch) ? f.buyer_mismatch : null,
-        resale:      resaleProduct({ category_guess: typeof f.category_guess === "string" ? f.category_guess : null }),
+        buyer:       out.read.buyer,
+        resale:      out.read.resale,
         read:        f as VendorBillPrefill,
       });
     } catch {
-      setAiError("Upload failed — try again, or fill the fields yourself.");
+      setAiError("Upload failed — try again, or fill the fields by hand.");
     } finally {
       setReading(false);
     }
@@ -1357,6 +1346,16 @@ export function AddExpenseDialog({
                 </p>
               )}
             </FormField>
+          )}
+
+          {/* R-1846: a proprietor's / partner's own "salary" is drawings, not an expense — caution +
+              one click to record it as drawings instead. Never blocks. New expenses only. */}
+          {!isEdit && (
+            <OwnerPayCautionBox
+              category={watch("category")} payee={vendorNameWatch} text={`${noteText} ${watch("notes") ?? ""}`.trim()}
+              amount={Number(watch("amount")) || 0} method={watch("payment_method")}
+              bankAccountId={bankAccountId} pettyCashAccountId={pettyCashAccountId}
+              date={watch("expense_date") || today} today={today} onRecorded={onClose} />
           )}
 
           {!isEdit && (

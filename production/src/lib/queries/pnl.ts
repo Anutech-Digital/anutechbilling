@@ -24,10 +24,12 @@ import { queryKeys } from "@/lib/queries/keys";
 import { createClient } from "@/lib/supabase/client";
 import { vendorsFromSubscriptions } from "@/lib/accounting/pnl";
 import { assemblePnl, type PnLNumbers, type PnlMasters, type PnlRpcRow } from "@/lib/accounting/pnl-assemble";
+import type { RevenueByProductRow } from "@/lib/accounting/revenue-family";
 import { fyMonthsSoFar, monthRange } from "@/lib/accounting/pnl-charts";
 import { rpcRowOrThrow } from "@/lib/accounting/report-rpc";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import type { AssetBlock } from "@/lib/accounting/depreciation";
+import { fetchDirectorPayroll } from "@/lib/queries/director-payroll";
 
 export type { PnLNumbers } from "@/lib/accounting/pnl-assemble";
 
@@ -42,7 +44,7 @@ async function fetchPnlMasters(supabase: Client) {
   /* R-265: the master-data reads page with fetchAllRows on `id` — a bare select stops
      at PostgREST's 1000-row cap and the subscription cost / project cost would silently
      cover only the first 1000 rows. fetchAllRows throws a page's error itself. */
-  const [subs, labourRows, emps, projects, assets] = await Promise.all([
+  const [subs, labourRows, emps, projects, assets, directorPayroll] = await Promise.all([
     /* ── THE SUBSCRIPTION BOOK — where the licence cost actually lives ──────
        `vendor_bills` is EMPTY on this tenant, so billed COGS is ₹0 and the report used
        to claim a 100% gross margin. The subscriptions carry the cost; lib/accounting/
@@ -68,6 +70,8 @@ async function fetchPnlMasters(supabase: Client) {
     fetchAllRows((a, b) => supabase.from("fixed_assets")
       .select("id, name, block, cost, put_to_use, disposed_on, disposal_value")
       .order("id").range(a, b)),
+    /* ── R-1852: a director-employee's payroll → the Director's Remuneration line ── */
+    fetchDirectorPayroll(supabase),
   ]);
 
   const itemIds = [...new Set(subs.map((s) => s.item_id).filter((id): id is string => !!id))];
@@ -89,6 +93,7 @@ async function fetchPnlMasters(supabase: Client) {
     projects,
     employeeNames: new Map(emps.map((e) => [e.id, e.name])),
     assets: assets.map((x) => ({ ...x, block: x.block as AssetBlock })),
+    directorPayroll,
   };
   return (range: Range): PnlMasters => ({ ...fixed, vendors: vendorsFromSubscriptions(book, range.from, range.to) });
 }
@@ -97,6 +102,21 @@ async function pnlFor(supabase: Client, range: Range, masters: (r: Range) => Pnl
   const rpc = await supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to });
   const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
   return assemblePnl(range, row, masters(range));
+}
+
+type RevenueByProductRpc = (
+  fn: "report_pnl_revenue_by_product", args: { p_from: string; p_to: string },
+) => PromiseLike<{ data: RevenueByProductRow[] | null; error: { code?: string; message: string } | null }>;
+
+/**
+ * R-1835: Revenue by what was sold — companion of report_pnl (migration 20261024110239).
+ * Optional on purpose: on a database without the function, or when the call fails, the
+ * statement keeps R-1833's Revenue lines (null here). The Revenue TOTAL never comes from here.
+ */
+async function revenueByProductRows(supabase: Client, range: Range): Promise<RevenueByProductRow[] | null> {
+  const rpc = supabase.rpc as unknown as RevenueByProductRpc;
+  const { data, error } = await rpc.call(supabase, "report_pnl_revenue_by_product", { p_from: range.from, p_to: range.to });
+  return error || !Array.isArray(data) ? null : data;
 }
 
 export function usePnL(range: Range, enabled = true) {
@@ -108,12 +128,13 @@ export function usePnL(range: Range, enabled = true) {
     enabled,
     queryFn: async (): Promise<PnLNumbers> => {
       const supabase = createClient();
-      const [rpc, masters] = await Promise.all([
+      const [rpc, masters, byProduct] = await Promise.all([
         supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
         fetchPnlMasters(supabase),
+        revenueByProductRows(supabase, range),
       ]);
       const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
-      return assemblePnl(range, row, masters(range));
+      return assemblePnl(range, { ...row, revenue_by_product: byProduct }, masters(range));
     },
   });
 }

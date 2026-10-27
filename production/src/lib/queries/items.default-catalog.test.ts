@@ -1,6 +1,6 @@
 /**
  * R-207: the catalog a new tenant gets (DEFAULT_CATALOG) must carry the Google
- * Workspace LIST price (Starter 270 / Standard 1,080 / Plus 1,380 per seat-month),
+ * Workspace LIST price (Starter 270 / Standard 1,080 / Plus 1,500 per seat-month — R-1970, was 1,380),
  * read from lib/pricing/workspace.ts — not an old 136/736 promo copy.
  */
 import { describe, expect, it, vi } from "vitest";
@@ -13,7 +13,7 @@ import { TIER_FALLBACK_MONTHLY } from "@/lib/pricing/workspace";
 const GW_MAIN = [
   { id: "GW-STR", list: 270, tier: "starter" },
   { id: "GW-STD", list: 1080, tier: "standard" },
-  { id: "GW-PLS", list: 1380, tier: "plus" },
+  { id: "GW-PLS", list: 1500, tier: "plus" },
 ] as const;
 
 describe("DEFAULT_CATALOG Google Workspace main rows (R-207)", () => {

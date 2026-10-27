@@ -10,7 +10,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 import { authjsMiddlewareSession } from "@/server/auth/middleware-session";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
-import { isRouteAllowed, ROLE_HOME, type UserRole } from "@/lib/nav";
+import { GENERIC_HOME, homeForRole, isRouteAllowed, type UserRole } from "@/lib/nav";
 import { rateLimitShared, clientIp, publicApiLimit } from "@/lib/security/rate-limit";
 import { CHANGE_PASSWORD_PATH, mustChangePassword, safeNextPath } from "@/lib/auth/must-change-password";
 import { apiNeedsMfaCode, MFA_API_REFUSAL } from "@/lib/auth/mfa-gate";
@@ -389,10 +389,11 @@ export async function middleware(request: NextRequest) {
   }
 
   // Logged in → redirect away from auth pages, sending each role to its
-  // own home page (sales lands on /leads, others on /dashboard).
+  // own home page (sales lands on /leads, others on /dashboard). R-1837: homeForRole — the
+  // first page the role may open (nav.ts isRouteAllowed), never a page that bounces it.
   if (isAuthed && isAuthPage) {
     const url = request.nextUrl.clone();
-    url.pathname = ROLE_HOME[(role as UserRole) ?? "owner"] ?? "/dashboard";
+    url.pathname = homeForRole(((role as UserRole) ?? "owner"), { canViewDeals });
     url.searchParams.delete("next");
     return NextResponse.redirect(url);
   }
@@ -406,11 +407,14 @@ export async function middleware(request: NextRequest) {
     const isAllowedPath = isRouteAllowed(userRole, pathname, { canViewDeals });
     if (!isAllowedPath) {
       const url = request.nextUrl.clone();
-      url.pathname = ROLE_HOME[userRole];
+      url.pathname = homeForRole(userRole, { canViewDeals });
       // R-1810: say which page was refused — the app shell shows "You don't have access to …"
       // (components/layout/denied-route-toast.tsx). The refused page's own query is dropped.
+      // R-1837: not for the generic landing (/dashboard): the login default, "/" and every
+      // "Back to dashboard" link send people there, so for a role without it (marketing,
+      // billing, sales…) it means "my home", not a page they asked for — no toast.
       url.search = "";
-      url.searchParams.set("denied", pathname);
+      if (pathname !== GENERIC_HOME) url.searchParams.set("denied", pathname);
       return NextResponse.redirect(url);
     }
   }

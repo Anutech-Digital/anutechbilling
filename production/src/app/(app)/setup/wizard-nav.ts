@@ -6,7 +6,8 @@
  * Every way of reaching Done (Finish, Skip, tapping the last progress segment)
  * now finishes setup; every way of leaving step 1 saves the company first.
  */
-export const DONE_STEP = 4;
+// R-1927 (OB-6): Company → Import → Done. Razorpay / Google moved to the Done screen as "Later" rows.
+export const DONE_STEP = 2;
 
 export type WizardMove = "save-company" | "finish" | "advance";
 

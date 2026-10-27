@@ -532,7 +532,6 @@ function BookInvoiceDialog({ advances, onClose }: { advances: PrepaidAdvance[]; 
 
   const amt = Math.round(Number(amount) || 0);
   const gstAmt = Math.round(Number(gst) || 0);
-  const plan = vendor && amt > 0 ? planFifo(advances, vendor, amt, gstAmt) : null;
   const balance = vendors.find((v) => v.vendor === vendor)?.balance ?? 0;
 
   /* ── Tax facts on the invoice (migration 20260927210000) ─────────────────────
@@ -558,6 +557,8 @@ function BookInvoiceDialog({ advances, onClose }: { advances: PrepaidAdvance[]; 
     : null;
   React.useEffect(() => { if (!tdsEdited && tdsView) setTds(String(tdsView.tds)); if (!tdsSection) setTds("0"); }, [tdsView?.tds, tdsEdited, tdsSection]); // eslint-disable-line react-hooks/exhaustive-deps
   const tdsAmt = Math.max(0, Math.round(Number(tds) || 0));
+  /* R-1913: TDS comes off what the advance has to cover (an invoice bigger than the advance stays part due). */
+  const plan = vendor && amt > 0 ? planFifo(advances, vendor, amt, gstAmt, tdsAmt) : null;
 
   async function submit() {
     if (!plan?.ok) return;
@@ -578,7 +579,8 @@ function BookInvoiceDialog({ advances, onClose }: { advances: PrepaidAdvance[]; 
           <DialogTitle>Book vendor invoice</DialogTitle>
           <DialogDescription>
             The vendor&apos;s invoice for what was actually used (e.g. Facebook&apos;s monthly bill). It is booked as an
-            expense and drawn from that vendor&apos;s oldest top-ups first.
+            expense and drawn from that vendor&apos;s oldest top-ups first. Bill already on the Expenses page? Open it
+            there and press &quot;Apply advance&quot; instead — booking it here would count it twice.
           </DialogDescription>
         </DialogHeader>
 
@@ -666,6 +668,13 @@ function BookInvoiceDialog({ advances, onClose }: { advances: PrepaidAdvance[]; 
                   ))}
                 </ul>
                 <p className="mt-1.5 text-ink-3">{vendor} advance left after this: <b className="text-ink">{rupee(plan.leftAfter)}</b></p>
+                {/* R-1913 (B2): bigger than the advance — one bill, the advance applied, the rest due. */}
+                {plan.stillDue > 0 && (
+                  <p className="mt-1 text-amber-ink">
+                    The invoice is more than the advance: it is booked as one bill, the advance is applied to it, and{" "}
+                    <b>{rupee(plan.stillDue)} stays due</b> on the Expenses page.
+                  </p>
+                )}
               </div>
             ) : (
               <p className="text-xs text-rose-ink">{plan.reason}</p>

@@ -10,7 +10,8 @@
 --   1. A top-up line becomes an advance for exactly its amount, linked both ways.
 --   2. One invoice larger than any single top-up is consumed oldest-first across
 --      them; the slices add up to the invoice and its GST exactly.
---   3. An invoice bigger than the open balance is refused and changes nothing.
+--   3. R-1913 (B2): an invoice bigger than the open balance becomes ONE unpaid bill for the
+--      full invoice with the whole balance applied (₹1 stays due); undone so 2 starts clean.
 --   4. Un-reconciling a top-up whose advance was used is refused; an unused one is
 --      removed with its advance.
 --   5. Deleting a bank-funded advance frees its bank line.
@@ -66,16 +67,25 @@ begin
   perform public.book_bank_txn_as_prepaid('aaaaaaaa-0000-0000-0000-0000000b8003', 'Facebook', 'Advertising');
 end $$;
 
--- 3. Invoice larger than the open balance: refused, nothing changes
-do $$ begin
+-- 3. Invoice larger than the open balance (R-1913, B2): one unpaid bill, the balance applied, ₹1 due.
+--    Checked inside a sub-block that is then undone, so step 2 starts from the same balances.
+do $$
+declare v_left int; v_n int; v_amt int; v_applied int; v_paid boolean;
+begin
   begin
-    perform public.consume_prepaid_fifo('Facebook', 15001, 0, '2026-07-31');
-    raise exception 'FAIL 3: over-balance invoice accepted';
+    v_left := public.consume_prepaid_fifo('Facebook', 15001, 0, '2026-07-31');
+    if v_left <> -1 then raise exception 'FAIL 3: returned %, want -1 (₹1 still due)', v_left; end if;
+    select count(*), max(amount), max(advance_applied), bool_or(paid) into v_n, v_amt, v_applied, v_paid
+      from public.expenses where tenant_id = 'aaaaaaaa-0000-0000-0000-0000000000a2';
+    if v_n <> 1 or v_amt <> 15001 or v_applied <> 15000 or v_paid then
+      raise exception 'FAIL 3b: rows % amount % applied % paid %', v_n, v_amt, v_applied, v_paid;
+    end if;
+    raise exception 'R1913_UNDO';
   exception when others then
-    if sqlerrm not like 'Only ₹15000 is left%' then raise exception 'FAIL 3: wrong error: %', sqlerrm; end if;
+    if sqlerrm <> 'R1913_UNDO' then raise; end if;
   end;
   if exists (select 1 from public.expenses where tenant_id = 'aaaaaaaa-0000-0000-0000-0000000000a2') then
-    raise exception 'FAIL 3b: a refused invoice left expenses behind';
+    raise exception 'FAIL 3c: the undone sub-block left expenses behind';
   end if;
 end $$;
 

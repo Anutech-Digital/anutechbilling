@@ -33,6 +33,8 @@ export interface DepositAccount {
   account_number_last4?: string | null;
   account_type?: string | null;
   is_active?: boolean | null;
+  /** R-1834: the "Petty Cash" every company is created with (one per company). */
+  is_default_petty_cash?: boolean | null;
 }
 
 /** Shown in the list: "Current A/c · HDFC ••1234". */
@@ -46,8 +48,19 @@ export function depositAccounts(accounts: ReadonlyArray<DepositAccount> | null |
 }
 
 /**
+ * R-1834 — the cash account the Cash method starts on, everywhere (Record payment, Add expense,
+ * Mark paid, Give advance): the company's only active cash account; with several, the Petty
+ * Cash created with the company (migration 20261024101339); else "" — the person picks.
+ */
+export function defaultCashAccountId(accounts: ReadonlyArray<DepositAccount> | null | undefined): string {
+  const cash = depositAccounts(accounts).filter((a) => a.account_type === "cash");
+  if (cash.length === 1) return cash[0].id;
+  return cash.find((a) => a.is_default_petty_cash === true)?.id ?? "";
+}
+
+/**
  * The account to pre-pick for a method, or "" (not tagged) when it would be a guess.
- *   · cash → the company's one cash account, if it has exactly one;
+ *   · cash → defaultCashAccountId (the one cash account, or the auto Petty Cash among several);
  *   · other → nothing;
  *   · UPI / bank / Razorpay / cheque → the company's one bank account, if it has exactly one.
  * Several candidates → "" so the operator picks; a wrong tag is worse than none.
@@ -57,10 +70,8 @@ export function defaultDepositAccountId(
   method: PaymentMethod | string,
 ): string {
   if (method === "other") return "";
-  const usable = depositAccounts(accounts);
-  const pool = method === "cash"
-    ? usable.filter((a) => a.account_type === "cash")
-    : usable.filter((a) => a.account_type !== "cash");
+  if (method === "cash") return defaultCashAccountId(accounts);
+  const pool = depositAccounts(accounts).filter((a) => a.account_type !== "cash");
   return pool.length === 1 ? pool[0].id : "";
 }
 

@@ -3,7 +3,8 @@
  *
  * Allows company owners/accountants to:
  * 1. Disburse advance money to employees for official expenses (Travel, Client Meetings, Maintenance).
- * 2. Record expenses incurred by employees against their advance balance (Hits P&L as Expense & reduces available advance).
+ * 2. Add the employee's bills against their advance balance (each bill is an expense in its category; R-1871 Add bills —
+ *    several at once, the part over the balance becomes a reimbursement).
  * 3. Track real-time remaining advance balance & settle completed advances.
  */
 "use client";
@@ -36,7 +37,9 @@ import {
 } from "@/lib/queries/advances";
 import { useEmployees } from "@/lib/queries/payroll";
 import { useBankAccounts } from "@/lib/queries/bank";
-import { AddExpenseDialog } from "@/components/features/accounting/add-expense-dialog";
+import { defaultCashAccountId } from "@/lib/payments/deposit-accounts";
+import { AddBillsDialog } from "./add-bills-dialog";
+import { AdvanceRegister } from "./advance-register";
 import { getBillAttachmentUrl } from "@/lib/queries/vendor-bills";
 import { toast } from "sonner";
 import { istToday } from "@/lib/dates/ist";
@@ -68,7 +71,7 @@ export default function EmployeeAdvancesPage() {
     setDisburseOpen(true);
     window.history.replaceState(null, "", window.location.pathname);
   }, []);
-  const [recordExpenseFor, setRecordExpenseFor] = React.useState<EmployeeAdvance | null>(null);
+  const [billsFor, setBillsFor] = React.useState<EmployeeAdvance | null>(null);
   const [topUpFor, setTopUpFor] = React.useState<EmployeeAdvance | null>(null);
 
   async function openBill(path: string) {
@@ -176,10 +179,10 @@ export default function EmployeeAdvancesPage() {
                       size="sm"
                       variant="primary"
                       className="gap-1.5"
-                      onClick={() => setRecordExpenseFor(adv)}
+                      onClick={() => setBillsFor(adv)}
                     >
                       <Icon name="plus" size={14} />
-                      Record expense
+                      Add bills
                     </Button>
 
                     {canMoveMoney && (
@@ -284,17 +287,16 @@ export default function EmployeeAdvancesPage() {
         </div>
       )}
 
+      {/* R-1872: per employee — given, spent, returned, balance, days out; > 30 days filter; CSV. */}
+      {!isLoading && <AdvanceRegister advances={advances} />}
+
       {/* Disburse Advance Modal */}
       <DisburseAdvanceDialog open={disburseOpen && canMoveMoney} onOpenChange={setDisburseOpen} prefill={prefill} />
 
-      {/* Record Expense Modal */}
-      {/* R-101: the normal Expense form (bill attach, GST, categories) with this
-          advance already picked under "Paid by". */}
-      {recordExpenseFor && (
-        <AddExpenseDialog
-          advanceId={recordExpenseFor.id}
-          onClose={() => setRecordExpenseFor(null)}
-        />
+      {/* R-1871: the employee's bills, several at once (photo + bill reader, GST); the part over
+          the balance becomes a reimbursement. The one way to book a bill against an advance here. */}
+      {billsFor && (
+        <AddBillsDialog advance={billsFor} open={!!billsFor} onOpenChange={(open) => !open && setBillsFor(null)} />
       )}
 
       {topUpFor && canMoveMoney && (
@@ -338,6 +340,13 @@ function DisburseAdvanceDialog({ open, onOpenChange, prefill }: { open: boolean;
   const [date, setDate] = React.useState<string>(todayISO());
   const [method, setMethod] = React.useState<string>("bank_transfer");
   const [bankId, setBankId] = React.useState<string>("");
+  /* R-1834: an advance given in Cash starts on the company's Petty Cash (the only cash account,
+     or the auto one among several); the person can still pick another account. */
+  const accountId = bankId || (method === "cash" ? defaultCashAccountId(bankAccounts) : "");
+  const pickMethod = (m: string) => {
+    setMethod(m);
+    if (m === "cash" && bankAccounts.find((b) => b.id === bankId)?.account_type !== "cash") setBankId("");
+  };
   const [purpose, setPurpose] = React.useState<string>("");
 
   /* Fill from AI Entry: the employee is matched by name (exact, then first-name), else the
@@ -376,7 +385,7 @@ function DisburseAdvanceDialog({ open, onOpenChange, prefill }: { open: boolean;
         disbursed_amount: parsedAmount,
         disbursed_date: date,
         payment_method: method,
-        bank_account_id: bankId || null,
+        bank_account_id: accountId || null,
         purpose: purpose.trim() || null,
       },
       {
@@ -448,7 +457,7 @@ function DisburseAdvanceDialog({ open, onOpenChange, prefill }: { open: boolean;
 
           <div className="grid grid-cols-2 gap-3">
             <FormField htmlFor="advances-payment-method" label="Payment Method">
-              <Select value={method} onValueChange={setMethod}>
+              <Select value={method} onValueChange={pickMethod}>
                 <SelectTrigger id="advances-payment-method" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
@@ -463,7 +472,7 @@ function DisburseAdvanceDialog({ open, onOpenChange, prefill }: { open: boolean;
             </FormField>
 
             <FormField htmlFor="advances-company-bank-cash" label="Company Bank / Cash">
-              <Select value={bankId} onValueChange={setBankId}>
+              <Select value={accountId} onValueChange={setBankId}>
                 <SelectTrigger id="advances-company-bank-cash" className="w-full">
                   <SelectValue placeholder="Select Bank..." />
                 </SelectTrigger>
@@ -682,6 +691,7 @@ function SettleAdvanceDialog({ advance, open, onOpenChange }: { advance: Employe
           {advance.remaining_balance > 0 ? (
             <p className="text-ink-2 bg-amber-soft/20 p-2.5 rounded border border-amber/30">
               💡 <strong>Employee has {rupee(advance.remaining_balance)} cash remaining.</strong> Settling records that they handed it back. Given from petty cash, it goes back into petty cash.
+              {" "}Paid back into the bank? Don&apos;t settle here — reconcile that bank credit as &quot;Advance returned by employee&quot; in Banking; it settles this advance.
             </p>
           ) : (
             <p className="text-emerald font-medium">

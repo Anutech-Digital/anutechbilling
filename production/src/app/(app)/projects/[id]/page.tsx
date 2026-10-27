@@ -211,13 +211,21 @@ export default function ProjectDetailPage() {
                 <Button size="sm" variant="outline" icon="copy" onClick={copyLink}>Copy link</Button>
               </div>
             </div>
-            <Button
-              variant="primary" icon="check"
-              loading={accept.isPending}
-              onClick={() => accept.mutate(project.id)}
-            >
-              Mark accepted
-            </Button>
+            {/* R-1819: accept_project_quote is owner / manager / accountant / billing; sales wait
+                for the customer's own accept on the link. */}
+            {mayRecordMoney ? (
+              <Button
+                variant="primary" icon="check"
+                loading={accept.isPending}
+                onClick={() => accept.mutate(project.id)}
+              >
+                Mark accepted
+              </Button>
+            ) : (
+              <p className="text-2xs text-ink-3 max-w-[220px]">
+                The customer accepts on the link, or an owner, manager, accountant or billing user marks it accepted.
+              </p>
+            )}
           </div>
         </Card>
       )}
@@ -463,7 +471,7 @@ export default function ProjectDetailPage() {
                     <span className="text-2xs text-ink-3 italic">Accept quotation to bill</span>
                   ) : (
                     <>
-                      {!m.invoice_id && (
+                      {!m.invoice_id && mayRecordMoney && (
                         <Button size="sm" variant="outline" loading={raise.isPending && raise.variables?.milestoneId === m.id} onClick={() => setRaiseFor(m)}>
                           Raise invoice
                         </Button>

@@ -519,6 +519,7 @@ export async function runSupportAgent(args: {
   const raw = await geminiJson<unknown>({
     apiKey: cfg.apiKey,
     model: cfg.model,
+    tenantId: cfg.tenantId,
     system: prompt.system,
     user: prompt.user,
     /* Lower than the sales agent's 0.3. A support answer is a procedure, and the same problem

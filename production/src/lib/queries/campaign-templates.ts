@@ -14,6 +14,7 @@ import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
 import { requireTenantId } from "@/lib/queries/require-tenant";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import type { CampaignTemplateRow, CampaignTemplateCategory } from "@/lib/supabase/database.types";
 
 export const TEMPLATES_KEY = ["campaign_templates"] as const;
@@ -96,12 +97,21 @@ export function useDeleteTemplate() {
   });
 }
 
+/**
+ * The `{{sender}}` a preview shows: the logged-in company's own name (R-1924), the same
+ * tenants.name /api/campaigns/send signs with. Never another company's name.
+ */
+export function usePreviewSender(): string {
+  const { data: me } = useCurrentUser();
+  return me?.tenantName?.trim() || "Your company";
+}
+
 /** Fill the variables with sample values, the same set /api/campaigns/send fills. */
-export function previewTemplate(html: string): string {
+export function previewTemplate(html: string, sender: string): string {
   return html
     .replace(/\{\{name\}\}/g, "Ramesh")
     .replace(/\{\{company\}\}/g, "Acme Pvt Ltd")
-    .replace(/\{\{sender\}\}/g, "Anutech Digital")
+    .replace(/\{\{sender\}\}/g, sender)
     .replace(/\{\{offer_code\}\}/g, "DIWALI20")
     .replace(/\{\{discount\}\}/g, "20")
     .replace(/\{\{expires\}\}/g, "31 Oct 2026");

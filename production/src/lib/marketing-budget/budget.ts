@@ -1,7 +1,7 @@
 /**
  * Marketing budget & payments (R-1792, Abhishek 23 Oct 2026) — the parts with no database:
  * what each channel is called, how much is left on a budget, and which expense a paid request
- * becomes. The database enforces the same limits (migration 20261024063200); these are for
+ * becomes. The database enforces the same limits (migration 20261023120000); these are for
  * showing them before anyone presses a button.
  */
 import type { UserRole } from "@/lib/auth/roles";

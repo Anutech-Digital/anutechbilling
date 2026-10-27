@@ -19,6 +19,8 @@ import {
   projectCostForPeriod, type ProjectCostResult, type LabourAllocation, type ProjectInfo, type CostExpense,
 } from "@/lib/accounting/project-cost";
 import { registerDepreciationForRange, type AssetLike } from "@/lib/accounting/depreciation";
+import { moveDirectorPayroll, type DirectorPayrollExpense } from "@/lib/accounting/director-remuneration";
+import { revenueByProduct, type RevenueByProductRow, type RevenueFamily } from "@/lib/accounting/revenue-family";
 
 export interface PnLNumbers {
   revenue:        number;   // Invoices ≥ status='pending' within period
@@ -61,6 +63,20 @@ export interface PnLNumbers {
   model: PnlPeriod;
   /** Salary on customer projects + project-tagged expenses — lib/accounting/project-cost.ts. */
   projectCost: ProjectCostResult;
+  /**
+   * R-1833: what the Revenue line is made of (ex-GST), so the statement can show it as sub-lines
+   * that add up to `revenue`: invoiced − credit notes + debit notes; `projects` is the part of
+   * `invoiced` raised against projects.
+   */
+  revenueParts?: { invoiced: number; creditNotes: number; debitNotes: number; projects: number };
+  /**
+   * R-1835: Revenue by what was sold (Google Workspace, Microsoft 365, Zoho, Hosting, Domains,
+   * support, software projects, other) — each family net of its own credit / debit notes, adding
+   * up to `revenue` exactly. Null before migration 20261024110239 or when the parts do not add up.
+   */
+  revenueByProduct?: RevenueFamily[] | null;
+  /** R-1833: billed licence cost per subscription vendor (R-1645), null before that migration. */
+  licenceBillsByVendor?: Readonly<Record<string, number>> | null;
   /** employee id → name, for the project-cost drill-down. */
   employeeNames: Map<string, string>;
 }
@@ -85,6 +101,9 @@ export interface PnlRpcRow {
   /** R-1645: COGS bills per category (pre-GST subtotal). Absent before that migration — then the
    *  P&L keeps the old rule (any bill switches the whole licence estimate off). */
   cogs_by_category?: { category: string | null; subtotal: number; n: number }[] | null;
+  /** R-1835: NOT a report_pnl column — usePnL adds the companion RPC
+   *  `report_pnl_revenue_by_product` here; absent / null on an older database. */
+  revenue_by_product?: RevenueByProductRow[] | null;
   unassigned_by_category: { category: string | null; amount: number }[];
   project_expenses: {
     project_id: string; amount: number; category: string | null; expense_date: string | null;
@@ -103,6 +122,12 @@ export interface PnlMasters {
   employeeNames: Map<string, string>;
   /** R-1578: the fixed-asset register. Absent = no depreciation line (₹0). */
   assets?: readonly AssetLike[];
+  /**
+   * R-1852: payroll expense rows of employees linked to a director (company_directors.employee_id
+   * → salary_payments.expense_id). Shown under Director's Remuneration instead of Salaries.
+   * Absent / empty = no move.
+   */
+  directorPayroll?: readonly DirectorPayrollExpense[];
 }
 
 /**
@@ -147,7 +172,10 @@ export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m
   const cogsCount = r.cogs_count;
 
   /* Mahina "YYYY-MM" aata hai; report sirf slice(0, 7) padhta hai, isliye pehli tareekh. */
-  const expenseRows = r.expense_groups.map((g) => ({
+  /* R-1852: a director-employee's payroll → Director's Remuneration (same total, one line with
+     sitting fees booked as expenses). Everything below — the category list, the expense report,
+     the trial balance and ITR that read them — then agrees. */
+  const expenseRows = moveDirectorPayroll(r.expense_groups, m.directorPayroll ?? [], range).map((g) => ({
     amount: g.amount, category: g.category, vendor_name: g.vendor_name,
     expense_date: `${g.month}-01`, n: g.n,
   }));
@@ -228,5 +256,13 @@ export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m
     model,
     projectCost,
     employeeNames: m.employeeNames,
+    revenueParts: {
+      invoiced: r.inv_taxable, creditNotes: r.cn_taxable, debitNotes: r.dn_taxable,
+      projects: Math.min(Math.max(0, projectRevenue), r.inv_taxable),
+    },
+    revenueByProduct: revenueByProduct(r.revenue_by_product, {
+      invoiced: r.inv_taxable, creditNotes: r.cn_taxable, debitNotes: r.dn_taxable,
+    }),
+    licenceBillsByVendor: billedByVendor(r),
   };
 }

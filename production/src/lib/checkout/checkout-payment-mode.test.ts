@@ -8,22 +8,41 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { checkoutPaymentMode, payButtonLabel } from "./checkout-payment-mode";
+import { checkoutPaymentMode, payButtonLabel, razorpayTestOffered } from "./checkout-payment-mode";
 
 const code = (f: string) => readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 const PAGE = "src/app/(marketing)/checkout/page.tsx";
 const LAYOUT = "src/app/(marketing)/checkout/layout.tsx";
 
 describe("checkoutPaymentMode — the same three modes as the Workspace buy page", () => {
-  it("Razorpay keys present → live (real Razorpay window)", () => {
-    expect(checkoutPaymentMode({ razorpayConfigured: true, simulationAllowed: true })).toBe("live");
+  it("Razorpay keys on a deployment → live (real Razorpay window)", () => {
     expect(checkoutPaymentMode({ razorpayConfigured: true, simulationAllowed: false })).toBe("live");
+  });
+  /* R-1769 (Pawan, 24 Oct 05:25 UTC): on localhost the checkout showed only "Pay ₹708" and
+     Razorpay answered "Authentication failed". .env.local carries an rzp_test_ key pair; any
+     laptop server that reads it (plain `npm run dev`, or test keys saved in local Settings)
+     went "live" and hid Simulate payment — so the order could never reach /done. */
+  it("R-1769: TEST keys on a laptop → still simulation, so the order reaches /done", () => {
+    expect(checkoutPaymentMode({ razorpayConfigured: true, simulationAllowed: true })).toBe("simulation");
   });
   it("no keys on a laptop → simulation, so the order can be walked to /done", () => {
     expect(checkoutPaymentMode({ razorpayConfigured: false, simulationAllowed: true })).toBe("simulation");
   });
   it("no keys on a deployment → disabled (R-079: a deployed site never simulates)", () => {
     expect(checkoutPaymentMode({ razorpayConfigured: false, simulationAllowed: false })).toBe("disabled");
+  });
+});
+
+describe("R-1769: the Razorpay TEST window stays one click away on a laptop with test keys", () => {
+  it("offered only when keys are set AND simulation is allowed (a laptop, never a deployment)", () => {
+    expect(razorpayTestOffered({ razorpayConfigured: true, simulationAllowed: true })).toBe(true);
+    expect(razorpayTestOffered({ razorpayConfigured: true, simulationAllowed: false })).toBe(false);
+    expect(razorpayTestOffered({ razorpayConfigured: false, simulationAllowed: true })).toBe(false);
+  });
+  it("the page sends simulate only when the person did not pick the Razorpay test window", () => {
+    const page = code(PAGE);
+    expect(page).toMatch(/simulate: paymentMode === "simulation" && !useRazorpayTest/);
+    expect(page).toMatch(/razorpayTest &&/);
   });
 });
 
@@ -49,7 +68,8 @@ describe("the checkout page uses the mode (owner's path: Pay on a laptop reaches
   });
   it("the layout reads the mode on the server, per request", () => {
     const layout = code(LAYOUT);
-    expect(layout).toMatch(/loadCheckoutPaymentMode\(\)/);
+    expect(layout).toMatch(/loadCheckoutPaymentSetup\(\)/);
+    expect(layout).toMatch(/razorpayTest=\{razorpayTest\}/);
     expect(layout).toMatch(/<PaymentModeProvider mode=\{/);
     expect(layout).toMatch(/export const dynamic = "force-dynamic"/);
   });

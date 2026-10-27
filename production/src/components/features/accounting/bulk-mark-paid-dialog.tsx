@@ -19,6 +19,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { rupee } from "@/lib/utils";
 import { useBulkMarkExpensesPaid, type Expense } from "@/lib/queries/expenses";
 import { istToday } from "@/lib/dates/ist";
+import { expenseCashDue } from "@/lib/payables/still-due";
 
 // Cash is deliberately excluded — petty-cash needs a per-expense account.
 const BULK_METHODS = ["bank_transfer", "upi", "card", "cheque"] as const;
@@ -35,7 +36,9 @@ export function BulkMarkPaidDialog({
   const [paidDate, setPaidDate] = React.useState<string>(today);
   const [method, setMethod] = React.useState<string>("bank_transfer");
 
-  const total = expenses.reduce((s, e) => s + (e.amount ?? 0), 0);
+  /* R-1952: each bill is paid its rest — less its TDS, the vendor advance applied and the bank
+     parts already paid — never the whole bill. */
+  const total = expenses.reduce((s, e) => s + expenseCashDue(e), 0);
 
   async function submit() {
     await bulk.mutateAsync({
@@ -84,7 +87,12 @@ export function BulkMarkPaidDialog({
                 <span className="truncate text-ink-2">
                   {e.category}{e.vendor_name ? ` · ${e.vendor_name}` : ""}
                 </span>
-                <span className="font-mono tabular-nums text-ink shrink-0">{rupee(e.amount)}</span>
+                <span className="font-mono tabular-nums text-ink shrink-0">
+                  {expenseCashDue(e) !== (e.amount ?? 0) && (
+                    <span className="mr-1.5 text-ink-3 line-through" title="Bill amount">{rupee(e.amount)}</span>
+                  )}
+                  {rupee(expenseCashDue(e))}
+                </span>
               </div>
             ))}
           </div>

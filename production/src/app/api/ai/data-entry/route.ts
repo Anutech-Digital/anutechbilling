@@ -76,6 +76,7 @@ export async function POST(request: NextRequest) {
     const raw = await geminiJson<unknown>({
       apiKey: gemini.apiKey,
       model: gemini.model,
+      tenantId: gemini.tenantId,
       system: dataEntryPrompt(today),
       user: text || "Read the attached file.",
       attachment: body.fileBase64 ? { mimeType: body.mimeType!, base64: body.fileBase64 } : undefined,

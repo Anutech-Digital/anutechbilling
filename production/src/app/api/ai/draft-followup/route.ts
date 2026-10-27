@@ -67,7 +67,7 @@ type DraftOutcome =
   | { ok: false; reason: "blocked"; violations: string[] };
 
 async function draftWithGemini(
-  apiKey: string, model: string, channel: "whatsapp" | "email",
+  apiKey: string, model: string, tenantId: string | null, channel: "whatsapp" | "email",
   intent: string, ctx: string, allowedAmounts: number[],
 ): Promise<DraftOutcome> {
   const system =
@@ -85,7 +85,7 @@ async function draftWithGemini(
   // geminiJson carries the timeout and the circuit breaker, and returns null on
   // every failure path — so an AI outage degrades to the stub instead of hanging.
   const p = await geminiJson<Partial<Draft>>({
-    apiKey, model, system, user, temperature: 0.7, label: "ai/draft-followup",
+    apiKey, model, tenantId, system, user, temperature: 0.7, label: "ai/draft-followup",
   });
   if (!p?.message) return { ok: false, reason: "unavailable" };
 
@@ -198,7 +198,7 @@ export async function POST(request: NextRequest) {
     // only one the draft may state. Anything else is invented.
     const allowed = lead.value ? [lead.value] : [];
     const ai = gemini.apiKey
-      ? await draftWithGemini(gemini.apiKey, gemini.model, parsed.channel, intent, ctx, allowed)
+      ? await draftWithGemini(gemini.apiKey, gemini.model, gemini.tenantId, parsed.channel, intent, ctx, allowed)
       : null;
     const settled = await settle(supabase, ai, stubDraft({
       channel: parsed.channel,
@@ -259,7 +259,7 @@ export async function POST(request: NextRequest) {
   // when it restates a number from context, and those are checked strictly.
   const allowed = outstanding > 0 ? [outstanding] : [];
   const ai = gemini.apiKey
-    ? await draftWithGemini(gemini.apiKey, gemini.model, parsed.channel, intent, ctx, allowed)
+    ? await draftWithGemini(gemini.apiKey, gemini.model, gemini.tenantId, parsed.channel, intent, ctx, allowed)
     : null;
   const settled = await settle(supabase, ai, stubDraft({
     channel: parsed.channel,

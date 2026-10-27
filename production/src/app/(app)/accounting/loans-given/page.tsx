@@ -32,10 +32,19 @@ import { useVendors } from "@/lib/queries/vendors";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canUseLoansGiven, splitRepayment, type RepaymentPlan, type ScheduleState } from "@/lib/accounting/loans-given";
 import {
-  useLoansGiven, useGiveLoan, useRecordLoanRepayment, useDeleteLoanGiven,
+  useLoansGiven, useGiveLoan, useGiveDirectorLoan, useRecordLoanRepayment, useDeleteLoanGiven,
   MODE_LABEL, type LoanGiven, type RepaymentMode,
 } from "@/lib/queries/loans-given";
 import { istToday } from "@/lib/dates/ist";
+import { canOpenRoute } from "@/lib/nav";
+import { useComplianceProfile } from "@/lib/compliance/profile";
+import { useCompanyDirectors } from "@/lib/queries/company-directors";
+import { useShareCapital } from "@/lib/queries/share-capital";
+import { shareCapitalSummary } from "@/lib/company/share-capital";
+import {
+  showsDirectorLoans, directorChoices, s186Estimate, S185_BASIS_LABEL, type S185Basis,
+} from "@/lib/accounting/director-loans";
+import { S185Step, S185Footer } from "./s185-step";
 
 const selectCls = "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber";
 const labelCls = "block text-xs font-medium text-ink-2 mb-1";
@@ -48,6 +57,15 @@ export default function LoansGivenPage() {
   const [openId, setOpenId] = React.useState<string | null>(null);
   const [repayId, setRepayId] = React.useState<string | null>(null);
   const [showClosed, setShowClosed] = React.useState(false);
+
+  /* R-1853: Banking's "Paid to a director → Loan" opens the form on Director (?give=director). */
+  const [giveAsDirector, setGiveAsDirector] = React.useState(false);
+  React.useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("give") === "director") {
+      setGiveAsDirector(true);
+      setGiveOpen(true);
+    }
+  }, []);
 
   const loans = React.useMemo(() => q.data ?? [], [q.data]);
   const openLoan = loans.find((l) => l.id === openId) ?? null;
@@ -153,7 +171,7 @@ export default function LoansGivenPage() {
                           <button type="button" className="text-left font-medium text-ink hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded" onClick={() => setOpenId(l.id)}>
                             {l.borrower_name}
                           </button>
-                          <div className="text-xs text-ink-3">{l.borrower_type === "company" ? "Company" : "Person"}{Number(l.interest_rate) > 0 ? ` · ${Number(l.interest_rate)}% a year` : " · interest-free"}</div>
+                          <div className="text-xs text-ink-3">{l.director_id ? "Director" : l.borrower_type === "company" ? "Company" : "Person"}{Number(l.interest_rate) > 0 ? ` · ${Number(l.interest_rate)}% a year` : " · interest-free"}</div>
                         </td>
                         <td className="px-4 py-3 text-ink-2">
                           <div className="font-mono">{rupee(l.principal)}</div>
@@ -205,7 +223,13 @@ export default function LoansGivenPage() {
       )}
 
       <FAB icon="plus" label="Give a loan" onClick={() => setGiveOpen(true)} ariaLabel="Give a loan" />
-      {giveOpen && <GiveLoanDialog onClose={() => setGiveOpen(false)} />}
+      {giveOpen && (
+        <GiveLoanDialog
+          loans={loans}
+          startAsDirector={giveAsDirector}
+          onClose={() => { setGiveOpen(false); setGiveAsDirector(false); }}
+        />
+      )}
       {openLoan && !repayLoan && (
         <LoanDetailDialog loan={openLoan} onClose={() => setOpenId(null)} onRepay={() => setRepayId(openLoan.id)} />
       )}
@@ -326,6 +350,9 @@ function LoanDetailDialog({ loan, onClose, onRepay }: { loan: LoanGiven; onClose
             )}
           </section>
 
+          {loan.s185_basis && (
+            <p className="text-sm text-ink-2"><span className="text-ink-3">Loan to a director — s.185 reason:</span> {S185_BASIS_LABEL[loan.s185_basis]}</p>
+          )}
           {loan.notes && <p className="text-sm text-ink-2"><span className="text-ink-3">Note:</span> {loan.notes}</p>}
         </div>
 
@@ -350,15 +377,30 @@ function Fig({ label, value, strong }: { label: string; value: string; strong?: 
   );
 }
 
-function GiveLoanDialog({ onClose }: { onClose: () => void }) {
+type BorrowerType = "person" | "company" | "director";
+const BORROWER_LABEL: Record<BorrowerType, string> = { person: "Person", company: "Company", director: "Director" };
+
+function GiveLoanDialog({ onClose, loans, startAsDirector }: { onClose: () => void; loans: readonly LoanGiven[]; startAsDirector: boolean }) {
   const give = useGiveLoan();
+  const giveDirector = useGiveDirectorLoan();
   const accountsQ = useBankAccounts();
   const accounts = (accountsQ.data ?? []).filter((a) => a.is_active && a.account_type !== "credit_card");
   const customersQ = useCustomers();
   const vendorsQ = useVendors();
 
+  /* R-1853: a company (Pvt Ltd, or type not set) can lend to a director — picked from the
+     directors register, never typed. A proprietor / firm never sees the Director choice. */
+  const role = useCurrentUser().data?.role;
+  const profileQ = useComplianceProfile();
+  const companyLoans = profileQ.data ? showsDirectorLoans(profileQ.data.businessType) : false;
+  const directorsQ = useCompanyDirectors(companyLoans);
+  const shareQ = useShareCapital(companyLoans);
+
   const [name, setName] = React.useState("");
-  const [type, setType] = React.useState<"person" | "company">("person");
+  const [type, setType] = React.useState<BorrowerType>(startAsDirector ? "director" : "person");
+  const [directorId, setDirectorId] = React.useState("");
+  const [step, setStep] = React.useState<"form" | "s185">("form");
+  const [basis, setBasis] = React.useState<S185Basis | null>(null);
   const [principal, setPrincipal] = React.useState("");
   const [givenOn, setGivenOn] = React.useState(istToday());
   const [accountId, setAccountId] = React.useState("");
@@ -372,11 +414,18 @@ function GiveLoanDialog({ onClose }: { onClose: () => void }) {
 
   React.useEffect(() => { if (!accountId && accounts.length > 0) setAccountId(accounts[0].id); }, [accounts, accountId]);
 
+  const isDirector = type === "director" && companyLoans;
+  const shownType: BorrowerType = isDirector ? "director" : type === "director" ? "person" : type;
+  const choices = directorChoices(directorsQ.data ?? [], givenOn || istToday());
+  const director = choices.find((d) => d.id === directorId) ?? null;
+  const directorName = director?.name ?? "";
+
   const amt = Math.round(Number(principal) || 0);
   const rateNum = Number(rate) || 0;
   const monthsNum = Math.round(Number(months) || 0);
   const problems: string[] = [];
-  if (!name.trim()) problems.push("Add the borrower's name.");
+  if (isDirector && !director) problems.push("Pick the director.");
+  if (!isDirector && !name.trim()) problems.push("Add the borrower's name.");
   if (amt <= 0) problems.push("Add the amount you lent.");
   if (!accountId) problems.push("Pick the account the money went from (add one in Banking if the list is empty).");
   if (rateNum < 0 || rateNum > 100) problems.push("Interest must be between 0 and 100% a year.");
@@ -384,11 +433,27 @@ function GiveLoanDialog({ onClose }: { onClose: () => void }) {
   if (plan === "instalments" && !dueOn) problems.push("Add the first instalment date.");
   if (dueOn && dueOn < givenOn) problems.push("The due date is before the loan date.");
 
+  /* s.186: paid-up capital from the share capital register (R-1851); loans still owed (principal). */
+  const paidUp = shareQ.data?.capital ? shareCapitalSummary(shareQ.data.capital, shareQ.data.holders).paidUpCapital : null;
+  const owedNow = loans.filter((l) => l.status === "open").reduce((s, l) => s + l.position.principalLeft, 0);
+  const s186 = s186Estimate({ paidUpCapital: paidUp, loansOutstanding: owedNow, newLoan: amt });
+
+  async function giveToDirector() {
+    if (!director || !basis) return;
+    await giveDirector.mutateAsync({
+      directorId: director.id, s185Basis: basis, principal: amt, givenOn, paidFromAccountId: accountId,
+      interestRate: rateNum, plan, dueOn: dueOn || null, instalments: plan === "instalments" ? monthsNum : null,
+      notes: notes.trim() || null,
+    });
+    onClose();
+  }
+
   async function submit() {
     setTried(true);
     if (problems.length > 0) return;
+    if (isDirector) { setStep("s185"); return; }   // s.185 first — nothing is saved yet
     await give.mutateAsync({
-      borrowerName: name.trim(), borrowerType: type, principal: amt, givenOn, paidFromAccountId: accountId,
+      borrowerName: name.trim(), borrowerType: type === "company" ? "company" : "person", principal: amt, givenOn, paidFromAccountId: accountId,
       interestRate: rateNum, plan, dueOn: dueOn || null, instalments: plan === "instalments" ? monthsNum : null,
       customerId: link.startsWith("c:") ? link.slice(2) : null,
       vendorId: link.startsWith("v:") ? link.slice(2) : null,
@@ -401,26 +466,56 @@ function GiveLoanDialog({ onClose }: { onClose: () => void }) {
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="md:!max-w-lg">
         <DialogHeader>
-          <DialogTitle>Give a loan</DialogTitle>
-          <DialogDescription>The money leaves the account you pick and shows as owed back to you.</DialogDescription>
+          <DialogTitle>{step === "s185" ? `Loan to a director — ${directorName}` : "Give a loan"}</DialogTitle>
+          <DialogDescription>
+            {step === "s185"
+              ? "Nothing is saved yet. Pick why this loan is allowed, or go back."
+              : "The money leaves the account you pick and shows as owed back to you."}
+          </DialogDescription>
         </DialogHeader>
+        {step === "s185" && director ? (
+          <div className="max-h-[48vh] sm:max-h-[65vh] overflow-y-auto pr-1">
+            <S185Step directorName={directorName} designation={director.designation} amount={amt} interestRate={rateNum}
+              s186={s186} basis={basis} onBasis={setBasis} />
+          </div>
+        ) : (
         <div className="max-h-[65vh] overflow-y-auto pr-1 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3">
+          <fieldset>
+            <legend className={labelCls}>Borrower is a</legend>
+            <div className="flex gap-1.5 flex-wrap">
+              {(companyLoans ? (["person", "company", "director"] as const) : (["person", "company"] as const)).map((t) => (
+                <Button key={t} type="button" size="sm" variant={shownType === t ? "primary" : "default"}
+                  aria-pressed={shownType === t} className="min-h-[40px]" onClick={() => setType(t)}>
+                  {BORROWER_LABEL[t]}
+                </Button>
+              ))}
+            </div>
+          </fieldset>
+          {isDirector ? (
+            <div>
+              <label htmlFor="lg-director" className={labelCls}>Director</label>
+              {directorsQ.isLoading ? (
+                <p className="text-sm text-ink-3">Loading the directors register…</p>
+              ) : choices.length === 0 ? (
+                <p className="rounded-md border border-dashed border-hairline p-3 text-sm text-ink-3">
+                  No director in office on this date.{" "}
+                  {canOpenRoute(role, "/settings")
+                    ? <Link href="/settings" className="text-indigo underline">Add directors in Settings → Company</Link>
+                    : "Ask your owner to add the directors in Settings → Company."}
+                </p>
+              ) : (
+                <select id="lg-director" value={directorId} onChange={(e) => setDirectorId(e.target.value)} className={selectCls}>
+                  <option value="">Pick a director</option>
+                  {choices.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+                </select>
+              )}
+            </div>
+          ) : (
             <div>
               <label htmlFor="lg-name" className={labelCls}>Borrower</label>
               <Input id="lg-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name of person or company" autoFocus />
             </div>
-            <fieldset>
-              <legend className={labelCls}>Type</legend>
-              <div className="flex gap-1.5">
-                {(["person", "company"] as const).map((t) => (
-                  <Button key={t} type="button" size="sm" variant={type === t ? "primary" : "default"} aria-pressed={type === t} className="min-h-[40px]" onClick={() => setType(t)}>
-                    {t === "person" ? "Person" : "Company"}
-                  </Button>
-                ))}
-              </div>
-            </fieldset>
-          </div>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
@@ -471,7 +566,7 @@ function GiveLoanDialog({ onClose }: { onClose: () => void }) {
             <p className="text-xs text-ink-3">{monthsNum} parts of about {rupee(Math.floor(amt / monthsNum))}{rateNum > 0 ? ", plus interest on what is still owed" : ""}.</p>
           )}
 
-          <div>
+          {!isDirector && <div>
             <label htmlFor="lg-link" className={labelCls}>Also a customer or vendor? (optional)</label>
             <select id="lg-link" value={link} onChange={(e) => setLink(e.target.value)} className={selectCls}>
               <option value="">No</option>
@@ -486,7 +581,7 @@ function GiveLoanDialog({ onClose }: { onClose: () => void }) {
                 </optgroup>
               )}
             </select>
-          </div>
+          </div>}
 
           <div>
             <label htmlFor="lg-notes" className={labelCls}>Note (optional)</label>
@@ -499,11 +594,19 @@ function GiveLoanDialog({ onClose }: { onClose: () => void }) {
             </ul>
           )}
         </div>
+        )}
         <DialogFooter>
-          <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
-          <Button type="button" variant="primary" loading={give.isPending} onClick={submit}>
-            Give {amt > 0 ? rupee(amt) : "loan"}
-          </Button>
+          {step === "s185" && director ? (
+            <S185Footer amount={amt} directorName={directorName} basis={basis} pending={giveDirector.isPending}
+              onBack={() => setStep("form")} onGive={() => void giveToDirector()} />
+          ) : (
+            <>
+              <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
+              <Button type="button" variant="primary" loading={give.isPending} onClick={submit}>
+                {isDirector ? "Next — s.185 check" : `Give ${amt > 0 ? rupee(amt) : "loan"}`}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -14,6 +14,8 @@
 import { NextResponse } from "next/server";
 import type { createClient } from "@/lib/supabase/server";
 import { can } from "@/lib/auth/roles";
+import { isDeactivated } from "@/lib/auth/deactivated";
+import { isMissingColumnError } from "@/lib/auth/session-user";
 
 type ServerClient = ReturnType<typeof createClient>;
 
@@ -25,14 +27,21 @@ export type VaultGate =
   | { ok: false; res: NextResponse };
 
 export async function vaultGate(supabase: ServerClient, userId: string): Promise<VaultGate> {
-  const { data: me } = await supabase
-    .from("users")
-    .select("tenant_id, role")
-    .eq("id", userId)
-    .maybeSingle();
+  /* R-1896: a deactivated member, or an ex-employee past their last working day
+     (access_ends_on), gets nothing — reveal decrypts with the admin client, so this gate is the
+     only check on that path besides the middleware. Falls back if the column is not there yet. */
+  type Me = { tenant_id: string | null; role: string; is_active?: boolean | null; access_ends_on?: string | null };
+  let res = await supabase.from("users").select("tenant_id, role, is_active, access_ends_on").eq("id", userId).maybeSingle();
+  if (res.error && isMissingColumnError(res.error)) {
+    res = await supabase.from("users").select("tenant_id, role, is_active").eq("id", userId).maybeSingle();
+  }
+  const me = (res.data as Me | null) ?? null;
 
   if (!me?.tenant_id) {
     return { ok: false, res: NextResponse.json({ ok: false, error: "No tenant for this user." }, { status: 403 }) };
+  }
+  if (isDeactivated(me)) {
+    return { ok: false, res: NextResponse.json({ ok: false, error: "Your login has ended. Ask the workspace owner." }, { status: 403 }) };
   }
   if (!can(me.role, "can_reveal_vault")) {
     return { ok: false, res: NextResponse.json({ ok: false, error: VAULT_FORBIDDEN }, { status: 403 }) };

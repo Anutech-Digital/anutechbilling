@@ -67,7 +67,9 @@ function query(table: string) {
       rows().push(row);
       return { data: row, error: null };
     }
-    if (op === "update") { for (const r of matched()) Object.assign(r, payload); return { data: null, error: null }; }
+    /* R-1926: like PostgREST with .select() after .update(), the changed rows come back
+       (confirmEmailToken claims the link with a conditional update and counts them). */
+    if (op === "update") { const hit = matched(); for (const r of hit) Object.assign(r, payload); return { data: hit, error: null }; }
     if (op === "delete") { db.tables[table] = rows().filter((r) => !filters.every((f) => f(r))); return { data: null, error: null }; }
     return { data: matched().map(withEmbed), error: null };
   };

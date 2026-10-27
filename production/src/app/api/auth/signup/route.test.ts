@@ -19,6 +19,7 @@ const st = vi.hoisted(() => ({
   rpcErr: null as { message: string } | null,
   insertErr: {} as Record<string, { message: string; code?: string }>, // per table
   calls: [] as string[],
+  inserted: {} as Record<string, Record<string, unknown>>, // R-1927: last insert payload per table
 }));
 
 vi.mock("@/lib/security/turnstile-guard", () => ({ turnstileRefusal: async () => null }));
@@ -39,7 +40,7 @@ vi.mock("@/lib/supabase/server", () => {
     self.is = () => self;
     self.update = () => { st.calls.push(`${table}.update`); return self; };
     self.delete = () => { st.calls.push(`${table}.delete`); return self; };
-    self.insert = () => { st.calls.push(`${table}.insert`); return Promise.resolve({ error: st.insertErr[table] ?? null }); };
+    self.insert = (row: Record<string, unknown>) => { st.inserted[table] = row; st.calls.push(`${table}.insert`); return Promise.resolve({ error: st.insertErr[table] ?? null }); };
     self.maybeSingle = async () => ({
       data: table === "team_invites" ? (byToken ? st.invite : st.pending) : null,
       error: null,
@@ -87,6 +88,7 @@ beforeEach(() => {
   st.rpcErr = null;
   st.insertErr = {};
   st.calls = [];
+  st.inserted = {};
 });
 
 /* R-1137 follow-up (23 Oct 2026): the tenant / users insert failures and the catch-all sent
@@ -200,5 +202,27 @@ describe("R-733: invite expiry and the atomic accept", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/already been used/);
     expect(st.calls).toContain("deleteUser");
+  });
+});
+
+/* R-1927 (G-ONBOARD OB-6): the GSTIN typed at signup did not set the company's state
+   (the tenants insert had only name / gstin / email), so the wizard asked again for a state
+   the owner had already given us. A checksum-valid GSTIN now saves state + state_code. */
+describe("R-1927: the GSTIN typed at signup sets the company's state", () => {
+  it("a valid Delhi GSTIN saves state Delhi / 07 on the new company", async () => {
+    const res = await post({ ...base, gstin: "07ABDCA0298H1ZP" });
+    expect(res.status).toBe(200);
+    expect(st.inserted.tenants).toMatchObject({ gstin: "07ABDCA0298H1ZP", state: "Delhi", state_code: "07" });
+  });
+  it("lower-case / spaced GSTIN still gives the state", async () => {
+    await post({ ...base, gstin: " 07abdca0298h1zp " });
+    expect(st.inserted.tenants).toMatchObject({ state: "Delhi", state_code: "07" });
+  });
+  it("no GSTIN or a wrong one → no guessed state", async () => {
+    await post({ ...base });
+    expect(st.inserted.tenants.state_code ?? null).toBeNull();
+    expect(st.inserted.tenants.state ?? null).toBeNull();
+    await post({ ...base, gstin: "07ABDCA0298H1ZX" });
+    expect(st.inserted.tenants.state_code ?? null).toBeNull();
   });
 });

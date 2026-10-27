@@ -49,3 +49,28 @@ export function quoteSeatCount(lines: readonly SeatLineLike[] | null | undefined
   const seats = (lines ?? []).filter(isSeatLine).reduce((s, l) => s + Math.max(0, Number(l.qty) || 0), 0);
   return seats > 0 ? seats : null;
 }
+
+/** A line that is never a seat even when nothing has a commitment: support or a domain. */
+function isSupportOrDomainLine(l: SeatLineLike): boolean {
+  if (isSupportSkuId(l.item_id)) return true;
+  if (isDomainRegistrationLine(l)) return true;
+  return /\bsupport\b/i.test(l.name ?? "");
+}
+
+/**
+ * R-1959 — the seats a LEAD should show for its quote; the ONE helper for every lead path in
+ * the builder (a new prospect lead and an existing lead).
+ *
+ * Pardeep, localhost (L-MVNY6VXO / Q-4786-27-0001): an empty catalogue, so the line was a
+ * "Custom item" with no commitment, 10 seats — and the lead showed Seats "—", because
+ * quoteSeatCount only counts licence lines. Licence lines still win when there are any
+ * (Kapoor stays 25, not 27); otherwise Σ qty of the lines that are not support or a domain.
+ * Null when nothing is left — never 0, so the column stays honestly empty.
+ */
+export function leadSeatCount(lines: readonly SeatLineLike[] | null | undefined): number | null {
+  const licence = quoteSeatCount(lines);
+  if (licence !== null) return licence;
+  const rest = (lines ?? []).filter((l) => !isSupportOrDomainLine(l))
+    .reduce((s, l) => s + Math.max(0, Number(l.qty) || 0), 0);
+  return rest > 0 ? rest : null;
+}

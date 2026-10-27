@@ -119,8 +119,14 @@ describe("R-1602 — 'Google Premier Partner' only through the one flag", () => 
     expect(offenders(/premier[\s ]+partner/i, (f) => f === "src/site/lib/config.ts")).toEqual([]);
   });
 
-  it("the buy/workspace badge stays behind the flag", () => {
+  /* R-1970 (Pardeep 26 Oct, DECISIONS 2): the v2 buy page has no partner badge at all — only
+     "Google Workspace reseller" via PARTNER_BADGE / PARTNER_LINE (buy-v2-scan-r1970.test.ts
+     scans the whole buy/workspace folder for the words). */
+  it("the buy/workspace page carries no Premier badge — it reads PARTNER_BADGE", () => {
     const f = CODE.find((c) => c.file === "src/app/(public)/buy/workspace/buy-workspace-client.tsx");
-    expect(f?.text).toMatch(/if \(!SHOW_PREMIER_PARTNER\) return null;/);
+    expect(f).toBeDefined();
+    expect(f?.text).not.toMatch(/PremierPartnerBadge|PremierBadgeShowcase|SHOW_PREMIER_PARTNER/);
+    const header = CODE.find((c) => c.file === "src/app/(public)/buy/workspace/_parts/site-header.tsx");
+    expect(header?.text).toMatch(/PARTNER_BADGE/);
   });
 });

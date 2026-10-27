@@ -13,8 +13,8 @@ describe("buy link (R-120)", () => {
     expect(buyWorkspaceHref("GW Business Starter", 999)).toContain("seats=300&");
   });
   it("parses back, rejecting anything unexpected", () => {
-    expect(parseBuyParams({ tier: "standard", seats: "12", buy: "1" })).toEqual({ tier: "standard", seats: 12, openBuy: true });
-    expect(parseBuyParams({ tier: "enterprise", seats: "abc", buy: "1" })).toEqual({ tier: null, seats: null, openBuy: false });
+    expect(parseBuyParams({ tier: "standard", seats: "12", buy: "1" })).toEqual({ tier: "standard", seats: 12, openBuy: true, coupon: null });
+    expect(parseBuyParams({ tier: "enterprise", seats: "abc", buy: "1" })).toEqual({ tier: null, seats: null, openBuy: false, coupon: null });
     expect(parseBuyParams({ seats: "5000" }).seats).toBe(300);
   });
 });

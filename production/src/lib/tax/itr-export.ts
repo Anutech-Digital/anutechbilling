@@ -21,7 +21,7 @@ export function itrCsvRows(p: ItrPack): Cell[][] {
   const add = (section: string, item: string, amount: Cell, count: Cell, detail: string) =>
     rows.push([section, item, amount, count, detail]);
 
-  add("Period", p.fy.label, "", "", `${p.fy.start} to ${p.fy.end} · ${p.fy.assessmentYear} · ITR due ${p.fy.itrDue}`);
+  add("Period", p.fy.label, "", "", `${p.fy.start} to ${p.fy.end} · ${p.fy.assessmentYear} · ${p.itrText} · due ${p.due.date}`);
 
   for (const l of p.pnl) {
     add(l.kind === "income" ? "Income" : "Expense", l.label, l.amount, l.count, l.source);
@@ -32,11 +32,14 @@ export function itrCsvRows(p: ItrPack): Cell[][] {
   add("Computation", "Taxable income (288A round)", p.taxableIncome, "", "Estimate — the CA will finalise it after adding depreciation/disallowances");
 
   for (const e of p.estimates) {
-    add("Tax estimate", `${e.regimeLabel} — base`, e.baseTax, "", `${e.ratePct}%`);
+    add("Tax estimate", `${e.regimeLabel} — base`, e.baseTax, "", e.rateText);
+    if (e.rebate) add("Tax estimate", `${e.regimeLabel} — rebate 87A`, -e.rebate, "", "");
     add("Tax estimate", `${e.regimeLabel} — surcharge`, e.surcharge, "", "");
     add("Tax estimate", `${e.regimeLabel} — cess 4%`, e.cess, "", "");
     add("Tax estimate", `${e.regimeLabel} — TOTAL`, e.total, "", p.cheaperEstimate?.regime === e.regime ? "lower one — schedule is based on this" : "");
   }
+
+  add("Tax estimate", "Rates used", "", "", p.ratesNote);
 
   add("Credits", "TDS receivable (this FY)", -p.sources.tdsCredit, "", "tds_receivable — the CA will match it with 26AS/AIS");
   add("Computation", "Net payable (after TDS)", p.netPayableAfterTds, "", "");

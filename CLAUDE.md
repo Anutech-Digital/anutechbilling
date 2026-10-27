@@ -32,6 +32,10 @@ AI writes the software; the four people do only what AI can't. Full model (roles
 
 Before a NEW migration: timestamp newer than every migration on all `origin/*` branches, then `node production/scripts/migration-order-check.mjs --base origin/main`. The person who asked for a card closes it after the AI check.
 
+## Picking up a stopped card — any member, any machine (25 Oct 2026, R-1898)
+
+Pardeep: any member's Claude Code must carry on any other member's stopped card, both ways. The board card is the truth (`doing` + `claimedBy` + last liveLog "done … next …" + `branch`). Half-done work is pushed at each green step with `node production/scripts/ops/worker-lock.mjs wip <CARD>` → `anutech` branch `wip/<card>`. To resume: `worker-lock.mjs resume <CARD> <new worktree path>` (fetches `wip/<card>`, builds the worktree from it), re-claim the card in your person's name, liveLog "picked up from <person>", continue from the "next". Final push still only via `worker-lock.mjs push <CARD>`. Steps: `docs/WORKER-STEPS.md`; method: `docs/TEAM-PROTOCOL.md` → "Picking up a stopped card".
+
 ## Branch names changed on 30 Sep 2026
 
 Old → new: `pardeep-sir` → `manager-pardeep`, `abhishek-pre-merge` → `billing-abhishek`, `pawan-api-system` → `website-pawan`, `hitesh-qa` → `accounts-hitesh`. If the current branch still has an OLD name, tell the user in one line and, when they say yes, do it for them: `git branch -m <old> <new>`, `git fetch origin`, `git merge origin/manager-pardeep`, run the gate, `git push -u origin <new>`. Leave the old remote branch alone (Pardeep removes old ones later).

@@ -19,10 +19,10 @@ describe("lead sources", () => {
   });
 
   it("keeps an unknown saved source visible instead of blanking it", () => {
-    expect(sourceOptions("meta-ads")).toBe(LEAD_SOURCES);
+    expect(sourceOptions("meta-ads")).toEqual(LEAD_SOURCES.filter((s) => !s.auto));
     const opts = sourceOptions("old-partner-form");
     expect(opts.at(-1)).toEqual({ value: "old-partner-form", label: "old-partner-form" });
-    expect(sourceOptions(null)).toBe(LEAD_SOURCES);
+    expect(sourceOptions(null)).toEqual(LEAD_SOURCES.filter((s) => !s.auto));
   });
 
   it("labels", () => {
@@ -37,7 +37,7 @@ describe("a saved source spelled differently is not listed twice (Deals audit, 3
     for (const saved of ["Added manually", "Manual", " manual ", "MANUAL"]) {
       expect(canonicalSource(saved)).toBe("manual");
       expect(sourceOptions(saved).filter((s) => s.label === "Added manually")).toHaveLength(1);
-      expect(sourceOptions(saved)).toBe(LEAD_SOURCES);
+      expect(sourceOptions(saved)).toEqual(LEAD_SOURCES.filter((s) => !s.auto));
     }
   });
 

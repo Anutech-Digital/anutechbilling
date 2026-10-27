@@ -15,15 +15,22 @@
  * lookup that failed is not "deactivated" — those have their own gates.
  */
 import type { NextResponse } from "next/server";
+import { istToday } from "@/lib/dates/ist";
 
 export const DEACTIVATED_ERROR = "deactivated";
 
 export const DEACTIVATED_MESSAGE =
   "Your account has been deactivated by the workspace owner. Ask them to turn it back on.";
 
-/** True only when the users row says is_active = false. */
-export function isDeactivated(row: { is_active?: boolean | null } | null | undefined): boolean {
-  return row?.is_active === false;
+/** True when the users row says is_active = false, or (R-1896, employee exit) its
+ *  access_ends_on — the last working day — is before today in IST. The login works through
+ *  that day and is off from the next one; the database's current_tenant_id() says the same. */
+export function isDeactivated(
+  row: { is_active?: boolean | null; access_ends_on?: string | null } | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (row?.is_active === false) return true;
+  return !!row?.access_ends_on && row.access_ends_on < istToday(now);
 }
 
 /** An active owner — the only role that may invite, claim, approve joins or set temp passwords. */

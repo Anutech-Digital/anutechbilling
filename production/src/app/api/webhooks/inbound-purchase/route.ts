@@ -38,7 +38,7 @@ function parseFrom(raw: string): { email: string } {
   return { email: (m ? m[1] : s).trim().toLowerCase() };
 }
 
-async function extractWithGemini(apiKey: string, model: string, subject: string, from: string, body: string): Promise<ExtractedPurchase | null> {
+async function extractWithGemini(apiKey: string, model: string, tenantId: string | null, subject: string, from: string, body: string): Promise<ExtractedPurchase | null> {
   const system =
     "You read a shopping order/invoice email (e.g. Amazon India) for a business's bookkeeping. " +
     "Decide if it is a real PURCHASE/ORDER confirmation or tax invoice (NOT a shipping update, " +
@@ -51,7 +51,7 @@ async function extractWithGemini(apiKey: string, model: string, subject: string,
        vendor ke bill padhta hai, aur ek atki hui call yahan bhi wahi keemat rakhti hai:
        forwarder POST ke baad thread label kar deta hai bina jawab dekhe. */
     const p = await geminiJson<Partial<ExtractedPurchase>>({
-      apiKey, model, system, user, temperature: 0.1, label: "inbound-purchase/extract",
+      apiKey, model, tenantId, system, user, temperature: 0.1, label: "inbound-purchase/extract",
     });
     if (!p) return null;
     return {
@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
 
   // 3. Extract (Gemini or minimal stub — never drop; owner reviews raw)
   const gemini = await resolveGeminiConfig(admin, tenantId);
-  const ai = gemini.apiKey ? await extractWithGemini(gemini.apiKey, gemini.model, subject, rawFrom, text) : null;
+  const ai = gemini.apiKey ? await extractWithGemini(gemini.apiKey, gemini.model, gemini.tenantId, subject, rawFrom, text) : null;
   const p: ExtractedPurchase = ai ?? {
     isPurchase: true, orderId: "", orderDate: "", currency: "INR", total: 0, gst: 0, items: [],
   };

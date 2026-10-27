@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { loadCheckoutPaymentMode } from "@/lib/checkout/checkout-payment-mode.server";
+import { loadCheckoutPaymentSetup } from "@/lib/checkout/checkout-payment-mode.server";
 import { PaymentModeProvider } from "./payment-mode";
 
 /**
@@ -17,6 +17,6 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function CheckoutLayout({ children }: { children: React.ReactNode }) {
-  const mode = await loadCheckoutPaymentMode();
-  return <PaymentModeProvider mode={mode}>{children}</PaymentModeProvider>;
+  const { mode, razorpayTest } = await loadCheckoutPaymentSetup();
+  return <PaymentModeProvider mode={mode} razorpayTest={razorpayTest}>{children}</PaymentModeProvider>;
 }

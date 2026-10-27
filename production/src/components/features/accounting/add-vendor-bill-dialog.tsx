@@ -41,6 +41,7 @@ import { useVendors, ensureVendor } from "@/lib/queries/vendors";
 import { istToday } from "@/lib/dates/ist";
 import { rupee } from "@/lib/utils";
 import { fillLineQty } from "@/app/api/ai/extract-bill/sanitize";
+import { checkBillFile, readBillFile } from "@/lib/accounting/bill-reader";
 import { buyerConfirmedNote, buyerWarningText, isBuyerMismatch, type BuyerMismatch } from "@/app/api/ai/extract-bill/buyer-check";
 import { useConfirm } from "@/components/providers/confirm-provider";
 
@@ -184,26 +185,17 @@ export function AddVendorBillDialog({
 
   async function handleBillFile(file: File) {
     setAiError(null); setAiNote(null); setAiBuyer(null);
-    if (file.size > 8 * 1024 * 1024) { setAiError("File is too big (max 8 MB) — try a smaller photo."); return; }
+    /* R-2005: the one bill reader (lib/accounting/bill-reader.ts) — same check, route and words
+       as Add expense and the bank Reconcile "record the bill now". */
+    const bad = checkBillFile(file);
+    if (bad) { setAiError(bad); return; }
     setAttachFile(file);   // keep it — attaches to the bill on save
     setReading(true);
     try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload  = () => resolve((r.result as string).split(",")[1] ?? "");
-        r.onerror = () => reject(new Error("read failed"));
-        r.readAsDataURL(file);
-      });
-      const res = await fetch("/api/ai/extract-bill", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ fileBase64: base64, mimeType: file.type }),
-      });
-      const json = await res.json();
-      if (!res.ok) { setAiError(json.error ?? "Couldn't read the bill."); return; }
-      const f = json.fields as Record<string, string | number | null>;
-      const bm = (f as Record<string, unknown>).buyer_mismatch;
-      setAiBuyer(isBuyerMismatch(bm) ? bm : null);
+      const out = await readBillFile(file);
+      if (!out.ok) { setAiError(out.error); return; }
+      const f = out.read.fields as Record<string, string | number | null>;
+      setAiBuyer(out.read.buyer);
       // Prefill — only overwrite what the AI actually found.
       if (f.vendor_name)  setValue("vendor_name",  String(f.vendor_name));
       if (f.vendor_gstin) setValue("vendor_gstin", String(f.vendor_gstin));
@@ -244,7 +236,7 @@ export function AddVendorBillDialog({
           : `Filled by AI · 📎 "${file.name}" will be attached to the bill — check the amounts against the bill, then Save.`) + proformaWarn,
       );
     } catch {
-      setAiError("Upload failed — try again, or fill in the fields by hand.");
+      setAiError("Upload failed — try again, or fill the fields by hand.");
     } finally {
       setReading(false);
     }

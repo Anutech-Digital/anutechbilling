@@ -166,3 +166,44 @@ describe("R-1569 — a part-paid quote charges only what is still due", () => {
     expect(rzp.create).not.toHaveBeenCalled();
   });
 });
+
+/* R-1923 (G-ONBOARD OB-2): the RAZORPAY_KEY_* env pair is the platform's (Anutech's) own
+   account. A company without its own keys used to fall back to it — its customer paid Anutech.
+   The env keys are now for the platform tenant (BUY_PAGE_TENANT_ID, lib/website-tenant.ts) only. */
+describe("R-1923 — the platform's Razorpay is never used for another company", () => {
+  const setEnvKeys = (platformTenant: string) => {
+    process.env.BUY_PAGE_TENANT_ID = platformTenant;
+    process.env.RAZORPAY_KEY_ID = "rzp_test_platform";
+    process.env.RAZORPAY_KEY_SECRET = "platform-secret";
+  };
+
+  it("a company without its own keys, env keys set, on a deployment → 503, no order, nothing recorded", async () => {
+    setEnvKeys("platform-tenant");
+    process.env.K_SERVICE = "billing"; // a deployed server: simulation is off (R-079)
+    db.secrets = null;
+    const res = await call();
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.notConfigured).toBe(true);
+    expect(body.error).toMatch(/online payment isn't available/i);
+    expect(rzp.create).not.toHaveBeenCalled();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("the platform tenant without stored keys still pays through the env keys", async () => {
+    setEnvKeys("t-1");
+    db.secrets = null;
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ orderId: "order_T1", razorpayKeyId: "rzp_test_platform", razorpayMode: "test" });
+    expect(rzp.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("a company with its own keys uses its own keys, not the env ones", async () => {
+    setEnvKeys("platform-tenant");
+    db.secrets = { razorpay_key_id: "rzp_test_own", razorpay_key_secret: "own", razorpay_mode: "test" };
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect((await res.json()).razorpayKeyId).toBe("rzp_test_own");
+  });
+});

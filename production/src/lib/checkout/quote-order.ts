@@ -17,10 +17,7 @@ import { isQuoteExpired } from "@/lib/utils";
 import { quoteDueNow, type QuoteDueNow, type QuoteDueNowFields } from "@/lib/payments/quote-due-now";
 import { isQuoteAmountConsistent } from "@/lib/quotes/amounts";
 import type { BillingCycle } from "@/lib/supabase/database.types";
-
-const ENV_RAZORPAY_KEY_ID =
-  process.env.RAZORPAY_KEY_ID?.trim() || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID?.trim() || "";
-const ENV_RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET?.trim() || "";
+import { platformEnvRazorpayKeys } from "./platform-razorpay";
 
 /** The quote columns this needs — the pay route's select. */
 export const QUOTE_ORDER_COLUMNS =
@@ -202,7 +199,7 @@ export async function startQuotePayment(
   const amountInr = due.amount;
   const instalments = due.instalment;
 
-  // ── 3. Resolve the tenant's Razorpay creds (tenant_secrets → env) ────────
+  // ── 3. Resolve the tenant's Razorpay creds (tenant_secrets → env, platform only: R-1923) ────────
   let rzKeyId = "";
   let rzKeySecret = "";
   let rzMode: "test" | "live" = "test";
@@ -218,10 +215,16 @@ export async function startQuotePayment(
       rzKeyId = secrets.razorpay_key_id;
       rzKeySecret = secrets.razorpay_key_secret;
       rzMode = secrets.razorpay_mode === "live" ? "live" : "test";
-    } else if (ENV_RAZORPAY_KEY_ID && ENV_RAZORPAY_KEY_SECRET) {
-      rzKeyId = ENV_RAZORPAY_KEY_ID;
-      rzKeySecret = ENV_RAZORPAY_KEY_SECRET;
-      rzMode = ENV_RAZORPAY_KEY_ID.startsWith("rzp_live_") ? "live" : "test";
+    } else {
+      /* R-1923: the env pair is the PLATFORM's own Razorpay account — only the platform
+         tenant's quotes may use it. Another company without its own keys gets the 503
+         below (or a laptop simulation), never Anutech's account. */
+      const platform = platformEnvRazorpayKeys(quote.tenant_id);
+      if (platform) {
+        rzKeyId = platform.keyId;
+        rzKeySecret = platform.keySecret;
+        rzMode = platform.mode;
+      }
     }
   }
   const razorpayConfigured = Boolean(rzKeyId) && Boolean(rzKeySecret);

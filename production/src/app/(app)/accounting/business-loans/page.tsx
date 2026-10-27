@@ -28,12 +28,17 @@ import {
 import { rupee, formatDate } from "@/lib/utils";
 import { useBankAccounts } from "@/lib/queries/bank";
 import {
-  useBusinessLoans, useRecordBusinessLoan, useRecordLoanEmi, useDeleteBusinessLoan, useLoanPayments,
+  useBusinessLoans, useRecordBusinessLoan, useRecordDirectorLoanTaken, useRecordLoanEmi, useDeleteBusinessLoan, useLoanPayments,
   type BusinessLoan,
 } from "@/lib/queries/business-loans";
 import { istToday } from "@/lib/dates/ist";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canDeleteMoney } from "@/lib/auth/roles";
+import Link from "next/link";
+import { canOpenRoute } from "@/lib/nav";
+import { useComplianceProfile } from "@/lib/compliance/profile";
+import { useCompanyDirectors } from "@/lib/queries/company-directors";
+import { showsDirectorLoans, directorChoices } from "@/lib/accounting/director-loans";
 
 function todayISO(): string {
   return istToday();
@@ -49,6 +54,16 @@ export default function BusinessLoansPage() {
   /* R-885: deleting a business loan is owner / accountant only (delete_business_loan refuses the rest). */
   const canDelete = canDeleteMoney(useCurrentUser().data?.role);
   const confirm = useConfirm();
+  /* R-1853: a company (Pvt Ltd, or type not set) can record a loan from a director. */
+  const profileQ = useComplianceProfile();
+  const companyLoans = profileQ.data ? showsDirectorLoans(profileQ.data.businessType) : false;
+  const [addAsDirector, setAddAsDirector] = React.useState(false);
+  React.useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("add") === "director") {
+      setAddAsDirector(true);
+      setAddOpen(true);
+    }
+  }, []);
 
   const loans = q.data ?? [];
   const totalOutstanding = loans.reduce((s, l) => s + l.outstanding, 0);
@@ -73,7 +88,7 @@ export default function BusinessLoansPage() {
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Accounting</p>
           <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Business Loans</h1>
           <p className="text-sm text-ink-3 mt-1">
-            Company ne jo loan liya (bank / NBFC se). Loan record karte hi paisa aapke bank me aa jaata hai aur utna &quot;dena baaki&quot; ban jaata hai.
+            Loans the business took — from a bank or an NBFC{companyLoans ? ", or from a director" : ""}. Recording one adds the money to your bank and the same amount to what the business owes.
           </p>
         </div>
         <Button variant="primary" icon="plus" className="hidden md:inline-flex" onClick={() => setAddOpen(true)}>Add loan</Button>
@@ -132,6 +147,7 @@ export default function BusinessLoansPage() {
                     <td className="px-4 py-3">
                       <div className="font-medium text-ink">{l.lender}</div>
                       {l.purpose && <div className="text-xs text-ink-3">{l.purpose}</div>}
+                      <DirectorTag loan={l} />
                     </td>
                     <td className="px-4 py-3 text-ink-2">{formatDate(l.disbursed_on)}</td>
                     <td className="px-4 py-3 text-right font-mono text-ink-2">{rupee(l.principal)}</td>
@@ -166,6 +182,7 @@ export default function BusinessLoansPage() {
                     <div className="font-medium text-ink leading-tight">
                       {l.lender}
                       {l.purpose && <div className="text-xs text-ink-3 font-normal">{l.purpose}</div>}
+                      <DirectorTag loan={l} />
                     </div>
                     <div className="font-serif text-xl text-ink leading-none">{rupee(l.outstanding)}</div>
                   </div>
@@ -190,9 +207,25 @@ export default function BusinessLoansPage() {
       )}
 
       <FAB icon="plus" label="Loan" onClick={() => setAddOpen(true)} ariaLabel="Add loan" />
-      {addOpen && <AddLoanDialog onClose={() => setAddOpen(false)} />}
+      {addOpen && (
+        <AddLoanDialog companyLoans={companyLoans} startAsDirector={addAsDirector}
+          onClose={() => { setAddOpen(false); setAddAsDirector(false); }} />
+      )}
       {emiFor && <PayEmiDialog loan={emiFor} onClose={() => setEmiFor(null)} />}
       {historyFor && <HistoryDialog loan={historyFor} onClose={() => setHistoryFor(null)} />}
+    </div>
+  );
+}
+
+/** R-1853: "Director" under the lender, and whether the written declaration copy is on file. */
+function DirectorTag({ loan }: { loan: BusinessLoan }) {
+  if (!loan.director_id) return null;
+  return (
+    <div className="text-xs font-normal">
+      <span className="text-ink-3">Director</span>
+      {loan.director_declaration
+        ? <span className="text-ink-3"> · declaration on file</span>
+        : <span className="text-amber-ink"> · declaration copy missing</span>}
     </div>
   );
 }
@@ -239,10 +272,20 @@ function LoanActions({ onEmi, onHistory, onDelete }: {
   );
 }
 
-function AddLoanDialog({ onClose }: { onClose: () => void }) {
+function AddLoanDialog({ onClose, companyLoans, startAsDirector }: { onClose: () => void; companyLoans: boolean; startAsDirector: boolean }) {
   const add = useRecordBusinessLoan();
+  const addDirector = useRecordDirectorLoanTaken();
   const accountsQ = useBankAccounts();
   const accounts = (accountsQ.data ?? []).filter((a) => a.is_active);
+  const role = useCurrentUser().data?.role;
+
+  /* R-1853: lender = a director from the directors register (never typed), with the written
+     declaration answered — Balance Sheet shows these as "Loans from directors". */
+  const [fromDirector, setFromDirector] = React.useState(startAsDirector);
+  const isDirector = fromDirector && companyLoans;
+  const directorsQ = useCompanyDirectors(companyLoans);
+  const [directorId, setDirectorId] = React.useState("");
+  const [declaration, setDeclaration] = React.useState(false);
 
   const [lender, setLender] = React.useState("");
   const [purpose, setPurpose] = React.useState("");
@@ -255,11 +298,22 @@ function AddLoanDialog({ onClose }: { onClose: () => void }) {
 
   React.useEffect(() => { if (!accountId && accounts.length > 0) setAccountId(accounts[0].id); }, [accounts, accountId]);
 
+  const choices = directorChoices(directorsQ.data ?? [], date || istToday());
+  const director = choices.find((d) => d.id === directorId) ?? null;
+
   const amt = Math.round(Number(principal));
-  const valid = lender.trim() && amt > 0 && Boolean(accountId);
+  const valid = (isDirector ? Boolean(director) : Boolean(lender.trim())) && amt > 0 && Boolean(accountId);
 
   async function submit() {
     if (!valid) return;
+    if (isDirector && director) {
+      await addDirector.mutateAsync({
+        directorId: director.id, principal: amt, interestRate: rate ? Number(rate) : null, disbursedOn: date,
+        depositAccountId: accountId, declaration, purpose: purpose.trim() || null,
+      });
+      onClose();
+      return;
+    }
     await add.mutateAsync({
       lender: lender.trim(), purpose: purpose.trim() || null, principal: amt,
       interestRate: rate ? Number(rate) : null,
@@ -274,15 +328,45 @@ function AddLoanDialog({ onClose }: { onClose: () => void }) {
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="md:!max-w-md">
         <DialogHeader>
-          <DialogTitle>Add business loan</DialogTitle>
-          <DialogDescription>A loan taken by the company. The money is received in the account selected below.</DialogDescription>
+          <DialogTitle>{isDirector ? "Loan from a director" : "Add business loan"}</DialogTitle>
+          <DialogDescription>A loan taken by the business. The money is received in the account selected below.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-3 max-h-[65vh] overflow-y-auto pr-1">
+          {companyLoans && (
+            <fieldset>
+              <legend className="block text-xs font-medium text-ink-2 mb-1">Lender is a</legend>
+              <div className="flex gap-1.5 flex-wrap">
+                <Button type="button" size="sm" variant={!isDirector ? "primary" : "default"} aria-pressed={!isDirector} className="min-h-[40px]" onClick={() => setFromDirector(false)}>Bank / NBFC</Button>
+                <Button type="button" size="sm" variant={isDirector ? "primary" : "default"} aria-pressed={isDirector} className="min-h-[40px]" onClick={() => setFromDirector(true)}>Director</Button>
+              </div>
+            </fieldset>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="business-loans-lender-bank-nbfc" className="block text-xs font-medium text-ink-2 mb-1">Lender (bank / NBFC)</label>
-              <Input id="business-loans-lender-bank-nbfc" value={lender} onChange={(e) => setLender(e.target.value)} placeholder="e.g. HDFC Bank" autoFocus />
-            </div>
+            {isDirector ? (
+              <div>
+                <label htmlFor="business-loans-director" className="block text-xs font-medium text-ink-2 mb-1">Director</label>
+                {directorsQ.isLoading ? (
+                  <p className="text-sm text-ink-3">Loading…</p>
+                ) : choices.length === 0 ? (
+                  <p className="text-sm text-ink-3">
+                    No director in office on this date.{" "}
+                    {canOpenRoute(role, "/settings")
+                      ? <Link href="/settings" className="text-indigo underline">Add directors in Settings → Company</Link>
+                      : "Ask your owner to add the directors in Settings → Company."}
+                  </p>
+                ) : (
+                  <select id="business-loans-director" value={directorId} onChange={(e) => setDirectorId(e.target.value)} className={selectCls}>
+                    <option value="">Pick a director</option>
+                    {choices.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+                  </select>
+                )}
+              </div>
+            ) : (
+              <div>
+                <label htmlFor="business-loans-lender-bank-nbfc" className="block text-xs font-medium text-ink-2 mb-1">Lender (bank / NBFC)</label>
+                <Input id="business-loans-lender-bank-nbfc" value={lender} onChange={(e) => setLender(e.target.value)} placeholder="e.g. HDFC Bank" autoFocus />
+              </div>
+            )}
             <div>
               <label htmlFor="business-loans-loan-amount" className="block text-xs font-medium text-ink-2 mb-1">Loan amount (₹)</label>
               <Input id="business-loans-loan-amount" type="number" min={1} value={principal} onChange={(e) => setPrincipal(e.target.value)} placeholder="e.g. 1000000" />
@@ -305,6 +389,28 @@ function AddLoanDialog({ onClose }: { onClose: () => void }) {
               <Input id="business-loans-taken-on" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
           </div>
+          {isDirector ? (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div>
+                  <label htmlFor="business-loans-interest-yr" className="block text-xs font-medium text-ink-2 mb-1">Interest %/yr (optional)</label>
+                  <Input id="business-loans-interest-yr" type="number" min={0} step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="0" />
+                </div>
+              </div>
+              <label className="flex items-start gap-2 rounded-md border border-hairline px-3 py-2 text-sm cursor-pointer">
+                <input type="checkbox" className="mt-1" checked={declaration} onChange={(e) => setDeclaration(e.target.checked)} />
+                <span className="min-w-0">
+                  <span className="block text-ink">We have the director&apos;s written declaration</span>
+                  <span className="block text-xs text-ink-3 leading-relaxed">
+                    That this money is the director&apos;s own, not borrowed from others. With it, a director&apos;s loan is not a
+                    &quot;deposit&quot; under the Companies (Acceptance of Deposits) Rules, 2014 — it is reported in Form DPT-3 and
+                    the Board&apos;s report. Keep the signed copy; your CA confirms.
+                  </span>
+                </span>
+              </label>
+            </>
+          ) : (
+          <>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div>
               <label htmlFor="business-loans-interest-yr" className="block text-xs font-medium text-ink-2 mb-1">Interest %/yr</label>
@@ -320,10 +426,12 @@ function AddLoanDialog({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <p className="text-xs text-ink-3">Interest %, tenure and EMI are optional — for reference only. Required: lender, amount, account.</p>
+          </>
+          )}
         </div>
         <DialogFooter>
           <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
-          <Button type="button" variant="primary" loading={add.isPending} disabled={!valid} onClick={submit}>
+          <Button type="button" variant="primary" loading={add.isPending || addDirector.isPending} disabled={!valid} onClick={submit}>
             Add {amt > 0 ? rupee(amt) : "loan"}
           </Button>
         </DialogFooter>

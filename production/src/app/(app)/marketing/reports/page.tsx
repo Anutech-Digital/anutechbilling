@@ -37,6 +37,7 @@ import { recommendationFor, type ChannelStat } from "@/lib/marketing/channel-eco
 import { sourceLabel } from "@/lib/leads/lead-sources";
 import { useMarketingReport, channelsToCsv, type RangeKey } from "@/lib/queries/marketing";
 import { logExport } from "@/lib/export-log";
+import { CampaignSalesTable } from "./campaign-sales-table";
 
 const RANGES: TabBarItem[] = [
   { id: "this_month",   label: "This month" },
@@ -124,6 +125,9 @@ export default function MarketingReportsPage() {
 
           <ChannelTable channels={data.report.channels} unattributed={data.report.unattributed}
                         unattributedShare={data.report.totals.unattributedShare} />
+
+          {/* R-1980: money received per ad campaign (ex GST, net of refunds), beside its spend. */}
+          <CampaignSalesTable range={range} />
 
           <Funnel steps={data.funnel} />
 

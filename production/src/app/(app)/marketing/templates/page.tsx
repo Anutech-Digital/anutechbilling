@@ -26,7 +26,7 @@ import { cn } from "@/lib/utils";
 import type { CampaignTemplateRow, CampaignTemplateCategory } from "@/lib/supabase/database.types";
 import {
   useCampaignTemplates, useSaveTemplate, useDeleteTemplate,
-  TEMPLATE_CATEGORIES, previewTemplate, unknownVariables,
+  TEMPLATE_CATEGORIES, previewTemplate, unknownVariables, usePreviewSender,
 } from "@/lib/queries/campaign-templates";
 
 type Editing = { id?: string; from?: CampaignTemplateRow } | null;
@@ -155,6 +155,7 @@ function TemplateCard({ t, onView, actions }: { t: CampaignTemplateRow; onView: 
 }
 
 function PreviewDialog({ t, onClose }: { t: CampaignTemplateRow; onClose: () => void }) {
+  const sender = usePreviewSender();
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="md:!max-w-2xl">
@@ -162,8 +163,8 @@ function PreviewDialog({ t, onClose }: { t: CampaignTemplateRow; onClose: () => 
           <DialogTitle>{t.name}</DialogTitle>
           <DialogDescription>Shown with a sample name and company. Each lead sees their own name in the real email.</DialogDescription>
         </DialogHeader>
-        <p className="text-sm"><span className="text-ink-3">Subject:</span> <b>{previewTemplate(t.subject)}</b></p>
-        <HtmlPreview html={previewTemplate(t.body_html)} title={`Preview: ${t.name}`} className="h-[55vh]" />
+        <p className="text-sm"><span className="text-ink-3">Subject:</span> <b>{previewTemplate(t.subject, sender)}</b></p>
+        <HtmlPreview html={previewTemplate(t.body_html, sender)} title={`Preview: ${t.name}`} className="h-[55vh]" />
         <p className="text-xs text-ink-3">The unsubscribe link is added at the bottom automatically when sending.</p>
       </DialogContent>
     </Dialog>
@@ -172,6 +173,7 @@ function PreviewDialog({ t, onClose }: { t: CampaignTemplateRow; onClose: () => 
 
 function EditDialog({ editing, onClose }: { editing: NonNullable<Editing>; onClose: () => void }) {
   const save = useSaveTemplate();
+  const sender = usePreviewSender();
   const f = editing.from;
   const [name, setName] = React.useState(f?.name ?? "");
   const [category, setCategory] = React.useState<CampaignTemplateCategory>(f?.category ?? "custom");
@@ -234,7 +236,7 @@ function EditDialog({ editing, onClose }: { editing: NonNullable<Editing>; onClo
               <textarea value={html} onChange={(e) => setHtml(e.target.value)} rows={12}
                 className="w-full rounded-md border border-hairline bg-paper p-2 font-mono text-xs" aria-label="Mail HTML" />
             ) : (
-              <HtmlPreview html={previewTemplate(html)} title="Template preview" className="h-[20rem]" />
+              <HtmlPreview html={previewTemplate(html, sender)} title="Template preview" className="h-[20rem]" />
             )}
           </div>
           <FormField label="Plain text (optional)" htmlFor="tp_text">

@@ -52,8 +52,9 @@ describe("recheckCoupon — after seats or plan change", () => {
   });
 });
 
-describe("the dialog re-checks instead of clearing silently", () => {
-  const src = readFileSync(resolve(__dirname, "buy-workspace-client.tsx"), "utf8");
+describe("the checkout re-checks instead of clearing silently", () => {
+  /* R-1971: the coupon box lives in the inline checkout's state (_parts/use-checkout.ts). */
+  const src = readFileSync(resolve(__dirname, "_parts", "use-checkout.ts"), "utf8");
   it("the tier/seats effect calls recheckCoupon", () => {
     expect(src).toMatch(/recheckCoupon\(/);
     expect(src).not.toMatch(/When tier or seats change, clear any applied coupon/);

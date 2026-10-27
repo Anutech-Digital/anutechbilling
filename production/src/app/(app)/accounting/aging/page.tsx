@@ -38,6 +38,10 @@ import { OverduePauseCard } from "@/components/features/collections/overdue-paus
 import { LateFeeSettingsCard } from "@/components/features/late-charges/late-fee-settings-card";
 import { WriteOffSuggestionsCard } from "@/components/features/collections/write-off-suggestions-card";
 import { useCreditSummary } from "@/lib/credit/queries";
+import { PayablesTab } from "./payables-tab";
+
+/** R-1921: who owes us (customers) / whom we owe (vendors). */
+const AGING_SIDES = ["receivables", "payables"] as const;
 
 // ────────────────────────────────────────────────────────────────
 // Aggregation hook
@@ -169,6 +173,8 @@ function whatsappLink(phone: string, message: string): string {
 
 export default function AgingPage() {
   const { data, isLoading, isError, refetch } = useAging();
+  /* R-1921: the Payables tab (vendors) next to the customers' receivables. */
+  const [side, setSide] = useUrlChoice<(typeof AGING_SIDES)[number]>("tab", AGING_SIDES, "receivables");
   /* R-346: subscriptions switched on before payment ("Activate now, pay later"). */
   const { data: credit } = useCreditSummary();
   /* R-270: on a failed load the tiles used to read ₹0 and the table "No outstanding
@@ -193,12 +199,30 @@ export default function AgingPage() {
       <div className="flex items-end justify-between gap-3 flex-wrap mb-6">
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Accounting</p>
-          <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Customer Aging</h1>
+          <h1 className="font-serif text-3xl md:text-4xl tracking-tight">{side === "payables" ? "Payables Aging" : "Customer Aging"}</h1>
           <p className="text-sm text-ink-3 mt-1">
-            Who owes you money, and for how long. Sorted by largest exposure.
+            {side === "payables"
+              ? "What you owe vendors, and how long past the due date. Sorted by largest amount."
+              : "Who owes you money, and for how long. Sorted by largest exposure."}
           </p>
         </div>
+        <div role="group" aria-label="Aging of" className="inline-flex rounded-lg border border-hairline p-0.5 bg-paper-2/60">
+          {([["receivables", "Receivables"], ["payables", "Payables"]] as const).map(([v, label]) => (
+            <button key={v} type="button" aria-pressed={side === v} onClick={() => setSide(v)}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber ${side === v ? "bg-paper text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {side === "payables" ? (
+        <>
+          <PayablesTab />
+          {/* Payables side: MSME vendors ka 45-din (s.43B(h)) flag — S33. */}
+          <MsmePayablesCard />
+        </>
+      ) : (<>
 
       {/* KPI strip */}
       {!failed && (
@@ -376,13 +400,12 @@ export default function AgingPage() {
         </>
       )}
 
-      {/* Payables side: MSME vendors ka 45-din (s.43B(h)) flag — S33. */}
       {/* R-116: pause on overdue (per company) + write-off suggestions (draft, owner confirms). */}
       <OverduePauseCard />
       {/* R-530: late fee + interest on overdue invoices (company setting) and the monthly bill run. */}
       <LateFeeSettingsCard />
       <WriteOffSuggestionsCard />
-      <MsmePayablesCard />
+      </>)}
     </div>
   );
 }

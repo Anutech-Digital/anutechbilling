@@ -48,7 +48,7 @@ export async function runUxAnalysis(admin: Admin, tenantId: string, mode: "auto"
     const gemini = await resolveGeminiConfig(admin as never, tenantId);
     if (gemini.apiKey) {
       const raw = await geminiJson<unknown>({
-        apiKey: gemini.apiKey, model: gemini.model, system: uxPrompt(),
+        apiKey: gemini.apiKey, model: gemini.model, tenantId: gemini.tenantId, system: uxPrompt(),
         user: JSON.stringify({ findings: f.map(({ surface, path, signal, severity, evidence, sessions }) => ({ surface, path, signal, severity, evidence, sessions })) }),
         temperature: 0.2, timeoutMs: 40_000, label: "ux-analysis",
       });

@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { lineLabel, totalsByLabel, NOT_RECONCILED, type CashFlowTxn } from "./cash-flow-lines";
+import { lineLabel, totalsByLabel, NOT_RECONCILED, activityOf, type CashFlowTxn } from "./cash-flow-lines";
+
+describe("R-1839 owner drawings / capital in the cash flow", () => {
+  it("is financing (the owner), labelled as such — never operating", () => {
+    expect(activityOf({ matched_to_type: "owner_equity", category: null })).toBe("financing");
+    expect(lineLabel({ matched_to_type: "owner_equity", category: null })).toBe("Owner drawings / capital");
+  });
+});
 
 const t = (over: Partial<CashFlowTxn>): CashFlowTxn => ({
   id: Math.random().toString(36), bank_account_id: "a", txn_date: "2026-09-10",

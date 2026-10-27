@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
+import { STATEMENT_ROW } from "@/components/ui/statement-row";
 import { LoadErrorInline } from "@/components/shared/load-error";
 import { rupee, cn, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
@@ -24,6 +25,8 @@ import { useBalanceSheetAuto, useBalanceSheetItems, useOpeningBalances } from "@
 import { usePnL, BOOKS_START } from "@/lib/queries/pnl";
 import { buildTrialBalance, trialBalanceCsvRows, LICENCE_ESTIMATE_HEAD, type TbGroup } from "@/lib/accounting/trial-balance";
 import { retainedProfitRange, licenceProvisionOf } from "@/lib/accounting/balance-sheet-totals";
+import { movementTotals } from "@/lib/accounting/owner-equity";
+import { useOwnerEquityMovements, isOwnerEquityTableMissing } from "@/lib/queries/owner-equity";
 
 const GROUPS: TbGroup[] = ["Assets", "Liabilities", "Equity", "Income", "Expenses", "Difference"];
 
@@ -41,13 +44,23 @@ export default function TrialBalancePage() {
   const retainedQ = usePnL({ from: profitRange.from, to: profitRange.to }, openingQ.data !== undefined && profitRange.open);
   const licenceProvision = openingQ.data === undefined ? null : !profitRange.open ? 0 : licenceProvisionOf(retainedQ.data);
 
+  /* R-1839: owner drawings / capital introduced — same range as the Balance Sheet (after the
+     CA's opening date, up to today). A table not there yet (before the migration) = none. */
+  const ownerQ = useOwnerEquityMovements();
+  const ownerMissing = ownerQ.isError && isOwnerEquityTableMissing(ownerQ.error);
+  const ownerEquity = React.useMemo(
+    () => (ownerQ.data ? movementTotals(ownerQ.data, { after: openingQ.data?.asOf ?? null, upTo: today }) : null),
+    [ownerQ.data, openingQ.data, today],
+  );
+
   const tb = React.useMemo(() => {
     if (!bsQ.data || !pnlQ.data || !itemsQ.data || openingQ.data === undefined || licenceProvision === null) return null;
-    return buildTrialBalance({ bs: bsQ.data, pnl: pnlQ.data, items: itemsQ.data, opening: openingQ.data, licenceProvision });
-  }, [bsQ.data, pnlQ.data, itemsQ.data, openingQ.data, licenceProvision]);
+    if (!ownerEquity && !ownerMissing) return null;
+    return buildTrialBalance({ bs: bsQ.data, pnl: pnlQ.data, items: itemsQ.data, opening: openingQ.data, licenceProvision, ownerEquity });
+  }, [bsQ.data, pnlQ.data, itemsQ.data, openingQ.data, licenceProvision, ownerEquity, ownerMissing]);
   const estimatedLicence = tb?.rows.find((r) => r.head === LICENCE_ESTIMATE_HEAD)?.debit ?? 0;
 
-  const error = bsQ.error ?? pnlQ.error ?? itemsQ.error ?? openingQ.error ?? retainedQ.error;
+  const error = bsQ.error ?? pnlQ.error ?? itemsQ.error ?? openingQ.error ?? retainedQ.error ?? (ownerMissing ? null : ownerQ.error);
   const retryFailed = () => {
     for (const q of [bsQ, pnlQ, itemsQ, openingQ, retainedQ]) if (q.error) void q.refetch();
   };
@@ -119,7 +132,7 @@ export default function TrialBalancePage() {
                         <td colSpan={3} className="px-4 py-2 text-2xs uppercase tracking-wider font-semibold text-ink-3">{g}</td>
                       </tr>
                       {rows.map((r) => (
-                        <tr key={`${g}-${r.head}`} className={cn(g === "Difference" && "bg-amber-soft/20")}>
+                        <tr key={`${g}-${r.head}`} className={cn(STATEMENT_ROW, g === "Difference" && "bg-amber-soft/20")}>
                           <td className="px-4 py-2">
                             <div className="text-ink">{r.head}{g === "Difference" && <Badge kind="warning" className="ml-2">derived</Badge>}</div>
                             <div className="text-xs text-ink-3">{r.source}</div>
@@ -132,7 +145,7 @@ export default function TrialBalancePage() {
                   );
                 })}
                 <tfoot className="border-t-2 border-ink bg-paper-2/30">
-                  <tr>
+                  <tr className={STATEMENT_ROW}>
                     <td className="px-4 py-3 text-2xs uppercase tracking-wider font-semibold text-ink-3">Total</td>
                     <td className="px-4 py-3 text-right font-serif text-lg">{rupee(tb.totalDebit)}</td>
                     <td className="px-4 py-3 text-right font-serif text-lg">{rupee(tb.totalCredit)}</td>

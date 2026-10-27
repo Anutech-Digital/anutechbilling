@@ -20,7 +20,6 @@ describe("annual filings report on the year that ENDED — defect #1", () => {
   const cases: [string, string][] = [
     ["AOC-4",     "2026-10-29"],
     ["MGT-7A",    "2026-11-28"],
-    ["DIR-3 KYC", "2026-09-30"],
     ["DPT-3",     "2026-06-30"],
     ["ITR-6",     "2026-10-31"],
     ["3CD",       "2026-09-30"],
@@ -220,5 +219,58 @@ describe("R-334 — profileFromRow reads the LUT", async () => {
     expect(profileFromRow({ lut_number: "AD290425000000X" }, null).exportsUnderLut).toBe(true);
     expect(profileFromRow({ lut_number: "  " }, null).exportsUnderLut).toBeFalsy();
     expect(profileFromRow({}, null).exportsUnderLut).toBeFalsy();
+  });
+});
+
+/**
+ * R-1856 — DIR-3 KYC is no longer yearly. G.S.R. 943(E) (31 Dec 2025, in force 31 Mar 2026)
+ * substituted Rule 12A: every DIN holder files DIR-3 KYC Web once every third consecutive FY,
+ * by 30 June; directors whose KYC was up to date are next due 30 Jun 2028 (ICAI CLCGC,
+ * 2 Jan 2026, quoting the MCA press release).
+ */
+describe("R-1856 — DIR-3 KYC once every 3 years by 30 June", () => {
+  const kyc = OBLIGATIONS.find((o) => o.key === "roc_dir3kyc")!;
+  const OCT_24_2026 = new Date("2026-10-24T12:00:00+05:30");
+  const pvt = { businessType: "pvt_ltd" as const, gstFiling: null };
+
+  it("in Oct 2026 the next due date is 30 Jun 2028, not 30 Sep 2026", () => {
+    expect(kyc.next(OCT_24_2026).dueDate).toBe("2028-06-30");
+  });
+
+  it("a Pvt Ltd does not see it overdue in Oct 2026", () => {
+    const row = buildComplianceRows(OCT_24_2026, new Map(), undefined, undefined, pvt).find((r) => r.ob.key === kyc.key)!;
+    expect(row.inst.dueDate).toBe("2028-06-30");
+    expect(row.status).toBe("upcoming");
+  });
+
+  it("an LLP sees the same date", () => {
+    const row = buildComplianceRows(OCT_24_2026, new Map(), undefined, undefined, { businessType: "llp", gstFiling: null })
+      .find((r) => r.ob.key === kyc.key)!;
+    expect(row.inst.dueDate).toBe("2028-06-30");
+  });
+
+  it("once the 2028 KYC is filed the next one is 30 Jun 2031", () => {
+    const first = kyc.next(OCT_24_2026);
+    const filed = new Map([[`${kyc.key}|${first.periodKey}`, "2028-05-10"]]);
+    const inst = kyc.next(new Date("2028-07-15T12:00:00+05:30"), (pk) => filed.has(`${kyc.key}|${pk}`));
+    expect(inst.dueDate).toBe("2031-06-30");
+  });
+
+  it("an unfiled 2028 KYC stays in view as overdue in July 2028", () => {
+    const row = buildComplianceRows(new Date("2028-07-15T12:00:00+05:30"), new Map(), undefined, undefined, pvt)
+      .find((r) => r.ob.key === kyc.key)!;
+    expect(row.inst.dueDate).toBe("2028-06-30");
+    expect(row.status).toBe("overdue");
+  });
+
+  it("says it is every 3 years, asks to check each director, and files only on DIR-3 KYC Web", () => {
+    expect(kyc.freq).toBe("every_3_years");
+    expect(kyc.form).toBe("DIR-3 KYC Web");
+    expect(kyc.applies).toMatch(/once every 3 years by 30 June/i);
+    expect(kyc.applies).toMatch(/check each director's last KYC year/i);
+    expect(kyc.applies).toMatch(/30 days/);
+    const steps = (kyc.filingSteps ?? []).join(" ");
+    expect(steps).toMatch(/DIR-3 KYC Web/);
+    expect(steps).not.toMatch(/e-form/i);
   });
 });

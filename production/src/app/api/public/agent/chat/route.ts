@@ -178,6 +178,7 @@ export async function POST(request: NextRequest) {
   const raw = await geminiJson<PublicChatReply>({
     apiKey: gemini.apiKey,
     model: gemini.model,
+    tenantId: gemini.tenantId,
     system: systemPrompt(facts.factsText, learnings),
     user: `Conversation so far:\n${transcript}\n\nAnswer the visitor's last message.`,
     temperature: 0.4,
@@ -324,6 +325,7 @@ export async function POST(request: NextRequest) {
         const lessonRaw = await geminiJson<{ lesson?: string }>({
           apiKey: gemini.apiKey!,
           model: gemini.model,
+          tenantId: gemini.tenantId,
           user: reflectionPrompt(transcript, leadCreated ? "lead_captured" : "guard_fallback"),
           temperature: 0.2,
           timeoutMs: 10_000,

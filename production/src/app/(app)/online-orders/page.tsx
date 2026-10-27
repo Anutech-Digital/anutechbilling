@@ -32,6 +32,8 @@ import {
 } from "@/components/ui/sheet";
 import { rupee } from "@/lib/utils";
 import { orderChannel, isTrialOrder, trialWindow } from "@/lib/online-orders/sources";
+import { adSourceText, adChannelLabel } from "@/lib/marketing/campaign-sales";
+import { useCampaignNames } from "@/lib/queries/marketing-sales";
 import { cn } from "@/lib/utils";
 import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 import { createClient } from "@/lib/supabase/client";
@@ -164,11 +166,26 @@ function ProgressStep({
 
 // ─── Order detail drawer ──────────────────────────────────────────────────────
 
+/** R-1980: the ad (channel + campaign name) that brought this order, or a dash. */
+function AdSource({ lead, names }: { lead: LeadRow; names: ReadonlyMap<string, string> | undefined }) {
+  const ad = adSourceText(lead, names ?? new Map());
+  if (!ad) return <span className="text-xs text-ink-3">—</span>;
+  const channel = adChannelLabel(ad.channel);
+  return (
+    <div className="min-w-0">
+      {ad.campaign && <p className="truncate text-xs text-ink" title={ad.campaign}>{ad.campaign}</p>}
+      {channel && <p className="truncate text-2xs text-ink-3" title={channel}>{channel}</p>}
+    </div>
+  );
+}
+
 function OrderDetailDrawer({
   order,
+  campaignNames,
   onClose,
 }: {
   order: Order;
+  campaignNames: ReadonlyMap<string, string> | undefined;
   onClose: () => void;
 }) {
   const isPaid = order.type === "paid";
@@ -286,6 +303,7 @@ function OrderDetailDrawer({
               </>
             )}
             <DrawerRow label="Source">{order.source}</DrawerRow>
+            <DrawerRow label="Ad source"><AdSource lead={order.lead} names={campaignNames} /></DrawerRow>
             <DrawerRow label="Assigned to">{order.amAssigned}</DrawerRow>
           </DrawerSection>
 
@@ -423,6 +441,10 @@ interface LeadRow {
   follow_up_date:   string | null;
   domain:           string | null;
   utm_source:       string | null;
+  /** R-1980: the ad fields the Ad source cell reads. */
+  utm_medium:       string | null;
+  utm_campaign:     string | null;
+  referrer_url:     string | null;
   trial_started_at: string | null;
   trial_expires_at: string | null;
   owner:            { full_name: string | null } | null;
@@ -643,6 +665,8 @@ export default function OnlineOrdersPage() {
   const [loadError, setLoadError] = React.useState(false);
   const { data: me, isLoading: meLoading } = useCurrentUser();
   const tenantId = me?.tenantId ?? null;
+  /* R-1980: utm_campaign code → campaign name for the Ad source column. */
+  const { data: campaignNames } = useCampaignNames(tenantId);
   /* R-1821: a role that sees masked contacts searches without the email column. */
   const hideContacts = contactSearchHidden(me?.role);
 
@@ -1005,14 +1029,14 @@ export default function OnlineOrdersPage() {
               <thead>
                 <tr className="border-b border-hairline bg-muted/30">
                   {[
-                    "Order", "Company", "Type", "Plan", "Seats",
+                    "Order", "Company", "Ad source", "Type", "Plan", "Seats",
                     "Amount", "Status", "Next action", "",
                   ].map((h, i) => (
                     <th
                       key={i}
                       className={cn(
                         "px-4 py-2.5 text-xs font-medium text-ink-3",
-                        (i === 4 || i === 5) ? "text-right" : "text-left",
+                        (i === 5 || i === 6) ? "text-right" : "text-left",
                       )}
                     >
                       {h}
@@ -1041,6 +1065,11 @@ export default function OnlineOrdersPage() {
                       <td className="px-4 py-3">
                         <p className="font-medium text-ink">{o.company}</p>
                         <p className="text-xs text-ink-3">{o.contact.email}</p>
+                      </td>
+
+                      {/* R-1980: which ad brought the order */}
+                      <td className="max-w-[160px] px-4 py-3">
+                        <AdSource lead={o.lead} names={campaignNames} />
                       </td>
 
                       {/* Type */}
@@ -1141,6 +1170,7 @@ export default function OnlineOrdersPage() {
       {openOrder && (
         <OrderDetailDrawer
           order={openOrder}
+          campaignNames={campaignNames}
           onClose={() => setOpenId(null)}
         />
       )}

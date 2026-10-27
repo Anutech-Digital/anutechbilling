@@ -20,6 +20,7 @@ import {
   BUSINESS_TYPE_LABEL, GST_FILING_LABEL,
   type BusinessType, type GstFiling,
 } from "@/lib/compliance/obligations";
+import { businessTypeChange, businessTypeHint, type BusinessTypeChange } from "@/lib/compliance/entity";
 import { useComplianceProfile, useSaveComplianceProfile } from "@/lib/compliance/profile";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -113,12 +114,6 @@ function UdyamField({ isOwner }: { isOwner: boolean }) {
 const BUSINESS_TYPES: BusinessType[] = ["proprietor", "partnership", "llp", "pvt_ltd"];
 const GST_MODES: GstFiling[] = ["monthly", "qrmp"];
 
-const BUSINESS_TYPE_HINT: Record<BusinessType, string> = {
-  proprietor: "No ROC filings. ITR-3 on the owner's PAN.",
-  partnership: "No ROC filings. ITR-5 for the firm.",
-  llp: "LLP Form 11 + Form 8, DIR-3 KYC, ITR-5.",
-  pvt_ltd: "AOC-4, MGT-7, AGM, DIR-3 KYC, ITR-6.",
-};
 const GST_MODE_HINT: Record<GstFiling, string> = {
   monthly: "GSTR-1 by the 11th, GSTR-3B by the 20th, every month.",
   qrmp: "GSTR-1 by the 13th and GSTR-3B by the 22nd/24th after each quarter; PMT-06 by the 25th in months 1–2.",
@@ -157,6 +152,65 @@ function Segmented<T extends string>({
   );
 }
 
+/**
+ * R-1842 — shown when Save would change the business type: what reads differently afterwards.
+ * Changing the type corrects what is stored; it does not convert the business.
+ */
+function TypeChangeConfirm({
+  change, fromLabel, onConfirm, onCancel, pending,
+}: {
+  change: BusinessTypeChange;
+  /** "Not set (treated as Pvt Ltd)" when nothing is stored yet. */
+  fromLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  pending: boolean;
+}) {
+  const headingId = React.useId();
+  return (
+    <section role="region" aria-labelledby={headingId}
+      className="rounded-md border border-amber/40 bg-amber-soft/30 p-3 sm:p-4">
+      <p id={headingId} className="text-xs font-semibold text-ink">What will change</p>
+      <p className="mt-1 text-xs text-ink-2">
+        {fromLabel} → {change.to.label}. This is a correction to the business type stored for this
+        company. If the business itself was converted (for example a proprietorship became a Pvt Ltd), that is a new
+        business with its own PAN — create a new company for it instead.
+      </p>
+
+      {(change.added.length > 0 || change.removed.length > 0) && (
+        <div className="mt-3">
+          <p className="text-3xs font-medium uppercase tracking-wide text-ink-3">Compliance Calendar</p>
+          <ul className="mt-1 space-y-0.5 text-xs text-ink-2">
+            {change.added.length > 0 && <li><span className="font-medium text-ink">Added:</span> {change.added.join(", ")}</li>}
+            {change.removed.length > 0 && <li><span className="font-medium text-ink">Removed:</span> {change.removed.join(", ")}</li>}
+          </ul>
+        </div>
+      )}
+
+      {change.rows.length > 0 && (
+        <dl className="mt-3 space-y-1.5 text-xs">
+          {change.rows.map((r) => (
+            <div key={r.what} className="sm:flex sm:gap-2">
+              <dt className="shrink-0 font-medium text-ink sm:w-40">{r.what}</dt>
+              <dd className="text-ink-2 break-words">{r.from} → {r.to}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      <p className="mt-3 text-3xs text-ink-3">Nothing is deleted. Filed entries stay in the calendar history.</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button type="button" size="sm" variant="primary" icon="check" loading={pending} disabled={pending} onClick={onConfirm}>
+          Change to {change.to.label}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 export function ComplianceProfileCard({ isOwner }: { isOwner: boolean }) {
   const { data: saved, isLoading, isError } = useComplianceProfile();
   const save = useSaveComplianceProfile();
@@ -176,15 +230,27 @@ export function ComplianceProfileCard({ isOwner }: { isOwner: boolean }) {
   const disabled = !isOwner || missing || save.isPending || isLoading;
   const canSave = isOwner && !missing && dirty && !save.isPending;
 
-  const onSave = () => {
+  const [confirming, setConfirming] = React.useState(false);
+  // R-1842: null when Save would not change what the business type means (not set = Pvt Ltd).
+  const change = saved && type && type !== saved.businessType
+    ? businessTypeChange(saved.businessType, type, gst)
+    : null;
+
+  const doSave = () => {
+    setConfirming(false);
     save.mutate({
       ...(type ? { business_type: type } : {}),
       ...(gst ? { gst_filing: gst } : {}),
     });
   };
+  const onSave = () => (change ? setConfirming(true) : doSave());
+  const cancelChange = () => {
+    setConfirming(false);
+    if (saved) setType(saved.businessType);
+  };
 
   return (
-    <Card className="p-5 max-w-3xl">
+    <Card id="compliance-profile" className="p-5 max-w-3xl scroll-mt-20">
       <div className="mb-1 flex items-center justify-between gap-2">
         <p className="text-sm font-semibold text-ink">Compliance profile</p>
         {missing ? <Badge kind="muted">Coming soon</Badge>
@@ -206,8 +272,8 @@ export function ComplianceProfileCard({ isOwner }: { isOwner: boolean }) {
           <div>
             <p className="mb-1.5 text-xs font-medium text-ink-2">Business type</p>
             <Segmented label="Business type" options={BUSINESS_TYPES} labels={BUSINESS_TYPE_LABEL}
-              value={type} onChange={setType} disabled={disabled} />
-            {type && <p className="mt-1.5 text-3xs text-ink-3">{BUSINESS_TYPE_HINT[type]}</p>}
+              value={type} onChange={(v) => { setType(v); setConfirming(false); }} disabled={disabled || confirming} />
+            {type && <p className="mt-1.5 text-3xs text-ink-3">{businessTypeHint(type)}</p>}
           </div>
           <div>
             <p className="mb-1.5 text-xs font-medium text-ink-2">GST filing</p>
@@ -215,7 +281,12 @@ export function ComplianceProfileCard({ isOwner }: { isOwner: boolean }) {
               value={gst} onChange={setGst} disabled={disabled} />
             {gst && <p className="mt-1.5 text-3xs text-ink-3">{GST_MODE_HINT[gst]}</p>}
           </div>
-          {isOwner && !missing && (
+          {isOwner && !missing && confirming && change && (
+            <TypeChangeConfirm change={change} pending={save.isPending}
+              fromLabel={saved?.businessType ? change.from.label : `Not set (treated as ${change.from.label})`}
+              onConfirm={doSave} onCancel={cancelChange} />
+          )}
+          {isOwner && !missing && !confirming && (
             <div className="flex items-center gap-2">
               <Button type="button" size="sm" variant="primary" icon="check"
                 loading={save.isPending} disabled={!canSave} onClick={onSave}>

@@ -62,9 +62,10 @@ describe("R-231 public form fields", () => {
   });
 
   it("buy-now and enquiry forms carry autofill hints", () => {
-    for (const f of ["app/(public)/buy/workspace/buy-workspace-client.tsx", "app/(public)/enquiry/enquiry-client.tsx"]) {
+    /* R-1971: the buy page's details step is in the inline checkout (_parts/checkout.tsx). */
+    for (const f of ["app/(public)/buy/workspace/_parts/checkout.tsx", "app/(public)/enquiry/enquiry-client.tsx"]) {
       const src = read(f);
-      for (const hint of ["name", "organization", "email", "tel"]) expect(src).toContain(`autoComplete="${hint}"`);
+      for (const hint of ["name", "organization", "email", "tel"]) expect(src).toMatch(new RegExp(`autoComplete(="|: ")${hint}"`)); // JSX attr or props object
     }
   });
 });

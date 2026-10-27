@@ -77,6 +77,12 @@ export function buildTrialBalance(args: {
    * Not given → this FY's estimate, so the expense head always has its other side.
    */
   licenceProvision?: number | null;
+  /**
+   * R-1839: owner drawings / capital introduced recorded as entries (after the CA's opening date,
+   * up to today — the Balance Sheet's range). Their cash side is already inside Cash & bank, so
+   * without these heads the Difference would carry them. Not given = none.
+   */
+  ownerEquity?: { capitalIntroduced: number; drawings: number } | null;
 }): TrialBalance {
   const { bs, pnl, items, opening } = args;
   /* R-1646: the P&L and the Balance Sheet count the licence cost estimated from the
@@ -151,6 +157,9 @@ export function buildTrialBalance(args: {
   put("Equity", "Opening Balance Adjustments", bs.openingBalanceAdjustments ?? 0, "credit",
     "Balance due on invoices imported from Zoho Books, as imported (account name to confirm with your CA)");
   for (const it of items.filter((i) => i.section === "equity")) put("Equity", it.label, it.amount, "credit", "Balance sheet — manual line");
+  /* R-1839: capital account movements — never income or expense. */
+  put("Equity", "Capital introduced", args.ownerEquity?.capitalIntroduced ?? 0, "credit", "Owner / partner money put in (recorded entries)");
+  put("Equity", "Drawings", args.ownerEquity?.drawings ?? 0, "debit", "Owner / partner money taken out (recorded entries) — lowers capital, not an expense");
 
   // ── Income / Expenses (FY to date) ──
   put("Income", "Sales (net of credit / debit notes)", pnl.revenue, "credit", `Taxable value of invoices, ${bs.fyLabel} to date`);

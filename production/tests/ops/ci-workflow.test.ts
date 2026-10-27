@@ -16,6 +16,14 @@ type Workflow = { concurrency: { group: string; "cancel-in-progress": string | b
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const wf = yaml.load(readFileSync(`${root}.github/workflows/ci.yml`, "utf8")) as Workflow;
 
+describe("sql-tests.yml — R-1989 manager-pardeep keeps its running run", () => {
+  const sql = yaml.load(readFileSync(`${root}.github/workflows/sql-tests.yml`, "utf8")) as Workflow;
+  it("cancels older runs on every ref except manager-pardeep (main/deploy behaviour unchanged)", () => {
+    expect(sql.concurrency.group).toBe("sql-tests-${{ github.ref }}");
+    expect(String(sql.concurrency["cancel-in-progress"])).toBe("${{ github.ref != 'refs/heads/manager-pardeep' }}");
+  });
+});
+
 describe("ci.yml — R-1593 cost controls", () => {
   it("one concurrency group per workflow + ref, cancelling older runs except on main/deploy", () => {
     expect(wf.concurrency.group).toBe("ci-${{ github.workflow }}-${{ github.ref }}");
@@ -24,11 +32,29 @@ describe("ci.yml — R-1593 cost controls", () => {
     expect(cancel).toContain("github.ref != 'refs/heads/deploy'");
   });
 
-  it("every job has a timeout of at most 30 minutes", () => {
+  /* R-1989 (26 Oct 2026): 13:28–14:21Z every manager-pardeep run was cancelled by the next push
+     (CI takes ~29 min, pushes came faster) — no run finished and `worker-lock ci` timed out.
+     manager-pardeep now keeps its running run like main/deploy; GitHub keeps only the newest
+     pending one, which then tests every commit pushed meanwhile. */
+  it("R-1989: a running CI on manager-pardeep is never cancelled; other branches unchanged", () => {
+    const cancel = String(wf.concurrency["cancel-in-progress"]);
+    expect(cancel).toBe(
+      "${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/deploy' && github.ref != 'refs/heads/manager-pardeep' }}",
+    );
+  });
+
+  it("every job has a timeout of at most 30 minutes, except `checks` (R-1991)", () => {
     for (const [name, job] of Object.entries(wf.jobs)) {
+      if (name === "checks") continue;
       expect(job["timeout-minutes"], name).toBeGreaterThan(0);
       expect(job["timeout-minutes"], name).toBeLessThanOrEqual(30);
     }
+  });
+
+  // R-1991 (26 Oct 2026): R-1978's run 40347350851 was cancelled at ~30 min in the
+  // "Restore Next build cache" post-step although every real step passed (Build alone 13 min).
+  it("checks job has a 45-minute timeout (R-1991)", () => {
+    expect(wf.jobs.checks["timeout-minutes"]).toBe(45);
   });
 
   it("restores production/.next/cache right before the build, keyed on lockfile + source", () => {

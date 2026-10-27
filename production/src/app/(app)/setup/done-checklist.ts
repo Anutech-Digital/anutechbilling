@@ -20,6 +20,8 @@ export interface ChecklistItem {
   note?: string;
   /** Where to finish it. Absent when the row is done. */
   href?: string;
+  /** R-1927: optional integration — listed under "Later" on the Done screen, never before the first quote. */
+  later?: boolean;
 }
 
 export interface RazorpayProbe {
@@ -93,21 +95,22 @@ export function buildDoneChecklist(i: DoneInputs): ChecklistItem[] {
   else items.push({ id: "catalog", label: "Load your price list", status: "todo", note: "Quotes need products", href: "/items" });
 
   // Razorpay — readiness from the server, not a boolean guess.
-  if (i.razorpay === undefined) items.push({ id: "razorpay", label: "Razorpay payments", status: "checking" });
-  else if (i.razorpay === null) items.push({ id: "razorpay", label: "Razorpay payments", status: "unknown", note: "Check in Settings → Integrations", href: INTEGRATIONS });
+  if (i.razorpay === undefined) items.push({ later: true, id: "razorpay", label: "Razorpay payments", status: "checking" });
+  else if (i.razorpay === null) items.push({ later: true, id: "razorpay", label: "Razorpay payments", status: "unknown", note: "Check in Settings → Integrations", href: INTEGRATIONS });
   else {
     const state = i.razorpay.readiness?.state ?? (i.razorpay.configured ? "ready" : "not_configured");
-    if (state === "ready") items.push({ id: "razorpay", label: "Razorpay connected", status: "done" });
-    else if (state === "collect_only") items.push({ id: "razorpay", label: "Razorpay half set up", status: "pending", note: "Add the webhook secret", href: INTEGRATIONS });
-    else items.push({ id: "razorpay", label: "Connect Razorpay", status: "todo", note: "Optional · online payments", href: INTEGRATIONS });
+    if (state === "ready") items.push({ later: true, id: "razorpay", label: "Razorpay connected", status: "done" });
+    else if (state === "collect_only") items.push({ later: true, id: "razorpay", label: "Razorpay half set up", status: "pending", note: "Add the webhook secret", href: INTEGRATIONS });
+    else items.push({ later: true, id: "razorpay", label: "Connect Razorpay", status: "todo", note: "Optional · online payments", href: INTEGRATIONS });
   }
 
   // Google Reseller API — the same probe the Settings card runs.
-  if (i.googleReseller === undefined) items.push({ id: "google", label: "Google Reseller API", status: "checking" });
-  else if (i.googleReseller?.connected) items.push({ id: "google", label: "Google Reseller API connected", status: "done" });
+  if (i.googleReseller === undefined) items.push({ later: true, id: "google", label: "Google Reseller API", status: "checking" });
+  else if (i.googleReseller?.connected) items.push({ later: true, id: "google", label: "Google Reseller API connected", status: "done" });
   else {
     const code = i.googleReseller?.code;
     items.push({
+      later: true,
       id: "google",
       label: "Google Reseller API",
       status: "todo",
@@ -120,19 +123,19 @@ export function buildDoneChecklist(i: DoneInputs): ChecklistItem[] {
   }
 
   // WhatsApp Business
-  if (i.whatsapp === undefined) items.push({ id: "whatsapp", label: "WhatsApp Business", status: "checking" });
-  else if (i.whatsapp === null) items.push({ id: "whatsapp", label: "WhatsApp Business", status: "unknown", note: "Check in Settings → Integrations", href: INTEGRATIONS });
-  else if (i.whatsapp.configured) items.push({ id: "whatsapp", label: "WhatsApp Business connected", status: "done" });
-  else items.push({ id: "whatsapp", label: "Connect WhatsApp Business", status: "todo", note: "Optional · send from the app", href: INTEGRATIONS });
+  if (i.whatsapp === undefined) items.push({ later: true, id: "whatsapp", label: "WhatsApp Business", status: "checking" });
+  else if (i.whatsapp === null) items.push({ later: true, id: "whatsapp", label: "WhatsApp Business", status: "unknown", note: "Check in Settings → Integrations", href: INTEGRATIONS });
+  else if (i.whatsapp.configured) items.push({ later: true, id: "whatsapp", label: "WhatsApp Business connected", status: "done" });
+  else items.push({ later: true, id: "whatsapp", label: "Connect WhatsApp Business", status: "todo", note: "Optional · send from the app", href: INTEGRATIONS });
 
   return items;
 }
 
-/** Next steps on the Done screen — each one opens the page that does it. */
+/** Next steps on the Done screen — each one opens the page that does it.
+ *  R-1927: the first quote is the Done screen's primary button and the integrations are its
+ *  "Later" rows, so neither is repeated here (one way per task). */
 export const NEXT_STEPS: ReadonlyArray<{ label: string; href: string }> = [
-  { label: "Send your first quote",         href: "/quotes/new" },
   { label: "Check your renewals calendar",  href: "/renewals" },
   { label: "Set up reminder automations",   href: "/automation" },
   { label: "Invite your team",              href: "/team" },
-  { label: "Connect WhatsApp and Razorpay", href: INTEGRATIONS },
 ];

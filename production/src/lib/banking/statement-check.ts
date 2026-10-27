@@ -8,6 +8,9 @@
  *   1. the opening balance is not the balance before the first imported line;
  *   2. lines are missing between two dates — the running balance jumps by more than
  *      the lines in between explain.
+ * What is left is paise rounding (R-1829): amounts are kept in whole rupees, statements
+ * carry paise, so over many lines Σ(rounded) ends a few rupees from the bank's balance.
+ * That is reported as verdict "rounding", never as missing lines.
  *
  * ─── ORDER WITHIN A DAY IS NOT TRUSTED ──────────────────────────────────────
  * Lines of one day may be stored in any order. Each day is re-threaded by the chain
@@ -44,10 +47,26 @@ export type StatementCheck = {
   /** How far the account's opening balance is from impliedOpening (account − implied). */
   openingDifference: number;
   gaps: StatementGap[];
+  /** Lines compared (dated up to statementDate). */
+  lineCount: number;
+  /** The part of `difference` neither the opening nor a gap explains: whole-rupee rounding
+      of paise amounts. openingDifference (when over ₹1) + Σ gaps + roundingDrift = difference. */
+  roundingDrift: number;
+  /** The most rounding alone can add up to over lineCount lines (see roundingAllowance). */
+  roundingAllowance: number;
+  /** match: within ₹1. rounding: only paise rounding, nothing missing. off: opening or lines. */
+  verdict: "match" | "rounding" | "off";
 };
 
 const TOLERANCE = 1;   // whole rupees; statements carry paise
 const close = (a: number, b: number) => Math.abs(a - b) <= TOLERANCE;
+/**
+ * The most whole-rupee rounding can move a balance over `n` lines (R-1829). Each stored
+ * amount is the bank's paise amount rounded (off by ≤ ₹0.50), and the two running balances
+ * it is compared between are rounded too (≤ ₹0.50 each): ≤ 0.5·n + 1, in whole rupees.
+ * A real bank statement of 1,449 lines ended ₹3 apart this way — not a missing line.
+ */
+export const roundingAllowance = (n: number) => Math.floor(n / 2) + 1;
 const startOf = (l: StatementLine) => (l.balance_after as number) + l.debit - l.credit;
 
 /**
@@ -148,17 +167,38 @@ export function checkStatement(lines: StatementLine[], openingBalance: number): 
       merged.push({ ...g });
     }
   }
-  const realGaps = merged.filter((g) => !close(g.amount, 0));
+  /* A "gap" no bigger than what rounding of the lines inside it can add up to is rounding:
+     a day whose lines do not thread (±₹1 each) is compared as a whole, and over many lines
+     the paise add up past ₹1 without any line missing. */
+  const linesIn = (g: StatementGap) => lines.filter((l) => l.txn_date >= g.after && l.txn_date <= g.by).length;
+  const realGaps = merged.filter((g) => Math.abs(g.amount) > Math.max(TOLERANCE, roundingAllowance(linesIn(g))));
 
   const statementBalance = dayEnd(balOf(lastBalDay));
+  const difference = appBalance - statementBalance;
+  const openingDifference = openingBalance - impliedOpening;
+  const lineCount = lines.filter((l) => l.txn_date <= lastBalDay).length;
+  const allowance = roundingAllowance(lineCount);
+  /* Whatever the opening and the gaps do not explain is rounding. An opening within ₹1 is
+     itself rounding (the balance before the first line is worked out from rounded figures). */
+  const openingOff = !close(openingDifference, 0);
+  const roundingDrift = difference - realGaps.reduce((s, g) => s + g.amount, 0) - (openingOff ? openingDifference : 0);
+  const verdict: StatementCheck["verdict"] = close(difference, 0)
+    ? "match"
+    : realGaps.length === 0 && !openingOff && Math.abs(roundingDrift) <= allowance
+      ? "rounding"
+      : "off";
   return {
     statementBalance,
     statementDate: lastBalDay,
     appBalance,
-    difference: appBalance - statementBalance,
+    difference,
     impliedOpening,
     firstLineDate: days[0],
-    openingDifference: openingBalance - impliedOpening,
+    openingDifference,
     gaps: realGaps,
+    lineCount,
+    roundingDrift,
+    roundingAllowance: allowance,
+    verdict,
   };
 }

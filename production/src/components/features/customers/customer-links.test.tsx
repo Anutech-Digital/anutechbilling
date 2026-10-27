@@ -100,6 +100,50 @@ describe("R-1522: the contact person, never the company name", () => {
     expect(primaryContactOf({ ...company, contact_name: "Ravi K", contact_phone: "98" }, [])?.name).toBe("Ravi K");
   });
 
+  it("R-1893: the mobile typed in the customer form shows when the contact has no phone", () => {
+    /* Pardeep, 25 Oct (staging, "Anil Tayal"): the mobile was on customers.contact_mobile,
+       the primary contact had no phone — header and Contacts card showed name + email only. */
+    const anil = { name: "Anil Tayal Co", contact_mobile: "9876543210", contact_phone: null };
+    const got = primaryContactOf(anil, [
+      { full_name: "Anil Tayal", phone: null, email: "office2@example.in", is_primary: true },
+    ]);
+    expect(got?.phone).toBe("9876543210");
+    /* The contact's own phone wins when it has one. */
+    expect(primaryContactOf(anil, [
+      { full_name: "Anil Tayal", phone: "9000000001", email: null, is_primary: true },
+    ])?.phone).toBe("9000000001");
+    /* Mobile first, then the landline — the same order as the database backfill. */
+    expect(primaryContactOf({ name: "X Co", contact_name: "Ravi K", contact_phone: "01140000000", contact_mobile: "9111111111" }, [])?.phone)
+      .toBe("9111111111");
+  });
+
+  it("R-1894: no contact person, but a mobile on the record — the mobile shows, marked as the record's", () => {
+    /* Localhost, 25 Oct ("R1762 Test Deal"): contact_name = the company name, contact_mobile =
+       98765 18930, no contact person — the header said "No contact person yet" and the mobile
+       showed nowhere. A typed mobile must never be hidden. */
+    const deal = { name: "R1762 Test Deal", contact_name: "R1762 Test Deal", contact_mobile: "98765 18930", contact_email: null };
+    const got = primaryContactOf(deal, []);
+    expect(got).toMatchObject({ name: "", phone: "98765 18930", email: null, fromRecord: true });
+    /* A real name on the record is shown too — still marked as the record's, not a contact person. */
+    expect(primaryContactOf({ name: "X Co", contact_name: "Ravi K", contact_email: "r@x.in" }, [])).toMatchObject({ name: "Ravi K", fromRecord: true });
+    /* A linked contact person is never marked as the record's. */
+    expect(primaryContactOf(deal, [{ full_name: "Anil", is_primary: true }])?.fromRecord).toBeUndefined();
+
+    render(<PrimaryContactLine contact={got} onAddContact={vi.fn()} />);
+    const line = screen.getByTestId("header-contact");
+    expect(line.textContent).toContain("On the customer record");
+    expect(line.querySelector('a[href="tel:9876518930"]')).not.toBeNull();
+    expect(screen.queryByTestId("header-no-contact")).toBeNull();
+  });
+
+  it("R-1894: identity card shows the record's mobile when there is no contact person", () => {
+    const c = { name: "R1762 Test Deal", contact_name: "R1762 Test Deal", contact_mobile: "98765 18930", id: "c-2", country: "India" } as unknown as Customer;
+    render(<CustomerIdentityRail c={c} contact={primaryContactOf(c, [])} />);
+    expect(screen.queryByTestId("no-contact-person")).toBeNull();
+    expect(document.body.textContent).toContain("On the customer record");
+    expect(document.querySelector('a[href="tel:9876518930"]')).not.toBeNull();
+  });
+
   it("a contact named like the company (import mistake) counts as no contact", () => {
     expect(isCompanyName("Greentin Solutions Private Limited", company)).toBe(true);
     expect(primaryContactOf({ ...company, contact_name: "GREENTIN SOLUTIONS PRIVATE LIMITED" }, [])).toBeNull();

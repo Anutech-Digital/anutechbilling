@@ -63,6 +63,30 @@ describe("rollupVendors", () => {
     expect(g.foreignOutstanding).toBe(100);
   });
 
+  it("R-1868: unpaid expense bills are owed too (less their TDS); advances are counted", () => {
+    const out = rollupVendors(
+      [V("v1", "Kapoor Legal Associates"), V("v2", "Meta Ads India")],
+      [{ vendor_id: "v1", total: 5900, paid_amount: 0, bill_date: "2026-09-01", currency: "INR", fx_rate: 1 }],
+      [
+        { vendor_id: "v1", amount: 47200, expense_date: "2026-09-01", paid: false, tds_amount: 4000, reconciled_txn_id: null, category: "Professional Services", payment_method: null, prepaid_advance_id: null },
+        { vendor_id: "v1", amount: 23600, expense_date: "2026-09-02", paid: true,  tds_amount: 0,    reconciled_txn_id: "t1", category: "Professional Services", payment_method: "bank", prepaid_advance_id: null },
+        { vendor_id: "v1", amount: 9999,  expense_date: "2026-09-03", paid: false, tds_amount: 0,    reconciled_txn_id: null, category: "Salaries", payment_method: "payroll", prepaid_advance_id: null },
+      ],
+      [
+        { vendor_id: "v2", vendor_name: "Meta Ads India", total_amount: 5000, consumed_amount: 1200, closed_at: null },
+        { vendor_id: null, vendor_name: "kapoor legal associates", total_amount: 1000, consumed_amount: 0, closed_at: null },
+      ],
+    );
+    const k = out.find((v) => v.id === "v1")!;
+    expect(k.billsOutstanding).toBe(5900);
+    expect(k.expenseBillsOutstanding).toBe(43200);   // 47,200 − TDS 4,000; paid and salary rows are not bills
+    expect(k.outstanding).toBe(49100);
+    expect(k.advance).toBe(1000);                    // matched by name when the advance has no vendor id
+    const m = out.find((v) => v.id === "v2")!;
+    expect(m.outstanding).toBe(0);
+    expect(m.advance).toBe(3800);
+  });
+
   it("leaves an untouched vendor at zero", () => {
     const out = rollupVendors(vendors, [], []);
     const u = out.find((v) => v.id === "v3")!;

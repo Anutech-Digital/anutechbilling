@@ -109,6 +109,7 @@ export function validateProductPick(
 export async function matchProductWithAi(args: {
   apiKey: string;
   model: string;
+  tenantId: string | null;
   text: string;
   catalogue: readonly CatalogueChoice[];
 }): Promise<CatalogueChoice | null> {
@@ -119,6 +120,7 @@ export async function matchProductWithAi(args: {
 
   const raw = await geminiJson<{ product?: string | null }>({
     apiKey: args.apiKey,
+    tenantId: args.tenantId,
     model: args.model,
     user: buildProductMatchPrompt(args.text, args.catalogue),
     /* Zero, because this is a lookup and not a piece of writing. The same answer to the

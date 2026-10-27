@@ -34,7 +34,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { trustedOrigin } from "@/lib/app-url";
 import { turnstileRefusal } from "@/lib/security/turnstile-guard";
 import { createAdminClient } from "@/lib/supabase/server";
-import { initials } from "@/lib/utils";
+import { GST_STATE_BY_CODE, initials } from "@/lib/utils";
+import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { normalizeEmail, type InviteMatch } from "@/lib/auth/membership";
 import { decideOnboarding } from "@/lib/auth/domain";
 import { startEmailVerification } from "@/lib/auth/email-verification";
@@ -212,11 +213,18 @@ export async function POST(request: NextRequest) {
     // ── 3c. Nobody recognised them → this really is a new company. ─────────
     const tenantId = crypto.randomUUID();
 
+    /* R-1927 (OB-6): a checksum-valid GSTIN proves the company's state (first 2 digits),
+       so the setup wizard opens with State already filled. No GSTIN / a wrong one → no state
+       (R-250: never a guessed state). */
+    const cleanGstin = gstin?.trim().toUpperCase() || null;
+    const gstinStateCode = stateCodeFromGstin(cleanGstin);
+
     const { error: tenantError } = await admin.from("tenants").insert({
       id: tenantId,
       name: companyName,
-      gstin: gstin || null,
+      gstin: cleanGstin,
       email,
+      ...(gstinStateCode ? { state: GST_STATE_BY_CODE[gstinStateCode], state_code: gstinStateCode } : {}),
     });
 
     if (tenantError) {

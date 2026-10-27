@@ -30,6 +30,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { settleCapturedPayment, type RazorpayPayment } from "@/app/api/webhooks/razorpay/webhook.server";
 import { loadCheckoutRazorpayKeys } from "./razorpay-keys.server";
 import { buyPageTenantId, BuyPageTenantMissingError } from "./live-guards";
+import { DOMAIN_QUOTE_PLAN, splitOrderParts } from "./split-order";
 import type { VerifyBody } from "./confirm-payment";
 
 export interface VerifyResult {
@@ -89,13 +90,18 @@ export async function verifyCheckoutPayment(request: { headers: Headers }, raw: 
   }
 
   // 2. Our quote for this order.
+  /* R-1985: a monthly order with a new domain is TWO quotes paid by this one order (both carry the
+     order id until paid, then the payment id) — the Workspace quote is the one settled, and the
+     amount due is both quotes' together (lib/checkout/split-order.ts). */
+  type OrderQuote = { id: string; tenant_id: string; amount: number | null; lead_id: string | null; plan: string | null };
   const { data: quoteRows } = await admin
     .from("quotes")
-    .select("id, tenant_id, amount")
+    .select("id, tenant_id, amount, lead_id, plan")
     .eq("tenant_id", tenantId)
-    .eq("payment_reference", orderId)
-    .limit(1);
-  const quote = ((quoteRows ?? [])[0] as { id: string; tenant_id: string; amount: number | null } | undefined) ?? null;
+    .in("payment_reference", [orderId, paymentId])
+    .limit(5);
+  const rank = (q: OrderQuote) => (q.plan === DOMAIN_QUOTE_PLAN ? 1 : 0);
+  const quote = ((quoteRows ?? []) as OrderQuote[]).sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id))[0] ?? null;
   if (!quote) {
     console.error("[checkout/verify] no quote for order", orderId);
     return out(404, { state: "refused", message: "We couldn't find the order this payment belongs to. " + SUPPORT_NEXT });
@@ -112,7 +118,8 @@ export async function verifyCheckoutPayment(request: { headers: Headers }, raw: 
     return out(502, { state: "confirming", quoteId: quote.id, message: "We're still confirming your payment with Razorpay." });
   }
 
-  const expectedPaise = Math.round(Number(quote.amount ?? 0) * 100);
+  const parts = await splitOrderParts(admin, { quote, orderId, paymentId });
+  const expectedPaise = Math.round((parts ? parts.reduce((s, p) => s + p.amount, 0) : Number(quote.amount ?? 0)) * 100);
   if (payment.order_id !== orderId || (payment.currency ?? "INR") !== "INR" || Number(payment.amount) !== expectedPaise) {
     console.error("[checkout/verify] payment does not match the order", {
       orderId, paymentId, paymentOrder: payment.order_id, paid: payment.amount, expected: expectedPaise,

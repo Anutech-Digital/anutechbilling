@@ -29,6 +29,7 @@ import type { createAdminClient } from "@/lib/supabase/server";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { raiseDueInstalmentsForQuote } from "@/lib/billing/sync-instalments.server";
 import { istToday } from "@/lib/dates/ist";
+import { Sentry } from "@/lib/sentry";
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -51,6 +52,7 @@ export async function issueInvoiceForOnlinePayment(
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
     console.error(`${args.logTag} invoice for ${args.quoteId} threw: ${reason}`);
+    try { Sentry.captureException(e instanceof Error ? e : new Error(reason)); } catch { /* reporting only */ }
     return { status: "failed", reason };
   }
 }
@@ -88,20 +90,37 @@ async function issue(
     }
     if (out.errors.length > 0) {
       const reason = out.errors[0].message;
-      console.error(`${logTag} instalment invoice NOT issued for ${quoteId}: ${reason}`);
-      if (q.lead_id) {
-        await admin.from("lead_activities").insert({
-          tenant_id: tenantId,
-          lead_id: q.lead_id,
-          kind: "note",
-          detail:
-            `Paid online, but the instalment GST invoice could not be issued automatically — ${reason} ` +
-            `The payment is recorded; the daily billing run issues it once the above is fixed.`,
-        });
-      }
+      await reportMissedInvoice(admin, {
+        tenantId, quoteId, leadId: q.lead_id, logTag,
+        log: `instalment invoice NOT issued for ${quoteId}: ${reason}`,
+        note:
+          `Paid online, but the instalment GST invoice could not be issued automatically — ${reason} ` +
+          `The payment is recorded; the daily billing run issues it once the above is fixed.`,
+      });
       return { status: "failed", reason };
     }
-    if (out.splitBilled) return { status: "not_fully_paid" };
+    if (out.splitBilled) {
+      /* R-1974: nothing raised and nothing failed. A repeat delivery (Razorpay sends
+         payment.captured AND order.paid) finds this period's invoice already raised — that
+         invoice is the answer. A monthly (flex) order is billed this way too: its invoice is
+         the subscription's instalment, so it carries no quote_id and quote.invoice_id stays
+         empty BY DESIGN (setting it would stop every later month — term_already_invoiced). */
+      const existing = await instalmentInvoiceForQuote(admin, { tenantId, quoteId });
+      if (existing) return { status: "exists", invoiceId: existing };
+      /* Money in, no invoice anywhere: never a silent "not fully paid". */
+      if (q.payment_status === "received" || q.payment_status === "partial") {
+        const reason = "no instalment was due or raised for the paid period";
+        await reportMissedInvoice(admin, {
+          tenantId, quoteId, leadId: q.lead_id, logTag,
+          log: `PAID ${quoteId} but no instalment GST invoice was raised (nothing due, nothing failed)`,
+          note:
+            `Paid online, but no GST invoice was issued — the billing schedule had no period due for this payment. ` +
+            `The payment is recorded. Open the subscription's billing schedule and raise the paid period's invoice.`,
+        });
+        return { status: "failed", reason };
+      }
+      return { status: "not_fully_paid" };
+    }
   }
 
   /* Only a FULLY paid quote is invoiced here — the same rule the Subscriptions screen
@@ -119,28 +138,81 @@ async function issue(
         .from("quotes").select("invoice_id").eq("id", quoteId).eq("tenant_id", tenantId).maybeSingle();
       if (again?.invoice_id) return { status: "exists", invoiceId: String(again.invoice_id) };
     }
-    console.error(`${logTag} invoice NOT issued for ${quoteId}: ${error.message}`);
-    if (q.lead_id) {
-      await admin.from("lead_activities").insert({
-        tenant_id: tenantId,
-        lead_id: q.lead_id,
-        kind: "note",
-        detail:
-          `Paid online, but the GST invoice could not be issued automatically — ${error.message} ` +
-          `The payment is recorded. Fix the above, then open quote ${quoteId} and click Issue invoice.`,
-      });
-    }
+    await reportMissedInvoice(admin, {
+      tenantId, quoteId, leadId: q.lead_id, logTag,
+      log: `invoice NOT issued for ${quoteId}: ${error.message}`,
+      note:
+        `Paid online, but the GST invoice could not be issued automatically — ${error.message} ` +
+        `The payment is recorded. Fix the above, then open quote ${quoteId} and click Issue invoice.`,
+    });
     return { status: "failed", reason: error.message };
   }
 
   const row = Array.isArray(data) ? data[0] : data;
   const invoiceId = row && typeof row === "object" ? (row as { invoice_id?: string }).invoice_id : null;
   if (!invoiceId) {
-    console.error(`${logTag} generate_invoice returned no invoice for ${quoteId}`);
+    await reportMissedInvoice(admin, {
+      tenantId, quoteId, leadId: q.lead_id, logTag,
+      log: `generate_invoice returned no invoice for ${quoteId}`,
+      note:
+        `Paid online, but the GST invoice could not be issued automatically — the invoice step returned nothing. ` +
+        `The payment is recorded. Open quote ${quoteId} and click Issue invoice.`,
+    });
     return { status: "failed", reason: "generate_invoice returned no result" };
   }
   console.info(`${logTag} GST invoice ${invoiceId} issued for paid ${quoteId}`);
   return { status: "issued", invoiceId };
+}
+
+/**
+ * R-1974: the invoice already raised for this paid quote's period, when it was billed as an
+ * instalment (split-billed annual, or a monthly flex order). Instalment invoices carry no
+ * quote_id, so they are found through the quote's subscriptions. Read-only; null on any error.
+ */
+async function instalmentInvoiceForQuote(
+  admin: Admin,
+  args: { tenantId: string; quoteId: string },
+): Promise<string | null> {
+  const { data: subs, error } = await admin
+    .from("subscriptions").select("id").eq("tenant_id", args.tenantId).eq("quote_id", args.quoteId);
+  if (error || !subs?.length) return null;
+  const { data: billed } = await admin
+    .from("subscription_billings")
+    .select("invoice_id")
+    .eq("tenant_id", args.tenantId)
+    .in("subscription_id", subs.map((s) => s.id))
+    .not("invoice_id", "is", null)
+    .order("term_start", { ascending: false })
+    .order("period_index", { ascending: true })
+    .limit(1);
+  const id = billed?.[0]?.invoice_id;
+  return id ? String(id) : null;
+}
+
+/**
+ * R-1974: every "paid but no GST invoice" outcome is said in three places — the server log,
+ * Sentry, and a note on the order's lead naming the fix. Never throws: the payment is already
+ * recorded, and a failure to report must not cost the caller's response.
+ */
+async function reportMissedInvoice(
+  admin: Admin,
+  args: { tenantId: string; quoteId: string; leadId: string | null; logTag: string; log: string; note: string },
+): Promise<void> {
+  console.error(`${args.logTag} ${args.log}`);
+  try {
+    Sentry.captureException(new Error(`Online payment without GST invoice: ${args.log}`));
+  } catch { /* reporting only */ }
+  if (!args.leadId) return;
+  try {
+    await admin.from("lead_activities").insert({
+      tenant_id: args.tenantId,
+      lead_id: args.leadId,
+      kind: "note",
+      detail: args.note,
+    });
+  } catch (e) {
+    console.error(`${args.logTag} could not write the missed-invoice note for ${args.quoteId}: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 /**

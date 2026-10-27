@@ -130,7 +130,7 @@ export function tdsDecision(i: TdsDecisionInput): TdsDecision {
   const catchUpBase = th.onlyAbove || !crossedYear ? 0 : Math.max(0, Math.round(i.fyBaseWithoutTds));
   const catchUpTds = Math.round((catchUpBase * ratePct) / 100);
 
-  const who = noPan ? "No PAN → s.206AA 20%" : `PAN ${pan}${deducteeType ? ` · ${DEDUCTEE_LABEL[deducteeType]}` : ""}`;
+  const who = noPan ? `No PAN → s.206AA ${ratePct}%` : `PAN ${pan}${deducteeType ? ` · ${DEDUCTEE_LABEL[deducteeType]}` : ""}`;
   let reason: string;
   if (th.onlyAbove) {
     reason = `${sec}: purchases this year ${inr(yearTotal)} — ${ratePct}% on the ${inr(taxableNow)} above ${inr(th.aggregate)} (${who}).`;

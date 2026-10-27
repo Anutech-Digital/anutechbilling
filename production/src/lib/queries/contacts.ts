@@ -357,6 +357,89 @@ export function useCreateContact() {
   });
 }
 
+/** R-1894: what add_customer_contact reports back. */
+export interface AddCustomerContactResult {
+  contact_id: string;
+  /** The same person (email, else phone) was already in the address book — linked, not duplicated. */
+  existing: boolean;
+  /** They already served this customer — nothing was written. */
+  already_linked: boolean;
+  /** Receives this customer's invoices and reminders (the customer's first person). */
+  is_primary: boolean;
+}
+
+/* The generated types do not know add_customer_contact yet (R-1894 migration). */
+type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }> };
+
+/**
+ * R-1894 (25 Oct 2026): add a person to ONE customer — the person and the customer_contacts
+ * link in one database step (add_customer_contact). The Contacts card used useCreateContact,
+ * which wrote only the person; everything that shows or mails a customer's people reads the
+ * link, so the person vanished. The database decides the primary (the customer's first link)
+ * and reuses a person already on file with the same email or phone.
+ */
+export function useAddCustomerContact() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: {
+      customerId: string; full_name: string; email: string | null; phone: string | null;
+      title: string | null; role: ContactRole;
+    }): Promise<AddCustomerContactResult> => {
+      const { data, error } = await (createClient() as unknown as RpcClient).rpc("add_customer_contact", {
+        p_customer_id: v.customerId,
+        p_full_name: v.full_name,
+        p_email: v.email,
+        p_phone: v.phone,
+        p_title: v.title,
+        p_role: v.role,
+      });
+      if (error) throw error;
+      return data as AddCustomerContactResult;
+    },
+    onSuccess: (r, v) => {
+      qc.invalidateQueries({ queryKey: ["contacts"] });
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      if (r?.already_linked) toast.success(`${v.full_name} is already a contact of this customer`);
+      else if (r?.existing) toast.success("Contact added", { description: "This person was already in your contacts — linked here, not duplicated." });
+      else toast.success(r?.is_primary ? "Contact added as the primary" : "Contact added");
+    },
+    onError: (err) => toastError(err, { fallback: "Could not add the contact.", description: "Nothing was saved. Try again, or reload the page." }),
+  });
+}
+
+/**
+ * R-1894: edit a person from a customer's Contacts card. The person's own fields go on the
+ * contact row; the ROLE goes on this customer's link, because that is the role the card shows
+ * and the same person can be the accountant here and the owner elsewhere. The legacy
+ * contacts.customer_id / role / is_primary are not written (an edit used to move the person's
+ * home customer to whichever customer was open).
+ */
+export function useUpdateCustomerContact() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, customerId, role, values }: {
+      id: string; customerId: string; role: ContactRole;
+      values: Pick<ContactFormValues, "full_name" | "email" | "phone" | "title">;
+    }) => {
+      const supabase = createClient();
+      const { error } = await supabase.from("contacts").update(values).eq("id", id);
+      if (error) throw error;
+      const { error: linkErr } = await supabase
+        .from("customer_contacts")
+        .update({ role })
+        .eq("customer_id", customerId)
+        .eq("contact_id", id);
+      if (linkErr) throw linkErr;
+      return id;
+    },
+    onSuccess: (id) => {
+      qc.invalidateQueries({ queryKey: ["contacts"] });
+      qc.invalidateQueries({ queryKey: ["contact", id] });
+    },
+    onError: (err) => toastError(err),
+  });
+}
+
 /** Update a contact's editable fields. */
 export function useUpdateContact() {
   const qc = useQueryClient();

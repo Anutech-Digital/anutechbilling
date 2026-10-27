@@ -16,7 +16,17 @@
  * the ad look better than it is.
  */
 
-export interface LeadSource { value: string; label: string }
+export interface LeadSource {
+  value: string;
+  label: string;
+  /** R-1981: other codes saved for this same source — mapped at READ time (canonicalSource,
+   *  SQL public.lead_source_key). The saved value is never rewritten. */
+  aliases?: readonly string[];
+  /** R-1981: written by the website itself (checkout / trial). Not offered on Add lead —
+   *  a hand-typed "Website order" would never reach Online Orders, which reads the raw
+   *  `buy-*` code (lib/online-orders/sources.ts). Shown when a lead already has it. */
+  auto?: boolean;
+}
 
 export const LEAD_SOURCES: readonly LeadSource[] = [
   // Paid — these carry spend (same keys as AD_CHANNELS)
@@ -31,7 +41,14 @@ export const LEAD_SOURCES: readonly LeadSource[] = [
   { value: "linkedin-organic", label: "LinkedIn (organic)" },
   { value: "youtube-organic",  label: "YouTube" },
   { value: "enquiry-form",     label: "Website enquiry form" },
-  { value: "buy-workspace-v2", label: "Buy Workspace page" },
+  { value: "buy-workspace-v2", label: "Buy Workspace page", aliases: ["buy-workspace"] },
+  // Written by the website itself (R-1981, 26 Oct 2026). Checkout and trial routes save their
+  // own codes (lib/online-orders/sources.ts lists them); the Source filter and reports show
+  // one name for each instead of five raw codes. "-sim" = a test-mode payment, kept apart so
+  // a test never counts as a sale from an ad.
+  { value: "website-order",      label: "Website order",        aliases: ["buy-workspace-direct", "buy-cart-direct"], auto: true },
+  { value: "website-order-test", label: "Website order (test)", aliases: ["buy-workspace-direct-sim", "buy-cart-direct-sim"], auto: true },
+  { value: "website-trial",      label: "Website trial",        aliases: ["buy-workspace-trial", "buy-hosting-trial"], auto: true },
   // Direct
   { value: "whatsapp",         label: "WhatsApp" },
   { value: "referral",         label: "Referral" },
@@ -57,7 +74,8 @@ export function canonicalSource(value: string | null | undefined): string {
   const v = (value ?? "").trim();
   if (!v) return v;
   const k = v.toLowerCase();
-  const hit = LEAD_SOURCES.find((s) => s.value.toLowerCase() === k || s.label.toLowerCase() === k);
+  const hit = LEAD_SOURCES.find((s) =>
+    s.value.toLowerCase() === k || s.label.toLowerCase() === k || (s.aliases ?? []).includes(k));
   return hit ? hit.value : v;
 }
 
@@ -67,10 +85,24 @@ export function canonicalSource(value: string | null | undefined): string {
  * and saving a lead never silently rewrites where it came from — unless it is just another
  * spelling of a listed source (canonicalSource), which is never offered twice.
  */
+const PICKABLE: readonly LeadSource[] = LEAD_SOURCES.filter((s) => !s.auto);
+
 export function sourceOptions(current: string | null | undefined): readonly LeadSource[] {
   const c = canonicalSource(current);
-  if (!c || LEAD_SOURCES.some((s) => s.value === c)) return LEAD_SOURCES;
-  return [...LEAD_SOURCES, { value: c, label: c }];
+  if (!c || PICKABLE.some((s) => s.value === c)) return PICKABLE;
+  const listed = LEAD_SOURCES.find((s) => s.value === c);
+  return [...PICKABLE, listed ?? { value: c, label: c }];
+}
+
+/**
+ * R-1981: the source to SAVE when a lead is edited. The form shows the canonical key
+ * ("website-order" for a saved "buy-workspace-direct"); writing that back would move the lead
+ * off Online Orders and the trial clock, which read the raw code. So when the person kept the
+ * same source, the saved value stays exactly as it was; a different pick is saved as picked.
+ */
+export function sourceForSave(picked: string, saved: string | null | undefined): string {
+  const raw = (saved ?? "").trim();
+  return raw && canonicalSource(raw) === picked ? (saved as string) : picked;
 }
 
 export function sourceLabel(value: string | null | undefined): string {

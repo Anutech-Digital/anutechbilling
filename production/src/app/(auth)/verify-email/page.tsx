@@ -2,7 +2,8 @@
 
 /**
  * /verify-email?token=…  — the link in the signup confirmation email (R-048, 4 Oct 2026).
- * Confirms the address, then sends the person to sign in. Every outcome says what to do
+ * Confirms the address. R-1926: a new owner is signed in by the link and goes straight to
+ * the setup wizard; anyone else is sent to sign in as before. Every outcome says what to do
  * next; an expired or used link offers a fresh one.
  */
 import * as React from "react";
@@ -14,7 +15,10 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { ResendVerification } from "@/components/features/auth/resend-verification";
 
-type State = "checking" | "ok" | "expired" | "used" | "invalid" | "error";
+type State = "checking" | "ok" | "opening" | "expired" | "used" | "invalid" | "error";
+
+/** R-1926: the only places the server may send a just-confirmed, signed-in person. */
+const LANDINGS = new Set(["/setup?welcome=1", "/dashboard"]);
 
 export default function VerifyEmailPage() {
   return (
@@ -42,7 +46,14 @@ function VerifyEmail() {
       body: JSON.stringify({ token }),
     })
       .then((r) => r.json())
-      .then((j: { ok?: boolean; email?: string; reason?: string; joinRequestedTo?: string | null }) => {
+      .then((j: { ok?: boolean; email?: string; reason?: string; joinRequestedTo?: string | null; signedIn?: boolean; next?: string }) => {
+        /* R-1926 (OB-5): the link signed them in — go straight on (hard navigation so the new
+           session cookie reaches the next request), no password retype. */
+        if (j.ok && j.signedIn && j.next && LANDINGS.has(j.next)) {
+          setState("opening");
+          window.location.replace(j.next);
+          return;
+        }
         if (j.ok) { setEmail(j.email ?? ""); setJoinTo(j.joinRequestedTo ?? null); setState("ok"); return; }
         setState(j.reason === "expired" || j.reason === "used" || j.reason === "invalid" ? j.reason : "error");
       })
@@ -51,6 +62,18 @@ function VerifyEmail() {
 
   if (state === "checking") {
     return <Card><p className="text-sm text-ink-3" role="status">Checking your link…</p></Card>;
+  }
+
+  if (state === "opening") {
+    return (
+      <Card>
+        <div className="text-center">
+          <Icon name="check_circle" size={36} className="text-emerald mx-auto mb-3" />
+          <h1 className="font-serif text-3xl mb-2">Email confirmed</h1>
+          <p className="text-sm text-ink-3" role="status">You&apos;re signed in. Opening your setup…</p>
+        </div>
+      </Card>
+    );
   }
 
   if (state === "ok" && joinTo) {
@@ -89,7 +112,7 @@ function VerifyEmail() {
     );
   }
 
-  const copy: Record<Exclude<State, "checking" | "ok">, { title: string; line: string }> = {
+  const copy: Record<Exclude<State, "checking" | "ok" | "opening">, { title: string; line: string }> = {
     used: { title: "Link already used", line: "This email is already confirmed. Sign in with your password." },
     expired: { title: "Link expired", line: "Confirmation links work for 48 hours. Get a new one below." },
     invalid: { title: "Link not recognised", line: "The link may be incomplete — open it straight from the email, or get a new one below." },

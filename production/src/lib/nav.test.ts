@@ -414,7 +414,7 @@ describe("R-255: the accountant / CA menu (manager's call, 7 Oct 2026)", () => {
     const { canOpenRoute } = await import("./nav");
     const root = path.join(__dirname, "../app/(app)/accounting");
     const hrefs = new Set<string>();
-    for (const f of ["balance-sheet/page.tsx", "profitability/page.tsx", "tds-receivable/page.tsx"]) {
+    for (const f of ["balance-sheet/page.tsx", "balance-sheet/bs-lines.tsx", "balance-sheet/profit-split/page.tsx", "profitability/page.tsx", "tds-receivable/page.tsx"]) {
       const src = fs.readFileSync(path.join(root, f), "utf8");
       for (const m of src.matchAll(/href=\{?[`"](\/[^`"$?]+)/g)) hrefs.add(m[1]);
     }
@@ -434,7 +434,8 @@ describe("R-255: the accountant / CA menu (manager's call, 7 Oct 2026)", () => {
 
   it("report pages gate their links through canOpenRoute", () => {
     const root = path.join(__dirname, "../app/(app)/accounting");
-    const bs = fs.readFileSync(path.join(root, "balance-sheet/page.tsx"), "utf8");
+    /* BSLine moved to bs-lines.tsx (page split for max-lines, 25 Oct 2026). */
+    const bs = fs.readFileSync(path.join(root, "balance-sheet/bs-lines.tsx"), "utf8");
     expect(bs).toContain("const clickable = !!href && canOpenRoute(role, href);");
     const prof = fs.readFileSync(path.join(root, "profitability/page.tsx"), "utf8");
     expect(prof.match(/r\.customerId && canOpenCustomer \?/g)?.length).toBe(2);

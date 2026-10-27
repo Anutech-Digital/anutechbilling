@@ -17,7 +17,7 @@ const CATALOG: ListPriceItem[] = [
     prices: { annual: { msrp: 136, wholesale: 110 }, monthly: { msrp: 170, wholesale: 138 } } },
   { id: "GW-STD", name: "Google Workspace Standard", vendor: "google", kind: "main", msrp: 736, prices: {} },
   { id: "GW-PLS", name: "Google Workspace Plus", vendor: "google", kind: "main", msrp: 1380,
-    prices: { annual: { msrp: 1380, wholesale: 1150 } } },
+    prices: { annual: { msrp: 1500, wholesale: 1150 } } },
   { id: "GW-ENT", name: "Google Workspace Enterprise", vendor: "google", kind: "main", msrp: 2400, prices: {} },
   { id: "GW-ENT-UP", name: "Google Workspace Enterprise (upgrade)", vendor: "google", kind: "addon", msrp: 9999, prices: {} },
   { id: "GV-STD", name: "Google Voice Standard", vendor: "google", kind: "main", msrp: 800, prices: {} },
@@ -70,7 +70,7 @@ describe("listPriceMrr", () => {
 
   it("item_id wins over the plan text", () => {
     expect(listPriceMrr(CATALOG, { vendor: "google", plan: "Google Workspace", seats: 4, item_id: "GW-PLS" }))
-      .toEqual({ ok: true, mrr: 1380 * 4, itemId: "GW-PLS", via: "item_id" });
+      .toEqual({ ok: true, mrr: 1500 * 4, itemId: "GW-PLS", via: "item_id" });
   });
 
   it("exact catalogue name works for any vendor", () => {

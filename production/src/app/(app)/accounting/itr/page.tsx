@@ -13,6 +13,11 @@
  * File hone ka record compliance_log me jata hai (obligation `it_itr6`,
  * period = FY key) — wahi jagah jo Compliance Calendar padhta hai, nayi
  * table nahi.
+ *
+ * R-1844 (24 Oct 2026): business type ke hisaab se — Proprietor ITR-3 (owner ke PAN par,
+ * slab: new + old regime), Firm / LLP ITR-5 (30%), Pvt Ltd ITR-6 (25% / 115BAA, pehle jaisa).
+ * Khaali type = Pvt Ltd (entity.ts) + amber "Set your business type". Filed record
+ * `it_itr_business` par jab type company nahi.
  */
 "use client";
 
@@ -29,12 +34,12 @@ import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { useItrPack } from "@/lib/queries/itr";
+import { useComplianceProfile } from "@/lib/compliance/profile";
+import { BusinessTypePrompt } from "@/components/features/compliance/business-type-prompt";
 import { useComplianceLog, toFiledMap, useMarkComplianceFiled, useUnmarkComplianceFiled } from "@/lib/queries/compliance";
-import { currentFinancialYear, type ItrPack } from "@/lib/tax/itr";
+import { computeItrPack, currentFinancialYear, type ItrPack } from "@/lib/tax/itr";
 import { fyLabelOfYear } from "@/lib/dates/ist";
 import { itrCsvRows, ITR_CSV_HEADERS } from "@/lib/tax/itr-export";
-
-const ITR_OBLIGATION_KEY = "it_itr6";
 
 /** Aaj IST me — FY chunav aur "kitne din bache" dono isi se. */
 function istToday(): string {
@@ -53,7 +58,16 @@ export default function ItrPage() {
   /* Default: pichhla FY — wahi hai jo file hona hai. Chalta hua FY advance
      tax ke liye ek click par. */
   const [fyYear, setFyYear] = React.useState(nowFy.startYear - 1);
-  const { data: pack, isLoading, isError, refetch } = useItrPack(fyYear);
+  const { data: companyPack, isLoading: packLoading, isError, refetch } = useItrPack(fyYear);
+  /* R-1844: the same figures, taxed as this business type (empty type = Pvt Ltd). */
+  const profileQ = useComplianceProfile();
+  const businessType = profileQ.data?.businessType ?? null;
+  const profileReady = profileQ.data !== undefined || profileQ.isError;
+  const pack = React.useMemo(
+    () => (companyPack && profileReady ? computeItrPack(companyPack.fy, companyPack.sources, businessType) : undefined),
+    [companyPack, businessType, profileReady],
+  );
+  const isLoading = packLoading || (!!companyPack && !profileReady);
   const { data: log } = useComplianceLog();
   const filedMap = toFiledMap(log);
 
@@ -63,10 +77,11 @@ export default function ItrPage() {
     <div className="mx-auto max-w-[1240px] space-y-4 p-4 md:p-6 lg:p-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="font-serif text-2xl text-ink">Income Tax (ITR) — preparation</h1>
+          <h1 className="font-serif text-2xl text-ink">Income Tax ({pack?.itrForm ?? "ITR"}) — preparation</h1>
+          {pack && <p className="mt-0.5 text-sm font-medium text-ink-2">{pack.itrText}</p>}
           <p className="mt-1 max-w-2xl text-sm text-ink-3">
             This computation is an ESTIMATE, not an assessment — depreciation comes from the asset register (IT Act
-            WDV); your CA adds disallowances and the audit. The return itself is filed on incometax.gov.in with a DSC; this pack cuts that
+            WDV); your CA adds disallowances and the audit. The return itself is filed on incometax.gov.in; this pack cuts that
             work from hours to minutes.
           </p>
         </div>
@@ -90,6 +105,8 @@ export default function ItrPage() {
         </div>
       </div>
 
+      <BusinessTypePrompt />
+
       {isLoading && (
         <div className="space-y-4">
           <Skeleton className="h-40 w-full" />
@@ -103,7 +120,7 @@ export default function ItrPage() {
         <PackView
           pack={pack}
           today={today}
-          filedOn={filedMap.get(`${ITR_OBLIGATION_KEY}|${pack.fy.fiscalKey}`) ?? null}
+          filedOn={filedMap.get(`${pack.obligationKey}|${pack.fy.fiscalKey}`) ?? null}
         />
       )}
     </div>
@@ -111,7 +128,8 @@ export default function ItrPage() {
 }
 
 function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; filedOn: string | null }) {
-  const dueIn = daysUntil(pack.fy.itrDue, today);
+  const dueIn = daysUntil(pack.due.date, today);
+  const slabs = pack.entityType === "proprietor";
   const incomeLines = pack.pnl.filter((l) => l.kind === "income");
   const expenseLines = pack.pnl.filter((l) => l.kind === "expense");
 
@@ -131,10 +149,10 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
           <Icon name="calendar" className="h-5 w-5 text-ink-3" />
           <div>
             <div className="text-sm font-medium text-ink">
-              Return for {pack.fy.label} ({pack.fy.assessmentYear}) — due {formatDate(pack.fy.itrDue)}
+              {pack.itrForm} for {pack.fy.label} ({pack.fy.startYear >= 2026 ? `Tax Year ${pack.fy.label.replace("FY ", "")}` : pack.fy.assessmentYear}) — due {formatDate(pack.due.date)}
             </div>
             <div className="text-xs text-ink-3">
-              Due date for a company under audit (Section 139(1)) · filing late means a fee of up to ₹5,000 (234F) and losing the loss carry-forward
+              {pack.due.note} · filing late means a fee of up to ₹5,000 (234F) and losing the loss carry-forward
             </div>
           </div>
         </div>
@@ -190,7 +208,11 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
 
         {/* ── Tax estimate — dono regime ───────────────────────────── */}
         <Card className="p-4">
-          <h2 className="mb-3 text-sm font-medium text-ink">Tax estimate — both regimes, your CA chooses</h2>
+          <h2 className="mb-3 text-sm font-medium text-ink">
+            {pack.entityType === "pvt_ltd" ? "Tax estimate — both regimes, your CA chooses"
+              : slabs ? "Tax estimate — new vs old regime (slabs), your CA chooses"
+              : "Tax estimate — firm rate"}
+          </h2>
           {pack.estimates.length === 0 ? (
             <p className="text-sm text-ink-3">
               {pack.bookProfit < 0
@@ -198,7 +220,7 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
                 : "Taxable income is zero."}
             </p>
           ) : (
-            <div className="grid grid-cols-2 gap-3">
+            <div className={`grid gap-3 ${pack.estimates.length > 1 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>
               {pack.estimates.map((e) => {
                 const cheaper = pack.cheaperEstimate?.regime === e.regime;
                 return (
@@ -211,7 +233,8 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
                       {cheaper && <Badge kind="success" size="sm">lower</Badge>}
                     </div>
                     <dl className="space-y-1 text-xs text-ink-2">
-                      <Row k={`Tax @ ${e.ratePct}%`} v={rupee(e.baseTax)} />
+                      <Row k={e.ratePct ? `Tax @ ${e.rateText}` : "Tax on slabs"} v={rupee(e.baseTax)} />
+                      {e.rebate > 0 && <Row k="Rebate 87A" v={`− ${rupee(e.rebate)}`} />}
                       <Row k="Surcharge" v={rupee(e.surcharge)} />
                       <Row k="Cess 4%" v={rupee(e.cess)} />
                     </dl>
@@ -223,6 +246,7 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
               })}
             </div>
           )}
+          <p className="mt-2 text-xs text-ink-3">{pack.ratesNote}</p>
           <div className="mt-3 space-y-1 text-xs text-ink-3">
             <div className="flex justify-between">
               <span>TDS receivable ({pack.sources.tdsCount} {pack.sources.tdsCount === 1 ? "entry" : "entries"}) —{" "}
@@ -283,7 +307,7 @@ function PackView({ pack, today, filedOn }: { pack: ItrPack; today: string; file
             View in Compliance calendar
           </Link>
         </div>
-        <FiledControl fy={pack.fy.fiscalKey} fyLabel={pack.fy.label} due={pack.fy.itrDue} filedOn={filedOn} today={today} />
+        <FiledControl obligationKey={pack.obligationKey} fy={pack.fy.fiscalKey} fyLabel={pack.fy.label} due={pack.due.date} filedOn={filedOn} today={today} />
       </Card>
     </div>
   );
@@ -318,8 +342,8 @@ function Row({ k, v }: { k: string; v: string }) {
  * "File ho gaya" ka record — compliance_log me, acknowledgment number ke
  * saath (`reference`). Wahi row Compliance Calendar par bhi dikhti hai.
  */
-function FiledControl({ fy, fyLabel, due, filedOn, today }: {
-  fy: string; fyLabel: string; due: string; filedOn: string | null; today: string;
+function FiledControl({ obligationKey, fy, fyLabel, due, filedOn, today }: {
+  obligationKey: string; fy: string; fyLabel: string; due: string; filedOn: string | null; today: string;
 }) {
   const mark = useMarkComplianceFiled();
   const unmark = useUnmarkComplianceFiled();
@@ -332,7 +356,7 @@ function FiledControl({ fy, fyLabel, due, filedOn, today }: {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => unmark.mutate({ obligation_key: ITR_OBLIGATION_KEY, period_key: fy })}
+          onClick={() => unmark.mutate({ obligation_key: obligationKey, period_key: fy })}
           disabled={unmark.isPending}
         >
           Marked by mistake? Undo
@@ -347,7 +371,7 @@ function FiledControl({ fy, fyLabel, due, filedOn, today }: {
       onSubmit={(e) => {
         e.preventDefault();
         mark.mutate({
-          obligation_key: ITR_OBLIGATION_KEY,
+          obligation_key: obligationKey,
           period_key: fy,
           period_label: fyLabel,
           due_date: due,

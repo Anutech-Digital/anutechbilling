@@ -27,7 +27,7 @@ import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import { isEmailConfigured } from "@/lib/email/send";
-import { sendCustomerEmail } from "@/lib/messaging";
+import { sendCustomerEmail, CUSTOMER_MESSAGES_OFF } from "@/lib/messaging";
 import { renderQuotePDF } from "@/lib/pdf";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { logoDataUri } from "@/lib/pdf/logo";
@@ -465,5 +465,11 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
     recipient,
     attachedPdf:  !!attachments,
     quoteStatus:  sendResult.status === "failed" ? quote.status : "sent",
+    /* R-1922: a failed send says WHY it was refused (so the toast offers the switch that fixes
+       it) and hands back the customer link (so "Copy link instead" still reaches the customer). */
+    ...(sendResult.status === "failed" ? {
+      refusedReason: sendResult.errorMessage === CUSTOMER_MESSAGES_OFF ? "customer_messages_off" : undefined,
+      customerLink:  customerUrl,
+    } : {}),
   });
 }
