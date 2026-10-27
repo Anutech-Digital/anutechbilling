@@ -38,7 +38,7 @@ import { TDS_SECTIONS, tdsSplitFromNet } from "@/lib/accounting/tds-split";
 import { amountInIndianWords } from "@/lib/accounting/amount-words";
 import { guessCustomer } from "@/lib/banking/credit-pay-for";
 import {
-  fifoAllocate, receiptCheck, pickProjectForReceipt, projectReceiptPayload, hintLink, type KistRow,
+  fifoAllocate, receiptCheck, pickProjectForReceipt, projectReceiptPayload, hintLink, projectsForPicker, type KistRow,
 } from "@/lib/banking/project-receipt-allocation";
 import { describeError } from "@/lib/errors/toast-error";
 
@@ -97,26 +97,32 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
   /* What this receipt settles: the bank amount, plus the TDS the customer paid for us. */
   const settled = net + tdsAmount;
 
-  /* The project to open on: the customer the bank line names, else the one whose oldest
-     instalments add up to the receipt. Once — the owner's own pick is never overridden. */
+  /* R-2004 — the customer chosen in "Who paid?" wins; the bank-line guess is used only when no
+     customer is chosen. The picker lists only the chosen customer's projects (none chosen → all,
+     the guessed customer's first). */
   const guessed = React.useMemo(() => guessCustomer(txn, customers), [txn, customers]);
-  const autoPicked = React.useRef(false);
+  const chosen = customerId || null;
+  const ordered = React.useMemo(
+    () => projectsForPicker(projects ?? [], chosen, guessed?.customerId ?? null),
+    [projects, chosen, guessed],
+  );
+
+  /* The project to open on: the chosen (else guessed) customer's ONE open project, else the one
+     whose oldest instalments add up to the receipt. Runs again only when the customer changes —
+     the owner's own pick is never overridden while the customer stays the same. A project that
+     is not the new customer's is cleared; a customer with no open project → "New project". */
+  const pickedFor = React.useRef<string | null | undefined>(undefined);
   React.useEffect(() => {
-    if (autoPicked.current || isLoading || !projects?.length || projectId) return;
-    autoPicked.current = true;
-    const id = pickProjectForReceipt(projects, guessed?.customerId ?? (customerId || null), settled);
-    if (id) setProjectId(id);
-  }, [isLoading, projects, projectId, guessed, customerId, settled]);
+    if (isLoading || !projects?.length || pickedFor.current === chosen) return;
+    pickedFor.current = chosen;
+    if (chosen && ordered.length === 0) { setProjectId(""); setMode("new"); return; }
+    if (projectId && ordered.some((p) => p.id === projectId)) return;
+    setProjectId(pickProjectForReceipt(ordered, chosen ?? guessed?.customerId ?? null, settled) ?? "");
+    setAddMilestone(false);
+  }, [isLoading, projects, chosen, ordered, projectId, guessed, settled]);
 
   /* A different project or a different amount settled → back to FIFO. */
   React.useEffect(() => { setManual(null); }, [projectId, settled]);
-
-  /* The guessed customer's projects first in the picker. */
-  const ordered = React.useMemo(() => {
-    const first = guessed?.customerId ?? customerId;
-    const list = [...(projects ?? [])];
-    return first ? [...list.filter((p) => p.customerId === first), ...list.filter((p) => p.customerId !== first)] : list;
-  }, [projects, guessed, customerId]);
 
   const fifo = project && !addingMilestone ? fifoAllocate(settled, project.milestones) : null;
   const rowState = (m: OpenMilestone): RowState => {
@@ -231,6 +237,8 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
           <p className="text-xs text-ink-3">Loading projects…</p>
         ) : (projects ?? []).length === 0 ? (
           <p className="text-xs text-ink-3">No open projects — choose &quot;New project&quot;.</p>
+        ) : ordered.length === 0 ? (
+          <p className="text-xs text-ink-3">No open project for {customers.find((c) => c.id === customerId)?.name ?? "this customer"} — choose &quot;New project&quot;.</p>
         ) : (
           <>
             <select value={projectId} onChange={(e) => pickProject(e.target.value)} aria-label="Project" className={selectCls}>

@@ -741,7 +741,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 customers={customers ?? []}
                 onNewCustomer={() => setNewCustomerOpen(true)}
                 pickedCustomerId={createdCustomer}
-                onProjectPayment={() => setShowProject(true)}
+                onProjectPayment={(id) => { setProjCustomer(id); setShowProject(true); }}
                 onSaved={() => setPayForDone(true)}
                 onDone={() => onOpenChange(false)}
               />

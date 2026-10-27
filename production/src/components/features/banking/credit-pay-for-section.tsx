@@ -59,8 +59,9 @@ interface Props {
   onNewCustomer?: () => void;
   /** A customer the parent just created — picked here. */
   pickedCustomerId?: string | null;
-  /** Left out (relink) → no "Project payment" button. */
-  onProjectPayment?: () => void;
+  /** Left out (relink) → no "Project payment" button. Gets the customer chosen in "Who paid?"
+   *  ("" when none) so the project section opens on that customer's project (R-2004). */
+  onProjectPayment?: (customerId: string) => void;
   /** The line is booked — the parent hides the choices that no longer apply. */
   onSaved?: () => void;
   onDone: () => void;
@@ -333,7 +334,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                   ? `Record sale & reconcile ${rupee(credit)}`
                   : `Keep ${rupee(credit)} as advance & reconcile`}
             </Button>
-            {onProjectPayment && <Button size="sm" variant="default" icon="briefcase" onClick={onProjectPayment}>Project payment</Button>}
+            {onProjectPayment && <Button size="sm" variant="default" icon="briefcase" onClick={() => onProjectPayment(customerId)}>Project payment</Button>}
           </div>
         </>
       )}

@@ -72,6 +72,23 @@ export function pickProjectForReceipt(
   return fits.length === 1 ? fits[0].id : null;
 }
 
+/**
+ * R-2004 — the projects the picker lists. The customer the owner CHOSE wins: only their projects.
+ * No customer chosen → every project, the narration-guessed customer's first (a guess only orders,
+ * it never hides — names like "SCN Acme…" / "SCN Bharat…" share words).
+ */
+export function projectsForPicker<T extends { customerId: string | null }>(
+  projects: readonly T[],
+  chosenCustomerId: string | null,
+  guessedCustomerId: string | null,
+): T[] {
+  if (chosenCustomerId) return projects.filter((p) => p.customerId === chosenCustomerId);
+  if (guessedCustomerId) {
+    return [...projects.filter((p) => p.customerId === guessedCustomerId), ...projects.filter((p) => p.customerId !== guessedCustomerId)];
+  }
+  return [...projects];
+}
+
 export interface KistRow { id: string; seq: number; on: boolean; amount: number; raiseInvoice: boolean }
 
 export interface ProjectReceiptTds { section: string; ratePct: number; amount: number }

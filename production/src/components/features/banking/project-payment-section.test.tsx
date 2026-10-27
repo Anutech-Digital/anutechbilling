@@ -142,3 +142,71 @@ describe("R-1998 error from the RPC", () => {
     expect(onDone).not.toHaveBeenCalled();
   });
 });
+
+/* R-2004 — owner's localhost check of R-1998: on "NEFT CR-…-SCN ACME WEBSITE CO-KIST 1 AND 2" the owner
+   chose "SCN Acme Website Co" in "Who paid?", clicked Project payment → the picker stayed on "Select a
+   project…" and also listed Bharat's "SCN Mobile app" (both names share "SCN", and both projects'
+   first two kists add up to ₹2,36,000). The customer chosen wins; the picker shows only theirs. */
+describe("R-2004 the customer chosen picks the project", () => {
+  const scnCustomers = [{ id: "c-acme", name: "SCN Acme Website Co" }, { id: "c-bharat", name: "SCN Bharat Apps" }];
+  const scnProjects = () => [
+    { id: "p-web", title: "SCN Website", customerName: "SCN Acme Website Co", customerId: "c-acme", total: 354000, paid: 0, gstRate: 18,
+      milestones: [ms(1), ms(2), ms(3)] },
+    { id: "p-app", title: "SCN Mobile app", customerName: "SCN Bharat Apps", customerId: "c-bharat", total: 236000, paid: 0, gstRate: 18,
+      milestones: [{ ...ms(1), id: "b1" }, { ...ms(2), id: "b2" }] },
+  ];
+  const el = (customerId: string) => (
+    <ProjectPaymentSection
+      txn={{ id: "t9", txn_date: "2026-10-20", description: "NEFT CR-HDFC0001957-SCN ACME WEBSITE CO-KIST 1 AND 2", reference: "SCN-1" }}
+      amount={236000}
+      customers={scnCustomers}
+      customerId={customerId}
+      onCustomerChange={() => {}}
+      onNewCustomer={() => {}}
+      onCancel={() => {}}
+      onDone={() => {}}
+    />
+  );
+  const projectSelect = () => screen.getByLabelText("Project") as HTMLSelectElement;
+  const optionTexts = () => Array.from(projectSelect().options).map((o) => o.textContent ?? "");
+
+  beforeEach(() => { state.projects = scnProjects(); });
+
+  it("Acme chosen → SCN Website is selected by itself, kist 1 + 2 ticked, Bharat's project is not listed", () => {
+    render(el("c-acme"));
+    expect(projectSelect().value).toBe("p-web");
+    expect(optionTexts().some((t) => t.includes("SCN Mobile app"))).toBe(false);
+    expect((screen.getByRole("checkbox", { name: "Tick Kist 1" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: "Tick Kist 2" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: "Tick Kist 3" }) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("customer switched Acme → Bharat → SCN Mobile app is selected, Acme's project leaves the list", () => {
+    const { rerender } = render(el("c-acme"));
+    expect(projectSelect().value).toBe("p-web");
+    rerender(el("c-bharat"));
+    expect(projectSelect().value).toBe("p-app");
+    expect(optionTexts().some((t) => t.includes("SCN Website"))).toBe(false);
+  });
+
+  it("no customer chosen → every open project is listed", () => {
+    render(el(""));
+    expect(optionTexts().some((t) => t.includes("SCN Website"))).toBe(true);
+    expect(optionTexts().some((t) => t.includes("SCN Mobile app"))).toBe(true);
+  });
+
+  it("the owner's own project pick stays while the customer stays the same", () => {
+    state.projects = [...scnProjects(), { id: "p-seo", title: "SCN SEO", customerName: "SCN Acme Website Co", customerId: "c-acme",
+      total: 118000, paid: 0, gstRate: 18, milestones: [{ ...ms(1), id: "s1" }] }];
+    const { rerender } = render(el("c-acme"));
+    fireEvent.change(projectSelect(), { target: { value: "p-seo" } });
+    rerender(el("c-acme"));
+    expect(projectSelect().value).toBe("p-seo");
+  });
+
+  it("the customer chosen has no open project → New project opens", () => {
+    state.projects = [scnProjects()[1]];
+    render(el("c-acme"));
+    expect(screen.getByRole("tab", { name: /New project/ }).getAttribute("aria-selected")).toBe("true");
+  });
+});

@@ -191,3 +191,13 @@ describe("R-1863 (c) Advance — nothing to invoice yet", () => {
     expect(state.pay).not.toHaveBeenCalled();
   });
 });
+
+describe("R-2004 Project payment keeps the customer chosen in “Who paid?”", () => {
+  it("the owner picks a customer, then Project payment → that customer is handed over", () => {
+    const onProjectPayment = vi.fn();
+    render(<CreditPayForSection transaction={txn(236000)} customers={customers} onNewCustomer={() => {}} onProjectPayment={onProjectPayment} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Customer who paid"), { target: { value: "c2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Project payment" }));
+    expect(onProjectPayment).toHaveBeenCalledWith("c2");
+  });
+});

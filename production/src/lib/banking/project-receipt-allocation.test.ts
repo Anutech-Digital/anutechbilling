@@ -3,7 +3,7 @@
    kist 2); ₹2,12,400 in the bank + ₹23,600 TDS for both kists; more money than is due. */
 import { describe, expect, it } from "vitest";
 import {
-  fifoAllocate, receiptCheck, pickProjectForReceipt, projectReceiptPayload, hintLink,
+  fifoAllocate, receiptCheck, pickProjectForReceipt, projectReceiptPayload, hintLink, projectsForPicker,
 } from "./project-receipt-allocation";
 
 const kists = [
@@ -111,5 +111,22 @@ describe("hintLink — the RPC's hint as the 'what to do next' link (§24)", () 
     expect(hintLink(undefined)).toBeNull();
     expect(hintLink("https://evil.example")).toBeNull();
     expect(hintLink("//evil.example")).toBeNull();
+  });
+});
+
+describe("R-2004 projectsForPicker — the customer chosen wins over the narration guess", () => {
+  const ps = [
+    { id: "a1", customerId: "c-acme" },
+    { id: "b1", customerId: "c-bharat" },
+    { id: "a2", customerId: "c-acme" },
+  ];
+  it("customer chosen → only that customer's projects (the guess is ignored)", () => {
+    expect(projectsForPicker(ps, "c-bharat", "c-acme").map((p) => p.id)).toEqual(["b1"]);
+  });
+  it("no customer, a guess → every project, the guessed customer's first", () => {
+    expect(projectsForPicker(ps, null, "c-bharat").map((p) => p.id)).toEqual(["b1", "a1", "a2"]);
+  });
+  it("no customer, no guess → every project as is", () => {
+    expect(projectsForPicker(ps, null, null).map((p) => p.id)).toEqual(["a1", "b1", "a2"]);
   });
 });
