@@ -12,7 +12,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { toastError } from "@/lib/errors/toast-error";
-import { payArgs, type Bill194q, type PayInput, type VendorOpenItem, type VendorPayResult } from "@/lib/banking/debit-pay-for";
+import { payArgs, type Bill194q, type PayInput, type VendorAlias, type VendorOpenItem, type VendorPayResult } from "@/lib/banking/debit-pay-for";
 import { queryKeys } from "@/lib/queries/keys";
 
 /* The generated types do not know the R-1866 functions yet (migration not applied there). */
@@ -52,12 +52,33 @@ export function usePayVendorFromBankDebit() {
     },
     onSuccess: () => {
       for (const key of ["bank_transactions", "bank_accounts", "bank_debit_vendor_open_items", "vendor_bills", "vendors",
-                         "expenses", "prepaid_advances", "balance-sheet", "payments-made", "vendor_194q", "vendor-payments", "statutory-dues"]) {
+                         "expenses", "prepaid_advances", "vendor_narration_aliases", "balance-sheet", "payments-made", "vendor_194q", "vendor-payments", "statutory-dues"]) {
         qc.invalidateQueries({ queryKey: [key] });
       }
       qc.invalidateQueries({ queryKey: queryKeys.pnl() });   // the P&L's real key (was ["pnl"], read by nothing)
     },
     onError: (err) => toastError(err),
+  });
+}
+
+/**
+ * R-1919: what this company has learned — "narration key → vendor" (vendor_narration_aliases),
+ * written by the database on every vendor-payment save from a bank line. guessVendor reads it as
+ * step 4 of the one order, exactly like bank_debit_vendor_guess (auto-reconcile).
+ */
+export function useVendorNarrationAliases() {
+  return useQuery({
+    queryKey: ["vendor_narration_aliases"],
+    queryFn: async (): Promise<VendorAlias[]> => {
+      /* The generated types do not know the R-1919 table yet (migration not applied there). */
+      const supabase = createClient() as unknown as {
+        from: (t: string) => { select: (c: string) => { order: (c: string) => PromiseLike<{ data: unknown; error: { message: string } | null }> } };
+      };
+      const { data, error } = await supabase.from("vendor_narration_aliases").select("narration_key, vendor_id").order("narration_key");
+      if (error) throw error;
+      return (data ?? []) as VendorAlias[];
+    },
+    staleTime: 60_000,
   });
 }
 

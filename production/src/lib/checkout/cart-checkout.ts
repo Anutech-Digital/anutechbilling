@@ -210,7 +210,7 @@ function repriceLine(sku: string | undefined, cycle: string | undefined, qty: nu
   return null;
 }
 
-type DomainPricing =
+export type DomainPricing =
   /* testPrice: R-1769 — priced from the laptop-only TEST list (lib/domains/test-prices.ts). */
   | { ok: true; line: QuoteLine; firstYear: number; testPrice: boolean }
   | { ok: false; reason: string };
@@ -240,8 +240,9 @@ export function bundledDomainRate(termRate: number, firstYear: number): number {
  * available with a known price for its term at this moment. R-156: the term
  * (`years`, default 1) is priced from the registry's own N-year total; a term the
  * registry does not price is refused, never extrapolated from the 1-year price.
+ * Exported (R-1977): the Workspace checkout prices its "I need a new domain" line here too.
  */
-async function priceDomainLines(
+export async function priceDomainLines(
   lines: { sku?: string; label?: string; qty: number; domain?: string; years?: number }[],
 ): Promise<Map<number, DomainPricing>> {
   const out = new Map<number, DomainPricing>();
@@ -708,6 +709,8 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
       );
     }
 
+    /* R-1978: the ad attribution, on the lead AND the quote (subscriptions read it by quote_id). */
+    const attribution = captureFromRequest(request, body as Record<string, unknown>);
     const { error: leadErr } = await admin.from("leads").insert({
       id: leadId,
       tenant_id: BUY_PAGE_TENANT_ID,
@@ -720,7 +723,7 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
       value: subtotal,
       stage: "quote",
       source: panel ? "dms-panel" : isSimulation ? "buy-cart-direct-sim" : "buy-cart-direct",
-      ...captureFromRequest(request, body as Record<string, unknown>),
+      ...attribution,
       domain: cleanDomain || null,
       notes,
       gstin: validGstin,
@@ -770,6 +773,7 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
       // on every paid order's bill — and printed the internal DMS account id. Only a sentence
       // that stays true after payment goes here; the internal detail is on the lead's notes.
       notes: panel ? `Ordered from your hosting control panel.` : `Ordered online.`,
+      ...attribution, // R-1978: the order carries its ad attribution (subscription reads it via quote_id)
     });
     if (qErr) {
       console.error("[checkout/cart] quote insert failed:", qErr);

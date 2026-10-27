@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain .mjs ops script, no types
-import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine } from "../scripts/ops/worker-lock.mjs";
+import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, CI_DEFAULT_TIMEOUT_MIN, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript } from "../scripts/ops/worker-lock.mjs";
 
 describe("worker locks (two workers must never build in the same files)", () => {
   it("compares paths from the app root, whatever the slashes", () => {
@@ -83,8 +83,8 @@ describe("worker locks (two workers must never build in the same files)", () => 
   it("2 workers while Pardeep works (09:00–21:59 IST), 4 at night", () => {
     expect(maxWorkersAt("2026-10-07T03:30:00Z")).toBe(2); // 09:00 IST
     expect(maxWorkersAt("2026-10-07T16:29:00Z")).toBe(2); // 21:59 IST
-    expect(maxWorkersAt("2026-10-07T16:30:00Z")).toBe(4); // 22:00 IST
-    expect(maxWorkersAt("2026-10-06T21:00:00Z")).toBe(4); // 02:30 IST
+    expect(maxWorkersAt("2026-10-07T16:30:00Z")).toBe(3); // 22:00 IST (R-1960: night cap 3)
+    expect(maxWorkersAt("2026-10-06T21:00:00Z")).toBe(3); // 02:30 IST
   });
 });
 
@@ -237,8 +237,273 @@ describe("tsc heap (R-1827)", () => {
   it("every TSC_STEPS child is spawned with tscEnv()", () => {
     const src = readFileSync(path.join(root, "scripts", "ops", "worker-lock.mjs"), "utf8");
     const at = src.indexOf("function tscWithTurn");
-    const body = src.slice(at, at + 600);
-    expect(body).toMatch(/for \(const step of TSC_STEPS\)/);
+    const body = src.slice(at, at + 2000);
+    expect(body).toMatch(/for \(const step of tscStepsFor\(\{ full \}\)\)/); // R-1960: TSC_STEPS, or the cold step with --full-tsc
     expect(body).toMatch(/sh\(step, tscEnv\(\)\)/);
+  });
+});
+
+/* R-1936 (25 Oct 2026, G-PROCESS #2): CI was red 26% and SQL tests 23% of the time (12–25 Oct), with red
+   stretches up to 24 h, because new pushes kept landing on a red manager-pardeep. push now refuses on red,
+   `ci <CARD>` waits for the sha's runs, and a changed migration runs its related SQL tests first. gh/git/psql faked. */
+type Run = { databaseId: number; workflowName: string; status: string; conclusion: string; headSha: string; url: string; createdAt: string };
+const run = (o: Partial<Run>): Run => ({ databaseId: 1, workflowName: "CI", status: "completed", conclusion: "success", headSha: "a".repeat(40), url: "https://gh/run/1", createdAt: "2026-10-25T10:00:00Z", ...o });
+/* Real `gh run view --log-failed` lines (run 40212296266, SQL tests, 25 Oct). */
+const SQL_RED_LOG = [
+  "sql-tests\tRun the SQL test suite\t2026-10-25T16:36:02.1298707Z  FAIL [21/300] audit_log_values",
+  "sql-tests\tRun the SQL test suite\t2026-10-25T16:36:27.7999349Z  FAIL [239/300] r897_automation_gate",
+  "sql-tests\tRun the SQL test suite\t2026-10-25T16:36:41.0354644Z 298/304 pass  4 not-applicable  2 FAIL",
+  "sql-tests\tRun the SQL test suite\t2026-10-25T16:36:41.0355430Z ERROR:  FAIL 5: a system change (no user) was logged",
+].join("\n");
+
+function fakeGh(table: { branch?: Run[]; sha?: Run[] | ((n: number) => Run[]); log?: string; jobs?: unknown; fail?: boolean }) {
+  const calls: string[][] = [];
+  let shaCalls = 0;
+  const gh = (args: string[]) => {
+    calls.push(args);
+    if (table.fail) throw new Error("spawn gh ENOENT");
+    if (args[0] === "run" && args[1] === "list" && args.includes("--commit")) { shaCalls++; const s = table.sha; return JSON.stringify(typeof s === "function" ? s(shaCalls) : s ?? []); }
+    if (args[0] === "run" && args[1] === "list") return JSON.stringify(table.branch ?? []);
+    if (args[0] === "run" && args[1] === "view" && args.includes("--log-failed")) return table.log ?? "";
+    if (args[0] === "run" && args[1] === "view" && args.includes("--json")) return JSON.stringify(table.jobs ?? { jobs: [] });
+    throw new Error("unexpected gh " + args.join(" "));
+  };
+  return { gh, calls };
+}
+
+describe("R-1936: push refuses while manager-pardeep CI is red", () => {
+  const redSql = run({ databaseId: 40212296266, workflowName: "SQL tests", conclusion: "failure", headSha: "958cece7c4640d0c25b73e4f4203da0aea712759", url: "https://gh/run/sql" });
+  const greenCi = run({ workflowName: "CI" });
+
+  it("red blocks, naming the workflow, the sha and the failing tests", () => {
+    const { gh } = fakeGh({ branch: [greenCi, redSql], log: SQL_RED_LOG });
+    const r = checkRedGate("R-2000", { gh });
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("CI laal hai (SQL tests on 958cece7: audit_log_values, r897_automation_gate) — pehle woh theek karo");
+    expect(r.message).toContain("--fixes-red");
+    expect(r.message).toContain("https://gh/run/sql");
+  });
+
+  it("asks GitHub about manager-pardeep on Anutech-Digital/anutechbilling", () => {
+    const { gh, calls } = fakeGh({ branch: [greenCi] });
+    checkRedGate("R-2000", { gh });
+    expect(calls[0]).toEqual(expect.arrayContaining(["run", "list", "-R", "Anutech-Digital/anutechbilling", "-b", "manager-pardeep", "--json"]));
+  });
+
+  it("--fixes-red and --owner-override pass, and each is logged", () => {
+    for (const flag of ["fixesRed", "ownerOverride"] as const) {
+      const logged: string[] = [];
+      const { gh } = fakeGh({ branch: [redSql], log: SQL_RED_LOG });
+      const r = checkRedGate("R-2000", { gh, [flag]: true, log: (l: string) => logged.push(l) });
+      expect(r.ok, flag).toBe(true);
+      expect(logged).toHaveLength(1);
+      expect(JSON.parse(logged[0])).toMatchObject({ card: "R-2000", how: flag === "fixesRed" ? "--fixes-red" : "--owner-override" });
+      expect(logged[0]).toContain("audit_log_values");
+    }
+  });
+
+  it("a run still in progress does not block — even over an older red one", () => {
+    const going = run({ databaseId: 9, workflowName: "SQL tests", status: "in_progress", conclusion: "", createdAt: "2026-10-25T17:00:00Z" });
+    const { gh } = fakeGh({ branch: [greenCi, redSql, going] });
+    const r = checkRedGate("R-2000", { gh });
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain("SQL tests abhi chal raha hai");
+  });
+
+  it("a cancelled (superseded) newest run is passed over — the finished red one below still blocks", () => {
+    const cancelled = run({ databaseId: 9, workflowName: "SQL tests", conclusion: "cancelled", createdAt: "2026-10-25T17:00:00Z" });
+    const { gh } = fakeGh({ branch: [redSql, cancelled], log: SQL_RED_LOG });
+    expect(checkRedGate("R-2000", { gh }).ok).toBe(false);
+  });
+
+  it("green → go; gh missing / offline → warn and go, never blocks", () => {
+    expect(checkRedGate("R-2000", { gh: fakeGh({ branch: [greenCi] }).gh }).ok).toBe(true);
+    const r = checkRedGate("R-2000", { gh: fakeGh({ fail: true }).gh });
+    expect(r.ok).toBe(true);
+    expect(r.warn).toBe(true);
+    expect(r.message).toMatch(/^⚠/);
+  });
+
+  it("no test name in the log → the failed step from the jobs list", () => {
+    const jobs = { jobs: [{ name: "checks", steps: [{ name: "Run npm run lint:ratchet", conclusion: "failure" }, { name: "Build", conclusion: "success" }] }] };
+    const { gh } = fakeGh({ branch: [run({ conclusion: "failure" })], log: "checks\tx\t2026-10-25T03:31:03Z ##[error]Process completed with exit code 1.", jobs });
+    expect(checkRedGate("R-2000", { gh }).message).toContain("step: checks › Run npm run lint:ratchet");
+  });
+
+  it("failing test names: test-sql and vitest FAIL lines + ratchet summaries, no summary counts", () => {
+    expect(failingTestNames(SQL_RED_LOG)).toEqual(["audit_log_values", "r897_automation_gate"]);
+    const vitest = "checks\tTest\t2026-10-25T03:27:05.1Z \x1b[31m FAIL \x1b[39m tests/a.test.ts > money > rounds";
+    expect(failingTestNames(vitest)).toEqual(["tests/a.test.ts > money > rounds"]);
+    expect(failingTestNames("c\tx\t2026-10-25T03:31:03.29Z Lint ratchet FAILED — more warnings than baseline for: max-lines")).toEqual(["Lint ratchet FAILED — more warnings than baseline for: max-lines"]);
+    expect(failingSteps({ jobs: [{ name: "j", steps: [{ name: "s", conclusion: "timed_out" }] }] })).toEqual(["j › s"]);
+  });
+
+  it("push wires the gate: related SQL before the turn, red gate after fetch and before git push (exit 7)", () => {
+    const src = readFileSync(path.join(path.resolve(__dirname, ".."), "scripts", "ops", "worker-lock.mjs"), "utf8");
+    const push = src.slice(src.indexOf("async function pushWithTurn"));
+    const rel = push.indexOf("relatedSqlGate(card");
+    const turn = push.indexOf('withTurn("push"');
+    const fetch = push.indexOf("git fetch -q anutech");
+    const gate = push.indexOf("checkRedGate(card");
+    const gitPush = push.indexOf("git push -q anutech");
+    expect(rel).toBeGreaterThan(0);
+    expect(turn).toBeGreaterThan(rel);
+    expect(gate).toBeGreaterThan(fetch);
+    expect(gitPush).toBeGreaterThan(gate);
+    expect(push.slice(gate, gate + 300)).toContain("process.exit(7)");
+  });
+
+  it("flags: --fixes-red, --owner-override, --sha, --timeout-min come out of the args", () => {
+    expect(parseCiFlags(["--fixes-red", "--sha", "abc", "--timeout-min", "3", "x"])).toMatchObject({ rest: ["x"], fixesRed: true, ownerOverride: false, sha: "abc", timeoutMin: 3 });
+    expect(parseCiFlags(["--owner-override", "--timeout-min=bad"])).toMatchObject({ ownerOverride: true, timeoutMin: 35, sha: null });
+  });
+
+  it("R-1987: ci waits 35 min by default (CI takes ~29 min; 25 timed out nearly every card), --timeout-min still overrides", () => {
+    expect(CI_DEFAULT_TIMEOUT_MIN).toBe(35);
+    expect(parseCiFlags([]).timeoutMin).toBe(35);
+    expect(parseCiFlags(["--timeout-min", "0"]).timeoutMin).toBe(35);
+    expect(parseCiFlags(["--timeout-min", "50"]).timeoutMin).toBe(50);
+    const src = readFileSync(path.join(path.resolve(__dirname, ".."), "scripts", "ops", "worker-lock.mjs"), "utf8");
+    expect(src).toMatch(/runCi\(card, \{[^}]*timeoutMin = CI_DEFAULT_TIMEOUT_MIN/);
+    expect(src).toContain("[--timeout-min 35]");
+  });
+});
+
+describe("R-1936: ci <CARD> waits for the sha's CI + SQL tests", () => {
+  const SHA = "b".repeat(40);
+  const git = (args: string[]) => (args[0] === "rev-parse" || args[0] === "log" ? `${SHA}\n` : "");
+  const clock = () => { let t = Date.parse("2026-10-25T17:00:00Z"); return { now: () => t, sleep: async (ms: number) => { t += ms; } }; };
+  const base = (gh: (a: string[]) => string, extra = {}) => ({ gh, git, isAncestor: () => false, sha: SHA, timeoutMin: 25, ...clock(), ...extra });
+
+  it("both green → exit 0 and the one-line JSON for ciCheck", async () => {
+    const { gh } = fakeGh({ sha: [run({ headSha: SHA, url: "u-ci" }), run({ workflowName: "SQL tests", headSha: SHA, url: "u-sql" })] });
+    const r = await runCi("R-2000", base(gh));
+    expect(r.code).toBe(0);
+    expect(r.check).toEqual({ sha: SHA, ci: "green", sql: "green", at: "2026-10-25T17:00:00Z", runUrls: ["u-ci", "u-sql"] });
+    expect(r.lines.join("\n")).toContain("ciCheck");
+  });
+
+  it("waits while a run is going, then decides; no SQL run for the sha = skipped (no supabase change)", async () => {
+    const going = [run({ headSha: SHA, status: "in_progress", conclusion: "" })];
+    const done = [run({ headSha: SHA })];
+    const { gh } = fakeGh({ sha: (n) => (n < 3 ? going : done) });
+    const printed: string[] = [];
+    const r = await runCi("R-2000", base(gh, { print: (l: string) => printed.push(l) }));
+    expect(printed.length).toBe(2);
+    expect(r.code).toBe(0);
+    expect(r.check?.sql).toBe("skipped");
+  });
+
+  it("red → exit 7 with the failing test names", async () => {
+    const { gh } = fakeGh({ sha: [run({ headSha: SHA }), run({ workflowName: "SQL tests", headSha: SHA, conclusion: "failure", url: "u-sql" })], log: SQL_RED_LOG });
+    const r = await runCi("R-2000", base(gh));
+    expect(r.code).toBe(7);
+    expect(r.check).toMatchObject({ ci: "green", sql: "red", sqlFailed: ["audit_log_values", "r897_automation_gate"] });
+    expect(r.lines.join("\n")).toContain("✗ SQL tests laal: audit_log_values, r897_automation_gate");
+  });
+
+  it("still running at the timeout → exit 8, JSON says pending", async () => {
+    const { gh } = fakeGh({ sha: [run({ headSha: SHA, status: "in_progress", conclusion: "" })] });
+    const r = await runCi("R-2000", base(gh, { timeoutMin: 2 }));
+    expect(r.code).toBe(8);
+    expect(r.check?.ci).toBe("pending");
+  });
+
+  it("gh never answers → exit 8, no JSON", async () => {
+    const r = await runCi("R-2000", base(fakeGh({ fail: true }).gh, { timeoutMin: 1 }));
+    expect(r.code).toBe(8);
+    expect(r.check).toBeNull();
+  });
+
+  it("own run cancelled by the next push → the newer run that contains this sha decides", async () => {
+    const later = "c".repeat(40);
+    const { gh } = fakeGh({
+      sha: [run({ databaseId: 1, headSha: SHA, conclusion: "cancelled" })],
+      branch: [run({ databaseId: 2, headSha: later, url: "u-later", createdAt: "2026-10-25T17:05:00Z" })],
+    });
+    const r = await runCi("R-2000", base(gh, { isAncestor: (a: string, b: string) => a === SHA && b === later }));
+    expect(r.code).toBe(0);
+    expect(r.check).toMatchObject({ ci: "green", via: later, runUrls: ["u-later"] });
+  });
+
+  it("default sha: the note push wrote, else the newest '<CARD>:' commit on manager-pardeep", () => {
+    expect(lastPushedSha("R-2000", { git, readNote: () => ({ sha: "f00" }) })).toBe("f00");
+    const asked: string[][] = [];
+    const g = (a: string[]) => { asked.push(a); return `${SHA}\n`; };
+    expect(lastPushedSha("r-2000", { git: g, readNote: () => null })).toBe(SHA);
+    expect(asked[0]).toEqual(["log", "anutech/manager-pardeep", "-1", "--format=%H", "-E", "--grep=^R-2000:"]);
+  });
+
+  it("exit codes are 0 green, 7 red, 8 timeout", () => {
+    expect(CI_EXIT).toEqual({ green: 0, red: 7, timeout: 8 });
+  });
+});
+
+describe("R-1936: a changed migration runs its related SQL tests on the local DB first", () => {
+  const MIG = { file: "20261026000000_r2000_x.sql", src: "-- deploy-peek: exists(select 1 from pg_proc where proname = 'book_expense')\nbegin;\ncreate or replace function public.book_expense(p uuid) returns void language plpgsql as $$ begin null; end $$;\ncreate table if not exists public.vendor_notes (id uuid);\ncommit;\n" };
+  const T = (file: string, body: string) => ({ file, src: `begin;\n${body}\nrollback;\n` });
+  const tests = [T("book_expense.test.sql", "select public.book_expense(null);"), T("vendor.test.sql", "select * from vendor_notes;"), T("other.test.sql", "select book_expenses_total();")];
+
+  it("names what the migration creates: functions, tables, views (no schema, lower case)", () => {
+    expect(migrationDefines(MIG.src).sort()).toEqual(["book_expense", "vendor_notes"]);
+    expect(migrationDefines('CREATE OR REPLACE VIEW "public"."V_Due" AS select 1; -- create table not_this')).toEqual(["v_due"]);
+  });
+
+  it("picks the tests that mention a name as a whole word only", () => {
+    expect(relatedSqlTests(["book_expense", "vendor_notes"], tests).map((t: { file: string }) => t.file)).toEqual(["book_expense.test.sql", "vendor.test.sql"]);
+    expect(deployPeek(MIG.src)).toBe("exists(select 1 from pg_proc where proname = 'book_expense')");
+  });
+
+  it("runs migration + test in one rolled-back transaction; a red test fails the push", () => {
+    const sent: string[] = [];
+    const psql = (sql: string) => {
+      sent.push(sql);
+      if (sql.includes("PEEK_APPLIED")) return { status: 0, out: "PEEK_PENDING\n" };
+      /* red only WITH the new migration — green on the local DB without it: this push broke it */
+      return sql.includes("vendor_notes;") && sql.includes("create table if not exists public.vendor_notes") ? { status: 3, out: 'ERROR:  relation "vendor_notes" broke' } : { status: 0, out: "" };
+    };
+    const r = runRelatedSql({ changed: [MIG], tests, psql });
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('✗ vendor.test.sql: ERROR:  relation "vendor_notes" broke');
+    const script = sent.find((s) => s.includes("book_expense(null)"))!;
+    expect(script.startsWith("begin;\n")).toBe(true);
+    expect(script).toContain("create or replace function public.book_expense");
+    expect(script).not.toMatch(/^\s*commit\s*;/im); // the migration's own commit never reaches the DB
+    expect(script.trimEnd().endsWith("rollback;")).toBe(true);
+  });
+
+  it("red with AND without the migration = the local DB was already broken → warn, not block", () => {
+    /* 25 Oct, real: merge_stranded_user.test.sql fails on the local DB alone (a leftover tenants row). */
+    const psql = (sql: string) => (sql.includes("PEEK_APPLIED") ? { status: 0, out: "PEEK_PENDING" } : sql.includes("vendor_notes;") ? { status: 3, out: "ERROR:  duplicate key value violates unique constraint \"tenants_pkey\"" } : { status: 0, out: "" });
+    const r = runRelatedSql({ changed: [MIG], tests, psql });
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain("⚠ vendor.test.sql: migration ke bina bhi local DB par laal");
+  });
+
+  it("a migration already on the local DB (deploy-peek true) is not run again", () => {
+    const sent: string[] = [];
+    const psql = (sql: string) => { sent.push(sql); return sql.includes("PEEK_APPLIED") ? { status: 0, out: "PEEK_APPLIED\n" } : { status: 0, out: "" }; };
+    const r = runRelatedSql({ changed: [MIG], tests, psql });
+    expect(r.ok).toBe(true);
+    expect(sent.filter((s) => s.includes("create or replace function"))).toHaveLength(0);
+  });
+
+  it("local DB down → warn and skip; no migration change → nothing to run", () => {
+    const down = runRelatedSql({ changed: [MIG], tests, psql: null });
+    expect(down).toMatchObject({ ok: true, skipped: true });
+    expect(down.message).toMatch(/^⚠ local DB nahi chal raha/);
+    expect(runRelatedSql({ changed: [], tests, psql: () => ({ status: 1, out: "" }) })).toMatchObject({ ok: true, skipped: true });
+  });
+
+  it("a related test that does not end in rollback fails (CI's runner refuses it too)", () => {
+    const r = runRelatedSql({ changed: [MIG], tests: [{ file: "bad.test.sql", src: "select book_expense(null);\ncommit;" }], psql: () => ({ status: 0, out: "PEEK_APPLIED" }) });
+    expect(r.ok).toBe(false);
+    expect(sqlTestSafe("begin;\nrollback;")).toBe(true);
+  });
+
+  it("CONCURRENTLY cannot run in a transaction → skip with a warning, never a false red", () => {
+    const m = { file: "m.sql", src: "create index concurrently if not exists i on public.vendor_notes(id);\ncreate table if not exists public.vendor_notes (id uuid);" };
+    expect(runRelatedSql({ changed: [m], tests, psql: () => ({ status: 1, out: "" }) })).toMatchObject({ ok: true, skipped: true });
+    expect(relatedTestScript([], "begin;\nrollback;")).toBe("begin;\n\n\nbegin;\nrollback;\n");
   });
 });

@@ -27,7 +27,7 @@ describe("push guard suites (R-385)", () => {
   it("has no duplicates and stays a short list (the push waits for it)", () => {
     expect(new Set(list).size).toBe(list.length);
     expect(list.length).toBeGreaterThan(10);
-    expect(list.length).toBeLessThanOrEqual(80);
+    expect(list.length).toBeLessThanOrEqual(90); // R-1973: 74 → 84 with the src/site scans (~5 s)
     expect(PUSH_GUARD_BUDGET_MS).toBe(90_000);
   });
 
@@ -37,6 +37,11 @@ describe("push guard suites (R-385)", () => {
     const scans = fs.readFileSync(path.join(root, "src/lib/ai/gemini-one-door.test.ts"), "utf8");
     expect(scans).toContain("generativelanguage.googleapis.com");
     expect(fs.readFileSync(path.join(root, "src/lib/ai/gemini.test.ts"), "utf8")).not.toContain("readdirSync");
+  });
+
+  it("R-1973: the src/site scan that turned CI red at 8ca1bcbe runs on push", () => {
+    expect(list).toContain("src/site/page-metadata.test.ts");
+    expect(list).toContain("src/site/lib/public-metadata-r1631.test.ts");
   });
 
   it("includes the two suites that broke CI on 7 Oct", () => {
@@ -63,7 +68,7 @@ describe("push guard suites (R-385)", () => {
   it("worker-lock push runs the guard after tsc and refuses the push on failure", () => {
     const src = fs.readFileSync(path.join(root, "scripts/ops/worker-lock.mjs"), "utf8");
     const push = src.slice(src.indexOf("async function pushWithTurn"));
-    const tsc = push.indexOf("tscWithTurn(card)");
+    const tsc = push.indexOf("tscWithTurn(card"); // R-1960: tscWithTurn(card, { full: ciFlags.fullTsc })
     const guard = push.indexOf("runGuardSuites(card)");
     const gitPush = push.indexOf("git push");
     expect(tsc).toBeGreaterThan(0);

@@ -37,6 +37,8 @@ import { Badge } from "@/components/ui/badge";
 import { ConsequenceList } from "@/components/shared/consequence-list";
 import { sendQuoteConsequences } from "@/lib/quotes/send-consequences";
 import { sendQuoteEmail, quoteEmailOutcome, quoteEmailErrorOutcome } from "@/lib/quotes/send-quote-email";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { showFailedSendToast } from "./failed-send-toast";
 import { PayQrNotice } from "./pay-qr-notice";
 
 const schema = z.object({
@@ -92,6 +94,7 @@ export function SendQuoteDialog({
   currency,
 }: SendQuoteDialogProps) {
   const qc = useQueryClient();
+  const { data: currentUser } = useCurrentUser();
   /* R-1523: per-send choice — nothing is stored on the quote. Reset to Quotation on each open. */
   const [template, setTemplate] = React.useState<"quotation" | "proforma">("quotation");
   React.useEffect(() => { if (open) setTemplate("quotation"); }, [open]);
@@ -139,8 +142,19 @@ export function SendQuoteDialog({
         toast.success(out.title, out.description ? { description: out.description } : undefined);
         onOpenChange(false);
       } else {
-        // Sheet stays open so "Send now" is the retry.
-        toast.error(out.title, { description: out.description });
+        // Sheet stays open so "Send now" is the retry. R-1922: the reason plus the button that
+        // fixes it (owner: "Turn on customer messages") and "Copy link instead".
+        showFailedSendToast({
+          out, res, role: currentUser?.role, quoteId, onQuotePage: true,
+          /* Plain navigation: the sheet is also rendered outside the app router in tests. */
+          navigate: (href) => { onOpenChange(false); window.location.assign(href); },
+          /* R-1956: "Copy link instead" marked the draft sent — the page behind shows it. */
+          onMarkedSent: () => {
+            qc.invalidateQueries({ queryKey: ["quotes"] });
+            qc.invalidateQueries({ queryKey: ["quotes", quoteId] });
+            qc.invalidateQueries({ queryKey: ["leads"] });
+          },
+        });
       }
     },
     onError: (err) => {

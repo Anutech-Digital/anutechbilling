@@ -24,7 +24,7 @@ export type WorkspaceTierId = "starter" | "standard" | "plus" | "enterprise";
 
 /**
  * Last-resort ₹/user/month — used only on catalog-miss. Kept in sync with the
- * live catalogue (annual): Starter 270, Standard 1,080, Plus 1,380. R-157 (5 Oct 2026):
+ * live catalogue (annual): Starter 270, Standard 1,080, Plus 1,500 (R-1970, Pardeep 26 Oct; was 1,380). R-157 (5 Oct 2026):
  * Standard was 864 — an old 20%-off promo price that no longer exists, so a catalogue miss
  * would have charged 20% less than every page shows. Enterprise has no list price; online
  * checkout refuses it (quote only) and the enquiry route never auto-quotes it.
@@ -32,7 +32,7 @@ export type WorkspaceTierId = "starter" | "standard" | "plus" | "enterprise";
 export const TIER_FALLBACK_MONTHLY: Record<WorkspaceTierId, number> = {
   starter:    270,
   standard:   1080,
-  plus:       1380,
+  plus:       1500,
   enterprise: 2400,
 };
 

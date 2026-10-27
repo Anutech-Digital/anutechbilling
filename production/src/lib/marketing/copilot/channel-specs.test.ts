@@ -35,6 +35,15 @@ describe("Meta — feed image ad (Meta publishes RECOMMENDED lengths, no hard ma
     expect(fieldSpec("meta-ads", "feed_image", "primary_text")).toMatchObject({ max: null, recommendedMin: 50, recommended: 150 });
     expect(fieldSpec("meta-ads", "feed_image", "headline")).toMatchObject({ max: null, recommended: 27 });
   });
+
+  it("R-1897: up to 5 primary texts / headlines / descriptions (asset feed options); AI writes 3 + 3 + 1; one CTA from the list", () => {
+    expect(fieldSpec("meta-ads", "feed_image", "primary_text")).toMatchObject({ minCount: 1, maxCount: 5, aiCount: 3 });
+    expect(fieldSpec("meta-ads", "feed_image", "headline")).toMatchObject({ minCount: 1, maxCount: 5, aiCount: 3 });
+    expect(fieldSpec("meta-ads", "feed_image", "description")).toMatchObject({ max: null, recommended: null, minCount: 0, maxCount: 5, aiCount: 1 });
+    const cta = fieldSpec("meta-ads", "feed_image", "cta")!;
+    expect(cta).toMatchObject({ minCount: 1, maxCount: 1 });
+    expect(cta.choices!.map((c) => c.value)).toEqual(expect.arrayContaining(["LEARN_MORE", "GET_QUOTE", "SHOP_NOW", "CONTACT_US"]));
+  });
 });
 
 describe("every number has an official source", () => {
@@ -45,6 +54,8 @@ describe("every number has an official source", () => {
           expect(field.source, `${p}/${f.key}/${field.key}`).toMatch(
             p === "google-ads" ? /^https:\/\/(support|developers)\.google\.com\// : /^https:\/\/(www\.facebook\.com|developers\.facebook\.com)\//,
           );
+          // R-1897: a pick-from-list field (CTA) has no length; Meta publishes no length for the description.
+          if (field.choices || (p === "meta-ads" && field.key === "description")) continue;
           expect(field.max ?? field.recommended, `${p}/${f.key}/${field.key} has no number`).not.toBeNull();
         }
       }

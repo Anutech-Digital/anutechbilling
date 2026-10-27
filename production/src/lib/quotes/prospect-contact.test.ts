@@ -23,7 +23,14 @@ describe("R-469 (6): new prospect email / phone", () => {
     });
     expect(row).toMatchObject({ company: "Acme Pvt Ltd", contact_email: "amit@acme.in", contact_phone: "9876543210", stage: "quote", state: "Maharashtra" });
     expect(prospectLeadRow({ name: "X", contact: { email: "", phone: "9876543210" }, stateCode: null, stateName: null, country: "", sent: false, plan: null, seats: 0, value: 0 }))
-      .toMatchObject({ stage: "new", contact_email: null, country: "India", seats: null, value: null });
+      .toMatchObject({ stage: "contact", contact_email: null, country: "India", seats: null, value: null });
+  });
+  /* R-1959: the lead is made BY saving a quote — a draft is contact, so it starts at Contacted
+     (stageAfterQuoteSaved), and its seats come from leadSeatCount (a custom line counts). */
+  it("R-1959: a draft-made lead starts at Contacted; a sent one at Quote Sent", () => {
+    const base = { name: "Sharma Cloud Test", contact: { email: "", phone: "9876543210" }, stateCode: null, stateName: null, country: "India", plan: "GW Business Starter (1 year)", seats: 10, value: 0 };
+    expect(prospectLeadRow({ ...base, sent: false })).toMatchObject({ stage: "contact", seats: 10 });
+    expect(prospectLeadRow({ ...base, sent: true })).toMatchObject({ stage: "quote", seats: 10 });
   });
   /* R-1712: a business typed as a new prospect got a B2C invoice — no GSTIN was ever asked. */
   it("R-1712: a GSTIN must pass the checksum; a valid one alone is worth a lead, and the lead carries it", () => {

@@ -6,7 +6,8 @@
  * R-1878). Fail-closed: no company on the session → 401, before anything else runs.
  *
  * Body (all optional when `planId` gives them):
- *   { planId?, brand?, itemId?, product?, objective?, platforms?, tone?, language?, brief? }
+ *   { planId?, brand?, itemId?, product?, objective?, platforms?, tone?, language?, brief?, audience? }
+ *   audience (R-1897) = which copy set: "generic" (Main audience) or "lookalike".
  *   brand voice = tone + language: the request's, else the plan's (ad_plans), else the default.
  *   brand = the request's, else the company name. product = the request's, else the item's name.
  *
@@ -31,6 +32,7 @@ import {
   COPY_LANGUAGES, SHORTEN_SYSTEM, applyShortened, buildCopyPrompt, buildShortenPrompt, collectCandidates,
   COPILOT_COPY_ROLES, copySlots, finalizeCopy, needsShortening, stubCopy, type CopyBrief, type CopyLanguage,
 } from "@/lib/marketing/copilot/copy-prompt";
+import { AUDIENCE_KEYS, AUDIENCE_WORDS, type AudienceKey } from "@/lib/marketing/copilot/copy-set";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -47,6 +49,8 @@ const body = z.object({
   tone: z.string().trim().max(200).optional(),
   language: z.enum(COPY_LANGUAGES as unknown as [CopyLanguage, ...CopyLanguage[]]).optional(),
   brief: z.string().trim().max(2000).optional(),
+  /* R-1897: the copy set is for one audience (Main / People like my customers). */
+  audience: z.enum(AUDIENCE_KEYS as unknown as [AudienceKey, ...AudienceKey[]]).optional(),
 });
 
 const planLanguage = (v: string | null | undefined): CopyLanguage | undefined =>
@@ -104,6 +108,7 @@ export async function POST(req: Request) {
     tone: b.tone || ctx.plan?.tone || null,
     language: b.language ?? planLanguage(ctx.plan?.language) ?? "en",
     brief: b.brief ?? "",
+    audience: b.audience ? AUDIENCE_WORDS[b.audience] : undefined,
   };
 
   const { slots, skipped } = copySlots(brief.platforms, objective);

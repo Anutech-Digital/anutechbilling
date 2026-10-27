@@ -5140,6 +5140,7 @@ model ad_plans {
   ad_target_groups      ad_target_groups[]
   ad_creatives          ad_creatives[]
   ad_copies             ad_copies[]
+  ad_copy_sets          ad_copy_sets[]
 
   @@unique([tenant_id, id])
   @@index([tenant_id, created_at(sort: Desc)], map: "ad_plans_tenant_recent_idx")
@@ -5197,11 +5198,53 @@ model ad_copies {
   text         String
   position     Int      @default(0) @db.SmallInt
   ai_generated Boolean  @default(false)
+  /// R-1897: which audience (ad_target_groups.kind) the line is for; 'generic' = Main audience.
+  audience     String   @default("generic")
+  /// R-1897: "Keep" — a new AI run does not replace the line.
+  locked       Boolean  @default(false)
+  /// R-1897: Google pin position 1–3; null = not pinned.
+  pinned       Int?     @db.SmallInt
   created_at   DateTime @default(now()) @db.Timestamptz(6)
   updated_at   DateTime @default(now()) @db.Timestamptz(6)
   ad_plans     ad_plans @relation(fields: [tenant_id, plan_id], references: [tenant_id, id], onDelete: Cascade, onUpdate: NoAction, map: "ad_copies_plan_fk")
 
-  @@unique([plan_id, platform, format, field, position], map: "ad_copies_slot")
+  @@unique([plan_id, platform, audience, format, field, position], map: "ad_copies_slot")
   @@index([tenant_id, plan_id], map: "ad_copies_plan_idx")
+  @@schema("public")
+}
+
+/// R-1897: one ad-copy set per plan × platform × audience (migration 20261025092735_r1897_ad_copy_sets); version goes up on every save.
+model ad_copy_sets {
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id            String                 @db.Uuid
+  plan_id              String                 @db.Uuid
+  platform             String
+  audience             String                 @default("generic")
+  format               String
+  version              Int                    @default(1)
+  updated_by           String?                @default(dbgenerated("auth.uid()")) @db.Uuid
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime               @default(now()) @db.Timestamptz(6)
+  ad_plans             ad_plans               @relation(fields: [tenant_id, plan_id], references: [tenant_id, id], onDelete: Cascade, onUpdate: NoAction, map: "ad_copy_sets_plan_fk")
+  ad_copy_set_versions ad_copy_set_versions[]
+
+  @@unique([tenant_id, plan_id, platform, audience], map: "ad_copy_sets_one_per_audience")
+  @@unique([tenant_id, id], map: "ad_copy_sets_tenant_id")
+  @@schema("public")
+}
+
+/// R-1897: every saved version of a set's lines (jsonb array), so an earlier one can be brought back.
+model ad_copy_set_versions {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id    String       @db.Uuid
+  set_id       String       @db.Uuid
+  version      Int
+  lines        Json         @default("[]")
+  saved_by     String?      @default(dbgenerated("auth.uid()")) @db.Uuid
+  saved_at     DateTime     @default(now()) @db.Timestamptz(6)
+  ad_copy_sets ad_copy_sets @relation(fields: [tenant_id, set_id], references: [tenant_id, id], onDelete: Cascade, onUpdate: NoAction, map: "ad_copy_set_versions_set_fk")
+
+  @@unique([set_id, version], map: "ad_copy_set_versions_one")
+  @@index([tenant_id, set_id, version(sort: Desc)], map: "ad_copy_set_versions_recent_idx")
   @@schema("public")
 }

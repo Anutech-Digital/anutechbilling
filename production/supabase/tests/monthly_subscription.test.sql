@@ -85,7 +85,10 @@ begin
      passes on exactly the value this case exists to reject — the assertion would have
      been vacuous against the old function, which set NULL. Caught by running it before
      applying the migration and getting an impossible PASS. */
-  if s.renewal_date is distinct from (current_date + interval '1 month')::date then
+  /* R-1953: ist_today(), not current_date. record_payment starts the subscription on
+     public.ist_today() (R-1816). current_date is the UTC date, a day behind IST from
+     18:30 to 24:00 UTC, so this case failed every night in CI. Same 'today' as the code. */
+  if s.renewal_date is distinct from (public.ist_today() + interval '1 month')::date then
     raise exception 'CASE 3 FAIL: renewal_date is %, expected one month out', s.renewal_date;
   end if;
 
@@ -104,7 +107,7 @@ begin
   if s.billing_cycle <> 'yearly' or s.term_months <> 12 then
     raise exception 'CASE 5 FAIL: annual subscription now reads %/% months', s.billing_cycle, s.term_months;
   end if;
-  if s.renewal_date <> (current_date + interval '1 year')::date then
+  if s.renewal_date is distinct from (public.ist_today() + interval '1 year')::date then  -- R-1953: IST, as above
     raise exception 'CASE 5 FAIL: annual renewal_date is %, expected one year out', s.renewal_date;
   end if;
   /* 38,232 a YEAR is 3,186 a month — the division that must stay for annual lines. */

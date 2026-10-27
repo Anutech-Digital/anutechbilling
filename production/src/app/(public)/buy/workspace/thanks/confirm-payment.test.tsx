@@ -159,13 +159,17 @@ describe("the thanks page confirms the payment on our server (R-1625)", () => {
 });
 
 describe("the buy page hands the payment over (R-1625)", () => {
-  const src = readFileSync(join(process.cwd(), "src/app/(public)/buy/workspace/buy-workspace-client.tsx"), "utf8");
+  /* R-1971: the buy page's checkout is inline now — the submit logic lives in _parts/submit-order.ts. */
+  const src = readFileSync(join(process.cwd(), "src/app/(public)/buy/workspace/_parts/submit-order.ts"), "utf8");
   it("Razorpay's success handler keeps {order, payment, signature} for this quote before redirecting", () => {
     expect(src).toMatch(/handler: \(resp\) => \{\s*(?:\/\/.*\s*)*saveWorkspacePayment\(json\.quoteId, fromRazorpayHandler\(resp\)\);\s*window\.location\.href = thanksUrl\(json\.quoteId, json\.publicToken, false\);/);
   });
   it("the workspace order is findable by the verify path: payment_reference = the Razorpay order id", () => {
     const route = readFileSync(join(process.cwd(), "src/app/api/public/checkout/workspace/route.ts"), "utf8");
     expect(route).toMatch(/\.update\(\{ payment_reference: order\.id \}\)/);
-    expect(route).toMatch(/amount:\s+amount \* 100/);
+    /* R-1985: the order is the quote's amount — plus the domain quote's on a monthly + new domain
+       order, which verify adds up the same way (lib/checkout/split-order.ts). */
+    expect(route).toMatch(/const orderTotal = amount \+ \(domainQuote\?\.amount \?\? 0\);/);
+    expect(route).toMatch(/amount:\s+orderTotal \* 100/);
   });
 });

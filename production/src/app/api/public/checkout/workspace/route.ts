@@ -28,7 +28,7 @@ import { trustedOrigin } from "@/lib/app-url";
 import { captureFromRequest } from "@/lib/marketing/utm";
 import { z } from "zod";
 import { resolveStateCode, stateCodeFromName } from "@/lib/gst/gstin-state";
-import { GST_STATE_BY_CODE, isValidGstin } from "@/lib/utils";
+import { GST_STATE_BY_CODE, isValidGstin, rupee } from "@/lib/utils";
 import Razorpay from "razorpay";
 import { createAdminClient } from "@/lib/supabase/server";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
@@ -40,9 +40,16 @@ import { issueInvoiceForOnlinePayment } from "@/lib/checkout/online-invoice.serv
 import { publicDbError } from "@/app/api/public/_lib/db-error";
 import { customerSetupSteps, leadOwnerNextSteps } from "@/lib/email/workspace-onboarding";
 import { loadLeadOwner } from "@/lib/email/lead-owner.server";
-import { buildLinesFromCatalog, type CatalogPriceRow } from "./pricing";
+import { BUY_COMMITMENTS, buildOrderLines, type CatalogPriceRow } from "./pricing";
 import { PLUS_NOT_SOLD_ONLINE, isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
 import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
+import { reportPurchaseToMeta } from "@/lib/meta/capi.server";
+import { recordCheckoutConsent } from "@/app/api/public/consent/record.server";
+import { clientIp } from "@/lib/security/rate-limit";
+import { splitDomain } from "@/lib/domains/live-lookup";
+import { priceDomainLines } from "@/lib/checkout/cart-checkout";
+import { normalisePhone, splitName, type Registrant } from "@/lib/provisioning/domain-registration";
+import { insertDomainQuote, splitOrderNotes, withGst, type DomainQuote } from "./domain-quote.server";
 
 /* R-079: the hard-coded dev tenant only off production; "" (fails closed) when unset there. */
 const BUY_PAGE_TENANT_ID = buyPageTenantIdOrEmpty();
@@ -80,6 +87,18 @@ const checkoutSchema = z.object({
    *  conversion funnel before he has Razorpay keys. Refused when Razorpay
    *  IS configured (would let attackers create free orders). */
   simulate:    z.boolean().optional(),
+  /** R-1967: "annual" (1-year plan — the default, as before) or "monthly" (flex). Only the
+   *  CHOICE comes from the browser; the rate is read from the catalogue on this server. */
+  commitment:  z.enum(BUY_COMMITMENTS).default("annual"),
+  /** R-1971 / R-1977: the buyer has no domain yet and asked us to register this one. It is
+   *  priced HERE from the live registry (never a browser price) as a domain line carrying the
+   *  registrant, so the paid order registers it. R-1985: on a monthly order too (own quote). */
+  domainNew:   z.boolean().optional(),
+  /** R-1977: the registrant's postal address — the registry records the owner's address
+   *  (owner decision 22). Required with domainNew. State = place of supply. */
+  addressLine1: z.string().max(200).optional(),
+  city:         z.string().max(80).optional(),
+  pinCode:      z.string().max(12).optional(),
 });
 
 // R-206: pricing (catalogue row → floored ₹/seat/month → lines → GST total) lives in ./pricing.
@@ -132,7 +151,8 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    const { fullName, companyName, email, phone, seats, domain, tierId, gstin, simulate, couponCode } = parsed.data;
+    const { fullName, companyName, email, phone, seats, domain, tierId, gstin, simulate, couponCode, commitment, domainNew } = parsed.data;
+    const cleanDomain = domain.toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "").trim();
 
     /* R-328 (7 Oct 2026, Pardeep): Business Plus is "Contact us for pricing" on the website,
        like Google's own page — never sold or priced online. Refused before anything is read,
@@ -242,9 +262,81 @@ export async function POST(request: NextRequest) {
     // Pricing source of truth = catalog. If Pardeep edits item MSRP, the
     // next checkout immediately reflects it — no re-deploy needed.
     const catalogRow = await fetchCatalogPrice(admin, tierId);
-    const built      = buildLinesFromCatalog(catalogRow, tierId, seats);
+    /* R-1967: Annual (as before) or Monthly (flex) — priced HERE from the catalogue. */
+    const isMonthly  = commitment === "monthly";
+    const built      = buildOrderLines(catalogRow, tierId, seats, commitment);
+    if (!built) {
+      return NextResponse.json(
+        {
+          error: "Monthly billing isn't offered for this plan right now. Nothing was charged. " +
+                 "Choose Annual, or ask us for a quote.",
+          monthlyNotOffered: true,
+        },
+        { status: 400 },
+      );
+    }
     const items      = built.items;
     const tierName   = built.tierName;
+
+    /* ── R-1977: "I need a new domain" — a real booking on an annual order ─────────────────
+       Priced HERE from the live registry with the cart's own priceDomainLines (one price rule:
+       the price the search showed is the price charged; unavailable or unreadable → refused,
+       never a guess). The line carries the registrant (owner decision 22, the customer's own
+       name), so the paid order is provisioned like a cart domain: the webhook queues its
+       registration, behind DOMAIN_REGISTRATION_LIVE. A simulated order queues nothing.
+       R-1985: on a MONTHLY (flex) order the line goes on its OWN quote (domain-quote.server.ts):
+       the flex first month is a subscription instalment (quote_id NULL — R-1974) that cannot
+       carry it. One payment pays both; the domain gets its own GST invoice. */
+    type DomainLine = (typeof items)[number] & { domain?: string; years?: number; registrant?: Registrant };
+    let domainLine: DomainLine | null = null;
+    let domainTestPriced = false;
+    if (domainNew) {
+      const parts = splitDomain(cleanDomain);
+      if (!parts) {
+        return NextResponse.json(
+          { error: `"${cleanDomain}" is not a domain we can register — use one name and an ending, like yourcompany.in. Nothing was charged.` },
+          { status: 400 },
+        );
+      }
+      const a = { line1: (parsed.data.addressLine1 ?? "").trim(), city: (parsed.data.city ?? "").trim(), zipcode: (parsed.data.pinCode ?? "").replace(/\s+/g, "") };
+      const missing = [a.line1.length < 3 && "address", a.city.length < 2 && "city", !/^\d{6}$/.test(a.zipcode) && "PIN code"].filter(Boolean);
+      if (missing.length) {
+        return NextResponse.json(
+          {
+            error: `To register ${cleanDomain} in your name we need your ${missing.join(", ")}. The domain registry records the owner's postal address. Nothing was charged.`,
+            needAddress: true,
+          },
+          { status: 400 },
+        );
+      }
+      const priced = (await priceDomainLines([{ sku: `domain:${parts.tld}`, qty: 1, domain: `${parts.name}.${parts.tld}`, years: 1 }])).get(0);
+      if (!priced || !priced.ok) {
+        const why = priced && !priced.ok ? priced.reason : `${cleanDomain} (its price couldn't be confirmed)`;
+        return NextResponse.json(
+          {
+            error: `We can't take payment for the domain ${why}. Nothing was charged. Try again in a minute, choose another name, or pick "I already have a domain".`,
+            domainUnavailable: true,
+          },
+          { status: 400 },
+        );
+      }
+      domainTestPriced = priced.testPrice;
+      const registrant: Registrant = {
+        ...splitName(fullName),
+        email: email.trim().toLowerCase(),
+        ...normalisePhone(phone),
+        companyName: companyName.trim() || undefined,
+        address: { ...a, state: buyerState ?? "", country: "IN" },
+      };
+      domainLine = { ...priced.line, registrant } as DomainLine;
+    }
+    /* R-1769: a TEST domain price (laptop list) is never charged with a live key. */
+    if (domainTestPriced && !isSimulation) {
+      return NextResponse.json(
+        { error: "This server is showing TEST prices for domains, so the order can't be paid. Nothing was charged. Please use 'Get a quote'." },
+        { status: 503 },
+      );
+    }
     let   subtotal   = built.subtotal;
     let   amount     = built.amount;
     // Site-promo + coupon results carried through the response — quote row
@@ -298,16 +390,21 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Insert lead at stage='quote' (intent to buy = qualified) ──────────
-    const cleanDomain = domain.toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "").trim();
     const leadId      = "L-" + Date.now().toString(36).toUpperCase();
+    /* R-1978: the ad that brought this order (cleaned — lib/marketing/utm.ts), written on the lead
+       AND on the quote: a paid order's subscription reads it through subscriptions.quote_id. */
+    const attribution = captureFromRequest(request, body as Record<string, unknown>);
     const planLabel   = `google-workspace-${tierId}`;
     const sourceTag   = isSimulation ? "buy-workspace-direct-sim" : "buy-workspace-direct";
     const leadNotes   = [
       isSimulation ? `[SIMULATION] Test buy — no real payment` : `DIRECT BUY · proceeding to Razorpay`,
-      `Domain: ${cleanDomain}`,
+      domainLine
+        ? `Domain: ${cleanDomain} — NEW: bought with this order${isMonthly ? ", on its own GST invoice" : ""} (${rupee(domainLine.rate)} + GST, 1 year); registered in the buyer's name after payment`
+        : domainNew ? `Domain: ${cleanDomain} — NEW: register it for the buyer and call them (not checked yet)` : `Domain: ${cleanDomain}`,
       `Plan: Google Workspace ${tierName}`,
       `Seats: ${seats}`,
-      `Total: ₹${amount.toLocaleString("en-IN")} (incl 18% GST)`,
+      isMonthly ? `Billing: monthly (flex) — this is one month` : `Billing: annual (1-year plan)`,
+      `Total: ₹${(amount + (domainLine && isMonthly ? withGst(domainLine.rate) : 0)).toLocaleString("en-IN")} (incl 18% GST)`,
       gstin ? `GSTIN: ${gstin}` : null,
     ].filter(Boolean).join("\n");
 
@@ -323,8 +420,8 @@ export async function POST(request: NextRequest) {
       value:         subtotal,
       stage:         "quote",
       source:        sourceTag,
-      // Migration 0232 — inbound attribution. Nulls when nothing was captured.
-      ...captureFromRequest(request, body as Record<string, unknown>),
+      // Migration 0232 — inbound attribution. Nulls when nothing was captured. R-1978: + utm_content/utm_term.
+      ...attribution,
       domain:        cleanDomain,        // structured — flows lead→quote→subscription
       notes:         leadNotes,
       // R-173: copied to the customer by record_payment; generate_invoice needs state_code.
@@ -395,6 +492,14 @@ export async function POST(request: NextRequest) {
       await admin.from("leads").update({ value: subtotal }).eq("id", leadId);
     }
 
+    /* R-1977: the domain goes on AFTER the site promo and the coupon — neither ever discounts it
+       (the cart's rule, R-225) — and GST is on the whole taxable value, like every other order. */
+    if (domainLine && !isMonthly) {
+      items.push(domainLine);
+      subtotal = subtotal + domainLine.rate;
+      amount   = Math.round(subtotal * 1.18);
+    }
+
     // ── Insert the actual quote row with the (possibly-discounted) totals.
     /* R-026: the IST calendar day. `toISOString().slice(0, 10)` is the UTC day, so an order
        placed between 00:00 and 05:30 IST was dated yesterday (AGENTS.md §6). */
@@ -438,12 +543,37 @@ export async function POST(request: NextRequest) {
       created_date:   createdDate,
       expires_date:   expiresDate,
       notes:          quoteNotes,
+      ...attribution, // R-1978
+      /* R-1967: a monthly (flex) order is billed each month — the PDF says PAYABLE EACH MONTH,
+         like the enquiry route's flex draft. The annual order row is written exactly as before. */
+      ...(isMonthly ? { billing_cycle: "monthly" } : {}),
     }).select("public_token").single();
     if (qErr || !inserted?.public_token) {
       console.error("[checkout/workspace] quote insert failed:", qErr ?? "no public_token returned");
       return NextResponse.json({ error: "Could not save quote. Please retry." }, { status: 500 });
     }
     const publicToken = inserted.public_token;
+
+    /* R-2010 (G-DPDP): tie this browser's cookie-consent record to the lead + quote, with the
+       choice in force now. Insert-only, never fails the order (it never throws). */
+    await recordCheckoutConsent(admin, {
+      tenantId: BUY_PAGE_TENANT_ID, anonId: (body as { consentAnonId?: unknown }).consentAnonId, leadId, quoteId,
+      metaConsent: (body as { metaConsent?: unknown }).metaConsent === true,
+      ip: clientIp(request.headers), userAgent: request.headers.get("user-agent"),
+    });
+
+    /* R-1985: monthly + new domain → the domain's own quote, on the same lead. The order total is
+       the two quotes' totals; the coupon and the site promo stayed on the Workspace (above). */
+    let domainQuote: DomainQuote | null = null;
+    if (domainLine && isMonthly) {
+      domainQuote = await insertDomainQuote(admin, {
+        tenantId: BUY_PAGE_TENANT_ID, leadId, companyName, domain: cleanDomain, line: domainLine,
+        notes: isSimulation ? `[SIMULATION] Test buy from /buy/workspace — domain.` : `Ordered online.`,
+        createdDate, expiresDate, attribution,
+      });
+      if (!domainQuote) return NextResponse.json({ error: "Could not save quote. Please retry." }, { status: 500 });
+    }
+    const orderTotal = amount + (domainQuote?.amount ?? 0);
 
     // ═══════════════════════════════════════════════════════════════════
     // SIMULATION FLOW — skip Razorpay, call record_payment directly so
@@ -466,9 +596,34 @@ export async function POST(request: NextRequest) {
       }
       // The same automatic GST invoice the webhook issues for a real payment (R-079).
       await issueInvoiceForOnlinePayment(admin, { quoteId, tenantId: BUY_PAGE_TENANT_ID, logTag: "[checkout/workspace] simulated" });
+      /* R-1985: the domain's share of the SAME payment, on its own quote → its own GST invoice. */
+      if (domainQuote) {
+        const { error: domErr } = await admin.rpc("record_payment", {
+          p_quote_id:  domainQuote.quoteId,
+          p_amount:    domainQuote.amount,
+          p_method:    "razorpay",
+          p_reference: simRef,
+          p_notes:     `[SIMULATION] Test payment — domain ${cleanDomain} (same payment as ${quoteId})`,
+        });
+        if (domErr) {
+          const e = publicDbError("checkout/workspace", domErr, "The test payment could not be recorded for the domain. Nothing was charged — please try again.");
+          return NextResponse.json({ error: e.message }, { status: e.status });
+        }
+        await issueInvoiceForOnlinePayment(admin, { quoteId: domainQuote.quoteId, tenantId: BUY_PAGE_TENANT_ID, logTag: "[checkout/workspace] simulated" });
+      }
+      /* R-1979: the server Purchase to Meta (deduped with the browser by event_id) — only with the
+         buyer's cookie consent and a configured pixel; never fails the order (it never throws). */
+      await reportPurchaseToMeta(admin, {
+        quoteId, tenantId: BUY_PAGE_TENANT_ID,
+        consent: (body as { metaConsent?: unknown }).metaConsent === true,
+        fbp: typeof (body as { fbp?: unknown }).fbp === "string" ? String((body as { fbp?: unknown }).fbp).slice(0, 100) : null,
+        sourceUrl: typeof (body as { pageUrl?: unknown }).pageUrl === "string" ? String((body as { pageUrl?: unknown }).pageUrl).slice(0, 400) : null,
+        clientIp: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || null,
+        userAgent: request.headers.get("user-agent"),
+      });
 
       // Best-effort confirmation emails — clearly tagged [TEST] in subject.
-      const amountFmt = `₹${amount.toLocaleString("en-IN")}`;
+      const amountFmt = `₹${orderTotal.toLocaleString("en-IN")}`;
       const { alert: owner, tenant: ownerTenant } = await loadOwnerAlert(admin, BUY_PAGE_TENANT_ID);
       if (!owner.ok) {
         console.error(`[checkout/workspace] simulated order ${quoteId} recorded, but no owner alert: ${owner.reason}`);
@@ -560,11 +715,14 @@ test rows before going live.`,
         customerName:   fullName,
         tierName,
         seats,
-        totalRupees:    amount,
+        commitment,
+        totalRupees:    orderTotal,
         sitePromoId,
         sitePromoDiscount,
         couponCode:     appliedCouponCode,
         couponDiscount,
+        newDomain:      domainLine ? { domain: domainLine.domain, price: domainLine.rate, years: 1 } : null,
+        domainQuoteId:  domainQuote?.quoteId ?? null,
         message:        "Simulated payment recorded. Check the app for the new quote, lead, customer and payment.",
       });
     }
@@ -574,10 +732,12 @@ test rows before going live.`,
     // ═══════════════════════════════════════════════════════════════════
     const razorpay = new Razorpay({ key_id: rzKeyId, key_secret: rzKeySecret });
     const order    = await razorpay.orders.create({
-      amount:       amount * 100,           // paise
+      amount:       orderTotal * 100,       // paise — R-1985: both quotes when a monthly order buys a domain
       currency:     "INR",
       receipt:      quoteId,                 // ≤40 chars — Q-2025-26-0001 is fine
       notes:        {
+        /* R-1985: one payment, two quotes — the webhook records each share on its own quote. */
+        ...(domainQuote ? splitOrderNotes([{ quoteId, amount }, { quoteId: domainQuote.quoteId, amount: domainQuote.amount }]) : {}),
         leadId,
         quoteId,
         company:      companyName,
@@ -595,11 +755,14 @@ test rows before going live.`,
     await admin.from("quotes")
       .update({ payment_reference: order.id })
       .eq("id", quoteId);
+    if (domainQuote) {
+      await admin.from("quotes").update({ payment_reference: order.id }).eq("id", domainQuote.quoteId);
+    }
 
     return NextResponse.json({
       success:        true,
       orderId:        order.id,
-      amount:         amount * 100,
+      amount:         orderTotal * 100,
       currency:       "INR",
       razorpayKeyId:  rzKeyId,
       razorpayMode:   rzMode,
@@ -610,11 +773,14 @@ test rows before going live.`,
       customerName:   fullName,
       tierName,
       seats,
-      totalRupees:    amount,
+      commitment,
+      totalRupees:    orderTotal,
       sitePromoId,
       sitePromoDiscount,
       couponCode:     appliedCouponCode,
       couponDiscount,
+      newDomain:      domainLine ? { domain: domainLine.domain, price: domainLine.rate, years: 1 } : null,
+      domainQuoteId:  domainQuote?.quoteId ?? null,
     });
   } catch (err) {
     const m = err instanceof Error ? err.message : "Unknown error";

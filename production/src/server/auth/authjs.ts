@@ -22,7 +22,8 @@ import "server-only";
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
-import { checkPassword, ensureOAuthUser, lastSignInAt, recordSignIn } from "./accounts";
+import { checkPassword, ensureOAuthUser, getUserById, lastSignInAt, recordSignIn } from "./accounts";
+import { EMAIL_LINK_PROVIDER, authSecret, authorizeEmailLink } from "./email-link";
 import { loginAttemptAllowed } from "./login-limit";
 import { recordLogin } from "./login-log";
 import { hasVerifiedFactor, verifyCode } from "./mfa";
@@ -92,6 +93,20 @@ export const authConfig: NextAuthConfig = {
         await recordSignIn(r.user.id);
         await recordLogin({ userId: r.user.id, headers: request?.headers, method: "password" });
         return { id: r.user.id, email: r.user.email, name: (r.user.user_metadata.full_name as string | undefined) ?? null };
+      },
+    }),
+    /* R-1926: the signup confirm link signs the person in. Called only in-process by
+       ./email-link.startSessionAfterVerify, right after the one-time email token was spent;
+       the ticket is HMAC'd with AUTH_SECRET and lives 60 s (see ./email-link). */
+    Credentials({
+      id: EMAIL_LINK_PROVIDER,
+      credentials: { ticket: {} },
+      async authorize(raw, request) {
+        const u = await authorizeEmailLink(raw?.ticket, { secret: authSecret(), getUser: getUserById });
+        if (!u) throw new LoginError("invalid_credentials");
+        await recordSignIn(u.id);
+        await recordLogin({ userId: u.id, headers: request?.headers, method: "email_link" });
+        return u;
       },
     }),
     ...(googleId && googleSecret

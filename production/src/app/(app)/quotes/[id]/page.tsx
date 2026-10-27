@@ -15,7 +15,7 @@ import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 import { useQuote, useDeleteQuote, quoteDeleteBlockReason, useQuotesByLead } from "@/lib/queries/quotes";
 import { canReviseQuote, nextRevision, revisionDraft } from "@/lib/quotes/revise";
 import { istToday } from "@/lib/dates/ist";
-import { withInvoiceIssued, leadStageNow, rejectLeadOffer, lostActivityDetail, lossLabel, acceptHint } from "@/lib/quotes/quote-page-actions";
+import { withInvoiceIssued, rejectLeadOffer, lostActivityDetail, lossLabel, acceptHint } from "@/lib/quotes/quote-page-actions";
 import type { LossReasonCode } from "@/lib/leads/loss-reasons";
 import { RejectQuoteDialog } from "./reject-quote-dialog";
 import { isQuoteEditableInPlace } from "@/lib/quotes/editable";
@@ -69,6 +69,9 @@ import { addGstinHref, buyerGstinMissing, quoteBuyerGstin } from "@/lib/quotes/b
 import { paletteMayOpen } from "@/components/layout/palette-access";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
+import { copyLinkMarkingSent } from "@/components/features/quotes/failed-send-toast";
+import { openWhatsAppMarkingSent, markSentBeforeShare } from "@/components/features/quotes/share-marking-sent";
+import { markQuoteSent } from "@/lib/quotes/mark-quote-sent";
 import { PayQrNotice } from "@/components/features/quotes/pay-qr-notice";
 import SendWhatsAppDialog from "@/components/features/whatsapp/send-whatsapp-dialog";
 import { ApprovalDrawer } from "@/components/features/quotes/approval-drawer";
@@ -101,7 +104,6 @@ import { usePaymentsByQuote, totalReceived as sumReceived } from "@/lib/queries/
 import { useCustomer } from "@/lib/queries/customers";
 import { useLead, useUpdateLeadStage } from "@/lib/queries/leads";
 import { useLogLeadActivity } from "@/lib/queries/lead-activities";
-import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canRecordMoney } from "@/lib/auth/roles";
 import { rupee, formatDate, daysBetween, toWhatsAppDigits } from "@/lib/utils";
@@ -183,6 +185,7 @@ export default function QuoteDetailPage() {
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [downloadingPdf, setDownloadingPdf] = React.useState(false);
   const [sharingWa, setSharingWa] = React.useState(false);
+  const [copyingLink, setCopyingLink] = React.useState(false);
   const [receiptPayment, setReceiptPayment] = React.useState<Payment | null>(null);
   const [sendOpen,    setSendOpen]    = React.useState(false);
   const [whatsOpen,   setWhatsOpen]   = React.useState(false);
@@ -425,86 +428,35 @@ export default function QuoteDetailPage() {
   };
 
   // ────────── Mutations ──────────
-  /** The page's lead query — may still be loading when a button is pressed (R-443). */
-  const cachedLead = lead;
   /**
-   * "Mark as sent" — THE FOURTH SEND PATH, and the likeliest one behind Darshan's report.
+   * "Mark as sent" — "I already sent it myself, on WhatsApp or by hand — just record it".
    *
-   * It is deliberately not the emailing route (`/api/quotes/[id]/send`): this button means "I
-   * already sent it myself, on WhatsApp or by hand — just record it". So it cannot be folded
-   * into that route, and it therefore needs its own copy of the stage rule.
-   *
-   * Which is exactly how the bug survived a fix. The scan added with `stageAfterQuoteSent`
-   * searched for writes of `stage: "quote"` and for the two server senders by name — and this
-   * path writes neither. It writes `status: "sent"`, from the browser, and moved no stage at
-   * all. A scan is only as wide as the thing it greps for; this one was too narrow, and the
-   * most obvious operator action in the whole app fell through it.
+   * Deliberately not the emailing route. Since R-1956 it is ONE server path,
+   * POST /api/quotes/[id]/mark-sent (lib/quotes/mark-quote-sent.ts), shared with "Copy customer
+   * link" on a draft and the refused-send toast's "Copy link instead": the same approval gate
+   * as email and the PDF link (customerCopyBlock), the same forward-only stage rule
+   * (stageAfterQuoteSent, read from the database NOW — R-443) and the same timeline line.
+   * It used to be a browser-side copy of that rule, which is how the stage bug once survived
+   * a fix (Darshan's report, 24 Aug 2026): a scan is only as wide as the thing it greps for.
    */
+  const afterMarkedSent = () => {
+    qc.invalidateQueries({ queryKey: ["quotes"] });
+    qc.invalidateQueries({ queryKey: ["quotes", params.id] });
+    /* The lead board reads the stage this just changed. Without this the operator marks a
+       quote sent, walks to the pipeline, and sees the lead still sitting in Contacted —
+       which is the exact symptom that was reported. */
+    qc.invalidateQueries({ queryKey: ["leads"] });
+    if (quote?.lead_id) qc.invalidateQueries({ queryKey: ["lead-activities", quote.lead_id] });
+  };
   const sendQuote = useMutation({
-    mutationFn: async () => {
-      const supabase = createClient();
-      /* `.select("id")` because supabase-js counts "matched no rows" as success — an RLS
-         refusal or a stale id would otherwise toast "marked as sent" over a quote that never
-         changed status, which is the same class of lie as AGENTS.md L84. */
-      const { data, error } = await supabase
-        .from("quotes").update({ status: "sent" }).eq("id", params.id).select("id");
-      if (error) throw error;
-      if (!data || data.length === 0) {
-        throw new Error("The quote was not updated — reopen this page and try again.");
-      }
-
-      /* Forward-only, same single rule as the other three senders. Runs through
-         useUpdateLeadStage rather than a raw update so the lost-reason hygiene and the
-         no-rows-matched throw come along with it.
-         R-443: the stage is read from the database NOW. The page's lead query may not have
-         loaded yet (pressed right after opening the page) — that undefined stage read as
-         "the lead has no stage recorded" and the lead stayed in Contacted. */
-      const sentLeadId = quote?.lead_id;
-      const lead = sentLeadId
-        ? { stage: await leadStageNow(() => supabase.from("leads").select("stage").eq("id", sentLeadId).maybeSingle(), cachedLead?.stage) }
-        : cachedLead;
-      const move = stageAfterQuoteSent(lead?.stage);
-      if (quote?.lead_id && move.nextStage) {
-        await updateLeadStage.mutateAsync({ id: quote.lead_id, stage: move.nextStage });
-        /* And SAY so on the timeline.
-           Caught by watching this run on live data, 24 Aug 2026: the lead moved from Contacted
-           to Quote Sent correctly and its timeline said nothing at all, because
-           useUpdateLeadStage writes the column and no activity row. The other three senders
-           each insert a `kind: "stage"` row — so this path moved a deal between columns with no
-           record of why, which is the version of the reported bug that is HARDER to debug than
-           the original: the board is right and the history is silent.
-
-           That is the L98 shape again — a rule reaching three call sites out of four — and I
-           introduced it hours after writing L98 down. Logged through the RPC rather than a
-           direct insert so tenant_id comes from the server, not from this component. */
-        try {
-          await logActivity.mutateAsync({
-            leadId: quote.lead_id,
-            kind:   "stage",
-            detail: `Quote ${params.id} marked as sent — ${move.reason}`,
-          });
-        } catch {
-          /* Swallowed on purpose, and it is the last statement for that reason. The quote is
-             already sent and the stage already moved; letting a failed HISTORY row throw here
-             would show "could not mark as sent" over two writes that both succeeded, and the
-             operator would press it again. The hook raises its own toast, so the failure is
-             still visible — it just does not masquerade as the action failing. */
-        }
-      }
-      return move;
-    },
-    onSuccess: (move) => {
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["quotes", params.id] });
-      /* The lead board reads the stage this just changed. Without this the operator marks a
-         quote sent, walks to the pipeline, and sees the lead still sitting in Contacted —
-         which is the exact symptom that was reported. */
-      qc.invalidateQueries({ queryKey: ["leads"] });
+    mutationFn: () => markQuoteSent(params.id),
+    onSuccess: (r) => {
+      afterMarkedSent();
       toast.success(
-        move.nextStage ? "Quote marked as sent · lead moved to Quote Sent" : "Quote marked as sent",
+        r.leadMoved ? "Quote marked as sent · lead moved to Quote Sent" : "Quote marked as sent",
         /* The refusal reason, shown rather than swallowed: on a Won deal the lead deliberately
            does NOT move, and silence there looks identical to the bug being fixed. */
-        move.nextStage ? undefined : { description: move.reason },
+        r.leadMoved || !r.leadReason ? undefined : { description: r.leadReason },
       );
     },
     onError: (e) => toastError(e),
@@ -930,13 +882,19 @@ export default function QuoteDetailPage() {
     const link = isMobile
       ? `https://wa.me/${digits}?text=${q}`
       : `https://web.whatsapp.com/send?phone=${digits}&text=${q}`;
-    // Open WhatsApp synchronously (inside the click gesture) so pop-up blockers
-    // don't eat it, THEN download the PDF for the owner to attach.
-    window.open(link, "_blank", "noopener,noreferrer");
+    /* R-1961: the message carries the accept link, and the accept page hides drafts — so a draft
+       is marked sent first (mark-sent route, approval gate included), the same step as the
+       copy-link button. The helper opens the tab inside this click (pop-up blockers) and points it
+       at WhatsApp only when that worked; a refusal closes it, shows the reason, and no PDF downloads.
+       No await before this call — it must run in the click itself. */
     setSharingWa(true);
+    const shared = await openWhatsAppMarkingSent({
+      quoteId: quote.id, quoteStatus: quote.status, url: link, onMarkedSent: afterMarkedSent,
+    });
+    if (shared.refused) { setSharingWa(false); return; }
     try {
       await downloadQuotePdfFile();
-      toast.success("Quote PDF downloaded", {
+      toast.success(shared.markedSent ? "Quote marked as sent · PDF downloaded" : "Quote PDF downloaded", {
         description: "Attach this PDF in the WhatsApp chat.",
       });
     } catch (err) {
@@ -1099,6 +1057,25 @@ export default function QuoteDetailPage() {
             Send on WhatsApp
           </Button>
           )}
+          {/* R-1922 (G-ONBOARD OB-1): the link works without any email or WhatsApp setup, so a new
+              company can reach its customer in one click — it was hidden under More. */}
+          <Button
+            icon="link"
+            disabled={!!customerBlock}
+            loading={copyingLink}
+            title={customerBlock ? CUSTOMER_COPY_BLOCKED_TITLE
+              : quote.status === "draft" ? "Marks the quote as sent, then copies the customer's accept link — a draft's link opens nothing"
+              : "Copy the customer's accept link — share it by email, WhatsApp or chat"}
+            /* R-1956: a draft's link is dead (the accept page hides drafts), so copying marks it
+               sent first through the same path as "Mark as sent" — approval gate included —
+               the way the refused-send toast's "Copy link instead" does. */
+            onClick={async () => {
+              setCopyingLink(true);
+              try {
+                await copyLinkMarkingSent({ quoteId: quote.id, link: acceptUrl, quoteStatus: quote.status, onMarkedSent: afterMarkedSent });
+              } finally { setCopyingLink(false); }
+            }}
+          >Copy customer link</Button>
           <Button
             icon="download"
             loading={downloadingPdf}
@@ -1133,16 +1110,6 @@ export default function QuoteDetailPage() {
               <Button icon="more_h">More</Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[13rem]">
-              <DropdownMenuItem
-                className="gap-2.5 py-2 cursor-pointer"
-                disabled={!!customerBlock}
-                onClick={() => {
-                  navigator.clipboard?.writeText(acceptUrl);
-                  toast.success("Customer link copied · share via email or WhatsApp");
-                }}
-              >
-                <Icon name="link" size={15} /> Copy customer link
-              </DropdownMenuItem>
               {/* R-1523: the same quote as a Proforma Invoice — server-rendered, so it carries the
                   UPI QR, bank details and pay link exactly as the emailed copy does. */}
               <DropdownMenuItem
@@ -2180,6 +2147,11 @@ export default function QuoteDetailPage() {
           title={`Send quote ${quote.id} via WhatsApp`}
           attachQuoteId={quote.id}
           attachQuoteLabel={`Quote-${quote.id}.pdf`}
+          /* R-1961: the message carries the accept link and the accept page hides drafts — a draft
+             is marked sent first (same step as the copy-link button); a refusal shows why, sends nothing. */
+          beforeSend={async () => (await markSentBeforeShare({
+            quoteId: quote.id, quoteStatus: quote.status, channel: "whatsapp-dialog", onMarkedSent: afterMarkedSent,
+          })).ok}
           // Preview the PDF in a new tab — uses the SAME renderer as
           // Download PDF + the server-side WhatsApp send path, so what
           // Pardeep reviews is exactly what the customer will receive.

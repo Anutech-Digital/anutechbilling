@@ -231,6 +231,21 @@ export async function uploadBillAttachment(file: File): Promise<string> {
   return path;
 }
 
+/**
+ * R-2005: attach a bill file to a bill / expense that a server transaction just created (the bank
+ * Reconcile "record the bill now" — reconcile_bank_debit_to_vendor returns its id). Same storage
+ * and the same `attachment_url` column Add COGS Bill / Add expense write; only that column changes.
+ */
+export async function attachBillFile(source: "vendor_bill" | "expense", id: string, file: File): Promise<string> {
+  const path = await uploadBillAttachment(file);
+  const supabase = createClient();
+  const { error } = source === "vendor_bill"
+    ? await supabase.from("vendor_bills").update({ attachment_url: path }).eq("id", id)
+    : await supabase.from("expenses").update({ attachment_url: path }).eq("id", id);
+  if (error) throw new Error(error.message);
+  return path;
+}
+
 /** Short-lived signed URL to view a bill attachment. */
 export async function getBillAttachmentUrl(path: string): Promise<string | null> {
   const supabase = createClient();

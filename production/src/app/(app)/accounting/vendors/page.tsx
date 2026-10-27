@@ -42,13 +42,14 @@ import { VENDOR_BILL_CATEGORIES } from "@/lib/queries/vendor-bills";
 import { rupee, formatDate, GST_STATE_BY_CODE, gstStateFromGstin, foreignAmount, formatForeignAmount } from "@/lib/utils";
 import { newestFirst } from "@/lib/sort/newest-first";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
-import { IFSC_RE, ACCOUNT_RE, UPI_RE, cleanAccountNo, cleanIfsc } from "@/lib/payables/payment-run";
+import { checkBankDetails, bankToast, type BankField } from "@/lib/banking/bank-details";
 import { panFromGstin, isPan, deducteeTypeFromPan, DEDUCTEE_LABEL } from "@/lib/accounting/tds-deductor";
 import { UDYAM_RE } from "@/lib/accounting/msme";
 import { toast } from "sonner";
 import type { Route } from "next";
 import { recordBillHref } from "../bills/add-from-url";
 import { isCarryOverClick, clearStraySelection } from "./vendor-popup";
+import { VendorStatementView } from "./vendor-statement-view";
 
 const VENDOR_SUPPLIED_PRODUCTS = [
   "Google Workspace & GCP",
@@ -329,6 +330,15 @@ function VendorActions({
   );
 }
 
+/** R-1905: the input ids of the bank fields — Save focuses the first wrong one. */
+const BANK_INPUT_ID: Record<BankField, string> = { accountNo: "vendors-bank-no", ifsc: "vendors-bank-ifsc", upi: "vendors-upi" };
+
+/** R-1905: a red line under a bank field saying what is wrong with it. */
+function BankFieldError({ id, msg }: { id: string; msg: string | undefined }) {
+  if (!msg) return null;
+  return <p id={id} role="alert" className="text-xs text-rose leading-snug">{msg}</p>;
+}
+
 function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void }) {
   const save = useUpsertVendor();
   const [name, setName] = React.useState(vendor?.name ?? "");
@@ -351,9 +361,20 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
   const [bankNo, setBankNo] = React.useState(vendor?.bank_account_no ?? "");
   const [bankIfsc, setBankIfsc] = React.useState(vendor?.bank_ifsc ?? "");
   const [upiId, setUpiId] = React.useState(vendor?.upi_id ?? "");
-  const bankNoBad = !!bankNo.trim() && !ACCOUNT_RE.test(cleanAccountNo(bankNo));
-  const ifscBad = !!bankIfsc.trim() && !IFSC_RE.test(cleanIfsc(bankIfsc));
-  const upiBad = !!upiId.trim() && !UPI_RE.test(upiId.trim());
+  /* R-1905: each bank field says what is wrong with IT, under the field — shown once the
+     field is left (blur) or Save is pressed. An empty UPI ID never blocks Save. */
+  const bankCheck = checkBankDetails({ accountNo: bankNo, ifsc: bankIfsc, upi: upiId });
+  const [bankTouched, setBankTouched] = React.useState<Partial<Record<BankField, boolean>>>({});
+  const [triedSave, setTriedSave] = React.useState(false);
+  const bankError = (f: BankField) => {
+    const msg = bankCheck.errors[f];
+    if (!msg) return undefined;
+    /* A pairing message ("Add the IFSC that goes with…") waits for Save — while the owner is
+       still filling the account number it would only nag. A wrong value shows on blur. */
+    const pairing = f === "ifsc" ? !bankIfsc.trim() : f === "accountNo" ? !bankNo.trim() : false;
+    return triedSave || (bankTouched[f] && !pairing) ? msg : undefined;
+  };
+  const touchBank = (f: BankField) => () => setBankTouched((t) => ({ ...t, [f]: true }));
   const [notes, setNotes] = React.useState(() => {
     if (!vendor?.notes) return "";
     return vendor.notes.replace(/\[Supplied Products: .*?\]/, "").trim();
@@ -391,10 +412,11 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
       });
       return;
     }
-    if (bankNoBad || ifscBad || upiBad || (!!bankNo.trim() !== !!bankIfsc.trim())) {
-      toast.error("Bank details are not complete", {
-        description: bankNo.trim() && !bankIfsc.trim() ? "Add the IFSC with the account number." : !bankNo.trim() && bankIfsc.trim() ? "Add the account number with the IFSC." : "Check the account number, IFSC or UPI ID.",
-      });
+    const bankMsg = bankToast(bankCheck);
+    if (bankMsg) {
+      setTriedSave(true);
+      toast.error(bankMsg.title, { description: bankMsg.description });
+      document.getElementById(BANK_INPUT_ID[bankCheck.first!])?.focus();
       return;
     }
     try {
@@ -465,14 +487,17 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
               <FormField htmlFor="vendors-bank-name" label="Account holder name">
                 <Input id="vendors-bank-name" value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="As on the cheque" />
               </FormField>
-              <FormField htmlFor="vendors-bank-no" label="Account number" hint={bankNoBad ? "6–18 digits" : undefined}>
-                <Input id="vendors-bank-no" value={bankNo} onChange={(e) => setBankNo(e.target.value)} inputMode="numeric" autoComplete="off" placeholder="e.g. 50200012345678" className="font-mono" />
+              <FormField htmlFor="vendors-bank-no" label="Account number">
+                <Input id="vendors-bank-no" value={bankNo} onChange={(e) => setBankNo(e.target.value)} onBlur={touchBank("accountNo")} inputMode="numeric" autoComplete="off" placeholder="e.g. 50200012345678" className="font-mono" aria-invalid={!!bankError("accountNo")} aria-describedby={bankError("accountNo") ? "vendors-bank-no-error" : undefined} />
+                <BankFieldError id="vendors-bank-no-error" msg={bankError("accountNo")} />
               </FormField>
-              <FormField htmlFor="vendors-bank-ifsc" label="IFSC" hint={ifscBad ? "11 characters, 5th is 0 — e.g. HDFC0001234" : undefined}>
-                <Input id="vendors-bank-ifsc" value={bankIfsc} onChange={(e) => setBankIfsc(e.target.value.toUpperCase())} maxLength={11} placeholder="HDFC0001234" className="font-mono uppercase" />
+              <FormField htmlFor="vendors-bank-ifsc" label="IFSC">
+                <Input id="vendors-bank-ifsc" value={bankIfsc} onChange={(e) => setBankIfsc(e.target.value.toUpperCase())} onBlur={touchBank("ifsc")} maxLength={11} placeholder="HDFC0001234" className="font-mono uppercase" aria-invalid={!!bankError("ifsc")} aria-describedby={bankError("ifsc") ? "vendors-bank-ifsc-error" : undefined} />
+                <BankFieldError id="vendors-bank-ifsc-error" msg={bankError("ifsc")} />
               </FormField>
-              <FormField htmlFor="vendors-upi" label="UPI ID (if no account)" hint={upiBad ? "e.g. name@okhdfcbank" : undefined}>
-                <Input id="vendors-upi" value={upiId} onChange={(e) => setUpiId(e.target.value.trim())} placeholder="name@okhdfcbank" />
+              <FormField htmlFor="vendors-upi" label="UPI ID (optional, if no bank account)">
+                <Input id="vendors-upi" value={upiId} onChange={(e) => setUpiId(e.target.value.trim())} onBlur={touchBank("upi")} placeholder="name@okhdfcbank" aria-invalid={!!bankError("upi")} aria-describedby={bankError("upi") ? "vendors-upi-error" : undefined} />
+                <BankFieldError id="vendors-upi-error" msg={bankError("upi")} />
               </FormField>
             </div>
           </div>
@@ -565,6 +590,8 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
   const payments = useVendorPayments(vendor.id, bills, vExpenses);
   const [detailBill, setDetailBill] = React.useState<VendorBill | null>(null);
   const [detailExpense, setDetailExpense] = React.useState<ExpenseRow | null>(null);
+  /* R-1921: the dated running statement (bill, payment, TDS, advance) next to the lists. */
+  const [view, setView] = React.useState<"bills" | "statement">("bills");
   const prods = parseSuppliedProducts(vendor.notes);
   /* R-1511: the click that opened this popup must not leave the header half-selected. */
   const openedAt = React.useRef(Date.now());
@@ -574,7 +601,7 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
     <>
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent
-        className="md:!max-w-lg"
+        className="md:!max-w-2xl"
         onMouseDownCapture={(e) => { if (isCarryOverClick(e.detail, Date.now() - openedAt.current)) e.preventDefault(); }}
       >
         <DialogHeader>
@@ -615,8 +642,19 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
           )}
         </div>
 
+        <div role="group" aria-label="Show" className="inline-flex self-start rounded-lg border border-hairline p-0.5 bg-paper-2/60">
+          {([["bills", "Bills & payments"], ["statement", "Statement"]] as const).map(([v, label]) => (
+            <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber ${view === v ? "bg-paper text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
         <div className="max-h-[55vh] overflow-y-auto -mx-1 px-1 space-y-4">
-          {isLoading ? (
+          {view === "statement" ? (
+            <VendorStatementView vendorId={vendor.id} />
+          ) : isLoading ? (
             <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-12" />)}</div>
           ) : (bills ?? []).length === 0 && (vExpenses ?? []).length === 0 ? (
             <div className="py-6 text-center space-y-3">
@@ -689,7 +727,7 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
             )}
           </>
           )}
-          {!isLoading && <VendorPaymentsList rows={payments.data} loading={payments.isLoading} error={payments.isError ? payments.error : null} onRetry={() => void payments.refetch()} />}
+          {view === "bills" && !isLoading && <VendorPaymentsList rows={payments.data} loading={payments.isLoading} error={payments.isError ? payments.error : null} onRetry={() => void payments.refetch()} />}
         </div>
 
         <DialogFooter className="gap-2">

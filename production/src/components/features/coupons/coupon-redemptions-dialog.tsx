@@ -20,9 +20,11 @@ interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   code: string | null;
+  /** R-1981: the campaign the coupon belongs to (coupons.campaign_id), or null. */
+  campaignName?: string | null;
 }
 
-export default function CouponRedemptionsDialog({ open, onOpenChange, code }: Props) {
+export default function CouponRedemptionsDialog({ open, onOpenChange, code, campaignName }: Props) {
   const { data, isLoading, error } = useCouponRedemptions(code ?? undefined);
 
   const totalSaved = (data ?? []).reduce((s, r) => s + (r.amount_saved ?? 0), 0);
@@ -39,6 +41,9 @@ export default function CouponRedemptionsDialog({ open, onOpenChange, code }: Pr
           </h2>
           <p className="text-xs text-ink-3 mt-1">
             One row per successful claim. Discount totals what we gave back to customers.
+          </p>
+          <p className="text-xs text-ink-3 mt-1">
+            Campaign: <span className="text-ink-2 font-medium">{campaignName || "No campaign"}</span>
           </p>
         </header>
 

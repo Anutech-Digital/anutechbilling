@@ -27,6 +27,8 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { daysElapsedInPeriod, prorateSalary } from "@/lib/payroll/proration";
+import { exitPayDays, onPayrollFor, employmentStatus } from "@/lib/payroll/exit";
+import { StartExitDialog } from "@/components/features/payroll/start-exit-dialog";
 import { nationalHolidaysForYear, FIXED_NATIONAL_HOLIDAYS, indiaPublicHolidaysForYear } from "@/lib/payroll/holidays-india";
 import { computeEsi, isEsiEligible, esiStickyCovered, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
 import { computePf, pfWage, pfWageCeiling, PF_EMPLOYER_RATE } from "@/lib/payroll/pf";
@@ -47,7 +49,7 @@ import { SalaryStatusCell } from "./salary-status-cell";
 import { salaryPayState } from "@/lib/payroll/salary-status";
 import { toast } from "sonner";
 import {
-  useEmployees, useUpsertEmployee, useDeleteEmployee, useSetEmployeePin,
+  useEmployees, useUpsertEmployee, useDeleteEmployee, useSetEmployeePin, useCancelEmployeeExit,
   useLeaveEntries, useCreateLeaveEntry, useDeleteLeaveEntry,
   useHolidays, useCreateHoliday, useDeleteHoliday,
   useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines,
@@ -192,11 +194,26 @@ export function EmployeesTab() {
   const leaveQ = useLeaveEntries();
   const del = useDeleteEmployee();
   const confirm = useConfirm();
-  const canWrite = canWriteMoney(useCurrentUser().data?.role);
+  const myRole = useCurrentUser().data?.role;
+  const canWrite = canWriteMoney(myRole);
+  /* R-1896: an exit ends the person's login — owner only (the RPC refuses anyone else). */
+  const isOwner = myRole === "owner";
+  const cancelExit = useCancelEmployeeExit();
   const [edit, setEdit] = React.useState<Employee | null | "new">(null);
   const [viewEmp, setViewEmp] = React.useState<Employee | null>(null);
   const [offerEmp, setOfferEmp] = React.useState<Employee | null>(null);
+  const [exitEmp, setExitEmp] = React.useState<Employee | null>(null);
   const rows = q.data ?? [];
+
+  const confirmCancelExit = async (e: Employee) => {
+    if (await confirm({
+      title: `Cancel ${e.name}'s exit?`,
+      body: "They stay on: the last working day is cleared and their login keeps working.",
+      confirmLabel: "Cancel exit",
+    })) {
+      cancelExit.mutate(e.id);
+    }
+  };
 
   const confirmDelete = async (e: Employee) => {
     if (await confirm({
@@ -286,9 +303,9 @@ export function EmployeesTab() {
                         <span className="text-ink-3"> / {allowance}</span>
                         {prorated && <span className="ml-1 text-3xs uppercase tracking-wide text-ink-3 font-sans not-italic" title={leaveTitle}>pro-rata</span>}
                       </td>
-                      <td className="px-4 py-3"><Badge kind={e.is_active ? "success" : "muted"} dot>{e.is_active ? "Active" : "Inactive"}</Badge></td>
+                      <td className="px-4 py-3"><EmployeeStatusBadge e={e} /></td>
                       <td className="px-4 py-3 text-right" onClick={(ev) => ev.stopPropagation()}>
-                        <EmployeeRowMenu e={e} canWrite={canWrite} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} />
+                        <EmployeeRowMenu e={e} canWrite={canWrite} isOwner={isOwner} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} onStartExit={setExitEmp} onCancelExit={confirmCancelExit} />
                       </td>
                     </tr>
                   );
@@ -334,8 +351,8 @@ export function EmployeesTab() {
                       {e.joining_date ? `Joined ${formatDate(e.joining_date)}` : "Not joined yet"} · Paid leave {left}/{allowance}{prorated ? " (pro-rata)" : ""}
                     </div>
                     <div className="flex items-center justify-between gap-2" onClick={(ev) => ev.stopPropagation()}>
-                      <Badge kind={e.is_active ? "success" : "muted"} dot>{e.is_active ? "Active" : "Inactive"}</Badge>
-                      <EmployeeRowMenu e={e} canWrite={canWrite} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} />
+                      <EmployeeStatusBadge e={e} />
+                      <EmployeeRowMenu e={e} canWrite={canWrite} isOwner={isOwner} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} onStartExit={setExitEmp} onCancelExit={confirmCancelExit} />
                     </div>
                   </Card>
                 </li>
@@ -347,6 +364,7 @@ export function EmployeesTab() {
       {canWrite && <FAB icon="plus" label="Add employee" onClick={() => setEdit("new")} ariaLabel="Add employee" />}
       {edit !== null && <EmployeeDialog employee={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
       {offerEmp && <OfferLetterDialog employee={offerEmp} onClose={() => setOfferEmp(null)} />}
+      {exitEmp && isOwner && <StartExitDialog employee={exitEmp} onClose={() => setExitEmp(null)} />}
       <EmployeeDetailDrawer
         employee={viewEmp ? (rows.find((r) => r.id === viewEmp.id) ?? viewEmp) : null}
         open={viewEmp !== null}
@@ -358,13 +376,25 @@ export function EmployeesTab() {
 }
 
 /** Row overflow menu — one clean "…" control replacing crowded inline buttons. */
-function EmployeeRowMenu({ e, canWrite, onView, onOffer, onEdit, onDelete }: {
+/** R-1896: Active / Leaving <last day> / Exited <last day> / Inactive — read from exit_date
+ *  against today (IST), so "Exited" appears on its own the day after the last day. */
+function EmployeeStatusBadge({ e }: { e: Employee }) {
+  const s = employmentStatus(e, todayISO());
+  if (s === "exiting") return <span title={`Last working day ${formatDate(e.exit_date!)}`}><Badge kind="warning" dot>Leaving {formatDate(e.exit_date!)}</Badge></span>;
+  if (s === "exited") return <span title={`Last working day ${formatDate(e.exit_date!)}`}><Badge kind="muted" dot>Exited {formatDate(e.exit_date!)}</Badge></span>;
+  return <Badge kind={s === "active" ? "success" : "muted"} dot>{s === "active" ? "Active" : "Inactive"}</Badge>;
+}
+
+function EmployeeRowMenu({ e, canWrite, isOwner, onView, onOffer, onEdit, onDelete, onStartExit, onCancelExit }: {
   e: Employee;
   canWrite: boolean;
+  isOwner: boolean;
   onView: (e: Employee) => void;
   onOffer: (e: Employee) => void;
   onEdit: (e: Employee) => void;
   onDelete: (e: Employee) => void;
+  onStartExit: (e: Employee) => void;
+  onCancelExit: (e: Employee) => void;
 }) {
   return (
     <DropdownMenu modal={false}>
@@ -389,6 +419,15 @@ function EmployeeRowMenu({ e, canWrite, onView, onOffer, onEdit, onDelete }: {
             <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => onEdit(e)}>
               <Icon name="edit" size={15} /> Edit profile &amp; salary
             </DropdownMenuItem>
+            {isOwner && (e.exit_date ? (
+              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => onCancelExit(e)}>
+                <Icon name="refresh" size={15} /> Cancel exit
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => onStartExit(e)}>
+                <Icon name="logout" size={15} /> Start exit
+              </DropdownMenuItem>
+            ))}
             <DropdownMenuSeparator />
             <DropdownMenuItem destructive className="gap-2.5 py-2 cursor-pointer" onClick={() => onDelete(e)}>
               <Icon name="trash" size={15} /> Delete employee
@@ -937,7 +976,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                 Active employee
               </label>
               {!active && (employee?.is_active ?? true) && (
-                <p className="text-xs text-amber-ink -mt-1">Before marking inactive, check the <b>Exit checklist</b> in the profile — devices / logins returned, advance settled, full &amp; final.</p>
+                <p className="text-xs text-amber-ink -mt-1">Someone leaving? Use <b>Start exit</b> in their ⋯ menu instead — it sets the last working day, pays that month pro-rata, stops payroll after it and ends their login.</p>
               )}
             </section>
           )}
@@ -1007,7 +1046,9 @@ export function PayrollTab() {
   const holQ = useHolidays();
   const shiftQ = useShiftRules();
 
-  const employees = (empQ.data ?? []).filter((e) => e.is_active);
+  /* R-1896: by month, not by today — a leaver stays in their exit month (final salary) and is
+     out of every month after it; someone who joins later is not in earlier months. */
+  const employees = (empQ.data ?? []).filter((e) => onPayrollFor(e, period));
   const paidByEmp = new Map((payQ.data ?? []).map((p) => [p.employee_id, p]));
   /* R-1831: unlinked bank lines of a salary's exact net → "Paid — link bank line". */
   const { data: waitingLines } = useUnlinkedSalaryBankLines(
@@ -1510,7 +1551,12 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
 
   // Don't auto-pay days that haven't happened yet: for a not-yet-complete month
   // the salary defaults to only the days elapsed so far (owner can pay full).
-  const payPeriod = daysElapsedInPeriod(period, todayISO());
+  /* R-1896: in the exit month pay only up to the last working day. */
+  const exitPay = exitPayDays(employee, period);
+  const monthSoFar = daysElapsedInPeriod(period, todayISO());
+  const payPeriod = exitPay
+    ? { elapsed: Math.min(monthSoFar.elapsed, exitPay.days), daysInMonth: monthSoFar.daysInMonth, complete: false }
+    : monthSoFar;
   const proratedDefault = prorateSalary(employee.monthly_gross, payPeriod.elapsed, payPeriod.daysInMonth);
   const [gross, setGross]   = React.useState(String(payPeriod.complete ? employee.monthly_gross : proratedDefault));
   const [bonus, setBonus]   = React.useState("0");
@@ -1600,7 +1646,11 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
     const monthStart = new Date(Date.UTC(yy, mm - 1, 1));
     const monthEnd = new Date(Date.UTC(yy, mm, 0));
     const todayUTC = new Date(todayISO() + "T00:00:00Z");
-    const rangeEnd = todayUTC < monthEnd ? todayUTC : monthEnd;
+    /* R-1896: days after the last working day are not absences. */
+    const exitDay = exitPayDays(employee, period)?.lastDay;
+    const lastDayUTC = exitDay ? new Date(exitDay + "T00:00:00Z") : monthEnd;
+    const capEnd = lastDayUTC < monthEnd ? lastDayUTC : monthEnd;
+    const rangeEnd = todayUTC < capEnd ? todayUTC : capEnd;
     const rangeStart = employee.joining_date && employee.joining_date > `${period}-01`
       ? new Date(employee.joining_date + "T00:00:00Z") : monthStart;
     // Company holidays + auto national gazetted holidays (26 Jan / 15 Aug / 2 Oct).
@@ -1667,10 +1717,12 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
               <Input id="payroll-salary-to-pay" type="number" min={0} value={gross} onChange={(e) => setGross(e.target.value)} />
               {!payPeriod.complete && (
                 <p className="text-xs text-ink-3 mt-1">
-                  {proratedDefault > 0
+                  {exitPay
+                    ? <>Final month — prorated to <b>{payPeriod.elapsed} of {payPeriod.daysInMonth} days</b>, last working day {formatDate(exitPay.lastDay)}.</>
+                    : proratedDefault > 0
                     ? <>Prorated to <b>{payPeriod.elapsed} of {payPeriod.daysInMonth} days</b> (till today) — days not yet worked aren&apos;t paid.</>
                     : <>This month hasn&apos;t started yet — enter an amount to pay in advance.</>}
-                  {grossN !== employee.monthly_gross && (
+                  {!exitPay && grossN !== employee.monthly_gross && (
                     <>{" "}<button type="button" className="text-amber-ink font-medium hover:underline" onClick={() => setGross(String(employee.monthly_gross))}>Pay full month ({rupee(employee.monthly_gross)})</button></>
                   )}
                 </p>

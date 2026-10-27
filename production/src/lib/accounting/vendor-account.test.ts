@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   isOpenExpenseBill, expenseBillDue, advanceLeft, vendorBalance, balanceWords, vendorPaymentRows,
+  vendorAdvanceLeft, advanceToApply, billAdvanceView, isPartlyPaidExpense, expenseStillOwed,
+  cogsBillAdvanceView, advanceHeadDefault,
 } from "./vendor-account";
 
 const exp = (o: Partial<Parameters<typeof isOpenExpenseBill>[0]> = {}) => ({
@@ -114,5 +116,125 @@ describe("payments made to the vendor", () => {
       advancesOutsideBank: [{ id: "p9", paid_date: "2026-10-05", total_amount: 5000, payment_method: "cash" }],
     });
     expect(rows).toEqual([{ key: "adv:p9", date: "2026-10-05", cash: 5000, tds: 0, via: "cash", what: "Advance", href: "/accounting/prepaid" }]);
+  });
+});
+
+/* R-1913 (R-1906 audit B2/B3): Verma — ₹30,000 advance from the bank, ₹50,000 bill on Expenses. */
+describe("R-1913 — the vendor's advance on a bill", () => {
+  const VERMA = "v-verma";
+  const adv = (o: Partial<{ vendor_id: string | null; vendor_name: string | null; total_amount: number; consumed_amount: number; closed_at: string | null; category: string | null }> = {}) => ({
+    vendor_id: VERMA, vendor_name: "Verma Contractors", total_amount: 30000, consumed_amount: 0, closed_at: null, category: "Repairs & Maintenance", ...o,
+  });
+  const bill = (o: Partial<Parameters<typeof billAdvanceView>[0]> = {}) => ({
+    ...exp({ amount: 50000, category: "Repairs & Maintenance" }), vendor_id: VERMA, vendor_name: "Verma Contractors", advance_applied: 0, ...o,
+  });
+
+  it("before: the bill offers 'Apply advance ₹30,000'; after: ₹20,000 due, nothing more to apply", () => {
+    expect(billAdvanceView(bill(), [adv()])).toEqual({ applied: 0, paidPart: 0, due: 50000, canApply: 30000, canUndo: false });
+    expect(billAdvanceView(bill({ advance_applied: 30000 }), [adv({ consumed_amount: 30000 })]))
+      .toEqual({ applied: 30000, paidPart: 0, due: 20000, canApply: 0, canUndo: true });
+  });
+
+  it("the popup's due takes the advance applied off (You owe ₹20,000, not ₹50,000)", () => {
+    expect(expenseBillDue(bill({ advance_applied: 30000 }))).toBe(20000);
+    expect(vendorBalance(expenseBillDue(bill({ advance_applied: 30000 })), 0)).toMatchObject({ net: 20000, state: "owe" });
+  });
+
+  it("a bill settled by the advance is no longer open; undo is still offered", () => {
+    const settled = bill({ amount: 20000, advance_applied: 20000, paid: true, payment_method: "advance" });
+    expect(isOpenExpenseBill(settled)).toBe(false);
+    expect(billAdvanceView(settled, [adv({ consumed_amount: 20000 })])).toMatchObject({ due: 0, canApply: 0, canUndo: true });
+  });
+
+  it("no undo once a bank line (or Mark paid) settled the rest", () => {
+    expect(billAdvanceView(bill({ advance_applied: 30000, paid: true, reconciled_txn_id: "t1", payment_method: "bank" }), []).canUndo).toBe(false);
+    expect(billAdvanceView(bill({ advance_applied: 30000, paid: true, payment_method: "neft" }), []).canUndo).toBe(false);
+  });
+
+  it("advance left: by vendor id (renamed vendor), by name when the advance has no vendor; never staff advances", () => {
+    expect(vendorAdvanceLeft([adv({ vendor_name: "Old name" })], VERMA, "Verma Contractors")).toBe(30000);
+    expect(vendorAdvanceLeft([adv({ vendor_id: null, vendor_name: " verma contractors " })], VERMA, "Verma Contractors")).toBe(30000);
+    expect(vendorAdvanceLeft([adv({ vendor_id: "other" })], VERMA, "Verma Contractors")).toBe(0);
+    expect(vendorAdvanceLeft([adv({ category: "Employee advance" })], VERMA, "Verma Contractors")).toBe(0);
+    expect(vendorAdvanceLeft([adv({ closed_at: "2026-10-01" })], VERMA, "Verma Contractors")).toBe(0);
+  });
+
+  it("apply at most the bill's due, and never more than the advance", () => {
+    expect(advanceToApply(30000, 20000)).toBe(20000);
+    expect(advanceToApply(30000, 50000)).toBe(30000);
+    expect(advanceToApply(0, 50000)).toBe(0);
+  });
+});
+
+/* R-1915 (R-1906 audit B5): Sharma Associates — ₹59,000 bill PS-1, ₹25,000 paid from a bank line. */
+describe("R-1915 — an expense bill paid in parts", () => {
+  const ps1 = (o: Partial<Parameters<typeof billAdvanceView>[0]> = {}) => ({
+    ...exp({ amount: 59000 }), vendor_id: "v-sharma", vendor_name: "Sharma Associates", advance_applied: 0, paid_amount: 0, ...o,
+  });
+
+  it("₹25,000 paid → 'Partly paid', ₹34,000 due (popup and the bill row)", () => {
+    const b = ps1({ paid_amount: 25000 });
+    expect(isPartlyPaidExpense(b)).toBe(true);
+    expect(isOpenExpenseBill(b)).toBe(true);
+    expect(expenseBillDue(b)).toBe(34000);
+    expect(vendorBalance(expenseBillDue(b), 0)).toMatchObject({ net: 34000, state: "owe" });
+    expect(billAdvanceView(b, [])).toEqual({ applied: 0, paidPart: 25000, due: 34000, canApply: 0, canUndo: false });
+    expect(expenseStillOwed(b)).toBe(34000);
+  });
+
+  it("not yet paid: not 'Partly paid'; still owed is the bill less the advance (TDS taken when paid)", () => {
+    expect(isPartlyPaidExpense(ps1())).toBe(false);
+    expect(expenseStillOwed(ps1({ tds_amount: 5000 }))).toBe(59000);
+    expect(expenseStillOwed(ps1({ advance_applied: 9000 }))).toBe(50000);
+  });
+
+  it("TDS ₹5,000 went with the first part (₹20,000 cash) → ₹34,000 cash due", () => {
+    const b = ps1({ paid_amount: 20000, tds_amount: 5000 });
+    expect(expenseBillDue(b)).toBe(34000);
+    expect(expenseStillOwed(b)).toBe(34000);
+  });
+
+  it("the rest paid → no longer open; with an advance + part the due is what is left", () => {
+    expect(isOpenExpenseBill(ps1({ paid_amount: 59000 }))).toBe(false);
+    expect(isPartlyPaidExpense(ps1({ paid_amount: 59000, paid: true }))).toBe(false);
+    const v = billAdvanceView(ps1({ amount: 50000, advance_applied: 30000, paid_amount: 5000 }), []);
+    expect(v).toMatchObject({ applied: 30000, paidPart: 5000, due: 15000, canUndo: false });
+  });
+});
+
+describe("R-1914 — a COGS vendor's advance on a COGS bill (Bills page)", () => {
+  const adv = (o: Partial<Parameters<typeof vendorAdvanceLeft>[0][number]> = {}) => ({
+    total_amount: 11800, consumed_amount: 0, closed_at: null, vendor_id: "g", vendor_name: "Google Cloud India", category: "COGS-Workspace", ...o,
+  });
+  const bill = (o: Partial<Parameters<typeof cogsBillAdvanceView>[0]> = {}) => ({
+    total: 11800, paid_amount: 0, status: "unpaid", currency: "INR", advance_applied: 0, vendor_id: "g", vendor_name: "Google Cloud India", ...o,
+  });
+  it("Google ₹11,800 advance + ₹11,800 COGS bill → Apply advance ₹11,800 (the COGS head no longer hides it)", () => {
+    expect(cogsBillAdvanceView(bill(), [adv()])).toEqual({ applied: 0, due: 11800, canApply: 11800, canUndo: false });
+  });
+  it("after Apply: paid by the advance, Undo offered, nothing more to apply", () => {
+    expect(cogsBillAdvanceView(bill({ paid_amount: 11800, advance_applied: 11800, status: "paid" }), [adv({ consumed_amount: 11800 })]))
+      .toEqual({ applied: 11800, due: 0, canApply: 0, canUndo: true });
+  });
+  it("part: ₹5,000 advance on an ₹11,800 bill leaves ₹6,800 due", () => {
+    expect(cogsBillAdvanceView(bill({ paid_amount: 5000, advance_applied: 5000, status: "partial" }), [adv({ total_amount: 5000, consumed_amount: 5000 })]))
+      .toEqual({ applied: 5000, due: 6800, canApply: 0, canUndo: true });
+  });
+  it("another vendor's advance, a foreign-currency bill, or a bill without the column → nothing to apply", () => {
+    expect(cogsBillAdvanceView(bill(), [adv({ vendor_id: "aws", vendor_name: "AWS" })]).canApply).toBe(0);
+    expect(cogsBillAdvanceView(bill({ currency: "USD" }), [adv()]).canApply).toBe(0);
+    expect(cogsBillAdvanceView(bill({ advance_applied: undefined }), [adv()])).toMatchObject({ applied: 0, canApply: 11800 });
+  });
+});
+
+describe("R-1914 — the head an advance is saved under (Banking → Paying a vendor?)", () => {
+  it("a COGS vendor keeps its COGS head — not 'Other'", () => {
+    expect(advanceHeadDefault("COGS-Workspace")).toBe("COGS-Workspace");
+    expect(advanceHeadDefault("Professional Services")).toBe("Professional Services");
+  });
+  it("no head, or Salaries → Other", () => {
+    expect(advanceHeadDefault(null)).toBe("Other");
+    expect(advanceHeadDefault("  ")).toBe("Other");
+    expect(advanceHeadDefault("Salaries")).toBe("Other");
   });
 });

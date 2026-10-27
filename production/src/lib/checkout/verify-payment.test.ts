@@ -319,3 +319,46 @@ describe("R-1596 — what verify refuses", () => {
     expect(db.rpcCalls).toEqual([]);
   });
 });
+
+describe("R-1985 — a monthly order with a new domain: one payment over the Workspace + domain quotes", () => {
+  const DOM = "Q-AITEST-1597";
+  function seedSplit() {
+    Object.assign(db.tables.quotes[0], { amount: 3068, plan: "google-workspace-standard" });
+    db.tables.quotes.push({
+      id: DOM, tenant_id: TENANT, customer_name: "AITEST Buyer Co", amount: 766, payment_status: "awaiting",
+      lead_id: "L-AITEST", seats: 1, plan: "domain-registration", line_items: [], is_renewal: false, status: "sent",
+      superseded_by: null, invoice_id: null, public_token: "tok2", payment_reference: ORDER, customer_id: null,
+    });
+    rzp.payment = { ...rzp.payment!, amount: 383400, method: "card" };
+  }
+
+  it("verify expects the SUM (₹3,834) and records each share on its own quote, same reference", async () => {
+    seedSplit();
+    const r = await verify();
+    expect(r.status).toBe(200);
+    expect(r.body.state).toBe("paid");
+    expect(r.body.quoteId).toBe(QUOTE);
+    const recs = db.rpcCalls.filter((c) => c.name === "record_payment").map((c) => c.args);
+    expect(recs).toEqual([
+      expect.objectContaining({ p_quote_id: QUOTE, p_amount: 3068, p_reference: PAY }),
+      expect.objectContaining({ p_quote_id: DOM, p_amount: 766, p_reference: PAY }),
+    ]);
+  });
+
+  it("the webhook after verify records nothing more", async () => {
+    seedSplit();
+    await verify();
+    const n = db.tables.payments.length;
+    const res = await webhook(signedWebhook(captured()));
+    expect((await res.json()).alreadyProcessed).toBe(true);
+    expect(db.tables.payments.length).toBe(n);
+  });
+
+  it("only the Workspace share paid by Razorpay (₹3,068) is refused, nothing recorded", async () => {
+    seedSplit();
+    rzp.payment = { ...rzp.payment!, amount: 306800 };
+    const r = await verify();
+    expect(r.status).toBe(409);
+    expect(db.rpcCalls.filter((c) => c.name === "record_payment")).toHaveLength(0);
+  });
+});

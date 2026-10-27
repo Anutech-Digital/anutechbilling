@@ -47,7 +47,7 @@ describe("guessVendor — only an unambiguous payee", () => {
   it("the vendor sharing more words wins (Kapoor Legal Associates over Kapoor Stationers)", () => {
     const vs = [{ id: "k1", name: "Kapoor Stationers" }, { id: "k2", name: "Kapoor Legal Associates" }];
     expect(guessVendor({ description: "NEFT-KAPOOR LEGAL ASSOCIATES-KL201 KL202" }, vs))
-      .toEqual({ vendorId: "k2", reason: "the bank line says “kapoor legal associates”" });
+      .toEqual({ vendorId: "k2", reason: "the bank line says “kapoor legal associates”", step: "name" });
   });
 });
 
@@ -166,6 +166,18 @@ describe("preselect", () => {
     expect(preselect([B1, cogs({ doc_id: "B9" })], 11800, plan).keys).toEqual([]);
     expect(preselect([cogs({ in_run: "PR-202610-001" })], 11800, plan).keys).toEqual([]);
   });
+  /* R-2007 (localhost 27 Oct): Google ₹5,000 line, bill SCN-G-20 ₹11,800 due — nothing was ticked
+     and the sheet said "₹5,000 not placed yet". */
+  it("the vendor's ONLY open bill and the bank paid less → that bill ticked (part payment)", () => {
+    const g20 = cogs({ doc_id: "BILL-SCN-G-20", bill_no: "SCN-G-20", amount_due: 11800 });
+    expect(preselect([g20], 5000, () => new Map())).toEqual({ keys: [itemKey(g20)], noTds: false });
+    const a = allocateOldestFirst([g20], 5000, new Map());
+    expect(a.cashByKey.get(itemKey(g20))).toBe(5000);
+    expect(a.left).toBe(0);
+  });
+  it("two open bills and less than either → still none (the owner picks)", () => {
+    expect(preselect([B1, cogs({ doc_id: "B9" })], 5000, () => new Map()).keys).toEqual([]);
+  });
 });
 
 describe("summarise + payArgs", () => {
@@ -192,9 +204,30 @@ describe("summarise + payArgs", () => {
       transactionId: "t5", vendorId: null, newVendor: { name: " Meta Ads India ", gstin: "", pan: "aagcm1866c", tdsSection: null },
       items: [], newBill: null, advance: 15000, advanceCategory: "Advertising", bankCharge: 0, note: null,
     });
-    expect(args.p_new_vendor).toEqual({ name: "Meta Ads India", gstin: null, pan: "AAGCM1866C", tds_section: null });
+    expect(args.p_new_vendor).toEqual({
+      name: "Meta Ads India", gstin: null, pan: "AAGCM1866C", tds_section: null, bank_account_no: null, bank_ifsc: null, upi_id: null,
+    });
     expect(args.p_advance).toBe(15000);
     expect(args.p_advance_category).toBe("Advertising");
+  });
+  it("R-1918: a new vendor from the bank line carries its account no, IFSC and UPI id to the server", () => {
+    const args = payArgs({
+      transactionId: "t6", vendorId: null,
+      newVendor: { name: "Sharma Associates", gstin: null, pan: null, tdsSection: "194J", accountNo: "5010 0123 4567 89", ifsc: " hdfc0001234 ", upi: " Sharma@OkHdfcBank " },
+      items: [], newBill: null, advance: 5000, advanceCategory: "Other", bankCharge: 0, note: null,
+    });
+    expect(args.p_new_vendor).toEqual({
+      name: "Sharma Associates", gstin: null, pan: null, tds_section: "194J",
+      bank_account_no: "50100123456789", bank_ifsc: "HDFC0001234", upi_id: "sharma@okhdfcbank",
+    });
+  });
+  it("R-1918: an IFSC without the account number is not sent (they go together — R-1905)", () => {
+    const args = payArgs({
+      transactionId: "t7", vendorId: null,
+      newVendor: { name: "Sharma Associates", gstin: null, pan: null, tdsSection: null, accountNo: "", ifsc: "HDFC0001234", upi: "" },
+      items: [], newBill: null, advance: 5000, advanceCategory: "Other", bankCharge: 0, note: null,
+    });
+    expect(args.p_new_vendor).toMatchObject({ bank_account_no: null, bank_ifsc: null, upi_id: null });
   });
   it("a new expense bill with GST input and TDS", () => {
     const args = payArgs({

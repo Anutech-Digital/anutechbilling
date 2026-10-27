@@ -59,14 +59,18 @@ interface Props {
   onNewCustomer?: () => void;
   /** A customer the parent just created — picked here. */
   pickedCustomerId?: string | null;
-  /** Left out (relink) → no "Project payment" button. */
-  onProjectPayment?: () => void;
+  /** Left out (relink) → no "Project payment" button. Gets the customer chosen in "Who paid?"
+   *  ("" when none) so the project section opens on that customer's project (R-2004). */
+  onProjectPayment?: (customerId: string) => void;
   /** The line is booked — the parent hides the choices that no longer apply. */
   onSaved?: () => void;
   onDone: () => void;
   /** R-1863: an old one-off bank sale being moved — save goes through relink_bank_one_off_sale
    *  (undo the old sale + book this choice, one transaction). */
   relink?: OldOneOffBooking | null;
+  /** R-2007: the Suggestion card's open item (and whether the gap is TDS) — "Change" opens this
+   *  section with it ticked. */
+  suggested?: { itemKey: string; tds: boolean } | null;
 }
 
 type Mode = "item" | "sale" | "advance";
@@ -79,7 +83,7 @@ const MODES: ReadonlyArray<readonly [Mode, string]> = [
 const selectCls =
   "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
 
-export function CreditPayForSection({ transaction, customers, onNewCustomer, pickedCustomerId, onProjectPayment, onSaved, onDone, relink }: Props) {
+export function CreditPayForSection({ transaction, customers, onNewCustomer, pickedCustomerId, onProjectPayment, onSaved, onDone, relink, suggested }: Props) {
   const credit = transaction.credit;
 
   /* ── 1. Customer ─────────────────────────────────────────────────────────────── */
@@ -108,10 +112,11 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const [pickKey, setPickKey] = React.useState("");
   React.useEffect(() => {
     if (!items) return;
-    const pre = preselectItem(items, credit);
+    const fromCard = suggested ? items.find((i) => itemKey(i) === suggested.itemKey) ?? null : null;
+    const pre = fromCard ?? preselectItem(items, credit);
     setPickKey(pre ? itemKey(pre) : "");
     setMode(items.length > 0 ? "item" : "sale");
-  }, [items, credit]);
+  }, [items, credit, suggested]);
   const picked = (items ?? []).find((i) => itemKey(i) === pickKey) ?? null;
 
   /* New sale lines. */
@@ -141,7 +146,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const [shortChoice, setShortChoice] = React.useState<ShortChoice>("part");
   /* TDS pre-chosen when the gap IS a common TDS rate; else part payment. Re-decided per item. */
   const tdsLikely = check?.kind === "short" && check.tdsRatePct !== null;
-  React.useEffect(() => { setShortChoice(tdsLikely ? "tds" : "part"); }, [tdsLikely, pickKey, mode]);
+  const cardSaysTds = Boolean(suggested?.tds && suggested.itemKey === pickKey);
+  React.useEffect(() => { setShortChoice(tdsLikely || cardSaysTds ? "tds" : "part"); }, [tdsLikely, cardSaysTds, pickKey, mode]);
 
   /* ── 4. Save ─────────────────────────────────────────────────────────────────── */
   const payItem = usePayItemFromBankCredit();
@@ -333,7 +339,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                   ? `Record sale & reconcile ${rupee(credit)}`
                   : `Keep ${rupee(credit)} as advance & reconcile`}
             </Button>
-            {onProjectPayment && <Button size="sm" variant="default" icon="briefcase" onClick={onProjectPayment}>Project payment</Button>}
+            {onProjectPayment && <Button size="sm" variant="default" icon="briefcase" onClick={() => onProjectPayment(customerId)}>Project payment</Button>}
           </div>
         </>
       )}

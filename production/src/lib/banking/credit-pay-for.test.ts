@@ -95,6 +95,26 @@ describe("R-1838 customer guess", () => {
   });
 });
 
+describe("R-2007 customer guess — shared words do not hide the payer", () => {
+  const scn = [{ id: "acme", name: "SCN Acme Website Co" }, { id: "bharat", name: "SCN Bharat Apps" }];
+  it("'SCN' is in both names; 'BHARAT APPS' is only Bharat's → SCN Bharat Apps", () => {
+    const g = guessCustomer({ description: "NEFT CR-ICIC0001957-SCN BHARAT APPS-KIST 1 2 LESS TDS" }, scn);
+    expect(g?.customerId).toBe("bharat");
+    expect(g?.reason).toBe("the bank line says “bharat apps”");
+  });
+  it("only the shared word → no guess (a tie)", () => {
+    expect(guessCustomer({ description: "NEFT CR-HDFC0001-SCN-PAYMENT" }, scn)).toBeNull();
+  });
+  it("generic words (PVT, LTD, CO, INDIA, TECHNOLOGIES) never pick a customer", () => {
+    const cs = [{ id: "a", name: "Zenith India Technologies Pvt Ltd" }, { id: "b", name: "Orbit Co" }];
+    expect(guessCustomer({ description: "NEFT INDIA TECHNOLOGIES PVT LTD CO" }, cs)).toBeNull();
+    expect(guessCustomer({ description: "NEFT ZENITH INDIA PVT LTD" }, cs)?.customerId).toBe("a");
+  });
+  it("two customers each with their own word in the line → no guess", () => {
+    expect(guessCustomer({ description: "NEFT SCN ACME BHARAT" }, scn)).toBeNull();
+  });
+});
+
 describe("R-1838 pre-selection + amount check", () => {
   const ren = item({ kind: "renewal", quote_id: "Q-REN", amount_due: 35400, taxable_value: 30000 });
   const add = item({ kind: "add_seats", quote_id: "Q-ADD", amount_due: 4720, taxable_value: 4000 });

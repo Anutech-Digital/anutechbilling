@@ -17,6 +17,10 @@ const state = vi.hoisted(() => ({
   pay: vi.fn(),
   q194: {} as Record<string, unknown[]>,
   setBuyer: vi.fn(),
+  advances: [] as unknown[],
+  applyAdvance: vi.fn(),
+  aliases: [] as Array<{ narration_key: string; vendor_id: string }>,
+  rules: [] as unknown[],
 }));
 
 vi.mock("@/lib/queries/vendors", () => ({
@@ -38,7 +42,14 @@ vi.mock("@/lib/queries/bank-debit-pay-for", () => ({
   usePayVendorFromBankDebit: () => ({ mutateAsync: state.pay, isPending: false }),
   useVendor194q: (id: string | null) => ({ data: id ? state.q194[id] ?? [] : undefined }),
   useSet194qBuyer: () => ({ mutate: state.setBuyer, isPending: false }),
+  useVendorNarrationAliases: () => ({ data: state.aliases }),
 }));
+/* R-1919: the one guess order reads the Category Rules and the learned aliases too. */
+vi.mock("@/lib/queries/txn-category-rules", () => ({ useTxnCategoryRules: () => ({ data: state.rules }) }));
+
+/* R-1913: the vendor's advance (Prepaid) and "Apply advance". */
+vi.mock("@/lib/queries/prepaid-advances", () => ({ usePrepaidAdvances: () => ({ data: state.advances }) }));
+vi.mock("@/lib/queries/vendor-advance", () => ({ useApplyVendorAdvance: () => ({ mutate: state.applyAdvance, isPending: false }) }));
 
 import { DebitPayForSection } from "./debit-pay-for-section";
 
@@ -46,9 +57,34 @@ afterEach(cleanup);
 beforeEach(() => {
   state.pay.mockReset();
   state.setBuyer.mockReset();
+  state.applyAdvance.mockReset();
+  state.advances = [];
   state.fy = { base: 70800 - 10800, baseWithoutTds: 60000 };   // the two unpaid bills ARE the year so far
   state.items = {};
   state.q194 = {};
+  state.aliases = [];
+  state.rules = [];
+});
+
+describe("R-1919 DebitPayForSection — one vendor guess, learned from the last payment", () => {
+  it("a payee picked by hand once is chosen on the next line, and says so", () => {
+    const line = txn(25000, "IMPS-612256082222-RK INFRA-FINO-XXXX6722-RENT OCT");
+    render(<DebitPayForSection transaction={line} onDone={() => {}} />);
+    expect((screen.getByLabelText("Vendor paid") as HTMLSelectElement).value).toBe("");   // nobody guessed yet
+    cleanup();
+    state.aliases = [{ narration_key: "rk infra", vendor_id: "v1" }];                    // what the save taught
+    render(<DebitPayForSection transaction={line} onDone={() => {}} />);
+    expect((screen.getByLabelText("Vendor paid") as HTMLSelectElement).value).toBe("v1");
+    expect(screen.getByText(/Learned from your last payment to this vendor — change it if wrong./)).toBeTruthy();
+  });
+
+  it("a Category Rule names the vendor before a learned alias (the order auto-reconcile uses)", () => {
+    state.rules = [{ id: "r1", pattern: "PAYUGOOGLE", category: "Advertising", direction: "debit" }];
+    state.aliases = [{ narration_key: "payugoogle", vendor_id: "v1" }];
+    render(<DebitPayForSection transaction={txn(5000, "K4UHU5ENAJ52FPOTCU/PAYUGOOGLE")} onDone={() => {}} />);
+    expect((screen.getByLabelText("Vendor paid") as HTMLSelectElement).value).toBe("v2");
+    expect(screen.getByText(/Guessed from your Category Rule “PAYUGOOGLE”/)).toBeTruthy();
+  });
 });
 
 const txn = (debit: number, description: string): BankTransactionRow => ({
@@ -98,9 +134,8 @@ describe("R-1866 DebitPayForSection", () => {
     state.pay.mockResolvedValue(result({ vendor_name: "Google Cloud India" }));
     render(<DebitPayForSection transaction={txn(10000, "NEFT GOOGLE PART")} onDone={() => {}} />);
     const box = screen.getByLabelText(/^Pay Bill G-2 · /) as HTMLInputElement;
-    expect(box.checked).toBe(false);          // 10,000 ≠ 23,600 — nothing pre-ticked
-    expect(saveButton().disabled).toBe(true);
-    fireEvent.click(box);
+    /* R-2007: the vendor's ONLY open bill and less money than it needs → pre-ticked as a part payment. */
+    expect(box.checked).toBe(true);
     expect(screen.getByText(/part payment — ₹13,600 stays due/)).toBeTruthy();
     fireEvent.click(saveButton());
     await screen.findByText("Done — this bank line is reconciled");
@@ -163,7 +198,8 @@ describe("R-1866 DebitPayForSection", () => {
     state.items.v3 = [IM2];
     state.q194.v3 = q(null);
     const { rerender } = render(<DebitPayForSection transaction={txn(2359000, "NEFT INGRAM MICRO IM-2")} onDone={() => {}} />);
-    fireEvent.click(screen.getByLabelText(/^Pay Bill IM-2 · /));
+    /* R-2007: the only open bill, bank less than it → already ticked (part payment until the TDS is known). */
+    expect((screen.getByLabelText(/^Pay Bill IM-2 · /) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByText(/turnover last financial year was/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Yes, above ₹10 crore/ }));
     expect(state.setBuyer).toHaveBeenCalledWith(true);
@@ -182,8 +218,193 @@ describe("R-1866 DebitPayForSection", () => {
   it("parts that do not make the bank amount cannot be saved", () => {
     state.items.v2 = [G2];
     render(<DebitPayForSection transaction={txn(10000, "NEFT GOOGLE")} onDone={() => {}} />);
+    fireEvent.click(screen.getByLabelText(/^Pay Bill G-2 · /));   // untick the pre-ticked part payment (R-2007)
     fireEvent.change(screen.getByLabelText("Advance to vendor"), { target: { value: "4000" } });
     expect(screen.getByText(/₹6,000 of the ₹10,000 is not placed yet/)).toBeTruthy();
+    expect(saveButton().disabled).toBe(true);
+  });
+});
+
+/* R-1911 (R-1906 audit B1): a payment already recorded on the Bills / Expenses page + the real
+   bank line must count ONCE — the sheet offers "match this bank line to it" first and pre-ticks it,
+   never the bill as a second payment, never the whole line as an advance. The money is proven by
+   supabase/tests/r1911_match_recorded_vendor_payment.test.sql. */
+describe("R-1911 DebitPayForSection — match a payment already recorded", () => {
+  const recordedBill: VendorOpenItem = {
+    source: "recorded_payment", doc_id: "11111111-aaaa-bbbb-cccc-000000000001", bill_no: "G-10", doc_date: "2026-10-10", due_date: null,
+    category: "COGS-Workspace", total: 10000, amount_due: 5000, gst: 0, tds_base: 0, tds_amount: 0, tds_section: null, can_part: false,
+    in_run: null, paid_on: "2026-10-10", pays_source: "vendor_bill", pays_doc_id: "B10",
+  };
+  const billHalfPaid: VendorOpenItem = { ...G2, doc_id: "B10", bill_no: "G-10", doc_date: "2026-09-05", total: 10000, amount_due: 5000 };
+  const matchButton = () => screen.getByRole("button", { name: /^Match ₹5,000 to the payment already recorded/ }) as HTMLButtonElement;
+
+  it("Bills-page payment of ₹5,000 + the real ₹5,000 line: listed first, pre-ticked, the bill NOT ticked, one match sent", async () => {
+    state.items.v2 = [recordedBill, billHalfPaid];
+    state.pay.mockResolvedValue(result({
+      vendor_name: "Google Cloud India", bank_amount: 5000,
+      paid: [{ source: "recorded_payment", pays_source: "vendor_bill", paid_on: "2026-10-10", doc_id: "B10", bill_no: "G-10", settled: 5000, cash: 5000, tds: 0, tds_section: null, status: "partial", still_due: 5000 }],
+    }));
+    render(<DebitPayForSection transaction={txn(5000, "NEFT DR-HDFC0001-GOOGLE CLOUD INDIA-N283")} onDone={() => {}} />);
+    const boxes = screen.getAllByRole("checkbox").filter((b) => /Match this bank line|^Pay Bill/.test(b.getAttribute("aria-label") ?? ""));
+    expect(boxes[0].getAttribute("aria-label")).toMatch(/^Match this bank line to the payment Already paid on .* from the Bills page · Bill G-10$/);
+    expect((boxes[0] as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(/^Pay Bill G-10 · /) as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText(/from the Bills page · Bill G-10 — match this bank line to it/)).toBeTruthy();
+    expect((screen.getByLabelText("Advance to vendor") as HTMLInputElement).value).toBe("0");
+    expect(matchButton().disabled).toBe(false);
+    fireEvent.click(matchButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay).toHaveBeenCalledTimes(1);
+    const arg = state.pay.mock.calls[0][0];
+    expect(arg.advance).toBe(0);
+    expect(arg.items.map((x: { item: VendorOpenItem; cash: number; tds: number }) => [x.item.source, x.item.doc_id, x.cash, x.tds]))
+      .toEqual([["recorded_payment", recordedBill.doc_id, 5000, 0]]);
+    expect(screen.getByText(/Matched to the ₹5,000 already paid to Google Cloud India on .* from the Bills page for Bill #G-10 — counted once, not paid again/)).toBeTruthy();
+  });
+
+  it("Expenses → Mark paid, then the real line: matched, NOT pre-filled as a whole-line advance", () => {
+    state.items.v1 = [{
+      ...recordedBill, doc_id: "EXP-9", bill_no: "PS-9", category: "Professional Services", total: 11800, amount_due: 10800,
+      paid_on: "2026-10-14", pays_source: "expense", pays_doc_id: "EXP-9",
+    }];
+    render(<DebitPayForSection transaction={txn(10800, "UPI SHARMA ASSOCIATES PS9")} onDone={() => {}} />);
+    expect((screen.getByLabelText(/^Match this bank line to the payment Already paid on .* from the Expenses page · Bill PS-9$/) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Advance to vendor") as HTMLInputElement).value).toBe("0");
+    expect(screen.queryByText(/has no unpaid bills/)).toBeNull();
+    expect(screen.getByRole("button", { name: /^Match ₹10,800 to the payment already recorded/ })).toBeTruthy();
+  });
+
+  it("a recorded payment of another amount is listed but not ticked; the exact bill still is", () => {
+    state.items.v2 = [{ ...recordedBill, amount_due: 3000 }, { ...billHalfPaid, amount_due: 7000 }];
+    render(<DebitPayForSection transaction={txn(7000, "NEFT GOOGLE CLOUD INDIA")} onDone={() => {}} />);
+    expect((screen.getByLabelText(/^Match this bank line to the payment/) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText(/^Pay Bill G-10 · /) as HTMLInputElement).checked).toBe(true);
+    expect(saveButton().disabled).toBe(false);
+  });
+});
+
+/* R-1913 (R-1906 audit B2): Verma's ₹30,000 advance, ₹50,000 bill on Expenses, the ₹20,000 bank
+   line — the advance is applied to the bill first, so the line pays only the rest. */
+describe("R-1913 DebitPayForSection — the vendor's advance on an expense bill", () => {
+  it("shows 'Advance with vendor ₹30,000' on the bill and applies at most what the bill owes", () => {
+    state.items.v1 = [exp({ doc_id: "EV1", bill_no: "VC-1", total: 50000, amount_due: 50000, gst: 0, tds_base: 50000 })];
+    state.advances = [{ vendor_id: "v1", vendor_name: "Sharma Associates", total_amount: 30000, consumed_amount: 0, closed_at: null, category: "Professional Services" }];
+    render(<DebitPayForSection transaction={txn(20000, "IMPS SHARMA ASSOCIATES VC-1")} onDone={() => {}} />);
+    expect(screen.getByText("Advance with vendor ₹30,000")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Apply ₹30,000 to this bill" }));
+    expect(state.applyAdvance).toHaveBeenCalledWith({ expenseId: "EV1" });
+  });
+
+  it("no advance with the vendor: nothing offered", () => {
+    state.items.v1 = [exp({})];
+    render(<DebitPayForSection transaction={txn(59000, "IMPS SHARMA ASSOCIATES")} onDone={() => {}} />);
+    expect(screen.queryByText(/Advance with vendor/)).toBeNull();
+  });
+});
+
+/* R-1914 (R-1906 audit B4): Google Cloud India (COGS-Workspace) — its advance keeps the COGS
+   head and is applied to its COGS bill (vendor_bills), not booked as an 'Other' expense. */
+describe("R-1914 DebitPayForSection — a COGS vendor's advance", () => {
+  it("Google's advance is offered on Google's COGS bill and applied to the bill (vendor_bill)", () => {
+    state.items.v2 = [G2];
+    state.advances = [{ vendor_id: "v2", vendor_name: "Google Cloud India", total_amount: 5000, consumed_amount: 0, closed_at: null, category: "COGS-Workspace" }];
+    render(<DebitPayForSection transaction={txn(18600, "NEFT GOOGLE")} onDone={() => {}} />);
+    expect(screen.getByText("Advance with vendor ₹5,000")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Apply ₹5,000 to this bill" }));
+    expect(state.applyAdvance).toHaveBeenCalledWith({ billId: "B2" });
+  });
+
+  it("₹11,800 to Google with no bill yet → advance saved under COGS-Workspace (was 'Other')", async () => {
+    state.pay.mockResolvedValue(result({ vendor_name: "Google Cloud India", advance: { id: "a1", amount: 11800, category: "COGS-Workspace" } }));
+    render(<DebitPayForSection transaction={txn(11800, "NEFT GOOGLE CLOUD INDIA ADV")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Vendor paid"), { target: { value: "v2" } });
+    expect((screen.getByLabelText("Advance to vendor") as HTMLInputElement).value).toBe("11800");
+    const head = screen.getByLabelText("Advance category") as HTMLSelectElement;
+    expect(head.value).toBe("COGS-Workspace");
+    expect(Array.from(head.options).map((o) => o.value)).toContain("COGS-Other");
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0]).toMatchObject({ vendorId: "v2", advance: 11800, advanceCategory: "COGS-Workspace" });
+  });
+});
+
+/* R-1915 (R-1906 audit B5): Sharma's ₹59,000 expense bill paid in two bank lines. */
+describe("R-1915 — expense bill part payment", () => {
+  it("₹25,000 line: tick the ₹59,000 bill → 'Pays ₹25,000', ₹34,000 stays due; one RPC with the part", async () => {
+    state.items.v1 = [exp({ bill_no: "PS-1", can_part: true })];
+    state.pay.mockResolvedValue(result({
+      bank_amount: 25000,
+      paid: [{ source: "expense", doc_id: "E1", bill_no: "PS-1", settled: 25000, cash: 25000, tds: 0, tds_section: null, status: "partial", still_due: 34000 }],
+    }));
+    render(<DebitPayForSection transaction={txn(25000, "UPI SHARMA ASSOCIATES PART")} onDone={() => {}} />);
+    const box = screen.getByLabelText(/^Pay Bill PS-1 · /) as HTMLInputElement;
+    if (!box.checked) fireEvent.click(box);
+    fireEvent.change(screen.getByLabelText("TDS section"), { target: { value: "" } });   // Sharma takes no TDS here
+    expect((screen.getByLabelText(/^Amount paid on Bill PS-1/) as HTMLInputElement).value).toBe("25000");
+    expect(screen.getByText(/part payment — ₹34,000 stays due/)).toBeTruthy();
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay).toHaveBeenCalledTimes(1);
+    const arg = state.pay.mock.calls[0][0];
+    expect(arg.items.map((x: { item: VendorOpenItem; cash: number; tds: number }) => [x.item.doc_id, x.cash, x.tds])).toEqual([["E1", 25000, 0]]);
+    expect(arg.advance).toBe(0);
+    expect(screen.getByText("Paid Bill #PS-1 (₹25,000) to Sharma Associates · Bill now part paid, ₹34,000 still due")).toBeTruthy();
+  });
+
+  it("second line ₹34,000: the part-paid bill (TDS already taken, base 0) is ticked and takes no new TDS", () => {
+    state.items.v1 = [exp({ bill_no: "PS-1", can_part: true, amount_due: 34000, tds_base: 0, tds_amount: 0, tds_section: "194J" })];
+    render(<DebitPayForSection transaction={txn(34000, "UPI SHARMA ASSOCIATES REST")} onDone={() => {}} />);
+    expect((screen.getByLabelText(/^Pay Bill PS-1 · /) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(/^Amount paid on Bill PS-1/) as HTMLInputElement).value).toBe("34000");
+    expect(screen.queryByText(/stays due/)).toBeNull();
+    expect(screen.queryByText(/\+ TDS/)).toBeNull();
+    expect(saveButton().disabled).toBe(false);
+  });
+});
+
+describe("R-1918 — new vendor from the bank line", () => {
+  it("UPI line from an unknown payee: one click adds it with name, IFSC and UPI id pre-filled; all reach the server", async () => {
+    state.pay.mockResolvedValue(result({ vendor_name: "Kapoor Legal", vendor_created: true, advance: { id: "a1", amount: 3000, category: "Other" } }));
+    render(<DebitPayForSection transaction={txn(3000, "UPI-KAPOOR LEGAL-kapoorlegal@okhdfcbank-HDFC0001234-529912345680-FEES")} onDone={() => {}} />);
+    expect((screen.getByLabelText("Vendor paid") as HTMLSelectElement).value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Add “Kapoor Legal” as a new vendor" }));
+    expect((screen.getByLabelText("New vendor name") as HTMLInputElement).value).toBe("Kapoor Legal");
+    expect((screen.getByLabelText("IFSC (optional)") as HTMLInputElement).value).toBe("HDFC0001234");
+    expect((screen.getByLabelText("UPI ID (optional)") as HTMLInputElement).value).toBe("kapoorlegal@okhdfcbank");
+    expect(screen.getByText(/Filled from the bank line: name, IFSC, UPI ID/)).toBeTruthy();
+    expect(screen.getByText(/Saved together with the account number/)).toBeTruthy();
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0].newVendor).toMatchObject({ name: "Kapoor Legal", ifsc: "HDFC0001234", upi: "kapoorlegal@okhdfcbank", accountNo: null });
+  });
+
+  it("card example — NEFT DR with a masked tail: '＋ New vendor' pre-fills name + IFSC, the account box asks for the full number ending 4521", async () => {
+    state.pay.mockResolvedValue(result({ vendor_name: "Sharma Traders", vendor_created: true }));
+    render(<DebitPayForSection transaction={txn(4000, "NEFT DR-HDFC0001234-SHARMA TRADERS-XXXXXX4521")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Vendor paid"), { target: { value: "__new_vendor__" } });
+    expect((screen.getByLabelText("New vendor name") as HTMLInputElement).value).toBe("Sharma Traders");
+    expect((screen.getByLabelText("IFSC (optional)") as HTMLInputElement).value).toBe("HDFC0001234");
+    const acc = screen.getByLabelText("Account number (optional)") as HTMLInputElement;
+    expect(acc.value).toBe("");
+    expect(acc.placeholder).toBe("Account number (ends 4521)");
+    fireEvent.change(acc, { target: { value: "50100123459999" } });
+    expect(screen.getByText(/ends with 4521 — check this number/)).toBeTruthy();
+    fireEvent.change(acc, { target: { value: "50100123454521" } });
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0].newVendor).toMatchObject({ name: "Sharma Traders", accountNo: "50100123454521", ifsc: "HDFC0001234" });
+  });
+
+  it("a wrong UPI id or account number blocks the save with the field's own words", () => {
+    render(<DebitPayForSection transaction={txn(4000, "CARD SOMETHING")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Vendor paid"), { target: { value: "__new_vendor__" } });
+    fireEvent.change(screen.getByLabelText("New vendor name"), { target: { value: "Some Vendor" } });
+    fireEvent.change(screen.getByLabelText("UPI ID (optional)"), { target: { value: "not-a-upi" } });
+    expect(screen.getByText(/This UPI ID looks wrong/)).toBeTruthy();
+    expect(saveButton().disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("UPI ID (optional)"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Account number (optional)"), { target: { value: "12AB" } });
+    expect(screen.getByText(/digits only/)).toBeTruthy();
     expect(saveButton().disabled).toBe(true);
   });
 });

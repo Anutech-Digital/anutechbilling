@@ -75,7 +75,8 @@ describe("R-1838 CreditPayForSection", () => {
     }));
     renderIt(35400);
     expect((screen.getByLabelText("Customer who paid") as HTMLSelectElement).value).toBe("c1");
-    expect(screen.getByText(/Guessed from the bank line says “acme”/)).toBeTruthy();
+    /* R-2007: the reason names every word only Acme has ("acme traders"). */
+    expect(screen.getByText(/Guessed from the bank line says “acme traders”/)).toBeTruthy();
     expect(screen.getByRole("radio", { checked: true }).textContent).toContain("Renewal");
     expect(screen.queryByText("Create subscription")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Record ₹35,400 on Q-REN & reconcile" }));
@@ -189,5 +190,15 @@ describe("R-1863 (c) Advance — nothing to invoice yet", () => {
     await screen.findByText("Old one-off sale Q-OLD undone — invoice INV-4 reversed by credit note CN-1");
     expect(state.relink.mock.calls[0][0]).toMatchObject({ path: "item", transactionId: "t1", quoteId: "Q-REN" });
     expect(state.pay).not.toHaveBeenCalled();
+  });
+});
+
+describe("R-2004 Project payment keeps the customer chosen in “Who paid?”", () => {
+  it("the owner picks a customer, then Project payment → that customer is handed over", () => {
+    const onProjectPayment = vi.fn();
+    render(<CreditPayForSection transaction={txn(236000)} customers={customers} onNewCustomer={() => {}} onProjectPayment={onProjectPayment} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Customer who paid"), { target: { value: "c2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Project payment" }));
+    expect(onProjectPayment).toHaveBeenCalledWith("c2");
   });
 });

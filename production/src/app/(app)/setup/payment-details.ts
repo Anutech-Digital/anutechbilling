@@ -6,6 +6,7 @@
  * invoice QR uses, and IFSC has a fixed shape. Everything is optional.
  */
 import { isValidVpa } from "@/lib/payments/upi";
+import { ifscProblem } from "@/lib/banking/bank-details";
 
 export interface PaymentDetails {
   upiVpa: string;
@@ -15,14 +16,14 @@ export interface PaymentDetails {
   ifsc: string;
 }
 
-const IFSC_RE = /^[A-Za-z]{4}0[A-Za-z0-9]{6}$/;
-
 /** First problem to show, or null when the block can be saved (blank is fine). */
 export function paymentDetailsProblem(p: PaymentDetails): string | null {
   const vpa = p.upiVpa.trim();
   if (vpa && !isValidVpa(vpa)) return "Enter a valid UPI ID, e.g. yourname@okhdfcbank";
   const ifsc = p.ifsc.trim();
-  if (ifsc && !IFSC_RE.test(ifsc)) return "IFSC is 11 characters, e.g. HDFC0001234";
+  /* R-1905: the same IFSC message as the vendor form (says the length and the rule). */
+  const ifscBad = ifscProblem(ifsc);
+  if (ifscBad) return ifscBad;
   if (p.accountNumber.trim() && !ifsc) return "Add the IFSC for this bank account";
   return null;
 }

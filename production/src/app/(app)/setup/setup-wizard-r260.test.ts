@@ -11,21 +11,22 @@ import { DONE_STEP, wizardMove } from "./wizard-nav";
 const page = ["page.tsx", "done-screen.tsx"].map((f) => fs.readFileSync(path.join(__dirname, f), "utf8")).join("\n");
 
 describe("R-260 wizard moves", () => {
-  it("Skip / Continue on the last content step finishes setup", () => {
-    expect(wizardMove(3)).toBe("finish");
-    expect(wizardMove(3, DONE_STEP)).toBe("finish");
+  // R-1927: the wizard is Company → Import → Done, so Import (step index 1) is the last content step.
+  it("Continue on the last content step finishes setup", () => {
+    expect(wizardMove(DONE_STEP - 1)).toBe("finish");
+    expect(wizardMove(DONE_STEP - 1, DONE_STEP)).toBe("finish");
   });
   it("leaving step 1 forward always saves the company", () => {
     expect(wizardMove(0)).toBe("save-company");
     expect(wizardMove(0, 1)).toBe("save-company");
   });
-  it("middle steps just advance", () => {
-    expect(wizardMove(1)).toBe("advance");
-    expect(wizardMove(2)).toBe("advance");
+  it("going back to an earlier step just moves", () => {
+    expect(wizardMove(1, 1)).toBe("advance");
   });
-  it("page wires Skip through the same move as Continue (no bare setStep skip)", () => {
-    expect(page).toMatch(/const skip = \(\) => goTo\(step \+ 1\)/);
+  it("no button reaches Done with a bare setStep (Continue goes through goTo)", () => {
+    expect(page).toMatch(/const next = \(\) => goTo\(step \+ 1\)/);
     expect(page).not.toMatch(/const skip = \(\) => setStep/);
+    expect(page).not.toMatch(/setStep\(DONE_STEP\)[\s\S]*setStep\(DONE_STEP\)/); // only finishSetup sets it
   });
 });
 

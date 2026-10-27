@@ -192,7 +192,8 @@ export function useBookBankTxnAsPrepaid() {
 
 /**
  * One vendor invoice drawn from that vendor's open advances, oldest first
- * (consume_prepaid_fifo). All-or-nothing: refused if the open balance is short.
+ * (consume_prepaid_fifo). R-1913: an invoice bigger than the advance becomes one bill with the
+ * whole advance applied — the answer is then negative (that much stays due).
  */
 export function useConsumePrepaidFifo() {
   const qc = useQueryClient();
@@ -229,7 +230,11 @@ export function useConsumePrepaidFifo() {
       qc.invalidateQueries({ queryKey: ["advance_expenses"] });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
-      toast.success(`Invoice booked to P&L. ${input.vendorName.trim()} advance left: ₹${left}.${input.tdsAmount ? ` TDS ₹${input.tdsAmount} recorded — add it to the challan; the vendor gets credit through the TDS certificate.` : ""}`);
+      /* R-1913: a negative answer = the invoice was bigger than the advance; that much stays due on the bill. */
+      const where = left < 0
+        ? `The whole ${input.vendorName.trim()} advance is applied — ₹${-left} stays due on the bill (Expenses page).`
+        : `${input.vendorName.trim()} advance left: ₹${left}.`;
+      toast.success(`Invoice booked to P&L. ${where}${input.tdsAmount ? ` TDS ₹${input.tdsAmount} recorded — add it to the challan; the vendor gets credit through the TDS certificate.` : ""}`);
     },
     onError: (err) => toastError(err),
   });

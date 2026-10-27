@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { stageAfterQuoteSent } from "./stage-after-quote-sent";
+import { stageAfterQuoteSent, stageAfterQuoteSaved } from "./stage-after-quote-sent";
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Darshan's report, 24 Aug 2026: "Customer ko quotation sent kar di lekin Quote sent mein
@@ -76,4 +76,26 @@ describe("it always says why, including when it does nothing", () => {
        stage had been considered and left. */
     expect(stageAfterQuoteSent(stage).reason.length).toBeGreaterThan(20);
   });
+});
+
+/* R-1959: Pardeep, localhost — a draft quote was saved for a New lead and the lead stayed at
+   New. Making a quote IS contact; a draft must still never move a lead backward. */
+describe("R-1959: stageAfterQuoteSaved — one rule for draft and sent", () => {
+  it("a draft moves a New lead to Contacted", () => {
+    expect(stageAfterQuoteSaved("new", false).nextStage).toBe("contact");
+    expect(stageAfterQuoteSaved(" New ", false).nextStage).toBe("contact");
+  });
+  it.each(["contact", "demo", "trial", "quote", "won", "lost"])("a draft leaves a %s lead where it is", (stage) => {
+    expect(stageAfterQuoteSaved(stage, false).nextStage).toBeNull();
+  });
+  it("a draft on a lead with no stage, or an unknown one, moves nothing", () => {
+    expect(stageAfterQuoteSaved(null, false).nextStage).toBeNull();
+    expect(stageAfterQuoteSaved("nurture", false).nextStage).toBeNull();
+  });
+  it.each(["new", "contact", "demo", "trial", "quote", "won", "lost", null, "nurture"])(
+    "sent behaves exactly like stageAfterQuoteSent for %s",
+    (stage) => {
+      expect(stageAfterQuoteSaved(stage, true)).toEqual(stageAfterQuoteSent(stage));
+    },
+  );
 });

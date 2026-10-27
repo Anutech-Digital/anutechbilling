@@ -78,8 +78,23 @@ export async function confirmEmailToken(admin: SupabaseClient, token: string, no
   if (row.used_at) return { ok: false, reason: "used" };
   if (new Date(row.expires_at).getTime() < now.getTime()) return { ok: false, reason: "expired" };
 
+  /* R-1926: the link now also signs the person in, so "single use" must hold even when it is
+     opened twice at once (mail scanners, double clicks). Claim the row FIRST with a
+     conditional update — only one caller can move used_at from null — then confirm. */
+  const { data: claimed, error: claimErr } = await admin
+    .from("email_verifications")
+    .update({ used_at: now.toISOString() })
+    .eq("id", row.id)
+    .is("used_at", null)
+    .select("id");
+  if (claimErr) return { ok: false, reason: "error" };
+  if (!claimed || claimed.length !== 1) return { ok: false, reason: "used" };
+
   const { error: upErr } = await admin.auth.admin.updateUserById(row.user_id, { email_confirm: true });
-  if (upErr) return { ok: false, reason: "error" };
-  await admin.from("email_verifications").update({ used_at: now.toISOString() }).eq("id", row.id);
+  if (upErr) {
+    // Give the link back so the person can simply try again.
+    await admin.from("email_verifications").update({ used_at: null }).eq("id", row.id);
+    return { ok: false, reason: "error" };
+  }
   return { ok: true, email: row.email, userId: row.user_id };
 }

@@ -156,7 +156,7 @@ const DEFAULT_CATALOG: CatalogEntry[] = [
     id: "GW-STR", name: "Google Workspace Business Starter", vendor: "google", kind: "main",
     msrp: GW_LIST.starter, wholesale: 110,
     prices: {
-      monthly: { msrp: 170, wholesale: 138 },  // No commit, ~25% premium for flex
+      monthly: { msrp: 325, wholesale: 138 },  // No commit (R-1970: list monthly 325, Pardeep 26 Oct)
       annual:  { msrp: GW_LIST.starter, wholesale: 110 },  // 1-yr commit, list price
     },
   },
@@ -164,7 +164,7 @@ const DEFAULT_CATALOG: CatalogEntry[] = [
     id: "GW-STD", name: "Google Workspace Business Standard", vendor: "google", kind: "main",
     msrp: GW_LIST.standard, wholesale: 620,
     prices: {
-      monthly: { msrp: 920, wholesale: 780 },
+      monthly: { msrp: 1300, wholesale: 780 },  // R-1970: list monthly 1,300
       annual:  { msrp: GW_LIST.standard, wholesale: 620 },
     },
   },
@@ -172,7 +172,7 @@ const DEFAULT_CATALOG: CatalogEntry[] = [
     id: "GW-PLS", name: "Google Workspace Business Plus", vendor: "google", kind: "main",
     msrp: GW_LIST.plus, wholesale: 1150,
     prices: {
-      monthly: { msrp: 1725, wholesale: 1450 },
+      monthly: { msrp: 1800, wholesale: 1450 },  // R-1970: list monthly 1,800
       annual:  { msrp: GW_LIST.plus, wholesale: 1150 },
     },
   },

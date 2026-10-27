@@ -23,7 +23,7 @@ type Client = ReturnType<typeof createClient>;
 export const ORDERS_PAGE = 100;
 
 export const LEAD_ORDER_COLUMNS =
-  "id, company, contact_name, contact_email, contact_phone, plan, seats, value, stage, source, notes, created_at, follow_up_date, domain, utm_source, trial_started_at, trial_expires_at, owner:users!leads_owner_id_fkey(full_name)";
+  "id, company, contact_name, contact_email, contact_phone, plan, seats, value, stage, source, notes, created_at, follow_up_date, domain, utm_source, utm_medium, utm_campaign, referrer_url, trial_started_at, trial_expires_at, owner:users!leads_owner_id_fkey(full_name)";
 
 /* notes: a trial's domain is written there ("Domain: acme.in") when the domain column is empty —
    the row shows it (domainFromNotes), so the search finds it. */

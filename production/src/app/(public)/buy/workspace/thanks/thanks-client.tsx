@@ -13,19 +13,40 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, PARTNER_BADGE } from "@/site/lib/config";
+import { COMPANY, SLA, WHATSAPP_READY } from "@/site/lib/config";
+import { BrandMark } from "../_parts/site-header";
+import { SiteFooter } from "../_parts/info-sections";
+import { buyContact, type BuyBrand } from "../_parts/brand";
+import { MetaPixel, trackMeta, metaConsent, fbpCookie } from "@/site/lib/meta-pixel";
+import { ConsentBanner } from "@/site/components/chrome/ConsentBanner";
+import { contentIdForPlan, purchaseEventId } from "@/lib/meta/pixel-ids";
 import { mailtoLink, phoneDisplay, whatsappLink } from "./support-links";
 import { ConfirmPaymentView } from "./confirm-payment-view";
 import { forgetWorkspacePayment } from "./payment-handoff";
+import { dropWorkspaceLinesFromStoredCart } from "@/site/components/cart/workspace-line";
 import { settlePageScroll } from "@/lib/ui/scroll-lock";
+import { rupee } from "@/lib/utils";
 import type { OrderPaymentState } from "@/lib/checkout/order-payment-state";
 
 export interface ThanksOrder {
   quoteId:        string;
+  /** R-1979: the quote's plan label ("google-workspace-starter"), for Meta's content_ids. */
+  planLabel?:     string | null;
+  /** R-1977: a new domain bought with this order (registered in the buyer's name after payment). */
+  newDomain?:     string | null;
+  /** R-1971: the GST invoice number for this order, once issued. */
+  invoiceNumber?: string | null;
+  /** R-1985: a monthly order's new domain is on its own GST invoice (same payment). */
+  domainInvoiceNumber?: string | null;
+  /** The company (quotes.customer_name) — shown on the COMPANY line, never as the greeting. */
   customerName:   string;
+  /** R-2009: the buyer's first name from checkout's "Your name" (the lead's contact_name); null → greet with no name. */
+  buyerFirstName?: string | null;
   tierName:       string;
   seats:          number;
   amount:         number;
+  /** R-1965: the quote's pre-GST amount, to split the paid total into amount + GST; null on old rows. */
+  subtotal?:      number | null;
   paymentStatus:  string;
   /** R-1624: from lib/checkout/order-payment-state — never read payment_status here. */
   paymentState:   OrderPaymentState;
@@ -57,9 +78,18 @@ export function ThanksClient({
   order,
   isSimulation,
   orderRef,
+  brand = null,
+  metaPixelId = null,
+  orderToken,
 }: {
+  /** R-1979: the order's secret token from the address — the server Purchase request proves the order with it. */
+  orderToken?: string;
+  /** R-1979: the website tenant's Meta Pixel id (no id → no script, no event). */
+  metaPixelId?: string | null;
   order: ThanksOrder | null;
   isSimulation: boolean;
+  /** R-1975: the website tenant (name, logo, GSTIN, address, phone) — the buy page reads the same row. */
+  brand?: BuyBrand | null;
   /** R-1625: the order number from the address. With no order to show yet, the page looks for
    *  the Razorpay payment the buy page kept for THIS order and asks our server to confirm it. */
   orderRef?: string;
@@ -68,7 +98,8 @@ export function ThanksClient({
     return <ConfirmPaymentView quoteId={orderRef} notFound={<OrderNotFound />} />;
   }
   if (!order) return <OrderNotFound />;
-  return <OrderView order={order} isSimulation={isSimulation} />;
+  /* R-2010: the same consent banner wherever the Pixel can load. */
+  return <><MetaPixel pixelId={metaPixelId} /><ConsentBanner /><OrderView order={order} isSimulation={isSimulation} brand={brand} orderToken={orderToken} /></>;
 }
 
 /** Fallback view — quote not found, not paid, or guessed wrong ID (and no payment of ours to confirm). */
@@ -116,22 +147,50 @@ function OrderNotFound() {
     );
 }
 
-function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: boolean }) {
+function OrderView({ order, isSimulation, brand, orderToken }: { order: ThanksOrder; isSimulation: boolean; brand: BuyBrand | null; orderToken?: string }) {
+  /* R-1975: the call link uses the tenant phone first, then the site number (the buy page rule). */
+  const tel = buyContact(brand).tel;
   /* R-1625: arriving from Razorpay — undo any scroll lock it left (§24), and drop the kept
      payment once this order shows as paid. */
   React.useEffect(() => {
     settlePageScroll();
     const t = window.setTimeout(settlePageScroll, 1000);
-    if (order.paymentState === "paid") forgetWorkspacePayment();
+    /* R-1966: the Workspace line in the website cart is now paid — take it out of the cart. */
+    if (order.paymentState === "paid") { forgetWorkspacePayment(); dropWorkspaceLinesFromStoredCart(); }
+    /* R-1979: Meta Purchase — same event id as the server's Conversions API event, so Meta counts
+       it once; value before GST. A no-op without the pixel (no id or no "Accept all"). */
+    if (order.paymentState === "paid") {
+      trackMeta("Purchase", {
+        value: order.subtotal ?? Math.round(order.amount / 1.18),
+        currency: "INR",
+        content_ids: contentIdForPlan(order.planLabel ?? null),
+        content_type: "product",
+        num_items: order.seats,
+      }, purchaseEventId(order.quoteId));
+      /* R-1979: and the server's Conversions API Purchase (same event id) — only with consent; a
+         simulated order already sent it from the checkout route. Fire-and-forget. */
+      if (!isSimulation && orderToken && metaConsent()) {
+        void fetch("/api/public/checkout/workspace/meta-purchase", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ quoteId: order.quoteId, t: orderToken, consent: true, fbp: fbpCookie(), pageUrl: window.location.origin + window.location.pathname }),
+        }).catch(() => { /* Meta is never in the way of the page */ });
+      }
+    }
     return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per payment state (R-1979 events included)
   }, [order.paymentState]);
 
   /* R-1624: 'invoiced' (the GST invoice issued right after payment) is paid in full when the
      money says so — the state comes from orderPaymentState, one mapping for every reader. */
   const isFullyPaid    = order.paymentState === "paid";
   const statusLabel    = isFullyPaid ? "Paid in full" : order.paymentState === "part-paid" ? "Partially paid" : "Awaiting payment";
-  const firstName      = order.customerName.split(/[\s,&]/)[0] || "there";
+  /* R-2009: the buyer's own first name — never the company's first word ("Welcome aboard, Gupta."). */
+  const firstName      = order.buyerFirstName?.trim() || null;
   const amountFmt      = `₹${order.amount.toLocaleString("en-IN")}`;
+  /* R-1965: same wording as the buy page — the pre-GST amount + GST (18%) under the paid total. */
+  const gstSplit       = order.subtotal != null && order.subtotal > 0 && order.subtotal < order.amount
+    ? `${rupee(order.subtotal)} + ${rupee(order.amount - order.subtotal)} GST (18%)`
+    : null;
   const waSupportMsg   = `Hi, I just placed order ${order.quoteId} (${order.tierName}, ${order.seats} users). Wanted to confirm next steps for domain verification.`;
 
   return (
@@ -156,27 +215,10 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
         </div>
       )}
 
-      {/* ── Header ── */}
+      {/* ── Header — R-1975: the website tenant's name and logo (the buy page's BrandMark) ── */}
       <header className="border-b border-hairline bg-paper">
         <div className="max-w-[1080px] mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/buy/workspace" className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-ink text-paper rounded-md grid place-items-center font-serif text-lg flex-shrink-0">
-              R
-            </div>
-            <div className="hidden sm:block">
-              <div className="font-serif text-base leading-none">ANUTECH DIGITAL</div>
-              <div className="text-3xs text-ink-3 mt-1">Cloud Reseller · India</div>
-            </div>
-          </Link>
-          <div
-            className="hidden md:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-3xs font-semibold border border-[#FBBF24]"
-            style={{
-              background: "linear-gradient(135deg, #1A1815 0%, #2D2418 100%)",
-              color:      "#FCD34D",
-            }}
-          >
-            <span style={{ fontSize: 11 }}>★</span> {PARTNER_BADGE}
-          </div>
+          <BrandMark brand={brand} />
         </div>
       </header>
 
@@ -200,10 +242,10 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
             {isFullyPaid ? "Payment received" : "Order placed"}
           </div>
           <h1 className="font-serif text-3xl md:text-5xl leading-[1.05] tracking-tight mb-3">
-            Welcome aboard, {firstName}.
+            {firstName ? `Welcome aboard, ${firstName}.` : "Welcome aboard."}
           </h1>
           <p className="text-base md:text-lg text-ink-3 leading-relaxed max-w-2xl mx-auto">
-            Your <GWInline /> order is confirmed. Our team will call or WhatsApp you
+            Your <GWInline /> order is confirmed. Our team will call or WhatsApp you{" "}
             {SLA.firstReply} ({SLA.hours}) to verify your domain and start
             the setup.
           </p>
@@ -227,7 +269,7 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
                 <div className="font-serif text-3xl text-ink leading-none">
                   {amountFmt}
                 </div>
-                <div className="text-2xs text-ink-3 mt-1">incl 18% GST</div>
+                <div className="text-2xs text-ink-3 mt-1">{gstSplit ?? "incl 18% GST"}</div>
               </div>
             </div>
 
@@ -236,6 +278,18 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
                 <span className="text-ink-3 sm:text-2xs sm:uppercase sm:tracking-wider sm:font-semibold sm:block sm:mb-0.5">Company</span>
                 <span className="text-ink font-medium">{order.customerName}</span>
               </div>
+              {order.invoiceNumber && (
+                <div className="flex justify-between sm:block">
+                  <span className="text-ink-3 sm:text-2xs sm:uppercase sm:tracking-wider sm:font-semibold sm:block sm:mb-0.5">GST invoice</span>
+                  <span className="text-ink font-medium font-mono" data-testid="thanks-invoice">{order.invoiceNumber}</span>
+                </div>
+              )}
+              {order.domainInvoiceNumber && (
+                <div className="flex justify-between sm:block">
+                  <span className="text-ink-3 sm:text-2xs sm:uppercase sm:tracking-wider sm:font-semibold sm:block sm:mb-0.5">Domain GST invoice</span>
+                  <span className="text-ink font-medium font-mono" data-testid="thanks-domain-invoice">{order.domainInvoiceNumber}</span>
+                </div>
+              )}
               <div className="flex justify-between sm:block">
                 <span className="text-ink-3 sm:text-2xs sm:uppercase sm:tracking-wider sm:font-semibold sm:block sm:mb-0.5">Plan</span>
                 <span className="text-ink font-medium">{order.tierName}</span>
@@ -244,6 +298,12 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
                 <span className="text-ink-3 sm:text-2xs sm:uppercase sm:tracking-wider sm:font-semibold sm:block sm:mb-0.5">Seats</span>
                 <span className="text-ink font-medium">{order.seats} {order.seats === 1 ? "user" : "users"}</span>
               </div>
+              {order.newDomain && (
+                <div className="flex justify-between gap-3 sm:block" data-testid="thanks-domain">
+                  <span className="text-ink-3 sm:text-2xs sm:uppercase sm:tracking-wider sm:font-semibold sm:block sm:mb-0.5">Domain</span>
+                  <span className="text-ink font-medium text-right sm:text-left"><span className="font-mono">{order.newDomain}</span> — registering, we will confirm by email</span>
+                </div>
+              )}
               <div className="flex justify-between sm:block">
                 <span className="text-ink-3 sm:text-2xs sm:uppercase sm:tracking-wider sm:font-semibold sm:block sm:mb-0.5">Status</span>
                 <span className={`font-medium inline-flex items-center gap-1.5 ${isFullyPaid ? "text-emerald" : "text-amber-ink"}`}>
@@ -355,10 +415,10 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
           )}
 
           <div className="text-xs text-ink-3 flex flex-wrap gap-x-4 gap-y-1 items-center justify-center">
-            {WHATSAPP_READY && (
-              <a href={`tel:+${WHATSAPP_NUMBER}`} className="inline-flex items-center gap-1.5 hover:text-ink transition-colors">
+            {tel && (
+              <a href={tel.href} className="inline-flex items-center gap-1.5 hover:text-ink transition-colors">
                 <Icon name="phone" size={12} />
-                Call {phoneDisplay()}
+                Call {tel.display}
               </a>
             )}
             <a href={mailtoLink(`Re: order ${order.quoteId}`)}
@@ -374,20 +434,13 @@ function OrderView({ order, isSimulation }: { order: ThanksOrder; isSimulation: 
         </div>
       </section>
 
-      {/* ── Footer ── */}
-      <footer className="py-8 text-center text-xs text-ink-3">
-        <div className="max-w-[800px] mx-auto px-6 space-y-1">
-          <div>
-            ANUTECH DIGITAL PVT LTD · {COMPANY.partnerLine} ·
-            GSTIN registered · Indian SMEs trust us with their email.
-          </div>
-          <div>
-            <Link href="/buy/workspace" className="hover:text-ink underline underline-offset-2">
-              Back to buy page
-            </Link>
-          </div>
-        </div>
-      </footer>
+      <div className="py-6 text-center text-sm">
+        <Link href="/buy/workspace" className="text-amber-ink underline underline-offset-2 hover:text-amber">
+          Back to buy page
+        </Link>
+      </div>
+      {/* R-1975: the buy page's own footer — tenant name, address, GSTIN, legal links. */}
+      <SiteFooter brand={brand} />
     </div>
   );
 }

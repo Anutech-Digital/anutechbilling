@@ -6,7 +6,8 @@ import { turnstileRefusal, turnstileRefusalFor, markTrustedInternalCall, isTrust
 const ENV = process.env.TURNSTILE_SECRET_KEY;
 afterEach(() => { if (ENV === undefined) delete process.env.TURNSTILE_SECRET_KEY; else process.env.TURNSTILE_SECRET_KEY = ENV; });
 const src = (p: string) => readFileSync(join(process.cwd(), "src", p), "utf8");
-const BUY = "app/(public)/buy/workspace/buy-workspace-client.tsx";
+/* R-1971: the buy page's posts (pay, trial, quote) live in the inline checkout's submit-order.ts. */
+const BUY = "app/(public)/buy/workspace/_parts/submit-order.ts";
 const POST_JSON = "app/(public)/buy/workspace/post-json.ts";
 
 describe("R-020 — bot check on public forms", () => {

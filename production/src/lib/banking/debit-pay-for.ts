@@ -13,7 +13,7 @@
  * app's own TDS config — the section's rate in tds-rates.ts and the thresholds in tdsDecision
  * (tds-deductor.ts) — never from numbers here.
  *
- *   guessVendor        — the payee, from the narration (UPI id, account no., a name word)
+ *   guessVendor        — the payee: UPI id → account no (or its masked tail) → Category Rule → learned alias → name words (R-1919)
  *   planTds            — TDS per selected expense bill (the rows' own TDS, else the section's)
  *   allocateOldestFirst— the bank amount spread over the picked bills, oldest first
  *   preselect          — the bill(s) the debit pays exactly (or exactly after TDS)
@@ -24,6 +24,10 @@
 import { customerNameTokens, narrationNames } from "@/lib/accounting/credit-match";
 import { tdsDecision, panFromGstin } from "@/lib/accounting/tds-deductor";
 import { rupee, formatDate } from "@/lib/utils";
+import { cleanAccountNo, cleanIfsc } from "@/lib/banking/bank-details";
+import { categoriseByRules, type CategoryRule } from "@/lib/banking/categorise";
+import { narrationKey } from "@/lib/banking/narration-key";
+import { bankDetailsFromNarration } from "@/lib/banking/narration-bank-details";
 
 /* ─── Vendors ────────────────────────────────────────────────────────────────────────── */
 
@@ -38,29 +42,88 @@ export interface VendorLite {
   default_category?: string | null;
 }
 
-export interface VendorGuess { vendorId: string; reason: string }
+export type VendorGuessStep = "upi" | "account" | "account_tail" | "rule" | "alias" | "name";
+export interface VendorGuess { vendorId: string; reason: string; step: VendorGuessStep }
+
+/** R-1919: a learned "narration key → vendor" (vendor_narration_aliases, written by the database on
+ *  every vendor-payment save from a bank line). */
+export interface VendorAlias { narration_key: string; vendor_id: string }
+
+export interface GuessExtras {
+  /** The company's Category Rules (txn_category_rules). */
+  rules?: readonly CategoryRule[];
+  /** The company's learned aliases. */
+  aliases?: readonly VendorAlias[];
+}
+
+const letters = (s: string | null | undefined) => (s ?? "").toUpperCase().replace(/[^A-Z]/g, "");
+
+/** R-1919: the vendors a Category Rule's pattern names — "FACEBK" → "Facebook…" (the first five
+ *  letters start the name, as the expense form always read it), or "PAYUFACEBOOK" → a vendor
+ *  whose first name word (4+ letters) is inside the pattern. */
+export function vendorsForRule(pattern: string, vendors: readonly VendorLite[]): VendorLite[] {
+  const p = letters(pattern);
+  if (p.length < 4) return [];
+  const key = p.slice(0, 5);
+  return vendors.filter((v) => {
+    if (letters(v.name).startsWith(key)) return true;
+    const first = customerNameTokens(v.name)[0];
+    return !!first && first.length >= 4 && p.includes(first.toUpperCase());
+  });
+}
 
 /**
- * Who was paid. Only an unambiguous answer: the vendor's UPI id or bank account number in the
- * narration (strong), else a narration word shared with exactly ONE vendor's name. Two vendors
- * → no guess; paying the wrong vendor's bills is worse than asking.
+ * Who was paid — R-1919: ONE order, the same as the database's bank_debit_vendor_guess (which
+ * auto-reconcile uses), so the sheet and auto-reconcile can never disagree:
+ *   1. the vendor's UPI id in the narration
+ *   2. the vendor's bank account number in the narration — or, below it, the masked tail ("XXXX4521")
+ *   3. the Category Rule that matches the line names the vendor
+ *   4. learned alias — this narration key was matched to the vendor before
+ *   5. a narration word shared with exactly ONE vendor's name (most shared words wins)
+ * Each step answers only when exactly one vendor fits; two → that step says nothing and the next
+ * one is asked. Nobody → no guess: paying the wrong vendor's bills is worse than asking.
  */
 export function guessVendor(
-  txn: { description: string | null; reference?: string | null },
+  txn: { description: string | null; reference?: string | null; debit?: number | null },
   vendors: readonly VendorLite[],
+  extras: GuessExtras = {},
 ): VendorGuess | null {
   const text = `${txn.description ?? ""} ${txn.reference ?? ""}`;
   const lower = text.toLowerCase();
   const digits = text.replace(/[^0-9]/g, " ");
 
-  const byUpi = vendors.filter((v) => v.upi_id && lower.includes(v.upi_id.trim().toLowerCase()));
-  if (byUpi.length === 1) return { vendorId: byUpi[0].id, reason: `the bank line has their UPI id ${byUpi[0].upi_id}` };
+  const byUpi = vendors.filter((v) => v.upi_id && v.upi_id.trim() && lower.includes(v.upi_id.trim().toLowerCase()));
+  if (byUpi.length === 1) return { vendorId: byUpi[0].id, reason: `the bank line has their UPI id ${byUpi[0].upi_id}`, step: "upi" };
 
   const byAcct = vendors.filter((v) => {
     const a = (v.bank_account_no ?? "").replace(/[^0-9]/g, "");
     return a.length >= 6 && digits.split(/\s+/).some((d) => d.length >= 6 && (a.endsWith(d) || d.endsWith(a)));
   });
-  if (byAcct.length === 1) return { vendorId: byAcct[0].id, reason: "the bank line has their account number" };
+  if (byAcct.length === 1) return { vendorId: byAcct[0].id, reason: "the bank line has their account number", step: "account" };
+
+  /* R-1919: a masked account ("XXXXXX4521") shows only its last digits — R-1918's parser reads
+     them; one vendor whose saved account ends with them (4+ digits) is a match. */
+  const tail = bankDetailsFromNarration(txn.description).accountTail;
+  if (tail && tail.length >= 4) {
+    const byTail = vendors.filter((v) => {
+      const a = (v.bank_account_no ?? "").replace(/[^0-9]/g, "");
+      return a.length >= 6 && a.endsWith(tail);
+    });
+    if (byTail.length === 1) return { vendorId: byTail[0].id, reason: `the bank line shows their account ending ${tail}`, step: "account_tail" };
+  }
+
+  const rule = categoriseByRules({ description: txn.description, debit: Math.max(1, txn.debit ?? 1), credit: 0 }, extras.rules ?? []);
+  if (rule) {
+    const byRule = vendorsForRule(rule.rule.pattern, vendors);
+    if (byRule.length === 1) return { vendorId: byRule[0].id, reason: `your Category Rule “${rule.rule.pattern.trim()}”`, step: "rule" };
+  }
+
+  const key = narrationKey(txn.description);
+  if (key) {
+    const known = new Set(vendors.map((v) => v.id));
+    const byAlias = [...new Set((extras.aliases ?? []).filter((a) => a.narration_key === key && known.has(a.vendor_id)).map((a) => a.vendor_id))];
+    if (byAlias.length === 1) return { vendorId: byAlias[0], reason: "your last payment to this vendor", step: "alias" };
+  }
 
   /* Name words: the vendor sharing the MOST distinctive words wins, only when no other vendor
      shares as many ("Kapoor Legal Associates" over "Kapoor Stationers" for "KAPOOR LEGAL…"). */
@@ -70,7 +133,7 @@ export function guessVendor(
     .filter((h) => h.shared.length > 0)
     .sort((a, b) => b.shared.length - a.shared.length);
   if (hits.length > 0 && (hits.length === 1 || hits[0].shared.length > hits[1].shared.length)) {
-    return { vendorId: hits[0].v.id, reason: `the bank line says “${hits[0].shared.join(" ")}”` };
+    return { vendorId: hits[0].v.id, reason: `the bank line says “${hits[0].shared.join(" ")}”`, step: "name" };
   }
   return null;
 }
@@ -82,7 +145,9 @@ export function vendorPan(v: Pick<VendorLite, "pan" | "gstin"> | null | undefine
 
 /* ─── Open bills (rows of bank_debit_vendor_open_items) ──────────────────────────────── */
 
-export type PaySource = "vendor_bill" | "expense";
+/** R-1911: "recorded_payment" = a payment already recorded outside the bank (Bills page Pay,
+ *  payment run, Expenses → Mark paid) that this bank line MATCHES — it is never paid again. */
+export type PaySource = "vendor_bill" | "expense" | "recorded_payment";
 
 export interface VendorOpenItem {
   source: PaySource;
@@ -95,20 +160,35 @@ export interface VendorOpenItem {
   /** Gross still owed — from the database, never recomputed here. */
   amount_due: number;
   gst: number;
-  /** Value before GST — the TDS base. */
+  /** Value before GST — the TDS base. R-1915: 0 on an expense bill already part-paid (its TDS
+   *  went with the first part — nothing left to deduct on). */
   tds_base: number;
-  /** TDS already on the expense row (0 = none yet). */
+  /** TDS already on the expense row (0 = none yet, or already withheld with an earlier part). */
   tds_amount: number;
   tds_section: string | null;
-  /** COGS bill: yes. Expense bill: paid in full. */
+  /** R-1915: COGS bills and expense bills can both be part-paid. */
   can_part: boolean;
   /** An open payment run holding it — pay it there. */
   in_run: string | null;
+  /** R-1911 recorded_payment: when it was recorded as paid, and the bill / expense it paid. */
+  paid_on?: string | null;
+  pays_source?: "vendor_bill" | "expense" | null;
+  pays_doc_id?: string | null;
 }
+
+/** R-1911: a payment already recorded outside the bank — the line is matched to it, not paid again. */
+export const isRecorded = (i: Pick<VendorOpenItem, "source">) => i.source === "recorded_payment";
+
+/** Where the recorded payment was entered, in the owner's words. */
+export const recordedWhere = (i: Pick<VendorOpenItem, "pays_source">) =>
+  i.pays_source === "expense" ? "the Expenses page" : "the Bills page";
 
 export const itemKey = (i: Pick<VendorOpenItem, "source" | "doc_id">) => `${i.source}:${i.doc_id}`;
 
 export function itemLabel(i: VendorOpenItem): string {
+  if (isRecorded(i)) {
+    return `Already paid on ${formatDate(i.paid_on ?? i.doc_date)} from ${recordedWhere(i)}${i.bill_no ? ` · Bill ${i.bill_no}` : ""}`;
+  }
   return `${i.bill_no ? `Bill ${i.bill_no}` : i.source === "vendor_bill" ? "COGS bill" : "Expense bill"} · ${formatDate(i.doc_date)}`;
 }
 
@@ -166,7 +246,8 @@ export function planTds(
     if (opts.off || sec !== "194Q" || !q || q.buyer !== true || !(q.tds_due > 0)) return null;
     return { key: itemKey(i), tds: q.tds_due, section: "194Q", reason: reason194q(q), fixed: true };
   };
-  const free = items.filter((i) => i.source === "expense" && !(i.tds_amount > 0));
+  /* R-1915: a part-paid expense bill (tds_base 0) takes no TDS — it went with its first part. */
+  const free = items.filter((i) => i.source === "expense" && !(i.tds_amount > 0) && i.tds_base > 0);
   const fixedBase = items.filter((i) => i.source === "expense" && i.tds_amount > 0).reduce((s, i) => s + i.tds_base, 0);
   const base = free.reduce((s, i) => s + i.tds_base, 0);
   const d = !opts.off && sec && base > 0
@@ -179,6 +260,7 @@ export function planTds(
     const key = itemKey(i);
     if (i.source !== "expense") return goods(i) ?? { key, tds: 0, section: null, reason: null, fixed: false };
     if (i.tds_amount > 0) return { key, tds: i.tds_amount, section: i.tds_section, reason: "TDS already on this bill", fixed: true };
+    if (!(i.tds_base > 0)) return { key, tds: 0, section: null, reason: null, fixed: false };
     if (!d) return { key, tds: 0, section: null, reason: null, fixed: false };
     const share = key === lastFree ? total - given : Math.round((total * i.tds_base) / base);
     given += share;
@@ -204,7 +286,7 @@ export const cashDue = (i: VendorOpenItem, tds: number) => Math.max(0, i.amount_
 
 /**
  * The bank amount over the picked bills, oldest first: each takes what it still needs; a COGS
- * bill can take a part, an expense bill only all of it (else it gets nothing and the rest stays
+ * bill (and, R-1915, an expense bill) can take a part; an item that cannot gets all or nothing (the rest stays
  * unallocated). Returns the cash per bill and what is left over.
  */
 export function allocateOldestFirst(
@@ -212,7 +294,8 @@ export function allocateOldestFirst(
   cash: number,
   tdsByKey: ReadonlyMap<string, number>,
 ): { cashByKey: Map<string, number>; left: number } {
-  const order = [...picked].sort((a, b) => a.doc_date.localeCompare(b.doc_date) || a.doc_id.localeCompare(b.doc_id));
+  /* R-1911: a recorded payment is matched first (whole), then the bills oldest first. */
+  const order = [...picked].sort((a, b) => Number(isRecorded(b)) - Number(isRecorded(a)) || a.doc_date.localeCompare(b.doc_date) || a.doc_id.localeCompare(b.doc_id));
   const cashByKey = new Map<string, number>();
   let left = Math.max(0, Math.round(cash));
   for (const i of order) {
@@ -225,15 +308,27 @@ export function allocateOldestFirst(
 }
 
 /**
- * Bills to tick for the operator: the ONE bill whose cash due (after its planned TDS) equals the
- * debit; else ALL open bills when together they equal it. Anything else → none (the operator picks).
+ * Bills to tick for the operator. R-1911 first: a payment of exactly this amount already recorded
+ * outside the bank (Bills page / Mark paid) IS this line — it is ticked, and the bill it paid is
+ * never offered as a second payment (QuickBooks "match, don't add again"); with several, the one
+ * recorded nearest the bank date. Else the ONE bill whose cash due (after its planned TDS) equals
+ * the debit; else ALL open bills when together they equal it. Anything else → none (the operator picks).
  */
 export function preselect(
   items: readonly VendorOpenItem[],
   debit: number,
   /** TDS per bill when exactly these bills are paid together (planTds). */
   tdsFor: (bills: readonly VendorOpenItem[]) => ReadonlyMap<string, number>,
+  /** The bank line's date — picks the nearest of several same-amount recorded payments. */
+  txnDate?: string,
 ): { keys: string[]; noTds: boolean } {
+  const recorded = items.filter((i) => isRecorded(i) && i.amount_due === debit);
+  if (recorded.length) {
+    const t = txnDate ? Date.parse(txnDate) : NaN;
+    const gap = (i: VendorOpenItem) => (Number.isNaN(t) ? 0 : Math.abs(Date.parse(i.paid_on ?? i.doc_date) - t));
+    const best = [...recorded].sort((a, b) => gap(a) - gap(b) || a.doc_id.localeCompare(b.doc_id))[0];
+    return { keys: [itemKey(best)], noTds: false };
+  }
   const open = items.filter((i) => !i.in_run);
   const net = (bills: readonly VendorOpenItem[]) => {
     const t = tdsFor(bills);
@@ -248,6 +343,12 @@ export function preselect(
   }
   for (const [cash, noTds] of tries) {
     if (open.length > 1 && cash(open) === debit) return { keys: open.map(itemKey), noTds };
+  }
+  /* R-2007 (localhost 27 Oct: Google ₹5,000 on bill SCN-G-20 ₹11,800 — nothing ticked): the
+     vendor's ONLY open bill, a bill that can be part-paid, and the bank paid less than it needs →
+     that bill, as a part payment of the bank amount. */
+  if (open.length === 1 && !isRecorded(open[0]) && open[0].can_part && debit > 0 && debit < net(open)) {
+    return { keys: [itemKey(open[0])], noTds: false };
   }
   return { keys: [], noTds: false };
 }
@@ -297,7 +398,12 @@ export const newBillTotal = (b: Pick<NewBillDraft, "taxable" | "gst">) => Math.m
 export interface PayInput {
   transactionId: string;
   vendorId: string | null;
-  newVendor: { name: string; gstin: string | null; pan: string | null; tdsSection: string | null } | null;
+  /** R-1918: accountNo / ifsc / upi — pre-filled from the bank narration, saved on the vendor so
+   *  the next line from it is guessed. */
+  newVendor: {
+    name: string; gstin: string | null; pan: string | null; tdsSection: string | null;
+    accountNo?: string | null; ifsc?: string | null; upi?: string | null;
+  } | null;
   /** Bills: gross settled (cash + TDS) and the TDS on it. */
   items: ReadonlyArray<{ item: VendorOpenItem; cash: number; tds: number; section: string | null }>;
   newBill: (NewBillDraft & { tds: number; tdsSection: string | null }) | null;
@@ -305,6 +411,17 @@ export interface PayInput {
   advanceCategory: string | null;
   bankCharge: number;
   note: string | null;
+}
+
+/** R-1918: the new vendor's bank details for the server. The IFSC goes only with an account
+ *  number (R-1905: they are a pair; a payment run needs both). */
+function newVendorBank(v: NonNullable<PayInput["newVendor"]>) {
+  const acc = cleanAccountNo(v.accountNo ?? "") || null;
+  return {
+    bank_account_no: acc,
+    bank_ifsc: acc ? cleanIfsc(v.ifsc ?? "") || null : null,
+    upi_id: (v.upi ?? "").trim().toLowerCase() || null,
+  };
 }
 
 /** The arguments of reconcile_bank_debit_to_vendor — exported so the tests pin what reaches the server. */
@@ -318,6 +435,7 @@ export function payArgs(i: PayInput) {
       gstin: i.newVendor.gstin?.trim().toUpperCase() || null,
       pan: i.newVendor.pan?.trim().toUpperCase() || null,
       tds_section: i.newVendor.tdsSection || null,
+      ...newVendorBank(i.newVendor),
     },
     p_items: i.items.filter((x) => x.cash > 0).map((x) => ({
       source: x.item.source,
@@ -350,6 +468,8 @@ export function payArgs(i: PayInput) {
 export interface PaidDoc {
   source: PaySource; doc_id: string; bill_no: string | null;
   settled: number; cash: number; tds: number; tds_section: string | null; status: string; still_due: number; total?: number;
+  /** R-1911 recorded_payment: what the matched payment had paid, and when it was recorded. */
+  pays_source?: "vendor_bill" | "expense"; paid_on?: string;
 }
 
 export interface VendorPayResult {
@@ -367,12 +487,21 @@ export interface VendorPayResult {
 
 export interface ResultLine { text: string; href?: string; tone?: "warn" }
 
-const docHref = (d: Pick<PaidDoc, "source" | "doc_id">) =>
-  d.source === "expense" ? `/accounting/expenses?edit=${encodeURIComponent(d.doc_id)}` : "/accounting/bills";
+const docHref = (d: Pick<PaidDoc, "source" | "doc_id" | "pays_source">) =>
+  d.source === "expense" || (d.source === "recorded_payment" && d.pays_source === "expense")
+    ? `/accounting/expenses?edit=${encodeURIComponent(d.doc_id)}` : "/accounting/bills";
 
 const statusWord = (d: PaidDoc) => (d.status === "paid" ? "Paid" : `part paid, ${rupee(d.still_due)} still due`);
 
 function docLine(d: PaidDoc, vendor: string, isNew: boolean): ResultLine {
+  if (d.source === "recorded_payment") {
+    const what = d.bill_no ? `Bill #${d.bill_no}` : d.pays_source === "expense" ? "the expense" : "the bill";
+    const where = d.pays_source === "expense" ? "the Expenses page" : "the Bills page";
+    return {
+      text: `Matched to the ${rupee(d.settled)} already paid to ${vendor} on ${d.paid_on ? formatDate(d.paid_on) : "an earlier date"} from ${where} for ${what} — counted once, not paid again · ${d.status === "paid" ? "Paid" : `Bill now ${statusWord(d)}`}`,
+      href: docHref(d),
+    };
+  }
   const name = d.bill_no ? `Bill #${d.bill_no}` : d.source === "expense" ? "Expense bill" : "COGS bill";
   const tds = d.tds > 0 ? ` · TDS ${rupee(d.tds)} deducted (${d.tds_section})` : "";
   return {
