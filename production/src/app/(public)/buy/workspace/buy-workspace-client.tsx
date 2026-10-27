@@ -16,6 +16,7 @@ import * as React from "react";
 import { isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
 import { toBuyPlans, planSum, monthlyOffered, annualSavingPct, clampSeats, usersLabel, BUSINESS_MAX_USERS, type Billing, type BuyPlan } from "./_parts/plans";
 import { buyContact, type BuyBrand } from "./_parts/brand";
+import { useBuyBrand } from "./_parts/use-buy-brand";
 import { goTo } from "./_parts/wordmark";
 import { SiteHeader } from "./_parts/site-header";
 import { Hero } from "./_parts/hero";
@@ -53,7 +54,7 @@ function BuyWorkspaceBody({
   initialSeats,
   initialBilling,
   openBuy = false,
-  brand = null,
+  brand: serverBrand = null,
   initialCoupon,
   metaPixelId = null,
 }: {
@@ -87,6 +88,8 @@ function BuyWorkspaceBody({
   const plans = React.useMemo(() => toBuyPlans(TIERS, isPublicPriceHiddenTier), [TIERS]);
   const monthlyOk = monthlyOffered(plans);
   const savePct = annualSavingPct(plans);
+  /* R-2024: the server's brand, or the one the page fetches when that read failed on a cold start. */
+  const { brand, pending: brandPending } = useBuyBrand(serverBrand, "Buy Google Workspace");
   const contact = buyContact(brand);
 
   const defaultId = plans.find((p) => p.popular && !p.priceHidden)?.id ?? plans[0]?.id ?? "standard";
@@ -202,7 +205,7 @@ function BuyWorkspaceBody({
       {/* R-2010: an ad visitor lands HERE first — the same consent banner as the site. */}
       <ConsentBanner />
       {isSimulation && <TestModeBar />}
-      <SiteHeader brand={brand} contact={contact} onNav={onNav} onBuy={goPay} />
+      <SiteHeader brand={brand} brandPending={brandPending} contact={contact} onNav={onNav} onBuy={goPay} />
       {sitePromo && <SitePromoBanner promo={sitePromo} />}
       <main>
         <Hero card={card} onPlans={() => goTo("plans")} onTrial={startTrial} trialOk />

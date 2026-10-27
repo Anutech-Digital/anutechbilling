@@ -20,6 +20,8 @@ import { ConsentBanner } from "@/site/components/chrome/ConsentBanner";
 import { contentIdForPlan } from "@/lib/meta/pixel-ids";
 import { toBuyPlans, planSum, monthlyOffered, type Billing } from "../_parts/plans";
 import { buyContact, whatsappHref, type BuyBrand, type BuyContact } from "../_parts/brand";
+import { useBuyBrand } from "../_parts/use-buy-brand";
+import { BrandSkeleton } from "../_parts/site-header";
 import { buildTiers, FALLBACK_TIERS, type CatalogItem } from "../_parts/tiers";
 import { useActiveSitePromo, computeSitePromoDiscount, SitePromoBanner } from "../_parts/site-promo";
 import { orderTotals } from "../_parts/checkout-form";
@@ -56,11 +58,12 @@ export function talkHref(contact: BuyContact, message: string): string {
   return "/buy/workspace?view=desktop#talk-to-us";
 }
 
-function TopBar({ brand, href }: { brand: BuyBrand | null; href: string }) {
+function TopBar({ brand, pending, href }: { brand: BuyBrand | null; pending: boolean; href: string }) {
   const name = brand?.name ?? "Google Workspace";
   return (
     <header className="sticky top-0 z-30 bg-paper/95 backdrop-blur-sm border-b border-hairline">
       <div className="max-w-[480px] mx-auto flex justify-between items-center gap-3 px-4 py-2">
+        {!brand && pending ? <BrandSkeleton size="sm" /> : (
         <Link href="/" className="flex items-center gap-2.5 min-w-0 no-underline text-ink">
           {brand?.logoUrl ? (
             /* eslint-disable-next-line @next/next/no-img-element -- tenant logo, any host */
@@ -73,6 +76,7 @@ function TopBar({ brand, href }: { brand: BuyBrand | null; href: string }) {
             <span className="text-xs text-ink-3 truncate">{PARTNER_BADGE}</span>
           </span>
         </Link>
+        )}
         <a href={href} target="_blank" rel="noopener noreferrer"
           className="h-11 px-3.5 border border-hairline rounded-full bg-white whitespace-nowrap shrink-0 text-sm font-semibold text-ink grid place-items-center no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
           Talk to us
@@ -85,7 +89,7 @@ function TopBar({ brand, href }: { brand: BuyBrand | null; href: string }) {
 export function BuyMobileClient({
   catalogItems = [],
   paymentMode = "simulation",
-  brand = null,
+  brand: serverBrand = null,
   metaPixelId = null,
   initialSearch = {},
 }: {
@@ -101,6 +105,8 @@ export function BuyMobileClient({
     [catalogItems],
   );
   const monthlyOk = monthlyOffered(plans);
+  /* R-2024: the server's brand, or the one the page fetches when that read failed on a cold start. */
+  const { brand, pending: brandPending } = useBuyBrand(serverBrand, "Buy Google Workspace");
   const contact = buyContact(brand);
 
   const [state, setState] = React.useState<MobileState>(() => {
@@ -176,7 +182,7 @@ export function BuyMobileClient({
       {/* R-2010: the same consent banner as the desktop page and the site. */}
       <ConsentBanner />
       {paymentMode === "simulation" && <TestModeBar />}
-      <TopBar brand={brand} href={helpHref} />
+      <TopBar brand={brand} pending={brandPending} href={helpHref} />
       {sitePromo && <SitePromoBanner promo={sitePromo} />}
       <main className="max-w-[480px] mx-auto pb-[160px]">
         {state.step === "compare" ? (

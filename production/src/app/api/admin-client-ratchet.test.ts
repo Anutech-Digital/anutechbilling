@@ -81,6 +81,7 @@ const PUBLIC_BY_DESIGN: Record<string, string> = {
   "public/demo-session": "R-524 Try the demo: anonymous by design (DEMO_ENABLED, per-IP limit); service role only reads demo_tenants + mints a one-time token for the fixed read-only visitor login, and the session is refused unless the DB confirms read-only",
   "public/agent/chat": "website sales chat; capped messages, model sees only public facts",
   "public/assessment/[token]": "read scoped to the unguessable assessment share token",
+  "public/brand": "R-2024 buy-page brand after a failed cold-start read: GET only, the website tenant only (websiteTenantId, never one the caller names), only the columns the page already shows (BRAND_COLUMNS), per-IP rate limit, no-store",
   "public/assessment/[token]/submit": "write scoped to the unguessable assessment share token",
   "public/callback": "website call-back form; Turnstile + per-IP/per-number rate limits",
   "public/catalog/workspace": "public price catalogue (read-only)",

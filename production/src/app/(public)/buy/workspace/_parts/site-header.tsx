@@ -17,7 +17,22 @@ export const NAV: ReadonlyArray<{ id: string; label: string }> = [
   { id: "talk-to-us", label: "Talk to us" },
 ];
 
-export function BrandMark({ brand }: { brand: BuyBrand | null }) {
+/** R-2024: while the page is still asking for the company's brand — a neutral placeholder,
+ *  never "Google Workspace" as if it were the seller. `size` matches the mark it stands in for. */
+export function BrandSkeleton({ size = "lg" }: { size?: "lg" | "sm" }) {
+  return (
+    <span data-brand-loading role="status" aria-label="Loading company name" className="flex items-center gap-2.5 min-w-0">
+      <span aria-hidden className={`${size === "lg" ? "h-9 w-9" : "h-8 w-8"} shrink-0 rounded-lg bg-paper-2 animate-pulse`} />
+      <span aria-hidden className="flex flex-col gap-1.5">
+        <span className="block h-3.5 w-32 rounded bg-paper-2 animate-pulse" />
+        <span className="block h-2.5 w-24 rounded bg-paper-2 animate-pulse" />
+      </span>
+    </span>
+  );
+}
+
+export function BrandMark({ brand, pending = false }: { brand: BuyBrand | null; pending?: boolean }) {
+  if (!brand && pending) return <BrandSkeleton />;
   const name = brand?.name ?? "Google Workspace";
   return (
     <Link href="/" className="flex items-center gap-2.5 min-w-0 no-underline text-ink" aria-label={`${name} home`}>
@@ -38,9 +53,11 @@ export function BrandMark({ brand }: { brand: BuyBrand | null }) {
 }
 
 export function SiteHeader({
-  brand, contact, onNav, onBuy,
+  brand, brandPending = false, contact, onNav, onBuy,
 }: {
   brand: BuyBrand | null;
+  /** R-2024: the brand is still being fetched — show a placeholder, not the neutral name. */
+  brandPending?: boolean;
   contact: BuyContact;
   onNav: (id: string) => void;
   onBuy: () => void;
@@ -48,7 +65,7 @@ export function SiteHeader({
   return (
     <header className="sticky top-0 z-40 bg-paper/95 backdrop-blur-sm border-b border-hairline">
       <div className="max-w-[1200px] mx-auto px-4 sm:px-5 py-3 flex items-center gap-5">
-        <BrandMark brand={brand} />
+        <BrandMark brand={brand} pending={brandPending} />
         <nav aria-label="On this page" className="hidden min-[1000px]:flex gap-1 ml-3">
           {NAV.map((n) => (
             <button

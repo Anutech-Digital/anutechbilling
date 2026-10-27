@@ -140,7 +140,7 @@ export default async function BuyWorkspacePage(props: {
   /* R-2020 (R-2019 decision 1): a phone gets the one-screen-at-a-time flow, a laptop the v2 page —
      decided here, so only one of the two client trees is sent. ?view=mobile|desktop overrides. */
   const view = buyViewFor(await headers(), typeof sp.view === "string" ? sp.view : null);
-  // Both reads at once (R-027) — each is capped, so the page waits at most ~3 s, not the sum.
+  // Both reads at once (R-027) — each is capped, so the page waits for the slowest, not the sum (the brand: ~6 s with its one retry, R-2024).
   const [catalogItems, { configured, keyId }, brand, metaPixelId] = await Promise.all([fetchGoogleWorkspaceItems(), isRazorpayConfigured(), fetchBuyBrand(), websitePixelId()]);
   // Live when Razorpay is fully configured. When it isn't:
   //  · non-prod (or ALLOW_SIMULATED_CHECKOUT=1) → "simulation": Buy now stays
