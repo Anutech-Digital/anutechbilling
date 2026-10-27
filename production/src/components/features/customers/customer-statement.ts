@@ -52,6 +52,80 @@ export interface StatementRow {
   link: StatementLink;
 }
 
+export interface StatementProjectPayment {
+  received_at: string; amount: number | null; reference?: string | null; project_title: string; invoice_id?: string | null; project_id: string;
+  /** R-2029: what ties several instalments to ONE bank receipt (the bank line it was reconciled to). */
+  bank_txn_id?: string | null;
+  /** 'tds' = the TDS part of an instalment (no bank line of its own). */
+  method?: string | null;
+  milestone_id?: string | null;
+  /** "Kist 1 — advance" → shown as "Kist 1". */
+  milestone_label?: string | null;
+}
+
+const KIST_SHOWN = 2;
+
+/** "Kist 1 + Kist 2" — the short part of each label (before " — "), at most two, then "+ N more". */
+function kistList(labels: readonly string[]): string {
+  const short = [...new Set(labels.map((l) => l.split(" — ")[0].trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+  const head = short.slice(0, KIST_SHOWN).join(" + ");
+  return short.length > KIST_SHOWN ? `${head} + ${short.length - KIST_SHOWN} more` : head;
+}
+
+/**
+ * R-2029 (27 Oct 2026, SCN Bharat Apps): one ₹2,12,400 bank receipt paid Kist 1 and Kist 2 and
+ * showed as two identical "Payment received · SCN-… ₹1,06,200" rows, plus two "TDS 194J …
+ * ₹11,800" rows. Now ONE row per bank receipt (instalments sharing a bank_txn_id), amounts
+ * summed, instalments named — and ONE TDS row for the TDS of those instalments (same project,
+ * same day, a milestone in the receipt). A receipt for a single instalment reads as before.
+ * Only the rows are merged: every rupee stays, so the running and closing balance do not move.
+ */
+export function groupProjectReceipts(
+  list: readonly StatementProjectPayment[],
+): { date: string; desc: string; credit: number; link: StatementLink }[] {
+  const byBank = new Map<string, StatementProjectPayment[]>();
+  for (const p of list) {
+    if (p.bank_txn_id && p.method !== "tds") byBank.set(p.bank_txn_id, [...(byBank.get(p.bank_txn_id) ?? []), p]);
+  }
+  const used = new Set<StatementProjectPayment>();
+  const out: { date: string; desc: string; credit: number; link: StatementLink }[] = [];
+  const day = (d: string) => (d ?? "").slice(0, 10);
+  for (const group of byBank.values()) {
+    if (group.length < 2) continue;
+    const first = group[0];
+    const ms = new Set(group.map((p) => p.milestone_id).filter(Boolean));
+    const tds = list.filter((p) => p.method === "tds" && p.milestone_id && ms.has(p.milestone_id)
+      && p.project_id === first.project_id && day(p.received_at) === day(first.received_at));
+    const kists = kistList(group.map((p) => p.milestone_label ?? ""));
+    const invoices = new Set(group.map((p) => p.invoice_id ?? null));
+    const link: StatementLink = { kind: "projectPayment", invoiceId: invoices.size === 1 ? first.invoice_id ?? null : null, projectId: first.project_id };
+    const ref = first.reference?.trim() || first.project_title;
+    out.push({
+      date: first.received_at, desc: `Payment received · ${ref}${kists ? ` · ${kists}` : ""}`,
+      credit: group.reduce((s, p) => s + (p.amount ?? 0), 0), link,
+    });
+    group.forEach((p) => used.add(p));
+    if (tds.length >= 2) {
+      const section = (tds[0].reference ?? "").split(" @")[0].trim() || "TDS";
+      out.push({
+        date: tds[0].received_at, desc: `${section}${kists ? ` · ${kistList(tds.map((p) => p.milestone_label ?? ""))}` : ""}`,
+        credit: tds.reduce((s, p) => s + (p.amount ?? 0), 0), link,
+      });
+      tds.forEach((p) => used.add(p));
+    }
+  }
+  for (const p of list) {
+    if (used.has(p)) continue;
+    out.push({
+      date: p.received_at, desc: `Payment received · ${p.reference?.trim() || p.project_title}`,
+      credit: p.amount ?? 0,
+      link: { kind: "projectPayment", invoiceId: p.invoice_id ?? null, projectId: p.project_id },
+    });
+  }
+  return out;
+}
+
 export interface StatementInput {
   /** R-1739: an invoice imported from Zoho Books (document_kind opening_invoice) is the
    *  customer's opening balance — only what was still due when it came in (opening_balance);
@@ -72,7 +146,7 @@ export interface StatementInput {
   }>;
   creditNotes: ReadonlyArray<{ id: string; invoice_id: string | null; credit_date: string; amount: number | null; reason?: string | null }>;
   debitNotes: ReadonlyArray<{ id: string; invoice_id: string | null; debit_date: string; amount: number | null; reason?: string | null }>;
-  projectPayments: ReadonlyArray<{ received_at: string; amount: number | null; reference?: string | null; project_title: string; invoice_id?: string | null; project_id: string }>;
+  projectPayments: ReadonlyArray<StatementProjectPayment>;
   /** Optional "— ₹X bank + ₹Y TDS" tail for a payment row (R-523). */
   paymentSplit?: (paymentId: string, amount: number) => string | null;
   /** R-2029: is this quote an R-1863 customer-advance holder (isCustomerAdvanceQuote)? Its
@@ -153,12 +227,8 @@ export function buildCustomerStatement(input: StatementInput): { rows: Statement
       link: c.invoice_id ? { kind: "invoice", invoiceId: c.invoice_id } : { kind: "invoice", invoiceId: c.id }, order: 3,
     });
   }
-  for (const p of input.projectPayments) {
-    raw.push({
-      date: p.received_at, desc: `Payment received · ${p.reference?.trim() || p.project_title}`,
-      debit: 0, credit: p.amount ?? 0,
-      link: { kind: "projectPayment", invoiceId: p.invoice_id ?? null, projectId: p.project_id }, order: 2,
-    });
+  for (const g of groupProjectReceipts(input.projectPayments)) {
+    raw.push({ ...g, debit: 0, order: 2 });
   }
   /* Day first (YYYY-MM-DD of the stored value), then invoice → debit note → payment →
      credit note → refund, so a same-day refund never dips below what it reverses. */
