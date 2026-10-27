@@ -195,3 +195,32 @@ describe("R-2029 statement labels a customer advance", () => {
     expect(labelled.closing).toBe(plain.closing);
   });
 });
+
+describe("R-2029 follow-up: an advance on the statement — closing credit, Use advance not counted twice", () => {
+  // SCN Bharat Apps shape: ₹4,00,000 advance (R-1863: a payment on the ₹0 holder quote,
+  // received on the bank date), later two invoices paid with "Use advance" (R-2023:
+  // record_desk_payment with credit_applied — no new cash).
+  const advance = { id: "adv", quote_id: "Q-ADV", amount: 400000, status: "received", received_at: "2026-10-25T00:00:00Z", receipt_voucher_no: "RV-F588-27-0021" };
+  const isAdvanceQuote = (id: string) => id === "Q-ADV";
+
+  it("the advance alone: an 'Advance (RV-…)' credit row on its receipt date, closing ₹4,00,000 credit", () => {
+    const { rows, closing } = buildCustomerStatement({ ...base, payments: [advance], isAdvanceQuote });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ date: "2026-10-25T00:00:00Z", desc: "Advance (RV-F588-27-0021)", debit: 0, credit: 400000 });
+    expect(closing).toBe(-400000);
+  });
+
+  it("after Use advance on an invoice the advance is not counted twice — closing = advance − invoice", () => {
+    const { rows, closing } = buildCustomerStatement({
+      ...base,
+      invoices: [{ id: "INV-1", invoice_date: "2026-10-27", amount: 118000 }],
+      payments: [
+        advance,
+        { id: "use", quote_id: "Q-1", invoice_id: "INV-1", amount: 118000, credit_applied: 118000, status: "received", received_at: "2026-10-27T06:00:00Z", receipt_voucher_no: "RV-F588-27-0022" },
+      ],
+      isAdvanceQuote,
+    });
+    expect(closing).toBe(118000 - 400000);
+    expect(rows.reduce((s, r) => s + r.credit, 0)).toBe(400000);
+  });
+});
