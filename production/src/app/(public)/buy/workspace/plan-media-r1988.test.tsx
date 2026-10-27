@@ -86,10 +86,10 @@ describe("R-1988 plan card media slot", () => {
     expect(within(card("Enterprise")).queryByTestId("plan-media")).toBeNull();
   });
 
-  it("plan cards still have 8 rows each (buttons stay aligned)", () => {
+  it("plan cards still have 7 rows each (buttons stay aligned; R-2030 merged the price row into the box)", () => {
     render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={null} />);
     for (const c of within(document.getElementById("plans") as HTMLElement).getAllByRole("article")) {
-      expect([...c.children].filter((el) => !el.className.includes("absolute"))).toHaveLength(8);
+      expect([...c.children].filter((el) => !el.className.includes("absolute"))).toHaveLength(7);
     }
   });
 });

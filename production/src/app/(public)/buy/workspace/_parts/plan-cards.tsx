@@ -73,7 +73,7 @@ export function PlanCards({
       </div>
 
       {/* R-1986 (Pardeep): the buttons and the feature lists line up across the cards whatever the
-          text above them — each card spans 8 rows of ONE grid (subgrid), so a row is as tall as its
+          text above them — each card spans 7 rows of ONE grid (R-2030: was 8 — the price row merged into the box) (subgrid), so a row is as tall as its
           tallest card. Phone: the cards stack, a plain column. */}
       <div className="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] gap-4 sm:gap-y-0" data-testid="plan-grid">
         {plans.map((p) => {
@@ -93,7 +93,7 @@ export function PlanCards({
             <article
               key={p.id}
               aria-label={p.name}
-              className={`relative flex flex-col sm:grid sm:grid-rows-subgrid sm:row-span-8 sm:mb-4 bg-white rounded-[14px] p-[22px] border-2 ${
+              className={`relative flex flex-col sm:grid sm:grid-rows-subgrid sm:row-span-7 sm:mb-4 bg-white rounded-[14px] p-[22px] border-2 ${
                 sel ? "border-amber shadow-[0_16px_32px_-16px_rgba(194,65,12,0.35)]" : "border-hairline"
               }`}
             >
@@ -103,51 +103,53 @@ export function PlanCards({
               <div className="text-[13px] font-bold mb-1"><GoogleWorkspaceWordmark workspaceWeight={500} /></div>
               <h3 className="font-serif font-normal text-2xl mb-1.5">{p.name}</h3>
               <p className="text-sm text-ink-3 leading-normal min-h-[42px] mb-4">{p.blurb}</p>
-              <div className="flex items-baseline gap-2 flex-wrap" data-testid={`plan-price-${p.id}`}>
-                {quote ? (
-                  /* R-1986 (Pardeep): Plus (price hidden, R-328) and Enterprise — "Talk to sales", no figure. */
-                  <span className="font-serif text-[30px] leading-none">Talk to sales</span>
-                ) : (
-                  <>
-                    <span className="font-serif text-[38px] leading-none">{rupee(rate)}</span>
-                    <span className="text-[13px] text-ink-3">/user/month</span>
-                  </>
-                )}
-              </div>
               {quote ? (
-                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2.5 text-[14px]" data-testid={`plan-sales-${p.id}`}>
-                  {contact.tel && (
-                    <a href={contact.tel.href} className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px] whitespace-nowrap">Call {contact.tel.display}</a>
-                  )}
-                  {contact.whatsapp && (
-                    <a href={whatsappHref(contact.whatsapp, salesWhatsappMessage(p.name, n))} target="_blank" rel="noopener noreferrer"
-                      className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px]">WhatsApp us</a>
-                  )}
+                <div>
+                  {/* R-1986 (Pardeep): Plus (price hidden, R-328) and Enterprise — "Talk to sales", no figure. */}
+                  <span className="block font-serif text-[30px] leading-none" data-testid={`plan-price-${p.id}`}>Talk to sales</span>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2.5 text-[14px]" data-testid={`plan-sales-${p.id}`}>
+                    {contact.tel && (
+                      <a href={contact.tel.href} className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px] whitespace-nowrap">Call {contact.tel.display}</a>
+                    )}
+                    {contact.whatsapp && (
+                      <a href={whatsappHref(contact.whatsapp, salesWhatsappMessage(p.name, n))} target="_blank" rel="noopener noreferrer"
+                        className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px]">WhatsApp us</a>
+                    )}
+                  </div>
                 </div>
               ) : (
-                <div>
-                  <div className="text-[13px] text-ink-3 min-h-5 mt-2">{annual ? "Billed yearly · 12-month plan" : "Billed monthly"}</div>
-                  {/* R-1988: the plan's video (lite, click to play) or three highlights */}
-                  <PlanMedia media={PLAN_MEDIA[p.id]} highlights={p.features} />
-                </div>
+                /* R-1988: the plan's video (lite, click to play) or three highlights — right under the
+                   description (R-2030: the rate moved into the box below). */
+                <PlanMedia media={PLAN_MEDIA[p.id]} highlights={p.features} />
               )}
+              {/* R-2030 (Pardeep: "1 and 2 should merge and only stay in 1's place"): ONE rate block —
+                  the big rate, the working with this card's users input, then how it is billed. */}
               <div className="text-[13px] text-ink-2 px-3 py-2.5 bg-paper rounded-lg mt-3 mb-4 font-mono leading-[2]"
                 data-testid={`plan-total-${p.id}`} data-working={over ? "" : head?.working ?? ""}>
                 {quote ? (
                   `Written GST quote ${SLA.quote}`
-                ) : onCardSeats ? (
-                  over ? (
-                    <><CardSeats planName={p.name} seats={n} onSeats={setN} />users · <span>Max {BUSINESS_MAX_USERS} users — see Enterprise</span></>
-                  ) : head ? (
-                    /* R-1986 (Pardeep): a FIXED three-line layout in every card — the number of digits
-                       never moves a word to another line. */
-                    <>
-                      <span className="block whitespace-nowrap" data-line="1">{head.workingParts.before}</span>
-                      <span className="block whitespace-nowrap" data-line="2"><CardSeats planName={p.name} seats={n} onSeats={setN} />{head.workingParts.mid}</span>
-                      <span className="block whitespace-nowrap" data-line="3">{head.workingParts.after}</span>
-                    </>
-                  ) : null
-                ) : over ? `Max ${BUSINESS_MAX_USERS} users — see Enterprise` : head?.working}
+                ) : (
+                  <>
+                    <span className="block font-serif text-[38px] leading-none text-ink mb-2" data-line="1" data-testid={`plan-price-${p.id}`}>
+                      <span>{rupee(rate)}</span>{" "}<span className="font-sans text-[13px] text-ink-3">/user/month</span>
+                    </span>
+                    {onCardSeats ? (
+                      over ? (
+                        <span className="block"><CardSeats planName={p.name} seats={n} onSeats={setN} />users · <span>Max {BUSINESS_MAX_USERS} users — see Enterprise</span></span>
+                      ) : head ? (
+                        /* R-1986 (Pardeep): a FIXED layout in every card — the number of digits never
+                           moves a word to another line. */
+                        <>
+                          <span className="block whitespace-nowrap" data-line="2">×<CardSeats planName={p.name} seats={n} onSeats={setN} />{head.workingParts.mid}</span>
+                          <span className="block whitespace-nowrap" data-line="3">{head.workingParts.after}</span>
+                        </>
+                      ) : null
+                    ) : (
+                      <span className="block">{over ? `Max ${BUSINESS_MAX_USERS} users — see Enterprise` : head?.working}</span>
+                    )}
+                    <span className="block font-sans text-[12px] text-ink-3 leading-normal mt-1">{annual ? "Billed yearly · 12-month plan" : "Billed monthly"}</span>
+                  </>
+                )}
               </div>
               <button
                 type="button"
