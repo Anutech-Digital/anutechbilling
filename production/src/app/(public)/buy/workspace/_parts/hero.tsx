@@ -33,7 +33,7 @@ export const HERO_VIDEO: { src: string; poster: string } | null = {
 };
 
 /** Motion is welcome: no "reduce motion" setting and no Save-Data. Unknown → no (poster only). */
-function motionWelcome(): boolean {
+export function motionWelcome(): boolean {
   if (typeof window === "undefined") return false;
   const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
   const saveData = Boolean((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData);
@@ -49,9 +49,11 @@ function motionWelcome(): boolean {
  * the text stacks full-width, so a flat 80%. Measured worst frame = pure white → 80% ink keeps
  * every hero text at 4.5:1 or more (hero-dark-r2018.test.tsx).
  */
-function HeroBackground() {
+/* R-2020: exported — the phone flow's hero (_mobile/hero.tsx) uses the same layer. */
+export function HeroBackground({ posterOnly = false }: { posterOnly?: boolean } = {}) {
   const [play, setPlay] = React.useState(false);
-  React.useEffect(() => { setPlay(motionWelcome()); }, []);
+  /* R-2020: the phone hero passes posterOnly — never the clip on a phone (Pardeep, 27 Oct). */
+  React.useEffect(() => { setPlay(!posterOnly && motionWelcome()); }, [posterOnly]);
   if (!HERO_VIDEO) return null;
   return (
     <div aria-hidden className="absolute inset-0 -z-10 overflow-hidden pointer-events-none">
@@ -79,7 +81,7 @@ function HeroBackground() {
 }
 
 /** R-2018: a keyboard focus ring that shows on the dark hero (white ring, ink gap). */
-const DARK_FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-ink";
+export const DARK_FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-ink";
 
 const CHECKS = ["GST tax invoice, ITC-ready", "UPI, cards and netbanking", "Domain + DNS setup included", "Hindi + English phone support"];
 

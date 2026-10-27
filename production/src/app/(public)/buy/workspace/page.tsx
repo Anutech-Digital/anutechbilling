@@ -24,8 +24,11 @@
  * the "contact us" grid or quote-only checkout instead of hanging the page.
  */
 import { Metadata } from "next";
+import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/server";
 import { BuyWorkspaceClient, type CatalogItem } from "./buy-workspace-client";
+import { BuyMobileClient } from "./_mobile/buy-mobile-client";
+import { buyViewFor } from "./_mobile/device";
 import { parseBuyParams } from "@/lib/checkout/buy-link";
 import { isPublicPriceHidden } from "@/lib/catalog/public-price-policy";
 import { simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
@@ -132,7 +135,11 @@ export default async function BuyWorkspacePage(props: {
   /* R-120: ?tier=&seats=&buy=1 from the home edition card — open on that edition, ready to pay. */
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const pick = parseBuyParams(await props.searchParams);
+  const sp = await props.searchParams;
+  const pick = parseBuyParams(sp);
+  /* R-2020 (R-2019 decision 1): a phone gets the one-screen-at-a-time flow, a laptop the v2 page —
+     decided here, so only one of the two client trees is sent. ?view=mobile|desktop overrides. */
+  const view = buyViewFor(await headers(), typeof sp.view === "string" ? sp.view : null);
   // Both reads at once (R-027) — each is capped, so the page waits at most ~3 s, not the sum.
   const [catalogItems, { configured, keyId }, brand, metaPixelId] = await Promise.all([fetchGoogleWorkspaceItems(), isRazorpayConfigured(), fetchBuyBrand(), websitePixelId()]);
   // Live when Razorpay is fully configured. When it isn't:
@@ -147,12 +154,18 @@ export default async function BuyWorkspacePage(props: {
     razorpayConfigured: configured,
     simulationAllowed: simulatedPaymentAllowed({ razorpayKeyId: keyId }),
   });
+  if (view === "mobile") {
+    return (
+      <BuyMobileClient catalogItems={catalogItems} paymentMode={paymentMode} brand={brand} metaPixelId={metaPixelId} initialSearch={sp} />
+    );
+  }
   return (
     <BuyWorkspaceClient
       catalogItems={catalogItems}
       paymentMode={paymentMode}
       initialTierId={pick.tier ?? undefined}
       initialSeats={pick.seats ?? undefined}
+      initialBilling={sp.billing === "monthly" ? "monthly" : undefined}
       openBuy={pick.openBuy}
       initialCoupon={pick.coupon ?? undefined}
       metaPixelId={metaPixelId}

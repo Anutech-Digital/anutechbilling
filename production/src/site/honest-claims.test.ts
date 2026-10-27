@@ -37,7 +37,9 @@ describe("public site claims", () => {
    true — a promo that was never charged, a refund of a fee never taken, an annual plan that
    "cancels anytime" — must not come back. */
 describe("Google Workspace buy pages — no invented offers or promises", () => {
-  const buy = readFileSync(join(__dirname, "../app/(public)/buy/workspace/buy-workspace-client.tsx"), "utf8");
+  /* R-2020: the tiers moved to _parts/tiers.ts — both files are read. */
+  const buy = readFileSync(join(__dirname, "../app/(public)/buy/workspace/buy-workspace-client.tsx"), "utf8")
+    + readFileSync(join(__dirname, "../app/(public)/buy/workspace/_parts/tiers.ts"), "utf8");
   it("no hardcoded 20% first-20-users promo", () => {
     expect(buy).not.toMatch(/First 20 users/i);
     expect(buy).not.toMatch(/promoPrice:\s*864/);

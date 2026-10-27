@@ -45,8 +45,10 @@ describe("R-276 Buy-now dialog price = charged price", () => {
   });
 
   it("the dialog builds its tiers and totals through these helpers", () => {
-    const src = readFileSync(join(__dirname, "buy-workspace-client.tsx"), "utf8");
+    /* R-2020: buildTiers moved to _parts/tiers.ts (shared by the desktop page and the phone flow). */
+    const src = readFileSync(join(__dirname, "_parts", "tiers.ts"), "utf8");
     expect(src).toMatch(/annual\s*=\s*tierAnnualPrice\(slug,/);
+    expect(readFileSync(join(__dirname, "buy-workspace-client.tsx"), "utf8")).toMatch(/buildTiers\(catalogItems\)/);
     /* R-1970: the page's sums go through _parts/plans.ts planSum → annualTotals. */
     expect(readFileSync(join(__dirname, "_parts", "plans.ts"), "utf8")).toMatch(/annualTotals\(seats, rate\)/);
   });
