@@ -35,7 +35,9 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe("R-2010 consent banner — wording a visitor can understand", () => {
   it("a new visitor sees both purposes, Meta named, what is shared, and a Privacy link", () => {
     render(<ConsentBanner />);
-    const dialog = screen.getByRole("dialog", { name: /cookie/i });
+    const dialog = screen.getByRole("region", { name: /cookie/i });
+    // R-1971: the buy page has no dialog on load — the non-modal banner is a labelled region.
+    expect(screen.queryByRole("dialog")).toBeNull();
     const text = dialog.textContent ?? "";
     expect(text).toContain("Necessary");
     expect(text).toContain("Advertising measurement (Meta)");
@@ -58,7 +60,7 @@ describe("R-2010 consent banner — wording a visitor can understand", () => {
   it("a visitor who already chose sees no banner", () => {
     window.localStorage.setItem(CONSENT_KEY, "essential");
     render(<ConsentBanner />);
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("region", { name: /cookie/i })).toBeNull();
   });
 });
 
@@ -67,7 +69,7 @@ describe("R-2010 choosing, recording, reopening", () => {
     render(<ConsentBanner />);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Only necessary" })); });
     expect(readConsent()).toBe("essential");
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("region", { name: /cookie/i })).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("/api/public/consent");
@@ -79,21 +81,23 @@ describe("R-2010 choosing, recording, reopening", () => {
   it("'Cookie settings' reopens the banner, shows the current choice, and changing it sticks", async () => {
     window.localStorage.setItem(CONSENT_KEY, "essential");
     render(<><ConsentBanner /><CookieSettingsButton /></>);
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("region", { name: /cookie/i })).toBeNull();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cookie settings" })); });
-    const dialog = screen.getByRole("dialog", { name: /cookie/i });
+    const dialog = screen.getByRole("region", { name: /cookie/i });
+    // R-1971: the buy page has no dialog on load — the non-modal banner is a labelled region.
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(dialog.textContent).toContain("Your current choice: Only necessary");
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Accept all" })); });
     expect(readConsent()).toBe("all");
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("region", { name: /cookie/i })).toBeNull();
   });
 
   it("Escape closes a reopened banner without changing the choice", async () => {
     window.localStorage.setItem(CONSENT_KEY, "all");
     render(<><ConsentBanner /><CookieSettingsButton /></>);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cookie settings" })); });
-    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.keyDown(screen.getByRole("region", { name: /cookie/i }), { key: "Escape" });
+    expect(screen.queryByRole("region", { name: /cookie/i })).toBeNull();
     expect(readConsent()).toBe("all");
   });
 });

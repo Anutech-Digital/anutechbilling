@@ -65,8 +65,7 @@ export function ConsentBanner() {
 
   return (
     <div
-      role="dialog"
-      aria-modal="false"
+      role="region"
       aria-labelledby="consent-title"
       aria-describedby="consent-body"
       className="consent-banner"
@@ -78,7 +77,7 @@ export function ConsentBanner() {
       }}
     >
       {/* R-230: below 980px the banner spans the screen with a 12px gutter (375px phones). */}
-      <style jsx>{`
+      <style>{`
         .consent-banner { left: 22px; bottom: 22px; max-width: 400px; }
         @media (max-width: 979px) {
           .consent-banner { left: 12px; right: 12px; bottom: 12px; max-width: none; max-height: calc(100vh - 24px); overflow-y: auto; }
