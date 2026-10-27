@@ -8,6 +8,7 @@ import type { ThanksOrder } from "./thanks-client";
 import { websiteTenantId } from "@/lib/website-tenant";
 import { orderPaymentState } from "@/lib/checkout/order-payment-state";
 import { PLAN_COPY, type PlanId } from "../_parts/plans";
+import { domainPartOf, instalmentInvoiceOf } from "./order-parts";
 
 /* R-1499: tenant read per call (websiteTenantId) — outside production an unset BUY_PAGE_TENANT_ID
    shows nothing (and logs why), never the live tenant's data. */
@@ -28,7 +29,7 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("quotes")
-    .select("id, tenant_id, public_token, customer_name, plan, seats, amount, subtotal, payment_status, payment_received_at, line_items, created_date")
+    .select("id, tenant_id, public_token, customer_name, plan, seats, amount, subtotal, payment_status, payment_received_at, line_items, created_date, lead_id, billing_cycle")
     .eq("id", quoteId)
     .eq("tenant_id", BUY_PAGE_TENANT_ID)
     /* "invoiced" too (R-120): the GST invoice is issued straight after record_payment (webhook
@@ -76,23 +77,35 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
     .maybeSingle();
 
   /* R-1977: a new domain bought with this order — its line carries the registrant. */
-  const newDomain = Array.isArray(data.line_items)
+  const lineDomain = Array.isArray(data.line_items)
     ? ((data.line_items as { domain?: unknown; registrant?: unknown }[]).find((l) => typeof l?.domain === "string" && l.registrant && typeof l.registrant === "object")?.domain as string | undefined) ?? null
     : null;
 
+  /* R-1985: a monthly order's month-1 invoice is the subscription instalment (quote_id NULL), and
+     a monthly order with a new domain has the domain on its own quote + invoice, paid by the same
+     payment — the page shows the whole order and both invoices. */
+  const row = data as typeof data & { lead_id?: string | null; billing_cycle?: string | null };
+  let invoiceNumber = (inv as { id?: string } | null)?.id ?? null;
+  if (!invoiceNumber && row.billing_cycle === "monthly") invoiceNumber = await instalmentInvoiceOf(admin, BUY_PAGE_TENANT_ID, data.id);
+  const dom = await domainPartOf(admin, BUY_PAGE_TENANT_ID, { id: data.id, lead_id: row.lead_id ?? null });
+  const amount = (data.amount ?? 0) + (dom?.amount ?? 0);
+  const received = amountReceived === null || (dom && dom.received === null) ? null : amountReceived + (dom?.received ?? 0);
+
   return {
     quoteId:        data.id,
-    newDomain,
+    newDomain:      lineDomain ?? dom?.domain ?? null,
+    domainInvoiceNumber: dom?.invoiceNumber ?? null,
     planLabel:      data.plan ?? null, // R-1979: Meta content_ids
-    invoiceNumber:  (inv as { id?: string } | null)?.id ?? null,
+    invoiceNumber,
     customerName:   data.customer_name ?? "",
     tierName,
     seats:          data.seats ?? 0,
-    amount:         data.amount ?? 0,
-    subtotal:       data.subtotal ?? null,
+    amount,
+    subtotal:       data.subtotal == null ? null : data.subtotal + (dom?.subtotal ?? 0),
     paymentStatus:  data.payment_status ?? "awaiting",
-    paymentState:   orderPaymentState({ paymentStatus: data.payment_status, amount: data.amount, received: amountReceived }),
-    amountReceived,
+    /* R-1985: the domain's share not in yet → the order is part-paid, whatever the Workspace says. */
+    paymentState:   orderPaymentState({ paymentStatus: dom && (dom.received ?? 0) < dom.amount ? "partial" : data.payment_status, amount, received }),
+    amountReceived: received,
     paymentDate:    data.payment_received_at ?? data.created_date ?? null,
   };
 }
