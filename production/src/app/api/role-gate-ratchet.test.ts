@@ -100,6 +100,7 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
   "public/cart-coupon": "website cart",
   "public/checkout/cart": "website checkout",
   "public/checkout/workspace": "website checkout",
+  "public/consent": "website cookie banner — insert-only consent record, per-IP rate limit (R-2010)",
   "public/checkout/verify": "website checkout's return from Razorpay — bounded by the Razorpay signature (R-1596)",
   "public/coupons/validate": "website cart",
   "public/demo-session": "anonymous demo (R-524)",

@@ -241,4 +241,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r1995allocateprojectreceipt", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.allocate_project_receipt(uuid,uuid,jsonb,date,text)') and prosrc like '%R-1995%')" },
   { key: "r1996allocateprojectreceipttds", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.allocate_project_receipt_with_tds(uuid,uuid,jsonb,jsonb,date,text)') and prosrc like '%R-1996%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.allocate_project_receipt(uuid,uuid,jsonb,date,text)') and prosrc like '%R-1996%')" },
   { key: "r1999projectreceiptundo", peek: "to_regprocedure('public.project_receipt_undo_preview(uuid)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.unreconcile_bank_receipt(uuid,boolean)') and prosrc like '%R-1999%')" },
+  { key: "r2010consentevents", peek: "to_regclass('public.consent_events') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'consent_events' and policyname = 'r2010_owner_reads')" },
 ];

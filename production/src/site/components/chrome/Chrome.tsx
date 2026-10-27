@@ -9,9 +9,9 @@ import Image from "next/image";
 import { FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
 import Link from "@/site/components/ui/SiteLink";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
 import { COMPANY, WHATSAPP_URL, WHATSAPP_READY, CLIENT_AREA_URL } from "@/site/lib/config";
 import { hideFloatingOn } from "./floating";
+import { CookieSettingsButton } from "./ConsentBanner";
 
 export function UtilityBar() {
   const pathname = usePathname();
@@ -163,6 +163,8 @@ export function Footer() {
         </div>
         <div style={{ borderTop: "1px solid var(--border-light)", marginTop: 36, paddingTop: 18, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", fontSize: 12, color: "var(--text-muted)" }}>
           <span>© 2026 {COMPANY.name} · {COMPANY.city} · GSTIN {COMPANY.gstin}</span>
+          {/* R-2010: change or withdraw cookie consent — as easy as giving it. */}
+          <CookieSettingsButton style={{ color: "var(--text-secondary)", textDecoration: "underline", fontSize: 12 }} />
           <span>All prices exclusive of GST at 18%, stated separately on every invoice.</span>
         </div>
       </div>
@@ -175,49 +177,7 @@ export function Footer() {
    is re-exported here because the R-230 callers and tests import it from Chrome. */
 export { hideFloatingOn };
 
-export function ConsentBanner() {
-  /* null until mounted — the banner must not flash for a visitor who already chose. */
-  const [consent, setConsent] = useState<string | null | "unknown">("unknown");
-  useEffect(() => {
-    try {
-      setConsent(window.localStorage.getItem("anutech.consent.v1"));
-    } catch {
-      setConsent("essential");
-    }
-  }, []);
-  if (consent !== null) return null;
-
-  const choose = (value: string) => {
-    try { window.localStorage.setItem("anutech.consent.v1", value); } catch { /* in-memory only */ }
-    setConsent(value);
-  };
-
-  return (
-    <div
-      role="dialog"
-      aria-label="Cookie consent"
-      className="consent-banner"
-      style={{
-        position: "fixed", zIndex: 95,
-        background: "#fff", border: "1px solid var(--border)", borderRadius: 10,
-        padding: 18, boxShadow: "var(--shadow-panel)",
-      }}
-    >
-      {/* R-230: left 22 + maxWidth 360 was wider than a 375px phone. Below 980px the banner
-          spans the screen with a 12px gutter instead of hanging off the right edge. */}
-      <style jsx>{`
-        .consent-banner { left: 22px; bottom: 22px; max-width: 360px; }
-        @media (max-width: 979px) {
-          .consent-banner { left: 12px; right: 12px; bottom: 12px; max-width: none; }
-        }
-      `}</style>
-      <p style={{ fontSize: 14, lineHeight: 1.5, color: "var(--text-secondary)", margin: "0 0 12px" }}>
-        Essential cookies keep the cart working. Analytics cookies are set only if you accept them.
-      </p>
-      <div style={{ display: "flex", gap: 10 }}>
-        <button className="btn btn-primary btn-sm" onClick={() => choose("all")}>Accept all</button>
-        <button className="btn btn-outline btn-sm" onClick={() => choose("essential")}>Essential only</button>
-      </div>
-    </div>
-  );
-}
+/* R-2010 (27 Oct 2026, G-DPDP): the banner moved to ./ConsentBanner — ONE component for the
+   marketing site AND the /buy pages (which render the Meta Pixel too). Re-exported here because
+   the (marketing) layout imports it from Chrome. */
+export { ConsentBanner } from "./ConsentBanner";

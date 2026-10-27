@@ -85,6 +85,7 @@ const PUBLIC_BY_DESIGN: Record<string, string> = {
   "public/callback": "website call-back form; Turnstile + per-IP/per-number rate limits",
   "public/catalog/workspace": "public price catalogue (read-only)",
   "public/checkout/workspace": "public buy flow; creates a draft quote for the buy-page tenant only",
+  "public/consent": "R-2010 cookie-consent record: insert-only row for the website tenant only (never a tenant the caller names); per-IP rate limit; IP kept only as an HMAC",
   "public/coupons/validate": "dry-run coupon check for the buy-page tenant; records nothing",
   "public/enquiry/general": "website enquiry form; Turnstile",
   "public/enquiry/workspace": "website workspace enquiry; Turnstile",

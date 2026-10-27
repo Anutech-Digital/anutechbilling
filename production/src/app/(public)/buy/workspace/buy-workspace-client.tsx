@@ -31,6 +31,7 @@ import { useCheckout } from "./_parts/use-checkout";
 import { rupee } from "@/lib/utils";
 import { landingForForm } from "@/site/lib/ad-attribution";
 import { MetaPixel, trackMeta } from "@/site/lib/meta-pixel";
+import { ConsentBanner } from "@/site/components/chrome/ConsentBanner";
 import { contentIdForPlan } from "@/lib/meta/pixel-ids";
 
 
@@ -526,6 +527,8 @@ function BuyWorkspaceBody({
   return (
     <div className="min-h-screen bg-paper text-ink pb-[76px] min-[820px]:pb-0">
       <MetaPixel pixelId={metaPixelId} />
+      {/* R-2010: an ad visitor lands HERE first — the same consent banner as the site. */}
+      <ConsentBanner />
       {isSimulation && <TestModeBar />}
       <SiteHeader brand={brand} contact={contact} onNav={onNav} onBuy={goPay} />
       {sitePromo && <SitePromoBanner promo={sitePromo} />}
