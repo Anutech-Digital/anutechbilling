@@ -9,7 +9,9 @@
  *        (a) that vendor's open bills: COGS bills and unpaid expense bills, oldest first, the exact
  *            match (or the match after TDS) ticked; several bills share the amount oldest-first,
  *            a COGS bill's share is editable (part payment);
- *        (b) a bill that was never entered — recorded and paid in the same step;
+ *        (b) a bill that was never entered — recorded and paid in the same step; R-2005: "Upload bill
+ *            (photo / PDF)" fills it with the same reader as Add COGS Bill / Add expense
+ *            (lib/accounting/bill-reader.ts) and the file is attached to the bill the save creates;
  *        (c) an advance (nothing billed yet, or the extra over the bills).
  *      TDS: the vendor's section pre-filled, the rate and threshold from the app's TDS config.
  *      A bank charge on the line is its own expense.
@@ -29,7 +31,10 @@ import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import { useVendors } from "@/lib/queries/vendors";
 import { useVendorTdsThisFy, EXPENSE_CATEGORIES } from "@/lib/queries/expenses";
-import { VENDOR_BILL_CATEGORIES } from "@/lib/queries/vendor-bills";
+import { VENDOR_BILL_CATEGORIES, attachBillFile } from "@/lib/queries/vendor-bills";
+import { readBillFile, checkBillFile, type BillRead } from "@/lib/accounting/bill-reader";
+import { buyerWarningText } from "@/app/api/ai/extract-bill/buyer-check";
+import { billVendorCheck, newBillFromRead } from "@/lib/banking/bill-read-new-bill";
 import { TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import { useVendorOpenItems, usePayVendorFromBankDebit, useVendor194q, useSet194qBuyer, useVendorNarrationAliases } from "@/lib/queries/bank-debit-pay-for";
@@ -181,14 +186,58 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
   const [bill, setBill] = React.useState<NewBillDraft>({
     kind: "expense", billNo: "", billDate: transaction.txn_date, category: "", taxable: 0, gst: 0, itc: true, pay: 0,
   });
+  /* R-2005: the uploaded bill — the read, the file (attached on save), and the reader's lines. */
+  const [billRead, setBillRead] = React.useState<BillRead | null>(null);
+  const [billFile, setBillFile] = React.useState<File | null>(null);
+  const [reading, setReading] = React.useState(false);
+  const [readError, setReadError] = React.useState<string | null>(null);
+  const [readNote, setReadNote] = React.useState<string | null>(null);
+  const [buyerOk, setBuyerOk] = React.useState(false);
+  const billFileRef = React.useRef<HTMLInputElement>(null);
+  /* Mirror of billRead for the effects below: an uploaded bill is a fact about the bill, so a change
+     of vendor (e.g. "Switch to <bill's vendor>") keeps it; a new bank line starts empty. */
+  const readRef = React.useRef<BillRead | null>(null);
+  const billCats = React.useMemo(() => ({ expense: EXPENSE_CATS, cogs: VENDOR_BILL_CATEGORIES }), []);
   React.useEffect(() => {
+    readRef.current = null;
+    setBillRead(null); setBillFile(null); setReadError(null); setReadNote(null); setBuyerOk(false);
+  }, [transaction.id]);
+  React.useEffect(() => {
+    if (readRef.current) return;
     setShowNew(false);
     setBill({ kind: "expense", billNo: "", billDate: transaction.txn_date, category: "", taxable: 0, gst: 0, itc: true, pay: 0 });
   }, [transaction.id, transaction.txn_date, vendorId]);
   React.useEffect(() => {
     const cat = vendor?.default_category ?? "";
     if (cat) setBill((b) => ({ ...b, kind: cat.startsWith("COGS-") ? "cogs" : "expense", category: cat }));
-  }, [vendor?.default_category]);
+    /* the uploaded bill wins over the vendor's usual head */
+    const r = readRef.current;
+    if (r) setBill((b) => newBillFromRead(b, r, billCats).bill);
+  }, [vendor?.default_category, vendorId, billCats]);
+  const readBill = async (file: File) => {
+    setReadError(null); setReadNote(null); setBuyerOk(false);
+    const bad = checkBillFile(file);
+    if (bad) { setReadError(bad); return; }
+    setBillFile(file);   // kept — attached to the bill on save even if the AI cannot read it
+    setReading(true);
+    const out = await readBillFile(file);
+    setReading(false);
+    if (!out.ok) { setReadError(out.error); return; }
+    readRef.current = out.read;
+    setBillRead(out.read);
+    const next = newBillFromRead(bill, out.read, billCats);
+    setBill(next.bill);
+    setReadNote(next.note);
+  };
+  const billVendor = showNew && billRead ? billVendorCheck(billRead.fields, isNew ? { name: nv.name, gstin: nv.gstin } : vendor, vendors) : null;
+  const switchToBillVendor = () => {
+    if (!billVendor) return;
+    if (billVendor.match) { pickVendor(billVendor.match.id); return; }
+    setVendorId(NEW_VENDOR);
+    setTouched(true);
+    setNv({ ...EMPTY_NV, name: billVendor.readName, gstin: billVendor.readGstin ?? "" });
+  };
+  const buyerBlock = showNew && Boolean(billRead?.buyer) && !buyerOk;
   const billTotal = newBillTotal(bill);
   const billTds = bill.kind === "expense" ? newBillTds(Math.round(bill.taxable || 0), tdsOpts) : { tds: 0, section: null, reason: null };
   const billPay = bill.kind === "expense" ? billTotal : Math.min(billTotal, Math.round(bill.pay || billTotal));
@@ -222,11 +271,13 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
   /* ── 3. Save ─────────────────────────────────────────────────────────────── */
   const pay = usePayVendorFromBankDebit();
   const [result, setResult] = React.useState<VendorPayResult | null>(null);
-  React.useEffect(() => { setResult(null); }, [transaction.id]);
+  const [attachFailed, setAttachFailed] = React.useState<string | null>(null);
+  React.useEffect(() => { setResult(null); setAttachFailed(null); }, [transaction.id]);
   /* R-1914: a COGS vendor's advance keeps its COGS head (set off later against its COGS bill). */
   const advCat = advCategory || advanceHeadDefault(vendor?.default_category);
   const nothingPicked = pickedItems.length === 0 && !showNew && advance <= 0;
-  const canSave = Boolean(vendorName) && !pay.isPending && sum.diff === 0 && !nothingPicked && !newBillBad && starved.length === 0 && !bankBad;
+  const canSave = Boolean(vendorName) && !pay.isPending && sum.diff === 0 && !nothingPicked && !newBillBad && starved.length === 0 && !bankBad
+    && !reading && !buyerBlock;
   /* R-1911: the line only matches payments already recorded — the button says so. */
   const onlyMatch = pickedItems.length > 0 && pickedItems.every(isRecorded) && !showNew && advance <= 0 && charge <= 0;
 
@@ -250,6 +301,13 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
         bankCharge: charge,
         note: null,
       });
+      /* R-2005: the uploaded bill goes on the bill / expense the transaction created — its id comes
+         back from the RPC. Like Add COGS Bill, a failed upload never undoes the saved payment. */
+      if (showNew && billFile && r.new_bill?.doc_id) {
+        const src = r.new_bill.source === "vendor_bill" ? "vendor_bill" : "expense";
+        try { await attachBillFile(src, r.new_bill.doc_id, billFile); }
+        catch { setAttachFailed(billFile.name); }
+      }
       setResult(r);
       onSaved?.();
     } catch { /* the hook toasts */ }
@@ -269,6 +327,9 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
               {l.href ? <Link href={l.href as never} className="underline hover:no-underline">{l.text}</Link> : l.text}
             </li>
           ))}
+          {attachFailed && (
+            <li className="text-sm break-words text-amber-ink">The file {attachFailed} could not be attached — open the bill and attach it there.</li>
+          )}
         </ul>
         <Button size="sm" variant="primary" onClick={onDone}>Close</Button>
       </section>
@@ -481,6 +542,44 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
             </label>
             {showNew && (
               <div className="space-y-2">
+                {/* R-2005: the same reader as Add COGS Bill / Add expense. */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" size="sm" variant="default" icon="upload" loading={reading} onClick={() => billFileRef.current?.click()}>
+                    {reading ? "Reading…" : "Upload bill (photo / PDF)"}
+                  </Button>
+                  <span className="text-xs text-ink-3">AI fills the bill from it; check it, then record the payment.</span>
+                  <input ref={billFileRef} type="file" accept="image/*,application/pdf" className="hidden" aria-label="Bill file (photo or PDF)"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) void readBill(f); e.target.value = ""; }} />
+                </div>
+                {readError && (
+                  <p className="flex items-start gap-1.5 text-xs text-rose-ink"><Icon name="alert" size={12} className="mt-0.5 shrink-0" /> {readError}</p>
+                )}
+                {billFile && !readError && (
+                  <p className="flex items-start gap-1.5 text-xs text-ink-2 break-words">
+                    <Icon name="file" size={12} className="mt-0.5 shrink-0" /> {billRead ? "Filled from the bill · " : ""}{billFile.name} will be attached to the bill — check the amounts against it.
+                  </p>
+                )}
+                {readNote && <p className="text-xs text-amber-ink">{readNote}</p>}
+                {billVendor && (
+                  <div role="alert" className="rounded-md bg-amber-soft/50 px-2.5 py-2 text-xs text-amber-ink space-y-1.5">
+                    <p>
+                      This bill is from {billVendor.readName}{billVendor.readGstin ? ` (GSTIN ${billVendor.readGstin})` : ""}, not {vendorName}.
+                      {billVendor.match ? "" : ` ${billVendor.readName} is not in your vendors yet.`}
+                    </p>
+                    <Button type="button" size="sm" variant="default" onClick={switchToBillVendor} className="whitespace-normal h-auto min-h-8 py-1.5 text-left max-w-full">
+                      {billVendor.match ? `Switch to ${billVendor.match.name}` : `Add ${billVendor.readName} as a new vendor`}
+                    </Button>
+                  </div>
+                )}
+                {billRead?.buyer && (
+                  <div role="alert" className="rounded-md bg-rose-soft/40 px-2.5 py-2 text-xs text-rose space-y-1.5">
+                    <p>{buyerWarningText(billRead.buyer)}</p>
+                    <label className="flex items-center gap-2 cursor-pointer text-ink-2">
+                      <input type="checkbox" checked={buyerOk} onChange={(e) => setBuyerOk(e.target.checked)} />
+                      Yes, {billRead.buyer.own_name} paid this bill
+                    </label>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-1.5" role="group" aria-label="Bill type">
                   {([["expense", "Expense bill"], ["cogs", "COGS bill (resale)"]] as const).map(([k, label]) => (
                     <button key={k} type="button" aria-pressed={bill.kind === k}
