@@ -115,8 +115,9 @@ describe("R-1971 inline checkout", () => {
   });
 
   /* R-1977: on ANNUAL a new domain is searched live and bought with the order (new-domain-r1977
-     .test.tsx); on MONTHLY the name + ending go to the team, billed separately — as here. */
-  it("step 1 needs a domain; on Monthly 'I need a new domain' sends name + ending as a new domain", async () => {
+     .test.tsx). R-1985: on MONTHLY too (same payment, its own GST invoice) — so the name must
+     be checked and chosen first, never handed off "billed separately". */
+  it("step 1 needs a domain; on Monthly 'I need a new domain' asks to Check and choose, like Annual", async () => {
     page({ initialTierId: "starter", initialSeats: 1 });
     fireEvent.click(screen.getAllByRole("button", { name: "Monthly" })[0]);
     fireEvent.click(within(checkout()).getByRole("button", { name: "Continue" }));
@@ -125,15 +126,8 @@ describe("R-1971 inline checkout", () => {
     type("The domain you want", "ravitraders");
     fireEvent.change(within(checkout()).getByLabelText("Domain ending"), { target: { value: ".co.in" } });
     fireEvent.click(within(checkout()).getByRole("button", { name: "Continue" }));
-    type("Your name", "Ravi Kumar");
-    type("Email for invoice and login", "ravi@example.invalid");
-    type("Mobile (WhatsApp)", "9811122233");
-    fireEvent.change(within(checkout()).getByLabelText("State (place of supply)"), { target: { value: "07" } });
-    fireEvent.click(within(checkout()).getByRole("button", { name: "Continue to payment" }));
-    fireEvent.click(within(checkout()).getByLabelText(/I agree to the/));
-    fireEvent.click(within(checkout()).getByRole("button", { name: /Place test order/ }));
-    await waitFor(() => expect(calls.some((c) => c.url === "/api/public/checkout/workspace")).toBe(true));
-    expect(calls.find((c) => c.url === "/api/public/checkout/workspace")!.body).toMatchObject({ domain: "ravitraders.co.in", domainNew: true, companyName: "Ravi Kumar" });
+    expect(within(checkout()).getByText("Press Check, then choose an available domain")).toBeTruthy();
+    expect(calls.some((c) => c.url === "/api/public/checkout/workspace")).toBe(false);
   });
 
   it("coupon in the summary: applied before GST, total drops", async () => {

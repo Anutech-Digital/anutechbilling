@@ -31,10 +31,11 @@ export function useCheckout({ planId, seats, sum, promoOff, billing = "annual", 
   const [couponError, setCouponError] = React.useState<string | null>(null);
   const [couponBusy, setCouponBusy] = React.useState(false);
   const afterPromo = sum ? Math.max(0, sum.subtotal - Math.min(promoOff, sum.subtotal)) : 0;
-  /* R-1977: a new domain bought with an annual order adds its (shown) live price; the server prices it again. */
-  const domainPrice = domainCharge(domain, billing, mode, canBuy);
-  const buysDomain = canBuy && domain.mode === "new" && billing === "annual" && mode === "pay";
-  const totals = sum ? orderTotals(sum.subtotal, promoOff, coupon?.discount ?? 0, domainPrice) : null;
+  /* R-1977: a new domain bought with the order adds its (shown) live price; the server prices it again.
+     R-1985: Monthly too — same payment, the domain on its own GST invoice (GST rounded per invoice). */
+  const domainPrice = domainCharge(domain, mode, canBuy);
+  const buysDomain = canBuy && domain.mode === "new" && mode === "pay";
+  const totals = sum ? orderTotals(sum.subtotal, promoOff, coupon?.discount ?? 0, domainPrice, billing === "monthly") : null;
 
   const seq = React.useRef(0);
   React.useEffect(() => {

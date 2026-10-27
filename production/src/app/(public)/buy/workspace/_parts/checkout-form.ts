@@ -63,9 +63,10 @@ export function domainErrors(d: DomainChoice, needPick = false): Partial<Record<
   return {};
 }
 
-/** R-1977: the pre-GST price the order adds for the new domain (annual pay orders only), else 0. */
-export function domainCharge(d: DomainChoice, billing: Billing, mode: CheckoutMode, canBuy = true): number {
-  return canBuy && d.mode === "new" && d.picked && billing === "annual" && mode === "pay" ? d.picked.price : 0;
+/** R-1977: the pre-GST price the order adds for the new domain (pay orders), else 0.
+ *  R-1985: Monthly too — paid in the same payment, on the domain's own GST invoice. */
+export function domainCharge(d: DomainChoice, mode: CheckoutMode, canBuy = true): number {
+  return canBuy && d.mode === "new" && d.picked && mode === "pay" ? d.picked.price : 0;
 }
 
 export type BuyerField = keyof BuyerDetails;
@@ -120,12 +121,16 @@ export function gstLines(gst: number, buyerState: string | null, sellerState: st
  * Discounts stack as the server does: site promo, then coupon, both before GST; GST on the rest.
  * R-1977: `domain` (the new domain's price) is added AFTER both — never discounted — and GST is
  * on the whole taxable value, as the route computes it.
+ * R-1985: `domainOwnInvoice` (a Monthly order) — the domain is its own quote and GST invoice, so
+ * GST is rounded on each, exactly as the two quotes' totals are (₹2,600 → ₹468; ₹649 → ₹117).
  */
-export function orderTotals(subtotal: number, promoOff: number, couponOff: number, domain = 0) {
+export function orderTotals(subtotal: number, promoOff: number, couponOff: number, domain = 0, domainOwnInvoice = false) {
   const afterPromo = Math.max(0, subtotal - Math.min(promoOff, subtotal));
   const coupon = Math.min(couponOff, afterPromo);
   const taxable = afterPromo - coupon + domain;
-  const gst = Math.round(taxable * 0.18);
+  const gst = domainOwnInvoice
+    ? Math.round((afterPromo - coupon) * 0.18) + Math.round(domain * 0.18)
+    : Math.round(taxable * 0.18);
   return { afterPromo, coupon, domain, taxable, gst, total: taxable + gst };
 }
 

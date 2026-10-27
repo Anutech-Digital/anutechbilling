@@ -39,10 +39,9 @@ export function summaryLines({ seats, billing, sum, promo, co, brand }: Pick<Sum
   if (co.coupon && co.totals.coupon > 0) lines.push({ label: `Coupon ${co.coupon.code}`, value: `− ${rupee(co.totals.coupon)}`, tone: "good" });
   /* R-1977: the new domain — after the discounts (they never apply to it), before GST. */
   const picked = co.domain.mode === "new" ? co.domain.picked : null;
+  /* R-1985: on Monthly it is paid now too, on its own GST invoice — said on the line. */
   if (picked && co.totals.domain > 0) {
-    lines.push({ label: `Domain ${picked.domain} · 1 year${picked.testPrice ? " (TEST price)" : ""}`, value: rupee(co.totals.domain) });
-  } else if (picked && billing === "monthly") {
-    lines.push({ label: `Domain ${picked.domain} · billed separately`, value: "—", tone: "muted" });
+    lines.push({ label: `Domain ${picked.domain} · 1 year${billing === "monthly" ? " · own GST invoice" : ""}${picked.testPrice ? " (TEST price)" : ""}`, value: rupee(co.totals.domain) });
   }
   for (const g of gstLines(co.totals.gst, co.buyerState, brand?.stateCode ?? null)) lines.push({ label: g.label, value: rupee(g.amount), tone: "muted" });
   return lines;
