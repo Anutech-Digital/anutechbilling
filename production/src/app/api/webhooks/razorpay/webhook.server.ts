@@ -63,6 +63,8 @@ import {
 import { domainItemIdsForQuote, vendorForQuote } from "./quote-vendor.server";
 import { captureMismatch, flagPaymentForReview, flagUnderpaid } from "./review.server";
 import { quoteDueNow } from "@/lib/payments/quote-due-now";
+import { splitOrderParts } from "@/lib/checkout/split-order";
+import { settleSplitPayment, type SplitRole } from "./split-payment.server";
 
 import { loadAutonomyPolicy } from "@/lib/ai/autonomy.server";
 import { applyGatewayEvent, type MandateStatus } from "@/lib/payments/mandate";
@@ -277,6 +279,8 @@ export interface CaptureInput {
   eventId?: string | null;
   /** R-747: the tenant whose OWN secret verified the event — told when its order cannot be found. */
   reviewTenant?: string | null;
+  /** R-1985: set by split-payment.server.ts — this run settles ONE quote's share of a payment. */
+  splitPart?: SplitRole;
 }
 
 /**
@@ -292,7 +296,7 @@ export interface CaptureInput {
  */
 export async function settleCapturedPayment(
   admin: ReturnType<typeof createAdminClient>,
-  { request, event, payment, order, keyIdForMode, mayActOn, eventId, reviewTenant }: CaptureInput,
+  { request, event, payment, order, keyIdForMode, mayActOn, eventId, reviewTenant, splitPart }: CaptureInput,
 ): Promise<NextResponse> {
   if (!payment && !order) {
     console.error("[webhooks/razorpay] no payment or order in payload");
@@ -355,6 +359,17 @@ export async function settleCapturedPayment(
     return NextResponse.json({ error: "Tenant mismatch" }, { status: 403 });
   }
 
+  /* R-1985: a monthly order with a new domain is paid by ONE payment over TWO quotes (the
+     Workspace and the domain's own) — each share is settled on its own quote. */
+  if (!splitPart) {
+    const parts = await splitOrderParts(admin, { quote, orderId, paymentId: payment.id });
+    if (parts) {
+      return settleSplitPayment(admin, { request, event, payment, order, keyIdForMode, mayActOn, eventId, reviewTenant }, {
+        tenantId: quote.tenant_id, quoteId: quote.id, leadId: quote.lead_id, orderId, parts,
+      }, settleCapturedPayment);
+    }
+  }
+
   /* Idempotency — Razorpay delivers the same payment more than once (payment.captured AND
      order.paid, plus retries). R-079: the payment row is the durable fact. R-1569: it is the
      ONLY test now. Until 18 Oct a quote already marked 'received' answered alreadyProcessed
@@ -365,13 +380,14 @@ export async function settleCapturedPayment(
      carried no payment entity was recorded under it. */
   {
     const refs = payment?.id ? [payment.id, orderId] : [orderId];
-    const { data: seen } = await admin
+    const seenQ = admin
       .from("payments")
       .select("id, quote_id")
       .eq("tenant_id", quote.tenant_id)
       .in("reference", refs)
-      .eq("status", "received")
-      .limit(1);
+      .eq("status", "received");
+    /* R-1985: one share of a split payment — the other share carries the same reference. */
+    const { data: seen } = await (splitPart ? seenQ.eq("quote_id", quote.id) : seenQ).limit(1);
     if (seen && seen.length) {
       const seenQuote = (seen[0] as { quote_id?: string | null }).quote_id ?? quote.id;
       console.log("[webhooks/razorpay] payment already recorded:", refs[0], "on", seenQuote);
@@ -435,8 +451,10 @@ export async function settleCapturedPayment(
   // Razorpay's `method` values (card/upi/netbanking/wallet/emi) don't map 1:1
   // to our enum (upi/razorpay/bank_transfer/cheque/cash/other). UPI passes
   // through, everything else collapses to 'razorpay' so the RPC accepts it.
+  /* R-1985: the second share of a split payment is "razorpay" — a UPI reference is a bank UTR,
+     which R-1676 lets onto ONE payment only; both shares are one gateway payment. */
   const paymentMethod: "upi" | "razorpay" =
-    payment?.method === "upi" ? "upi" : "razorpay";
+    payment?.method === "upi" && splitPart?.role !== "secondary" ? "upi" : "razorpay";
   const paymentRef    = payment?.id ?? orderId;
 
   if (paymentAmount <= 0) {
@@ -683,6 +701,14 @@ export async function settleCapturedPayment(
     }
   }
 
+  /* R-1985: the domain's share of a split payment — the Workspace share sends the one mail. */
+  if (splitPart?.role === "secondary") {
+    return NextResponse.json({
+      received: true, quoteId: quote.id, paid: paymentAmount,
+      invoiceId: invoice.status === "issued" || invoice.status === "exists" ? invoice.invoiceId : null, invoice: invoice.status,
+    });
+  }
+
   // ── Send confirmation emails (best-effort) ────────────────────────────
   // The alert goes to the tenant that made the sale — resolved from the quote's
   // own tenant_id, so it can never be another tenant's inbox.
@@ -708,7 +734,7 @@ export async function settleCapturedPayment(
   const tierName      = notes.tierName ?? "Google Workspace";
   const seats         = notes.seats   ?? String(quote.seats ?? "");
   const domain        = notes.domain  ?? "";
-  const amountFmt     = rupee(paymentAmount);
+  const amountFmt     = rupee(splitPart?.orderTotal ?? paymentAmount); // R-1985: the whole payment
 
   // Hosting orders get hosting wording (not "live on Google Workspace") and the
   // provisioning worker sends the cPanel login separately.

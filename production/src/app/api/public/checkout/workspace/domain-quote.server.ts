@@ -13,22 +13,11 @@
  * order (split-payment.server.ts); a simulated order records both shares in the route.
  */
 import type { createAdminClient } from "@/lib/supabase/server";
+import { DOMAIN_QUOTE_PLAN, withGst } from "@/lib/checkout/split-order";
+
+export { splitOrderNotes, withGst } from "@/lib/checkout/split-order";
 
 type Admin = ReturnType<typeof createAdminClient>;
-
-/** The domain quote's plan label — a domain registration, not a Workspace plan. */
-export const DOMAIN_QUOTE_PLAN = "domain-registration";
-
-/** GST-inclusive amount of one taxable value, the way the route computes every order total. */
-export const withGst = (taxable: number) => Math.round(taxable * 1.18);
-
-/** Razorpay order notes for a payment split over several quotes (all values are strings). */
-export function splitOrderNotes(parts: { quoteId: string; amount: number }[]): Record<string, string> {
-  return {
-    splitQuoteIds: parts.map((p) => p.quoteId).join(","),
-    splitShares: parts.map((p) => String(p.amount)).join(","),
-  };
-}
 
 export interface DomainQuoteInput {
   tenantId: string;
