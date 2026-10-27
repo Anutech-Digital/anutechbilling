@@ -268,6 +268,7 @@ MIGS=(
   "r1992bsprojecttdsadvance|20261026235600_r1992_balance_sheet_project_tds_advance.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-1992%')"
   "r1995allocateprojectreceipt|20261027000541_r1995_allocate_project_receipt.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.allocate_project_receipt(uuid,uuid,jsonb,date,text)') and prosrc like '%R-1995%')"
   "r1996allocateprojectreceipttds|20261027005624_r1996_allocate_project_receipt_tds.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.allocate_project_receipt_with_tds(uuid,uuid,jsonb,jsonb,date,text)') and prosrc like '%R-1996%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.allocate_project_receipt(uuid,uuid,jsonb,date,text)') and prosrc like '%R-1996%')"
+  "r1999projectreceiptundo|20261027012329_r1999_project_receipt_undo.sql|resellersos_migration|to_regprocedure('public.project_receipt_undo_preview(uuid)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.unreconcile_bank_receipt(uuid,boolean)') and prosrc like '%R-1999%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
