@@ -75,7 +75,8 @@ export const PLAN_COPY: Record<PlanId, PlanCopy> = {
 /**
  * R-1988 (Pardeep, 26 Oct 2026): the media slot per priced plan card. R-2031 (27 Oct): Pardeep's
  * "Google Workspace + apps" image (public/buy/workspace-apps.webp, 1536×1024) on both Starter and
- * Standard in place of the YouTube video. A plan with no entry shows three feature highlights.
+ * Standard in place of the YouTube video (R-2032: on Plus / Enterprise too). A plan with no entry shows
+ * three feature highlights.
  */
 const WORKSPACE_APPS_IMAGE = {
   src: "/buy/workspace-apps.webp",
@@ -86,6 +87,9 @@ const WORKSPACE_APPS_IMAGE = {
 export const PLAN_MEDIA: Partial<Record<PlanId, { src: string; width: number; height: number; alt: string }>> = {
   starter: WORKSPACE_APPS_IMAGE,
   standard: WORKSPACE_APPS_IMAGE,
+  /* R-2032: Plus / Enterprise too — the same slot on every card, nothing looks empty. */
+  plus: WORKSPACE_APPS_IMAGE,
+  enterprise: WORKSPACE_APPS_IMAGE,
 };
 
 const ORDER: PlanId[] = ["starter", "standard", "plus", "enterprise"];

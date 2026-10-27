@@ -103,31 +103,36 @@ export function PlanCards({
               <div className="text-[13px] font-bold mb-1"><GoogleWorkspaceWordmark workspaceWeight={500} /></div>
               <h3 className="font-serif font-normal text-2xl mb-1.5">{p.name}</h3>
               <p className="text-sm text-ink-3 leading-normal min-h-[42px] mb-4">{p.blurb}</p>
-              {quote ? (
-                <div>
-                  {/* R-1986 (Pardeep): Plus (price hidden, R-328) and Enterprise — "Talk to sales", no figure. */}
-                  <span className="block font-serif text-[30px] leading-none" data-testid={`plan-price-${p.id}`}>Talk to sales</span>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2.5 text-[14px]" data-testid={`plan-sales-${p.id}`}>
-                    {contact.tel && (
-                      <a href={contact.tel.href} className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px] whitespace-nowrap">Call {contact.tel.display}</a>
-                    )}
-                    {contact.whatsapp && (
-                      <a href={whatsappHref(contact.whatsapp, salesWhatsappMessage(p.name, n))} target="_blank" rel="noopener noreferrer"
-                        className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px]">WhatsApp us</a>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                /* R-1988/R-2031: the plan's image (Workspace apps) or three highlights — right under the
-                   description (R-2030: the rate moved into the box below). */
-                <PlanMedia media={PLAN_MEDIA[p.id]} highlights={p.features} />
-              )}
+              {/* R-1988/R-2031: the plan's image (Workspace apps) or three highlights — right under the
+                  description (R-2030: the rate moved into the box below; R-2032: on every card, so
+                  Plus / Enterprise are not left with an empty slot). */}
+              <PlanMedia media={PLAN_MEDIA[p.id]} highlights={p.features} />
               {/* R-2030 (Pardeep: "1 and 2 should merge and only stay in 1's place"): ONE rate block —
                   the big rate, the working with this card's users input, then how it is billed. */}
               <div className="text-[13px] text-ink-2 px-3 py-2.5 bg-paper rounded-lg mt-3 mb-4 font-mono leading-[2]"
                 data-testid={`plan-total-${p.id}`} data-working={over ? "" : head?.working ?? ""}>
                 {quote ? (
-                  `Written GST quote ${SLA.quote}`
+                  /* R-2032 (Pardeep: "these look oddly empty"): the same pattern as the price box —
+                     big serif line (Plus: price hidden, R-328), the written-quote line, then small
+                     Call · WhatsApp links (were loose lines under the description, R-1986). */
+                  <>
+                    <span className="block font-serif text-[30px] leading-none text-ink mb-2" data-line="1" data-testid={`plan-price-${p.id}`}>
+                      {p.id === "enterprise" ? "Custom price" : "Price on request"}
+                    </span>
+                    <span className="block font-sans text-[13px] leading-normal">Written GST quote {SLA.quote}</span>
+                    {(contact.tel || contact.whatsapp) && (
+                      <span className="flex flex-wrap items-center gap-x-1.5 font-sans text-[12px] leading-normal mt-1" data-testid={`plan-sales-${p.id}`}>
+                        {contact.tel && (
+                          <a href={contact.tel.href} className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px] whitespace-nowrap">Call {contact.tel.display}</a>
+                        )}
+                        {contact.tel && contact.whatsapp && <span aria-hidden className="text-ink-3">·</span>}
+                        {contact.whatsapp && (
+                          <a href={whatsappHref(contact.whatsapp, salesWhatsappMessage(p.name, n))} target="_blank" rel="noopener noreferrer"
+                            className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px] whitespace-nowrap">WhatsApp us</a>
+                        )}
+                      </span>
+                    )}
+                  </>
                 ) : (
                   <>
                     <span className="block font-serif text-[38px] leading-none text-ink mb-2" data-line="1" data-testid={`plan-price-${p.id}`}>

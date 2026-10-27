@@ -6,7 +6,7 @@
  *   "× [10] users ="  /  "₹3,250/month + GST"   (annual: "× [10] users × 12 =" / "₹32,400/year + GST")
  *   "Billed monthly" / "Billed yearly · 12-month plan"  (small)
  * No big price or "Billed …" line under the title any more — the video/highlights sit right under
- * the description. Plus / Enterprise keep "Talk to sales".
+ * the description. (Plus / Enterprise: R-2032 below.)
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup, screen, fireEvent, within } from "@testing-library/react";
@@ -95,9 +95,54 @@ describe("R-2030 one rate block per priced card, in the working box", () => {
     expect(next.textContent).not.toMatch(/₹|Billed/);
   });
 
-  it("Plus and Enterprise still say 'Talk to sales' and keep the quote box", () => {
-    mount();
-    for (const id of ["plus", "enterprise"]) expect(screen.getByTestId(`plan-price-${id}`).textContent).toBe("Talk to sales");
-    expect(card("Business Plus").textContent).toMatch(/Written GST quote/);
+});
+
+/* R-2032 (Pardeep, 27 Oct: "these look oddly empty"): Plus and Enterprise follow the same pattern
+   as a priced card — the Workspace apps image under the description, then ONE box: big serif
+   "Price on request" (Plus — the price stays hidden, R-328) / "Custom price" (Enterprise), the
+   written-quote line, then small Call · WhatsApp links. No separate "Talk to sales" heading. */
+describe("R-2032 Plus / Enterprise cards: same pattern as the price box", () => {
+  const BRAND_PHONE = { ...BRAND, phone: "98111 22233" };
+  const withPhone = () => render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={BRAND_PHONE} initialSeats={12} />);
+
+  it("big serif 'Price on request' (Plus) / 'Custom price' (Enterprise) inside the box", () => {
+    withPhone();
+    for (const [id, label] of [["plus", "Price on request"], ["enterprise", "Custom price"]] as const) {
+      const head = screen.getByTestId(`plan-price-${id}`);
+      expect(head.textContent).toBe(label);
+      expect(head.className).toMatch(/font-serif/);
+      expect(box(id).contains(head)).toBe(true);
+    }
+  });
+
+  it("the box: the quote line, then the Call and WhatsApp links (moved in from above)", () => {
+    withPhone();
+    for (const [name, id] of [["Business Plus", "plus"], ["Enterprise", "enterprise"]] as const) {
+      expect(box(id).textContent).toContain("Written GST quote within 1 working day");
+      const sales = screen.getByTestId(`plan-sales-${id}`);
+      expect(box(id).contains(sales)).toBe(true);
+      expect(within(sales).getByRole("link", { name: /^Call / }).getAttribute("href")).toMatch(/^tel:\+91.*22233$/); // the tenant phone (no full number here — buy-contact.test scans _parts)
+      expect(within(sales).getByRole("link", { name: "WhatsApp us" })).toBeTruthy();
+      expect(card(name).textContent).not.toMatch(/Talk to sales/);
+    }
+  });
+
+  it("the Workspace apps image under the description, like Starter / Standard (no empty slot)", () => {
+    withPhone();
+    for (const name of ["Business Plus", "Enterprise"]) {
+      const c = card(name);
+      const blurb = [...c.children].find((el) => el.tagName === "P") as HTMLElement;
+      const slot = blurb.nextElementSibling as HTMLElement;
+      expect(slot.getAttribute("data-testid")).toBe("plan-media");
+      expect(within(slot).getByRole("img").getAttribute("src")).toBe("/buy/workspace-apps.webp");
+    }
+  });
+
+  it("no price figure on Plus / Enterprise; 'Get a quote' stays", () => {
+    withPhone();
+    expect(card("Business Plus").textContent).not.toMatch(/₹|1,500|1,800/);
+    expect(card("Enterprise").textContent).not.toMatch(/₹/);
+    expect(within(card("Business Plus")).getByRole("button", { name: "Get a quote" })).toBeTruthy();
+    expect(within(card("Enterprise")).getByRole("button", { name: "Get a quote" })).toBeTruthy();
   });
 });

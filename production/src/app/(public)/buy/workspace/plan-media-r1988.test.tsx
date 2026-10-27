@@ -42,11 +42,8 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const card = (name: string) => within(document.getElementById("plans") as HTMLElement).getByRole("article", { name });
 
 describe("R-2031 plan card media slot: Pardeep's Workspace apps image", () => {
-  it("Business Starter and Standard use /buy/workspace-apps.webp; Plus / Enterprise none", () => {
-    expect(PLAN_MEDIA.starter?.src).toBe("/buy/workspace-apps.webp");
-    expect(PLAN_MEDIA.standard?.src).toBe("/buy/workspace-apps.webp");
-    expect(PLAN_MEDIA.plus).toBeUndefined();
-    expect(PLAN_MEDIA.enterprise).toBeUndefined();
+  it("every plan uses /buy/workspace-apps.webp (R-2032: Plus / Enterprise too, so no card looks empty)", () => {
+    for (const id of ["starter", "standard", "plus", "enterprise"] as const) expect(PLAN_MEDIA[id]?.src).toBe("/buy/workspace-apps.webp");
   });
 
   it("the image file is in public/ (served at /buy/workspace-apps.webp)", () => {
@@ -73,7 +70,7 @@ describe("R-2031 plan card media slot: Pardeep's Workspace apps image", () => {
   it("the slot keeps the old 16:9 size, so the cards and buttons stay aligned", () => {
     render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={null} />);
     const slot = within(card("Business Starter")).getByTestId("plan-media");
-    expect(slot.className).toMatch(/\baspect-video\b/);
+    expect(slot.className.split(" ")).toContain("aspect-video");
     expect(slot.className).toMatch(/\bw-full\b/);
   });
 
@@ -83,10 +80,12 @@ describe("R-2031 plan card media slot: Pardeep's Workspace apps image", () => {
     expect(items).toEqual(["Custom email @yourcompany", "30 GB per user", "Gemini in Gmail"]);
   });
 
-  it("Plus and Enterprise (quoted) get no media slot", () => {
+  it("R-2032: Plus and Enterprise (quoted) get the same image slot", () => {
     render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={null} />);
-    expect(within(card("Business Plus")).queryByTestId("plan-media")).toBeNull();
-    expect(within(card("Enterprise")).queryByTestId("plan-media")).toBeNull();
+    for (const name of ["Business Plus", "Enterprise"]) {
+      expect(within(card(name)).getByTestId("plan-media").className.split(" ")).toContain("aspect-video");
+      expect(within(card(name)).getByRole("img", { name: ALT })).toBeTruthy();
+    }
   });
 
   it("plan cards still have 7 rows each (buttons stay aligned; R-2030 merged the price row into the box)", () => {

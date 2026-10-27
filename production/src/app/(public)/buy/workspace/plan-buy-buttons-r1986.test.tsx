@@ -89,13 +89,12 @@ describe("R-1986 plan cards: Buy <Google plan name>", () => {
 describe("R-1986 Plus / Enterprise: Talk to sales", () => {
   const withPhone = () => render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={{ ...BRAND, phone: "98111 22233" }} initialSeats={12} />);
 
-  it("Plus and Enterprise: heading 'Talk to sales', no price figure", () => {
+  it("Plus and Enterprise: no price figure (R-2032: 'Price on request' / 'Custom price' in the box, no 'Talk to sales' heading)", () => {
     withPhone();
-    for (const id of ["plus", "enterprise"]) {
-      expect(screen.getByTestId(`plan-price-${id}`).textContent).toBe("Talk to sales");
-    }
+    expect(screen.getByTestId("plan-price-plus").textContent).toBe("Price on request");
+    expect(screen.getByTestId("plan-price-enterprise").textContent).toBe("Custom price");
     expect(card("Business Plus").textContent).not.toMatch(/1,500|1,800|Contact us for pricing/);
-    expect(card("Enterprise").textContent).not.toMatch(/\bCustom\b/);
+    expect(card("Enterprise").textContent).not.toMatch(/₹/); // R-2032: "Custom price" is the label now — still no figure
   });
 
   it("Call = the tenant phone as tel:, WhatsApp = wa.me with the plan and the users", () => {
