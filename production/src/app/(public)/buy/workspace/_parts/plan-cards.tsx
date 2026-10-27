@@ -121,14 +121,19 @@ export function PlanCards({
                     </span>
                     <span className="block font-sans text-[13px] leading-normal">Written GST quote {SLA.quote}</span>
                     {(contact.tel || contact.whatsapp) && (
-                      <span className="flex flex-wrap items-center gap-x-1.5 font-sans text-[12px] leading-normal mt-1" data-testid={`plan-sales-${p.id}`}>
+                      /* R-2032 follow-up (Pardeep, 27 Oct): one link per line — no "·" left hanging at a
+                         line end at 1280 / 375. 32px tall rows keep the box near the price box's height. */
+                      <span className="block font-sans text-[12px] leading-normal mt-1" data-testid={`plan-sales-${p.id}`}>
                         {contact.tel && (
-                          <a href={contact.tel.href} className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px] whitespace-nowrap">Call {contact.tel.display}</a>
+                          <span className="flex">
+                            <a href={contact.tel.href} className="min-h-8 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px] whitespace-nowrap">Call {contact.tel.display}</a>
+                          </span>
                         )}
-                        {contact.tel && contact.whatsapp && <span aria-hidden className="text-ink-3">·</span>}
                         {contact.whatsapp && (
-                          <a href={whatsappHref(contact.whatsapp, salesWhatsappMessage(p.name, n))} target="_blank" rel="noopener noreferrer"
-                            className="min-h-11 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px] whitespace-nowrap">WhatsApp us</a>
+                          <span className="flex">
+                            <a href={whatsappHref(contact.whatsapp, salesWhatsappMessage(p.name, n))} target="_blank" rel="noopener noreferrer"
+                              className="min-h-8 inline-flex items-center font-semibold text-amber-ink underline underline-offset-[3px] whitespace-nowrap">WhatsApp us</a>
+                          </span>
                         )}
                       </span>
                     )}

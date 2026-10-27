@@ -124,6 +124,14 @@ describe("R-2032 Plus / Enterprise cards: same pattern as the price box", () => 
       expect(within(sales).getByRole("link", { name: /^Call / }).getAttribute("href")).toMatch(/^tel:\+91.*22233$/); // the tenant phone (no full number here — buy-contact.test scans _parts)
       expect(within(sales).getByRole("link", { name: "WhatsApp us" })).toBeTruthy();
       expect(card(name).textContent).not.toMatch(/Talk to sales/);
+      // R-2032 follow-up (Pardeep, 27 Oct): two separate lines, one link each — no "·" left hanging at a line end
+      const rows = [...sales.children] as HTMLElement[];
+      expect(rows).toHaveLength(2);
+      expect(rows.map((r) => r.querySelectorAll("a").length)).toEqual([1, 1]);
+      expect(rows[0].textContent).toMatch(/^Call /);
+      expect(rows[1].textContent).toBe("WhatsApp us");
+      for (const r of rows) expect(r.className.split(" ")).toContain("flex");
+      expect(sales.textContent).not.toContain("·");
     }
   });
 
