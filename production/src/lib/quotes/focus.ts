@@ -9,6 +9,7 @@
 import { isPipelineQuote, quoteListTab } from "./list-tab";
 import { invoicedPartPaid } from "./quote-payment-state";
 import { QUOTE_STATE_LABEL, QUOTE_WITH_CUSTOMER_LABEL } from "./state-labels";
+import { isCustomerAdvanceQuote } from "./customer-advance";
 
 /** Paid in full, GST invoice not raised yet. R-1541: the Payments Received sidebar badge counts
  *  these quotes (nav_badges().payments) and opens ?focus=to-invoice. */
@@ -29,7 +30,7 @@ export const QUOTE_FOCUS_LABEL: Record<Exclude<QuoteFocus, "">, string> = {
 
 /* partial / to-invoice are the /payments tiles "Partial Quotes" and "Awaiting GST Invoice":
    quotes by payment_status, which no quotes tab isolates (Awaiting payment is wider). */
-export function quoteInFocus(q: { status: string; payment_status?: string | null; invoice_id?: string | null; amount?: number | null; payment_amount?: number | null; open_balance?: number | null }, focus: QuoteFocus): boolean {
+export function quoteInFocus(q: { status: string; payment_status?: string | null; invoice_id?: string | null; amount?: number | null; payment_amount?: number | null; open_balance?: number | null; plan?: string | null; line_items?: unknown }, focus: QuoteFocus): boolean {
   if (focus === "") return true;
   if (focus === "pipeline") return isPipelineQuote(q);
   /* R-489: the SAME bucket as the Sent + Viewed tabs. Was status sent/viewed alone, so a
@@ -38,7 +39,8 @@ export function quoteInFocus(q: { status: string; payment_status?: string | null
   if (focus === "review") { const tab = quoteListTab(q); return tab === "sent" || tab === "viewed"; }
   /* R-1710: part-paid by MONEY — also once invoiced ('invoiced' alone said nothing about it). */
   if (focus === "partial") return q.payment_status === "partial" || invoicedPartPaid(q);
-  if (focus === "to-invoice") return q.payment_status === QUOTE_TO_INVOICE_PAYMENT_STATUS;
+  /* R-2023: a customer's advance (R-1863 ₹0 holder) has nothing to invoice. */
+  if (focus === "to-invoice") return q.payment_status === QUOTE_TO_INVOICE_PAYMENT_STATUS && !isCustomerAdvanceQuote(q);
   /* R-1713: the SAME set as the Accepted tab. "Accepted ₹6.2L (18)" counted every accepted
      quote while the tab it opened held 3 (the rest live in Awaiting payment / Invoiced). */
   return quoteListTab(q) === "accepted";
