@@ -61,6 +61,13 @@ export function CustomerCombobox({
 
   const sub = (c: (typeof customers)[number]) =>
     c.contact_email || c.domain || c.state || "—";
+  /* R-2029: "JAK GROUP PRIVATE LIMITEDJAK GROUP PRIVATE LIMITED" / "T-J1-21Oct Audit Pvt LtdDelhi" —
+     the avatar got the full name as its initials, and the muted line ran into the name. The
+     avatar now makes real initials from `name`, and an option reads "Name · extra". */
+  const optionLabel = (c: (typeof customers)[number]) => {
+    const extra = sub(c);
+    return extra === "—" ? c.name : `${c.name} · ${extra}`;
+  };
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -77,11 +84,11 @@ export function CustomerCombobox({
         >
           {selected ? (
             <>
-              <Avatar initials={selected.name} color="emerald" size="sm" />
+              <Avatar name={selected.name} color="emerald" size="sm" />
               <span className="min-w-0 flex-1">
                 <span className="block font-medium text-ink truncate">{selected.name}</span>
                 {(selected.contact_email || selected.domain) && (
-                  <span className="block text-2xs text-ink-3 truncate">{selected.contact_email || selected.domain}</span>
+                  <span className="block text-2xs text-ink-3 truncate"><span className="sr-only"> · </span>{selected.contact_email || selected.domain}</span>
                 )}
               </span>
             </>
@@ -142,16 +149,17 @@ export function CustomerCombobox({
                 <button
                   key={c.id}
                   type="button"
+                  aria-label={optionLabel(c)}
                   onClick={() => { onChange(c.id); setOpen(false); }}
                   className={cn(
                     "flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors",
                     active ? "bg-amber-soft/60" : "hover:bg-paper-2/60",
                   )}
                 >
-                  <Avatar initials={c.name} color={active ? "amber" : "slate"} size="sm" />
+                  <Avatar name={c.name} color={active ? "amber" : "slate"} size="sm" />
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-medium text-ink truncate">{c.name}</span>
-                    <span className="block text-2xs text-ink-3 truncate">{sub(c)}</span>
+                    <span className="block text-2xs text-ink-3 truncate"><span className="sr-only"> · </span>{sub(c)}</span>
                   </span>
                   {active && <Icon name="check" size={15} className="text-amber shrink-0" />}
                 </button>

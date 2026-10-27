@@ -75,6 +75,9 @@ export interface StatementInput {
   projectPayments: ReadonlyArray<{ received_at: string; amount: number | null; reference?: string | null; project_title: string; invoice_id?: string | null; project_id: string }>;
   /** Optional "— ₹X bank + ₹Y TDS" tail for a payment row (R-523). */
   paymentSplit?: (paymentId: string, amount: number) => string | null;
+  /** R-2029: is this quote an R-1863 customer-advance holder (isCustomerAdvanceQuote)? Its
+   *  payment reads "Advance (RV-…)" — the same credit, the same balance, only the label. */
+  isAdvanceQuote?: (quoteId: string) => boolean;
 }
 
 /**
@@ -126,9 +129,12 @@ export function buildCustomerStatement(input: StatementInput): { rows: Statement
     /* R-1739: a payment on an imported Zoho invoice has no quote — it opens that invoice. */
     const link: StatementLink = p.quote_id ? { kind: "payment", quoteId: p.quote_id } : { kind: "invoice", invoiceId: p.invoice_id ?? "" };
     const split = input.paymentSplit?.(p.id, amount) ?? null;
+    const advance = !!p.quote_id && (input.isAdvanceQuote?.(p.quote_id) ?? false);
     raw.push({
       date: p.received_at,
-      desc: `Payment received${p.receipt_voucher_no ? ` · ${p.receipt_voucher_no}` : ""}${split ? ` — ${split}` : ""}`,
+      desc: advance
+        ? `Advance${p.receipt_voucher_no ? ` (${p.receipt_voucher_no})` : ""}${split ? ` — ${split}` : ""}`
+        : `Payment received${p.receipt_voucher_no ? ` · ${p.receipt_voucher_no}` : ""}${split ? ` — ${split}` : ""}`,
       debit: 0, credit: amount, link, order: 2,
     });
     if (p.status === "refunded") {

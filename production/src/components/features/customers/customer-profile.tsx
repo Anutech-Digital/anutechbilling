@@ -81,6 +81,7 @@ import { txnHref, primaryContactOf } from "@/components/features/customers/custo
 import { recordPhoneOf } from "@/lib/customers/record-phone";
 import { buildCustomerStatement, statementBalanceText, statementPayments, useCustomerNotes } from "@/components/features/customers/customer-statement";
 import { RecordTable, RowLink } from "@/components/features/customers/customer-record-table";
+import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 
 export interface CustomerProfileProps {
   customerId: string;
@@ -330,6 +331,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
     debitNotes: customerNotes?.debitNotes ?? [],
     projectPayments: projPayments,
     paymentSplit: (id, amount) => receiptSplitLine(amount, tdsOnPayment[id]),
+    /* R-2029: a customer advance (R-1863) reads "Advance (RV-…)" on the statement. */
+    isAdvanceQuote: (id) => isCustomerAdvanceQuote((quotes ?? []).find((q) => q.id === id)),
   });
   const ledger = statement.rows.map((e) => ({
     ...e,

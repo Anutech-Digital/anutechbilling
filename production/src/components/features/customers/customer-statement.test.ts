@@ -178,3 +178,20 @@ describe("R-1632 statementPayments — the /payments customer rule", () => {
     expect(statementPayments(pays, "c1", ["Q-1", "Q-2"]).map((p) => p.id)).toEqual(["a", "b"]);
   });
 });
+
+describe("R-2029 statement labels a customer advance", () => {
+  it("a payment on an advance holder quote reads 'Advance (RV-…)' — balance unchanged", () => {
+    const input: StatementInput = {
+      ...base,
+      payments: [
+        { id: "p1", quote_id: "Q-ADV", amount: 47348, status: "received", received_at: "2026-10-27T05:00:00Z", receipt_voucher_no: "RV-0042" },
+        { id: "p2", quote_id: "Q-2", amount: 1000, status: "received", received_at: "2026-10-27T06:00:00Z", receipt_voucher_no: "RV-0043" },
+      ],
+    };
+    const plain = buildCustomerStatement(input);
+    const labelled = buildCustomerStatement({ ...input, isAdvanceQuote: (id) => id === "Q-ADV" });
+    expect(labelled.rows.map((r) => r.desc)).toEqual(["Advance (RV-0042)", "Payment received · RV-0043"]);
+    expect(labelled.rows.map((r) => r.balance)).toEqual(plain.rows.map((r) => r.balance));
+    expect(labelled.closing).toBe(plain.closing);
+  });
+});
