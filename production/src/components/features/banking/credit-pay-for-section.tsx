@@ -46,6 +46,8 @@ import {
   saleMakesSubscription, salePreview, saleTermsMixed, tdsRateToRecord, tdsToRecord,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
+import { PAYER_RELATIONS, payerFromNarration, payerMatchesCustomer, type PayerRelation } from "@/lib/banking/customer-payer";
+import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
 
 const NEW_CUSTOMER = "__new_customer__";
 
@@ -93,13 +95,15 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
   /* ── 1. Customer ─────────────────────────────────────────────────────────────── */
   const { data: openInvoices } = useOpenInvoicesForCreditMatch(credit > 0);
+  /* R-2025: the customers' known payers and our own name (never the payer). */
+  const memory = usePayerMemory();
   const guess = React.useMemo(() => {
     const ms = matchCreditToInvoices(
       { amount: credit, txnDate: transaction.txn_date, description: transaction.description, reference: transaction.reference },
       openInvoices ?? [],
     );
-    return guessCustomer(transaction, customers, ms);
-  }, [transaction, customers, openInvoices, credit]);
+    return guessCustomer(transaction, customers, ms, memory);
+  }, [transaction, customers, openInvoices, credit, memory]);
   const [customerId, setCustomerId] = React.useState("");
   const [touchedCustomer, setTouchedCustomer] = React.useState(false);
   React.useEffect(() => { setCustomerId(""); setTouchedCustomer(false); }, [transaction.id]);
@@ -110,6 +114,26 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     if (pickedCustomerId) { setCustomerId(pickedCustomerId); setTouchedCustomer(true); }
   }, [pickedCustomerId]);
   const customer = customers.find((c) => c.id === customerId) ?? null;
+
+  /* ── 1b. R-2025: who REALLY paid — the payer the narration names. When it is not the chosen
+     customer (by name, or one of their known payers) the sheet warns and Save needs an answer.
+     Not on a relink (the line is already booked). ─────────────────────────────── */
+  const payer = React.useMemo(
+    () => (relink ? null : payerFromNarration(transaction.description, memory.ownNames)),
+    [relink, transaction.description, memory.ownNames],
+  );
+  const knownForCustomer = React.useMemo(() => memory.payers.filter((k) => k.customer_id === customerId), [memory.payers, customerId]);
+  const knownHit = payer ? knownForCustomer.find((k) => k.payer_name_key === payer.key) ?? null : null;
+  const payerMismatch = Boolean(customer && payer && !payerMatchesCustomer(payer, customer.name, knownForCustomer));
+  const [payerAnswer, setPayerAnswer] = React.useState<{ relation: PayerRelation; note: string } | null>(null);
+  React.useEffect(() => { setPayerAnswer(null); }, [customerId, transaction.id]);
+  const setLinePayer = useSetBankLinePayer();
+  const payerToRecord: { relation: PayerRelation; note: string | null } | null = !payer
+    ? null
+    : payerMismatch
+      ? payerAnswer && { relation: payerAnswer.relation, note: payerAnswer.note.trim() || null }
+      : knownHit ? { relation: knownHit.relation, note: null } : null;
+  const wrongCustomer = () => { setCustomerId(""); setTouchedCustomer(true); };
 
   /* ── 2. What for ─────────────────────────────────────────────────────────────── */
   const { data: items, isLoading: itemsLoading } = useBankCreditOpenItems(customerId || null);
@@ -163,12 +187,13 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const relinkSale = useRelinkOneOffSale();
   const [result, setResult] = React.useState<PayForResult | null>(null);
   React.useEffect(() => { setResult(null); }, [transaction.id]);
-  const busy = payItem.isPending || newSale.isPending || advance.isPending || relinkSale.isPending;
+  const busy = payItem.isPending || newSale.isPending || advance.isPending || relinkSale.isPending || setLinePayer.isPending;
 
   const tdsAmount = check ? tdsToRecord(check, shortChoice) : 0;
   const tdsRate = check ? tdsRateToRecord(check, taxable) : null;
   const saleInvalid = lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0)) || preview.taxable <= 0 || saleTermsMixed(lines);
-  const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad
+  const payerUnanswered = payerMismatch && !payerAnswer;
+  const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
     && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : true);
 
   const save = async () => {
@@ -191,6 +216,11 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           }
         : { path: "advance", transactionId: transaction.id, customerId };
     try {
+      /* R-2025: the answer first — the save's own transaction then puts it on the receipt and
+         learns the payer (trigger). If it cannot be stored, nothing is booked. */
+      if (payer && payerToRecord && !relink) {
+        await setLinePayer.mutateAsync({ transactionId: transaction.id, customerId, payer, relation: payerToRecord.relation, note: payerToRecord.note });
+      }
       const r = relink
         ? await relinkSale.mutateAsync(target)
         : target.path === "item"
@@ -256,6 +286,17 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           <p className="text-xs text-ink-3">Guessed from {guess.reason} — change it if wrong.</p>
         )}
       </div>
+
+      {/* 1b. R-2025: the money came from someone else's account */}
+      {payerMismatch && payer && customer && (
+        <PayerWarning
+          payerName={payer.name}
+          customerName={customer.name}
+          answer={payerAnswer}
+          onAnswer={setPayerAnswer}
+          onWrongCustomer={wrongCustomer}
+        />
+      )}
 
       {customerId && (
         <>
@@ -355,6 +396,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
             </Button>
             {onProjectPayment && <Button size="sm" variant="default" icon="briefcase" onClick={() => onProjectPayment(customerId)}>Project payment</Button>}
           </div>
+          {payerUnanswered && mode !== null && <p className="text-xs text-amber-ink">Say who paid (above) before saving.</p>}
         </>
       )}
     </section>
@@ -491,6 +533,58 @@ function SaleEditor({ lines, catalog, gstRate, preview, onAdd, onChange, onRemov
           Taxable {rupee(preview.taxable)} · {gstRate > 0 ? `GST ${gstRate}% ${rupee(preview.gst)}` : "No GST"} · <b>Total {rupee(preview.total)}</b>
         </p>
       )}
+    </div>
+  );
+}
+
+/* R-2025 (2): "This money came from X, not from <customer>." — one click answers it. */
+type PayerAnswer = { relation: PayerRelation; note: string };
+const BEHALF_RELATIONS = PAYER_RELATIONS.filter(([k]) => k !== "own_account");
+
+function PayerWarning({ payerName, customerName, answer, onAnswer, onWrongCustomer }: {
+  payerName: string;
+  customerName: string;
+  answer: PayerAnswer | null;
+  onAnswer: (a: PayerAnswer | null) => void;
+  onWrongCustomer: () => void;
+}) {
+  const own = answer?.relation === "own_account";
+  const behalf = Boolean(answer && !own);
+  const chip = (on: boolean) =>
+    `rounded-md border px-2 py-1.5 text-xs font-medium text-left ${on ? "border-amber bg-amber/10 text-amber-ink" : "border-hairline bg-paper text-ink-2"}`;
+  return (
+    <div role="group" aria-label="Who paid" className="rounded-md border border-amber bg-amber-soft/40 p-2.5 space-y-2">
+      <p className="text-xs font-medium text-amber-ink flex items-start gap-1.5">
+        <Icon name="alert" size={14} className="mt-px shrink-0" />
+        <span>This money came from {payerName}, not from {customerName}.</span>
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+        <button type="button" aria-pressed={own} className={chip(own)} onClick={() => onAnswer({ relation: "own_account", note: "" })}>
+          Customer’s own other account
+        </button>
+        <button type="button" aria-pressed={behalf} className={chip(behalf)}
+          onClick={() => onAnswer(behalf ? answer : { relation: "third_party", note: answer?.note ?? "" })}>
+          Paid on the customer’s behalf
+        </button>
+        <button type="button" aria-pressed={false} className={chip(false)} onClick={onWrongCustomer}>
+          Wrong customer — change
+        </button>
+      </div>
+      {behalf && answer && (
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="How the payer is related">
+            {BEHALF_RELATIONS.map(([k, label]) => (
+              <button key={k} type="button" aria-pressed={answer.relation === k} className={chip(answer.relation === k)}
+                onClick={() => onAnswer({ ...answer, relation: k })}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <Input value={answer.note} maxLength={500} placeholder="Note (optional) — e.g. MD's other company" aria-label="Note (optional)"
+            onChange={(e) => onAnswer({ ...answer, note: e.target.value })} />
+        </div>
+      )}
+      <p className="text-xs text-ink-3">The receipt and GST invoice stay in {customerName}&apos;s name; the payer is remembered for next time.</p>
     </div>
   );
 }

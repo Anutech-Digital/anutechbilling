@@ -272,6 +272,7 @@ MIGS=(
   "r2010consentevents|20261027070332_r2010_consent_events.sql|resellersos_migration|to_regclass('public.consent_events') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'consent_events' and policyname = 'r2010_owner_reads')"
   "r2023customeradvance|20261027110130_r2023_customer_advance.sql|resellersos_migration|to_regprocedure('public.is_customer_advance_quote(text,integer,text,jsonb)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.generate_invoice(text)') and prosrc like '%R-2023%')"
   "r2023navbadgesadvance|20261027110131_r2023_nav_badges_advance.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.nav_badges(text[])') and prosrc like '%R-2023%')"
+  "r2025customerpayers|20261027120512_r2025_customer_payers.sql|resellersos_migration|to_regclass('public.customer_payers') is not null and to_regprocedure('public.set_bank_line_payer(uuid,uuid,text,text,text,text,text,text)') is not null and to_regprocedure('public.save_customer_payer(uuid,uuid,text,text,text,text,text,text)') is not null and to_regprocedure('public.delete_customer_payer(uuid)') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'payments' and column_name = 'payer_relation')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

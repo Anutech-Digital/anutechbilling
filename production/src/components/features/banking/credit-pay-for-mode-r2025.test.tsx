@@ -12,6 +12,11 @@ import type { BankTransactionRow } from "@/lib/queries/bank";
 
 const state = vi.hoisted(() => ({ items: [] as unknown[], pay: vi.fn(), sale: vi.fn(), adv: vi.fn(), relink: vi.fn() }));
 
+/* R-2025: no known payers, our own name (the payer warning / known-payer guess). */
+vi.mock("@/lib/queries/customer-payers", () => ({
+  usePayerMemory: () => ({ payers: [], ownNames: [] }),
+  useSetBankLinePayer: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 vi.mock("@/lib/queries/bank", () => ({ useOpenInvoicesForCreditMatch: () => ({ data: [] }) }));
 vi.mock("@/lib/queries/bank-credit-pay-for", () => ({
   useBankCreditOpenItems: (id: string | null) => ({ data: id ? state.items : undefined, isLoading: false }),

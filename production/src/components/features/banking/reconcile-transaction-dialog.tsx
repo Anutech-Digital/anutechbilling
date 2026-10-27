@@ -76,6 +76,7 @@ import { ownerEquityWords } from "@/lib/accounting/owner-equity";
 import { expenseGuard, sameVendor, type VendorFocus } from "@/lib/banking/vendor-line-guard";
 import { matchCreditToInvoices } from "@/lib/banking/invoice-credit-match";
 import { guessCustomer, itemKey as creditItemKey } from "@/lib/banking/credit-pay-for";
+import { usePayerMemory } from "@/lib/queries/customer-payers";
 import { useReconcileSuggestion, SuggestionCard, logSuggestion } from "@/components/features/banking/reconcile-suggestion-card";
 import {
   WhoTiles, ChosenTileBar, ReconcileFooter, SectionSlot, tileLabel,
@@ -289,14 +290,15 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      to open the Customer tile by itself. The section still makes and shows its own guess. */
   const creditAmt = transaction?.credit ?? 0;
   const { data: openInvoices } = useOpenInvoicesForCreditMatch(creditAmt > 0);
+  const payerMemory = usePayerMemory();   // R-2025: a known payer names the customer too
   const customerGuessed = React.useMemo(() => {
     if (!transaction || creditAmt <= 0) return false;
     const ms = matchCreditToInvoices(
       { amount: creditAmt, txnDate: transaction.txn_date, description: transaction.description, reference: transaction.reference },
       openInvoices ?? [],
     );
-    return guessCustomer(transaction, customers ?? [], ms) !== null;
-  }, [transaction, creditAmt, customers, openInvoices]);
+    return guessCustomer(transaction, customers ?? [], ms, payerMemory) !== null;
+  }, [transaction, creditAmt, customers, openInvoices, payerMemory]);
   /* New customer from here opens the SAME side-sheet form the quote builder uses
      (components/features/customers — Billing's form, used as-is, not copied), and
      picks the customer it creates. */

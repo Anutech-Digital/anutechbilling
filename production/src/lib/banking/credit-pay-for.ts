@@ -24,6 +24,7 @@ import { billingUnitOf, defaultQtyForUnit, isPerSeat } from "@/lib/catalog/billi
 import { catalogLineListRate } from "@/lib/quotes/catalog-line";
 import { addMonthsClamped } from "@/lib/billing/schedule";
 import { rupee, formatDate } from "@/lib/utils";
+import { knownPayerCustomer, payerFromNarration, type KnownPayer } from "@/lib/banking/customer-payer";
 import type { Item } from "@/lib/supabase/database.types";
 
 /* ─── Open items (rows of bank_credit_open_items) ──────────────────────────────────────── */
@@ -86,7 +87,15 @@ export function itemDetail(i: OpenItem): string {
 
 export interface CustomerLite { id: string; name: string }
 
-export interface CustomerGuess { customerId: string; reason: string }
+export interface CustomerGuess {
+  customerId: string;
+  reason: string;
+  /** R-2025 (4): the guess came from a known payer of this customer (customer_payers). */
+  payer?: KnownPayer;
+}
+
+/** R-2025: the learned payers and our own company name(s) (never a payer). */
+export interface PayerMemory { payers: readonly KnownPayer[]; ownNames: readonly string[] }
 
 /** R-2007: words in many company names that never tell one customer from another (on top of
  *  credit-match's NAME_NOISE: pvt, ltd, co, technologies, …). */
@@ -102,12 +111,26 @@ const GENERIC_NAME_WORDS = new Set(["india", "indian", "group", "global", "inter
  *      AND the amount fits).
  * Anything else → no guess; the operator picks. A wrong guess posts a receipt to the wrong
  * customer, which is worse than no guess.
+ *
+ * R-2025 (4), before both: the payer the narration names (payerFromNarration) is a KNOWN payer
+ * (customer_payers) of exactly one customer → that customer, "known payer for <customer>". Known
+ * for two customers → no guess at all, even if a name word fits.
  */
 export function guessCustomer(
   credit: { description: string | null },
   customers: readonly CustomerLite[],
   invoiceMatches: ReadonlyArray<{ customerName: string | null; confidence: string }> = [],
+  memory?: PayerMemory,
 ): CustomerGuess | null {
+  if (memory && memory.payers.length > 0) {
+    const payer = payerFromNarration(credit.description, memory.ownNames);
+    const hit = knownPayerCustomer(payer?.key ?? null, memory.payers);
+    if (hit?.kind === "many") return null;
+    if (hit?.kind === "one") {
+      const c = customers.find((x) => x.id === hit.payer.customer_id);
+      if (c) return { customerId: c.id, reason: `known payer for ${c.name}`, payer: hit.payer };
+    }
+  }
   const words = new Set(narrationNames(credit.description));
   const named = customers.map((c) => ({ c, toks: [...new Set(customerNameTokens(c.name))].filter((t) => !GENERIC_NAME_WORDS.has(t)) }));
   const howMany = new Map<string, number>();

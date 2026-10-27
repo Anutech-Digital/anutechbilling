@@ -20,6 +20,11 @@ const state = vi.hoisted(() => ({
 }));
 const { mutation } = vi.hoisted(() => ({ mutation: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }) }));
 
+/* R-2025: no known payers, our own name (the payer warning / known-payer guess). */
+vi.mock("@/lib/queries/customer-payers", () => ({
+  usePayerMemory: () => ({ payers: [], ownNames: [] }),
+  useSetBankLinePayer: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/lib/queries/bank", () => ({
   useSuggestMatches: () => ({ data: state.suggestions, isLoading: false }),

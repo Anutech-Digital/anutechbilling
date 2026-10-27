@@ -29,6 +29,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCustomer, useDeleteCustomer, useSetCustomerActive, useCustomerOpenCredit, customerDeleteBlockReason } from "@/lib/queries/customers";
 import { useCustomerCreditRows, openAdvanceLines } from "@/lib/queries/customer-advances";
 import { AdvanceAvailableCard } from "./advance-available-card";
+import { KnownPayersCard } from "./known-payers-card";
 import { useCustomerGroups } from "@/lib/queries/customer-groups";
 import { useCustomerSubscriptions } from "@/lib/queries/subscriptions";
 import { CustomerContactsCard } from "@/components/features/customers/customer-contacts-card";
@@ -562,6 +563,9 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
 
           {/* R-346: may this customer be activated on credit, and up to how much. */}
           <CreditSettingsCard customer={c} isOwner={me?.role === "owner"} />
+
+          {/* R-2025: who else pays for them — learned on Reconcile; owner / accountant edit. */}
+          <KnownPayersCard customerId={params.id} customerName={c.name} canEdit={me?.role === "owner" || me?.role === "accountant"} />
 
           {/* R-1621: a trusted customer's own grace after the renewal date (owner/manager). */}
           <RenewalGraceCard

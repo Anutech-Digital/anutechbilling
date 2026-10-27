@@ -18,6 +18,11 @@ const state = vi.hoisted(() => ({
   relink: vi.fn(),
 }));
 
+/* R-2025: no known payers, our own name (the payer warning / known-payer guess). */
+vi.mock("@/lib/queries/customer-payers", () => ({
+  usePayerMemory: () => ({ payers: [], ownNames: [] }),
+  useSetBankLinePayer: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 vi.mock("@/lib/queries/bank", () => ({
   useOpenInvoicesForCreditMatch: () => ({ data: [] }),
 }));
