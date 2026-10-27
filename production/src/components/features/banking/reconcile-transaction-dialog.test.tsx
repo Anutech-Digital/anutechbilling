@@ -7,6 +7,8 @@
        behind "Not a payment to Sharma Associates?";
      · there, "Book as expense" for Sharma is refused with a sentence naming PS-2;
      · Combine no longer offers Sharma's own bill (it is paid in the vendor section).
+   R-2006: the "fold" is now the tile sheet — the guessed vendor opens the Vendor tile and the other
+   ways are behind "← Change" (tests updated for that; the rules they check are the same).
    The vendor section itself is tested in debit-pay-for-section.test.tsx; it is a stub here that
    reports the vendor the way the real one does (onVendorChange). */
 import * as React from "react";
@@ -36,6 +38,7 @@ vi.mock("@/lib/queries/bank", () => ({
   useBookBankTxnAsStatutory: mutation,
   useBookBankTxnAsCommission: mutation,
   useReconcileSalaryAdvanceSplit: mutation,
+  useOpenInvoicesForCreditMatch: () => ({ data: [] }),
 }));
 vi.mock("@/lib/queries/expenses", () => ({
   EXPENSE_CATEGORIES: ["Professional Services", "Bank Charges", "Salaries", "Other"],
@@ -103,7 +106,7 @@ beforeEach(() => {
 });
 
 describe("R-1917 Reconcile sheet — one way for a vendor's money-out line", () => {
-  it("Sharma line: the vendor section's Record payment is the ONLY primary button; the rest is folded", () => {
+  it("Sharma line: the vendor section's Record payment is the ONLY primary button; the rest is behind ← Change", () => {
     render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={sharmaLine} />);
     const primaries = primaryButtons();
     expect(primaries.map((b) => b.textContent)).toEqual(["Record payment ₹11,800 to Sharma Associates & reconcile"]);
@@ -111,13 +114,15 @@ describe("R-1917 Reconcile sheet — one way for a vendor's money-out line", () 
     expect(screen.queryByText(/Book as a new expense|Looks like a/)).toBeNull();
     expect(screen.queryByText("Combine multiple expenses")).toBeNull();
     expect(screen.queryByText("Mark reconciled manually")).toBeNull();
-    const fold = screen.getByRole("button", { name: /Not a payment to Sharma Associates\? Other ways to book this line/ });
-    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    // R-2006: the Vendor tile is open; the other ways are behind "← Change".
+    expect(screen.getByRole("button", { name: "Change who this money is for" })).toBeTruthy();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
   });
 
   it("B8: opened from the fold, Book as expense for Sharma is refused with a sentence naming PS-2", () => {
     render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={sharmaLine} />);
-    fireEvent.click(screen.getByRole("button", { name: /Not a payment to Sharma Associates\?/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Change who this money is for" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Bank charge \/ other/ }));
     expect((screen.getByLabelText("Vendor / payee (optional)") as HTMLInputElement).value).toBe("Sharma Associates");
     fireEvent.change(screen.getByLabelText("Expense category"), { target: { value: "Professional Services" } });
     const alert = screen.getByRole("alert");
@@ -133,7 +138,8 @@ describe("R-1917 Reconcile sheet — one way for a vendor's money-out line", () 
 
   it("the expense is for someone else (payee changed) → it books", async () => {
     render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={sharmaLine} />);
-    fireEvent.click(screen.getByRole("button", { name: /Not a payment to Sharma Associates\?/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Change who this money is for" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Bank charge \/ other/ }));
     fireEvent.change(screen.getByLabelText("Expense category"), { target: { value: "Other" } });
     fireEvent.change(screen.getByLabelText("Vendor / payee (optional)"), { target: { value: "Gupta Printers" } });
     expect(screen.queryByRole("alert")).toBeNull();
@@ -143,17 +149,20 @@ describe("R-1917 Reconcile sheet — one way for a vendor's money-out line", () 
 
   it("Combine multiple expenses (in the fold) leaves out Sharma's own bill — it is paid in the vendor section", () => {
     render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={sharmaLine} />);
-    fireEvent.click(screen.getByRole("button", { name: /Not a payment to Sharma Associates\?/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Change who this money is for" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Bank charge \/ other/ }));
     fireEvent.click(screen.getByRole("button", { name: "Combine multiple expenses" }));
     expect(screen.getByText("Rent · Kapoor Estates")).toBeTruthy();
     expect(screen.queryByText("Professional Services · Sharma Associates")).toBeNull();
   });
 
-  it("no vendor known: the sheet is as before — suggestions and the expense form are open", () => {
+  it("no vendor known: suggestions show and the expense form is under Bank charge / other", () => {
     state.focus = null;
     render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={{ ...sharmaLine, description: "UPI 9876@okhdfc" } as BankTransactionRow} />);
     expect(screen.getByText("Suggested matches")).toBeTruthy();
+    // R-2006: no tile is guessed — the tiles show; the expense form is one click away.
+    expect(screen.queryByLabelText("Expense category")).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: /Bank charge \/ other/ }));
     expect(screen.getByLabelText("Expense category")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Other ways to book this line/ })).toBeNull();
   });
 });
