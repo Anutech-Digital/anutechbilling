@@ -28,6 +28,8 @@ import { useTdsForPayment } from "@/lib/queries/tds-receivable";
 import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
 import { cashReceived } from "@/lib/payments/cash-received";
 import { receiptLine } from "@/lib/payments/receipt-line";
+import { onBehalfLine } from "@/lib/banking/customer-payer";
+import { usePaymentPayer } from "@/lib/queries/customer-payers";
 import type { Payment } from "@/lib/supabase/database.types";
 
 interface Props {
@@ -84,6 +86,9 @@ export function ReceiptVoucherDialog({
      deducted TDS, say so beside the total so the bank amount can be matched. */
   const { data: tdsOnPayment = 0 } = useTdsForPayment(payment.id, open);
   const splitLine = receiptSplitLine(payment.amount, tdsOnPayment);
+  /* R-2025: paid from someone else's account — say who, on whose behalf (the voucher stays the customer's). */
+  const { data: payerRow } = usePaymentPayer(open ? payment.id : null);
+  const payerLine = onBehalfLine(payerRow?.payer_name, payerRow?.payer_relation, customerName);
 
   // GST calculation — reverse-out from gross amount (Indian standard)
   // amount received = taxable + GST → taxable = amount × 100 / (100 + rate)
@@ -147,7 +152,7 @@ ${tenantName}`
                     tenantAddress, tenantState,
                     tenantLogo: await logoDataUri(me?.tenantLogoUrl),
                     interState, gstRate, quoteId,
-                    splitLine, openingInvoiceNumber,
+                    splitLine, openingInvoiceNumber, payerLine,
                   });
                 } catch (err) {
                   console.error("Receipt voucher PDF failed:", err);
@@ -200,6 +205,7 @@ ${tenantName}`
             <div className="min-w-0 text-right">
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-1.5">To (Recipient)</p>
               <p className="font-serif text-lg leading-tight">{customerName}</p>
+              {payerLine && <p className="text-xs text-ink-2 mt-0.5">{payerLine}</p>}
               {customerGstin && (
                 <p className="text-xs text-ink-2 mt-0.5 font-mono">GSTIN: {customerGstin}</p>
               )}

@@ -60,6 +60,7 @@ import { downloadCSV } from "@/lib/csv";
 import { QUOTES_CSV_HEADERS, quotesCsvRows } from "@/lib/export/crm-csv";
 import { rupee, daysBetween, cleanDisplayName, phoneSuffixOf, formatDate } from "@/lib/utils";
 import { unifiedStatus, cashNote } from "@/lib/quotes/status-badge";
+import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { awaitsMyApproval } from "@/lib/quotes/awaiting-approval";
 import { ApprovalsStrip } from "@/components/features/quotes/approvals-strip";
 import { cn } from "@/lib/utils";
@@ -797,7 +798,7 @@ export default function QuotesPage() {
                           <Badge kind="info" className="font-sans text-3xs">Renewal</Badge>
                         ) : q.is_add_seats ? (
                           <Badge kind="info" className="font-sans text-3xs">Prorata</Badge>
-                        ) : q.is_one_off ? (
+                        ) : q.is_one_off && !isCustomerAdvanceQuote(q) ? (
                           <Badge kind="muted" className="font-sans text-3xs">Direct invoice</Badge>
                         ) : null}
                       </div>
@@ -909,7 +910,7 @@ export default function QuotesPage() {
                             <Badge kind="info" className="font-sans text-3xs">Renewal</Badge>
                           ) : q.is_add_seats ? (
                             <Badge kind="info" className="font-sans text-3xs">Prorata</Badge>
-                          ) : q.is_one_off ? (
+                          ) : q.is_one_off && !isCustomerAdvanceQuote(q) ? (
                             <Badge kind="muted" className="font-sans text-3xs">Direct invoice</Badge>
                           ) : null}
                         </div>
@@ -1136,7 +1137,7 @@ export default function QuotesPage() {
                               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => router.push(`/quotes/${q.id}?send=1` as any)}>
                                 <Icon name="send" size={15} /> Send / nudge
                               </DropdownMenuItem>
-                              {(q.status === "accepted" || q.payment_status === "received") && q.payment_status !== "invoiced" && (
+                              {(q.status === "accepted" || q.payment_status === "received") && q.payment_status !== "invoiced" && !isCustomerAdvanceQuote(q) && (
                                 <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => router.push(`/quotes/${q.id}` as any)}>
                                   <Icon name="receipt" size={15} /> Convert to invoice
                                 </DropdownMenuItem>

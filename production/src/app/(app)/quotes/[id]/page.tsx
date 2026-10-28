@@ -18,6 +18,8 @@ import { istToday } from "@/lib/dates/ist";
 import { withInvoiceIssued, rejectLeadOffer, lostActivityDetail, lossLabel, acceptHint } from "@/lib/quotes/quote-page-actions";
 import type { LossReasonCode } from "@/lib/leads/loss-reasons";
 import { RejectQuoteDialog } from "./reject-quote-dialog";
+import { CustomerStoppedDialog } from "./customer-stopped-dialog";
+import { showCustomerStopped, isPartRequest, partRequestSteps, partRequestOpenLine, PART_REQUEST_BADGE, type CustomerStoppedEnd } from "@/lib/billing/part-requests";
 import { isQuoteEditableInPlace } from "@/lib/quotes/editable";
 import { paymentDomainDefault } from "@/lib/quotes/payment-domain";
 import { useGenerateInvoice, useDocumentSeries } from "@/lib/queries/invoices";
@@ -68,6 +70,8 @@ import { quoteContact } from "@/lib/quotes/quote-contact";
 import { addGstinHref, buyerGstinMissing, quoteBuyerGstin } from "@/lib/quotes/buyer-gstin";
 import { paletteMayOpen } from "@/components/layout/palette-access";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
+import { CustomerAdvanceView } from "@/components/features/quotes/customer-advance-view";
+import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
 import { copyLinkMarkingSent } from "@/components/features/quotes/failed-send-toast";
 import { openWhatsAppMarkingSent, markSentBeforeShare } from "@/components/features/quotes/share-marking-sent";
@@ -245,6 +249,9 @@ export default function QuoteDetailPage() {
   const approvalEconomics = React.useMemo(() => quote ? quoteEconomics(quote) : null, [quote]);
   const approvalNeed      = React.useMemo(() => approvalEconomics ? requiredApproval(approvalEconomics) : null, [approvalEconomics]);
   const approvalRec       = React.useMemo(() => quote ? quoteApprovalRecord(quote) : null, [quote]);
+  /* R-2048: a part's payment request (R-2044) is never approved, signed or accepted — it is paid,
+     then invoiced. No approval gate, badge or accept row on it. */
+  const partRequest       = isPartRequest(quote as { subscription_billing_id?: string | null } | null | undefined);
 
   /* Who can actually clear it, by name. "Waiting for the owner to approve" is wrong in a
      workspace with three owners, and worse than vague: the person most likely to be
@@ -259,8 +266,8 @@ export default function QuoteDetailPage() {
     return approverSentence(eligibleApprovers(team ?? [], quote));
   }, [teamLoaded, team, quote]);
 
-  const sendGate          = approvalNeed && approvalRec ? canSend(approvalRec, approvalNeed, approverNames) : null;
-  const approvalPill      = approvalNeed && approvalRec ? approvalBadge(approvalRec, approvalNeed) : null;
+  const sendGate          = !partRequest && approvalNeed && approvalRec ? canSend(approvalRec, approvalNeed, approverNames) : null;
+  const approvalPill      = !partRequest && approvalNeed && approvalRec ? approvalBadge(approvalRec, approvalNeed) : null;
   const viewerCanApprove  = approvalNeed && approvalRec && me
     ? canApprove({ id: me.userId, role: me.role }, approvalRec, approvalNeed).allowed
     : false;
@@ -522,6 +529,27 @@ export default function QuoteDetailPage() {
      lead's last open quote, offers to mark the lead Lost in the same step — before, the
      lead sat in Quote Sent and its value stayed in the pipeline. */
   const [rejectOpen, setRejectOpen] = React.useState(false);
+  /* R-2044: "Customer stopped" on an unpaid part payment request. */
+  const [stoppedOpen, setStoppedOpen] = React.useState(false);
+  const customerStopped = useMutation({
+    mutationFn: async (input: { end: CustomerStoppedEnd; reason: string }) => {
+      const resp = await fetch(`/api/quotes/${encodeURIComponent(params.id)}/customer-stopped`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+      });
+      const body = (await resp.json().catch(() => null)) as { error?: string; subscription_status?: string } | null;
+      if (!resp.ok) throw new Error(body?.error ?? `HTTP ${resp.status}`);
+      return { ...input, subscriptionStatus: body?.subscription_status ?? null };
+    },
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["quotes"] });
+      qc.invalidateQueries({ queryKey: ["quotes", params.id] });
+      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      invalidateReceivables(qc);
+      setStoppedOpen(false);
+      toast.success(`${params.id} closed — subscription ${r.end === "cancel" ? "cancelled" : "paused"}. Nothing is owed for this part.`);
+    },
+    onError: (e) => toastError(e, { fallback: "Couldn't mark the customer as stopped." }),
+  });
   /* R-1807: a failed (or unanswered) read is not "no other open quote" — the Lost offer waits
      for the list; on isError the dialog says the lead stays as it is. */
   const leadQuotesQ = useQuotesByLead(quote?.lead_id ?? undefined);
@@ -645,6 +673,33 @@ export default function QuoteDetailPage() {
           }
         />
       </div>
+    );
+  }
+
+  /* R-2023: an R-1863 customer advance is not a sale — its own page (no stepper, no Generate
+     GST Invoice); it is used through Record payment → "Use advance" on the next bill. */
+  if (isCustomerAdvanceQuote(quote) && quote.status !== "rejected") {
+    return (
+      <CustomerAdvanceView quote={quote} payments={paymentHistory ?? []} onOpenReceipt={setReceiptPayment}>
+        {me && receiptPayment && (
+          <ReceiptVoucherDialog
+            open={!!receiptPayment}
+            onOpenChange={(open) => !open && setReceiptPayment(null)}
+            payment={receiptPayment}
+            customerName={customer?.name ?? quote.customer_name}
+            customerGstin={customer?.gstin}
+            customerEmail={customer?.contact_email}
+            tenantName={me.tenantName}
+            tenantGstin={me.tenantGstin}
+            tenantEmail={me.tenantEmail}
+            tenantPhone={me.tenantPhone}
+            tenantAddress={me.tenantAddress}
+            tenantState={me.tenantState}
+            interState={interState}
+            quoteId={quote.id}
+          />
+        )}
+      </CustomerAdvanceView>
     );
   }
 
@@ -1019,6 +1074,12 @@ export default function QuoteDetailPage() {
                   </button>
                 </>
               )}
+              {partRequest && (
+                <>
+                  <span>·</span>
+                  <Badge kind="info">{PART_REQUEST_BADGE}</Badge>
+                </>
+              )}
               {quote.is_extension ? (
                 <>
                   <span>·</span>
@@ -1176,6 +1237,17 @@ export default function QuoteDetailPage() {
                   <Icon name="check_circle" size={15} /> Activate now, pay later
                 </DropdownMenuItem>
               )}
+              {quote && showCustomerStopped({
+                subscription_billing_id: (quote as { subscription_billing_id?: string | null }).subscription_billing_id,
+                status: quote.status, invoice_id: quote.invoice_id, receivedSoFar: totalReceivedSoFar,
+              }) && (
+                <DropdownMenuItem
+                  className="gap-2.5 py-2 cursor-pointer"
+                  onClick={() => setStoppedOpen(true)}
+                >
+                  <Icon name="x" size={15} /> Customer stopped
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               {deleteBlock ? (
                 <DropdownMenuItem
@@ -1207,7 +1279,7 @@ export default function QuoteDetailPage() {
       {/* Quote-to-cash lifecycle */}
       {lifecycle && (
         <Card>
-          <LifecycleStepper steps={trialSteps ?? lifecycle.steps} dead={lifecycle.dead} />
+          <LifecycleStepper steps={partRequest ? partRequestSteps(lifecycle.steps, lifecycle.dead) : (trialSteps ?? lifecycle.steps)} dead={lifecycle.dead} />
           {/* R-282: the trial's last day IS the payment due date — said in words, because the
               stepper's detail line is hidden on a phone. */}
           {quote.status === "accepted" && totalReceivedSoFar === 0 && trialState && trialState.kind !== "converted" && (
@@ -1367,7 +1439,12 @@ export default function QuoteDetailPage() {
             accepted (no payment yet)" + "Record payment now" here too would be
             contradictory (deal already invoiced) and duplicate the balance
             button. */}
-        {(quote.status === "sent" || quote.status === "viewed")
+        {/* R-2048: an open part request — no accept / reject / revise; it is paid (money row
+            below) or closed with More → Customer stopped. */}
+        {partRequest && ["sent", "viewed", "accepted"].includes(quote.status) && !quote.invoice_id && (
+          <p className="text-sm text-ink-2">{partRequestOpenLine(quote.created_date ? formatDate(quote.created_date) : null)}</p>
+        )}
+        {!partRequest && (quote.status === "sent" || quote.status === "viewed")
           && quote.payment_status !== "invoiced" && !quote.invoice_id && (
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-ink-3">
@@ -2258,6 +2335,14 @@ export default function QuoteDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CustomerStoppedDialog
+        open={stoppedOpen}
+        onOpenChange={setStoppedOpen}
+        quoteId={quote.id}
+        pending={customerStopped.isPending}
+        onConfirm={(input) => customerStopped.mutate(input)}
+      />
 
       <RejectQuoteDialog
         open={rejectOpen}

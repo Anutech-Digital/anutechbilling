@@ -24,6 +24,7 @@ import { Reorder, useDragControls } from "framer-motion";
 import { useDashboardLeads, useLeadStageTotals } from "@/lib/queries/leads";
 import { useCustomers } from "@/lib/queries/customers";
 import { useQuotes } from "@/lib/queries/quotes";
+import { quoteActivityTitle } from "./activity-title";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { useProjectReceivablesByCustomer } from "@/lib/queries/projects";
 import { useTasks } from "@/lib/queries/tasks";
@@ -317,9 +318,8 @@ export default function DashboardPage() {
         items.push({
           icon:  "file",
           tone:  q.payment_status === "received" ? "emerald" : "slate",
-          title: q.payment_status === "received"
-            ? `Quote paid: ${q.id} · ${rupee(q.amount ?? 0, { compact: true })}`
-            : `Quote ${q.status === "sent" ? "sent" : "created"}: ${q.id} · ${q.customer_name}`,
+          /* R-2029: a customer advance reads "Customer advance · ₹X", not "Quote paid ₹0". */
+          title: quoteActivityTitle(q),
           time:  relativeTime(ts, now),
           ts,
         });

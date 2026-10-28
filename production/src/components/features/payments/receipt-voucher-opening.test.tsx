@@ -8,6 +8,7 @@ import { render, cleanup, screen } from "@testing-library/react";
 
 vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { tenantLogoUrl: null } }) }));
 vi.mock("@/lib/queries/tds-receivable", () => ({ useTdsForPayment: () => ({ data: 0 }) }));
+vi.mock("@/lib/queries/customer-payers", () => ({ usePaymentPayer: () => ({ data: null }) }));
 
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import type { Payment } from "@/lib/supabase/database.types";

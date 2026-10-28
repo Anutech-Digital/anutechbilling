@@ -55,6 +55,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   quote_open_balance: "per quote — opening invoices have no quote",
   raise_project_milestone_invoice: "issues our invoice",
   raise_subscription_billing: "issues our invoice",
+  instalment_credit: "R-2044: one subscription's instalment invoices' paid_amount (credit already used) — not GST or revenue",
   reconcile_bank_txn: "money in, not GST",
   record_desk_payment: "payments on quotes",
   record_instalment_payment: "payments on instalments",

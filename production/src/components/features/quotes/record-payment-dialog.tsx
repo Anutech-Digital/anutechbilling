@@ -34,6 +34,7 @@ import { recordPaymentConsequences } from "@/lib/payments/record-consequences";
 import { useDocumentSeries, useGenerateInvoice } from "@/lib/queries/invoices";
 import { useRouter } from "next/navigation";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { isPartRequest, partLabelOf, partRequestPaymentToast } from "@/lib/billing/part-requests";
 import { paymentToast, blankReference, subscriptionNoteFor, type PaymentToastAction, type SubscriptionNote } from "@/lib/payments/record-payment-toast";
 import {
   invoiceNowOffer,
@@ -68,6 +69,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { createClient } from "@/lib/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { rupee, formatDate } from "@/lib/utils";
 import { fiscalYearFromDate, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
 import { checkTdsRate, tdsDefaultRatePct } from "@/lib/accounting/tds-rates";
@@ -78,6 +80,7 @@ import { domainConflictMessage } from "@/lib/quotes/payment-domain";
 import { deskPaymentTagArgs, isReplayResult, replayToast } from "@/lib/payments/record-payment-replay";
 import { instalmentPaymentLines, type InstalmentPaymentResult } from "@/lib/payments/instalment-payment";
 import { splitExpectation, splitPaymentToast, splitOutcomeSentence, type SplitExpectation, type InstalmentRaiseResult } from "@/lib/payments/split-expected";
+import { advanceToUse } from "@/lib/quotes/customer-advance";
 
 const schema = z.object({
   /* R-449: ₹0 used to stop the form with no message — the browser's own min=1 check
@@ -99,8 +102,11 @@ const schema = z.object({
   tdsSection:   z.string().optional(),
   tdsRatePct:   z.coerce.number().min(0).max(100).optional(),
   customerTan:  z.string().optional(),
+  /* R-2023: the customer's advance used on this bill ("Use advance"). Set by the sheet, not typed
+     here. With it, ₹0 in bank is fine — the advance alone may pay the bill. */
+  creditApplied: z.coerce.number().min(0).optional(),
 }).superRefine((d, ctx) => {
-  if (d.amount < 1 && !d.tdsDeducted) {
+  if (d.amount < 1 && !d.tdsDeducted && !((d.creditApplied ?? 0) > 0)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["amount"], message: "Amount must be more than ₹0." });
   }
   // Reference sanity — block junk like "dfg" / "asfdgdfgsdfgds". A real UTR /
@@ -180,6 +186,53 @@ export function applyTdsSuggestion(
   form.setValue("tdsDeducted", true, { shouldDirty: true });
   form.setValue("tdsSection", m.section, { shouldDirty: true });
   form.setValue("tdsRatePct", m.ratePct, { shouldDirty: true, shouldValidate: true });
+}
+
+/** R-2023: "Use advance — ₹X available" on the Record payment sheet. Ticked = the most that fits
+ *  (the bill or the advance, whichever is less); the amount can be lowered to use only part. */
+export function UseAdvanceBox({ available, checked, applied, onCheckedChange, onAmountChange }: {
+  available: number;
+  checked: boolean;
+  applied: number;
+  onCheckedChange: (v: boolean) => void;
+  onAmountChange: (n: number | null) => void;
+}) {
+  return (
+    <div className="rounded-md border border-emerald/30 bg-emerald-soft/40 px-3 py-2.5 text-xs">
+      <label className="flex items-start gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={checked}
+          onChange={(e) => onCheckedChange(e.target.checked)}
+        />
+        <div className="flex-1">
+          <div className="font-medium text-ink">Use advance — {rupee(available)} available</div>
+          <div className="text-ink-3 mt-0.5">
+            {checked
+              ? `${rupee(applied)} of the advance pays this bill — the customer pays that much less in cash.`
+              : "This customer paid ahead (an advance or an earlier overpayment). Tick to use it on this bill."}
+          </div>
+        </div>
+      </label>
+      {checked && (
+        <label className="mt-2 flex items-center gap-2 pl-5">
+          <span className="text-ink-2">Use ₹</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            step={1}
+            aria-label="Advance to use (₹)"
+            className="w-28 rounded border border-hairline bg-paper px-2 py-1 text-xs tabular-nums"
+            value={applied}
+            onChange={(e) => onAmountChange(e.target.value === "" ? 0 : Number(e.target.value))}
+          />
+          <span className="text-ink-3">{applied < available ? `${rupee(available - applied)} stays as advance` : "whole advance used"}</span>
+        </label>
+      )}
+    </div>
+  );
 }
 
 /** R-1520: "The remaining ₹25,500 may be TDS (194J 10%) — was TDS deducted?" + one button.
@@ -452,7 +505,17 @@ export function RecordPaymentDialog({
 
   // Advance credit applied to this payment — capped at the remaining balance
   // (can't apply more credit than is owed). Reduces the cash the customer needs.
-  const appliedCreditAmount  = applyCredit ? Math.min(availableCredit, remaining) : 0;
+  /* R-2023: "Use advance" — the whole advance that fits by default, or the part the person
+     types (partial use). Never more than the advance nor the bill (customer-advance.ts). */
+  const [typedCredit, setTypedCredit] = React.useState<number | null>(null);
+  React.useEffect(() => { if (!open) setTypedCredit(null); }, [open]);
+  const appliedCreditAmount  = applyCredit
+    ? advanceToUse({ available: availableCredit, owed: remaining, typed: typedCredit })
+    : 0;
+  React.useEffect(() => {
+    setValue("creditApplied", appliedCreditAmount);
+    if (isSubmitted) void trigger("amount");
+  }, [appliedCreditAmount, setValue, trigger, isSubmitted]);
 
   // When TDS is checked, "amount received" represents the BANK amount
   // (post-TDS). The amount we record_payment with is amount + TDS + any advance
@@ -494,6 +557,10 @@ export function RecordPaymentDialog({
     buyer: BuyerPlace | null;
     /** R-1735: "No GSTIN — invoice will be B2C. Add GSTIN?" — a reminder, never a block. */
     gstinNudge: B2cNudge | null;
+    /** R-2044: a part's payment request — paying it raises that part's tax invoice itself. */
+    partRequest: boolean;
+    /** R-2048: the part's short name ("Q2") for the toast, from the request's line. */
+    partLabel: string | null;
   } | null>(null);
   React.useEffect(() => {
     if (!open || invoiceId) { setInvoiceFacts(null); return; }
@@ -506,6 +573,15 @@ export function RecordPaymentDialog({
         .eq("id", quoteId)
         .maybeSingle();
       if (!q) return;
+      /* R-2044: quotes.subscription_billing_id (migration 20261028025317) — read untyped until the
+         generated types are refreshed. */
+      const { data: pr } = await (supabase as unknown as SupabaseClient)
+        .from("quotes").select("subscription_billing_id, line_items").eq("id", quoteId).maybeSingle();
+      const prRow = pr as { subscription_billing_id?: string | null; line_items?: unknown } | null;
+      const partRequest = isPartRequest(prRow);
+      const partLabel = partRequest && Array.isArray(prRow?.line_items)
+        ? partLabelOf((prRow.line_items[0] as { name?: string | null } | undefined)?.name)
+        : null;
       /* R-447: the quote's own Place of supply counts, not only the lead's state — order in
          paymentBuyerPlace (customer with a state → quote → lead). Before issuing, the sheet
          copies the quote's state onto a customer that has none (fillCustomerStateFromQuote). */
@@ -520,7 +596,7 @@ export function RecordPaymentDialog({
       const gstinNudge = b2cGstinNudge({
         quoteId, customerId: q.customer_id ?? null, customer: c ?? null, lead: l ?? null, prospectCountry: q.prospect_country,
       });
-      if (live) setInvoiceFacts({ billingCycle: q.billing_cycle ?? null, buyer, gstinNudge });
+      if (live) setInvoiceFacts({ billingCycle: q.billing_cycle ?? null, buyer, gstinNudge, partRequest, partLabel });
     })();
     return () => { live = false; };
   }, [open, quoteId, invoiceId]);
@@ -530,6 +606,7 @@ export function RecordPaymentDialog({
         invoiceId,
         billingCycle: invoiceFacts.billingCycle,
         buyer: invoiceFacts.buyer,
+        partRequest: invoiceFacts.partRequest,
         completesQuote: newRunningTotal >= expectedAmount,
       })
     : { offer: false, defaultOn: false, hint: null };
@@ -566,6 +643,7 @@ export function RecordPaymentDialog({
       tdsSection:   tdsOnly?.section ?? customerTdsDefaults.section,
       tdsRatePct:   tdsOnly?.ratePct ?? customerTdsDefaults.ratePct,
       customerTan:  customerTdsDefaults.tan ?? "",
+      creditApplied: 0,              // R-2023: "Use advance" starts unticked on every open.
     });
     if (tdsOnly) setMethod("other");
     setAmountEdited(false);
@@ -884,7 +962,8 @@ export function RecordPaymentDialog({
          select("*") because credit_activated_at is absent before the R-346 migration; a
          named column would fail the whole read there. Rule: subscriptionNoteFor(). */
       let subscriptionNote: SubscriptionNote = null;
-      if (res.isFirstPayment && !res.subscriptionCreated && !res.isRenewalQuote) {
+      /* R-2048: not for a part request — it is one part of a running subscription, not a one-off. */
+      if (res.isFirstPayment && !res.subscriptionCreated && !res.isRenewalQuote && !invoiceFacts?.partRequest) {
         const sb = createClient();
         const [{ data: q }, { count: subCount }] = await Promise.all([
           sb.from("quotes").select("*").eq("id", quoteId).maybeSingle(),
@@ -949,7 +1028,9 @@ export function RecordPaymentDialog({
          a Rs 7,646 payment and 0 invoices. The toast then speaks of instalments, not of the
          year's "outstanding" the RPC reports. */
       let splitRaise: InstalmentRaiseResult | null = null;
-      if (split) {
+      /* R-2044: a part's payment request — the payment raised that part's invoice; this fetches it
+         (or raises it, if that step was refused) so the toast can open it. */
+      if (split || invoiceFacts?.partRequest) {
         try {
           const resp = await fetch(`/api/quotes/${encodeURIComponent(quoteId)}/raise-instalments`, { method: "POST" });
           const body = (await resp.json().catch(() => null)) as (InstalmentRaiseResult & { error?: string }) | null;
@@ -981,7 +1062,17 @@ export function RecordPaymentDialog({
       const tLines = res.instalmentLines.length ? { ...tBase, lines: [...res.instalmentLines, ...tBase.lines] } : tBase;
       /* R-1730: the domain is set up after the payment, not in this sheet. */
       const setupLine = domainSetupLine({ domainToSetUp: res.domainToSetUp, isFullyPaid: res.isFullyPaid });
-      const t = setupLine ? { ...tLines, lines: [...tLines.lines, setupLine] } : tLines;
+      const tAll = setupLine ? { ...tLines, lines: [...tLines.lines, setupLine] } : tLines;
+      /* R-2048: a part request's toast says the part's tax invoice was raised and the subscription
+         continues — never "one-time purchase" or "GST invoice can be generated now". */
+      const t = invoiceFacts?.partRequest
+        ? partRequestPaymentToast(tAll, {
+            part: invoiceFacts.partLabel,
+            invoiceId: firstRaised,
+            isFullyPaid: res.isFullyPaid,
+            error: splitRaise?.errors[0]?.message ?? null,
+          })
+        : tAll;
       const run = (action: PaymentToastAction) => () => runToastAction(action, res.newPaymentId ?? null);
       (t.tone === "warning" ? toast.warning : toast.success)(t.title, {
         description: t.lines.length ? t.lines.join("\n") : undefined,
@@ -1195,26 +1286,16 @@ export function RecordPaymentDialog({
             </div>
           </div>
 
-          {/* Advance credit — this customer overpaid before; adjust it here */}
+          {/* Advance credit — this customer paid ahead (R-1863 advance / overpayment); use it here.
+              R-2023: "Use advance", partial allowed — the ONE way an advance is used. */}
           {availableCredit > 0 && customerId && (
-            <div className="rounded-md border border-emerald/30 bg-emerald-soft/40 px-3 py-2.5 text-xs">
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={applyCredit}
-                  onChange={(e) => { setApplyCredit(e.target.checked); setAmountEdited(false); }}
-                />
-                <div className="flex-1">
-                  <div className="font-medium text-ink">Apply advance credit — {rupee(availableCredit)} available</div>
-                  <div className="text-ink-3 mt-0.5">
-                    {applyCredit
-                      ? `${rupee(appliedCreditAmount)} adjusted against this quote — the customer pays that much less in cash.`
-                      : "This customer overpaid earlier. Tick to adjust it against this bill."}
-                  </div>
-                </div>
-              </label>
-            </div>
+            <UseAdvanceBox
+              available={availableCredit}
+              checked={applyCredit}
+              applied={appliedCreditAmount}
+              onCheckedChange={(v) => { setApplyCredit(v); setTypedCredit(null); setAmountEdited(false); }}
+              onAmountChange={(n) => { setTypedCredit(n); setAmountEdited(false); }}
+            />
           )}
 
           {/* Warning for over-payment */}

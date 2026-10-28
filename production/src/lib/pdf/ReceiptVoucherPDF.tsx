@@ -77,6 +77,10 @@ export interface ReceiptVoucherPDFProps {
   /** R-1747: the payment is on an invoice imported from Zoho Books (its number) — a plain
    *  payment receipt against that opening balance: no advance wording, no GST split. */
   openingInvoiceNumber?: string | null;
+
+  /** R-2025: "Received from X (director) on behalf of <customer>" — paid from someone else's
+   *  account. The voucher stays in the customer's name. */
+  payerLine?: string | null;
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────
@@ -321,7 +325,7 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
   const {
     payment,
     tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress, tenantState, tenantLogo,
-    customerName, customerGstin, customerEmail, customerAddress,
+    customerName, customerGstin, customerEmail, customerAddress, payerLine,
     interState = false,
     gstRate = 18,
     quoteId,
@@ -378,6 +382,7 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
           <View style={s.partyR}>
             <Text style={s.partyLabel}>To (Recipient)</Text>
             <Text style={s.partyName}>{pdfText(customerName)}</Text>
+            {payerLine       && <Text style={s.partyMeta}>{pdfText(payerLine)}</Text>}
             {customerGstin   && <Text style={s.partyGstin}>GSTIN: {customerGstin}</Text>}
             {customerAddress && <Text style={s.partyMeta}>{pdfText(customerAddress)}</Text>}
             {customerEmail   && <Text style={[s.partyMeta, { fontFamily: "Courier" }]}>{customerEmail}</Text>}

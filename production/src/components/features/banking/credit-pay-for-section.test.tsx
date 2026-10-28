@@ -18,6 +18,11 @@ const state = vi.hoisted(() => ({
   relink: vi.fn(),
 }));
 
+/* R-2025: no known payers, our own name (the payer warning / known-payer guess). */
+vi.mock("@/lib/queries/customer-payers", () => ({
+  usePayerMemory: () => ({ payers: [], ownNames: [] }),
+  useSetBankLinePayer: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 vi.mock("@/lib/queries/bank", () => ({
   useOpenInvoicesForCreditMatch: () => ({ data: [] }),
 }));
@@ -60,6 +65,8 @@ const done = (o: Partial<PayForResult>): PayForResult => ({
   renewal_rolled_forward: false, subscription_skipped: false, already_recorded: false, subscriptions: [], ...o,
 });
 
+/* R-2025 (0): nothing is pre-chosen — the owner picks what the money is for first. */
+const choose = (m: string) => fireEvent.click(screen.getByRole("button", { name: m }));
 const renderIt = (credit: number) =>
   render(<CreditPayForSection transaction={txn(credit)} customers={customers} onNewCustomer={() => {}} onProjectPayment={() => {}} onDone={() => {}} />);
 
@@ -74,6 +81,7 @@ describe("R-1838 CreditPayForSection", () => {
       subscriptions: [{ id: "s1", plan: "Google Workspace", seats: 15, start_date: "2025-11-01", renewal_date: "2027-11-01", billing_cycle: "yearly" }],
     }));
     renderIt(35400);
+    choose("An open quote / invoice");
     expect((screen.getByLabelText("Customer who paid") as HTMLSelectElement).value).toBe("c1");
     /* R-2007: the reason names every word only Acme has ("acme traders"). */
     expect(screen.getByText(/Guessed from the bank line says “acme traders”/)).toBeTruthy();
@@ -94,6 +102,7 @@ describe("R-1838 CreditPayForSection", () => {
     ];
     state.pay.mockResolvedValue(done({ kind: "add_seats" }));
     renderIt(4720);
+    choose("An open quote / invoice");
     expect(screen.getByRole("radio", { checked: true }).textContent).toContain("Add seats · pro-rata");
     fireEvent.click(screen.getByRole("button", { name: "Record ₹4,720 on Q-ADD & reconcile" }));
     expect(state.pay.mock.calls[0][0]).toMatchObject({ quoteId: "Q-ADD", createSubscription: null });
@@ -103,6 +112,7 @@ describe("R-1838 CreditPayForSection", () => {
     state.items = [item({ quote_id: "Q-NEW", makes_subscription: true, lines: [{ name: "GWS Standard", qty: 5, commitment: "annual_yearly" }] })];
     state.pay.mockResolvedValue(done({}));
     renderIt(11800);
+    choose("An open quote / invoice");
     const box = screen.getByRole("checkbox") as HTMLInputElement;
     expect(box.checked).toBe(true);
     expect((screen.getByLabelText("Subscription start date") as HTMLInputElement).value).toBe("2026-10-20");
@@ -116,6 +126,7 @@ describe("R-1838 CreditPayForSection", () => {
     state.items = [item({ quote_id: "Q-NEW", makes_subscription: true })];
     state.pay.mockResolvedValue(done({ quote_id: "Q-NEW", subscription_skipped: true }));
     renderIt(11800);
+    choose("An open quote / invoice");
     fireEvent.click(screen.getByRole("checkbox"));
     expect(screen.getByText(/No subscription will be created/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Record ₹11,800 on Q-NEW & reconcile" }));
@@ -128,10 +139,12 @@ describe("R-1838 CreditPayForSection", () => {
     state.items = [];
     state.sale.mockResolvedValue(done({ new_quote: true }));
     renderIt(17700);
-    expect(screen.getByRole("button", { name: "A new sale (no quote yet)" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "A new sale (no quote yet)" }).getAttribute("aria-pressed")).toBe("false");
+    choose("A new sale (no quote yet)");
     fireEvent.change(screen.getByLabelText("Add a product"), { target: { value: "GW-PLUS" } });
     fireEvent.change(screen.getByLabelText("Seats"), { target: { value: "5" } });
-    fireEvent.change(screen.getByLabelText("Unit price"), { target: { value: "3000" } });
+    /* R-2026: the price is asked ₹/user/month — ₹250 a month = ₹3,000 a year on the quote line. */
+    fireEvent.change(screen.getByLabelText("Unit price ₹/user/month"), { target: { value: "250" } });
     expect(screen.getByText(/Taxable ₹15,000 · GST 18% ₹2,700/)).toBeTruthy();
     expect(screen.getByText(/₹17,700 received = ₹17,700 due/)).toBeTruthy();
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
@@ -145,6 +158,7 @@ describe("R-1838 CreditPayForSection", () => {
     state.items = [item({ kind: "invoice", quote_id: "Q-INV", invoice_id: "INV-1", amount_due: 11800, taxable_value: 10000 })];
     state.pay.mockResolvedValue(done({}));
     renderIt(11600);
+    choose("An open quote / invoice");
     expect(screen.getByText(/That is 2% TDS/)).toBeTruthy();
     expect(screen.getByRole("button", { name: /TDS deducted/ }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Record ₹11,600 on INV-1 & reconcile" }));
@@ -186,6 +200,7 @@ describe("R-1863 (c) Advance — nothing to invoice yet", () => {
                 invoice_date: "2026-10-12", invoice_amount: 11800, blocker: null }} />);
     expect(screen.queryByRole("button", { name: "Project payment" })).toBeNull();
     expect(screen.queryByText("＋ New customer")).toBeNull();
+    choose("An open quote / invoice");
     fireEvent.click(screen.getByRole("button", { name: "Relink: Record ₹11,800 on Q-REN & reconcile" }));
     await screen.findByText("Old one-off sale Q-OLD undone — invoice INV-4 reversed by credit note CN-1");
     expect(state.relink.mock.calls[0][0]).toMatchObject({ path: "item", transactionId: "t1", quoteId: "Q-REN" });

@@ -8,6 +8,11 @@ import { cleanup, render, screen } from "@testing-library/react";
 import type { OldOneOffBooking } from "@/lib/banking/credit-pay-for";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 
+/* R-2025: no known payers, our own name (the payer warning / known-payer guess). */
+vi.mock("@/lib/queries/customer-payers", () => ({
+  usePayerMemory: () => ({ payers: [], ownNames: [] }),
+  useSetBankLinePayer: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 vi.mock("@/lib/queries/customers", () => ({ useCustomers: () => ({ data: [{ id: "c2", name: "Beta", country: "India" }] }) }));
 vi.mock("@/components/features/banking/credit-pay-for-section", () => ({
   CreditPayForSection: (p: { relink?: unknown; pickedCustomerId?: string | null }) =>

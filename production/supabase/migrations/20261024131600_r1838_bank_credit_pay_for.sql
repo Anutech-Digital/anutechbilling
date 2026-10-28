@@ -1,4 +1,4 @@
--- deploy-peek: to_regprocedure('public.bank_credit_open_items(uuid)') is not null and to_regprocedure('public.reconcile_bank_credit_to_item(uuid,text,text,integer,numeric,text,boolean,date,date)') is not null and to_regprocedure('public.reconcile_bank_credit_new_sale(uuid,uuid,jsonb,boolean,date,date,integer,numeric,text)') is not null
+-- deploy-peek: to_regprocedure('public.bank_credit_open_items(uuid)') is not null and to_regprocedure('public.reconcile_bank_credit_to_item(uuid,text,text,integer,numeric,text,boolean,date,date)') is not null and exists(select 1 from pg_proc where proname='reconcile_bank_credit_new_sale' and pronamespace='public'::regnamespace)
 -- deploy-key: r1838bankcreditpayfor
 -- 20261024131600_r1838_bank_credit_pay_for.sql
 --

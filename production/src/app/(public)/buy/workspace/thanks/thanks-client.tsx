@@ -17,6 +17,7 @@ import { COMPANY, SLA, WHATSAPP_READY } from "@/site/lib/config";
 import { BrandMark } from "../_parts/site-header";
 import { SiteFooter } from "../_parts/info-sections";
 import { buyContact, type BuyBrand } from "../_parts/brand";
+import { useBuyBrand } from "../_parts/use-buy-brand";
 import { MetaPixel, trackMeta, metaConsent, fbpCookie } from "@/site/lib/meta-pixel";
 import { ConsentBanner } from "@/site/components/chrome/ConsentBanner";
 import { contentIdForPlan, purchaseEventId } from "@/lib/meta/pixel-ids";
@@ -147,7 +148,9 @@ function OrderNotFound() {
     );
 }
 
-function OrderView({ order, isSimulation, brand, orderToken }: { order: ThanksOrder; isSimulation: boolean; brand: BuyBrand | null; orderToken?: string }) {
+function OrderView({ order, isSimulation, brand: serverBrand, orderToken }: { order: ThanksOrder; isSimulation: boolean; brand: BuyBrand | null; orderToken?: string }) {
+  /* R-2024: the server's brand, or the one the page fetches when that read failed on a cold start. */
+  const { brand, pending: brandPending } = useBuyBrand(serverBrand, "Order confirmed");
   /* R-1975: the call link uses the tenant phone first, then the site number (the buy page rule). */
   const tel = buyContact(brand).tel;
   /* R-1625: arriving from Razorpay — undo any scroll lock it left (§24), and drop the kept
@@ -218,7 +221,7 @@ function OrderView({ order, isSimulation, brand, orderToken }: { order: ThanksOr
       {/* ── Header — R-1975: the website tenant's name and logo (the buy page's BrandMark) ── */}
       <header className="border-b border-hairline bg-paper">
         <div className="max-w-[1080px] mx-auto px-6 py-4 flex items-center justify-between">
-          <BrandMark brand={brand} />
+          <BrandMark brand={brand} pending={brandPending} />
         </div>
       </header>
 
