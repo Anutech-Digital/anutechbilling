@@ -216,7 +216,7 @@ describe("the plan follows the term start it is given", () => {
 });
 
 describe("quote page money line", () => {
-  it("Q1 paid → no '₹22,940 still outstanding'; offers the next instalment", async () => {
+  it("Q1 paid → no '₹22,940 still outstanding'; paid to date, no second Record (R-2055)", async () => {
     const { quoteMoneyActions } = await import("@/lib/quotes/money-stage");
     const plan = planForQuote(Q, START)!;
     const d = splitDue(plan, { todayISO: START, received: 7646 });
@@ -228,8 +228,8 @@ describe("quote page money line", () => {
     }, rupee);
     expect(m.outstanding).toBe(0);
     expect(m.note).not.toMatch(/22,940/);
-    expect(m.note).toMatch(/Next instalment ₹7,646 \(2 of 4\) on 9 Jan 2027/);
-    expect(m.recordLabel).toBe("Record next instalment");
+    expect(m.note).toMatch(/Paid to date — next part ₹7,646 \(2 of 4\) on 9 Jan 2027/);
+    expect(m.canRecordPayment).toBe(false); // R-2055: the part's payment request comes on its date — one way
   });
   it("nothing paid yet → ₹7,646 due now, not ₹30,586", async () => {
     const { quoteMoneyActions } = await import("@/lib/quotes/money-stage");
