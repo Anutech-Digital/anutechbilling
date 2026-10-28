@@ -489,7 +489,8 @@ type CatalogRow = NonNullable<ReturnType<typeof useItems>["data"]>[number];
 
 /* R-2026: per product line, Commitment FIRST (the price tier — the quote builder's Annual (1-yr)
    / Monthly flex / One-time, priced from the catalogue for that commitment, cost from wholesale for
-   the same commitment), then seats and the unit price ₹/user/month. Under the lines, Payment — how
+   the same commitment), then seats and the unit price — R-2050: ₹/user/YEAR on Annual, ₹/user/month
+   on Monthly flex (the line's own rate, never below the Workspace list floor). Under the lines, Payment — how
    often an annual commitment is billed (BILLING_CYCLE_OPTIONS); Monthly flex is monthly only. */
 function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPayCycle, dueNow, laterText, onAdd, onChange, onRemove }: {
   lines: SaleLine[];
@@ -545,7 +546,7 @@ function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPay
                   aria-label={`Unit price ${unit}`} />
               </label>
             </div>
-            <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(shownUnitPrice(l))}{unit.replace(/^₹/, "")}{l.cycle === "annual_yearly" && l.monthPriced !== false ? " × 12" : ""} = {rupee(l.qty * l.rate)}{termWord}</p>
+            <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(shownUnitPrice(l))}{unit.replace(/^₹/, "")} = {rupee(l.qty * l.rate)}{termWord}</p>
           </div>
         );
       })}
