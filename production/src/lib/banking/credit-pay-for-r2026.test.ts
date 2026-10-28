@@ -11,28 +11,29 @@ import {
 import { newSaleArgs, raiseFirstInstalment, relinkArgs } from "@/lib/queries/bank-credit-pay-for";
 import { formatDate } from "@/lib/utils";
 
-/* A per-seat Google Workspace row with its own annual and monthly-flex tiers (₹/seat/MONTH). */
+/* A per-seat Google Workspace row with its own annual and monthly-flex tiers (₹/seat/MONTH) at the
+   list price (R-2050: a row below the R-205 floor is lifted to it — see credit-pay-for-r2050.test.ts). */
 const STARTER = {
-  id: "GW-ST", name: "Google Workspace Business Starter", vendor: "google", msrp: 136, wholesale: 110,
-  item_type: "subscription", prices: { annual: { msrp: 136, wholesale: 110 }, monthly: { msrp: 160, wholesale: 132 } },
+  id: "GW-ST", name: "Google Workspace Business Starter", vendor: "google", msrp: 270, wholesale: 110,
+  item_type: "subscription", prices: { annual: { msrp: 270, wholesale: 110 }, monthly: { msrp: 325, wholesale: 132 } },
 } as never;
 const SETUP = { id: "MIG", name: "Email migration", vendor: null, msrp: 199, wholesale: 0, item_type: "one_time", billing_unit: "one_time", prices: {} } as never;
 
-describe("R-2026 price by commitment (catalogue tier, editable, ₹/user/month)", () => {
+describe("R-2026 price by commitment (catalogue tier, editable; R-2050: Annual ₹/user/year)", () => {
   it("Annual commitment takes prices.annual, Monthly flex takes prices.monthly — cost from the same tier", () => {
     const annual = saleLineFromItem(STARTER, "annual_yearly", 35);
-    expect(annual).toMatchObject({ rate: 136 * 12, cost: 110 * 12, qty: 35, monthPriced: true });
-    expect(shownUnitPrice(annual)).toBe(136);
-    expect(shownPriceUnit(annual)).toBe("₹/user/month");
+    expect(annual).toMatchObject({ rate: 270 * 12, cost: 110 * 12, qty: 35, monthPriced: true });
+    expect(shownUnitPrice(annual)).toBe(3240);              // R-2050: Annual shows ₹/user/YEAR
+    expect(shownPriceUnit(annual)).toBe("₹/user/year");
     const flex = repriceLine(annual, STARTER, "monthly");
-    expect(flex).toMatchObject({ cycle: "monthly", rate: 160, cost: 132, qty: 35 });
-    expect(shownUnitPrice(flex)).toBe(160);
+    expect(flex).toMatchObject({ cycle: "monthly", rate: 325, cost: 132, qty: 35 });
+    expect(shownUnitPrice(flex)).toBe(325);
     expect(shownPriceUnit(flex)).toBe("₹/user/month");
-    expect(repriceLine(flex, STARTER, "annual_yearly")).toMatchObject({ rate: 1632, cost: 1320 });
+    expect(repriceLine(flex, STARTER, "annual_yearly")).toMatchObject({ rate: 3240, cost: 1320 });
   });
-  it("a typed ₹/user/month price is stored as the quote line's ₹/seat/year (annual) or as typed (monthly)", () => {
+  it("R-2050: a typed price is stored as typed — ₹/seat/year (annual, no × 12) or ₹/seat/month (monthly)", () => {
     const annual = saleLineFromItem(STARTER, "annual_yearly", 35);
-    expect(rateFromShownPrice(annual, 140)).toBe(1680);
+    expect(rateFromShownPrice(annual, 3360)).toBe(3360);
     expect(rateFromShownPrice({ cycle: "monthly", monthPriced: true }, 165)).toBe(165);
     expect(rateFromShownPrice({ cycle: "one_time", monthPriced: false }, 199)).toBe(199);
   });
@@ -87,8 +88,8 @@ describe("R-2026 amount due now = the first bill", () => {
   });
   it("Monthly flex: the month's bill now, then the same every month", () => {
     const s = saleSchedule([saleLineFromItem(STARTER, "monthly", 10)], 18, "quarterly", "2026-10-21");
-    expect(s).toMatchObject({ dueNow: 1888, dueTaxable: 1600, later: [], everyMonth: true });
-    expect(laterBillsText(s, "monthly")).toBe("Then ₹1,888 every month while the plan runs (Monthly flex).");
+    expect(s).toMatchObject({ dueNow: 3835, dueTaxable: 3250, later: [], everyMonth: true });
+    expect(laterBillsText(s, "monthly")).toBe("Then ₹3,835 every month while the plan runs (Monthly flex).");
   });
 });
 
@@ -99,7 +100,7 @@ describe("R-2026 the subscription gets the commitment + cycle (server args)", ()
   };
   it("new sale sends the line commitment and p_billing_cycle", () => {
     const a = newSaleArgs({ ...base, billingCycle: "quarterly" });
-    expect(a.p_lines[0]).toMatchObject({ commitment: "annual_yearly", rate: 1632 });
+    expect(a.p_lines[0]).toMatchObject({ commitment: "annual_yearly", rate: 3240 });
     expect(a.p_billing_cycle).toBe("quarterly");
     expect(newSaleArgs(base).p_billing_cycle).toBeNull();
   });

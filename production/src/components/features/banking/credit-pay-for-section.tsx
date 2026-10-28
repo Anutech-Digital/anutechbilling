@@ -43,7 +43,7 @@ import {
 import {
   amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
-  saleLineFromItem, saleMakesSubscription, salePreview, saleSchedule, saleTermsMixed, shownPriceUnit, shownUnitPrice,
+  paidUpText, saleLineFromItem, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, shownPriceUnit, shownUnitPrice,
   tdsRateToRecord, tdsToRecord,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
@@ -187,6 +187,11 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const due = mode === "item" ? (picked?.amount_due ?? null) : mode === "sale" && preview.total > 0 ? schedule.dueNow : null;
   const taxable = mode === "item" ? (picked?.taxable_value ?? 0) : schedule.dueTaxable;
   const check: AmountCheck | null = due === null ? null : amountCheck(credit, due, taxable);
+  /* R-2052: annual commitment billed in parts — Renews on stays the end of the year; this says
+     how far the money pays, and takes over the "Next N bills" line (the next bill said once). */
+  const paidUp = mode === "sale" && makesSub && createSub && preview.total > 0
+    ? salePaidUp(schedule, check?.kind === "over" ? check.overBy : 0, renewalShown, saleCycle)
+    : null;
   const [shortChoice, setShortChoice] = React.useState<ShortChoice>("part");
   /* TDS pre-chosen when the gap IS a common TDS rate; else part payment. Re-decided per item. */
   const tdsLikely = check?.kind === "short" && check.tdsRatePct !== null;
@@ -360,7 +365,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
               payCycle={saleCycle}
               onPayCycle={setPayCycle}
               dueNow={schedule.dueNow}
-              laterText={laterText}
+              laterText={paidUp ? null : laterText}
               onAdd={addProduct}
               onChange={setLine}
               onRemove={(idx) => setLines((ls) => ls.filter((_, i) => i !== idx))}
@@ -388,6 +393,12 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                     <Input type="date" value={renewalShown} onChange={(e) => setSubRenewal(e.target.value || null)} aria-label="Subscription renewal date" />
                   </label>
                   {datesBad && <p className="text-xs text-rose-ink sm:col-span-2">The renewal date must be after the start date.</p>}
+                  {paidUp && (
+                    <div className="text-xs sm:col-span-2 space-y-0.5">
+                      <p className="text-ink-2 tabular-nums">{paidUpText(paidUp)}</p>
+                      <p className="text-ink-3">Renews on is the end of the 1-year commitment; parts are billed on their dates.</p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="text-xs text-amber-ink">No subscription will be created. The quote will show “paid but has no subscription” with a button to create it later.</p>
@@ -489,7 +500,8 @@ type CatalogRow = NonNullable<ReturnType<typeof useItems>["data"]>[number];
 
 /* R-2026: per product line, Commitment FIRST (the price tier — the quote builder's Annual (1-yr)
    / Monthly flex / One-time, priced from the catalogue for that commitment, cost from wholesale for
-   the same commitment), then seats and the unit price ₹/user/month. Under the lines, Payment — how
+   the same commitment), then seats and the unit price — R-2050: ₹/user/YEAR on Annual, ₹/user/month
+   on Monthly flex (the line's own rate, never below the Workspace list floor). Under the lines, Payment — how
    often an annual commitment is billed (BILLING_CYCLE_OPTIONS); Monthly flex is monthly only. */
 function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPayCycle, dueNow, laterText, onAdd, onChange, onRemove }: {
   lines: SaleLine[];
@@ -545,7 +557,7 @@ function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPay
                   aria-label={`Unit price ${unit}`} />
               </label>
             </div>
-            <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(shownUnitPrice(l))}{unit.replace(/^₹/, "")}{l.cycle === "annual_yearly" && l.monthPriced !== false ? " × 12" : ""} = {rupee(l.qty * l.rate)}{termWord}</p>
+            <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(shownUnitPrice(l))}{unit.replace(/^₹/, "")} = {rupee(l.qty * l.rate)}{termWord}</p>
           </div>
         );
       })}
