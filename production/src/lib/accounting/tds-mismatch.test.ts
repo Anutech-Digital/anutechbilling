@@ -3,6 +3,7 @@ import {
   TDS_GST_NEXT_STEP,
   gstOnGross,
   tdsEffectiveRatePct,
+  tdsEntryMismatch,
   tdsMismatch,
 } from "./tds-mismatch";
 
@@ -73,5 +74,17 @@ describe("R-2047 gstOnGross — the GST on this entry's gross, from its invoice"
   it("no invoice or no rate → null (unknown)", () => {
     expect(gstOnGross(100_000, null)).toBeNull();
     expect(gstOnGross(100_000, { taxable_value: 90_000, tax_amount: null, tax_rate: null })).toBeNull();
+  });
+});
+
+describe("R-2047 tdsEntryMismatch — a stored row + its invoice", () => {
+  const scn = { gross_amount: 100_000, tds_amount: 11_800, rate_pct: "10.00", invoice_id: "INV-F588-27-0027" };
+  const tax = { "INV-F588-27-0027": { taxable_value: 100_000, tax_amount: 18_000, tax_rate: 18 } };
+  it("linked invoice known → GST-inclusive note", () => {
+    expect(tdsEntryMismatch(scn, tax)?.kind).toBe("gst_inclusive");
+  });
+  it("invoice not loaded → generic note", () => {
+    expect(tdsEntryMismatch(scn, {})?.kind).toBe("other");
+    expect(tdsEntryMismatch({ ...scn, invoice_id: null }, tax)?.kind).toBe("other");
   });
 });

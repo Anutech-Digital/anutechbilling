@@ -29,6 +29,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import {
   useTdsReceivables,
   useTdsSummary,
+  useTdsInvoiceTax,
   TDS_STATUSES,
   TDS_STATUS_LABEL,
   TDS_STATUS_DESCRIPTION,
@@ -37,6 +38,8 @@ import {
   type TdsStatus,
 } from "@/lib/queries/tds-receivable";
 import { TdsRateCheckReport } from "./rate-check-report";
+import { tdsEntryMismatch } from "@/lib/accounting/tds-mismatch";
+import { TdsMismatchNote, EffectiveRate } from "@/components/features/accounting/tds-mismatch-note";
 import { TdsDetailDialog } from "@/components/features/accounting/tds-detail-dialog";
 import { Tds26asImport } from "@/components/features/accounting/tds-26as-import";
 import { istToday } from "@/lib/dates/ist";
@@ -79,6 +82,10 @@ export default function TdsReceivablePage() {
 
   const rows    = listQ.data    ?? [];
   const summary = summaryQ.data;
+  /* R-2047: TDS that is not rate × gross gets an amber note — the invoice's GST tells whether
+     the customer deducted on the GST-inclusive amount. */
+  const invoiceTax = useTdsInvoiceTax(rows.map((r) => r.invoice_id)).data;
+  const mismatchOf = (r: TdsReceivable) => tdsEntryMismatch(r, invoiceTax);
 
   // FY picker options — current + 2 prev
   const fyOptions = React.useMemo(() => {
@@ -264,10 +271,12 @@ export default function TdsReceivablePage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-hairline">
-                {rows.map((r) => (
+                {rows.map((r) => {
+                  const mismatch = mismatchOf(r);
+                  return (
+                  <React.Fragment key={r.id}>
                   <tr
-                    key={r.id}
-                    className={`hover:bg-paper-2/40 cursor-pointer ${ROW_FOCUS_RING}`}
+                    className={`hover:bg-paper-2/40 cursor-pointer ${ROW_FOCUS_RING}${mismatch ? " [&>td]:pb-1.5" : ""}`}
                     {...rowActivation(() => setSelected(r))}
                   >
                     <td className="px-4 py-3 text-ink-2">{formatDate(r.payment_received_date)}</td>
@@ -278,7 +287,10 @@ export default function TdsReceivablePage() {
                     <td className="px-4 py-3 text-ink-2 font-mono text-xs">{r.section}</td>
                     <td className="px-4 py-3 text-right text-ink-2 font-mono">{rupee(r.gross_amount)}</td>
                     <td className="px-4 py-3 text-right font-mono font-semibold text-rose">{rupee(r.tds_amount)}</td>
-                    <td className="px-4 py-3 text-right text-ink-3 font-mono">{Number(r.rate_pct).toFixed(2)}%</td>
+                    <td className="px-4 py-3 text-right text-ink-3 font-mono">
+                      {Number(r.rate_pct).toFixed(2)}%
+                      {mismatch && <EffectiveRate pct={mismatch.effectivePct} className="block whitespace-nowrap" />}
+                    </td>
                     <td className="px-4 py-3">
                       <Badge color={STATUS_COLOR[r.status]}>{TDS_STATUS_LABEL[r.status]}</Badge>
                     </td>
@@ -299,14 +311,25 @@ export default function TdsReceivablePage() {
                       )}
                     </td>
                   </tr>
-                ))}
+                  {mismatch && (
+                    <tr className="!border-t-0" data-testid="tds-mismatch-row">
+                      <td colSpan={9} className="px-4 pb-3 pt-0">
+                        <TdsMismatchNote mismatch={mismatch} />
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </Card>
 
           {/* Mobile cards */}
           <ul className="md:hidden space-y-2.5">
-            {rows.map((r) => (
+            {rows.map((r) => {
+              const mismatch = mismatchOf(r);
+              return (
               <li key={r.id}>
                 <button
                   type="button"
@@ -319,6 +342,7 @@ export default function TdsReceivablePage() {
                         <div className="font-medium text-ink leading-tight">{r.customer_name}</div>
                         <div className="text-xs text-ink-3 mt-0.5">
                           {formatDate(r.payment_received_date)} · {r.section} @ {Number(r.rate_pct).toFixed(2)}%
+                          {mismatch && <> · <EffectiveRate pct={mismatch.effectivePct} /></>}
                         </div>
                       </div>
                       <Badge color={STATUS_COLOR[r.status]}>{TDS_STATUS_LABEL[r.status]}</Badge>
@@ -336,10 +360,12 @@ export default function TdsReceivablePage() {
                     {r.customer_tan && (
                       <div className="text-xs text-ink-3 mt-2 font-mono">TAN: {r.customer_tan}</div>
                     )}
+                    {mismatch && <div className="mt-2"><TdsMismatchNote mismatch={mismatch} /></div>}
                   </Card>
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </>
       )}
@@ -349,6 +375,7 @@ export default function TdsReceivablePage() {
         open={!!selected}
         onOpenChange={(o) => !o && setSelected(null)}
         tds={selected}
+        mismatch={selected ? mismatchOf(selected) : null}
       />
     </div>
   );

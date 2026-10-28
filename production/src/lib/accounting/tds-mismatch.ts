@@ -119,3 +119,21 @@ export function gstOnGross(gross: number, invoice: InvoiceTaxLike | null | undef
   if (rate === null || !Number.isFinite(rate)) return null;
   return Math.round((gross * rate) / 100);
 }
+
+/** The tds_receivable fields tdsEntryMismatch reads. */
+export interface TdsEntryAmounts {
+  gross_amount?: number | null;
+  tds_amount: number | null;
+  rate_pct: number | string | null;
+  invoice_id?: string | null;
+}
+
+/** tdsMismatch for one stored entry, the GST taken from its linked invoice (if known). */
+export function tdsEntryMismatch(
+  entry: TdsEntryAmounts,
+  taxByInvoice?: Readonly<Record<string, InvoiceTaxLike>> | null,
+): TdsMismatch | null {
+  const gross = Number(entry.gross_amount ?? 0);
+  const inv = entry.invoice_id ? taxByInvoice?.[entry.invoice_id] : undefined;
+  return tdsMismatch({ gross, tds: entry.tds_amount, ratePct: entry.rate_pct, gst: gstOnGross(gross, inv) });
+}
