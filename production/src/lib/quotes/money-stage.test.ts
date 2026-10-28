@@ -194,7 +194,7 @@ describe("R-446: a per-period plan never offers a whole-term GST invoice", () =>
   it("paid monthly quote: no Generate button, the note says each period is invoiced", () => {
     const a = quoteMoneyActions(q({ received: 45360, paymentStatus: "received", splitBilledCycle: "monthly" }), rupee);
     expect(a.canGenerateInvoice).toBe(false);
-    expect(a.note).toContain("Billed monthly: each period gets its own GST invoice");
+    expect(a.note).toContain("Billed monthly: each part gets a payment request on its date; its tax invoice is raised when paid"); // R-2055 (post-R-2044)
     expect(a.note).not.toContain("Raise the GST invoice");
   });
   it("unpaid / part-paid still take payment, without the invoice button", () => {

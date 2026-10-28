@@ -31,6 +31,8 @@
  * is payable, and one raised after a part payment says what is left.
  */
 
+import { PARTS_WORDING, PAID_TO_DATE_LABEL } from "./paid-to-date";
+
 export interface QuoteMoneyInput {
   status: string;
   /** `quotes.payment_status` — 'none' is the column default and means the same as
@@ -58,6 +60,9 @@ export interface QuoteMoneyInput {
   /** R-2054: a part payment request (R-2044, quotes.subscription_billing_id set). It has no
    *  accept step, so the "before they formally accept" sentence is not shown on it. */
   partRequest?: boolean;
+  /** R-2055: on a SALE quote billed in parts, the open payment request (R-2044) of the next
+   *  part, when the billing run has raised it. The part is collected there — one way only. */
+  nextPartRequest?: { id: string; number: string } | null;
 }
 
 export type MoneyStage =
@@ -88,6 +93,8 @@ export interface MoneyActions {
   note: string;
   /** ₹ still to collect. */
   outstanding: number;
+  /** R-2055: the next part's payment request to open instead of recording here. */
+  openRequest?: { id: string; number: string } | null;
 }
 
 export function quoteMoneyActions(q: QuoteMoneyInput, rupees: (n: number) => string): MoneyActions {
@@ -99,12 +106,22 @@ export function quoteMoneyActions(q: QuoteMoneyInput, rupees: (n: number) => str
      button, and the sentence says where the invoice comes from. */
   const cycle = q.splitBilledCycle ? q.splitBilledCycle.replace(/_/g, "-") : null;
   if (cycle && (stage === "unpaid" || stage === "partial" || stage === "paid")) {
-    const each = `Billed ${cycle}: each period gets its own GST invoice on its date.`;
+    /* R-2055: since R-2044 a later part is a payment request raised on its date, and its tax
+       invoice is raised when it is paid ("its own GST invoice on its date" was pre-R-2044). */
+    const each = `Billed ${cycle}: ${PARTS_WORDING}.`;
     /* R-527: with the plan known, "outstanding" is what has fallen due. Q-FBB9-27-0020 read
        "₹7,646 of ₹30,586 received · ₹22,940 still outstanding" the day Q1 was paid. */
     const d = q.splitDue;
     if (d) {
-      const nextLine = d.next ? ` Next instalment ${rupees(d.next.gross)} (${d.next.index} of ${d.count}) on ${d.next.billOn}.` : "";
+      const nextPart = d.next ? `next part ${rupees(d.next.gross)} (${d.next.index} of ${d.count}) on ${d.next.billOn}` : "";
+      /* R-2055: the first part is paid and a later part's request is out — the request owns
+         that money. One way: open the request, never a second Record payment here. */
+      if (q.received > 0 && d.next && q.nextPartRequest) {
+        return base("partial", 0, {
+          note: `${PAID_TO_DATE_LABEL} — ${nextPart}: payment request ${q.nextPartRequest.number} is out — record that part there. ${each}`,
+          openRequest: q.nextPartRequest,
+        });
+      }
       if (d.outstanding > 0) {
         return base(q.received > 0 ? "partial" : "unpaid", d.outstanding, {
           note: `${rupees(d.outstanding)} due now${q.received > 0 ? ` · ${rupees(q.received)} received so far` : ""}. ${each}`,
@@ -112,10 +129,13 @@ export function quoteMoneyActions(q: QuoteMoneyInput, rupees: (n: number) => str
           recordLabel: q.received > 0 ? "Record instalment payment" : "Record payment",
         });
       }
+      /* R-2055: nothing is due today. Was "Instalments due so far are paid" beside a
+         "Record next instalment" button — a second way to take a part whose payment request
+         comes on its date. Hidden until then. */
       return base(d.next ? "partial" : "paid", 0, {
-        note: `Instalments due so far are paid — ${rupees(q.received)} received.${nextLine} ${each}`,
-        canRecordPayment: d.next != null,
-        recordLabel: "Record next instalment",
+        note: d.next
+          ? `${PAID_TO_DATE_LABEL} — ${nextPart}. ${rupees(q.received)} received. ${each}`
+          : `Paid in full — ${rupees(q.received || q.total)} received. ${each}`,
       });
     }
     if (stage === "unpaid") {

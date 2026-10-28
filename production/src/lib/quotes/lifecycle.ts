@@ -63,6 +63,11 @@ export interface LifecycleInput {
    * still says what came in and what is left, instead of "Invoiced before payment".
    */
   money?: { received: number; due: number };
+  /**
+   * R-2055: billed in parts, first part paid — "Paid to date — next part ₹9,558 on 28 Jan 2027"
+   * (paid-to-date.ts paidToDateLine). The Paid step is done; nothing is due on this quote.
+   */
+  paidToDate?: string | null;
 }
 
 const LABELS: Record<LifecycleStage, string> = {
@@ -86,7 +91,7 @@ export function quoteLifecycle(input: LifecycleInput): {
 
   const sent   = input.status !== "draft";
   const signed = input.hasSignature || input.status === "accepted";
-  const paid   = input.paid ?? (input.paymentStatus === "received" || input.paymentStatus === "invoiced");
+  const paid   = Boolean(input.paidToDate) || (input.paid ?? (input.paymentStatus === "received" || input.paymentStatus === "invoiced"));
   const invoiced = Boolean(input.invoiceId);
 
   const steps: LifecycleStep[] = [
@@ -111,7 +116,9 @@ export function quoteLifecycle(input: LifecycleInput): {
     {
       stage: "paid", label: LABELS.paid,
       state: paid ? "done" : "todo",
-      detail: paid
+      detail: input.paidToDate
+        ? `${input.paidToDate}.`
+        : paid
         ? "Payment received."
         : input.money && input.money.received > 0 && input.money.due > 0
           ? `Part-paid — ${partPaidLine(input.money)}.`
