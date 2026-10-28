@@ -5,7 +5,8 @@
 import { describe, it, expect } from "vitest";
 import { planForQuote, splitDue } from "@/lib/billing/instalments";
 import { rupee } from "@/lib/utils";
-import { paidToDateOf, paidToDateOfPlan, paidToDateLine, committedLine, PARTS_WORDING } from "./paid-to-date";
+import { paidToDateOf, paidToDateOfPlan, paidToDateLine, committedLine, pagePaidToDate, PARTS_WORDING } from "./paid-to-date";
+import { pickNextPartRequest } from "@/app/(app)/quotes/[id]/next-part-request";
 import { quoteMoneyActions } from "./money-stage";
 import { quoteListTab } from "./list-tab";
 import { cashNote, unifiedStatus } from "./status-badge";
@@ -14,11 +15,11 @@ import { quoteLifecycle } from "./lifecycle";
 
 const START = "2026-10-28";
 const Q = {
-  status: "accepted",
+  status: "accepted" as const,
   subtotal: 32_400, discount_pct: 0, tax_rate: 18, amount: 38_232,
   billing_cycle: "quarterly" as const,
   line_items: [{ id: "l1", name: "Google Workspace Business Starter", qty: 10, rate: 3240, commitment: "annual_yearly" }],
-  payment_status: "partial",
+  payment_status: "partial" as const,
   payment_amount: 9_558,
   invoice_id: null,
   subscription_billing_id: null,
@@ -87,6 +88,22 @@ describe("R-2055 paid to date", () => {
     const plain = { ...Q, billing_cycle: "yearly" as never };
     expect(quoteListTab(plain)).toBe("awaiting");
     expect(unifiedStatus(plain).label).toBe("Partly paid");
+  });
+
+  it("page: part 2's date came with no request out → not paid to date (due now); request out → paid to date", () => {
+    const base = { quote: Q, termStart: START, received: 9_558 };
+    expect(pagePaidToDate({ ...base, todayISO: START, hasOpenRequest: false })?.committed).toBe(28_674);
+    expect(pagePaidToDate({ ...base, todayISO: "2027-01-28", hasOpenRequest: false })).toBeNull();
+    expect(pagePaidToDate({ ...base, todayISO: "2027-01-28", hasOpenRequest: true })?.next.index).toBe(2);
+  });
+
+  it("pickNextPartRequest: the earliest open request of this subscription", () => {
+    const periodOf = new Map([["b2", 2], ["b3", 3]]);
+    const row = (id: string, b: string, over = {}) => ({ id, subscription_billing_id: b, status: "sent", invoice_id: null, payment_status: "awaiting", ...over });
+    expect(pickNextPartRequest([row("Q3", "b3"), row("Q2", "b2")], periodOf)).toEqual({ id: "Q2", number: "Q2" });
+    expect(pickNextPartRequest([row("Q2", "b2", { invoice_id: "i" }), row("Q3", "b3")], periodOf)?.id).toBe("Q3");
+    expect(pickNextPartRequest([row("Q2", "b2", { status: "rejected" })], periodOf)).toBeNull();
+    expect(pickNextPartRequest([row("Qx", "other")], periodOf)).toBeNull();
   });
 
   it("lifecycle Paid step says paid to date, not Part-paid … still due", () => {

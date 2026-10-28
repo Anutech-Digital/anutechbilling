@@ -81,6 +81,25 @@ export function paidToDateOf(q: PaidToDateQuote, termStart: string = istToday())
   return paidToDateOfPlan(planForQuote(fields, termStart.slice(0, 10)), received);
 }
 
+/**
+ * The quote page's reading: with the subscription's real start, a part whose date has come and
+ * whose payment request is NOT out yet is still due here (the R-527 "due now" line, legacy and
+ * before the billing run). Once its request is out, the request owns it — still paid to date.
+ */
+export function pagePaidToDate(a: {
+  quote: PaidToDateQuote;
+  termStart: string;
+  received: number;
+  todayISO: string;
+  hasOpenRequest: boolean;
+}): PaidToDate | null {
+  const q = { ...a.quote, payment_amount: a.received };
+  const p = paidToDateOf(q, a.termStart);
+  if (!p) return null;
+  const isDue = p.next.billOn <= a.todayISO.slice(0, 10);
+  return isDue && !a.hasOpenRequest ? null : p;
+}
+
 /** Badge / list word — "Paid to date". */
 export const PAID_TO_DATE_LABEL = "Paid to date";
 
