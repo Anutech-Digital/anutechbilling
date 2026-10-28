@@ -289,7 +289,7 @@ export default function TdsReceivablePage() {
                     <td className="px-4 py-3 text-right font-mono font-semibold text-rose">{rupee(r.tds_amount)}</td>
                     <td className="px-4 py-3 text-right text-ink-3 font-mono">
                       {Number(r.rate_pct).toFixed(2)}%
-                      {mismatch && <EffectiveRate pct={mismatch.effectivePct} className="block whitespace-nowrap" />}
+                      {mismatch && <EffectiveRate pct={mismatch.effectivePct} className="block" />}
                     </td>
                     <td className="px-4 py-3">
                       <Badge color={STATUS_COLOR[r.status]}>{TDS_STATUS_LABEL[r.status]}</Badge>
