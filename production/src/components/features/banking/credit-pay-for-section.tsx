@@ -41,11 +41,13 @@ import {
   useRelinkOneOffSale, type RelinkTarget,
 } from "@/lib/queries/bank-credit-pay-for";
 import {
-  amountCheck, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
-  linesAreMonthly, preselectItem, rateSuffix, repriceLine, resultLines, saleLineFromItem,
-  saleMakesSubscription, salePreview, saleTermsMixed, tdsRateToRecord, tdsToRecord,
-  type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type SaleCycle, type SaleLine, type ShortChoice,
+  amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
+  laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
+  saleLineFromItem, saleMakesSubscription, salePreview, saleSchedule, saleTermsMixed, shownPriceUnit, shownUnitPrice,
+  tdsRateToRecord, tdsToRecord,
+  type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
+import type { BillingCycle } from "@/lib/supabase/database.types";
 import { PAYER_RELATIONS, payerFromNarration, payerMatchesCustomer, type PayerRelation } from "@/lib/banking/customer-payer";
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
 
@@ -114,6 +116,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     if (pickedCustomerId) { setCustomerId(pickedCustomerId); setTouchedCustomer(true); }
   }, [pickedCustomerId]);
   const customer = customers.find((c) => c.id === customerId) ?? null;
+  /* R-2026 (5): each customer once, each name once (the "JAK GROUP…JAK GROUP…" screenshot). */
+  const customerChoices = React.useMemo(() => customerOptions(customers), [customers]);
 
   /* ── 1b. R-2025: who REALLY paid — the payer the narration names. When it is not the chosen
      customer (by name, or one of their known payers) the sheet warns and Save needs an answer.
@@ -158,6 +162,11 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const gst = useGstRegistration();
   const gstRate = billOfSupplyStatus(gst.data?.saved ?? null) || isExportSupply(customer?.country ?? null) ? 0 : 18;
   const preview = salePreview(lines, gstRate);
+  /* R-2026: Payment — how often an annual commitment is billed (the quote's billing_cycle). */
+  const [payCycle, setPayCycle] = React.useState<BillingCycle>("yearly");
+  React.useEffect(() => { setPayCycle("yearly"); }, [transaction.id]);
+  const payment = paymentChoice(lines);
+  const saleCycle = saleBillingCycle(lines, payCycle);
 
   /* Subscription choice (new subscription sale only). */
   const makesSub = mode === "item" ? Boolean(picked?.makes_subscription) : mode === "sale" && saleMakesSubscription(lines);
@@ -170,9 +179,13 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const datesBad = makesSub && createSub && (!subStart || renewalShown <= subStart);
 
   /* ── 3. Amount check ─────────────────────────────────────────────────────────── */
+  /* R-2026: a new sale paid in parts is due its FIRST bill now (Annual + Quarterly = one
+     quarter + GST); the rest of the schedule is shown under it. */
+  const schedule = saleSchedule(lines, gstRate, saleCycle, subStart || transaction.txn_date);
+  const laterText = mode === "sale" && preview.total > 0 ? laterBillsText(schedule, saleCycle) : null;
   /* An advance has nothing due — the whole credit is kept as the customer's credit. */
-  const due = mode === "item" ? (picked?.amount_due ?? null) : mode === "sale" && preview.total > 0 ? preview.total : null;
-  const taxable = mode === "item" ? (picked?.taxable_value ?? 0) : preview.taxable;
+  const due = mode === "item" ? (picked?.amount_due ?? null) : mode === "sale" && preview.total > 0 ? schedule.dueNow : null;
+  const taxable = mode === "item" ? (picked?.taxable_value ?? 0) : schedule.dueTaxable;
   const check: AmountCheck | null = due === null ? null : amountCheck(credit, due, taxable);
   const [shortChoice, setShortChoice] = React.useState<ShortChoice>("part");
   /* TDS pre-chosen when the gap IS a common TDS rate; else part payment. Re-decided per item. */
@@ -210,7 +223,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         }
       : mode === "sale"
         ? {
-            path: "new_sale", transactionId: transaction.id, customerId, lines,
+            path: "new_sale", transactionId: transaction.id, customerId, lines, billingCycle: saleCycle,
             createSubscription: subArgs.createSubscription ?? false, subStart: subArgs.subStart, subRenewal: subArgs.subRenewal,
             tdsAmount, tdsRatePct: tdsRate,
           }
@@ -280,7 +293,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         >
           <option value="" disabled>Who paid? Select a customer…</option>
           {onNewCustomer && <option value={NEW_CUSTOMER}>＋ New customer</option>}
-          {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          {customerChoices.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
         </select>
         {guess && customerId === guess.customerId && !touchedCustomer && (
           <p className="text-xs text-ink-3">Guessed from {guess.reason} — change it if wrong.</p>
@@ -343,6 +356,11 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
               catalog={activeCatalog}
               gstRate={gstRate}
               preview={preview}
+              payment={payment}
+              payCycle={saleCycle}
+              onPayCycle={setPayCycle}
+              dueNow={schedule.dueNow}
+              laterText={laterText}
               onAdd={addProduct}
               onChange={setLine}
               onRemove={(idx) => setLines((ls) => ls.filter((_, i) => i !== idx))}
@@ -469,11 +487,20 @@ function AmountCheckBox({ check, credit, due, choice, onChoice }: {
 
 type CatalogRow = NonNullable<ReturnType<typeof useItems>["data"]>[number];
 
-function SaleEditor({ lines, catalog, gstRate, preview, onAdd, onChange, onRemove }: {
+/* R-2026: per product line, Commitment FIRST (the price tier — the quote builder's Annual (1-yr)
+   / Monthly flex / One-time, priced from the catalogue for that commitment, cost from wholesale for
+   the same commitment), then seats and the unit price ₹/user/month. Under the lines, Payment — how
+   often an annual commitment is billed (BILLING_CYCLE_OPTIONS); Monthly flex is monthly only. */
+function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPayCycle, dueNow, laterText, onAdd, onChange, onRemove }: {
   lines: SaleLine[];
   catalog: CatalogRow[];
   gstRate: number;
   preview: { taxable: number; gst: number; total: number };
+  payment: PaymentChoice;
+  payCycle: BillingCycle;
+  onPayCycle: (c: BillingCycle) => void;
+  dueNow: number;
+  laterText: string | null;
   onAdd: (itemId: string) => void;
   onChange: (idx: number, patch: Partial<SaleLine>) => void;
   onRemove: (idx: number) => void;
@@ -483,6 +510,9 @@ function SaleEditor({ lines, catalog, gstRate, preview, onAdd, onChange, onRemov
       {lines.map((l, idx) => {
         const it = l.itemId ? catalog.find((c) => c.id === l.itemId) : undefined;
         const oneTimeOnly = it ? defaultCycle(it) === "one_time" : false;
+        const commits = commitmentOptions(oneTimeOnly);
+        const unit = shownPriceUnit(l);
+        const termWord = l.cycle === "annual_yearly" ? " a year" : l.cycle === "monthly" ? " a month" : "";
         return (
           <div key={idx} className="rounded-md border border-hairline bg-paper p-2.5 space-y-2">
             <div className="flex items-start justify-between gap-2">
@@ -492,34 +522,30 @@ function SaleEditor({ lines, catalog, gstRate, preview, onAdd, onChange, onRemov
               </button>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <label className="text-xs text-ink-3 space-y-0.5 col-span-2 sm:col-span-1">
+                <span className="block">Commitment</span>
+                <select
+                  value={l.cycle}
+                  disabled={oneTimeOnly}
+                  onChange={(e) => onChange(idx, repriceLine(l, it, e.target.value as SaleCycle))}
+                  aria-label="Commitment"
+                  className={selectCls}
+                >
+                  {commits.map((c) => <option key={c.cycle} value={c.cycle}>{c.label}</option>)}
+                </select>
+              </label>
               <label className="text-xs text-ink-3 space-y-0.5">
                 <span className="block">{l.perSeat ? "Seats (licences)" : "Quantity"}</span>
                 <Input type="number" min={1} value={String(l.qty)} onChange={(e) => onChange(idx, { qty: Math.max(0, Math.round(Number(e.target.value) || 0)) })} aria-label={l.perSeat ? "Seats" : "Quantity"} />
               </label>
               <label className="text-xs text-ink-3 space-y-0.5">
-                <span className="block">Unit price ₹{rateSuffix(l)}</span>
-                <Input type="number" min={0} value={String(l.rate)} onChange={(e) => onChange(idx, { rate: Math.max(0, Math.round(Number(e.target.value) || 0)) })} aria-label="Unit price" />
-              </label>
-              <label className="text-xs text-ink-3 space-y-0.5 col-span-2 sm:col-span-1">
-                <span className="block">Billing</span>
-                <select
-                  value={l.cycle}
-                  disabled={oneTimeOnly}
-                  onChange={(e) => onChange(idx, repriceLine(l, it, e.target.value as SaleCycle))}
-                  aria-label="Billing term"
-                  className={selectCls}
-                >
-                  {oneTimeOnly ? <option value="one_time">One-time</option> : (
-                    <>
-                      <option value="annual_yearly">Yearly (1-year term)</option>
-                      <option value="monthly">Monthly</option>
-                      <option value="one_time">One-time</option>
-                    </>
-                  )}
-                </select>
+                <span className="block">Unit price {unit}</span>
+                <Input type="number" min={0} step="any" value={String(shownUnitPrice(l))}
+                  onChange={(e) => onChange(idx, { rate: rateFromShownPrice(l, Number(e.target.value)) })}
+                  aria-label={`Unit price ${unit}`} />
               </label>
             </div>
-            <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(l.rate)} = {rupee(l.qty * l.rate)}</p>
+            <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(shownUnitPrice(l))}{unit.replace(/^₹/, "")}{l.cycle === "annual_yearly" && l.monthPriced !== false ? " × 12" : ""} = {rupee(l.qty * l.rate)}{termWord}</p>
           </div>
         );
       })}
@@ -528,11 +554,28 @@ function SaleEditor({ lines, catalog, gstRate, preview, onAdd, onChange, onRemov
         {catalog.map((i) => <option key={i.id} value={i.id}>{i.name}{i.vendor ? ` · ${i.vendor}` : ""}</option>)}
       </select>
       {saleTermsMixed(lines) && <p className="text-xs text-rose-ink">Monthly and yearly products cannot be on one sale — record them separately.</p>}
+      {payment.options.length > 0 && (
+        <label className="block text-xs text-ink-3 space-y-0.5">
+          <span className="block">Payment</span>
+          <select
+            value={payCycle}
+            disabled={payment.options.length === 1}
+            onChange={(e) => onPayCycle(e.target.value as BillingCycle)}
+            aria-label="Payment"
+            className={selectCls}
+          >
+            {payment.options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+          {payment.why && <span className="block text-ink-3">{payment.why}</span>}
+        </label>
+      )}
       {lines.length > 0 && (
         <p className="text-xs text-ink-2 tabular-nums">
           Taxable {rupee(preview.taxable)} · {gstRate > 0 ? `GST ${gstRate}% ${rupee(preview.gst)}` : "No GST"} · <b>Total {rupee(preview.total)}</b>
+          {dueNow !== preview.total && <> · <b>Due now {rupee(dueNow)}</b> (first bill)</>}
         </p>
       )}
+      {laterText && <p className="text-xs text-ink-3 tabular-nums">{laterText}</p>}
     </div>
   );
 }

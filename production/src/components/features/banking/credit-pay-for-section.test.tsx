@@ -143,7 +143,8 @@ describe("R-1838 CreditPayForSection", () => {
     choose("A new sale (no quote yet)");
     fireEvent.change(screen.getByLabelText("Add a product"), { target: { value: "GW-PLUS" } });
     fireEvent.change(screen.getByLabelText("Seats"), { target: { value: "5" } });
-    fireEvent.change(screen.getByLabelText("Unit price"), { target: { value: "3000" } });
+    /* R-2026: the price is asked ₹/user/month — ₹250 a month = ₹3,000 a year on the quote line. */
+    fireEvent.change(screen.getByLabelText("Unit price ₹/user/month"), { target: { value: "250" } });
     expect(screen.getByText(/Taxable ₹15,000 · GST 18% ₹2,700/)).toBeTruthy();
     expect(screen.getByText(/₹17,700 received = ₹17,700 due/)).toBeTruthy();
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);

@@ -20,6 +20,8 @@ import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import type { OldOneOffBooking, OpenItem, PayForResult, SaleLine } from "@/lib/banking/credit-pay-for";
 import { saleLinesPayload } from "@/lib/banking/credit-pay-for";
 import { ADVANCE_PAYMENT_NOTE_PREFIX, advancePaymentIds } from "@/lib/banking/bank-row-label";
+import { isSplitBilled } from "@/lib/billing/instalments";
+import type { BillingCycle } from "@/lib/supabase/database.types";
 
 /* The generated types do not know the R-1838 functions yet (migration not applied there). */
 type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }> };
@@ -67,6 +69,9 @@ export interface NewSaleInput {
   subRenewal: string | null;
   tdsAmount: number;
   tdsRatePct: number | null;
+  /** R-2026: how often it is billed (the quote's billing_cycle). Null/absent = the server's
+   *  default (yearly; Monthly flex is always monthly). */
+  billingCycle?: BillingCycle | null;
 }
 
 /** The RPC arguments — exported so the tests pin exactly what reaches the server. */
@@ -95,7 +100,30 @@ export function newSaleArgs(i: NewSaleInput) {
     p_tds_amount: Math.max(0, Math.round(i.tdsAmount)),
     p_tds_rate_pct: i.tdsAmount > 0 ? i.tdsRatePct : null,
     p_tds_section: i.tdsAmount > 0 ? "194J" : null,
+    p_billing_cycle: i.billingCycle ?? null,
   };
+}
+
+/**
+ * R-2026: a sale paid in parts (annual commitment billed quarterly …) gets its FIRST bill's tax
+ * invoice now — the Record payment sheet's own call (R-527: POST /api/quotes/:id/raise-instalments,
+ * the billing cron's code; idempotent per period). The payment is already booked; a failure here
+ * only says the daily run will raise it.
+ */
+export async function raiseFirstInstalment(r: PayForResult, cycle: BillingCycle | null | undefined, post: typeof fetch = fetch): Promise<PayForResult> {
+  if (!isSplitBilled(cycle) || !r.quote_id || r.already_recorded || r.invoice_issued) return r;
+  try {
+    const resp = await post(`/api/quotes/${encodeURIComponent(r.quote_id)}/raise-instalments`, { method: "POST" });
+    const body = (await resp.json().catch(() => null)) as
+      { raised?: Array<{ invoice_id?: string | null }>; errors?: Array<{ message?: string }>; error?: string } | null;
+    if (!resp.ok || !body) return { ...r, instalment_error: body?.error ?? `HTTP ${resp.status}` };
+    const first = body.raised?.find((x) => x?.invoice_id)?.invoice_id ?? null;
+    if (first) return { ...r, invoice_issued: first };
+    const err = body.errors?.[0]?.message ?? null;
+    return err ? { ...r, instalment_error: err } : r;
+  } catch (e) {
+    return { ...r, instalment_error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 function useAfterPay() {
@@ -190,7 +218,7 @@ export function useRelinkOneOffSale() {
       const { data, error } = await rpc("relink_bank_one_off_sale", relinkArgs(t));
       if (error) throw error;
       if (!data) throw new Error("The relink was not confirmed — refresh the page to see whether it was saved.");
-      return data as PayForResult;
+      return t.path === "new_sale" ? raiseFirstInstalment(data as PayForResult, t.billingCycle) : (data as PayForResult);
     },
     /* The undone sale's invoice + credit note refresh via invalidateReceivables (["invoices"], ["credit-notes"]). */
     onSuccess: after,
@@ -205,7 +233,7 @@ export function useNewSaleFromBankCredit() {
       const { data, error } = await rpc("reconcile_bank_credit_new_sale", newSaleArgs(input));
       if (error) throw error;
       if (!data) throw new Error("The sale was not confirmed — refresh the page to see whether it was saved.");
-      return data as PayForResult;
+      return raiseFirstInstalment(data as PayForResult, input.billingCycle);
     },
     onSuccess: after,
     onError: onPayError,
