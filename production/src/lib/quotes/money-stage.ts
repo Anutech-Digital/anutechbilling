@@ -55,6 +55,9 @@ export interface QuoteMoneyInput {
     next: { gross: number; billOn: string; index: number } | null;
     count: number;
   } | null;
+  /** R-2054: a part payment request (R-2044, quotes.subscription_billing_id set). It has no
+   *  accept step, so the "before they formally accept" sentence is not shown on it. */
+  partRequest?: boolean;
 }
 
 export type MoneyStage =
@@ -141,7 +144,9 @@ export function quoteMoneyActions(q: QuoteMoneyInput, rupees: (n: number) => str
 
     case "open":
       return base(stage, outstanding, {
-        note: "Waiting on the customer. You can still record a payment if money arrives before they formally accept.",
+        /* R-2054: a part payment request has no accept step — the R-2048 part-request line
+           above the money row already says to record the payment when it comes in. */
+        note: q.partRequest ? "" : "Waiting on the customer. You can still record a payment if money arrives before they formally accept.",
         /* Money sometimes lands before anyone presses Accept, and refusing to record it
            is how a real payment ends up in a WhatsApp thread instead of the books. */
         canRecordPayment: true,

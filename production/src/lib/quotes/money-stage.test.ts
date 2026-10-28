@@ -220,3 +220,27 @@ describe("R-444 (2): the draft sentence shows once", () => {
     expect(quoteMoneyActions(q({ status: "draft" }), rupee).note).toBe("");
   });
 });
+
+/**
+ * R-2054 — a part payment request (R-2044, quotes.subscription_billing_id set) has no accept
+ * step, so the money row must not say "before they formally accept". The R-2048 part-request
+ * line already says what to do. Ordinary sent quotes keep the sentence.
+ */
+describe("R-2054: no 'formally accept' sentence on a part payment request", () => {
+  it("an open part request has no accept wording, and money can still be recorded", () => {
+    for (const status of ["sent", "viewed"]) {
+      const a = quoteMoneyActions(q({ status, total: 4814, partRequest: true }), rupee);
+      expect(a.stage).toBe("open");
+      expect(a.note).not.toMatch(/formally accept|Waiting on the customer/);
+      expect(a.note).toBe("");
+      expect(a.canRecordPayment).toBe(true);
+    }
+  });
+
+  it("an ordinary sent quote keeps it", () => {
+    for (const partRequest of [false, undefined]) {
+      const a = quoteMoneyActions(q({ status: "sent", partRequest }), rupee);
+      expect(a.note).toBe("Waiting on the customer. You can still record a payment if money arrives before they formally accept.");
+    }
+  });
+});

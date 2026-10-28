@@ -751,6 +751,7 @@ export default function QuoteDetailPage() {
       invoiceId:     quote.invoice_id,
       total,
       received:      totalReceivedSoFar,
+      partRequest,   // R-2054: no "formally accept" sentence on a part payment request
       /* R-446: same test the database trigger uses — any subscription of this quote that
          is not yearly (or the quote's own cycle, before the subscription exists). */
       splitBilledCycle: splitCycle,
