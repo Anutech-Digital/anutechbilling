@@ -16,6 +16,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { lutMissingWarning } from "@/lib/gst/export-lut";
 import { invoiceIssueFix } from "@/lib/onboarding/setup-links";
 import { customerBeforeInvoice } from "@/lib/quotes/quote-page-actions";
+import { pendingPartAction, partGenerateResult, type PartGenerateAnswer, type PartGenerateResult, type SplitSaleStatus } from "@/lib/invoices/split-sale-pending";
 
 /**
  * R-431 (board R-406): generate_invoice refuses when the company's own state is empty. The
@@ -103,7 +104,7 @@ export function useQuotesAwaitingInvoice() {
       const { data: quotes, error } = await supabase
         .from("quotes")
         .select(
-          "id, customer_id, customer_name, amount, payment_amount, payment_received_at, payment_method, lead_id, payment_status, payment_terms_days",
+          "id, customer_id, customer_name, amount, payment_amount, payment_received_at, payment_method, lead_id, payment_status, payment_terms_days, subtotal, discount_pct, tax_rate, billing_cycle, line_items",
         )
         .in("payment_status", ["partial", "received"])
         .is("invoice_id", null);
@@ -155,13 +156,31 @@ export function useQuotesAwaitingInvoice() {
         for (const c of custs ?? []) gstinByCustomer.set(c.id, c.gstin ?? null);
       }
 
+      /* R-2057: a sale billed in parts (annual commitment, paid quarterly / monthly) is tax-invoiced
+         ONE PART at a time, and its quote never gets quotes.invoice_id — so it sat here for ever and
+         its Generate (the whole term) was refused. split_sale_invoice_status (migration
+         20261028151322) says what each part stands at, from the billing job's own rules: the row
+         offers "Generate invoice for Q1 …", says the part is not paid in full, or leaves the list
+         (its due part is invoiced). Not answered (e.g. migration not on this database yet) → the
+         rows stay as they were; the database still refuses a whole-term invoice. */
+      const statusByQuote = new Map<string, SplitSaleStatus>();
+      {
+        const { data: st, error: sErr } = await (supabase as unknown as {
+          rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: SplitSaleStatus[] | null; error: { message: string } | null }>;
+        }).rpc("split_sale_invoice_status", { p_quote_ids: quoteIds });
+        if (sErr) console.error("[useQuotesAwaitingInvoice] split_sale_invoice_status failed:", sErr.message);
+        for (const row of st ?? []) statusByQuote.set(row.quote_id, row);
+      }
+
       // Decorate each quote with its first_advance_at; sort by oldest first (most urgent)
       return quotes
         .map((q) => ({
           ...q,
           first_advance_at: firstAdvanceByQuote.get(q.id) ?? q.payment_received_at ?? null,
           customer_gstin: q.customer_id ? gstinByCustomer.get(q.customer_id) ?? null : null,
+          part_action: pendingPartAction(statusByQuote.get(q.id), q),
         }))
+        .filter((q) => q.part_action.kind !== "hide")
         .sort((a, b) => {
           if (!a.first_advance_at) return 1;
           if (!b.first_advance_at) return -1;
@@ -276,6 +295,26 @@ export function useGenerateInvoice() {
         toast.success(`Invoice ${invoiceId} generated · ₹${netPayable.toLocaleString("en-IN")} payable`);
       }
     },
+    onError: (err) => toastInvoiceIssueError(err),
+  });
+}
+
+/**
+ * R-2057: Generate on a pending sale billed in parts — the due part's tax invoice through the billing
+ * cron's own path (POST /api/quotes/:id/raise-instalments → raiseDueInstalmentsForQuote →
+ * bill_subscription_instalment → raise_subscription_billing). Never the whole term. A part already
+ * invoiced comes back as that invoice (kind "existing") — the caller opens it, nothing new is made.
+ */
+export function useGeneratePartInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (quoteId: string): Promise<PartGenerateResult> => {
+      const res = await fetch(`/api/quotes/${encodeURIComponent(quoteId)}/raise-instalments`, { method: "POST" });
+      const body = (await res.json().catch(() => null)) as (PartGenerateAnswer & { error?: string }) | null;
+      if (!res.ok || !body) throw new Error(body?.error ?? `The invoice could not be issued (HTTP ${res.status}). Try again.`);
+      return partGenerateResult(body);
+    },
+    onSettled: () => invalidateReceivables(qc),
     onError: (err) => toastInvoiceIssueError(err),
   });
 }
