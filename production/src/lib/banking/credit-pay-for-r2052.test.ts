@@ -42,6 +42,6 @@ describe("R-2052 paid up to — Annual commitment billed in parts", () => {
   it("extra money paying every later part → paid up to the day before Renews on, no next bill", () => {
     const p = salePaidUp(saleSchedule(lines, 18, "half_yearly", START), 19116, RENEW)!;
     expect(p).toMatchObject({ paidUpTo: "2027-10-22", next: null, rest: [] });
-    expect(paidUpText(p)).toBe("Paid up to 22-10-2027 — the whole year is paid.");
+    expect(paidUpText(p)).toBe("The whole year is paid.");   // R-2053: the term line says when it ends
   });
 });

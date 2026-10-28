@@ -43,7 +43,7 @@ import {
 import {
   amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
-  paidUpText, saleLineFromItem, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, shownPriceUnit, shownUnitPrice,
+  paidUpText, saleLineFromItem, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice,
   tdsRateToRecord, tdsToRecord,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
@@ -177,6 +177,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   React.useEffect(() => { setCreateSub(true); setSubStart(transaction.txn_date); setSubRenewal(null); }, [transaction.id, transaction.txn_date, pickKey, mode]);
   const renewalShown = subRenewal ?? defaultRenewal(subStart || transaction.txn_date, monthly);
   const datesBad = makesSub && createSub && (!subStart || renewalShown <= subStart);
+  const termText = mode === "sale" ? saleTermText(subStart, renewalShown) : null;
 
   /* ── 3. Amount check ─────────────────────────────────────────────────────────── */
   /* R-2026: a new sale paid in parts is due its FIRST bill now (Annual + Quarterly = one
@@ -393,10 +394,11 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                     <Input type="date" value={renewalShown} onChange={(e) => setSubRenewal(e.target.value || null)} aria-label="Subscription renewal date" />
                   </label>
                   {datesBad && <p className="text-xs text-rose-ink sm:col-span-2">The renewal date must be after the start date.</p>}
-                  {paidUp && (
-                    <div className="text-xs sm:col-span-2 space-y-0.5">
-                      <p className="text-ink-2 tabular-nums">{paidUpText(paidUp)}</p>
-                      <p className="text-ink-3">Renews on is the end of the 1-year commitment; parts are billed on their dates.</p>
+                  {/* R-2053: the term once, then (R-2052) how far the money pays — no date twice. */}
+                  {(termText || paidUp) && (
+                    <div className="text-xs sm:col-span-2 space-y-0.5 tabular-nums">
+                      {termText && <p className="text-ink-3">{termText}</p>}
+                      {paidUp && <p className="text-ink-2">{paidUpText(paidUp)}</p>}
                     </div>
                   )}
                 </div>
@@ -553,7 +555,7 @@ function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPay
               <label className="text-xs text-ink-3 space-y-0.5">
                 <span className="block">Unit price {unit}</span>
                 <Input type="number" min={0} step="any" value={String(shownUnitPrice(l))}
-                  onChange={(e) => onChange(idx, { rate: rateFromShownPrice(l, Number(e.target.value)) })}
+                  onChange={(e) => onChange(idx, { rate: rateFromShownPrice(l, Number(e.target.value)), priceTyped: true })}
                   aria-label={`Unit price ${unit}`} />
               </label>
             </div>
