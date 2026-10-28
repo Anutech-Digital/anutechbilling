@@ -19,7 +19,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { QUOTE_FOCI, QUOTE_FOCUS_LABEL, quoteInFocus, focusValue, type QuoteFocus } from "@/lib/quotes/focus";
 import { FocusBanner } from "@/components/shared/focus-banner";
-import { useQuotes, useDeleteQuote, quoteDeleteBlockReason } from "@/lib/queries/quotes";
+import { useQuotes, useDeleteQuote, quoteDeleteBlockReason, useSubscriptionBillingDueDates, useCustomerStopped } from "@/lib/queries/quotes";
 import { useQuoteLeadContacts } from "@/lib/queries/quote-lead-contacts";
 import { quoteMatchesSearch, quotePartyName } from "@/lib/quotes/quote-party-name";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
@@ -70,6 +70,11 @@ import type { Quote } from "@/lib/supabase/database.types";
 /* R-105: same paging rule + "Load N more" control as Payments (R-104) and the shared DataTable. */
 import { usePagedRows, LoadMore } from "../payments/load-more";
 import { QUOTES_PAGE_SIZE, quotesPagingKey } from "./paging";
+/* R-2046: Commitment due — unpaid part payment requests, with the SAME dialogs as elsewhere. */
+import { COMMITMENT_CHOICES, commitmentDueRows, isCommitmentDue, type CommitmentQuote } from "./commitment-due";
+import { CommitmentDueSection, CommitmentDueStrip } from "./commitment-due-section";
+import { RecordQuotePaymentDialog } from "../payments/record-quote-payment";
+import { CustomerStoppedDialog } from "./[id]/customer-stopped-dialog";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { COPY } from "@/lib/copy";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
@@ -255,6 +260,30 @@ export default function QuotesPage() {
      counts add up to All. Before, an invoiced quote with a balance counted under
      Accepted/Invoiced AND Awaiting payment, and a rejected one showed under Expired. */
   const counts = React.useMemo(() => quoteTabCounts(quotesByWorkspace), [quotesByWorkspace]);
+
+  /* ── R-2046: Commitment due ───────────────────────────────────────────────
+     Unpaid part payment requests (R-2044) — committed money that is not an invoice yet, so not
+     in receivables. Same team cut as the list. Days overdue from each part's bill date. */
+  const [commitmentParam, setCommitmentParam] = useUrlChoice<(typeof COMMITMENT_CHOICES)[number]>("commitment", COMMITMENT_CHOICES, "");
+  const showCommitment = commitmentParam === "due";
+  const commitmentQuotes = React.useMemo(
+    () => (quotesByWorkspace as unknown as CommitmentQuote[]).filter(isCommitmentDue),
+    [quotesByWorkspace],
+  );
+  const { data: billOnById } = useSubscriptionBillingDueDates(
+    commitmentQuotes.map((q) => q.subscription_billing_id as string),
+  );
+  const commitment = React.useMemo(
+    () => commitmentDueRows(commitmentQuotes, billOnById ?? new Map(), istToday()),
+    [commitmentQuotes, billOnById],
+  );
+  const mayRecordMoney = canRecordMoney(me?.role);
+  const [payQuoteId, setPayQuoteId] = React.useState<string | null>(null);
+  const [stopQuoteId, setStopQuoteId] = React.useState<string | null>(null);
+  const customerStopped = useCustomerStopped({ onDone: () => setStopQuoteId(null) });
+  /* The section replaces the tabbed list only once the quotes loaded — a failed read shows the
+     list's own error, never an empty "nothing due". */
+  const commitmentOn = showCommitment && !isLoading && !error && !!quotes;
 
   // Awaiting payment = money expected but not yet fully received. Includes an
   // INVOICED quote that still has a balance due — else real outstanding cash
@@ -657,8 +686,28 @@ export default function QuotesPage() {
             }}
           />
 
+          {/* R-2046: Commitment due — a strip above the tabs (not a tab: these quotes already sit
+              in Sent / Awaiting payment, R-469); opening it shows its own section in place of the
+              tabbed list, with Record payment / Customer stopped on each row. */}
+          {!isLoading && !error && quotes && (commitmentOn ? (
+            <CommitmentDueSection
+              rows={commitment.rows}
+              total={commitment.total}
+              mayRecordMoney={mayRecordMoney}
+              onRecordPayment={setPayQuoteId}
+              onCustomerStopped={setStopQuoteId}
+              onClose={() => setCommitmentParam("")}
+            />
+          ) : (
+            <CommitmentDueStrip
+              count={commitment.rows.length}
+              total={commitment.total}
+              onShow={() => setCommitmentParam("due")}
+            />
+          ))}
+
           {/* Sticky Horizontal TabBar + Date Range + Search */}
-          {!isLoading && quotes && quotes.length > 0 && (
+          {!commitmentOn && !isLoading && quotes && quotes.length > 0 && (
             <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 md:-mx-6 md:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-3">
               {focus && (
                 <FocusBanner label={QUOTE_FOCUS_LABEL[focus]} count={filtered.length} onClear={() => setFocus("")} />
@@ -740,7 +789,7 @@ export default function QuotesPage() {
       )}
 
       {/* Empty */}
-      {!isLoading && !error && quotes && quotes.length === 0 && (() => {
+      {!commitmentOn && !isLoading && !error && quotes && quotes.length === 0 && (() => {
         /* R-063: was "No quotes yet" even with project quotes in the next tab. */
         const c = quotesEmptyCopy("subscription", projectQuotes?.length ?? 0);
         return (
@@ -759,7 +808,7 @@ export default function QuotesPage() {
       })()}
 
       {/* Filtered empty */}
-      {!isLoading && !error && quotes && quotes.length > 0 && filtered.length === 0 && (
+      {!commitmentOn && !isLoading && !error && quotes && quotes.length > 0 && filtered.length === 0 && (
         <div className="mt-6">
           <EmptyState
             icon="search"
@@ -772,7 +821,7 @@ export default function QuotesPage() {
       )}
 
       {/* Adaptive card list — phones, tablets, and medium viewports (< 1280px) */}
-      {!isLoading && !error && filtered.length > 0 && (
+      {!commitmentOn && !isLoading && !error && filtered.length > 0 && (
         <ul className="xl:hidden space-y-2 mb-3">
           {paged.shown.map((q) => {
             const uStatus = unifiedStatus(q);
@@ -858,7 +907,7 @@ export default function QuotesPage() {
       )}
 
       {/* Desktop table — large viewports (>= 1280px) */}
-      {!isLoading && !error && filtered.length > 0 && (
+      {!commitmentOn && !isLoading && !error && filtered.length > 0 && (
         <div className="hidden xl:block">
           <Card flush>
             <table className="w-full">
@@ -1227,6 +1276,23 @@ export default function QuotesPage() {
         <FAB icon="plus" label="New quote" onClick={() => setProjectQuoteOpen(true)} />
       ) : (
         <FAB icon="plus" label="New quote" href="/quotes/new" />
+      )}
+
+      {/* R-2046: the same Record payment sheet as the quote page / Payments (record_payment RPC). */}
+      <RecordQuotePaymentDialog
+        quoteId={payQuoteId}
+        open={!!payQuoteId && mayRecordMoney}
+        onOpenChange={(o) => { if (!o) setPayQuoteId(null); }}
+      />
+      {/* R-2046: the same Customer stopped dialog as the quote page (stop_part_payment_request). */}
+      {stopQuoteId && (
+        <CustomerStoppedDialog
+          open
+          onOpenChange={(o) => { if (!o) setStopQuoteId(null); }}
+          quoteId={stopQuoteId}
+          pending={customerStopped.isPending}
+          onConfirm={(input) => customerStopped.mutate({ quoteId: stopQuoteId, ...input })}
+        />
       )}
 
       <CreateProjectQuoteDialog open={projectQuoteOpen} onOpenChange={setProjectQuoteOpen} />
