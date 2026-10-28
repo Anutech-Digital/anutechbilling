@@ -34,6 +34,7 @@ import { recordPaymentConsequences } from "@/lib/payments/record-consequences";
 import { useDocumentSeries, useGenerateInvoice } from "@/lib/queries/invoices";
 import { useRouter } from "next/navigation";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { isPartRequest, partLabelOf, partRequestPaymentToast } from "@/lib/billing/part-requests";
 import { paymentToast, blankReference, subscriptionNoteFor, type PaymentToastAction, type SubscriptionNote } from "@/lib/payments/record-payment-toast";
 import {
   invoiceNowOffer,
@@ -558,6 +559,8 @@ export function RecordPaymentDialog({
     gstinNudge: B2cNudge | null;
     /** R-2044: a part's payment request — paying it raises that part's tax invoice itself. */
     partRequest: boolean;
+    /** R-2048: the part's short name ("Q2") for the toast, from the request's line. */
+    partLabel: string | null;
   } | null>(null);
   React.useEffect(() => {
     if (!open || invoiceId) { setInvoiceFacts(null); return; }
@@ -573,8 +576,12 @@ export function RecordPaymentDialog({
       /* R-2044: quotes.subscription_billing_id (migration 20261028025317) — read untyped until the
          generated types are refreshed. */
       const { data: pr } = await (supabase as unknown as SupabaseClient)
-        .from("quotes").select("subscription_billing_id").eq("id", quoteId).maybeSingle();
-      const partRequest = Boolean((pr as { subscription_billing_id?: string | null } | null)?.subscription_billing_id);
+        .from("quotes").select("subscription_billing_id, line_items").eq("id", quoteId).maybeSingle();
+      const prRow = pr as { subscription_billing_id?: string | null; line_items?: unknown } | null;
+      const partRequest = isPartRequest(prRow);
+      const partLabel = partRequest && Array.isArray(prRow?.line_items)
+        ? partLabelOf((prRow.line_items[0] as { name?: string | null } | undefined)?.name)
+        : null;
       /* R-447: the quote's own Place of supply counts, not only the lead's state — order in
          paymentBuyerPlace (customer with a state → quote → lead). Before issuing, the sheet
          copies the quote's state onto a customer that has none (fillCustomerStateFromQuote). */
@@ -589,7 +596,7 @@ export function RecordPaymentDialog({
       const gstinNudge = b2cGstinNudge({
         quoteId, customerId: q.customer_id ?? null, customer: c ?? null, lead: l ?? null, prospectCountry: q.prospect_country,
       });
-      if (live) setInvoiceFacts({ billingCycle: q.billing_cycle ?? null, buyer, gstinNudge, partRequest });
+      if (live) setInvoiceFacts({ billingCycle: q.billing_cycle ?? null, buyer, gstinNudge, partRequest, partLabel });
     })();
     return () => { live = false; };
   }, [open, quoteId, invoiceId]);
@@ -955,7 +962,8 @@ export function RecordPaymentDialog({
          select("*") because credit_activated_at is absent before the R-346 migration; a
          named column would fail the whole read there. Rule: subscriptionNoteFor(). */
       let subscriptionNote: SubscriptionNote = null;
-      if (res.isFirstPayment && !res.subscriptionCreated && !res.isRenewalQuote) {
+      /* R-2048: not for a part request — it is one part of a running subscription, not a one-off. */
+      if (res.isFirstPayment && !res.subscriptionCreated && !res.isRenewalQuote && !invoiceFacts?.partRequest) {
         const sb = createClient();
         const [{ data: q }, { count: subCount }] = await Promise.all([
           sb.from("quotes").select("*").eq("id", quoteId).maybeSingle(),
@@ -1054,7 +1062,17 @@ export function RecordPaymentDialog({
       const tLines = res.instalmentLines.length ? { ...tBase, lines: [...res.instalmentLines, ...tBase.lines] } : tBase;
       /* R-1730: the domain is set up after the payment, not in this sheet. */
       const setupLine = domainSetupLine({ domainToSetUp: res.domainToSetUp, isFullyPaid: res.isFullyPaid });
-      const t = setupLine ? { ...tLines, lines: [...tLines.lines, setupLine] } : tLines;
+      const tAll = setupLine ? { ...tLines, lines: [...tLines.lines, setupLine] } : tLines;
+      /* R-2048: a part request's toast says the part's tax invoice was raised and the subscription
+         continues — never "one-time purchase" or "GST invoice can be generated now". */
+      const t = invoiceFacts?.partRequest
+        ? partRequestPaymentToast(tAll, {
+            part: invoiceFacts.partLabel,
+            invoiceId: firstRaised,
+            isFullyPaid: res.isFullyPaid,
+            error: splitRaise?.errors[0]?.message ?? null,
+          })
+        : tAll;
       const run = (action: PaymentToastAction) => () => runToastAction(action, res.newPaymentId ?? null);
       (t.tone === "warning" ? toast.warning : toast.success)(t.title, {
         description: t.lines.length ? t.lines.join("\n") : undefined,

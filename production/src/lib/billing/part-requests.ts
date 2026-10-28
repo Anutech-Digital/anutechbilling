@@ -23,7 +23,9 @@ export type BillOutcome =
   | { action: "already_invoiced"; invoice_id: string }
   | { action: "invoice"; invoice_id?: string; gross: number; already_raised?: boolean; dry_run?: boolean; reason?: string }
   | { action: "request"; quote_id?: string; created?: boolean; gross: number; dry_run?: boolean }
-  | { action: "request_open"; quote_id: string; status: string; gross: number };
+  /* R-2048: sale_quote = the part is the first of an unpaid sale; quote_id is the open sale quote,
+     which is its payment request (no invoice, no second request). */
+  | { action: "request_open"; quote_id: string; status: string; gross: number; sale_quote?: boolean };
 
 export interface BillTally {
   raised: { period_index: number; invoice_id: string; gross: number }[];
@@ -194,4 +196,82 @@ export function showCustomerStopped(q: {
     && ["sent", "viewed", "accepted"].includes(q.status)
     && !q.invoice_id
     && q.receivedSoFar <= 0;
+}
+
+/* ─── R-2048: the part request's own page and toast ───────────────────────────────────────
+   A part request (quotes.subscription_billing_id set) is not a sales quote: nobody approves,
+   signs or accepts it — the customer pays it and its tax invoice is raised. The quote page and
+   the Record payment toast read these rules, so they never show the sales-quote flow on it. */
+
+/** True when this quote is the payment request for one part of a subscription billed in parts. */
+export function isPartRequest(q: { subscription_billing_id?: string | null } | null | undefined): boolean {
+  return Boolean(q?.subscription_billing_id);
+}
+
+/** The badge next to the status on a part request's page. */
+export const PART_REQUEST_BADGE = "Payment request";
+
+/** "Advance payment for Q2 · 28 Jan–27 Apr 2027" → "Q2" (the part's short name), else null. */
+export function partLabelOf(lineName: string | null | undefined): string | null {
+  const m = /^Advance payment for (.+?)(?: · .*)?$/.exec((lineName ?? "").trim());
+  return m ? m[1].trim() : null;
+}
+
+interface StepLike { stage: string; label: string; state: "done" | "current" | "todo" | "skipped"; detail: string }
+
+/**
+ * The bar for a part request: Sent → Paid → Invoiced. No Draft (it is made sent), no Signed (it
+ * is never accepted), no Provisioned (the service is already running). Exactly one step is
+ * "current" — the first unfinished one — unless the request was closed (Customer stopped).
+ */
+export function partRequestSteps<S extends StepLike>(steps: readonly S[], dead: boolean): S[] {
+  const keep = steps
+    .filter((s) => s.stage === "sent" || s.stage === "paid" || s.stage === "invoiced")
+    .map((s) => ({ ...s, state: s.state === "current" ? "todo" : s.state }) as S);
+  for (const s of keep) {
+    if (s.stage === "sent") s.detail = s.state === "done" ? "Payment request sent to the customer." : "Not sent yet.";
+    if (s.stage === "invoiced" && s.state !== "done") s.detail = "The tax invoice is raised when this is paid.";
+    if (s.stage === "invoiced" && s.state === "done") s.detail = "Tax invoice raised for this part.";
+  }
+  if (!dead) {
+    const next = keep.find((s) => s.state === "todo");
+    if (next) next.state = "current";
+  }
+  return keep;
+}
+
+/** The sentence on the action row of an open part request (instead of the accept / reject row). */
+export function partRequestOpenLine(dueOn: string | null): string {
+  return `Payment request for one part of the subscription${dueOn ? `, due ${dueOn}` : ""}. Record the payment when it comes in — its tax invoice is raised then. If the customer will not pay, use More → Customer stopped.`;
+}
+
+interface ToastLike { tone: "success" | "warning"; title: string; lines: string[] }
+
+/**
+ * The Record payment toast on a part request. The generic toast calls it "a one-time purchase —
+ * there is no subscription to renew" (its line is one_time) — wrong: it is one part of a running
+ * subscription. Says what really happened: the part's tax invoice was raised and the
+ * subscription continues — or, when it could not be raised now, why, and that the next billing
+ * run raises it.
+ */
+export function partRequestPaymentToast<T extends ToastLike>(base: T, a: {
+  part: string | null;
+  invoiceId: string | null;
+  isFullyPaid: boolean;
+  error: string | null;
+}): T {
+  const part = a.part ?? "this part";
+  const lines = base.lines.filter((l) => !/one-time purchase|no subscription to renew|No subscription was created/.test(l));
+  if (a.invoiceId) {
+    return { ...base, tone: base.tone, title: `Paid — tax invoice ${a.invoiceId} raised for ${part} (subscription continues)`, lines };
+  }
+  if (!a.isFullyPaid) {
+    return { ...base, title: `Payment recorded for ${part} · the tax invoice is raised when it is fully paid`, lines };
+  }
+  return {
+    ...base,
+    tone: "warning",
+    title: `Paid — the tax invoice for ${part} was not raised yet`,
+    lines: [...(a.error ? [a.error] : []), "The next billing run raises it once that is fixed. The subscription continues.", ...lines],
+  };
 }

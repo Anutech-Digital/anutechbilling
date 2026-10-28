@@ -48,7 +48,7 @@ export const AUTOMATION_JOBS = {
   "compliance-reminders": { label: "Compliance due-date reminders", what: "Reminds about GST, TDS and other statutory due dates.", customerFacing: true, scope: "tenant", dryRun: true },
   "health-digest":        { label: "Error digest email", what: "Reads the app's error logs and emails the owner when something broke.", customerFacing: false, scope: "platform", dryRun: true },
   "ai-reflection":        { label: "AI daily reflection", what: "Emails the platform owner a short daily summary of what the AI did.", customerFacing: false, scope: "platform", dryRun: true },
-  "billing":              { label: "Instalment invoices", what: "Raises the tax invoice for each subscription instalment when it falls due.", customerFacing: true, scope: "tenant", dryRun: true },
+  "billing":              { label: "Instalment payment requests", what: "Sends a payment request for each subscription part when it falls due; the tax invoice is raised when it is paid.", customerFacing: true, scope: "tenant", dryRun: true },
   "ai-reply-retry":       { label: "AI reply retry", what: "Answers customer emails the AI could not answer the first time.", customerFacing: true, scope: "tenant", dryRun: false },
   "ai-sales-loop":        { label: "AI sales follow-ups", what: "Sends the AI's planned follow-ups to leads.", customerFacing: true, scope: "tenant", dryRun: false },
   "ai-support-sla":       { label: "AI support ticket sweep", what: "Closes support tickets the customer never came back to, and flags unowned ones.", customerFacing: true, scope: "tenant", dryRun: false },
