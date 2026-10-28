@@ -196,6 +196,83 @@ export async function fetchInrRate(
 }
 
 /**
+ * R-2056 — FBIL rows → the rate of the newest publish day ON or BEFORE `date` (YYYY-MM-DD).
+ * FBIL's refrates/fetch returns the last couple of publish days, so a recent bill date is
+ * usually in it; an older one is not (→ null).
+ */
+export function parseFbilReferenceRateOn(json: unknown, from: string, date: string): { rate: number; asOf: string } | null {
+  if (!Array.isArray(json)) return null;
+  const onOrBefore = (json as Array<Record<string, unknown>>).filter((r) => {
+    const d = toIsoDate(r?.processRunDate);
+    return !!d && d <= date;
+  });
+  return parseFbilReferenceRates(onOrBefore, from);
+}
+
+/** A bill dated on a holiday / weekend takes FBIL's last publish day — at most this many days before. */
+const FBIL_DATED_MAX_GAP_DAYS = 4;
+/** ECB (frankfurter) gives the last working day on or before the date — at most this far back. */
+const ECB_DATED_MAX_GAP_DAYS = 7;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * R-2056 (28 Oct 2026) — the ₹ rate for 1 `from` ON A GIVEN DATE (a bill's date), or null.
+ *
+ * Today, a future date or no date → exactly `fetchInrRate` (the latest rate). A past date:
+ *   1. FBIL reference rate of that day (or its last publish day ≤ 4 days before) — "reference";
+ *   2. the ECB rate of that day from frankfurter.app's dated endpoint — "indicative";
+ *   never open.er-api.com: it only knows today's rate, which would be the wrong day's number.
+ * Cached per currency + date for the rest of the IST day. Never throws; never invents a number.
+ * One helper for every document with a date — vendor bills now; quotes / invoices can use it too.
+ */
+export async function fetchInrRateOn(
+  fromRaw: string,
+  date: string | null | undefined,
+  opts: { fetchImpl?: FetchLike; now?: Date } = {},
+): Promise<FxRate | null> {
+  const from = fromRaw.toUpperCase().trim();
+  const now = opts.now ?? new Date();
+  const today = istToday(now);
+  if (!date || !DATE_RE.test(date) || date >= today || from === FX_TO) return fetchInrRate(from, opts);
+
+  const key = `${from}|${date}`;
+  const hit = cache.get(key);
+  if (hit && hit.day === today) return hit.value;
+
+  const fetchImpl: FetchLike = opts.fetchImpl ?? ((u, i) => fetch(u, i));
+  let value: FxRate | null = null;
+
+  const fbil = parseFbilReferenceRateOn(await getJson(fetchImpl, FBIL_URL), from, date);
+  if (fbil && daysBetween(fbil.asOf, date) <= FBIL_DATED_MAX_GAP_DAYS) {
+    value = make(fbil.rate, from, fbil.asOf, "fbil");
+  }
+  if (!value) {
+    const fr = parseFrankfurter(
+      await getJson(fetchImpl, `https://api.frankfurter.app/${date}?from=${encodeURIComponent(from)}&to=${FX_TO}`),
+    );
+    if (fr && fr.asOf && fr.asOf <= date && daysBetween(fr.asOf, date) <= ECB_DATED_MAX_GAP_DAYS) {
+      value = make(fr.rate, from, fr.asOf, "frankfurter");
+    }
+  }
+
+  if (value) cache.set(key, { value, day: today, at: now.getTime() });
+  return value;
+}
+
+/**
+ * R-2056 — the small line under an auto-filled Exchange rate box:
+ *   "₹94.7145 · FBIL/RBI reference rate, 21 Oct 2026 — change it if your bank charged a different rate"
+ * An indicative rate says plainly that it is not the RBI reference rate.
+ */
+export function fxRateHint(r: Pick<FxRate, "rate" | "asOf" | "source">): string {
+  const label = fxSourcePdfLabel(r.source) ?? fxSourceLabel(r.source) ?? r.source;
+  const date = formatFxDate(r.asOf);
+  const head = `₹${r.rate} · ${label}${date ? `, ${date}` : ""}`;
+  const indicative = fxKindOf(r.source) === "indicative";
+  return `${head} — ${indicative ? "not the RBI reference rate; " : ""}change it if your bank charged a different rate`;
+}
+
+/**
  * The line the invoice / quote PDF prints under the totals for a foreign-currency document:
  *   "₹ equivalent at 1 USD = ₹95.9832 (FBIL/RBI reference rate, 30 Sep 2026)"
  * GST is always computed and reported in ₹; this says which rate turned the foreign

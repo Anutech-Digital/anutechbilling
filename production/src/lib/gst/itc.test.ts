@@ -14,8 +14,8 @@ describe("input tax credit on expenses", () => {
 
   it("kaccha / no bill, no GSTIN, blocked category → cost, with the reason", () => {
     expect(itcEligibility({ gst_paid: 100, bill_type: "kaccha", category: "Software", vendorGstin: G }).reason).toMatch(/Not a GST tax invoice/);
-    expect(itcEligibility({ gst_paid: 100, bill_type: "gst", category: "Software", vendorGstin: null }).reason).toMatch(/no GSTIN/);
-    expect(itcEligibility({ gst_paid: 100, bill_type: "gst", category: "Software", vendorGstin: "ABC" }).reason).toMatch(/no GSTIN/);
+    expect(itcEligibility({ gst_paid: 100, bill_type: "gst", category: "Software", vendorGstin: null }).reason).toMatch(/box is empty/);   // R-2056
+    expect(itcEligibility({ gst_paid: 100, bill_type: "gst", category: "Software", vendorGstin: "ABC" }).reason).toMatch(/looks wrong/);   // R-2056: wrong format, not "empty"
     expect(itcEligibility({ gst_paid: 100, bill_type: "gst", category: "Staff Welfare", vendorGstin: G }).reason).toMatch(/17\(5\)\(b\)/);
     expect(itcEligibility({ gst_paid: 100, bill_type: "gst", category: "Business Promotion", vendorGstin: G }).reason).toMatch(/17\(5\)\(h\)/);
   });
