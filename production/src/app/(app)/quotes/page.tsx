@@ -79,6 +79,7 @@ import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { COPY } from "@/lib/copy";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { quoteListTab, quoteTabCounts, isPipelineQuote } from "@/lib/quotes/list-tab";
+import { paidToDateOf } from "@/lib/quotes/paid-to-date";
 import { QUOTE_STATE_LABEL, QUOTE_WITH_CUSTOMER_LABEL } from "@/lib/quotes/state-labels";
 import { quoteTotalUnit, extensionBadgeLabel } from "@/lib/quotes/billing";
 import { useQuoteOpenBalances, withOpenBalances } from "@/lib/quotes/open-balances";
@@ -1125,6 +1126,14 @@ export default function QuotesPage() {
                               return (
                                 <Button asChild size="sm" variant="primary" icon="receipt">
                                   <Link href={`/quotes/${q.id}` as any}>Generate invoice</Link>
+                                </Button>
+                              );
+                            }
+                            /* R-2055: billed in parts, first part paid — paid to date; the next part has its own payment request. */
+                            if (ps === "partial" && paidToDateOf(q)) {
+                              return (
+                                <Button asChild size="sm" icon="file">
+                                  <Link href={`/quotes/${q.id}` as any}>Open quote</Link>
                                 </Button>
                               );
                             }

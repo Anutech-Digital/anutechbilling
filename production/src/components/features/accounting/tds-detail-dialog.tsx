@@ -44,14 +44,18 @@ import {
   useWriteOffTds,
   useDeleteTdsReceivable,
 } from "@/lib/queries/tds-receivable";
+import type { TdsMismatch } from "@/lib/accounting/tds-mismatch";
+import { TdsMismatchNote, EffectiveRate } from "./tds-mismatch-note";
 
 interface Props {
   open:         boolean;
   onOpenChange: (open: boolean) => void;
   tds:          TdsReceivable | null;
+  /** R-2047: TDS that is not rate × gross (tdsEntryMismatch) — amber note + Effective rate. */
+  mismatch?:    TdsMismatch | null;
 }
 
-export function TdsDetailDialog({ open, onOpenChange, tds }: Props) {
+export function TdsDetailDialog({ open, onOpenChange, tds, mismatch = null }: Props) {
   const { data: me } = useCurrentUser();
   const [uploading, setUploading]   = React.useState(false);
   const [customerPhone, setCustomerPhone] = React.useState<string | null>(null);
@@ -147,7 +151,9 @@ export function TdsDetailDialog({ open, onOpenChange, tds }: Props) {
             <span className="font-mono">{tds.customer_tan ?? "—"}</span>
           } />
           <Field label="Section" value={tds.section} mono />
-          <Field label="Rate" value={`${Number(tds.rate_pct).toFixed(2)}%`} mono />
+          <Field label="Rate" value={mismatch
+            ? <>{Number(tds.rate_pct).toFixed(2)}% <EffectiveRate pct={mismatch.effectivePct} className="ml-1" /></>
+            : `${Number(tds.rate_pct).toFixed(2)}%`} mono />
           <Field label="Pre-GST taxable" value={rupee(tds.gross_amount)} mono />
           <Field label="TDS amount" value={<span className="text-rose font-semibold">{rupee(tds.tds_amount)}</span>} mono />
           <Field label="Net paid to bank" value={<span className="text-emerald">{rupee(tds.net_paid)}</span>} mono />
@@ -168,6 +174,8 @@ export function TdsDetailDialog({ open, onOpenChange, tds }: Props) {
             <Field label="ITR claimed on" value={formatDate(tds.claimed_in_itr_date)} />
           )}
         </div>
+
+        {mismatch && <TdsMismatchNote mismatch={mismatch} withNextStep />}
 
         {tds.notes && (
           <div className="bg-paper-2/40 rounded-md p-3 text-xs text-ink-2 leading-relaxed">

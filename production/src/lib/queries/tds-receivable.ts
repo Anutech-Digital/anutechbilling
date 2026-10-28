@@ -126,6 +126,37 @@ async function linkTdsInvoices(supabase: ReturnType<typeof createClient>, rows: 
   }
 }
 
+/** R-2047: an invoice's tax figures, to tell whether TDS was deducted on the GST-inclusive amount. */
+export interface TdsInvoiceTax {
+  id: string;
+  taxable_value: number | null;
+  tax_amount: number | null;
+  tax_rate: number | null;
+}
+
+/**
+ * R-2047: tax figures of the invoices TDS entries are linked to, keyed by invoice id. Read-only;
+ * a failed lookup gives an empty map (the screen then shows the generic note, never hides rows).
+ */
+export function useTdsInvoiceTax(invoiceIds: readonly (string | null | undefined)[]) {
+  const ids = Array.from(new Set(invoiceIds.filter((x): x is string => !!x))).sort();
+  return useQuery({
+    queryKey: ["tds_receivable", "invoice_tax", ids],
+    enabled: ids.length > 0,
+    queryFn: async (): Promise<Record<string, TdsInvoiceTax>> => {
+      const supabase = createClient();
+      try {
+        const rows = await fetchAllRowsIn<TdsInvoiceTax, string>(ids, (chunk, from, to) =>
+          supabase.from("invoices").select("id, taxable_value, tax_amount, tax_rate")
+            .in("id", chunk).order("id", { ascending: true }).range(from, to));
+        return Object.fromEntries(rows.map((r) => [r.id, r]));
+      } catch {
+        return {};
+      }
+    },
+  });
+}
+
 /** Status counts + totals — drives the tab badges + KPI strip. */
 export function useTdsSummary(fiscalYear?: string) {
   return useQuery({

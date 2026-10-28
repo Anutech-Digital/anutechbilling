@@ -51,7 +51,8 @@ function newSale(credit: number, payment: string) {
   fireEvent.change(screen.getByLabelText("Seats"), { target: { value: "10" } });
   fireEvent.change(screen.getByLabelText("Payment"), { target: { value: payment } });
 }
-const HINT = "Renews on is the end of the 1-year commitment; parts are billed on their dates.";
+/* R-2053: the old hint gave way to the term line ("Renews on" is the day the next year starts). */
+const TERM = "1 year: 23-10-2026 to 22-10-2027 · renews 23-10-2027";
 
 describe("R-2052 Create subscription: Renews on stays a year, paid-up line beside it", () => {
   it("owner's example: Half-yearly from 23-10-2026 → Renews on 23-10-2027, 'Paid up to 22-04-2027 · next bill … on 23 Apr 2027', said once", () => {
@@ -59,7 +60,7 @@ describe("R-2052 Create subscription: Renews on stays a year, paid-up line besid
     expect((screen.getByLabelText("Subscription start date") as HTMLInputElement).value).toBe("2026-10-23");
     expect((screen.getByLabelText("Subscription renewal date") as HTMLInputElement).value).toBe("2027-10-23");
     expect(screen.getByText("Paid up to 22-04-2027 · next bill ₹19,116 on 23 Apr 2027.")).toBeTruthy();
-    expect(screen.getByText(HINT)).toBeTruthy();
+    expect(screen.getByText(TERM)).toBeTruthy();
     expect(screen.queryByText(/Next 1 bill/)).toBeNull();               // one fact, one place
     expect(screen.getAllByText(/23 Apr 2027/)).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Record sale & reconcile ₹19,116" }));
@@ -72,7 +73,7 @@ describe("R-2052 Create subscription: Renews on stays a year, paid-up line besid
     expect((screen.getByLabelText("Subscription renewal date") as HTMLInputElement).value).toBe("2027-10-23");
     fireEvent.change(screen.getByLabelText("Payment"), { target: { value: "yearly" } });
     expect(screen.queryByText(/Paid up to/)).toBeNull();
-    expect(screen.queryByText(HINT)).toBeNull();
+    expect(screen.getByText(TERM)).toBeTruthy();   // the term stays; only the paid-up line goes
   });
 
   it("extra money that pays the next quarter in full → paid up to 22-04-2027", () => {

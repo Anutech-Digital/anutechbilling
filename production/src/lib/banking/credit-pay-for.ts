@@ -212,9 +212,13 @@ export interface SaleLine {
   perSeat: boolean;
   /** R-2026: the catalogue prices it per MONTH (a seat / unit a month). R-2050: an annual line is
    *  shown and typed ₹/user/YEAR = `rate` (the quote line's unit); this flag only says whether a
-   *  line with no catalogue row converts ÷12 / ×12 when its commitment changes. False for a row
-   *  priced per year or once (domain, migration, a yearly-total plan). Absent = true. */
+   *  line with no catalogue row (or a typed price — R-2053) converts ÷12 / ×12 when its
+   *  commitment changes. False for a row priced per year or once (domain, migration, a
+   *  yearly-total plan). Absent = true. */
   monthPriced?: boolean;
+  /** R-2053: the owner typed this line's price (a deal). A commitment change then converts it
+   *  instead of taking the catalogue price. A new product line starts without it. */
+  priceTyped?: boolean;
 }
 
 type CatalogRow = Pick<Item, "id" | "name" | "vendor" | "msrp" | "wholesale" | "prices"> & { item_type?: string | null };
@@ -255,14 +259,18 @@ export function isMonthPriced(it: CatalogRow): boolean {
  *  line with no catalogue row converts its own price — a year ÷ 12 = a month, a month × 12 = a
  *  year (whole rupees) — so the shown figure keeps its meaning in the new unit. */
 export function repriceLine(line: SaleLine, it: CatalogRow | undefined, cycle: SaleCycle): SaleLine {
+  /* R-2053: a year ÷ 12 = a month, a month × 12 = a year; to or from one-time the number is kept. */
+  const factor = line.monthPriced === false ? 1
+    : line.cycle === "annual_yearly" && cycle === "monthly" ? 1 / 12
+    : line.cycle === "monthly" && cycle === "annual_yearly" ? 12 : 1;
   if (!it) {
-    const factor = line.monthPriced === false ? 1
-      : line.cycle === "annual_yearly" && cycle === "monthly" ? 1 / 12
-      : line.cycle === "monthly" && cycle === "annual_yearly" ? 12 : 1;
     return { ...line, cycle, rate: Math.round(line.rate * factor), cost: Math.round(line.cost * factor) };
   }
   const p = listRateFor(it, cycle);
-  return { ...line, cycle, rate: Math.round(p.rate), cost: Math.round(p.cost) };
+  /* R-2053 (Pardeep delegated, 28 Oct): a TYPED price (a deal) is kept and converted; only an
+     untouched line takes the floored catalogue price. Cost always follows the catalogue tier. */
+  const rate = line.priceTyped ? Math.round(line.rate * factor) : Math.round(p.rate);
+  return { ...line, cycle, rate, cost: Math.round(p.cost) };
 }
 
 /**
@@ -445,10 +453,25 @@ function dmy(iso: string): string {
   return `${d}-${m}-${y}`;
 }
 
-/** "Paid up to 22-04-2027 · next bill ₹19,116 on 23 Apr 2027." (+ the later parts, said once). */
+/**
+ * R-2053 — the term, said once under Start date / Renews on: "1 year: 23-10-2026 to 22-10-2027 ·
+ * renews 23-10-2027". Renews on is the day the next term STARTS (renewal_date = start + whole
+ * terms — the app's rule, read by reminders and renewal billing), so the term ends the day before.
+ * "1 month" for Monthly flex; "Term" when the owner edited Renews on. Null when it is not after
+ * the start (the form already says so).
+ */
+export function saleTermText(startISO: string, renewalISO: string): string | null {
+  if (!startISO || !renewalISO || renewalISO <= startISO) return null;
+  const label = renewalISO === addMonthsClamped(startISO, 12) ? "1 year"
+    : renewalISO === addMonthsClamped(startISO, 1) ? "1 month" : "Term";
+  return `${label}: ${dmy(startISO)} to ${dmy(addDaysISO(renewalISO, -1))} · renews ${dmy(renewalISO)}`;
+}
+
+/** "Paid up to 22-04-2027 · next bill ₹19,116 on 23 Apr 2027." (+ the later parts, said once).
+ *  The whole year paid → the term line above already says when it ends (R-2053). */
 export function paidUpText(p: PaidUp): string {
   const head = `Paid up to ${dmy(p.paidUpTo)}`;
-  if (!p.next) return `${head} — the whole year is paid.`;
+  if (!p.next) return "The whole year is paid.";
   const next = `${head} · next bill ${rupee(p.next.gross)} on ${formatDate(p.next.billOn)}`;
   const n = p.rest.length;
   if (n === 0) return `${next}.`;

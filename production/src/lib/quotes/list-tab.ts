@@ -19,6 +19,7 @@
 
 import { istToday } from "@/lib/dates/ist";
 import { shownQuoteStatus, expiredByDate } from "./quote-expiry";
+import { paidToDateOf } from "./paid-to-date";
 
 export const QUOTE_LIST_TABS = [
   "draft", "sent", "viewed", "accepted", "awaiting", "invoiced", "rejected", "expired",
@@ -36,6 +37,13 @@ export interface ListTabQuote {
   /** R-1707: quote_open_balance() for this quote (lib/quotes/open-balances.ts). null/absent =
    *  not loaded → the old amount − payment_amount, never 0. */
   open_balance?: number | null;
+  /** R-2055: the plan fields (paid-to-date.ts) — optional so older callers still fit. */
+  subtotal?: number | null;
+  discount_pct?: number | null;
+  tax_rate?: number | null;
+  billing_cycle?: string | null;
+  line_items?: unknown;
+  subscription_billing_id?: string | null;
 }
 
 /**
@@ -63,7 +71,10 @@ export function quoteListTab(q: ListTabQuote, today: string = istToday()): Quote
   /* R-1713: 'awaiting' counts only once the customer ACCEPTED. Extension, add-seats and
      checkout quotes are created with payment_status 'awaiting', so a sent one landed in
      "Awaiting payment" with its badge saying it was sent and the Sent tab at 0. */
-  if (q.payment_status === "partial" || (q.payment_status === "awaiting" && q.status === "accepted")) return "awaiting";
+  /* R-2055: a sale quote billed in parts with the first part paid is paid to date — the later
+     parts are payment requests (R-2044), in Commitment due from their date, not here. */
+  const partial = q.payment_status === "partial" && !paidToDateOf(q);
+  if (partial || (q.payment_status === "awaiting" && q.status === "accepted")) return "awaiting";
   if (q.status === "draft" || q.status === "sent" || q.status === "viewed" || q.status === "accepted") {
     return q.status;
   }

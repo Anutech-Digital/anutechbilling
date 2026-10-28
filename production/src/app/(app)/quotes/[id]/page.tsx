@@ -29,6 +29,9 @@ import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { issueEinvoiceNotice, isB2B } from "@/lib/compliance/einvoice";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage";
+import { pagePaidToDate, paidToDateLine, PAID_TO_DATE_LABEL } from "@/lib/quotes/paid-to-date";
+import { useNextPartRequest } from "./next-part-request";
+import { PaymentHistoryCard } from "./payment-history-card";
 import { planForQuote, splitDue } from "@/lib/billing/instalments";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-quote";
@@ -120,7 +123,6 @@ import {
 import { cn } from "@/lib/utils";
 import type { Quote, QuoteLineItem, Payment, BillingCycle } from "@/lib/supabase/database.types";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
-import { FeeNetLine } from "@/app/(app)/payments/gateway-fee";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyBuilderLine, billOfSupplyStatus, quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
@@ -278,6 +280,21 @@ export default function QuoteDetailPage() {
   const { data: signature } = useQuoteSignature(params.id);
   /* R-1715: the invoice's own created_at for the history — never quote.updated_at. */
   const { data: invoiceCreatedAt } = useInvoiceCreatedAt(quote?.invoice_id);
+  /* R-2055: a SALE quote billed in parts, first part paid, is "Paid to date" — the later parts
+     are payment requests (R-2044). One rule: lib/quotes/paid-to-date.ts. */
+  const saleSub = (allSubs ?? [])
+    .filter((s) => quote && s.quote_id === quote.id)
+    .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""))[0];
+  const { data: nextPartRequest = null } = useNextPartRequest(quote && !partRequest ? saleSub?.id : null);
+  const paidToDate = quote
+    ? pagePaidToDate({
+        quote: quote as typeof quote & { subscription_billing_id?: string | null },
+        termStart: (saleSub?.start_date ?? istToday()).slice(0, 10),
+        received: sumReceived(paymentHistory ?? []),
+        todayISO: istToday(),
+        hasOpenRequest: Boolean(nextPartRequest),
+      })
+    : null;
   const lifecycle = quote
     ? quoteLifecycle({
         status: quote.status,
@@ -292,6 +309,7 @@ export default function QuoteDetailPage() {
         paid: quoteIsPaid(quote),
         /* R-1710: what came in and what is left, also once invoiced. */
         money: quotePaymentState(quote),
+        paidToDate: paidToDate ? paidToDateLine(paidToDate, formatDate(paidToDate.next.billOn)) : null,
       })
     : null;
 
@@ -695,7 +713,9 @@ export default function QuoteDetailPage() {
   /* R-1718: one rule with the list — no "Awaiting payment" on a rejected / expired / replaced quote. */
   const paymentBadge = quotePaymentBadge(quote);
   /* R-1710: "Invoiced" alone hid a half payment (T-A1: ₹20,000 of ₹38,232) — money beside the stage. */
-  const payment = paymentBadge
+  const payment = paidToDate
+    ? { kind: "success" as const, label: PAID_TO_DATE_LABEL }
+    : paymentBadge
     ? paymentBadge === "invoiced" && invoicedPartPaid(quote)
       ? { kind: "danger" as const, label: `${QUOTE_STATE_LABEL.invoiced} · ${QUOTE_STATE_LABEL.partial}` }
       : PAYMENT_META[paymentBadge]
@@ -751,6 +771,8 @@ export default function QuoteDetailPage() {
       invoiceId:     quote.invoice_id,
       total,
       received:      totalReceivedSoFar,
+      partRequest,   // R-2054: no "formally accept" sentence on a part payment request
+      nextPartRequest: paidToDate ? nextPartRequest : null, // R-2055: one way to take the next part
       /* R-446: same test the database trigger uses — any subscription of this quote that
          is not yearly (or the quote's own cycle, before the subscription exists). */
       splitBilledCycle: splitCycle,
@@ -1673,6 +1695,13 @@ export default function QuoteDetailPage() {
                 </Button>
               )}
 
+              {/* R-2055: the next part is collected on its payment request — the only way. */}
+              {money.openRequest && (
+                <Button asChild variant={variantFor(primary, "record_payment")} icon="receipt">
+                  <Link href={`/quotes/${money.openRequest.id}` as never}>Open payment request</Link>
+                </Button>
+              )}
+
               {money.canRecordPayment && mayRecordMoney && (
                 <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={() => setPaymentOpen(true)}>
                   {money.recordLabel}
@@ -1919,121 +1948,16 @@ export default function QuoteDetailPage() {
         </Card>
       )}
 
-      {/* Payment history (installments) */}
+      {/* Payment history (installments) — payment-history-card.tsx */}
       {paymentHistory && paymentHistory.length > 0 && (
-        <Card title="Payment history" sub={`${paymentHistory.length} payment${paymentHistory.length === 1 ? "" : "s"} · ${rupee(totalReceivedSoFar)} of ${rupee(total)} received`}>
-          {/* Phone (S32): six columns pushed the page to 640px wide, so the whole
-              quote zoomed out. Under md each payment is one row. */}
-          <ul className="md:hidden -mx-1 divide-y divide-hairline">
-            {paymentHistory.map((p, idx) => (
-              <li key={p.id} className="px-1 py-2.5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm">
-                    <span className="font-medium tabular-nums">{rupee(p.amount)}</span>{" "}
-                    <span className="text-ink-3">· {paymentMethodLabel(p.method)}</span>
-                  </div>
-                  {p.status === "received" ? (
-                    <Badge kind="success" dot>received</Badge>
-                  ) : (
-                    <Badge kind="danger" dot>refunded</Badge>
-                  )}
-                </div>
-                <div className="flex items-center justify-between gap-3 mt-0.5">
-                  <div className="text-xs text-ink-3 min-w-0 truncate">
-                    #{idx + 1} · {formatDate(p.received_at)}
-                    {p.reference ? <> · <span className="font-mono">{p.reference}</span></> : null}
-                    <FeeNetLine payment={p} />
-                  </div>
-                  {p.status === "received" && me && (
-                    <Button size="sm" variant="ghost" icon="file" onClick={() => setReceiptPayment(p)}>
-                      Receipt
-                    </Button>
-                  )}
-                </div>
-              </li>
-            ))}
-            <li className="px-1 pt-2.5 flex items-baseline justify-between gap-3">
-              <span className="text-xs font-semibold text-ink-3 uppercase tracking-wider">Total received</span>
-              <span className="text-right">
-                <span className="font-serif text-lg tabular-nums text-emerald">{rupee(totalReceivedSoFar)}</span>
-                <span className="block text-xs text-ink-3">
-                  {totalReceivedSoFar >= total ? (
-                    <span className="text-emerald">✓ Fully paid</span>
-                  ) : (
-                    <>Remaining <b className="text-amber-ink">{rupee(total - totalReceivedSoFar)}</b></>
-                  )}
-                </span>
-              </span>
-            </li>
-          </ul>
-          <div className="hidden md:block overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-paper-2 border-b border-hairline">
-              <tr>
-                <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Date</th>
-                <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Amount</th>
-                <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Method</th>
-                <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Reference</th>
-                <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Status</th>
-                <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Receipt</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paymentHistory.map((p, idx) => (
-                <tr key={p.id} className="border-b border-hairline last:border-0">
-                  <td className="p-3 text-xs text-ink-2">
-                    <div>{formatDate(p.received_at)}</div>
-                    <div className="text-3xs text-ink-3">#{idx + 1}</div>
-                  </td>
-                  <td className="p-3 text-right tabular-nums text-sm font-medium">
-                    {rupee(p.amount)}
-                    <FeeNetLine payment={p} className="font-normal" />
-                  </td>
-                  <td className="p-3 text-sm">{paymentMethodLabel(p.method)}</td>
-                  <td className="p-3 font-mono text-xs text-ink-2 truncate max-w-[180px]">{p.reference ?? "—"}</td>
-                  <td className="p-3">
-                    {p.status === "received" ? (
-                      <Badge kind="success" dot>received</Badge>
-                    ) : (
-                      <Badge kind="danger" dot>refunded</Badge>
-                    )}
-                    {p.receipt_voucher_no && (
-                      <div className="text-3xs text-ink-3 font-mono mt-0.5">{p.receipt_voucher_no}</div>
-                    )}
-                  </td>
-                  <td className="p-3 text-right">
-                    {p.status === "received" && me ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon="file"
-                        onClick={() => setReceiptPayment(p)}
-                        title="GST-compliant receipt voucher"
-                      >
-                        View
-                      </Button>
-                    ) : (
-                      <span className="text-2xs text-ink-3">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {/* Total row */}
-              <tr className="bg-paper-2">
-                <td className="p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Total received</td>
-                <td className="p-3 text-right font-serif text-lg tabular-nums text-emerald">{rupee(totalReceivedSoFar)}</td>
-                <td colSpan={4} className="p-3 text-xs text-ink-3">
-                  {totalReceivedSoFar >= total ? (
-                    <span className="text-emerald">✓ Fully paid</span>
-                  ) : (
-                    <>Remaining <b className="text-amber-ink">{rupee(total - totalReceivedSoFar)}</b></>
-                  )}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          </div>
-        </Card>
+        <PaymentHistoryCard
+          paymentHistory={paymentHistory}
+          total={total}
+          totalReceivedSoFar={totalReceivedSoFar}
+          canOpenReceipt={!!me}
+          onOpenReceipt={setReceiptPayment}
+          committed={paidToDate}
+        />
       )}
 
       {/* Receipt Voucher dialog — opens for any "received" payment */}
