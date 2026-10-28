@@ -34,7 +34,7 @@ import { recordPaymentConsequences } from "@/lib/payments/record-consequences";
 import { useDocumentSeries, useGenerateInvoice } from "@/lib/queries/invoices";
 import { useRouter } from "next/navigation";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
-import { isPartRequest, partLabelOf, partRequestPaymentToast } from "@/lib/billing/part-requests";
+import { isPartRequest, partLabelOf, partRequestPaymentToast, partRequestTdsCheck } from "@/lib/billing/part-requests";
 import { paymentToast, blankReference, subscriptionNoteFor, type PaymentToastAction, type SubscriptionNote } from "@/lib/payments/record-payment-toast";
 import {
   invoiceNowOffer,
@@ -498,10 +498,17 @@ export function RecordPaymentDialog({
   const [amountEdited, setAmountEdited] = React.useState(false);
 
   // TDS computation — preGST × rate%
-  const { preGST: quotePreGST, tds: tdsAmount } = React.useMemo(
+  const { preGST: quotePreGST, tds: tdsAtRate } = React.useMemo(
     () => tdsDeducted ? computeTds(expectedAmount, tdsRatePct, quoteTaxRate) : { preGST: 0, tds: 0 },
     [tdsDeducted, tdsRatePct, expectedAmount, quoteTaxRate],
   );
+  /* R-2045: on a part payment request the TDS the customer ACTUALLY withheld can be typed (the
+     field is shown only there). Bank + that TDS covering the part pays it in full; more than rate
+     × this part's taxable value is warned about below (partRequestTdsCheck), never blocked.
+     A rate change, unticking TDS or closing the sheet goes back to rate × taxable. */
+  const [typedPartTds, setTypedPartTds] = React.useState<number | null>(null);
+  React.useEffect(() => { setTypedPartTds(null); }, [open, tdsDeducted, tdsRatePct]);
+  const tdsAmount = tdsDeducted && typedPartTds !== null ? typedPartTds : tdsAtRate;
 
   // Advance credit applied to this payment — capped at the remaining balance
   // (can't apply more credit than is owed). Reduces the cash the customer needs.
@@ -738,7 +745,10 @@ export function RecordPaymentDialog({
       const notes  = [
         data.notes || null,
         tdsActive
-          ? `TDS ${data.tdsSection} @ ${tdsRatePct}% = ${rupee(tdsAmount)} on pre-GST ${rupee(quotePreGST)}`
+          ? tdsAmount === tdsAtRate
+            ? `TDS ${data.tdsSection} @ ${tdsRatePct}% = ${rupee(tdsAmount)} on pre-GST ${rupee(quotePreGST)}`
+            /* R-2045: the TDS the customer actually withheld on a part request, typed. */
+            : `TDS ${data.tdsSection} withheld ${rupee(tdsAmount)} (${tdsRatePct}% of pre-GST ${rupee(quotePreGST)} = ${rupee(tdsAtRate)})`
           : null,
       ].filter(Boolean).join(" · ") || null;
       const tagArgs = deskPaymentTagArgs({ receivedDate: data.receivedDate, bankAccountId });
@@ -1497,6 +1507,38 @@ export function RecordPaymentDialog({
                     </span>
                   </p>
                 )}
+
+                {/* R-2045: a part payment request — the TDS the customer actually withheld, and
+                    a warning when it is more than rate × THIS part's taxable value. */}
+                {invoiceFacts?.partRequest && (() => {
+                  const check = partRequestTdsCheck({ taxable: quotePreGST, ratePct: tdsRatePct, tds: tdsAmount });
+                  return (
+                    <FormField label="TDS deducted by the customer (₹)" htmlFor="partTdsAmount">
+                      <Input
+                        id="partTdsAmount"
+                        type="number"
+                        min={0}
+                        prefix="₹"
+                        value={Number.isFinite(tdsAmount) ? tdsAmount : 0}
+                        helper={`${tdsRatePct}% of this part's taxable value ${rupee(quotePreGST)} is ${rupee(check.expected)}. Change it if the customer withheld a different amount.`}
+                        onChange={(e) => {
+                          const n = Math.max(0, Math.round(Number(e.target.value) || 0));
+                          setTypedPartTds(n);
+                        }}
+                      />
+                      {check.message && (
+                        <p
+                          role="status"
+                          data-testid="part-tds-warning"
+                          className="mt-1.5 flex items-start gap-1.5 rounded-md bg-amber-soft border border-amber/30 px-2 py-1.5 text-2xs text-amber-ink"
+                        >
+                          <Icon name="alert" size={12} className="flex-shrink-0 mt-0.5" />
+                          <span>{check.message}</span>
+                        </p>
+                      )}
+                    </FormField>
+                  );
+                })()}
 
                 <FormField label="Customer TAN" htmlFor="customerTan">
                   <Input
