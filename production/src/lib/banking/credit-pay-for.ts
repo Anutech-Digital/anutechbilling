@@ -23,6 +23,7 @@ import { tdsRateFor } from "@/lib/banking/invoice-credit-match";
 import { billingUnitOf, defaultQtyForUnit, isPerSeat, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { headlinePrice } from "@/lib/catalog/headline-price";
 import { catalogLineListRate } from "@/lib/quotes/catalog-line";
+import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { BILLING_CYCLE_OPTIONS, cycleScheduleLabel } from "@/lib/quotes/billing";
 import { COMMIT_CHOICES, type CommitChoice } from "@/lib/quotes/line-commit-choice";
 import { isSplitBilled, quoteInstalmentPlan } from "@/lib/billing/instalments";
@@ -209,9 +210,10 @@ export interface SaleLine {
   cost: number;
   cycle: SaleCycle;
   perSeat: boolean;
-  /** R-2026: the catalogue prices it per MONTH (a seat / unit a month) — its annual-commitment
-   *  price is shown ₹/user/month and stored × 12 (₹/seat/YEAR, the quote line's unit). False for
-   *  a row priced per year or once (domain, migration, a yearly-total plan). Absent = true. */
+  /** R-2026: the catalogue prices it per MONTH (a seat / unit a month). R-2050: an annual line is
+   *  shown and typed ₹/user/YEAR = `rate` (the quote line's unit); this flag only says whether a
+   *  line with no catalogue row converts ÷12 / ×12 when its commitment changes. False for a row
+   *  priced per year or once (domain, migration, a yearly-total plan). Absent = true. */
   monthPriced?: boolean;
 }
 
@@ -222,10 +224,16 @@ export function defaultCycle(it: CatalogRow): SaleCycle {
   return billingUnitOf(it) === "one_time" ? "one_time" : "annual_yearly";
 }
 
+/** R-2050: the catalogue price for a commitment, never below the Workspace list floor (R-205) —
+ *  the quote builder floors its catalogue rows the same way before pricing a line. */
+function listRateFor(it: CatalogRow, cycle: SaleCycle): { rate: number; cost: number } {
+  return catalogLineListRate(floorWorkspaceRow(it), cycle === "one_time" ? null : cycle);
+}
+
 /** A catalogue product → a sale line priced the way the quote builder prices it. */
 export function saleLineFromItem(it: CatalogRow, cycle: SaleCycle = defaultCycle(it), seats?: number | null): SaleLine {
   const unit = billingUnitOf(it);
-  const p = catalogLineListRate(it, cycle === "one_time" ? null : cycle);
+  const p = listRateFor(it, cycle);
   return {
     itemId: it.id,
     name: it.name,
@@ -243,10 +251,17 @@ export function isMonthPriced(it: CatalogRow): boolean {
   return headlinePrice(it).unit !== "yr" && unitYearMultiplier(billingUnitOf(it)) === 12;
 }
 
-/** Change the cycle of a catalogue line: re-price it from the catalogue for that term. */
+/** Change the cycle of a catalogue line: re-price it from the catalogue for that term. R-2050: a
+ *  line with no catalogue row converts its own price — a year ÷ 12 = a month, a month × 12 = a
+ *  year (whole rupees) — so the shown figure keeps its meaning in the new unit. */
 export function repriceLine(line: SaleLine, it: CatalogRow | undefined, cycle: SaleCycle): SaleLine {
-  if (!it) return { ...line, cycle };
-  const p = catalogLineListRate(it, cycle === "one_time" ? null : cycle);
+  if (!it) {
+    const factor = line.monthPriced === false ? 1
+      : line.cycle === "annual_yearly" && cycle === "monthly" ? 1 / 12
+      : line.cycle === "monthly" && cycle === "annual_yearly" ? 12 : 1;
+    return { ...line, cycle, rate: Math.round(line.rate * factor), cost: Math.round(line.cost * factor) };
+  }
+  const p = listRateFor(it, cycle);
   return { ...line, cycle, rate: Math.round(p.rate), cost: Math.round(p.cost) };
 }
 
@@ -294,23 +309,23 @@ export function commitmentOptions(oneTimeOnly: boolean): CommitmentOption[] {
     }));
 }
 
-/** The unit price as the operator sees it: ₹/user/MONTH for a month-priced subscription line. */
-export function shownUnitPrice(line: Pick<SaleLine, "rate" | "cycle" | "monthPriced">): number {
-  if (line.cycle === "annual_yearly" && line.monthPriced !== false) return Math.round((line.rate / 12) * 100) / 100;
+/** The unit price as the operator sees it. R-2050 (Pardeep 28 Oct: "commitment annual hai to annual
+ *  price show hona chahiye"): it IS the line's rate — ₹/user/YEAR on an annual commitment (the quote
+ *  line's ₹/seat/year), ₹/user/month on Monthly flex, ₹ once on one-time. No ×12 / ÷12. */
+export function shownUnitPrice(line: Pick<SaleLine, "rate">): number {
   return line.rate;
 }
 
-/** The stored rate for a typed unit price (annual, month-priced → × 12: the quote line's ₹/seat/YEAR). */
-export function rateFromShownPrice(line: Pick<SaleLine, "cycle" | "monthPriced">, shown: number): number {
-  const v = Math.max(0, Number.isFinite(shown) ? shown : 0);
-  return line.cycle === "annual_yearly" && line.monthPriced !== false ? Math.round(v * 12) : Math.round(v);
+/** The stored rate for a typed unit price — as typed, whole rupees (a deal price is not locked). */
+export function rateFromShownPrice(_line: Pick<SaleLine, "cycle">, shown: number): number {
+  return Math.round(Math.max(0, Number.isFinite(shown) ? shown : 0));
 }
 
-/** "₹/user/month", "₹/month", "₹/user/year", "₹/user, once" — the unit of the shown price. */
-export function shownPriceUnit(line: Pick<SaleLine, "cycle" | "perSeat" | "monthPriced">): string {
+/** "₹/user/year" (annual), "₹/user/month" (Monthly flex), "₹/user, once" — the unit of the shown price. */
+export function shownPriceUnit(line: Pick<SaleLine, "cycle" | "perSeat">): string {
   const who = line.perSeat ? "/user" : "";
   if (line.cycle === "one_time") return line.perSeat ? "₹/user, once" : "₹ once";
-  if (line.cycle === "monthly" || line.monthPriced !== false) return `₹${who}/month`;
+  if (line.cycle === "monthly") return `₹${who}/month`;
   return `₹${who}/year`;
 }
 
