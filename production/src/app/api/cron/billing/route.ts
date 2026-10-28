@@ -1,5 +1,6 @@
 /**
- * Split-billing cron — raises one tax invoice per subscription instalment.
+ * Split-billing cron — a payment request per subscription part (R-2044); the part's tax invoice
+ * when it is paid.
  *
  * Runs daily. For every active subscription on a cycle that actually splits
  * (monthly / quarterly / half-yearly), it materialises the term's instalments into
@@ -33,10 +34,13 @@
  * reason, never silently. `?dry=1` returns what WOULD happen without writing anything.
  *
  * ─── R-2044: A PART IS INVOICED WHEN IT IS PAID ─────────────────────────────
- * Each due part goes through bill_subscription_instalment: a paid part (the sale's first part,
- * a term paid up front, or its payment request paid) gets its tax invoice through
+ * Each due part goes through bill_subscription_instalment: a paid part (money received covers it —
+ * the sale quote's receipts, a term paid up front, or its payment request paid) gets its tax invoice through
  * raise_subscription_billing; an unpaid one gets a payment REQUEST (a quote, once per part) —
- * never an unpaid tax invoice. Then chasePartRequests mails new requests with their Pay link,
+ * never an unpaid tax invoice. R-2048: the first part of an UNPAID sale is not invoiced either —
+ * its open sale quote is its payment request (paying it raises the invoice); that also ended the
+ * one "errors 1" of a local Run now (an unpaid sale whose customer had no state reached
+ * raise_subscription_billing, which refused; a dry run never calls it, so it showed 0). Then chasePartRequests mails new requests with their Pay link,
  * chases unpaid ones (Day 1 / 3 / 7 / 14) and pauses after the company's opt-in grace.
  * `?on=YYYY-MM-DD` time-travels the decision — ONLY with `?dry=1`, like invoice-dunning: a live
  * pass on a pretend calendar would bill and mail real customers about dates not yet come.

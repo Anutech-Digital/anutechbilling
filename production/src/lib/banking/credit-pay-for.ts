@@ -559,10 +559,11 @@ export function resultLines(r: PayForResult): ResultLine[] {
   if (r.instalment_error) out.push({ text: `The first bill's invoice was not raised yet (${r.instalment_error}) — the daily billing run raises it.`, tone: "warn" });
   else if (r.invoice_id && r.kind !== "instalment") out.push({ text: `Invoice ${r.invoice_id}`, href: `/invoices/${encodeURIComponent(r.invoice_id)}` });
   if (r.tds_amount > 0) out.push({ text: `${rupee(r.tds_amount)} TDS booked as TDS receivable — collect the certificate (Form 16A)` });
-  /* R-2026: paid in parts — the rest of the year is not owed today; each bill gets its own invoice. */
+  /* R-2026: paid in parts — the rest of the year is not owed today. R-2048: each part is a payment
+     request on its date; its invoice is raised when it is paid (R-2044). */
   const split = r.subscriptions.map((s) => splitCycle(s.billing_cycle)).find((c) => c !== null) ?? null;
   if (split && r.outstanding > 0 && !r.already_recorded) {
-    out.push({ text: `The rest of the year is ${cycleScheduleLabel(split)} — each bill gets its own invoice when it falls due.` });
+    out.push({ text: `The rest of the year is ${cycleScheduleLabel(split)} — a payment request goes out on each date; its invoice is raised when it is paid.` });
   } else if (r.outstanding > 0 && !r.already_recorded) out.push({ text: `${rupee(r.outstanding)} still due on it`, tone: "warn" });
   if (r.overpaid_credit > 0) out.push({ text: `${rupee(r.overpaid_credit)} extra kept as the customer's advance credit` });
   return out;

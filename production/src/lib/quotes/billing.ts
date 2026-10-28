@@ -17,11 +17,14 @@ import type { BillingCycle } from "@/lib/supabase/database.types";
 import { BILLING_CYCLE_INVOICES_PER_YEAR } from "@/lib/supabase/database.types";
 import { isOneTimeQuote } from "./service-period";
 
+/* R-2048: "payments", not "invoices" — since R-2044 each part of a split year is a payment
+   request first and is invoiced when paid (or on its date, for a customer with "Invoice on due
+   date" ON — a payment either way). Shared by the quote builder, leads and bank reconcile. */
 export const BILLING_CYCLE_OPTIONS: { id: BillingCycle; label: string }[] = [
-  { id: "yearly",      label: "Annual — 1 invoice/yr (popular)" },
-  { id: "half_yearly", label: "Half-yearly — 2 invoices/yr" },
-  { id: "quarterly",   label: "Quarterly — 4 invoices/yr" },
-  { id: "monthly",     label: "Monthly — 12 invoices/yr" },
+  { id: "yearly",      label: "Annual — 1 payment/yr (popular)" },
+  { id: "half_yearly", label: "Half-yearly — 2 payments/yr" },
+  { id: "quarterly",   label: "Quarterly — 4 payments/yr" },
+  { id: "monthly",     label: "Monthly — 12 payments/yr" },
 ];
 
 /** Invoices raised per year for a billing cycle (yearly 1 … monthly 12). */

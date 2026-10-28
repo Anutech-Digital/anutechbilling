@@ -126,7 +126,7 @@ describe("R-2026 the subscription gets the commitment + cycle (server args)", ()
     }).map((l) => l.text);
     expect(lines).toContain("Subscription created: Google Workspace Business Starter × 10 · billed quarterly, renews 21 Oct 2027");
     expect(lines.some((t) => /still due/.test(t))).toBe(false);
-    expect(lines).toContain("The rest of the year is billed quarterly — each bill gets its own invoice when it falls due.");
+    expect(lines).toContain("The rest of the year is billed quarterly — a payment request goes out on each date; its invoice is raised when it is paid.");
   });
 });
 

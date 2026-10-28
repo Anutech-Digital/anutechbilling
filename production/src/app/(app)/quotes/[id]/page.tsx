@@ -19,7 +19,7 @@ import { withInvoiceIssued, rejectLeadOffer, lostActivityDetail, lossLabel, acce
 import type { LossReasonCode } from "@/lib/leads/loss-reasons";
 import { RejectQuoteDialog } from "./reject-quote-dialog";
 import { CustomerStoppedDialog } from "./customer-stopped-dialog";
-import { showCustomerStopped, type CustomerStoppedEnd } from "@/lib/billing/part-requests";
+import { showCustomerStopped, isPartRequest, partRequestSteps, partRequestOpenLine, PART_REQUEST_BADGE, type CustomerStoppedEnd } from "@/lib/billing/part-requests";
 import { isQuoteEditableInPlace } from "@/lib/quotes/editable";
 import { paymentDomainDefault } from "@/lib/quotes/payment-domain";
 import { useGenerateInvoice, useDocumentSeries } from "@/lib/queries/invoices";
@@ -249,6 +249,9 @@ export default function QuoteDetailPage() {
   const approvalEconomics = React.useMemo(() => quote ? quoteEconomics(quote) : null, [quote]);
   const approvalNeed      = React.useMemo(() => approvalEconomics ? requiredApproval(approvalEconomics) : null, [approvalEconomics]);
   const approvalRec       = React.useMemo(() => quote ? quoteApprovalRecord(quote) : null, [quote]);
+  /* R-2048: a part's payment request (R-2044) is never approved, signed or accepted — it is paid,
+     then invoiced. No approval gate, badge or accept row on it. */
+  const partRequest       = isPartRequest(quote as { subscription_billing_id?: string | null } | null | undefined);
 
   /* Who can actually clear it, by name. "Waiting for the owner to approve" is wrong in a
      workspace with three owners, and worse than vague: the person most likely to be
@@ -263,8 +266,8 @@ export default function QuoteDetailPage() {
     return approverSentence(eligibleApprovers(team ?? [], quote));
   }, [teamLoaded, team, quote]);
 
-  const sendGate          = approvalNeed && approvalRec ? canSend(approvalRec, approvalNeed, approverNames) : null;
-  const approvalPill      = approvalNeed && approvalRec ? approvalBadge(approvalRec, approvalNeed) : null;
+  const sendGate          = !partRequest && approvalNeed && approvalRec ? canSend(approvalRec, approvalNeed, approverNames) : null;
+  const approvalPill      = !partRequest && approvalNeed && approvalRec ? approvalBadge(approvalRec, approvalNeed) : null;
   const viewerCanApprove  = approvalNeed && approvalRec && me
     ? canApprove({ id: me.userId, role: me.role }, approvalRec, approvalNeed).allowed
     : false;
@@ -1071,6 +1074,12 @@ export default function QuoteDetailPage() {
                   </button>
                 </>
               )}
+              {partRequest && (
+                <>
+                  <span>·</span>
+                  <Badge kind="info">{PART_REQUEST_BADGE}</Badge>
+                </>
+              )}
               {quote.is_extension ? (
                 <>
                   <span>·</span>
@@ -1270,7 +1279,7 @@ export default function QuoteDetailPage() {
       {/* Quote-to-cash lifecycle */}
       {lifecycle && (
         <Card>
-          <LifecycleStepper steps={trialSteps ?? lifecycle.steps} dead={lifecycle.dead} />
+          <LifecycleStepper steps={partRequest ? partRequestSteps(lifecycle.steps, lifecycle.dead) : (trialSteps ?? lifecycle.steps)} dead={lifecycle.dead} />
           {/* R-282: the trial's last day IS the payment due date — said in words, because the
               stepper's detail line is hidden on a phone. */}
           {quote.status === "accepted" && totalReceivedSoFar === 0 && trialState && trialState.kind !== "converted" && (
@@ -1430,7 +1439,12 @@ export default function QuoteDetailPage() {
             accepted (no payment yet)" + "Record payment now" here too would be
             contradictory (deal already invoiced) and duplicate the balance
             button. */}
-        {(quote.status === "sent" || quote.status === "viewed")
+        {/* R-2048: an open part request — no accept / reject / revise; it is paid (money row
+            below) or closed with More → Customer stopped. */}
+        {partRequest && ["sent", "viewed", "accepted"].includes(quote.status) && !quote.invoice_id && (
+          <p className="text-sm text-ink-2">{partRequestOpenLine(quote.created_date ? formatDate(quote.created_date) : null)}</p>
+        )}
+        {!partRequest && (quote.status === "sent" || quote.status === "viewed")
           && quote.payment_status !== "invoiced" && !quote.invoice_id && (
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-ink-3">

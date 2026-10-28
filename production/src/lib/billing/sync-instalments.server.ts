@@ -169,8 +169,9 @@ export async function syncSubscriptionInstalments(args: {
     todayISO,
   );
 
-  /* R-2044: a part whose date came is invoiced only when it is paid (the sale quote's first part,
-     a term paid up front, or its own payment request paid) — otherwise it gets a payment
+  /* R-2044: a part whose date came is invoiced only when it is paid (R-2048: the sale quote's
+     first part too — only once the sale quote's money covers it; until then the open sale quote
+     is its request), a term paid up front, or its own payment request paid — otherwise it gets a payment
      request. bill_subscription_instalment decides, in one transaction, and invoices through
      raise_subscription_billing (the one instalment invoice path). */
   for (const row of due) {
