@@ -4,13 +4,33 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
 const fetchInrRate = vi.fn();
-vi.mock("@/lib/fx/rate-source", () => ({ fetchInrRate: (...a: unknown[]) => fetchInrRate(...a) }));
+const fetchInrRateOn = vi.fn();
+vi.mock("@/lib/fx/rate-source", () => ({
+  fetchInrRate: (...a: unknown[]) => fetchInrRate(...a),
+  fetchInrRateOn: (...a: unknown[]) => fetchInrRateOn(...a),
+}));
 
 import { GET } from "./route";
 
 const req = (from: string) => new NextRequest(`http://localhost/api/fx/latest?from=${from}`);
 
-beforeEach(() => fetchInrRate.mockReset());
+beforeEach(() => { fetchInrRate.mockReset(); fetchInrRateOn.mockReset(); });
+
+/* R-2056 — ?date= asks for that day's rate (a bill's date). */
+describe("GET /api/fx/latest?date=", () => {
+  it("a valid date goes to fetchInrRateOn", async () => {
+    fetchInrRateOn.mockResolvedValue({ rate: 94.94, from: "USD", to: "INR", asOf: "2026-10-23", source: "frankfurter", kind: "indicative", label: "x" });
+    const res = await GET(new NextRequest("http://localhost/api/fx/latest?from=USD&date=2026-10-25"));
+    expect(res.status).toBe(200);
+    expect(fetchInrRateOn).toHaveBeenCalledWith("USD", "2026-10-25");
+    expect(fetchInrRate).not.toHaveBeenCalled();
+  });
+  it("a junk date is refused", async () => {
+    const res = await GET(new NextRequest("http://localhost/api/fx/latest?from=USD&date=25-10-2026"));
+    expect(res.status).toBe(400);
+    expect(fetchInrRateOn).not.toHaveBeenCalled();
+  });
+});
 
 describe("GET /api/fx/latest", () => {
   it("passes through source, kind, label and asOf", async () => {
