@@ -275,3 +275,35 @@ export function partRequestPaymentToast<T extends ToastLike>(base: T, a: {
     lines: [...(a.error ? [a.error] : []), "The next billing run raises it once that is fixed. The subscription continues.", ...lines],
   };
 }
+
+/* ─── R-2045: a part request paid net of TDS ──────────────────────────────────────────────
+   Pardeep (28 Oct): "TDS is only on the instalment the customer paid — never on the whole year's
+   value." Expected TDS = rate × THIS part's taxable value (GST excluded when shown separately,
+   CBDT circular 23/2017): Q2 taxable ₹4,080 at 194J 10% → ₹408, bank ₹4,406 = fully paid. Bank +
+   TDS that covers the part pays it in full (its tax invoice is raised for the full amount; the TDS
+   is a receivable on that invoice — record_payment_with_tds, R-2045 migration). More TDS than
+   expected is a WARNING, never a block: the customer may have deducted on the full year or on GST. */
+
+/** Whole-rupee rounding slack before "more TDS than expected" is said. */
+export const PART_TDS_TOLERANCE = 1;
+
+const inr = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
+
+export function partRequestTdsCheck(a: { taxable: number; ratePct: number; tds: number }): {
+  expected: number;
+  tooHigh: boolean;
+  message: string | null;
+} {
+  const taxable = Math.max(0, Math.round(Number(a.taxable) || 0));
+  const rate = Math.max(0, Number(a.ratePct) || 0);
+  const tds = Math.max(0, Math.round(Number(a.tds) || 0));
+  const expected = Math.round(taxable * rate / 100);
+  const tooHigh = taxable > 0 && tds > expected + PART_TDS_TOLERANCE;
+  return {
+    expected,
+    tooHigh,
+    message: tooHigh
+      ? `TDS ${inr(tds)} is more than ${rate}% of this part's taxable value ${inr(taxable)} (${inr(expected)}). TDS is deducted only on the part paid, not on GST or the full year — the customer may have deducted on the full year. Check with the customer; you can still save.`
+      : null,
+  };
+}
