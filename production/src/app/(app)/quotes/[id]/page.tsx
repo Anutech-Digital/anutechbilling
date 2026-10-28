@@ -18,6 +18,8 @@ import { istToday } from "@/lib/dates/ist";
 import { withInvoiceIssued, rejectLeadOffer, lostActivityDetail, lossLabel, acceptHint } from "@/lib/quotes/quote-page-actions";
 import type { LossReasonCode } from "@/lib/leads/loss-reasons";
 import { RejectQuoteDialog } from "./reject-quote-dialog";
+import { CustomerStoppedDialog } from "./customer-stopped-dialog";
+import { showCustomerStopped, type CustomerStoppedEnd } from "@/lib/billing/part-requests";
 import { isQuoteEditableInPlace } from "@/lib/quotes/editable";
 import { paymentDomainDefault } from "@/lib/quotes/payment-domain";
 import { useGenerateInvoice, useDocumentSeries } from "@/lib/queries/invoices";
@@ -524,6 +526,27 @@ export default function QuoteDetailPage() {
      lead's last open quote, offers to mark the lead Lost in the same step — before, the
      lead sat in Quote Sent and its value stayed in the pipeline. */
   const [rejectOpen, setRejectOpen] = React.useState(false);
+  /* R-2044: "Customer stopped" on an unpaid part payment request. */
+  const [stoppedOpen, setStoppedOpen] = React.useState(false);
+  const customerStopped = useMutation({
+    mutationFn: async (input: { end: CustomerStoppedEnd; reason: string }) => {
+      const resp = await fetch(`/api/quotes/${encodeURIComponent(params.id)}/customer-stopped`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+      });
+      const body = (await resp.json().catch(() => null)) as { error?: string; subscription_status?: string } | null;
+      if (!resp.ok) throw new Error(body?.error ?? `HTTP ${resp.status}`);
+      return { ...input, subscriptionStatus: body?.subscription_status ?? null };
+    },
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["quotes"] });
+      qc.invalidateQueries({ queryKey: ["quotes", params.id] });
+      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      invalidateReceivables(qc);
+      setStoppedOpen(false);
+      toast.success(`${params.id} closed — subscription ${r.end === "cancel" ? "cancelled" : "paused"}. Nothing is owed for this part.`);
+    },
+    onError: (e) => toastError(e, { fallback: "Couldn't mark the customer as stopped." }),
+  });
   /* R-1807: a failed (or unanswered) read is not "no other open quote" — the Lost offer waits
      for the list; on isError the dialog says the lead stays as it is. */
   const leadQuotesQ = useQuotesByLead(quote?.lead_id ?? undefined);
@@ -1203,6 +1226,17 @@ export default function QuoteDetailPage() {
                   onClick={openActivateOnCredit}
                 >
                   <Icon name="check_circle" size={15} /> Activate now, pay later
+                </DropdownMenuItem>
+              )}
+              {quote && showCustomerStopped({
+                subscription_billing_id: (quote as { subscription_billing_id?: string | null }).subscription_billing_id,
+                status: quote.status, invoice_id: quote.invoice_id, receivedSoFar: totalReceivedSoFar,
+              }) && (
+                <DropdownMenuItem
+                  className="gap-2.5 py-2 cursor-pointer"
+                  onClick={() => setStoppedOpen(true)}
+                >
+                  <Icon name="x" size={15} /> Customer stopped
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
@@ -2287,6 +2321,14 @@ export default function QuoteDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CustomerStoppedDialog
+        open={stoppedOpen}
+        onOpenChange={setStoppedOpen}
+        quoteId={quote.id}
+        pending={customerStopped.isPending}
+        onConfirm={(input) => customerStopped.mutate(input)}
+      />
 
       <RejectQuoteDialog
         open={rejectOpen}

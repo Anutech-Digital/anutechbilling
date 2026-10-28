@@ -68,6 +68,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { createClient } from "@/lib/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { rupee, formatDate } from "@/lib/utils";
 import { fiscalYearFromDate, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
 import { checkTdsRate, tdsDefaultRatePct } from "@/lib/accounting/tds-rates";
@@ -555,6 +556,8 @@ export function RecordPaymentDialog({
     buyer: BuyerPlace | null;
     /** R-1735: "No GSTIN — invoice will be B2C. Add GSTIN?" — a reminder, never a block. */
     gstinNudge: B2cNudge | null;
+    /** R-2044: a part's payment request — paying it raises that part's tax invoice itself. */
+    partRequest: boolean;
   } | null>(null);
   React.useEffect(() => {
     if (!open || invoiceId) { setInvoiceFacts(null); return; }
@@ -567,6 +570,11 @@ export function RecordPaymentDialog({
         .eq("id", quoteId)
         .maybeSingle();
       if (!q) return;
+      /* R-2044: quotes.subscription_billing_id (migration 20261028025317) — read untyped until the
+         generated types are refreshed. */
+      const { data: pr } = await (supabase as unknown as SupabaseClient)
+        .from("quotes").select("subscription_billing_id").eq("id", quoteId).maybeSingle();
+      const partRequest = Boolean((pr as { subscription_billing_id?: string | null } | null)?.subscription_billing_id);
       /* R-447: the quote's own Place of supply counts, not only the lead's state — order in
          paymentBuyerPlace (customer with a state → quote → lead). Before issuing, the sheet
          copies the quote's state onto a customer that has none (fillCustomerStateFromQuote). */
@@ -581,7 +589,7 @@ export function RecordPaymentDialog({
       const gstinNudge = b2cGstinNudge({
         quoteId, customerId: q.customer_id ?? null, customer: c ?? null, lead: l ?? null, prospectCountry: q.prospect_country,
       });
-      if (live) setInvoiceFacts({ billingCycle: q.billing_cycle ?? null, buyer, gstinNudge });
+      if (live) setInvoiceFacts({ billingCycle: q.billing_cycle ?? null, buyer, gstinNudge, partRequest });
     })();
     return () => { live = false; };
   }, [open, quoteId, invoiceId]);
@@ -591,6 +599,7 @@ export function RecordPaymentDialog({
         invoiceId,
         billingCycle: invoiceFacts.billingCycle,
         buyer: invoiceFacts.buyer,
+        partRequest: invoiceFacts.partRequest,
         completesQuote: newRunningTotal >= expectedAmount,
       })
     : { offer: false, defaultOn: false, hint: null };
@@ -1011,7 +1020,9 @@ export function RecordPaymentDialog({
          a Rs 7,646 payment and 0 invoices. The toast then speaks of instalments, not of the
          year's "outstanding" the RPC reports. */
       let splitRaise: InstalmentRaiseResult | null = null;
-      if (split) {
+      /* R-2044: a part's payment request — the payment raised that part's invoice; this fetches it
+         (or raises it, if that step was refused) so the toast can open it. */
+      if (split || invoiceFacts?.partRequest) {
         try {
           const resp = await fetch(`/api/quotes/${encodeURIComponent(quoteId)}/raise-instalments`, { method: "POST" });
           const body = (await resp.json().catch(() => null)) as (InstalmentRaiseResult & { error?: string }) | null;

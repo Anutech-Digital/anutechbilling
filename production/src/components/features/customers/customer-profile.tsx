@@ -36,6 +36,7 @@ import { CustomerContactsCard } from "@/components/features/customers/customer-c
 import { LateChargesPreview } from "@/components/features/late-charges/customer-late-charges";
 import { CreditSettingsCard } from "@/components/features/customers/credit-settings-card";
 import { RenewalGraceCard } from "@/components/features/customers/renewal-grace-card";
+import { InvoiceOnDueDateCard } from "@/components/features/customers/invoice-on-due-date-card";
 import { CustomerFollowupCard } from "@/components/features/collections/customer-followup-card";
 import { EntitlementCard } from "@/components/features/support/entitlement-card";
 import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
@@ -578,6 +579,9 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
             canEdit={me?.role === "owner" || me?.role === "manager"}
             companyGraceDays={me?.tenantGracePeriodDays}
           />
+
+          {/* R-2044: parts billed as payment requests first, unless this customer is invoiced on the due date. */}
+          <InvoiceOnDueDateCard customerId={params.id} canEdit={me?.role === "owner" || me?.role === "manager"} />
 
           {/* R-1517: payment follow-ups — log a call / promise, next date, full history. */}
           <CustomerFollowupCard customerId={params.id} customerName={c.name} />

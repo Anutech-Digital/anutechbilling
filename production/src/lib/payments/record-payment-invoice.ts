@@ -108,6 +108,12 @@ export interface InvoiceNowInput {
   buyer: BuyerPlace | null | undefined;
   /** Will this payment (with TDS / credit) bring the quote to its total? */
   completesQuote: boolean;
+  /**
+   * R-2044: the quote is the payment request for one part of a subscription billed in parts
+   * (quotes.subscription_billing_id). Its tax invoice is that part's, raised by the payment
+   * itself — never "Issue GST invoice now" (generate_invoice refuses it).
+   */
+  partRequest?: boolean;
 }
 
 export interface InvoiceNowOffer {
@@ -122,7 +128,7 @@ export interface InvoiceNowOffer {
 export function invoiceNowOffer(i: InvoiceNowInput): InvoiceNowOffer {
   /* A part payment never issues it (generate_invoice is still on the quote page for an
      invoice-before-payment), so the box is not shown rather than shown and ignored. */
-  if (i.invoiceId || isSplitBilled(i.billingCycle) || !i.completesQuote) {
+  if (i.invoiceId || i.partRequest || isSplitBilled(i.billingCycle) || !i.completesQuote) {
     return { offer: false, defaultOn: false, hint: null };
   }
   const stateKnown = buyerStateKnown(i.buyer);
