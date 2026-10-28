@@ -32,6 +32,15 @@
  * quote already carries a whole-term invoice is skipped (term_already_invoiced), with a
  * reason, never silently. `?dry=1` returns what WOULD happen without writing anything.
  *
+ * ─── R-2044: A PART IS INVOICED WHEN IT IS PAID ─────────────────────────────
+ * Each due part goes through bill_subscription_instalment: a paid part (the sale's first part,
+ * a term paid up front, or its payment request paid) gets its tax invoice through
+ * raise_subscription_billing; an unpaid one gets a payment REQUEST (a quote, once per part) —
+ * never an unpaid tax invoice. Then chasePartRequests mails new requests with their Pay link,
+ * chases unpaid ones (Day 1 / 3 / 7 / 14) and pauses after the company's opt-in grace.
+ * `?on=YYYY-MM-DD` time-travels the decision — ONLY with `?dry=1`, like invoice-dunning: a live
+ * pass on a pretend calendar would bill and mail real customers about dates not yet come.
+ *
  * Auth: Authorization: Bearer <CRON_SECRET>. Fails CLOSED — this job issues tax
  * invoices, so an unconfigured secret must refuse, never allow.
  */
@@ -44,6 +53,8 @@ import { syncSubscriptionInstalments, INSTALMENT_SUB_SELECT } from "@/lib/billin
 import { reportCron } from "@/lib/ops/cron-report";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
+import { chasePartRequests, type PartRequestChaseResult } from "@/lib/billing/part-request-chase.server";
+import { billingCronDay } from "@/lib/billing/part-requests";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -61,6 +72,7 @@ function readActiveSubs(supabase: ReturnType<typeof createAdminClient>) {
 interface SkipRow  { subscription_id: string; code: string; reason: string }
 interface RaisedRow { subscription_id: string; period_index: number; invoice_id: string; gross: number }
 interface ErrorRow { subscription_id: string; message: string }
+interface RequestRow { subscription_id: string; period_index: number; quote_id: string; gross: number }
 
 interface BillingCronResult {
   ran_at:               string;
@@ -71,6 +83,13 @@ interface BillingCronResult {
   invoices_raised:      number;
   already_raised:       number;
   raised:               RaisedRow[];
+  /** R-2044: payment requests made this run (dry run: would be made). */
+  requests_made:        number;
+  requests:             RequestRow[];
+  /** R-2044: parts still waiting on an earlier request. */
+  requests_waiting:     number;
+  /** R-2044: sending, reminders and pauses for open part requests. */
+  chase:                PartRequestChaseResult | null;
   skipped:              SkipRow[];
   errors:               ErrorRow[];
 }
@@ -90,9 +109,12 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const dryRun   = new URL(req.url).searchParams.get("dry") === "1";
+  const params   = new URL(req.url).searchParams;
+  const dryRun   = params.get("dry") === "1";
+  const day      = billingCronDay({ dryRun, on: params.get("on"), todayISO: localDateISO(new Date()) });
+  if ("error" in day) return NextResponse.json({ error: day.error }, { status: 400 });
   const supabase = createAdminClient();   // service role — the cron has no session
-  const today    = localDateISO(new Date());
+  const today    = day.todayISO;
 
   const result: BillingCronResult = {
     ran_at: new Date().toISOString(),
@@ -103,6 +125,10 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
     invoices_raised: 0,
     already_raised: 0,
     raised: [],
+    requests_made: 0,
+    requests: [],
+    requests_waiting: 0,
+    chase: null,
     skipped: [],
     errors: [],
   };
@@ -169,12 +195,22 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
       result.invoices_raised      += r.raised.length + r.wouldRaise;
       result.already_raised       += r.alreadyRaised;
       for (const x of r.raised) result.raised.push({ subscription_id: sub.id, ...x });
+      result.requests_made    += r.requests.length + r.wouldRequest;
+      result.requests_waiting += r.requestsOpen.length;
+      for (const x of r.requests) result.requests.push({ subscription_id: sub.id, ...x });
     } catch (e) {
       result.errors.push({
         subscription_id: sub.id,
         message: e instanceof Error ? e.message : String(e),
       });
     }
+  }
+
+  /* R-2044: mail new requests, chase unpaid ones, pause after the opt-in grace. */
+  try {
+    result.chase = await chasePartRequests(supabase, { todayISO: today, dryRun });
+  } catch (e) {
+    result.errors.push({ subscription_id: "", message: `part payment requests: ${errorMessage(e)}` });
   }
 
   return NextResponse.json(reportCron("billing", result));

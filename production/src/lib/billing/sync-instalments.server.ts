@@ -19,6 +19,7 @@ import { plannedInstalments, instalmentSkip, instalmentsDue, type InstalmentSkip
 import { billingTermStart } from "./subscription-schedule";
 import { addDaysISO } from "@/lib/dates/ist";
 import { billedElsewhere, billedElsewhereLabel } from "@/lib/subscriptions/billed-elsewhere";
+import { applyBillOutcome, type BillOutcome } from "./part-requests";
 
 type Admin = SupabaseClient<Database>;
 
@@ -55,6 +56,12 @@ export interface InstalmentSyncResult {
   alreadyRaised: number;
   /** Would have been raised (dry run only). */
   wouldRaise: number;
+  /** R-2044: payment requests (quotes) made now for parts that are due but not paid. */
+  requests: { period_index: number; quote_id: string; gross: number }[];
+  /** R-2044: parts still waiting on a request made earlier (unpaid, or stopped). */
+  requestsOpen: { period_index: number; quote_id: string; status: string }[];
+  /** R-2044: would have got a payment request (dry run only). */
+  wouldRequest: number;
 }
 
 export async function syncSubscriptionInstalments(args: {
@@ -66,7 +73,7 @@ export async function syncSubscriptionInstalments(args: {
 }): Promise<InstalmentSyncResult> {
   const { supabase, sub, quote, todayISO } = args;
   const dryRun = args.dryRun ?? false;
-  const out: InstalmentSyncResult = { skip: null, created: 0, resynced: 0, raised: [], alreadyRaised: 0, wouldRaise: 0 };
+  const out: InstalmentSyncResult = emptySyncResult();
 
   /* R-1763: a period Zoho already billed is never laid or invoiced here (the database refuses
      it too — trigger subscription_billings_not_billed_elsewhere). The term key stays the
@@ -160,14 +167,14 @@ export async function syncSubscriptionInstalments(args: {
     todayISO,
   );
 
+  /* R-2044: a part whose date came is invoiced only when it is paid (the sale quote's first part,
+     a term paid up front, or its own payment request paid) — otherwise it gets a payment
+     request. bill_subscription_instalment decides, in one transaction, and invoices through
+     raise_subscription_billing (the one instalment invoice path). */
   for (const row of due) {
-    if (dryRun) { out.wouldRaise += 1; continue; }
-    const { data, error } = await supabase.rpc("raise_subscription_billing", { p_billing_id: row.id });
+    const { data, error } = await billSubscriptionInstalment(supabase, row.id, dryRun);
     if (error) throw new Error(error.message);
-    const r = data?.[0];
-    if (!r) throw new Error(`raise_subscription_billing returned nothing for instalment ${row.id}`);
-    if (r.already_raised) out.alreadyRaised += 1;
-    else out.raised.push({ period_index: row.period_index, invoice_id: r.invoice_id, gross: r.gross });
+    applyBillOutcome(out, row.period_index, data, dryRun);
   }
 
   /* R-527: OWED follows the instalments that have fallen due, not the year. */
@@ -176,6 +183,22 @@ export async function syncSubscriptionInstalments(args: {
     if (error) throw new Error(error.message);
   }
   return out;
+}
+
+export function emptySyncResult(): InstalmentSyncResult {
+  return {
+    skip: null, created: 0, resynced: 0, raised: [], alreadyRaised: 0, wouldRaise: 0,
+    requests: [], requestsOpen: [], wouldRequest: 0,
+  };
+}
+
+/**
+ * public.bill_subscription_instalment (R-2044, migration 20261028025317): invoice a paid part, or
+ * make (once) the payment request of an unpaid one. Untyped call, shapes pinned in
+ * part-requests.ts (BillOutcome), like sync_split_outstanding below.
+ */
+export function billSubscriptionInstalment(supabase: Admin, billingId: string, dryRun: boolean): PromiseLike<{ data: unknown; error: { message: string } | null }> {
+  return (supabase as unknown as SupabaseClient).rpc("bill_subscription_instalment", { p_billing_id: billingId, p_dry_run: dryRun });
 }
 
 /**
@@ -220,6 +243,27 @@ export async function raiseDueInstalmentsForQuote(args: {
 }): Promise<QuoteInstalmentOutcome> {
   const { supabase, quoteId, tenantId, todayISO } = args;
   const out: QuoteInstalmentOutcome = { raised: [], errors: [], splitBilled: false };
+
+  /* R-2044: the paid quote is ONE part's payment request → that part's tax invoice. Paying it
+     already raised it in the same transaction (tg_payments_part_request_invoice); this reports
+     it, or raises it now if that step was refused then (e.g. the customer had no state). */
+  const part = await partRequestOf(supabase, quoteId, tenantId);
+  if (part) {
+    out.splitBilled = true;
+    try {
+      const { data, error: bErr } = await billSubscriptionInstalment(supabase, part.billingId, false);
+      if (bErr) throw new Error(bErr.message);
+      const r = data as BillOutcome;
+      const invoiceId = r.action === "invoice" || r.action === "already_invoiced" ? r.invoice_id ?? null : null;
+      if (invoiceId) {
+        const { data: inv } = await supabase.from("invoices").select("amount").eq("id", invoiceId).maybeSingle();
+        out.raised.push({ subscription_id: part.subscriptionId, period_index: part.periodIndex, invoice_id: invoiceId, gross: inv?.amount ?? 0 });
+      }
+    } catch (e) {
+      out.errors.push({ subscription_id: part.subscriptionId, message: e instanceof Error ? e.message : String(e) });
+    }
+    return out;
+  }
   const { data: subs, error } = await supabase
     .from("subscriptions")
     .select(INSTALMENT_SUB_SELECT)
@@ -242,4 +286,20 @@ export async function raiseDueInstalmentsForQuote(args: {
     }
   }
   return out;
+}
+
+/** R-2044: the part (subscription_billings row) a quote is the payment request for, or null. */
+export async function partRequestOf(
+  supabase: Admin,
+  quoteId: string,
+  tenantId: string,
+): Promise<{ billingId: string; subscriptionId: string; periodIndex: number } | null> {
+  const { data: q } = await supabase
+    .from("quotes").select("subscription_billing_id").eq("id", quoteId).eq("tenant_id", tenantId).maybeSingle();
+  const billingId = (q as { subscription_billing_id?: string | null } | null)?.subscription_billing_id ?? null;
+  if (!billingId) return null;
+  const { data: b } = await supabase
+    .from("subscription_billings").select("subscription_id, period_index").eq("id", billingId).maybeSingle();
+  if (!b) return null;
+  return { billingId, subscriptionId: b.subscription_id, periodIndex: b.period_index };
 }
