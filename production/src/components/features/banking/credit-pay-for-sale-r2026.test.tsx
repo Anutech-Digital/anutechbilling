@@ -93,7 +93,9 @@ describe("R-2026 new sale: Commitment first, then Payment", () => {
     fireEvent.change(screen.getByLabelText("Payment"), { target: { value: "quarterly" } });
     expect(screen.getByText(/Total ₹38,232/).closest("p")?.textContent).toContain("Due now ₹9,558 (first bill)");
     expect(screen.getByText(/₹9,558 received = ₹9,558 due/)).toBeTruthy();
-    expect(screen.getByText(`Next 3 bills ₹9,558 each, on ${formatDate("2027-01-21")}, ${formatDate("2027-04-21")} and ${formatDate("2027-07-21")}.`)).toBeTruthy();
+    /* R-2052: with Create subscription ticked the next 3 bills are said once, in the paid-up line. */
+    expect(screen.getByText(`Paid up to 20-01-2027 · next bill ₹9,558 on ${formatDate("2027-01-21")}, then 2 more ₹9,558 each, on ${formatDate("2027-04-21")} and ${formatDate("2027-07-21")}.`)).toBeTruthy();
+    expect(screen.queryByText(/^Next 3 bills/)).toBeNull();
     /* Renewal follows the commitment: a year, not a quarter. */
     expect((screen.getByLabelText("Subscription renewal date") as HTMLInputElement).value).toBe("2027-10-21");
     fireEvent.click(screen.getByRole("button", { name: "Record sale & reconcile ₹9,558" }));
