@@ -253,4 +253,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2057splitsalepending", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.split_sale_invoice_status(text[])') and prosrc like '%R-2057%')" },
   { key: "r2067supportsyncoutbox", peek: "to_regprocedure('public.claim_support_sync_outbox(integer,uuid[])') is not null and to_regprocedure('public.finish_support_sync_outbox(uuid,boolean,text)') is not null" },
   { key: "r2073supportupgrade", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-2073%')" },
+  { key: "r2073rolledforwardflag", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-2073: nothing rolled%')" },
 ];
