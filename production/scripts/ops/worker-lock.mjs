@@ -60,6 +60,12 @@ import { fileURLToPath } from "node:url";
 import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites } from "./push-guard-suites.mjs";
 import { enforceScope, parseScopeFlags } from "./worker-lock-guards.mjs";
 import { runRelatedSql } from "./worker-lock-sql.mjs";
+import { isDerived, withoutDerived, refreshDerived, rebaseResolvingDerived, realDerivedDeps, settleLocks } from "./worker-lock-derived.mjs";
+import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue } from "./worker-lock-queue.mjs";
+const readQueue = () => readQueueIn(LOCK_DIR);
+const leaveQueue = (c) => leaveQueueIn(LOCK_DIR, c);
+export { PRIORITIES, normPriority, priorityRank, queueOrder, liveQueue, queueTurn, lockActivityAt, isStaleLock, lockBeat, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS, parseQueueFlags, worktreeIndexMtime, readQueue as readQueueDir } from "./worker-lock-queue.mjs";
+export { isDerived, withoutDerived, newestDeployDate, refreshDerived, rebaseResolvingDerived, MIGRATION_DERIVED } from "./worker-lock-derived.mjs";
 export { migrationDefines, relatedSqlTests, deployPeek, sqlTestSafe, relatedTestScript, runRelatedSql } from "./worker-lock-sql.mjs";
 
 export const LOCK_DIR = process.env.WORKER_LOCK_DIR || path.join(os.homedir(), ".claude", "worker-locks");
@@ -163,13 +169,17 @@ export function claimSlot(card, locks, { fixesRed = false, max = maxWorkersAt(Da
   return { ok: false, overCap: false };
 }
 
-/** Every pair of overlapping paths between my claims and other live locks. */
+/**
+ * Every pair of overlapping paths between my claims and other live locks.
+ * R-2105: files derived from the migrations folder (deploy-db-*.sh, peeks.generated.ts) never clash —
+ * push regenerates them after the rebase (worker-lock-derived.mjs).
+ */
 export function findConflicts(card, mine, locks) {
   const out = [];
   for (const l of locks) {
     if (l.card === card) continue;
-    const theirs = [...(l.areas ?? []), ...(l.files ?? [])];
-    for (const m of mine) for (const t of theirs) {
+    const theirs = withoutDerived([...(l.areas ?? []), ...(l.files ?? [])]);
+    for (const m of withoutDerived(mine)) for (const t of theirs) {
       if (pathsOverlap(m, t)) out.push({ card: l.card, mine: normPath(m), theirs: normPath(t) });
     }
   }
@@ -189,7 +199,8 @@ export function updateLock(card, fn, dir = LOCK_DIR) {
   return { found: true, lock: next };
 }
 
-export function readLocks() {
+
+export function readLocks({ now = Date.now() } = {}) {
   if (!fs.existsSync(LOCK_DIR)) return [];
   const live = [];
   for (const f of fs.readdirSync(LOCK_DIR).filter((n) => n.endsWith(".json") && !n.startsWith("_"))) {
@@ -201,10 +212,21 @@ export function readLocks() {
       console.log(`(stale lock ${l.card ?? f} removed — its worktree folder is gone)`);
       continue;
     }
+    /* R-2105: no sign of life for 60 min (ci-wait/ci-red: 120) → a stopped worker; released, logged. */
+    if (releaseIfStale(l, full, LOCK_DIR, now)) continue;
     live.push(l);
   }
   return live;
 }
+
+/** The card file's own priority ("p1"), if any. */
+function cardPriority(cardPath) {
+  if (!cardPath) return null;
+  try { return cardFromJson(JSON.parse(fs.readFileSync(cardPath, "utf8")))?.priority ?? null; } catch { return null; }
+}
+
+/** R-2105: "still working" — refresh this card's heartbeat (no-op without a lock). */
+function beat(card) { try { updateLock(card, (l) => lockBeat(l, new Date().toISOString())); } catch {} }
 
 function report(conflicts) {
   console.error("✗ TAKRAAV — dusra worker inhi files par kaam kar raha hai:");
@@ -372,7 +394,7 @@ async function pushWithTurn(card, ciFlags = {}) {
   const scope = (exit) => enforceScope(card, "commits", { lockDir: LOCK_DIR, allowOutside: ciFlags.allowOutside, cardPath: ciFlags.cardPath, exit });
   scope();
   /* R-1973: a card pushing again (e.g. --fixes-red after a red ci) is being built — back in a slot. */
-  try { updateLock(card, (l) => (countsTowardCap(l) ? l : lockWorking(l))); } catch {}
+  try { updateLock(card, (l) => lockBeat(countsTowardCap(l) ? l : lockWorking(l), new Date().toISOString())); } catch {}
   /* R-1936: SQL tests of the migrations this push changes — on the local DB, before the push turn. */
   relatedSqlGate(card, { skip: ciFlags.skipRelatedSql });
   await withTurn("push", card, "push kar raha hai", async () => {
@@ -385,11 +407,19 @@ async function pushWithTurn(card, ciFlags = {}) {
        flatten a merge (staging → manager-pardeep). Otherwise --rebase-merges keeps any merge commits. */
     let upToDate = false;
     try { sh("git merge-base --is-ancestor anutech/manager-pardeep HEAD"); upToDate = true; } catch {}
+    /* R-2105: a conflict ONLY in deploy-db-*.sh / peeks.generated.ts is resolved by regenerating them;
+       anything else still aborts and stops. After the rebase they are regenerated anyway (both cards' migrations). */
+    const derived = realDerivedDeps();
     if (!upToDate) {
-      try { sh("git rebase -q --rebase-merges anutech/manager-pardeep"); }
-      catch { try { sh("git rebase --abort"); } catch {} console.error("✗ Rebase me CONFLICT — kisi aur ka code isi jagah badla. Ruko, owner ko batao. Khud se mat sulajhao."); process.exit(2); }
+      const rb = rebaseResolvingDerived("anutech/manager-pardeep", derived);
+      if (!rb.ok) { console.error(`✗ Rebase me CONFLICT — kisi aur ka code isi jagah badla${rb.conflicts?.length ? ` (${rb.conflicts.join(", ")})` : ""}. Ruko, owner ko batao. Khud se mat sulajhao.`); process.exit(2); }
+      if (rb.resolved) console.log(`  rebase: ${rb.resolved} jagah sirf generated files (deploy-db/peeks) me takraav tha — dobara generate karke sulajhaya.`);
       scope((c) => { fs.rmSync(path.join(LOCK_DIR, "_push-turn.json"), { force: true }); process.exit(c); });
     }
+    try {
+      const r = refreshDerived(card, derived);
+      if (r.how !== "none") console.log(`  generated files dobara bane (${r.changed.join(", ")}) — ${r.how === "amend" ? "apne aakhri commit me jode" : "alag commit"}.`);
+    } catch (e) { console.error("✗ gen-deploy-db fail — push nahi hua (migration ka -- deploy-peek: dekho).\n" + String(e?.stderr ?? e?.message ?? e).slice(-800)); process.exit(1); }
     /* R-910: the Auth.js/gateway code imports a Prisma client that is generated, not committed. */
     if (fs.existsSync("prisma/schema.prisma")) { try { sh("npx prisma generate"); } catch (e) { console.error("✗ prisma generate fail — push nahi hua.\n" + String(e.stderr ?? e.message ?? "").slice(-800)); process.exit(1); } }
     /* R-1814: what THIS worker is pushing, read before anything else can move HEAD. */
@@ -711,6 +741,38 @@ export function lastPushedSha(card, { git, readNote = () => null } = {}) {
 }
 
 /**
+ * R-2105: one look (no waiting) at the CI verdict of a ci-wait lock's pushed sha — or of any later
+ * manager-pardeep run whose sha contains it. "green" | "red" | "pending" | null (not a ci-wait lock /
+ * no sha / gh failed). Same rules as `ci`, with the grace period already over.
+ */
+export function ciWaitVerdict(lock, { gh, isAncestor }) {
+  if (!lock || lock.state !== LOCK_STATES.ciWait || !lock.pushedSha) return null;
+  const full = lock.pushedSha;
+  let shaRuns, branchRuns;
+  try {
+    shaRuns = JSON.parse(gh(["run", "list", "-R", CI_REPO, "--commit", full, "-L", "20", "--json", RUN_FIELDS]));
+    branchRuns = JSON.parse(gh(["run", "list", "-R", CI_REPO, "-b", CI_BRANCH, "-L", "40", "--json", RUN_FIELDS]));
+  } catch { return null; }
+  const later = newestFirst(branchRuns).reverse()
+    .filter((r) => r.headSha !== full && !shaRuns.some((m) => m.databaseId === r.databaseId))
+    .filter((r) => { try { return isAncestor(full, r.headSha); } catch { return false; } });
+  const ci = workflowVerdict("CI", shaRuns, later, { graceOver: true, ciDone: false });
+  const sql = workflowVerdict("SQL tests", shaRuns, later, { graceOver: true, ciDone: ci.state === "green" || ci.state === "red" });
+  if (ci.state === "red" || sql.state === "red") return "red";
+  if (ci.state === "green" && (sql.state === "green" || sql.state === "skipped")) return "green";
+  return "pending";
+}
+
+/**
+ * R-2105: before claim/check report TAKRAAV, every ci-wait lock in the way is looked up; CI green for its
+ * sha (or a later sha containing it) → that lock is removed, exactly what `ci <CARD>` green would have
+ * done. Returns the locks still standing. `remove(card)` and `print(line)` are injected for tests.
+ */
+export function settleCiWaitLocks(card, mine, locks, { gh, isAncestor, remove, print = () => {} }) {
+  return settleLocks(card, mine, locks, { findConflicts, verdict: (l) => ciWaitVerdict(l, { gh, isAncestor }), remove, print });
+}
+
+/**
  * `ci <CARD>`: poll until both gate workflows have a verdict for the sha, or the timeout.
  * deps: gh, git, isAncestor(a, b), now(), sleep(ms), print(line). Returns { code, check, lines }.
  */
@@ -792,6 +854,16 @@ function relatedSqlDeps() {
     } catch { psql = null; }
   }
   return { changed, tests, psql };
+}
+
+/** R-2105: real gh + git for settleCiWaitLocks (a gh failure just leaves the lock in place). */
+function realSettleDeps() {
+  let fetched = false;
+  const isAncestor = (a, b) => {
+    if (!fetched) { fetched = true; try { execFileSync("git", ["fetch", "-q", "anutech"], { stdio: "ignore", timeout: 60_000 }); } catch {} }
+    try { execFileSync("git", ["merge-base", "--is-ancestor", a, b], { stdio: "ignore" }); return true; } catch { return false; }
+  };
+  return { gh: realGh, isAncestor, remove: (c) => fs.rmSync(lockFile(c), { force: true }), print: (l) => console.log(l) };
 }
 
 function relatedSqlGate(card, { skip = false } = {}) {
@@ -949,47 +1021,76 @@ function main(argv) {
   if (!card || !/^R-\d+$/.test(card)) { console.error("Card id do, jaise R-197"); process.exit(1); }
 
   if (cmd === "claim") {
-    const { rest: claimArgs, fixesRed } = parseCiFlags(rest);
+    const { rest: ciRest, fixesRed } = parseCiFlags(rest);
+    const { rest: claimArgs, wait, priority: askedPriority, waitMin } = parseQueueFlags(ciRest);
     const [worktree, ...areas] = claimArgs;
-    const locks = readLocks();
-    const own = locks.find((l) => l.card === card) ?? null;
+    const own0 = readLocks().find((l) => l.card === card) ?? null;
     /* R-1973: `claim <CARD> --fixes-red` (no paths) = take the slot back for a card in ci-wait / ci-red. */
-    const reclaim = fixesRed && own && !countsTowardCap(own) && !worktree;
-    if (!reclaim && (!worktree || !areas.length)) { console.error("claim <CARD> <worktree> <folder/file>... --card <card.json>   (CI laal ke baad: claim <CARD> --fixes-red --card <card.json>)"); process.exit(1); }
+    const reclaim = fixesRed && own0 && !countsTowardCap(own0) && !worktree;
+    if (!reclaim && (!worktree || !areas.length)) { console.error("claim <CARD> <worktree> <folder/file>... --card <card.json> [--wait] [--priority p0|p1|p2]   (CI laal ke baad: claim <CARD> --fixes-red --card <card.json>)"); process.exit(1); }
     enforceCard(card, "claim", cardFlags);
+    const derivedAsked = areas.filter(isDerived);
+    if (derivedAsked.length) console.log(`(R-2105: ${derivedAsked.join(", ")} generated hain — claim ki zaroorat nahi, push inhe dobara banata hai)`);
     const broad = areas.filter(tooBroad);
     if (broad.length) { console.error(`✗ Bahut bada area: ${broad.join(", ")} — page/lib ka folder ya file do (kam se kam 3 hisse, jaise src/lib/deals).`); process.exit(1); }
-    const slot = claimSlot(card, locks, { fixesRed });
-    if (!slot.ok) {
+    const priority = normPriority(askedPriority) ?? normPriority(cardPriority(cardFlags.cardPath)) ?? DEFAULT_PRIORITY;
+    const settle = (locks) => (reclaim ? locks : settleCiWaitLocks(card, areas, locks, realSettleDeps()));
+    /* One look at the slots, the queue and the files. Never exits. */
+    const look = () => {
+      const locks = settle(readLocks());
+      const slot = claimSlot(card, locks, { fixesRed });
+      const q = slot.overCap ? { turn: true, ahead: [] } : queueTurn(card, readQueue(), Date.now());
+      const conflicts = reclaim ? [] : findConflicts(card, areas, locks);
+      return { locks, slot, q, conflicts, own: locks.find((l) => l.card === card) ?? null };
+    };
+    const grant = ({ slot, own }) => {
+      leaveQueue(card);
+      if (slot.overCap) console.log(`(${card} --fixes-red: CI laal theek karna pehle — cap bhara hone par bhi slot wapas diya)`);
+      if (reclaim) {
+        updateLock(card, (l) => lockBeat(lockWorking(l), new Date().toISOString()));
+        console.log(`✓ ${card} ne slot wapas liya (${own0.state} → working); files wahi: ${[...(own0.areas ?? []), ...(own0.files ?? [])].join(", ")}`);
+        return;
+      }
+      /* A re-claim keeps what the card already holds (its ci-wait files stay claimed). */
+      const keep = own ? [...(own.areas ?? [])] : [];
+      const at = new Date().toISOString();
+      fs.writeFileSync(lockFile(card), JSON.stringify({ card, worktree: path.resolve(worktree), areas: [...new Set([...keep, ...areas.map(normPath)])], files: own?.files ?? [], claimedAt: own?.claimedAt ?? at, beatAt: at, state: LOCK_STATES.working, priority }, null, 2));
+      console.log(`✓ ${card} ka lock laga (${priority}): ${areas.map(normPath).join(", ")}`);
+    };
+    const refuseSlot = ({ locks, q }) => {
       const busy = locks.filter((l) => l.card !== card && countsTowardCap(l)).map((l) => l.card);
       const waiting = locks.filter((l) => l.card !== card && !countsTowardCap(l)).map((l) => `${l.card} ${l.state}`);
-      console.error(`✗ PEHLE SE ${maxWorkersAt(Date.now())} WORKER chal rahe hain (${busy.join(", ")})${waiting.length ? ` — CI ka intezaar slot nahi ginta: ${waiting.join(", ")}` : ""} — computer hang na ho, isliye ruko.`);
-      console.error("Owner ko batao: \"Ek worker khatam hone ke baad ye card chalaiye.\" Lock ko haath mat lagao.");
+      if (q.ahead.length) console.error(`✗ Queue me ${q.ahead.join(", ")} pehle hain (priority, phir pehle aaya).`);
+      else console.error(`✗ PEHLE SE ${maxWorkersAt(Date.now())} WORKER chal rahe hain (${busy.join(", ")})${waiting.length ? ` — CI ka intezaar slot nahi ginta: ${waiting.join(", ")}` : ""} — computer hang na ho, isliye ruko.`);
+      console.error(`Intezaar karna hai to: claim ${card} … --wait (queue me baari aane par khud lock lagega). Lock ko haath mat lagao.`);
       process.exit(3);
+    };
+    if (!wait) {
+      const s1 = look();
+      if (!s1.slot.ok || !s1.q.turn) refuseSlot(s1);
+      if (s1.conflicts.length) report(s1.conflicts);
+      return grant(s1);
     }
-    if (slot.overCap) console.log(`(${card} --fixes-red: CI laal theek karna pehle — cap bhara hone par bhi slot wapas diya)`);
-    if (reclaim) {
-      updateLock(card, lockWorking);
-      console.log(`✓ ${card} ne slot wapas liya (${own.state} → working); files wahi: ${[...(own.areas ?? []), ...(own.files ?? [])].join(", ")}`);
-      return;
-    }
-    const conflicts = findConflicts(card, areas, locks);
-    if (conflicts.length) report(conflicts);
-    /* A re-claim keeps what the card already holds (its ci-wait files stay claimed). */
-    const keep = own ? [...(own.areas ?? [])] : [];
-    fs.writeFileSync(lockFile(card), JSON.stringify({ card, worktree: path.resolve(worktree), areas: [...new Set([...keep, ...areas.map(normPath)])], files: own?.files ?? [], claimedAt: own?.claimedAt ?? new Date().toISOString(), state: LOCK_STATES.working }, null, 2));
-    console.log(`✓ ${card} ka lock laga: ${areas.map(normPath).join(", ")}`);
+    /* R-2105: --wait — join the queue and block until it is this card's turn (no 5-min retry loops). */
+    return waitInQueue({ card, priority, worktree: worktree ? path.resolve(worktree) : null, waitMin, dir: LOCK_DIR, look, grant, countsTowardCap });
+  }
+  if (cmd === "beat") {
+    const u = updateLock(card, (l) => lockBeat(l, new Date().toISOString()));
+    if (!u.found) { console.error(`✗ ${card} ka lock nahi hai.`); process.exit(1); }
+    console.log(`✓ ${card} beat ${u.lock.beatAt}`);
     return;
   }
   if (cmd === "check") {
     const f = lockFile(card);
     if (!fs.existsSync(f)) { console.error(`✗ ${card} ka lock nahi hai — pehle claim chalao.`); process.exit(1); }
     const me = JSON.parse(fs.readFileSync(f, "utf8"));
-    const files = changedFiles();
-    const conflicts = findConflicts(card, files, readLocks());
+    /* R-2105: derived files (deploy-db-*.sh, peeks.generated.ts) stay out of the lock — push regenerates them. */
+    const files = withoutDerived(changedFiles());
+    const conflicts = findConflicts(card, files, settleCiWaitLocks(card, files, readLocks(), realSettleDeps()));
     if (conflicts.length) report(conflicts);
     enforceScope(card, "worktree", { lockDir: LOCK_DIR, allowOutside, cardPath: cardFlags.cardPath });
     me.files = [...new Set([...(me.files ?? []), ...files])];
+    me.beatAt = new Date().toISOString();
     fs.writeFileSync(f, JSON.stringify(me, null, 2));
     console.log(`✓ ${files.length} badli files — kisi aur worker se takraav nahi.`);
     return;
@@ -1005,6 +1106,7 @@ function main(argv) {
     const git = (gargs) => execFileSync("git", gargs, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     const isAncestor = (a, b) => { try { execFileSync("git", ["merge-base", "--is-ancestor", a, b], { stdio: "ignore" }); return true; } catch { return false; } };
     try { git(["fetch", "-q", "anutech"]); } catch {}
+    beat(card);
     return runCi(card, { gh: realGh, git, isAncestor, sha: f.sha, timeoutMin: f.timeoutMin, readNote: readPushedNote, print: (l) => console.log(l) })
       .then((r) => {
         for (const l of r.lines) (r.code ? console.error : console.log)(l);
@@ -1025,6 +1127,7 @@ function main(argv) {
     if (!r.ok) process.exit(5);
     return;
   }
+  if (cmd === "tsc") beat(card);
   if (cmd === "tsc") return tscWithTurn(card, parseTscFlags(rest)).then((ok) => { if (ok) console.log("✓ tsc green"); else process.exit(1); });
   if (cmd === "prep") return prep(card, rest);
   if (cmd === "release") {
@@ -1042,7 +1145,7 @@ function main(argv) {
     console.log(r.message);
     return;
   }
-  console.error("claim | check | push | ci | sql-related | wip | resume | tsc | prep | release | list | guard-push   (claim/push need --card <card.json>; tsc/push take --full-tsc)");
+  console.error("claim [--wait --priority p0] | beat | check | push | ci | sql-related | wip | resume | tsc | prep | release | list | guard-push   (claim/push need --card <card.json>; tsc/push take --full-tsc)");
   process.exit(1);
 }
 
