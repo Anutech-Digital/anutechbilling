@@ -73,6 +73,10 @@ export async function syncSubscriptionInstalments(args: {
   quote: QuotePaymentFacts | undefined;
   todayISO: string;
   dryRun?: boolean;
+  /** R-2092: lay (insert / re-sync) this subscription's parts and stop — bill nothing. Run for
+      every subscription of a quote BEFORE billing any of them, so the quote's parts of one period
+      are all there when the first is billed and go on ONE tax invoice (billing_part_group). */
+  layOnly?: boolean;
 }): Promise<InstalmentSyncResult> {
   const { supabase, sub, quote, todayISO } = args;
   const dryRun = args.dryRun ?? false;
@@ -155,6 +159,7 @@ export async function syncSubscriptionInstalments(args: {
   }
   out.created  = toInsert.length;
   out.resynced = toResync.length;
+  if (args.layOnly) return out;
 
   const { data: fresh, error: frErr } = dryRun
     ? { data: existing ?? [], error: null }
@@ -261,8 +266,16 @@ export async function duePartInvoices(
   ]);
   const cycleOf = new Map((subs ?? []).map((x) => [x.id, (x.billing_cycle ?? null) as string | null]));
   const amountOf = new Map((invs ?? []).map((x) => [x.id, x.amount ?? 0]));
+  /* R-2092: the parts of one quote period share ONE invoice — report it once. */
+  const seen = new Set<string>();
   return [...rows]
     .sort((a, b) => a.period_start.localeCompare(b.period_start) || a.period_index - b.period_index)
+    .filter((r) => {
+      const id = r.invoice_id as string;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
     .map((r) => ({
       subscription_id: r.subscription_id,
       period_index:    r.period_index,
@@ -273,6 +286,40 @@ export async function duePartInvoices(
       period_end:      r.period_end,
       raised_now:      args.raisedNow.has(r.invoice_id as string),
     }));
+}
+
+/**
+ * R-2092: lay (insert / re-sync, no billing) the parts of every subscription in `subs`. A failure
+ * is left to the billing pass that follows: it runs the same step again and reports it.
+ * Returns the parts laid / re-synced, for the cron's counts. A dry run writes nothing.
+ */
+export async function layInstalments(
+  supabase: Admin,
+  subs: InstalmentSub[],
+  quoteOf: (sub: InstalmentSub) => QuotePaymentFacts | undefined,
+  todayISO: string,
+  dryRun: boolean,
+): Promise<{ created: number; resynced: number }> {
+  const out = { created: 0, resynced: 0 };
+  if (dryRun) return out;
+  for (const sub of subs) {
+    try {
+      const r = await syncSubscriptionInstalments({ supabase, sub, quote: quoteOf(sub), todayISO, layOnly: true });
+      out.created += r.created;
+      out.resynced += r.resynced;
+    } catch {
+      /* reported by the billing pass */
+    }
+  }
+  return out;
+}
+
+/** R-2092: the subscriptions in `subs` that share their quote with another one in `subs`. */
+export function quoteSiblings<T extends Pick<InstalmentSub, "tenant_id" | "quote_id">>(subs: T[]): T[] {
+  const key = (s: T) => `${s.tenant_id}:${s.quote_id}`;
+  const count = new Map<string, number>();
+  for (const s of subs) if (s.quote_id) count.set(key(s), (count.get(key(s)) ?? 0) + 1);
+  return subs.filter((s) => s.quote_id != null && (count.get(key(s)) ?? 0) > 1);
 }
 
 /**
@@ -332,6 +379,9 @@ export async function raiseDueInstalmentsForQuote(args: {
   if (!subs || subs.length === 0) return out;
 
   const facts = await readQuotePaymentFacts(supabase, quoteId);
+  /* R-2092: every subscription's parts are laid first, then billed — a quote's parts for one
+     period become ONE tax invoice only when they all exist at the first bill. */
+  if (subs.length > 1) await layInstalments(supabase, subs, () => facts, todayISO, false);
   for (const sub of subs) {
     try {
       const r = await syncSubscriptionInstalments({ supabase, sub, quote: facts, todayISO });
