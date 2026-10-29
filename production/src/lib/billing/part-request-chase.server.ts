@@ -41,7 +41,8 @@ export interface PartRequestChaseResult {
 interface ReqRow {
   id: string; tenant_id: string; customer_id: string | null; customer_name: string;
   amount: number | null; payment_amount: number | null; public_token: string | null;
-  line_items: { name?: string }[] | null;
+  /** R-2092: a request for a quote's period names each subscription's part (billing_id). */
+  line_items: { name?: string; billing_id?: string }[] | null;
   subscription_billing_id: string;
 }
 interface BillRow {
@@ -142,15 +143,17 @@ export async function chasePartRequests(
         if (opts.dryRun) {
           out.would.push({ quote_id: q.id, step: "pause" });
         } else {
+          /* R-2092: a request for a quote's period covers every subscription of that group. */
+          const subIds = await requestSubscriptionIds(db, q, b.subscription_id);
           const { data, error } = await db.from("subscriptions")
             .update({
               status: "paused", suspended_by: "automation", suspended_at: new Date().toISOString(),
               suspend_reason: requestPauseReason(q.id, b.bill_on, opts.todayISO),
             })
-            .eq("id", b.subscription_id).eq("status", "active")
+            .in("id", subIds).eq("tenant_id", q.tenant_id).eq("status", "active")
             .select("id");
           if (error) throw new Error(error.message);
-          if ((data as unknown[] | null)?.length) out.paused.push({ subscription_id: b.subscription_id, quote_id: q.id });
+          for (const row of (data as { id: string }[] | null) ?? []) out.paused.push({ subscription_id: row.id, quote_id: q.id });
         }
       }
     } catch (e) {
@@ -158,4 +161,18 @@ export async function chasePartRequests(
     }
   }
   return out;
+}
+
+/** R-2092: the subscriptions a part request is for — every part its lines name, else its own one. */
+export async function requestSubscriptionIds(
+  db: SupabaseClient,
+  q: Pick<ReqRow, "tenant_id" | "line_items">,
+  ownSubscriptionId: string,
+): Promise<string[]> {
+  const parts = (q.line_items ?? []).map((l) => l.billing_id).filter((x): x is string => typeof x === "string" && x.length > 0);
+  if (parts.length === 0) return [ownSubscriptionId];
+  const { data, error } = await db.from("subscription_billings")
+    .select("subscription_id").in("id", parts).eq("tenant_id", q.tenant_id);
+  if (error) throw new Error(error.message);
+  return Array.from(new Set([ownSubscriptionId, ...((data as { subscription_id: string }[] | null) ?? []).map((r) => r.subscription_id)]));
 }

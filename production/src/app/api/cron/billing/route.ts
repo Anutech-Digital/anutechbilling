@@ -53,7 +53,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { fetchAllRows, fetchAllRowsIn, errorMessage } from "@/lib/ops/fetch-all";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { localDateISO } from "@/lib/leads/outcomes";
-import { syncSubscriptionInstalments, INSTALMENT_SUB_SELECT } from "@/lib/billing/sync-instalments.server";
+import { syncSubscriptionInstalments, layInstalments, quoteSiblings, INSTALMENT_SUB_SELECT } from "@/lib/billing/sync-instalments.server";
 import { reportCron } from "@/lib/ops/cron-report";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
@@ -182,6 +182,18 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
   } catch (e) {
     return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
   }
+
+  /* R-2092: a quote with several subscriptions billed in parts gets ONE tax invoice (and one
+     payment request) per period — so every one of their parts is laid before any is billed. */
+  const laid = await layInstalments(
+    supabase,
+    quoteSiblings(subs.filter((s) => cronTenantAllowed(s.tenant_id))),
+    (s) => (s.quote_id ? quoteById.get(s.quote_id) : undefined),
+    today,
+    dryRun,
+  );
+  result.instalments_created  += laid.created;
+  result.instalments_resynced += laid.resynced;
 
   for (const sub of subs) {
     /* R-897 */ if (!cronTenantAllowed(sub.tenant_id)) continue;
