@@ -123,3 +123,22 @@ export function buildSupportUpgrade(args: {
     },
   };
 }
+
+/**
+ * R-2087 — is this quote a support-plan UPGRADE (the quote buildSupportUpgrade makes)?
+ *
+ * The same shape record_payment keys off (migration 20261029014621, v_r2073_upgrade): a
+ * renewal-linked quote that buys no time (extension_months = 0) whose first line is a
+ * support plan (item_id SUP-…). It is stored with is_renewal = true — that flag only means
+ * "no new subscription" — so every screen that said "Renewal" for it must ask this first.
+ */
+export function isSupportUpgradeQuote(q: {
+  is_renewal?: boolean | null;
+  is_extension?: boolean | null;
+  extension_months?: number | null;
+  line_items?: unknown;
+}): boolean {
+  if (q.is_renewal !== true || q.is_extension === true || q.extension_months !== 0) return false;
+  const first = Array.isArray(q.line_items) ? (q.line_items[0] as { item_id?: unknown } | undefined) : undefined;
+  return typeof first?.item_id === "string" && isSupportSkuId(first.item_id);
+}

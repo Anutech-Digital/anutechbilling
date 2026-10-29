@@ -25,6 +25,7 @@ import { usePaymentsByQuote, totalReceived, useInstalmentLink } from "@/lib/quer
 import { RecordSubscriptionPaymentContainer } from "./record-invoice-payment";
 import { invoiceReceiptsQuote, invoiceTdsMoney } from "./invoice-receipts";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
+import { invoiceMoneyIn } from "@/lib/invoices/payment-state";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { invoiceBucket } from "@/lib/invoices/overdue";
 import { invoiceStatusBadge } from "./invoice-status";
@@ -344,7 +345,14 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   <div className="grid grid-cols-2 gap-3 pb-3 border-b border-hairline/60" data-testid="invoice-balance">
                     <div>
                       <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Paid</p>
-                      <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(Math.max(0, (invoice.net_payable ?? total) - invoiceAmountDue(invoice)))}</p>
+                      {/* R-2087: money in = receipts after the invoice + advances adjusted at issue.
+                          It was net_payable − due, so an invoice paid in advance (every /buy
+                          order, every desk payment before Issue: net_payable 0) said "Paid ₹0". */}
+                      <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5" data-testid="invoice-paid">{rupee(invoiceMoneyIn({
+                        ...invoice,
+                        credit_noted: invoiceNotes === undefined ? undefined : invoiceNotes?.credit ?? 0,
+                        debit_noted: invoiceNotes?.debit ?? 0,
+                      }))}</p>
                     </div>
                     <div>
                       <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Balance due</p>

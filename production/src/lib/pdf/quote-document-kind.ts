@@ -44,7 +44,9 @@ export function quoteIsPaid(q: Pick<Quote, "payment_status"> & Partial<Pick<Quot
  * gapless number (§17a). Naming it "Invoice" here would put a second, unnumbered
  * invoice-shaped paper in the customer's hands.
  */
-export function quoteDocumentLabel(args: { paid: boolean; isRenewal?: boolean }): string {
+export function quoteDocumentLabel(args: { paid: boolean; isRenewal?: boolean; isUpgrade?: boolean }): string {
+  /* R-2087: a support-plan upgrade is stored as a renewal but renews nothing. */
+  if (args.isUpgrade) return args.paid ? "Upgrade order · Paid" : "Upgrade Quotation";
   if (args.paid) return args.isRenewal ? "Renewal order · Paid" : "Paid order";
   return args.isRenewal ? "Renewal Quotation" : "Quotation";
 }

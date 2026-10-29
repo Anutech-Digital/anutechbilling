@@ -299,6 +299,8 @@ interface RecordPaymentDialogProps {
   askDomain?: boolean;
   /** R-453: a renewal quote — the sheet says the existing subscription is renewed. */
   isRenewal?: boolean;
+  /** R-2087: a support-plan upgrade quote — the sheet says the plan is upgraded, not renewed. */
+  isUpgrade?: boolean;
   /** Pre-fill the domain field (e.g. from the customer/lead's known domain). */
   defaultDomain?: string | null;
   /**
@@ -338,6 +340,7 @@ export function RecordPaymentDialog({
   askDomain = false,
   defaultDomain = null,
   isRenewal = false,
+  isUpgrade = false,
   lineItems,
   onRecorded,
   tdsOnly = null,
@@ -1727,6 +1730,7 @@ export function RecordPaymentDialog({
                     ),
                     planLabel: (lineItems ?? [])[0]?.name ?? null,
                     renewsSubscription: isRenewal,
+                    upgradesPlan: isUpgrade,
                     addsSeats: isAddSeatsQuote,
                   },
                   /* Null once an invoice already exists — a post-invoice payment issues no

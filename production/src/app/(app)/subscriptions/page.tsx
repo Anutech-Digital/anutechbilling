@@ -27,6 +27,7 @@ import ExtendSubscriptionDialog from "@/components/features/subscriptions/extend
 import AddSeatsDialog            from "@/components/features/subscriptions/add-seats-dialog";
 import UpgradeSupportDialog      from "@/components/features/subscriptions/upgrade-support-dialog";
 import { supportUpgradeFrom } from "@/lib/support/upgrade-quote";
+import { isSupportSkuId } from "@/lib/support/tiers";
 import { mayDo } from "@/lib/auth/action-roles";
 import { AddSubscriptionDialog } from "@/components/features/subscriptions/add-subscription-dialog";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
@@ -1847,6 +1848,7 @@ export default function SubscriptionsPage() {
               <SubDrawerActions
                 hasCustomer={!!scheduleSub.customer_id}
                 primary={!leakFixShown}
+                supportPlan={isSupportSkuId(scheduleSub.item_id)}
                 onManageSeats={() => { const sub = scheduleSub; setScheduleSub(null); openAddSeats(sub); }}
                 onExtend={() => { const sub = scheduleSub; setScheduleSub(null); setExtendSub(sub); }}
                 onOpenCustomer={() => { const id = scheduleSub.customer_id; setScheduleSub(null); router.push(`/customers/${id}` as never); }}

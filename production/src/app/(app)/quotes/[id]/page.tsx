@@ -17,6 +17,7 @@ import { canReviseQuote, nextRevision, revisionDraft } from "@/lib/quotes/revise
 import { istToday } from "@/lib/dates/ist";
 import { withInvoiceIssued, rejectLeadOffer, lostActivityDetail, lossLabel, acceptHint } from "@/lib/quotes/quote-page-actions";
 import type { LossReasonCode } from "@/lib/leads/loss-reasons";
+import { isSupportUpgradeQuote } from "@/lib/support/upgrade-quote";
 import { RejectQuoteDialog } from "./reject-quote-dialog";
 import { CustomerStoppedDialog } from "./customer-stopped-dialog";
 import { showCustomerStopped, isPartRequest, partRequestSteps, partRequestOpenLine, PART_REQUEST_BADGE } from "@/lib/billing/part-requests";
@@ -732,6 +733,9 @@ export default function QuoteDetailPage() {
   const paidOnceLines = addSeatsQuote || isMonthExtension(extFlags);
   const lineOnceNote = oneTimeLineNote({ isAddSeats: quote.is_add_seats, ...extFlags });
   const extTitle = extensionTitle(extFlags);
+  /* R-2087: a support-plan upgrade is stored as is_renewal (no new subscription) — it said
+     "Renewal quote" / "Renewal" although it renews nothing; it upgrades the plan. */
+  const upgradeQuote = isSupportUpgradeQuote(quote);
   const linePer = (line: QuoteLineItem) =>
     paidOnceLines || !line.commitment ? "" : isAnnualTier(line.commitment) ? "/yr" : "/mo";
   const discount = Math.round(quote.subtotal * (quote.discount_pct / 100));
@@ -1016,7 +1020,7 @@ export default function QuoteDetailPage() {
           <IconButton icon="arrow_left" aria-label="Back" onClick={() => router.push("/quotes" as any)} />
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
-              Revenue · {quote.is_extension ? "Extension Quote" : quote.is_renewal ? "Renewal Quote" : "Quote"}
+              Revenue · {quote.is_extension ? "Extension Quote" : upgradeQuote ? "Upgrade Quote" : quote.is_renewal ? "Renewal Quote" : "Quote"}
             </p>
             <h1 className="font-serif text-3xl md:text-4xl leading-tight">
               {quote.id}
@@ -1093,7 +1097,7 @@ export default function QuoteDetailPage() {
               ) : quote.is_renewal && (
                 <>
                   <span>·</span>
-                  <Badge kind="info">Renewal</Badge>
+                  <Badge kind="info">{upgradeQuote ? "Upgrade" : "Renewal"}</Badge>
                 </>
               )}
               {payment && (
@@ -2001,6 +2005,7 @@ export default function QuoteDetailPage() {
         lineItems={Array.isArray(quote.line_items) ? quote.line_items : null}
         askDomain={!quote.is_one_off}
         isRenewal={!!quote.is_renewal}
+        isUpgrade={upgradeQuote}
         /* The QUOTE first — it is the record being paid and the one the operator typed
            the domain into. Leaving it out is what made the field open empty on a quote
            that had the answer written on it (reported 22 Aug from Q-TEST-2026-27-0009). */
@@ -2170,6 +2175,7 @@ export default function QuoteDetailPage() {
               billOfSupply,
               notes:         quote.notes ?? "",
               isRenewal:     quote.is_renewal,
+              isUpgrade:     upgradeQuote,
               oneTime:       oneTimeQuote,
               extensionTitle: extTitle,
             });

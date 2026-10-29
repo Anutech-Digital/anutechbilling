@@ -143,6 +143,9 @@ export interface QuotePDFProps {
   /** When true, renders "Renewal Quotation" label + visible "RENEWAL" stamp.
    *  Set by lib/renewals/create-renewal-quote.ts on the source quote. */
   isRenewal?:    boolean;
+  /** R-2087: a support-plan upgrade quote (isSupportUpgradeQuote) — "Upgrade Quotation" +
+   *  "UPGRADE" stamp instead of the renewal ones. */
+  isUpgrade?:    boolean;
   /**
    * R-034. The money is already in, so this sheet is the customer's record of a paid
    * order rather than an offer: the heading says so, and the two sentences that ask
@@ -462,13 +465,13 @@ export function QuotePDF(props: QuotePDFProps) {
     quoteId, customerName, contactName, contactEmail, contactPhone, customerState, customerGstin,
     createdDate, expiresDate, validityDays,
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
-    interState, placeOfSupply, isExport = false, billOfSupply = null, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, termsConditions, isRenewal,
+    interState, placeOfSupply, isExport = false, billOfSupply = null, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, termsConditions, isRenewal, isUpgrade = false,
     isPaid = false, paymentTermsDays = null, oneTime = false, extensionTitle = null, periodContext = null,
     upiQrDataUrl, upiVpa, template = "quotation", bank = null, payLinkUrl = null,
   } = props;
   /* R-1523: a paid quote stays a "Paid order" — a Proforma asks for money that is already in. */
   const proforma = template === "proforma" && !isPaid;
-  const docLabel = proforma ? PROFORMA_TITLE : quoteDocumentLabel({ paid: isPaid, isRenewal });
+  const docLabel = proforma ? PROFORMA_TITLE : quoteDocumentLabel({ paid: isPaid, isRenewal, isUpgrade });
   /* R-813: a customer document — never the staff-only audit part of the notes. */
   const notes = customerQuoteNotes(props.notes, lineItems);
   const includedSupport = props.includedSupport !== undefined
@@ -602,7 +605,7 @@ export function QuotePDF(props: QuotePDFProps) {
             {extensionTitle ? (
               <Text style={s.renewalStamp}>{extensionTitle.toUpperCase()}</Text>
             ) : isRenewal && (
-              <Text style={s.renewalStamp}>RENEWAL</Text>
+              <Text style={s.renewalStamp}>{isUpgrade ? "UPGRADE" : "RENEWAL"}</Text>
             )}
           </View>
         </View>
