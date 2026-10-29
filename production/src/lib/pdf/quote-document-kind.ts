@@ -13,6 +13,7 @@
  * One function, one answer, asserted by a test.
  */
 import type { Quote } from "@/lib/supabase/database.types";
+import { isSupportUpgradeQuote } from "@/lib/support/upgrade-quote";
 
 /**
  * Is the money IN, so nothing is owed on this document?
@@ -49,4 +50,32 @@ export function quoteDocumentLabel(args: { paid: boolean; isRenewal?: boolean; i
   if (args.isUpgrade) return args.paid ? "Upgrade order · Paid" : "Upgrade Quotation";
   if (args.paid) return args.isRenewal ? "Renewal order · Paid" : "Paid order";
   return args.isRenewal ? "Renewal Quotation" : "Quotation";
+}
+
+/**
+ * R-2093 — WHAT this quote is, decided once for every customer-facing document.
+ *
+ * R-2087 taught the server PDF (build-props) that a support-plan upgrade is stored with
+ * is_renewal = true but renews nothing — yet the email PDF, the WhatsApp PDF, the attachment
+ * builder and the /quote/[id]/accept page each passed their own `isRenewal: quote.is_renewal`,
+ * so the customer still got "Renewal Quotation". Every renderer now asks this one function
+ * (isSupportUpgradeQuote first) instead of reading the flag itself.
+ */
+export type QuoteDocumentKind = "quote" | "renewal" | "upgrade";
+
+export type QuoteKindFacts = Parameters<typeof isSupportUpgradeQuote>[0];
+
+export function quoteDocumentKind(q: QuoteKindFacts): QuoteDocumentKind {
+  if (isSupportUpgradeQuote(q)) return "upgrade";
+  return q.is_renewal === true ? "renewal" : "quote";
+}
+
+/** The two flags QuotePDF and RecordPaymentDialog take — spread them: `...flagsForQuoteKind(kind)`. */
+export function flagsForQuoteKind(kind: QuoteDocumentKind): { isRenewal: boolean; isUpgrade: boolean } {
+  return { isRenewal: kind !== "quote", isUpgrade: kind === "upgrade" };
+}
+
+/** Shorthand for a caller holding the quote row: `...quoteKindFlags(quote)` / `{...quoteKindFlags(quote)}`. */
+export function quoteKindFlags(q: QuoteKindFacts): { isRenewal: boolean; isUpgrade: boolean } {
+  return flagsForQuoteKind(quoteDocumentKind(q));
 }

@@ -27,6 +27,7 @@
  * reply path costs the reply, and the customer is left with silence.
  */
 import { renderQuotePDF } from "@/lib/pdf";
+import { quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 import { logoDataUri } from "@/lib/pdf/logo";
 import type { createAdminClient } from "@/lib/supabase/server";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
@@ -114,7 +115,8 @@ export async function quotePdfAttachment(
       validityDays:  30,
       billingCycle:  (quote.billing_cycle ?? undefined) as never,
       notes:         quote.notes ?? undefined,
-      isRenewal:     quote.is_renewal ?? false,
+      /* R-2093: quote / renewal / upgrade from ONE helper — never the raw flag. */
+      ...quoteKindFlags(quote),
       oneTime:       isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off }),
       periodContext: await loadQuotePeriodContext(admin, { ...quote, tenant_id: tenantId }),
     });

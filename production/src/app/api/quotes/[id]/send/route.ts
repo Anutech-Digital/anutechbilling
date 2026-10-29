@@ -29,6 +29,7 @@ import { primaryContactEmail } from "@/lib/contacts/primary";
 import { isEmailConfigured } from "@/lib/email/send";
 import { sendCustomerEmail, CUSTOMER_MESSAGES_OFF } from "@/lib/messaging";
 import { renderQuotePDF } from "@/lib/pdf";
+import { quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
@@ -332,7 +333,8 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       bank:          proforma ? proformaBank(tenant) : null,
       payLinkUrl:    customerUrl,
       notes:         quote.notes ?? undefined,
-      isRenewal:     quote.is_renewal,
+      /* R-2093: quote / renewal / upgrade from ONE helper — never the raw flag. */
+      ...quoteKindFlags(quote),
       /* R-1670 (3): the invoice terms this quote will carry, not a fixed "Net 7". */
       paymentTermsDays: quote.payment_terms_days ?? null,
       oneTime:       isOneTimeQuote({

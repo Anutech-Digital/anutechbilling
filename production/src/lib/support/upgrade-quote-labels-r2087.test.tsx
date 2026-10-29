@@ -75,12 +75,14 @@ describe("R-2087 (1) an upgrade quote is called an upgrade", () => {
     const page = fs.readFileSync(path.resolve(__dirname, "../../app/(app)/quotes/[id]/page.tsx"), "utf8");
     expect(page).toContain('upgradeQuote ? "Upgrade Quote"');
     expect(page).toContain('{upgradeQuote ? "Upgrade" : "Renewal"}');
-    expect(page).toContain("isUpgrade={upgradeQuote}");
+    /* R-2093: the sheet and the PDF take isRenewal/isUpgrade from quoteKindFlags (one helper). */
+    expect(page).toContain("{...quoteKindFlags(quote)");
+    expect(page).toContain('quoteDocumentKind(quote) === "upgrade"');
     const list = fs.readFileSync(path.resolve(__dirname, "../../app/(app)/quotes/page.tsx"), "utf8");
     expect(list.match(/isSupportUpgradeQuote\(q\) \? "Upgrade" : "Renewal"/g)?.length).toBe(2);
     expect(list).toContain("!isSupportUpgradeQuote(q)).length");
     const props = fs.readFileSync(path.resolve(__dirname, "../pdf/build-props.ts"), "utf8");
-    expect(props).toContain("isUpgrade:     isSupportUpgradeQuote(quote)");
+    expect(props).toContain("...quoteKindFlags(quote)");
   });
 });
 

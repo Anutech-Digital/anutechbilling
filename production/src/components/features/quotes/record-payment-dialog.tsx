@@ -1024,6 +1024,7 @@ export function RecordPaymentDialog({
         invoicePaid:          res.invoicePaid,
         hasExistingInvoice:   res.hasExistingInvoice,
         isRenewalQuote:       res.isRenewalQuote,
+        isUpgradeQuote:       isUpgrade,  // R-2093
         renewalRolledForward: res.renewalRolledForward,
         overpaidCredit:       res.overpaidCredit,
         tdsRecorded:          res.tdsRecorded,

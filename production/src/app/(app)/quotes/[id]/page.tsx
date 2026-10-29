@@ -17,7 +17,6 @@ import { canReviseQuote, nextRevision, revisionDraft } from "@/lib/quotes/revise
 import { istToday } from "@/lib/dates/ist";
 import { withInvoiceIssued, rejectLeadOffer, lostActivityDetail, lossLabel, acceptHint } from "@/lib/quotes/quote-page-actions";
 import type { LossReasonCode } from "@/lib/leads/loss-reasons";
-import { isSupportUpgradeQuote } from "@/lib/support/upgrade-quote";
 import { RejectQuoteDialog } from "./reject-quote-dialog";
 import { CustomerStoppedDialog } from "./customer-stopped-dialog";
 import { showCustomerStopped, isPartRequest, partRequestSteps, partRequestOpenLine, PART_REQUEST_BADGE } from "@/lib/billing/part-requests";
@@ -116,7 +115,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canRecordMoney } from "@/lib/auth/roles";
 import { rupee, formatDate, daysBetween, toWhatsAppDigits } from "@/lib/utils";
 import { logoDataUri } from "@/lib/pdf/logo";
-import { quoteIsPaid } from "@/lib/pdf/quote-document-kind";
+import { quoteDocumentKind, quoteIsPaid, quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 import {
   extensionTitle, isMonthExtension, isOneTimeQuote, oneTimeLineNote,
   quoteLinePeriodContext, renewedSubscriptionDomain,
@@ -735,7 +734,7 @@ export default function QuoteDetailPage() {
   const extTitle = extensionTitle(extFlags);
   /* R-2087: a support-plan upgrade is stored as is_renewal (no new subscription) — it said
      "Renewal quote" / "Renewal" although it renews nothing; it upgrades the plan. */
-  const upgradeQuote = isSupportUpgradeQuote(quote);
+  const upgradeQuote = quoteDocumentKind(quote) === "upgrade";  // R-2093: one helper
   const linePer = (line: QuoteLineItem) =>
     paidOnceLines || !line.commitment ? "" : isAnnualTier(line.commitment) ? "/yr" : "/mo";
   const discount = Math.round(quote.subtotal * (quote.discount_pct / 100));
@@ -2004,8 +2003,7 @@ export default function QuoteDetailPage() {
            operator to guess — which is exactly what a tester hit twice on 22 Aug. */
         lineItems={Array.isArray(quote.line_items) ? quote.line_items : null}
         askDomain={!quote.is_one_off}
-        isRenewal={!!quote.is_renewal}
-        isUpgrade={upgradeQuote}
+        {...quoteKindFlags(quote) /* R-2093 */}
         /* The QUOTE first — it is the record being paid and the one the operator typed
            the domain into. Leaving it out is what made the field open empty on a quote
            that had the answer written on it (reported 22 Aug from Q-TEST-2026-27-0009). */
@@ -2174,8 +2172,8 @@ export default function QuoteDetailPage() {
               isExport:      pos.isExport,
               billOfSupply,
               notes:         quote.notes ?? "",
-              isRenewal:     quote.is_renewal,
-              isUpgrade:     upgradeQuote,
+              /* R-2093: quote / renewal / upgrade from ONE helper — never the raw flag. */
+              ...quoteKindFlags(quote),
               oneTime:       oneTimeQuote,
               extensionTitle: extTitle,
             });

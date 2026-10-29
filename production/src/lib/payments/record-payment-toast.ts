@@ -33,6 +33,9 @@ export interface PaymentToastInput {
   invoicePaid: boolean;
   hasExistingInvoice: boolean;
   isRenewalQuote: boolean;
+  /** R-2093: a support-plan upgrade quote (quoteDocumentKind === "upgrade"). It is stored as a
+   *  renewal, but the money upgrades the plan — it renews nothing, so never say "renewal". */
+  isUpgradeQuote?: boolean;
   renewalRolledForward: boolean;
   overpaidCredit: number;
   tdsRecorded: boolean;
@@ -60,6 +63,11 @@ export interface PaymentToast {
 }
 
 function headline(r: PaymentToastInput): string {
+  if (r.isUpgradeQuote) {
+    return r.isFullyPaid
+      ? "Paid in full · support plan upgraded"
+      : `Partial upgrade payment recorded · ${rupee(r.outstanding)} still due to upgrade the plan`;
+  }
   if (r.renewalRolledForward) return "Renewal payment received · subscription rolled forward 1 year";
   if (r.isRenewalQuote && !r.isFullyPaid) {
     return `Partial renewal payment recorded · ${rupee(r.outstanding)} still due to renew`;

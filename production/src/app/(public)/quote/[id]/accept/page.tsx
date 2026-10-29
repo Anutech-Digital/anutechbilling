@@ -33,6 +33,7 @@ import { maybeAlertHotLead, recordQuoteView } from "@/lib/quotes/quote-views.ser
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 import { publicQuoteVisible } from "./visibility";
+import { quoteDocumentLabel, quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 
 export const dynamic = "force-dynamic"; // never cache — quotes change state
 
@@ -209,6 +210,9 @@ export default async function QuoteAcceptPage(props: Props) {
     }),
     /* R-811: "3-month extension" from extension_months. */
     extension_title: extensionTitle({ isExtension: quote.is_extension, extensionMonths: quote.extension_months }),
+    /* R-2093: "Upgrade Quotation" / "Renewal Quotation" / "Quotation" — the same helper the
+       emailed, WhatsApp and downloaded PDFs use, so the customer reads one word everywhere. */
+    document_label: quoteDocumentLabel({ paid: false, ...quoteKindFlags(quote) }),
   };
   /* R-1764: "Domain:" / "Subscription period:" under each subscription line — the same helper
      and inputs as the PDF and the tax invoice, so all three name the same dates. */
