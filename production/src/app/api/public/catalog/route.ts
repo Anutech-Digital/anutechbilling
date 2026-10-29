@@ -1,5 +1,5 @@
 /**
- * GET /api/public/catalog?function=hosting|mail|ssl — R-1786 (Phase 2 of R-1784).
+ * GET /api/public/catalog?function=hosting|mail|ssl|support — R-1786 (Phase 2 of R-1784).
  *
  * The website's own products and prices for the panels and the site, read-only and anonymous:
  * the same price book the /hosting page and checkout charge with (lib/catalog/catalog-prices*),
@@ -7,9 +7,9 @@
  *
  * Narrow on purpose: `publicCatalog` whitelists the fields (sku, name, function, termMonths,
  * exGst, inclGst, gstRate, hsn, fulfilment, engineRef) — cost/wholesale/margin are never read
- * into the book, and the test proves none leaves. Support plans are not here yet (Phase 3,
- * R-1787, after Pardeep's tier decision); Workspace has /api/public/catalog/workspace; domains
- * are priced live by the registry.
+ * into the book, and the test proves none leaves. R-2083: the paid support plans (SUP-STANDARD-
+ * MO/YR, SUP-ENTERPRISE-MO/YR; Free is not sold) are here too — the prices /buy/support charges.
+ * Workspace has /api/public/catalog/workspace; domains are priced live by the registry.
  *
  * Cached: the book is memoised 60 s per server; CDN `s-maxage=60`.
  */

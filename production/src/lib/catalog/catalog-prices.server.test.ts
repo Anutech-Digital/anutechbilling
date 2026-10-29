@@ -30,7 +30,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 import { CATALOG_TTL_MS, forgetCatalogPricesForTests, getPriceBook } from "./catalog-prices.server";
-import { CORE_SKUS } from "./catalog-prices";
+import { BOOK_SKUS } from "./catalog-prices";
 import { hostingPriceTable } from "@/lib/checkout/hosting-prices";
 
 const T = "5b0c7a3e-4d2f-4e61-9a8b-2c1d0e9f7a64";
@@ -69,13 +69,15 @@ describe("getPriceBook", () => {
     expect(c.columns).not.toMatch(/wholesale|margin|partner_price|\*/);
     expect(c.filters).toContainEqual(["tenant_id", T]);
     expect(c.filters).toContainEqual(["is_active", true]);
-    expect(c.filters).toContainEqual(["sku", CORE_SKUS.map((s) => s.sku)]);
+    expect(c.filters).toContainEqual(["sku", BOOK_SKUS.map((s) => s.sku)]);
+    // R-2083: the yearly support total is read as ONE number — never the prices json (wholesale).
+    expect(c.columns).toContain("annual_total_msrp:prices->annual_total->>msrp");
   });
 
-  it("flag on: the 9 SKUs with no row keep their code price and are logged once", async () => {
+  it("flag on: the 13 SKUs with no row keep their code price and are logged once", async () => {
     vi.stubEnv("CATALOG_FROM_DB", "1");
     const book = await getPriceBook(T);
-    expect(book.fallbacks).toHaveLength(9);
+    expect(book.fallbacks).toHaveLength(BOOK_SKUS.length - 1);
     expect(hostingPriceTable(book.tiers)[1].yearly.exGst).toBe(1500);
     expect(console.warn).toHaveBeenCalledTimes(1);
     expect(String(vi.mocked(console.warn).mock.calls[0][0])).toMatch(/HOST-STARTER-MO.*code price/);
