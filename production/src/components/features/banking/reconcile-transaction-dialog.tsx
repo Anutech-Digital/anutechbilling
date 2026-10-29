@@ -66,6 +66,8 @@ import { useReferralCommissions } from "@/lib/queries/referral-commissions";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
 import { ProjectPaymentSection } from "@/components/features/banking/project-payment-section";
 import { CreditPayForSection } from "@/components/features/banking/credit-pay-for-section";
+import { RazorpaySettlementSection } from "@/components/features/banking/razorpay-settlement-section";
+import { isRazorpaySettlementLine } from "@/lib/razorpay/settlement-match";
 import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-section";
 import { EmiRepaymentSection } from "@/components/features/banking/emi-repayment-section";
 import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
@@ -1276,6 +1278,12 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 <Icon name="info" size={12} />
                 No close matches in your books (±₹100, ±7 days).
               </p>
+            )}
+
+            {/* R-2099: a Razorpay settlement credit — one press fetches it from Razorpay and books every
+                payment + Razorpay's fee in one step. The tiles below stay for anything else. */}
+            {isCredit && !payForDone && isRazorpaySettlementLine(transaction) && (
+              <RazorpaySettlementSection line={{ id: transaction.id, credit: transaction.credit }} onDone={() => onOpenChange(false)} />
             )}
 
             {/* 2. Who is this money for? → only the chosen tile's section. With a suggestion its
