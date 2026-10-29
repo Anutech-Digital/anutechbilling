@@ -201,7 +201,7 @@ export default function QuoteDetailPage() {
   const [approvalOpen, setApprovalOpen] = React.useState(false);
   const requestApproval = useRequestApproval();
   /* R-1121: this quote's, the renewed one and the customer's subscriptions — not the whole table. */
-  const { data: allSubs } = useQuoteSubscriptions(quote ?? null);
+  const { data: allSubs, isLoading: subsLoading } = useQuoteSubscriptions(quote ?? null);
   /* R-1764: each subscription line's "Domain:" and "Subscription period:" in the preview. */
   const periodCtx = React.useMemo(
     () => (quote ? quoteLinePeriodContext(quote, renewedSubscriptionDomain(quote, allSubs)) : null),
@@ -289,7 +289,7 @@ export default function QuoteDetailPage() {
   const { data: nextPartRequest = null } = useNextPartRequest(quote && !partRequest ? saleSub?.id : null);
   /* R-2101: the parts' tax invoices (linked through subscription_billings) tick INVOICED. Not
      loaded / failed → null: the step falls back to quote.invoice_id alone (as before R-2101). */
-  const { data: partInvoices = null } = useQuotePartInvoices(
+  const { data: partInvoices = null, isLoading: partInvoicesLoading } = useQuotePartInvoices(
     quote && !quote.invoice_id && !partRequest
       ? (allSubs ?? []).filter((s) => s.quote_id === quote.id && s.billing_cycle !== "yearly").map((s) => s.id)
       : [],
@@ -660,7 +660,10 @@ export default function QuoteDetailPage() {
   const { data: turnover } = useTurnoverBracket();
 
   // ────────── Loading / Error ──────────
-  if (isLoading) {
+  /* R-2104: also wait for the subscriptions and the parts' invoices. Rendered before they came, a
+     paid quote said "No invoice yet" and flashed the red "Re-create subscription" banner (no
+     subscription read yet looked like a missing one). */
+  if (isLoading || subsLoading || partInvoicesLoading) {
     return (
       <div className="p-4 md:p-6 lg:p-8 max-w-5xl mx-auto space-y-6">
         <Skeleton className="h-12 w-1/2" />

@@ -15,7 +15,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
-import { plannedInstalments, instalmentSkip, instalmentsDue, type InstalmentSkip } from "./instalments";
+import { plannedInstalments, instalmentSkip, instalmentsDue, quotePeriodTaxables, type InstalmentSkip, type SplitQuoteFields } from "./instalments";
 import { billingTermStart } from "./subscription-schedule";
 import { addDaysISO } from "@/lib/dates/ist";
 import { billedElsewhere, billedElsewhereLabel } from "@/lib/subscriptions/billed-elsewhere";
@@ -87,7 +87,12 @@ export async function syncSubscriptionInstalments(args: {
   /* R-1763: a period Zoho already billed is never laid or invoiced here (the database refuses
      it too — trigger subscription_billings_not_billed_elsewhere). The term key stays the
      whole term's first day, so the periods still to bill here keep their usual key. */
-  const wholeTerm = plannedInstalments(sub);
+  /* R-2104: the quote's only split-billed subscription is laid with the QUOTE's period amounts —
+     the figure the Record payment sheet asked (quotePeriodTaxables). */
+  const mrrTerm = plannedInstalments(sub);
+  const wholeTerm = mrrTerm.length > 0
+    ? quotePeriodTaxables(mrrTerm, { mrr: sub.mrr, cycle: sub.billing_cycle, ...(await quotePlanFacts(supabase, sub)) })
+    : mrrTerm;
   const planned = wholeTerm.filter((p) => !billedElsewhere(sub, p.periodStart));
   if (wholeTerm.length > 0 && planned.length === 0) {
     out.skip = { code: "billed_elsewhere", reason: `${billedElsewhereLabel(sub)} — this term is not invoiced again here; the next term is.` };
@@ -194,6 +199,34 @@ export async function syncSubscriptionInstalments(args: {
     if (error) throw new Error(error.message);
   }
   return out;
+}
+
+/**
+ * R-2104: what quotePeriodTaxables needs from the subscription's quote — its split fields and how
+ * many split-billed subscriptions it has (active ones + this one). No quote, or a failed read → { quote: null }:
+ * the MRR figures stand (as before R-2104).
+ */
+export async function quotePlanFacts(
+  supabase: Admin,
+  sub: Pick<InstalmentSub, "id" | "tenant_id" | "quote_id" | "billing_cycle">,
+): Promise<{ quote: SplitQuoteFields | null; splitSubsOfQuote: number }> {
+  const quoteId = sub.quote_id;
+  if (!quoteId || !sub.billing_cycle || sub.billing_cycle === "yearly") return { quote: null, splitSubsOfQuote: 0 };
+  const read = await (async () => Promise.all([
+    supabase.from("quotes")
+      .select("subtotal, discount_pct, tax_rate, amount, billing_cycle, line_items")
+      .eq("tenant_id", sub.tenant_id).eq("id", quoteId).maybeSingle(),
+    supabase.from("subscriptions")
+      .select("id, billing_cycle, status")
+      .eq("tenant_id", sub.tenant_id).eq("quote_id", quoteId),
+  ]))().catch(() => null);
+  if (!read) return { quote: null, splitSubsOfQuote: 0 };
+  const [{ data: q, error: qErr }, { data: subs, error: sErr }] = read;
+  if (qErr || sErr || !q) return { quote: null, splitSubsOfQuote: 0 };
+  return {
+    quote: q as SplitQuoteFields,
+    splitSubsOfQuote: (subs ?? []).filter((x) => (x.id === sub.id || x.status === "active") && x.billing_cycle != null && x.billing_cycle !== "yearly").length,
+  };
 }
 
 export function emptySyncResult(): InstalmentSyncResult {
