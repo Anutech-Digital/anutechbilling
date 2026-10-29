@@ -25,7 +25,7 @@ import { Button } from "@/components/ui/button";
 const DANGER_OUTLINE = "w-full border-rose/60 text-rose hover:bg-rose-soft/40 hover:text-rose-ink";
 
 export function SubDrawerActions({
-  hasCustomer, primary, onManageSeats, onExtend, onOpenCustomer, onStatement, onCorrect,
+  hasCustomer, primary, onManageSeats, onExtend, onOpenCustomer, onStatement, onCorrect, onUpgradePlan,
 }: {
   /** Open customer / Statement need a customer record. */
   hasCustomer: boolean;
@@ -37,6 +37,9 @@ export function SubDrawerActions({
   onOpenCustomer: () => void;
   onStatement: () => void;
   onCorrect: () => void;
+  /** R-2073: set only for an active support plan (SUP-…) with a higher tier, for roles that may
+   *  change a subscription's terms — opens the pro-rata upgrade quote dialog. */
+  onUpgradePlan?: () => void;
 }) {
   return (
     <div className="mb-4 pb-4 border-b border-hairline" data-testid="sub-drawer-actions">
@@ -49,6 +52,7 @@ export function SubDrawerActions({
         >
           Manage seats
         </Button>
+        {onUpgradePlan && <Button icon="zap" onClick={onUpgradePlan}>Upgrade plan</Button>}
         <Button icon="clock" onClick={onExtend}>Extend term</Button>
         {/* The statement, one click from here — ?customer= seeds the ledger's picker. */}
         {hasCustomer && <Button icon="book" onClick={onStatement}>Statement</Button>}
