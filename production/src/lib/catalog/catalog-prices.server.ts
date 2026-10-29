@@ -12,7 +12,7 @@
  * per tenant. The read is narrow: SKU, name, price and the public metadata — never `wholesale`.
  */
 import { createAdminClient } from "@/lib/supabase/server";
-import { buildPriceBook, catalogFromDbEnabled, codePriceBook, CORE_SKUS, type CatalogRow, type PriceBook } from "./catalog-prices";
+import { BOOK_SKUS, buildPriceBook, catalogFromDbEnabled, codePriceBook, type CatalogRow, type PriceBook } from "./catalog-prices";
 
 export const CATALOG_TTL_MS = 60_000;
 export const CATALOG_MAX_STALE_MS = 24 * 60 * 60 * 1000;
@@ -28,7 +28,9 @@ export function forgetCatalogPricesForTests(): void {
 }
 
 /** Only these columns — the public API shapes from them, and cost never enters the book. */
-const COLUMNS = "sku, name, msrp, hsn, term_months, fulfilment, engine_ref, is_public";
+/* R-2083: + the year total a yearly support row keeps in prices.annual_total.msrp — that one
+   number only (a JSON path), so the wholesale beside it in `prices` is never read. */
+const COLUMNS = "sku, name, msrp, annual_total_msrp:prices->annual_total->>msrp, hsn, term_months, fulfilment, engine_ref, is_public";
 
 async function readRows(tenantId: string): Promise<CatalogRow[]> {
   const admin = createAdminClient();
@@ -37,7 +39,7 @@ async function readRows(tenantId: string): Promise<CatalogRow[]> {
     .select(COLUMNS)
     .eq("tenant_id", tenantId)
     .eq("is_active", true)
-    .in("sku", CORE_SKUS.map((s) => s.sku));
+    .in("sku", BOOK_SKUS.map((s) => s.sku));
   let timer: ReturnType<typeof setTimeout> | undefined;
   const budget = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`no answer in ${CATALOG_READ_BUDGET_MS} ms`)), CATALOG_READ_BUDGET_MS);
