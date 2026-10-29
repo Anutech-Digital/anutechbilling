@@ -72,7 +72,7 @@ export function CreditPaySplit({
                   {problem && <span className="block text-xs text-rose-ink">{problem}</span>}
                 </span>
                 {on && (
-                  <Input type="number" min={1} step={1} value={String(picks[k])} className="w-28 shrink-0 tabular-nums"
+                  <Input type="number" min={1} step={1} value={String(picks[k])} wrapperClassName="w-28 shrink-0" className="tabular-nums"
                     onChange={(e) => onAmount(k, Number(e.target.value))} aria-label={`Amount on ${doc}`} />
                 )}
               </li>
@@ -90,8 +90,8 @@ export function CreditPaySplit({
           {saleEditor}
           {saleTotal > 0 && (
             <label className="flex items-center justify-between gap-2 text-xs text-ink-3">
-              <span>Amount of this money on the new sale</span>
-              <Input type="number" min={1} step={1} value={String(saleAmount)} className="w-28 tabular-nums"
+              <span className="min-w-0">Amount of this money on the new sale</span>
+              <Input type="number" min={1} step={1} value={String(saleAmount)} wrapperClassName="w-28 shrink-0" className="tabular-nums"
                 onChange={(e) => onSaleAmount(Number(e.target.value))} aria-label="Amount on the new sale" />
             </label>
           )}

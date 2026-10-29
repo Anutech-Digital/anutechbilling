@@ -19,7 +19,7 @@ import { toastInvoiceIssueError } from "@/lib/queries/invoices";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import type { OldOneOffBooking, OpenItem, PayForResult, SaleLine } from "@/lib/banking/credit-pay-for";
 import { saleLinesPayload } from "@/lib/banking/credit-pay-for";
-import { ADVANCE_PAYMENT_NOTE_PREFIX, advancePaymentIds } from "@/lib/banking/bank-row-label";
+import { ADVANCE_PAYMENT_NOTE_PREFIX, advancePaymentIds, type SplitLinePayment } from "@/lib/banking/bank-row-label";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { splitArgs, type SplitInput } from "@/lib/banking/credit-pay-for-multi";
 import type { BillingCycle } from "@/lib/supabase/database.types";
@@ -290,5 +290,32 @@ export function useSplitFromBankCredit() {
     },
     onSuccess: after,
     onError: onPayError,
+  });
+}
+
+/* ─── R-2098: the receipts on lines that paid several items (bank row "N payments") ─── */
+
+/** bank line id → its receipts (payments.bank_txn_id). Read-only; RLS scopes to the company. */
+export function useBankSplitLinePayments(txnIds: readonly string[]) {
+  const ids = [...new Set(txnIds)].sort();
+  return useQuery({
+    queryKey: ["bank_transactions", "split_payments", ids] as const,
+    enabled: ids.length > 0,
+    queryFn: async (): Promise<Map<string, SplitLinePayment[]>> => {
+      const sb = createClient() as unknown as { from: (t: string) => { select: (c: string) => { in: (c: string, v: string[]) => { eq: (c: string, v: string) => PromiseLike<{ data: unknown; error: { message: string } | null }> } } } };
+      const out = new Map<string, SplitLinePayment[]>();
+      for (let i = 0; i < ids.length; i += 150) {
+        const { data, error } = await sb.from("payments").select("id, amount, quote_id, invoice_id, receipt_voucher_no, bank_txn_id")
+          .in("bank_txn_id", ids.slice(i, i + 150)).eq("status", "received");
+        if (error) throw error;
+        for (const r of (data ?? []) as Array<SplitLinePayment & { bank_txn_id: string }>) {
+          const list = out.get(r.bank_txn_id) ?? [];
+          list.push({ id: r.id, amount: Number(r.amount) || 0, quote_id: r.quote_id, invoice_id: r.invoice_id, receipt_voucher_no: r.receipt_voucher_no });
+          out.set(r.bank_txn_id, list);
+        }
+      }
+      return out;
+    },
+    staleTime: 30_000,
   });
 }

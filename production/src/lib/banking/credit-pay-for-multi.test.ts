@@ -107,6 +107,26 @@ describe("resultLines for a split", () => {
     expect(lines).toContain("₹346 kept as advance for Infotrack — it will be offered when you record their next payment");
   });
 
+  /* Localhost 29 Oct ("We hit a snag"): reconcile_bank_credit_split returns NO `subscriptions`
+     key (migration 20261029054707) — resultLines read r.subscriptions[0] before the split branch. */
+  it("the server's exact split shape (no subscriptions key) — no crash, ₹230 advance", () => {
+    const fromServer = {
+      kind: "split", amount: 2000, allocated: 1770,
+      parts: [part({ invoice_id: "INV-11", quote_id: "Q-11", amount: 590 }), part({ invoice_id: "INV-12", quote_id: "Q-12", amount: 1180 })],
+      advance_credit: 230, advance_quote_id: "Q-ADV", advance_receipt_voucher_no: "RV-9", round_off: 0, payment_id: "p1",
+    } as unknown as PayForResult;
+    const r = { ...fromServer, customer_id: "c1", customer_name: "E2E Test Co" };
+    expect(() => resultLines(r)).not.toThrow();
+    const lines = resultLines(r).map((l) => l.text);
+    expect(lines).toEqual([
+      "₹590 recorded on quote Q-11", "Invoice INV-11",
+      "₹1,180 recorded on quote Q-12", "Invoice INV-12",
+      "₹230 kept as advance for E2E Test Co — it will be offered when you record their next payment",
+    ]);
+    const ro = { ...fromServer, parts: [], advance_credit: 0, round_off: 40 } as unknown as PayForResult;
+    expect(resultLines(ro).map((l) => l.text)).toEqual(["₹40 less came in — written off as round-off (Bank Charges)"]);
+  });
+
   it("a round-off says which way", () => {
     const base = { ...part({}), kind: "split" as const, parts: [] };
     expect(resultLines({ ...base, round_off: 48 }).map((l) => l.text)).toEqual(["₹48 less came in — written off as round-off (Bank Charges)"]);

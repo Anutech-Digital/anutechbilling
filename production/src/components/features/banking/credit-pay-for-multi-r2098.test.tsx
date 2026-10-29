@@ -32,7 +32,8 @@ import { CreditPayForSection } from "./credit-pay-for-section";
 afterEach(cleanup);
 beforeEach(() => {
   state.items = []; state.pay.mockReset(); state.split.mockReset();
-  state.split.mockResolvedValue({ kind: "split", parts: [], subscriptions: [], amount: 0, round_off: 0 });
+  /* The server's split result has NO subscriptions of its own — only its parts do (the localhost crash). */
+  state.split.mockResolvedValue({ kind: "split", parts: [], amount: 0, round_off: 0 });
 });
 
 const customers = [{ id: "c1", name: "I-XL Systems", country: "India" }];
@@ -137,5 +138,41 @@ describe("R-2098 one bank line → several items", () => {
     render(<CreditPayForSection transaction={txnOf(1000)} customers={customers} pickedCustomerId="c1" onDone={() => {}}
       relink={{ txn_id: "t1" } as never} />);
     expect(screen.queryByRole("button", { name: "Several quotes / invoices" })).toBeNull();
+  });
+});
+
+describe("R-2098 after the save (localhost 29 Oct: 'We hit a snag')", () => {
+  it("renders what the server did for each part, the advance and the round-off — no crash", async () => {
+    const part = (n: number) => ({
+      kind: "invoice", quote_id: `Q-${n}`, invoice_id: `INV-${n}`, invoice_issued: null, payment_id: `p${n}`, receipt_voucher_no: null,
+      amount: 3906, tds_amount: 0, outstanding: 0, is_fully_paid: true, overpaid_credit: 0, renewal_rolled_forward: false,
+      subscription_skipped: false, already_recorded: false, subscriptions: [],
+    });
+    state.split.mockResolvedValue({
+      kind: "split", amount: 12218, allocated: 7812, parts: [part(1), part(2)], advance_credit: 460, round_off: 40,
+      payment_id: "p1", customer_id: "c1", customer_name: "I-XL Systems",
+    });
+    state.items = [inv(1, 3906), inv(2, 3906)];
+    open(12218);
+    tick("INV-1"); tick("INV-2");
+    fireEvent.click(screen.getByRole("button", { name: "Record on 2 items & reconcile ₹12,218" }));
+    await waitFor(() => expect(screen.getByText("Done — this bank line is reconciled")).toBeTruthy());
+    expect(screen.getByText("Invoice INV-1")).toBeTruthy();
+    expect(screen.getByText("Invoice INV-2")).toBeTruthy();
+    expect(screen.getByText("₹460 kept as advance for I-XL Systems — it will be offered when you record their next payment")).toBeTruthy();
+    expect(screen.getByText("₹40 less came in — written off as round-off (Bank Charges)")).toBeTruthy();
+  });
+});
+
+describe("R-2098 layout: a ticked row keeps its text", () => {
+  it("the amount box is a fixed-width column (on the Input wrapper), the text takes the rest", () => {
+    state.items = [inv(1, 3906)];
+    open(3906);
+    tick("INV-1");
+    const input = screen.getByLabelText("Amount on INV-1");
+    const wrapper = input.closest("div.w-28");
+    expect(wrapper).toBeTruthy();
+    expect(wrapper?.className).toContain("shrink-0");
+    expect(wrapper?.className).not.toContain("w-full");
   });
 });
