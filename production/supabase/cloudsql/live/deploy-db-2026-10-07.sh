@@ -279,6 +279,7 @@ MIGS=(
   "r2045partrequesttds|20261028082218_r2045_part_request_tds.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment_with_tds(text,integer,text,text,text,integer,integer,integer,text,numeric,text,text,text)') and prosrc like '%R-2045%')"
   "r2045parttdslateinvoice|20261028084724_r2045_part_tds_late_invoice.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_quotes_part_request_tds_invoice' and tgrelid = to_regclass('public.quotes'))"
   "r2057splitsalepending|20261028151322_r2057_split_sale_pending.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.split_sale_invoice_status(text[])') and prosrc like '%R-2057%')"
+  "r2067supportsyncoutbox|20261029000150_r2067_support_sync_outbox_claim.sql|resellersos_migration|to_regprocedure('public.claim_support_sync_outbox(integer,uuid[])') is not null and to_regprocedure('public.finish_support_sync_outbox(uuid,boolean,text)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

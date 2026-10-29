@@ -26,6 +26,7 @@ export const CRON_ROUTES: Record<AutomationJob, Loader> = {
   "ai-reply-retry":       () => import("@/app/api/cron/ai-reply-retry/route"),
   "ai-sales-loop":        () => import("@/app/api/cron/ai-sales-loop/route"),
   "ai-support-sla":       () => import("@/app/api/cron/ai-support-sla/route"),
+  "support-sync":         () => import("@/app/api/cron/support-sync/route"),
   "ai-telecall-renewals": () => import("@/app/api/cron/ai-telecall-renewals/route"),
   "cold-calls":           () => import("@/app/api/cron/cold-calls/route"),
   "provision-hosting":    () => import("@/app/api/cron/provision-hosting/route"),

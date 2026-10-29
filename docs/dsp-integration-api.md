@@ -171,3 +171,25 @@ To let DSP lock/unlock support instantly on billing changes, ResellerOS will
 POST HMAC-signed events (`payment.received`, `invoice.paid`,
 `subscription.*`) to a DSP endpoint. Not built yet — Phase 1 (polling these
 read APIs) works today.
+
+**Built (R-2067, 29 Oct 2026): support-plan sync.** When a support
+subscription (vendor `support`) is created, or its plan / status / renewal date
+changes, or its customer is archived/restored, a row is queued in
+`support_sync_outbox` (triggers `trg_queue_support_sync`,
+`trg_queue_support_sync_on_customer_status`). The cron
+`/api/cron/support-sync` (every 5 min, switch "Support plan sync" on
+/automation) POSTs each row's payload unchanged to
+`${DSP_SUPPORT_URL}/api/sync/customer` with header
+`X-Webhook-Secret: ${DSP_WEBHOOK_SECRET}`:
+
+```json
+{ "event_type": "subscription.updated",
+  "data": { "billing_customer_id": "…", "name": "…", "email": "…", "domain": "…",
+            "plan": "<subscription plan name, or 'free' when cancelled>",
+            "plan_status": "active|cancelled|…", "plan_expiry": "YYYY-MM-DD" } }
+```
+
+2xx → row `sent`. Anything else → retried with back-off (10, 20, 40, 80 min);
+the 5th failure → `failed`, counted on the cron's `[cron/support-sync]` stderr
+line (health digest). One customer's rows go strictly oldest first. The secret
+is a shared header for now; HMAC signing is still planned.

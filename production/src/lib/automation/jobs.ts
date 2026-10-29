@@ -62,6 +62,7 @@ export const AUTOMATION_JOBS = {
   "attendance-retention": { label: "Old attendance photo clean-up", what: "Deletes attendance selfies older than the keep period.", customerFacing: false, scope: "tenant", dryRun: false },
   "gmail-inbox":          { label: "Read the sales mailbox", what: "Reads new emails in the connected mailbox and adds them as enquiries.", customerFacing: false, scope: "tenant", dryRun: false },
   "google-contacts-sync": { label: "Google Contacts sync", what: "Keeps Google Contacts and your customers in step.", customerFacing: false, scope: "tenant", dryRun: false },
+  "support-sync":         { label: "Support plan sync", what: "Tells the support desk when a support plan is sold, renewed or cancelled, so the customer gets the right plan there.", customerFacing: false, scope: "tenant", dryRun: false },
   "gbp-sync":             { label: "Google Business Profile sync", what: "Pulls reviews and details from your Google Business Profile.", customerFacing: false, scope: "tenant", dryRun: false },
   "ads-sync":             { label: "Ad spend sync", what: "Pulls Google Ads and Meta Ads spend.", customerFacing: false, scope: "tenant", dryRun: false },
   "indiamart-leads":      { label: "IndiaMART leads", what: "Pulls new leads from IndiaMART.", customerFacing: false, scope: "tenant", dryRun: false },
