@@ -29,6 +29,9 @@ export type SplitState =
   | { kind: "left"; left: number; canRoundOff: boolean }
   /** Allocated a little more than came in — only as a round-off. */
   | { kind: "short"; short: number }
+  /** Allocated a little more than came in, but an item stays part-paid — no round-off (R-2098):
+      refused until that amount is lowered; the rest stays due on it. */
+  | { kind: "partShort"; short: number }
   /** Allocated more than came in, beyond the round-off limit — refused. */
   | { kind: "over"; over: number };
 
@@ -45,7 +48,18 @@ export function cleanAmount(v: number): number {
   return Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0;
 }
 
-export function splitSummary(credit: number, amounts: readonly number[]): SplitSummary {
+/** True when any ticked item (or the new sale) gets less than its due — it stays part-paid. */
+export function splitPartPaid(picks: ReadonlyArray<{ amount: number; due: number }>): boolean {
+  return picks.some((p) => cleanAmount(p.amount) < p.due);
+}
+
+/**
+ * The bar. R-2098: a round-off (≤ ROUND_OFF_LIMIT) only when, after it, EVERY item is settled in
+ * full — with `partPaid` a small extra is advance only and a small shortfall is refused (the same
+ * rule as reconcile_bank_credit_split, migration 20261029135130).
+ */
+export function splitSummary(credit: number, amounts: readonly number[], opts: { partPaid?: boolean } = {}): SplitSummary {
+  const partPaid = opts.partPaid ?? false;
   const allocated = amounts.reduce((s, a) => s + cleanAmount(a), 0);
   const left = credit - allocated;
   const state: SplitState = allocated === 0
@@ -53,9 +67,9 @@ export function splitSummary(credit: number, amounts: readonly number[]): SplitS
     : left === 0
       ? { kind: "exact" }
       : left > 0
-        ? { kind: "left", left, canRoundOff: left <= ROUND_OFF_LIMIT }
+        ? { kind: "left", left, canRoundOff: !partPaid && left <= ROUND_OFF_LIMIT }
         : -left <= ROUND_OFF_LIMIT
-          ? { kind: "short", short: -left }
+          ? (partPaid ? { kind: "partShort", short: -left } : { kind: "short", short: -left })
           : { kind: "over", over: -left };
   return { credit, allocated, left, state };
 }
@@ -65,6 +79,11 @@ export function splitRest(state: SplitState, choice: SplitRest): SplitRest | nul
   if (state.kind === "left") return choice === "round_off" && state.canRoundOff ? "round_off" : "advance";
   if (state.kind === "short") return "round_off";
   return null;
+}
+
+/** Nothing can be saved in this state. */
+export function splitBlocked(state: SplitState): boolean {
+  return state.kind === "empty" || state.kind === "over" || state.kind === "partShort";
 }
 
 /** Per-item problem, or null: an amount must be more than ₹0 and no more than the item's due. */
@@ -82,7 +101,7 @@ export function pickDefault(item: OpenItem): SplitPick {
 
 /** The bar's three numbers and its tone. */
 export function splitBarText(s: SplitSummary): { allocated: string; bank: string; left: string; tone: "ok" | "warn" | "bad" } {
-  const tone = s.state.kind === "exact" ? "ok" : s.state.kind === "over" ? "bad" : "warn";
+  const tone = s.state.kind === "exact" ? "ok" : s.state.kind === "over" || s.state.kind === "partShort" ? "bad" : "warn";
   const left = s.left >= 0 ? rupee(s.left) : `−${rupee(-s.left)}`;
   return { allocated: rupee(s.allocated), bank: rupee(s.credit), left, tone };
 }
@@ -97,6 +116,7 @@ export function splitStateText(state: SplitState, rest: SplitRest | null): strin
         ? `${rupee(state.left)} more came in — written off as round-off (Bank Charges).`
         : `${rupee(state.left)} left over — kept as the customer's advance credit, used on their next bill.`;
     case "short": return `${rupee(state.short)} less came in than these items — written off as round-off (Bank Charges); every item is settled in full.`;
+    case "partShort": return `Allocated ${rupee(state.short)} more than came in. An item is paid in part, so nothing is written off — lower its amount by ${rupee(state.short)}; the rest stays due on it.`;
     case "over": return `Allocated ${rupee(state.over)} more than came in. Lower an amount — only up to ${rupee(ROUND_OFF_LIMIT)} can be written off.`;
   }
 }

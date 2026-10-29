@@ -52,7 +52,7 @@ import {
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { PAYER_RELATIONS, payerFromNarration, payerMatchesCustomer, type PayerRelation } from "@/lib/banking/customer-payer";
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
-import { cleanAmount, pickDefault, pickProblem, splitRest, splitSummary, type SplitRest } from "@/lib/banking/credit-pay-for-multi";
+import { cleanAmount, pickDefault, pickProblem, splitBlocked, splitPartPaid, splitRest, splitSummary, type SplitRest } from "@/lib/banking/credit-pay-for-multi";
 import { CreditPaySplit } from "./credit-pay-for-split";
 
 const NEW_CUSTOMER = "__new_customer__";
@@ -216,12 +216,17 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   /* R-2098: the split's bar. */
   const splitPicked = (items ?? []).filter((i) => itemKey(i) in picks);
   const saleAmt = splitSale ? cleanAmount(splitSaleAmount ?? schedule.dueNow) : 0;
-  const split = splitSummary(credit, [...splitPicked.map((i) => picks[itemKey(i)]), saleAmt]);
+  /* R-2098: a round-off only when every item (and the new sale) ends settled in full. */
+  const splitPart = splitPartPaid([
+    ...splitPicked.map((i) => ({ amount: picks[itemKey(i)], due: i.amount_due })),
+    ...(splitSale ? [{ amount: saleAmt, due: preview.total }] : []),
+  ]);
+  const split = splitSummary(credit, [...splitPicked.map((i) => picks[itemKey(i)]), saleAmt], { partPaid: splitPart });
   const rest = splitRest(split.state, restChoice);
   const splitInvalid = (splitPicked.length === 0 && !splitSale)
     || splitPicked.some((i) => pickProblem(i, picks[itemKey(i)]) !== null)
     || (splitSale && (saleInvalidOf(lines, preview.taxable) || saleAmt <= 0 || saleAmt > preview.total))
-    || split.state.kind === "over" || split.state.kind === "empty";
+    || splitBlocked(split.state);
   const [shortChoice, setShortChoice] = React.useState<ShortChoice>("part");
   /* TDS pre-chosen when the gap IS a common TDS rate; else part payment. Re-decided per item. */
   const tdsLikely = check?.kind === "short" && check.tdsRatePct !== null;

@@ -292,6 +292,7 @@ MIGS=(
   "r2103panelaccountoutbox|20261029114000_r2103_panel_account_outbox.sql|resellersos_migration|to_regclass('public.panel_account_outbox') is not null and to_regprocedure('public.queue_panel_account_backfill(boolean)') is not null"
   "r2102supportsyncplankey|20261029124808_r2102_support_sync_plan_key.sql|resellersos_migration|to_regprocedure('public.support_plan_key(text,text)') is not null and exists (select 1 from pg_proc where proname = 'queue_support_sync' and prosrc like '%R-2102%')"
   "r2104quoteperiodparts|20261029131440_r2104_quote_period_parts.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.billing_part_group(uuid)') and prosrc like '%R-2104%')"
+  "r2098roundof|20261029135130_r2098_round_off_full_only.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2098 round-off full only%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
