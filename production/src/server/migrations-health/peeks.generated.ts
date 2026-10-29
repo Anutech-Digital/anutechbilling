@@ -260,4 +260,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2092siblingslaid", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%R-2092 siblings laid%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.split_sale_invoice_status(text[])') and prosrc like '%R-2092%')" },
   { key: "r2098bankcreditsplit", peek: "to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') is not null and to_regclass('public.bank_receipt_round_offs') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-2098%')" },
   { key: "r2099razorpaysettlement", peek: "to_regprocedure('public.reconcile_razorpay_settlement(uuid,jsonb)') is not null and to_regclass('public.razorpay_settlement_recons') is not null" },
+  { key: "r2101partinvoiceqty", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-2101%')" },
 ];

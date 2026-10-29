@@ -288,6 +288,7 @@ MIGS=(
   "r2092siblingslaid|20261029052411_r2092_siblings_laid.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%R-2092 siblings laid%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.split_sale_invoice_status(text[])') and prosrc like '%R-2092%')"
   "r2098bankcreditsplit|20261029054707_r2098_bank_credit_split.sql|resellersos_migration|to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') is not null and to_regclass('public.bank_receipt_round_offs') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-2098%')"
   "r2099razorpaysettlement|20261029060514_r2099_razorpay_settlement.sql|resellersos_migration|to_regprocedure('public.reconcile_razorpay_settlement(uuid,jsonb)') is not null and to_regclass('public.razorpay_settlement_recons') is not null"
+  "r2101partinvoiceqty|20261029110904_r2101_part_invoice_qty.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-2101%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

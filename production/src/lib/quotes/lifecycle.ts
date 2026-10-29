@@ -12,7 +12,9 @@
  *   Paid         the money is in: quoteIsPaid() — 'received', or 'invoiced' with the payments
  *                covering the quote (R-159: invoicing before payment no longer reads as paid)
  *   Provisioned  every provisioning task is done (or there is nothing to provision)
- *   Invoiced     invoice_id is set
+ *   Invoiced     invoice_id is set — or, for a sale billed in parts, a part's tax invoice exists
+ *                (R-2101: linked through subscription_billings, never by invoices.quote_id,
+ *                which would print the whole term's amounts on the part's invoice)
  *
  * "Signed" accepts a plain acceptance as well as a click-to-sign record, because
  * quotes accepted before signatures existed are genuinely accepted — showing them as
@@ -68,6 +70,12 @@ export interface LifecycleInput {
    * (paid-to-date.ts paidToDateLine). The Paid step is done; nothing is due on this quote.
    */
   paidToDate?: string | null;
+  /**
+   * R-2101: a sale billed in parts — the tax invoices raised for its parts so far, oldest first
+   * (quotePartInvoices). The sale quote's own invoice_id stays empty. Absent / empty → only
+   * invoiceId decides.
+   */
+  partInvoices?: readonly string[] | null;
 }
 
 const LABELS: Record<LifecycleStage, string> = {
@@ -92,7 +100,8 @@ export function quoteLifecycle(input: LifecycleInput): {
   const sent   = input.status !== "draft";
   const signed = input.hasSignature || input.status === "accepted";
   const paid   = Boolean(input.paidToDate) || (input.paid ?? (input.paymentStatus === "received" || input.paymentStatus === "invoiced"));
-  const invoiced = Boolean(input.invoiceId);
+  const parts = input.partInvoices ?? [];
+  const invoiced = Boolean(input.invoiceId) || parts.length > 0;
 
   const steps: LifecycleStep[] = [
     {
@@ -136,7 +145,11 @@ export function quoteLifecycle(input: LifecycleInput): {
     {
       stage: "invoiced", label: LABELS.invoiced,
       state: invoiced ? "done" : "todo",
-      detail: invoiced ? "Tax invoice issued." : "No invoice yet.",
+      detail: input.invoiceId
+        ? "Tax invoice issued."
+        : parts.length > 0
+          ? `Tax ${parts.length === 1 ? "invoice" : "invoices"} ${parts.join(", ")} issued for the paid ${parts.length === 1 ? "part" : "parts"}. Each later part is invoiced when it is paid.`
+          : "No invoice yet.",
     },
   ];
 

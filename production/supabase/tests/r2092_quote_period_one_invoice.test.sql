@@ -125,8 +125,8 @@ begin
     raise exception 'A FAIL: lines %', v_i.line_items;
   end if;
   /* The rupee of rounding comes off the line that was rounded up (13 × 11,000 ÷ 4 = 35,750). */
-  if (select (l->>'rate')::int from jsonb_array_elements(v_i.line_items) l where l->>'name' like '%Standard') <> 35750
-     or (select (l->>'rate')::int from jsonb_array_elements(v_i.line_items) l where l->>'name' like '%Starter') <> 45600
+  if (select (l->>'qty')::int * (l->>'rate')::int from jsonb_array_elements(v_i.line_items) l where l->>'name' like '%Standard') <> 35750
+     or (select (l->>'qty')::int * (l->>'rate')::int from jsonb_array_elements(v_i.line_items) l where l->>'name' like '%Starter') <> 45600
      or (select taxable_amount from public.subscription_billings where id = 'bbbbbbbb-0000-0000-0000-000002092121') <> 35750 then
     raise exception 'A FAIL: rounding on the wrong line: %', v_i.line_items;
   end if;

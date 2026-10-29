@@ -64,3 +64,12 @@ describe("record-payment-dialog wiring (R-404, R-407, R-447, R-444)", () => {
     expect(src.indexOf("generateInvoice.mutateAsync(quoteId)).invoiceId", fill)).toBeGreaterThan(fill);
   });
 });
+
+/* R-2101 (29 Oct 2026, localhost): after Confirm, the payments refresh, remaining drops to ₹0 and
+   the amount effect sets the field to 0 while the sheet closes — "Amount must be more than ₹0"
+   flashed red on a payment that had just been saved. */
+describe("no red ₹0 flash after Confirm (R-2101)", () => {
+  it("the ₹0 pill shows only for a 0 the operator typed", () => {
+    expect(src).toMatch(/<FieldPill check=\{amountEdited && watch\("amount"\) === 0 && !tdsDeducted/);
+  });
+});

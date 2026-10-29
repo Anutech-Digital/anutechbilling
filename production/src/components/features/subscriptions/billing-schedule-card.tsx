@@ -23,12 +23,12 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, rupee, formatDate } from "@/lib/utils";
 import type { Subscription } from "@/lib/supabase/database.types";
-import { subscriptionSchedule, nextTermSchedule } from "@/lib/billing/subscription-schedule";
-import { periodLastDay } from "@/lib/billing/schedule";
+import { subscriptionSchedule, nextTermSchedule, currentTermStart } from "@/lib/billing/subscription-schedule";import { periodLastDay } from "@/lib/billing/schedule";
 import { cycleScheduleLabel } from "@/lib/quotes/billing";
 import { useScheduleInvoices } from "@/lib/queries/subscriptions";
 import {
-  scheduleInvoices, nextUninvoiced, nextTermShowsNext, scheduleCountLabel, termAddSeatInvoices, shownTermTotal,
+  scheduleInvoices, nextUninvoiced, nextTermShowsNext, scheduleCountLabel, scheduleCounts, termAddSeatInvoices, shownTermTotal,
+  quoteTermAmount, scheduleFootnote,
   type ScheduleInvoice, type AddSeatInvoice,
 } from "./schedule-invoices";
 import { subscriptionEnded } from "@/lib/subscriptions/renewal-display";
@@ -40,11 +40,21 @@ export function BillingScheduleCard({ subscription, todayISO }: {
   subscription: Subscription;
   todayISO: string;
 }) {
-  const current = React.useMemo(() => subscriptionSchedule(subscription), [subscription]);
+  const { data: inv } = useScheduleInvoices(subscription);
+  /* R-2101: the sale term's parts at the quote's own figure (13 × ₹11,000 → ₹35,750 a quarter),
+     not the rounded mrr's (₹35,751) — the first term only; a renewed term is priced on mrr. */
+  const saleTermAmount = React.useMemo(() => {
+    const start = subscription.start_date?.slice(0, 10) ?? null;
+    if (!inv?.saleQuote || !start || currentTermStart(subscription) !== start) return null;
+    return quoteTermAmount({
+      plan: subscription.plan, seats: subscription.seats, mrr: subscription.mrr,
+      termMonths: Math.max(1, subscription.term_months ?? 12), quote: inv.saleQuote,
+    });
+  }, [subscription, inv]);
+  const current = React.useMemo(() => subscriptionSchedule(subscription, saleTermAmount), [subscription, saleTermAmount]);
   /* R-1685: an ended subscription has no next term and no "next" bill. */
   const ended   = subscriptionEnded(subscription.status);
   const next    = React.useMemo(() => (ended ? [] : nextTermSchedule(subscription)), [subscription, ended]);
-  const { data: inv } = useScheduleInvoices(subscription);
   const invoiced = React.useMemo(() => scheduleInvoices({
     periods: current,
     startDate: subscription.start_date,
@@ -88,8 +98,7 @@ export function BillingScheduleCard({ subscription, todayISO }: {
       )}
 
       <p className="mt-3 text-2xs leading-snug text-ink-3">
-        Amounts without an invoice number are scheduled, not invoiced yet. Each tax invoice
-        is raised on its own billing date and takes its GST number then.
+        {scheduleFootnote(subscription.billing_cycle)}
       </p>
     </Card>
   );
@@ -111,6 +120,8 @@ function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true
   /* R-1683: invoiced rows count their invoice's own figure; the term's add-seats invoices are added. */
   const total = shownTermTotal(rows, invoiced, extras);
   const nextIndex = showNext ? nextUninvoiced(rows, invoiced, todayISO) : null;
+  /* R-2101: a period billed outside (Opening, R-1763) is not "invoiced" here. */
+  const counts = scheduleCounts(rows, invoiced);
   return (
     <div className={cn(muted && "opacity-75")}>
       <div className="mb-1.5 flex items-baseline justify-between">
@@ -120,7 +131,7 @@ function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true
             for one bill with nothing distinguishing them is how a rep and a customer
             end up arguing about which is right. */}
         <span className="text-2xs text-ink-3">
-          {scheduleCountLabel(rows.length, rows.filter((p) => invoiced.has(p.index)).length, extras.length)} · {rupee(total)} ex-GST
+          {scheduleCountLabel(rows.length, counts.invoiced, extras.length, counts.billedOutside)} · {rupee(total)} ex-GST
         </span>
       </div>
       <ul className="divide-y divide-hairline">

@@ -42,10 +42,13 @@ type ScheduleFields = Pick<Subscription, "mrr" | "billing_cycle" | "term_months"
  * schedule.ts. Subtracting the months from the stored date directly would start the
  * term one day early and bill a day the customer never had.
  */
-export function subscriptionSchedule(sub: ScheduleFields): BillingPeriod[] {
+export function subscriptionSchedule(sub: ScheduleFields, termAmountOverride?: number | null): BillingPeriod[] {
   const termMonths = Math.max(1, sub.term_months ?? 12);
   const cycle = sub.billing_cycle ?? "yearly";
-  const termAmount = Math.max(0, Math.round((sub.mrr ?? 0) * termMonths));
+  /* R-2101: the quote's own term figure when the caller has it (quoteTermAmount — rounding only). */
+  const termAmount = termAmountOverride != null && termAmountOverride > 0
+    ? Math.round(termAmountOverride)
+    : Math.max(0, Math.round((sub.mrr ?? 0) * termMonths));
 
   const start = currentTermStart(sub);
   if (!start || termAmount <= 0) return [];

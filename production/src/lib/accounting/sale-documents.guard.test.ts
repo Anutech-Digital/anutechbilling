@@ -152,6 +152,7 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/app/(app)/accounting/aging/read.ts": "aging of open balances — includes opening invoices on purpose",
   "src/app/(app)/invoices/[id]/page.tsx": "one invoice; an opening invoice gets its own view",
   "src/app/(app)/quotes/[id]/invoice-created-at.ts": "R-1715: one invoice's created_at by id, for the quote's workflow history time — not a list or a total",
+  "src/app/(app)/quotes/[id]/part-invoices.ts": "R-2101: the status (void or not) of the invoices a sale quote's parts point at, for its INVOICED step — not a list or a total",
   "src/app/(app)/online-orders/page.tsx":"R-1120: the order quote's own invoice by id (taxable, GST, split) for the drawer — not a list or a total",
   "src/lib/queries/marketing-sales.ts": "R-1980: a received payment's own invoice by id — its taxable share (ex GST) and quote link; the revenue is the PAYMENT, not an invoice total",
   "src/app/api/cron/billing/route.ts": "raises our subscription invoices",

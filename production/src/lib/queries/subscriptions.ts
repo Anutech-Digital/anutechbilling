@@ -343,9 +343,18 @@ export function useScheduleInvoices(sub: Pick<Subscription, "id" | "quote_id"> |
       if (qErr) throw new Error(qErr.message);
       const { data: rows, error: bErr } = await supabase
         .from("subscription_billings")
-        .select("term_start, period_index, invoice_id")
+        .select("term_start, period_index, invoice_id, taxable_amount")
         .eq("subscription_id", sub!.id);
       if (bErr) throw new Error(bErr.message);
+      /* R-2101: the sale quote's lines — the parts not invoiced yet show the quote's own period
+         figure (quoteTermAmount), not one from the rounded mrr. */
+      let saleQuote: { discount_pct: number | null; line_items: unknown } | null = null;
+      if (sub!.quote_id) {
+        const { data: sq, error: sqErr } = await supabase
+          .from("quotes").select("discount_pct, line_items").eq("id", sub!.quote_id).maybeSingle();
+        if (sqErr) throw new Error(sqErr.message);
+        saleQuote = sq ? { discount_pct: sq.discount_pct ?? null, line_items: sq.line_items } : null;
+      }
       const ids = Array.from(new Set([
         ...(rows ?? []).map((r) => r.invoice_id),
         ...(qs ?? []).map((q) => q.invoice_id),
@@ -391,7 +400,9 @@ export function useScheduleInvoices(sub: Pick<Subscription, "id" | "quote_id"> |
           invoice_id: r.invoice_id,
           invoice_status: inv(r.invoice_id)?.status ?? null,
           invoice_ex_gst: inv(r.invoice_id)?.exGst ?? null,
+          part_ex_gst: r.taxable_amount ?? null,   // R-2101: this subscription's share of a combined invoice
         })),
+        saleQuote,
       };
     },
   });

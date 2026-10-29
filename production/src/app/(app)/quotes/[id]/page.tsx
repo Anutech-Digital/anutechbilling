@@ -31,6 +31,7 @@ import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage";
 import { pagePaidToDate, paidToDateLine, PAID_TO_DATE_LABEL } from "@/lib/quotes/paid-to-date";
 import { useNextPartRequest } from "./next-part-request";
+import { useQuotePartInvoices } from "./part-invoices";
 import { PaymentHistoryCard } from "./payment-history-card";
 import { planForQuote, splitDue } from "@/lib/billing/instalments";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
@@ -286,6 +287,13 @@ export default function QuoteDetailPage() {
     .filter((s) => quote && s.quote_id === quote.id)
     .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""))[0];
   const { data: nextPartRequest = null } = useNextPartRequest(quote && !partRequest ? saleSub?.id : null);
+  /* R-2101: the parts' tax invoices (linked through subscription_billings) tick INVOICED. Not
+     loaded / failed → null: the step falls back to quote.invoice_id alone (as before R-2101). */
+  const { data: partInvoices = null } = useQuotePartInvoices(
+    quote && !quote.invoice_id && !partRequest
+      ? (allSubs ?? []).filter((s) => s.quote_id === quote.id && s.billing_cycle !== "yearly").map((s) => s.id)
+      : [],
+  );
   const paidToDate = quote
     ? pagePaidToDate({
         quote: quote as typeof quote & { subscription_billing_id?: string | null },
@@ -310,6 +318,7 @@ export default function QuoteDetailPage() {
         /* R-1710: what came in and what is left, also once invoiced. */
         money: quotePaymentState(quote),
         paidToDate: paidToDate ? paidToDateLine(paidToDate, formatDate(paidToDate.next.billOn)) : null,
+        partInvoices: partInvoices,
       })
     : null;
 

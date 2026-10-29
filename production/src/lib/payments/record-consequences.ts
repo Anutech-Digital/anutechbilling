@@ -39,6 +39,10 @@ export interface PaymentToRecord {
   createsSubscription: boolean;
   /** The plan a subscription would be created for, when there is one. */
   planLabel: string | null;
+  /** R-2101: every plan that gets a subscription — record_payment makes one per line that
+   *  carries a billing commitment (Business Starter + Business Standard → two). When given with
+   *  more than one name, the sheet names them all instead of planLabel alone. */
+  planLabels?: readonly string[];
   /** R-453: a renewal quote — record_payment moves the EXISTING subscription on by a term
    *  instead of creating one. Optional; absent means a normal quote. */
   renewsSubscription?: boolean;
@@ -157,9 +161,12 @@ export function recordPaymentConsequences(args: {
       text: "No subscription and no renewal are created from this payment — nothing will be billed again automatically.",
     });
   } else {
+    const plans = (p.planLabels ?? []).map((x) => x.trim()).filter(Boolean);
     out.push({
       tone: "fact",
-      text: `Creates a recurring subscription${p.planLabel?.trim() ? ` for ${p.planLabel.trim()}` : ""} and sets its first renewal date. The renewal cron will bill it from then on.`,
+      text: plans.length > 1
+        ? `Creates ${plans.length} recurring subscriptions — ${plans.slice(0, -1).join(", ")} and ${plans[plans.length - 1]} — and sets their first renewal date. The renewal cron will bill them from then on.`
+        : `Creates a recurring subscription${p.planLabel?.trim() ? ` for ${p.planLabel.trim()}` : ""} and sets its first renewal date. The renewal cron will bill it from then on.`,
     });
   }
 
