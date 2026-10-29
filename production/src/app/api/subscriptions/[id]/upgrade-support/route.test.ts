@@ -35,7 +35,9 @@ vi.mock("@/lib/supabase/server", () => {
       if (table === "users") return { data: { tenant_id: "T1", role: state.role }, error: null };
       if (table === "subscriptions") {
         if (ctx.op === "update") return { data: state.linkRows, error: null };
-        return { data: state.sub, error: state.sub ? null : { message: "not found" } };
+        // like the DB: a tenant_id filter hides another company's row (maybeSingle: no error)
+        const hidden = !state.sub || ("tenant_id" in ctx.filters && ctx.filters.tenant_id !== state.sub.tenant_id);
+        return { data: hidden ? null : state.sub, error: null };
       }
       if (table === "items") return { data: items, error: null };
       if (table === "quotes") {
@@ -103,6 +105,17 @@ describe("R-2073 upgrade-support route", () => {
     state.role = "sales";
     const res = await post({ to_tier: "enterprise" });
     expect(res.status).toBe(403);
+    expect(state.inserted).toHaveLength(0);
+  });
+
+  it("R-2091: another company's subscription → 404, the same answer as an unknown id", async () => {
+    state.sub = null;
+    const unknown = await post({ to_tier: "enterprise" });
+    state.sub = { id: "S1", tenant_id: "T-OTHER", status: "active" };
+    const foreign = await post({ to_tier: "enterprise" });
+    expect(unknown.status).toBe(404);
+    expect(foreign.status).toBe(404);
+    expect(await foreign.json()).toEqual(await unknown.json());
     expect(state.inserted).toHaveLength(0);
   });
 

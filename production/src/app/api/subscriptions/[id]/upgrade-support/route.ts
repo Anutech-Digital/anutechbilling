@@ -44,9 +44,13 @@ export const POST = withRoute(
       .from("subscriptions")
       .select("id, tenant_id, customer_id, customer_name, plan, item_id, status, billing_cycle, term_months, start_date, renewal_date, renewal_quote_id, domain")
       .eq("id", params.id)
-      .single();
-    if (subErr || !sub) return NextResponse.json({ error: "subscription not found" }, { status: 404 });
-    if (sub.tenant_id !== tenantId) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+      .eq("tenant_id", tenantId)
+      .maybeSingle();
+    /* R-2091: another company's subscription answers exactly like an unknown id — a 403 here
+       told the caller that id exists. The role gate (withRoute) still answers 403 in-tenant. */
+    if (subErr || !sub || sub.tenant_id !== tenantId) {
+      return NextResponse.json({ error: "subscription not found" }, { status: 404 });
+    }
 
     const { data: items, error: itemsErr } = await supabase
       .from("items")
