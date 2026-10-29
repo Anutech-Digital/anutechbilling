@@ -3,7 +3,7 @@
  * its dry-run count (nothing is queued before the person has seen the number).
  */
 import { describe, it, expect } from "vitest";
-import { backfillQuestion, panelAccountRights } from "./panel-accounts-card";
+import { backfillQuestion, panelAccountRights, supportBackfillQuestion } from "./panel-accounts-card";
 
 describe("panel accounts card (R-2103)", () => {
   it("owner and manager may retry and backfill; support and sales only look", () => {
@@ -19,5 +19,13 @@ describe("panel accounts card (R-2103)", () => {
     expect(q.body).toContain("40 will get");
     expect(q.body).toContain("3 have no email");
     expect(backfillQuestion({ dry_run: true, with_email: 1, without_email: 0, queued: 0 }).title).toBe("Give 1 existing customer a panel login?");
+  });
+
+  it("R-2107: the Free support question counts only customers with an email and says who is skipped", () => {
+    const q = supportBackfillQuestion({ dry_run: true, with_email: 12, without_email: 2, queued: 0 });
+    expect(q.title).toBe("Give 12 existing customers a Free support desk account?");
+    expect(q.body).toContain("2 have no email and are skipped");
+    expect(q.body).toContain("Support plan sync switch");
+    expect(supportBackfillQuestion({ dry_run: true, with_email: 1, without_email: 0, queued: 0 }).body).not.toContain("skipped");
   });
 });

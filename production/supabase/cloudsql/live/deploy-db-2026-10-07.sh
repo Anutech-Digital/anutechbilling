@@ -294,6 +294,7 @@ MIGS=(
   "r2104quoteperiodparts|20261029131440_r2104_quote_period_parts.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.billing_part_group(uuid)') and prosrc like '%R-2104%')"
   "r2098roundof|20261029135130_r2098_round_off_full_only.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2098 round-off full only%')"
   "r2108customerprimaryemail|20261029140553_r2108_customer_primary_email.sql|resellersos_migration|to_regprocedure('public.customer_primary_email(uuid)') is not null and exists (select 1 from pg_proc where proname = 'claim_panel_account_outbox' and prosrc like '%R-2108%')"
+  "r2107supportfreebackfill|20261029145126_r2107_support_free_backfill.sql|resellersos_migration|to_regprocedure('public.queue_support_free_backfill(boolean)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

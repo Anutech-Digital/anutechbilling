@@ -71,6 +71,17 @@ export function backfillQuestion(c: BackfillCount): { title: string; body: strin
   };
 }
 
+/** R-2107: the confirm text for the Free support desk backfill, from its dry-run count. */
+export function supportBackfillQuestion(c: BackfillCount): { title: string; body: string } {
+  return {
+    title: `Give ${c.with_email} existing customer${c.with_email === 1 ? "" : "s"} a Free support desk account?`,
+    body:
+      `Customers with an active licence and no paid support plan. The support desk sends each one a welcome email` +
+      (c.without_email > 0 ? `; ${c.without_email} have no email and are skipped` : "") +
+      ". Do this once, after the data transfer. Sent only while the Support plan sync switch is on.",
+  };
+}
+
 export function PanelAccountsCard() {
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -108,6 +119,26 @@ export function PanelAccountsCard() {
       void qc.invalidateQueries({ queryKey: KEY });
     },
     onError: (e) => toastError(e, { fallback: "Could not queue existing customers" }),
+  });
+
+  /* R-2107: same go-live pattern for the Free support desk account (queue_support_free_backfill). */
+  const supportBackfill = useMutation({
+    mutationFn: async () => {
+      const count = await rpc<BackfillCount>("queue_support_free_backfill", { p_dry_run: true });
+      if (count.with_email === 0) {
+        toast.success(count.without_email > 0
+          ? `Nobody to queue — ${count.without_email} customer${count.without_email === 1 ? " has" : "s have"} no email`
+          : "Every customer with a licence is already on the support desk or queued");
+        return null;
+      }
+      const ok = await confirm({ ...supportBackfillQuestion(count), confirmLabel: "Queue them", cancelLabel: "Cancel" });
+      if (!ok) return null;
+      return rpc<BackfillCount>("queue_support_free_backfill", { p_dry_run: false });
+    },
+    onSuccess: (done) => {
+      if (done) toast.success(`${done.queued} customer${done.queued === 1 ? "" : "s"} queued for a Free support desk account`);
+    },
+    onError: (e) => toastError(e, { fallback: "Could not queue Free support for existing customers" }),
   });
 
   const c = overview.data?.counts;
@@ -163,6 +194,9 @@ export function PanelAccountsCard() {
             <div className="flex flex-wrap items-center gap-2 border-t border-hairline pt-3">
               <Button size="sm" variant="ghost" disabled={backfill.isPending} onClick={() => backfill.mutate()}>
                 {backfill.isPending ? "Counting…" : "Give existing customers a login"}
+              </Button>
+              <Button size="sm" variant="ghost" disabled={supportBackfill.isPending} onClick={() => supportBackfill.mutate()}>
+                {supportBackfill.isPending ? "Counting…" : "Give existing customers Free support"}
               </Button>
               <span className="text-xs text-ink-3">One-time, after the data transfer. Shows the count before anything is queued.</span>
             </div>
