@@ -30,6 +30,8 @@ const SQL_SALE = new Set([
   "get_partner_metrics",   // invoiced this month (reseller children)
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
+  tg_queue_panel_account: "R-2103: reads only the customer of an opening-invoice payment, to queue their customer panel login — no amounts",
+  queue_panel_account_backfill: "R-2103: finds the customer of opening-invoice payments to queue panel logins — no amounts",
   zoho_books_import_apply: "R-1753: open Zoho invoices go in through import_opening_invoices (opening, never a sale)",
   zoho_books_import_undo: "R-1753: refuses while a created customer has other invoices; removes its own opening invoices",
   accept_project_quote: "creates a project invoice of ours",

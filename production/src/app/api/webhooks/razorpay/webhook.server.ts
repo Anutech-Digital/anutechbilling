@@ -42,6 +42,7 @@ import { decideProvisioning, testPaymentProvisioningAllowed } from "@/lib/provis
 import { queueProvisioning } from "@/lib/provisioning/provisioning.server";
 import { provisioningProducts, productAmountPaid } from "@/lib/provisioning/products";
 import { domainRegistrationEnabled, hostingProvisioningEnabled } from "@/lib/provisioning/domain-registration";
+import { ensurePanelAccount } from "@/lib/provisioning/panel-account.server";
 import {
   DOMAIN_RENEWAL_PLAN,
   domainRenewalEnabled,
@@ -704,6 +705,16 @@ export async function settleCapturedPayment(
         }
       }
     }
+  }
+
+  /* R-2103: the customer panel (DMS) login at once. record_payment's insert already queued the
+     customer (trg_queue_panel_account); this sends that row now instead of on the next cron.
+     An order made inside the DMS panel names its buyer's DMS user, so the row is only marked
+     done with it. Best-effort, never throws — the payment is recorded either way. */
+  {
+    const panelUser = notes.channel === "dms-panel" && typeof notes.dmsUserId === "string" ? notes.dmsUserId : null;
+    const panel = await ensurePanelAccount(admin, { tenantId: quote.tenant_id, quoteId: quote.id, dmsUserId: panelUser });
+    if (panel.kind === "skipped") console.log(`[webhooks/razorpay] ${quote.id}: panel account not sent now — ${panel.reason}`);
   }
 
   /* R-1985: the domain's share of a split payment — the Workspace share sends the one mail. */

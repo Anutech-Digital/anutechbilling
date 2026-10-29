@@ -289,6 +289,7 @@ MIGS=(
   "r2098bankcreditsplit|20261029054707_r2098_bank_credit_split.sql|resellersos_migration|to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') is not null and to_regclass('public.bank_receipt_round_offs') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-2098%')"
   "r2099razorpaysettlement|20261029060514_r2099_razorpay_settlement.sql|resellersos_migration|to_regprocedure('public.reconcile_razorpay_settlement(uuid,jsonb)') is not null and to_regclass('public.razorpay_settlement_recons') is not null"
   "r2101partinvoiceqty|20261029110904_r2101_part_invoice_qty.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-2101%')"
+  "r2103panelaccountoutbox|20261029114000_r2103_panel_account_outbox.sql|resellersos_migration|to_regclass('public.panel_account_outbox') is not null and to_regprocedure('public.queue_panel_account_backfill(boolean)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

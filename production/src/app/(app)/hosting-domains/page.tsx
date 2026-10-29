@@ -28,6 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PanelAccountsCard } from "@/components/features/panel-accounts/panel-accounts-card";
 
 interface DmsStatus {
   configured: boolean;
@@ -202,6 +203,9 @@ export default function HostingDomainsPage() {
           </p>
         )}
       </Card>
+
+      {/* R-2103: who has a customer panel login, who is stuck, and the go-live backfill. */}
+      <PanelAccountsCard />
     </div>
   );
 }
