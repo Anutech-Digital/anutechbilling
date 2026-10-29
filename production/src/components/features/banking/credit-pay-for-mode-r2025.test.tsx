@@ -24,6 +24,7 @@ vi.mock("@/lib/queries/bank-credit-pay-for", () => ({
   useNewSaleFromBankCredit: () => ({ mutateAsync: state.sale, isPending: false }),
   useAdvanceFromBankCredit: () => ({ mutateAsync: state.adv, isPending: false }),
   useRelinkOneOffSale: () => ({ mutateAsync: state.relink, isPending: false }),
+  useSplitFromBankCredit: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("@/lib/queries/items", () => ({ useItems: () => ({ data: [] }) }));
 vi.mock("@/lib/compliance/gst-registration-query", () => ({ useGstRegistration: () => ({ data: { saved: null } }) }));

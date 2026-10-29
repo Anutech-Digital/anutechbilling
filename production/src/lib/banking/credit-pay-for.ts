@@ -546,8 +546,9 @@ export function linesAreMonthly(lines: OpenItem["lines"]): boolean {
 /* ─── Result ─────────────────────────────────────────────────────────────────────────── */
 
 export interface PayForResult {
-  /** "advance" — R-1863: booked as the customer's advance (on account), nothing invoiced. */
-  kind: OpenItemKind | "advance";
+  /** "advance" — R-1863: booked as the customer's advance (on account), nothing invoiced.
+      "split" — R-2098: several items on one line; each is in parts. */
+  kind: OpenItemKind | "advance" | "split";
   quote_id: string | null;
   invoice_id: string | null;
   invoice_issued: string | null;
@@ -576,6 +577,11 @@ export interface PayForResult {
   old_invoice_credited?: string | null;
   old_invoice_voided?: string | null;
   old_credit_note_id?: string | null;
+  /* R-2098 split: what each item recorded, the money left as advance, the round-off. */
+  parts?: PayForResult[];
+  allocated?: number;
+  round_off?: number;
+  advance_receipt_voucher_no?: string | null;
 }
 
 export interface ResultLine { text: string; href?: string; tone?: "ok" | "warn" }
@@ -607,6 +613,21 @@ export function resultLines(r: PayForResult): ResultLine[] {
           : `Old one-off sale ${r.relinked_from_quote} undone`,
       href: r.old_invoice_credited ? `/invoices/${encodeURIComponent(r.old_invoice_credited)}` : undefined,
     });
+  }
+
+  /* R-2098: several items on one line — each part says what it did, then the rest. */
+  if (r.kind === "split") {
+    for (const p of r.parts ?? []) out.push(...resultLines(p));
+    if ((r.advance_credit ?? 0) > 0) {
+      out.push({
+        text: advanceMessage(r.advance_credit ?? 0, r.customer_name ?? "the customer"),
+        href: r.customer_id ? `/customers/${encodeURIComponent(r.customer_id)}` : undefined,
+      });
+    }
+    const ro = r.round_off ?? 0;
+    if (ro > 0) out.push({ text: `${rupee(ro)} less came in — written off as round-off (Bank Charges)` });
+    else if (ro < 0) out.push({ text: `${rupee(-ro)} more came in — written off as round-off (Bank Charges)` });
+    return out;
   }
 
   if (r.kind === "advance") {

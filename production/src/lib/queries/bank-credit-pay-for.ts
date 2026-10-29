@@ -21,6 +21,7 @@ import type { OldOneOffBooking, OpenItem, PayForResult, SaleLine } from "@/lib/b
 import { saleLinesPayload } from "@/lib/banking/credit-pay-for";
 import { ADVANCE_PAYMENT_NOTE_PREFIX, advancePaymentIds } from "@/lib/banking/bank-row-label";
 import { isSplitBilled } from "@/lib/billing/instalments";
+import { splitArgs, type SplitInput } from "@/lib/banking/credit-pay-for-multi";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 
 /* The generated types do not know the R-1838 functions yet (migration not applied there). */
@@ -268,5 +269,26 @@ export function useBankAdvancePaymentIds(paymentIds: readonly string[]) {
       return advancePaymentIds(pays, quotes.map((q) => ({ ...q, amount: Number(q.amount) || 0 })));
     },
     staleTime: 30_000,
+  });
+}
+
+/* ─── R-2098: one line → several items (+ a new sale), the rest advance / round-off ─────────── */
+
+/** ONE server transaction (reconcile_bank_credit_split, migration 20261029045721). The new sale's
+ *  first instalment invoice, when it is billed in parts, is raised as for a single new sale. */
+export function useSplitFromBankCredit() {
+  const after = useAfterPay();
+  return useMutation({
+    mutationFn: async (input: SplitInput & { customerName?: string | null }): Promise<PayForResult> => {
+      const { data, error } = await rpc("reconcile_bank_credit_split", splitArgs(input));
+      if (error) throw error;
+      if (!data) throw new Error("The payments were not confirmed — refresh the page to see whether they were saved.");
+      const r = data as PayForResult;
+      const parts = await Promise.all((r.parts ?? []).map((p) =>
+        p.new_quote ? raiseFirstInstalment(p, (input.sale?.billingCycle ?? null) as BillingCycle | null) : Promise.resolve(p)));
+      return { ...r, parts, customer_id: input.customerId, customer_name: input.customerName ?? null };
+    },
+    onSuccess: after,
+    onError: onPayError,
   });
 }
