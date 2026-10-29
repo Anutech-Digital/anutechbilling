@@ -136,3 +136,20 @@ describe("billing cron wiring (R-2092)", () => {
     expect(src).toContain("quoteSiblings(");
   });
 });
+
+describe("follow-up after the localhost check (R-2092)", () => {
+  it("a part held back for its quote's other subscription is tallied as waiting — not an error, not a silent 0", async () => {
+    const { applyBillOutcome } = await import("./part-requests");
+    const out = { raised: [], alreadyRaised: 0, wouldRaise: 0, requests: [], requestsOpen: [], wouldRequest: 0 } as Parameters<typeof applyBillOutcome>[0];
+    applyBillOutcome(out, 1, { action: "waiting", reason: "siblings_not_laid", subscription_ids: ["s-standard"] }, false);
+    expect(out.waiting).toEqual([{ period_index: 1, subscription_ids: ["s-standard"] }]);
+    expect(out.raised).toEqual([]);
+  });
+
+  it("layInstalments returns a failed lay as an error (68ed55d70 swallowed it)", async () => {
+    const { layInstalments } = await import("./sync-instalments.server");
+    const broken = { from: () => { throw new Error("connection dropped"); } } as never;
+    const r = await layInstalments(broken, [sub("s-standard", 11917) as never], () => undefined, TODAY, false);
+    expect(r.errors).toEqual([{ subscription_id: "s-standard", message: expect.stringMatching(/Laying the parts failed: connection dropped/) }]);
+  });
+});

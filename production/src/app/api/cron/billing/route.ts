@@ -192,6 +192,7 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
     today,
     dryRun,
   );
+  result.errors.push(...laid.errors);
   result.instalments_created  += laid.created;
   result.instalments_resynced += laid.resynced;
 

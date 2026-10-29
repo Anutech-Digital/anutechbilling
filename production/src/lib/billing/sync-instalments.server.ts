@@ -65,6 +65,8 @@ export interface InstalmentSyncResult {
   requestsOpen: { period_index: number; quote_id: string; status: string }[];
   /** R-2044: would have got a payment request (dry run only). */
   wouldRequest: number;
+  /** R-2092: parts held back until the quote's other subscriptions have their parts laid. */
+  waiting?: { period_index: number; subscription_ids: string[] }[];
 }
 
 export async function syncSubscriptionInstalments(args: {
@@ -290,7 +292,10 @@ export async function duePartInvoices(
 
 /**
  * R-2092: lay (insert / re-sync, no billing) the parts of every subscription in `subs`. A failure
- * is left to the billing pass that follows: it runs the same step again and reports it.
+ * is RETURNED per subscription and logged — never swallowed (68ed55d70 swallowed it, and on
+ * localhost the quote's Q1 went out as the Starter alone). Billing stays safe without it: the
+ * database bills no part while another subscription of its quote has no parts laid
+ * (bill_subscription_instalment → 'waiting', migration 20261029052411).
  * Returns the parts laid / re-synced, for the cron's counts. A dry run writes nothing.
  */
 export async function layInstalments(
@@ -299,16 +304,18 @@ export async function layInstalments(
   quoteOf: (sub: InstalmentSub) => QuotePaymentFacts | undefined,
   todayISO: string,
   dryRun: boolean,
-): Promise<{ created: number; resynced: number }> {
-  const out = { created: 0, resynced: 0 };
+): Promise<{ created: number; resynced: number; errors: { subscription_id: string; message: string }[] }> {
+  const out = { created: 0, resynced: 0, errors: [] as { subscription_id: string; message: string }[] };
   if (dryRun) return out;
   for (const sub of subs) {
     try {
       const r = await syncSubscriptionInstalments({ supabase, sub, quote: quoteOf(sub), todayISO, layOnly: true });
       out.created += r.created;
       out.resynced += r.resynced;
-    } catch {
-      /* reported by the billing pass */
+    } catch (e) {
+      const message = `Laying the parts failed: ${e instanceof Error ? e.message : String(e)}`;
+      console.error(`[billing/lay] subscription ${sub.id}: ${message}`);
+      out.errors.push({ subscription_id: sub.id, message });
     }
   }
   return out;
@@ -381,7 +388,10 @@ export async function raiseDueInstalmentsForQuote(args: {
   const facts = await readQuotePaymentFacts(supabase, quoteId);
   /* R-2092: every subscription's parts are laid first, then billed — a quote's parts for one
      period become ONE tax invoice only when they all exist at the first bill. */
-  if (subs.length > 1) await layInstalments(supabase, subs, () => facts, todayISO, false);
+  if (subs.length > 1) {
+    const laid = await layInstalments(supabase, subs, () => facts, todayISO, false);
+    out.errors.push(...laid.errors);
+  }
   for (const sub of subs) {
     try {
       const r = await syncSubscriptionInstalments({ supabase, sub, quote: facts, todayISO });

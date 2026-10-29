@@ -213,6 +213,78 @@ begin
   raise notice 'F PASS: single-subscription quote unchanged (₹53,808, paid, one line)';
 end $$;
 
+-- G. (migration 20261029052411, localhost 29 Oct) the Starter's parts laid, the Standard's NOT
+--    yet (the order the billing code ran in on localhost) → the Starter is NOT billed alone:
+--    'waiting', no invoice, the pending list says 'not_laid'; once the Standard's parts are laid,
+--    ONE invoice for both. Same with ₹60 short: never a Starter-only 'Paid' invoice.
+insert into public.customers (id, tenant_id, name, state_code, country)
+  values ('cccccccc-0000-0000-0000-000000209207','dddddddd-0000-0000-0000-000000209201','Cust 2092-7','27','India');
+insert into public.quotes (id, tenant_id, customer_name, customer_id, tax_rate, amount, subtotal, billing_cycle, status, line_items)
+select 'TESTQ-R2092-' || n, 'dddddddd-0000-0000-0000-000000209201', 'Cust 2092-7', 'cccccccc-0000-0000-0000-000000209207',
+       18, 383972, 325400, 'quarterly', 'accepted',
+       '[{"name":"Google Workspace Business Starter","qty":57,"rate":3200,"commitment":"annual_quarterly"},
+         {"name":"Google Workspace Business Standard","qty":13,"rate":11000,"commitment":"annual_quarterly"}]'::jsonb
+  from generate_series(7, 8) n;
+insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr,
+                                  billing_cycle, quote_id, start_date, status, created_at)
+select ('eeeeeeee-0000-0000-0000-0000002092' || n || k)::uuid, 'dddddddd-0000-0000-0000-000000209201',
+       'cccccccc-0000-0000-0000-000000209207', 'Cust 2092-7',
+       case k when 1 then 'Google Workspace Business Starter' else 'Google Workspace Business Standard' end,
+       'google'::vendor, case k when 1 then 57 else 13 end, case k when 1 then 15200 else 11917 end,
+       'quarterly'::billing_cycle, 'TESTQ-R2092-' || n, public.ist_today(), 'active', now()
+  from generate_series(7, 8) n cross join generate_series(1, 2) k;
+-- Only the Starters' Q1 is laid.
+insert into public.subscription_billings (id, tenant_id, subscription_id, term_start, period_index, bill_on,
+                                          period_start, period_end, taxable_amount, tax_rate)
+select ('bbbbbbbb-0000-0000-0000-000002092' || n || '11')::uuid, 'dddddddd-0000-0000-0000-000000209201',
+       ('eeeeeeee-0000-0000-0000-0000002092' || n || '1')::uuid,
+       public.ist_today(), 1, public.ist_today(), public.ist_today(), (public.ist_today() + interval '3 months')::date, 45600, 18
+  from generate_series(7, 8) n;
+
+do $$
+declare
+  r jsonb; v_i record; v_n integer; v_st record;
+begin
+  perform public.record_payment('TESTQ-R2092-7', 95993, 'upi', 'R2092-PAY-7');
+  perform public.record_payment('TESTQ-R2092-8', 95933, 'upi', 'R2092-PAY-8');
+
+  r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-000002092711', false);
+  if r->>'action' <> 'waiting' or exists (select 1 from public.invoices where customer_id = 'cccccccc-0000-0000-0000-000000209207') then
+    raise exception 'G FAIL: the Starter was billed while the Standard had no parts: %', r;
+  end if;
+  r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-000002092811', false);
+  if r->>'action' <> 'waiting' then raise exception 'G FAIL (short): %', r; end if;
+  select * into v_st from public.split_sale_invoice_status(array['TESTQ-R2092-7']);
+  if v_st.state <> 'not_laid' then raise exception 'G FAIL: pending list says % (want not_laid)', v_st.state; end if;
+
+  -- the Standard's Q1 is laid now (its billing run) → ONE invoice for the quote
+  insert into public.subscription_billings (id, tenant_id, subscription_id, term_start, period_index, bill_on,
+                                            period_start, period_end, taxable_amount, tax_rate)
+  select ('bbbbbbbb-0000-0000-0000-000002092' || n || '21')::uuid, 'dddddddd-0000-0000-0000-000000209201',
+         ('eeeeeeee-0000-0000-0000-0000002092' || n || '2')::uuid,
+         public.ist_today(), 1, public.ist_today(), public.ist_today(), (public.ist_today() + interval '3 months')::date, 35751, 18
+    from generate_series(7, 8) n;
+  r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-000002092721', false);
+  if r->>'action' <> 'invoice' then raise exception 'G FAIL: %', r; end if;
+  select * into v_i from public.invoices where id = r->>'invoice_id';
+  if v_i.amount <> 95993 or v_i.status::text <> 'paid' or jsonb_array_length(v_i.line_items) <> 2
+     or (select count(distinct invoice_id) from public.subscription_billings
+          where id in ('bbbbbbbb-0000-0000-0000-000002092711', 'bbbbbbbb-0000-0000-0000-000002092721')) <> 1 then
+    raise exception 'G FAIL: % % %', v_i.amount, v_i.status, v_i.line_items;
+  end if;
+  select * into v_st from public.split_sale_invoice_status(array['TESTQ-R2092-7']);
+  if v_st.state <> 'invoiced' or v_st.invoice_id <> v_i.id then raise exception 'G FAIL: pending list % %', v_st.state, v_st.invoice_id; end if;
+
+  -- ₹60 short: still no invoice once both are laid; the pending list says 'short' for the quote's ₹95,993
+  r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-000002092811', false);
+  select count(*) into v_n from public.invoices where id in (select invoice_id from public.subscription_billings
+    where subscription_id in ('eeeeeeee-0000-0000-0000-000000209281', 'eeeeeeee-0000-0000-0000-000000209282'));
+  if v_n <> 0 or r->>'action' <> 'request_open' then raise exception 'G FAIL (short): % invoice(s), %', v_n, r; end if;
+  select * into v_st from public.split_sale_invoice_status(array['TESTQ-R2092-8']);
+  if v_st.state <> 'short' or v_st.gross <> 95993 then raise exception 'G FAIL (short): pending % %', v_st.state, v_st.gross; end if;
+  raise notice 'G PASS: no Starter-alone invoice while the Standard is not laid; then one ₹95,993 invoice; short → none, pending ''short''';
+end $$;
+
 select 'R-2092 quote period one invoice: ALL PASS' as result;
 
 rollback;
