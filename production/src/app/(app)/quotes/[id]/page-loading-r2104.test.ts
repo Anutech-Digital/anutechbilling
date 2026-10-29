@@ -18,6 +18,10 @@ describe("quote page waits for its subscriptions (R-2104)", () => {
     expect(page).toMatch(/if \(isLoading \|\| subsLoading \|\| partInvoicesLoading\) \{/);
   });
 
+  it("closing Record payment re-reads the parts' invoices — INVOICED ticks without a reload (localhost check, 29 Oct)", () => {
+    expect(page).toMatch(/if \(!o\) void qc\.invalidateQueries\(\{ queryKey: \["quote-part-invoices"\] \}\);/);
+  });
+
   it("only the FIRST read of the parts' invoices waits — a refetch keeps the last answer (no skeleton under an open sheet)", () => {
     expect(parts).toMatch(/placeholderData: \(prev[^)]*\) => prev/);
   });

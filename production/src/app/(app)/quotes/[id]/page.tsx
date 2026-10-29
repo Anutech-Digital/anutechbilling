@@ -2003,7 +2003,12 @@ export default function QuoteDetailPage() {
       {/* Payment dialog */}
       <RecordPaymentDialog
         open={paymentOpen && mayRecordMoney}
-        onOpenChange={setPaymentOpen}
+        onOpenChange={(o) => {
+          setPaymentOpen(o);
+          /* R-2104: the payment raised the part's tax invoice (raise-instalments) — re-read the
+             parts' invoices so INVOICED ticks without a page reload. */
+          if (!o) void qc.invalidateQueries({ queryKey: ["quote-part-invoices"] });
+        }}
         quoteId={quote.id}
         customerName={quote.customer_name}
         expectedAmount={total}
