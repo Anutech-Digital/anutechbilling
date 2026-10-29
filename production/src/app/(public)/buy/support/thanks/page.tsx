@@ -11,15 +11,21 @@ import type { Metadata } from "next";
 import { createAdminClient } from "@/lib/supabase/server";
 import { buyPageTenantIdOrEmpty } from "@/lib/checkout/live-guards";
 import { quoteTokenMatches } from "@/lib/quotes/accept-token";
-import { isSupportCheckoutPlan } from "@/lib/support/public-checkout";
+import { isSupportCheckoutPlan, supportPlanHeading } from "@/lib/support/public-checkout";
+import { supportDeskUrl } from "@/lib/support/support-customer.server";
+import { fetchBuyBrand } from "../../workspace/_parts/fetch-brand";
 import { SupportThanks, type SupportThanksOrder } from "./support-thanks";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "Support plan — order",
-  robots: { index: false, follow: false },
-};
+/* R-2102: the seller's brand in the tab, like the checkout page — never the app's own name. */
+export async function generateMetadata(): Promise<Metadata> {
+  const brand = await fetchBuyBrand();
+  return {
+    title: { absolute: brand ? `Support plan order · ${brand.name}` : "Support plan order" },
+    robots: { index: false, follow: false },
+  };
+}
 
 async function fetchSupportOrder(quoteId: string, token: string): Promise<SupportThanksOrder | null> {
   if (!/^Q-[A-Z0-9-]{4,40}$/.test(quoteId) || !token) return null;
@@ -27,15 +33,15 @@ async function fetchSupportOrder(quoteId: string, token: string): Promise<Suppor
   if (!tenantId) return null;
   const { data, error } = await createAdminClient()
     .from("quotes")
-    .select("id, public_token, plan, amount, payment_status, line_items")
+    .select("id, public_token, plan, amount, payment_status")
     .eq("id", quoteId)
     .eq("tenant_id", tenantId)
     .maybeSingle();
   if (error || !data || !quoteTokenMatches(token, data.public_token) || !isSupportCheckoutPlan(data.plan)) return null;
-  const line = Array.isArray(data.line_items) ? (data.line_items[0] as { name?: string } | undefined) : undefined;
   return {
     quoteId: data.id,
-    planName: line?.name ?? "Support plan",
+    /* R-2102: "Enterprise Support plan" — the line name carries the seller's company name. */
+    planName: supportPlanHeading(data.plan),
     amount: Number(data.amount ?? 0),
     paid: ["received", "invoiced"].includes(String(data.payment_status)),
   };
@@ -45,6 +51,5 @@ export default async function SupportThanksPage(props: { searchParams: Promise<{
   const sp = await props.searchParams;
   const quoteId = (sp.order ?? "").trim();
   const order = quoteId ? await fetchSupportOrder(quoteId, (sp.t ?? "").trim()) : null;
-  const deskUrl = (process.env.DSP_SUPPORT_URL ?? "").trim().replace(/\/+$/, "") || null;
-  return <SupportThanks order={order} simulated={sp.sim === "1"} deskUrl={deskUrl} />;
+  return <SupportThanks order={order} simulated={sp.sim === "1"} deskUrl={supportDeskUrl()} />;
 }

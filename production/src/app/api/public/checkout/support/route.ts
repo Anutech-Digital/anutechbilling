@@ -42,9 +42,10 @@ import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { captureFromRequest } from "@/lib/marketing/utm";
 import { publicDbError } from "@/app/api/public/_lib/db-error";
 import {
-  buildSupportOrder, isUuid, sameEmail, supportCheckoutSchema, type SupportBuyPlan, type SupportBuyTerm, type SupportItemRow,
+  buildSupportOrder, supportCheckoutSchema, type SupportBuyPlan, type SupportBuyTerm, type SupportItemRow,
 } from "@/lib/support/public-checkout";
 import { findSupportSku } from "@/lib/support/tiers";
+import { attachableCustomer } from "@/lib/support/support-customer.server";
 
 export const dynamic = "force-dynamic";
 
@@ -77,23 +78,6 @@ async function supportItem(admin: Admin, tenantId: string, plan: SupportBuyPlan,
   const rows = (data ?? []) as { id: string; name: string | null; sku: string | null }[];
   const row = rows.find((r) => r.sku === sku) ?? findSupportSku(rows, plan, term);
   return row ? { id: row.id, name: row.name ?? "" } : null;
-}
-
-/** DSP's customer, only when it is this company's, active, and the same email. Else null. */
-async function attachableCustomer(admin: Admin, tenantId: string, billingCustomerId: string, email: string) {
-  if (!billingCustomerId) return null;
-  const q = admin.from("customers").select("id, name, contact_email, is_active").eq("tenant_id", tenantId);
-  /* The id is [A-Za-z0-9-] only (schema), so it is safe inside the or() filter. */
-  const { data, error } = await (isUuid(billingCustomerId)
-    ? q.or(`id.eq.${billingCustomerId},customer_number.eq.${billingCustomerId}`)
-    : q.eq("customer_number", billingCustomerId)
-  ).limit(2);
-  if (error) {
-    console.error("[checkout/support] customer lookup failed:", error.message);
-    return null;
-  }
-  const rows = (data ?? []) as { id: string; name: string | null; contact_email: string | null; is_active: boolean }[];
-  return rows.find((c) => c.is_active && sameEmail(c.contact_email, email)) ?? null;
 }
 
 export async function POST(request: NextRequest) {

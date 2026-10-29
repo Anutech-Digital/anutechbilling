@@ -5,6 +5,11 @@
  * the GST invoice needs, pay. The figures come from the server (page.tsx → price book); this
  * file never computes a price, and the server prices the order again from the plan + term.
  *
+ * R-2102: opened from the support desk for a known customer, it says which plan they are on and
+ * lists only the higher plans. A paid customer moving up mid-term is charged pro-rata (R-2073),
+ * which is a quote from us, not this page — so their action is "Ask for the upgrade quote".
+ * On Enterprise there is nothing to buy: the page says so and points to the desk.
+ *
  * Layout: one column on a phone (the summary and Pay sit under the form), the form and a sticky
  * summary side by side from md — 960px wide at most, so it fits 1280 with room to spare.
  */
@@ -14,7 +19,9 @@ import { fromRazorpayHandler } from "@/lib/checkout/confirm-payment";
 import { payButtonLabel, type CheckoutPaymentMode } from "@/lib/checkout/checkout-payment-mode";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { rupee } from "@/lib/utils";
+import { formatIstDate } from "@/lib/dates/ist";
 import { COMPANY } from "@/site/lib/config";
+import type { SupportTierId } from "@/lib/support/tiers";
 import { yearlySavingPct, type SupportBuyPlan, type SupportBuyTerm, type SupportPriceView } from "@/lib/support/public-checkout";
 import { STATE_OPTIONS } from "../workspace/_parts/checkout-form";
 import { postJson, NOT_REACHED } from "../workspace/post-json";
@@ -37,6 +44,9 @@ interface Props {
   billingCustomerId: string;
   paymentMode: CheckoutPaymentMode;
   sellerName: string | null;
+  /** R-2102: the desk customer's plan now; null when the link names no customer we know. */
+  current: { tier: SupportTierId; label: string; paidUntil: string | null } | null;
+  deskUrl: string | null;
 }
 
 interface CheckoutAnswer {
@@ -78,8 +88,10 @@ export function SupportCheckout(p: Props) {
   const ts = useTurnstile();
 
   const card = p.plans.find((x) => x.id === plan) ?? p.plans[0];
-  const price = card.prices[term];
-  const canPay = p.paymentMode !== "disabled" && price.exGst > 0;
+  const price = card?.prices[term];
+  /* A paid customer moving up mid-term pays pro-rata — that is a quote, not this checkout. */
+  const paidNow = !!p.current && p.current.tier !== "free";
+  const canPay = !!price && !paidNow && p.paymentMode !== "disabled" && price.exGst > 0;
   const set = (k: keyof typeof f, v: string) => { setF((o) => ({ ...o, [k]: v })); setErrors({}); };
 
   function check(): boolean {
@@ -96,7 +108,7 @@ export function SupportCheckout(p: Props) {
   }
 
   async function pay() {
-    if (busy || !canPay || !check()) return;
+    if (busy || !canPay || !price || !check()) return;
     setBusy(true);
     /* Every way out says what did NOT happen, and frees the button. */
     const stop = (form: string) => { setErrors({ form }); setBusy(false); };
@@ -118,7 +130,7 @@ export function SupportCheckout(p: Props) {
       const quoteId = j.quoteId, token = j.publicToken;
       const rzp = new Rzp({
         key: j.razorpayKeyId, amount: j.amount, currency: j.currency ?? "INR", order_id: j.orderId,
-        name: p.sellerName ?? COMPANY.short, description: j.tierName ?? price.label,
+        name: seller, description: j.tierName ?? price.label,
         prefill: { name: f.name.trim(), email: f.email.trim(), contact: f.phone.trim() },
         theme: { color: "#1668E3" },
         handler: (resp: unknown) => {
@@ -132,6 +144,31 @@ export function SupportCheckout(p: Props) {
     } catch {
       stop("Something went wrong before payment. No money was taken — press Pay again.");
     }
+  }
+
+  const seller = p.sellerName ?? COMPANY.short;
+  const currentLine = p.current && (
+    <p className="text-[15px] text-ink-2 bg-white border border-hairline rounded-xl px-4 py-3 mb-6 max-w-2xl">
+      Your plan now: <strong className="text-ink">{p.current.label}</strong>
+      {p.current.paidUntil && p.current.tier !== "free" ? <>, paid until {formatIstDate(p.current.paidUntil)}</> : null}.
+    </p>
+  );
+
+  /* Enterprise (the top plan) — nothing above it to buy. */
+  if (!card || !price) {
+    return (
+      <main className="min-h-screen bg-paper">
+        <div className="mx-auto max-w-xl px-4 py-12">
+          <p className="text-sm text-ink-3 m-0">{seller}</p>
+          <h1 className="text-2xl font-bold text-ink mt-1 mb-3">You&apos;re on our highest support plan</h1>
+          {currentLine}
+          <p className="text-[15px] text-ink-2 mt-0 mb-5">There is no higher plan to buy. Raise tickets, WhatsApp and calls from the support desk.</p>
+          <a href={p.deskUrl ?? `mailto:${COMPANY.supportEmail}`} className="flex items-center justify-center h-12 rounded-xl bg-amber text-white font-bold hover:bg-amber-ink">
+            {p.deskUrl ? "Go to support desk" : `Email ${COMPANY.supportEmail}`}
+          </a>
+        </div>
+      </main>
+    );
   }
 
   const saving = yearlySavingPct(card.prices.monthly.exGst, card.prices.yearly.exGst);
@@ -149,8 +186,9 @@ export function SupportCheckout(p: Props) {
         <p className="bg-amber-soft text-amber-ink text-center text-sm font-semibold px-4 py-2">Test mode — no real payment is taken on this computer.</p>
       )}
       <div className="mx-auto max-w-5xl px-4 py-8 md:py-12">
-        <p className="text-sm text-ink-3 m-0">{p.sellerName ?? COMPANY.short}</p>
-        <h1 className="text-2xl md:text-3xl font-bold text-ink mt-1 mb-2">Buy a support plan</h1>
+        <p className="text-sm text-ink-3 m-0">{seller}</p>
+        <h1 className="text-2xl md:text-3xl font-bold text-ink mt-1 mb-2">{paidNow ? "Upgrade your support plan" : "Buy a support plan"}</h1>
+        {currentLine}
         <p className="text-[15px] text-ink-2 mb-8 max-w-2xl">Faster answers from our support desk. Pay online and get a GST tax invoice; the plan is switched on at the desk for the same email within minutes.</p>
 
         <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_340px] items-start">
@@ -181,6 +219,7 @@ export function SupportCheckout(p: Props) {
               </div>
             </section>
 
+            {!paidNow && (
             <section aria-labelledby="sup-det-h" className="bg-white border border-hairline rounded-2xl p-5">
               <h2 id="sup-det-h" className="text-base font-semibold text-ink mt-0 mb-3">2. Your details (for the GST invoice)</h2>
               <div className="grid gap-x-4 sm:grid-cols-2">
@@ -210,27 +249,40 @@ export function SupportCheckout(p: Props) {
                 </div>
               </div>
             </section>
+            )}
           </div>
 
           <aside aria-labelledby="sup-sum-h" className="bg-white border border-hairline rounded-2xl p-5 md:sticky md:top-6">
-            <h2 id="sup-sum-h" className="text-base font-semibold text-ink mt-0 mb-3">3. Pay</h2>
+            <h2 id="sup-sum-h" className="text-base font-semibold text-ink mt-0 mb-3">{paidNow ? "Next step" : "3. Pay"}</h2>
+            {!paidNow && (<>
             <dl className="m-0 text-[15px] space-y-2">
               <div className="flex justify-between gap-3"><dt className="text-ink-2">{price.label}</dt><dd className="m-0 text-ink">{rupee(price.exGst)}</dd></div>
               <div className="flex justify-between gap-3"><dt className="text-ink-2">GST 18%</dt><dd className="m-0 text-ink">{rupee(price.gst)}</dd></div>
               <div className="flex justify-between gap-3 border-t border-hairline pt-2 font-bold"><dt className="text-ink">Total</dt><dd className="m-0 text-ink">{rupee(price.total)}</dd></div>
             </dl>
             <p className="text-[13px] text-ink-3 mt-2 mb-4">{term === "yearly" ? "Covers 12 months. We remind you before it renews." : "Covers one month. We send the next month's invoice before it renews."}</p>
+            </>)}
+            {!paidNow && (<>
             <label htmlFor="sup-agree" className="flex gap-2.5 items-start text-sm text-ink-2 leading-normal cursor-pointer">
               <input id="sup-agree" type="checkbox" checked={agree} onChange={(e) => { setAgree(e.target.checked); setErrors({}); }} aria-describedby="sup-agree-err" className="w-5 h-5 mt-0.5 shrink-0 accent-[hsl(var(--amber))]" />
               <span>I agree to the <a href="/terms-and-conditions" target="_blank" rel="noopener noreferrer" className="text-amber-ink underline underline-offset-[3px]">Terms</a> and the <a href="/refund" target="_blank" rel="noopener noreferrer" className="text-amber-ink underline underline-offset-[3px]">Refund policy</a>.</span>
             </label>
             <p id="sup-agree-err" className="text-[13px] text-rose min-h-5 mt-1">{errors.agree ?? ""}</p>
             {ts.widget}
+            </>)}
             {canPay ? (
               <button type="button" onClick={() => void pay()} disabled={busy}
                 className="w-full h-12 rounded-xl bg-amber text-white text-[16px] font-bold hover:bg-amber-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2 disabled:opacity-60">
                 {busy ? "Please wait…" : payButtonLabel(p.paymentMode, rupee(price.total))}
               </button>
+            ) : paidNow && p.current ? (
+              <>
+                <p className="text-[13px] text-ink-2 mt-0 mb-3">Moving up from {p.current.label} in the middle of a term is charged pro-rata — only the difference for the days left. Your renewal date stays the same.</p>
+                <a href={`mailto:${COMPANY.supportEmail}?subject=${encodeURIComponent(`Upgrade from ${p.current.label} to ${card.label} Support — please send the pro-rata quote`)}`}
+                  className="flex items-center justify-center w-full h-12 rounded-xl bg-amber text-white text-[16px] font-bold hover:bg-amber-ink">
+                  Ask for the upgrade quote
+                </a>
+              </>
             ) : (
               <a href={`mailto:${COMPANY.supportEmail}?subject=${encodeURIComponent(`${price.label} — please send a GST quote`)}`}
                 className="flex items-center justify-center w-full h-12 rounded-xl bg-amber text-white text-[16px] font-bold hover:bg-amber-ink">

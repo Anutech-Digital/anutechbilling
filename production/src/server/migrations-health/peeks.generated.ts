@@ -262,4 +262,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2099razorpaysettlement", peek: "to_regprocedure('public.reconcile_razorpay_settlement(uuid,jsonb)') is not null and to_regclass('public.razorpay_settlement_recons') is not null" },
   { key: "r2101partinvoiceqty", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-2101%')" },
   { key: "r2103panelaccountoutbox", peek: "to_regclass('public.panel_account_outbox') is not null and to_regprocedure('public.queue_panel_account_backfill(boolean)') is not null" },
+  { key: "r2102supportsyncplankey", peek: "to_regprocedure('public.support_plan_key(text,text)') is not null and exists (select 1 from pg_proc where proname = 'queue_support_sync' and prosrc like '%R-2102%')" },
 ];

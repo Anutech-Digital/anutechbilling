@@ -13,7 +13,7 @@
 --      still one subscription and one outbox row;
 --   3. monthly: a monthly line on a billing_cycle 'monthly' quote → term 1, mrr 999, outbox row;
 --   4. WHY the route links the item: the same line WITHOUT item_id is name-guessed to
---      vendor 'other' and NO outbox row is written — the plan would never reach the desk.
+--      vendor 'other' and the desk gets at most Free (R-2102) — the paid plan would never reach it.
 --
 -- SAFETY: synthetic tenant and rows, one transaction, ends in ROLLBACK.
 
@@ -103,8 +103,10 @@ begin
   if s is null or s.vendor::text = 'support' then
     raise exception 'CASE 4 FAIL: expected a non-support subscription for the unlinked line, got %', s.vendor;
   end if;
-  if exists (select 1 from public.support_sync_outbox where subscription_id = s.id) then
-    raise exception 'CASE 4 FAIL: an unlinked line queued an outbox row — this case no longer shows why the route links the item';
+  -- R-2102: every buyer now gets Free on the desk, so a row may be queued — but never a paid plan.
+  if exists (select 1 from public.support_sync_outbox where subscription_id = s.id
+              and payload->'data'->>'plan_key' is distinct from 'free') then
+    raise exception 'CASE 4 FAIL: an unlinked line queued a PAID plan for the desk — this case no longer shows why the route links the item';
   end if;
 
   raise notice 'R-2083 support checkout → subscription → outbox: all 4 cases pass';
