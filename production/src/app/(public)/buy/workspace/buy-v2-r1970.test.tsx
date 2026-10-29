@@ -66,17 +66,17 @@ describe("R-1970 /buy/workspace v2", () => {
     expect(hrefs).toEqual(["/privacy-policy", "/terms-and-conditions", "/refund", "/contact"]);
   });
 
-  it("plan cards: Annual 270 / 1,080, Monthly 325 / 1,300; Plus is a quote (R-328); Enterprise quoted — both 'Talk to sales' (R-1986)", () => {
+  it("plan cards: Annual 270 / 1,080, Monthly 325 / 1,300; Plus is a quote (R-328) 'Price on request'; Enterprise 'Custom price' (R-2032)", () => {
     page();
     expect(priceOf("starter")).toContain("₹270");
     expect(priceOf("standard")).toContain("₹1,080");
-    expect(priceOf("plus")).toBe("Talk to sales");
-    expect(priceOf("enterprise")).toBe("Talk to sales");
+    expect(priceOf("plus")).toBe("Price on request");
+    expect(priceOf("enterprise")).toBe("Custom price");
     const plans = document.getElementById("plans") as HTMLElement;
     fireEvent.click(within(plans).getByRole("button", { name: "Monthly" }));
     expect(priceOf("starter")).toContain("₹325");
     expect(priceOf("standard")).toContain("₹1,300");
-    expect(priceOf("plus")).toBe("Talk to sales");
+    expect(priceOf("plus")).toBe("Price on request");
     expect(within(plans).getByRole("button", { name: "Monthly" }).getAttribute("aria-pressed")).toBe("true");
   });
 

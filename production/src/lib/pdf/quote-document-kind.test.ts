@@ -68,7 +68,8 @@ const pdf = readFileSync("src/lib/pdf/QuotePDF.tsx", "utf8")
 
 describe("QuotePDF drops the three sentences that ask for money", () => {
   it("takes its heading from the shared helper, not from its own ternary", () => {
-    expect(pdf).toContain("quoteDocumentLabel({ paid: isPaid, isRenewal })");
+    // R-2087: the same call, now also told about a support-plan upgrade.
+    expect(pdf).toContain("quoteDocumentLabel({ paid: isPaid, isRenewal, isUpgrade })");
     // The old inline decision is gone, so the header and the footer cannot drift.
     expect(pdf).not.toMatch(/isRenewal \? "Renewal Quotation" : "Quotation"/);
   });

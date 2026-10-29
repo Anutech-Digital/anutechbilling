@@ -78,6 +78,23 @@ describe("R-523 owner report — past entries whose rate does not fit the sectio
     expect(out[1].message).toMatch(/technical services/);
   });
 
+  it("R-2047: lists an entry deducted on the GST-inclusive amount with that reason", () => {
+    const scn = { ...row("scn", "194J", "10.00", "2026-10-24"), tds_amount: 11_800, gross_amount: 100_000, invoice_id: "INV-27" };
+    const fine = { ...row("fine", "194J", 10), tds_amount: 10_000, gross_amount: 100_000, invoice_id: "INV-28" };
+    const odd = { ...row("odd", "194J", 10), tds_amount: 9_000, gross_amount: 100_000, invoice_id: "INV-28" };
+    const tax = {
+      "INV-27": { taxable_value: 100_000, tax_amount: 18_000, tax_rate: 18 },
+      "INV-28": { taxable_value: 100_000, tax_amount: 18_000, tax_rate: 18 },
+    };
+    const out = tdsRateMismatches([fine, scn, odd, row("wrong-c", "194C", 10)], tax);
+    expect(out.map((m) => m.entry.id)).toEqual(["wrong-c", "scn"]);
+    expect(out[0]).toMatchObject({ reason: "rate", reasonLabel: null });
+    expect(out[1]).toMatchObject({ reason: "gst_inclusive", reasonLabel: "TDS on GST-inclusive amount", knownVariant: false });
+    expect(out[1].message).toMatch(/^Deducted ₹11,800 = 10% of ₹1,18,000 \(incl\. GST\)/);
+    // Without invoice tax the report is exactly as before (R-523).
+    expect(tdsRateMismatches([scn]).length).toBe(0);
+  });
+
   it("never changes the rows it reads", () => {
     const rows = [row("wrong-c", "194C", 10)];
     const before = JSON.stringify(rows);

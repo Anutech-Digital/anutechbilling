@@ -233,6 +233,8 @@ export interface CustomerProjectPayment {
   id: string; amount: number; received_at: string;
   method: string | null; reference: string | null; bank_txn_id: string | null;
   project_id: string; project_title: string; invoice_id: string | null;
+  /** R-2029: the instalment it pays — the statement joins one bank receipt's instalments. */
+  milestone_id: string | null; milestone_label: string | null;
 }
 export function useCustomerProjectPayments(customerId: string | null | undefined) {
   return useQuery({
@@ -252,10 +254,11 @@ export function useCustomerProjectPayments(customerId: string | null | undefined
       if (ids.length === 0) return empty;
       const titleById = new Map((projects ?? []).map((p) => [p.id as string, (p.title as string) ?? "Project"]));
       const [{ data: milestones }, { data: pays }] = await Promise.all([
-        supabase.from("project_milestones").select("id, invoice_id, project_id").in("project_id", ids),
+        supabase.from("project_milestones").select("id, invoice_id, project_id, label").in("project_id", ids),
         supabase.from("project_payments").select("*").in("project_id", ids).order("received_at", { ascending: false }),
       ]);
       const invByMs = new Map<string, string | null>((milestones ?? []).map((m) => [m.id as string, (m.invoice_id as string | null)]));
+      const labelByMs = new Map<string, string | null>((milestones ?? []).map((m) => [m.id as string, (m.label as string | null) ?? null]));
       const invoiceProject: Record<string, { projectId: string; title: string }> = {};
       for (const m of milestones ?? []) {
         if (m.invoice_id) invoiceProject[m.invoice_id as string] = { projectId: m.project_id as string, title: titleById.get(m.project_id as string) ?? "Project" };
@@ -268,6 +271,7 @@ export function useCustomerProjectPayments(customerId: string | null | undefined
           id: p.id, amount: p.amount ?? 0, received_at: p.received_at,
           method: p.method ?? null, reference: p.reference ?? null, bank_txn_id: p.bank_txn_id ?? null,
           project_id: p.project_id, project_title: titleById.get(p.project_id) ?? "Project", invoice_id: inv,
+          milestone_id: p.milestone_id ?? null, milestone_label: p.milestone_id ? (labelByMs.get(p.milestone_id) ?? null) : null,
         });
         if (inv) invoicePaid[inv] = (invoicePaid[inv] ?? 0) + (p.amount ?? 0);
       }

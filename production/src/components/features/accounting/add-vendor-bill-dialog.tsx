@@ -39,6 +39,9 @@ import { useCreateVendorBill, useOwnStateCode, uploadBillAttachment, VENDOR_BILL
 import { BILL_DOCUMENT_TYPES, BILL_DOCUMENT_TYPE_LABEL, billItcEligibility, isBillDocumentType, type BillDocumentType } from "@/lib/gst/bill-itc";
 import { useVendors, ensureVendor } from "@/lib/queries/vendors";
 import { istToday } from "@/lib/dates/ist";
+import { useAutoFxRate } from "@/lib/fx/use-auto-fx-rate";
+import { GSTIN_ISSUE_REASON, normalizeGstin } from "@/lib/gst/itc";
+import { BILLING_CURRENCIES } from "@/lib/currency";
 import { rupee } from "@/lib/utils";
 import { fillLineQty } from "@/app/api/ai/extract-bill/sanitize";
 import { checkBillFile, readBillFile } from "@/lib/accounting/bill-reader";
@@ -120,8 +123,8 @@ export function BillReadWarnings({ buyer, proforma }: { buyer: BuyerMismatch | n
 /**
  * @param prefill   values read from a bill that arrived by email. Seeds the SAME
  *                  fields the in-dialog AI upload seeds — including forcing the
- *                  FX rate blank for a foreign bill, so an emailed invoice can
- *                  never be saved at a rate nobody chose.
+ *                  FX rate reset for a foreign bill (R-2056: the bill date's rate then fills in,
+ *                  with its source shown, and stays editable).
  * @param onCreated the new bill's id, so a caller can link its own record to it.
  *
  * Both optional: every existing caller is unchanged.
@@ -161,8 +164,9 @@ export function AddVendorBillDialog({
   // Currency of the bill. Books are in ₹, so a foreign bill (USD etc.) needs an
   // exchange rate the operator confirms — we never push raw foreign amounts
   // into the INR P&L. rate = ₹ per 1 unit of `currency` (1 for INR).
+  // R-2056: the rate for the BILL DATE fills itself (useAutoFxRate, below the form hook) and
+  // stays editable; a rate the operator typed is never overwritten.
   const [currency, setCurrency] = React.useState("INR");
-  const [fxRate, setFxRate]     = React.useState("");        // string for the input; "" until entered
   const [fxError, setFxError]   = React.useState<string | null>(null);
   const isForeign = currency !== "INR";
 
@@ -172,7 +176,6 @@ export function AddVendorBillDialog({
   // Second press of Save on a bill whose GST gives no credit = "yes, save it as cost".
   const [noCreditOk, setNoCreditOk] = React.useState(false);
   const { data: ownStateCode } = useOwnStateCode();
-  const rate = isForeign ? Number(fxRate || 0) : 1;
 
   // Line items (products/services on the bill) — amounts stay in the bill's own
   // currency, faithful to the document; the ₹ books use the converted totals.
@@ -212,7 +215,7 @@ export function AddVendorBillDialog({
       // Currency + line items
       const cur = String((f as Record<string, unknown>).currency ?? "INR") || "INR";
       setCurrency(cur);
-      if (cur !== "INR") setFxRate("");   // force the operator to enter today's rate
+      resetFx();   // R-2056: a new bill — its own date's rate fills in again
       const items = Array.isArray((f as Record<string, unknown>).line_items)
         ? ((f as Record<string, unknown>).line_items as Array<Record<string, unknown>>)
         : [];
@@ -232,7 +235,7 @@ export function AddVendorBillDialog({
         : "";
       setAiNote(
         (cur !== "INR"
-          ? `Filled by AI · the bill is in ${cur} — enter the exchange rate (₹/${cur}) below so the books are right in ₹. 📎 "${file.name}" will be attached.`
+          ? `Filled by AI · the bill is in ${cur} — check the exchange rate (₹/${cur}) below; it is the rate for the bill date. 📎 "${file.name}" will be attached.`
           : `Filled by AI · 📎 "${file.name}" will be attached to the bill — check the amounts against the bill, then Save.`) + proformaWarn,
       );
     } catch {
@@ -257,11 +260,18 @@ export function AddVendorBillDialog({
     },
   });
 
+  /* R-2056 (Pardeep: "latest rate khud aana chahiye, par editable ho") — the bill date's rate,
+     FBIL/RBI reference first (lib/fx/rate-source.ts fetchInrRateOn); source + date shown under the box. */
+  const billDateNow = watch("bill_date");
+  const fx = useAutoFxRate(currency, billDateNow);
+  const resetFx = fx.reset;
+  const rate = isForeign ? Number(fx.value || 0) : 1;
+
   /* Seed from an extraction that arrived by email. Mirrors handleBillFile above
      rather than sharing it, because that one also holds the File for upload and
      an emailed bill is already stored — but the RULES are the same, deliberately:
-     only overwrite what was actually read, and blank the FX rate on a foreign
-     bill so nobody can save at a rate they did not choose. */
+     only overwrite what was actually read, and reset the FX rate on a foreign
+     bill (R-2056: the bill date's rate then fills in, source shown, editable). */
   const seeded = React.useRef(false);
   React.useEffect(() => {
     if (!prefill || seeded.current) return;
@@ -293,7 +303,7 @@ export function AddVendorBillDialog({
 
     const cur = String(prefill.currency ?? "INR") || "INR";
     setCurrency(cur);
-    if (cur !== "INR") setFxRate("");   // force the operator to enter today's rate
+    resetFx();   // R-2056: the bill date's rate fills in by itself
 
     if (Array.isArray(prefill.line_items)) {
       setLines(prefill.line_items.map((it) => fillLineQty({
@@ -303,7 +313,7 @@ export function AddVendorBillDialog({
         amount:      it.amount     != null ? String(it.amount)     : "",
       })));
     }
-  }, [prefill, setValue]);
+  }, [prefill, setValue, resetFx]);
 
   const subtotal = Number(watch("subtotal") || 0);
   const cgst     = Number(watch("cgst")     || 0);
@@ -386,15 +396,21 @@ export function AddVendorBillDialog({
     // toLocaleString() follows the browser locale). The foreign amount stays
     // "en-US" — Western grouping is correct for USD/EUR; do NOT "fix" it to
     // en-IN. Only the ₹ conversion uses Indian lakh grouping.
+    /* R-2056: say where the rate came from (FBIL/RBI or ECB and its date, or typed). */
+    const fxBasis = fx.auto
+      ? [fx.auto.source === "fbil" ? "FBIL/RBI reference rate" : fx.auto.source === "frankfurter" ? "ECB indicative rate" : "indicative rate", fx.auto.asOf].filter(Boolean).join(" ")
+      : "rate entered by you";
     const fxNote = isForeign
-      ? `Foreign bill: ${currency} ${values.total.toLocaleString("en-US")} @ ₹${rate}/${currency} = ₹${inr(values.total).toLocaleString("en-IN")}.`
+      ? `Foreign bill: ${currency} ${values.total.toLocaleString("en-US")} @ ₹${rate}/${currency} (${fxBasis}) = ₹${inr(values.total).toLocaleString("en-IN")}.`
       : "";
     const notes = [fxNote, values.notes?.trim(), buyerNote].filter(Boolean).join(" ") || null;
 
     // Link to the vendors master — reuse the picked vendor, else find-or-create
     // one from the typed name (keeps the master clean + dedup'd).
+    /* R-2056: a GSTIN is saved without spaces / dashes. */
+    const vendorGstin = normalizeGstin(values.vendor_gstin) || null;
     const vId = vendorId ?? await ensureVendor({
-      name: values.vendor_name, gstin: values.vendor_gstin, defaultCategory: values.category,
+      name: values.vendor_name, gstin: vendorGstin, defaultCategory: values.category,
     });
     // Attach the uploaded bill file (proof) — non-fatal if the upload fails.
     let attachment_url: string | null = null;
@@ -406,7 +422,7 @@ export function AddVendorBillDialog({
       vendor_id:    vId,
       attachment_url,
       vendor_name:  values.vendor_name,
-      vendor_gstin: values.vendor_gstin || null,
+      vendor_gstin: vendorGstin,
       bill_no:      values.bill_no      || null,
       bill_date:    values.bill_date,
       due_date:     values.due_date     || null,
@@ -549,7 +565,14 @@ export function AddVendorBillDialog({
               </div>
             </FormField>
             <FormField label="Vendor GSTIN (optional)" htmlFor="vendor_gstin">
-              <Input id="vendor_gstin" placeholder="e.g. 27ABCDE1234F1Z5" {...register("vendor_gstin")} />
+              <Input id="vendor_gstin" placeholder="e.g. 27ABCDE1234F1Z5"
+                {...register("vendor_gstin", {
+                  /* R-2056: "07 ABCDE 1234F1Z5" / "07-ABCDE-…" → spaces and dashes go. */
+                  onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
+                    const n = normalizeGstin(e.target.value);
+                    if (n !== e.target.value) setValue("vendor_gstin", n);
+                  },
+                })} />
             </FormField>
           </div>
 
@@ -654,21 +677,42 @@ export function AddVendorBillDialog({
 
           {/* Amounts grid */}
           <div className="p-3 rounded-lg border border-hairline bg-paper-2/30">
-            {isForeign && (
-              <div className="mb-3 rounded-md bg-amber-soft/40 p-2.5">
-                <div className="flex flex-wrap items-end gap-3">
-                  <div className="text-xs text-amber-ink leading-snug max-w-[55%]">
-                    Bill is in <b>{currency}</b>. Enter today's rate — the ₹ books use the converted amounts.
-                  </div>
+            {/* R-2056: the bill's currency can be picked by hand too (it was only set by the AI reader). */}
+            <div className={`mb-3 rounded-md p-2.5 ${isForeign ? "bg-amber-soft/40" : ""}`}>
+              <div className="flex flex-wrap items-start gap-3">
+                <FormField label="Bill currency" htmlFor="bill_currency">
+                  <Select value={currency} onValueChange={(v) => { setCurrency(v); resetFx(); setFxError(null); }}>
+                    <SelectTrigger id="bill_currency" className="w-28">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {BILLING_CURRENCIES.map((c) => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormField>
+                {isForeign && (
                   <FormField htmlFor="add-vendor-field" label={`Exchange rate (₹ per 1 ${currency})`} required>
                     <Input id="add-vendor-field" type="number" min={0} step="any" placeholder="e.g. 83.50"
-                      value={fxRate}
+                      value={fx.value}
                       error={fxError ?? undefined}
-                      onChange={(e) => { setFxRate(e.target.value); if (fxError) setFxError(null); }} />
+                      onChange={(e) => { fx.setTyped(e.target.value); if (fxError) setFxError(null); }} />
                   </FormField>
-                </div>
+                )}
               </div>
-            )}
+              {isForeign && (
+                <p role="status" className="mt-1.5 text-xs text-amber-ink leading-snug">
+                  {fx.hint
+                    ? fx.hint
+                    : fx.loading
+                      ? `Getting the ${currency} rate for the bill date…`
+                      : fx.typed && fx.value
+                        ? `Rate entered by you — the ₹ books use the converted amounts.`
+                        : `Bill is in ${currency}. Enter today's rate — the ₹ books use the converted amounts.`}
+                </p>
+              )}
+            </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <FormField label={`Pre-GST subtotal (${isForeign ? currency : "₹"})`} required htmlFor="subtotal">
                 <Input id="subtotal" type="number" min={0} step="any" error={errors.subtotal?.message} {...register("subtotal")} />
@@ -699,7 +743,10 @@ export function AddVendorBillDialog({
                 <span>
                   {itc.eligible
                     ? "ITC available — this goes to GST input credit (GST Report, GSTR-3B 4(A))."
-                    : <>ITC not available — {itc.reason}. This GST is added to cost (P&amp;L), not to Input GST.</>}
+                    : itc.reason === GSTIN_ISSUE_REASON.oidar
+                      /* R-2056: the OIDAR line already says it goes to cost and what to do next. */
+                      ? <>ITC not available — {itc.reason}.</>
+                      : <>ITC not available — {itc.reason}. This GST is added to cost (P&amp;L), not to Input GST.</>}
                 </span>
               </p>
             )}

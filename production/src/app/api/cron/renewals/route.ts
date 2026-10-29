@@ -43,6 +43,7 @@ import { decideCadence, CADENCE_TRIGGERS, reopensForNewTerm, effectiveGraceDays,
 import { readGraceOverrides } from "@/lib/renewals/grace-overrides";
 import { renderTemplate } from "@/lib/renewals/templates";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
+import { flagsForQuoteKind, type QuoteDocumentKind } from "@/lib/pdf/quote-document-kind";
 import { splitBilledRenewalStep } from "@/lib/renewals/split-billed-renewal";
 import { createDomainRenewalQuote } from "@/lib/domains/renewal";
 import { isEmailConfigured } from "@/lib/email/send";
@@ -623,7 +624,8 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
               interState:    isInterStateSupply(customer?.state_code, tenant.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant.gstin, treatment: customer?.gst_treatment }),
               validityDays:  30,
               notes:         "Renewal quote — auto-generated. Reply or call us with any questions.",
-              isRenewal:     true,
+              /* R-2093: the linked quote may be a support-plan upgrade — its kind, not a fixed renewal. */
+              ...flagsForQuoteKind((quoteResult as { kind?: QuoteDocumentKind }).kind ?? "renewal"),
               /* R-1764: "Domain:" / "Subscription period:" — the next term this quote buys. */
               periodContext: await loadQuotePeriodContextById(supabase, sub.tenant_id, renewalQuoteId),
             });

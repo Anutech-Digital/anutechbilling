@@ -14,6 +14,7 @@
  */
 import { paymentMethodLabel } from "@/lib/payments/method-label";
 import { checkTdsRate } from "./tds-rates";
+import { tdsEntryMismatch, TDS_GST_INCLUSIVE_REASON, type InvoiceTaxLike } from "./tds-mismatch";
 import { rupee } from "@/lib/utils";
 
 /* R-1138: the shared formatter (lakh grouping, sign, rounding) — not a local copy. */
@@ -106,6 +107,9 @@ export interface TdsEntryLike {
   rate_pct: number | string;
   tds_amount: number;
   payment_received_date: string;
+  /** R-2047: read to find TDS deducted on the GST-inclusive amount. */
+  gross_amount?: number | null;
+  invoice_id?: string | null;
 }
 
 export interface TdsRateMismatch<T extends TdsEntryLike> {
@@ -113,19 +117,42 @@ export interface TdsRateMismatch<T extends TdsEntryLike> {
   defaultPct: number;
   knownVariant: boolean;
   message: string;
+  /** R-2047: "rate" = the rate is not the section's usual one (R-523); "gst_inclusive" = the
+   *  rate is fine but TDS was deducted on the amount including GST. */
+  reason: "rate" | "gst_inclusive";
+  /** Badge text for a gst_inclusive entry (TDS_GST_INCLUSIVE_REASON); null for a rate entry. */
+  reasonLabel: string | null;
 }
 
-/** Owner report: past entries whose rate is not their section's default. Read-only —
- *  past entries are never changed; the owner decides with the CA. Firm mismatches first. */
-export function tdsRateMismatches<T extends TdsEntryLike>(rows: readonly T[]): TdsRateMismatch<T>[] {
+/** Owner report: past entries whose rate is not their section's default, and (R-2047, when
+ *  the invoices' tax is given) entries whose TDS was deducted on the GST-inclusive amount.
+ *  Read-only — past entries are never changed; the owner decides with the CA. Firm rate
+ *  mismatches first, then GST-inclusive, then the section's other lawful rate. */
+export function tdsRateMismatches<T extends TdsEntryLike>(
+  rows: readonly T[],
+  taxByInvoice?: Readonly<Record<string, InvoiceTaxLike>> | null,
+): TdsRateMismatch<T>[] {
   const out: TdsRateMismatch<T>[] = [];
   for (const entry of rows) {
     const c = checkTdsRate(entry.section, Number(entry.rate_pct));
-    if (c.matches || c.defaultPct === null || !c.message) continue;
-    out.push({ entry, defaultPct: c.defaultPct, knownVariant: c.knownVariant, message: c.message });
+    const m = taxByInvoice ? tdsEntryMismatch(entry, taxByInvoice) : null;
+    const onGst = m?.kind === "gst_inclusive" ? m : null;
+    if (!c.matches && c.defaultPct !== null && c.message) {
+      out.push({
+        entry, defaultPct: c.defaultPct, knownVariant: c.knownVariant,
+        message: onGst ? `${c.message} ${onGst.note}` : c.message,
+        reason: "rate", reasonLabel: null,
+      });
+    } else if (onGst) {
+      out.push({
+        entry, defaultPct: c.defaultPct ?? Number(entry.rate_pct), knownVariant: false,
+        message: onGst.note, reason: "gst_inclusive", reasonLabel: TDS_GST_INCLUSIVE_REASON,
+      });
+    }
   }
+  const rank = (x: TdsRateMismatch<T>) => (x.reason === "gst_inclusive" ? 1 : x.knownVariant ? 2 : 0);
   return out.sort((a, b) =>
-    Number(a.knownVariant) - Number(b.knownVariant) ||
+    rank(a) - rank(b) ||
     (b.entry.payment_received_date ?? "").localeCompare(a.entry.payment_received_date ?? ""));
 }
 

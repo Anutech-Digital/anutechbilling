@@ -24,7 +24,7 @@
  *
  * Pure: the GST page, P&L, Balance Sheet, month close and the Add Bill dialog share it.
  */
-import { itcEligibility, isGstin, type ItcVerdict, type ItcSplit } from "@/lib/gst/itc";
+import { itcEligibility, isGstin, gstinIssue, normalizeGstin, GSTIN_ISSUE_REASON, type ItcVerdict, type ItcSplit } from "@/lib/gst/itc";
 
 export const BILL_DOCUMENT_TYPES = ["tax_invoice", "proforma", "bill_of_supply", "other"] as const;
 export type BillDocumentType = (typeof BILL_DOCUMENT_TYPES)[number];
@@ -74,11 +74,13 @@ export function billItcEligibility(b: BillItcInput): ItcVerdict {
   if (gst <= 0) return { eligible: false, reason: null };
   const doc = effectiveBillDocType(b.document_type, b.vendor_gstin);
   if (doc !== "tax_invoice") return { eligible: false, reason: DOC_REASON[doc] };
-  if (!isGstin(b.vendor_gstin)) return { eligible: false, reason: "Vendor has no GSTIN — it will not match in GSTR-2B" };
+  /* R-2056: empty box, wrong format and an OIDAR (foreign online service) GSTIN each say their own thing. */
+  const issue = gstinIssue(b.vendor_gstin);
+  if (issue) return { eligible: false, reason: GSTIN_ISSUE_REASON[issue] };
 
   const own = (b.ownStateCode ?? "").trim();
   if (/^\d{2}$/.test(own)) {
-    const vendorState = (b.vendor_gstin ?? "").trim().slice(0, 2);
+    const vendorState = normalizeGstin(b.vendor_gstin).slice(0, 2);
     const local = Math.max(0, b.cgst ?? 0) + Math.max(0, b.sgst ?? 0);
     const inter = Math.max(0, b.igst ?? 0);
     if (vendorState !== own && local > 0) {

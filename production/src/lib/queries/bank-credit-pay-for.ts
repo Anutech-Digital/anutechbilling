@@ -19,6 +19,10 @@ import { toastInvoiceIssueError } from "@/lib/queries/invoices";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import type { OldOneOffBooking, OpenItem, PayForResult, SaleLine } from "@/lib/banking/credit-pay-for";
 import { saleLinesPayload } from "@/lib/banking/credit-pay-for";
+import { ADVANCE_PAYMENT_NOTE_PREFIX, advancePaymentIds, type SplitLinePayment } from "@/lib/banking/bank-row-label";
+import { isSplitBilled } from "@/lib/billing/instalments";
+import { splitArgs, type SplitInput } from "@/lib/banking/credit-pay-for-multi";
+import type { BillingCycle } from "@/lib/supabase/database.types";
 
 /* The generated types do not know the R-1838 functions yet (migration not applied there). */
 type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }> };
@@ -66,6 +70,9 @@ export interface NewSaleInput {
   subRenewal: string | null;
   tdsAmount: number;
   tdsRatePct: number | null;
+  /** R-2026: how often it is billed (the quote's billing_cycle). Null/absent = the server's
+   *  default (yearly; Monthly flex is always monthly). */
+  billingCycle?: BillingCycle | null;
 }
 
 /** The RPC arguments — exported so the tests pin exactly what reaches the server. */
@@ -94,7 +101,30 @@ export function newSaleArgs(i: NewSaleInput) {
     p_tds_amount: Math.max(0, Math.round(i.tdsAmount)),
     p_tds_rate_pct: i.tdsAmount > 0 ? i.tdsRatePct : null,
     p_tds_section: i.tdsAmount > 0 ? "194J" : null,
+    p_billing_cycle: i.billingCycle ?? null,
   };
+}
+
+/**
+ * R-2026: a sale paid in parts (annual commitment billed quarterly …) gets its FIRST bill's tax
+ * invoice now — the Record payment sheet's own call (R-527: POST /api/quotes/:id/raise-instalments,
+ * the billing cron's code; idempotent per period). The payment is already booked; a failure here
+ * only says the daily run will raise it.
+ */
+export async function raiseFirstInstalment(r: PayForResult, cycle: BillingCycle | null | undefined, post: typeof fetch = fetch): Promise<PayForResult> {
+  if (!isSplitBilled(cycle) || !r.quote_id || r.already_recorded || r.invoice_issued) return r;
+  try {
+    const resp = await post(`/api/quotes/${encodeURIComponent(r.quote_id)}/raise-instalments`, { method: "POST" });
+    const body = (await resp.json().catch(() => null)) as
+      { raised?: Array<{ invoice_id?: string | null }>; errors?: Array<{ message?: string }>; error?: string } | null;
+    if (!resp.ok || !body) return { ...r, instalment_error: body?.error ?? `HTTP ${resp.status}` };
+    const first = body.raised?.find((x) => x?.invoice_id)?.invoice_id ?? null;
+    if (first) return { ...r, invoice_issued: first };
+    const err = body.errors?.[0]?.message ?? null;
+    return err ? { ...r, instalment_error: err } : r;
+  } catch (e) {
+    return { ...r, instalment_error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 function useAfterPay() {
@@ -189,7 +219,7 @@ export function useRelinkOneOffSale() {
       const { data, error } = await rpc("relink_bank_one_off_sale", relinkArgs(t));
       if (error) throw error;
       if (!data) throw new Error("The relink was not confirmed — refresh the page to see whether it was saved.");
-      return data as PayForResult;
+      return t.path === "new_sale" ? raiseFirstInstalment(data as PayForResult, t.billingCycle) : (data as PayForResult);
     },
     /* The undone sale's invoice + credit note refresh via invalidateReceivables (["invoices"], ["credit-notes"]). */
     onSuccess: after,
@@ -204,9 +234,88 @@ export function useNewSaleFromBankCredit() {
       const { data, error } = await rpc("reconcile_bank_credit_new_sale", newSaleArgs(input));
       if (error) throw error;
       if (!data) throw new Error("The sale was not confirmed — refresh the page to see whether it was saved.");
-      return data as PayForResult;
+      return raiseFirstInstalment(data as PayForResult, input.billingCycle);
     },
     onSuccess: after,
     onError: onPayError,
+  });
+}
+
+/* ─── R-2025 (0): which reconciled bank lines are customer ADVANCES (row badge "Advance") ─── */
+
+/** The payment ids (matched_to_id of "payment" lines) that are R-1863 advances — read-only. */
+export function useBankAdvancePaymentIds(paymentIds: readonly string[]) {
+  const ids = [...new Set(paymentIds)].sort();
+  return useQuery({
+    queryKey: ["bank_advance_payment_ids", ids] as const,
+    enabled: ids.length > 0,
+    queryFn: async (): Promise<Set<string>> => {
+      const sb = createClient();
+      const pays: Array<{ id: string; quote_id: string | null; notes: string | null }> = [];
+      for (let i = 0; i < ids.length; i += 150) {
+        const { data, error } = await sb.from("payments").select("id, quote_id, notes")
+          .in("id", ids.slice(i, i + 150)).like("notes", `${ADVANCE_PAYMENT_NOTE_PREFIX}%`);
+        if (error) throw error;
+        pays.push(...((data ?? []) as typeof pays));
+      }
+      const quoteIds = [...new Set(pays.map((p) => p.quote_id).filter((q): q is string => Boolean(q)))];
+      if (quoteIds.length === 0) return new Set();
+      const quotes: Array<{ id: string; plan: string | null; amount: number | null; invoice_id: string | null; line_items: unknown }> = [];
+      for (let i = 0; i < quoteIds.length; i += 150) {
+        const { data, error } = await sb.from("quotes").select("id, plan, amount, invoice_id, line_items").in("id", quoteIds.slice(i, i + 150));
+        if (error) throw error;
+        quotes.push(...((data ?? []) as unknown as typeof quotes));
+      }
+      return advancePaymentIds(pays, quotes.map((q) => ({ ...q, amount: Number(q.amount) || 0 })));
+    },
+    staleTime: 30_000,
+  });
+}
+
+/* ─── R-2098: one line → several items (+ a new sale), the rest advance / round-off ─────────── */
+
+/** ONE server transaction (reconcile_bank_credit_split, migration 20261029054707). The new sale's
+ *  first instalment invoice, when it is billed in parts, is raised as for a single new sale. */
+export function useSplitFromBankCredit() {
+  const after = useAfterPay();
+  return useMutation({
+    mutationFn: async (input: SplitInput & { customerName?: string | null }): Promise<PayForResult> => {
+      const { data, error } = await rpc("reconcile_bank_credit_split", splitArgs(input));
+      if (error) throw error;
+      if (!data) throw new Error("The payments were not confirmed — refresh the page to see whether they were saved.");
+      const r = data as PayForResult;
+      const parts = await Promise.all((r.parts ?? []).map((p) =>
+        p.new_quote ? raiseFirstInstalment(p, (input.sale?.billingCycle ?? null) as BillingCycle | null) : Promise.resolve(p)));
+      return { ...r, parts, customer_id: input.customerId, customer_name: input.customerName ?? null };
+    },
+    onSuccess: after,
+    onError: onPayError,
+  });
+}
+
+/* ─── R-2098: the receipts on lines that paid several items (bank row "N payments") ─── */
+
+/** bank line id → its receipts (payments.bank_txn_id). Read-only; RLS scopes to the company. */
+export function useBankSplitLinePayments(txnIds: readonly string[]) {
+  const ids = [...new Set(txnIds)].sort();
+  return useQuery({
+    queryKey: ["bank_transactions", "split_payments", ids] as const,
+    enabled: ids.length > 0,
+    queryFn: async (): Promise<Map<string, SplitLinePayment[]>> => {
+      const sb = createClient() as unknown as { from: (t: string) => { select: (c: string) => { in: (c: string, v: string[]) => { eq: (c: string, v: string) => PromiseLike<{ data: unknown; error: { message: string } | null }> } } } };
+      const out = new Map<string, SplitLinePayment[]>();
+      for (let i = 0; i < ids.length; i += 150) {
+        const { data, error } = await sb.from("payments").select("id, amount, quote_id, invoice_id, receipt_voucher_no, bank_txn_id")
+          .in("bank_txn_id", ids.slice(i, i + 150)).eq("status", "received");
+        if (error) throw error;
+        for (const r of (data ?? []) as Array<SplitLinePayment & { bank_txn_id: string }>) {
+          const list = out.get(r.bank_txn_id) ?? [];
+          list.push({ id: r.id, amount: Number(r.amount) || 0, quote_id: r.quote_id, invoice_id: r.invoice_id, receipt_voucher_no: r.receipt_voucher_no });
+          out.set(r.bank_txn_id, list);
+        }
+      }
+      return out;
+    },
+    staleTime: 30_000,
   });
 }

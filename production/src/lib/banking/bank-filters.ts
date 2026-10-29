@@ -224,8 +224,25 @@ function lineMatches(
   if (f.imp && !ctx.importLines?.get(f.imp)?.has(t.id)) return false;
   const q = f.q.trim().toLowerCase();
   if (q && ![t.description, t.reference, String(t.debit ?? ""), String(t.credit ?? "")]
-    .some((v) => (v ?? "").toString().toLowerCase().includes(q))) return false;
+    .some((v) => (v ?? "").toString().toLowerCase().includes(q))
+    && !amountSearchMatches(q, t)) return false;
   return true;
+}
+
+/**
+ * R-2097: an amount typed the way it is written — "2,950", "₹2,950", "Rs 2,950.00" — finds the
+ * line just as "2950" does. ₹ / Rs / INR / commas / spaces are dropped; whole digits match the
+ * amount as a substring (the old "2950" behaviour), and a figure with paise matches it exactly.
+ */
+function amountSearchMatches(q: string, t: FilterLine): boolean {
+  const bare = q.replace(/₹|\brs\.?|\binr\b|[,\s]/g, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(bare)) return false;
+  const amounts = [t.debit, t.credit].map((v) => Number(v ?? 0)).filter((v) => v > 0);
+  if (bare.includes(".")) {
+    const want = Math.round(Number(bare) * 100);
+    return amounts.some((a) => Math.round(a * 100) === want);
+  }
+  return amounts.some((a) => String(a).includes(bare));
 }
 
 function lazyDupes(lines: readonly FilterLine[], f: BankFilters): () => Set<string> {

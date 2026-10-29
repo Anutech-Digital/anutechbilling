@@ -70,8 +70,16 @@ describe("R-523 receipt, statement, Lifetime paid show bank money and TDS apart"
 describe("R-523 owner report and the section list", () => {
   it("TDS Receivable page lists entries whose rate does not fit the section, read-only", () => {
     expect(tdsPage).toMatch(/<TdsRateCheckReport onOpen=\{setSelected\} \/>/);
-    expect(report).toMatch(/tdsRateMismatches\(q\.data \?\? \[\]\)/);
+    // R-2047: the report also reads the invoices' tax, to list TDS on the GST-inclusive amount.
+    expect(report).toMatch(/tdsRateMismatches\(q\.data \?\? \[\], invoiceTax\)/);
+    expect(report).toMatch(/useTdsInvoiceTax\(\(q\.data \?\? \[\]\)\.map\(\(r\) => r\.invoice_id\)\)/);
     expect(report).not.toMatch(/\.update\(|\.insert\(|\.delete\(|useMutation/);
+  });
+  it("R-2047: list rows and the detail show the amber note from tdsEntryMismatch", () => {
+    expect(tdsPage).toMatch(/useTdsInvoiceTax\(rows\.map\(\(r\) => r\.invoice_id\)\)/);
+    expect(tdsPage).toMatch(/tdsEntryMismatch\(r, invoiceTax\)/);
+    expect(tdsPage).toMatch(/<TdsMismatchNote mismatch=\{mismatch\} \/>/);
+    expect(tdsPage).toMatch(/mismatch=\{selected \? mismatchOf\(selected\) : null\}/);
   });
   it("section labels take their % from the rate table (no hand-typed 194H 5%)", () => {
     expect(queries).not.toMatch(/Commission \/ brokerage \(5%\)/);

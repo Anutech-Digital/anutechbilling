@@ -16,7 +16,7 @@
  * Pure and dependency-free: the extract-bill route computes it once (server has the tenant), and
  * both dialogs (Add expense, Add COGS Bill) read the route's answer — one rule, one place.
  */
-import { isGstin } from "@/lib/gst/itc";
+import { isGstin, normalizeGstin } from "@/lib/gst/itc";
 
 export interface BuyerRead {
   buyer_name?: string | null;
@@ -60,11 +60,11 @@ const sameName = (a: string, b: string) => !!a && !!b && (a === b || a.includes(
 
 export function billBuyerMismatch(read: BuyerRead, own: OwnCompany): BuyerMismatch | null {
   const buyerName = (read.buyer_name ?? "").toString().trim();
-  const rawGstin = (read.buyer_gstin ?? "").toString().trim().toUpperCase();
+  const rawGstin = normalizeGstin(read.buyer_gstin);   // R-2056: spaces / dashes dropped
   const buyerGstin = isGstin(rawGstin) ? rawGstin : null;
   if (!buyerName && !buyerGstin) return null;
 
-  const ownGstin = (own.gstin ?? "").trim().toUpperCase();
+  const ownGstin = normalizeGstin(own.gstin);
   const ownName = (own.name ?? "").trim() || (own.legal_name ?? "").trim() || (own.trade_name ?? "").trim();
   if (!ownName) return null;
   const mismatch = (): BuyerMismatch => ({ buyer_name: buyerName || buyerGstin!, buyer_gstin: buyerGstin, own_name: ownName });

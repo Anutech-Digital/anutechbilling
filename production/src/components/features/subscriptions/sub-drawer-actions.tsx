@@ -25,8 +25,11 @@ import { Button } from "@/components/ui/button";
 const DANGER_OUTLINE = "w-full border-rose/60 text-rose hover:bg-rose-soft/40 hover:text-rose-ink";
 
 export function SubDrawerActions({
-  hasCustomer, primary, onManageSeats, onExtend, onOpenCustomer, onStatement, onCorrect,
+  hasCustomer, primary, onManageSeats, onExtend, onOpenCustomer, onStatement, onCorrect, onUpgradePlan, supportPlan = false,
 }: {
+  /** R-2087: a support plan (item SUP-…) has no seats — "Manage seats" is hidden and
+   *  "Upgrade plan" (when offered) is the primary button. */
+  supportPlan?: boolean;
   /** Open customer / Statement need a customer record. */
   hasCustomer: boolean;
   /** False when another primary is already on screen (the "Bill the N extra seats" leak
@@ -37,18 +40,32 @@ export function SubDrawerActions({
   onOpenCustomer: () => void;
   onStatement: () => void;
   onCorrect: () => void;
+  /** R-2073: set only for an active support plan (SUP-…) with a higher tier, for roles that may
+   *  change a subscription's terms — opens the pro-rata upgrade quote dialog. */
+  onUpgradePlan?: () => void;
 }) {
   return (
     <div className="mb-4 pb-4 border-b border-hairline" data-testid="sub-drawer-actions">
       <div className="grid grid-cols-2 gap-2">
-        <Button
-          variant={primary ? "primary" : "default"}
-          icon="plus"
-          className="col-span-2"
-          onClick={onManageSeats}
-        >
-          Manage seats
-        </Button>
+        {supportPlan ? (
+          onUpgradePlan && (
+            <Button variant={primary ? "primary" : "default"} icon="zap" className="col-span-2" onClick={onUpgradePlan}>
+              Upgrade plan
+            </Button>
+          )
+        ) : (
+          <>
+            <Button
+              variant={primary ? "primary" : "default"}
+              icon="plus"
+              className="col-span-2"
+              onClick={onManageSeats}
+            >
+              Manage seats
+            </Button>
+            {onUpgradePlan && <Button icon="zap" onClick={onUpgradePlan}>Upgrade plan</Button>}
+          </>
+        )}
         <Button icon="clock" onClick={onExtend}>Extend term</Button>
         {/* The statement, one click from here — ?customer= seeds the ledger's picker. */}
         {hasCustomer && <Button icon="book" onClick={onStatement}>Statement</Button>}

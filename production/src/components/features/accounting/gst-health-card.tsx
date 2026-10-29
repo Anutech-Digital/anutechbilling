@@ -114,8 +114,9 @@ export function GstHealthCard() {
       </div>
 
       <ul id={listId} hidden={!open} className="divide-y divide-hairline">
-        {data.customers.map((c) => (
-          <li key={c.customerId ?? c.customerName} className="px-4 py-2.5">
+        {data.customers.map((c, idx) => (
+          /* R-2058: rows without a customer all share one name, so the index keeps them apart. */
+          <li key={c.customerId ?? `no-customer-${idx}`} className="px-4 py-2.5">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <span className="text-[13px] font-medium text-ink">
                 {c.customerName}

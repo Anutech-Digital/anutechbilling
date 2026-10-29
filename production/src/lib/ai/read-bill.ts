@@ -32,7 +32,11 @@ export const BILL_PROMPT =
   "{\n" +
   '  "document_type": string|null,      // "tax_invoice", "proforma" (Proforma / Pro-forma Invoice, quotation) or "other", from the document\'s own title\n' +
   '  "vendor_name": string|null,        // the SUPPLIER who issued the bill (the seller, NOT the buyer)\n' +
-  '  "vendor_gstin": string|null,       // 15-char India GST/VAT registration of the supplier if printed\n' +
+  /* R-2056 (28 Oct 2026): a foreign SaaS invoice prints it as "VAT Registration India GST: 9924USA…OS…"
+     and the reader left vendor_gstin empty. Name the line and the OIDAR shape. */
+  '  "vendor_gstin": string|null,       // 15-char India GSTIN of the SUPPLIER if printed. A foreign online-service bill prints it\n' +
+  '                                     // on a "VAT Registration" / "India GST" / "GSTIN" line near the seller, e.g. "VAT Registration India GST: 9918IND29061OSS"\n' +
+  '                                     // (OIDAR shape: 99 + 2 digits + 3-letter country + 5 digits + "OS" + 1 char) — copy it here, without spaces\n' +
   /* R-1767 (22 Oct 2026): a bill "Bill To" ANOTHER company was saved in ours with no warning —
      the reader never read the buyer. The extract-bill route compares it with our own GSTIN/name. */
   '  "buyer_name": string|null,         // the BUYER the bill is addressed to: the "Bill To" / "Billed To" / "Buyer" block. NEVER the seller\n' +

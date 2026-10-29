@@ -31,6 +31,8 @@ import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
 import { matchCreditToInvoices, type OpenInvoice } from "@/lib/banking/invoice-credit-match";
 import { amountCheck, guessCustomer, tdsRateToRecord, type CustomerLite } from "@/lib/banking/credit-pay-for";
 import { guessVendor, type VendorLite } from "@/lib/banking/debit-pay-for";
+import { payerFromNarration, payerMatchesCustomer } from "@/lib/banking/customer-payer";
+import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
 import { projectReceiptPayload } from "@/lib/banking/project-receipt-allocation";
 import { suggestMoneyIn, suggestMoneyOut, type Suggestion } from "@/lib/banking/reconcile-suggestion";
 
@@ -61,15 +63,27 @@ export function useReconcileSuggestion(input: {
   const credit = txn?.credit ?? 0;
   const debit = txn?.debit ?? 0;
 
-  /* Money in: the customer guessCustomer names (as CreditPayForSection does). */
+  /* Money in: the customer guessCustomer names (as CreditPayForSection does) — R-2025: known
+     payers first. A payer who is NOT the guessed customer (and not a known payer of theirs) →
+     no one-click card: the form asks who paid. */
+  const memory = usePayerMemory();
+  const setLinePayer = useSetBankLinePayer();
+  const payer = React.useMemo(
+    () => (txn && credit > 0 ? payerFromNarration(txn.description, memory.ownNames) : null),
+    [txn, credit, memory.ownNames],
+  );
   const customerGuess = React.useMemo(() => {
     if (!txn || credit <= 0) return null;
     const ms = matchCreditToInvoices(
       { amount: credit, txnDate: txn.txn_date, description: txn.description, reference: txn.reference },
       openInvoices ?? [],
     );
-    return guessCustomer(txn, customers, ms);
-  }, [txn, credit, customers, openInvoices]);
+    const g = guessCustomer(txn, customers, ms, memory);
+    if (!g || !payer) return g;
+    const c = customers.find((x) => x.id === g.customerId);
+    const known = memory.payers.filter((k) => k.customer_id === g.customerId);
+    return c && payerMatchesCustomer(payer, c.name, known) ? g : null;
+  }, [txn, credit, customers, openInvoices, memory, payer]);
   const { data: projects } = useOpenProjects(Boolean(customerGuess));
   const { data: creditItems } = useBankCreditOpenItems(customerGuess?.customerId ?? null);
 
@@ -100,13 +114,19 @@ export function useReconcileSuggestion(input: {
   const allocate = useAllocateProjectReceipt();
   const payItem = usePayItemFromBankCredit();
   const payVendor = usePayVendorFromBankDebit();
-  const accepting = allocate.isPending || payItem.isPending || payVendor.isPending;
+  const accepting = allocate.isPending || payItem.isPending || payVendor.isPending || setLinePayer.isPending;
 
   /** Books the suggestion through its section's own save. Resolves true when saved. */
   const accept = React.useCallback(async (): Promise<boolean> => {
     if (!txn || !suggestion) return false;
     const s = suggestion;
     try {
+      /* R-2025: a known payer (not the customer) — record who paid first, so the receipt says
+         "on behalf of" and the payer is counted again. If that fails, nothing is booked. */
+      const kp = customerGuess?.payer;
+      if (s.kind !== "vendor" && payer && kp && kp.customer_id === s.customerId) {
+        await setLinePayer.mutateAsync({ transactionId: txn.id, customerId: s.customerId, payer, relation: kp.relation, note: null });
+      }
       if (s.kind === "project") {
         await allocate.mutateAsync(projectReceiptPayload({
           bankTxnId: txn.id,
@@ -138,7 +158,7 @@ export function useReconcileSuggestion(input: {
     }
     logSuggestion("accept", txn.id, s);
     return true;
-  }, [txn, credit, suggestion, allocate, payItem, payVendor]);
+  }, [txn, credit, suggestion, allocate, payItem, payVendor, customerGuess, payer, setLinePayer]);
 
   return { suggestion, accept, accepting };
 }

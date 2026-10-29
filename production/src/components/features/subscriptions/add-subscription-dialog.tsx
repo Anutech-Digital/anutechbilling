@@ -50,7 +50,8 @@ const VENDOR_LABEL: Record<Item["vendor"], string> = {
   other:     "📦 Other Cloud Vendor",
 };
 import { useQueryClient } from "@tanstack/react-query";
-import { rupee } from "@/lib/utils";
+import { rupee, formatDate } from "@/lib/utils";
+import { OPENING_SOURCE, OPENING_LABEL } from "@/lib/subscriptions/billed-elsewhere";
 
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { grossAmount } from "@/lib/quotes/amounts";
@@ -237,7 +238,8 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
   const [billingChoice, setBillingChoice] = React.useState<BillingChoice>("annual_yearly");
   /** The catalog row being sold → subscriptions.item_id. Null on a custom plan. */
   const [itemId, setItemId] = React.useState<string | null>(null);
-  const [paymentTerms, setPaymentTerms] = React.useState<"paid" | "credit">("credit");
+  /** R-2097: "opening" = billed & paid outside this app before go-live — no quote, no dues. */
+  const [paymentTerms, setPaymentTerms] = React.useState<"paid" | "credit" | "opening">("credit");
   // R-025: `toISOString()` is UTC, so before 05:30 IST this seeded YESTERDAY — and a
   // subscription's start date is what every renewal date is then counted from.
   const [startDate, setStartDate] = React.useState(() => todayIST());
@@ -999,6 +1001,49 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
         return;
       }
 
+      /* ── R-2097: OPENING — billed & paid before this app, so nothing is owed here ──
+         A customer moved from Zoho / paid on Razorpay before go-live. Postpaid would book a
+         balance they do not owe; Payment received would record their money a second time.
+         So: no quote, no invoice, no payment, outstanding 0, no due date — just the
+         subscription with its seats, rate and term, marked billed outside this app until the
+         renewal date (R-1763's columns). The billing cron and the database trigger
+         subscription_billings_not_billed_elsewhere then never invoice this term; Manage seats,
+         Extend term and the renewal work on it as on any other subscription. */
+      if (paymentTerms === "opening") {
+        const { error: openErr } = await supabase.from("subscriptions").insert({
+          tenant_id: tenantId,
+          customer_id: customerId,
+          customer_name: cleanCustomerName,
+          plan,
+          vendor,
+          seats,
+          used: 0,
+          mrr: mrrAmount,
+          billing_cycle: terms.billingCycle,
+          term_months: terms.termMonths,
+          start_date: startDate,
+          renewal_date: renewalDate,
+          payment_due_date: null,
+          status: "active",
+          domain: cleanDomain,
+          item_id: itemId,
+          outstanding_amount: 0,
+          auto_renew: true,
+          external_source: OPENING_SOURCE,
+          billed_externally_until: renewalDate,
+        });
+        if (openErr) throw openErr;
+        toast.success(`Opening subscription added for ${cleanCustomerName}`, {
+          description: `${OPENING_LABEL}: no invoice, no payment, nothing due. The renewal on ${formatDate(renewalDate)} bills here.`,
+        });
+        qc.invalidateQueries({ queryKey: ["subscriptions"] });
+        qc.invalidateQueries({ queryKey: ["customers"] });
+        qc.invalidateQueries({ queryKey: ["contacts"] });
+        onSuccess?.();
+        onOpenChange(false);
+        return;
+      }
+
       // ── Step 2: Auto-Create Quote & Audit Invoice ─────────────────────────
       /* ── One quote per SALE, not one per button press ───────────────────────
          Reported 9 Sep 2026: "why quote keep generating again and again". The paid path
@@ -1215,11 +1260,20 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               2026: it now names the two paths, and only the paid one raises an invoice
               (via generate_invoice, after the payment is recorded). */}
           <DialogDescription className="text-xs text-ink-3">
-            Auto-creates or links the <b>Customer CRM record</b>, raises an accepted{" "}
-            <b>Quote</b>, and activates the <b>Subscription</b>.{" "}
-            {paymentTerms === "paid"
-              ? "Payment is recorded next, and the GST invoice is raised from it."
-              : "No GST invoice yet — postpaid tracks the balance until payment."}
+            {paymentTerms === "opening" ? (
+              <>
+                Auto-creates or links the <b>Customer CRM record</b> and activates the{" "}
+                <b>Subscription</b>. Opening: no quote, no invoice, no payment, nothing due — the renewal bills here.
+              </>
+            ) : (
+              <>
+                Auto-creates or links the <b>Customer CRM record</b>, raises an accepted{" "}
+                <b>Quote</b>, and activates the <b>Subscription</b>.{" "}
+                {paymentTerms === "paid"
+                  ? "Payment is recorded next, and the GST invoice is raised from it."
+                  : "No GST invoice yet — postpaid tracks the balance until payment."}
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -1662,7 +1716,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
 
           {/* Payment Status & Terms */}
           <FormField label="Payment & Billing Terms (Special Cases Handling) *">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <button
                 type="button"
                 onClick={() => setPaymentTerms("credit")}
@@ -1707,6 +1761,27 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                   {onNeedsPayment
                     ? "Opens Record payment next — logs the money, issues the GST receipt voucher, activates the subscription and raises the GST invoice."
                     : "Unavailable here — record the payment from the quote instead."}
+                </div>
+              </button>
+
+              {/* R-2097: a customer billed & paid before this app (Zoho, Razorpay) — the
+                  subscription is filed with nothing due, no quote, no invoice, no payment. */}
+              <button
+                type="button"
+                onClick={() => setPaymentTerms("opening")}
+                aria-pressed={paymentTerms === "opening"}
+                className={`p-3 rounded-lg border text-xs text-left transition-all ${
+                  paymentTerms === "opening"
+                    ? "bg-primary-soft/60 border-primary text-ink font-bold shadow-xs"
+                    : "bg-paper-2 border-hairline text-ink-3 hover:bg-paper-3"
+                }`}
+              >
+                <div className="font-semibold text-ink flex items-center gap-1.5 mb-0.5">
+                  <Icon name="receipt" size={14} className="text-primary" />
+                  <span>Opening — already billed &amp; paid before using this app</span>
+                </div>
+                <div className="text-2xs text-ink-3">
+                  No invoice, no payment, nothing due. Marked &quot;billed outside this app&quot; until the renewal date; the renewal bills here.
                 </div>
               </button>
             </div>

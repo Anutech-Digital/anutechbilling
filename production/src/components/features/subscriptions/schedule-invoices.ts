@@ -16,6 +16,7 @@
  */
 import type { BillingPeriod } from "@/lib/billing/schedule";
 import { addDaysISO } from "@/lib/dates/ist";
+import { PARTS_WORDING } from "@/lib/quotes/paid-to-date";
 import { billedElsewhere, billedElsewhereLabel, type ExternalSourceFields } from "@/lib/subscriptions/billed-elsewhere";
 
 export interface ScheduleInvoice {
@@ -45,6 +46,9 @@ export interface InstalmentRow {
   invoice_status: string | null;
   /** R-1683: that invoice's ₹ ex-GST, when loaded. */
   invoice_ex_gst?: number | null;
+  /** R-2101: this part's own ₹ ex-GST (subscription_billings.taxable_amount). Since R-2092 one
+   *  invoice can cover every subscription of a quote for a period — the row then shows its share. */
+  part_ex_gst?: number | null;
 }
 
 export function scheduleInvoices(args: {
@@ -67,9 +71,13 @@ export function scheduleInvoices(args: {
   for (const r of args.instalments) {
     if (!r.invoice_id || !keys.has(r.term_start.slice(0, 10))) continue;
     if (r.invoice_status === "void") continue;
+    /* R-2101: a combined invoice (R-2092) is larger than this part — show the part's share. */
+    const exGst = r.invoice_ex_gst != null && r.part_ex_gst != null && r.invoice_ex_gst > r.part_ex_gst
+      ? r.part_ex_gst
+      : r.invoice_ex_gst;
     out.set(r.period_index, {
       invoiceId: r.invoice_id, status: r.invoice_status ?? "pending",
-      ...(r.invoice_ex_gst != null ? { exGst: r.invoice_ex_gst } : {}),
+      ...(exGst != null ? { exGst } : {}),
     });
   }
 
@@ -116,11 +124,61 @@ export function nextTermShowsNext(current: BillingPeriod[], invoiced: Map<number
  * with no invoice raised read "1 invoice" beside "date passed" (staging T-16). Rows are billing
  * dates; how many of them really have an invoice is said separately, and only when there is one.
  */
-export function scheduleCountLabel(rows: number, invoicedCount: number, addSeatCount = 0): string {
+export function scheduleCountLabel(rows: number, invoicedCount: number, addSeatCount = 0, billedOutsideCount = 0): string {
   const dates = `${rows} billing ${rows === 1 ? "date" : "dates"}`;
-  const base = invoicedCount > 0 ? `${dates} · ${invoicedCount} invoiced` : dates;
+  let base = invoicedCount > 0 ? `${dates} · ${invoicedCount} invoiced` : dates;
+  /* R-2101: a period billed in another system (R-1763, an Opening subscription) has no invoice
+     here — "1 invoiced" beside it read as if this app had raised one. */
+  if (billedOutsideCount > 0) base = `${base} · ${billedOutsideCount} billed outside`;
   /* R-1683: an add-seats invoice is not a billing date, but it IS money billed in this term. */
   return addSeatCount > 0 ? `${base} · ${addSeatCount} added-seats ${addSeatCount === 1 ? "invoice" : "invoices"}` : base;
+}
+
+/**
+ * R-2101: the footnote under the schedule. A subscription billed in parts said "Each tax invoice is
+ * raised on its own billing date" — the opposite of the quote page (R-2044/R-2055: each part gets
+ * a payment request on its date; its tax invoice is raised when paid). One wording: PARTS_WORDING.
+ */
+export function scheduleFootnote(cycle: string | null | undefined): string {
+  if (cycle && cycle !== "yearly") {
+    return `Amounts without an invoice number are not invoiced yet. Billed in parts: ${PARTS_WORDING}.`;
+  }
+  return "Amounts without an invoice number are scheduled, not invoiced yet. Each tax invoice is raised on its own billing date and takes its GST number then.";
+}
+
+/** R-2101: how many rows have a real invoice here vs were billed in another system (R-1763). */
+export function scheduleCounts(periods: BillingPeriod[], invoiced: Map<number, ScheduleInvoice>): { invoiced: number; billedOutside: number } {
+  let inv = 0, outside = 0;
+  for (const p of periods) {
+    const i = invoiced.get(p.index);
+    if (!i) continue;
+    if (i.status === "external") outside++; else inv++;
+  }
+  return { invoiced: inv, billedOutside: outside };
+}
+
+/**
+ * R-2101: the term amount of a subscription sold on a quote, from the QUOTE's own line (qty ×
+ * rate × term ÷ 12) when it differs from round(mrr × term) by rounding only — so the parts not
+ * invoiced yet show the quote's figure (13 × ₹11,000 = ₹1,43,000 a year → ₹35,750 a quarter),
+ * not one from the rounded mrr (₹11,917 × 12 = ₹1,43,004 → ₹35,751; localhost 29 Oct). The
+ * invoice itself takes the quote-period figure already (billing_part_group, R-2092).
+ * Null → use the mrr figure (no quote, a discount, no matching line, or a real price change).
+ */
+export function quoteTermAmount(args: {
+  plan: string | null; seats: number | null; mrr: number | null; termMonths: number;
+  quote: { discount_pct?: number | null; line_items?: unknown } | null;
+}): number | null {
+  const q = args.quote;
+  if (!q || (q.discount_pct ?? 0) !== 0 || !Array.isArray(q.line_items) || !args.plan || !args.seats) return null;
+  const line = (q.line_items as Array<{ name?: unknown; qty?: unknown; rate?: unknown }>)
+    .find((l) => l?.name === args.plan && Number(l?.qty) === args.seats);
+  const rate = Number(line?.rate);
+  if (!line || !Number.isFinite(rate) || rate <= 0) return null;
+  const fromQuote = Math.round(args.seats * rate * args.termMonths / 12);
+  const fromMrr = Math.round((args.mrr ?? 0) * args.termMonths);
+  /* Rounding only: mrr is rounded to the rupee, so at most ₹0.50 a month apart. */
+  return Math.abs(fromQuote - fromMrr) <= Math.ceil(args.termMonths / 2) ? fromQuote : null;
 }
 
 /**

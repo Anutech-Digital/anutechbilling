@@ -63,8 +63,9 @@ describe("R-1970 buy/workspace words and numbers", () => {
     expect(monthly("GW-STR")).toBe(325);
     expect(monthly("GW-STD")).toBe(1300);
     expect(monthly("GW-PLS")).toBe(1800);
-    /* R-2020: the fallback tiers moved to _parts/tiers.ts (one copy for desktop and phone). */
+    /* R-2027: the page has no typed fallback tiers any more — it is priced from the catalogue
+       only (a cold start shows "Loading prices…" and fetches it), so tiers.ts types no price. */
     const client = readFileSync(join(DIR, "_parts", "tiers.ts"), "utf8");
-    expect(client).toMatch(/id: "plus",[\s\S]{0,200}monthlyPrice: isPublicPriceHiddenTier\("plus"\) \? null : 1800,\s*annualPrice: +isPublicPriceHiddenTier\("plus"\) \? null : 1500,/);
+    expect(client).not.toMatch(/monthlyPrice:\s*\d|annualPrice:\s*\d/);
   });
 });

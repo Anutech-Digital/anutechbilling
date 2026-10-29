@@ -178,3 +178,94 @@ describe("R-1632 statementPayments — the /payments customer rule", () => {
     expect(statementPayments(pays, "c1", ["Q-1", "Q-2"]).map((p) => p.id)).toEqual(["a", "b"]);
   });
 });
+
+describe("R-2029 statement labels a customer advance", () => {
+  it("a payment on an advance holder quote reads 'Advance (RV-…)' — balance unchanged", () => {
+    const input: StatementInput = {
+      ...base,
+      payments: [
+        { id: "p1", quote_id: "Q-ADV", amount: 47348, status: "received", received_at: "2026-10-27T05:00:00Z", receipt_voucher_no: "RV-0042" },
+        { id: "p2", quote_id: "Q-2", amount: 1000, status: "received", received_at: "2026-10-27T06:00:00Z", receipt_voucher_no: "RV-0043" },
+      ],
+    };
+    const plain = buildCustomerStatement(input);
+    const labelled = buildCustomerStatement({ ...input, isAdvanceQuote: (id) => id === "Q-ADV" });
+    expect(labelled.rows.map((r) => r.desc)).toEqual(["Advance (RV-0042)", "Payment received · RV-0043"]);
+    expect(labelled.rows.map((r) => r.balance)).toEqual(plain.rows.map((r) => r.balance));
+    expect(labelled.closing).toBe(plain.closing);
+  });
+});
+
+describe("R-2029 follow-up: an advance on the statement — closing credit, Use advance not counted twice", () => {
+  // SCN Bharat Apps shape: ₹4,00,000 advance (R-1863: a payment on the ₹0 holder quote,
+  // received on the bank date), later two invoices paid with "Use advance" (R-2023:
+  // record_desk_payment with credit_applied — no new cash).
+  const advance = { id: "adv", quote_id: "Q-ADV", amount: 400000, status: "received", received_at: "2026-10-25T00:00:00Z", receipt_voucher_no: "RV-F588-27-0021" };
+  const isAdvanceQuote = (id: string) => id === "Q-ADV";
+
+  it("the advance alone: an 'Advance (RV-…)' credit row on its receipt date, closing ₹4,00,000 credit", () => {
+    const { rows, closing } = buildCustomerStatement({ ...base, payments: [advance], isAdvanceQuote });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ date: "2026-10-25T00:00:00Z", desc: "Advance (RV-F588-27-0021)", debit: 0, credit: 400000 });
+    expect(closing).toBe(-400000);
+  });
+
+  it("after Use advance on an invoice the advance is not counted twice — closing = advance − invoice", () => {
+    const { rows, closing } = buildCustomerStatement({
+      ...base,
+      invoices: [{ id: "INV-1", invoice_date: "2026-10-27", amount: 118000 }],
+      payments: [
+        advance,
+        { id: "use", quote_id: "Q-1", invoice_id: "INV-1", amount: 118000, credit_applied: 118000, status: "received", received_at: "2026-10-27T06:00:00Z", receipt_voucher_no: "RV-F588-27-0022" },
+      ],
+      isAdvanceQuote,
+    });
+    expect(closing).toBe(118000 - 400000);
+    expect(rows.reduce((s, r) => s + r.credit, 0)).toBe(400000);
+  });
+});
+
+describe("R-2029 follow-up: one bank receipt that paid several project instalments = one row (+ one TDS row)", () => {
+  // SCN Bharat Apps, local 24 Oct: one ₹2,12,400 bank line paid Kist 1 and Kist 2 (₹1,06,200
+  // each, bank_txn …432) and each carried ₹11,800 TDS 194J (method tds, no bank line).
+  const P = (id: string, ms: string, label: string, amount: number, method: string, reference: string, bank: string | null) => ({
+    id, received_at: "2026-10-24", amount, reference, project_title: "SCN Website", project_id: "proj-1", invoice_id: null,
+    method, bank_txn_id: bank, milestone_id: ms, milestone_label: label,
+  });
+  const scn = [
+    P("a", "m1", "Kist 1 — advance", 106200, "bank_transfer", "SCN-N298261957000432", "bt-432"),
+    P("b", "m1", "Kist 1 — advance", 11800, "tds", "TDS 194J @ 10% on ₹100000", null),
+    P("c", "m2", "Kist 2 — delivery", 106200, "bank_transfer", "SCN-N298261957000432", "bt-432"),
+    P("d", "m2", "Kist 2 — delivery", 11800, "tds", "TDS 194J @ 10% on ₹100000", null),
+  ];
+  const invoices = [{ id: "INV-1", invoice_date: "2026-10-20", amount: 260000 }];
+
+  it("shows ONE receipt row and ONE TDS row, amounts summed, closing unchanged", () => {
+    const ungrouped = scn.map(({ bank_txn_id: _b, milestone_id: _m, milestone_label: _l, method: _x, ...r }) => r);
+    const before = buildCustomerStatement({ ...base, invoices, projectPayments: ungrouped });
+    const { rows, closing } = buildCustomerStatement({ ...base, invoices, projectPayments: scn });
+    expect(before.rows).toHaveLength(5);
+    expect(rows.map((r) => [r.desc, r.credit])).toEqual([
+      ["Invoice INV-1", 0],
+      ["Payment received · SCN-N298261957000432 · Kist 1 + Kist 2", 212400],
+      ["TDS 194J · Kist 1 + Kist 2", 23600],
+    ]);
+    expect(closing).toBe(before.closing);
+    expect(rows[rows.length - 1].balance).toBe(before.rows[before.rows.length - 1].balance);
+  });
+
+  it("a long list of instalments is capped: 'Kist 1 + Kist 2 + 2 more'", () => {
+    const many = [1, 2, 3, 4].map((n) => P(`x${n}`, `m${n}`, `Kist ${n}`, 1000, "bank_transfer", "REF-9", "bt-9"));
+    const { rows } = buildCustomerStatement({ ...base, projectPayments: many });
+    expect(rows.map((r) => [r.desc, r.credit])).toEqual([["Payment received · REF-9 · Kist 1 + Kist 2 + 2 more", 4000]]);
+  });
+
+  it("a receipt for a single instalment reads as before", () => {
+    const one = [scn[0], scn[1]];
+    const { rows } = buildCustomerStatement({ ...base, projectPayments: one });
+    expect(rows.map((r) => [r.desc, r.credit])).toEqual([
+      ["Payment received · SCN-N298261957000432", 106200],
+      ["Payment received · TDS 194J @ 10% on ₹100000", 11800],
+    ]);
+  });
+});

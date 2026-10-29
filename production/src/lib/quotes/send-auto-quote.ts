@@ -32,6 +32,7 @@
 import { sendCustomerEmail } from "@/lib/messaging";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { renderQuotePDF } from "@/lib/pdf";
+import { quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 import { quoteLinePeriodContext } from "@/lib/quotes/service-period";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { rupee } from "@/lib/utils";
@@ -97,6 +98,8 @@ interface QuoteRow {
   expires_date: string | null;
   notes: string | null;
   is_renewal: boolean | null;
+  is_extension: boolean | null;
+  extension_months: number | null;
   status: string | null;
   billing_cycle: string | null;
 }
@@ -131,7 +134,7 @@ export async function sendAutoQuote(
 
   const { data: q } = await admin
     .from("quotes")
-    .select("id, customer_name, line_items, subtotal, discount_pct, tax_rate, amount, created_date, expires_date, notes, is_renewal, status, billing_cycle")
+    .select("id, customer_name, line_items, subtotal, discount_pct, tax_rate, amount, created_date, expires_date, notes, is_renewal, is_extension, extension_months, status, billing_cycle")
     .eq("id", args.quoteId)
     .eq("tenant_id", args.tenantId)
     .maybeSingle();
@@ -210,7 +213,8 @@ export async function sendAutoQuote(
       interState:    false,
       validityDays:  30,
       notes:         quote.notes ?? undefined,
-      isRenewal:     quote.is_renewal ?? false,
+      /* R-2093: quote / renewal / upgrade from ONE helper — never the raw flag. */
+      ...quoteKindFlags(quote),
       /* R-1570: the quote's own invoice frequency. Without it the renderer fell back to the
          line's commitment — "annual, billed monthly" printed as one yearly total while the
          covering letter (quote-body.ts) printed per month. Both now read the same cycle. */

@@ -291,8 +291,8 @@ export default function AgingPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-hairline">
-                {rows.map((r) => (
-                  <tr key={r.customerId ?? r.customerName} className="hover:bg-paper-2/40">
+                {rows.map((r, idx) => (
+                  <tr key={r.customerId ?? `${r.customerName}-${idx}`} className="hover:bg-paper-2/40">
                     <td className="px-4 py-3">
                       <div className="font-medium text-ink">{r.customerName}</div>
                       {(r.contactEmail || r.contactPhone) && (
@@ -353,8 +353,8 @@ export default function AgingPage() {
 
           {/* Mobile card list */}
           <ul className="md:hidden space-y-2.5">
-            {rows.map((r) => (
-              <li key={r.customerId ?? r.customerName}>
+            {rows.map((r, idx) => (
+              <li key={r.customerId ?? `${r.customerName}-${idx}`}>
                 <Card className="p-4">
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="min-w-0 break-words font-medium text-ink leading-tight">{r.customerName}</div>

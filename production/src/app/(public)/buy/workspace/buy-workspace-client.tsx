@@ -16,6 +16,7 @@ import * as React from "react";
 import { isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
 import { toBuyPlans, planSum, monthlyOffered, annualSavingPct, clampSeats, usersLabel, BUSINESS_MAX_USERS, type Billing, type BuyPlan } from "./_parts/plans";
 import { buyContact, type BuyBrand } from "./_parts/brand";
+import { useBuyBrand } from "./_parts/use-buy-brand";
 import { goTo } from "./_parts/wordmark";
 import { SiteHeader } from "./_parts/site-header";
 import { Hero } from "./_parts/hero";
@@ -32,7 +33,9 @@ import { MetaPixel, trackMeta } from "@/site/lib/meta-pixel";
 import { ConsentBanner } from "@/site/components/chrome/ConsentBanner";
 import { contentIdForPlan } from "@/lib/meta/pixel-ids";
 /* R-2020: the tiers and the site promo live in _parts/ so the phone flow (_mobile/) shares them. */
-import { buildTiers, FALLBACK_TIERS, type Tier, type CatalogItem } from "./_parts/tiers";
+import { buildTiers, type Tier, type CatalogItem } from "./_parts/tiers";
+import { useBuyCatalog } from "./_parts/use-buy-catalog";
+import { PricesPending } from "./_parts/prices-pending";
 import { useActiveSitePromo, computeSitePromoDiscount, SitePromoBanner } from "./_parts/site-promo";
 export type { CatalogItem };
 
@@ -40,20 +43,57 @@ export type { CatalogItem };
 // The page. The sections live in _parts/; this body keeps the one state they all read
 // (plan, users, billing — and the checkout via useCheckout). No cart here.
 // ──────────────────────────────────────────────────────────────────────
-type BuyWorkspaceProps = Parameters<typeof BuyWorkspaceBody>[0];
+type BodyProps = Parameters<typeof BuyWorkspaceBody>[0];
+type BuyWorkspaceProps = Omit<BodyProps, "catalogItems"> & {
+  /** Server-fetched, enabled Google Workspace SKUs from the reseller's Item Catalog (page.tsx).
+   *  null = the server could not read them (cold start): the page loads them itself (R-2027).
+   *  [] = the catalogue has none online. Never replaced by typed prices. */
+  catalogItems?: CatalogItem[] | null;
+};
 
-export function BuyWorkspaceClient(props: BuyWorkspaceProps) {
-  return <BuyWorkspaceBody {...props} />;
+/**
+ * R-2027: the page is priced ONLY from the catalogue. Without prices yet it shows "Loading
+ * prices…" with Buy locked (or "prices are not available" with Try again / Talk to us) — the
+ * plans, hero card and checkout mount once real prices are here, so they start from them.
+ */
+export function BuyWorkspaceClient({ catalogItems = null, ...props }: BuyWorkspaceProps) {
+  const { items, loading, retry } = useBuyCatalog(catalogItems);
+  /* R-2024: the server's brand, or the one the page fetches when that read failed on a cold start. */
+  const { brand, pending: brandPending } = useBuyBrand(props.brand ?? null, "Buy Google Workspace");
+  if (items && items.length > 0) {
+    /* the brand this wrapper already fetched (if any) goes in as the server's — no second request */
+    return <BuyWorkspaceBody {...props} catalogItems={items} brand={brand} />;
+  }
+  const contact = buyContact(brand);
+  return (
+    <div className="min-h-screen bg-paper text-ink">
+      <MetaPixel pixelId={props.metaPixelId ?? null} />
+      <ConsentBanner />
+      {(props.paymentMode ?? "simulation") === "simulation" && <TestModeBar />}
+      <SiteHeader brand={brand} brandPending={brandPending} contact={contact} onNav={(id) => goTo(id)} onBuy={() => goTo("plans")} buyLoading={loading} />
+      <main>
+        <PricesPending loading={loading} onRetry={items === null ? retry : undefined} />
+        <AfterYouPay />
+        <Faq brand={brand} />
+        <SupportBand
+          brand={brand} contact={contact}
+          waMessage="Hi, I'd like a GST quote for Google Workspace."
+          onQuote={() => window.location.assign("/contact")}
+        />
+      </main>
+      <SiteFooter brand={brand} />
+    </div>
+  );
 }
 
 function BuyWorkspaceBody({
-  catalogItems = [],
+  catalogItems,
   paymentMode = "simulation",
   initialTierId,
   initialSeats,
   initialBilling,
   openBuy = false,
-  brand = null,
+  brand: serverBrand = null,
   initialCoupon,
   metaPixelId = null,
 }: {
@@ -68,25 +108,26 @@ function BuyWorkspaceBody({
   initialBilling?: Billing;
   /** Arrived from a "Buy now" elsewhere (?buy=1): go straight to checkout. */
   openBuy?: boolean;
-  /** Server-fetched, enabled Google Workspace SKUs from the reseller's Item
-   *  Catalog. When empty, we fall back to the hardcoded FALLBACK_TIERS. */
-  catalogItems?: CatalogItem[];
+  /** The catalogue's enabled Google Workspace SKUs — never empty here (BuyWorkspaceClient). */
+  catalogItems: CatalogItem[];
   /** "live": Razorpay configured, real money taken. "simulation": no Razorpay but a
    *  simulated checkout is allowed (non-prod) — TEST MODE bar. "disabled": production before
    *  Razorpay go-live — no online pay; the checkout sends a GST quote request instead. */
   paymentMode?: "live" | "simulation" | "disabled";
   /** R-1970: the website tenant's name, logo, GSTIN, address, phone (page.tsx). */
   brand?: BuyBrand | null;
-} = {}) {
+}) {
   const isSimulation = paymentMode === "simulation";
   const onlinePay = paymentMode !== "disabled";
   const TIERS = React.useMemo<Tier[]>(
-    () => (catalogItems.length > 0 ? buildTiers(catalogItems) : FALLBACK_TIERS),
+    () => buildTiers(catalogItems),
     [catalogItems],
   );
   const plans = React.useMemo(() => toBuyPlans(TIERS, isPublicPriceHiddenTier), [TIERS]);
   const monthlyOk = monthlyOffered(plans);
   const savePct = annualSavingPct(plans);
+  /* R-2024: the server's brand, or the one the page fetches when that read failed on a cold start. */
+  const { brand, pending: brandPending } = useBuyBrand(serverBrand, "Buy Google Workspace");
   const contact = buyContact(brand);
 
   const defaultId = plans.find((p) => p.popular && !p.priceHidden)?.id ?? plans[0]?.id ?? "standard";
@@ -202,7 +243,7 @@ function BuyWorkspaceBody({
       {/* R-2010: an ad visitor lands HERE first — the same consent banner as the site. */}
       <ConsentBanner />
       {isSimulation && <TestModeBar />}
-      <SiteHeader brand={brand} contact={contact} onNav={onNav} onBuy={goPay} />
+      <SiteHeader brand={brand} brandPending={brandPending} contact={contact} onNav={onNav} onBuy={goPay} />
       {sitePromo && <SitePromoBanner promo={sitePromo} />}
       <main>
         <Hero card={card} onPlans={() => goTo("plans")} onTrial={startTrial} trialOk />

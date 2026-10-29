@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import type { Quote, Database } from "@/lib/supabase/database.types";
 
 type QuoteInsert = Database["public"]["Tables"]["quotes"]["Insert"];
@@ -302,5 +303,60 @@ export function useDecideApproval() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["quotes"] }),
     onError: (err) => toastError(err),
+  });
+}
+
+// ============================================================
+// R-2046 "Commitment due" — the bill date of each part a payment request is for
+// ============================================================
+/** subscription_billings.id → bill_on (the part's due date). Tenant-scoped by RLS
+ *  (subscription_billings_select); the ids come from the caller's own quotes. */
+export function useSubscriptionBillingDueDates(billingIds: readonly string[]) {
+  const ids = [...new Set(billingIds)].sort();
+  return useQuery({
+    queryKey: ["quotes", "commitment-due-dates", ids],
+    enabled: ids.length > 0,
+    queryFn: async (): Promise<Map<string, string>> => {
+      const supabase = createClient();
+      const out = new Map<string, string>();
+      /* Chunks keep the request URL short; a failed read THROWS (R-1655) — never a silent "no date". */
+      for (let i = 0; i < ids.length; i += 100) {
+        const { data, error } = await supabase
+          .from("subscription_billings")
+          .select("id, bill_on")
+          .in("id", ids.slice(i, i + 100));
+        if (error) throw error;
+        for (const r of data ?? []) out.set(r.id, r.bill_on);
+      }
+      return out;
+    },
+  });
+}
+
+// ============================================================
+// R-2044 "Customer stopped" — one mutation for the quote page and the Commitment due list
+// ============================================================
+export type CustomerStoppedInput = { quoteId: string; end: "cancel" | "pause"; reason: string };
+
+export function useCustomerStopped(opts: { onDone?: () => void } = {}) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: CustomerStoppedInput) => {
+      const resp = await fetch(`/api/quotes/${encodeURIComponent(input.quoteId)}/customer-stopped`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ end: input.end, reason: input.reason }),
+      });
+      const body = (await resp.json().catch(() => null)) as { error?: string; subscription_status?: string } | null;
+      if (!resp.ok) throw new Error(body?.error ?? `HTTP ${resp.status}`);
+      return { ...input, subscriptionStatus: body?.subscription_status ?? null };
+    },
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["quotes"] });
+      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      invalidateReceivables(qc);
+      opts.onDone?.();
+      toast.success(`${r.quoteId} closed — subscription ${r.end === "cancel" ? "cancelled" : "paused"}. Nothing is owed for this part.`);
+    },
+    onError: (e) => toastError(e, { fallback: "Couldn't mark the customer as stopped." }),
   });
 }

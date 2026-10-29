@@ -42,6 +42,7 @@ import { createReminderSender } from "@/lib/marketing/whatsapp-reminders.server"
 import { dunningReminderKind } from "@/lib/marketing/whatsapp-reminders";
 import { isMissingDbObject } from "@/lib/credit/activate-on-credit";
 import { runOverdueSuspension, type OverdueSuspensionResult } from "@/lib/collections/overdue-suspension.server";
+import { runSupportOverduePause, type SupportPauseResult } from "@/lib/collections/support-overdue-pause.server";
 import { loadLateCharges } from "@/lib/late-charges/load";
 import { lateChargesSentence } from "@/lib/late-charges/charges";
 import { istToday } from "@/lib/dates/ist";
@@ -134,6 +135,8 @@ interface DunningResult {
   whatsapp?: { sent: number; skipped: number; failed: number; disabled: number };
   /** R-116: the per-company "pause after N days overdue" pass (notice first, then pause). */
   overdue_pause?: OverdueSuspensionResult | { error: string };
+  /** R-2070 (D4): support plans paused once their invoice is more than 7 days overdue. */
+  support_pause?: SupportPauseResult | { error: string };
   /** R-530: the late-charges line could not be worked out — reminders went without it. */
   late_charges_error?: string;
 }
@@ -498,6 +501,18 @@ ${reminderSummary(history, decision.step, outcome)}`,
   } catch (e) {
     result.overdue_pause = { error: errorMessage(e) };
     result.errors.push({ invoice_id: "-", message: `overdue pause: ${errorMessage(e)}` });
+  }
+
+  /* R-2070 (decision D4) — support plans: more than 7 days past due → paused, every company,
+     no opt-in. The support app then stops chat and calls (tickets stay open); paying the
+     invoice turns it back on (trg_invoices_overdue_resume). Its own try, like the pass above. */
+  try {
+    const support = await runSupportOverduePause(supabase, { asOf, dryRun, invoices, creditQuoteIds });
+    result.support_pause = support;
+    for (const e of support.errors) result.errors.push({ invoice_id: "-", message: `support pause ${e.subscription_id}: ${e.message}` });
+  } catch (e) {
+    result.support_pause = { error: errorMessage(e) };
+    result.errors.push({ invoice_id: "-", message: `support pause: ${errorMessage(e)}` });
   }
 
   return NextResponse.json(reportCron("invoice-dunning", result));

@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { recordPaymentConsequences, ADD_SEATS_CONSEQUENCE, type PaymentToRecord } from "./record-consequences";
 import type { SeriesState } from "@/lib/actions/consequence";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 /* ANUTECH's real receipt-voucher counter, measured 23 Aug 2026: 39 numbers used, zero
    payments on the books. */
@@ -136,5 +138,28 @@ describe("recordPaymentConsequences", () => {
     expect(text(recordPaymentConsequences({ payment: P, receiptSeries: RV }))).toContain(
       "Creates a recurring subscription for Google Workspace Business Standard and sets its first renewal date.",
     );
+  });
+});
+
+/* R-2101 (29 Oct 2026, localhost): a quote with Business Starter 57 + Business Standard 13, both
+   on an annual commitment — record_payment makes TWO subscriptions, and "What this does" named
+   the Starter alone. */
+describe("a quote with two commitment lines names both subscriptions (R-2101)", () => {
+  it("Creates 2 recurring subscriptions — Starter and Standard", () => {
+    const t = text(recordPaymentConsequences({
+      payment: { ...P, planLabel: "Google Workspace Business Starter",
+        planLabels: ["Google Workspace Business Starter", "Google Workspace Business Standard"] },
+      receiptSeries: RV,
+    }));
+    expect(t).toContain("Creates 2 recurring subscriptions — Google Workspace Business Starter and Google Workspace Business Standard — and sets their first renewal date.");
+    expect(t).not.toContain("Creates a recurring subscription for");
+  });
+  it("one line → the old sentence", () => {
+    const t = text(recordPaymentConsequences({ payment: { ...P, planLabels: ["Google Workspace Business Standard"] }, receiptSeries: RV }));
+    expect(t).toContain("Creates a recurring subscription for Google Workspace Business Standard and sets its first renewal date.");
+  });
+  it("the Record payment sheet passes every commitment line's name", () => {
+    const src = readFileSync(join(__dirname, "../../components/features/quotes/record-payment-dialog.tsx"), "utf8");
+    expect(src).toMatch(/planLabels: \(lineItems \?\? \[\]\)\s*\n\s*\.filter\(\(l\) => typeof l\?\.commitment === "string"/);
   });
 });

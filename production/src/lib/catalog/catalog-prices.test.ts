@@ -5,13 +5,14 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  bookCerts, bookHostingRate, buildPriceBook, catalogFromDbEnabled, codePrice, codePriceBook,
-  CORE_SKUS, publicCatalog, type CatalogRow,
+  bookCerts, bookHostingRate, bookSupportPrice, buildPriceBook, catalogFromDbEnabled, codePrice, codePriceBook,
+  BOOK_SKUS, CORE_SKUS, publicCatalog, SUPPORT_SKUS, supportBookSku, type CatalogRow,
 } from "./catalog-prices";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { hostingPriceTable, hostingRate, hostingRateIn } from "@/lib/checkout/hosting-prices";
 import { MAILBOX_YR } from "@/site/lib/data/domains-landing";
 import { CERTS } from "@/site/lib/data/catalog";
+import { SUPPORT_TIERS, supportPrice } from "@/lib/support/tiers";
 
 /** The rows R-1785 seeded, exactly (catalog-seed-parity.test.ts proves = the code prices). */
 const SEEDED: Record<string, number> = {
@@ -21,18 +22,28 @@ const SEEDED: Record<string, number> = {
   "MAIL-ANUTECH-YR": 948,
   "SSL-POSITIVE-YR": 899, "SSL-WILDCARD-YR": 4499, "SSL-OVEV-YR": 6999,
 };
+/** R-2083: the support rows as 20260817160000 seeded them (yearly total in prices.annual_total). */
+const SUPPORT_SEEDED: Record<string, number> = {
+  "SUP-STANDARD-MO": 999, "SUP-STANDARD-YR": 9996, "SUP-ENTERPRISE-MO": 4999, "SUP-ENTERPRISE-YR": 49992,
+};
 
 function rows(over: Record<string, number | string | null> = {}, drop: string[] = []): CatalogRow[] {
-  return CORE_SKUS.filter((c) => !drop.includes(c.sku)).map((c) => ({
-    sku: c.sku,
-    name: c.name,
-    msrp: (c.sku in over ? over[c.sku] : SEEDED[c.sku]) as number,
-    hsn: c.hsn,
-    term_months: c.termMonths,
-    fulfilment: c.fulfilment,
-    engine_ref: c.engineRef,
-    is_public: true,
-  }));
+  return BOOK_SKUS.filter((c) => !drop.includes(c.sku)).map((c) => {
+    const v = (c.sku in over ? over[c.sku] : SEEDED[c.sku] ?? SUPPORT_SEEDED[c.sku]) as number;
+    /* R-2083: a yearly support row keeps 0 in msrp and the year in prices.annual_total.msrp. */
+    const supportYear = /^SUP-.*-YR$/.test(c.sku);
+    return {
+      sku: c.sku,
+      name: c.name,
+      msrp: supportYear ? 0 : v,
+      ...(supportYear ? { annual_total_msrp: v } : {}),
+      hsn: c.hsn,
+      term_months: c.termMonths,
+      fulfilment: c.fulfilment,
+      engine_ref: c.engineRef,
+      is_public: true,
+    };
+  });
 }
 
 describe("CATALOG_FROM_DB", () => {
@@ -118,7 +129,7 @@ describe("flag on — prices come from the catalogue rows", () => {
   it("an empty catalogue (company not seeded) = the code prices, every SKU reported", () => {
     const book = buildPriceBook([]);
     expect(hostingPriceTable(book.tiers)).toEqual(hostingPriceTable());
-    expect(book.fallbacks).toHaveLength(CORE_SKUS.length);
+    expect(book.fallbacks).toHaveLength(BOOK_SKUS.length);
   });
 });
 
@@ -128,7 +139,7 @@ describe("public catalogue shape", () => {
   it("only the whitelisted fields — no cost, wholesale or margin even when the row carries them", () => {
     const leaky = rows().map((r) => ({ ...r, wholesale: 123, margin_pct: 40, partner_price: 77 }));
     const out = publicCatalog(buildPriceBook(leaky));
-    expect(out).toHaveLength(10);
+    expect(out).toHaveLength(14); // R-2083: 10 hosting/mail/SSL + 4 paid support plans
     for (const item of out) expect(Object.keys(item).sort()).toEqual(KEYS);
     expect(JSON.stringify(out)).not.toMatch(/wholesale|margin|cost|partner/i);
   });
@@ -161,5 +172,44 @@ describe("CORE_SKUS = the R-1785 seed", () => {
     expect(CORE_SKUS.map(({ sku, name, hsn, termMonths, fulfilment, engineRef }) => ({ sku, name, hsn, termMonths, fulfilment, engineRef })))
       .toEqual(seed.map(({ msrp: _m, ...rest }) => rest));
     for (const s of seed) expect(SEEDED[s.sku]).toBe(s.msrp);
+  });
+});
+
+describe("R-2083: support plans in the book", () => {
+  it("flag off: SUPPORT_TIERS prices — Standard ₹999/mo · ₹9,996/yr, Enterprise ₹4,999/mo · ₹49,992/yr; Free has no SKU", () => {
+    const book = codePriceBook();
+    expect(book.support).toEqual({ "SUP-STANDARD-MO": 999, "SUP-STANDARD-YR": 9996, "SUP-ENTERPRISE-MO": 4999, "SUP-ENTERPRISE-YR": 49992 });
+    expect(bookSupportPrice(book, "standard", "yearly")).toBe(9996);
+    expect(bookSupportPrice(book, "enterprise", "monthly")).toBe(4999);
+    expect(bookSupportPrice(book, "free", "monthly")).toBeNull();
+    expect(bookSupportPrice(book, "premium", "yearly")).toBeNull();
+    expect(supportBookSku("free", "yearly")).toBeNull();
+    expect(SUPPORT_SKUS.map((s) => [s.sku, s.termMonths])).toEqual([
+      ["SUP-STANDARD-MO", 1], ["SUP-STANDARD-YR", 12], ["SUP-ENTERPRISE-MO", 1], ["SUP-ENTERPRISE-YR", 12],
+    ]);
+    for (const t of SUPPORT_TIERS.filter((x) => x.id !== "free")) {
+      expect(codePrice(supportBookSku(t.id, "monthly")!)).toBe(supportPrice(t, "monthly"));
+      expect(codePrice(supportBookSku(t.id, "yearly")!)).toBe(supportPrice(t, "yearly"));
+    }
+  });
+
+  it("flag on: yearly row priced from prices.annual_total (msrp 0); an edit reaches the book; a missing / ₹0 row keeps the code price", () => {
+    expect(buildPriceBook(rows()).support["SUP-STANDARD-YR"]).toBe(9996);
+    const edited = buildPriceBook(rows({ "SUP-ENTERPRISE-YR": 51000, "SUP-STANDARD-MO": 1099 }));
+    expect(edited.support["SUP-ENTERPRISE-YR"]).toBe(51000);
+    expect(edited.support["SUP-STANDARD-MO"]).toBe(1099);
+    const gaps = buildPriceBook(rows({ "SUP-STANDARD-YR": 0 }, ["SUP-ENTERPRISE-MO"]));
+    expect(gaps.support["SUP-STANDARD-YR"]).toBe(9996);
+    expect(gaps.support["SUP-ENTERPRISE-MO"]).toBe(4999);
+    expect(gaps.fallbacks).toEqual(["SUP-STANDARD-YR", "SUP-ENTERPRISE-MO"]);
+  });
+
+  it("public list ?function=support: four rows, ex- and incl-GST, never hidden by the Aug seed's is_public=false", () => {
+    const hidden = rows().map((r) => (r.sku.startsWith("SUP-") ? { ...r, is_public: false } : r));
+    const out = publicCatalog(buildPriceBook(hidden), "support");
+    expect(out.map((i) => [i.sku, i.exGst, i.inclGst, i.termMonths])).toEqual([
+      ["SUP-STANDARD-MO", 999, 1179, 1], ["SUP-STANDARD-YR", 9996, 11795, 12],
+      ["SUP-ENTERPRISE-MO", 4999, 5899, 1], ["SUP-ENTERPRISE-YR", 49992, 58991, 12],
+    ]);
   });
 });

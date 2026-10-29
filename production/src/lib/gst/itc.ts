@@ -43,14 +43,55 @@ export interface ItcVerdict {
 
 const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 
-export function isGstin(v: string | null | undefined): boolean {
-  return GSTIN_RE.test((v ?? "").trim().toUpperCase());
+/**
+ * R-2056 (28 Oct 2026) — a foreign online-service provider (OIDAR: e.g. a US SaaS / AI vendor)
+ * has its own GSTIN layout: 99 (state code "other countries") + 2-digit year + 3-letter
+ * country + 5-digit serial + "OS" + check character. Taken from GSTN's API portal
+ * (developer.gst.gov.in/apiportal/taxpayer/returns, gstin(OIDAR) "REGEX_7":
+ * [9][9][0-9]{2}[a-zA-Z]{3}[0-9]{5}[O][S][0-9a-zA-Z]{1}, sample 9918IND29061OSS).
+ * Such a supplier files GSTR-5A, not GSTR-1, so its GST never shows in our GSTR-2B.
+ */
+const OIDAR_GSTIN_RE = /^99[0-9]{2}[A-Z]{3}[0-9]{5}OS[0-9A-Z]$/;
+
+/** R-2056: upper-case, spaces / dashes / dots removed — "07 ABCDE-1234F1Z5" → "07ABCDE1234F1Z5". */
+export function normalizeGstin(v: string | null | undefined): string {
+  return (v ?? "").toString().replace(/[\s.\-]+/g, "").toUpperCase();
 }
+
+/** A domestic (regular / composition) GSTIN — the kind that matches in GSTR-2B. */
+export function isGstin(v: string | null | undefined): boolean {
+  return GSTIN_RE.test(normalizeGstin(v));
+}
+
+/** A foreign online-service provider's (OIDAR) GSTIN. */
+export function isOidarGstin(v: string | null | undefined): boolean {
+  return OIDAR_GSTIN_RE.test(normalizeGstin(v));
+}
+
+/** Why a vendor GSTIN gives no GSTR-2B match: nothing typed, a wrong format, or an OIDAR one. null = fine. */
+export type GstinIssue = "empty" | "invalid" | "oidar";
+export function gstinIssue(v: string | null | undefined): GstinIssue | null {
+  const g = normalizeGstin(v);
+  if (!g) return "empty";
+  if (GSTIN_RE.test(g)) return null;
+  if (OIDAR_GSTIN_RE.test(g)) return "oidar";
+  return "invalid";
+}
+
+/** The words for each GSTIN issue — Add bill / Add expense and the GST page's "Blocked ITC" list. */
+export const GSTIN_ISSUE_REASON: Readonly<Record<GstinIssue, string>> = {
+  empty:   "Vendor GSTIN box is empty — without a GSTIN it will not match in GSTR-2B",
+  invalid: "This GSTIN looks wrong (15 characters, no spaces) — it will not match in GSTR-2B",
+  /* Wording from the card (R-2056); the ITC / reverse-charge position is for Hitesh / the CA to confirm. */
+  oidar:   "Foreign online service (OIDAR) GSTIN — this GST is not in GSTR-2B, so it goes to cost. " +
+           "Add your GSTIN in the vendor's billing settings so future bills are B2B (you pay GST under reverse charge and claim it)",
+};
 
 export function itcEligibility(e: ItcInput): ItcVerdict {
   if (!((e.gst_paid ?? 0) > 0)) return { eligible: false, reason: null };
   if (e.bill_type !== "gst") return { eligible: false, reason: "Not a GST tax invoice (kaccha / no bill) — no credit" };
-  if (!isGstin(e.vendorGstin)) return { eligible: false, reason: "Vendor has no GSTIN — it will not match in GSTR-2B" };
+  const issue = gstinIssue(e.vendorGstin);
+  if (issue) return { eligible: false, reason: GSTIN_ISSUE_REASON[issue] };
   const blocked = ITC_BLOCKED_CATEGORIES[(e.category ?? "").trim()];
   if (blocked) return { eligible: false, reason: blocked };
   return { eligible: true, reason: null };

@@ -31,6 +31,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { agentQuoteBlocker, headlineTier } from "@/lib/items/agent-sellable";
+import { storedFromTyped, headlineColumns } from "@/lib/items/item-price";
 import { Icon } from "@/components/ui/icon";
 import { useCreateItem, useUpdateItem } from "@/lib/queries/items";
 import { rupee } from "@/lib/utils";
@@ -268,7 +269,7 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
       if (isEdit) {
         await updateItem.mutateAsync({
           id: item!.id,
-          patch: { ...data, msrp: headline.msrp, wholesale: headline.wholesale, prices: cleanPrices, ...partnerPatch },
+          patch: { ...data, ...headlineColumns(headline), prices: cleanPrices, ...partnerPatch },
         });
       } else {
         await createItem.mutateAsync({
@@ -277,8 +278,7 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
           vendor: data.vendor,
           kind: data.kind,
           hsn: data.hsn || "998313",
-          msrp: headline.msrp,
-          wholesale: headline.wholesale,
+          ...headlineColumns(headline),
           prices: cleanPrices,
           ...partnerPatch,
         });
@@ -427,7 +427,8 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
 
               // Editing a yearly-display input means dividing by 12 before storing
               const handleEdit = (field: "msrp" | "wholesale", raw: number) => {
-                const stored = row.unit === "yr" ? Math.round((raw / 12) * 100) / 100 : raw;
+                /* R-2097: unrounded — ₹1,000/yr stays exact (see lib/items/item-price). */
+                const stored = storedFromTyped(raw, row.unit === "yr" ? "yr" : "mo");
                 setTier(row.tier, field, stored);
               };
 

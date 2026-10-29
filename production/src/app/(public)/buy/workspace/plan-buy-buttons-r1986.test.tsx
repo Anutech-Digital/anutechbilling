@@ -89,13 +89,12 @@ describe("R-1986 plan cards: Buy <Google plan name>", () => {
 describe("R-1986 Plus / Enterprise: Talk to sales", () => {
   const withPhone = () => render(<BuyWorkspaceClient catalogItems={CATALOG} paymentMode="simulation" brand={{ ...BRAND, phone: "98111 22233" }} initialSeats={12} />);
 
-  it("Plus and Enterprise: heading 'Talk to sales', no price figure", () => {
+  it("Plus and Enterprise: no price figure (R-2032: 'Price on request' / 'Custom price' in the box, no 'Talk to sales' heading)", () => {
     withPhone();
-    for (const id of ["plus", "enterprise"]) {
-      expect(screen.getByTestId(`plan-price-${id}`).textContent).toBe("Talk to sales");
-    }
+    expect(screen.getByTestId("plan-price-plus").textContent).toBe("Price on request");
+    expect(screen.getByTestId("plan-price-enterprise").textContent).toBe("Custom price");
     expect(card("Business Plus").textContent).not.toMatch(/1,500|1,800|Contact us for pricing/);
-    expect(card("Enterprise").textContent).not.toMatch(/\bCustom\b/);
+    expect(card("Enterprise").textContent).not.toMatch(/₹/); // R-2032: "Custom price" is the label now — still no figure
   });
 
   it("Call = the tenant phone as tel:, WhatsApp = wa.me with the plan and the users", () => {
@@ -124,10 +123,10 @@ describe("R-1986 Plus / Enterprise: Talk to sales", () => {
   });
 });
 
-/* R-1986 (Pardeep): the buttons and feature lists line up across the 4 cards — each card is 8 rows
+/* R-1986 (Pardeep): the buttons and feature lists line up across the 4 cards — each card is 7 rows (R-2030; was 8)
    of one grid (subgrid) from sm up, so text length above the button cannot push it down. */
 describe("R-1986 plan cards line up", () => {
-  it("every card is a subgrid spanning 8 rows: wordmark, name, blurb, price, contact, total, button, features", () => {
+  it("every card is a subgrid spanning 7 rows: wordmark, name, blurb, media/contact, rate+total box, button, features (R-2030)", () => {
     page();
     const grid = screen.getByTestId("plan-grid");
     expect(grid.className).toMatch(/sm:gap-y-0/);
@@ -135,11 +134,11 @@ describe("R-1986 plan cards line up", () => {
     expect(cards).toHaveLength(4);
     for (const c of cards) {
       expect(c.className).toMatch(/sm:grid-rows-subgrid/);
-      expect(c.className).toMatch(/sm:row-span-8/);
+      expect(c.className).toMatch(/sm:row-span-7/);
       const inFlow = [...c.children].filter((el) => !el.className.includes("absolute"));
-      expect(inFlow).toHaveLength(8);
-      expect(inFlow[6].tagName).toBe("BUTTON");
-      expect(inFlow[7].tagName).toBe("UL");
+      expect(inFlow).toHaveLength(7);
+      expect(inFlow[5].tagName).toBe("BUTTON");
+      expect(inFlow[6].tagName).toBe("UL");
     }
   });
 });
@@ -156,9 +155,9 @@ describe("R-1986 plan card total box shows the working", () => {
     mount();
     expect(working("starter")).toBe("₹270/user/month × 10 users × 12 = ₹32,400/year + GST");
     expect(working("standard")).toBe("₹1,080/user/month × 10 users × 12 = ₹1,29,600/year + GST");
-    // R-1986: three fixed lines — "₹270/user/month ×" / "[10] users × 12 =" / "₹32,400/year + GST"
+    // R-1986 + R-2030: three fixed lines — "₹270 /user/month" / "× [10] users × 12 =" / "₹32,400/year + GST"
     const lines = [...screen.getByTestId("plan-total-starter").querySelectorAll("[data-line]")].map((l) => l.textContent);
-    expect(lines).toEqual(["₹270/user/month ×", "users × 12 =", "₹32,400/year + GST"]);
+    expect(lines).toEqual(["₹270 /user/month", "×users × 12 =", "₹32,400/year + GST"]); // R-2030: the rate line is the big one
     expect(screen.getByTestId("plan-total-starter").querySelector("[data-line=\"2\"] input")).toBeTruthy();
     expect(usersIn("Business Starter").value).toBe("10");
   });
@@ -222,13 +221,14 @@ describe("R-1986 fixed three-line working box", () => {
   it("Starter and Standard have the same three lines whatever the digits; each line never wraps", () => {
     mount(10, "standard");
     fireEvent.change(usersIn("Business Starter"), { target: { value: "3" } });
-    expect(lines("starter")).toEqual(["₹270/user/month ×", "users × 12 =", "₹9,720/year + GST"]);
-    expect(lines("standard")).toEqual(["₹1,080/user/month ×", "users × 12 =", "₹1,29,600/year + GST"]);
-    for (const l of screen.getByTestId("plan-total-starter").querySelectorAll("[data-line]")) expect(l.className).toMatch(/block whitespace-nowrap/);
+    expect(lines("starter")).toEqual(["₹270 /user/month", "×users × 12 =", "₹9,720/year + GST"]);
+    expect(lines("standard")).toEqual(["₹1,080 /user/month", "×users × 12 =", "₹1,29,600/year + GST"]);
+    // R-2030: the working lines (2, 3) never wrap; line 1 is the big rate, whose "/user/month" may drop under it on a narrow card
+    for (const l of screen.getByTestId("plan-total-starter").querySelectorAll("[data-line=\"2\"], [data-line=\"3\"]")) expect(l.className).toMatch(/block whitespace-nowrap/);
   });
   it("monthly: line 2 'users =', line 3 '/month + GST'", () => {
     mount(10, "standard");
     fireEvent.click(within(plans()).getByRole("button", { name: "Monthly" }));
-    expect(lines("starter")).toEqual(["₹325/user/month ×", "users =", "₹3,250/month + GST"]);
+    expect(lines("starter")).toEqual(["₹325 /user/month", "×users =", "₹3,250/month + GST"]);
   });
 });

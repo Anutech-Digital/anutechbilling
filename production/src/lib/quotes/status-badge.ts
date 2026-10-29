@@ -28,6 +28,8 @@ import { invoicedPartPaid } from "./quote-payment-state";
 import { shownQuoteStatus } from "./quote-expiry";
 import { istToday } from "@/lib/dates/ist";
 import { QUOTE_STATE_LABEL } from "./state-labels";
+import { isCustomerAdvanceQuote, CUSTOMER_ADVANCE_LABEL } from "./customer-advance";
+import { paidToDateOf, PAID_TO_DATE_LABEL } from "./paid-to-date";
 
 export type QuoteBadgeKind = "muted" | "success" | "warning" | "danger" | "info";
 
@@ -39,6 +41,15 @@ type QuoteStatusFields = Pick<Quote, "status" | "payment_status" | "amount" | "p
   /** R-1679: the validity date — a sent / viewed quote past it reads "Expired" (quote-expiry.ts). */
   expires_date?: string | null;
   invoice_id?: string | null;
+  /** R-2023: an R-1863 advance holder ("Advance on account", ₹0, no lines) is not a sale. */
+  plan?: string | null;
+  line_items?: unknown;
+  /** R-2055: the plan fields (paid-to-date.ts) — optional so older callers still fit. */
+  subtotal?: number | null;
+  discount_pct?: number | null;
+  tax_rate?: number | null;
+  billing_cycle?: string | null;
+  subscription_billing_id?: string | null;
 };
 
 /** What is still owed on this quote. Never negative — an overpayment is not a debt. */
@@ -51,12 +62,17 @@ export function outstanding(q: Pick<Quote, "amount" | "payment_amount">): number
  * folded into a single lifecycle stage, so a row never shows two competing badges.
  */
 export function unifiedStatus(q: QuoteStatusFields, today: string = istToday()): { label: string; kind: QuoteBadgeKind } {
+  /* R-2023: a customer's advance (R-1863 holder quote) is money kept as credit — never "Paid"
+     or "Accepted" like a sale (customer-advance.ts). */
+  if (isCustomerAdvanceQuote(q) && q.status !== "rejected") return { label: CUSTOMER_ADVANCE_LABEL, kind: "info" };
   /* Payment first, and independent of `status`. This ordering IS the fix: every one of
      these was previously reachable only from `status === "accepted"`. */
   if (q.payment_status === "invoiced") {
     /* R-1710: the stage alone hid a half payment — say both (money from quote-payment-state.ts). */
     return invoicedPartPaid(q) ? { label: `${QUOTE_STATE_LABEL.invoiced} · ${QUOTE_STATE_LABEL.partial}`, kind: "danger" } : { label: QUOTE_STATE_LABEL.invoiced, kind: "info" };
   }
+  /* R-2055: billed in parts, first part paid — nothing is owed on this quote today. */
+  if (q.payment_status === "partial" && paidToDateOf(q)) return { label: PAID_TO_DATE_LABEL, kind: "success" };
   if (q.payment_status === "partial") {
     /* Rose, not amber. Amber is the same tone this list gives "Out for review" and
        "expiring soon" — ordinary busywork. A part-paid quote is money sitting half
@@ -127,7 +143,16 @@ export function cashNote(q: QuoteStatusFields): QuoteCashNote | null {
   const paid = q.payment_amount ?? 0;
   const inr = (n: number) => `₹${n.toLocaleString("en-IN")}`;
 
+  /* R-2023: an advance's amount is ₹0 (nothing sold) — the money is its receipt. */
+  if (isCustomerAdvanceQuote(q) && q.status !== "rejected") {
+    return (q.payment_amount ?? 0) > 0 ? { text: `${inr(q.payment_amount ?? 0)} advance`, tone: "waiting" } : null;
+  }
+
   /* R-1710: invoiced after a part payment — the same two halves as before the invoice. */
+  /* R-2055: the later parts are payment requests (R-2044) — committed, not "left" on this quote. */
+  if (q.payment_status === "partial" && paidToDateOf(q)) {
+    return { text: `${inr(paid)} paid to date`, tone: "waiting" };
+  }
   if ((q.payment_status === "partial" || invoicedPartPaid(q)) && due > 0) {
     return { text: `${inr(paid)} paid · ${inr(due)} left`, tone: "owed" };
   }

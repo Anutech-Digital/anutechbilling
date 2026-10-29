@@ -151,6 +151,38 @@ document). Returns `application/pdf`; bad/missing token → 403, unknown id → 
 ]
 ```
 
+### 3.6 Support revenue from GST invoices (R-2079)
+`GET /support/invoices/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` — scope `read`.
+
+DSP's support revenue, taken from Billing's GST tax invoices (not from DSP payments).
+Counts only **issued Tax Invoices** (status pending / paid / overdue — no draft, no void,
+no Bill of Supply, no imported Zoho opening invoice) that carry a support line (`SUP-…`), and
+only the support lines' share of a mixed invoice. Credit notes raised against them in the
+period are subtracted (in the month of the credit note). `from` / `to` are IST calendar dates,
+both included, both required (400 otherwise).
+
+```json
+{
+  "currency": "INR",
+  "from": "2026-10-01",
+  "to": "2026-10-31",
+  "total_taxable": 1500.49,
+  "total_gst": 270.09,
+  "total_with_gst": 1770.58,
+  "count": 2,                      // support invoices (credit notes do not change it)
+  "by_plan": [
+    { "plan_key": "enterprise", "taxable": 500.5, "gst": 90.09, "total": 590.59, "count": 1 },
+    { "plan_key": "standard",   "taxable": 999.99, "gst": 180,  "total": 1179.99, "count": 1 }
+  ],                                // plan_key: standard | enterprise | addon (product-wise add-on)
+  "by_month": [
+    { "month": "2026-10", "taxable": 1500.49, "total": 1770.58, "count": 2 }
+  ]
+}
+```
+
+Amounts here are rupees **exact to the paisa** (they may have two decimals) — summed in paise
+and converted once, so `by_plan` and `by_month` always add up to the totals.
+
 ---
 
 ## 4. Money units
@@ -171,3 +203,25 @@ To let DSP lock/unlock support instantly on billing changes, ResellerOS will
 POST HMAC-signed events (`payment.received`, `invoice.paid`,
 `subscription.*`) to a DSP endpoint. Not built yet — Phase 1 (polling these
 read APIs) works today.
+
+**Built (R-2067, 29 Oct 2026): support-plan sync.** When a support
+subscription (vendor `support`) is created, or its plan / status / renewal date
+changes, or its customer is archived/restored, a row is queued in
+`support_sync_outbox` (triggers `trg_queue_support_sync`,
+`trg_queue_support_sync_on_customer_status`). The cron
+`/api/cron/support-sync` (every 5 min, switch "Support plan sync" on
+/automation) POSTs each row's payload unchanged to
+`${DSP_SUPPORT_URL}/api/sync/customer` with header
+`X-Webhook-Secret: ${DSP_WEBHOOK_SECRET}`:
+
+```json
+{ "event_type": "subscription.updated",
+  "data": { "billing_customer_id": "…", "name": "…", "email": "…", "domain": "…",
+            "plan": "<subscription plan name, or 'free' when cancelled>",
+            "plan_status": "active|cancelled|…", "plan_expiry": "YYYY-MM-DD" } }
+```
+
+2xx → row `sent`. Anything else → retried with back-off (10, 20, 40, 80 min);
+the 5th failure → `failed`, counted on the cron's `[cron/support-sync]` stderr
+line (health digest). One customer's rows go strictly oldest first. The secret
+is a shared header for now; HMAC signing is still planned.

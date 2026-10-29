@@ -9,6 +9,7 @@
 // A single line on the bill (product/service the supplier charged for).
 import { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
 import { normaliseCompanyName } from "./buyer-check";
+import { normalizeGstin } from "@/lib/gst/itc";
 
 export interface ExtractedLine {
   description?: string | null;
@@ -206,8 +207,8 @@ export function normalisePaymentMode(v: unknown): "upi" | "card" | "bank_transfe
  */
 function sanitizeBuyer(ai: ExtractedBill): { buyer_name: string | null; buyer_gstin: string | null } {
   const name  = (ai.buyer_name ?? "").toString().trim() || null;
-  const gstin = (ai.buyer_gstin ?? "").toString().trim().toUpperCase() || null;
-  const vGstin = (ai.vendor_gstin ?? "").toString().trim().toUpperCase();
+  const gstin = normalizeGstin(ai.buyer_gstin) || null;
+  const vGstin = normalizeGstin(ai.vendor_gstin);
   const vName  = normaliseCompanyName(ai.vendor_name);
   if ((gstin && gstin === vGstin) || (name && vName && normaliseCompanyName(name) === vName)) {
     return { buyer_name: null, buyer_gstin: null };
@@ -231,7 +232,8 @@ export function sanitizeExtractedBill(ai: ExtractedBill) {
   const aiCategory = (ai.category_guess ?? "").toString().trim();
   return {
     vendor_name:  (ai.vendor_name ?? "").toString().trim() || null,
-    vendor_gstin: (ai.vendor_gstin ?? "").toString().trim().toUpperCase() || null,
+    /* R-2056: "9924 USA-29003 OSI" → no spaces / dashes (an OIDAR GSTIN is kept as is). */
+    vendor_gstin: normalizeGstin(ai.vendor_gstin) || null,
     bill_no:      (ai.bill_no ?? "").toString().trim() || null,
     bill_date:    /^\d{4}-\d{2}-\d{2}$/.test((ai.bill_date ?? "").toString()) ? (ai.bill_date as string) : null,
     currency:     normaliseCurrency(ai.currency),

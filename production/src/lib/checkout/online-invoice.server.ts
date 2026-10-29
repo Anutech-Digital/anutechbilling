@@ -28,6 +28,7 @@
 import type { createAdminClient } from "@/lib/supabase/server";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { raiseDueInstalmentsForQuote } from "@/lib/billing/sync-instalments.server";
+import { partRequestOf } from "@/lib/billing/part-request-of.server";
 import { istToday } from "@/lib/dates/ist";
 import { Sentry } from "@/lib/sentry";
 
@@ -75,6 +76,24 @@ async function issue(
     return { status: "failed", reason };
   }
   if (q.invoice_id) return { status: "exists", invoiceId: String(q.invoice_id) };
+
+  /* R-2044: a part's payment request is never invoiced whole. Paying it raised that part's tax
+     invoice in the same transaction (tg_payments_part_request_invoice) — or, when that step was
+     refused (no state on the customer …), raise it now through the same code. */
+  if (await partRequestOf(admin, quoteId, tenantId)) {
+    await fillBlankCustomerState(admin, { tenantId, quoteId, leadId: q.lead_id, customerId: q.customer_id, logTag });
+    const out = await raiseDueInstalmentsForQuote({ supabase: admin, quoteId, tenantId, todayISO: istToday() });
+    if (out.raised.length > 0) return { status: "issued", invoiceId: out.raised[0].invoice_id };
+    const reason = out.errors[0]?.message ?? "the payment request is not paid in full yet";
+    if (out.errors.length > 0) {
+      await reportMissedInvoice(admin, {
+        tenantId, quoteId, leadId: q.lead_id, logTag,
+        log: `part invoice NOT issued for paid request ${quoteId}: ${reason}`,
+        note: `Paid online, but the GST invoice for this part could not be issued automatically — ${reason} The payment is recorded; the daily billing run issues it once the above is fixed.`,
+      });
+    }
+    return { status: "failed", reason };
+  }
 
   /* R-527: a split-billed quote (annual commitment billed monthly / quarterly / half-yearly)
      is never invoiced whole — the invoices trigger refuses generate_invoice for it. What the

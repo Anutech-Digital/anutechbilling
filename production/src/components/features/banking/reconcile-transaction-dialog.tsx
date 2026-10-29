@@ -66,6 +66,8 @@ import { useReferralCommissions } from "@/lib/queries/referral-commissions";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
 import { ProjectPaymentSection } from "@/components/features/banking/project-payment-section";
 import { CreditPayForSection } from "@/components/features/banking/credit-pay-for-section";
+import { RazorpaySettlementSection } from "@/components/features/banking/razorpay-settlement-section";
+import { isRazorpaySettlementLine } from "@/lib/razorpay/settlement-match";
 import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-section";
 import { EmiRepaymentSection } from "@/components/features/banking/emi-repayment-section";
 import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
@@ -76,6 +78,7 @@ import { ownerEquityWords } from "@/lib/accounting/owner-equity";
 import { expenseGuard, sameVendor, type VendorFocus } from "@/lib/banking/vendor-line-guard";
 import { matchCreditToInvoices } from "@/lib/banking/invoice-credit-match";
 import { guessCustomer, itemKey as creditItemKey } from "@/lib/banking/credit-pay-for";
+import { usePayerMemory } from "@/lib/queries/customer-payers";
 import { useReconcileSuggestion, SuggestionCard, logSuggestion } from "@/components/features/banking/reconcile-suggestion-card";
 import {
   WhoTiles, ChosenTileBar, ReconcileFooter, SectionSlot, tileLabel,
@@ -289,14 +292,15 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      to open the Customer tile by itself. The section still makes and shows its own guess. */
   const creditAmt = transaction?.credit ?? 0;
   const { data: openInvoices } = useOpenInvoicesForCreditMatch(creditAmt > 0);
+  const payerMemory = usePayerMemory();   // R-2025: a known payer names the customer too
   const customerGuessed = React.useMemo(() => {
     if (!transaction || creditAmt <= 0) return false;
     const ms = matchCreditToInvoices(
       { amount: creditAmt, txnDate: transaction.txn_date, description: transaction.description, reference: transaction.reference },
       openInvoices ?? [],
     );
-    return guessCustomer(transaction, customers ?? [], ms) !== null;
-  }, [transaction, creditAmt, customers, openInvoices]);
+    return guessCustomer(transaction, customers ?? [], ms, payerMemory) !== null;
+  }, [transaction, creditAmt, customers, openInvoices, payerMemory]);
   /* New customer from here opens the SAME side-sheet form the quote builder uses
      (components/features/customers — Billing's form, used as-is, not copied), and
      picks the customer it creates. */
@@ -1274,6 +1278,12 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 <Icon name="info" size={12} />
                 No close matches in your books (±₹100, ±7 days).
               </p>
+            )}
+
+            {/* R-2099: a Razorpay settlement credit — one press fetches it from Razorpay and books every
+                payment + Razorpay's fee in one step. The tiles below stay for anything else. */}
+            {isCredit && !payForDone && isRazorpaySettlementLine(transaction) && (
+              <RazorpaySettlementSection line={{ id: transaction.id, credit: transaction.credit }} onDone={() => onOpenChange(false)} />
             )}
 
             {/* 2. Who is this money for? → only the chosen tile's section. With a suggestion its

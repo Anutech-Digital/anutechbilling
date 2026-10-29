@@ -12,6 +12,7 @@
  *    when this was the lead's last open quote.
  */
 import { LOSS_REASONS } from "@/lib/leads/loss-reasons";
+import { isSupportUpgradeQuote } from "@/lib/support/upgrade-quote";
 
 // ── R-409 ────────────────────────────────────────────────────────────────────
 export function withInvoiceIssued<Q extends { invoice_id: string | null; payment_status: string | null }>(
@@ -99,7 +100,10 @@ export function lostActivityDetail(quoteId: string, code: string, note: string |
 export function acceptHint(q: {
   is_renewal?: boolean | null; is_add_seats?: boolean | null; is_extension?: boolean | null;
   customer_id?: string | null; lead_id: string | null;
+  extension_months?: number | null; line_items?: unknown;
 }): string {
+  /* R-2087: a support-plan upgrade is stored as a renewal, but nothing is renewed. */
+  if (isSupportUpgradeQuote(q)) return "Mark accepted when the customer agrees. Their support plan is upgraded when the payment is recorded — the renewal date stays the same.";
   if (q.is_renewal) return "Mark accepted when the customer agrees. Their subscription is renewed when the payment is recorded.";
   /* R-821 (10 Oct 2026): an add-seats or extension quote is always for an existing
      customer, even on a row with no customer_id — it still said "convert the lead". */

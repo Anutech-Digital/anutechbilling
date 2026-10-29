@@ -48,8 +48,9 @@ describe("R-453 (1): Record payment on a renewal says it renews", () => {
     expect(text).toContain("Creates a recurring subscription");
   });
   it("both payment callers on the quote pass isRenewal", () => {
-    expect(read("app/(app)/quotes/[id]/page.tsx")).toMatch(/isRenewal=\{!!quote\.is_renewal\}/);
-    expect(read("components/features/quotes/quote-action-bar.tsx")).toMatch(/isRenewal=\{!!quote\.is_renewal\}/);
+    /* R-2093: now through the one helper — {...quoteKindFlags(quote)} sets isRenewal (and isUpgrade). */
+    expect(read("app/(app)/quotes/[id]/page.tsx")).toMatch(/\{\.\.\.quoteKindFlags\(quote\)/);
+    expect(read("components/features/quotes/quote-action-bar.tsx")).toMatch(/\{\.\.\.quoteKindFlags\(quote\)/);
   });
 });
 

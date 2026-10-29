@@ -19,6 +19,10 @@ import { plannedInstalments, instalmentSkip, instalmentsDue, type InstalmentSkip
 import { billingTermStart } from "./subscription-schedule";
 import { addDaysISO } from "@/lib/dates/ist";
 import { billedElsewhere, billedElsewhereLabel } from "@/lib/subscriptions/billed-elsewhere";
+import { applyBillOutcome, type BillOutcome } from "./part-requests";
+import { partRequestOf } from "./part-request-of.server";
+import { partName, type PartInvoice } from "@/lib/invoices/split-sale-pending";
+export { partRequestOf };
 
 type Admin = SupabaseClient<Database>;
 
@@ -55,6 +59,14 @@ export interface InstalmentSyncResult {
   alreadyRaised: number;
   /** Would have been raised (dry run only). */
   wouldRaise: number;
+  /** R-2044: payment requests (quotes) made now for parts that are due but not paid. */
+  requests: { period_index: number; quote_id: string; gross: number }[];
+  /** R-2044: parts still waiting on a request made earlier (unpaid, or stopped). */
+  requestsOpen: { period_index: number; quote_id: string; status: string }[];
+  /** R-2044: would have got a payment request (dry run only). */
+  wouldRequest: number;
+  /** R-2092: parts held back until the quote's other subscriptions have their parts laid. */
+  waiting?: { period_index: number; subscription_ids: string[] }[];
 }
 
 export async function syncSubscriptionInstalments(args: {
@@ -63,10 +75,14 @@ export async function syncSubscriptionInstalments(args: {
   quote: QuotePaymentFacts | undefined;
   todayISO: string;
   dryRun?: boolean;
+  /** R-2092: lay (insert / re-sync) this subscription's parts and stop — bill nothing. Run for
+      every subscription of a quote BEFORE billing any of them, so the quote's parts of one period
+      are all there when the first is billed and go on ONE tax invoice (billing_part_group). */
+  layOnly?: boolean;
 }): Promise<InstalmentSyncResult> {
   const { supabase, sub, quote, todayISO } = args;
   const dryRun = args.dryRun ?? false;
-  const out: InstalmentSyncResult = { skip: null, created: 0, resynced: 0, raised: [], alreadyRaised: 0, wouldRaise: 0 };
+  const out: InstalmentSyncResult = emptySyncResult();
 
   /* R-1763: a period Zoho already billed is never laid or invoiced here (the database refuses
      it too — trigger subscription_billings_not_billed_elsewhere). The term key stays the
@@ -145,6 +161,7 @@ export async function syncSubscriptionInstalments(args: {
   }
   out.created  = toInsert.length;
   out.resynced = toResync.length;
+  if (args.layOnly) return out;
 
   const { data: fresh, error: frErr } = dryRun
     ? { data: existing ?? [], error: null }
@@ -160,14 +177,15 @@ export async function syncSubscriptionInstalments(args: {
     todayISO,
   );
 
+  /* R-2044: a part whose date came is invoiced only when it is paid (R-2048: the sale quote's
+     first part too — only once the sale quote's money covers it; until then the open sale quote
+     is its request), a term paid up front, or its own payment request paid — otherwise it gets a payment
+     request. bill_subscription_instalment decides, in one transaction, and invoices through
+     raise_subscription_billing (the one instalment invoice path). */
   for (const row of due) {
-    if (dryRun) { out.wouldRaise += 1; continue; }
-    const { data, error } = await supabase.rpc("raise_subscription_billing", { p_billing_id: row.id });
+    const { data, error } = await billSubscriptionInstalment(supabase, row.id, dryRun);
     if (error) throw new Error(error.message);
-    const r = data?.[0];
-    if (!r) throw new Error(`raise_subscription_billing returned nothing for instalment ${row.id}`);
-    if (r.already_raised) out.alreadyRaised += 1;
-    else out.raised.push({ period_index: row.period_index, invoice_id: r.invoice_id, gross: r.gross });
+    applyBillOutcome(out, row.period_index, data, dryRun);
   }
 
   /* R-527: OWED follows the instalments that have fallen due, not the year. */
@@ -176,6 +194,22 @@ export async function syncSubscriptionInstalments(args: {
     if (error) throw new Error(error.message);
   }
   return out;
+}
+
+export function emptySyncResult(): InstalmentSyncResult {
+  return {
+    skip: null, created: 0, resynced: 0, raised: [], alreadyRaised: 0, wouldRaise: 0,
+    requests: [], requestsOpen: [], wouldRequest: 0,
+  };
+}
+
+/**
+ * public.bill_subscription_instalment (R-2044, migration 20261028025317): invoice a paid part, or
+ * make (once) the payment request of an unpaid one. Untyped call, shapes pinned in
+ * part-requests.ts (BillOutcome), like sync_split_outstanding below.
+ */
+export function billSubscriptionInstalment(supabase: Admin, billingId: string, dryRun: boolean): PromiseLike<{ data: unknown; error: { message: string } | null }> {
+  return (supabase as unknown as SupabaseClient).rpc("bill_subscription_instalment", { p_billing_id: billingId, p_dry_run: dryRun });
 }
 
 /**
@@ -204,6 +238,95 @@ export interface QuoteInstalmentOutcome {
   errors: { subscription_id: string; message: string }[];
   /** True when the quote has at least one split-billed subscription. */
   splitBilled: boolean;
+  /** R-2057: every due part of the quote that HAS its tax invoice — raised now or before — so the
+      Invoices page's Generate opens the one that exists instead of failing or making another. */
+  invoices: PartInvoice[];
+}
+
+/**
+ * R-2057: the due parts (bill_on ≤ today) of these subscriptions that have their tax invoice, in
+ * period order. `onlyBillingId` narrows it to one part (a part's own payment request).
+ */
+export async function duePartInvoices(
+  supabase: Admin,
+  args: { subscriptionIds: string[]; todayISO: string; raisedNow: ReadonlySet<string>; onlyBillingId?: string | null },
+): Promise<PartInvoice[]> {
+  if (args.subscriptionIds.length === 0) return [];
+  let q = supabase
+    .from("subscription_billings")
+    .select("id, subscription_id, period_index, period_start, period_end, bill_on, invoice_id")
+    .in("subscription_id", args.subscriptionIds)
+    .not("invoice_id", "is", null)
+    .lte("bill_on", args.todayISO);
+  if (args.onlyBillingId) q = q.eq("id", args.onlyBillingId);
+  const { data: rows, error } = await q;
+  if (error) throw new Error(error.message);
+  if (!rows || rows.length === 0) return [];
+  const [{ data: subs }, { data: invs }] = await Promise.all([
+    supabase.from("subscriptions").select("id, billing_cycle").in("id", [...new Set(rows.map((r) => r.subscription_id))]),
+    supabase.from("invoices").select("id, amount").in("id", rows.map((r) => r.invoice_id as string)),
+  ]);
+  const cycleOf = new Map((subs ?? []).map((x) => [x.id, (x.billing_cycle ?? null) as string | null]));
+  const amountOf = new Map((invs ?? []).map((x) => [x.id, x.amount ?? 0]));
+  /* R-2092: the parts of one quote period share ONE invoice — report it once. */
+  const seen = new Set<string>();
+  return [...rows]
+    .sort((a, b) => a.period_start.localeCompare(b.period_start) || a.period_index - b.period_index)
+    .filter((r) => {
+      const id = r.invoice_id as string;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .map((r) => ({
+      subscription_id: r.subscription_id,
+      period_index:    r.period_index,
+      part:            partName(cycleOf.get(r.subscription_id) ?? null, r.period_index),
+      invoice_id:      r.invoice_id as string,
+      gross:           amountOf.get(r.invoice_id as string) ?? 0,
+      period_start:    r.period_start,
+      period_end:      r.period_end,
+      raised_now:      args.raisedNow.has(r.invoice_id as string),
+    }));
+}
+
+/**
+ * R-2092: lay (insert / re-sync, no billing) the parts of every subscription in `subs`. A failure
+ * is RETURNED per subscription and logged — never swallowed (68ed55d70 swallowed it, and on
+ * localhost the quote's Q1 went out as the Starter alone). Billing stays safe without it: the
+ * database bills no part while another subscription of its quote has no parts laid
+ * (bill_subscription_instalment → 'waiting', migration 20261029052411).
+ * Returns the parts laid / re-synced, for the cron's counts. A dry run writes nothing.
+ */
+export async function layInstalments(
+  supabase: Admin,
+  subs: InstalmentSub[],
+  quoteOf: (sub: InstalmentSub) => QuotePaymentFacts | undefined,
+  todayISO: string,
+  dryRun: boolean,
+): Promise<{ created: number; resynced: number; errors: { subscription_id: string; message: string }[] }> {
+  const out = { created: 0, resynced: 0, errors: [] as { subscription_id: string; message: string }[] };
+  if (dryRun) return out;
+  for (const sub of subs) {
+    try {
+      const r = await syncSubscriptionInstalments({ supabase, sub, quote: quoteOf(sub), todayISO, layOnly: true });
+      out.created += r.created;
+      out.resynced += r.resynced;
+    } catch (e) {
+      const message = `Laying the parts failed: ${e instanceof Error ? e.message : String(e)}`;
+      console.error(`[billing/lay] subscription ${sub.id}: ${message}`);
+      out.errors.push({ subscription_id: sub.id, message });
+    }
+  }
+  return out;
+}
+
+/** R-2092: the subscriptions in `subs` that share their quote with another one in `subs`. */
+export function quoteSiblings<T extends Pick<InstalmentSub, "tenant_id" | "quote_id">>(subs: T[]): T[] {
+  const key = (s: T) => `${s.tenant_id}:${s.quote_id}`;
+  const count = new Map<string, number>();
+  for (const s of subs) if (s.quote_id) count.set(key(s), (count.get(key(s)) ?? 0) + 1);
+  return subs.filter((s) => s.quote_id != null && (count.get(key(s)) ?? 0) > 1);
 }
 
 /**
@@ -219,7 +342,40 @@ export async function raiseDueInstalmentsForQuote(args: {
   todayISO: string;
 }): Promise<QuoteInstalmentOutcome> {
   const { supabase, quoteId, tenantId, todayISO } = args;
-  const out: QuoteInstalmentOutcome = { raised: [], errors: [], splitBilled: false };
+  const out: QuoteInstalmentOutcome = { raised: [], errors: [], splitBilled: false, invoices: [] };
+  /* R-2057: which of the reported invoices THIS call raised. `raised` keeps its meaning for the
+     Record payment toast (a part request's invoice raised by the payment trigger is in it). */
+  const raisedNow = new Set<string>();
+  const withInvoices = async (subscriptionIds: string[], onlyBillingId?: string) => {
+    try {
+      out.invoices = await duePartInvoices(supabase, { subscriptionIds, todayISO, onlyBillingId, raisedNow });
+    } catch (e) {
+      out.errors.push({ subscription_id: subscriptionIds[0] ?? "", message: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
+  /* R-2044: the paid quote is ONE part's payment request → that part's tax invoice. Paying it
+     already raised it in the same transaction (tg_payments_part_request_invoice); this reports
+     it, or raises it now if that step was refused then (e.g. the customer had no state). */
+  const part = await partRequestOf(supabase, quoteId, tenantId);
+  if (part) {
+    out.splitBilled = true;
+    try {
+      const { data, error: bErr } = await billSubscriptionInstalment(supabase, part.billingId, false);
+      if (bErr) throw new Error(bErr.message);
+      const r = data as BillOutcome;
+      const invoiceId = r.action === "invoice" || r.action === "already_invoiced" ? r.invoice_id ?? null : null;
+      if (invoiceId && r.action === "invoice" && !r.already_raised) raisedNow.add(invoiceId);
+      if (invoiceId) {
+        const { data: inv } = await supabase.from("invoices").select("amount").eq("id", invoiceId).maybeSingle();
+        out.raised.push({ subscription_id: part.subscriptionId, period_index: part.periodIndex, invoice_id: invoiceId, gross: inv?.amount ?? 0 });
+      }
+    } catch (e) {
+      out.errors.push({ subscription_id: part.subscriptionId, message: e instanceof Error ? e.message : String(e) });
+    }
+    await withInvoices([part.subscriptionId], part.billingId);
+    return out;
+  }
   const { data: subs, error } = await supabase
     .from("subscriptions")
     .select(INSTALMENT_SUB_SELECT)
@@ -230,16 +386,24 @@ export async function raiseDueInstalmentsForQuote(args: {
   if (!subs || subs.length === 0) return out;
 
   const facts = await readQuotePaymentFacts(supabase, quoteId);
+  /* R-2092: every subscription's parts are laid first, then billed — a quote's parts for one
+     period become ONE tax invoice only when they all exist at the first bill. */
+  if (subs.length > 1) {
+    const laid = await layInstalments(supabase, subs, () => facts, todayISO, false);
+    out.errors.push(...laid.errors);
+  }
   for (const sub of subs) {
     try {
       const r = await syncSubscriptionInstalments({ supabase, sub, quote: facts, todayISO });
       if (r.skip?.code === "not_split_billed") continue;
       out.splitBilled = true;
-      for (const x of r.raised) out.raised.push({ subscription_id: sub.id, ...x });
+      for (const x of r.raised) { out.raised.push({ subscription_id: sub.id, ...x }); raisedNow.add(x.invoice_id); }
     } catch (e) {
       out.splitBilled = true;
       out.errors.push({ subscription_id: sub.id, message: e instanceof Error ? e.message : String(e) });
     }
   }
+  if (out.splitBilled) await withInvoices(subs.filter((x) => x.billing_cycle !== "yearly").map((x) => x.id));
   return out;
 }
+

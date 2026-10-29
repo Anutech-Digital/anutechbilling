@@ -15,6 +15,18 @@ const noop = () => {};
 const handlers = { onManageSeats: noop, onExtend: noop, onOpenCustomer: noop, onStatement: noop, onCorrect: noop };
 
 describe("R-1727 drawer actions — the everyday job first", () => {
+  it("R-2073: Upgrade plan shows only when the page passes a handler, as a secondary button", () => {
+    const onUpgradePlan = vi.fn();
+    render(<SubDrawerActions hasCustomer primary {...handlers} onUpgradePlan={onUpgradePlan} />);
+    const b = screen.getByRole("button", { name: /Upgrade plan/ });
+    expect(b.className).not.toMatch(/bg-amber/);
+    fireEvent.click(b);
+    expect(onUpgradePlan).toHaveBeenCalledOnce();
+    cleanup();
+    render(<SubDrawerActions hasCustomer primary {...handlers} />);
+    expect(screen.queryByRole("button", { name: /Upgrade plan/ })).toBeNull();
+  });
+
   it("Manage seats is the primary (amber) button; the rest are secondary", () => {
     render(<SubDrawerActions hasCustomer primary {...handlers} />);
     const seats = screen.getByRole("button", { name: /Manage seats/ });

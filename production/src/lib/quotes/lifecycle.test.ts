@@ -151,3 +151,23 @@ describe("paid step follows the money, not the invoice (R-159)", () => {
     expect(readFileSync(join(__dirname, "../../app/(app)/quotes/[id]/page.tsx"), "utf8")).toMatch(/paid: quoteIsPaid\(quote\)/);
   });
 });
+
+/* R-2101 (29 Oct 2026, localhost): a 2-subscription quarterly sale, Q1 paid ₹95,993, got ONE
+   combined part invoice (R-2092) — and the quote page still said "INVOICED – No invoice yet",
+   because a part's invoice is linked through subscription_billings, not quotes.invoice_id. */
+describe("a sale billed in parts: the parts' invoices tick Invoiced (R-2101)", () => {
+  const sale = { status: "accepted" as const, paymentStatus: "received" as const, invoiceId: null, hasSignature: true, provisionStatus: "not_required" as const, paid: true };
+  it("Q1's combined invoice → Invoiced is done and names it", () => {
+    const step = quoteLifecycle({ ...sale, partInvoices: ["INV-1111-27-0016"] }).steps.find((s) => s.stage === "invoiced")!;
+    expect(step.state).toBe("done");
+    expect(step.detail).toBe("Tax invoice INV-1111-27-0016 issued for the paid part. Each later part is invoiced when it is paid.");
+  });
+  it("no part invoiced yet → still No invoice yet", () => {
+    const step = quoteLifecycle({ ...sale, partInvoices: [] }).steps.find((s) => s.stage === "invoiced")!;
+    expect(step.state).not.toBe("done");
+    expect(step.detail).toBe("No invoice yet.");
+  });
+  it("the quote page passes the parts' invoices", () => {
+    expect(readFileSync(join(__dirname, "../../app/(app)/quotes/[id]/page.tsx"), "utf8")).toMatch(/partInvoices: partInvoices/);
+  });
+});

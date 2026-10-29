@@ -17,7 +17,7 @@ import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { INVOICE_TABS } from "@/lib/navigation/drilldown";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useInvoices, useQuotesAwaitingInvoice, useGenerateInvoice, useDeleteProjectInvoice, useDeleteSubscriptionInvoice, useDocumentSeries } from "@/lib/queries/invoices";
+import { useInvoices, useQuotesAwaitingInvoice, useGenerateInvoice, useGeneratePartInvoice, useDeleteProjectInvoice, useDeleteSubscriptionInvoice, useDocumentSeries } from "@/lib/queries/invoices";
 import { RecordSubscriptionPaymentContainer } from "./record-invoice-payment";
 import { useProjectPaymentsByInvoice, useProjectInvoiceIds, useMilestoneByInvoice } from "@/lib/queries/projects";
 import { RecordProjectPaymentDialog } from "@/components/features/projects/record-project-payment-dialog";
@@ -71,6 +71,7 @@ import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import type { Invoice } from "@/lib/supabase/database.types";
 import { InvoiceNotesList, InvoicePaymentsAccordion } from "./invoice-detail";
 import { invoiceHref, legacyOpenRedirect, NEW_INVOICE_HREF } from "./invoice-href";
+import type { PendingPartAction, PartGenerateResult } from "@/lib/invoices/split-sale-pending";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 import { downloadServerExport } from "@/lib/exports/download-server-export";
 import { mayExport } from "@/lib/exports/server-export";
@@ -135,6 +136,33 @@ function InvoicesPageInner() {
   const { data: noteTotals } = useInvoiceNoteTotals();
   const { data: pending } = useQuotesAwaitingInvoice();
   const generateInvoice = useGenerateInvoice();
+  /* R-2057: a sale billed in parts — Generate issues the due PART's invoice (the billing job's path),
+     or opens it when it already exists. Never the whole term. */
+  const generatePart = useGeneratePartInvoice();
+  const [partBusy, setPartBusy] = React.useState<string | null>(null);
+  const showPartResult = React.useCallback((res: PartGenerateResult) => {
+    if (res.kind === "refused") {
+      toast.error(res.title, { description: res.description, duration: 15_000 });
+      return;
+    }
+    const open = () => router.push(invoiceHref(res.invoiceId) as never);
+    if (res.kind === "existing") {
+      toast.info(res.title, { description: `${res.description} · opening it` });
+      open();
+      return;
+    }
+    toast.success(res.title, { description: res.description, duration: 15_000, action: { label: "Open invoice", onClick: open } });
+  }, [router]);
+  const issuePart = React.useCallback(async (quoteId: string) => {
+    setPartBusy(quoteId);
+    try {
+      showPartResult(await generatePart.mutateAsync(quoteId));
+    } catch {
+      /* toastInvoiceIssueError already said why */
+    } finally {
+      setPartBusy(null);
+    }
+  }, [generatePart, showPartResult]);
   // Combined by default — Subscription & Project invoices live in one list
   // (each row carries a Type badge). The tabs below are just an optional filter.
   const [view, setView] = React.useState<"all" | "subscription" | "project">("all");
@@ -201,10 +229,12 @@ function InvoicesPageInner() {
          issue-consequences then says nothing rather than warning about a GSTIN nobody
          looked for. */
       customer_gstin?: string | null;
+      part_action?: PendingPartAction;
     }) => ({
       id: q.id,
       customerName: q.customer_name ?? null,
-      amount: q.amount ?? null,
+      /* R-2057: a part's invoice is for the part, not the year. */
+      amount: q.part_action?.kind === "part" ? q.part_action.amount ?? q.amount ?? null : q.amount ?? null,
       paymentTermsDays: q.payment_terms_days ?? null,
       customerGstin: q.customer_gstin ?? null,
     }),
@@ -248,7 +278,15 @@ function InvoicesPageInner() {
     setGenerating(true);
     let ok = 0, fail = 0;
     for (const id of pendingSelected) {
+      const act = pending?.find((q) => q.id === id)?.part_action;
       try {
+        if (act?.kind === "short") { fail++; continue; }   // not paid in full — no tax invoice yet
+        if (act?.kind === "part") {
+          /* R-2057: the part's invoice through the billing job's path; an existing one counts as done. */
+          const res = await generatePart.mutateAsync(id);
+          if (res.kind === "refused") fail++; else ok++;
+          continue;
+        }
         await generateInvoice.mutateAsync(id);
         ok++;
       } catch {
@@ -260,7 +298,7 @@ function InvoicesPageInner() {
     setConfirmBulk(false);
     if (ok > 0) toast.success(`Generated ${ok} invoice${ok === 1 ? "" : "s"}` + (fail ? ` · ${fail} failed` : ""));
     if (fail > 0 && ok === 0) toast.error(`${fail} invoice${fail === 1 ? "" : "s"} failed`, { description: "Nothing was raised. Open a quote to see why and generate it from there." });
-  }, [pendingSelected, generateInvoice]);
+  }, [pendingSelected, generateInvoice, generatePart, pending]);
   const [generating, setGenerating] = React.useState(false);
 
 
@@ -395,7 +433,9 @@ function InvoicesPageInner() {
           urgent:  pending.filter((q: any) => { const d = ageOf(q); return d > 30 && d <= 60; }),
           overdue: pending.filter((q: any) => ageOf(q) > 60),
         };
-        const sumAmt = (arr: any[]) => arr.reduce((s, q) => s + Math.max(0, (q.amount ?? 0) - (q.paid_amount ?? 0)), 0);
+        /* R-2057: a part row counts the part it would invoice, not the year. */
+        const rowAmt = (q: any) => (q.part_action?.kind === "part" || q.part_action?.kind === "short") ? (q.part_action.amount ?? q.amount ?? 0) : (q.amount ?? 0);
+        const sumAmt = (arr: any[]) => arr.reduce((s, q) => s + Math.max(0, rowAmt(q) - (q.paid_amount ?? 0)), 0);
         const totalAmt = sumAmt(pending);
 
         const togglePending = (id: string) => {
@@ -403,9 +443,11 @@ function InvoicesPageInner() {
           if (next.has(id)) next.delete(id); else next.add(id);
           setPendingSelected(next);
         };
+        /* R-2057: a part not paid in full cannot be selected — nothing to issue yet. */
+        const selectableCount = pending.filter((q) => q.part_action?.kind !== "short").length;
         const toggleAllPending = () => {
-          if (pendingSelected.size === pending.length) setPendingSelected(new Set());
-          else setPendingSelected(new Set(pending.map((q) => q.id)));
+          if (pendingSelected.size === selectableCount) setPendingSelected(new Set());
+          else setPendingSelected(new Set(pending.filter((q) => q.part_action?.kind !== "short").map((q) => q.id)));
         };
 
         return (
@@ -504,9 +546,12 @@ function InvoicesPageInner() {
                           {/* Opens the confirmation rather than issuing. The number this
                               will take, the amount, and the fact that it cannot be edited
                               afterwards are all things the operator could not see before. */}
-                          <Button size="sm" variant="primary" icon="receipt" loading={generateInvoice.isPending} onClick={() => setConfirmSingle(q.id)}>
-                            Generate
-                          </Button>
+                          <PendingRowAction
+                            act={q.part_action}
+                            busy={generateInvoice.isPending || partBusy === q.id}
+                            onWhole={() => setConfirmSingle(q.id)}
+                            onPart={() => { void issuePart(q.id); }}
+                          />
                         </div>
                       </li>
                     );
@@ -521,7 +566,7 @@ function InvoicesPageInner() {
                         <th className="p-2 w-10">
                           <input
                             type="checkbox"
-                            checked={pendingSelected.size === pending.length && pending.length > 0}
+                            checked={pendingSelected.size === selectableCount && selectableCount > 0}
                             onChange={toggleAllPending}
                             className="w-3.5 h-3.5 accent-amber cursor-pointer"
                             aria-label="Select all pending"
@@ -555,6 +600,8 @@ function InvoicesPageInner() {
                               <input
                                 type="checkbox"
                                 checked={isSel}
+                                /* R-2057: a part not paid in full has nothing to issue yet. */
+                                disabled={q.part_action?.kind === "short"}
                                 onChange={() => togglePending(q.id)}
                                 className="w-3.5 h-3.5 accent-amber cursor-pointer"
                                 aria-label={`Select ${q.id}`}
@@ -598,17 +645,15 @@ function InvoicesPageInner() {
                               </Badge>
                             </td>
                             <td className="p-2 text-right">
-                              <Button
-                                size="sm"
-                                variant="primary"
-                                icon="receipt"
-                                loading={generateInvoice.isPending}
-                                /* Same confirmation as the phone button and the bulk issue (R-082 jaanch,
-                                   1 Oct): this one issued a GST invoice on a bare click. */
-                                onClick={() => setConfirmSingle(q.id)}
-                              >
-                                Generate
-                              </Button>
+                              {/* Same confirmation as the phone button and the bulk issue (R-082 jaanch,
+                                  1 Oct) for a whole-quote invoice. R-2057: a part's invoice is what the
+                                  billing job issues on its own — no second confirmation. */}
+                              <PendingRowAction
+                                act={q.part_action}
+                                busy={generateInvoice.isPending || partBusy === q.id}
+                                onWhole={() => setConfirmSingle(q.id)}
+                                onPart={() => { void issuePart(q.id); }}
+                              />
                             </td>
                           </tr>
                         );
@@ -1430,6 +1475,37 @@ function BucketTile({ label, count, amount, tone }: {
       <div className="font-serif text-xl mt-0.5 tabular-nums">{count}</div>
       <div className="text-2xs tabular-nums opacity-80 mt-0.5">{rupee(amount)}</div>
     </div>
+  );
+}
+
+/**
+ * R-2057: the action of one pending row. A whole quote → "Generate" (opens the issue confirmation,
+ * as before). A sale billed in parts → "Generate invoice for Q1 ₹X" with the part's dates under it.
+ * A due part not paid in full → no button: what is short and the next step.
+ */
+function PendingRowAction({ act, busy, onWhole, onPart }: {
+  act:     PendingPartAction | undefined;
+  busy:    boolean;
+  onWhole: () => void;
+  onPart:  () => void;
+}) {
+  if (act?.kind === "short") {
+    return <p className="text-2xs text-amber-ink text-left max-w-[16rem] ml-auto whitespace-normal">{act.note}</p>;
+  }
+  if (act?.kind === "part") {
+    return (
+      <div className="inline-flex flex-col items-end gap-0.5">
+        <Button size="sm" variant="primary" icon="receipt" loading={busy} onClick={onPart}>
+          {`Generate invoice for ${act.part}${act.amount != null ? ` ${rupee(act.amount)}` : ""}`}
+        </Button>
+        {act.period && <span className="text-3xs text-ink-3 whitespace-nowrap">{act.period}</span>}
+      </div>
+    );
+  }
+  return (
+    <Button size="sm" variant="primary" icon="receipt" loading={busy} onClick={onWhole}>
+      Generate
+    </Button>
   );
 }
 

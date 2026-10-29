@@ -1,6 +1,6 @@
 /**
  * R-2020 (R-2019a, 27 Oct 2026): the catalogue rows → the page's tiers (R-276 floor, R-157 real
- * monthly rate only, R-328 Plus without a price) and the fallback when the catalogue is empty.
+ * monthly rate only, R-328 Plus without a price). No typed fallback prices since R-2027.
  * Moved out of buy-workspace-client.tsx unchanged, so the desktop page and the phone flow build
  * their plans from ONE copy — no second price rule.
  */
@@ -28,7 +28,7 @@ export interface Tier {
 /**
  * What the Server Component (page.tsx) passes in. One row per enabled
  * Google Workspace SKU in the reseller's Item Catalog. When empty, the
- * client falls back to FALLBACK_TIERS below.
+ * page shows "Loading prices…" (null) or "not available online" (empty) — R-2027.
  */
 export interface CatalogItem {
   id:         string;
@@ -154,81 +154,7 @@ export function buildTiers(catalog: CatalogItem[]): Tier[] {
 
 // NOTE: Business Base (₹99/user) is excluded — it's vendor-direct only,
 // resellers cannot sell it. Customers wanting Base must buy from Google directly.
-// FALLBACK_TIERS used only when the catalog returns zero enabled Google Workspace
-// items. Real source of truth is the items table (page.tsx fetches it server-side).
-export const FALLBACK_TIERS: Tier[] = [
-  {
-    id: "starter",
-    catalogId: null,
-    name: "Business Starter",
-    monthlyPrice: 325,
-    annualPrice:  270,
-    maxUsers:     300,
-    cta:          "Get a quote",
-    introHeader:  "Starter includes:",
-    features: [
-      "30 GB pooled storage per person",
-      "Custom business email @yourcompany",
-      "Gemini AI in Gmail",
-      "Gemini app access + NotebookLM",
-      "100-participant video meetings",
-      "Google Vids — AI video creation",
-      "Workspace Studio automation",
-      "Manage up to 300 users",
-    ],
-  },
-  {
-    id: "standard",
-    catalogId: null,
-    name: "Business Standard",
-    monthlyPrice: 1300,
-    annualPrice:  1080,
-    maxUsers:     300,
-    isPopular:    true,
-    cta:          "Get a quote",
-    introHeader:  "All of Starter, and:",
-    features: [
-      "2 TB pooled storage (65× more than Starter)",
-      "Gemini in Docs, Meet, Sheets, Slides",
-      "Expanded NotebookLM access",
-      "150-participant meetings with recording",
-      "Noise cancellation + auto-transcripts",
-      "Custom email layouts + mail merge",
-      "Appointment booking + eSignature in Docs",
-      "Google Workspace Migrate tool",
-    ],
-  },
-  /* R-1970 (Pardeep, 26 Oct): Plus is 1,500 / 1,800 — but R-328 keeps its price off the
-     website, so while that policy holds the fallback card is quote-only, like the catalogue one. */
-  {
-    id: "plus",
-    catalogId: null,
-    name: "Business Plus",
-    monthlyPrice: isPublicPriceHiddenTier("plus") ? null : 1800,
-    annualPrice:  isPublicPriceHiddenTier("plus") ? null : 1500,
-    maxUsers:     300,
-    cta:          "Get a quote",
-    introHeader:  "All of Standard, and:",
-    features:     TIER_PRESETS.plus.features,
-  },
-  {
-    id: "enterprise",
-    catalogId: null,
-    name: "Enterprise",
-    monthlyPrice: null,
-    annualPrice:  null,
-    maxUsers:     null,
-    cta:          "Contact sales",
-    introHeader:  "All features, with:",
-    features: [
-      "5 TB pooled storage per person",
-      "1,000-participant livestreaming",
-      "S/MIME encryption",
-      "Data Loss Prevention (DLP)",
-      "Context-aware access policies",
-      "Enterprise data regions",
-      "Cloud Identity Premium",
-      "Enhanced support for mission-critical issues",
-    ],
-  },
-];
+// R-2027 (27 Oct 2026): there are no typed fallback tiers any more. They priced the page
+// when the catalogue read failed on a cold start — prices that go wrong the day the catalogue
+// changes. The page now shows "Loading prices…" and fetches the catalogue (use-buy-catalog.ts),
+// or says prices are not available online — never a price that is not the catalogue's.
