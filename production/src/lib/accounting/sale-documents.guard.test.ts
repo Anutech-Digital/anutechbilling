@@ -142,6 +142,7 @@ const TS_SALE = new Set([
   "src/components/features/accounting/tally-daybook-button.tsx",  // Tally Sales vouchers
   "src/lib/queries/gst-health.ts",                                // GST checks of our invoices
   "src/lib/queries/month-close.ts",                               // month's output GST
+  "src/app/api/v1/support/invoices/summary/route.ts",             // R-2079: support revenue for DSP
 ]);
 const TS_NOT_SALE: Record<string, string> = {
   "src/app/(public)/buy/workspace/thanks/fetch-order.ts": "R-1971: the number of this order's own GST invoice (by quote_id) for the buyer's thanks page — not a list or a total",
