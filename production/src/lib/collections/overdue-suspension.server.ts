@@ -34,6 +34,7 @@ import {
   NOTICE_GRACE_DAYS,
   SUSPEND_NOTICE_STEP,
   decideOverdueSuspension,
+  isSupportItem,
   oldestOverdueInvoice,
   suspendThreshold,
   suspensionNoticeMessage,
@@ -60,7 +61,7 @@ interface TenantRow {
 }
 interface SubRow {
   id: string; tenant_id: string; customer_id: string | null; customer_name: string;
-  plan: string; domain: string | null; quote_id: string | null; status: string;
+  plan: string; domain: string | null; quote_id: string | null; item_id?: string | null; status: string;
 }
 interface InvRow extends OverdueInvoice {
   tenant_id: string; customer_name: string; quote_id: string | null; amount: number;
@@ -88,7 +89,7 @@ export async function runOverdueSuspension(
   const [subs, invoices] = await Promise.all([
     fetchAllRowsIn(tenantIds, (ids, from, to) => supabase
       .from("subscriptions")
-      .select("id, tenant_id, customer_id, customer_name, plan, domain, quote_id, status")
+      .select("id, tenant_id, customer_id, customer_name, plan, domain, quote_id, item_id, status")
       .in("tenant_id", ids).eq("status", "active")
       .order("id", { ascending: true }).range(from, to)) as Promise<SubRow[]>,
     fetchAllRowsIn(tenantIds, (ids, from, to) => supabase
@@ -148,6 +149,9 @@ export async function runOverdueSuspension(
 
   for (const sub of subs) {
     /* R-897 */ if (!cronTenantAllowed(sub.tenant_id)) continue;
+    /* R-2070: support plans have their own fixed rule (support-overdue-pause.server.ts). They
+       still count in subsPerQuote above, so a Workspace + Support quote is judged as before. */
+    if (isSupportItem(sub.item_id)) continue;
     const tenant = tenantById.get(sub.tenant_id);
     if (!tenant) continue;
     result.subscriptions_checked++;
