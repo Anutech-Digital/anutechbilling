@@ -44,6 +44,7 @@ import { gstTreatmentOption } from "@/lib/gst/customer-gst-treatment";
 import { GroupFormDialog } from "./group-form-dialog";
 import { useCustomerGroups } from "@/lib/queries/customer-groups";
 import type { Customer } from "@/lib/supabase/database.types";
+import { returnPathFromSearch } from "./return-path";
 
 const selectClass =
   "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
@@ -107,7 +108,8 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
     gstTreatment, gstTreatmentAuto, gstTreatmentMeaning, onTreatmentChange, panLocked,
   } = useCustomerForm({
     customer,
-    onSaved: (id) => router.push(`/customers/${id}` as never),
+    /* R-2108: "?return=" (e.g. Hosting & Domains → Add email) goes back there after Save. */
+    onSaved: (id) => router.push((returnPathFromSearch(window.location.search) ?? `/customers/${id}`) as never),
   });
 
   // Parent account / group picker — links this company to a common reseller.
@@ -185,7 +187,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
     setValue("display_name", val === "individual" ? person : company, { shouldDirty: true });
   };
 
-  const cancel = () => router.push((isEdit && customer ? `/customers/${customer.id}` : "/customers") as never);
+  const cancel = () => router.push((returnPathFromSearch(window.location.search) ?? (isEdit && customer ? `/customers/${customer.id}` : "/customers")) as never);
 
   // Company / GSTIN / email errors live in the always-visible essentials block,
   // so they need no tab dot. Only the tabbed secondary fields do.

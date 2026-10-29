@@ -22,6 +22,7 @@ import { rupee } from "@/lib/utils";
 import { formatIstDate } from "@/lib/dates/ist";
 import { COMPANY } from "@/site/lib/config";
 import type { SupportTierId } from "@/lib/support/tiers";
+import type { SupportBuyPrefill } from "@/lib/support/desk-prefill";
 import { yearlySavingPct, type SupportBuyPlan, type SupportBuyTerm, type SupportPriceView } from "@/lib/support/public-checkout";
 import { STATE_OPTIONS } from "../workspace/_parts/checkout-form";
 import { postJson, NOT_REACHED } from "../workspace/post-json";
@@ -47,6 +48,8 @@ interface Props {
   /** R-2102: the desk customer's plan now; null when the link names no customer we know. */
   current: { tier: SupportTierId; label: string; paidUntil: string | null } | null;
   deskUrl: string | null;
+  /** R-2108: name, company, phone, state of the desk customer we know; null otherwise. */
+  prefill: SupportBuyPrefill | null;
 }
 
 interface CheckoutAnswer {
@@ -81,7 +84,10 @@ function loadRazorpay(): Promise<RzpCtor> {
 export function SupportCheckout(p: Props) {
   const [plan, setPlan] = React.useState<SupportBuyPlan>(p.initialPlan);
   const [term, setTerm] = React.useState<SupportBuyTerm>(p.initialTerm);
-  const [f, setF] = React.useState({ name: "", company: "", email: p.initialEmail, phone: "", gstin: "", stateCode: "" });
+  const [f, setF] = React.useState({
+    name: p.prefill?.name ?? "", company: p.prefill?.company ?? "", email: p.initialEmail,
+    phone: p.prefill?.phone ?? "", gstin: "", stateCode: p.prefill?.stateCode ?? "",
+  });
   const [agree, setAgree] = React.useState(false);
   const [errors, setErrors] = React.useState<Partial<Record<Field, string>>>({});
   const [busy, setBusy] = React.useState(false);

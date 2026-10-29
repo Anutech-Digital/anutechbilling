@@ -28,6 +28,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { toastError } from "@/lib/errors/toast-error";
 import { formatDate } from "@/lib/utils";
+import { editCustomerHref } from "@/components/features/customers/return-path";
 
 const KEY = ["panel-accounts", "overview"] as const;
 
@@ -140,12 +141,12 @@ export function PanelAccountsCard() {
                     </Link>
                     <p className="text-xs text-ink-3">
                       {r.status === "needs_email"
-                        ? "Needs email — add one on the customer and the login is sent on the next run."
+                        ? "Needs email — add one to the customer or its primary contact; the login is sent on the next run."
                         : `Failed ${formatDate(r.updated_at)}${r.last_error ? ` — ${r.last_error}` : ""}`}
                     </p>
                   </div>
                   {r.status === "needs_email" ? (
-                    <Link href={`/customers/${r.customer_id}`} className="text-xs font-medium text-amber-ink hover:underline">
+                    <Link href={editCustomerHref(r.customer_id, "/hosting-domains") as never} className="text-xs font-medium text-amber-ink hover:underline">
                       Add email
                     </Link>
                   ) : canAct ? (

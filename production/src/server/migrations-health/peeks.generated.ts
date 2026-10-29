@@ -265,4 +265,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2102supportsyncplankey", peek: "to_regprocedure('public.support_plan_key(text,text)') is not null and exists (select 1 from pg_proc where proname = 'queue_support_sync' and prosrc like '%R-2102%')" },
   { key: "r2104quoteperiodparts", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.billing_part_group(uuid)') and prosrc like '%R-2104%')" },
   { key: "r2098roundof", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2098 round-off full only%')" },
+  { key: "r2108customerprimaryemail", peek: "to_regprocedure('public.customer_primary_email(uuid)') is not null and exists (select 1 from pg_proc where proname = 'claim_panel_account_outbox' and prosrc like '%R-2108%')" },
 ];

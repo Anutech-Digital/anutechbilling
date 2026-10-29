@@ -90,6 +90,7 @@ export default async function BuySupportPage(props: { searchParams: Promise<Reco
       deskUrl={supportDeskUrl()}
       initialTerm={pick.term}
       initialEmail={pick.email}
+      prefill={current?.prefill ?? null}
       billingCustomerId={pick.billingCustomerId}
       paymentMode={mode}
       sellerName={brand?.name ?? null}
