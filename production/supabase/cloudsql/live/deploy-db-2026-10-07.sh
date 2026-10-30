@@ -308,6 +308,7 @@ MIGS=(
   "gp09apersonalwall|20261030071753_gp09a_personal_restrictive_money.sql|resellersos_migration|(to_regprocedure('public.is_personal_session()') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'tds_receivable' and policyname = 'gp09_personal_wall'))"
   "gp12bpersonalimport|20261030074413_gp12b_personal_import.sql|resellersos_migration|(to_regprocedure('public.personal_import_commit(jsonb)') is not null and to_regclass('public.personal_category_rules') is not null)"
   "r2157agentcheckpoints|20261030084415_r2157_agent_checkpoints.sql|resellersos_migration|to_regclass('public.agent_checkpoints') is not null and to_regclass('public.agent_checkpoint_writes') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'agent_checkpoint_writes' and policyname = 'zzz_service_role_all')"
+  "r2158adagentsafety|20261030084431_r2158_ad_agent_safety.sql|resellersos_migration|(to_regclass('public.ad_agent_actions') is not null and to_regprocedure('public.ad_agent_action_decide(uuid,text,uuid,text,uuid)') is not null)"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

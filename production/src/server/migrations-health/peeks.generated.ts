@@ -280,4 +280,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "gp09apersonalwall", peek: "(to_regprocedure('public.is_personal_session()') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'tds_receivable' and policyname = 'gp09_personal_wall'))" },
   { key: "gp12bpersonalimport", peek: "(to_regprocedure('public.personal_import_commit(jsonb)') is not null and to_regclass('public.personal_category_rules') is not null)" },
   { key: "r2157agentcheckpoints", peek: "to_regclass('public.agent_checkpoints') is not null and to_regclass('public.agent_checkpoint_writes') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'agent_checkpoint_writes' and policyname = 'zzz_service_role_all')" },
+  { key: "r2158adagentsafety", peek: "(to_regclass('public.ad_agent_actions') is not null and to_regprocedure('public.ad_agent_action_decide(uuid,text,uuid,text,uuid)') is not null)" },
 ];
