@@ -275,4 +275,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "gp02bvaultpin", peek: "to_regprocedure('public.vault_pin_begin_attempt(uuid)') is not null and not exists (select 1 from pg_policy where polname = 'personal_vault_pin_all')" },
   { key: "r2095newsalepaiserate", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_new_sale_quote(uuid,uuid,jsonb,text)') and prosrc like '%R-2095%')" },
   { key: "gp04seedbusiness", peek: "to_regprocedure('public.seed_business_workspace(uuid,text[])') is not null and exists(select 1 from pg_trigger where tgname = 'trg_tenants_default_petty_cash' and tgrelid = to_regclass('public.tenants') and pg_get_triggerdef(oid) like '%workspace_kind%') and exists(select 1 from pg_trigger where tgname = 'trg_tenants_customer_messages_on' and tgrelid = to_regclass('public.tenants') and pg_get_triggerdef(oid) like '%workspace_kind%')" },
+  { key: "gp16apersonalidentitylink", peek: "to_regclass('public.personal_identity_link') is not null and to_regprocedure('public.link_personal_identity(uuid,uuid,uuid)') is not null" },
 ];
