@@ -323,6 +323,10 @@ interface RecordPaymentDialogProps {
     isFullyPaid: boolean;
     subscriptionCreated: boolean;
     isFirstPayment: boolean;
+    /** R-2099: the GST invoice this sheet issued with the payment ("Issue GST invoice now"), else null. */
+    invoiceId?: string | null;
+    /** R-2099: the sheet already called generate_invoice (issued, or refused and toasted). */
+    invoiceAttempted?: boolean;
   }) => void;
 }
 
@@ -948,6 +952,11 @@ export function RecordPaymentDialog({
          with the same UTR still filled, one click from being submitted again. Whatever the
          invoice / toast steps below do, a saved payment always ends with the sheet closed. */
       setValue("reference", "");
+      /* R-2099 (30 Oct): whether THIS sheet already tried the GST invoice — handed to onRecorded
+         so a caller (Subscriptions onboarding) does not call generate_invoice a second time and
+         show "INV-… already exists" next to "Paid in full · GST invoice INV-… issued". */
+      let issuedInvoiceId: string | null = null;
+      let invoiceAttempted = false;
       try {
 
       /* ── ONE result toast (R-248) ──────────────────────────────────────────
@@ -998,7 +1007,6 @@ export function RecordPaymentDialog({
          page's button uses (consistency pre-flight + generate_invoice). Only when the payment
          really completed the quote. A refusal is shown by the hook with generate_invoice's own
          reason, and the quote keeps its Generate GST Invoice button — nothing is lost. */
-      let issuedInvoiceId: string | null = null;
       if (shouldIssueAfterPayment({
         ticked: issueInvoice,
         offered: invoiceOffer.offer,
@@ -1006,6 +1014,7 @@ export function RecordPaymentDialog({
         hasExistingInvoice: Boolean(res.hasExistingInvoice),
         isReplay: false,
       })) {
+        invoiceAttempted = true;
         try {
           /* R-447: generate_invoice reads the CUSTOMER's state. A customer made from a lead
              with no state gets the quote's Place of supply first (blank state only). */
@@ -1106,6 +1115,8 @@ export function RecordPaymentDialog({
           isFullyPaid: res.isFullyPaid,
           subscriptionCreated: res.subscriptionCreated,
           isFirstPayment: res.isFirstPayment,
+          invoiceId: issuedInvoiceId,
+          invoiceAttempted,
         });
         onOpenChange(false);
       }
