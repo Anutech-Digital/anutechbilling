@@ -414,6 +414,11 @@ export default function PnLPage() {
                 <Row label="− Depreciation" amount={-data.depreciation} tone="rose" hint="R-1578: Assets register, Income-tax WDV, days in this period"
                      cmp={cmp(data.depreciation, (p) => p.depreciation, "more-is-bad", true)} />
               )}
+              {/* R-2095: income that is not a sale (interest received on FD / savings), booked from bank lines. */}
+              {data.otherIncomeLines.map((l) => (
+                <Row key={l.head} label={`+ ${l.label}`} amount={l.amount} tone="emerald"
+                     hint={`Other income · ${l.count} bank ${l.count === 1 ? "line" : "lines"}`} />
+              ))}
               <Divider thick />
               {/* From `model`, like every other line of this statement. The flat
                   `data.netProfit` subtracts vendor-bill COGS, which is ₹0 when no bills are

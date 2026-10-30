@@ -66,6 +66,9 @@ vi.mock("@/components/features/banking/credit-pay-for-section", () => ({
   ),
 }));
 vi.mock("@/components/features/banking/owner-equity-section", () => ({ OwnerEquitySection: () => null }));
+/* R-2095: the transfer / other-income sections have their own tests (own-transfer-section-r2095). */
+vi.mock("@/components/features/banking/other-income-section", () => ({ OtherIncomeSection: () => null }));
+vi.mock("@/components/features/banking/own-transfer-section", () => ({ OwnTransferSection: () => null }));
 vi.mock("@/components/features/banking/incentive-from-bank-section", () => ({ IncentiveFromBankSection: () => null }));
 /* Money in with no advance to return → the real section renders nothing. */
 vi.mock("@/components/features/banking/employee-advance-bank-section", () => ({ EmployeeAdvanceBankSection: () => null }));

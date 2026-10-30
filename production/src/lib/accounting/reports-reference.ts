@@ -287,6 +287,7 @@ export function referencePnl(range: { from: string; to: string }, r: PnlRawRows,
     revenue, revenueCount, cogs, cogsCount, grossMargin,
     expenses: expensesTotal, expensesCount, expensesByCategory, expenseReport,
     commissions, commissionsCount, depreciation, netProfit,
+    otherIncome: 0, otherIncomeLines: [],   // R-2095: other income comes from report_pnl_other_income only
     outputGST, inputGST, netGST, itcBlocked: itc.blocked,
     marginPct, profitPct, model, projectCost, employeeNames: m.employeeNames,
   };

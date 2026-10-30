@@ -71,6 +71,8 @@ import { isRazorpaySettlementLine } from "@/lib/razorpay/settlement-match";
 import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-section";
 import { EmiRepaymentSection } from "@/components/features/banking/emi-repayment-section";
 import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
+import { OtherIncomeSection } from "@/components/features/banking/other-income-section";
+import { OwnTransferSection } from "@/components/features/banking/own-transfer-section";
 import { IncentiveFromBankSection } from "@/components/features/banking/incentive-from-bank-section";
 import { EmployeeAdvanceBankSection } from "@/components/features/banking/employee-advance-bank-section";
 import { useComplianceProfile } from "@/lib/compliance/profile";
@@ -1099,13 +1101,18 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         </>);
 
       case "transfer":
-        return manualBox(false, <>
+        /* R-2095: post it against the other account (an FD sweep) — or, below, just mark it. */
+        return <>
+          <OwnTransferSection transaction={transaction} onDone={() => onOpenChange(false)} />
+          {manualBox(false, <>
           Money moved between your own bank accounts is not income or expense. Mark this line reconciled — and the
           matching line in the other account the same way.
-        </>);
+        </>)}
+        </>;
 
       case "other":
-        if (isCredit) return manualBox(false);
+        /* R-2095: interest on an FD / savings → other income (P&L); else mark it reconciled. */
+        if (isCredit) return <><OtherIncomeSection transaction={transaction} onDone={() => onOpenChange(false)} />{manualBox(false)}</>;
         return (
           <>
             {/* Book directly as an expense — creates the expense (P&L) and reconciles this line,
