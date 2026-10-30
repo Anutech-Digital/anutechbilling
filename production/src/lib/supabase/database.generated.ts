@@ -16280,6 +16280,7 @@ export type Database = {
         | "delivery"
         | "partner_agent"
         | "marketing"
+        | "personal"
       vault_category:
         | "google_admin"
         | "m365_admin"
@@ -16477,6 +16478,7 @@ export const Constants = {
         "delivery",
         "partner_agent",
         "marketing",
+        "personal",
       ],
       vault_category: [
         "google_admin",
