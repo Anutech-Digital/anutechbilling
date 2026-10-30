@@ -13,8 +13,8 @@ export type CommitChoice = "one_time" | "monthly" | "annual";
 
 export const COMMIT_CHOICES: ReadonlyArray<{ value: CommitChoice; label: string }> = [
   { value: "one_time", label: "One-time" },
-  { value: "monthly", label: "Monthly flex" },
-  { value: "annual", label: "Annual (1-yr)" },
+  { value: "monthly", label: "Flexible (monthly)" },
+  { value: "annual", label: "Annual commitment" },
 ];
 
 /** What the select shows for a saved line. */

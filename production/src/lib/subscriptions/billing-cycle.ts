@@ -43,10 +43,10 @@ export function cycleFromUrl(v: CycleUrlValue): CycleFilter {
 
 export const CYCLE_LABEL: Record<CycleFilter, string> = {
   all:          "All cycles",
-  annual:       "Annual · billed yearly",
-  annual_split: "Annual · billed monthly/quarterly",
+  annual:       "Annual · paid yearly",
+  annual_split: "Annual · paid monthly/quarterly",
   three_year:   "3 years",
-  monthly:      "Monthly (Flexible)",
+  monthly:      "Flexible (monthly)",
   check_term:   "Check term",
   none:         "No term",
 };
@@ -94,12 +94,12 @@ export function subscriptionCycle(sub: CycleSub): SubCycle {
   const tm = sub.term_months;
 
   if (tm != null && tm >= 36) {
-    return { kind: "three_year", term, label: term ? `3 years · billed ${billedWord(term.months)}` : "3 years" };
+    return { kind: "three_year", term, label: term ? `3 years · paid ${billedWord(term.months)}` : "3 years" };
   }
 
   if (isSplitBilled(sub.billing_cycle as BillingCycle)) {
     const len = tm ?? 12;
-    if (len >= 12) return { kind: "annual_split", term, label: `Annual · billed ${billedWord(term?.months ?? 12)}` };
+    if (len >= 12) return { kind: "annual_split", term, label: `Annual · paid ${billedWord(term?.months ?? 12)}` };
     if (len <= 1)  return { kind: "monthly", term, label: CYCLE_LABEL.monthly };
     return { kind: "check_term", term, label: CHECK_TERM_ROW };
   }

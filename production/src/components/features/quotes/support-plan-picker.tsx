@@ -148,7 +148,7 @@ export function SupportPlanPicker({ items, onAdd, selected, onRemove, catalogAcc
 
         {/* Two buttons rather than a dropdown: there are exactly two answers and the
             comparison is the point. */}
-        <div className="flex rounded-lg border border-hairline p-0.5" role="group" aria-label="Billing cycle">
+        <div className="flex rounded-lg border border-hairline p-0.5" role="group" aria-label="Payment frequency">
           {(["monthly", "yearly"] as Cycle[]).map((c) => (
             <button
               key={c}

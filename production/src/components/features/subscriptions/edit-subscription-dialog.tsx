@@ -26,7 +26,7 @@ import {
   useUpdateSubscription, useCorrectSubscriptionTerms, useCorrectSubscriptionCommitment, useScheduleInvoices,
 } from "@/lib/queries/subscriptions";
 import {
-  COMMITMENT_OPTIONS, THREE_YEAR_OPTION, FREQUENCY_LABEL, catalogCostPerSeatMonth, commitmentOf,
+  COMMITMENT_OPTIONS, THREE_YEAR_OPTION, FREQUENCY_LABEL, catalogCostPerSeatMonth, commitmentLabel, commitmentOf,
   commitmentRenewal, commitmentVerdict, frequenciesFor,
 } from "@/lib/subscriptions/commitment-change";
 import { BILLING_CYCLE_INVOICES_PER_YEAR as PARTS_PER_YEAR, type BillingCycle } from "@/lib/supabase/database.types";
@@ -163,6 +163,14 @@ export function EditSubscriptionDialog({
     /* R-2095: a changed commitment sets the term length; otherwise the record's own. */
     setRenewal(termEndInclusive(next, termNext !== termNow ? termNext : recordTermMonths));
   };
+
+  /* R-2095 follow-up: a renewed sub keeps its first start date, so its start→renewal span is
+     several terms (a Flexible sub rolled 15 Jun → 14 Nov read "keeping the term 5 months long").
+     When the span is longer than the stored term, name the commitment instead; the renewal still
+     moves with the start by the same span. */
+  const startHint = sub.term_months != null && sub.term_months > 0 && recordTermMonths > sub.term_months
+    ? `${commitmentLabel(sub.term_months)} — the renewal date moves with it.`
+    : `Renewal follows, keeping the term ${recordTermMonths === 1 ? "one month" : `${recordTermMonths} months`} long.`;
 
   /* ── R-2095: commitment (term_months) and payment frequency (billing_cycle) ─────────── */
   const commitNext = commitmentOf(termNext);
@@ -448,9 +456,8 @@ export function EditSubscriptionDialog({
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Start date" htmlFor="sub_start">
               <Input id="sub_start" type="date" value={startDate} onChange={(e) => changeStart(e.target.value)} />
-              <p className="mt-1 text-2xs leading-snug text-ink-3">
-                Renewal follows, keeping the term{" "}
-                {recordTermMonths === 1 ? "one month" : `${recordTermMonths} months`} long.
+              <p className="mt-1 text-2xs leading-snug text-ink-3" data-testid="start-term-hint">
+                {startHint}
               </p>
             </FormField>
             <FormField label="Renewal date" htmlFor="sub_renewal">

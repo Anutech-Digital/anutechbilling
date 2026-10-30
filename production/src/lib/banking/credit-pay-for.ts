@@ -393,7 +393,7 @@ export function paymentChoice(lines: ReadonlyArray<Pick<SaleLine, "cycle">>): Pa
   if (lines.some((l) => l.cycle === "monthly")) {
     return {
       options: BILLING_CYCLE_OPTIONS.filter((o) => o.id === "monthly"),
-      why: "Monthly flex has no commitment, so it is paid monthly only. Choose Annual (1-yr) for yearly, half-yearly or quarterly payment.",
+      why: "Flexible (monthly) has no commitment, so it is paid monthly only. Choose Annual commitment for yearly, half-yearly or quarterly payment.",
     };
   }
   if (!lines.some((l) => l.cycle === "annual_yearly")) return { options: [], why: null };
@@ -455,7 +455,7 @@ export function saleSchedule(lines: readonly SaleLine[], gstRatePct: number, cyc
 
 /** "Next 3 bills ₹4,814 each, on 21 Jan 2027, 21 Apr 2027 and 21 Jul 2027." */
 export function laterBillsText(s: SaleSchedule, cycle: BillingCycle): string | null {
-  if (s.everyMonth) return `Then ${rupee(s.monthlyGross ?? s.dueNow)} every month while the plan runs (Monthly flex).`;
+  if (s.everyMonth) return `Then ${rupee(s.monthlyGross ?? s.dueNow)} every month while the Flexible (monthly) plan runs.`;
   const n = s.later.length;
   if (n === 0) return null;
   const same = s.later.every((b) => b.gross === s.later[0].gross);

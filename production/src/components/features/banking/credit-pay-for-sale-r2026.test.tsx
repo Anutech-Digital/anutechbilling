@@ -78,7 +78,7 @@ describe("R-2026 new sale: Commitment first, then Payment", () => {
     expect((screen.getByLabelText("Unit price ₹/user/month") as HTMLInputElement).value).toBe("325");
     expect(optionValues("Payment frequency")).toEqual(["monthly"]);
     expect((screen.getByLabelText("Payment frequency") as HTMLSelectElement).disabled).toBe(true);
-    expect(screen.getByText(/Monthly flex has no commitment, so it is paid monthly only/)).toBeTruthy();
+    expect(screen.getByText(/Flexible \(monthly\) has no commitment, so it is paid monthly only/)).toBeTruthy();
     expect(screen.getByText(/₹3,835 received = ₹3,835 due/)).toBeTruthy();
   });
 

@@ -712,7 +712,7 @@ function SaleEditor({ customerDomain, lines, catalog, gstRate, preview, payment,
         <option value="" disabled>{lines.length ? "＋ Add another product…" : "What was sold? Select a product…"}</option>
         {catalog.map((i) => <option key={i.id} value={i.id}>{i.name}{i.vendor ? ` · ${i.vendor}` : ""}</option>)}
       </select>
-      {saleTermsMixed(lines) && <p className="text-xs text-rose-ink">Monthly flex cannot be on one sale with yearly or one-time products — record them as separate sales (or make them all one commitment).</p>}
+      {saleTermsMixed(lines) && <p className="text-xs text-rose-ink">Flexible (monthly) cannot be on one sale with yearly or one-time products — record them as separate sales (or make them all one commitment).</p>}
       {payment.options.length > 0 && (
         <label className="block text-xs text-ink-3 space-y-0.5">
           <span className="block">Payment frequency</span>

@@ -41,7 +41,8 @@ export interface SubscriptionCogs {
 }
 
 type CogsFields = Pick<Subscription,
-  "seats" | "mrr" | "item_id" | "vendor_cost_per_seat_month" | "vendor_synced_at">;
+  "seats" | "mrr" | "item_id" | "vendor_cost_per_seat_month" | "vendor_synced_at">
+  & Partial<Pick<Subscription, "term_months">>;
 
 /**
  * Resolve cost and margin.
@@ -64,12 +65,16 @@ export function subscriptionCogs(sub: CogsFields, catalog: readonly Item[]): Sub
   const item = sub.item_id ? catalog.find((c) => c.id === sub.item_id) : undefined;
   /* The annual tier is the reseller's normal buying price; monthly is the fallback,
      and the legacy `wholesale` column the last resort. Zero is treated as absent —
-     a ₹0 wholesale is a blank field, not a free product. */
-  const catalogRate =
-    item?.prices?.annual?.wholesale ||
-    item?.prices?.monthly?.wholesale ||
-    item?.wholesale ||
-    null;
+     a ₹0 wholesale is a blank field, not a free product.
+     R-2095: a Flexible (monthly) subscription (term_months 1) is bought on the Flexible
+     tier, so that tier comes first for it — the same rule as catalogCostPerSeatMonth. */
+  const flexible = sub.term_months != null && sub.term_months <= 1;
+  const catalogRate = flexible
+    ? item?.prices?.monthly?.wholesale || item?.prices?.annual?.wholesale || item?.wholesale || null
+    : item?.prices?.annual?.wholesale ||
+      item?.prices?.monthly?.wholesale ||
+      item?.wholesale ||
+      null;
 
   if (catalogRate) {
     return build("catalog", catalogRate, seats, mrr,

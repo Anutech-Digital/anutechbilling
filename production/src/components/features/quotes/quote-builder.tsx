@@ -1056,7 +1056,7 @@ function QuoteBuilderBody() {
   const refuseMixedTerm = (next: ReadonlyArray<QuoteLineItem>): boolean => {
     if (!isMixedTerm(next)) return false;
     toast.error(ONE_TERM_MESSAGE, {
-      description: "Monthly flex is billed per month, the other lines per year — one quote can't total both.",
+      description: "Flexible (monthly) is billed per month, the other lines per year — one quote can't total both.",
     });
     return true;
   };
@@ -2908,7 +2908,7 @@ function QuoteBuilderBody() {
                     bill monthly. Per-line PRICE tier (Monthly-flex vs Annual) is a
                     separate control in the items table. */}
                 <div>
-                  <label htmlFor="qb-billing-cycle" className="text-xs font-medium text-ink-3 mb-1.5 block">Billing cycle</label>
+                  <label htmlFor="qb-billing-cycle" className="text-xs font-medium text-ink-3 mb-1.5 block">Payment frequency</label>
                   <select
                     id="qb-billing-cycle"
                     value={effectiveCycle}
@@ -2922,7 +2922,7 @@ function QuoteBuilderBody() {
                   </select>
                   <p className="mt-1.5 text-2xs text-ink-3">
                     {hasFlexMonthly
-                      ? "A line is “Monthly flex” — a no-commitment plan bills monthly, so the whole invoice is monthly."
+                      ? "A line is “Flexible (monthly)” — a no-commitment plan is paid monthly, so the whole invoice is monthly."
                       : <>How often invoices go out. Applies to the whole {isInvoiceMode ? "invoice" : "quote"} — separate from each line’s Monthly-flex vs Annual <b>price</b> (set in the items table).</>}
                   </p>
                 </div>

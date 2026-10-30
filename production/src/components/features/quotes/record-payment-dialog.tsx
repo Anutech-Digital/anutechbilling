@@ -259,6 +259,22 @@ export function TdsShortfallHint({ match, onApply }: { match: TdsShortfallMatch 
   );
 }
 
+/** R-2095: TDS ticked and ₹0 in bank — the receipt saves as method other with no bank account
+ *  (lib/payments/tds-rounding tdsOnlyReceipt), so the sheet must not ask for either. */
+export function isTdsOnlyEntry(tdsDeducted: boolean, bank: number): boolean {
+  return tdsOnlyReceipt({ method: "other", bankAccountId: null, bank, tdsActive: tdsDeducted, notes: null }).tdsOnly;
+}
+
+/** Shown in place of Payment method + Received in on a TDS-only receipt. */
+export function TdsOnlyNoBankNote() {
+  return (
+    <p data-testid="tds-only-no-bank" className="rounded-md border border-hairline bg-paper-2 px-3 py-2 text-xs text-ink-2">
+      TDS only — no money reached your bank, so there is no payment method or account. Saved as
+      &ldquo;TDS deducted by customer&rdquo;.
+    </p>
+  );
+}
+
 /** Compute TDS amount = pre-GST gross × rate%. R-1119: GST is stripped at the quote's own
  *  rate (5% / 12% / 0% export), not a fixed 18%. */
 function computeTds(quoteAmountInclGst: number, ratePct: number, taxRatePct: number | null): { preGST: number; tds: number } {
@@ -502,6 +518,7 @@ export function RecordPaymentDialog({
 
   const watchedAmount = watch("amount") || 0;
   const tdsDeducted   = watch("tdsDeducted") || false;
+  const tdsOnlyEntry  = isTdsOnlyEntry(tdsDeducted, Number(watchedAmount));
   const tdsRatePct    = Number(watch("tdsRatePct") || 0);
   // Has the user hand-edited the bank amount? Until they do, we keep it locked
   // to (remaining − TDS) so net + TDS always settles the quote exactly.
@@ -1391,7 +1408,11 @@ export function RecordPaymentDialog({
           {/* ── How it was paid, and which of YOUR accounts received it (R-404) ──
               Was one list of hard-coded rows with our own company name shown to every company,
               tagging payments with made-up ids the uuid column refused. Now: a plain method
-              list, and this company's own bank / cash accounts. */}
+              list, and this company's own bank / cash accounts.
+              R-2095: a TDS-only receipt (TDS ticked, ₹0 in bank) has neither — it saves as method
+              other with no account, so both fields give way to one line saying so. */}
+          <input type="hidden" {...register("method")} value={method} />
+          {tdsOnlyEntry ? <TdsOnlyNoBankNote /> : (<>
           <FormField label={PAYMENT_FIELD_LABELS.method} required htmlFor="paymentMethod">
             <Select
               value={method}
@@ -1411,7 +1432,6 @@ export function RecordPaymentDialog({
                 ))}
               </SelectContent>
             </Select>
-            <input type="hidden" {...register("method")} value={method} />
           </FormField>
 
           <FormField label={PAYMENT_FIELD_LABELS.receivedIn} htmlFor="depositAccount">
@@ -1423,6 +1443,7 @@ export function RecordPaymentDialog({
               onChange={(id) => { setAccountTouched(true); setBankAccountId(id); }}
             />
           </FormField>
+          </>)}
 
           {/* Received on */}
           <FormField label={PAYMENT_FIELD_LABELS.receivedOn} required htmlFor="receivedDate">

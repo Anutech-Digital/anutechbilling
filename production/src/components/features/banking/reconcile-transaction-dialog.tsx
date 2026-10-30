@@ -1112,7 +1112,13 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
 
       case "other":
         /* R-2095: interest on an FD / savings → other income (P&L); else mark it reconciled. */
-        if (isCredit) return <><OtherIncomeSection transaction={transaction} onDone={() => onOpenChange(false)} />{manualBox(false)}</>;
+        /* R-2095 follow-up: the default manual words listed interest as a no-entry case, against the
+           box above — on money in, interest has one home (the box), so the words say so. */
+        if (isCredit) return <><OtherIncomeSection transaction={transaction} onDone={() => onOpenChange(false)} />{manualBox(false, <>
+          Interest and other income go in the box above, so they reach the P&amp;L. Mark this line reconciled
+          without any entry only when nothing is earned — e.g. a <b>failed / reversed transaction</b> (debited,
+          then credited back): mark <b>both</b> the −₹ and the +₹ line this way. They cancel out.
+        </>)}</>;
         return (
           <>
             {/* Book directly as an expense — creates the expense (P&L) and reconciles this line,

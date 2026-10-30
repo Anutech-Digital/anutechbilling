@@ -34,7 +34,7 @@ describe("linkedSubscriptionView", () => {
   it("plan, status, term, renewal date and the drawer link", () => {
     expect(linkedSubscriptionView(row)).toEqual({
       id: S, plan: "Business Starter", subtitle: "acme.in", status: "Active",
-      term: "Annual · billed yearly", renewalDate: "2027-04-01",
+      term: "Annual · paid yearly", renewalDate: "2027-04-01",
       href: `/subscriptions?open=${S}&q=acme.in`,
     });
   });

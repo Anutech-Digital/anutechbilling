@@ -36,20 +36,20 @@ describe("BillingCycleFilter", () => {
     const group = screen.getByRole("group", { name: "Billing cycle" });
     expect(group).toBeTruthy();
     const names = screen.getAllByRole("button").map((b) => b.textContent);
-    expect(names).toEqual(["All cycles4", "Annual · billed yearly2", "Annual · billed monthly/quarterly1", "Monthly (Flexible)1"]);
+    expect(names).toEqual(["All cycles4", "Annual · paid yearly2", "Annual · paid monthly/quarterly1", "Flexible (monthly)1"]);
     expect(screen.queryByRole("button", { name: /Quarterly/ })).toBeNull();
   });
 
   it("marks the chosen cycle with aria-pressed", () => {
     render(<BillingCycleFilter options={cycleOptions(rows, "monthly")} value="monthly" onChange={() => {}} />);
-    expect(screen.getByRole("button", { name: /^Monthly/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: /^Flexible \(monthly\)/ }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: /^All cycles/ }).getAttribute("aria-pressed")).toBe("false");
   });
 
   it("calls onChange with the cycle clicked (real buttons, so Enter/Space work)", () => {
     const onChange = vi.fn();
     render(<BillingCycleFilter options={cycleOptions(rows, "all")} value="all" onChange={onChange} />);
-    const btn = screen.getByRole("button", { name: /Annual · billed monthly\/quarterly/ });
+    const btn = screen.getByRole("button", { name: /Annual · paid monthly\/quarterly/ });
     expect(btn.tagName).toBe("BUTTON");
     fireEvent.click(btn);
     expect(onChange).toHaveBeenCalledWith("annual_split");

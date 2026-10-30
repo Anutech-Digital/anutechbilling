@@ -38,9 +38,9 @@ const noDates     = sub({ start_date: null, renewal_date: null });
 
 describe("R-1774 — chip names say what they mean", () => {
   it("uses the vendor words", () => {
-    expect(CYCLE_LABEL.annual).toBe("Annual · billed yearly");
-    expect(CYCLE_LABEL.annual_split).toBe("Annual · billed monthly/quarterly");
-    expect(CYCLE_LABEL.monthly).toBe("Monthly (Flexible)");
+    expect(CYCLE_LABEL.annual).toBe("Annual · paid yearly");
+    expect(CYCLE_LABEL.annual_split).toBe("Annual · paid monthly/quarterly");
+    expect(CYCLE_LABEL.monthly).toBe("Flexible (monthly)");
     expect(CYCLE_LABEL.three_year).toBe("3 years");
     expect(CYCLE_LABEL.check_term).toBe("Check term");
     expect(CYCLE_LABEL.none).toBe("No term");
@@ -59,7 +59,7 @@ describe("R-1774 — a 3- or 6-month TERM goes under Check term", () => {
     expect(subscriptionCycle(qtrSpan).kind).toBe("check_term");
     expect(subscriptionCycle(halfSpan).kind).toBe("check_term");
   });
-  it("a 3-month term billed monthly is Check term, not Monthly (Flexible)", () => {
+  it("a 3-month term billed monthly is Check term, not Flexible (monthly)", () => {
     expect(subscriptionCycle(sub({ billing_cycle: "monthly", term_months: 3 })).kind).toBe("check_term");
   });
   it("the row says what to do, and never changes the data", () => {
@@ -82,23 +82,23 @@ describe("R-1774 — 3 years", () => {
     expect(subscriptionCycle(triennialMo).kind).toBe("three_year");
   });
   it("row label names the term and how it is billed", () => {
-    expect(subscriptionCycle(triennial).label).toBe("3 years · billed yearly");
-    expect(subscriptionCycle(triennialMo).label).toBe("3 years · billed monthly");
+    expect(subscriptionCycle(triennial).label).toBe("3 years · paid yearly");
+    expect(subscriptionCycle(triennialMo).label).toBe("3 years · paid monthly");
   });
 });
 
 describe("R-1774 — row labels use the chip words", () => {
   it("annual billed yearly", () => {
-    expect(subscriptionCycle(annual).label).toBe("Annual · billed yearly");
+    expect(subscriptionCycle(annual).label).toBe("Annual · paid yearly");
   });
   it("annual billed in parts names the part", () => {
-    expect(subscriptionCycle(splitQtr).label).toBe("Annual · billed quarterly");
-    expect(subscriptionCycle(splitMonth).label).toBe("Annual · billed monthly");
-    expect(subscriptionCycle(splitHalf).label).toBe("Annual · billed half-yearly");
+    expect(subscriptionCycle(splitQtr).label).toBe("Annual · paid quarterly");
+    expect(subscriptionCycle(splitMonth).label).toBe("Annual · paid monthly");
+    expect(subscriptionCycle(splitHalf).label).toBe("Annual · paid half-yearly");
   });
   it("monthly flexible", () => {
     expect(subscriptionCycle(flexMonthly).kind).toBe("monthly");
-    expect(subscriptionCycle(flexMonthly).label).toBe("Monthly (Flexible)");
+    expect(subscriptionCycle(flexMonthly).label).toBe("Flexible (monthly)");
   });
   it("no term → no label", () => {
     expect(subscriptionCycle(noDates).kind).toBe("none");
@@ -106,7 +106,7 @@ describe("R-1774 — row labels use the chip words", () => {
   });
   it("tooltip keeps the per-invoice amount", () => {
     expect(cycleInvoiceTitle(subscriptionCycle(splitQtr), "₹7,646")).toBe(
-      "Annual · billed quarterly — ₹7,646 per invoice",
+      "Annual · paid quarterly — ₹7,646 per invoice",
     );
     expect(cycleInvoiceTitle(subscriptionCycle(ownerQuarterly), "₹1,620")).toMatch(
       /^Saved as a 3-month term — ₹1,620 per invoice\. .*Correct details/,
@@ -114,7 +114,7 @@ describe("R-1774 — row labels use the chip words", () => {
   });
 });
 
-describe("R-1774 — Annual · billed monthly/quarterly tooltip counts the parts", () => {
+describe("R-1774 — Annual · paid monthly/quarterly tooltip counts the parts", () => {
   it("says how many are monthly, quarterly and half-yearly", () => {
     const opt = cycleOptions([splitMonth, splitMonth, splitQtr, splitHalf, annual], "all")
       .find((o) => o.value === "annual_split")!;
