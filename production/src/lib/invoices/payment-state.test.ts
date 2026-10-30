@@ -23,6 +23,10 @@ describe("invoicePaymentState (R-1709)", () => {
     ["part paid, rest credited → Credited", { ...base, status: "paid", net_payable: 18232, paid_amount: 20000, credit_noted: 18232 }, "credited", 20000],
     /* ₹1,00,000 paid, then a ₹10,000 credit note: fully paid; the ₹10,000 went to customer credit. */
     ["paid in full, credit note after → Paid, money capped at the value", { ...base, status: "paid", amount: 100000, net_payable: 90000, paid_amount: 100000, credit_noted: 10000 }, "paid", 90000],
+    /* R-2095 (staging, a part invoice re-issued): paid in full, then credit notes for the WHOLE
+       invoice — it is cancelled; the money went to customer credit. It read "Paid". */
+    ["paid in full, then credited in full → Credited, no money in", { ...base, status: "paid", paid_amount: 38232, net_payable: 0, credit_noted: 38232 }, "credited", 0],
+    ["credited in full within ₹1 → Credited", { ...base, status: "paid", paid_amount: 38232, net_payable: 1, credit_noted: 38231 }, "credited", 1],
     ["debit note raises what must come in", { ...base, status: "paid", amount: 1000, net_payable: 1200, paid_amount: 1200, debit_noted: 200 }, "paid", 1200],
     /* Older invoices were marked paid without paid_amount (credit_note_refund.sql:170): trust the status. */
     ["legacy paid row, no money columns → Paid at its value", { ...base, status: "paid", net_payable: 0 }, "paid", 38232],
