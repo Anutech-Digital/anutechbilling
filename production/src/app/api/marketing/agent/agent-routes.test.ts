@@ -18,12 +18,29 @@ const h = vi.hoisted(() => ({
   active: true,
   plans: [] as Array<{ id: string; tenant_id: string; marketing_campaign_id: string | null; prompt: string }>,
   stores: new Map<string, unknown>(),
+  /* R-2159: the company's products and the AI door (fakes). */
+  items: [{ id: "gws-starter", name: "Google Workspace Business Starter" }] as Array<{ id: string; name: string }>,
+  aiKey: "test-key" as string | null,
+  aiCalls: [] as Array<{ tenantId: string | null; label: string }>,
+  aiReply: null as unknown,
+  aiCap: null as string | null,
+}));
+
+vi.mock("@/lib/supabase/server", () => ({ createClient: () => ({}) }));
+vi.mock("@/lib/ai/gemini", () => ({
+  resolveGeminiConfig: async () => ({ apiKey: h.aiKey, model: "test-model" }),
+  geminiJson: async (args: { tenantId: string | null; label: string; onCapReached?: (m: string) => void }) => {
+    h.aiCalls.push({ tenantId: args.tenantId, label: args.label });
+    if (h.aiCap) { args.onCapReached?.(h.aiCap); return null; }
+    return h.aiReply;
+  },
 }));
 
 vi.mock("@/server/auth/session", () => ({ getTenantSession: async () => h.session }));
 vi.mock("@/server/db", () => ({
   withTenant: async (_s: unknown, fn: (tx: unknown) => unknown) => fn({
     public_users: { findUnique: async () => (h.role ? { role: h.role, is_active: h.active } : null) },
+    items: { findMany: async () => h.items },
     ad_plans: {
       findFirst: async ({ where }: { where: { id: string; tenant_id: string } }) =>
         h.plans.find((p: Plan) => p.id === where.id && p.tenant_id === where.tenant_id) ?? null,
@@ -53,6 +70,7 @@ beforeEach(() => {
   h.role = "marketing";
   h.active = true;
   h.stores = new Map();
+  h.aiKey = "test-key"; h.aiCalls = []; h.aiReply = null; h.aiCap = null;
   h.plans = [
     { id: PLAN, tenant_id: T1, marketing_campaign_id: null, prompt: "Launch a campaign to increase sales of Google Workspace in Delhi, ₹500/day" },
     { id: OTHER_PLAN, tenant_id: T2, marketing_campaign_id: null, prompt: "Other company's plan" },
@@ -141,5 +159,63 @@ describe("guards", () => {
     expect((await again.json()).run.status).toBe("waiting");
     expect((await resume({ planId: PLAN, decision: "reject", note: "Wrong city" })).status).toBe(200);
     expect((await resume({ planId: PLAN, decision: "approve" })).status).toBe(409);
+  });
+});
+
+describe("R-2159 Xeno through the routes", () => {
+  const NO_BUDGET = "Increase sales of Google Workspace in Delhi";
+
+  it("owner's prompt: Xeno's brief is in the run (goal sales, Delhi, ₹500/day, the product) and it waits for review", async () => {
+    const { run } = await (await start({ planId: PLAN })).json();
+    expect(run.next).toEqual(["humanGate"]);
+    expect(run.state.brief).toMatchObject({
+      goal: "sales", budget: { daily: 500, currency: "INR" }, audience: { geo: ["Delhi"] }, itemIds: ["gws-starter"],
+    });
+  });
+
+  it("every Xeno call is counted for THIS company (geminiJson gets the tenant = cap reserved first)", async () => {
+    await start({ planId: PLAN });
+    expect(h.aiCalls).toEqual([{ tenantId: T1, label: "marketing/agent-xeno" }]);
+  });
+
+  it("no budget → waits with Xeno's question; answers resume it to review; a review answer there is 409", async () => {
+    h.plans[0].prompt = NO_BUDGET;
+    const s = (await (await start({ planId: PLAN })).json()).run;
+    expect(s.next).toEqual(["xenoAsk"]);
+    expect(s.waitingFor[0]).toMatchObject({ kind: "questions", questions: [{ id: "budget" }] });
+
+    expect((await resume({ planId: PLAN, decision: "approve" })).status).toBe(409);
+
+    const r = await resume({ planId: PLAN, answers: { budget: "₹300 per day" } });
+    expect(r.status).toBe(200);
+    const run = (await r.json()).run;
+    expect(run.next).toEqual(["humanGate"]);
+    expect(run.state.brief.budget.daily).toBe(300);
+    expect(h.aiCalls).toHaveLength(2); // asked again with the answer, counted again
+
+    expect((await resume({ planId: PLAN, answers: { budget: "₹1" } })).status).toBe(409);
+  });
+
+  it("400 for answers that are not answers", async () => {
+    h.plans[0].prompt = NO_BUDGET;
+    await start({ planId: PLAN });
+    expect((await resume({ planId: PLAN, answers: {} })).status).toBe(400);
+    expect((await resume({ planId: PLAN, answers: { goal: "fame" } })).status).toBe(400);
+    expect((await resume({ planId: PLAN, answers: { budget: "₹300", spendMore: "yes" } })).status).toBe(400);
+  });
+
+  it("AI cap used up → still starts from the words; the reason is in the run's errors", async () => {
+    h.aiCap = "Your company has used this month's AI limit (50 of 50 AI calls).";
+    const { run } = await (await start({ planId: PLAN })).json();
+    expect(run.next).toEqual(["humanGate"]);
+    expect(run.state.brief.goal).toBe("sales");
+    expect(run.state.errors).toEqual([expect.objectContaining({ node: "xenoPlan", code: "ai_cap_reached" })]);
+  });
+
+  it("no AI key → no AI call; brief from the words", async () => {
+    h.aiKey = null;
+    const { run } = await (await start({ planId: PLAN })).json();
+    expect(h.aiCalls).toEqual([]);
+    expect(run.state.xeno).toMatchObject({ source: "words" });
   });
 });

@@ -25,8 +25,12 @@ const money = z.number().finite().min(0).max(10_000_000);
 export const AGENT_PLATFORMS = ["meta", "google"] as const;
 export type AgentPlatform = (typeof AGENT_PLATFORMS)[number];
 
+/** What a campaign is for (R-2159: Xeno asks when the words name none). */
+export const BRIEF_GOALS = ["sales", "leads", "traffic"] as const;
+export type BriefGoal = (typeof BRIEF_GOALS)[number];
+
 export const BriefSchema = z.object({
-  goal: z.enum(["sales", "leads", "traffic"]),
+  goal: z.enum(BRIEF_GOALS),
   targetRoas: z.number().finite().positive().max(1000).nullable(),
   audience: z.object({
     geo: z.array(shortText(80)).max(20),
@@ -110,6 +114,30 @@ export const ReviewDecisionSchema = z.object({
 });
 export type ReviewDecision = z.infer<typeof ReviewDecisionSchema>;
 
+/** R-2159: what Xeno may ask back about — only these, in fixed words (never the AI's own text). */
+export const XENO_GAPS = ["budget", "goal"] as const;
+export type XenoGap = (typeof XENO_GAPS)[number];
+
+/** The person's answers to Xeno's questions (resume body of the questions gate). */
+export const XenoAnswersSchema = z.object({
+  answers: z.object({
+    budget: z.string().trim().min(1, "Write the budget, e.g. ₹500 per day.").max(200).optional(),
+    goal: z.enum(BRIEF_GOALS).optional(),
+  }).strict().refine((a) => a.budget !== undefined || a.goal !== undefined, { message: "Answer at least one question." }),
+});
+export type XenoAnswers = z.infer<typeof XenoAnswersSchema>;
+
+/** Where Xeno's brief came from and what it still lacks (shown next to the brief card). */
+export const XenoMetaSchema = z.object({
+  source: z.enum(["ai", "words"]),
+  missing: z.array(z.enum(XENO_GAPS)).max(XENO_GAPS.length),
+  /** Question rounds asked so far (Xeno stops asking after MAX_QUESTION_ROUNDS). */
+  rounds: z.number().int().min(0).max(10),
+  answers: z.array(z.object({ id: z.enum(XENO_GAPS), answer: z.string().max(200) })).max(20),
+  notes: z.array(z.string().max(300)).max(10),
+});
+export type XenoMeta = z.infer<typeof XenoMetaSchema>;
+
 export const CampaignStateSchema = z.object({
   tenantId: UUID,
   /** ad_plans.id — the row the graph works on. Also the checkpoint thread. */
@@ -119,6 +147,8 @@ export const CampaignStateSchema = z.object({
   campaignId: UUID.nullable(),
   userIntent: z.string().trim().max(4000),
   brief: BriefSchema.nullable(),
+  /** R-2159. Default null so a thread saved before Xeno existed still reads. */
+  xeno: XenoMetaSchema.nullable().default(null),
   creatives: z.array(CreativeSchema).max(40),
   deployment: DeploymentSchema,
   analytics: AnalyticsSchema.nullable(),
@@ -142,6 +172,7 @@ export const CampaignState = Annotation.Root({
   campaignId: last<string | null>(() => null),
   userIntent: last<string>(() => ""),
   brief: last<Brief | null>(() => null),
+  xeno: last<XenoMeta | null>(() => null),
   creatives: last<Creative[]>(() => []),
   deployment: last<Deployment>(() => ({ status: "Draft", platformIds: {} })),
   analytics: last<Analytics | null>(() => null),
@@ -173,6 +204,7 @@ export function initialState(plan: PlanSeed, intent?: string): CampaignStateValu
     campaignId: plan.campaignId,
     userIntent: (intent ?? "").trim() || plan.prompt.trim(),
     brief: null,
+    xeno: null,
     creatives: [],
     deployment: { status: "Draft", platformIds: {} },
     analytics: null,
