@@ -37,6 +37,8 @@ import { useConfirm } from "@/components/providers/confirm-provider";
 import { COPY } from "@/lib/copy";
 import { NavDirectory } from "@/components/layout/nav-directory";
 import { budgetProblem, budgetToSave } from "@/lib/marketing/tool-budget";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { NeoPanel, mayAskNeo } from "@/components/features/marketing-neo/neo-panel";
 
 const GROUP_ORDER: ToolGroup[] = ["ads", "listings", "messaging", "email", "website", "social"];
 
@@ -44,6 +46,10 @@ export default function MarketingHubPage() {
   const tools = useMarketingTools();
   const spend = useSpendThisMonth();
   const [editing, setEditing] = React.useState<ToolRow | null>(null);
+  /* R-2165: Neo, the marketing numbers chat — owner and marketing only (route + DB check again). */
+  const me = useCurrentUser();
+  const [neoOpen, setNeoOpen] = React.useState(false);
+  const canAskNeo = mayAskNeo(me.data?.role);
 
   const rows = React.useMemo(() => mergeTools(tools.data ?? [], spend.data ?? {}), [tools.data, spend.data]);
   const sum = hubSummary(rows);
@@ -51,14 +57,22 @@ export default function MarketingHubPage() {
 
   return (
     <div className="mx-auto max-w-[1240px] p-4 md:p-6 lg:p-8 space-y-6">
-      <header>
-        <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Sell</p>
-        <h1 className="font-serif text-3xl md:text-4xl leading-tight">Marketing Hub</h1>
-        <p className="text-sm text-ink-3 mt-1 max-w-3xl">
-          The marketing tools the business runs on — each one's status, account, owner,
-          monthly budget vs actual spend, and where its work happens in the app.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Sell</p>
+          <h1 className="font-serif text-3xl md:text-4xl leading-tight">Marketing Hub</h1>
+          <p className="text-sm text-ink-3 mt-1 max-w-3xl">
+            The marketing tools the business runs on — each one's status, account, owner,
+            monthly budget vs actual spend, and where its work happens in the app.
+          </p>
+        </div>
+        {canAskNeo && (
+          <Button type="button" variant="outline" onClick={() => setNeoOpen(true)}>
+            <Icon name="sparkles" size={16} /> Ask Neo
+          </Button>
+        )}
       </header>
+      {canAskNeo && <NeoPanel open={neoOpen} onOpenChange={setNeoOpen} />}
 
       {/* S30: the fourteen marketing pages that used to be sidebar rows, in five groups.
           Read from APP_NAV (the Hub's `directory`), so this list and the nav cannot drift —
