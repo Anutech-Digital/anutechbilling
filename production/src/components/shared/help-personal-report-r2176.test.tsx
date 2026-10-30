@@ -102,6 +102,7 @@ describe("Help → Report a problem, personal session (R-2176)", () => {
     expect(screen.queryByText("Write it up with AI")).toBeNull();
     expect(screen.queryByLabelText("Take a screenshot of this page")).toBeNull();
     expect(screen.queryByLabelText("Attach an image")).toBeNull();
+    expect((screen.getByLabelText("What went wrong?") as HTMLTextAreaElement).placeholder).not.toMatch(/screenshot/i);
   });
 });
 

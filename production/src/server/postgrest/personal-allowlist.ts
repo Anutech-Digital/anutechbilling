@@ -73,6 +73,7 @@ export const PERSONAL_RPCS: readonly string[] = [
   "personal_my_payments",
   "personal_my_subscriptions",
   "get_my_tenant_with_parent",     // Sidebar workspace name (own tenant only, R-1615 gate)
+  "personal_file_support_ticket",  // R-2176 Help → Report a problem → support-desk ticket (auth.uid() only)
 ];
 
 function refuse(what: string): GatewayRefusal {

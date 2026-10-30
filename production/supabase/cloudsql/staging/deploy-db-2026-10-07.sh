@@ -321,6 +321,7 @@ MIGS=(
   "gp16bpersona|20261030160500_gp16b_personal_my_bills.sql|resellersos_migration|to_regprocedure('public.personal_my_invoices()') is not null and to_regprocedure('public.personal_my_quotes()') is not null and to_regprocedure('public.personal_my_payments()') is not null and to_regprocedure('public.personal_my_subscriptions()') is not null"
   "gpd3paneloutboxdeactivate|20261030162816_gpd3_panel_outbox_deactivate.sql|resellersos_migration|to_regprocedure('public.queue_panel_account_deactivate(uuid,uuid)') is not null and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'panel_account_outbox' and column_name = 'op')"
   "r2095correctsubcommitment|20261030164727_r2095_correct_subscription_commitment.sql|resellersos_migration|to_regprocedure('public.correct_subscription_commitment(uuid,integer,public.billing_cycle,date,text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_contract_amendment()') and prosrc like '%R-2095 commitment%')"
+  "r2176persona|20261030221233_r2176_personal_file_support_ticket.sql|resellersos_migration|to_regprocedure('public.personal_file_support_ticket(text,text,text,text)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
