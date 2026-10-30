@@ -79,6 +79,8 @@ export function NotificationPanel({
   const router = useRouter();
   const { items, unreadCount, loading } = useNotificationFeed();
   const { data: me } = useCurrentUser();
+  /* R-2176: /tasks is a business page — a personal session's bell has no "All tasks" footer. */
+  const personal = isPersonalSession(me ? { role: me.role } : null);
   const markDbRead = useMarkNotificationRead();
   const markDbAll  = useMarkAllNotificationsRead();
 
@@ -154,7 +156,7 @@ export function NotificationPanel({
             <EmptyState
               icon="bell"
               title="You're all caught up"
-              body={bellEmptyBody(!isPersonalSession(me ? { role: me.role } : null))}
+              body={bellEmptyBody(!personal)}
             />
           ) : (
             items.map((n) => (
@@ -211,6 +213,7 @@ export function NotificationPanel({
         </div>
 
         {/* Footer */}
+        {!personal && (
         <div className="flex items-center justify-between p-3 border-t border-hairline bg-paper-2 flex-shrink-0">
           <Button
             variant="ghost"
@@ -224,6 +227,7 @@ export function NotificationPanel({
             All tasks
           </Button>
         </div>
+        )}
       </SheetContent>
     </Sheet>
   );

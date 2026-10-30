@@ -97,6 +97,8 @@ export const PERSONAL_API_REFUSAL = "Not available for personal accounts. Upgrad
 export const PERSONAL_API_ROUTES: Readonly<Record<string, string>> = {
   "vault/personal/pin":
     "the caller's own Money PIN — requireOwner() reads the session; every service-role RPC is createAdminClientFor(who.userId) with p_user_id: who.userId (GP-02b)",
+  "personal/support-ticket":
+    "R-2176: files the SESSION user's Help report as a support-desk ticket — user from auth.getUser(); createAdminClientFor(user.id); the users row, the caller's own personal_identity_link row and raised_by_user are all pinned to that id; no id from the request",
   "dms/sso":
     "signs the SESSION user into the DMS panel — email from auth.getUser(), customer from portal_my_customer(); no service role, no id from the request",
 };
