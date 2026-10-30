@@ -30,7 +30,7 @@ vi.mock("@/server/auth/session", () => ({ getTenantSession: async () => h.sessio
 vi.mock("@/server/db", () => ({
   withTenant: async (_s: unknown, fn: (tx: unknown) => unknown) => fn({
     public_users: { findUnique: async () => (h.role ? { role: h.role, is_active: h.active } : null) },
-    $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    $queryRaw: async (_strings: TemplateStringsArray, ...values: unknown[]) => {
       if (h.dbError) throw h.dbError;
       h.queries.push(values);
       const [metrics, dimensions, from, to] = values as [string[], string[], string, string];
