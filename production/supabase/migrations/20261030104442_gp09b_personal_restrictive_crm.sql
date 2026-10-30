@@ -37,6 +37,11 @@
 -- personal_* / vault_* tables — a personal user's own account, mail and support use them.
 -- SECURITY DEFINER RPCs (which skip RLS) are GP-09c.
 --
+-- cold_call_campaigns / cold_call_contacts are made by prisma/migrations (R-1661), not by the
+-- supabase/migrations chain, so a DB built only from baseline + supabase/migrations (the CI SQL
+-- job) lacks them: those two are walled when present and skipped with a NOTICE otherwise. Every
+-- other table on the list must exist (missing = the list is out of date = exception).
+--
 -- Re-runnable (drop policy if exists + create).
 
 begin;
@@ -68,6 +73,10 @@ begin
     'statutory_dues_payments', 'salary_payments']
   loop
     if to_regclass('public.' || v_t) is null then
+      if v_t in ('cold_call_campaigns', 'cold_call_contacts') then
+        raise notice 'R-2123: public.% not on this DB (prisma-made, R-1661) — skipped', v_t;
+        continue;
+      end if;
       raise exception 'R-2123: table public.% is missing — the personal wall list is out of date', v_t;
     end if;
     execute format('drop policy if exists gp09_personal_wall on public.%I', v_t);

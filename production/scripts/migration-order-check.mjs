@@ -53,6 +53,7 @@ const NOT_YET_ON_PRODUCTION = new Set([
   "20261009220100_demo_readonly_wiring.sql", // R-531: deploy-skip, never deployed anywhere
   "20261009235000_attendance_devices.sql",   // auth.users FK refused on Cloud SQL; never reached staging/live
   "20261011133000_r724_storage_roles.sql",   // R-724: only the deploy-peek comment changed; train t never deployed it
+  "20261030104442_gp09b_personal_restrictive_crm.sql", // R-2123: raised on prisma-made cold_call_* absent from the CI SQL chain; no train had deployed it
 ]);
 
 /**

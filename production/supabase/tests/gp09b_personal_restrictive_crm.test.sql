@@ -41,6 +41,10 @@ insert into gp09b_list (t) values
   ('emi_schedule'), ('business_loans'), ('business_loan_payments'), ('loans_given'),
   ('loan_repayments'), ('employee_loans'), ('employee_loan_repayments'),
   ('statutory_dues_payments'), ('salary_payments');
+-- cold_call_* are prisma-made (R-1661): absent on a DB built from baseline + supabase/migrations
+-- only (the CI SQL job). Checked wherever they exist.
+delete from gp09b_list l
+ where l.t in ('cold_call_campaigns', 'cold_call_contacts') and to_regclass('public.' || l.t) is null;
 grant select on gp09b_list to authenticated;
 
 -- ── 1. coverage ─────────────────────────────────────────────────────────────────────
