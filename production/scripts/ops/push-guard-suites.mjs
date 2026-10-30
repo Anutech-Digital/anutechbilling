@@ -32,6 +32,7 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/checkout/live-key-staging-ratchet.test.ts", // R-2155: no Razorpay order/link/verify without the staging live-key guard
   "src/app/api/admin-client-ratchet.test.ts",
   "src/app/api/role-gate-ratchet.test.ts", // R-732
+  "src/app/api/personal-gate-ratchet.test.ts", // R-2117: every route under a personal /api prefix is listed + owner-pinned
   "src/app/(app)/page-widths-ratchet.test.ts", // R-1489: §20 page widths
   "src/lib/quotes/discount-copies-ratchet.test.ts", // R-1133: no new hand-written quote discount
   "tests/ops/gen-api-doc.test.ts", // R-1665: docs/API.md regenerated when a route changes
