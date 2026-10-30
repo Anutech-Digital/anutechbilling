@@ -85,6 +85,7 @@ import { quoteTotalUnit, extensionBadgeLabel } from "@/lib/quotes/billing";
 import { useQuoteOpenBalances, withOpenBalances } from "@/lib/quotes/open-balances";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
+import { isSupportUpgradeQuote } from "@/lib/support/upgrade-quote";
 
 /** A quote's total in ITS billing currency (foreign quotes show $/€…; books stay ₹). */
 function quoteMoney(q: { amount: number | null; currency?: string | null; exchange_rate?: number | null }): string {
@@ -845,7 +846,7 @@ export default function QuotesPage() {
                             {extensionTitle({ isExtension: q.is_extension, extensionMonths: q.extension_months }) ?? "Extension"}
                           </Badge>
                         ) : q.is_renewal ? (
-                          <Badge kind="info" className="font-sans text-3xs">Renewal</Badge>
+                          <Badge kind="info" className="font-sans text-3xs">{isSupportUpgradeQuote(q) ? "Upgrade" : "Renewal"}</Badge>
                         ) : q.is_add_seats ? (
                           <Badge kind="info" className="font-sans text-3xs">Prorata</Badge>
                         ) : q.is_one_off && !isCustomerAdvanceQuote(q) ? (
@@ -957,7 +958,7 @@ export default function QuotesPage() {
                               {extensionBadgeLabel(q.extension_months)}
                             </Badge>
                           ) : q.is_renewal ? (
-                            <Badge kind="info" className="font-sans text-3xs">Renewal</Badge>
+                            <Badge kind="info" className="font-sans text-3xs">{isSupportUpgradeQuote(q) ? "Upgrade" : "Renewal"}</Badge>
                           ) : q.is_add_seats ? (
                             <Badge kind="info" className="font-sans text-3xs">Prorata</Badge>
                           ) : q.is_one_off && !isCustomerAdvanceQuote(q) ? (
@@ -1237,7 +1238,7 @@ export default function QuotesPage() {
                 <span className="hidden sm:inline">
                   Renewals:{" "}
                   <b className="text-ink tabular-nums">
-                    {filtered.filter((q) => q.is_renewal && !q.is_extension).length}
+                    {filtered.filter((q) => q.is_renewal && !q.is_extension && !isSupportUpgradeQuote(q)).length}
                   </b>
                 </span>
                 {filtered.some((q) => q.is_extension) && (

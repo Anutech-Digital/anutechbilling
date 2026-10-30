@@ -40,3 +40,16 @@ describe("R-2025 advancePaymentIds — the same rule as bank_advance_payment()",
     expect(advancePaymentIds(pays, []).size).toBe(0);
   });
 });
+
+describe("R-2098 a line that paid several items", () => {
+  it("reads 'N payments' and lists each receipt in the tooltip", async () => {
+    const { splitPaymentsTitle } = await import("./bank-row-label");
+    expect(bankRowStatusLabel("payment", false, 3)).toBe("3 payments");
+    expect(bankRowStatusLabel("payment", true, 1)).toBe("Advance");
+    expect(bankRowStatusLabel("payment", false, 0)).toBe("Payment");
+    expect(splitPaymentsTitle([
+      { id: "a", amount: 3906, quote_id: "Q-1", invoice_id: "INV-1", receipt_voucher_no: "RV-1" },
+      { id: "b", amount: 460, quote_id: "Q-ADV", invoice_id: null, receipt_voucher_no: null },
+    ])).toBe("₹3,906 · INV-1 (RV-1)\n₹460 · Q-ADV");
+  });
+});

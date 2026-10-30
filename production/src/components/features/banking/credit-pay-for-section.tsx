@@ -11,7 +11,9 @@
  *            unpaid invoices, the one whose due equals the credit pre-selected; or
  *        (b) a new sale: product, seats, unit price, term — GST shown; or
  *        (c) R-1863: an advance — nothing to invoice yet; the whole credit becomes the customer's
- *            advance credit (reconcile_bank_credit_as_advance), offered on their next payment.
+ *            advance credit (reconcile_bank_credit_as_advance), offered on their next payment; or
+ *        (d) R-2098: several of the open items (+ an optional new sale) — one bar shows allocated /
+ *            bank / left; the rest is advance or, up to ₹50, a round-off (reconcile_bank_credit_split).
  *      A new subscription sale offers "Create subscription" (ticked) with start + renewal dates.
  *   3. Amount check — exact / short (TDS deducted, or part payment) / over (kept as credit).
  *   4. One button → one server transaction (lib/queries/bank-credit-pay-for.ts), then the sheet
@@ -38,18 +40,20 @@ import { useOpenInvoicesForCreditMatch, type BankTransactionRow } from "@/lib/qu
 import { matchCreditToInvoices } from "@/lib/banking/invoice-credit-match";
 import {
   useAdvanceFromBankCredit, useBankCreditOpenItems, useNewSaleFromBankCredit, usePayItemFromBankCredit,
-  useRelinkOneOffSale, type RelinkTarget,
+  useRelinkOneOffSale, useSplitFromBankCredit, type RelinkTarget,
 } from "@/lib/queries/bank-credit-pay-for";
 import {
   amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
-  paidUpText, saleLineFromItem, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice,
+  paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice,
   tdsRateToRecord, tdsToRecord,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { PAYER_RELATIONS, payerFromNarration, payerMatchesCustomer, type PayerRelation } from "@/lib/banking/customer-payer";
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
+import { cleanAmount, pickDefault, pickProblem, splitBlocked, splitPartPaid, splitRest, splitSummary, type SplitRest } from "@/lib/banking/credit-pay-for-multi";
+import { CreditPaySplit } from "./credit-pay-for-split";
 
 const NEW_CUSTOMER = "__new_customer__";
 
@@ -77,7 +81,7 @@ interface Props {
   suggested?: { itemKey: string; tds: boolean } | null;
 }
 
-type Mode = "item" | "sale" | "advance";
+type Mode = "item" | "sale" | "advance" | "split";
 /* R-2025 (0) — Pardeep 27 Oct: after picking the customer NOTHING is pre-chosen. "A new sale" used
    to be pre-selected when the customer had nothing open, so one Save booked a sale + GST invoice +
    subscription on money that was really an advance. Each choice now says what it will do, and Save
@@ -87,6 +91,8 @@ const MODES: ReadonlyArray<readonly [Mode, string, string]> = [
   ["item", "An open quote / invoice", "Pays the quote → service starts + GST invoice"],
   ["sale", "A new sale (no quote yet)", "Records a sale → GST invoice + subscription"],
   ["advance", "Advance — nothing to invoice yet", "Customer credit, no invoice — use it on the next bill"],
+  /* R-2098: one line, several items. Not offered on a relink (one old sale → one target). */
+  ["split", "Several quotes / invoices", "Splits this money — the rest as advance or round-off"],
 ];
 
 const selectCls =
@@ -154,6 +160,19 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   }, [items, credit, suggested]);
   const picked = (items ?? []).find((i) => itemKey(i) === pickKey) ?? null;
 
+  /* R-2098: several items — key → amount on it; an optional new sale; what the rest is. */
+  const [picks, setPicks] = React.useState<Record<string, number>>({});
+  const [splitSale, setSplitSale] = React.useState(false);
+  const [splitSaleAmount, setSplitSaleAmount] = React.useState<number | null>(null);   // null = its first bill
+  const [restChoice, setRestChoice] = React.useState<SplitRest>("advance");
+  React.useEffect(() => { setPicks({}); setSplitSale(false); setSplitSaleAmount(null); setRestChoice("advance"); }, [customerId, transaction.id]);
+  const togglePick = (i: OpenItem) => setPicks((p) => {
+    const k = itemKey(i);
+    if (k in p) return Object.fromEntries(Object.entries(p).filter(([x]) => x !== k));
+    const d = pickDefault(i);
+    return { ...p, [d.key]: d.amount };
+  });
+
   /* New sale lines. */
   const { data: catalog } = useItems();
   const activeCatalog = React.useMemo(() => (catalog ?? []).filter((i) => i.is_active), [catalog]);
@@ -169,7 +188,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const saleCycle = saleBillingCycle(lines, payCycle);
 
   /* Subscription choice (new subscription sale only). */
-  const makesSub = mode === "item" ? Boolean(picked?.makes_subscription) : mode === "sale" && saleMakesSubscription(lines);
+  const saleShown = mode === "sale" || (mode === "split" && splitSale);
+  const makesSub = mode === "item" ? Boolean(picked?.makes_subscription) : saleShown && saleMakesSubscription(lines);
   const monthly = mode === "item" ? linesAreMonthly(picked?.lines ?? null) : lines.some((l) => l.cycle === "monthly");
   const [createSub, setCreateSub] = React.useState(true);
   const [subStart, setSubStart] = React.useState(transaction.txn_date);
@@ -183,7 +203,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   /* R-2026: a new sale paid in parts is due its FIRST bill now (Annual + Quarterly = one
      quarter + GST); the rest of the schedule is shown under it. */
   const schedule = saleSchedule(lines, gstRate, saleCycle, subStart || transaction.txn_date);
-  const laterText = mode === "sale" && preview.total > 0 ? laterBillsText(schedule, saleCycle) : null;
+  const laterText = saleShown && preview.total > 0 ? laterBillsText(schedule, saleCycle) : null;
   /* An advance has nothing due — the whole credit is kept as the customer's credit. */
   const due = mode === "item" ? (picked?.amount_due ?? null) : mode === "sale" && preview.total > 0 ? schedule.dueNow : null;
   const taxable = mode === "item" ? (picked?.taxable_value ?? 0) : schedule.dueTaxable;
@@ -193,6 +213,20 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const paidUp = mode === "sale" && makesSub && createSub && preview.total > 0
     ? salePaidUp(schedule, check?.kind === "over" ? check.overBy : 0, renewalShown, saleCycle)
     : null;
+  /* R-2098: the split's bar. */
+  const splitPicked = (items ?? []).filter((i) => itemKey(i) in picks);
+  const saleAmt = splitSale ? cleanAmount(splitSaleAmount ?? schedule.dueNow) : 0;
+  /* R-2098: a round-off only when every item (and the new sale) ends settled in full. */
+  const splitPart = splitPartPaid([
+    ...splitPicked.map((i) => ({ amount: picks[itemKey(i)], due: i.amount_due })),
+    ...(splitSale ? [{ amount: saleAmt, due: preview.total }] : []),
+  ]);
+  const split = splitSummary(credit, [...splitPicked.map((i) => picks[itemKey(i)]), saleAmt], { partPaid: splitPart });
+  const rest = splitRest(split.state, restChoice);
+  const splitInvalid = (splitPicked.length === 0 && !splitSale)
+    || splitPicked.some((i) => pickProblem(i, picks[itemKey(i)]) !== null)
+    || (splitSale && (saleInvalidOf(lines, preview.taxable) || saleAmt <= 0 || saleAmt > preview.total))
+    || splitBlocked(split.state);
   const [shortChoice, setShortChoice] = React.useState<ShortChoice>("part");
   /* TDS pre-chosen when the gap IS a common TDS rate; else part payment. Re-decided per item. */
   const tdsLikely = check?.kind === "short" && check.tdsRatePct !== null;
@@ -204,16 +238,18 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const newSale = useNewSaleFromBankCredit();
   const advance = useAdvanceFromBankCredit();
   const relinkSale = useRelinkOneOffSale();
+  const splitPay = useSplitFromBankCredit();
   const [result, setResult] = React.useState<PayForResult | null>(null);
   React.useEffect(() => { setResult(null); }, [transaction.id]);
-  const busy = payItem.isPending || newSale.isPending || advance.isPending || relinkSale.isPending || setLinePayer.isPending;
+  const splitCount = splitPicked.length + (splitSale ? 1 : 0);
+  const busy = payItem.isPending || newSale.isPending || advance.isPending || relinkSale.isPending || splitPay.isPending || setLinePayer.isPending;
 
   const tdsAmount = check ? tdsToRecord(check, shortChoice) : 0;
   const tdsRate = check ? tdsRateToRecord(check, taxable) : null;
-  const saleInvalid = lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0)) || preview.taxable <= 0 || saleTermsMixed(lines);
+  const saleInvalid = saleInvalidOf(lines, preview.taxable);
   const payerUnanswered = payerMismatch && !payerAnswer;
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
-    && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : true);
+    && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : mode === "split" ? !splitInvalid : true);
 
   const save = async () => {
     if (!canSave || mode === null) return;
@@ -222,6 +258,25 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
       subStart: makesSub && createSub ? subStart : null,
       subRenewal: makesSub && createSub ? subRenewal : null,
     };
+    if (mode === "split") {
+      try {
+        if (payer && payerToRecord) {
+          await setLinePayer.mutateAsync({ transactionId: transaction.id, customerId, payer, relation: payerToRecord.relation, note: payerToRecord.note });
+        }
+        const r = await splitPay.mutateAsync({
+          transactionId: transaction.id, customerId, customerName: customer?.name ?? null,
+          items: splitPicked.map((i) => ({ quote_id: i.quote_id, invoice_id: i.invoice_id, amount: picks[itemKey(i)] })),
+          sale: splitSale
+            ? { lines: saleLinesPayload(lines), billingCycle: saleCycle, createSubscription: makesSub ? createSub : false,
+                subStart: subArgs.subStart, subRenewal: subArgs.subRenewal, amount: saleAmt }
+            : null,
+          rest,
+        });
+        setResult(r);
+        onSaved?.();
+      } catch { /* the hook toasts */ }
+      return;
+    }
     const target: RelinkTarget = mode === "item" && picked
       ? {
           path: "item", transactionId: transaction.id, quoteId: picked.quote_id, invoiceId: picked.invoice_id,
@@ -279,6 +334,23 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     if (it) setLines((ls) => [...ls, saleLineFromItem(it, defaultCycle(it))]);
   };
 
+  const saleEditorNode = (
+    <SaleEditor
+      lines={lines}
+      catalog={activeCatalog}
+      gstRate={gstRate}
+      preview={preview}
+      payment={payment}
+      payCycle={saleCycle}
+      onPayCycle={setPayCycle}
+      dueNow={schedule.dueNow}
+      laterText={paidUp ? null : laterText}
+      onAdd={addProduct}
+      onChange={setLine}
+      onRemove={(idx) => setLines((ls) => ls.filter((_, i) => i !== idx))}
+    />
+  );
+
   return (
     <section aria-labelledby="payfor-h" className="rounded-md border border-amber/50 bg-amber-soft/25 p-3 space-y-3">
       <div>
@@ -320,8 +392,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
       {customerId && (
         <>
           {/* 2. What for */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5" role="group" aria-label="What this money is for">
-            {MODES.map(([k, label, effect]) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5" role="group" aria-label="What this money is for">
+            {MODES.filter(([k]) => !(relink && k === "split")).map(([k, label, effect]) => (
               <button
                 key={k}
                 type="button"
@@ -344,6 +416,25 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
               The whole {rupee(credit)} is kept as {customer?.name ?? "the customer"}&apos;s advance credit, with a receipt voucher.
               Nothing is invoiced now — it is offered when you record their next payment.
             </p>
+          ) : mode === "split" ? (
+            itemsLoading ? <Skeleton className="h-16" /> : (
+              <CreditPaySplit
+                items={items ?? []}
+                picks={picks}
+                onToggle={togglePick}
+                onAmount={(k, a) => setPicks((p) => ({ ...p, [k]: cleanAmount(a) }))}
+                saleOn={splitSale}
+                onSaleOn={setSplitSale}
+                saleAmount={saleAmt}
+                saleTotal={preview.total}
+                onSaleAmount={(a) => setSplitSaleAmount(cleanAmount(a))}
+                saleEditor={saleEditorNode}
+                summary={split}
+                rest={rest}
+                restChoice={restChoice}
+                onRestChoice={setRestChoice}
+              />
+            )
           ) : mode === "item" ? (
             itemsLoading ? <Skeleton className="h-16" /> : (items ?? []).length === 0 ? (
               <p className="text-xs text-ink-3">
@@ -356,25 +447,10 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                 ))}
               </ul>
             )
-          ) : (
-            <SaleEditor
-              lines={lines}
-              catalog={activeCatalog}
-              gstRate={gstRate}
-              preview={preview}
-              payment={payment}
-              payCycle={saleCycle}
-              onPayCycle={setPayCycle}
-              dueNow={schedule.dueNow}
-              laterText={paidUp ? null : laterText}
-              onAdd={addProduct}
-              onChange={setLine}
-              onRemove={(idx) => setLines((ls) => ls.filter((_, i) => i !== idx))}
-            />
-          )}
+          ) : saleEditorNode}
 
           {/* Subscription choice — a new subscription sale only */}
-          {makesSub && (mode === "sale" || picked) && (
+          {makesSub && (saleShown || (mode === "item" && picked)) && (
             <div className="rounded-md border border-hairline bg-paper p-2.5 space-y-2">
               <label className="flex items-start gap-2 text-sm text-ink cursor-pointer">
                 <input type="checkbox" checked={createSub} onChange={(e) => setCreateSub(e.target.checked)} className="mt-1" />
@@ -421,6 +497,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                 ? "Choose what this money is for"
                 : mode === "item"
                 ? picked ? `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile` : "Pick what it pays"
+                : mode === "split"
+                  ? `Record on ${splitCount} item${splitCount === 1 ? "" : "s"} & reconcile ${rupee(credit)}`
                 : mode === "sale"
                   ? `Record sale & reconcile ${rupee(credit)}`
                   : `Keep ${rupee(credit)} as advance & reconcile`}
@@ -644,4 +722,9 @@ function PayerWarning({ payerName, customerName, answer, onAnswer, onWrongCustom
       <p className="text-xs text-ink-3">The receipt and GST invoice stay in {customerName}&apos;s name; the payer is remembered for next time.</p>
     </div>
   );
+}
+
+/** A new sale that cannot be saved: no line, a line without product / seats / price, ₹0, or mixed terms. */
+function saleInvalidOf(lines: readonly SaleLine[], taxable: number): boolean {
+  return lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0)) || taxable <= 0 || saleTermsMixed(lines);
 }

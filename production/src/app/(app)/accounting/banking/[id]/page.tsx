@@ -40,8 +40,8 @@ import {
 import { certainInvoiceMatches, matchCreditToInvoices, type InvoiceMatch } from "@/lib/banking/invoice-credit-match";
 import { noCustomerYet } from "@/lib/banking/no-customer-yet";
 import type { OldOneOffBooking } from "@/lib/banking/credit-pay-for";
-import { useBankAdvancePaymentIds, useOldOneOffBookings } from "@/lib/queries/bank-credit-pay-for";
-import { bankRowStatusLabel } from "@/lib/banking/bank-row-label";
+import { useBankAdvancePaymentIds, useBankSplitLinePayments, useOldOneOffBookings } from "@/lib/queries/bank-credit-pay-for";
+import { bankRowStatusLabel, splitPaymentsTitle, type SplitLinePayment } from "@/lib/banking/bank-row-label";
 import { useCustomers } from "@/lib/queries/customers";
 import { RelinkOneOffDialog } from "@/components/features/banking/old-one-off-bookings";
 import { InvoiceMatchChip } from "@/components/features/banking/invoice-match-chip";
@@ -188,6 +188,12 @@ export default function BankAccountDetailPage() {
   );
   const { data: advancePayIds } = useBankAdvancePaymentIds(paymentIdsOnLines);
   const isAdvanceTxn = (t: BankTransactionRow) => t.matched_to_type === "payment" && Boolean(t.matched_to_id && advancePayIds?.has(String(t.matched_to_id)));
+  /* R-2098: a line that paid several items — "N payments", each listed in the tooltip. */
+  const paymentLineIds = React.useMemo(
+    () => (transactions ?? []).filter((t) => t.matched_to_type === "payment" && t.credit > 0).map((t) => t.id),
+    [transactions],
+  );
+  const { data: splitPays } = useBankSplitLinePayments(paymentLineIds);
 
   /* R-1869 "Money out · no vendor yet": unmatched money out where R-1866's guessVendor (the
      same guess the Reconcile sheet pre-fills) finds nobody — and not a salary line (Salary lines
@@ -627,6 +633,7 @@ export default function BankAccountDetailPage() {
                       onUnreconcile={canWrite ? () => setUnreconcileTxn(txn) : undefined}
                       onRelink={canWrite && oldById.has(txn.id) ? () => openRelink(txn) : undefined}
                       isAdvance={isAdvanceTxn(txn)}
+                      splitPays={splitPays?.get(txn.id)}
                     />
                   ))}
                 </tbody>
@@ -649,6 +656,7 @@ export default function BankAccountDetailPage() {
                 onUnreconcile={canWrite ? () => setUnreconcileTxn(txn) : undefined}
                 onRelink={canWrite && oldById.has(txn.id) ? () => openRelink(txn) : undefined}
                 isAdvance={isAdvanceTxn(txn)}
+                splitPays={splitPays?.get(txn.id)}
               />
             ))}
           </ul>
@@ -706,9 +714,9 @@ function TxnAmount({ txn }: { txn: BankTransactionRow }) {
 }
 
 /* R-2025 (0): an R-1863 advance reads "Advance", not "Payment" (lib/banking/bank-row-label). */
-function TxnStatusBadge({ txn, isAdvance = false }: { txn: BankTransactionRow; isAdvance?: boolean }) {
+function TxnStatusBadge({ txn, isAdvance = false, splitPays }: { txn: BankTransactionRow; isAdvance?: boolean; splitPays?: readonly SplitLinePayment[] }) {
   return txn.matched_to_type
-    ? <Badge kind="success" size="sm" dot>{bankRowStatusLabel(txn.matched_to_type, isAdvance)}</Badge>
+    ? <MatchedBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} />
     : <Badge kind="warning" size="sm" dot>Unmatched</Badge>;
 }
 
@@ -726,11 +734,14 @@ function TransactionRow({
   onUnreconcile,
   onRelink,
   isAdvance = false,
+  splitPays,
 }: {
   txn: BankTransactionRow;
   highlighted?: boolean;
   /** R-2025 (0): booked as the customer's advance — the badge reads "Advance". */
   isAdvance?: boolean;
+  /** R-2098: the receipts of a line that paid several items. */
+  splitPays?: readonly SplitLinePayment[];
   /** R-399: a certain open-invoice match for this unmatched credit — the chip opens the drawer. */
   invoiceMatch?: InvoiceMatch;
   /** Both left out for a read-only viewer (R-254) — the status shows, the buttons do not. */
@@ -776,7 +787,7 @@ function TransactionRow({
           // Reconciled: show WHAT it matched (this replaces the Status column)
           // plus a quiet way to undo it.
           <div className="flex flex-col items-end gap-0.5">
-            <Badge kind="success" size="sm" dot>{bankRowStatusLabel(txn.matched_to_type, isAdvance)}</Badge>
+            <MatchedBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} />
             {onRelink && (
               <Button size="sm" variant="default" onClick={onRelink} title="Move this one-off sale onto the renewal, extra seats or quote it paid">
                 Relink
@@ -799,7 +810,7 @@ function TransactionRow({
             Reconcile
           </Button>
         ) : (
-          <TxnStatusBadge txn={txn} isAdvance={isAdvance} />
+          <TxnStatusBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} />
         )}
       </td>
     </tr>
@@ -809,8 +820,9 @@ function TransactionRow({
 // ============================================================
 // Card (mobile)
 // ============================================================
-function TransactionCard({ txn, highlighted = false, invoiceMatch, onReconcile, onUnreconcile, onRelink, isAdvance = false }: {
+function TransactionCard({ txn, highlighted = false, invoiceMatch, onReconcile, onUnreconcile, onRelink, isAdvance = false, splitPays }: {
   txn: BankTransactionRow; highlighted?: boolean; invoiceMatch?: InvoiceMatch; onReconcile?: () => void; onUnreconcile?: () => void; onRelink?: () => void; isAdvance?: boolean;
+  splitPays?: readonly SplitLinePayment[];
 }) {
   const reconcile = useReconcileTransaction();
   return (
@@ -832,7 +844,7 @@ function TransactionCard({ txn, highlighted = false, invoiceMatch, onReconcile, 
           </div>
         </div>
         <div className="mt-2 flex items-center justify-between gap-2">
-          <TxnStatusBadge txn={txn} isAdvance={isAdvance} />
+          <TxnStatusBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} />
           {txn.matched_to_type === "transfer" ? (
             <span className="text-xs text-ink-3">Auto</span>
           ) : txn.matched_to_type ? (
@@ -858,4 +870,11 @@ function TransactionCard({ txn, highlighted = false, invoiceMatch, onReconcile, 
       </Card>
     </li>
   );
+}
+
+/** R-2098: "Payment" / "Advance" — or "N payments" with each receipt in the tooltip. */
+function MatchedBadge({ txn, isAdvance, splitPays }: { txn: BankTransactionRow; isAdvance: boolean; splitPays?: readonly SplitLinePayment[] }) {
+  const n = splitPays?.length ?? 0;
+  const badge = <Badge kind="success" size="sm" dot>{bankRowStatusLabel(txn.matched_to_type, isAdvance, n)}</Badge>;
+  return n > 1 && splitPays ? <span title={splitPaymentsTitle(splitPays)}>{badge}</span> : badge;
 }

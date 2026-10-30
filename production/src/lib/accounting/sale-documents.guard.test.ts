@@ -30,12 +30,15 @@ const SQL_SALE = new Set([
   "get_partner_metrics",   // invoiced this month (reseller children)
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
+  tg_queue_panel_account: "R-2103: reads only the customer of an opening-invoice payment, to queue their customer panel login — no amounts",
+  queue_panel_account_backfill: "R-2103: finds the customer of opening-invoice payments to queue panel logins — no amounts",
   zoho_books_import_apply: "R-1753: open Zoho invoices go in through import_opening_invoices (opening, never a sale)",
   zoho_books_import_undo: "R-1753: refuses while a created customer has other invoices; removes its own opening invoices",
   accept_project_quote: "creates a project invoice of ours",
   bank_credit_open_items: "R-1838: lists a customer's unpaid invoices to take a bank receipt (opening invoices excluded: no quote / instalment link)",
   bank_old_one_off_bookings: "R-1863: lists bank lines booked as a one-off bank sale with their own invoice (only those reached through the line's payment → quote), to relink them",
   reconcile_bank_credit_to_item: "R-1838: records a bank receipt on the picked invoice via record_desk_payment / record_instalment_payment",
+  bank_credit_pay_item: "R-2098: the body of reconcile_bank_credit_to_item (shared with reconcile_bank_credit_split) — records a bank receipt on the picked invoice via record_desk_payment / record_instalment_payment",
   activate_quote_on_credit: "quote → our invoice",
   allocate_project_receipt: "payments on projects; sets paid_amount on the project invoice it raises (R-1995)",
   allocate_project_receipt_with_tds: "payments on projects + the customer's TDS; sets paid_amount on the project invoice it raises (R-1996; allocate_project_receipt calls it)",
@@ -142,6 +145,7 @@ const TS_SALE = new Set([
   "src/components/features/accounting/tally-daybook-button.tsx",  // Tally Sales vouchers
   "src/lib/queries/gst-health.ts",                                // GST checks of our invoices
   "src/lib/queries/month-close.ts",                               // month's output GST
+  "src/app/api/v1/support/invoices/summary/route.ts",             // R-2079: support revenue for DSP
 ]);
 const TS_NOT_SALE: Record<string, string> = {
   "src/app/(public)/buy/workspace/thanks/fetch-order.ts": "R-1971: the number of this order's own GST invoice (by quote_id) for the buyer's thanks page — not a list or a total",
@@ -150,6 +154,7 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/app/(app)/accounting/aging/read.ts": "aging of open balances — includes opening invoices on purpose",
   "src/app/(app)/invoices/[id]/page.tsx": "one invoice; an opening invoice gets its own view",
   "src/app/(app)/quotes/[id]/invoice-created-at.ts": "R-1715: one invoice's created_at by id, for the quote's workflow history time — not a list or a total",
+  "src/app/(app)/quotes/[id]/part-invoices.ts": "R-2101: the status (void or not) of the invoices a sale quote's parts point at, for its INVOICED step — not a list or a total",
   "src/app/(app)/online-orders/page.tsx":"R-1120: the order quote's own invoice by id (taxable, GST, split) for the drawer — not a list or a total",
   "src/lib/queries/marketing-sales.ts": "R-1980: a received payment's own invoice by id — its taxable share (ex GST) and quote link; the revenue is the PAYMENT, not an invoice total",
   "src/app/api/cron/billing/route.ts": "raises our subscription invoices",

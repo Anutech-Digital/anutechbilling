@@ -546,8 +546,9 @@ export function linesAreMonthly(lines: OpenItem["lines"]): boolean {
 /* ─── Result ─────────────────────────────────────────────────────────────────────────── */
 
 export interface PayForResult {
-  /** "advance" — R-1863: booked as the customer's advance (on account), nothing invoiced. */
-  kind: OpenItemKind | "advance";
+  /** "advance" — R-1863: booked as the customer's advance (on account), nothing invoiced.
+      "split" — R-2098: several items on one line; each is in parts. */
+  kind: OpenItemKind | "advance" | "split";
   quote_id: string | null;
   invoice_id: string | null;
   invoice_issued: string | null;
@@ -576,6 +577,11 @@ export interface PayForResult {
   old_invoice_credited?: string | null;
   old_invoice_voided?: string | null;
   old_credit_note_id?: string | null;
+  /* R-2098 split: what each item recorded, the money left as advance, the round-off. */
+  parts?: PayForResult[];
+  allocated?: number;
+  round_off?: number;
+  advance_receipt_voucher_no?: string | null;
 }
 
 export interface ResultLine { text: string; href?: string; tone?: "ok" | "warn" }
@@ -593,7 +599,23 @@ export function advanceMessage(amount: number, customerName: string): string {
 /** "Renewal of Google Workspace (15 seats) paid → subscription renewed to 24 Oct 2027", etc. */
 export function resultLines(r: PayForResult): ResultLine[] {
   const out: ResultLine[] = [];
-  const sub = r.subscriptions[0];
+  /* R-2098: several items on one line — each part says what it did, then the rest. A split
+     result has no subscriptions of its own (they are on its parts), so this comes first. */
+  if (r.kind === "split") {
+    for (const p of r.parts ?? []) out.push(...resultLines(p));
+    if ((r.advance_credit ?? 0) > 0) {
+      out.push({
+        text: advanceMessage(r.advance_credit ?? 0, r.customer_name ?? "the customer"),
+        href: r.customer_id ? `/customers/${encodeURIComponent(r.customer_id)}` : undefined,
+      });
+    }
+    const ro = r.round_off ?? 0;
+    if (ro > 0) out.push({ text: `${rupee(ro)} less came in — written off as round-off (Bank Charges)` });
+    else if (ro < 0) out.push({ text: `${rupee(-ro)} more came in — written off as round-off (Bank Charges)` });
+    return out;
+  }
+  const subs = r.subscriptions ?? [];
+  const sub = subs[0];
   const subName = sub ? `${sub.plan ?? "subscription"}${sub.seats ? ` (${sub.seats} seats)` : ""}` : "";
   const quoteHref = r.quote_id ? `/quotes/${encodeURIComponent(r.quote_id)}` : undefined;
 
@@ -633,7 +655,7 @@ export function resultLines(r: PayForResult): ResultLine[] {
     out.push({ text: `Instalment ${r.invoice_id} paid${sub ? ` · ${subName}` : ""}` });
   } else {
     out.push({ text: `${rupee(r.amount)} recorded on ${r.new_quote ? "new sale" : "quote"} ${r.quote_id}`, href: quoteHref });
-    for (const s of r.subscriptions) {
+    for (const s of subs) {
       out.push({
         text: `Subscription created: ${s.plan ?? "plan"} × ${s.seats ?? 0}${splitCycle(s.billing_cycle) ? ` · ${cycleScheduleLabel(splitCycle(s.billing_cycle))}` : ""}${s.renewal_date ? `, renews ${formatDate(s.renewal_date)}` : ""}`,
         href: "/subscriptions",
@@ -650,7 +672,7 @@ export function resultLines(r: PayForResult): ResultLine[] {
   if (r.tds_amount > 0) out.push({ text: `${rupee(r.tds_amount)} TDS booked as TDS receivable — collect the certificate (Form 16A)` });
   /* R-2026: paid in parts — the rest of the year is not owed today. R-2048: each part is a payment
      request on its date; its invoice is raised when it is paid (R-2044). */
-  const split = r.subscriptions.map((s) => splitCycle(s.billing_cycle)).find((c) => c !== null) ?? null;
+  const split = subs.map((s) => splitCycle(s.billing_cycle)).find((c) => c !== null) ?? null;
   if (split && r.outstanding > 0 && !r.already_recorded) {
     out.push({ text: `The rest of the year is ${cycleScheduleLabel(split)} — a payment request goes out on each date; its invoice is raised when it is paid.` });
   } else if (r.outstanding > 0 && !r.already_recorded) out.push({ text: `${rupee(r.outstanding)} still due on it`, tone: "warn" });

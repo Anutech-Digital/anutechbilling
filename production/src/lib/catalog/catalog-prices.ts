@@ -19,8 +19,9 @@
 import { HOSTING_TIERS, type HostingTier } from "@/site/lib/data/hosting-landing-v2";
 import { MAILBOX_YR } from "@/site/lib/data/domains-landing";
 import { CERTS, MAIL_RATES, type Cert } from "@/site/lib/data/catalog";
+import { SUPPORT_TIERS, supportPrice, supportSkuId, type SupportTierId } from "@/lib/support/tiers";
 
-export const CATALOG_FUNCTIONS = ["hosting", "mail", "ssl"] as const;
+export const CATALOG_FUNCTIONS = ["hosting", "mail", "ssl", "support"] as const;
 export type CatalogFunction = (typeof CATALOG_FUNCTIONS)[number];
 
 /** One SKU the website sells, as the R-1785 seed wrote it (the fallback metadata). */
@@ -50,6 +51,29 @@ export const CORE_SKUS: readonly CoreSku[] = [
   { sku: "SSL-OVEV-YR", name: "OV / EV SSL (Yearly)", function: "ssl", termMonths: 12, hsn: "998313", fulfilment: "manual", engineRef: null },
 ];
 
+/**
+ * R-2083 (29 Oct 2026): the paid support plans the website sells (/buy/support) — Standard and
+ * Enterprise, monthly and yearly. Free is not sold, so it has no SKU here. Names, HSN and term
+ * are the 20260817160000 seed's + R-1785 §4's (sku, term_months, fulfilment 'support_panel');
+ * the code price is SUPPORT_TIERS (lib/support/tiers.ts) — the same figures the seed wrote and
+ * the quote builder charges. Kept apart from CORE_SKUS, which is the R-1785 seed list exactly.
+ */
+const supportSkus = (id: SupportTierId, label: string): CoreSku[] => [
+  { sku: supportSkuId(id, "monthly"), name: `Support ${label} (Monthly)`, function: "support", termMonths: 1, hsn: "998313", fulfilment: "support_panel", engineRef: null },
+  { sku: supportSkuId(id, "yearly"), name: `Support ${label} (Yearly)`, function: "support", termMonths: 12, hsn: "998313", fulfilment: "support_panel", engineRef: null },
+];
+export const SUPPORT_SKUS: readonly CoreSku[] = [...supportSkus("standard", "Standard"), ...supportSkus("enterprise", "Enterprise")];
+
+/** Every SKU the book prices and the public catalogue lists. */
+export const BOOK_SKUS: readonly CoreSku[] = [...CORE_SKUS, ...SUPPORT_SKUS];
+
+/** The support SKU for a plan and cycle, or null for a plan the website does not sell (Free). */
+export function supportBookSku(plan: string, cycle: "monthly" | "yearly"): string | null {
+  const t = SUPPORT_TIERS.find((x) => x.id === plan);
+  if (!t || t.id === "free") return null;
+  return supportSkuId(t.id, cycle);
+}
+
 /** CERTS card name → its SKU. Free DV is included with hosting, not sold. */
 export const SSL_SKU_BY_CERT: Readonly<Record<string, string>> = {
   "Positive SSL": "SSL-POSITIVE-YR",
@@ -69,6 +93,8 @@ export interface CatalogRow {
   fulfilment: string | null;
   engine_ref: string | null;
   is_public: boolean;
+  /** R-2083: prices.annual_total.msrp — where a yearly support row keeps its year total (msrp 0). */
+  annual_total_msrp?: number | string | null;
 }
 
 export interface PriceBook {
@@ -80,6 +106,8 @@ export interface PriceBook {
   mailboxYearly: number;
   /** SKU → ₹ ex-GST for each paid certificate. */
   ssl: Readonly<Record<string, number>>;
+  /** R-2083: SKU → ₹ ex-GST for one term of each paid support plan (SUP-*-MO = a month, -YR = the year). */
+  support: Readonly<Record<string, number>>;
   /** Public metadata per SKU (catalogue row when there is one, else the seed's). */
   entries: readonly PublicEntry[];
   /** SKUs priced from code because the catalogue had no usable row. */
@@ -111,6 +139,23 @@ function rupees(v: unknown): number | null {
 
 const twoDp = (n: number) => Math.round(n * 100) / 100;
 
+function codeSupportPrice(sku: string): number {
+  const m = /^SUP-([A-Z]+)-(MO|YR)$/.exec(sku);
+  const t = m ? SUPPORT_TIERS.find((x) => x.id.toUpperCase() === m[1]) : undefined;
+  return t && m ? supportPrice(t, m[2] === "YR" ? "yearly" : "monthly") : 0;
+}
+
+/**
+ * The price a catalogue row holds. Support's yearly rows keep the whole-year total in
+ * prices.annual_total.msrp and 0 in msrp (20260817160000 — lib/support/catalog-row.ts
+ * supportRowPrice); every other row keeps it in msrp.
+ */
+function rowPrice(sku: string, r: CatalogRow | undefined): number | null {
+  if (!r) return null;
+  if (/^SUP-[A-Z]+-YR$/.test(sku)) return rupees(r.annual_total_msrp) ?? rupees(r.msrp);
+  return rupees(r.msrp);
+}
+
 function codeSslPrice(sku: string): number {
   const name = Object.keys(SSL_SKU_BY_CERT).find((k) => SSL_SKU_BY_CERT[k] === sku);
   const cert = CERTS.find((c) => c.name === name);
@@ -125,6 +170,7 @@ export function codePrice(sku: string): number {
     return t ? Math.round(h[2] === "YR" ? t.yearlyTotal : t.monthly) : 0;
   }
   if (sku === "MAIL-ANUTECH-YR") return Math.round(MAILBOX_YR);
+  if (sku.startsWith("SUP-")) return codeSupportPrice(sku);
   return codeSslPrice(sku);
 }
 
@@ -137,7 +183,7 @@ export function buildPriceBook(rows: readonly CatalogRow[] | null): PriceBook {
   const bySku = new Map((rows ?? []).map((r) => [r.sku, r]));
   const fallbacks: string[] = [];
   const price = (sku: string): number => {
-    const fromDb = rows ? rupees(bySku.get(sku)?.msrp) : null;
+    const fromDb = rows ? rowPrice(sku, bySku.get(sku)) : null;
     if (fromDb !== null) return fromDb;
     if (rows) fallbacks.push(sku);
     return codePrice(sku);
@@ -158,6 +204,8 @@ export function buildPriceBook(rows: readonly CatalogRow[] | null): PriceBook {
   const mailboxYearly = price("MAIL-ANUTECH-YR");
   const ssl: Record<string, number> = {};
   for (const sku of Object.values(SSL_SKU_BY_CERT)) ssl[sku] = price(sku);
+  const support: Record<string, number> = {};
+  for (const s of SUPPORT_SKUS) support[s.sku] = price(s.sku);
 
   const priceOf = (sku: string): number => {
     const h = /^HOST-([A-Z]+)-(YR|MO)$/.exec(sku);
@@ -165,11 +213,12 @@ export function buildPriceBook(rows: readonly CatalogRow[] | null): PriceBook {
       const t = tiers.find((x) => x.name.toUpperCase() === h[1])!;
       return Math.round(h[2] === "YR" ? t.yearlyTotal : t.monthly);
     }
+    if (sku.startsWith("SUP-")) return support[sku];
     return sku === "MAIL-ANUTECH-YR" ? mailboxYearly : ssl[sku];
   };
-  const entries: PublicEntry[] = CORE_SKUS.map((c) => {
+  const entries: PublicEntry[] = BOOK_SKUS.map((c) => {
     const r = bySku.get(c.sku);
-    const usable = !!rows && !!r && rupees(r.msrp) !== null;
+    const usable = !!rows && !!r && rowPrice(c.sku, r) !== null;
     return {
       sku: c.sku,
       name: usable ? r!.name : c.name,
@@ -179,11 +228,14 @@ export function buildPriceBook(rows: readonly CatalogRow[] | null): PriceBook {
       hsn: usable && r!.hsn ? r!.hsn : c.hsn,
       fulfilment: usable && r!.fulfilment ? r!.fulfilment : c.fulfilment,
       engineRef: usable ? r!.engine_ref : c.engineRef,
-      isPublic: usable ? r!.is_public : true,
+      /* R-2083: the support rows were seeded in Aug, before is_public existed (default false,
+         never set since). A paid plan IS sold on the website (/buy/support), so its flag is not
+         read — the rows would otherwise vanish from the list the day CATALOG_FROM_DB goes on. */
+      isPublic: c.function === "support" ? true : usable ? r!.is_public : true,
     };
   });
 
-  return { source: rows ? "catalog" : "code", tiers, mailboxYearly, ssl, entries, fallbacks };
+  return { source: rows ? "catalog" : "code", tiers, mailboxYearly, ssl, support, entries, fallbacks };
 }
 
 /** Today's prices, from code only. */
@@ -256,6 +308,13 @@ export function bookMailRates(
 ): Readonly<Record<string, number>> {
   const mo = bookMailboxMonthly(book);
   return rates["Anutech Mail"] === mo ? rates : { ...rates, "Anutech Mail": mo };
+}
+
+/** R-2083: the ex-GST price of one term of a paid support plan in this book, or null (Free / unknown). */
+export function bookSupportPrice(book: Pick<PriceBook, "support">, plan: string, cycle: "monthly" | "yearly"): number | null {
+  const sku = supportBookSku(plan, cycle);
+  const p = sku ? book.support[sku] : undefined;
+  return typeof p === "number" && p > 0 ? p : null;
 }
 
 /** The ex-GST rate for one hosting tier and cycle in this book, or null for an unknown tier. */

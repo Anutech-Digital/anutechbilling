@@ -363,8 +363,8 @@ export default function ProfitabilityPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-hairline">
-                {rows.map((r) => (
-                  <tr key={r.customerId ?? r.customerName} className="hover:bg-paper-2/40">
+                {rows.map((r, idx) => (
+                  <tr key={r.customerId ?? `${r.customerName}-${idx}`} className="hover:bg-paper-2/40">
                     <td className="px-4 py-3">
                       <span className={`inline-block w-2.5 h-2.5 rounded-full ${
                         r.health === "green" ? "bg-emerald" :
@@ -428,8 +428,8 @@ export default function ProfitabilityPage() {
 
           {/* Mobile */}
           <ul className="md:hidden space-y-2.5">
-            {rows.map((r) => (
-              <li key={r.customerId ?? r.customerName}>
+            {rows.map((r, idx) => (
+              <li key={r.customerId ?? `${r.customerName}-${idx}`}>
                 <Card className="p-4">
                   <div className="flex items-start gap-2.5 mb-2">
                     <span className={`mt-1.5 inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 ${

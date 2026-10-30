@@ -25,6 +25,10 @@ import { assessLeakage, leakageTotals } from "@/lib/vendor/leakage";
 import { useActiveTrials } from "@/lib/queries/trials";
 import ExtendSubscriptionDialog from "@/components/features/subscriptions/extend-subscription-dialog";
 import AddSeatsDialog            from "@/components/features/subscriptions/add-seats-dialog";
+import UpgradeSupportDialog      from "@/components/features/subscriptions/upgrade-support-dialog";
+import { supportUpgradeFrom } from "@/lib/support/upgrade-quote";
+import { isSupportSkuId } from "@/lib/support/tiers";
+import { mayDo } from "@/lib/auth/action-roles";
 import { AddSubscriptionDialog } from "@/components/features/subscriptions/add-subscription-dialog";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -287,6 +291,8 @@ export default function SubscriptionsPage() {
     return () => window.removeEventListener(SUBSCRIPTION_SEARCH_EVENT, onPick);
   }, []);
   const [extendSub,  setExtendSub]   = React.useState<Subscription | null>(null);
+  /* R-2073: the support plan being upgraded (pro-rata quote dialog). */
+  const [upgradeSub, setUpgradeSub]  = React.useState<Subscription | null>(null);
   const [scheduleSub, setScheduleSub] = React.useState<Subscription | null>(null);
   /* R-1433: ?open=<subscription id> — "Open subscription" on an invoice lands here and opens
      that subscription's drawer. Read once after mount (no useSearchParams: build rule), then
@@ -356,6 +362,8 @@ export default function SubscriptionsPage() {
   const canDeleteSub = canDeleteMoney(useCurrentUser().data?.role);
   /* R-1513: the "Quote" link only for roles that can open /quotes (R-237). */
   const canQuotesHere = canOpenQuotes(useCurrentUser().data?.role);
+  /* R-2073: Upgrade plan makes a quote that changes the bill — the Extend / Add seats roles. */
+  const canChangeTerms = mayDo(useCurrentUser().data?.role, "seats.change");
   const confirm = useConfirm();
   const handleDeleteSub = async (s: Subscription) => {
     const body = `This removes the subscription (and any draft purchase order for it). `
@@ -1752,6 +1760,16 @@ export default function SubscriptionsPage() {
         />
       )}
 
+      {/* R-2073: Upgrade plan dialog (support subscriptions) */}
+      {upgradeSub && (
+        <UpgradeSupportDialog
+          sub={upgradeSub}
+          catalog={catalog}
+          open={!!upgradeSub}
+          onOpenChange={(v) => { if (!v) setUpgradeSub(null); }}
+        />
+      )}
+
       {/* Add seats dialog */}
       {addSeatsSub && (
         <AddSeatsDialog
@@ -1830,11 +1848,15 @@ export default function SubscriptionsPage() {
               <SubDrawerActions
                 hasCustomer={!!scheduleSub.customer_id}
                 primary={!leakFixShown}
+                supportPlan={isSupportSkuId(scheduleSub.item_id)}
                 onManageSeats={() => { const sub = scheduleSub; setScheduleSub(null); openAddSeats(sub); }}
                 onExtend={() => { const sub = scheduleSub; setScheduleSub(null); setExtendSub(sub); }}
                 onOpenCustomer={() => { const id = scheduleSub.customer_id; setScheduleSub(null); router.push(`/customers/${id}` as never); }}
                 onStatement={() => { const id = scheduleSub.customer_id; setScheduleSub(null); router.push(`/accounting/ledger?customer=${id}` as never); }}
                 onCorrect={() => { const sub = scheduleSub; setScheduleSub(null); setEditSub(sub); }}
+                onUpgradePlan={canChangeTerms && supportUpgradeFrom(scheduleSub)
+                  ? () => { const sub = scheduleSub; setScheduleSub(null); setUpgradeSub(sub); }
+                  : undefined}
               />
               {/* ── WHAT TO DO ABOUT THE LEAK, NOT JUST THAT THERE IS ONE ────────
                   The row and the card both learned to SHOW leakage on 21 Sep 2026, and

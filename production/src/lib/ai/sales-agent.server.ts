@@ -148,13 +148,19 @@ export function catalogueFromRows(rows: readonly CatalogRow[]): SalesCatalogEntr
     /* × 12. `items.msrp` is ₹/seat/MONTH (AGENTS.md §1) and this field is per YEAR — the
        conversion was missing until 24 Aug 2026, so the agent quoted a twelfth of every
        price. See perSeatPerYear for the measurement. */
+    /* R-2097: the annual tier holds the EXACT monthly figure (₹1,000/yr → 83.333…); the integer
+       msrp column holds it in whole rupees (83), and 83 × 12 = ₹996. Price a year from the tier. */
+    const annual = r.prices?.annual;
+    const fromTier = typeof annual?.msrp === "number" && annual.msrp > 0;
+    const perMonth = fromTier ? annual!.msrp : r.msrp;
+    const costPerMonth = fromTier && typeof annual!.wholesale === "number" ? annual!.wholesale : r.wholesale;
     const entry: SalesCatalogEntry = {
       sku: r.id,
       name: r.name,
       vendor: r.vendor ?? "other",
-      msrpPerSeatPerYear: perSeatPerYear(r.msrp),
+      msrpPerSeatPerYear: perSeatPerYear(perMonth),
       wholesalePerSeatPerYear:
-        typeof r.wholesale === "number" ? perSeatPerYear(r.wholesale) : 0,
+        typeof costPerMonth === "number" ? perSeatPerYear(costPerMonth) : 0,
       monthlyFlexPerSeatPerMonth: flexRate(r.prices),
     };
 

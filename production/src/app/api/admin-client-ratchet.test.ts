@@ -87,6 +87,7 @@ const PUBLIC_BY_DESIGN: Record<string, string> = {
   "public/catalog/buy-workspace": "R-2027 buy-page prices after a failed cold-start read: GET only, the website tenant only (websiteTenantId, never one the caller names), only id/name/msrp/prices.msrp (no wholesale or margin, Plus without a price), per-IP rate limit, no-store",
   "public/catalog/workspace": "public price catalogue (read-only)",
   "public/checkout/workspace": "public buy flow; creates a draft quote for the buy-page tenant only",
+  "public/checkout/support": "public buy flow (R-2083); creates a lead + draft quote for the buy-page tenant only, priced on the server",
   "public/consent": "R-2010 cookie-consent record: insert-only row for the website tenant only (never a tenant the caller names); per-IP rate limit; IP kept only as an HMAC",
   "public/coupons/validate": "dry-run coupon check for the buy-page tenant; records nothing",
   "public/enquiry/general": "website enquiry form; Turnstile",

@@ -123,6 +123,14 @@ JOBS=(
   # above: the dial stops what the app sends OUT to other people, and must never be able to
   # silence what the app says TO US.
   "resellersos-ai-support-sla|*/15 * * * *|/api/cron/ai-support-sla|Close silent support tickets; alert on unassigned escalations"
+  # R-2067: every 5 minutes — a support plan sold / renewed / cancelled reaches the support
+  # desk (DSP) within minutes. Needs DSP_SUPPORT_URL + DSP_WEBHOOK_SECRET on the service
+  # (unset = the route does nothing) and the "Support plan sync" switch ON on /automation.
+  "resellersos-support-sync|*/5 * * * *|/api/cron/support-sync|Send queued support-plan changes to the support desk (DSP)"
+  # R-2103: every 5 minutes — a customer who has paid gets their customer panel (DMS) login.
+  # Needs PANEL_ACCOUNTS_LIVE=1 + DMS_ENGINE_COMMAND_KEY on the service (else the route does
+  # nothing) and the "Customer panel accounts" switch ON on /automation.
+  "resellersos-panel-accounts|*/5 * * * *|/api/cron/panel-accounts|Create customer panel (DMS) accounts for customers who have paid"
   # 10:30 IST, once a day, weekdays only — and every part of that is deliberate.
   #
   # ONCE: the job selects subscriptions renewing on an EXACT date five days out, so each one

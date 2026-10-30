@@ -39,9 +39,17 @@ export interface PaymentToRecord {
   createsSubscription: boolean;
   /** The plan a subscription would be created for, when there is one. */
   planLabel: string | null;
+  /** R-2101: every plan that gets a subscription — record_payment makes one per line that
+   *  carries a billing commitment (Business Starter + Business Standard → two). When given with
+   *  more than one name, the sheet names them all instead of planLabel alone. */
+  planLabels?: readonly string[];
   /** R-453: a renewal quote — record_payment moves the EXISTING subscription on by a term
    *  instead of creating one. Optional; absent means a normal quote. */
   renewsSubscription?: boolean;
+  /** R-2087: a support-plan upgrade quote (isSupportUpgradeQuote) — stored as a renewal
+   *  (no new subscription) but record_payment moves the EXISTING subscription to the new
+   *  plan and keeps its renewal date. Wins over renewsSubscription. */
+  upgradesPlan?: boolean;
   /** R-542: an add-seats quote (quotes.is_add_seats) — the seats were already added to the
    *  EXISTING subscription by Manage seats → Add Seats, and record_payment creates no
    *  subscription for it. Optional; absent means a normal quote. */
@@ -51,6 +59,10 @@ export interface PaymentToRecord {
 /** R-542: what recording a payment on an add-seats quote does to the subscription. */
 export const ADD_SEATS_CONSEQUENCE =
   "Adds the seats to the existing subscription — no new subscription is created. The next renewal bills the new seat count.";
+
+/** R-2087: what recording the full payment on a support-plan upgrade quote does. */
+export const UPGRADE_PLAN_CONSEQUENCE =
+  "Upgrades the existing support plan once paid in full — same subscription, same renewal date. No new subscription is created.";
 
 export function recordPaymentConsequences(args: {
   payment: PaymentToRecord;
@@ -124,7 +136,9 @@ export function recordPaymentConsequences(args: {
     });
   }
 
-  if (p.renewsSubscription) {
+  if (p.upgradesPlan) {
+    out.push({ tone: "fact", text: UPGRADE_PLAN_CONSEQUENCE });
+  } else if (p.renewsSubscription) {
     /* R-453: "Creates a recurring subscription" on a renewal made the owner think a second
        subscription would appear. It does not — the same one gets a new renewal date. */
     out.push({
@@ -147,9 +161,12 @@ export function recordPaymentConsequences(args: {
       text: "No subscription and no renewal are created from this payment — nothing will be billed again automatically.",
     });
   } else {
+    const plans = (p.planLabels ?? []).map((x) => x.trim()).filter(Boolean);
     out.push({
       tone: "fact",
-      text: `Creates a recurring subscription${p.planLabel?.trim() ? ` for ${p.planLabel.trim()}` : ""} and sets its first renewal date. The renewal cron will bill it from then on.`,
+      text: plans.length > 1
+        ? `Creates ${plans.length} recurring subscriptions — ${plans.slice(0, -1).join(", ")} and ${plans[plans.length - 1]} — and sets their first renewal date. The renewal cron will bill them from then on.`
+        : `Creates a recurring subscription${p.planLabel?.trim() ? ` for ${p.planLabel.trim()}` : ""} and sets its first renewal date. The renewal cron will bill it from then on.`,
     });
   }
 

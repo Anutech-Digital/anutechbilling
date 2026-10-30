@@ -16,7 +16,7 @@ import { quotePlaceOfSupply } from "../quotes/quote-place-of-supply";
 import type { Invoice, Quote, Customer } from "@/lib/supabase/database.types";
 import type { InvoicePDFProps } from "./InvoicePDF";
 import type { QuotePDFProps } from "./QuotePDF";
-import { quoteIsPaid } from "./quote-document-kind";
+import { quoteIsPaid, quoteKindFlags } from "./quote-document-kind";
 import { payMethods } from "./pay-methods";
 import { includedSupportLine } from "./quote-support-line";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
@@ -318,7 +318,8 @@ export function buildQuotePdfProps(args: {
     /* R-367: "Support: Free — Included" when no support line is on the quote — the same
        builder the preview dialog calls, so the two documents agree. */
     includedSupport: includedSupportLine(quote.line_items ?? []),
-    isRenewal:     quote.is_renewal,
+    /* R-2093: quote / renewal / upgrade from ONE helper — never the raw flag. */
+    ...quoteKindFlags(quote),
     /* R-034: the money is in, so this sheet is a record of a paid order, not an offer.
        Decided once, here, so the heading and the footer cannot disagree. */
     isPaid:        quoteIsPaid(quote),

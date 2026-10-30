@@ -14,6 +14,7 @@ import * as React from "react";
 import { useQuote } from "@/lib/queries/quotes";
 import { usePaymentsByQuote, totalReceived } from "@/lib/queries/payments";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
+import { quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 
 export function RecordQuotePaymentDialog({
   quoteId,
@@ -45,6 +46,7 @@ export function RecordQuotePaymentDialog({
       lineItems={Array.isArray(quote.line_items) ? quote.line_items : null}
       askDomain={!quote.is_one_off}
       defaultDomain={quote.domain ?? undefined}
+      {...quoteKindFlags(quote) /* R-2093: the sheet + toast say renewal / upgrade like the quote page */}
     />
   );
 }

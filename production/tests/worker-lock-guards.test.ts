@@ -263,8 +263,8 @@ describe("R-1958 scope guard — a change must not undo other cards' work", () =
     const src = readFileSync(path.join(__dirname, "..", "scripts", "ops", "worker-lock.mjs"), "utf8");
     const push = src.slice(src.indexOf("async function pushWithTurn"), src.indexOf("R-1898 (25 Oct 2026)"));
     expect(push.indexOf("scope();")).toBeGreaterThan(-1);
-    expect(push.indexOf("scope();")).toBeLessThan(push.indexOf("git rebase -q"));
-    expect(push.lastIndexOf("scope((c)")).toBeGreaterThan(push.indexOf("git rebase -q"));
+    expect(push.indexOf("scope();")).toBeLessThan(push.indexOf("rebaseResolvingDerived(") /* R-2105: the rebase runs there */);
+    expect(push.lastIndexOf("scope((c)")).toBeGreaterThan(push.indexOf("rebaseResolvingDerived(") /* R-2105: the rebase runs there */);
     expect(src).toMatch(/enforceScope\(card, "worktree"/);
   });
 });

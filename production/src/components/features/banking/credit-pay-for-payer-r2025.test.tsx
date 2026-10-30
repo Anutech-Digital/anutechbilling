@@ -22,6 +22,7 @@ vi.mock("@/lib/queries/bank-credit-pay-for", () => ({
   useNewSaleFromBankCredit: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useAdvanceFromBankCredit: () => ({ mutateAsync: state.adv, isPending: false }),
   useRelinkOneOffSale: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSplitFromBankCredit: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("@/lib/queries/customer-payers", () => ({
   usePayerMemory: () => ({ payers: state.payers, ownNames: ["Orbit Software"] }),

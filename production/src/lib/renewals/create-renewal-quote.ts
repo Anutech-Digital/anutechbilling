@@ -21,6 +21,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { quoteDocumentKind, type QuoteDocumentKind } from "@/lib/pdf/quote-document-kind";
 import type { Database, Json, QuoteLineItem } from "@/lib/supabase/database.types";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteStartTaxRate } from "@/lib/quotes/bill-of-supply";
@@ -88,7 +89,14 @@ export interface RenewalQuoteResult {
   lineItems:  QuoteLineItem[];
   /** True if a brand-new quote was created in this call. */
   created:    boolean;
+  /** R-2093: what the linked quote IS. The subscription's renewal_quote_id also carries a
+   *  support-plan upgrade quote (R-2073), so a reminder must not print it "Renewal". */
+  kind:       QuoteDocumentKind;
 }
+
+/* R-2093: what path 1 reads — the stored figures as they are, plus the three columns
+   quoteDocumentKind needs to tell a support-plan upgrade quote from a renewal. */
+const LINKED_QUOTE_COLUMNS = "id, amount, line_items, subtotal, discount_pct, tax_rate, is_renewal, is_extension, extension_months" as const;
 
 export async function createOrGetRenewalQuote(
   input: CreateRenewalQuoteInput,
@@ -99,7 +107,7 @@ export async function createOrGetRenewalQuote(
   if (existingQuoteId) {
     const { data: q } = await supabase
       .from("quotes")
-      .select("id, amount, line_items, subtotal, discount_pct, tax_rate")
+      .select(LINKED_QUOTE_COLUMNS)
       .eq("id", existingQuoteId)
       .single();
     if (q) {
@@ -111,6 +119,7 @@ export async function createOrGetRenewalQuote(
         taxRate:     (q.tax_rate as number) ?? 18,
         lineItems:   ((q.line_items ?? []) as QuoteLineItem[]),
         created:     false,
+        kind:        quoteDocumentKind(q as never),
       };
     }
     // If the linked quote was deleted somehow, fall through and create fresh
@@ -277,5 +286,6 @@ export async function createOrGetRenewalQuote(
     lineItems:   made.line_items ?? [],
     /* False when another run made (or linked) it first — its quote, not the one priced here. */
     created:     made.created,
+    kind:        "renewal",
   };
 }

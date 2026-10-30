@@ -57,6 +57,9 @@ export type PublicQuote = {
   /** R-811: "3-month extension" / "1-year extension" on an extension quote (extensionTitle()
    *  in lib/quotes/service-period); null/absent otherwise. */
   extension_title?: string | null;
+  /** R-2093: the document's heading from lib/pdf/quote-document-kind (quoteDocumentLabel +
+   *  quoteKindFlags) — "Upgrade Quotation" on a support-plan upgrade. Absent → "Quotation". */
+  document_label?: string;
 };
 export type PublicLine = {
   id: string;
@@ -669,7 +672,7 @@ export function QuoteAcceptView({
               </div>
             </div>
             <div className="text-right">
-              <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold">Quotation</p>
+              <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold" data-testid="document-label">{quote.document_label ?? "Quotation"}</p>
               <p className="font-serif text-3xl mt-1">{quote.id}</p>
               {quote.expires_date && (
                 <p className="text-xs text-ink-3 mt-1">

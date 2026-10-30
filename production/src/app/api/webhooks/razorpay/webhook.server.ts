@@ -42,6 +42,7 @@ import { decideProvisioning, testPaymentProvisioningAllowed } from "@/lib/provis
 import { queueProvisioning } from "@/lib/provisioning/provisioning.server";
 import { provisioningProducts, productAmountPaid } from "@/lib/provisioning/products";
 import { domainRegistrationEnabled, hostingProvisioningEnabled } from "@/lib/provisioning/domain-registration";
+import { ensurePanelAccount } from "@/lib/provisioning/panel-account.server";
 import {
   DOMAIN_RENEWAL_PLAN,
   domainRenewalEnabled,
@@ -73,6 +74,7 @@ import { safeDbMessage, logDbError } from "@/lib/errors/db-error";
 import { maskContactValue } from "@/lib/security/redact-contact";
 import { customerSetupSteps, leadOwnerNextSteps } from "@/lib/email/workspace-onboarding";
 import { loadLeadOwner } from "@/lib/email/lead-owner.server";
+import { isSupportCheckoutPlan, SUPPORT_OWNER_ACTION, supportWhatNext } from "@/lib/support/public-checkout";
 
 const WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET?.trim() || "";
 const FROM_EMAIL     = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
@@ -596,6 +598,10 @@ export async function settleCapturedPayment(
   } else if (renewedSub && !renewalPlan) {
     console.log(`[webhooks/razorpay] ${quote.id} renews a ${renewedSub.vendor} subscription — nothing to activate.`);
   }
+  /* R-2083: a support plan bought on /buy/support has nothing to provision — its subscription
+     (vendor 'support', filed by record_payment above) reaches the support desk through
+     support_sync_outbox. Queuing it would hand the desk an "activate in the vendor's console". */
+  const isSupportOrder = isSupportCheckoutPlan(quote.plan);
   const products = isRenewal
     ? renewalPlan && renewalDomain
       ? [{ vendor: renewedSub!.vendor as "domain" | "hosting", domain: renewalDomain, seats: 1 }]
@@ -608,7 +614,7 @@ export async function settleCapturedPayment(
         domainItemIds,
       });
 
-  for (const product of products) {
+  for (const product of isSupportOrder ? [] : products) {
     const provisioning = decideProvisioning({
       paymentMode: razorpayMode(keyIdForMode),
       /* The signature verified and the amount was checked above — those two together are what
@@ -701,6 +707,16 @@ export async function settleCapturedPayment(
     }
   }
 
+  /* R-2103: the customer panel (DMS) login at once. record_payment's insert already queued the
+     customer (trg_queue_panel_account); this sends that row now instead of on the next cron.
+     An order made inside the DMS panel names its buyer's DMS user, so the row is only marked
+     done with it. Best-effort, never throws — the payment is recorded either way. */
+  {
+    const panelUser = notes.channel === "dms-panel" && typeof notes.dmsUserId === "string" ? notes.dmsUserId : null;
+    const panel = await ensurePanelAccount(admin, { tenantId: quote.tenant_id, quoteId: quote.id, dmsUserId: panelUser });
+    if (panel.kind === "skipped") console.log(`[webhooks/razorpay] ${quote.id}: panel account not sent now — ${panel.reason}`);
+  }
+
   /* R-1985: the domain's share of a split payment — the Workspace share sends the one mail. */
   if (splitPart?.role === "secondary") {
     return NextResponse.json({
@@ -760,11 +776,11 @@ export async function settleCapturedPayment(
   const invoiceLine = invoiceUrl
     ? `YOUR GST TAX INVOICE\n  ${invoiceUrl}`
     : `Your GST tax invoice will reach you by email shortly.`;
-  const whatNext = isHostingOrder
+  const whatNext = isSupportOrder ? supportWhatNext(tierName) : isHostingOrder
     ? `WHAT HAPPENS NEXT\n  • Your hosting account is being set up now\n  • You'll get a separate email with your control-panel login\n  • Moving from another host? Reply and we'll migrate you free`
     /* R-120: the whole setup, step by step — who does what, with the exact DNS values. */
     : customerSetupSteps({ domain, seats, tierName, contactName: leadOwner?.name ?? sellerPerson, contactPhone: sellerPhone });
-  const productDesc = isHostingOrder ? tierName : `${seats} users of ${tierName}`;
+  const productDesc = isHostingOrder || isSupportOrder ? tierName : `${seats} users of ${tierName}`;
 
   await Promise.allSettled([
     // Customer order confirmation
@@ -782,7 +798,7 @@ Thanks for your purchase! Your payment of ${amountFmt} for ${productDesc} has be
 
 ORDER SUMMARY
   Order ID    ${quote.id}
-  Plan        ${tierName}${isHostingOrder ? "" : `\n  Seats       ${seats}`}
+  Plan        ${tierName}${isHostingOrder || isSupportOrder ? "" : `\n  Seats       ${seats}`}
   Domain      ${domain || "—"}
   Total paid  ${amountFmt} (incl 18% GST)
 
@@ -815,11 +831,11 @@ ORDER ID    ${quote.id}
 RAZORPAY    ${paymentRef}
 METHOD      ${paymentMethod}
 
-ACTION REQUIRED
+${isSupportOrder ? SUPPORT_OWNER_ACTION : `ACTION REQUIRED
   1. Verify domain ownership (DNS TXT record)
   2. Create customer in Google Reseller Console
   3. Provision ${seats} licenses on ${domain || "the customer's domain"}
-  4. Send admin credentials to ${customerEmail}
+  4. Send admin credentials to ${customerEmail}`}
 
 Open in app: ${publicBase}/customers
 Open quote:  ${publicBase}/quotes/${quote.id}${leadOwner
@@ -830,7 +846,7 @@ Open quote:  ${publicBase}/quotes/${quote.id}${leadOwner
     /* R-120: the employee who owns the lead (R-111 deals new leads round-robin) gets the
        order and the next steps — not only the tenant inbox. Skipped when that person IS the
        tenant inbox, so nobody gets the same order twice. */
-    leadOwner && !isHostingOrder && leadOwner.email.toLowerCase() !== (owner.ok ? owner.to.toLowerCase() : "") && sendInternalEmail({
+    leadOwner && !isHostingOrder && !isSupportOrder && leadOwner.email.toLowerCase() !== (owner.ok ? owner.to.toLowerCase() : "") && sendInternalEmail({
       to:      leadOwner.email,
       from:    FROM_EMAIL,
       kind:    "razorpay_payment_lead_owner",

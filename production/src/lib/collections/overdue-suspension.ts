@@ -148,6 +148,46 @@ export function decideOverdueSuspension(input: SuspensionInput, today: string): 
   };
 }
 
+/* ── R-2070 (decision D4, 29 Oct 2026) — support plans ──────────────────────────────────
+ * A support plan (catalogue SKU "SUP-…", see 20260817160000_support_tier_skus.sql) whose
+ * invoice is more than SUPPORT_GRACE_DAYS past due is paused for EVERY company — no opt-in,
+ * no separate final notice. Pausing support only stops live chat and calls in the support
+ * app (tickets stay open and the support app itself tells the customer "payment pending"
+ * where they would start a chat), so the R-116 notice-then-pause ladder is not needed here.
+ * The R-116 per-company pass skips support plans so one subscription has one rule.
+ * Turning it back on is the same trigger as R-116 (trg_invoices_overdue_resume). */
+
+/** Days past the due date a support plan's invoice may stay unpaid before chat/call stop. */
+export const SUPPORT_GRACE_DAYS = 7;
+/** Catalogue id prefix of every support plan SKU. */
+export const SUPPORT_SKU_PREFIX = "SUP-";
+
+/** Is this subscription's catalogue item a support plan? */
+export function isSupportItem(itemId: string | null | undefined): boolean {
+  return typeof itemId === "string" && itemId.startsWith(SUPPORT_SKU_PREFIX);
+}
+
+export function decideSupportOverduePause(
+  input: { subscriptionStatus: string; oldest: OldestOverdue | null },
+): SuspensionDecision {
+  if (input.subscriptionStatus !== "active") {
+    return { action: "none", daysOverdue: 0, pauseOn: null, reason: `Subscription is ${input.subscriptionStatus}.` };
+  }
+  const o = input.oldest;
+  if (!o) return { action: "none", daysOverdue: 0, pauseOn: null, reason: "No overdue invoice for this support plan." };
+  const pauseOn = addDaysISO(o.dueDate, SUPPORT_GRACE_DAYS + 1);
+  if (o.daysOverdue <= SUPPORT_GRACE_DAYS) {
+    return {
+      action: "none", daysOverdue: o.daysOverdue, pauseOn,
+      reason: `${o.daysOverdue} days overdue — support chat and calls stop after ${SUPPORT_GRACE_DAYS} days.`,
+    };
+  }
+  return {
+    action: "suspend", daysOverdue: o.daysOverdue, pauseOn,
+    reason: `Invoice ${o.invoiceId} is ${o.daysOverdue} days overdue (support plans: ${SUPPORT_GRACE_DAYS} days grace). Chat and calls stop until it is paid; tickets stay open.`,
+  };
+}
+
 export interface WriteOffCandidate {
   invoiceId: string;
   amountDue: number;

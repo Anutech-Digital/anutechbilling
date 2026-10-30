@@ -31,6 +31,7 @@ import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage";
 import { pagePaidToDate, paidToDateLine, PAID_TO_DATE_LABEL } from "@/lib/quotes/paid-to-date";
 import { useNextPartRequest } from "./next-part-request";
+import { useQuotePartInvoices } from "./part-invoices";
 import { PaymentHistoryCard } from "./payment-history-card";
 import { planForQuote, splitDue } from "@/lib/billing/instalments";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
@@ -115,7 +116,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canRecordMoney } from "@/lib/auth/roles";
 import { rupee, formatDate, daysBetween, toWhatsAppDigits } from "@/lib/utils";
 import { logoDataUri } from "@/lib/pdf/logo";
-import { quoteIsPaid } from "@/lib/pdf/quote-document-kind";
+import { quoteDocumentKind, quoteIsPaid, quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 import {
   extensionTitle, isMonthExtension, isOneTimeQuote, oneTimeLineNote,
   quoteLinePeriodContext, renewedSubscriptionDomain,
@@ -200,7 +201,7 @@ export default function QuoteDetailPage() {
   const [approvalOpen, setApprovalOpen] = React.useState(false);
   const requestApproval = useRequestApproval();
   /* R-1121: this quote's, the renewed one and the customer's subscriptions — not the whole table. */
-  const { data: allSubs } = useQuoteSubscriptions(quote ?? null);
+  const { data: allSubs, isLoading: subsLoading } = useQuoteSubscriptions(quote ?? null);
   /* R-1764: each subscription line's "Domain:" and "Subscription period:" in the preview. */
   const periodCtx = React.useMemo(
     () => (quote ? quoteLinePeriodContext(quote, renewedSubscriptionDomain(quote, allSubs)) : null),
@@ -286,6 +287,13 @@ export default function QuoteDetailPage() {
     .filter((s) => quote && s.quote_id === quote.id)
     .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""))[0];
   const { data: nextPartRequest = null } = useNextPartRequest(quote && !partRequest ? saleSub?.id : null);
+  /* R-2101: the parts' tax invoices (linked through subscription_billings) tick INVOICED. Not
+     loaded / failed → null: the step falls back to quote.invoice_id alone (as before R-2101). */
+  const { data: partInvoices = null, isLoading: partInvoicesLoading } = useQuotePartInvoices(
+    quote && !quote.invoice_id && !partRequest
+      ? (allSubs ?? []).filter((s) => s.quote_id === quote.id && s.billing_cycle !== "yearly").map((s) => s.id)
+      : [],
+  );
   const paidToDate = quote
     ? pagePaidToDate({
         quote: quote as typeof quote & { subscription_billing_id?: string | null },
@@ -310,6 +318,7 @@ export default function QuoteDetailPage() {
         /* R-1710: what came in and what is left, also once invoiced. */
         money: quotePaymentState(quote),
         paidToDate: paidToDate ? paidToDateLine(paidToDate, formatDate(paidToDate.next.billOn)) : null,
+        partInvoices: partInvoices,
       })
     : null;
 
@@ -651,7 +660,10 @@ export default function QuoteDetailPage() {
   const { data: turnover } = useTurnoverBracket();
 
   // ────────── Loading / Error ──────────
-  if (isLoading) {
+  /* R-2104: also wait for the subscriptions and the parts' invoices. Rendered before they came, a
+     paid quote said "No invoice yet" and flashed the red "Re-create subscription" banner (no
+     subscription read yet looked like a missing one). */
+  if (isLoading || subsLoading || partInvoicesLoading) {
     return (
       <div className="p-4 md:p-6 lg:p-8 max-w-5xl mx-auto space-y-6">
         <Skeleton className="h-12 w-1/2" />
@@ -732,6 +744,9 @@ export default function QuoteDetailPage() {
   const paidOnceLines = addSeatsQuote || isMonthExtension(extFlags);
   const lineOnceNote = oneTimeLineNote({ isAddSeats: quote.is_add_seats, ...extFlags });
   const extTitle = extensionTitle(extFlags);
+  /* R-2087: a support-plan upgrade is stored as is_renewal (no new subscription) — it said
+     "Renewal quote" / "Renewal" although it renews nothing; it upgrades the plan. */
+  const upgradeQuote = quoteDocumentKind(quote) === "upgrade";  // R-2093: one helper
   const linePer = (line: QuoteLineItem) =>
     paidOnceLines || !line.commitment ? "" : isAnnualTier(line.commitment) ? "/yr" : "/mo";
   const discount = Math.round(quote.subtotal * (quote.discount_pct / 100));
@@ -1016,7 +1031,7 @@ export default function QuoteDetailPage() {
           <IconButton icon="arrow_left" aria-label="Back" onClick={() => router.push("/quotes" as any)} />
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
-              Revenue · {quote.is_extension ? "Extension Quote" : quote.is_renewal ? "Renewal Quote" : "Quote"}
+              Revenue · {quote.is_extension ? "Extension Quote" : upgradeQuote ? "Upgrade Quote" : quote.is_renewal ? "Renewal Quote" : "Quote"}
             </p>
             <h1 className="font-serif text-3xl md:text-4xl leading-tight">
               {quote.id}
@@ -1093,7 +1108,7 @@ export default function QuoteDetailPage() {
               ) : quote.is_renewal && (
                 <>
                   <span>·</span>
-                  <Badge kind="info">Renewal</Badge>
+                  <Badge kind="info">{upgradeQuote ? "Upgrade" : "Renewal"}</Badge>
                 </>
               )}
               {payment && (
@@ -1988,7 +2003,12 @@ export default function QuoteDetailPage() {
       {/* Payment dialog */}
       <RecordPaymentDialog
         open={paymentOpen && mayRecordMoney}
-        onOpenChange={setPaymentOpen}
+        onOpenChange={(o) => {
+          setPaymentOpen(o);
+          /* R-2104: the payment raised the part's tax invoice (raise-instalments) — re-read the
+             parts' invoices so INVOICED ticks without a page reload. */
+          if (!o) void qc.invalidateQueries({ queryKey: ["quote-part-invoices"] });
+        }}
         quoteId={quote.id}
         customerName={quote.customer_name}
         expectedAmount={total}
@@ -2000,7 +2020,7 @@ export default function QuoteDetailPage() {
            operator to guess — which is exactly what a tester hit twice on 22 Aug. */
         lineItems={Array.isArray(quote.line_items) ? quote.line_items : null}
         askDomain={!quote.is_one_off}
-        isRenewal={!!quote.is_renewal}
+        {...quoteKindFlags(quote) /* R-2093 */}
         /* The QUOTE first — it is the record being paid and the one the operator typed
            the domain into. Leaving it out is what made the field open empty on a quote
            that had the answer written on it (reported 22 Aug from Q-TEST-2026-27-0009). */
@@ -2169,7 +2189,8 @@ export default function QuoteDetailPage() {
               isExport:      pos.isExport,
               billOfSupply,
               notes:         quote.notes ?? "",
-              isRenewal:     quote.is_renewal,
+              /* R-2093: quote / renewal / upgrade from ONE helper — never the raw flag. */
+              ...quoteKindFlags(quote),
               oneTime:       oneTimeQuote,
               extensionTitle: extTitle,
             });

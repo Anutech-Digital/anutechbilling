@@ -15,7 +15,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
-import { plannedInstalments, instalmentSkip, instalmentsDue, type InstalmentSkip } from "./instalments";
+import { plannedInstalments, instalmentSkip, instalmentsDue, quotePeriodTaxables, type InstalmentSkip, type SplitQuoteFields } from "./instalments";
 import { billingTermStart } from "./subscription-schedule";
 import { addDaysISO } from "@/lib/dates/ist";
 import { billedElsewhere, billedElsewhereLabel } from "@/lib/subscriptions/billed-elsewhere";
@@ -65,6 +65,8 @@ export interface InstalmentSyncResult {
   requestsOpen: { period_index: number; quote_id: string; status: string }[];
   /** R-2044: would have got a payment request (dry run only). */
   wouldRequest: number;
+  /** R-2092: parts held back until the quote's other subscriptions have their parts laid. */
+  waiting?: { period_index: number; subscription_ids: string[] }[];
 }
 
 export async function syncSubscriptionInstalments(args: {
@@ -73,6 +75,10 @@ export async function syncSubscriptionInstalments(args: {
   quote: QuotePaymentFacts | undefined;
   todayISO: string;
   dryRun?: boolean;
+  /** R-2092: lay (insert / re-sync) this subscription's parts and stop — bill nothing. Run for
+      every subscription of a quote BEFORE billing any of them, so the quote's parts of one period
+      are all there when the first is billed and go on ONE tax invoice (billing_part_group). */
+  layOnly?: boolean;
 }): Promise<InstalmentSyncResult> {
   const { supabase, sub, quote, todayISO } = args;
   const dryRun = args.dryRun ?? false;
@@ -81,7 +87,12 @@ export async function syncSubscriptionInstalments(args: {
   /* R-1763: a period Zoho already billed is never laid or invoiced here (the database refuses
      it too — trigger subscription_billings_not_billed_elsewhere). The term key stays the
      whole term's first day, so the periods still to bill here keep their usual key. */
-  const wholeTerm = plannedInstalments(sub);
+  /* R-2104: the quote's only split-billed subscription is laid with the QUOTE's period amounts —
+     the figure the Record payment sheet asked (quotePeriodTaxables). */
+  const mrrTerm = plannedInstalments(sub);
+  const wholeTerm = mrrTerm.length > 0
+    ? quotePeriodTaxables(mrrTerm, { mrr: sub.mrr, cycle: sub.billing_cycle, ...(await quotePlanFacts(supabase, sub)) })
+    : mrrTerm;
   const planned = wholeTerm.filter((p) => !billedElsewhere(sub, p.periodStart));
   if (wholeTerm.length > 0 && planned.length === 0) {
     out.skip = { code: "billed_elsewhere", reason: `${billedElsewhereLabel(sub)} — this term is not invoiced again here; the next term is.` };
@@ -155,6 +166,7 @@ export async function syncSubscriptionInstalments(args: {
   }
   out.created  = toInsert.length;
   out.resynced = toResync.length;
+  if (args.layOnly) return out;
 
   const { data: fresh, error: frErr } = dryRun
     ? { data: existing ?? [], error: null }
@@ -187,6 +199,34 @@ export async function syncSubscriptionInstalments(args: {
     if (error) throw new Error(error.message);
   }
   return out;
+}
+
+/**
+ * R-2104: what quotePeriodTaxables needs from the subscription's quote — its split fields and how
+ * many split-billed subscriptions it has (active ones + this one). No quote, or a failed read → { quote: null }:
+ * the MRR figures stand (as before R-2104).
+ */
+export async function quotePlanFacts(
+  supabase: Admin,
+  sub: Pick<InstalmentSub, "id" | "tenant_id" | "quote_id" | "billing_cycle">,
+): Promise<{ quote: SplitQuoteFields | null; splitSubsOfQuote: number }> {
+  const quoteId = sub.quote_id;
+  if (!quoteId || !sub.billing_cycle || sub.billing_cycle === "yearly") return { quote: null, splitSubsOfQuote: 0 };
+  const read = await (async () => Promise.all([
+    supabase.from("quotes")
+      .select("subtotal, discount_pct, tax_rate, amount, billing_cycle, line_items")
+      .eq("tenant_id", sub.tenant_id).eq("id", quoteId).maybeSingle(),
+    supabase.from("subscriptions")
+      .select("id, billing_cycle, status")
+      .eq("tenant_id", sub.tenant_id).eq("quote_id", quoteId),
+  ]))().catch(() => null);
+  if (!read) return { quote: null, splitSubsOfQuote: 0 };
+  const [{ data: q, error: qErr }, { data: subs, error: sErr }] = read;
+  if (qErr || sErr || !q) return { quote: null, splitSubsOfQuote: 0 };
+  return {
+    quote: q as SplitQuoteFields,
+    splitSubsOfQuote: (subs ?? []).filter((x) => (x.id === sub.id || x.status === "active") && x.billing_cycle != null && x.billing_cycle !== "yearly").length,
+  };
 }
 
 export function emptySyncResult(): InstalmentSyncResult {
@@ -261,8 +301,16 @@ export async function duePartInvoices(
   ]);
   const cycleOf = new Map((subs ?? []).map((x) => [x.id, (x.billing_cycle ?? null) as string | null]));
   const amountOf = new Map((invs ?? []).map((x) => [x.id, x.amount ?? 0]));
+  /* R-2092: the parts of one quote period share ONE invoice — report it once. */
+  const seen = new Set<string>();
   return [...rows]
     .sort((a, b) => a.period_start.localeCompare(b.period_start) || a.period_index - b.period_index)
+    .filter((r) => {
+      const id = r.invoice_id as string;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
     .map((r) => ({
       subscription_id: r.subscription_id,
       period_index:    r.period_index,
@@ -273,6 +321,45 @@ export async function duePartInvoices(
       period_end:      r.period_end,
       raised_now:      args.raisedNow.has(r.invoice_id as string),
     }));
+}
+
+/**
+ * R-2092: lay (insert / re-sync, no billing) the parts of every subscription in `subs`. A failure
+ * is RETURNED per subscription and logged — never swallowed (68ed55d70 swallowed it, and on
+ * localhost the quote's Q1 went out as the Starter alone). Billing stays safe without it: the
+ * database bills no part while another subscription of its quote has no parts laid
+ * (bill_subscription_instalment → 'waiting', migration 20261029052411).
+ * Returns the parts laid / re-synced, for the cron's counts. A dry run writes nothing.
+ */
+export async function layInstalments(
+  supabase: Admin,
+  subs: InstalmentSub[],
+  quoteOf: (sub: InstalmentSub) => QuotePaymentFacts | undefined,
+  todayISO: string,
+  dryRun: boolean,
+): Promise<{ created: number; resynced: number; errors: { subscription_id: string; message: string }[] }> {
+  const out = { created: 0, resynced: 0, errors: [] as { subscription_id: string; message: string }[] };
+  if (dryRun) return out;
+  for (const sub of subs) {
+    try {
+      const r = await syncSubscriptionInstalments({ supabase, sub, quote: quoteOf(sub), todayISO, layOnly: true });
+      out.created += r.created;
+      out.resynced += r.resynced;
+    } catch (e) {
+      const message = `Laying the parts failed: ${e instanceof Error ? e.message : String(e)}`;
+      console.error(`[billing/lay] subscription ${sub.id}: ${message}`);
+      out.errors.push({ subscription_id: sub.id, message });
+    }
+  }
+  return out;
+}
+
+/** R-2092: the subscriptions in `subs` that share their quote with another one in `subs`. */
+export function quoteSiblings<T extends Pick<InstalmentSub, "tenant_id" | "quote_id">>(subs: T[]): T[] {
+  const key = (s: T) => `${s.tenant_id}:${s.quote_id}`;
+  const count = new Map<string, number>();
+  for (const s of subs) if (s.quote_id) count.set(key(s), (count.get(key(s)) ?? 0) + 1);
+  return subs.filter((s) => s.quote_id != null && (count.get(key(s)) ?? 0) > 1);
 }
 
 /**
@@ -332,6 +419,12 @@ export async function raiseDueInstalmentsForQuote(args: {
   if (!subs || subs.length === 0) return out;
 
   const facts = await readQuotePaymentFacts(supabase, quoteId);
+  /* R-2092: every subscription's parts are laid first, then billed — a quote's parts for one
+     period become ONE tax invoice only when they all exist at the first bill. */
+  if (subs.length > 1) {
+    const laid = await layInstalments(supabase, subs, () => facts, todayISO, false);
+    out.errors.push(...laid.errors);
+  }
   for (const sub of subs) {
     try {
       const r = await syncSubscriptionInstalments({ supabase, sub, quote: facts, todayISO });

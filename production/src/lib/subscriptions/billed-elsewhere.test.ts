@@ -60,3 +60,33 @@ describe("R-1763 — the billing cron never invoices the term Zoho billed", () =
     expect(r.raised).toEqual([]);
   });
 });
+
+describe("R-2097 — an Opening subscription (billed & paid before this app)", () => {
+  const opening = {
+    mrr: 3333, billing_cycle: "yearly" as const, term_months: 12,
+    start_date: "2026-04-01", renewal_date: "2027-03-31",
+    external_source: "opening", external_ref: null, external_ref_date: null,
+    billed_externally_until: "2027-03-31",
+  };
+  it("is named on the contract, and its term is 'Billed outside this app', not due", () => {
+    expect(externalSourceText(opening)).toBe("Opening — billed outside this app");
+    const periods = subscriptionSchedule(opening);
+    const m = scheduleInvoices({ periods, startDate: opening.start_date, saleInvoice: null, instalments: [], source: opening });
+    expect(m.get(1)).toMatchObject({ status: "external", externalLabel: "Billed outside this app" });
+    expect(nextUninvoiced(periods, m, "2026-10-29")).toBeNull();
+    expect(billedElsewhere(opening, nextTermSchedule(opening)[0].periodStart)).toBe(false);
+  });
+  it("the billing cron skips its term without touching the database", async () => {
+    const noDb = new Proxy({}, { get() { throw new Error("database touched"); } }) as unknown as SupabaseClient;
+    const sub: InstalmentSub = {
+      id: "s2", tenant_id: "t1", quote_id: null, mrr: 3333, billing_cycle: "quarterly", term_months: 12,
+      start_date: "2026-04-01", renewal_date: "2027-03-31",
+      external_source: "opening", external_ref: null, billed_externally_until: "2027-03-31",
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = await syncSubscriptionInstalments({ supabase: noDb as any, sub, quote: undefined, todayISO: "2026-10-29" });
+    expect(r.skip?.code).toBe("billed_elsewhere");
+    expect(r.skip?.reason).toBe("Billed outside this app — this term is not invoiced again here; the next term is.");
+    expect(r.raised).toEqual([]);
+  });
+});

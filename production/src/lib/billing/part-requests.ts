@@ -26,7 +26,10 @@ export type BillOutcome =
   | { action: "request"; quote_id?: string; created?: boolean; gross: number; dry_run?: boolean }
   /* R-2048: sale_quote = the part is the first of an unpaid sale; quote_id is the open sale quote,
      which is its payment request (no invoice, no second request). */
-  | { action: "request_open"; quote_id: string; status: string; gross: number; sale_quote?: boolean };
+  | { action: "request_open"; quote_id: string; status: string; gross: number; sale_quote?: boolean }
+  /* R-2092: another subscription of the same quote has no parts laid yet — nothing is billed, so
+     the quote's period goes on ONE invoice once they are (migration 20261029052411). */
+  | { action: "waiting"; reason: string; subscription_ids: string[] };
 
 export interface BillTally {
   raised: { period_index: number; invoice_id: string; gross: number }[];
@@ -35,6 +38,8 @@ export interface BillTally {
   requests: { period_index: number; quote_id: string; gross: number }[];
   requestsOpen: { period_index: number; quote_id: string; status: string }[];
   wouldRequest: number;
+  /** R-2092: parts held back until the quote's other subscriptions are laid. */
+  waiting?: { period_index: number; subscription_ids: string[] }[];
 }
 
 /** Adds one part's outcome to the run's tally. Unknown answers throw — never a silent "0". */
@@ -60,6 +65,9 @@ export function applyBillOutcome(out: BillTally, periodIndex: number, data: unkn
       return;
     case "request_open":
       out.requestsOpen.push({ period_index: periodIndex, quote_id: r.quote_id, status: r.status });
+      return;
+    case "waiting":
+      (out.waiting ??= []).push({ period_index: periodIndex, subscription_ids: r.subscription_ids ?? [] });
       return;
     default:
       throw new Error(`bill_subscription_instalment answered "${(r as { action: string }).action}" for part ${periodIndex}`);

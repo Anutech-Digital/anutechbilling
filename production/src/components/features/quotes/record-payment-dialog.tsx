@@ -299,6 +299,8 @@ interface RecordPaymentDialogProps {
   askDomain?: boolean;
   /** R-453: a renewal quote — the sheet says the existing subscription is renewed. */
   isRenewal?: boolean;
+  /** R-2087: a support-plan upgrade quote — the sheet says the plan is upgraded, not renewed. */
+  isUpgrade?: boolean;
   /** Pre-fill the domain field (e.g. from the customer/lead's known domain). */
   defaultDomain?: string | null;
   /**
@@ -338,6 +340,7 @@ export function RecordPaymentDialog({
   askDomain = false,
   defaultDomain = null,
   isRenewal = false,
+  isUpgrade = false,
   lineItems,
   onRecorded,
   tdsOnly = null,
@@ -1021,6 +1024,7 @@ export function RecordPaymentDialog({
         invoicePaid:          res.invoicePaid,
         hasExistingInvoice:   res.hasExistingInvoice,
         isRenewalQuote:       res.isRenewalQuote,
+        isUpgradeQuote:       isUpgrade,  // R-2093
         renewalRolledForward: res.renewalRolledForward,
         overpaidCredit:       res.overpaidCredit,
         tdsRecorded:          res.tdsRecorded,
@@ -1352,7 +1356,11 @@ export function RecordPaymentDialog({
             />
             {/* Reports a decimal BEFORE submit, and says what it would be saved as —
                 rounding somebody's money without telling them is not a kindness. */}
-            <FieldPill check={watch("amount") === 0 && !tdsDeducted
+            {/* R-2101: only for a 0 the operator TYPED. After Confirm the payments refresh,
+                `remaining` drops to ₹0 and the amount effect below sets the field to 0 while the
+                sheet closes — the red "more than ₹0" flashed on a payment that had just saved.
+                A 0 never typed is still refused on submit (schema refine above). */}
+            <FieldPill check={amountEdited && watch("amount") === 0 && !tdsDeducted
               ? { tone: "error", message: "Amount must be more than ₹0." }
               : checkMoney(Number.isFinite(watchedAmount) ? String(watchedAmount) : "")} />
           </FormField>
@@ -1726,7 +1734,13 @@ export function RecordPaymentDialog({
                       (l) => typeof l?.commitment === "string" && l.commitment.trim() !== "",
                     ),
                     planLabel: (lineItems ?? [])[0]?.name ?? null,
+                    /* R-2101: one subscription per commitment line — name them all, not the first. */
+                    planLabels: (lineItems ?? [])
+                      .filter((l) => typeof l?.commitment === "string" && l.commitment.trim() !== "")
+                      .map((l) => l?.name ?? "")
+                      .filter((n): n is string => typeof n === "string" && n.trim() !== ""),
                     renewsSubscription: isRenewal,
+                    upgradesPlan: isUpgrade,
                     addsSeats: isAddSeatsQuote,
                   },
                   /* Null once an invoice already exists — a post-invoice payment issues no

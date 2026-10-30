@@ -19,6 +19,8 @@ export const JOB_CRON: Record<AutomationJob, string> = {
   "ai-reply-retry":       "*/5 * * * *",
   "ai-sales-loop":        "0 9-19 * * 1-6",
   "ai-support-sla":       "*/15 * * * *",
+  "support-sync":         "*/5 * * * *",
+  "panel-accounts":       "*/5 * * * *",
   "ai-telecall-renewals": "30 10 * * 1-5",
   "cold-calls":           "*/2 9-19 * * 1-5",
   "provision-hosting":    "*/15 9-21 * * *",

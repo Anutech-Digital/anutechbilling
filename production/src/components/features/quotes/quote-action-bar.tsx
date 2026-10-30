@@ -34,6 +34,7 @@ import { canRecordMoney } from "@/lib/auth/roles";
 import type { Quote } from "@/lib/supabase/database.types";
 import { acceptedToast } from "@/lib/quotes/accepted-toast";
 import { acceptHint } from "@/lib/quotes/quote-page-actions";
+import { quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 
 interface QuoteActionBarProps {
   quote: Quote;
@@ -188,7 +189,7 @@ export function QuoteActionBar({ quote, onOpenFullQuote, onChanged, className }:
         isProspect={isProspect}
         invoiceId={quote.invoice_id}
         customerId={quote.customer_id}
-        isRenewal={!!quote.is_renewal}
+        {...quoteKindFlags(quote) /* R-2093: renewal / upgrade from one helper */}
       />
     </div>
   );

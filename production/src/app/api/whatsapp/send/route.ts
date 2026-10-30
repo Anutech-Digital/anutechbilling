@@ -25,6 +25,7 @@ import { withRoute } from "@/lib/api/with-route";
 import { sendCustomerWhatsApp } from "@/lib/messaging";
 import { classifySendFailure } from "@/lib/whatsapp/send-failure";
 import { renderQuotePDF } from "@/lib/pdf";
+import { quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
 import { quoteDueNowUpiAmount } from "@/lib/payments/quote-due-now";
@@ -165,7 +166,8 @@ export const POST = withRoute({
         interState:    isInterStateSupply(customer?.state_code, tenant?.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant?.gstin, treatment: customer?.gst_treatment }),
         validityDays:  30,
         notes:         quote.notes ?? undefined,
-        isRenewal:     quote.is_renewal,
+        /* R-2093: quote / renewal / upgrade from ONE helper — never the raw flag. */
+        ...quoteKindFlags(quote),
         oneTime:       isOneTimeQuote({
           isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off,
           isExtension: quote.is_extension, extensionMonths: quote.extension_months,
