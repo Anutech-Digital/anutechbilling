@@ -128,7 +128,11 @@ export function payerMatchesCustomer(payer: NarrationPayer, customerName: string
   const p = distinctive(payer.name), c = distinctive(customerName);
   if (p.length === 0 || c.length === 0) return true;
   const cs = new Set(c), ps = new Set(p);
-  return p.every((t) => cs.has(t)) || c.every((t) => ps.has(t));
+  if (p.every((t) => cs.has(t)) || c.every((t) => ps.has(t))) return true;
+  /* R-2095: the bank cut the LAST word anywhere ("…ELECTRICAL EQUIP" = "…Electrical Equipments"):
+     every other word is the customer's and the cut one starts one of the customer's words. */
+  const last = p[p.length - 1];
+  return p.length >= 2 && p.slice(0, -1).every((t) => cs.has(t)) && c.some((t) => t !== last && t.startsWith(last));
 }
 
 /** Who this payer is known for: one customer, several (→ no guess), or nobody. */

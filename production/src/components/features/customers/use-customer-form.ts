@@ -281,6 +281,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     lastDerivedPan.current = panFromForm;
   }, [panFromForm, setValue, form]);
 
+  /* R-2095: the owner chose "Save without contact" once — the next submit of this form saves. */
+  const noContactOk = React.useRef(false);
   const onSubmit = async (data: CustomerFormData) => {
     // Export (non-India) customers have no GSTIN / Indian state code — never
     // persist a stale one if the user typed then switched country.
@@ -301,12 +303,15 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
 
        CREATE ONLY, on purpose — editing an old customer is never blocked. Reported
        through setError so it lands on the field like every other message here. */
-    if (!isEdit) {
+    /* R-2095 (staging, 30 Oct): a customer brought over from Zoho can have neither (Quantiva) — the
+       owner may save it anyway; the customer then reads "No email or phone yet" until one is added. */
+    if (!isEdit && !noContactOk.current) {
       const problem = newCustomerReachProblem(data);
       if (problem) {
         form.setError("contact_email", { type: "manual", message: problem });
         toast.error("Add an email or a phone number", {
-          description: "The invoice and the payment reminder need somewhere to go. One of the two is enough.",
+          description: "The invoice and the payment reminder need somewhere to go. One of the two is enough. No contact at all? Save without one and add it later.",
+          action: { label: "Save without contact", onClick: () => { noContactOk.current = true; form.clearErrors("contact_email"); void onSubmit(data); } },
         });
         return;
       }
