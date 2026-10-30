@@ -80,6 +80,7 @@ import { domainConflictMessage } from "@/lib/quotes/payment-domain";
 import { deskPaymentTagArgs, isReplayResult, replayToast } from "@/lib/payments/record-payment-replay";
 import { instalmentPaymentLines, type InstalmentPaymentResult } from "@/lib/payments/instalment-payment";
 import { splitExpectation, splitPaymentToast, splitOutcomeSentence, type SplitExpectation, type InstalmentRaiseResult } from "@/lib/payments/split-expected";
+import { tdsWithRounding } from "@/lib/payments/tds-rounding";
 import { advanceToUse } from "@/lib/quotes/customer-advance";
 
 const schema = z.object({
@@ -517,8 +518,6 @@ export function RecordPaymentDialog({
      A rate change, unticking TDS or closing the sheet goes back to rate × taxable. */
   const [typedPartTds, setTypedPartTds] = React.useState<number | null>(null);
   React.useEffect(() => { setTypedPartTds(null); }, [open, tdsDeducted, tdsRatePct]);
-  const tdsAmount = tdsDeducted && typedPartTds !== null ? typedPartTds : tdsAtRate;
-
   // Advance credit applied to this payment — capped at the remaining balance
   // (can't apply more credit than is owed). Reduces the cash the customer needs.
   /* R-2023: "Use advance" — the whole advance that fits by default, or the part the person
@@ -528,6 +527,10 @@ export function RecordPaymentDialog({
   const appliedCreditAmount  = applyCredit
     ? advanceToUse({ available: availableCredit, owed: remaining, typed: typedCredit })
     : 0;
+  /* R-2095: the customer's TDS may be ₹1 off rate × pre-GST (paise rounding) — a typed bank amount
+     ₹1 short / over the balance takes the ₹1 into the TDS (lib/payments/tds-rounding). */
+  const tdsAmount = tdsDeducted && typedPartTds !== null ? typedPartTds
+    : tdsWithRounding({ tdsAtRate, remaining, bank: Number(watchedAmount) || 0, credit: appliedCreditAmount, bankTyped: amountEdited });
   React.useEffect(() => {
     setValue("creditApplied", appliedCreditAmount);
     if (isSubmitted) void trigger("amount");
