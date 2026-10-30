@@ -29,7 +29,7 @@ import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
 import { settleCapturedPayment, type RazorpayPayment } from "@/app/api/webhooks/razorpay/webhook.server";
 import { loadCheckoutRazorpayKeys } from "./razorpay-keys.server";
-import { buyPageTenantId, BuyPageTenantMissingError } from "./live-guards";
+import { buyPageTenantId, BuyPageTenantMissingError, liveKeyCheckoutRefusal } from "./live-guards";
 import { DOMAIN_QUOTE_PLAN, splitOrderParts } from "./split-order";
 import type { VerifyBody } from "./confirm-payment";
 
@@ -82,6 +82,9 @@ export async function verifyCheckoutPayment(request: { headers: Headers }, raw: 
   if (!keys) {
     return out(503, { state: "confirming", message: "Online payment isn't set up on our side, so we couldn't confirm it. " + SUPPORT_NEXT });
   }
+  /* R-2155: a live key on staging may read settlements, never settle a payment into our books. */
+  const stagingLive = liveKeyCheckoutRefusal(keys.keyId);
+  if (stagingLive) return out(403, { state: "refused", message: stagingLive });
 
   // 1. The signature, before anything else is looked up or asked.
   if (!checkoutSignatureValid(orderId, paymentId, signature, keys.keySecret)) {

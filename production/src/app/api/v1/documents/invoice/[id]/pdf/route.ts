@@ -19,6 +19,7 @@ import { readTenantUdyam } from "@/lib/compliance/udyam";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 import { loadRenewedSubscriptionDomain } from "@/lib/quotes/line-period-context";
 import { tdsByPayment } from "@/lib/accounting/tds-receipt";
+import { liveKeyCheckoutRefusal } from "@/lib/checkout/live-guards";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,7 +65,9 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
     .select("razorpay_key_id, razorpay_key_secret")
     .eq("tenant_id", inv.tenant_id)
     .maybeSingle();
-  const razorpayConfigured = Boolean(secrets?.razorpay_key_id && secrets?.razorpay_key_secret);
+  /* R-2155: staging with a live key cannot take a Razorpay payment, so its PDF does not offer one. */
+  const razorpayConfigured =
+    Boolean(secrets?.razorpay_key_id && secrets?.razorpay_key_secret) && !liveKeyCheckoutRefusal(secrets?.razorpay_key_id);
 
   /* Fetched here, not inside the renderer: logoDataUri carries a 4s deadline and swallows
      every failure, so a slow or missing logo costs the mark and never the document. */
