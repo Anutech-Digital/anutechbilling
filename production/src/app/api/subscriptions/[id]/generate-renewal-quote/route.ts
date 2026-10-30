@@ -91,7 +91,7 @@ export const POST = withRoute({
     const { data: fresh, error: fErr } = await supabase.from("subscriptions").select(INSTALMENT_SUB_SELECT).eq("id", sub.id).single();
     if (fErr || !fresh) return NextResponse.json({ error: fErr?.message ?? "subscription not found" }, { status: 500 });
     const facts = fresh.quote_id ? await readQuotePaymentFacts(supabase, fresh.quote_id) : undefined;
-    const r = await syncSubscriptionInstalments({ supabase, sub: fresh as InstalmentSub, quote: facts, todayISO: today });
+    const r = await syncSubscriptionInstalments({ supabase, sub: fresh as InstalmentSub, quote: facts, todayISO: today, rebillCredited: true });
     const msg = nextPartMessage(sub.customer_name, r, r.skip?.reason ?? null);
     return NextResponse.json(
       { split: true, rolledTo: roll.rolls > 0 ? roll.renewalDate : null, message: msg.text, href: msg.href,

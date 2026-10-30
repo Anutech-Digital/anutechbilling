@@ -49,6 +49,8 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
 
   const out = await raiseDueInstalmentsForQuote({
     supabase: admin, quoteId: quote.id, tenantId: me.tenant_id, todayISO: istToday(),
+    /* R-2095: the owner's own Generate — a part freed by a full credit note is billed again. */
+    rebillCredited: true,
   });
   return NextResponse.json(out);
 }
