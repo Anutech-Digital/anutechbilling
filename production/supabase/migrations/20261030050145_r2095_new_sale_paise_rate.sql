@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_new_sale_quote(uuid,uuid,jsonb,text)') and prosrc like '%R-2095%')
 -- deploy-key: r2095newsalepaiserate
--- 20261030040725_r2095_new_sale_paise_rate.sql
+-- 20261030050145_r2095_new_sale_paise_rate.sql
 --
 -- R-2095 (30 Oct 2026, staging reconcile): Reconcile → "A new sale" refused a paise unit price
 -- ("a whole-rupee unit price") and the screen rounded it — Zoho bills ₹103.5 and ₹1,347.5 a seat, so
