@@ -30,6 +30,7 @@ const SQL_SALE = new Set([
   "get_partner_metrics",   // invoiced this month (reseller children)
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
+  personal_my_invoices: "R-2132: a personal login's own document list (like a customer portal) — shows each of its linked customer's invoices with its own amount and balance; it totals nothing and no report or GST figure reads it",
   quote_one_time_lines: "R-2095: only checks whether a live invoice already carries a quote's one-time lines (tag one_time_of) — no amounts",
   marketing_metrics_query: "R-2165: Neo's ad report — a received payment's own invoice by id for its taxable share (ex GST), same as R-1980 marketing-sales.ts; the revenue is the PAYMENT, not an invoice total",
   tg_queue_panel_account: "R-2103: reads only the customer of an opening-invoice payment, to queue their customer panel login — no amounts",
