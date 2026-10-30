@@ -1,29 +1,19 @@
 /**
- * R-2176 — POST /api/personal/support-ticket: the session user is the ONLY identity. No user id,
- * tenant or customer comes from the request; the service-role client is made for the session
- * user and every read/write in filePersonalSupportTicket is pinned to that user.
+ * R-2176 — POST /api/personal/support-ticket: the caller's OWN session files the ticket. No
+ * service-role client is made (under DATA_GATEWAY=1 that is app_service, which cannot read
+ * public.users — the localhost check of 4957282b0), and the request names no user, tenant or
+ * customer: personal_file_support_ticket reads auth.uid().
  */
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { getUser, adminFor, file, profile } = vi.hoisted(() => {
-  const profile: { row: { role: string; full_name: string | null } | null; askedFor: string[] } = { row: null, askedFor: [] };
-  const adminFor = vi.fn((id: string) => ({
-    __admin: id,
-    from: (t: string) => {
-      if (t !== "users") throw new Error("unexpected table " + t);
-      return { select: () => ({ eq: (_c: string, v: string) => { profile.askedFor.push(v); return { maybeSingle: async () => ({ data: profile.row }) }; } }) };
-    },
-  }));
-  return { getUser: vi.fn(), adminFor, file: vi.fn(), profile };
-});
+const { getUser, rpc } = vi.hoisted(() => ({ getUser: vi.fn(), rpc: vi.fn() }));
 
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: () => ({ auth: { getUser } }),
-  createAdminClientFor: (id: string) => adminFor(id),
-}));
-vi.mock("@/lib/support/personal-report", async (orig) => ({
-  ...(await orig<typeof import("@/lib/support/personal-report")>()),
-  filePersonalSupportTicket: (...a: unknown[]) => file(...a),
+  createClient: () => ({ auth: { getUser }, rpc }),
+  createAdminClient: () => { throw new Error("service role must not be used"); },
+  createAdminClientFor: () => { throw new Error("service role must not be used"); },
 }));
 
 import { POST } from "./route";
@@ -32,53 +22,53 @@ const req = (body: unknown) => new Request("http://x/api/personal/support-ticket
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
 });
 
-beforeEach(() => {
-  getUser.mockReset(); adminFor.mockClear(); file.mockReset();
-  profile.row = { role: "personal", full_name: "Asha" }; profile.askedFor = [];
-});
+beforeEach(() => { getUser.mockReset(); rpc.mockReset(); });
 
 describe("POST /api/personal/support-ticket (R-2176)", () => {
   it("not signed in → 401, nothing filed", async () => {
     getUser.mockResolvedValue({ data: { user: null } });
-    const res = await POST(req({ text: "hi" }) as never);
+    const res = await POST(req({ text: "hi" }));
     expect(res.status).toBe(401);
-    expect(file).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("files for the SESSION user — a user id in the body is ignored", async () => {
+  it("files through the SESSION client's rpc; ids in the body are ignored", async () => {
     getUser.mockResolvedValue({ data: { user: { id: "me" } } });
-    file.mockResolvedValue({ ok: true, ticketId: "TKT-ABC-01" });
-    const res = await POST(req({ text: "Broken", type: "bug", severity: "high", pagePath: "/assets", userId: "someone-else" }) as never);
+    rpc.mockResolvedValue({ data: "TKT-ABC-01", error: null });
+    const res = await POST(req({ text: "Broken", type: "bug", severity: "high", pagePath: "/assets", userId: "someone-else", tenantId: "t" }));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ticketId: "TKT-ABC-01" });
-    expect(adminFor).toHaveBeenCalledWith("me");
-    expect(profile.askedFor).toEqual(["me"]);
-    expect(file).toHaveBeenCalledWith(expect.objectContaining({ __admin: "me" }), "me", "Asha", { text: "Broken", type: "bug", severity: "high", pagePath: "/assets" });
+    expect(rpc).toHaveBeenCalledTimes(1);
+    const [fn, args] = rpc.mock.calls[0];
+    expect(fn).toBe("personal_file_support_ticket");
+    expect(JSON.stringify(args)).not.toMatch(/someone-else|"t"/);
+    expect(args).toMatchObject({ p_category: "tech", p_priority: "high" });
   });
 
-  it("unknown kind/severity fall back to bug/medium; over-long text is refused", async () => {
+  it("unknown kind/severity fall back to bug/medium; over-long text is refused before the call", async () => {
     getUser.mockResolvedValue({ data: { user: { id: "me" } } });
-    file.mockResolvedValue({ ok: true, ticketId: "T" });
-    await POST(req({ text: "x", type: "hack", severity: "nope" }) as never);
-    expect(file.mock.calls[0][3]).toMatchObject({ type: "bug", severity: "medium", pagePath: "" });
-    const res = await POST(req({ text: "x".repeat(9000) }) as never);
-    expect(res.status).toBe(400);
+    rpc.mockResolvedValue({ data: "T", error: null });
+    await POST(req({ text: "x", type: "hack", severity: "nope" }));
+    expect(rpc.mock.calls[0][1]).toMatchObject({ p_category: "tech", p_priority: "normal" });
+    rpc.mockClear();
+    expect((await POST(req({ text: "x".repeat(9000) }))).status).toBe(400);
+    expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("a business login (or no users row) → 403, nothing filed — it reports into Admin → Feedback", async () => {
+  it("a SQL refusal keeps its status and the honest message", async () => {
     getUser.mockResolvedValue({ data: { user: { id: "me" } } });
-    profile.row = { role: "owner", full_name: "O" };
-    expect((await POST(req({ text: "x" }) as never)).status).toBe(403);
-    profile.row = null;
-    expect((await POST(req({ text: "x" }) as never)).status).toBe(403);
-    expect(file).not.toHaveBeenCalled();
-  });
-
-  it("a refusal keeps its status and honest message", async () => {
-    getUser.mockResolvedValue({ data: { user: { id: "me" } } });
-    file.mockResolvedValue({ ok: false, code: "NOT_LINKED", status: 409, error: "Your report was NOT sent." });
-    const res = await POST(req({ text: "x" }) as never);
+    rpc.mockResolvedValue({ data: null, error: { message: "R2176_NOT_LINKED: no support desk is linked to this login yet." } });
+    const res = await POST(req({ text: "x" }));
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: "Your report was NOT sent.", code: "NOT_LINKED" });
+    const j = await res.json();
+    expect(j.code).toBe("NOT_LINKED");
+    expect(j.error).toMatch(/NOT sent/);
+    rpc.mockResolvedValue({ data: null, error: { message: "R2176_NOT_PERSONAL: this is for personal accounts." } });
+    expect((await POST(req({ text: "x" }))).status).toBe(403);
+  });
+
+  it("the route source holds no service role", () => {
+    const src = fs.readFileSync(path.join(__dirname, "route.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(src).not.toMatch(/createAdminClient|SUPABASE_SERVICE_ROLE_KEY/);
   });
 });

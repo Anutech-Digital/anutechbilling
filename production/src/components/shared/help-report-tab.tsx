@@ -252,7 +252,7 @@ export function HelpReportTab({ pathname, getTrail, caughtError, onCaughtErrorUs
             onPaste={(e) => void onPaste(e)}
             rows={6}
             maxLength={4000}
-            placeholder="What you did, what happened, what you expected. Paste a screenshot with Ctrl+V."
+            placeholder={personal ? "What you did, what happened, what you expected." : "What you did, what happened, what you expected. Paste a screenshot with Ctrl+V."}
             className="block w-full resize-y rounded-lg border border-hairline bg-paper px-3 py-2 text-sm text-ink leading-relaxed focus:outline-none focus:ring-2 focus:ring-amber"
           />
         </div>
