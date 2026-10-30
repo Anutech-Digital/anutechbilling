@@ -37,3 +37,50 @@ const under = (pathname: string, page: string) => pathname === page || pathname.
 export function isPersonalOnlyPage(pathname: string): boolean {
   return PERSONAL_ONLY_PAGES.some((p) => under(pathname, p));
 }
+
+/**
+ * GP-07b (R-2116, G-PERSONAL measure 2) — the API a PERSONAL session may call. Middleware answers
+ * every other /api path with 403 JSON, so a personal login cannot reach a business route
+ * (/api/invoices, /api/team/invite, …) by hand even though its pages are walled (GP-07a).
+ *
+ * The personal workspace's own API:
+ *   /api/vault/personal   the Money screens' PIN + private vault routes — NEVER /api/vault (company vault)
+ *   /api/personal         personal-only routes (statement import etc. — later cards)
+ *   /api/dms/sso          "My digital assets" → the DMS panel
+ *   /api/support-sso      Support → the support desk
+ */
+export const PERSONAL_API_PREFIXES: readonly string[] = [
+  "/api/vault/personal",
+  "/api/personal",
+  "/api/dms/sso",
+  "/api/support-sso",
+];
+
+/**
+ * Routes that never act as a business member — sign-in, public site/checkout, signed webhooks,
+ * uptime checks, the public domain search (the role-gate ratchet's MACHINE_CALLER family) — plus
+ * two the app shell needs on every page:
+ *   /api/sb                     the data gateway the Money screens read through; its rows are
+ *                               walled by RLS (GP-09) and its table allowlist (GP-10), not here
+ *   /api/monitoring/sentry-dsn  the root layout's error reporting (public DSN, no session)
+ * NOT here on purpose: /api/ai/* (extract-statement, help) and /api/cron/*.
+ */
+export const PERSONAL_OPEN_API_PREFIXES: readonly string[] = [
+  "/api/auth",
+  "/api/public",
+  "/api/webhooks",
+  "/api/version",
+  "/api/health",
+  "/api/domains/availability",
+  "/api/sb",
+  "/api/monitoring/sentry-dsn",
+];
+
+/** True when a personal session may call this /api path (segment match: /api/versionx is not /api/version). */
+export function isPersonalApiAllowed(pathname: string): boolean {
+  const path = pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  return [...PERSONAL_API_PREFIXES, ...PERSONAL_OPEN_API_PREFIXES].some((p) => under(path, p));
+}
+
+/** The 403 body a personal session gets from a business API route. */
+export const PERSONAL_API_REFUSAL = "Not available for personal accounts. Upgrade to business to use this.";

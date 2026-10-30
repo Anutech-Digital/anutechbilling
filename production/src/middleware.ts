@@ -11,7 +11,7 @@ import { updateSession } from "@/lib/supabase/middleware";
 import { authjsMiddlewareSession } from "@/server/auth/middleware-session";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { GENERIC_HOME, homeForRole, isRouteAllowed, type UserRole } from "@/lib/nav";
-import { isPersonalOnlyPage } from "@/lib/workspace/personal-allowlist";
+import { isPersonalApiAllowed, isPersonalOnlyPage, PERSONAL_API_REFUSAL } from "@/lib/workspace/personal-allowlist";
 import { rateLimitShared, clientIp, publicApiLimit } from "@/lib/security/rate-limit";
 import { CHANGE_PASSWORD_PATH, mustChangePassword, safeNextPath } from "@/lib/auth/must-change-password";
 import { apiNeedsMfaCode, MFA_API_REFUSAL } from "@/lib/auth/mfa-gate";
@@ -393,6 +393,15 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url);
     }
     return response;
+  }
+
+  /* GP-07b (R-2116, G-PERSONAL measure 2): a personal session (one login = one personal
+     workspace) may call only its own API, the data gateway and the machine/public routes
+     (lib/workspace/personal-allowlist.ts) — every business route answers 403 JSON, so
+     /api/invoices or /api/team/invite cannot be reached by hand. Pages fall through to the
+     auth-page bounce and the route guard below (GP-07a), which send it to /money. */
+  if (isAuthed && role === "personal" && pathname.startsWith("/api/") && !isPersonalApiAllowed(pathname)) {
+    return NextResponse.json({ error: PERSONAL_API_REFUSAL }, { status: 403 });
   }
 
   // Logged in → redirect away from auth pages, sending each role to its
