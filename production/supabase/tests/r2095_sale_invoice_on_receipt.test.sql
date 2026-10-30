@@ -11,6 +11,7 @@
 --   D. Half-yearly sale, default renewal, H1 part-paid (₹91,350 of ₹92,925) → its first part's
 --      invoice is raised on that receipt (bill_subscription_instalment 'invoice'), ₹1,575 due.
 --   E. Paid in full with the shortfall as TDS (₹91,350 + ₹1,575 TDS) → first part invoiced, paid.
+--   F. A subscription line keeps its own end-domain (Zoho bills per end-domain); a bad one is refused.
 
 begin;
 
@@ -43,7 +44,9 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   ('11111111-0000-0000-0000-000000209562','dddddddd-0000-0000-0000-000000209561','bbbbbbbb-0000-0000-0000-000000209561','2026-09-25','NEFT SENT 2095',0,5000,'UTR2095SB','manual'),
   ('11111111-0000-0000-0000-000000209563','dddddddd-0000-0000-0000-000000209561','bbbbbbbb-0000-0000-0000-000000209561','2026-09-19','NEFT HALF 2095 C',0,91350,'UTR2095SC','manual'),
   ('11111111-0000-0000-0000-000000209564','dddddddd-0000-0000-0000-000000209561','bbbbbbbb-0000-0000-0000-000000209561','2026-09-19','NEFT HALF 2095 D',0,91350,'UTR2095SD','manual'),
-  ('11111111-0000-0000-0000-000000209565','dddddddd-0000-0000-0000-000000209561','bbbbbbbb-0000-0000-0000-000000209561','2026-09-19','NEFT HALF 2095 E',0,91350,'UTR2095SE','manual');
+  ('11111111-0000-0000-0000-000000209565','dddddddd-0000-0000-0000-000000209561','bbbbbbbb-0000-0000-0000-000000209561','2026-09-19','NEFT HALF 2095 E',0,91350,'UTR2095SE','manual'),
+  ('11111111-0000-0000-0000-000000209566','dddddddd-0000-0000-0000-000000209561','bbbbbbbb-0000-0000-0000-000000209561','2026-09-20','NEFT GLOBAL 2095 F',0,2360,'UTR2095SF','manual'),
+  ('11111111-0000-0000-0000-000000209567','dddddddd-0000-0000-0000-000000209561','bbbbbbbb-0000-0000-0000-000000209561','2026-09-20','NEFT GLOBAL 2095 G',0,1180,'UTR2095SG','manual');
 
 -- B's quote: made and sent before any money (the normal path).
 insert into public.quotes (id, tenant_id, customer_id, customer_name, tax_rate, amount, subtotal, billing_cycle, status, is_one_off, line_items)
@@ -124,6 +127,28 @@ begin
     raise exception 'FAIL E: TDS-settled first part not paid';
   end if;
   raise notice 'E PASS: TDS counts as paid';
+
+  -- F. one sale, two subscription lines, each with its own end-domain (Zoho bills per end-domain);
+  --    a line without one keeps the customer's domain; a bad domain is refused
+  r := public.reconcile_bank_credit_new_sale('11111111-0000-0000-0000-000000209566', 'cccccccc-0000-0000-0000-000000209561',
+         '[{"item_id":null,"name":"Google Workspace Business Starter","qty":1,"rate":1000,"cost":0,"commitment":"annual_yearly","domain":"Shop.Global2095.in"},
+           {"item_id":null,"name":"Google Workspace Business Standard","qty":1,"rate":1000,"cost":0,"commitment":"annual_yearly"}]'::jsonb,
+         true, '2026-09-01', null, 0, null, null, 'yearly');
+  if (select line_items->0->>'domain' from public.quotes where id = r->>'quote_id') is distinct from 'shop.global2095.in' then
+    raise exception 'FAIL F: the line domain was not kept on the quote (%)', (select line_items from public.quotes where id = r->>'quote_id');
+  end if;
+  if not exists (select 1 from public.subscriptions s where s.quote_id = r->>'quote_id' and s.domain = 'shop.global2095.in') then
+    raise exception 'FAIL F: no subscription on the line''s end-domain (%)', r->'subscriptions';
+  end if;
+  ok := false;
+  begin
+    perform public.reconcile_bank_credit_new_sale('11111111-0000-0000-0000-000000209567', 'cccccccc-0000-0000-0000-000000209561',
+         '[{"item_id":null,"name":"X","qty":1,"rate":1000,"cost":0,"commitment":"annual_yearly","domain":"not a domain"}]'::jsonb,
+         true, '2026-09-01', null, 0, null, null, 'yearly');
+  exception when sqlstate '22023' then ok := true;
+  end;
+  if not ok then raise exception 'FAIL F: a malformed domain was taken'; end if;
+  raise notice 'F PASS: per-line end-domain kept; bad domain refused';
 end $$;
 
 select 'R-2095 sale invoice on receipt: ALL PASS' as result;

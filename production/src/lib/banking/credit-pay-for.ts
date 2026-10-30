@@ -239,6 +239,22 @@ export interface SaleLine {
   /** R-2053: the owner typed this line's price (a deal). A commitment change then converts it
    *  instead of taking the catalogue price. A new product line starts without it. */
   priceTyped?: boolean;
+  /** R-2095 (Sept): the subscription's END-domain (Zoho bills per end-domain); empty = the customer's. */
+  domain?: string | null;
+}
+
+/** R-2095: a line's end-domain, as the server will store it (lower-case, trimmed), or null. */
+export function saleLineDomain(l: Pick<SaleLine, "domain" | "cycle">): string | null {
+  if (l.cycle === "one_time") return null;
+  const d = (l.domain ?? "").trim().toLowerCase();
+  return d || null;
+}
+
+/** R-2095: null when the typed end-domain is fine (or empty); the same rule the server checks. */
+export function saleLineDomainProblem(domain: string | null | undefined): string | null {
+  const d = (domain ?? "").trim().toLowerCase();
+  if (!d) return null;
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?([.][a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(d) ? null : "Domain must look like example.com.";
 }
 
 type CatalogRow = Pick<Item, "id" | "name" | "vendor" | "msrp" | "wholesale" | "prices"> & { item_type?: string | null };
@@ -555,6 +571,7 @@ export function saleLinesPayload(lines: readonly SaleLine[]) {
     rate: paiseRate(l.rate),   // R-2095: paise kept
     cost: Math.round(l.cost),
     commitment: l.cycle,
+    ...(saleLineDomain(l) ? { domain: saleLineDomain(l) } : {}),   // R-2095: end-domain per line
   }));
 }
 

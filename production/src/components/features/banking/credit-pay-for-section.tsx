@@ -46,7 +46,7 @@ import {
   amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
   paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
-  tdsRateToRecord, tdsToRecord, shortChoices, roundOffSplit,
+  tdsRateToRecord, tdsToRecord, shortChoices, roundOffSplit, saleLineDomainProblem,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
 import { tdsSectionGuess, TDS_SECTION_CHOICES } from "@/lib/banking/tds-section";
@@ -58,7 +58,7 @@ import { CreditPaySplit } from "./credit-pay-for-split";
 
 const NEW_CUSTOMER = "__new_customer__";
 
-export interface PayForCustomer { id: string; name: string; country?: string | null; gstin?: string | null }
+export interface PayForCustomer { id: string; name: string; country?: string | null; gstin?: string | null; domain?: string | null }
 
 interface Props {
   transaction: BankTransactionRow;
@@ -370,6 +370,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
   const saleEditorNode = (
     <SaleEditor
+      customerDomain={customer?.domain ?? null}
       lines={lines}
       catalog={activeCatalog}
       gstRate={gstRate}
@@ -638,7 +639,9 @@ type CatalogRow = NonNullable<ReturnType<typeof useItems>["data"]>[number];
    the same commitment), then seats and the unit price — R-2050: ₹/user/YEAR on Annual, ₹/user/month
    on Monthly flex (the line's own rate, never below the Workspace list floor). Under the lines, Payment — how
    often an annual commitment is billed (BILLING_CYCLE_OPTIONS); Monthly flex is monthly only. */
-function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPayCycle, dueNow, laterText, onAdd, onChange, onRemove }: {
+function SaleEditor({ customerDomain, lines, catalog, gstRate, preview, payment, payCycle, onPayCycle, dueNow, laterText, onAdd, onChange, onRemove }: {
+  /** R-2095: shown as each subscription line's default end-domain. */
+  customerDomain: string | null;
   lines: SaleLine[];
   catalog: CatalogRow[];
   gstRate: number;
@@ -692,6 +695,15 @@ function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPay
                   aria-label={`Unit price ${unit}`} />
               </label>
             </div>
+            {/* R-2095 (Sept): Zoho bills per end-domain — a subscription line names its own; empty = the customer's. */}
+            {l.cycle !== "one_time" && (
+              <label className="block text-xs text-ink-3 space-y-0.5">
+                <span className="block">End domain</span>
+                <Input value={l.domain ?? ""} onChange={(e) => onChange(idx, { domain: e.target.value })}
+                  placeholder={customerDomain ? `${customerDomain} (customer's domain)` : "example.com"} aria-label="End domain" />
+                {saleLineDomainProblem(l.domain) && <span className="block text-rose-ink">{saleLineDomainProblem(l.domain)}</span>}
+              </label>
+            )}
             <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(shownUnitPrice(l), { decimals: Number.isInteger(shownUnitPrice(l)) ? 0 : 2 })}{unit.replace(/^₹/, "")} = {rupee(l.qty * l.rate)}{termWord}</p>
           </div>
         );
@@ -781,5 +793,6 @@ function PayerWarning({ payerName, customerName, answer, onAnswer, onWrongCustom
 
 /** A new sale that cannot be saved: no line, a line without product / seats / price, ₹0, or mixed terms. */
 function saleInvalidOf(lines: readonly SaleLine[], taxable: number): boolean {
-  return lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0)) || taxable <= 0 || saleTermsMixed(lines);
+  return lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0) || saleLineDomainProblem(l.domain) !== null)
+    || taxable <= 0 || saleTermsMixed(lines);
 }

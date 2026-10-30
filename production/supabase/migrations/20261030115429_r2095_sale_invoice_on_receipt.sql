@@ -15,7 +15,9 @@
 --      (sent at sale time) covered the paid half again. bank_credit_pay_item now refuses a renewal
 --      date inside the first year for a sale billed in parts on a 1-year commitment (the screen
 --      no longer offers it either; the sale-time call raises no request — app code).
---   3. Receipts made from bank lines did not say which line: an AFTER trigger on
+--   3. A new sale's subscription line may carry its own end-domain (Zoho bills per end-domain);
+--      empty = the customer's domain, as before (record_payment keeps a line's domain, R-829).
+--   4. Receipts made from bank lines did not say which line: an AFTER trigger on
 --      bank_transactions stores payments.bank_txn_id whenever a line is matched to a receipt
 --      (every path — reconcile, advance, manual match); existing matched lines are back-filled.
 --
@@ -244,7 +246,8 @@ as $$
 /* R-2098: reconcile_bank_credit_new_sale's quote, moved here unchanged so the split can make the
    same sale and pay part of the line on it. Returns {quote_id, quote_total, tax_rate}.
    R-2095: unit prices keep paise (Zoho rates ₹103.5, ₹1,347.5); the subtotal is rounded once.
-   R-2095 (Sept): invoice_on_receipt — the sale is invoiced on its first receipt, part-paid or not. */
+   R-2095 (Sept): invoice_on_receipt — the sale is invoiced on its first receipt, part-paid or not;
+   a subscription line keeps its own end-domain. */
 declare
   v_cycle    text;
   v_txn      record;
@@ -279,6 +282,13 @@ begin
                  or coalesce(li->>'rate', '') !~ '^[0-9]+(.[0-9]{1,2})?$'
                  or coalesce(li->>'commitment', 'one_time') not in ('annual_yearly', 'monthly', 'one_time')) then
     raise exception 'Every line needs a product, seats / quantity of at least 1 and a unit price (paise allowed, two decimals at most).' using errcode = '22023';
+  end if;
+  /* R-2095 (Sept): a subscription line may name its own end-domain (Zoho bills per end-domain);
+     empty = the customer's domain. */
+  if exists (select 1 from jsonb_array_elements(p_lines) li
+              where nullif(btrim(coalesce(li->>'domain', '')), '') is not null
+                and lower(btrim(li->>'domain')) !~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?([.][a-z0-9]([a-z0-9-]*[a-z0-9])?)+$') then
+    raise exception 'A line''s domain must look like example.com.' using errcode = '22023';
   end if;
   v_monthly := exists (select 1 from jsonb_array_elements(p_lines) li where li->>'commitment' = 'monthly');
   v_annual  := exists (select 1 from jsonb_array_elements(p_lines) li where li->>'commitment' = 'annual_yearly');
@@ -327,7 +337,9 @@ begin
              'rate',       round((li->>'rate')::numeric, 2),   -- R-2095: paise kept
              'cost',       coalesce(case when coalesce(li->>'cost', '') ~ '^[0-9]+$' then (li->>'cost')::int end, 0),
              'commitment', case when li->>'commitment' in ('annual_yearly', 'monthly') then li->>'commitment' end,
-             'one_time',   case when coalesce(li->>'commitment', 'one_time') = 'one_time' then true end))
+             'one_time',   case when coalesce(li->>'commitment', 'one_time') = 'one_time' then true end,
+             'domain',     case when li->>'commitment' in ('annual_yearly', 'monthly')
+                                then nullif(lower(btrim(coalesce(li->>'domain', ''))), '') end))
            order by ord)
     into v_lines
     from jsonb_array_elements(p_lines) with ordinality as t(li, ord);
