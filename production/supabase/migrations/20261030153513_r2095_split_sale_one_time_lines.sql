@@ -1,6 +1,6 @@
 -- deploy-peek: to_regprocedure('public.quote_one_time_lines(text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%quote_one_time_lines%')
 -- deploy-key: r2095splitsaleonetimelines
--- 20261030140100_r2095_split_sale_one_time_lines.sql
+-- 20261030153513_r2095_split_sale_one_time_lines.sql
 --
 -- R-2095 (30 Oct 2026, September reconcile on staging): a sale billed in parts (quarterly /
 -- half-yearly / monthly on a 1-year commitment) with a ONE-TIME line (setup, migration) never

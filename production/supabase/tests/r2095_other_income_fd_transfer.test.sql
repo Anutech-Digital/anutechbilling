@@ -1,7 +1,7 @@
 -- R-2095 (30 Oct 2026, September reconcile on staging), P1:
 --   interest credited by the bank could only be "marked reconciled" (no income anywhere), and an FD
 --   sweep-in / sweep-out never moved the FD account.
--- Migration 20261030140000_r2095_other_income_fd_transfer. Self-asserting, ONE transaction, rolled back.
+-- Migration 20261030153511_r2095_other_income_fd_transfer. Self-asserting, ONE transaction, rolled back.
 --
 --   A. ₹1,234 interest line → book_bank_credit_as_other_income('interest') → other_incomes row,
 --      line matched 'other_income', report_pnl_other_income shows interest ₹1,234.

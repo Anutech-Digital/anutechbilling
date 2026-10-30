@@ -1,6 +1,6 @@
 -- R-2095 (30 Oct 2026, September reconcile): a sale billed quarterly with a one-time setup line never
 -- invoiced the setup (parts come from the subscriptions; a whole-quote invoice is refused for a
--- split-billed quote). Migration 20261030140100_r2095_split_sale_one_time_lines.
+-- split-billed quote). Migration 20261030153513_r2095_split_sale_one_time_lines.
 -- Self-asserting, ONE transaction, rolled back. Run on a local/test DB only.
 --
 --   Sale from a bank line: Workspace 10 × ₹3,240/yr (annual, billed quarterly) + Setup ₹5,000 (one-time).

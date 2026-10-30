@@ -1,6 +1,6 @@
 -- deploy-peek: to_regclass('public.other_incomes') is not null and to_regprocedure('public.book_bank_credit_as_other_income(uuid,text,text)') is not null and to_regprocedure('public.reconcile_bank_txn_as_transfer(uuid,uuid)') is not null and to_regprocedure('public.report_pnl_other_income(date,date)') is not null
 -- deploy-key: r2095otherincomefdtransfer
--- 20261030140000_r2095_other_income_fd_transfer.sql
+-- 20261030153511_r2095_other_income_fd_transfer.sql
 --
 -- R-2095 (30 Oct 2026, September reconcile on staging), P1:
 --   1. Interest credited by the bank (FD / savings interest) could only be "marked reconciled
