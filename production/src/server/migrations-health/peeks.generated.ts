@@ -283,4 +283,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2158adagentsafety", peek: "(to_regclass('public.ad_agent_actions') is not null and to_regprocedure('public.ad_agent_action_decide(uuid,text,uuid,text,uuid)') is not null)" },
   { key: "r2118gp16aowner", peek: "not exists(select 1 from pg_roles where rolname='resellersos_migration') or (select c.relowner::regrole::text from pg_class c where c.oid = to_regclass('public.personal_identity_link')) = 'resellersos_migration'" },
   { key: "gp09bpersonalwall", peek: "exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'statutory_dues_payments' and policyname = 'gp09_personal_wall')" },
+  { key: "gp21bbackupt", peek: "to_regprocedure('public.backup_tenant_tiered(uuid,integer,boolean,text)') is not null" },
 ];

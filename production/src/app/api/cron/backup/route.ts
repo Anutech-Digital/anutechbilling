@@ -35,7 +35,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { fetchAllRows, errorMessage } from "@/lib/ops/fetch-all";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { runSweepWithRetry } from "@/lib/backup/sweep-retry";
-import { runPerTenantBackup, type TenantBackupInfo } from "@/lib/backup/per-tenant";
+import { runPerTenantBackup, type TenantBackupInfo, type TenantRow } from "@/lib/backup/per-tenant";
 import { reportCron } from "@/lib/ops/cron-report";
 import { gatedCron } from "@/lib/automation/cron-gate";
 import {
@@ -226,14 +226,31 @@ async function runCron(req: NextRequest) {
         /* WC-scale: paged — tenant 1001 was silently never backed up. */
         try {
           const data = await fetchAllRows((from, to) => admin
-            .from("tenants").select("id, name").order("created_at").order("id").range(from, to));
-          return { ok: true, data };
+            .from("tenants").select("id, name, workspace_kind").order("created_at").order("id").range(from, to));
+          /* tenants.workspace_kind (R-2110) is not in database.generated.ts yet — the shape is TenantRow. */
+          return { ok: true, data: data as unknown as TenantRow[] };
         } catch (e) {
-          return { ok: false, message: errorMessage(e) };
+          /* R-2140: a database without tenants.workspace_kind (GP-01 not applied yet) must not
+             stop the night's backup — read without it; every tenant then gets the full backup. */
+          if (!/workspace_kind/i.test(errorMessage(e))) return { ok: false, message: errorMessage(e) };
+          try {
+            const data = await fetchAllRows((from, to) => admin
+              .from("tenants").select("id, name").order("created_at").order("id").range(from, to));
+            return { ok: true, data };
+          } catch (e2) {
+            return { ok: false, message: errorMessage(e2) };
+          }
         }
       },
-      backupTenant: async (tenantId) => {
-        const { data, error } = await admin.rpc("backup_tenant", { p_tenant: tenantId, p_label: null });
+      backupTenant: async (tenantId, plan) => {
+        /* R-2140: personal tenant → tiered (skip when unchanged, fewer kept); see lib/backup/tiering.ts. */
+        const { data, error } = plan
+          ? await admin.rpc("backup_tenant_tiered", {
+              p_tenant: tenantId,
+              p_keep: plan.keep,
+              p_only_if_changed: plan.onlyIfChanged,
+            })
+          : await admin.rpc("backup_tenant", { p_tenant: tenantId, p_label: null });
         return error
           ? { ok: false, message: error.message }
           : { ok: true, data: (data ?? {}) as TenantBackupInfo };
@@ -265,10 +282,21 @@ async function runCron(req: NextRequest) {
     console.warn(`[cron/backup] retried ${retried.length}x — ${retried.join(" | ")}`);
   }
 
+  /* R-2140: one line per run, so "the second run skipped the unchanged personal tenant" is
+     visible in the log (and in the scheduler's response body as skipped_unchanged). */
+  const skipped = report.results.filter((r) => r.ok && r.skipped);
+  if (skipped.length > 0) {
+    console.log(
+      `[cron/backup] personal tenants skipped (${skipped.length}): ` +
+        skipped.map((r) => `${r.tenant} — ${r.skipped === "unchanged" ? `unchanged since snapshot ${r.snapshot_id ?? "?"}` : "policy: skip"}`).join(" | "),
+    );
+  }
+
   const body = {
     mode:        "per-tenant" as const,
     label:       report.label,
     backed_up:   report.backed_up,
+    skipped_unchanged: report.skipped_unchanged,
     failed:      report.failed,
     total_bytes: report.total_bytes,
     offsite_ok:  report.offsite_ok,
