@@ -311,6 +311,7 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
         form.setError("contact_email", { type: "manual", message: problem });
         toast.error("Add an email or a phone number", {
           description: "The invoice and the payment reminder need somewhere to go. One of the two is enough. No contact at all? Save without one and add it later.",
+          duration: 15000,
           action: { label: "Save without contact", onClick: () => { noContactOk.current = true; form.clearErrors("contact_email"); void onSubmit(data); } },
         });
         return;
