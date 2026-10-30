@@ -2,7 +2,7 @@
 -- deploy-key: r2095invoicedatereceipt
 -- 20261030054246_r2095_invoice_date_receipt.sql
 --
--- R-2095 P0 (30 Oct 2026, staging P&L check, Excel Technologies): 5 invoices with ₹5,02,250 taxable
+-- R-2095 P0 (30 Oct 2026, staging P&L check): 5 invoices with ₹5,02,250 taxable
 -- for money received in April (₹4,04,800), May (₹3,000) and September (₹94,450) were dated
 -- October — every invoice was dated "today" when it was raised. October revenue and GSTR-1 were
 -- overstated, those months understated. One rule (coordinator, 30 Oct):
