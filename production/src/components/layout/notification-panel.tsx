@@ -26,6 +26,15 @@ import { useRecentLeads } from "@/lib/queries/leads";
 import { useCelebrations } from "@/lib/queries/contacts";
 import { useNotifications, useMarkNotificationRead, useMarkAllNotificationsRead } from "@/lib/queries/notifications";
 import { useBusinessShell } from "@/lib/hooks/useBusinessShell";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { isPersonalSession } from "@/lib/workspace/kind";
+
+/** R-2175: the empty bell says what WOULD show up — a personal workspace has no leads or follow-ups. */
+export function bellEmptyBody(business: boolean): string {
+  return business
+    ? "Follow-ups due today and new leads will show up here."
+    : "Updates about your account will show up here.";
+}
 
 /**
  * R-1122: the list + unread count that BOTH the bell badge (topbar) and this panel show.
@@ -69,6 +78,7 @@ export function NotificationPanel({
 }) {
   const router = useRouter();
   const { items, unreadCount, loading } = useNotificationFeed();
+  const { data: me } = useCurrentUser();
   const markDbRead = useMarkNotificationRead();
   const markDbAll  = useMarkAllNotificationsRead();
 
@@ -144,7 +154,7 @@ export function NotificationPanel({
             <EmptyState
               icon="bell"
               title="You're all caught up"
-              body="Follow-ups due today and new leads will show up here."
+              body={bellEmptyBody(!isPersonalSession(me ? { role: me.role } : null))}
             />
           ) : (
             items.map((n) => (

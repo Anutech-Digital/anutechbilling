@@ -27,6 +27,7 @@ import { cleanSteps, type BugDraft } from "@/lib/ai/app-help";
 import type { FeedbackSeverity, FeedbackType } from "@/lib/feedback/triage";
 import { CropOverlay, captureViewport, toShot } from "@/components/shared/help-shot";
 import { HelpReportMatches } from "@/components/shared/help-report-matches";
+import { businessTenantId } from "@/lib/workspace/kind";
 
 /** Recorded steps attached to a report — the same window AI Help sends with a draft. */
 const RECORDED_STEPS = 15;
@@ -207,7 +208,9 @@ export function HelpReportTab({ pathname, getTrail, caughtError, onCaughtErrorUs
         </div>
 
         {/* R-1417: this company's open reports that look like the same problem; R-1466: +1 on them. */}
-        <HelpReportMatches text={text} tenantId={currentUser?.tenantId ?? null} userId={currentUser?.userId ?? null} />
+        {/* R-2175: businessTenantId → null for a personal session, so the matcher never reads
+            `feedback` (a business table the data gateway refuses for it). */}
+        <HelpReportMatches text={text} tenantId={businessTenantId(currentUser)} userId={currentUser?.userId ?? null} />
 
         {shots.length > 0 && (
           <ul className="flex flex-wrap gap-2" aria-label={`${shots.length} screenshot(s) attached`}>

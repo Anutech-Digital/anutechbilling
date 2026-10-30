@@ -41,3 +41,13 @@ export function isPersonalSession(who: { role?: string | null; workspaceKind?: u
   if (!who) return false;
   return who.role === "personal" || isPersonalWorkspace(who.workspaceKind);
 }
+
+/**
+ * R-2175: the tenant id for reads of BUSINESS tables (feedback, page_test_runs, …) — null for a
+ * personal session (the data gateway refuses those tables for it, R-2125) and when there is no
+ * identity / tenant. Callers treat null exactly as "signed out": the read does not run.
+ */
+export function businessTenantId(who: { role?: string | null; tenantId?: string | null } | null | undefined): string | null {
+  if (!who || isPersonalSession(who)) return null;
+  return who.tenantId ?? null;
+}
