@@ -160,6 +160,13 @@ export function recordPaymentConsequences(args: {
       tone: "fact",
       text: "No subscription and no renewal are created from this payment — nothing will be billed again automatically.",
     });
+  } else if (p.priorReceived > 0) {
+    /* R-2095 (Sept reconcile): a sale's subscriptions are filed by its FIRST receipt (record_payment,
+       never twice) — a balance payment on Q-0224 said "Creates 2 recurring subscriptions". */
+    out.push({
+      tone: "fact",
+      text: "The subscriptions on this quote already exist (made by its first payment) — this payment only adds to what was received. No new subscription is created.",
+    });
   } else {
     const plans = (p.planLabels ?? []).map((x) => x.trim()).filter(Boolean);
     out.push({
