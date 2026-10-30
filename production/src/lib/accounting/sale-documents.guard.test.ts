@@ -59,6 +59,8 @@ const SQL_NOT_SALE: Record<string, string> = {
   raise_project_milestone_invoice: "issues our invoice",
   raise_subscription_billing: "issues our invoice",
   instalment_credit: "R-2044: one subscription's instalment invoices' paid_amount (credit already used) — not GST or revenue",
+  instalment_credit_parts: "R-2095: instalment_credit's pool, incl. part invoices credit notes cancelled — not GST or revenue",
+  invoice_fully_credited: "R-2095: do credit notes cover one invoice's value — frees its billing parts, not GST or revenue",
   split_sale_invoice_status: "R-2057: the amount of one part's instalment invoice, for the pending list — not GST or revenue",
   reconcile_bank_txn: "money in, not GST",
   record_desk_payment: "payments on quotes",

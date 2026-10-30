@@ -15,6 +15,7 @@ import { KeyHintBar, ShortcutsSheet } from "@/components/shared/shortcuts-sheet"
 import { useRouter } from "next/navigation";
 import { useSubscriptions, useSetSubscriptionDomain, useDeleteSubscription } from "@/lib/queries/subscriptions";
 import { useOutstandingReceivables } from "@/lib/queries/payments";
+import { sheetHandledInvoice } from "@/lib/payments/record-payment-invoice";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
 import { initialSubscriptionSearch, SUBSCRIPTION_SEARCH_EVENT } from "./palette-links";
@@ -456,7 +457,7 @@ export default function SubscriptionsPage() {
 
   const raiseInvoiceFor = React.useCallback(async (
     quoteId: string,
-    res: { isFullyPaid: boolean },
+    res: { isFullyPaid: boolean; invoiceId?: string | null; invoiceAttempted?: boolean },
   ) => {
     /* Set BEFORE anything else: the sheet closes right after this returns, and the
        close handler must not mistake a completed payment for an abandoned one. */
@@ -466,6 +467,11 @@ export default function SubscriptionsPage() {
       toast.info("Part payment recorded — the GST invoice is raised once the quote is fully paid.", {
         duration: 7000,
       });
+      refetch();
+      return;
+    }
+    /* R-2099: the payment sheet already issued it (or tried and said why) — one call, one toast. */
+    if (sheetHandledInvoice(res)) {
       refetch();
       return;
     }

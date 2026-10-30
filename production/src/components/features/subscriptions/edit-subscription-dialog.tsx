@@ -26,6 +26,7 @@ import { useUpdateSubscription, useCorrectSubscriptionTerms, useScheduleInvoices
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { subscriptionProducts, productsForVendor } from "@/lib/subscriptions/catalog-options";
+import { cleanDomain } from "./duplicate-subscription";
 import {
   correctionVerdict, mrrForSeats, seatCutWarning, MIN_CORRECTION_REASON,
 } from "@/lib/subscriptions/correct-terms";
@@ -73,6 +74,8 @@ export function EditSubscriptionDialog({
   const [mrrTouched, setMrrTouched] = React.useState(false);
   const [reason, setReason]   = React.useState("");
   const [vendor, setVendor]   = React.useState<Subscription["vendor"]>(sub.vendor);
+  /* R-2095: the domain the service runs on — a typo (tattvaspa.com for .org) blocked the real one. */
+  const [domain, setDomain]   = React.useState(sub.domain ?? "");
   const [seats, setSeats]     = React.useState(String(sub.seats));
   const [mrr, setMrr]         = React.useState(String(sub.mrr));
   const [startDate, setStart] = React.useState(sub.start_date ?? "");
@@ -90,7 +93,7 @@ export function EditSubscriptionDialog({
   // Re-seed when a different subscription is opened.
   React.useEffect(() => {
     setItemId(sub.item_id ?? KEEP); setMrrTouched(false); setReason("");
-    setVendor(sub.vendor); setSeats(String(sub.seats));
+    setVendor(sub.vendor); setSeats(String(sub.seats)); setDomain(sub.domain ?? "");
     setMrr(String(sub.mrr)); setStart(sub.start_date ?? ""); setRenewal(sub.renewal_date ?? "");
     setStatus(sub.status); setPaymentDue(sub.payment_due_date ?? "");
     setPauseReason(""); setPauseForUnpaid((sub.outstanding_amount ?? 0) > 0);
@@ -225,6 +228,8 @@ export function EditSubscriptionDialog({
         id: sub.id,
         patch: {
           vendor,
+          /* R-2095: cleaned like the Onboard dialog; blank keeps the recorded one. */
+          domain:       cleanDomain(domain.trim()) || sub.domain || null,
           start_date:   startDate || null,
           renewal_date: renewal || null,
           /* Blank CLEARS it here, unlike the onboarding dialog which defaults an empty
@@ -269,6 +274,13 @@ export function EditSubscriptionDialog({
               <p className="mt-1 text-2xs leading-snug text-ink-3">
                 No {vendor} plans in your catalog. Add the product under <Link href={"/items" as never} className="underline">Items</Link> to switch to it.
               </p>
+            )}
+          </FormField>
+
+          <FormField label="Domain" htmlFor="sub_domain">
+            <Input id="sub_domain" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="e.g. acme.com" />
+            {cleanDomain(domain) !== cleanDomain(sub.domain) && cleanDomain(domain) !== "" && (
+              <p className="mt-1 text-2xs leading-snug text-ink-3">Corrects the record from {sub.domain || "no domain"} to {cleanDomain(domain)} — nothing is billed.</p>
             )}
           </FormField>
 

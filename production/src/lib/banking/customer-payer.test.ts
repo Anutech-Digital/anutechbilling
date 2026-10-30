@@ -108,3 +108,20 @@ describe("R-2025 (3)(6) the receipt line", () => {
     expect(onBehalfLine(null, null, "Links Infotech")).toBeNull();
   });
 });
+
+/* R-2095 (staging, 30 Oct): banks cut long names anywhere — "QUALITY POWER ELECTRICAL EQUIP" for
+   Quality Power Electrical Equipments Pvt Ltd was asked "who is this payer?" as someone else. */
+describe("R-2095 a payer name cut short by the bank", () => {
+  const p = (name: string) => ({ name, key: name.toLowerCase(), ifsc: null, upi: null, accountTail: null });
+  it("the last word cut short still matches the customer", () => {
+    expect(payerMatchesCustomer(p("QUALITY POWER ELECTRICAL EQUIP"), "Quality Power Electrical Equipments Pvt Ltd", [])).toBe(true);
+    expect(payerMatchesCustomer(p("NARMADA POLYMERS PV"), "Narmada Polymers Pvt Ltd", [])).toBe(true);
+  });
+  it("a cut word that matches nothing of the customer is still someone else", () => {
+    expect(payerMatchesCustomer(p("QUALITY POWER ELECTRICAL EQUIP"), "Quality Paints Ltd", [])).toBe(false);
+  });
+  it("only the LAST word may be cut, and by 3+ letters kept", () => {
+    expect(payerMatchesCustomer(p("QUAL POWER ELECTRICAL"), "Quality Power Electrical Equipments", [])).toBe(false);
+    expect(payerMatchesCustomer(p("QUALITY POWER ELECTRICAL EQ"), "Quality Power Electrical Equipments", [])).toBe(true);
+  });
+});

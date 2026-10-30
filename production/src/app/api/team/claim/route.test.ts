@@ -73,6 +73,13 @@ describe("POST /api/team/claim (R-1421)", () => {
     expect((await res.json()).error).toMatch(/Pick a role/);
   });
 
+  it("R-2110: role 'personal' → 400 'pick a role', RPC never called", async () => {
+    const res = await post({ email: "a@b.in", role: "personal" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/Pick a role/);
+    expect(st.rpcCalls).toHaveLength(0);
+  });
+
   it("valid body → RPC with caller's own tenant, trimmed lower-case email", async () => {
     const res = await post({ email: "  Deepak@Anutech.in ", role: "support" });
     expect(res.status).toBe(200);

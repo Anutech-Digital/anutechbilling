@@ -158,6 +158,8 @@ export function useUpdateSubscription() {
          *  "no agreed date" and shows no countdown — see the edit dialog. */
         payment_due_date?: string | null;
         status?: Subscription["status"];
+        /** R-2095: correct a mistyped domain (Correct details). */
+        domain?: string | null;
       };
     }) => {
       const supabase = createClient();

@@ -59,3 +59,32 @@ describe("buyPageTenantId", () => {
     expect(buyPageTenantIdOrEmpty({ NODE_ENV: "test" })).toBe(DEV_BUY_PAGE_TENANT_ID);
   });
 });
+
+/* R-2155 — staging may READ with a live key (R-2099 settlements) but never take money with it. */
+import { STAGING_LIVE_KEY_MESSAGE, liveKeyCheckoutRefusal } from "./live-guards";
+
+describe("R-2155 liveKeyCheckoutRefusal", () => {
+  const LIVE = "rzp_live_AbC123";
+  it("refuses a live key on every staging signal", () => {
+    for (const env of [
+      { APP_ENV: "staging" },
+      { NEXT_PUBLIC_APP_ENV: "Staging" },
+      { NEXT_PUBLIC_APP_URL: "https://resellersos-staging-abc.a.run.app" },
+      { NODE_ENV: "production", K_SERVICE: "resellersos-staging", APP_ENV: "staging" },
+    ]) {
+      expect(liveKeyCheckoutRefusal(LIVE, env)).toBe(STAGING_LIVE_KEY_MESSAGE);
+      expect(liveKeyCheckoutRefusal(`  ${LIVE}  `, env)).toBe(STAGING_LIVE_KEY_MESSAGE);
+    }
+  });
+  it("lets a test key through on staging, and a live key through on the live deployment", () => {
+    expect(liveKeyCheckoutRefusal("rzp_test_x", { APP_ENV: "staging" })).toBeNull();
+    expect(liveKeyCheckoutRefusal(LIVE, { NODE_ENV: "production", NEXT_PUBLIC_APP_ENV: "production", K_SERVICE: "resellersos" })).toBeNull();
+    expect(liveKeyCheckoutRefusal(null, { APP_ENV: "staging" })).toBeNull();
+    expect(liveKeyCheckoutRefusal("", { APP_ENV: "staging" })).toBeNull();
+  });
+  it("says what to do, in words, and that nothing was charged", () => {
+    expect(STAGING_LIVE_KEY_MESSAGE).toMatch(/Staging cannot take real payments/);
+    expect(STAGING_LIVE_KEY_MESSAGE).toMatch(/test key/);
+    expect(STAGING_LIVE_KEY_MESSAGE).toMatch(/Nothing was charged/);
+  });
+});

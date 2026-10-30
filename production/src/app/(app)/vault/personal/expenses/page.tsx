@@ -39,8 +39,11 @@ import {
   type PersonalTransaction,
 } from "@/lib/queries/personal-vault";
 import { summariseCashFlow, PERSONAL_EXPENSE_CATEGORIES } from "@/lib/vault/personal/net-worth";
-import { formatDate } from "@/lib/utils";
-import { fyStartISO } from "@/lib/dates/ist";
+import { formatDate, rupee } from "@/lib/utils";
+// "Today" is the IST day (R-1609), not the browser's — a laptop on another timezone used to
+// pre-fill yesterday's date.
+import { fyStartISO, istToday } from "@/lib/dates/ist";
+import { parseRupees, MAX_RUPEES } from "@/lib/vault/personal/parse-rupees";
 
 type TxKind = PersonalTransaction["kind"];
 
@@ -65,18 +68,22 @@ interface FormState {
   note: string;
 }
 
-function todayIso(): string {
-  // Stored verbatim as YYYY-MM-DD. Converting through UTC is how "aaj" becomes "kal"
-  // for an IST user — the same trap lib/leads/inline-edit.ts already documents.
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function parseRupees(value: string): number | null {
-  const cleaned = value.replace(/[,\s₹]/g, "");
-  if (!/^\d+(\.\d+)?$/.test(cleaned)) return null;
-  const n = Math.round(Number(cleaned));
-  return Number.isFinite(n) && n > 0 ? n : null;
+/**
+ * R-2111: the amount goes through parse-rupees.ts (R-1419) — the old local parser had no
+ * upper limit, so a 25-digit amount reached the bigint column as "1e+24" and came back as a
+ * Postgres error. The message sits under the field, not in a toast.
+ */
+function checkAmount(input: string): { value: number } | { problem: string } {
+  const p = parseRupees(input);
+  if (!p.ok) {
+    return {
+      problem: p.reason === "too_big"
+        ? `Too large — up to ${rupee(MAX_RUPEES)} (₹1 lakh crore). Check for extra zeros.`
+        : "Type a whole amount in digits, like 1250 or 1,250. No minus sign.",
+    };
+  }
+  if (p.value <= 0) return { problem: "Enter an amount above 0." };
+  return { value: p.value };
 }
 
 export default function PersonalExpensesPage() {
@@ -88,8 +95,9 @@ export default function PersonalExpensesPage() {
 
   const [open, setOpen] = React.useState(false);
   const [form, setForm] = React.useState<FormState>({
-    kind: "expense", amount: "", occurred_on: todayIso(), category: "", account_id: "", note: "",
+    kind: "expense", amount: "", occurred_on: istToday(), category: "", account_id: "", note: "",
   });
+  const [amountIssue, setAmountIssue] = React.useState<string | null>(null);
 
   // Memoised because both feed useMemo dependency arrays below; a fresh [] on every
   // render would recompute the whole FY summary on every keystroke in the dialog.
@@ -98,6 +106,12 @@ export default function PersonalExpensesPage() {
   const accountLabel = React.useMemo(
     () => new Map(accounts.map((a) => [a.id, a.label])),
     [accounts],
+  );
+  // R-2111: a closed account is not offered for new entries; an old entry already linked to
+  // one keeps it, so editing it does not silently drop the link.
+  const pickableAccounts = React.useMemo(
+    () => accounts.filter((a) => a.is_active || a.id === form.account_id),
+    [accounts, form.account_id],
   );
 
   // IST, not the browser's clock (R-1609).
@@ -109,7 +123,8 @@ export default function PersonalExpensesPage() {
   );
 
   const openNew = (kind: TxKind) => {
-    setForm({ kind, amount: "", occurred_on: todayIso(), category: "", account_id: "", note: "" });
+    setForm({ kind, amount: "", occurred_on: istToday(), category: "", account_id: "", note: "" });
+    setAmountIssue(null);
     setOpen(true);
   };
 
@@ -123,12 +138,15 @@ export default function PersonalExpensesPage() {
       account_id: t.account_id ?? "",
       note: t.note ?? "",
     });
+    setAmountIssue(null);
     setOpen(true);
   };
 
   const handleSave = async () => {
-    const amount = parseRupees(form.amount);
-    if (amount === null) { toast.error("Enter an amount above 0.", { description: "Numbers only — no commas or ₹ sign, e.g. 1250." }); return; }
+    const checked = checkAmount(form.amount);
+    if ("problem" in checked) { setAmountIssue(checked.problem); return; }
+    setAmountIssue(null);
+    const amount = checked.value;
     if (!form.occurred_on) { toast.error("Pick a date.", { description: "Choose the day this expense happened, then save." }); return; }
 
     try {
@@ -156,8 +174,12 @@ export default function PersonalExpensesPage() {
       danger: true,
     });
     if (!ok) return;
-    await del.mutateAsync(t.id);
-    toast.success("Entry removed.");
+    try {
+      await del.mutateAsync(t.id);
+      toast.success("Entry removed.");
+    } catch {
+      /* R-2111: the hook already showed why (toastError); only keep the promise from going unhandled */
+    }
   };
 
   const isIncome = INCOME_KINDS.includes(form.kind);
@@ -301,10 +323,15 @@ export default function PersonalExpensesPage() {
                 <label htmlFor="ve-amount" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Amount (₹)</label>
                 <Input id="ve-amount"
                   value={form.amount}
-                  onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
+                  onChange={(e) => { setForm((f) => ({ ...f, amount: e.target.value })); setAmountIssue(null); }}
                   placeholder="50000"
                   inputMode="numeric"
+                  aria-invalid={amountIssue ? true : undefined}
+                  aria-describedby={amountIssue ? "ve-amount-error" : undefined}
                 />
+                {amountIssue && (
+                  <p id="ve-amount-error" role="alert" className="mt-1 text-xs text-rose">{amountIssue}</p>
+                )}
               </div>
             </div>
 
@@ -326,7 +353,7 @@ export default function PersonalExpensesPage() {
                   <SelectTrigger id="ve-account"><SelectValue placeholder="Cash" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Cash / none</SelectItem>
-                    {accounts.map((a) => <SelectItem key={a.id} value={a.id}>{a.label}</SelectItem>)}
+                    {pickableAccounts.map((a) => <SelectItem key={a.id} value={a.id}>{a.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>

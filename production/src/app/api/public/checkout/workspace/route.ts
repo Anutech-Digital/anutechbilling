@@ -35,7 +35,7 @@ import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { ownerPaymentAlertAllowed, storefrontVoice } from "@/lib/email/storefront-voice";
-import { buyPageTenantIdOrEmpty, simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
+import { buyPageTenantIdOrEmpty, liveKeyCheckoutRefusal, simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
 import { issueInvoiceForOnlinePayment } from "@/lib/checkout/online-invoice.server";
 import { publicDbError } from "@/app/api/public/_lib/db-error";
 import { customerSetupSteps, leadOwnerNextSteps } from "@/lib/email/workspace-onboarding";
@@ -234,6 +234,12 @@ export async function POST(request: NextRequest) {
     // even if the UI button is already hidden. Server is the real gate.
     // R-079: a production deployment or a live key refuses it whatever ALLOW_SIMULATED_CHECKOUT says.
     const simulationAllowed = simulatedPaymentAllowed({ razorpayKeyId: rzKeyId });
+
+    /* R-2155: a live key on staging may read settlements, never take a payment. */
+    const stagingLive = liveKeyCheckoutRefusal(rzKeyId);
+    if (stagingLive) {
+      return NextResponse.json({ error: stagingLive, stagingLiveKey: true }, { status: 403 });
+    }
 
     if (!razorpayConfigured && !isSimulation) {
       return NextResponse.json(

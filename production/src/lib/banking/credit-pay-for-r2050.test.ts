@@ -38,7 +38,7 @@ describe("R-2050 Annual commitment: unit price per user per YEAR, never below th
   it("a typed yearly price (a deal) is stored as typed — no × 12, not locked to the floor", () => {
     const l = saleLineFromItem(E2E_STARTER, "annual_yearly", 10);
     expect(rateFromShownPrice(l, 3000)).toBe(3000);
-    expect(rateFromShownPrice(l, 2999.6)).toBe(3000);
+    expect(rateFromShownPrice(l, 2999.6)).toBe(2999.6);   // R-2095: paise kept (Zoho rates)
   });
   it("Monthly commitment stays ₹/user/month; switching re-prices for the new unit", () => {
     const annual = saleLineFromItem(STANDARD, "annual_yearly", 5);

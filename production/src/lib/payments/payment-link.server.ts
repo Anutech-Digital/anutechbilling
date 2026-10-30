@@ -20,6 +20,7 @@
 import { createAdminClient } from "@/lib/supabase/server";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { razorpayMode } from "./razorpay-readiness";
+import { liveKeyCheckoutRefusal } from "@/lib/checkout/live-guards";
 import { sendCustomerEmail } from "@/lib/messaging";
 import {
   decidePaymentLink,
@@ -77,6 +78,10 @@ export async function createAndSendPaymentLink(args: {
     const keyId = secrets?.razorpay_key_id?.trim() ?? "";
     const keySecret = secrets?.razorpay_key_secret?.trim() ?? "";
     const mode = razorpayMode(keyId);
+
+    /* R-2155: a live key on staging may read settlements, never mint a payment link. */
+    const stagingLive = liveKeyCheckoutRefusal(keyId);
+    if (stagingLive) return { ok: false, url: null, detail: stagingLive, mode: null };
 
     const decision = decidePaymentLink({
       mode,

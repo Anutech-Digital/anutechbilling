@@ -130,7 +130,7 @@ function RenewalBucket({
         headers: { "Content-Type": "application/json" },
       });
       /* R-239: an HTML 500 used to surface as "Failed: Unexpected token <". */
-      const json = (await readJsonSafe(res)) as { error?: string; alreadyExisted?: boolean; quoteId?: string };
+      const json = (await readJsonSafe(res)) as { error?: string; alreadyExisted?: boolean; quoteId?: string; split?: boolean; message?: string; href?: string | null };
       if (!res.ok) {
         toastError(new Error(json.error ?? "Could not generate renewal quote"), {
           action: { label: "Retry", onClick: () => void handleGenerateQuote(sub) },
@@ -139,6 +139,13 @@ function RenewalBucket({
       }
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
       qc.invalidateQueries({ queryKey: ["quotes"] });
+      /* R-2095: billed in parts → Generate billed the next part (request or invoice), not a quote. */
+      if (json.split) {
+        qc.invalidateQueries({ queryKey: ["invoices"] });
+        toast.success(json.message ?? "Next part billed", { duration: 6000 });
+        if (json.href && (canQuotes || json.href.startsWith("/invoices"))) router.push(json.href as never);
+        return;
+      }
       const msg = json.alreadyExisted
         ? `Opening existing renewal quote for ${sub.customer_name}`
         : `Renewal quote ${json.quoteId} created for ${sub.customer_name}`;

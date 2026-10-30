@@ -28,6 +28,7 @@ export const PUSH_GUARD_SUITES = [
   "src/app/(app)/accounting/load-error-ratchet.test.ts",
   "src/components/features/accounting/rupee-ratchet.test.ts",
   "src/lib/accounting/rupee-hand-rolled-ratchet.test.ts", // R-1138: no new "₹" + toLocaleString("en-IN")
+  "src/lib/checkout/live-key-staging-ratchet.test.ts", // R-2155: no Razorpay order/link/verify without the staging live-key guard
   "src/app/api/admin-client-ratchet.test.ts",
   "src/app/api/role-gate-ratchet.test.ts", // R-732
   "src/app/(app)/page-widths-ratchet.test.ts", // R-1489: §20 page widths

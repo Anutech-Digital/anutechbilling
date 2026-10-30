@@ -33,7 +33,7 @@ import { addDaysISO, istToday } from "@/lib/dates/ist";
 import { createAdminClient } from "@/lib/supabase/server";
 import { resolveStateCode, stateCodeFromName } from "@/lib/gst/gstin-state";
 import { GST_STATE_BY_CODE, isValidGstin, rupee } from "@/lib/utils";
-import { buyPageTenantId, BuyPageTenantMissingError, simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
+import { buyPageTenantId, BuyPageTenantMissingError, liveKeyCheckoutRefusal, simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
 import { loadCheckoutRazorpayKeys } from "@/lib/checkout/razorpay-keys.server";
 import { issueInvoiceForOnlinePayment } from "@/lib/checkout/online-invoice.server";
 import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
@@ -127,6 +127,9 @@ export async function POST(request: NextRequest) {
     if (!isSimulation && !keys) {
       return fail(503, `Online payment isn't set up yet. ${NOTHING_CHARGED} Please contact us and we'll send you a GST quote.`);
     }
+    /* R-2155: a live key on staging may read settlements, never take a payment. */
+    const stagingLive = isSimulation ? null : liveKeyCheckoutRefusal(keys?.keyId);
+    if (stagingLive) return fail(403, stagingLive, { stagingLiveKey: true });
 
     /* ── The price: the server's book, never the browser ─────────────────────── */
     const book = await getPriceBook(tenantId);
