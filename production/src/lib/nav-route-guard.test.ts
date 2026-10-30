@@ -17,10 +17,12 @@
 import { describe, it, expect, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 import {
-  APP_NAV, OFF_MENU_ROLES, ROLE_HOME, ROUTE_DENY, filterNavForRole, flattenNav, isRouteAllowed,
+  APP_NAV, OFF_MENU_ROLES, ROLE_HOME, ROUTE_DENY, filterNavForRole, flattenNav, homeForRole, isRouteAllowed,
   type UserRole,
 } from "./nav";
 import { APP_ROUTES } from "./feedback/route-map";
+import { PERSONAL_ONLY_PAGES, PERSONAL_PAGES, isPersonalOnlyPage } from "./workspace/personal-allowlist";
+import { buildSidebarApps } from "./nav-apps";
 
 const st = vi.hoisted(() => ({ role: "sales" as string | null }));
 vi.mock("@/lib/supabase/client", () => ({ isSupabaseConfigured: () => true }));
@@ -39,6 +41,9 @@ const under = (p: string, a: string) => p === a || p.startsWith(a + "/");
 const denied = (role: UserRole, p: string) => (ROUTE_DENY[role] ?? []).some((d) => under(p, d));
 const allHrefs = [...new Set(flattenNav(APP_NAV).map((e) => e.item.href))];
 const menuOf = (role: UserRole) => new Set(flattenNav(filterNavForRole(APP_NAV, role)).map((e) => e.item.href));
+/** GP-07a: paths a row in the role's menu also covers (personal Money → /vault/personal). */
+const coveredFor = (role: UserRole, p: string) =>
+  flattenNav(filterNavForRole(APP_NAV, role)).some((e) => (e.item.covers ?? []).some((c) => under(p, c)));
 /** Every (app) page, with a sample value in each [param]. */
 const appPages = APP_ROUTES.filter((r) => r.file.includes("/(app)/")).map((r) => r.route.replace(/\[[^\]]+\]/g, "x"));
 
@@ -52,10 +57,10 @@ describe("URL access = the menu (R-1542)", () => {
     const menu = menuOf(role);
     const wrong: string[] = [];
     for (const href of allHrefs) {
-      const want = menu.has(href) && !denied(role, href);
+      const want = (menu.has(href) || coveredFor(role, href)) && !denied(role, href);
       if (isRouteAllowed(role, href) !== want) wrong.push(`${href} → ${!want}`);
       const sub = `${href}/__probe`;
-      if (isRouteAllowed(role, sub) !== (menu.has(href) && !denied(role, sub))) wrong.push(`${sub} → ${!want}`);
+      if (isRouteAllowed(role, sub) !== ((menu.has(href) || coveredFor(role, sub)) && !denied(role, sub))) wrong.push(`${sub} → ${!want}`);
     }
     expect(wrong).toEqual([]);
   });
@@ -72,8 +77,26 @@ describe("URL access = the menu (R-1542)", () => {
     }
   });
 
-  it("the owner — whom middleware does not gate — may open every (app) page", () => {
-    expect(appPages.filter((p) => !isRouteAllowed("owner", p))).toEqual([]);
+  it("the owner — whom middleware does not gate — may open every (app) page but the personal-only ones", () => {
+    /* GP-07a (R-2115): /money, /assets, /support/my, /upgrade and /account belong to the
+       personal workspace. Middleware gates the owner on exactly these (next test). */
+    expect(appPages.filter((p) => !isRouteAllowed("owner", p) && !isPersonalOnlyPage(p))).toEqual([]);
+  });
+
+  it("middleware sends the owner home (with ?denied) from a personal-only page, and from nothing else", async () => {
+    st.role = "owner";
+    for (const p of PERSONAL_ONLY_PAGES) {
+      expect(isRouteAllowed("owner", p), p).toBe(false);
+      const r = await middleware(new NextRequest(`https://app.test${p}`, { headers: { cookie: "sb-proj-auth-token=xyz" } }));
+      expect(r.status, p).toBe(307);
+      const to = new URL(r.headers.get("location")!);
+      expect(to.pathname, p).toBe("/dashboard");
+      expect(to.searchParams.get("denied"), p).toBe(p);
+    }
+    for (const p of appPages.filter((x) => !isPersonalOnlyPage(x))) {
+      const r = await middleware(new NextRequest(`https://app.test${p}`, { headers: { cookie: "sb-proj-auth-token=xyz" } }));
+      expect(r.status, p).toBe(200);
+    }
   });
 
   it("every role's home opens for it (no redirect loop)", () => {
@@ -89,5 +112,75 @@ describe("URL access = the menu (R-1542)", () => {
       if (opened !== isRouteAllowed(role, p)) wrong.push(`${p} status ${r.status}`);
     }
     expect(wrong).toEqual([]);
+  });
+});
+
+/**
+ * GP-07a (R-2115, G-PERSONAL measure 2) — a personal login sees ONLY its own pages:
+ * Money (/money → /vault/personal/*), My digital assets, Support (/support/my), Upgrade and
+ * Account (avatar menu). Every business page — and the company Password Vault at /vault —
+ * is refused by the same guard middleware runs.
+ */
+describe("personal role: only the personal pages (GP-07a)", () => {
+  const underAny = (p: string, list: readonly string[]) => list.some((a) => under(p, a));
+
+  it("PERSONAL_PAGES is exactly the agreed list", () => {
+    expect([...PERSONAL_PAGES].sort()).toEqual(["/account", "/assets", "/money", "/support/my", "/upgrade", "/vault/personal"]);
+  });
+
+  it("walks every (app) page: allowed exactly when it is a personal page", () => {
+    const wrong = appPages.filter((p) => isRouteAllowed("personal", p) !== underAny(p, PERSONAL_PAGES));
+    expect(wrong).toEqual([]);
+  });
+
+  it.each(["/money", "/vault/personal", "/vault/personal/banking", "/vault/personal/expenses", "/vault/personal/wealth", "/assets", "/support/my", "/upgrade", "/account"])(
+    "opens %s", (p) => expect(isRouteAllowed("personal", p)).toBe(true),
+  );
+
+  it.each(["/dashboard", "/invoices", "/accounting", "/accounting/pnl", "/vault", "/support", "/settings", "/team", "/help", "/today", "/quotes", "/customers"])(
+    "refuses %s", (p) => expect(isRouteAllowed("personal", p)).toBe(false),
+  );
+
+  it("lands on /money, which it may open — no redirect loop", () => {
+    expect(ROLE_HOME.personal).toBe("/money");
+    expect(homeForRole("personal")).toBe("/money");
+    expect(isRouteAllowed("personal", homeForRole("personal"))).toBe(true);
+  });
+
+  it("middleware: a typed business URL goes to /money with ?denied; the personal pages open", async () => {
+    st.role = "personal";
+    for (const p of ["/invoices", "/settings", "/vault", "/team"]) {
+      const r = await middleware(new NextRequest(`https://app.test${p}`, { headers: { cookie: "sb-proj-auth-token=xyz" } }));
+      expect(r.status, p).toBe(307);
+      const to = new URL(r.headers.get("location")!);
+      expect(to.pathname, p).toBe("/money");
+      expect(to.searchParams.get("denied"), p).toBe(p);
+    }
+    for (const p of ["/money", "/vault/personal", "/vault/personal/banking", "/assets", "/support/my", "/upgrade", "/account"]) {
+      const r = await middleware(new NextRequest(`https://app.test${p}`, { headers: { cookie: "sb-proj-auth-token=xyz" } }));
+      expect(r.status, p).toBe(200);
+    }
+  });
+
+  it("the filtered nav has exactly the 4 rows, in one Personal section", () => {
+    const nav = filterNavForRole(APP_NAV, "personal");
+    expect(nav.map((s) => s.section)).toEqual(["Personal"]);
+    expect(nav[0].items.map((i) => [i.label, i.href])).toEqual([
+      ["Money", "/money"], ["My digital assets", "/assets"], ["Support", "/support/my"], ["Upgrade", "/upgrade"],
+    ]);
+    expect(nav[0].items.every((i) => !i.headerOnly && !i.children?.length && !i.directory?.length)).toBe(true);
+  });
+
+  it("the sidebar shows the same 4 rows and nothing pinned", () => {
+    const m = buildSidebarApps("personal");
+    expect(m.pinned).toEqual([]);
+    expect(m.apps.flatMap((a) => a.items.map((i) => i.label))).toEqual(["Money", "My digital assets", "Support", "Upgrade"]);
+  });
+
+  it("no business role gets a personal row", () => {
+    for (const role of ROLES.filter((r) => r !== "personal")) {
+      const hrefs = flattenNav(filterNavForRole(APP_NAV, role)).map((e) => e.item.href);
+      expect(hrefs.filter((h) => underAny(h, PERSONAL_ONLY_PAGES)), role).toEqual([]);
+    }
   });
 });

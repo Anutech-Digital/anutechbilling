@@ -19,6 +19,12 @@
  *      outright, so a manager reaches every protected route.
  *   2. Put a lock over the screen so a colleague at the owner's desk cannot read it.
  *
+ * ─── GP-07a (R-2115): A PERSONAL LOGIN OPENS IT TOO ────────────────────────
+ * For a personal login (role 'personal', its own workspace) these screens ARE its Money pages
+ * (menu row "Money", /money redirects here). It is admitted here and in the PIN route, and
+ * the words change: a personal login has no company, so no "company books" and no
+ * "Drawings" tab. The company Password Vault at /vault stays closed to it (nav.ts).
+ *
  * ─── WHY THIS IS NOT AT /vault ──────────────────────────────────────────────
  * `/vault` is already the customer console Password Vault — a live feature holding the
  * Google/M365 credentials this reseller administers, reachable by owner AND manager.
@@ -42,9 +48,12 @@ import { cn } from "@/lib/utils";
 const TABS = [
   { href: "/vault/personal", label: "Overview", icon: "chart" },
   { href: "/vault/personal/banking", label: "Banking", icon: "wallet" },
-  { href: "/vault/personal/expenses", label: "Drawings & Expenses", icon: "receipt" },
+  { href: "/vault/personal/expenses", label: "Drawings & Expenses", personalLabel: "Expenses", icon: "receipt" },
   { href: "/vault/personal/wealth", label: "Wealth", icon: "trending_up" },
 ] as const;
+
+/** Who may open these screens: the business owner (Private Vault) and a personal login (Money). */
+const VAULT_ROLES: readonly string[] = ["owner", "personal"];
 
 export default function PersonalVaultLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -61,7 +70,7 @@ export default function PersonalVaultLayout({ children }: { children: React.Reac
 
   /* A refusal that says what happened, why, and what to do — §24. The alternative,
      an empty vault, is indistinguishable from a broken one and gets reported as a bug. */
-  if (me && me.role !== "owner") {
+  if (me && !VAULT_ROLES.includes(me.role)) {
     return (
       <div className="p-4 md:p-6 lg:p-8 max-w-[720px] mx-auto">
         <Card className="p-8 text-center">
@@ -81,6 +90,8 @@ export default function PersonalVaultLayout({ children }: { children: React.Reac
     );
   }
 
+  const personal = me?.role === "personal";
+
   return (
     <VaultPinGate>
       <div className="p-4 md:p-6 lg:p-8 max-w-[1240px] mx-auto space-y-5">
@@ -88,15 +99,17 @@ export default function PersonalVaultLayout({ children }: { children: React.Reac
           <div>
             <h1 className="text-2xl md:text-3xl font-serif text-ink flex items-center gap-2">
               <Icon name="lock" size={22} className="text-ink-3" />
-              Private Vault
+              {personal ? "Money" : "Private Vault"}
             </h1>
             <p className="text-sm text-ink-3 mt-1">
-              Your own money — fully separate from the company books. No one in your team can see this.
+              {personal
+                ? "Your bank accounts, cash, cards, spending and savings. Only you can see this."
+                : "Your own money — fully separate from the company books. No one in your team can see this."}
             </p>
           </div>
         </div>
 
-        <nav className="flex items-center gap-1 border-b border-hairline overflow-x-auto" aria-label="Private vault sections">
+        <nav className="flex items-center gap-1 border-b border-hairline overflow-x-auto" aria-label={personal ? "Money sections" : "Private vault sections"}>
           {TABS.map((t) => {
             // Exact match for the index so it does not stay lit on every child route.
             const active = t.href === "/vault/personal" ? pathname === t.href : pathname?.startsWith(t.href);
@@ -112,7 +125,7 @@ export default function PersonalVaultLayout({ children }: { children: React.Reac
                 )}
               >
                 <Icon name={t.icon} size={14} />
-                {t.label}
+                {personal && "personalLabel" in t ? t.personalLabel : t.label}
               </Link>
             );
           })}

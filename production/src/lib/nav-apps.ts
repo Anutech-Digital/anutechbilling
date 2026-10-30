@@ -62,6 +62,12 @@ export const NAV_APPS: NavAppDef[] = [
     id: "settings", label: "Settings", icon: "settings",
     itemIds: ["settings", "automation", "vault", "documents", "help"],
   },
+  {
+    /* GP-07a (R-2115): a personal login's four rows. Only the 'personal' role sees them, so
+       for every business role this app is empty and dropped. */
+    id: "personal", label: "Personal", icon: "wallet",
+    itemIds: ["personal-money", "personal-assets", "personal-support", "personal-upgrade"],
+  },
 ];
 
 /** At or under this many sidebar rows, show every app at once (no switcher). */
