@@ -124,6 +124,15 @@ const PROTECTED_PREFIXES = [
 // Routes that should redirect to /dashboard if user is logged in
 const AUTH_PREFIXES = ["/login", "/signup"];
 
+/* R-2177 (GP-10c): the personal home is the Money row (/money, ROLE_HOME.personal), but /money is
+   a PAGE that only forwards to /vault/personal — its redirect() streams the whole app shell
+   first (HTML 200 + NEXT_REDIRECT), so a bounce through it mounted the shell twice. Every
+   server redirect here goes straight to the money screens instead; nav.ts keeps /money as the
+   row's link. */
+const PERSONAL_MONEY_ROW = "/money";
+const PERSONAL_MONEY_HOME = "/vault/personal";
+const serverHome = (home: string) => (home === PERSONAL_MONEY_ROW ? PERSONAL_MONEY_HOME : home);
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -409,8 +418,16 @@ export async function middleware(request: NextRequest) {
   // first page the role may open (nav.ts isRouteAllowed), never a page that bounces it.
   if (isAuthed && isAuthPage) {
     const url = request.nextUrl.clone();
-    url.pathname = homeForRole(((role as UserRole) ?? "owner"), { canViewDeals });
+    url.pathname = serverHome(homeForRole(((role as UserRole) ?? "owner"), { canViewDeals }));
     url.searchParams.delete("next");
+    return NextResponse.redirect(url);
+  }
+
+  /* R-2177: a personal session on its Money row goes to the money screens in one 307, query
+     kept (?denied= for the "You don't have access" toast) — no app shell for the hop. */
+  if (isAuthed && role === "personal" && (pathname === PERSONAL_MONEY_ROW || pathname === PERSONAL_MONEY_ROW + "/")) {
+    const url = request.nextUrl.clone();
+    url.pathname = PERSONAL_MONEY_HOME;
     return NextResponse.redirect(url);
   }
 
@@ -426,7 +443,7 @@ export async function middleware(request: NextRequest) {
     const isAllowedPath = isRouteAllowed(userRole, pathname, { canViewDeals });
     if (!isAllowedPath) {
       const url = request.nextUrl.clone();
-      url.pathname = homeForRole(userRole, { canViewDeals });
+      url.pathname = serverHome(homeForRole(userRole, { canViewDeals }));
       // R-1810: say which page was refused — the app shell shows "You don't have access to …"
       // (components/layout/denied-route-toast.tsx). The refused page's own query is dropped.
       // R-1837: not for the generic landing (/dashboard): the login default, "/" and every

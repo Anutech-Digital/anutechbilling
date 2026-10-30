@@ -108,7 +108,10 @@ describe("URL access = the menu (R-1542)", () => {
     const wrong: string[] = [];
     for (const p of appPages) {
       const r = await middleware(new NextRequest(`https://app.test${p}`, { headers: { cookie: "sb-proj-auth-token=xyz" } }));
-      const opened = r.status === 200;
+      /* R-2177: /money (personal's Money row) is answered with one 307 to /vault/personal. */
+      const toMoneyScreens = role === "personal" && p === "/money" && r.status === 307
+        && new URL(r.headers.get("location")!).pathname === "/vault/personal";
+      const opened = r.status === 200 || toMoneyScreens;
       if (opened !== isRouteAllowed(role, p)) wrong.push(`${p} status ${r.status}`);
     }
     expect(wrong).toEqual([]);
@@ -147,16 +150,18 @@ describe("personal role: only the personal pages (GP-07a)", () => {
     expect(isRouteAllowed("personal", homeForRole("personal"))).toBe(true);
   });
 
-  it("middleware: a typed business URL goes to /money with ?denied; the personal pages open", async () => {
+  /* R-2177: middleware sends the bounce straight to /vault/personal (the /money page only forwards
+     there, after streaming the app shell); /money itself is a 307 there too. */
+  it("middleware: a typed business URL goes to /vault/personal with ?denied; the personal pages open", async () => {
     st.role = "personal";
     for (const p of ["/invoices", "/settings", "/vault", "/team"]) {
       const r = await middleware(new NextRequest(`https://app.test${p}`, { headers: { cookie: "sb-proj-auth-token=xyz" } }));
       expect(r.status, p).toBe(307);
       const to = new URL(r.headers.get("location")!);
-      expect(to.pathname, p).toBe("/money");
+      expect(to.pathname, p).toBe("/vault/personal");
       expect(to.searchParams.get("denied"), p).toBe(p);
     }
-    for (const p of ["/money", "/vault/personal", "/vault/personal/banking", "/assets", "/support/my", "/upgrade", "/account"]) {
+    for (const p of ["/vault/personal", "/vault/personal/banking", "/assets", "/support/my", "/upgrade", "/account"]) {
       const r = await middleware(new NextRequest(`https://app.test${p}`, { headers: { cookie: "sb-proj-auth-token=xyz" } }));
       expect(r.status, p).toBe(200);
     }

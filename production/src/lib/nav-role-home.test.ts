@@ -23,6 +23,9 @@ vi.mock("@/lib/supabase/middleware", () => ({
 import { middleware } from "../middleware";
 
 const ROLES = Object.keys(ROLE_HOME) as UserRole[];
+/* R-2177: middleware sends a personal login past its /money row (a page that only forwards)
+   straight to /vault/personal; every other role lands on homeForRole itself. */
+const serverHome = (role: UserRole) => (homeForRole(role) === "/money" ? "/vault/personal" : homeForRole(role));
 const go = async (role: UserRole, path: string) => {
   st.role = role;
   const r = await middleware(new NextRequest(`https://app.test${path}`, { headers: { cookie: "sb-proj-auth-token=xyz" } }));
@@ -54,7 +57,7 @@ describe("role home (R-1837)", () => {
   it.each(ROLES.filter((r) => r !== "owner"))("%s: after login (/login while signed in) → home, no ?denied", async (role) => {
     const { status, to } = await go(role, "/login");
     expect(status).toBe(307);
-    expect(to?.pathname).toBe(homeForRole(role));
+    expect(to?.pathname).toBe(serverHome(role));
     expect(to?.searchParams.has("denied")).toBe(false);
   });
 
@@ -63,7 +66,7 @@ describe("role home (R-1837)", () => {
     async (role) => {
       const { status, to } = await go(role, "/dashboard");
       expect(status).toBe(307);
-      expect(to?.pathname).toBe(homeForRole(role));
+      expect(to?.pathname).toBe(serverHome(role));
       expect(to?.searchParams.has("denied")).toBe(false);
     },
   );
