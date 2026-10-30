@@ -33,6 +33,7 @@ import { onlySaleInvoices } from "@/lib/accounting/sale-documents";
 import { DIRECTOR_REMUNERATION_CATEGORY, SALARIES_CATEGORY, pnlCategoryOf } from "@/lib/accounting/director-remuneration";
 import { fetchDirectorPayroll } from "@/lib/queries/director-payroll";
 import { rupee, formatDate } from "@/lib/utils";
+import type { CogsEstimateBasis } from "@/lib/accounting/pnl";
 
 export type PnLDrillKind = "revenue" | "cogs" | "expenses";
 
@@ -51,6 +52,8 @@ interface Props {
   range:        { from: string; to: string };
   /** When set on an "expenses" drill, show only this category's entries. */
   expenseCategory?: string | null;
+  /** R-2095: the licence cost is (partly) estimated — show how, on the COGS drill. */
+  cogsEstimate?: CogsEstimateBasis | null;
 }
 
 const META: Record<PnLDrillKind, { title: string; desc: string; href: string; hrefLabel: string; tone: "ink" | "rose"; groupLabel: string }> = {
@@ -157,7 +160,8 @@ function useDrilldown(kind: PnLDrillKind | null, range: { from: string; to: stri
   });
 }
 
-export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCategory }: Props) {
+export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCategory, cogsEstimate }: Props) {
+  const estimate = kind === "cogs" ? cogsEstimate ?? null : null;
   const { data: rows, isLoading } = useDrilldown(kind, range, open, expenseCategory);
   const meta = kind ? META[kind] : null;
   const amountColor = meta?.tone === "rose" ? "text-rose" : "text-ink";
@@ -244,6 +248,7 @@ export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCat
         )}
 
         <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3">
+          {estimate && <CogsEstimateCard basis={estimate} />}
           {isLoading ? (
             <div className="space-y-2">
               {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
@@ -251,7 +256,7 @@ export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCat
           ) : !hasData ? (
             <div className="rounded-md border border-dashed border-hairline bg-paper-2/20 px-4 py-8 text-center">
               <Icon name="inbox" size={20} className="text-ink-3 mx-auto mb-1" />
-              <p className="text-sm text-ink-2">No transactions in this period</p>
+              <p className="text-sm text-ink-2">{estimate ? "No vendor bills in this period yet" : "No transactions in this period"}</p>
               <p className="text-xs text-ink-3 mt-1">
                 Nothing recorded between {range.from} and {range.to}.
               </p>
@@ -356,5 +361,51 @@ export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCat
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * R-2095 (staging P&L, 30 Oct 2026): an estimated licence cost opened an empty bill list. The
+ * estimate's working, and the next step that makes it exact — a vendor bill.
+ */
+export function CogsEstimateCard({ basis }: { basis: CogsEstimateBasis }) {
+  return (
+    <section aria-label="How the licence cost is estimated" className="mb-3 rounded-md border border-amber/40 bg-amber-soft/30 p-3 space-y-2">
+      <p className="text-sm text-ink">
+        <span className="font-semibold">{rupee(basis.estimated)} estimated</span>
+        {basis.ratioPct !== null
+          ? <> = licence revenue {rupee(basis.licenceRevenue)} × {basis.ratioPct}% (what your subscriptions cost you ÷ what they are priced at)</>
+          : <> from your subscriptions' wholesale cost</>}
+        .
+      </p>
+      {basis.vendors.length > 0 && (
+        <table className="w-full text-xs tabular-nums">
+          <thead className="text-ink-3">
+            <tr>
+              <th className="text-left font-medium">Vendor (no bill yet)</th>
+              <th className="text-right font-medium">Subs · seats</th>
+              <th className="text-right font-medium">Price</th>
+              <th className="text-right font-medium">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {basis.vendors.map((v) => (
+              <tr key={v.vendor} className="border-t border-hairline">
+                <td className="py-1 text-ink-2">{v.label}</td>
+                <td className="py-1 text-right text-ink-2">{v.subscriptions} · {v.seats}</td>
+                <td className="py-1 text-right text-ink-2">{rupee(v.bookRevenue)}</td>
+                <td className="py-1 text-right text-ink-2">{rupee(v.bookCost)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-2xs text-ink-3">Enter the vendor's invoice (Google / Microsoft / Zoho) to replace the estimate with the real cost.</p>
+        <Link href={"/accounting/bills?add=1" as never} className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90">
+          <Icon name="plus" size={13} /> Add vendor bill
+        </Link>
+      </div>
+    </section>
   );
 }

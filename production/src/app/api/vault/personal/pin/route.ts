@@ -121,7 +121,8 @@ async function attempt(
   };
 }
 
-/** The vault is an owner feature. Non-owners get 403 and no hint about what is behind it. */
+/** The vault is an owner (or personal-login) feature. Anyone else gets 403 and no hint about
+ *  what is behind it. Either way every operation is on the caller's OWN row (auth.uid()). */
 async function requireOwner(supabase: ReturnType<typeof createClient>) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: NextResponse.json({ error: "You are not signed in." }, { status: 401 }) } as const;
@@ -130,7 +131,8 @@ async function requireOwner(supabase: ReturnType<typeof createClient>) {
   if (!me?.tenant_id) {
     return { error: NextResponse.json({ error: "Workspace not found." }, { status: 403 }) } as const;
   }
-  if (me.role !== "owner") {
+  /* GP-07a (R-2115): the business owner's Private Vault, and a personal login's Money pages. */
+  if (me.role !== "owner" && me.role !== "personal") {
     return { error: NextResponse.json({ error: "This is for the owner only." }, { status: 403 }) } as const;
   }
   return { userId: user.id, tenantId: me.tenant_id } as const;

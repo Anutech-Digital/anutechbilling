@@ -37,7 +37,7 @@ describe("the 'personal' role (R-2110)", () => {
   });
   it("has a label, a home and no business permission", () => {
     expect(ROLE_LABEL.personal).toBe("Personal");
-    expect(ROLE_HOME.personal).toBe("/vault/personal");
+    expect(ROLE_HOME.personal).toBe("/money"); // GP-07a (R-2115): the Personal section's Money row
     expect(Object.values(PERMISSIONS.personal).every((v) => v === false)).toBe(true);
     expect(can("personal", "can_export_data")).toBe(false);
     expect(GATEWAY_LIMITED_BY_ROLE.personal).toBe(true);

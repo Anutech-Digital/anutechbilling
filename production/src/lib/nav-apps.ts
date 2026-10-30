@@ -62,6 +62,12 @@ export const NAV_APPS: NavAppDef[] = [
     id: "settings", label: "Settings", icon: "settings",
     itemIds: ["settings", "automation", "vault", "documents", "help"],
   },
+  {
+    /* GP-07a (R-2115): a personal login's four rows. Only the 'personal' role sees them, so
+       for every business role this app is empty and dropped. */
+    id: "personal", label: "Personal", icon: "wallet",
+    itemIds: ["personal-money", "personal-assets", "personal-support", "personal-upgrade"],
+  },
 ];
 
 /** At or under this many sidebar rows, show every app at once (no switcher). */
@@ -84,12 +90,17 @@ export interface SidebarModel {
 /**
  * The sidebar for a role: pinned rows + the apps that have at least one row it can see.
  * Rows (and their children / directory rows) are already pruned by filterNavForRole.
+ *
+ * No role yet (the session is still loading) → an empty menu. filterNavForRole(undefined)
+ * returns the WHOLE nav, so every login — a personal one too — saw the business menu plus
+ * the Personal tile flash in before its own (R-2115 checker, 30 Oct 2026).
  */
 export function buildSidebarApps(
   role: UserRole | undefined,
   nav: NavSection[] = APP_NAV,
   apps: NavAppDef[] = NAV_APPS,
 ): SidebarModel {
+  if (!role) return { pinned: [], apps: [], flat: true };
   const visible = new Map<string, NavItem>();
   for (const s of filterNavForRole(nav, role)) for (const i of s.items) visible.set(i.id, i);
 

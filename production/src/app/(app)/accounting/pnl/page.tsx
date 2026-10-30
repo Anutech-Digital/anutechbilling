@@ -869,6 +869,7 @@ export default function PnLPage() {
         kind={drill}
         range={range}
         expenseCategory={drillExpenseCat}
+        cogsEstimate={data?.model.estimateBasis ?? null}
       />
     </div>
   );

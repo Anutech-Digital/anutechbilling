@@ -17,7 +17,7 @@ import { NotificationPanel, useNotificationFeed } from "./notification-panel";
 import { QuickActionsPanel } from "./quick-actions-panel";
 import { TopBarBreadcrumb } from "./topbar-breadcrumb";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { getCrumb, getParentListHref } from "@/lib/nav";
+import { crumbForRole, getParentListHref } from "@/lib/nav";
 import type { Route } from "next";
 import { logLoginOnce } from "@/lib/queries/activity";
 
@@ -33,8 +33,10 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
   const router = useRouter();
   // Record a login once per browser session (fire-and-forget) for the activity log.
   React.useEffect(() => { void logLoginOnce(); }, []);
-  const crumb = crumbOverride ?? getCrumb(pathname);
   const { data: me } = useCurrentUser();
+  /* R-2115: a personal login's money at /vault/personal reads "Personal > Money", not the
+     owner's "Settings > Password Vault" crumb. */
+  const crumb = crumbOverride ?? crumbForRole(pathname, me?.role);
   // On phones the breadcrumb is hidden (no room), so detail/sub pages (≥2 path
   // segments, e.g. /quotes/Q-123 or /customers/abc/edit) get a Back chevron so
   // users aren't stranded relying on the OS back gesture.

@@ -645,7 +645,7 @@ function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPay
                   aria-label={`Unit price ${unit}`} />
               </label>
             </div>
-            <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(shownUnitPrice(l))}{unit.replace(/^₹/, "")} = {rupee(l.qty * l.rate)}{termWord}</p>
+            <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(shownUnitPrice(l), { decimals: Number.isInteger(shownUnitPrice(l)) ? 0 : 2 })}{unit.replace(/^₹/, "")} = {rupee(l.qty * l.rate)}{termWord}</p>
           </div>
         );
       })}

@@ -108,6 +108,15 @@ export interface NavItem {
    * hidden row's page still opens (nav-sell-mode.test.ts).
    */
   sellModes?: SellMode[];
+  /**
+   * GP-07a (R-2115): other pages this row stands for in the route guard — a role whose menu
+   * holds this row may open them (and everything beneath them) by URL. Read ONLY by
+   * isRouteAllowed: no sidebar row, no palette entry, no crumb. Used by the personal Money
+   * row (/money) for the private money screens at /vault/personal, which in the business
+   * menu sit under the owner's Password Vault — a personal login must open them without the
+   * company vault (/vault) or a "Password Vault" heading appearing in its menu.
+   */
+  covers?: string[];
 }
 
 /** R-1861: rows that belong to a business that sells subscriptions. */
@@ -337,6 +346,8 @@ export const OFF_MENU_ROLES: Readonly<Record<string, UserRole[]>> = {
   "/products": OM_ONLY,                 // redirects to /items (Products row: owner + manager)
   /* Mock bank-consent screen of the Banking statement pull — Banking's own roles. */
   "/aa": ["owner", "manager", "billing", "accountant"],
+  /* GP-07a (R-2115): the personal login's Account page — in the avatar menu, not a sidebar row. */
+  "/account": ["personal"],
 };
 
 /**
@@ -350,6 +361,9 @@ export const OFF_MENU_ROLES: Readonly<Record<string, UserRole[]>> = {
 export function isRouteAllowed(role: UserRole, pathname: string, opts: NavFilterOpts = {}): boolean {
   const under = (a: string) => pathname === a || pathname.startsWith(a + "/");
   if ((ROUTE_DENY[role] ?? []).some(under)) return false;
+  /* GP-07a: a row in this role's menu that `covers` the path admits it (personal Money →
+     /vault/personal/*). Only roles that see such a row are affected — no business role does. */
+  if (flattenNav(filterNavForRole(APP_NAV, role, opts)).some((e) => (e.item.covers ?? []).some(under))) return true;
   const rows = flattenNav(APP_NAV).map((e) => e.item.href).filter(under);
   const off = Object.keys(OFF_MENU_ROLES).filter(under);
   const best = [...rows, ...off].sort((a, b) => b.length - a.length)[0];
@@ -382,11 +396,10 @@ export const ROLE_HOME: Record<UserRole, string> = {
   partner_agent: "/partners",
   /* R-1791: the Marketing Hub overview — admitted for this role by MKT below. */
   marketing:    "/marketing",
-  /* R-2110 (GP-01): placeholder until GP-07a adds the Personal nav section and its /money home.
-     The only row that admits 'personal' is /vault/personal itself (see the Password Vault row),
-     so no business page opens for it. No personal user can exist before GP-05, which depends on
-     GP-07a. */
-  personal:     "/vault/personal",
+  /* GP-07a (R-2115): the Personal section's Money row. /money redirects to /vault/personal,
+     which the Money row covers. Only the Personal section admits 'personal', so no business
+     page opens for it (nav-route-guard.test.ts walks every page as personal). */
+  personal:     "/money",
 };
 
 /**
@@ -504,6 +517,7 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/items/products": "One-time products tab of Products (/items) — the menu row opens the page, the tab links here",
   "/products": "Redirects to Products (/items) for people who type the menu name as a URL (R-490)",
   "/settings/company": "redirect to /settings (Company tab), R-1670",
+  "/account": "Personal login's account page; opened from the avatar menu (GP-07a)",
 };
 
 export const APP_NAV: NavSection[] = [
@@ -830,11 +844,10 @@ export const APP_NAV: NavSection[] = [
           /* The owner's PRIVATE books. This hides the menu row and nothing more: middleware
              skips its role guard for owner AND manager. The data is protected by RLS scoped
              to auth.uid() (personal_vault_owner_isolation.test.sql), per USER not per role. */
-          /* R-2110 (GP-01): 'personal' is admitted on THIS row only, so ROLE_HOME.personal is a
-             page the role may open (the roles.test.ts login-loop guard). The sub-rows below stay
-             owner-only and the page's own layout still refuses non-owners — GP-07a admits the
-             personal role there and gives it its own nav section. */
-          { id: "vault-personal", href: "/vault/personal",  label: "Private Vault",    icon: "wallet", roles: ["owner", "personal"], hint: "Your personal money — hidden from the team" },
+          /* GP-07a (R-2115): a personal login reaches these through its own Money row (Personal
+             section, `covers: ["/vault/personal"]`), so the rows stay owner-only — admitting
+             'personal' here would put a "Password Vault" heading in its menu. */
+          { id: "vault-personal", href: "/vault/personal",  label: "Private Vault",    icon: "wallet", roles: ["owner"], hint: "Your personal money — hidden from the team" },
           { id: "vault-personal-banking",  href: "/vault/personal/banking",  label: "Private banking",  icon: "rupee",  roles: ["owner"] },
           { id: "vault-personal-expenses", href: "/vault/personal/expenses", label: "Private expenses", icon: "receipt", roles: ["owner"] },
           { id: "vault-personal-wealth",   href: "/vault/personal/wealth",   label: "Private wealth",   icon: "trending_up", roles: ["owner"] },
@@ -850,6 +863,20 @@ export const APP_NAV: NavSection[] = [
            The Feedback child keeps its own OM gate. */
         id: "help",      href: "/help",                 label: "Help & Tutorial",  icon: "question", roles: [...STAFF, "partner_agent", "marketing"],
       },
+    ],
+  },
+  {
+    /* GP-07a (R-2115, G-PERSONAL measure 2): a personal login's whole menu — exactly these
+       four rows, for the 'personal' role only. Account (/account) is in the avatar menu
+       (OFF_MENU_ROLES). No business role sees this section, so their menus and route guard
+       are unchanged (nav-s30.test.ts, nav-route-guard.test.ts). */
+    section: "Personal",
+    icon: "wallet",
+    items: [
+      { id: "personal-money",   href: "/money",      label: "Money",             icon: "wallet",  roles: ["personal"], covers: ["/vault/personal"], hint: "Your bank, cash and cards, spending and savings" },
+      { id: "personal-assets",  href: "/assets",     label: "My digital assets", icon: "globe",   roles: ["personal"], hint: "Your domains, subscriptions and bills in one place" },
+      { id: "personal-support", href: "/support/my", label: "Support",           icon: "ticket",  roles: ["personal"], hint: "Ask for help and follow your requests" },
+      { id: "personal-upgrade", href: "/upgrade",    label: "Upgrade",           icon: "sparkles", roles: ["personal"], hint: "Turn on GST invoices, quotes and other business tools" },
     ],
   },
 ];
@@ -914,6 +941,8 @@ const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
   "/reports/purchases":      { tail: ["Purchase report"] },
   "/mobile":                 { tail: ["Mobile (PWA)"], under: "Settings" },
   "/setup":                  { tail: ["Setup Wizard"], under: "Settings" },
+  /* R-2115 checker: the personal Account page (avatar menu) read "Home > Dashboard". */
+  "/account":                { tail: ["Account"], under: "Personal" },
 };
 
 /** The crumb of every APP_NAV entry, from where it sits. */
@@ -982,6 +1011,23 @@ export function getCrumb(pathname: string): string[] {
     if (SCREEN_TITLES[prefix]) return SCREEN_TITLES[prefix];
   }
   return ["Home", "Dashboard"];
+}
+
+/** A personal login's Money tabs (/vault/personal/*) — the tab names its page header shows. */
+const PERSONAL_MONEY_TABS: Record<string, string> = { banking: "Banking", expenses: "Expenses", wealth: "Wealth" };
+
+/**
+ * The breadcrumb for this role. Same as getCrumb, except a personal login (GP-07a, R-2115
+ * checker): it opens its money at /vault/personal through the Money row, and the owner's
+ * crumb there ("Settings > Password Vault > Private Vault") names pages it has no menu for.
+ */
+export function crumbForRole(pathname: string, role: string | null | undefined): string[] {
+  if (role === "personal" && (pathname === "/vault/personal" || pathname.startsWith("/vault/personal/"))) {
+    const tab = pathname.split("/")[3];
+    const tail = tab ? PERSONAL_MONEY_TABS[tab] : undefined;
+    return tail ? ["Personal", "Money", tail] : ["Personal", "Money"];
+  }
+  return getCrumb(pathname);
 }
 
 /**

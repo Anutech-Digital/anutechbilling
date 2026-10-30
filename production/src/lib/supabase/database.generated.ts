@@ -8781,6 +8781,113 @@ export type Database = {
           },
         ]
       }
+      personal_categories: {
+        Row: {
+          created_at: string
+          direction: string
+          id: string
+          is_active: boolean
+          name: string
+          owner_user_id: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          direction?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          owner_user_id: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          direction?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          owner_user_id?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "personal_categories_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_categories_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_categories_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      personal_category_rules: {
+        Row: {
+          category: string
+          created_at: string
+          id: string
+          match_text: string
+          owner_user_id: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          id?: string
+          match_text: string
+          owner_user_id: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          id?: string
+          match_text?: string
+          owner_user_id?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "personal_category_rules_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_category_rules_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_category_rules_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       personal_holdings: {
         Row: {
           asset_class: string
@@ -8841,6 +8948,87 @@ export type Database = {
           },
           {
             foreignKeyName: "personal_holdings_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      personal_import_batches: {
+        Row: {
+          account_id: string | null
+          created_at: string
+          file_kind: string | null
+          file_name: string | null
+          id: string
+          inserted_count: number
+          owner_user_id: string
+          row_count: number
+          skipped_count: number
+          statement_from: string | null
+          statement_to: string | null
+          tenant_id: string
+        }
+        Insert: {
+          account_id?: string | null
+          created_at?: string
+          file_kind?: string | null
+          file_name?: string | null
+          id?: string
+          inserted_count?: number
+          owner_user_id: string
+          row_count?: number
+          skipped_count?: number
+          statement_from?: string | null
+          statement_to?: string | null
+          tenant_id: string
+        }
+        Update: {
+          account_id?: string | null
+          created_at?: string
+          file_kind?: string | null
+          file_name?: string | null
+          id?: string
+          inserted_count?: number
+          owner_user_id?: string
+          row_count?: number
+          skipped_count?: number
+          statement_from?: string | null
+          statement_to?: string | null
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "personal_import_batches_account_owner_fkey"
+            columns: ["account_id", "owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "personal_account_balances"
+            referencedColumns: ["account_id", "owner_user_id"]
+          },
+          {
+            foreignKeyName: "personal_import_batches_account_owner_fkey"
+            columns: ["account_id", "owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "personal_accounts"
+            referencedColumns: ["id", "owner_user_id"]
+          },
+          {
+            foreignKeyName: "personal_import_batches_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_import_batches_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_import_batches_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "v_tenant_with_parent"
@@ -8919,6 +9107,13 @@ export type Database = {
             columns: ["account_id", "owner_user_id"]
             isOneToOne: false
             referencedRelation: "personal_accounts"
+            referencedColumns: ["id", "owner_user_id"]
+          },
+          {
+            foreignKeyName: "personal_transactions_import_batch_fkey"
+            columns: ["import_batch_id", "owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "personal_import_batches"
             referencedColumns: ["id", "owner_user_id"]
           },
           {
@@ -15500,6 +15695,7 @@ export type Database = {
         Returns: number
       }
       payment_run_role: { Args: never; Returns: string }
+      personal_import_commit: { Args: { batch: Json }; Returns: Json }
       plan_key: { Args: { p_name: string }; Returns: string }
       portal_customer_exists: { Args: { p_email: string }; Returns: boolean }
       portal_ensure_customer_link: { Args: never; Returns: string }

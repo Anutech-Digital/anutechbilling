@@ -131,3 +131,52 @@ describe("middleware role guard — child rows win over their parent (R-1542)", 
     expect((await go(path)).status).toBe(200);
   });
 });
+
+/* GP-07b (R-2116, G-PERSONAL measure 2): GP-07a walled the PAGES for a personal login; the API
+   was still open — a personal session could GET /api/invoices or POST /api/team/invite by hand.
+   Now a personal session reaches only its own API (vault/personal, personal, DMS + support SSO),
+   the data gateway its Money screens read through, and the machine/public routes; everything
+   else answers 403 JSON. A business owner is unchanged. */
+describe("middleware /api allowlist for personal sessions (GP-07b)", () => {
+  const api = (path: string, method = "GET") =>
+    middleware(new NextRequest(`https://app.test${path}`, { method, headers: { cookie: "sb-proj-auth-token=xyz" } }));
+
+  it.each([
+    ["GET", "/api/invoices"], ["POST", "/api/team/invite"], ["POST", "/api/ai/extract-statement"],
+    ["GET", "/api/ai/extract-statement"], ["POST", "/api/ai/help"], ["GET", "/api/quotes"],
+    ["GET", "/api/customers"], ["GET", "/api/vault"], ["GET", "/api/vault/abc/reveal"],
+    ["GET", "/api/settings"], ["GET", "/api/cron/renewals"], ["GET", "/api/versionx"],
+    ["GET", "/api/publicity"], ["GET", "/api/vault/personalx"], ["GET", "/api/dms/panel-order"],
+    ["GET", "/api/domains"], ["GET", "/api/health-check"],
+  ])("personal %s %s → 403 JSON", async (method, path) => {
+    st.role = "personal";
+    const r = await api(path, method);
+    expect(r.status).toBe(403);
+    expect(r.headers.get("content-type")).toContain("application/json");
+    expect(await r.json()).toEqual({ error: expect.stringMatching(/personal/i) });
+  });
+
+  it.each([
+    "/api/vault/personal/pin", "/api/vault/personal", "/api/personal/statements", "/api/dms/sso",
+    "/api/support-sso", "/api/support-sso/start", "/api/public/checkout", "/api/public/catalog/workspace",
+    "/api/auth/supabase-token", "/api/auth/mfa/aal", "/api/auth/password/update",
+    "/api/webhooks/razorpay", "/api/version", "/api/version/", "/api/health/money",
+    "/api/domains/availability", "/api/sb/rest/v1/personal_accounts", "/api/monitoring/sentry-dsn",
+  ])("personal passes %s", async (path) => {
+    st.role = "personal";
+    const r = await api(path);
+    expect(r.status).toBe(200);
+  });
+
+  it.each(["/api/invoices", "/api/team/invite", "/api/quotes", "/api/ai/extract-statement", "/api/vault/personal/pin"])(
+    "owner is unchanged on %s", async (path) => {
+      st.role = "owner";
+      expect((await api(path)).status).toBe(200);
+    },
+  );
+
+  it.each(["sales", "billing", "accountant"])("%s is unchanged on /api/invoices", async (role) => {
+    st.role = role;
+    expect((await api("/api/invoices")).status).toBe(200);
+  });
+});

@@ -67,6 +67,9 @@ export interface InstalmentSyncResult {
   wouldRequest: number;
   /** R-2092: parts held back until the quote's other subscriptions have their parts laid. */
   waiting?: { period_index: number; subscription_ids: string[] }[];
+  /** R-2095: due parts whose invoice credit notes cancelled in full — not re-billed by this run
+   *  (only the owner's own Generate re-bills them: rebillCredited). */
+  heldCredited?: { period_index: number; credited: string[] }[];
 }
 
 export async function syncSubscriptionInstalments(args: {
@@ -79,6 +82,11 @@ export async function syncSubscriptionInstalments(args: {
       every subscription of a quote BEFORE billing any of them, so the quote's parts of one period
       are all there when the first is billed and go on ONE tax invoice (billing_part_group). */
   layOnly?: boolean;
+  /** R-2095 (coordinator, 30 Oct): a part freed by credit notes for its whole invoice is billed
+   *  again ONLY when the owner asks (Invoices → Generate invoice for Qn, Renewals → Generate). A
+   *  credit note often means "customer cancelled / we don't bill this" — the billing job and the
+   *  auto-raise after a payment leave it alone. */
+  rebillCredited?: boolean;
 }): Promise<InstalmentSyncResult> {
   const { supabase, sub, quote, todayISO } = args;
   const dryRun = args.dryRun ?? false;
@@ -187,7 +195,24 @@ export async function syncSubscriptionInstalments(args: {
      is its request), a term paid up front, or its own payment request paid — otherwise it gets a payment
      request. bill_subscription_instalment decides, in one transaction, and invoices through
      raise_subscription_billing (the one instalment invoice path). */
+  /* R-2095: which due parts were freed by a full credit note (credited_invoice_ids, migration
+     20261030035007 — not in the generated types yet, so read untyped). */
+  const creditedOf = new Map<string, string[]>();
+  if (due.length > 0) {
+    const { data: cr, error: crErr } = await (supabase as unknown as SupabaseClient)
+      .from("subscription_billings").select("id, credited_invoice_ids").in("id", due.map((r) => r.id));
+    if (crErr) throw new Error(crErr.message);
+    for (const c of (cr ?? []) as Array<{ id: string; credited_invoice_ids: string[] | null }>) {
+      creditedOf.set(c.id, (c.credited_invoice_ids ?? []).filter(Boolean));
+    }
+  }
   for (const row of due) {
+    /* R-2095: a credited part waits for the owner's own Generate. */
+    const credited = creditedOf.get(row.id) ?? [];
+    if (credited.length > 0 && !args.rebillCredited) {
+      (out.heldCredited ??= []).push({ period_index: row.period_index, credited });
+      continue;
+    }
     const { data, error } = await billSubscriptionInstalment(supabase, row.id, dryRun);
     if (error) throw new Error(error.message);
     applyBillOutcome(out, row.period_index, data, dryRun);
@@ -373,6 +398,8 @@ export async function raiseDueInstalmentsForQuote(args: {
   quoteId: string;
   tenantId: string;
   todayISO: string;
+  /** R-2095: the owner's own Generate — re-bill parts freed by a full credit note. */
+  rebillCredited?: boolean;
 }): Promise<QuoteInstalmentOutcome> {
   const { supabase, quoteId, tenantId, todayISO } = args;
   const out: QuoteInstalmentOutcome = { raised: [], errors: [], splitBilled: false, invoices: [] };
@@ -427,7 +454,7 @@ export async function raiseDueInstalmentsForQuote(args: {
   }
   for (const sub of subs) {
     try {
-      const r = await syncSubscriptionInstalments({ supabase, sub, quote: facts, todayISO });
+      const r = await syncSubscriptionInstalments({ supabase, sub, quote: facts, todayISO, rebillCredited: args.rebillCredited });
       if (r.skip?.code === "not_split_billed") continue;
       out.splitBilled = true;
       for (const x of r.raised) { out.raised.push({ subscription_id: sub.id, ...x }); raisedNow.add(x.invoice_id); }
