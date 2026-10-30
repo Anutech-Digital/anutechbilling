@@ -298,6 +298,7 @@ MIGS=(
   "gp01personalrole|20261030004000_gp01_personal_role.sql|resellersos_migration|exists(select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid join pg_namespace n on n.oid = t.typnamespace where n.nspname = 'public' and t.typname = 'user_role' and e.enumlabel = 'personal')"
   "gp01workspacekind|20261030004100_gp01_workspace_kind.sql|resellersos_migration|(exists(select 1 from pg_constraint where conname = 'tenants_workspace_kind_check') and exists(select 1 from pg_proc where oid = to_regprocedure('public.r720_tenants_column_guard()') and prosrc like '%R-2110%'))"
   "gp12apersonalledger|20261030021200_gp12a_personal_ledger.sql|resellersos_migration|(to_regclass('public.personal_account_balances') is not null and exists(select 1 from pg_constraint where conname = 'personal_transactions_account_owner_fkey' and convalidated))"
+  "gp03consentaccount|20261030033952_gp03_consent_account.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'consent_events' and column_name = 'user_id') and exists(select 1 from pg_proc where proname = 'consent_events_no_update' and prosrc like '%GP-03%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
