@@ -24,6 +24,7 @@
  * files real customers' orders and invoices under whichever tenant that literal names,
  * silently. Production now requires the env value and says so in words.
  */
+import { isStagingEnv } from "@/lib/email/staging-allowlist";
 
 /** The ANUTECH tenant the website sells under on a developer's machine. Never used in production. */
 export const DEV_BUY_PAGE_TENANT_ID = "fbb976f1-9090-4f10-9726-0901bd144e42";
@@ -84,4 +85,29 @@ export function buyPageTenantIdOrEmpty(env: Env = process.env): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * R-2155 (30 Oct 2026) — staging never takes real money.
+ *
+ * Staging needs the company's LIVE Razorpay key for one thing: READING settlements and payments
+ * (R-2099, lib/razorpay/settlement*.ts). The same key in tenant_secrets is also what every
+ * checkout uses, so without this a staging quote-accept / buy link would open a real Razorpay
+ * window and charge a real card.
+ *
+ * Every path that creates a Razorpay order or payment link, or settles a payment, asks this
+ * first and refuses with the message when it answers. Read paths never ask it.
+ * `live-key-staging-ratchet.test.ts` fails if a new money call site skips it.
+ *
+ * "Staging" = isStagingEnv (APP_ENV / NEXT_PUBLIC_APP_ENV = staging, or a staging host in
+ * NEXT_PUBLIC_APP_URL) — the same signals the R-1403 mail guard uses. The live deployment sets
+ * none of them, so live checkout is untouched; a test key on staging is untouched too.
+ */
+export const STAGING_LIVE_KEY_MESSAGE =
+  "Staging cannot take real payments — use a Razorpay test key (rzp_test_…) for checkout here. Nothing was charged.";
+
+/** The refusal to show, or null when this key may take a payment on this deployment. */
+export function liveKeyCheckoutRefusal(keyId: string | null | undefined, env: Env = process.env): string | null {
+  if (!(keyId ?? "").trim().startsWith("rzp_live_")) return null;
+  return isStagingEnv(env) ? STAGING_LIVE_KEY_MESSAGE : null;
 }
