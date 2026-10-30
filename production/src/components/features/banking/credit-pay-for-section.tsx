@@ -46,9 +46,10 @@ import {
   amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
   paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
-  tdsRateToRecord, tdsToRecord,
+  tdsRateToRecord, tdsToRecord, shortChoices, roundOffSplit,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
+import { tdsSectionGuess, TDS_SECTION_CHOICES } from "@/lib/banking/tds-section";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { PAYER_RELATIONS, payerFromNarration, payerMatchesCustomer, type PayerRelation } from "@/lib/banking/customer-payer";
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
@@ -57,7 +58,7 @@ import { CreditPaySplit } from "./credit-pay-for-split";
 
 const NEW_CUSTOMER = "__new_customer__";
 
-export interface PayForCustomer { id: string; name: string; country?: string | null }
+export interface PayForCustomer { id: string; name: string; country?: string | null; gstin?: string | null }
 
 interface Props {
   transaction: BankTransactionRow;
@@ -250,6 +251,11 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
   const tdsAmount = check ? tdsToRecord(check, shortChoice) : 0;
   const tdsRate = check ? tdsRateToRecord(check, taxable) : null;
+  /* R-2095: the section follows the rate and the customer's PAN type (lib/banking/tds-section); changeable. */
+  const tdsGuess = tdsSectionGuess(check?.kind === "short" ? check.tdsRatePct : null, customer?.gstin ?? null);
+  const [tdsSectionPick, setTdsSectionPick] = React.useState<string | null>(null);
+  React.useEffect(() => { setTdsSectionPick(null); }, [pickKey, mode, customerId]);
+  const tdsSection = tdsSectionPick ?? tdsGuess.section;
   const saleInvalid = saleInvalidOf(lines, preview.taxable);
   const payerUnanswered = payerMismatch && !payerAnswer;
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
@@ -262,6 +268,30 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
       subStart: makesSub && createSub ? subStart : null,
       subRenewal: makesSub && createSub ? subRenewal : null,
     };
+    /* R-2095: a round-off (≤ ₹50) on one sale / item settles it in full — saved through the split
+       RPC, which books the difference (R-2098's rule) in the same transaction. */
+    const roundOff = !relink && shortChoice === "round_off" && check?.kind === "short" && (mode === "sale" || (mode === "item" && picked))
+      ? roundOffSplit(mode === "sale" ? { mode: "sale", saleTotal: preview.total } : { mode: "item", item: picked! })
+      : null;
+    if (roundOff) {
+      try {
+        if (payer && payerToRecord) {
+          await setLinePayer.mutateAsync({ transactionId: transaction.id, customerId, payer, relation: payerToRecord.relation, note: payerToRecord.note });
+        }
+        const r = await splitPay.mutateAsync({
+          transactionId: transaction.id, customerId, customerName: customer?.name ?? null,
+          items: roundOff.items,
+          sale: roundOff.saleAmount !== null
+            ? { lines: saleLinesPayload(lines), billingCycle: saleCycle, createSubscription: makesSub ? createSub : false,
+                subStart: subArgs.subStart, subRenewal: subArgs.subRenewal, amount: roundOff.saleAmount }
+            : null,
+          rest: roundOff.rest,
+        });
+        setResult(r);
+        onSaved?.();
+      } catch { /* the hook toasts */ }
+      return;
+    }
     if (mode === "split") {
       try {
         if (payer && payerToRecord) {
@@ -284,13 +314,13 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     const target: RelinkTarget = mode === "item" && picked
       ? {
           path: "item", transactionId: transaction.id, quoteId: picked.quote_id, invoiceId: picked.invoice_id,
-          tdsAmount, tdsRatePct: tdsRate, ...subArgs,
+          tdsAmount, tdsRatePct: tdsRate, tdsSection, ...subArgs,
         }
       : mode === "sale"
         ? {
             path: "new_sale", transactionId: transaction.id, customerId, lines, billingCycle: saleCycle,
             createSubscription: subArgs.createSubscription ?? false, subStart: subArgs.subStart, subRenewal: subArgs.subRenewal,
-            tdsAmount, tdsRatePct: tdsRate,
+            tdsAmount, tdsRatePct: tdsRate, tdsSection,
           }
         : { path: "advance", transactionId: transaction.id, customerId };
     try {
@@ -489,7 +519,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           )}
 
           {/* 3. Amount check */}
-          {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice} />}
+          {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice}
+            section={tdsSection} sectionReason={tdsSectionPick ? null : tdsGuess.reason} onSection={setTdsSectionPick} noRoundOff={Boolean(relink)} />}
 
           {/* R-2095 (staging, 30 Oct): a refused save left the drawer open with nothing said — the
               server's reason is shown here too, not only as a toast. */}
@@ -549,9 +580,11 @@ function OpenItemRow({ item, credit, selected, onPick }: { item: OpenItem; credi
   );
 }
 
-function AmountCheckBox({ check, credit, due, choice, onChoice }: {
+function AmountCheckBox({ check, credit, due, choice, onChoice, section, sectionReason, onSection, noRoundOff }: {
   check: AmountCheck; credit: number; due: number; choice: ShortChoice; onChoice: (c: ShortChoice) => void;
+  section: string; sectionReason: string | null; onSection: (s: string) => void; noRoundOff?: boolean;
 }) {
+  const choices = shortChoices(check).filter((c) => !(noRoundOff && c.value === "round_off"));
   if (check.kind === "exact") {
     return <p className="text-xs text-emerald inline-flex items-center gap-1"><Icon name="check" size={12} /> {rupee(credit)} received = {rupee(due)} due.</p>;
   }
@@ -568,8 +601,8 @@ function AmountCheckBox({ check, credit, due, choice, onChoice }: {
         {rupee(credit)} received is <b>{rupee(check.shortBy)} less</b> than {rupee(due)} due.
         {check.tdsRatePct !== null && <> That is {check.tdsRatePct}% TDS on the taxable value.</>}
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5" role="group" aria-label="Why less was received">
-        {([["tds", `TDS deducted (${rupee(check.shortBy)})`], ["part", `Part payment — ${rupee(check.shortBy)} stays due`]] as const).map(([k, label]) => (
+      <div className={`grid grid-cols-1 gap-1.5 ${choices.length > 2 ? "sm:grid-cols-3" : "sm:grid-cols-2"}`} role="group" aria-label="Why less was received">
+        {choices.map(({ value: k, label }) => (
           <button
             key={k}
             type="button"
@@ -581,7 +614,19 @@ function AmountCheckBox({ check, credit, due, choice, onChoice }: {
           </button>
         ))}
       </div>
-      {choice === "tds" && <p className="text-xs text-ink-3">Booked as TDS receivable (section 194J) — collect the customer&apos;s Form 16A.</p>}
+      {choice === "tds" && (
+        <div className="space-y-1">
+          <label className="flex flex-wrap items-center gap-2 text-xs text-ink-2">
+            <span>TDS section</span>
+            <select value={section} onChange={(e) => onSection(e.target.value)} aria-label="TDS section"
+              className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40">
+              {TDS_SECTION_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          </label>
+          {sectionReason && <p className="text-xs text-ink-3">{sectionReason}</p>}
+          <p className="text-xs text-ink-3">Booked as TDS receivable (section {section}) — collect the customer&apos;s Form 16A.</p>
+        </div>
+      )}
     </div>
   );
 }

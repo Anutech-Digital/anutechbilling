@@ -7,7 +7,8 @@
  */
 import { describe, it, expect } from "vitest";
 import { syncSubscriptionInstalments } from "./sync-instalments.server";
-import { raiseFirstInstalment, type PayForResult } from "@/lib/queries/bank-credit-pay-for";
+import { raiseFirstInstalment } from "@/lib/queries/bank-credit-pay-for";
+import type { PayForResult } from "@/lib/banking/credit-pay-for";
 
 type Row = Record<string, unknown>;
 

@@ -54,6 +54,8 @@ export interface PayItemInput {
   invoiceId: string | null;
   tdsAmount: number;
   tdsRatePct: number | null;
+  /** R-2095: the Income-tax section the customer deducted under (lib/banking/tds-section); default 194J. */
+  tdsSection?: string | null;
   /** null = not a new subscription sale (the server ignores it). */
   createSubscription: boolean | null;
   subStart: string | null;
@@ -70,6 +72,8 @@ export interface NewSaleInput {
   subRenewal: string | null;
   tdsAmount: number;
   tdsRatePct: number | null;
+  /** R-2095: the Income-tax section the customer deducted under; default 194J. */
+  tdsSection?: string | null;
   /** R-2026: how often it is billed (the quote's billing_cycle). Null/absent = the server's
    *  default (yearly; Monthly flex is always monthly). */
   billingCycle?: BillingCycle | null;
@@ -83,7 +87,7 @@ export function payItemArgs(i: PayItemInput) {
     p_invoice_id: i.invoiceId,
     p_tds_amount: Math.max(0, Math.round(i.tdsAmount)),
     p_tds_rate_pct: i.tdsAmount > 0 ? i.tdsRatePct : null,
-    p_tds_section: i.tdsAmount > 0 ? "194J" : null,
+    p_tds_section: i.tdsAmount > 0 ? (i.tdsSection || "194J") : null,
     p_create_subscription: i.createSubscription,
     p_sub_start: i.createSubscription ? i.subStart : null,
     p_sub_renewal: i.createSubscription ? i.subRenewal : null,
@@ -100,7 +104,7 @@ export function newSaleArgs(i: NewSaleInput) {
     p_sub_renewal: i.createSubscription ? i.subRenewal : null,
     p_tds_amount: Math.max(0, Math.round(i.tdsAmount)),
     p_tds_rate_pct: i.tdsAmount > 0 ? i.tdsRatePct : null,
-    p_tds_section: i.tdsAmount > 0 ? "194J" : null,
+    p_tds_section: i.tdsAmount > 0 ? (i.tdsSection || "194J") : null,
     p_billing_cycle: i.billingCycle ?? null,
   };
 }

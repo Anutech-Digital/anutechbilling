@@ -27,6 +27,7 @@ import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { BILLING_CYCLE_OPTIONS, cycleScheduleLabel } from "@/lib/quotes/billing";
 import { COMMIT_CHOICES, type CommitChoice } from "@/lib/quotes/line-commit-choice";
 import { isSplitBilled, quoteInstalmentPlan } from "@/lib/billing/instalments";
+import { ROUND_OFF_LIMIT } from "@/lib/banking/credit-pay-for-multi";
 import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
 import { rupee, formatDate } from "@/lib/utils";
 import { knownPayerCustomer, payerFromNarration, type KnownPayer } from "@/lib/banking/customer-payer";
@@ -181,8 +182,27 @@ export function amountCheck(credit: number, due: number, taxable: number | null)
   return { kind: "short", shortBy: due - credit, tdsRatePct: tdsRateFor(credit, due, taxable && taxable > 0 ? taxable : null) };
 }
 
-/** What the operator decided about a short payment. */
-export type ShortChoice = "tds" | "part";
+/** What the operator decided about a short payment. R-2095: or a round-off (≤ ROUND_OFF_LIMIT). */
+export type ShortChoice = "tds" | "part" | "round_off";
+
+/** R-2095 (Sept reconcile): the answers to "why less came in" — round-off only up to ₹50 (R-2098). */
+export function shortChoices(check: AmountCheck): Array<{ value: ShortChoice; label: string }> {
+  if (check.kind !== "short") return [];
+  const out: Array<{ value: ShortChoice; label: string }> = [
+    { value: "tds", label: `TDS deducted (${rupee(check.shortBy)})` },
+    { value: "part", label: `Part payment — ${rupee(check.shortBy)} stays due` },
+  ];
+  if (check.shortBy <= ROUND_OFF_LIMIT) out.push({ value: "round_off", label: `Round off ${rupee(check.shortBy)} — settled in full` });
+  return out;
+}
+
+/** R-2095: a round-off on ONE sale / item is saved through the split (R-2098: it settles in full). */
+export function roundOffSplit(a: { mode: "sale"; saleTotal: number } | { mode: "item"; item: Pick<OpenItem, "quote_id" | "invoice_id" | "amount_due"> }):
+  { items: Array<{ quote_id: string | null; invoice_id: string | null; amount: number }>; saleAmount: number | null; rest: "round_off" } {
+  return a.mode === "sale"
+    ? { items: [], saleAmount: a.saleTotal, rest: "round_off" }
+    : { items: [{ quote_id: a.item.quote_id, invoice_id: a.item.invoice_id, amount: a.item.amount_due }], saleAmount: null, rest: "round_off" };
+}
 
 /** The TDS amount to send: the whole shortfall when the operator says it was TDS, else 0. */
 export function tdsToRecord(check: AmountCheck, choice: ShortChoice): number {
