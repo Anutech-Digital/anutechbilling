@@ -98,6 +98,20 @@ describe("panel-accounts cron (R-2103)", () => {
     expect(finishCalls()[0]).toMatchObject({ p_result: "needs_email" });
   });
 
+  it("R-2142: a deactivate row (personal erase) sends customer.deactivate with Billing's customer id", async () => {
+    engine.send = vi.fn(async () => ({ kind: "done", result: { ok: true, found: true, changed: true, userId: "u-1" }, replayed: false }));
+    db.rpc = fakeRpc([row("r1", { op: "deactivate" })]);
+    const body = await (await GET(req())).json();
+    expect(body).toMatchObject({ claimed: 1, done: 1 });
+    const cmd = engine.send!.mock.calls[0][0];
+    expect(cmd).toMatchObject({
+      command: "customer.deactivate", subject: "asha@example.invalid", mode: "live",
+      payload: { customerId: "C-00007", reason: "personal-erase" },
+    });
+    expect(cmd.commandId).toMatch(/^rsos-deact-cust-r1-\d{8}$/);
+    expect(finishCalls()[0]).toEqual({ p_id: "r1", p_result: "done", p_dms_user_id: "u-1", p_error: null });
+  });
+
   it("PANEL_ACCOUNTS_LIVE not exactly 1 → nothing claimed or sent", async () => {
     process.env.PANEL_ACCOUNTS_LIVE = "true";
     db.rpc = fakeRpc([row("r1")]);

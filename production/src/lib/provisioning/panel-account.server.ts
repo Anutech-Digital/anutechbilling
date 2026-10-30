@@ -41,12 +41,17 @@ export function panelAccountsReady(env: Record<string, string | undefined> = pro
   return panelAccountsEnabled(env) && commandsConfigured();
 }
 
+/** R-2142: what a panel_account_outbox row asks DMS to do. */
+export type PanelAccountOp = "ensure" | "deactivate";
+
 /** A row as claim_panel_account_outbox returns it. */
 export interface PanelAccountRow {
   id: string;
   tenant_id: string;
   customer_id: string;
   attempts: number;
+  /** R-2142: 'deactivate' = personal erase → DMS customer.deactivate. Absent/'ensure' = customer.ensure. */
+  op?: PanelAccountOp;
   email: string | null;
   customer_name: string | null;
   contact_name: string | null;
@@ -117,6 +122,33 @@ export function buildEnsureCommand(row: PanelAccountRow, now: Date = new Date())
   };
 }
 
+/** R-2142: one deactivate commandId per customer per IST day (a retry the same day is replayed). */
+export function panelDeactivateCommandId(customerId: string, now: Date = new Date()): string {
+  return `rsos-deact-${customerId}-${istDay(now)}`;
+}
+
+/**
+ * R-2142 (GP-D3): the customer.deactivate command for a claimed 'deactivate' row — the personal
+ * account was erased, so DMS turns the login off and clears its link to this customer (paid
+ * services stay). customerId is the same billing_customer_id DMS stores as resellerosCustomerId;
+ * DMS refuses when the account is linked to a different one. Null when the row has no usable email.
+ */
+export function buildDeactivateCommand(row: PanelAccountRow, now: Date = new Date()): EngineCommand | null {
+  const email = (row.email ?? "").trim().toLowerCase();
+  if (!EMAIL_RE.test(email)) return null;
+  return {
+    commandId: panelDeactivateCommandId(row.customer_id, now),
+    command: "customer.deactivate",
+    subject: email,
+    mode: "live",
+    payload: {
+      customerId: billingCustomerId({ id: row.customer_id, customer_number: row.customer_number }),
+      reason: "personal-erase",
+      sourceRef: row.customer_id,
+    },
+  };
+}
+
 export type FinishResult = "done" | "wait" | "retry" | "needs_email";
 
 /** How an engine answer is recorded on the row. */
@@ -152,9 +184,9 @@ export function emptyProcessResult(): ProcessResult {
   return { done: 0, waiting: 0, retrying: 0, failed: 0, needsEmail: 0, errors: [] };
 }
 
-/** Send customer.ensure for one claimed row and record the answer. */
+/** Send customer.ensure (or, for an erased personal account, customer.deactivate) for one claimed row and record the answer. */
 export async function processPanelAccountRow(db: Db, row: PanelAccountRow, out: ProcessResult, now: Date = new Date()): Promise<void> {
-  const cmd = buildEnsureCommand(row, now);
+  const cmd = row.op === "deactivate" ? buildDeactivateCommand(row, now) : buildEnsureCommand(row, now);
   const fin = cmd
     ? finishFor(await sendEngineCommand(cmd))
     : { result: "needs_email" as const, dmsUserId: null, error: "The customer has no valid email address." };
@@ -266,4 +298,25 @@ async function ensureNow(
   } catch (e) {
     return { kind: "skipped", reason: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/**
+ * R-2142 (GP-D3): the personal account erase (GP-22/23) calls this to turn the customer's DMS
+ * panel login off. It only queues (queue_panel_account_deactivate, service_role); the cron
+ * /api/cron/panel-accounts sends customer.deactivate. Idempotent: 'queued' | 'already' |
+ * 'no_email' (no DMS user to find) | null (customer not in that company). Throws on a DB error so
+ * the erase never reports success without the queue. Call it BEFORE the customer's email is
+ * scrubbed (the email is captured on the row), and keep the customers row (anonymise, not delete):
+ * the outbox row cascades with it.
+ */
+export async function queuePanelAccountDeactivate(
+  db: Db,
+  input: { tenantId: string; customerId: string },
+): Promise<"queued" | "already" | "no_email" | null> {
+  const { data, error } = await db.rpc("queue_panel_account_deactivate", {
+    p_tenant_id: input.tenantId,
+    p_customer_id: input.customerId,
+  });
+  if (error) throw new Error(`Could not queue the DMS panel deactivate: ${error.message}`);
+  return (data ?? null) as "queued" | "already" | "no_email" | null;
 }
