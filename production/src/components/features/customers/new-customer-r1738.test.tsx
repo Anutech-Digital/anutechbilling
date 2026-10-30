@@ -14,7 +14,7 @@ vi.mock("@/lib/queries/customers", () => ({
   }),
   useUpdateCustomer: () => ({ isPending: false, mutateAsync: async () => ({}) }),
 }));
-vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), dismiss: vi.fn() } }));
 
 import { toast } from "sonner";
 import { useCustomerForm } from "./use-customer-form";
@@ -112,5 +112,6 @@ describe("Add company with only the essentials (R-1738)", () => {
     expect(created).toHaveLength(1);
     expect(created[0].name).toBe("Quantiva");
     expect(result.current.contactMissing).toBe(false);
+    expect(toast.dismiss).toHaveBeenCalledWith("new-customer-no-contact");
   });
 });
