@@ -11,6 +11,7 @@ import { updateSession } from "@/lib/supabase/middleware";
 import { authjsMiddlewareSession } from "@/server/auth/middleware-session";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { GENERIC_HOME, homeForRole, isRouteAllowed, type UserRole } from "@/lib/nav";
+import { isPersonalOnlyPage } from "@/lib/workspace/personal-allowlist";
 import { rateLimitShared, clientIp, publicApiLimit } from "@/lib/security/rate-limit";
 import { CHANGE_PASSWORD_PATH, mustChangePassword, safeNextPath } from "@/lib/auth/must-change-password";
 import { apiNeedsMfaCode, MFA_API_REFUSAL } from "@/lib/auth/mfa-gate";
@@ -112,6 +113,12 @@ const PROTECTED_PREFIXES = [
      role guard further down is skipped for them too, because `role` is null
      until a users row exists. */
   "/welcome",
+  /* GP-07a (R-2115): the personal workspace's own pages (lib/workspace/personal-allowlist.ts).
+     /vault/personal and /support/my are already covered by "/vault" and "/support". */
+  "/money",
+  "/assets",
+  "/upgrade",
+  "/account",
 ];
 
 // Routes that should redirect to /dashboard if user is logged in
@@ -402,7 +409,10 @@ export async function middleware(request: NextRequest) {
   // isRouteAllowed). R-1542 (18 Oct 2026): the manager is gated too — skipping it meant
   // ROUTE_DENY.manager (Loans given) and the owner-only Backup row never ran. Only the owner
   // skips it, and nav-route-guard.test.ts proves the owner may open every page anyway.
-  if (isAuthed && isProtected && role && role !== "owner") {
+  // GP-07a (R-2115): the owner IS gated on the personal workspace's own pages (/money,
+  // /assets, /support/my, /upgrade, /account) — they are not a business owner's, and the
+  // guard would otherwise never run for them. Everywhere else the owner still skips it.
+  if (isAuthed && isProtected && role && (role !== "owner" || isPersonalOnlyPage(pathname))) {
     const userRole = role as UserRole;
     const isAllowedPath = isRouteAllowed(userRole, pathname, { canViewDeals });
     if (!isAllowedPath) {

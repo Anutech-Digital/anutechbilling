@@ -29,13 +29,15 @@ interface PinRow {
 }
 
 let row: PinRow | null = null;
+/** The signed-in user's role (GP-07a: owner and personal may use the vault lock). */
+let role = "owner";
 const tick = () => new Promise((r) => setTimeout(r, 1));
 
 /** Table access — a read or write lands one round trip later, like PostgREST. */
 function table(name: string) {
   if (name === "users") {
     return {
-      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { tenant_id: TENANT, role: "owner" } }) }) }),
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { tenant_id: TENANT, role } }) }) }),
     };
   }
   if (name !== "personal_vault_pin") throw new Error(`unexpected table ${name}`);
@@ -147,7 +149,21 @@ function setRow(failed = 0, lockedUntil: string | null = null) {
   row = { user_id: USER, tenant_id: TENANT, pin_hash: hashPin(GOOD, salt), pin_salt: salt, failed_attempts: failed, locked_until: lockedUntil };
 }
 
-beforeEach(() => setRow());
+beforeEach(() => { role = "owner"; setRow(); });
+
+describe("GP-07a (R-2115): who may use the vault lock", () => {
+  it("a personal login may — it is that person's own money", async () => {
+    role = "personal";
+    expect((await GET()).status).toBe(200);
+    expect((await post({ action: "verify", pin: GOOD })).status).toBe(200);
+  });
+
+  it.each(["manager", "sales", "billing", "accountant"])("%s is refused (403)", async (r) => {
+    role = r;
+    expect((await GET()).status).toBe(403);
+    expect((await post({ action: "verify", pin: GOOD })).status).toBe(403);
+  });
+});
 
 describe("GP-02b: wrong PINs in parallel cannot slip past the lock", () => {
   it("5 parallel wrong PIN posts leave failed_attempts=5 and the PIN locked", async () => {
