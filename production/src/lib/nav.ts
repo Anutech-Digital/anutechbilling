@@ -382,6 +382,11 @@ export const ROLE_HOME: Record<UserRole, string> = {
   partner_agent: "/partners",
   /* R-1791: the Marketing Hub overview — admitted for this role by MKT below. */
   marketing:    "/marketing",
+  /* R-2110 (GP-01): placeholder until GP-07a adds the Personal nav section and its /money home.
+     The only row that admits 'personal' is /vault/personal itself (see the Password Vault row),
+     so no business page opens for it. No personal user can exist before GP-05, which depends on
+     GP-07a. */
+  personal:     "/vault/personal",
 };
 
 /**
@@ -825,7 +830,11 @@ export const APP_NAV: NavSection[] = [
           /* The owner's PRIVATE books. This hides the menu row and nothing more: middleware
              skips its role guard for owner AND manager. The data is protected by RLS scoped
              to auth.uid() (personal_vault_owner_isolation.test.sql), per USER not per role. */
-          { id: "vault-personal", href: "/vault/personal",  label: "Private Vault",    icon: "wallet", roles: ["owner"], hint: "Your personal money — hidden from the team" },
+          /* R-2110 (GP-01): 'personal' is admitted on THIS row only, so ROLE_HOME.personal is a
+             page the role may open (the roles.test.ts login-loop guard). The sub-rows below stay
+             owner-only and the page's own layout still refuses non-owners — GP-07a admits the
+             personal role there and gives it its own nav section. */
+          { id: "vault-personal", href: "/vault/personal",  label: "Private Vault",    icon: "wallet", roles: ["owner", "personal"], hint: "Your personal money — hidden from the team" },
           { id: "vault-personal-banking",  href: "/vault/personal/banking",  label: "Private banking",  icon: "rupee",  roles: ["owner"] },
           { id: "vault-personal-expenses", href: "/vault/personal/expenses", label: "Private expenses", icon: "receipt", roles: ["owner"] },
           { id: "vault-personal-wealth",   href: "/vault/personal/wealth",   label: "Private wealth",   icon: "trending_up", roles: ["owner"] },

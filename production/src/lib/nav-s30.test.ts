@@ -45,6 +45,12 @@ const OLD_CRUMBS = snapshot.crumbs as Record<string, string[]>;
 /* R-1791 (23 Oct 2026): the Marketing role is newer than the snapshot — it had no pages before. */
 OLD_MENU.marketing ??= [];
 OLD_ALLOWED.marketing ??= [];
+/* R-2110 (GP-01, 30 Oct 2026): the personal role is newer still. Until GP-07a gives it its own
+   section it opens exactly one page, its home /vault/personal (roles.test.ts login-loop guard) —
+   not even /help: the personal menu is exactly Money, My digital assets, Support, Upgrade (GP-07a). */
+OLD_MENU.personal ??= [];
+OLD_ALLOWED.personal ??= [];
+const ADDED_30OCT_PERSONAL_HOME = ["/vault/personal"];
 
 /** S28 (29 Sep 2026): the WhatsApp renewal / invoice reminders settings page, a Marketing Hub
  *  directory row for owner / manager — the same roles as every other row there. */
@@ -174,7 +180,7 @@ const addedFor = (role: string) => [
   ...(role === "marketing" ? ADDED_23OCT_MARKETING_ROLE : []),
   ...(["owner", "marketing", "billing", "accountant"].includes(role) ? ADDED_23OCT_BUDGET : []),
   ...(["owner", "manager", "marketing"].includes(role) ? ADDED_25OCT_COPILOT : []),
-  ...ADDED_FOR_EVERY_ROLE,
+  ...(role === "personal" ? ADDED_30OCT_PERSONAL_HOME : ADDED_FOR_EVERY_ROLE),
 ];
 
 /** What a role can actually click: sidebar rows, their accordion children, and the
@@ -365,7 +371,9 @@ describe("2. structure", () => {
     /* R-1663 (19 Oct 2026): Cold Calling is the second — sales use it, the Hub stays owner/manager. */
     expect(wider.map(({ e, r }) => `${e.item.href} (${r})`).sort()).toEqual(
       ["/contacts (sales)", "/marketing/budget (accountant)", "/marketing/budget (billing)",
-       "/marketing/cold-calling (sales)", "/marketing/cold-calling (sales_senior)"]);
+       "/marketing/cold-calling (sales)", "/marketing/cold-calling (sales_senior)",
+       /* R-2110: the personal role reaches its home through a heading-only Password Vault. */
+       "/vault/personal (personal)"]);
     for (const { e, r } of wider) {
       const parent = filterNavForRole(APP_NAV, r).flatMap((s) => s.items).find((i) => i.id === e.parent!.id);
       expect(parent?.headerOnly, `${r}: ${e.parent!.href} should be a heading`).toBe(true);
