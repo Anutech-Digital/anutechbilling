@@ -287,7 +287,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      customer and WHAT it pays (renewal / add-seats / new-product quote, unpaid invoice, or a new
      sale with seats × unit price) and books it through record_payment in one transaction. It
      replaces the old "Create invoice" form, which booked every receipt as a one-off sale. */
-  const { data: customers } = useCustomers();
+  const customersQuery = useCustomers();
+  const customers = customersQuery.data;
   /* R-2006: the same "who paid" guess CreditPayForSection makes (same lib, same inputs) — only
      to open the Customer tile by itself. The section still makes and shows its own guess. */
   const creditAmt = transaction?.credit ?? 0;
@@ -306,6 +307,14 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      picks the customer it creates. */
   const [newCustomerOpen, setNewCustomerOpen] = React.useState(false);
   const [createdCustomer, setCreatedCustomer] = React.useState<string | null>(null);
+  /* R-2095 (Sept reconcile): the new customer is picked only once the list has it — before, the pick
+     sometimes landed before the customers list refetched and the drawer showed no customer. */
+  const refetchCustomers = customersQuery.refetch;
+  const pickCreatedCustomer = React.useCallback(async (id: string) => {
+    setNewCustomerOpen(false);
+    await Promise.resolve(refetchCustomers?.()).catch(() => undefined);
+    setCreatedCustomer(id); setProjCustomer(id);
+  }, [refetchCustomers]);
   const [payForDone, setPayForDone] = React.useState(false);
   /* "Project payment" — which project (existing or new) this money is for; booked here
      instead of sending the operator off to the projects page. */
@@ -1329,7 +1338,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
       <AddCustomerForm
         open={newCustomerOpen}
         onOpenChange={setNewCustomerOpen}
-        onCreated={(id) => { setCreatedCustomer(id); setProjCustomer(id); setNewCustomerOpen(false); }}
+        onCreated={(id) => { void pickCreatedCustomer(id); }}
       />
     </Sheet>
   );

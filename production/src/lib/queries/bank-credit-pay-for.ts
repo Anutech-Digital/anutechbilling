@@ -114,7 +114,10 @@ export function newSaleArgs(i: NewSaleInput) {
 export async function raiseFirstInstalment(r: PayForResult, cycle: BillingCycle | null | undefined, post: typeof fetch = fetch): Promise<PayForResult> {
   if (!isSplitBilled(cycle) || !r.quote_id || r.already_recorded || r.invoice_issued) return r;
   try {
-    const resp = await post(`/api/quotes/${encodeURIComponent(r.quote_id)}/raise-instalments`, { method: "POST" });
+    /* R-2095 (Sept): afterSale — the paid part's invoice only, no next-period request at sale time. */
+    const resp = await post(`/api/quotes/${encodeURIComponent(r.quote_id)}/raise-instalments`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ afterSale: true }),
+    });
     const body = (await resp.json().catch(() => null)) as
       { raised?: Array<{ invoice_id?: string | null }>; errors?: Array<{ message?: string }>; error?: string } | null;
     if (!resp.ok || !body) return { ...r, instalment_error: body?.error ?? `HTTP ${resp.status}` };

@@ -45,7 +45,7 @@ import {
 import {
   amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
-  paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice,
+  paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
   tdsRateToRecord, tdsToRecord,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
@@ -196,7 +196,9 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const [subRenewal, setSubRenewal] = React.useState<string | null>(null);   // null = follows the term
   React.useEffect(() => { setCreateSub(true); setSubStart(transaction.txn_date); setSubRenewal(null); }, [transaction.id, transaction.txn_date, pickKey, mode]);
   const renewalShown = subRenewal ?? defaultRenewal(subStart || transaction.txn_date, monthly);
-  const datesBad = makesSub && createSub && (!subStart || renewalShown <= subStart);
+  /* R-2095: a 1-year commitment billed in parts renews at the end of the year, not on the next part. */
+  const renewalProblem = makesSub && createSub && saleShown ? splitRenewalProblem(subStart, renewalShown, saleCycle, monthly) : null;
+  const datesBad = makesSub && createSub && (!subStart || renewalShown <= subStart || Boolean(renewalProblem));
   const termText = mode === "sale" ? saleTermText(subStart, renewalShown) : null;
 
   /* ── 3. Amount check ─────────────────────────────────────────────────────────── */
@@ -471,7 +473,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                     <span className="block">Renews on</span>
                     <Input type="date" value={renewalShown} onChange={(e) => setSubRenewal(e.target.value || null)} aria-label="Subscription renewal date" />
                   </label>
-                  {datesBad && <p className="text-xs text-rose-ink sm:col-span-2">The renewal date must be after the start date.</p>}
+                  {datesBad && <p className="text-xs text-rose-ink sm:col-span-2">{renewalProblem ?? "The renewal date must be after the start date."}</p>}
                   {/* R-2053: the term once, then (R-2052) how far the money pays — no date twice. */}
                   {(termText || paidUp) && (
                     <div className="text-xs sm:col-span-2 space-y-0.5 tabular-nums">

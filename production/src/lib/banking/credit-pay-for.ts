@@ -553,6 +553,19 @@ export function defaultRenewal(startISO: string, monthly: boolean): string {
   return addMonthsClamped(startISO, monthly ? 1 : 12);
 }
 
+/**
+ * R-2095 (Sept reconcile): a 1-year commitment billed in parts renews at the END of the year — never on
+ * the next part's date. Staging: renewal 19 Dec on a half-yearly sale from 19 Jun made the schedule
+ * count the year back from 19 Dec and bill the paid half again. The database refuses it too
+ * (bank_credit_pay_item). Null when fine; a Monthly flex plan (no commitment) is not checked.
+ */
+export function splitRenewalProblem(startISO: string, renewalISO: string, cycle: BillingCycle | null | undefined, monthlyFlex: boolean): string | null {
+  if (monthlyFlex || !startISO || !renewalISO || !isSplitBilled(cycle)) return null;
+  const yearEnd = addMonthsClamped(startISO, 12);
+  if (renewalISO >= addDaysISO(yearEnd, -1)) return null;
+  return `Billed ${String(cycle).replace("_", "-")} on a 1-year commitment, so it renews on ${formatDate(yearEnd)} — the next part is billed on its own date. Leave Renews on at the end of the year.`;
+}
+
 /** Is a quote's subscription monthly? (its lines say so) */
 export function linesAreMonthly(lines: OpenItem["lines"]): boolean {
   return (lines ?? []).some((l) => l?.commitment === "monthly");
