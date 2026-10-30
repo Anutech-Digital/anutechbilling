@@ -315,6 +315,7 @@ MIGS=(
   "r2165marketingmetricsquery|20261030120849_r2165_marketing_metrics_query.sql|resellersos_migration|to_regprocedure('public.marketing_metrics_query(text[],text[],date,date,text,text,text,boolean,integer)') is not null and exists(select 1 from pg_proc where proname = 'marketing_metrics_query' and prosrc like '%R-2165%')"
   "r2160adcreatives|20261030122442_r2160_ad_creatives.sql|postgres|(to_regprocedure('public.ad_creative_object_allowed(text,text)') is not null and exists(select 1 from pg_policy p join pg_class c on c.oid = p.polrelid join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'storage' and c.relname = 'objects' and p.polname = 'r2160 ad-creatives select'))"
   "r2095saleinvoiceonreceipt|20261030123423_r2095_sale_invoice_on_receipt.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'quotes' and column_name = 'invoice_on_receipt') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%invoice_on_receipt%') and to_regprocedure('public.tg_bank_txn_payment_link()') is not null"
+  "r2095receiptlinkundo|20261030131008_r2095_receipt_link_undo.sql|resellersos_migration|to_regprocedure('public.tg_bank_txn_payment_link()') is null and not exists(select 1 from pg_trigger where tgname = 'trg_bank_txn_payment_link')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

@@ -1,11 +1,11 @@
 -- R-2095 (30 Oct 2026, September reconcile on staging): a part-paid NEW SALE booked from a bank
 -- receipt issued no GST invoice; a half-yearly sale was filed with the next half's date as its
 -- renewal date; receipts did not name their bank line.
--- Migration 20261030123423_r2095_sale_invoice_on_receipt.
+-- Migrations 20261030123423_r2095_sale_invoice_on_receipt, 20261030131008_r2095_receipt_link_undo.
 -- Self-asserting, ONE transaction, rolled back. Run on a local/test DB only.
 --
 --   A. Yearly sale ₹14,868, bank ₹14,860 (₹8 short) → GST invoice issued on that receipt, pending,
---      ₹8 due; the receipt names its bank line (payments.bank_txn_id).
+--      ₹8 due; the bank line names its receipt (matched_to_id).
 --   B. A quote SENT before payment, part-paid from a bank line → still no invoice (unchanged rule).
 --   C. Half-yearly sale on a 1-year commitment with renewal = the next half's date → refused (22023).
 --   D. Half-yearly sale, default renewal, H1 part-paid (₹91,350 of ₹92,925) → its first part's
@@ -70,11 +70,14 @@ begin
   if i.status::text <> 'pending' or i.amount <> 14868 or i.net_payable <> 8 then
     raise exception 'FAIL A: invoice % status % amount % due % (want pending / 14,868 / 8)', i.id, i.status, i.amount, i.net_payable;
   end if;
-  if (select p.bank_txn_id from public.payments p where p.quote_id = q.id and p.status = 'received' limit 1)
-     is distinct from '11111111-0000-0000-0000-000000209561'::uuid then
-    raise exception 'FAIL A: the receipt does not name its bank line';
+  /* The line names its one receipt (matched_to_id); payments.bank_txn_id stays for split lines
+     only (R-2098) — migration 20261030131008. */
+  if (select t.matched_to_id from public.bank_transactions t where t.id = '11111111-0000-0000-0000-000000209561')
+     is distinct from (select p.id::text from public.payments p where p.quote_id = q.id and p.status = 'received' limit 1)
+     or (select p.bank_txn_id from public.payments p where p.quote_id = q.id and p.status = 'received' limit 1) is not null then
+    raise exception 'FAIL A: the bank line does not name its receipt, or a single receipt got bank_txn_id';
   end if;
-  raise notice 'A PASS: % pending, ₹8 due, receipt → bank line', i.id;
+  raise notice 'A PASS: % pending, ₹8 due, bank line → its receipt', i.id;
 
   -- B. a sent quote part-paid → no invoice (unchanged)
   r := public.reconcile_bank_credit_to_item('11111111-0000-0000-0000-000000209562', 'TESTQ-R2095S-B', null, 0, null, null, false, null, null);
