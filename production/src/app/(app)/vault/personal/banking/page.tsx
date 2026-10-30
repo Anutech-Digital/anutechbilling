@@ -41,7 +41,8 @@ import {
   isLiabilityAccount,
   type AccountKind,
 } from "@/lib/vault/personal/net-worth";
-import { formatDate } from "@/lib/utils";
+import { formatDate, rupee } from "@/lib/utils";
+import { parseRupees, MAX_RUPEES } from "@/lib/vault/personal/parse-rupees";
 
 interface FormState {
   id?: string;
@@ -61,16 +62,18 @@ const EMPTY: FormState = {
   balance: "", credit_limit: "", interest_rate: "", maturity_date: "", notes: "",
 };
 
-/** "1,50,000" / "₹1.5L" is not accepted — this is a plain number field, so say so. */
-function parseRupees(value: string): number | null {
-  const cleaned = value.replace(/[,\s₹]/g, "");
-  if (cleaned === "") return 0;
-  if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
-  const n = Number(cleaned);
-  if (!Number.isFinite(n)) return null;
-  // Whole rupees, everywhere. Paise never reach persistence.
-  return Math.round(n);
+/**
+ * R-2111: every vault amount goes through parse-rupees.ts (R-1419). The old local parser let
+ * "-5" through and sent a 25-digit balance to the bigint column as "1e+24" — a Postgres error
+ * instead of a plain message under the field.
+ */
+function rupeeProblem(reason: "not_a_number" | "too_big"): string {
+  return reason === "too_big"
+    ? `Too large — up to ${rupee(MAX_RUPEES)} (₹1 lakh crore). Check for extra zeros.`
+    : "Type a whole amount in digits, like 125000 or 1,25,000. No minus sign.";
 }
+
+type AmountField = "balance" | "credit_limit";
 
 export default function PersonalBankingPage() {
   const { data, isLoading, error } = usePersonalAccounts(true);
@@ -80,8 +83,10 @@ export default function PersonalBankingPage() {
 
   const [open, setOpen] = React.useState(false);
   const [form, setForm] = React.useState<FormState>(EMPTY);
+  // Shown under the amount field itself (R-2111), so the owner sees which box is wrong.
+  const [amountIssue, setAmountIssue] = React.useState<{ field: AmountField; text: string } | null>(null);
 
-  const openNew = () => { setForm(EMPTY); setOpen(true); };
+  const openNew = () => { setForm(EMPTY); setAmountIssue(null); setOpen(true); };
   const openEdit = (a: PersonalAccount) => {
     setForm({
       id: a.id,
@@ -95,6 +100,7 @@ export default function PersonalBankingPage() {
       maturity_date: a.maturity_date ?? "",
       notes: a.notes ?? "",
     });
+    setAmountIssue(null);
     setOpen(true);
   };
 
@@ -104,22 +110,28 @@ export default function PersonalBankingPage() {
       return;
     }
 
-    const balance = parseRupees(form.balance);
-    if (balance === null) {
-      toast.error("Balance must be a number.", { description: "Type digits only, like 125000 or 1,25,000. Nothing was saved." });
+    const balanceP = parseRupees(form.balance);
+    if (!balanceP.ok) {
+      setAmountIssue({ field: "balance", text: rupeeProblem(balanceP.reason) });
       return;
     }
+    const balance = balanceP.value;
 
     if (form.account_last4 && !/^\d{4}$/.test(form.account_last4)) {
       toast.error("Enter only the last 4 digits.", { description: "Never the full account number — 4 digits are enough to tell accounts apart." });
       return;
     }
 
-    const creditLimit = form.credit_limit ? parseRupees(form.credit_limit) : null;
-    if (form.credit_limit && creditLimit === null) {
-      toast.error("Credit limit must be a number.", { description: "Type digits only, like 200000, or leave it empty. Nothing was saved." });
-      return;
+    let creditLimit: number | null = null;
+    if (form.credit_limit.trim()) {
+      const limitP = parseRupees(form.credit_limit);
+      if (!limitP.ok) {
+        setAmountIssue({ field: "credit_limit", text: rupeeProblem(limitP.reason) });
+        return;
+      }
+      creditLimit = limitP.value;
     }
+    setAmountIssue(null);
 
     const rate = form.interest_rate ? Number(form.interest_rate) : null;
     if (form.interest_rate && (rate === null || !Number.isFinite(rate) || rate < 0 || rate > 100)) {
@@ -155,8 +167,12 @@ export default function PersonalBankingPage() {
       danger: true,
     });
     if (!ok) return;
-    await del.mutateAsync(a.id);
-    toast.success("Account removed.");
+    try {
+      await del.mutateAsync(a.id);
+      toast.success("Account removed.");
+    } catch {
+      /* R-2111: the hook already showed why (toastError); only keep the promise from going unhandled */
+    }
   };
 
   const rows = data ?? [];
@@ -292,10 +308,18 @@ export default function PersonalBankingPage() {
                 </label>
                 <Input id="vb-balance"
                   value={form.balance}
-                  onChange={(e) => setForm((f) => ({ ...f, balance: e.target.value }))}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, balance: e.target.value }));
+                    if (amountIssue?.field === "balance") setAmountIssue(null);
+                  }}
                   placeholder="0"
                   inputMode="numeric"
+                  aria-invalid={amountIssue?.field === "balance" || undefined}
+                  aria-describedby={amountIssue?.field === "balance" ? "vb-balance-error" : undefined}
                 />
+                {amountIssue?.field === "balance" && (
+                  <p id="vb-balance-error" role="alert" className="mt-1 text-xs text-rose">{amountIssue.text}</p>
+                )}
               </div>
             </div>
 
@@ -334,10 +358,18 @@ export default function PersonalBankingPage() {
                 <label htmlFor="vb-credit-limit" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Credit limit (₹)</label>
                 <Input id="vb-credit-limit"
                   value={form.credit_limit}
-                  onChange={(e) => setForm((f) => ({ ...f, credit_limit: e.target.value }))}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, credit_limit: e.target.value }));
+                    if (amountIssue?.field === "credit_limit") setAmountIssue(null);
+                  }}
                   placeholder="200000"
                   inputMode="numeric"
+                  aria-invalid={amountIssue?.field === "credit_limit" || undefined}
+                  aria-describedby={amountIssue?.field === "credit_limit" ? "vb-credit-limit-error" : undefined}
                 />
+                {amountIssue?.field === "credit_limit" && (
+                  <p id="vb-credit-limit-error" role="alert" className="mt-1 text-xs text-rose">{amountIssue.text}</p>
+                )}
               </div>
             )}
 

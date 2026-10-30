@@ -43,6 +43,7 @@ import {
 } from "@/lib/vault/personal/net-worth";
 import { formatDate, rupee } from "@/lib/utils";
 import { parseRupees, MAX_RUPEES, MAX_UNITS } from "@/lib/vault/personal/parse-rupees";
+import { istToday } from "@/lib/dates/ist";
 
 interface FormState {
   id?: string;
@@ -55,15 +56,17 @@ interface FormState {
   notes: string;
 }
 
-function todayIso(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+/**
+ * A fresh blank form each time it opens (R-2111). "Value as of" is today in IST (R-1609) —
+ * the browser's own date was a day behind on a laptop in another timezone, and as a module
+ * constant it also kept the day the page was first loaded.
+ */
+function emptyForm(): FormState {
+  return {
+    asset_class: "mutual_fund", name: "", invested: "", current_value: "",
+    units: "", valued_on: istToday(), notes: "",
+  };
 }
-
-const EMPTY: FormState = {
-  asset_class: "mutual_fund", name: "", invested: "", current_value: "",
-  units: "", valued_on: todayIso(), notes: "",
-};
 
 /** How stale is one holding's figure? Returns null when it is fresh enough to say nothing. */
 function stalenessNote(valuedOn: string | null, now: Date): string | null {
@@ -82,14 +85,14 @@ export default function PersonalWealthPage() {
   const confirm = useConfirm();
 
   const [open, setOpen] = React.useState(false);
-  const [form, setForm] = React.useState<FormState>(EMPTY);
+  const [form, setForm] = React.useState<FormState>(emptyForm);
 
   const now = React.useMemo(() => new Date(), []);
   // Memoised: a fresh [] each render would re-run computeNetWorth on every keystroke.
   const rows = React.useMemo(() => data ?? [], [data]);
   const nw = React.useMemo(() => computeNetWorth([], rows, now), [rows, now]);
 
-  const openNew = () => { setForm(EMPTY); setOpen(true); };
+  const openNew = () => { setForm(emptyForm()); setOpen(true); };
   const openEdit = (h: PersonalHolding) => {
     setForm({
       id: h.id,
@@ -154,8 +157,12 @@ export default function PersonalWealthPage() {
       danger: true,
     });
     if (!ok) return;
-    await del.mutateAsync(h.id);
-    toast.success("Holding removed.");
+    try {
+      await del.mutateAsync(h.id);
+      toast.success("Holding removed.");
+    } catch {
+      /* R-2111: the hook already showed why (toastError); only keep the promise from going unhandled */
+    }
   };
 
   return (
