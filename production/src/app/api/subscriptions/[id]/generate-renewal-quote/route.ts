@@ -30,6 +30,9 @@ import { MONEY_RECORD_ROLES } from "@/lib/auth/roles";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { renewalIsSettled, firstReminderDaysOut } from "@/lib/renewals/cadence";
+import { rolledRenewalDate, nextPartMessage } from "@/lib/renewals/split-billed-next-part";
+import { syncSubscriptionInstalments, readQuotePaymentFacts, INSTALMENT_SUB_SELECT, type InstalmentSub } from "@/lib/billing/sync-instalments.server";
+import { istToday } from "@/lib/dates/ist";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -47,7 +50,7 @@ export const POST = withRoute({
     .from("subscriptions")
     .select(
       `id, tenant_id, customer_id, customer_name, plan, item_id, seats, mrr,
-       renewal_date, status, renewal_state, renewal_quote_id, term_months, billing_cycle`
+       renewal_date, status, renewal_state, renewal_quote_id, term_months, billing_cycle, start_date`
     )
     .eq("id", params.id)
     .single();
@@ -64,7 +67,37 @@ export const POST = withRoute({
      year twice). The renewals cron rolls the term and the instalments keep coming. */
   const splitReason = renewalQuoteBlockedReason(sub.billing_cycle);
   if (splitReason) {
-    return NextResponse.json({ error: splitReason, code: "split_billed" }, { status: 400 });
+    /* R-2095 (staging, 30 Oct): a monthly sub whose month ended had NO part bill and Generate only
+       refused — month 2 could not be billed. Generate now bills the NEXT PART: the term rolls on
+       (as the renewals cron does on the new term's first day) and the due part goes the billing
+       job's way — a payment request, or its tax invoice when it is already paid. */
+    if (sub.status !== "active") {
+      return NextResponse.json({ error: `cannot bill the next part — subscription is ${sub.status}` }, { status: 400 });
+    }
+    const today = istToday();
+    const roll = rolledRenewalDate({
+      billing_cycle: sub.billing_cycle, term_months: sub.term_months ?? 12, start_date: sub.start_date,
+      renewal_date: sub.renewal_date, renewal_quote_id: sub.renewal_quote_id,
+    }, today);
+    if (roll.heldBy) {
+      return NextResponse.json({ error: `Renewal quote ${roll.heldBy} is still open — paying it would bill the new term twice. Cancel it first, then Generate the next part.`, code: "split_billed" }, { status: 400 });
+    }
+    if (roll.rolls > 0 && roll.renewalDate) {
+      const { error: rollErr } = await supabase.from("subscriptions")
+        .update({ renewal_date: roll.renewalDate, renewal_state: "renewed", reminder_count: 0, last_reminder_sent_at_v2: null })
+        .eq("id", sub.id).eq("status", "active").eq("renewal_date", sub.renewal_date).is("renewal_quote_id", null);
+      if (rollErr) return NextResponse.json({ error: `Could not roll the term: ${rollErr.message}` }, { status: 500 });
+    }
+    const { data: fresh, error: fErr } = await supabase.from("subscriptions").select(INSTALMENT_SUB_SELECT).eq("id", sub.id).single();
+    if (fErr || !fresh) return NextResponse.json({ error: fErr?.message ?? "subscription not found" }, { status: 500 });
+    const facts = fresh.quote_id ? await readQuotePaymentFacts(supabase, fresh.quote_id) : undefined;
+    const r = await syncSubscriptionInstalments({ supabase, sub: fresh as InstalmentSub, quote: facts, todayISO: today });
+    const msg = nextPartMessage(sub.customer_name, r, r.skip?.reason ?? null);
+    return NextResponse.json(
+      { split: true, rolledTo: roll.rolls > 0 ? roll.renewalDate : null, message: msg.text, href: msg.href,
+        error: msg.ok ? undefined : msg.text, subscriptionId: sub.id },
+      { status: msg.ok ? 200 : 400 },
+    );
   }
   if (sub.status !== "active") {
     return NextResponse.json(
