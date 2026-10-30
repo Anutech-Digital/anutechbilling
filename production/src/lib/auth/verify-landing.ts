@@ -13,12 +13,22 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PERSONAL_HOME } from "@/lib/personal/signup-flag";
 
-export const SETUP_WELCOME_PATH = "/setup?welcome=1";
+export const SETUP_WELCOME_PATH = "/setup?welcome=1" as const;
+
+/** Every place landingAfterVerify can send someone. The /verify-email page follows the server's
+ *  next ONLY when it is on this list (R-1926 allowlist; R-2119 adds the personal home) — never an
+ *  arbitrary URL. One list, so a new landing cannot be returned here and dropped by the page. */
+export const VERIFY_LANDINGS = [SETUP_WELCOME_PATH, "/dashboard", PERSONAL_HOME] as const;
+export type VerifyLanding = (typeof VERIFY_LANDINGS)[number];
+
+export function isVerifyLanding(next: unknown): next is VerifyLanding {
+  return typeof next === "string" && (VERIFY_LANDINGS as readonly string[]).includes(next);
+}
 
 export async function landingAfterVerify(
   admin: SupabaseClient,
   userId: string,
-): Promise<"/setup?welcome=1" | "/dashboard" | typeof PERSONAL_HOME | null> {
+): Promise<VerifyLanding | null> {
   const { data: member } = await admin
     .from("users")
     .select("id, tenant_id, role")
