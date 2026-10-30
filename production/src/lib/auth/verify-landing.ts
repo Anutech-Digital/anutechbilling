@@ -3,6 +3,7 @@
  *
  *   profile row + owner + company setup not finished → /setup?welcome=1  (same as the Google door,
  *                                                         welcome/page.tsx)
+ *   profile row, role personal (R-2119, G-PERSONAL)   → /money — never the company wizard
  *   profile row otherwise                             → /dashboard
  *   no profile row (parked on a join request, or none) → null: NO session — they have no
  *                                                         workspace to open yet
@@ -10,13 +11,14 @@
  * Reads only the confirmed user's OWN users row (by auth id) and that row's tenant.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { PERSONAL_HOME } from "@/lib/personal/signup-flag";
 
 export const SETUP_WELCOME_PATH = "/setup?welcome=1";
 
 export async function landingAfterVerify(
   admin: SupabaseClient,
   userId: string,
-): Promise<"/setup?welcome=1" | "/dashboard" | null> {
+): Promise<"/setup?welcome=1" | "/dashboard" | typeof PERSONAL_HOME | null> {
   const { data: member } = await admin
     .from("users")
     .select("id, tenant_id, role")
@@ -24,6 +26,7 @@ export async function landingAfterVerify(
     .maybeSingle();
   const m = member as { id: string; tenant_id: string | null; role: string | null } | null;
   if (!m?.tenant_id) return null;
+  if (m.role === "personal") return PERSONAL_HOME;
   if (m.role !== "owner") return "/dashboard";
   const { data: tenant } = await admin
     .from("tenants")
