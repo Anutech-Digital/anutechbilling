@@ -111,3 +111,26 @@ One line each, with the amount and date:
 - 30 Oct, September run: the TDS auto-detect in the new-sale form works for exact 1/2/10%. Part-paid
   new sales issued no GST invoice, and half-yearly sales auto-created a SENT next quote (both P0 on
   R-2095). Use your own tab. Hand off at a clean line when the session gets long.
+- 30 Oct, Sep finish runs (three workers in a row; a few lines left for the owner):
+  - **Razorpay line with no quote in the app:** New quote (Zoho items and rates) → **Mark as sent** →
+    **Record payment** (method Razorpay, reference = the `pay_` id, date = the Zoho payment date) →
+    back on the bank line **Fetch settlement** → **Reconcile settlement** (books fee and GST).
+  - **Date fields:** set them with `form_input` as `YYYY-MM-DD`. Typing or clicking the picker can
+    land on a different day (one form auto-set the day before the Zoho date). Read the value back.
+  - **Low-margin quotes** (below the margin floor) show **Review & decide** and must be approved before
+    **Mark as sent**. Approving a price is an **owner decision**. A worker may approve only when the
+    price equals the Zoho invoice exactly; otherwise list the quote for Pardeep and move on.
+  - **Overseas customer:** choosing a non-India country sets Overseas and USD. Use Zoho's exchange
+    rate on the quote. A small rupee gap left due is the FX difference: note it, do not write it off.
+    Do not press Generate for an export invoice (it dates it today and treats it as B2C). If the
+    country is missing from the region list, stop and list it (app gap).
+  - **TDS on an old receipt:** Record balance payment → **Customer deducted TDS**, bank amount 0.
+    The multi-item (split) reconcile has no TDS option, so book TDS afterwards this way.
+  - **Count from the app, not the handoff:** Banking → Unmatched + Money in + month filter is the
+    real total. Handoff counts drifted (one month was two lines off).
+  - **Zoho bills per end-domain.** One customer can hold several domains on different terms and
+    start dates. Make one subscription per domain and check each against its own Zoho invoice;
+    fix a wrong domain or date with **Correct details**, never by a new sale.
+  - **Find bank lines by reference number** (UTR / `pay_` id), not by name or amount.
+  - **Manage seats → add-seats with effective date = Zoho period start** gives the Zoho amount
+    within ₹5. Larger gaps mean the base (seats, rate, term) is wrong: fix the base first.
