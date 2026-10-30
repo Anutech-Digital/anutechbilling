@@ -10,7 +10,7 @@
  * migration and fails when the two drift.
  */
 import { z } from "zod";
-import { istToday } from "@/lib/dates/ist";
+import { istToday, utcDateISO } from "@/lib/dates/ist";
 
 /** Who may ask Neo: the marketing agent's people (AGENT_ROLES, R-2157); the SQL function checks the same two. */
 export const NEO_ROLES: readonly string[] = ["owner", "marketing"];
@@ -79,10 +79,11 @@ export type QueryPlan = z.infer<typeof QueryPlanSchema>;
 /** [from, to) for the SQL function plus a label for people. */
 export interface ResolvedRange { from: string; to: string; label: string; days: number }
 
-const addDays = (iso: string, n: number): string => {
+/** YYYY-MM-DD plus n calendar days. */
+export const addDays = (iso: string, n: number): string => {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
+  return utcDateISO(d);
 };
 const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
 

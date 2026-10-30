@@ -14,7 +14,7 @@
  *     clicks + impressions, CPC → spend + clicks), so "5.9×" never stands alone.
  */
 import {
-  BY_AD_METRICS, SPEND_METRICS, TIME_DIMENSIONS, type NeoDimension, type NeoMetric, type NeoPlatform,
+  addDays, BY_AD_METRICS, SPEND_METRICS, TIME_DIMENSIONS, type NeoDimension, type NeoMetric, type NeoPlatform,
   type NeoRange, type QueryPlan,
 } from "./plan";
 import { istToday } from "@/lib/dates/ist";
@@ -63,9 +63,7 @@ function readRange(q: string, today: string): NeoRange {
     if (days === 14) return { preset: "last_14_days" };
     if (days === 30) return { preset: "last_30_days" };
     if (days === 90) return { preset: "last_90_days" };
-    const from = new Date(`${today}T00:00:00Z`);
-    from.setUTCDate(from.getUTCDate() - (Math.min(days, 366) - 1));
-    return { from: from.toISOString().slice(0, 10), to: today };
+    return { from: addDays(today, -(Math.min(days, 366) - 1)), to: today };
   }
   if (/\blast (3|three) months\b|\bquarter\b/.test(q)) return { preset: "last_90_days" };
   return { preset: "last_30_days" };
