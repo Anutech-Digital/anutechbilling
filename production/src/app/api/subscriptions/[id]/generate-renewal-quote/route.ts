@@ -30,7 +30,7 @@ import { MONEY_RECORD_ROLES } from "@/lib/auth/roles";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { renewalIsSettled, firstReminderDaysOut } from "@/lib/renewals/cadence";
-import { rolledRenewalDate, nextPartMessage } from "@/lib/renewals/split-billed-next-part";
+import { billDueTermsOldestFirst, termsMessage } from "@/lib/renewals/split-billed-next-part";
 import { syncSubscriptionInstalments, readQuotePaymentFacts, INSTALMENT_SUB_SELECT, type InstalmentSub } from "@/lib/billing/sync-instalments.server";
 import { istToday } from "@/lib/dates/ist";
 
@@ -74,27 +74,41 @@ export const POST = withRoute({
     if (sub.status !== "active") {
       return NextResponse.json({ error: `cannot bill the next part — subscription is ${sub.status}` }, { status: 400 });
     }
+    /* R-2095 (staging, 30 Oct, P0 money): Greentin (monthly, renewal_date 11 Sep) was rolled to
+       11 Nov in one go and only 11 Oct–10 Nov was billed — 11 Sep–10 Oct never was. The terms
+       are now rolled ONE at a time, each billed before the next roll (oldest first, one GST
+       document per period); renewal_date moves only with a bill. */
     const today = istToday();
-    const roll = rolledRenewalDate({
-      billing_cycle: sub.billing_cycle, term_months: sub.term_months ?? 12, start_date: sub.start_date,
-      renewal_date: sub.renewal_date, renewal_quote_id: sub.renewal_quote_id,
-    }, today);
-    if (roll.heldBy) {
-      return NextResponse.json({ error: `Renewal quote ${roll.heldBy} is still open — paying it would bill the new term twice. Cancel it first, then Generate the next part.`, code: "split_billed" }, { status: 400 });
+    const runTerms = await billDueTermsOldestFirst({
+      sub: {
+        billing_cycle: sub.billing_cycle, term_months: sub.term_months ?? 12, start_date: sub.start_date,
+        renewal_date: sub.renewal_date, renewal_quote_id: sub.renewal_quote_id,
+      },
+      todayISO: today,
+      roll: async (from, to) => {
+        const { data: moved, error: rollErr } = await supabase.from("subscriptions")
+          .update({ renewal_date: to, renewal_state: "renewed", reminder_count: 0, last_reminder_sent_at_v2: null })
+          .eq("id", sub.id).eq("status", "active").eq("renewal_date", from).is("renewal_quote_id", null)
+          .select("id");
+        if (rollErr) throw new Error(`Could not roll the term: ${rollErr.message}`);
+        if (!moved || moved.length === 0) throw new Error("The subscription changed while billing — reload and Generate again.");
+      },
+      billCurrentTerm: async () => {
+        const { data: fresh, error: fErr } = await supabase.from("subscriptions").select(INSTALMENT_SUB_SELECT).eq("id", sub.id).single();
+        if (fErr || !fresh) throw new Error(fErr?.message ?? "subscription not found");
+        const facts = fresh.quote_id ? await readQuotePaymentFacts(supabase, fresh.quote_id) : undefined;
+        const r = await syncSubscriptionInstalments({ supabase, sub: fresh as InstalmentSub, quote: facts, todayISO: today, rebillCredited: true });
+        return { raised: r.raised, requests: r.requests, requestsOpen: r.requestsOpen, skip: r.skip };
+      },
+    });
+    if (runTerms.heldBy) {
+      return NextResponse.json({ error: `Renewal quote ${runTerms.heldBy} is still open — paying it would bill the new term twice. Cancel it first, then Generate the next part.`, code: "split_billed" }, { status: 400 });
     }
-    if (roll.rolls > 0 && roll.renewalDate) {
-      const { error: rollErr } = await supabase.from("subscriptions")
-        .update({ renewal_date: roll.renewalDate, renewal_state: "renewed", reminder_count: 0, last_reminder_sent_at_v2: null })
-        .eq("id", sub.id).eq("status", "active").eq("renewal_date", sub.renewal_date).is("renewal_quote_id", null);
-      if (rollErr) return NextResponse.json({ error: `Could not roll the term: ${rollErr.message}` }, { status: 500 });
-    }
-    const { data: fresh, error: fErr } = await supabase.from("subscriptions").select(INSTALMENT_SUB_SELECT).eq("id", sub.id).single();
-    if (fErr || !fresh) return NextResponse.json({ error: fErr?.message ?? "subscription not found" }, { status: 500 });
-    const facts = fresh.quote_id ? await readQuotePaymentFacts(supabase, fresh.quote_id) : undefined;
-    const r = await syncSubscriptionInstalments({ supabase, sub: fresh as InstalmentSub, quote: facts, todayISO: today, rebillCredited: true });
-    const msg = nextPartMessage(sub.customer_name, r, r.skip?.reason ?? null);
+    const msg = termsMessage(sub.customer_name, runTerms);
+    const { data: after } = await supabase.from("subscriptions").select("renewal_date").eq("id", sub.id).maybeSingle();
+    const rolledTo = after?.renewal_date && after.renewal_date !== sub.renewal_date ? after.renewal_date : null;
     return NextResponse.json(
-      { split: true, rolledTo: roll.rolls > 0 ? roll.renewalDate : null, message: msg.text, href: msg.href,
+      { split: true, rolledTo, periods: runTerms.terms.length, message: msg.text, href: msg.href,
         error: msg.ok ? undefined : msg.text, subscriptionId: sub.id },
       { status: msg.ok ? 200 : 400 },
     );

@@ -92,4 +92,25 @@ describe("Add company with only the essentials (R-1738)", () => {
     expect(created[0].name).toBe("Quantiva");
     expect(created[0].contact_name).toBe("Quantiva");
   });
+
+  /* R-2095 (staging, 30 Oct, 2nd gap): inside the bank reconcile drawer the form is a sheet on top
+     of a modal sheet — the toast's "Save without contact" cannot be clicked there (the modal blocks
+     every click outside it; sonner sets no pointer-events of its own). The form itself carries the
+     same choice. */
+  it("the form itself offers 'Save without contact' (no toast click needed)", async () => {
+    created.length = 0;
+    const { result } = renderHook(() => useCustomerForm({}));
+    act(() => {
+      result.current.setValue("name", "Quantiva");
+      result.current.setValue("state", "Punjab");
+    });
+    expect(result.current.contactMissing).toBe(false);
+    await act(async () => { await result.current.submit(); });
+    expect(created).toHaveLength(0);
+    expect(result.current.contactMissing).toBe(true);
+    await act(async () => { await result.current.saveWithoutContact(); });
+    expect(created).toHaveLength(1);
+    expect(created[0].name).toBe("Quantiva");
+    expect(result.current.contactMissing).toBe(false);
+  });
 });
