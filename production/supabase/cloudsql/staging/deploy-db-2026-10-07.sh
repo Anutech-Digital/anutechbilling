@@ -310,6 +310,7 @@ MIGS=(
   "r2157agentcheckpoints|20261030084415_r2157_agent_checkpoints.sql|resellersos_migration|to_regclass('public.agent_checkpoints') is not null and to_regclass('public.agent_checkpoint_writes') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'agent_checkpoint_writes' and policyname = 'zzz_service_role_all')"
   "r2158adagentsafety|20261030084431_r2158_ad_agent_safety.sql|resellersos_migration|(to_regclass('public.ad_agent_actions') is not null and to_regprocedure('public.ad_agent_action_decide(uuid,text,uuid,text,uuid)') is not null)"
   "r2118gp16aowner|20261030102051_r2118_gp16a_owner_to_migration.sql|postgres|not exists(select 1 from pg_roles where rolname='resellersos_migration') or (select c.relowner::regrole::text from pg_class c where c.oid = to_regclass('public.personal_identity_link')) = 'resellersos_migration'"
+  "gp21bbackupt|20261030104900_gp21b_backup_tiering.sql|resellersos_migration|to_regprocedure('public.backup_tenant_tiered(uuid,integer,boolean,text)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
