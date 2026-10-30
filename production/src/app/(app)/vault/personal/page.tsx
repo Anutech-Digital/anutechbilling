@@ -63,7 +63,11 @@ export default function PersonalVaultOverview() {
     );
   }
 
-  const empty = (accountsQ.data?.length ?? 0) === 0 && (holdingsQ.data?.length ?? 0) === 0;
+  // R-2111: an owner who has only recorded expenses/drawings is not "empty" — their FY card
+  // must show. Transactions count too.
+  const empty = (accountsQ.data?.length ?? 0) === 0
+    && (holdingsQ.data?.length ?? 0) === 0
+    && (txQ.data?.length ?? 0) === 0;
 
   return (
     <div className="space-y-5">
