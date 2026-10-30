@@ -151,3 +151,30 @@ describe("cogsTotals — unknowns are excluded, not counted as free", () => {
     });
   });
 });
+
+/* R-2095 follow-up (30 Oct 2026): a Flexible (monthly) subscription with no vendor bill was costed
+   at the ANNUAL wholesale — Google's Flexible tier costs more, so its margin read too high. The
+   tier follows term_months, the same rule as catalogCostPerSeatMonth (Correct details). */
+describe("R-2095 — catalogue tier follows the commitment", () => {
+  const tiered = [item({ prices: { annual: { msrp: 270, wholesale: 110 }, monthly: { msrp: 325, wholesale: 132 } } })];
+
+  it("Flexible (term_months 1) uses the Flexible (monthly) wholesale", () => {
+    const c = subscriptionCogs(sub({ term_months: 1, mrr: 3_250 }), tiered);
+    expect(c.source).toBe("catalog");
+    expect(c.perSeatMonth).toBe(132);
+    expect(c.monthlyCost).toBe(1_320);
+  });
+
+  it("Annual (term_months 12, or not stored) keeps the annual wholesale", () => {
+    expect(subscriptionCogs(sub({ term_months: 12 }), tiered).perSeatMonth).toBe(110);
+    expect(subscriptionCogs(sub({ term_months: null }), tiered).perSeatMonth).toBe(110);
+  });
+
+  it("Flexible with no Flexible tier falls back to the annual one", () => {
+    expect(subscriptionCogs(sub({ term_months: 1 }), CATALOG).perSeatMonth).toBe(110);
+  });
+
+  it("a stored vendor cost still wins over either tier", () => {
+    expect(subscriptionCogs(sub({ term_months: 1, vendor_cost_per_seat_month: 120 }), tiered).perSeatMonth).toBe(120);
+  });
+});
