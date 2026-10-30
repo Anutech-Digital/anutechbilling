@@ -1,7 +1,7 @@
 -- R-2095 (30 Oct 2026, September reconcile on staging): a part-paid NEW SALE booked from a bank
 -- receipt issued no GST invoice; a half-yearly sale was filed with the next half's date as its
 -- renewal date; receipts did not name their bank line.
--- Migration 20261030115429_r2095_sale_invoice_on_receipt.
+-- Migration 20261030123423_r2095_sale_invoice_on_receipt.
 -- Self-asserting, ONE transaction, rolled back. Run on a local/test DB only.
 --
 --   A. Yearly sale ₹14,868, bank ₹14,860 (₹8 short) → GST invoice issued on that receipt, pending,
