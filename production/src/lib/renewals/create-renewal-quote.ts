@@ -21,6 +21,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { catalogPlanName } from "@/lib/subscriptions/plan-match";
 import { quoteDocumentKind, type QuoteDocumentKind } from "@/lib/pdf/quote-document-kind";
 import type { Database, Json, QuoteLineItem } from "@/lib/supabase/database.types";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
@@ -167,7 +168,7 @@ export async function createOrGetRenewalQuote(
       .from("items")
       .select("msrp, wholesale")
       .eq("tenant_id", input.tenantId)
-      .eq("name", input.plan)
+      .eq("name", catalogPlanName(input.plan))   // R-2095: an old "(N seats)" suffix
       .maybeSingle();
     return data;
   })();
@@ -215,7 +216,7 @@ export async function createOrGetRenewalQuote(
 
   const lineItems: QuoteLineItem[] = [{
     id:         "renewal-1",
-    name:       input.plan,
+    name:       catalogPlanName(input.plan),   // R-2095
     qty:        input.seats,
     rate:       perSeatRate,
     cost:       perSeatCost,

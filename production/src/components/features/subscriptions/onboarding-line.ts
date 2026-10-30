@@ -24,7 +24,10 @@ export function onboardingQuoteLine(input: {
   const isDay = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d);
   return {
     id,
-    name: `${plan} (${seats} seats)`,
+    /* R-2095 (staging, 30 Oct): the name is the catalogue plan — record_payment names the
+       subscription after the line, and "(2 seats)" in the plan broke matching (R-812 family).
+       Seats are the line's qty and the subscription's seats column. */
+    name: plan,
     qty: seats,
     /* rate × qty must equal what the quote stores, so the rate carries the same
        `periods` multiplier the total does. On annual-billed-monthly that makes

@@ -45,12 +45,20 @@
 const FILLER = new Set(["business"]);
 
 /**
+ * R-2095 (staging, 30 Oct): the Onboard dialog's paid path named the line — and so the
+ * subscription — "<plan> (2 seats)". The plan is the catalogue name; old rows are read without it.
+ */
+export function catalogPlanName(plan: string | null | undefined): string {
+  return String(plan ?? "").replace(/\s*\(\s*\d+\s*seats?\s*\)\s*$/i, "").trim();
+}
+
+/**
  * A comparable key for a product name. Applied to BOTH the subscription's plan text
  * and the catalog row's name — never to only one side.
  */
 export function planKey(name: string | null | undefined): string {
   if (!name) return "";
-  return String(name)
+  return catalogPlanName(name)   // R-2095: an old "(N seats)" suffix is not part of the product
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")   // punctuation, "(", "&", "-" all become spaces
     .split(" ")
