@@ -19,3 +19,15 @@ export function tdsWithRounding(a: {
   const gap = a.remaining - a.credit - a.bank - a.tdsAtRate;
   return Math.abs(gap) === 1 ? a.tdsAtRate + gap : a.tdsAtRate;
 }
+
+/**
+ * R-2095 (Sept reconcile): a TDS-only balance receipt (₹0 in bank, the customer's TDS clears the
+ * balance) was saved as "Bank transfer ₹21" into HDFC — it looked like bank money and waited in bank
+ * reconciliation for a line that never comes. It is saved as method 'other', no bank account, and
+ * named "TDS deducted by customer".
+ */
+export function tdsOnlyReceipt<M extends string>(a: { method: M; bankAccountId: string | null; bank: number; tdsActive: boolean; notes: string | null }):
+  { method: M | "other"; bankAccountId: string | null; notes: string | null; tdsOnly: boolean } {
+  if (!(a.tdsActive && a.bank === 0)) return { method: a.method, bankAccountId: a.bankAccountId, notes: a.notes, tdsOnly: false };
+  return { method: "other", bankAccountId: null, notes: ["TDS deducted by customer", a.notes].filter(Boolean).join(" · "), tdsOnly: true };
+}

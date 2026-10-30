@@ -80,7 +80,7 @@ import { domainConflictMessage } from "@/lib/quotes/payment-domain";
 import { deskPaymentTagArgs, isReplayResult, replayToast } from "@/lib/payments/record-payment-replay";
 import { instalmentPaymentLines, type InstalmentPaymentResult } from "@/lib/payments/instalment-payment";
 import { splitExpectation, splitPaymentToast, splitOutcomeSentence, type SplitExpectation, type InstalmentRaiseResult } from "@/lib/payments/split-expected";
-import { tdsWithRounding } from "@/lib/payments/tds-rounding";
+import { tdsWithRounding, tdsOnlyReceipt } from "@/lib/payments/tds-rounding";
 import { advanceToUse } from "@/lib/quotes/customer-advance";
 
 const schema = z.object({
@@ -763,13 +763,16 @@ export function RecordPaymentDialog({
             : `TDS ${data.tdsSection} withheld ${rupee(tdsAmount)} (${tdsRatePct}% of pre-GST ${rupee(quotePreGST)} = ${rupee(tdsAtRate)})`
           : null,
       ].filter(Boolean).join(" · ") || null;
-      const tagArgs = deskPaymentTagArgs({ receivedDate: data.receivedDate, bankAccountId });
+      /* R-2095: ₹0 in bank + TDS = the customer's TDS, not bank money (no bank account, method other). */
+      const tdsOnlyR = tdsOnlyReceipt({ method, bankAccountId: bankAccountId || null, bank: data.amount, tdsActive, notes });
+      const tagArgsAll = deskPaymentTagArgs({ receivedDate: data.receivedDate, bankAccountId });
+      const tagArgs = tdsOnlyR.tdsOnly ? { ...tagArgsAll, p_bank_account_id: null } : tagArgsAll;
 
       const deskArgs = {
         p_amount:             settledAmount,
-        p_method:             method,
+        p_method:             tdsOnlyR.method,
         p_reference:          data.reference,
-        p_notes:              notes,
+        p_notes:              tdsOnlyR.notes,
         p_credit_customer_id: appliedCreditAmount > 0 && customerId ? customerId : null,
         p_credit_amount:      appliedCreditAmount > 0 && customerId ? appliedCreditAmount : 0,
         p_received_on:        tagArgs.p_received_on,
