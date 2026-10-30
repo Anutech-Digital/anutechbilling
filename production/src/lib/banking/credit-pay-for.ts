@@ -278,8 +278,16 @@ export function repriceLine(line: SaleLine, it: CatalogRow | undefined, cycle: S
  * (18, or 0 for an export customer / a Bill of Supply). Display only — the server computes the
  * quote with create_direct_invoice's rule and the result shows ITS total.
  */
+/** R-2095: a unit price keeps its paise (Zoho bills ₹103.5, ₹1,347.5) — two decimals at most. */
+export function paiseRate(rate: number): number {
+  return Number.isFinite(rate) ? Math.round(Math.max(0, rate) * 100) / 100 : 0;
+}
+
 export function salePreview(lines: readonly SaleLine[], gstRatePct: number): { taxable: number; gst: number; total: number } {
-  const taxable = lines.reduce((s, l) => s + Math.max(0, Math.round(l.qty)) * Math.max(0, Math.round(l.rate)), 0);
+  /* R-2095: qty × paise rate, summed in paise, rounded to the rupee ONCE (the invoice is in rupees) —
+     the server (bank_credit_new_sale_quote) adds the same way. */
+  const paise = lines.reduce((s, l) => s + Math.max(0, Math.round(l.qty)) * Math.round(paiseRate(l.rate) * 100), 0);
+  const taxable = Math.round(paise / 100);
   const gst = Math.round((taxable * gstRatePct) / 100);
   return { taxable, gst, total: taxable + gst };
 }
@@ -324,9 +332,9 @@ export function shownUnitPrice(line: Pick<SaleLine, "rate">): number {
   return line.rate;
 }
 
-/** The stored rate for a typed unit price — as typed, whole rupees (a deal price is not locked). */
+/** The stored rate for a typed unit price — as typed, paise kept (R-2095; a deal price is not locked). */
 export function rateFromShownPrice(_line: Pick<SaleLine, "cycle" | "monthPriced">, shown: number): number {
-  return Math.round(Math.max(0, Number.isFinite(shown) ? shown : 0));
+  return paiseRate(shown);
 }
 
 /** "₹/user/year" (annual), "₹/user/month" (Monthly flex), "₹/user, once" — the unit of the shown price. */
@@ -374,6 +382,8 @@ export interface SaleSchedule {
   later: SaleBill[];
   /** Monthly flex: the same bill again every month. */
   everyMonth: boolean;
+  /** R-2095: ₹ incl GST of that monthly bill — the monthly lines only (one-time lines are billed once). */
+  monthlyGross?: number;
 }
 
 /**
@@ -398,12 +408,14 @@ export function saleSchedule(lines: readonly SaleLine[], gstRatePct: number, cyc
       };
     }
   }
-  return { dueNow: p.total, dueTaxable: p.taxable, later: [], everyMonth: flex && p.total > 0 };
+  /* R-2095: "then every month" is the monthly lines alone — a one-time line (setup) is billed once. */
+  const monthlyGross = flex ? salePreview(lines.filter((l) => l.cycle === "monthly"), gstRatePct).total : 0;
+  return { dueNow: p.total, dueTaxable: p.taxable, later: [], everyMonth: flex && monthlyGross > 0, ...(flex ? { monthlyGross } : {}) };
 }
 
 /** "Next 3 bills ₹4,814 each, on 21 Jan 2027, 21 Apr 2027 and 21 Jul 2027." */
 export function laterBillsText(s: SaleSchedule, cycle: BillingCycle): string | null {
-  if (s.everyMonth) return `Then ${rupee(s.dueNow)} every month while the plan runs (Monthly flex).`;
+  if (s.everyMonth) return `Then ${rupee(s.monthlyGross ?? s.dueNow)} every month while the plan runs (Monthly flex).`;
   const n = s.later.length;
   if (n === 0) return null;
   const same = s.later.every((b) => b.gross === s.later[0].gross);
@@ -520,7 +532,7 @@ export function saleLinesPayload(lines: readonly SaleLine[]) {
     item_id: l.itemId,
     name: l.name.trim(),
     qty: Math.round(l.qty),
-    rate: Math.round(l.rate),
+    rate: paiseRate(l.rate),   // R-2095: paise kept
     cost: Math.round(l.cost),
     commitment: l.cycle,
   }));

@@ -65,10 +65,30 @@ export interface SeatIncreaseCharge {
   proration: ProrationResult;
 }
 
+/**
+ * R-2095 (staging, 30 Oct): the ₹/seat/year behind a whole-rupee mrr. mrr × 12 ÷ seats is not the
+ * price it came from: 7 seats × ₹3,150 ÷ 12 = ₹1,837.50 → mrr ₹1,838 → ₹3,150.86 → "₹3,151/seat".
+ * Both ₹3,150 and ₹3,151 give that mrr. When a price within ₹1 of the exact figure gives the SAME
+ * mrr back and is a multiple of ₹10 (prices are set that way), that price is the one; otherwise the
+ * rounded figure, as before.
+ */
+export function annualPerSeatFromMrr(mrr: number, seats: number): number {
+  if (!(seats > 0) || !(mrr > 0)) return 0;
+  const exact = (mrr * 12) / seats;
+  const rounded = Math.round(exact);
+  const score = (p: number) => (p % 100 === 0 ? 3 : p % 50 === 0 ? 2 : p % 10 === 0 ? 1 : 0);
+  let best = rounded;
+  for (let p = Math.ceil(exact - 1); p <= Math.floor(exact + 1); p++) {
+    if (p <= 0 || Math.abs(p - exact) >= 1 || Math.round((seats * p) / 12) !== mrr) continue;
+    if (score(p) > score(best) || (score(p) === score(best) && score(p) > 0 && Math.abs(p - exact) < Math.abs(best - exact))) best = p;
+  }
+  return score(best) > 0 ? best : rounded;
+}
+
 export function seatIncreaseCharge(input: SeatIncreaseChargeInput): SeatIncreaseCharge {
   const { currentSeats, currentMrr, additionalSeats, remainingDays, termDays, taxRatePct } = input;
 
-  const annualPerSeat = currentSeats > 0 ? Math.round((currentMrr * 12) / currentSeats) : 0;
+  const annualPerSeat = annualPerSeatFromMrr(currentMrr, currentSeats);   // R-2095
 
   const proration = prorate({
     annualPerSeatPaise: rupeesToPaise(annualPerSeat),

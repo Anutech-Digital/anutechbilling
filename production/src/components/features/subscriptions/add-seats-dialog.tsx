@@ -123,7 +123,12 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
     seller: { state_code: me?.tenantStateCode, gstin: me?.tenantGstin },
   });
   const taxRatePct       = pos.isExport ? 0 : 18;
-  const taxLabel         = gstHeadLabel({ ratePct: taxRatePct, interState: pos.interState, isExport: pos.isExport });
+  /* R-2095 (staging, 30 Oct): while the customer / company is still loading, or either state is
+     unknown, the head is not known — "CGST 9% + SGST 9%" was printed as a guess for a Maharashtra
+     customer whose invoice then charged IGST. Say "GST 18%" until the head is known (R-431). */
+  const taxLabel         = seatTaxLabel({
+    loaded: Boolean(me) && (customer !== undefined || !sub.customer_id), pos, ratePct: taxRatePct,
+  });
   /* R-803: the server's own calculation (addSeats calls seatIncreaseCharge too), so these
      lines equal the quote it creates. Adding the separately rounded subtotal and GST here
      showed ₹1,007 for a ₹1,006 quote (₹852.95 + ₹153.53 = ₹1,006.48). */
@@ -366,4 +371,12 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
       </DialogContent>
     </Dialog>
   );
+}
+
+/** R-2095: the GST head the Add seats preview names — only once it is known (R-431), never a guess. */
+export function seatTaxLabel(a: { loaded: boolean; pos: { interState: boolean; isExport: boolean; head: { known: boolean } }; ratePct: number }): string {
+  if (a.pos.isExport || (a.loaded && a.pos.head.known)) {
+    return gstHeadLabel({ ratePct: a.ratePct, interState: a.pos.interState, isExport: a.pos.isExport });
+  }
+  return `GST ${a.ratePct}%`;
 }

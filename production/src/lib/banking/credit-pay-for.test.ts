@@ -162,9 +162,9 @@ describe("R-1838 new sale — seats × unit price", () => {
     expect(salePreview(lines, 0).total).toBe(15000);
     expect(amountCheck(17700, salePreview(lines, 18).total, 15000)).toEqual({ kind: "exact" });
   });
-  it("sends whole-rupee qty/rate and the line's own term to the RPC", () => {
+  it("sends whole qty, a paise rate (R-2095) and the line's own term to the RPC", () => {
     const p = saleLinesPayload([{ ...saleLineFromItem(GWS, "annual_yearly", 5), rate: 3000.4 }, saleLineFromItem(SETUP)]);
-    expect(p[0]).toMatchObject({ item_id: "GW-STD", qty: 5, rate: 3000, commitment: "annual_yearly" });
+    expect(p[0]).toMatchObject({ item_id: "GW-STD", qty: 5, rate: 3000.4, commitment: "annual_yearly" });
     expect(p[1]).toMatchObject({ item_id: "MIG", qty: 1, rate: 199, commitment: "one_time" });
   });
   it("a subscription product makes a subscription; a one-time one does not", () => {
