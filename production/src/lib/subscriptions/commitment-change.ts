@@ -163,7 +163,7 @@ export function commitmentVerdict(f: CommitmentFacts): CommitmentVerdict {
     const running = termStart != null && end != null && termStart <= f.today && f.today <= end;
     if (running) {
       block = `An ${now >= 36 ? "3-year" : "annual"} commitment cannot be reduced mid-term — the customer committed until ${fmt(end!)}. `
-        + `Change it once this term ends (from ${fmt(end!)} on), or keep the commitment and change only the payment frequency.`;
+        + `Change it after ${fmt(end!)}, when this term ends, or keep the commitment and change only the payment frequency.`;
     }
   }
 

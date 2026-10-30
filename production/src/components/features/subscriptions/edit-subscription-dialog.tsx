@@ -29,7 +29,7 @@ import {
   COMMITMENT_OPTIONS, THREE_YEAR_OPTION, FREQUENCY_LABEL, catalogCostPerSeatMonth, commitmentOf,
   commitmentRenewal, commitmentVerdict, frequenciesFor,
 } from "@/lib/subscriptions/commitment-change";
-import type { BillingCycle } from "@/lib/supabase/database.types";
+import { BILLING_CYCLE_INVOICES_PER_YEAR as PARTS_PER_YEAR, type BillingCycle } from "@/lib/supabase/database.types";
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { subscriptionProducts, productsForVendor } from "@/lib/subscriptions/catalog-options";
@@ -354,7 +354,7 @@ export function EditSubscriptionDialog({
           {commitNext === "flex"
             ? <p className="-mt-2 text-2xs leading-snug text-ink-3">Flexible is paid monthly only. An annual commitment can be paid monthly, quarterly, half-yearly or yearly.</p>
             : termNext !== termNow || cycleNext !== cycleNow
-              ? <p className="-mt-2 text-2xs leading-snug text-ink-3">Renews at the end of the {termNext === 36 ? "3-year" : "12-month"} commitment; each payment covers {FREQUENCY_LABEL[cycleNext].toLowerCase()} part of it.</p>
+              ? <p className="-mt-2 text-2xs leading-snug text-ink-3">Renews at the end of the {termNext === 36 ? "3-year" : "12-month"} commitment — paid {FREQUENCY_LABEL[cycleNext].toLowerCase()}, {PARTS_PER_YEAR[cycleNext] * (termNext === 36 ? 3 : 1)} {PARTS_PER_YEAR[cycleNext] * (termNext === 36 ? 3 : 1) === 1 ? "payment" : "payments"}.</p>
               : null}
           {termNext !== termNow && (
             <p data-testid="commitment-cost" className="-mt-2 text-2xs leading-snug text-ink-2">
@@ -437,7 +437,7 @@ export function EditSubscriptionDialog({
               label={verdict.changed && commitVerdict.changed ? "Why are these details changing?"
                 : verdict.changed ? "Why are the seats, plan or price changing?" : "Why are the commitment or payment frequency changing?"}
               htmlFor="sub_correct_reason" required>
-              <Textarea id="sub_correct_reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Customer removed 5 users; credit note issued" />
+              <Textarea id="sub_correct_reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={verdict.changed ? "Customer removed 5 users; credit note issued" : "Annual commitment paid monthly; was booked as Flexible"} />
               {!reasonOk && <p className="mt-1 text-2xs text-ink-3">Needed to save — kept in the subscription&apos;s change history.</p>}
             </FormField>
           )}

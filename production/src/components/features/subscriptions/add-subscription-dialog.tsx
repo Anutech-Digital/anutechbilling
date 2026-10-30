@@ -1307,7 +1307,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               )}
             </FormField>
 
-            <FormField label="Customer Company Name *" required htmlFor="custName">
+            <FormField label="Customer Company Name" required htmlFor="custName">
               <Input
                 id="custName"
                 placeholder="e.g. Sharma Cloud Solutions"
@@ -1346,7 +1346,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormField label="Primary Customer Domain *" required htmlFor="subDomain">
+            <FormField label="Primary Customer Domain" required htmlFor="subDomain">
               <Input
                 id="subDomain"
                 placeholder="e.g. example.test"
@@ -1496,7 +1496,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
 
           {/* Vendor & Plan Selection */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormField label="Cloud Vendor *" required htmlFor="vendor">
+            <FormField label="Cloud Vendor" required htmlFor="vendor">
               <Select value={vendor} onValueChange={(val: any) => handleVendorChange(val)}>
                 <SelectTrigger id="vendor">
                   <SelectValue />
@@ -1514,7 +1514,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               </Select>
             </FormField>
 
-            <FormField label="Plan / SKU Product *" required htmlFor="planSelect">
+            <FormField label="Plan / SKU Product" required htmlFor="planSelect">
               {!isCustomPlan ? (
                 <Select value={itemId ?? ""} onValueChange={handlePlanSelect}>
                   <SelectTrigger id="planSelect">
@@ -1581,7 +1581,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               above it. R-2095: two explicit choices (Annual commitment paid monthly must be
               possible), the same two Correct details and the bank New sale ask. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <FormField label="Commitment *" required htmlFor="commitmentChoice">
+            <FormField label="Commitment" required htmlFor="commitmentChoice">
               <Select value={choiceParts(billingChoice).commitment}
                 onValueChange={(v) => changeBillingChoice(choiceFromParts(v as CommitmentChoice, choiceParts(billingChoice).frequency))}>
                 <SelectTrigger id="commitmentChoice">
@@ -1594,7 +1594,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                 </SelectContent>
               </Select>
             </FormField>
-            <FormField label="Payment frequency *" required htmlFor="billingChoice">
+            <FormField label="Payment frequency" required htmlFor="billingChoice">
               <Select value={choiceParts(billingChoice).frequency}
                 disabled={choiceParts(billingChoice).commitment === "flex"}
                 onValueChange={(v) => changeBillingChoice(choiceFromParts(choiceParts(billingChoice).commitment, v as BillingCycle))}>
@@ -1615,7 +1615,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
 
           {/* Seats, Price & Financial Summary */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <FormField label="License Seats *" required htmlFor="seats">
+            <FormField label="License Seats" required htmlFor="seats">
               <Input
                 id="seats"
                 type="number"
@@ -1697,7 +1697,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
 
           {/* Dates */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormField label="Start Date *" required htmlFor="startDate">
+            <FormField label="Start Date" required htmlFor="startDate">
               <Input
                 id="startDate"
                 type="date"
@@ -1711,7 +1711,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               </p>
             </FormField>
 
-            <FormField label="Renewal / Expiry Date *" required htmlFor="renewalDate">
+            <FormField label="Renewal / Expiry Date" required htmlFor="renewalDate">
               <Input
                 id="renewalDate"
                 type="date"
@@ -1737,7 +1737,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
           </div>
 
           {/* Payment Status & Terms */}
-          <FormField label="Payment & Billing Terms (Special Cases Handling) *">
+          <FormField label="Payment & Billing Terms (Special Cases Handling)" required>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <button
                 type="button"
@@ -1816,7 +1816,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               screen said when it was expected — and the app's reminder ladder hangs
               off an invoice this path deliberately never raises. */}
           {paymentTerms === "credit" && (
-            <FormField label="Payment due date *" required htmlFor="paymentDueDate">
+            <FormField label="Payment due date" required htmlFor="paymentDueDate">
               {/* REQUIRED and blank by default. The earlier version pre-filled start + 30
                   and fell back to it when empty; that made it possible to activate credit
                   against a date nobody had agreed. The submit guard above is the real
