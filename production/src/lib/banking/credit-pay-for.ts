@@ -432,13 +432,17 @@ export function saleSchedule(lines: readonly SaleLine[], gstRatePct: number, cyc
   const effective = saleBillingCycle(lines, cycle);
   const flex = lines.some((l) => l.cycle === "monthly");
   if (!flex && isSplitBilled(effective) && p.taxable > 0) {
-    const plan = quoteInstalmentPlan({
-      cycle: effective, termTaxable: p.taxable, termGross: p.total, taxRate: gstRatePct, termStart: startISO,
-    });
+    /* R-2095 (Sept reconcile): only the subscription lines are split; a one-time line (setup) is
+       billed once, in the first part — before, it was spread across the parts. */
+    const recurring = salePreview(lines.filter((l) => l.cycle !== "one_time"), gstRatePct);
+    const once = salePreview(lines.filter((l) => l.cycle === "one_time"), gstRatePct);
+    const plan = recurring.taxable > 0 ? quoteInstalmentPlan({
+      cycle: effective, termTaxable: recurring.taxable, termGross: recurring.total, taxRate: gstRatePct, termStart: startISO,
+    }) : null;
     if (plan && plan.lines.length > 1) {
       return {
-        dueNow: plan.lines[0].gross,
-        dueTaxable: plan.lines[0].taxable,
+        dueNow: plan.lines[0].gross + once.total,
+        dueTaxable: plan.lines[0].taxable + once.taxable,
         later: plan.lines.slice(1).map((l) => ({ billOn: l.billOn, gross: l.gross })),
         everyMonth: false,
       };
