@@ -121,7 +121,9 @@ const schema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reference"], message: formatProblem });
     return;
   }
-  if (digital && (ref.length < 4 || !/\d/.test(ref))) {
+  /* R-2095: a Razorpay id (pay_ + 14) passed its own format above — it may have no digit. */
+  const razorpayId = d.method === "razorpay" && /^pay_/i.test(ref);
+  if (digital && !razorpayId && (ref.length < 4 || !/\d/.test(ref))) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["reference"],
