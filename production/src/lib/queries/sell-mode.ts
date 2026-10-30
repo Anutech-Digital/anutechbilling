@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { isPersonalSession } from "@/lib/workspace/kind";
 import { DEFAULT_SELL_MODE, parseSellMode, type SellMode } from "@/lib/sell-mode";
 
 const untyped = () => createClient() as unknown as SupabaseClient;
@@ -107,7 +108,8 @@ export function useHasSubscriptions(enabled: boolean) {
   const tenantId = me.data?.tenantId ?? null;
   const q = useQuery({
     queryKey: ["sell_mode", "has_subscriptions", tenantId],
-    enabled: enabled && Boolean(tenantId),
+    /* R-2175: a personal workspace has no subscriptions and the gateway refuses the read. */
+    enabled: enabled && Boolean(tenantId) && !isPersonalSession(me.data ? { role: me.data.role } : null),
     staleTime: 5 * 60 * 1000,
     queryFn: async (): Promise<boolean> => {
       const { data, error } = await createClient().from("subscriptions").select("id").limit(1);
