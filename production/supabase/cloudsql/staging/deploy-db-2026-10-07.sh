@@ -306,6 +306,7 @@ MIGS=(
   "gp16apersonalidentitylink|20261030053741_gp16a_personal_identity_link.sql|resellersos_migration|to_regclass('public.personal_identity_link') is not null and to_regprocedure('public.link_personal_identity(uuid,uuid,uuid)') is not null"
   "r2095invoicedatereceipt|20261030054246_r2095_invoice_date_receipt.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.invoice_date_for_receipt(uuid,date)')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.generate_invoice(text)') and prosrc like '%R-2095%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-2095%')"
   "gp09apersonalwall|20261030071753_gp09a_personal_restrictive_money.sql|resellersos_migration|(to_regprocedure('public.is_personal_session()') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'tds_receivable' and policyname = 'gp09_personal_wall'))"
+  "gp12bpersonalimport|20261030074413_gp12b_personal_import.sql|resellersos_migration|(to_regprocedure('public.personal_import_commit(jsonb)') is not null and to_regclass('public.personal_category_rules') is not null)"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
