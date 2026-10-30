@@ -538,9 +538,12 @@ export function saleLinesPayload(lines: readonly SaleLine[]) {
   }));
 }
 
-/** Mixed monthly + annual on one sale is refused by the server (one quote = one billing term). */
+/** Monthly flex beside ANY other line (annual or one-time) is refused by the server — R-381's
+ *  trigger (quote_line_terms_mixed) counts a line without a monthly commitment as annual. R-2095
+ *  (staging, 30 Oct): Monthly flex + one-time passed this check, the save got a 400 and the
+ *  drawer said nothing. One quote = one billing term. */
 export function saleTermsMixed(lines: readonly SaleLine[]): boolean {
-  return lines.some((l) => l.cycle === "monthly") && lines.some((l) => l.cycle === "annual_yearly");
+  return lines.some((l) => l.cycle === "monthly") && lines.some((l) => l.cycle !== "monthly");
 }
 
 /* ─── Subscription dates ─────────────────────────────────────────────────────────────── */

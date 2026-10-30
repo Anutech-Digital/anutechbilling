@@ -243,6 +243,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   React.useEffect(() => { setResult(null); }, [transaction.id]);
   const splitCount = splitPicked.length + (splitSale ? 1 : 0);
   const busy = payItem.isPending || newSale.isPending || advance.isPending || relinkSale.isPending || splitPay.isPending || setLinePayer.isPending;
+  const saveErrorObj = splitPay.error ?? newSale.error ?? payItem.error ?? advance.error ?? relinkSale.error ?? setLinePayer.error;
+  const saveError = saveErrorObj ? (saveErrorObj as { message?: string }).message ?? String(saveErrorObj) : null;
 
   const tdsAmount = check ? tdsToRecord(check, shortChoice) : 0;
   const tdsRate = check ? tdsRateToRecord(check, taxable) : null;
@@ -487,6 +489,12 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           {/* 3. Amount check */}
           {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice} />}
 
+          {/* R-2095 (staging, 30 Oct): a refused save left the drawer open with nothing said — the
+              server's reason is shown here too, not only as a toast. */}
+          {saveError && !busy && (
+            <p role="alert" className="text-xs text-rose-ink break-words">Not saved: {saveError}</p>
+          )}
+
           <div className="flex flex-wrap gap-2">
             {/* Wraps on a phone: the quote number makes the label longer than 375px allows. */}
             <Button size="sm" variant="primary" icon="check" disabled={!canSave} loading={busy} onClick={save}
@@ -645,7 +653,7 @@ function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPay
         <option value="" disabled>{lines.length ? "＋ Add another product…" : "What was sold? Select a product…"}</option>
         {catalog.map((i) => <option key={i.id} value={i.id}>{i.name}{i.vendor ? ` · ${i.vendor}` : ""}</option>)}
       </select>
-      {saleTermsMixed(lines) && <p className="text-xs text-rose-ink">Monthly and yearly products cannot be on one sale — record them separately.</p>}
+      {saleTermsMixed(lines) && <p className="text-xs text-rose-ink">Monthly flex cannot be on one sale with yearly or one-time products — record them as separate sales (or make them all one commitment).</p>}
       {payment.options.length > 0 && (
         <label className="block text-xs text-ink-3 space-y-0.5">
           <span className="block">Payment</span>
