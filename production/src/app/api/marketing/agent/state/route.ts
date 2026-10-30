@@ -33,7 +33,7 @@ export async function GET(req: Request) {
   if (ctx === "missing") return planNotFound();
 
   try {
-    return runJson(await readRun(agentGraphFor(session), planId.data));
+    return runJson(await readRun(await agentGraphFor(session), planId.data));
   } catch (e) {
     if (e instanceof AgentThreadError) return badRequest(e.message);
     return agentFailed("state", e);

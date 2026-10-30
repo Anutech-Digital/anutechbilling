@@ -8,7 +8,11 @@
  */
 import { Command } from "@langchain/langgraph";
 import type { CampaignGraph, GatePrompt } from "./graph";
-import { CampaignStateSchema, type CampaignStateValue, type ReviewDecision } from "./state";
+import { CampaignStateSchema, type CampaignStateValue, type ReviewDecision, type XenoAnswers } from "./state";
+
+/** An answer to whichever gate the thread waits at: review (decision) or Xeno's questions (answers). */
+export type GateAnswer = ReviewDecision | XenoAnswers;
+const isAnswers = (a: GateAnswer): a is XenoAnswers => "answers" in a;
 
 export type AgentRunStatus = "not_started" | "waiting" | "running" | "done";
 
@@ -57,14 +61,21 @@ export async function startRun(graph: CampaignGraph, seed: CampaignStateValue): 
   return readRun(graph, first.planId);
 }
 
-/** Answer the gate the thread is waiting at. */
-export async function resumeRun(graph: CampaignGraph, planId: string, answer: ReviewDecision): Promise<AgentRunView> {
+/** Answer the gate the thread is waiting at (the answer must fit that gate — R-2159). */
+export async function resumeRun(graph: CampaignGraph, planId: string, answer: GateAnswer): Promise<AgentRunView> {
   const before = await readRun(graph, planId);
   if (before.status !== "waiting") {
     throw new AgentConflictError(
       before.status === "not_started" ? "Start the campaign's agent first." : "The agent is not waiting for an answer.",
       before,
     );
+  }
+  const gate = before.waitingFor[0]?.kind;
+  if (gate === "questions" && !isAnswers(answer)) {
+    throw new AgentConflictError("The agent is waiting for answers to its questions, not a review.", before);
+  }
+  if (gate === "review" && isAnswers(answer)) {
+    throw new AgentConflictError("The agent is waiting for a review (approve, edit or reject), not answers.", before);
   }
   await graph.invoke(new Command({ resume: answer }), configFor(planId));
   return readRun(graph, planId);

@@ -11,6 +11,11 @@ import { z } from "zod";
 import type { TenantSession, Tx } from "@/server/db";
 import { TenantCheckpointSaver } from "@/lib/marketing/agent/checkpointer";
 import { compileCampaignGraph } from "@/lib/marketing/agent/graph";
+import { xenoBrain } from "@/lib/marketing/agent/xeno-brain";
+import { resolveGeminiConfig } from "@/lib/ai/gemini";
+import { createClient } from "@/lib/supabase/server";
+import type { ItemOption } from "@/lib/marketing/copilot/plan-draft";
+import { activeItems } from "../copilot/plans/plan-io";
 import { prismaCheckpointStore } from "@/lib/marketing/agent/prisma-store";
 import type { AgentRunView } from "@/lib/marketing/agent/runner";
 import type { PlanSeed } from "@/lib/marketing/agent/state";
@@ -34,9 +39,21 @@ export async function planSeed(tx: Tx, tenantId: string, planId: string): Promis
   return p ? { tenantId: p.tenant_id, planId: p.id, campaignId: p.marketing_campaign_id, prompt: p.prompt } : null;
 }
 
-/** The graph with a checkpointer bound to THIS session (every read/write through withTenant). */
-export function agentGraphFor(session: TenantSession) {
-  return compileCampaignGraph(new TenantCheckpointSaver(prismaCheckpointStore(session)));
+/** R-2159: the company's active products — Xeno matches the request to one (same list as the co-pilot). */
+export const agentItems = (tx: Tx, tenantId: string): Promise<ItemOption[]> => activeItems(tx, tenantId);
+
+/**
+ * The graph with a checkpointer bound to THIS session (every read/write through withTenant).
+ * Pass `items` when the run may reach Xeno (start, resume): Xeno then gets this company's AI
+ * door, which counts every call against this company's monthly AI cap before it is made.
+ * Without it (state) the graph is only read, never run.
+ */
+export async function agentGraphFor(session: TenantSession, items?: readonly ItemOption[]) {
+  const saver = new TenantCheckpointSaver(prismaCheckpointStore(session));
+  if (!items) return compileCampaignGraph(saver);
+  const ai = await resolveGeminiConfig(createClient(), session.tenantId);
+  const brain = xenoBrain({ tenantId: session.tenantId, apiKey: ai.apiKey, model: ai.model });
+  return compileCampaignGraph(saver, { xeno: { items, brain } });
 }
 
 export const signIn = () => NextResponse.json({ error: "Please sign in again." }, { status: 401 });
