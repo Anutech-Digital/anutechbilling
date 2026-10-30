@@ -97,3 +97,27 @@ describe("R-2095: Correct details — commitment and payment frequency", () => {
     expect((screen.getByRole("button", { name: /save changes|blocked/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
+
+/* R-2095 follow-up (30 Oct): Venus (Flexible, rolled monthly 15 Jun → 14 Nov) read "keeping the term
+   5 months long" — the start→renewal span of a rolled sub, not its term. A Flexible sub's term is
+   one month; the hint names the commitment instead. */
+describe("R-2095: the start-date hint names the commitment, not the rolled span", () => {
+  const hint = () => screen.getByTestId("start-term-hint").textContent ?? "";
+
+  it("rolled Flexible sub → Flexible (monthly), never '5 months'", () => {
+    render(<EditSubscriptionDialog sub={venus} open onOpenChange={() => {}} />);
+    expect(hint()).toMatch(/Flexible \(monthly\)/);
+    expect(hint()).not.toMatch(/5 months/);
+  });
+
+  it("rolled annual sub (renewed twice) → Annual commitment, never '36 months'", () => {
+    render(<EditSubscriptionDialog sub={{ ...annual, start_date: "2024-06-15" } as Subscription} open onOpenChange={() => {}} />);
+    expect(hint()).toMatch(/Annual commitment/);
+    expect(hint()).not.toMatch(/36 months/);
+  });
+
+  it("first-term annual sub keeps the plain 12-month wording", () => {
+    render(<EditSubscriptionDialog sub={annual} open onOpenChange={() => {}} />);
+    expect(hint()).toMatch(/12 months long/);
+  });
+});
