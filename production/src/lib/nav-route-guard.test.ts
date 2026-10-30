@@ -17,7 +17,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 import {
-  APP_NAV, OFF_MENU_ROLES, ROLE_HOME, ROUTE_DENY, filterNavForRole, flattenNav, homeForRole, isRouteAllowed,
+  APP_NAV, OFF_MENU_ROLES, ROLE_HOME, ROUTE_DENY, crumbForRole, filterNavForRole, flattenNav, getCrumb, homeForRole, isRouteAllowed,
   type UserRole,
 } from "./nav";
 import { APP_ROUTES } from "./feedback/route-map";
@@ -175,6 +175,31 @@ describe("personal role: only the personal pages (GP-07a)", () => {
     const m = buildSidebarApps("personal");
     expect(m.pinned).toEqual([]);
     expect(m.apps.flatMap((a) => a.items.map((i) => i.label))).toEqual(["Money", "My digital assets", "Support", "Upgrade"]);
+  });
+
+  /* R-2115 checker: /account read "Home > Dashboard" (no crumb) and /vault/personal read
+     "Settings > Password Vault > ..." for a personal login, whose menu has neither. */
+  it("/account's breadcrumb is Personal > Account", () => {
+    expect(getCrumb("/account")).toEqual(["Personal", "Account"]);
+    expect(crumbForRole("/account", "personal")).toEqual(["Personal", "Account"]);
+  });
+
+  it.each([
+    ["/vault/personal", ["Personal", "Money"]],
+    ["/vault/personal/banking", ["Personal", "Money", "Banking"]],
+    ["/vault/personal/expenses", ["Personal", "Money", "Expenses"]],
+    ["/vault/personal/wealth", ["Personal", "Money", "Wealth"]],
+    ["/money", ["Personal", "Money"]],
+  ])("a personal login's crumb for %s is %j", (p, crumb) => {
+    expect(crumbForRole(p, "personal")).toEqual(crumb);
+  });
+
+  it("the owner's Private Vault crumb is unchanged", () => {
+    for (const p of ["/vault/personal", "/vault/personal/banking"]) {
+      expect(crumbForRole(p, "owner")).toEqual(getCrumb(p));
+      expect(crumbForRole(p, undefined)).toEqual(getCrumb(p));
+      expect(getCrumb(p)[0]).not.toBe("Personal");
+    }
   });
 
   it("no business role gets a personal row", () => {

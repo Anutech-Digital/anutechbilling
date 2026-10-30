@@ -941,6 +941,8 @@ const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
   "/reports/purchases":      { tail: ["Purchase report"] },
   "/mobile":                 { tail: ["Mobile (PWA)"], under: "Settings" },
   "/setup":                  { tail: ["Setup Wizard"], under: "Settings" },
+  /* R-2115 checker: the personal Account page (avatar menu) read "Home > Dashboard". */
+  "/account":                { tail: ["Account"], under: "Personal" },
 };
 
 /** The crumb of every APP_NAV entry, from where it sits. */
@@ -1009,6 +1011,23 @@ export function getCrumb(pathname: string): string[] {
     if (SCREEN_TITLES[prefix]) return SCREEN_TITLES[prefix];
   }
   return ["Home", "Dashboard"];
+}
+
+/** A personal login's Money tabs (/vault/personal/*) — the tab names its page header shows. */
+const PERSONAL_MONEY_TABS: Record<string, string> = { banking: "Banking", expenses: "Expenses", wealth: "Wealth" };
+
+/**
+ * The breadcrumb for this role. Same as getCrumb, except a personal login (GP-07a, R-2115
+ * checker): it opens its money at /vault/personal through the Money row, and the owner's
+ * crumb there ("Settings > Password Vault > Private Vault") names pages it has no menu for.
+ */
+export function crumbForRole(pathname: string, role: string | null | undefined): string[] {
+  if (role === "personal" && (pathname === "/vault/personal" || pathname.startsWith("/vault/personal/"))) {
+    const tab = pathname.split("/")[3];
+    const tail = tab ? PERSONAL_MONEY_TABS[tab] : undefined;
+    return tail ? ["Personal", "Money", tail] : ["Personal", "Money"];
+  }
+  return getCrumb(pathname);
 }
 
 /**
