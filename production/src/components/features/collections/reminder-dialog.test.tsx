@@ -54,7 +54,14 @@ const renderDialog = () => {
   );
 };
 
-const message = async () => (await screen.findByLabelText(/Message/)) as HTMLTextAreaElement;
+// R-2174: the box renders as soon as the draft arrives, but the dialog fills it in an effect AFTER
+// that commit. findByLabelText could resolve in between (CI on 10c1fda11: expected '' to contain
+// FIRST), so wait until the draft text is IN the box — then reading or editing it is deterministic.
+const message = async () => {
+  const box = (await screen.findByLabelText(/Message/)) as HTMLTextAreaElement;
+  await waitFor(() => expect(box.value).toBe(st.draft.message));
+  return box;
+};
 
 describe("Remind dialog", () => {
   it("opening only drafts — the draft fills the editable message, nothing is sent", async () => {
