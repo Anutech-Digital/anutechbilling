@@ -235,12 +235,22 @@ describe("Add Subscription — start and expiry dates", () => {
  * update exactly as they do in a browser.
  */
 describe("Add Subscription — the billing period drives the term", () => {
-  /** Pick a billing choice via Radix's hidden native select. */
-  const pick = (value: string) => {
+  /** Pick one value via Radix's hidden native select. */
+  const pickOne = (value: string) => {
     const sel = Array.from(document.querySelectorAll("select"))
       .find((s) => Array.from(s.options).some((o) => o.value === value));
     if (!sel) throw new Error(`no select offering ${value}`);
     fireEvent.change(sel, { target: { value } });
+  };
+  /** R-2095: a billing choice is now two picks — Commitment, then Payment frequency. */
+  const PARTS: Record<string, [string, string | null]> = {
+    monthly_flex: ["flex", null], annual_monthly: ["annual", "monthly"], annual_quarterly: ["annual", "quarterly"],
+    annual_half_yearly: ["annual", "half_yearly"], annual_yearly: ["annual", "yearly"],
+  };
+  const pick = (choice: string) => {
+    const [commitment, frequency] = PARTS[choice];
+    pickOne(commitment);
+    if (frequency) pickOne(frequency);
   };
   const renewal = () => document.querySelector<HTMLInputElement>("#renewalDate")!.value;
   const start   = () => document.querySelector<HTMLInputElement>("#startDate")!;
@@ -310,11 +320,20 @@ describe("Add Subscription — the billing period drives the term", () => {
  * is exactly the path that used to leave the number alone.
  */
 describe("Add Subscription — R-876 switching the period converts the price", () => {
-  const pick = (value: string) => {
+  /* R-2095: a billing choice is two picks — Commitment, then Payment frequency. */
+  const pickOne = (value: string) => {
     const sel = Array.from(document.querySelectorAll("select"))
       .find((s) => Array.from(s.options).some((o) => o.value === value));
     if (!sel) throw new Error(`no select offering ${value}`);
     fireEvent.change(sel, { target: { value } });
+  };
+  const PARTS: Record<string, [string, string | null]> = {
+    monthly_flex: ["flex", null], annual_quarterly: ["annual", "quarterly"], annual_yearly: ["annual", "yearly"],
+  };
+  const pick = (choice: string) => {
+    const [commitment, frequency] = PARTS[choice];
+    pickOne(commitment);
+    if (frequency) pickOne(frequency);
   };
   const arr = () => {
     const m = (document.body.textContent ?? "").match(/Total Annual Contract Value \(ARR\):\s*(₹[\d,]+)/);
@@ -373,5 +392,51 @@ describe("Add Subscription — Workspace is never offered below list price (R-17
     const { price } = renderDialog();
     expect(priceLabel()).toContain("₹/yr");
     expect(price.value).toBe("3240");
+  });
+});
+
+/**
+ * R-2095 (coordinator 30 Oct): Commitment and Payment frequency are two explicit choices —
+ * Annual commitment paid MONTHLY must be possible (Venus Infotech), and quarterly / half-yearly too.
+ */
+describe("Add Subscription — R-2095 commitment and payment frequency", () => {
+  beforeEach(() => {
+    catalogRows.length = 0;
+    catalogRows.push({
+      id: "GW-STD", name: "Google Workspace Standard", vendor: "google",
+      msrp: 864, wholesale: 620,
+      prices: { annual: { msrp: 864, wholesale: 620 }, monthly: { msrp: 1_000, wholesale: 700 } },
+      item_type: "subscription", is_active: true,
+    });
+  });
+  const nativeFor = (triggerId: string) =>
+    document.querySelector(`#${triggerId}`)!.parentElement!.querySelector("select")!;
+  const values = (sel: HTMLSelectElement) => Array.from(sel.options).map((o) => o.value).filter(Boolean);
+  const renewal = () => document.querySelector<HTMLInputElement>("#renewalDate")!.value;
+
+  it("shows Commitment and Payment frequency as two labelled fields, defaulting to Annual · Yearly", () => {
+    renderDialog();
+    expect(document.querySelector('label[for="commitmentChoice"]')?.textContent).toContain("Commitment");
+    expect(document.querySelector('label[for="billingChoice"]')?.textContent).toContain("Payment frequency");
+    expect(document.querySelector("#commitmentChoice")?.textContent).toContain("Annual commitment");
+    expect(document.querySelector("#billingChoice")?.textContent).toContain("Yearly");
+    expect(values(nativeFor("billingChoice"))).toEqual(["yearly", "half_yearly", "quarterly", "monthly"]);
+  });
+
+  it.each([["monthly"], ["quarterly"], ["half_yearly"]])("Annual commitment paid %s: annual rate per month, renewal stays start + 12m − 1d", (freq) => {
+    renderDialog();
+    fireEvent.change(document.querySelector<HTMLInputElement>("#startDate")!, { target: { value: "2026-06-15" } });
+    fireEvent.change(nativeFor("billingChoice"), { target: { value: freq } });
+    expect(document.querySelector("#commitmentChoice")?.textContent).toContain("Annual commitment");
+    expect(priceLabel()).toContain("₹/mo");
+    expect(renewal()).toBe("2027-06-14");
+  });
+
+  it("Flexible: payment frequency is Monthly only, renewal one month", () => {
+    renderDialog();
+    fireEvent.change(document.querySelector<HTMLInputElement>("#startDate")!, { target: { value: "2026-06-15" } });
+    fireEvent.change(nativeFor("commitmentChoice"), { target: { value: "flex" } });
+    expect(values(nativeFor("billingChoice"))).toEqual(["monthly"]);
+    expect(renewal()).toBe("2026-07-14");
   });
 });

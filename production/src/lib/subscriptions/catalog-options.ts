@@ -251,6 +251,47 @@ export const BILLING_CHOICES: readonly BillingChoiceMeta[] = [
     hint: "Cancel any time. Higher rate — this is its own price, not the annual one ÷ 12." },
 ] as const;
 
+/* ─── R-2095: COMMITMENT and PAYMENT FREQUENCY as two explicit choices ────────────────
+ * The screen asks the two facts separately (the same two that Correct details and the bank
+ * reconcile New sale ask): Commitment = Annual / Flexible, Payment frequency = Yearly /
+ * Half-yearly / Quarterly / Monthly (Flexible: Monthly only). A BillingChoice is exactly one pair,
+ * so billingTerms() and everything priced from it are unchanged. */
+export type CommitmentChoice = "annual" | "flex";
+
+export const COMMITMENT_CHOICES: ReadonlyArray<{ value: CommitmentChoice; label: string; hint: string }> = [
+  { value: "annual", label: "Annual commitment", hint: "Committed for 12 months at the annual price. Pay yearly, half-yearly, quarterly or monthly." },
+  { value: "flex",   label: "Flexible (monthly)", hint: "No commitment — cancel any month. Its own, higher price; paid monthly only." },
+];
+
+export const FREQUENCY_CHOICES: ReadonlyArray<{ value: "yearly" | "half_yearly" | "quarterly" | "monthly"; label: string }> = [
+  { value: "yearly", label: "Yearly" },
+  { value: "half_yearly", label: "Half-yearly" },
+  { value: "quarterly", label: "Quarterly" },
+  { value: "monthly", label: "Monthly" },
+];
+
+export function choiceParts(c: BillingChoice): { commitment: CommitmentChoice; frequency: BillingTerms["billingCycle"] } {
+  if (c === "monthly_flex") return { commitment: "flex", frequency: "monthly" };
+  if (c === "annual_monthly") return { commitment: "annual", frequency: "monthly" };
+  if (c === "annual_quarterly") return { commitment: "annual", frequency: "quarterly" };
+  if (c === "annual_half_yearly") return { commitment: "annual", frequency: "half_yearly" };
+  return { commitment: "annual", frequency: "yearly" };
+}
+
+/** The pair → its BillingChoice. Flexible is monthly whatever frequency is passed. */
+export function choiceFromParts(commitment: CommitmentChoice, frequency: BillingTerms["billingCycle"]): BillingChoice {
+  if (commitment === "flex") return "monthly_flex";
+  if (frequency === "monthly") return "annual_monthly";
+  if (frequency === "quarterly") return "annual_quarterly";
+  if (frequency === "half_yearly") return "annual_half_yearly";
+  return "annual_yearly";
+}
+
+/** The frequencies a commitment may be paid in. */
+export function frequencyChoicesFor(commitment: CommitmentChoice): typeof FREQUENCY_CHOICES[number][] {
+  return FREQUENCY_CHOICES.filter((f) => commitment === "annual" || f.value === "monthly");
+}
+
 export interface BillingTerms {
   /** What a number typed into the price field MEANS for this choice. */
   unit: "per_seat_month" | "per_seat_year";

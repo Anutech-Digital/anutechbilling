@@ -715,12 +715,12 @@ function SaleEditor({ customerDomain, lines, catalog, gstRate, preview, payment,
       {saleTermsMixed(lines) && <p className="text-xs text-rose-ink">Monthly flex cannot be on one sale with yearly or one-time products — record them as separate sales (or make them all one commitment).</p>}
       {payment.options.length > 0 && (
         <label className="block text-xs text-ink-3 space-y-0.5">
-          <span className="block">Payment</span>
+          <span className="block">Payment frequency</span>
           <select
             value={payCycle}
             disabled={payment.options.length === 1}
             onChange={(e) => onPayCycle(e.target.value as BillingCycle)}
-            aria-label="Payment"
+            aria-label="Payment frequency"
             className={selectCls}
           >
             {payment.options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}

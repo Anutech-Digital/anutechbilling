@@ -14,6 +14,7 @@ let role = "owner";
 vi.mock("@/lib/queries/subscriptions", () => ({
   useUpdateSubscription: () => ({ mutateAsync: update, isPending: false }),
   useCorrectSubscriptionTerms: () => ({ mutateAsync: correct, isPending: false }),
+  useCorrectSubscriptionCommitment: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useScheduleInvoices: () => ({ data: { sale: { invoiceId: "INV-0073", status: "paid" }, instalments: [], renewals: [], addSeats: [] } }),
 }));
 vi.mock("@/lib/queries/items", () => ({ useItems: () => ({ data: [] }) }));

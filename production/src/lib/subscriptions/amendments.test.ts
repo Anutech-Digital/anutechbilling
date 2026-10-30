@@ -151,3 +151,21 @@ describe("seatHistoryReconciles", () => {
     expect(seatHistoryReconciles([], 10)).toBeNull();
   });
 });
+
+describe("R-2095: commitment and payment frequency on the change history", () => {
+  it("reads term_months, the licence cost and the payment frequency in words", () => {
+    const lines = describeAmendment(amend({
+      kind: "term_changed+billing_cycle_changed+commitment_changed",
+      changes: {
+        term_months: { from: 1, to: 12 },
+        vendor_cost_per_seat_month: { from: 318, to: 264 },
+        billing_cycle: { from: "monthly", to: "half_yearly" },
+      },
+    }));
+    expect(lines.map((l) => l.text)).toEqual([
+      "Commitment: Flexible (monthly) → Annual commitment",
+      "Licence cost / seat / month: ₹318 → ₹264",
+      "Payment frequency: Monthly → Half-yearly",
+    ]);
+  });
+});

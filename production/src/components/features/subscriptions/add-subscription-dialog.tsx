@@ -35,9 +35,10 @@ import { matchContacts } from "@/lib/contacts/match-contacts";
 import {
   subscriptionProducts, vendorSelectOptions, productsForVendor, findProduct, judgePrice,
   billingTerms, annualise, firstInvoiceTaxable, BILLING_CHOICES, convertPriceForChoice,
-  type CatalogProduct, type BillingChoice, type PriceSwitchMemo,
+  COMMITMENT_CHOICES, choiceParts, choiceFromParts, frequencyChoicesFor,
+  type CatalogProduct, type BillingChoice, type PriceSwitchMemo, type CommitmentChoice,
 } from "@/lib/subscriptions/catalog-options";
-import type { Item } from "@/lib/supabase/database.types";
+import type { BillingCycle, Item } from "@/lib/supabase/database.types";
 
 /** Display names for the vendor enum. All seven — the DB has always allowed them. */
 const VENDOR_LABEL: Record<Item["vendor"], string> = {
@@ -1576,22 +1577,41 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
             </FormField>
           </div>
 
-          {/* Billing period — decides what the price field MEANS, so it sits above it. */}
-          <FormField label="Billing Period *" required htmlFor="billingChoice">
-            <Select value={billingChoice} onValueChange={(v) => changeBillingChoice(v as BillingChoice)}>
-              <SelectTrigger id="billingChoice">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {BILLING_CHOICES.map((c) => (
-                  <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="mt-1 text-2xs leading-snug text-ink-3">
-              {BILLING_CHOICES.find((c) => c.value === billingChoice)?.hint}
-            </p>
-          </FormField>
+          {/* Commitment + payment frequency — decide what the price field MEANS, so they sit
+              above it. R-2095: two explicit choices (Annual commitment paid monthly must be
+              possible), the same two Correct details and the bank New sale ask. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <FormField label="Commitment *" required htmlFor="commitmentChoice">
+              <Select value={choiceParts(billingChoice).commitment}
+                onValueChange={(v) => changeBillingChoice(choiceFromParts(v as CommitmentChoice, choiceParts(billingChoice).frequency))}>
+                <SelectTrigger id="commitmentChoice">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {COMMITMENT_CHOICES.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+            <FormField label="Payment frequency *" required htmlFor="billingChoice">
+              <Select value={choiceParts(billingChoice).frequency}
+                disabled={choiceParts(billingChoice).commitment === "flex"}
+                onValueChange={(v) => changeBillingChoice(choiceFromParts(choiceParts(billingChoice).commitment, v as BillingCycle))}>
+                <SelectTrigger id="billingChoice">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {frequencyChoicesFor(choiceParts(billingChoice).commitment).map((f) => (
+                    <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+          </div>
+          <p className="-mt-2 text-2xs leading-snug text-ink-3">
+            {BILLING_CHOICES.find((c) => c.value === billingChoice)?.hint}
+          </p>
 
           {/* Seats, Price & Financial Summary */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

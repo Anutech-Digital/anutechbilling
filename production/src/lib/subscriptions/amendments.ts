@@ -27,8 +27,25 @@ const FIELD_LABEL: Record<string, string> = {
   plan: "Plan",
   renewal_date: "Renewal date",
   status: "Status",
-  billing_cycle: "Billing frequency",
+  /* R-2095 (owner, 30 Oct): one fact, one label — "Payment frequency" everywhere on screen. */
+  billing_cycle: "Payment frequency",
+  term_months: "Commitment",
+  vendor_cost_per_seat_month: "Licence cost / seat / month",
 };
+
+const CYCLE_WORD: Record<string, string> = {
+  monthly: "Monthly", quarterly: "Quarterly", half_yearly: "Half-yearly", yearly: "Yearly",
+};
+
+/** R-2095: term_months in words — 1 Flexible, 12 Annual, 36 three years. */
+function commitmentWord(v: unknown): string {
+  const n = Number(v);
+  if (v === null || v === undefined || !Number.isFinite(n)) return "—";
+  if (n <= 1) return "Flexible (monthly)";
+  if (n === 12) return "Annual commitment";
+  if (n === 36) return "3-year commitment";
+  return `${n} months`;
+}
 
 /** ₹ formatting kept local so this module has no UI dependency. */
 function money(v: unknown): string {
@@ -73,6 +90,18 @@ export function describeAmendment(a: ContractAmendment): AmendmentLine[] {
          it is what somebody is looking for when they open this list. */
       const bad = to === "paused" || to === "cancelled" || to === "expired";
       out.push({ text: `${label}: ${plain(from)} → ${plain(to)}`, tone: bad ? "warning" : "neutral" });
+      continue;
+    }
+    if (field === "term_months") {
+      out.push({ text: `${label}: ${commitmentWord(from)} → ${commitmentWord(to)}`, tone: Number(to) < Number(from) ? "warning" : "neutral" });
+      continue;
+    }
+    if (field === "vendor_cost_per_seat_month") {
+      out.push({ text: `${label}: ${money(from)} → ${money(to)}`, tone: "neutral" });
+      continue;
+    }
+    if (field === "billing_cycle") {
+      out.push({ text: `${label}: ${CYCLE_WORD[String(from)] ?? plain(from)} → ${CYCLE_WORD[String(to)] ?? plain(to)}`, tone: "neutral" });
       continue;
     }
     out.push({ text: `${label}: ${plain(from)} → ${plain(to)}`, tone: "neutral" });
