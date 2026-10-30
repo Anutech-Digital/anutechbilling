@@ -58,7 +58,7 @@ export function prismaCheckpointStore(session: TenantSession): CheckpointStore {
   return {
     async getCheckpoint(threadId, ns, checkpointId) {
       const rows = await run((tx) => tx.$queryRaw<RawCheckpoint[]>`
-        select ${COLS} from agent_checkpoints.checkpoints
+        select ${COLS} from public.agent_checkpoints
          where tenant_id = ${tenant}::uuid and thread_id = ${threadId}::uuid and checkpoint_ns = ${ns}
            ${checkpointId ? Prisma.sql`and checkpoint_id = ${checkpointId}` : Prisma.empty}
          order by checkpoint_id desc limit 1`);
@@ -73,7 +73,7 @@ export function prismaCheckpointStore(session: TenantSession): CheckpointStore {
       if (q.beforeId !== undefined) where.push(Prisma.sql`checkpoint_id < ${q.beforeId}`);
       const limit = q.limit === undefined ? Prisma.empty : Prisma.sql`limit ${Math.max(0, Math.min(1000, Math.trunc(q.limit)))}`;
       const rows = await run((tx) => tx.$queryRaw<RawCheckpoint[]>`
-        select ${COLS} from agent_checkpoints.checkpoints
+        select ${COLS} from public.agent_checkpoints
          where ${Prisma.join(where, " and ")}
          order by checkpoint_id desc ${limit}`);
       return rows.map(toRow);
@@ -82,7 +82,7 @@ export function prismaCheckpointStore(session: TenantSession): CheckpointStore {
     async getWrites(threadId, ns, checkpointId) {
       const rows = await run((tx) => tx.$queryRaw<RawWrite[]>`
         select thread_id::text as thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel, value_type, value
-          from agent_checkpoints.writes
+          from public.agent_checkpoint_writes
          where tenant_id = ${tenant}::uuid and thread_id = ${threadId}::uuid
            and checkpoint_ns = ${ns} and checkpoint_id = ${checkpointId}
          order by task_id, idx`);
@@ -91,7 +91,7 @@ export function prismaCheckpointStore(session: TenantSession): CheckpointStore {
 
     async putCheckpoint(row) {
       await run((tx) => tx.$executeRaw`
-        insert into agent_checkpoints.checkpoints
+        insert into public.agent_checkpoints
           (tenant_id, thread_id, checkpoint_ns, checkpoint_id, parent_checkpoint_id,
            checkpoint_type, checkpoint, metadata_type, metadata)
         values (${tenant}::uuid, ${row.threadId}::uuid, ${row.ns}, ${row.checkpointId}, ${row.parentCheckpointId},
@@ -109,7 +109,7 @@ export function prismaCheckpointStore(session: TenantSession): CheckpointStore {
             ? Prisma.sql`do update set channel = excluded.channel, value_type = excluded.value_type, value = excluded.value`
             : Prisma.sql`do nothing`;
           await tx.$executeRaw`
-            insert into agent_checkpoints.writes
+            insert into public.agent_checkpoint_writes
               (tenant_id, thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel, value_type, value)
             values (${tenant}::uuid, ${w.threadId}::uuid, ${w.ns}, ${w.checkpointId}, ${w.taskId}, ${w.idx},
                     ${w.channel}, ${w.valueType}, ${buf(w.value)})
@@ -120,8 +120,8 @@ export function prismaCheckpointStore(session: TenantSession): CheckpointStore {
 
     async deleteThread(threadId) {
       await run(async (tx) => {
-        await tx.$executeRaw`delete from agent_checkpoints.writes where tenant_id = ${tenant}::uuid and thread_id = ${threadId}::uuid`;
-        await tx.$executeRaw`delete from agent_checkpoints.checkpoints where tenant_id = ${tenant}::uuid and thread_id = ${threadId}::uuid`;
+        await tx.$executeRaw`delete from public.agent_checkpoint_writes where tenant_id = ${tenant}::uuid and thread_id = ${threadId}::uuid`;
+        await tx.$executeRaw`delete from public.agent_checkpoints where tenant_id = ${tenant}::uuid and thread_id = ${threadId}::uuid`;
       });
     },
   };
