@@ -228,7 +228,7 @@ export function findProduct(
  * B9, in the opposite direction. `periods` below is that rule, in one number.
  */
 export type BillingChoice =
-  | "monthly_flex" | "annual_monthly" | "annual_quarterly" | "annual_yearly";
+  | "monthly_flex" | "annual_monthly" | "annual_quarterly" | "annual_half_yearly" | "annual_yearly";
 
 export interface BillingChoiceMeta {
   value: BillingChoice;
@@ -242,6 +242,9 @@ export const BILLING_CHOICES: readonly BillingChoiceMeta[] = [
     hint: "Annual commitment, paid upfront. The default." },
   { value: "annual_monthly", label: "Monthly — annual commitment",
     hint: "Same annual rate, invoiced every month. Customer is committed for 12 months." },
+  /* R-2095 (Sept reconcile): Zoho subs billed every 6 months could not be entered as they are. */
+  { value: "annual_half_yearly", label: "Half-yearly — annual commitment",
+    hint: "Same annual rate, priced per month, invoiced every 6 months (2 invoices). Committed for 12 months." },
   { value: "annual_quarterly", label: "Quarterly — annual commitment",
     hint: "Same annual rate, priced per month, invoiced every 3 months (4 invoices). Committed for 12 months." },
   { value: "monthly_flex",   label: "Monthly — no commitment (flex)",
@@ -269,7 +272,7 @@ export interface BillingTerms {
   /** What goes on the quote line. Only two values are written for new quotes. */
   commitment: "monthly" | "annual_yearly";
   /** quotes.billing_cycle and subscriptions.billing_cycle. */
-  billingCycle: "monthly" | "quarterly" | "yearly";
+  billingCycle: "monthly" | "quarterly" | "half_yearly" | "yearly";
   /** subscriptions.term_months — 1 for flex, 12 for a commitment. */
   termMonths: number;
 }
@@ -309,6 +312,17 @@ export function billingTerms(
       flexPriceMissing: false,
       periods: 12, invoicesPerTerm: 4,
       commitment: "annual_yearly", billingCycle: "quarterly", termMonths: 12,
+    };
+  }
+  if (choice === "annual_half_yearly") {
+    /* R-2095: as annual_quarterly (per month at the annual rate, stored as the year) — 2 invoices. */
+    return {
+      unit: "per_seat_month", unitLabel: "₹/mo",
+      suggestedSellPerSeat: product?.annualMonthlySellPerSeat ?? 0,
+      costPerSeat: product?.annualMonthlyCostPerSeat ?? null,
+      flexPriceMissing: false,
+      periods: 12, invoicesPerTerm: 2,
+      commitment: "annual_yearly", billingCycle: "half_yearly", termMonths: 12,
     };
   }
   if (choice === "annual_monthly") {

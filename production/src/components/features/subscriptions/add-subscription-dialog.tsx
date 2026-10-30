@@ -1709,6 +1709,8 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                     ? "End of the 12-month commitment. Invoices still go out monthly."
                     : terms.billingCycle === "quarterly"
                       ? "End of the 12-month commitment. Invoices go out every 3 months."
+                      : terms.billingCycle === "half_yearly"
+                        ? "End of the 12-month commitment. Invoices go out every 6 months."
                       : "End of the 12-month term, when the next yearly invoice is due."}
               </p>
             </FormField>
@@ -1843,9 +1845,9 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                 <div className="mt-1 text-2xs font-semibold text-ink-2">
                   {/* R-826: the first invoice comes from the same split the cron uses
                       (floor per invoice, remainder on the last), not a guess. */}
-                  {terms.billingCycle === "quarterly" ? "Invoiced every 3 months" : "Invoiced monthly"} —{" "}
+                  {terms.billingCycle === "quarterly" ? "Invoiced every 3 months" : terms.billingCycle === "half_yearly" ? "Invoiced every 6 months" : "Invoiced monthly"} —{" "}
                   <b>{rupee(grossAmount(firstInvoiceTaxable(storedTaxable, terms), TAX_RATE_PCT))}</b>
-                  {" "}due {terms.billingCycle === "quarterly" ? "this quarter" : "this month"},
+                  {" "}due {terms.billingCycle === "quarterly" ? "this quarter" : terms.billingCycle === "half_yearly" ? "this half-year" : "this month"},
                   × {terms.invoicesPerTerm} over the committed year.
                 </div>
               )}
