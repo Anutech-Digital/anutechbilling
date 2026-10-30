@@ -318,6 +318,7 @@ MIGS=(
   "r2095receiptlinkundo|20261030131008_r2095_receipt_link_undo.sql|resellersos_migration|to_regprocedure('public.tg_bank_txn_payment_link()') is null and not exists(select 1 from pg_trigger where tgname = 'trg_bank_txn_payment_link')"
   "r2095otherincomefdtransfer|20261030153511_r2095_other_income_fd_transfer.sql|resellersos_migration|to_regclass('public.other_incomes') is not null and to_regprocedure('public.book_bank_credit_as_other_income(uuid,text,text)') is not null and to_regprocedure('public.reconcile_bank_txn_as_transfer(uuid,uuid)') is not null and to_regprocedure('public.report_pnl_other_income(date,date)') is not null"
   "r2095splitsaleonetimelines|20261030153513_r2095_split_sale_one_time_lines.sql|resellersos_migration|to_regprocedure('public.quote_one_time_lines(text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%quote_one_time_lines%')"
+  "gp16bpersona|20261030160500_gp16b_personal_my_bills.sql|resellersos_migration|to_regprocedure('public.personal_my_invoices()') is not null and to_regprocedure('public.personal_my_quotes()') is not null and to_regprocedure('public.personal_my_payments()') is not null and to_regprocedure('public.personal_my_subscriptions()') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
