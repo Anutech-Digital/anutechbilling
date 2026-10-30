@@ -23,8 +23,9 @@
 --   4. Owner B cannot INSERT into Owner A's vault.                     ← with_check
 --   5. Owner B cannot UPDATE Owner A's holding.                        ← silent no-op
 --   6. Owner B cannot DELETE Owner A's account.                        ← silent no-op
---   7. The PIN row is isolated the same way.                           ← lock is private
+--   7. The PIN row is isolated the same way (filtered or no grant).    ← lock is private
 --   8. Owner A can still write their own rows.                         ← feature works
+--   9. personal_account_balances (R-2127) is private the same way.     ← computed view
 --
 -- ON ASSERTING "0 ROWS" — usually a weak assertion, correct here.
 --   RLS does not raise on a filtered SELECT/UPDATE/DELETE; it silently narrows. So for
@@ -178,7 +179,14 @@ begin
   ------------------------------------------- 7. owner B cannot overwrite A's PIN
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_b::text, 'role', 'authenticated')::text, true);
-  update public.personal_vault_pin set pin_hash = 'hijacked' where user_id = v_a;
+  -- Two correct outcomes: RLS silently filters the row (old grants), or the request role
+  -- has no UPDATE on the table at all (GP-02b / R-2112 moves PIN writes server-side and
+  -- revokes it). Either way the assertion below — A's hash untouched — is what counts.
+  begin
+    update public.personal_vault_pin set pin_hash = 'hijacked' where user_id = v_a;
+  exception when insufficient_privilege then
+    null;
+  end;
 
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_a::text, 'role', 'authenticated')::text, true);
@@ -201,7 +209,23 @@ begin
   select balance into v_bal from public.personal_accounts where label = 'A ICICI Card';
   if v_bal <> 80000 then raise exception 'FAIL 8: card balance stored as % — expected 80000 whole rupees', v_bal; end if;
 
-  raise notice 'PASS — all 8 cases';
+  ------------------------------------------- 9. the computed balances view (R-2127) is private too
+  select count(*) into n from public.personal_account_balances;
+  if n <> 2 then raise exception 'FAIL 9: owner A should see their 2 balance rows, sees %', n; end if;
+
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_b::text, 'role', 'authenticated')::text, true);
+  select count(*) into n from public.personal_account_balances;
+  if n <> 0 then
+    raise exception 'FAIL 9: a second owner reads % row(s) of personal_account_balances — the view must be security_invoker so the owner_user_id = auth.uid() policy applies', n;
+  end if;
+
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_support::text, 'role', 'authenticated')::text, true);
+  select count(*) into n from public.personal_account_balances;
+  if n <> 0 then raise exception 'FAIL 9: a support user reads % balance row(s)', n; end if;
+
+  raise notice 'PASS — all 9 cases';
 end $$;
 
 -- Single visible result, so a green run is unmistakable.

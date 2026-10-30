@@ -8699,6 +8699,7 @@ export type Database = {
           balance: number
           created_at: string
           credit_limit: number | null
+          due_day: number | null
           id: string
           institution: string | null
           interest_rate: number | null
@@ -8706,8 +8707,11 @@ export type Database = {
           kind: string
           label: string
           maturity_date: string | null
+          min_due: number | null
           notes: string | null
+          opening_balance: number
           owner_user_id: string
+          statement_day: number | null
           tenant_id: string
           updated_at: string
         }
@@ -8716,6 +8720,7 @@ export type Database = {
           balance?: number
           created_at?: string
           credit_limit?: number | null
+          due_day?: number | null
           id?: string
           institution?: string | null
           interest_rate?: number | null
@@ -8723,8 +8728,11 @@ export type Database = {
           kind: string
           label: string
           maturity_date?: string | null
+          min_due?: number | null
           notes?: string | null
+          opening_balance?: number
           owner_user_id: string
+          statement_day?: number | null
           tenant_id: string
           updated_at?: string
         }
@@ -8733,6 +8741,7 @@ export type Database = {
           balance?: number
           created_at?: string
           credit_limit?: number | null
+          due_day?: number | null
           id?: string
           institution?: string | null
           interest_rate?: number | null
@@ -8740,8 +8749,11 @@ export type Database = {
           kind?: string
           label?: string
           maturity_date?: string | null
+          min_due?: number | null
           notes?: string | null
+          opening_balance?: number
           owner_user_id?: string
+          statement_day?: number | null
           tenant_id?: string
           updated_at?: string
         }
@@ -8840,49 +8852,74 @@ export type Database = {
         Row: {
           account_id: string | null
           amount: number
+          balance_after: number | null
           category: string | null
           created_at: string
+          dedupe_hash: string | null
           id: string
+          import_batch_id: string | null
           kind: string
           note: string | null
           occurred_on: string
           owner_user_id: string
+          raw_description: string | null
+          reference: string | null
+          source: string
           tenant_id: string
           updated_at: string
         }
         Insert: {
           account_id?: string | null
           amount: number
+          balance_after?: number | null
           category?: string | null
           created_at?: string
+          dedupe_hash?: string | null
           id?: string
+          import_batch_id?: string | null
           kind: string
           note?: string | null
           occurred_on: string
           owner_user_id: string
+          raw_description?: string | null
+          reference?: string | null
+          source?: string
           tenant_id: string
           updated_at?: string
         }
         Update: {
           account_id?: string | null
           amount?: number
+          balance_after?: number | null
           category?: string | null
           created_at?: string
+          dedupe_hash?: string | null
           id?: string
+          import_batch_id?: string | null
           kind?: string
           note?: string | null
           occurred_on?: string
           owner_user_id?: string
+          raw_description?: string | null
+          reference?: string | null
+          source?: string
           tenant_id?: string
           updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "personal_transactions_account_id_fkey"
-            columns: ["account_id"]
+            foreignKeyName: "personal_transactions_account_owner_fkey"
+            columns: ["account_id", "owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "personal_account_balances"
+            referencedColumns: ["account_id", "owner_user_id"]
+          },
+          {
+            foreignKeyName: "personal_transactions_account_owner_fkey"
+            columns: ["account_id", "owner_user_id"]
             isOneToOne: false
             referencedRelation: "personal_accounts"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "owner_user_id"]
           },
           {
             foreignKeyName: "personal_transactions_owner_user_id_fkey"
@@ -14394,6 +14431,44 @@ export type Database = {
       }
     }
     Views: {
+      personal_account_balances: {
+        Row: {
+          account_id: string | null
+          account_kind: string | null
+          balance: number | null
+          credits: number | null
+          debits: number | null
+          label: string | null
+          opening_balance: number | null
+          owner_user_id: string | null
+          spend: number | null
+          tenant_id: string | null
+          txn_count: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "personal_accounts_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_accounts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_accounts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       purchase_order_summary: {
         Row: {
           allocated_total: number | null

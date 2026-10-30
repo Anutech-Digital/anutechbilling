@@ -269,4 +269,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2107supportfreebackfill", peek: "to_regprocedure('public.queue_support_free_backfill(boolean)') is not null" },
   { key: "gp01personalrole", peek: "exists(select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid join pg_namespace n on n.oid = t.typnamespace where n.nspname = 'public' and t.typname = 'user_role' and e.enumlabel = 'personal')" },
   { key: "gp01workspacekind", peek: "(exists(select 1 from pg_constraint where conname = 'tenants_workspace_kind_check') and exists(select 1 from pg_proc where oid = to_regprocedure('public.r720_tenants_column_guard()') and prosrc like '%R-2110%'))" },
+  { key: "gp12apersonalledger", peek: "(to_regclass('public.personal_account_balances') is not null and exists(select 1 from pg_constraint where conname = 'personal_transactions_account_owner_fkey' and convalidated))" },
 ];
