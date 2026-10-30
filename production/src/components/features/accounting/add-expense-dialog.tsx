@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { cn, rupee, formatForeignAmount, formatDate } from "@/lib/utils";
+import { cn, rupee, formatForeignAmount, formatDate, gstStateFromGstin } from "@/lib/utils";
 import {
   useCreateExpense,
   useUpdateExpense,
@@ -1243,6 +1243,21 @@ export function AddExpenseDialog({
               ) : (
                 <p className="mt-1 text-xs text-ink-3">New payee — not added to the Vendors master (no GST invoice).</p>
               )
+            )}
+            {/* R-2095 (staging, 30 Oct): a NEW vendor made from a GST bill had no GSTIN until edited on
+                the Vendors page. Typed here, it goes on the vendor (and its state from the GSTIN). */}
+            {isGstBill && !vendorId && vendorNameWatch.trim().length >= 2 && (
+              <div className="mt-2">
+                <label htmlFor="new_vendor_gstin" className="text-xs text-ink-3">Vendor GSTIN (new vendor)</label>
+                <Input id="new_vendor_gstin" className="font-mono uppercase" maxLength={15} placeholder="e.g. 27AAACN1234F1Z5"
+                  value={aiGstin ?? ""} onChange={(e) => setAiGstin(e.target.value.replace(/s+/g, "").toUpperCase() || null)} />
+                {aiGstin && !/^[0-9]{2}[A-Z0-9]{13}$/.test(aiGstin) && (
+                  <p className="mt-1 text-xs text-rose-ink">15 characters, no spaces — e.g. 27AAACN1234F1Z5.</p>
+                )}
+                {aiGstin && /^[0-9]{2}[A-Z0-9]{13}$/.test(aiGstin) && gstStateFromGstin(aiGstin).name && (
+                  <p className="mt-1 text-xs text-ink-3">State: {gstStateFromGstin(aiGstin).name} — saved on the vendor.</p>
+                )}
+              </div>
             )}
             {/* The payee is one of OUR employees: their commission is salary (incentive, TDS 192),
                 not an agent's commission (194H) — a ₹5L "commission to abhishek" was booked here
