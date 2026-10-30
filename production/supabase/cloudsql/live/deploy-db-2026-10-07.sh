@@ -304,6 +304,7 @@ MIGS=(
   "r2095newsalepaiserate|20261030050145_r2095_new_sale_paise_rate.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_new_sale_quote(uuid,uuid,jsonb,text)') and prosrc like '%R-2095%')"
   "gp04seedbusiness|20261030051044_gp04_seed_business_workspace.sql|resellersos_migration|to_regprocedure('public.seed_business_workspace(uuid,text[])') is not null and exists(select 1 from pg_trigger where tgname = 'trg_tenants_default_petty_cash' and tgrelid = to_regclass('public.tenants') and pg_get_triggerdef(oid) like '%workspace_kind%') and exists(select 1 from pg_trigger where tgname = 'trg_tenants_customer_messages_on' and tgrelid = to_regclass('public.tenants') and pg_get_triggerdef(oid) like '%workspace_kind%')"
   "gp16apersonalidentitylink|20261030053741_gp16a_personal_identity_link.sql|resellersos_migration|to_regclass('public.personal_identity_link') is not null and to_regprocedure('public.link_personal_identity(uuid,uuid,uuid)') is not null"
+  "r2095invoicedatereceipt|20261030054246_r2095_invoice_date_receipt.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.invoice_date_for_receipt(uuid,date)')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.generate_invoice(text)') and prosrc like '%R-2095%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-2095%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
