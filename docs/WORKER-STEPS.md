@@ -2,6 +2,8 @@
 
 > **Process changes go here (R-2105, 29 Oct 2026).** This file is the ONE place for worker rules — every team member's Claude reads it from git. A new or changed rule is written here in the same commit as the tooling change; never only in a local note (the old `<home>/Anutech-HQ/worker-steps.md` copy is retired and only points here).
 
+**Playbooks (R-2169, 30 Oct 2026).** Before a hands-on run (bank reconcile, demo, checks) read the matching playbook in `docs/playbooks/` (see its README) — method, hard rules and lessons from earlier runs; the observer appends new lessons there after each run.
+
 **FAST GATE (25 Oct 2026, Pardeep: "jo tumhe thik lage par kaam fast ho") — this replaces the "FULL suite" part of step 4.** Run:
 - the card's own tests;
 - `npx vitest related <changed files> --run`;
