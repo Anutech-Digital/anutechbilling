@@ -21,11 +21,12 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
+import { VaultLoadError } from "@/components/features/vault/vault-load-error";
 import { usePinStatus, useVerifyPin } from "@/lib/queries/personal-vault";
 import { PIN_LENGTH, UNLOCK_TTL_MINUTES } from "@/lib/vault/personal/pin-rules";
 
 export function VaultPinGate({ children }: { children: React.ReactNode }) {
-  const { data: status, isLoading } = usePinStatus();
+  const { data: status, isLoading, error: statusError, refetch } = usePinStatus();
   const verify = useVerifyPin();
 
   const [unlockedAt, setUnlockedAt] = React.useState<number | null>(null);
@@ -65,9 +66,23 @@ export function VaultPinGate({ children }: { children: React.ReactNode }) {
     );
   }
 
+  // GP-02b (R-2112): fail CLOSED. A status request that failed or came back empty is not
+  // "no PIN" — before this, `!status?.configured` was true for an undefined status and the
+  // vault opened with no PIN asked. Show the error with a retry instead.
+  if (!status) {
+    return (
+      <div className="p-4 md:p-6 lg:p-8 max-w-[440px] mx-auto">
+        <VaultLoadError
+          error={statusError ?? new Error("Could not check the vault lock.")}
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
+  }
+
   // No PIN configured — the vault is open. The PIN is optional by design; forcing one
   // on somebody who does not want it just gets a sticky note on the monitor.
-  if (!status?.configured || unlocked) return <>{children}</>;
+  if (!status.configured || unlocked) return <>{children}</>;
 
   const locked = status.locked;
 

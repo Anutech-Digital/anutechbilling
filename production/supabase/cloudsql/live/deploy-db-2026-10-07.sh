@@ -300,6 +300,7 @@ MIGS=(
   "gp12apersonalledger|20261030021200_gp12a_personal_ledger.sql|resellersos_migration|(to_regclass('public.personal_account_balances') is not null and exists(select 1 from pg_constraint where conname = 'personal_transactions_account_owner_fkey' and convalidated))"
   "gp03consentaccount|20261030033952_gp03_consent_account.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'consent_events' and column_name = 'user_id') and exists(select 1 from pg_proc where proname = 'consent_events_no_update' and prosrc like '%GP-03%')"
   "r2095creditedpartrebill|20261030035007_r2095_credited_part_rebill.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.release_credited_billing_parts(text)') and prosrc like '%R-2095%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%R-2095%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.billing_part_group(uuid)') and prosrc like '%R-2095%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.instalment_credit(uuid)') and prosrc like '%R-2095%')"
+  "gp02bvaultpin|20261030042132_gp02b_vault_pin_hardening.sql|resellersos_migration|to_regprocedure('public.vault_pin_begin_attempt(uuid)') is not null and not exists (select 1 from pg_policy where polname = 'personal_vault_pin_all')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
