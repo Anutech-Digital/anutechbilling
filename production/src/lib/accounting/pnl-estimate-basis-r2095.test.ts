@@ -22,6 +22,11 @@ describe("R-2095 the estimate's basis", () => {
       ["zoho", 2, 20, 20_000, 12_000],
     ]);
   });
+  it("a small ratio keeps two decimals (not × 0%)", () => {
+    const tiny: VendorInput = { vendor: "microsoft", revenue: 6_526, billedCost: null, estimatedCost: 25, seats: 2, subscriptions: 1 };
+    const p = buildPnl({ revenue: 10_000, expenses: 0, billedCogs: null, billedByVendor: {}, vendors: [tiny] });
+    expect(p.estimateBasis?.ratioPct).toBe(0.38);
+  });
   it("a billed vendor is not in the basis", () => {
     const p = buildPnl({ revenue: 200_000, expenses: 0, billedCogs: 5_000, billedByVendor: { zoho: 5_000 }, vendors: [google, zoho] });
     expect(p.estimateBasis?.vendors.map((v) => v.vendor)).toEqual(["google"]);

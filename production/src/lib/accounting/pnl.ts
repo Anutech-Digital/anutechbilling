@@ -201,7 +201,7 @@ export function vendorLine(v: VendorInput): VendorLine {
  */
 export interface CogsEstimateBasis {
   licenceRevenue: number;
-  /** Book cost ÷ book price, one decimal. Null when the book has no price (cost taken as is). */
+  /** Book cost ÷ book price, two decimals. Null when the book has no price (cost taken as is). */
   ratioPct: number | null;
   estimated: number;
   vendors: Array<{ vendor: string; label: string; subscriptions: number; seats: number; bookRevenue: number; bookCost: number }>;
@@ -350,7 +350,8 @@ export function buildPnl(input: PnlInput): PnlPeriod {
     /* R-2095 */
     estimateBasis: estimatedPart > 0 ? {
       licenceRevenue,
-      ratioPct: bookRevenue > 0 ? Math.round((bookCost / bookRevenue) * 1000) / 10 : null,
+      /* two decimals: a small unbilled share (₹25 of ₹6,526) read "× 0%" at one (localhost check). */
+      ratioPct: bookRevenue > 0 ? Math.round((bookCost / bookRevenue) * 10000) / 100 : null,
       estimated: estimatedPart,
       vendors: unbilled.filter((v) => v.cost > 0 || v.revenue > 0).map((v) => ({
         vendor: v.vendor, label: v.label, subscriptions: v.subscriptions, seats: v.seats, bookRevenue: v.revenue, bookCost: v.cost,
