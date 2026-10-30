@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { cn, formatDate, daysBetween, isValidGstin, validateGstin } from "@/lib/utils";
 import type { GstinVerification } from "@/lib/supabase/database.types";
+import { gstDetailsLastUpdated, GST_DETAILS_LAST_UPDATED_LABEL } from "@/lib/gst/gstin-details";
 
 interface Props {
   /** Live value from the GSTIN field — used by the button to know what
@@ -214,8 +215,9 @@ export default function GstinVerifyCard({
             {result.valid_from && (
               <div><span className="text-ink-3">Registered</span><br /><span className="text-ink-2">{formatDate(result.valid_from)}</span></div>
             )}
-            {result.last_return_filed && (
-              <div><span className="text-ink-3">Last return filed</span><br /><span className="text-ink-2">{formatDate(result.last_return_filed)}</span></div>
+            {/* R-2168: GSTN lstupdt is when the record was last updated, not a return filing; old cached rows read too. */}
+            {gstDetailsLastUpdated(result) && (
+              <div><span className="text-ink-3">{GST_DETAILS_LAST_UPDATED_LABEL}</span><br /><span className="text-ink-2">{formatDate(gstDetailsLastUpdated(result))}</span></div>
             )}
             {result.jurisdiction && (
               <div className="col-span-2"><span className="text-ink-3">Jurisdiction</span><br /><span className="text-ink-2">{result.jurisdiction}</span></div>

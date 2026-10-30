@@ -29,7 +29,9 @@ import { isValidGstin }      from "@/lib/utils";
 import { mockGstinVerification } from "@/lib/gst/mock-gstin";
 import { gstinMockAllowed, GSTIN_NOT_SET_UP_ERROR, GSTIN_NOT_SET_UP_CODE } from "./mock-allowed";
 import type { GstinVerification } from "@/lib/supabase/database.types";
-import { safeFetch, UnsafeUrlError, SANDBOX_HOSTS } from "@/lib/net/safe-fetch";
+import {
+  safeFetch, UnsafeUrlError, SANDBOX_HOSTS, sandboxBaseForKey, sandboxKeyBaseProblem,
+} from "@/lib/net/safe-fetch";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -65,6 +67,40 @@ const SANDBOX_BASE_REFUSED =
   "GSTIN check stopped: the Sandbox API base URL saved for this company is not a Sandbox address, so your keys were not sent. "
   + "Open Settings → Integrations → Sandbox, clear the base URL (or set https://api.sandbox.co.in) and Save, then verify again.";
 
+/* R-2168: Sandbox explains a 4xx in its body (e.g. 403 "Use test API key for test environment");
+   that text reaches the owner — with the key, secret and token scrubbed out, never echoed. */
+class SandboxHttpError extends Error {
+  constructor(readonly status: number, readonly providerMessage: string | null, stage: string) {
+    super(`Sandbox ${stage} ${status}${providerMessage ? `: ${providerMessage}` : ""}`);
+  }
+}
+
+function scrubSecrets(text: string, creds: SandboxCreds, extra: string[] = []): string {
+  let out = text;
+  for (const s of [creds.apiKey, creds.apiSecret, ...extra]) {
+    if (s && s.length >= 4) out = out.split(s).join("[hidden]");
+  }
+  // Belt and braces: anything shaped like a Sandbox key or secret.
+  return out.replace(/\b(key|secret)_(live|test)_[A-Za-z0-9_-]+/g, "[hidden]");
+}
+
+/** Sandbox's own explanation from an error body (JSON `message`/`error`, else short plain text). */
+async function sandboxErrorMessage(res: Response, creds: SandboxCreds, extra: string[] = []): Promise<string | null> {
+  const text = await res.text().catch(() => "");
+  let msg: unknown = null;
+  try {
+    const j = JSON.parse(text) as Record<string, unknown>;
+    const data = j.data as Record<string, unknown> | undefined;
+    const err = j.error as Record<string, unknown> | string | undefined;
+    msg = j.message ?? (typeof err === "string" ? err : err?.message) ?? data?.message ?? null;
+  } catch {
+    msg = /^\s*</.test(text) ? null : text;   // an HTML error page says nothing useful
+  }
+  if (typeof msg !== "string") return null;
+  const clean = scrubSecrets(msg, creds, extra).replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  return clean ? clean.slice(0, 200) : null;
+}
+
 interface CachedToken { token: string; expiresAt: number }
 const sandboxTokenCache = new Map<string, CachedToken>();
 
@@ -83,8 +119,7 @@ async function sandboxAuthenticate(creds: SandboxCreds): Promise<string> {
     signal: AbortSignal.timeout(8000),
   }, SANDBOX_FETCH);
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Sandbox auth ${res.status}: ${text.slice(0, 200)}`);
+    throw new SandboxHttpError(res.status, await sandboxErrorMessage(res, creds), "auth");
   }
   const json = await res.json() as { access_token?: string; data?: { access_token?: string }; expires?: number | string };
   const token = json.access_token ?? json.data?.access_token;
@@ -124,8 +159,7 @@ async function verifyViaSandbox(gstin: string, creds: SandboxCreds): Promise<Gst
     // Token might have rotated server-side — invalidate cache so the next
     // attempt re-authenticates fresh.
     if (res.status === 401) sandboxTokenCache.delete(creds.apiKey);
-    const text = await res.text();
-    throw new Error(`Sandbox responded ${res.status}: ${text.slice(0, 200)}`);
+    throw new SandboxHttpError(res.status, await sandboxErrorMessage(res, creds, [token]), "responded");
   }
   const json: unknown = await res.json();
   console.log("[sandbox] raw GSTIN response:", JSON.stringify(json).slice(0, 1500));
@@ -231,7 +265,8 @@ function normaliseSandbox(raw: unknown): GstinVerification {
     registration_type:  pickStr(r, "dty",      "tax_payer_type", "taxpayer_type", "tax_payer_type_v2"),
     valid_from:         pickStr(r, "rgdt",     "registration_date", "date_of_registration", "valid_from"),
     valid_upto:         pickStr(r, "nba",      "valid_upto", "date_of_cancellation"),
-    last_return_filed:  pickStr(r, "lstupdt",  "last_return_filed", "last_updated"),
+    // R-2168: lstupdt = when the registration record was last updated, NOT a return filing date.
+    details_last_updated: pickStr(r, "lstupdt", "last_updated"),
     jurisdiction:       pickStr(r, "ctj",      "centre_jurisdiction", "stj", "state_jurisdiction"),
     // First 2 digits of GSTIN = canonical GST state code. The top-level
     // "stcd" is ALSO this code in some shapes, but `pradr.addr.stcd` is the
@@ -303,7 +338,8 @@ export async function POST(req: NextRequest) {
       creds = {
         apiKey:    secrets.sandbox_api_key,
         apiSecret: secrets.sandbox_api_secret,
-        baseUrl:   secrets.sandbox_api_base ?? "https://api.sandbox.co.in",
+        // R-2168: blank / default base follows the key prefix (key_test_ → test-api).
+        baseUrl:   sandboxBaseForKey(secrets.sandbox_api_key, secrets.sandbox_api_base),
       };
     }
   }
@@ -311,7 +347,7 @@ export async function POST(req: NextRequest) {
     creds = {
       apiKey:    process.env.SANDBOX_API_KEY.trim(),
       apiSecret: process.env.SANDBOX_API_SECRET.trim(),
-      baseUrl:   process.env.SANDBOX_API_BASE?.trim() || "https://api.sandbox.co.in",
+      baseUrl:   sandboxBaseForKey(process.env.SANDBOX_API_KEY, process.env.SANDBOX_API_BASE),
     };
   }
   const providerConfigured = creds !== null;
@@ -323,6 +359,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, code: GSTIN_NOT_SET_UP_CODE, error: GSTIN_NOT_SET_UP_ERROR });
   }
 
+  /* R-2168: a live key saved with the test address (saved before Save checked this) — say what
+     to fix instead of letting Sandbox answer 403; the keys are not sent. */
+  const keyBaseProblem = creds ? sandboxKeyBaseProblem(creds.apiKey, creds.baseUrl) : null;
+  if (keyBaseProblem) {
+    return NextResponse.json({
+      ok: false, code: "sandbox_key_base_mismatch",
+      error: `GSTIN check stopped: ${keyBaseProblem} (Settings → Integrations → Sandbox.)`,
+    }, { status: 400 });
+  }
+
   let verification: GstinVerification;
   try {
     verification = providerConfigured ? await verifyViaSandbox(gstin, creds!) : mockVerify(gstin);
@@ -331,6 +377,14 @@ export async function POST(req: NextRequest) {
     console.error("[/api/gstin/verify] provider failed:", msg);
     if (e instanceof UnsafeUrlError) {
       return NextResponse.json({ ok: false, code: "sandbox_base_refused", error: SANDBOX_BASE_REFUSED }, { status: 400 });
+    }
+    /* R-2168: Sandbox answered but refused (4xx) — show its own reason, not "could not reach". */
+    if (e instanceof SandboxHttpError && e.status >= 400 && e.status < 500) {
+      const reason = e.providerMessage ? `Sandbox said: "${e.providerMessage}"` : `Sandbox refused the request`;
+      return NextResponse.json({
+        ok: false, code: "provider_rejected",
+        error: `${reason} (HTTP ${e.status}). Check the API key, secret and base URL in Settings → Integrations → Sandbox, Save, then try again.`,
+      }, { status: 502 });
     }
     return NextResponse.json(
       { ok: false, error: "Could not reach GSTIN provider. Try again in a few seconds." },
