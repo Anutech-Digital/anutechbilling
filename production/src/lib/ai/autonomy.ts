@@ -263,6 +263,43 @@ export const AI_ACTIONS = {
     today: "auto",
     supports: ["off", "hold", "auto"],
   },
+  /* R-2158 (AI-02, goal G-ADS-AI, 30 Oct 2026) — the AI ad agent's money actions. Pardeep's
+     decision D3: the AI RECOMMENDS; anything that raises spend waits for a person, so the three
+     spend-up actions do not support `auto` at all (a stored "auto" is reported and falls back to
+     hold). Lowering a budget or pausing may run alone — `auto` — but only inside the company's
+     change-per-day cap, which the database holds (ad_agent_action_request, migration
+     20261030084431); with no caps set they are held too. All five are `notWired` until the agent
+     graph (AI-07 publish, AI-08 monitor) calls lib/marketing/ad-safety → requestAdAction. */
+  "ads.publish": {
+    label: "Publish an AI-made ad campaign to Google / Meta",
+    today: "hold",
+    supports: ["off", "hold"],
+    notWired: "R-2158 — the ad agent's publish node is not built yet (AI-07)",
+  },
+  "ads.budget_up": {
+    label: "Raise an ad campaign's daily budget",
+    today: "hold",
+    supports: ["off", "hold"],
+    notWired: "R-2158 — the ad agent's monitor node is not built yet (AI-08)",
+  },
+  "ads.new_creative": {
+    label: "Add a new AI-made ad to a running campaign",
+    today: "hold",
+    supports: ["off", "hold"],
+    notWired: "R-2158 — the ad agent's monitor node is not built yet (AI-08)",
+  },
+  "ads.budget_down": {
+    label: "Lower an ad campaign's daily budget (inside the company cap)",
+    today: "auto",
+    supports: ["off", "hold", "auto"],
+    notWired: "R-2158 — the ad agent's monitor node is not built yet (AI-08)",
+  },
+  "ads.pause": {
+    label: "Pause a losing ad campaign (inside the company cap)",
+    today: "auto",
+    supports: ["off", "hold", "auto"],
+    notWired: "R-2158 — the ad agent's monitor node is not built yet (AI-08)",
+  },
 } as const satisfies Record<string, AiActionSpec>;
 
 export type AiAction = keyof typeof AI_ACTIONS;
