@@ -25,6 +25,7 @@ import { useTasks } from "@/lib/queries/tasks";
 import { useRecentLeads } from "@/lib/queries/leads";
 import { useCelebrations } from "@/lib/queries/contacts";
 import { useNotifications, useMarkNotificationRead, useMarkAllNotificationsRead } from "@/lib/queries/notifications";
+import { useBusinessShell } from "@/lib/hooks/useBusinessShell";
 
 /**
  * R-1122: the list + unread count that BOTH the bell badge (topbar) and this panel show.
@@ -32,11 +33,14 @@ import { useNotifications, useMarkNotificationRead, useMarkAllNotificationsRead 
  * "Mark all read" clears the badge. react-query dedupes the reads between the two.
  */
 export function useNotificationFeed() {
-  const { data: tasks, isLoading: tasksLoading } = useTasks("all");
+  /* R-2175: tasks, leads and contacts are business records — a personal session has none and
+     the data gateway refuses them (R-2125). Its bell shows only its own notifications. */
+  const business = useBusinessShell();
+  const { data: tasks, isLoading: tasksLoading } = useTasks("all", { enabled: business });
   /* Only the leads it shows: created in the last 7 days, 30 at most, five columns (S40).
      This panel is mounted on every page and used to load every lead with select("*"). */
-  const { data: leads, isLoading: leadsLoading } = useRecentLeads();
-  const { data: celebrations, isLoading: celebrationsLoading } = useCelebrations(7);
+  const { data: leads, isLoading: leadsLoading } = useRecentLeads(business);
+  const { data: celebrations, isLoading: celebrationsLoading } = useCelebrations(7, { enabled: business });
   /* Asli events — DB se (audit B4): payment/quote-accept/lead/ticket. Read-state
      row par hai, har device par ek. */
   const { data: dbNotifs, isLoading: notifsLoading } = useNotifications();

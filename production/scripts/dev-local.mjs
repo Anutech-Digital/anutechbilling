@@ -51,6 +51,9 @@ function localSupabase() {
   const out = `${r.stdout ?? ""}`;
   const get = (k) => new RegExp(`^${k}="?([^"\\r\\n]+)"?`, "m").exec(out)?.[1];
   const url = get("API_URL"), anon = get("ANON_KEY"), service = get("SERVICE_ROLE_KEY"), db = get("DB_URL");
+  /* R-2175: the LOCAL stack's JWT secret (signs its anon / service keys, HS256) — the data
+     gateway (server/postgrest/identity.ts) verifies with it. Never the .env.local value. */
+  const jwtSecret = get("JWT_SECRET");
   if (!url || !anon || !service || !db) {
     console.error("Local Supabase nahi mila. Pehle `npx supabase start` chalao (Docker chahiye).");
     process.exit(2);
@@ -62,7 +65,29 @@ function localSupabase() {
       process.exit(2);
     }
   }
-  return { url, anon, service, db };
+  return { url, anon, service, db, jwtSecret };
+}
+
+/**
+ * R-2175: local GoTrue (Supabase CLI) signs SESSION tokens ES256 with its own key, so the data
+ * gateway needs the local PUBLIC keys to check them (identity.ts accepts ES256 only with these,
+ * only when NEXT_PUBLIC_APP_ENV=local and not on Cloud Run). Read once here, from the API url
+ * localSupabase() already proved is on this machine; private parts ("d") are stripped. A miss
+ * only warns: HS256 tokens still work, ES256 ones stay 401 as before.
+ */
+async function localJwksJson(apiUrl) {
+  try {
+    const res = await fetch(new URL("/auth/v1/.well-known/jwks.json", apiUrl), { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    const keys = (Array.isArray(body?.keys) ? body.keys : [])
+      .filter((k) => k && k.kty === "EC" && k.crv === "P-256" && !("d" in k))
+      .map(({ kty, crv, x, y, kid, alg, use }) => ({ kty, crv, x, y, kid, alg, use }));
+    return keys.length ? JSON.stringify({ keys }) : "";
+  } catch (e) {
+    console.warn(`  (local jwks.json nahi mila: ${e instanceof Error ? e.message : e} — ES256 session tokens gateway par 401 denge)`);
+    return "";
+  }
 }
 
 /**
@@ -111,6 +136,8 @@ const port = portIdx >= 0 ? args[portIdx + 1] : "3001";
 
 const sb = localSupabase();
 const dbLogins = await prismaLogins(sb.db, sb.service);
+const localJwks = await localJwksJson(sb.url);
+if (!sb.jwtSecret) console.warn("  (supabase status ne JWT_SECRET nahi diya — data gateway (DATA_GATEWAY=1) 500 PGRST300 dega)");
 const env = { ...process.env };
 const blanked = [];
 for (const f of [".env", ".env.local", ".env.development", ".env.development.local"]) {
@@ -124,6 +151,10 @@ Object.assign(env, {
   NEXT_PUBLIC_SUPABASE_URL: sb.url,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: sb.anon,
   SUPABASE_SERVICE_ROLE_KEY: sb.service,
+  /* R-2175: the gateway's verify secret + the local ES256 public keys — LOCAL values only (the
+     .env.local SUPABASE_JWT_SECRET was blanked above and stays out of ALLOW). */
+  SUPABASE_JWT_SECRET: sb.jwtSecret ?? "",
+  GATEWAY_LOCAL_JWKS: localJwks,
   NEXT_PUBLIC_APP_ENV: "local",
   NEXT_PUBLIC_APP_URL: `http://localhost:${port}`,
   CRON_SECRET: "local-dev-cron-secret",

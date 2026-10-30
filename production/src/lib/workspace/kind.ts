@@ -29,3 +29,15 @@ export function parseWorkspaceKind(value: unknown): WorkspaceKind {
 export function isPersonalWorkspace(value: unknown): boolean {
   return parseWorkspaceKind(value) === "personal";
 }
+
+/**
+ * R-2175: is this signed-in person a PERSONAL session? Same either-one rule as the data gateway
+ * (server/postgrest/gateway-limits.ts gatewayRole, R-2125): users.role 'personal' OR the
+ * tenant's workspace_kind 'personal'. The app shell uses it to skip business-only reads (nav
+ * badges, attendance, tasks, leads, contacts, subscriptions) a personal workspace never has and
+ * the gateway refuses. Unknown / loading / signed out → false (callers wait for identity first).
+ */
+export function isPersonalSession(who: { role?: string | null; workspaceKind?: unknown } | null | undefined): boolean {
+  if (!who) return false;
+  return who.role === "personal" || isPersonalWorkspace(who.workspaceKind);
+}

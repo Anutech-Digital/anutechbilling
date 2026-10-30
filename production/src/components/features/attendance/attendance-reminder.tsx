@@ -31,6 +31,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { useBusinessShell } from "@/lib/hooks/useBusinessShell";
 import { useMyAttendanceToday, useMyReminderPrefs, useTodayWorkingDay } from "@/lib/queries/my-attendance";
 import {
   decideAttendanceReminder,
@@ -67,9 +68,12 @@ export function AttendanceReminder() {
   const pathname = usePathname();
 
   const { data: me } = useCurrentUser();
-  const { data: today } = useMyAttendanceToday();
+  /* R-2175: a personal session has no employee row and no holidays — the data gateway refuses
+     both reads for it (R-2125), so the reminder does not ask (and so never shows). */
+  const business = useBusinessShell();
+  const { data: today } = useMyAttendanceToday({ enabled: business });
   /* The same working-day answer the cron resolves server-side. */
-  const { data: workingDay } = useTodayWorkingDay();
+  const { data: workingDay } = useTodayWorkingDay({ enabled: business });
   const { data: prefs } = useMyReminderPrefs();
 
   // A ticking clock, so the check-out reminder arrives at the configured minute rather
