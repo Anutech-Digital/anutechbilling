@@ -27,13 +27,14 @@ import { Button } from "@/components/ui/button";
 import { rupee } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { usePnL, usePnLMonths } from "@/lib/queries/pnl";
-import { PnLDrilldownDialog, type PnLDrillKind } from "@/components/features/accounting/pnl-drilldown-dialog";
+import { PnLDrilldownDialog } from "@/components/features/accounting/pnl-drilldown-dialog";
+import { lineTarget, licenceLineTarget, revenueLineTarget, type PnLDrillKind, type PnLDrillTarget } from "@/lib/accounting/pnl-drill";
 import { PnlWaterfall, HundredRupeeBar } from "@/components/features/accounting/pnl-waterfall";
 import { MoneyFlow } from "@/components/features/accounting/money-flow";
 import { isEstimatedBasis, licenceCostHint } from "@/lib/accounting/pnl";
 import {
   COMPARE_OPTIONS, compareRange, rangeLabel, periodName, runningNote,
-  opexBreakdown, revenueBreakdown, licenceBreakdown, pnlCsv,
+  opexBreakdown, revenueBreakdown, licenceBreakdown, licenceEstimates, pnlCsv,
   type CompareMode, type Sense,
 } from "@/lib/accounting/pnl-compare";
 import { Row, SubRows, UnknownRow, GstCompare, Divider, HIDDEN_NOTE, type Cmp } from "./statement-rows";
@@ -122,8 +123,10 @@ const QUICK_RANGES: { label: string; build: () => DateRange }[] = [
 export default function PnLPage() {
   const [range, setRange] = React.useState<DateRange>(thisMonth());
   const { data, isLoading, isError, refetch } = usePnL(range);
-  const [drill, setDrill] = React.useState<PnLDrillKind | null>(null);
-  const [drillExpenseCat, setDrillExpenseCat] = React.useState<string | null>(null);
+  /* R-2181: what was clicked — the line, its sub-row filter and the amount shown on it. */
+  const [drill, setDrill] = React.useState<PnLDrillTarget | null>(null);
+  const openLine = (k: PnLDrillKind, opts?: { licenceOnly?: boolean }) =>
+    setDrill(data ? lineTarget(k, data, opts) : { kind: k });
   const [projectCostOpen, setProjectCostOpen] = React.useState(false);
 
   /* ── R-1832: Compare — None · Previous period · Same period last year ─────
@@ -290,7 +293,7 @@ export default function PnLPage() {
           expensesCount={data.expensesCount}
           outputGst={data.outputGST}
           compare={cmpRange ? { model: prev?.model ?? null, name: cmpName } : null}
-          onOpen={(k) => { if (k === "expenses") setDrillExpenseCat(null); setDrill(k); }}
+          onOpen={(k) => openLine(k)}
         />
       )}
 
@@ -325,12 +328,12 @@ export default function PnLPage() {
                   the government, not earned — and the hint says so in numbers. */}
               <Row label="Revenue"        amount={data.model.revenue}
                    hint={`${rupee(data.model.revenue + data.outputGST)} invoiced − ${rupee(data.outputGST)} GST · ${data.revenueCount} invoice${data.revenueCount === 1 ? "" : "s"}`}
-                   onHint={() => setDrill("revenue")} tone="ink"
+                   onHint={() => openLine("revenue")} tone="ink"
                    cmp={cmp(data.model.revenue, (p) => p.model.revenue, "more-is-good")} />
               {revenueLines && (
                 <SubRows group={revenueLines} cmpOn={cmpOn} cmpLoading={cmpOn && !prev}
                          showAll={!!showAll.revenue} onToggleAll={() => toggleAll("revenue")}
-                         onOpen={() => setDrill("revenue")} />
+                         onOpen={(l) => setDrill(revenueLineTarget(l))} />
               )}
               {/* Unknown is written as unknown. "₹0" under an unrecorded cost of goods — and a
                   "₹0" gross margin under it — read as facts; they are gaps. */}
@@ -363,13 +366,13 @@ export default function PnLPage() {
                   <Row label={<>− <Term k="cogs">Cost of goods</Term> (licence cost)</>}
                        amount={-data.model.licenceCogs}
                        hint={licenceCostHint(data.model, data.cogsCount)}
-                       onHint={() => setDrill("cogs")}
+                       onHint={() => openLine("cogs", { licenceOnly: true })}
                        tone="rose"
                        cmp={cmp(data.model.licenceCogs, (p) => p.model.cogsBasis === "unknown" ? null : p.model.licenceCogs, "more-is-bad", true)} />
                   {licenceLines && (
                     <SubRows group={licenceLines} cmpOn={cmpOn} cmpLoading={cmpOn && !prev}
                              showAll={!!showAll.licence} onToggleAll={() => toggleAll("licence")}
-                             onOpen={() => setDrill("cogs")} />
+                             onOpen={(l) => setDrill(licenceLineTarget(l, licenceEstimates(data)))} />
                   )}
                 </>
               )}
@@ -391,7 +394,7 @@ export default function PnLPage() {
               <Row label={<>− <Term k="opex">Operating expenses</Term></>}
                    amount={-(data.expenses - data.model.projectCost)}
                    hint={`${data.expensesCount} ${data.expensesCount === 1 ? "entry" : "entries"}${data.model.projectCost > 0 ? ` · ${rupee(data.model.projectCost)} moved to project cost` : ""}`}
-                   onHint={() => { setDrillExpenseCat(null); setDrill("expenses"); }}
+                   onHint={() => { setDrill({ kind: "expenses" }); }}
                    tone="rose"
                    cmp={cmp(data.expenses - data.model.projectCost, (p) => p.expenses - p.model.projectCost, "more-is-bad", true)} />
 
@@ -400,7 +403,7 @@ export default function PnLPage() {
               {opexLines && (
                 <SubRows group={opexLines} cmpOn={cmpOn} cmpLoading={cmpOn && !prev}
                          showAll={!!showAll.opex} onToggleAll={() => toggleAll("opex")}
-                         onOpen={(l) => { setDrillExpenseCat(l.category ?? null); setDrill("expenses"); }} />
+                         onOpen={(l) => setDrill({ kind: "expenses", category: l.category ?? null })} />
               )}
 
               {(data.commissions > 0 || (prev?.commissions ?? 0) > 0) && (
@@ -645,7 +648,7 @@ export default function PnLPage() {
                       key: "revenue", group: "in", label: "Revenue",
                       amount: m.revenue,
                       hint: `${data.revenueCount} invoice${data.revenueCount === 1 ? "" : "s"} issued`,
-                      onOpen: () => setDrill("revenue"),
+                      onOpen: () => openLine("revenue"),
                     },
                     {
                       key: "cogs", group: "out",
@@ -659,14 +662,14 @@ export default function PnLPage() {
                       ].filter(Boolean).join(" · ") || "nothing bought to resell",
                       ofSalesPct: m.revenue > 0 ? Math.round((m.cogs / m.revenue) * 100) : null,
                       estimated: isEstimatedBasis(m.cogsBasis),
-                      onOpen: () => setDrill("cogs"),
+                      onOpen: () => openLine("cogs"),
                     },
                     {
                       key: "opex", group: "out", label: "Running the business",
                       amount: m.expenses,
                       hint: `${data.expensesCount} ${data.expensesCount === 1 ? "entry" : "entries"} — salaries, hosting, office${m.projectCost > 0 ? " (project salary moved to cost of goods)" : ""}`,
                       ofSalesPct: m.revenue > 0 ? Math.round((m.expenses / m.revenue) * 100) : null,
-                      onOpen: () => { setDrillExpenseCat(null); setDrill("expenses"); },
+                      onOpen: () => { setDrill({ kind: "expenses" }); },
                     },
                     {
                       key: "gross", group: "left", label: "Gross margin",
@@ -700,9 +703,9 @@ export default function PnLPage() {
                   <PnlWaterfall
                     steps={steps}
                     onSelect={(key) => {
-                      if (key === "revenue") setDrill("revenue");
-                      else if (key === "cogs") setDrill("cogs");
-                      else if (key === "opex") { setDrillExpenseCat(null); setDrill("expenses"); }
+                      if (key === "revenue") openLine("revenue");
+                      else if (key === "cogs") openLine("cogs");
+                      else if (key === "opex") { setDrill({ kind: "expenses" }); }
                     }}
                   />
                 </div>
@@ -870,10 +873,9 @@ export default function PnLPage() {
       )}
       <PnLDrilldownDialog
         open={drill !== null}
-        onOpenChange={(o) => { if (!o) { setDrill(null); setDrillExpenseCat(null); } }}
-        kind={drill}
+        onOpenChange={(o) => { if (!o) setDrill(null); }}
+        target={drill}
         range={range}
-        expenseCategory={drillExpenseCat}
         cogsEstimate={data?.model.estimateBasis ?? null}
       />
     </div>

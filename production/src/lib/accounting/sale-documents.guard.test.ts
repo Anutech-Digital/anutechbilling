@@ -23,7 +23,7 @@ const ROOT = join(__dirname, "..", "..", "..");
 const SQL_SALE = new Set([
   "report_pnl",            // revenue + output GST
   "report_pnl_monthly",    // revenue trend
-  "report_pnl_revenue_by_product", // R-1835: revenue split by what was sold (same rows as report_pnl)
+  "report_pnl_revenue_lines", // R-2181: the documents behind Revenue per product family (R-1835 report_pnl_revenue_by_product is their sum)
   "report_balance_sheet",  // gst_output (receivables keep the open balance)
   "report_day_book",       // Sales vouchers
   "report_party_ledger",   // 'Opening balance' for opening_balance, not a Sales voucher
@@ -148,7 +148,6 @@ const TS_SALE = new Set([
   "src/app/(app)/accounting/gst/report.ts",                       // GSTR-1 / 3B
   "src/app/(app)/accounting/gst/composition-report.ts",           // CMP-08 — bill_of_supply only
   "src/lib/compliance/revised-invoice-query.ts",                  // revised invoices — bill_of_supply only
-  "src/components/features/accounting/pnl-drilldown-dialog.tsx",  // P&L revenue rows
   "src/components/features/accounting/tally-daybook-button.tsx",  // Tally Sales vouchers
   "src/lib/queries/gst-health.ts",                                // GST checks of our invoices
   "src/lib/queries/month-close.ts",                               // month's output GST

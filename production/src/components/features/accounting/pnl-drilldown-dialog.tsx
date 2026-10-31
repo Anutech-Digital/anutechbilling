@@ -1,13 +1,16 @@
 /**
  * PnLDrilldownDialog — click a P&L line to see the transactions behind it.
  *
- * The P&L Report shows summary rows (Revenue, COGS, Operating expenses). Each
- * of those is the SUM of real records in the selected period. This dialog is
- * the "show me the rows" popup: pick a kind + the same date range and it lists
- * every underlying transaction, with a total that reconciles to the P&L line.
+ * The P&L Report shows summary rows (Revenue, COGS, Operating expenses) and their sub-rows
+ * (Revenue by product, Licence cost by vendor, expenses by category). Each is the SUM of real
+ * records in the selected period. This dialog lists exactly the records behind the row clicked,
+ * with a total that equals the row (R-2181: "Total ₹X = <row> ₹X", a red note when it does not —
+ * never hidden).
  *
- *   revenue  → invoices issued in the period (pending / paid / overdue)
- *   cogs     → vendor bills categorised COGS-* (shown at pre-GST subtotal)
+ *   revenue  → SQL report_pnl_revenue_lines: invoices, credit notes (−) and debit notes of the
+ *              period, ex-GST, only the row's product families (lib/accounting/pnl-drill.ts)
+ *   cogs     → COGS vendor bills of the row's vendor at what the P&L counts (pre-GST + GST that
+ *              is not credit) + the estimated parts (R-2095)
  *   expenses → operating expenses in the period
  *
  * Read-only. No money is written here — it's a lens onto existing data.
@@ -29,29 +32,25 @@ import {
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createClient } from "@/lib/supabase/client";
-import { onlySaleInvoices } from "@/lib/accounting/sale-documents";
 import { DIRECTOR_REMUNERATION_CATEGORY, SALARIES_CATEGORY, pnlCategoryOf } from "@/lib/accounting/director-remuneration";
 import { fetchDirectorPayroll } from "@/lib/queries/director-payroll";
+import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { rupee, formatDate } from "@/lib/utils";
+import { signedRupee } from "@/lib/accounting/net-figure";
 import type { CogsEstimateBasis } from "@/lib/accounting/pnl";
+import {
+  cogsDrillRows, drillTie, revenueDrillRows,
+  type CogsBillRow, type DrillRow, type PnLDrillKind, type PnLDrillTarget, type RevenueLineRow,
+} from "@/lib/accounting/pnl-drill";
 
-export type PnLDrillKind = "revenue" | "cogs" | "expenses";
-
-interface DrillRow {
-  id:      string;
-  date:    string;
-  primary: string;   // main label (customer / vendor / category)
-  sub:     string;   // secondary (invoice no + status / category / vendor·method)
-  amount:  number;   // the value that feeds the P&L line
-}
+export type { PnLDrillKind, PnLDrillTarget } from "@/lib/accounting/pnl-drill";
 
 interface Props {
   open:         boolean;
   onOpenChange: (open: boolean) => void;
-  kind:         PnLDrillKind | null;
+  /** What was clicked: the line, its sub-row filter and the amount shown on it. */
+  target:       PnLDrillTarget | null;
   range:        { from: string; to: string };
-  /** When set on an "expenses" drill, show only this category's entries. */
-  expenseCategory?: string | null;
   /** R-2095: the licence cost is (partly) estimated — show how, on the COGS drill. */
   cogsEstimate?: CogsEstimateBasis | null;
 }
@@ -59,15 +58,15 @@ interface Props {
 const META: Record<PnLDrillKind, { title: string; desc: string; href: string; hrefLabel: string; tone: "ink" | "rose"; groupLabel: string }> = {
   revenue: {
     title: "Revenue — invoices in this period",
-    desc:  "Every invoice issued in the range (pending, paid or overdue). Accrual basis — counted on invoice date, not payment date.",
+    desc:  "Invoices issued in the range, less credit notes and plus debit notes dated in it. Amounts are before GST (GST is collected for the government, not earned). Accrual basis — counted on the document date, not the payment date.",
     href:  "/invoices",
     hrefLabel: "Open Invoices",
     tone:  "ink",
     groupLabel: "customer",
   },
   cogs: {
-    title: "COGS — vendor bills in this period",
-    desc:  "Vendor bills categorised as cost-of-goods (Google / Microsoft / Zoho wholesale). Shown at pre-GST cost — the amount that reduces gross margin.",
+    title: "Cost of goods — vendor bills in this period",
+    desc:  "Vendor bills categorised as cost of goods (Google / Microsoft / Zoho wholesale), at pre-GST cost plus any GST that cannot be claimed back — the amount that reduces gross margin. A vendor with no bill yet shows its estimate.",
     href:  "/accounting/bills",
     hrefLabel: "Open Vendor Bills",
     tone:  "rose",
@@ -83,51 +82,50 @@ const META: Record<PnLDrillKind, { title: string; desc: string; href: string; hr
   },
 };
 
-function useDrilldown(kind: PnLDrillKind | null, range: { from: string; to: string }, enabled: boolean, expenseCategory?: string | null) {
+type RevenueLinesRpc = (
+  fn: "report_pnl_revenue_lines", args: { p_from: string; p_to: string; p_families: string[] | null },
+) => PromiseLike<{ data: RevenueLineRow[] | null; error: { code?: string; message: string } | null }>;
+
+function useDrilldown(target: PnLDrillTarget | null, range: { from: string; to: string }, enabled: boolean) {
+  const kind = target?.kind ?? null;
   return useQuery({
-    queryKey: ["accounting", "pnl-drill", kind, range, expenseCategory ?? null],
+    queryKey: ["accounting", "pnl-drill", kind, range, target?.families ?? null, target?.excludeFamilies ?? null,
+               target?.vendors ?? null, target?.estimates ?? null, target?.projectCost ?? null, target?.category ?? null],
     enabled:  enabled && !!kind,
     queryFn: async (): Promise<DrillRow[]> => {
       const supabase = createClient();
 
       if (kind === "revenue") {
-        /* R-1739: same rows as report_pnl — no invoice imported from Zoho Books. */
-        const { data, error } = await onlySaleInvoices(supabase
-          .from("invoices")
-          .select("id, customer_name, invoice_date, amount, status"))
-          .gte("invoice_date", range.from)
-          .lte("invoice_date", range.to)
-          .in("status", ["pending", "paid", "overdue"])
-          .order("invoice_date", { ascending: false });
-        if (error) throw error;
-        return (data ?? []).map((i) => ({
-          id:      i.id,
-          date:    i.invoice_date,
-          primary: i.customer_name || "Customer",
-          sub:     `${i.id} · ${i.status}`,
-          amount:  i.amount ?? 0,
-        }));
+        /* R-2181: the same rows report_pnl_revenue_by_product adds up (ex-GST, net of notes,
+           sales only — R-1739), only the families of the row clicked. */
+        const rpc = supabase.rpc as unknown as RevenueLinesRpc;
+        const { data, error } = await rpc.call(supabase, "report_pnl_revenue_lines", {
+          p_from: range.from, p_to: range.to,
+          p_families: target?.families && target.families.length > 0 ? target.families : null,
+        });
+        if (error) throw new Error(error.message);
+        return revenueDrillRows(data ?? [], target ?? {});
       }
 
       if (kind === "cogs") {
-        const { data, error } = await supabase
-          .from("vendor_bills")
-          .select("id, vendor_name, bill_no, bill_date, subtotal, category")
-          .gte("bill_date", range.from)
-          .lte("bill_date", range.to)
-          .like("category", "COGS-%")
-          .order("bill_date", { ascending: false });
+        const [{ data, error }, { data: tenant }] = await Promise.all([
+          supabase
+            .from("vendor_bills")
+            .select("id, vendor_name, bill_no, bill_date, subtotal, category, cgst, sgst, igst, document_type, vendor_gstin")
+            .gte("bill_date", range.from)
+            .lte("bill_date", range.to)
+            .like("category", "COGS-%")
+            .order("bill_date", { ascending: false }),
+          supabase.from("tenants").select("state_code, gstin").limit(1).maybeSingle(),
+        ]);
         if (error) throw error;
-        return (data ?? []).map((b) => ({
-          id:      b.id,
-          date:    b.bill_date,
-          primary: b.vendor_name || "Vendor",
-          sub:     [b.category?.replace(/^COGS-/, ""), b.bill_no].filter(Boolean).join(" · "),
-          amount:  b.subtotal ?? 0,
-        }));
+        /* Our state, as report_pnl reads it — for the bill's GST credit check (R-1576). */
+        const own = tenant?.state_code?.trim() || stateCodeFromGstin(tenant?.gstin ?? null) || null;
+        return cogsDrillRows((data ?? []) as CogsBillRow[], target ?? {}, own, range);
       }
 
       // expenses
+      const expenseCategory = target?.category ?? null;
       /* R-1852: a director-employee's payroll is on the P&L's Director's Remuneration line, so
          that line's drill-down lists it and the Salaries one does not — the rows add up to the line. */
       const payLine = expenseCategory === SALARIES_CATEGORY || expenseCategory === DIRECTOR_REMUNERATION_CATEGORY;
@@ -160,12 +158,19 @@ function useDrilldown(kind: PnLDrillKind | null, range: { from: string; to: stri
   });
 }
 
-export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCategory, cogsEstimate }: Props) {
-  const estimate = kind === "cogs" ? cogsEstimate ?? null : null;
-  const { data: rows, isLoading } = useDrilldown(kind, range, open, expenseCategory);
+export function PnLDrilldownDialog({ open, onOpenChange, target, range, cogsEstimate }: Props) {
+  const kind = target?.kind ?? null;
+  const expenseCategory = target?.category ?? null;
+  /* The estimate's working only on a drill that lists an estimated part. */
+  const estimate = kind === "cogs" && (target?.vendors === undefined || (target?.estimates?.length ?? 0) > 0) ? cogsEstimate ?? null : null;
+  const { data: rows, isLoading, isError } = useDrilldown(target, range, open);
   const meta = kind ? META[kind] : null;
   const amountColor = meta?.tone === "rose" ? "text-rose" : "text-ink";
-  const title = kind === "expenses" && expenseCategory ? `${expenseCategory} — this period` : (meta?.title ?? "Details");
+  /* A sub-row (a product, a vendor, a category) is named in the title. */
+  const subRow = (kind === "revenue" && (target?.families || target?.excludeFamilies)) || (kind === "cogs" && target?.vendors);
+  const title = kind === "expenses" && expenseCategory ? `${expenseCategory} — this period`
+    : subRow && target?.label ? `${target.label} — ${kind === "revenue" ? "revenue" : "cost of goods"} this period`
+    : (meta?.title ?? "Details");
 
   const [search, setSearch] = React.useState("");
   const [grouped, setGrouped] = React.useState(false);
@@ -179,7 +184,7 @@ export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCat
       return next;
     });
   // Fresh controls each time the dialog opens or the line changes.
-  React.useEffect(() => { setSearch(""); setGrouped(false); setOpenGroups(new Set()); }, [kind, open, expenseCategory]);
+  React.useEffect(() => { setSearch(""); setGrouped(false); setOpenGroups(new Set()); }, [target, open]);
   // Collapse everything again whenever grouping is toggled on.
   React.useEffect(() => { if (grouped) setOpenGroups(new Set()); }, [grouped]);
 
@@ -192,6 +197,9 @@ export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCat
   }, [rows, search]);
 
   const total = filtered.reduce((s, r) => s + r.amount, 0);
+  /* The tie is on EVERY row of the drill, not the searched subset. */
+  const allTotal = (rows ?? []).reduce((s, r) => s + r.amount, 0);
+  const tie = !isLoading && !isError && rows ? drillTie(allTotal, target?.expected) : null;
 
   // Group by the main label (category / customer / vendor), biggest group first.
   const groups = React.useMemo(() => {
@@ -253,6 +261,11 @@ export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCat
             <div className="space-y-2">
               {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
             </div>
+          ) : isError ? (
+            <div role="alert" className="rounded-md border border-rose/40 bg-rose/5 px-4 py-6 text-center">
+              <p className="text-sm text-rose">The transactions could not load.</p>
+              <p className="text-xs text-ink-3 mt-1">Close this and click the row again. If it keeps failing, tell the person who looks after the app.</p>
+            </div>
           ) : !hasData ? (
             <div className="rounded-md border border-dashed border-hairline bg-paper-2/20 px-4 py-8 text-center">
               <Icon name="inbox" size={20} className="text-ink-3 mx-auto mb-1" />
@@ -288,7 +301,7 @@ export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCat
                           {g.key} <span className="text-ink-3">· {g.rows.length}</span>
                         </span>
                       </span>
-                      <span className={`font-mono text-sm font-semibold ${amountColor}`}>{rupee(g.subtotal)}</span>
+                      <span className={`font-mono text-sm font-semibold ${amountColor}`}>{signedRupee(g.subtotal)}</span>
                     </button>
                     <AnimatePresence initial={false}>
                       {isOpen && (
@@ -307,7 +320,7 @@ export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCat
                                   <p className="text-xs text-ink-3 truncate">{r.sub}</p>
                                 </div>
                                 <div className="text-right whitespace-nowrap">
-                                  <p className={`font-mono text-sm ${amountColor}`}>{rupee(r.amount)}</p>
+                                  <p className={`font-mono text-sm ${amountColor}`}>{signedRupee(r.amount)}</p>
                                   <p className="text-xs text-ink-3">{formatDate(r.date)}</p>
                                 </div>
                               </li>
@@ -329,7 +342,7 @@ export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCat
                     <p className="text-xs text-ink-3 truncate">{r.sub}</p>
                   </div>
                   <div className="text-right whitespace-nowrap">
-                    <p className={`font-mono text-sm ${amountColor}`}>{rupee(r.amount)}</p>
+                    <p className={`font-mono text-sm ${amountColor}`}>{signedRupee(r.amount)}</p>
                     <p className="text-xs text-ink-3">{formatDate(r.date)}</p>
                   </div>
                 </li>
@@ -345,8 +358,22 @@ export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCat
               Total · {filtered.length} {filtered.length === 1 ? "item" : "items"}
               {search.trim() ? " (filtered)" : ""}
             </span>
-            <span className={`font-mono text-base font-semibold ${amountColor}`}>{rupee(total)}</span>
+            <span className={`font-mono text-base font-semibold ${amountColor}`}>{signedRupee(total)}</span>
           </div>
+        )}
+
+        {/* R-2181: the drill total against the number clicked — said when equal, red when not. */}
+        {tie && target?.expected != null && (
+          tie.ties ? (
+            <p data-testid="pnl-drill-tie" className="px-5 py-2 border-t border-hairline text-xs text-ink-2">
+              Total {signedRupee(allTotal)} = {target.label ?? "row"} {signedRupee(target.expected)}
+            </p>
+          ) : (
+            <p data-testid="pnl-drill-tie" role="alert" className="px-5 py-2 border-t border-hairline text-xs text-rose">
+              Total {signedRupee(allTotal)} does not match {target.label ?? "the row"} {signedRupee(target.expected)} — a gap of {rupee(Math.abs(tie.diff))}.
+              The list may be missing a document, or the row counts one the list does not.
+            </p>
+          )
         )}
 
         {meta && (

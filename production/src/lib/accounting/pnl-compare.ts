@@ -192,6 +192,9 @@ export interface SubLine {
   category?: string;
   /** Estimated from the subscription book, not from a bill. */
   estimated?: boolean;
+  /** R-2181: the "Other (N …)" line — the keys of the lines rolled into it, so its drill-down
+   *  opens exactly those. */
+  members?: string[];
 }
 
 export interface SubLines { lines: SubLine[]; itemCount: number }
@@ -219,6 +222,7 @@ function rollUp(items: Item[], showAll: boolean, otherNoun: string): SubLine[] {
       now: r2(rest.reduce((s, c) => s + c.now, 0)),
       was: r2(rest.reduce((s, c) => s + c.was, 0)),
       estimated: rest.some((c) => c.estimated) || undefined,
+      members: rest.map((c) => c.key),
     },
   ];
 }
@@ -341,24 +345,34 @@ const licenceItems = (d: LicenceSource): Item[] => {
     const rest = r2(m.billedLicenceCogs - perVendor);
     if (rest !== 0) items.push({ key: "lic:other-bills", label: bills ? "Other vendor bills" : "Vendor bills", now: rest, was: 0, sense: "more-is-bad" });
   }
-  if (m.estimatedLicenceCogs > 0) {
-    /* The estimate is one ratio over the licence revenue (lib/accounting/pnl.ts); it is shared
-       out by each un-billed vendor's own book cost, so the vendor lines add up to it exactly. */
-    const unbilled = m.byVendor.filter((v) => !((bills?.[v.vendor] ?? 0) > 0) && v.cost > 0);
-    const split = splitByWeight(m.estimatedLicenceCogs, unbilled.map((v) => ({ key: v.vendor, w: v.cost })));
-    if (split.size === 0) {
-      items.push({ key: "lic:estimate", label: "Licences", now: m.estimatedLicenceCogs, was: 0, sense: "more-is-bad", estimated: true });
-    }
-    for (const v of unbilled) {
-      const amt = split.get(v.vendor) ?? 0;
-      if (amt === 0) continue;
-      const existing = items.find((i) => i.key === `lic:${v.vendor}`);
-      if (existing) existing.now = r2(existing.now + amt);
-      else items.push({ key: `lic:${v.vendor}`, label: v.label, now: amt, was: 0, sense: "more-is-bad", estimated: true });
-    }
+  for (const e of licenceEstimates(d)) {
+    const existing = items.find((i) => i.key === `lic:${e.vendor}`);
+    if (existing) existing.now = r2(existing.now + e.amount);
+    else items.push({ key: `lic:${e.vendor}`, label: e.label, now: e.amount, was: 0, sense: "more-is-bad", estimated: true });
   }
   return items;
 };
+
+/** One vendor's estimated licence cost (no bill yet). vendor "estimate" = no vendor split known. */
+export interface LicenceEstimate { vendor: string; label: string; amount: number }
+
+/**
+ * The estimated part of the licence cost, per un-billed vendor. The estimate is one ratio over
+ * the licence revenue (lib/accounting/pnl.ts); it is shared out by each un-billed vendor's own
+ * book cost, so the vendor parts add up to it exactly. R-2181: the COGS drill-down lists these
+ * same parts, so its total equals the line clicked.
+ */
+export function licenceEstimates(d: LicenceSource): LicenceEstimate[] {
+  const m = d.model;
+  if (m.cogsBasis === "unknown" || !(m.estimatedLicenceCogs > 0)) return [];
+  const bills = d.licenceBillsByVendor;
+  const unbilled = m.byVendor.filter((v) => !((bills?.[v.vendor] ?? 0) > 0) && v.cost > 0);
+  const split = splitByWeight(m.estimatedLicenceCogs, unbilled.map((v) => ({ key: v.vendor, w: v.cost })));
+  if (split.size === 0) return [{ vendor: "estimate", label: "Licences", amount: m.estimatedLicenceCogs }];
+  return unbilled
+    .map((v) => ({ vendor: v.vendor, label: v.label, amount: split.get(v.vendor) ?? 0 }))
+    .filter((e) => e.amount !== 0);
+}
 
 export function licenceBreakdown(cur: LicenceSource, prev?: LicenceSource | null, opts: Opts = {}): SubLines {
   const items = merge(licenceItems(cur), prev ? licenceItems(prev) : []);

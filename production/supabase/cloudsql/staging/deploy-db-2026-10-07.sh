@@ -324,6 +324,7 @@ MIGS=(
   "r2176persona|20261030221233_r2176_personal_file_support_ticket.sql|resellersos_migration|to_regprocedure('public.personal_file_support_ticket(text,text,text,text)') is not null"
   "r2154subscriptionduesdrift|20261031023525_r2154_subscription_dues_drift.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.subscription_dues_drift()') and prosrc like '%R-2154%')"
   "r2178cnsyncsubscription|20261031032023_r2178_credit_note_syncs_subscription.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.sync_invoice_subscription_outstanding(text)') and prosrc like '%R-2178%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.issue_credit_note(text,integer,text,text,text)') and prosrc like '%R-2178%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.issue_debit_note(text,integer,text,text,text)') and prosrc like '%R-2178%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_subscription_commitment(uuid,integer,public.billing_cycle,date,text)') and prosrc like '%R-2178%')"
+  "r2181revdrill|20261031054236_r2181_pnl_revenue_drill.sql|resellersos_migration|to_regprocedure('public.report_pnl_revenue_lines(date,date,text[])') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_pnl_revenue_by_product(date,date)') and prosrc like '%R-2181%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
