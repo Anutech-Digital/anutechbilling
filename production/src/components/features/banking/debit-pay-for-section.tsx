@@ -40,7 +40,7 @@ import type { BankTransactionRow } from "@/lib/queries/bank";
 import { useVendorOpenItems, usePayVendorFromBankDebit, useVendor194q, useSet194qBuyer, useVendorNarrationAliases } from "@/lib/queries/bank-debit-pay-for";
 import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
 import {
-  allocateOldestFirst, cashDue, guessVendor, isRecorded, itemKey, itemLabel, newBillTds, newBillTotal, planTds, preselect,
+  allocateOldestFirst, cashDue, guessVendor, isRecorded, itemKey, itemLabel, newBillPay, newBillTds, newBillTotal, planTds, preselect,
   resultLines, summarise, tdsMap, vendorPan,
   type NewBillDraft, type VendorLite, type VendorOpenItem, type VendorPayResult,
 } from "@/lib/banking/debit-pay-for";
@@ -252,9 +252,10 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
   const buyerBlock = showNew && Boolean(billRead?.buyer) && !buyerOk;
   const billTotal = newBillTotal(bill);
   const billTds = bill.kind === "expense" ? newBillTds(Math.round(bill.taxable || 0), tdsOpts) : { tds: 0, section: null, reason: null };
-  const billPay = bill.kind === "expense" ? billTotal : Math.min(billTotal, Math.round(bill.pay || billTotal));
+  /* R-2321: an expense bill can be part-paid too — "Paying now" defaults to the bank line. */
+  const billPay = newBillPay(bill, billTotal, billTds.tds, debit);
   const newBillCash = showNew && billTotal > 0 ? Math.max(0, billPay - billTds.tds) : 0;
-  const newBillBad = showNew && (!(bill.taxable > 0) || !bill.category || (bill.kind === "cogs" && !(billPay > 0)));
+  const newBillBad = showNew && (!(bill.taxable > 0) || !bill.category || !(billPay > billTds.tds));
 
   /* (c) Advance + bank charge. */
   const [charge, setCharge] = React.useState(0);
@@ -278,7 +279,7 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
   const sum = summarise(debit, { bills: billsCash, newBill: newBillCash, advance, charge });
   const starved = pickedItems.filter((i) => cashOf(i) <= 0);
   const tdsTotal = pickedItems.reduce((s, i) => s + (cashOf(i) > 0 ? tdsByKey.get(itemKey(i)) ?? 0 : 0), 0) + (showNew ? billTds.tds : 0);
-  const grossBills = pickedItems.reduce((s, i) => s + (cashOf(i) > 0 ? cashOf(i) + (tdsByKey.get(itemKey(i)) ?? 0) : 0), 0) + (showNew ? (bill.kind === "expense" ? billTotal : billPay) : 0);
+  const grossBills = pickedItems.reduce((s, i) => s + (cashOf(i) > 0 ? cashOf(i) + (tdsByKey.get(itemKey(i)) ?? 0) : 0), 0) + (showNew ? billPay : 0);
 
   /* ── 3. Save ─────────────────────────────────────────────────────────────── */
   const pay = usePayVendorFromBankDebit();
@@ -626,16 +627,20 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
                     Claim input GST credit (a GST tax invoice from a registered vendor)
                   </label>
                 )}
-                {bill.kind === "cogs" && billTotal > 0 && (
-                  <label className="inline-flex items-center gap-1.5 text-xs text-ink-2">
-                    <span>Paying now ₹</span>
-                    <Input type="number" min={0} className="w-28 h-8" aria-label="Amount paid on the new bill" value={String(billPay)} onChange={(e) => setBill({ ...bill, pay: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
-                    <span className="text-ink-3">of {rupee(billTotal)}</span>
-                  </label>
+                {/* R-2321: expense bills too — a part leaves the rest due on the bill (as R-1915). */}
+                {billTotal > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-ink-2">
+                    <label className="inline-flex items-center gap-1.5">
+                      <span>Paying now ₹</span>
+                      <Input type="number" min={0} className="w-28 h-8" aria-label="Amount paid on the new bill" value={String(billPay)} onChange={(e) => setBill({ ...bill, pay: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
+                      <span className="text-ink-3">of {rupee(billTotal)}</span>
+                    </label>
+                    {billPay > 0 && billPay < billTotal && <span className="text-amber-ink">part payment — {rupee(billTotal - billPay)} stays due on the bill</span>}
+                  </div>
                 )}
                 {billTotal > 0 && (
                   <p className="text-xs text-ink-2 tabular-nums">
-                    Bill {rupee(billTotal)}{billTds.tds > 0 ? <> − TDS {rupee(billTds.tds)} ({billTds.section})</> : null} = <b>{rupee(newBillCash)}</b> from bank
+                    {billPay < billTotal ? `Paying ${rupee(billPay)}` : `Bill ${rupee(billTotal)}`}{billTds.tds > 0 ? <> − TDS {rupee(billTds.tds)} ({billTds.section})</> : null} = <b>{rupee(newBillCash)}</b> from bank
                   </p>
                 )}
               </div>

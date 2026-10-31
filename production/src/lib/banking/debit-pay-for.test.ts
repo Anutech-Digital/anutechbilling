@@ -6,6 +6,7 @@
 //   4. ₹15,000 with nothing billed                        → advance
 import { describe, it, expect } from "vitest";
 import {
+  newBillPay,
   allocateOldestFirst, guessVendor, itemKey, newBillTds, payArgs, planTds, preselect, resultLines, summarise,
   tdsMap, vendorPan, type Bill194q, type VendorOpenItem, type VendorPayResult,
 } from "./debit-pay-for";
@@ -259,5 +260,27 @@ describe("resultLines — what happened, in the owner's words", () => {
     expect(lines.some((l) => l.text.includes("₹4,600 kept as an advance") && l.href === "/accounting/prepaid")).toBe(true);
     expect(lines.some((l) => l.text.includes("Bank charge ₹25"))).toBe(true);
     expect(lines.some((l) => l.text.includes("TDS ₹5,000 (194J) withheld"))).toBe(true);
+  });
+});
+
+/* R-2321: "Paying now" on a new bill typed on the spot — an expense bill can be part-paid too. */
+describe("R-2321 newBillPay — what a new bill settles now (cash + TDS)", () => {
+  it("owner's case: ₹71,500 expense bill, ₹67,500 bank line → ₹67,500 now (the line), ₹4,000 stays due", () => {
+    expect(newBillPay({ kind: "expense", pay: 0 }, 71500, 0, 67500)).toBe(67500);
+  });
+  it("default with TDS: the line is the cash, so the bill settles line + TDS", () => {
+    expect(newBillPay({ kind: "expense", pay: 0 }, 23600, 2000, 21600)).toBe(23600);
+    expect(newBillPay({ kind: "expense", pay: 0 }, 59000, 5000, 25000)).toBe(30000);
+  });
+  it("never more than the bill (the rest of the line stays as an advance, as before)", () => {
+    expect(newBillPay({ kind: "expense", pay: 0 }, 50000, 0, 67500)).toBe(50000);
+    expect(newBillPay({ kind: "expense", pay: 90000 }, 71500, 0, 67500)).toBe(71500);
+  });
+  it("a typed amount wins", () => {
+    expect(newBillPay({ kind: "expense", pay: 60000 }, 71500, 0, 67500)).toBe(60000);
+  });
+  it("COGS bill unchanged: empty → the whole bill", () => {
+    expect(newBillPay({ kind: "cogs", pay: 0 }, 71500, 0, 67500)).toBe(71500);
+    expect(newBillPay({ kind: "cogs", pay: 40000 }, 71500, 0, 67500)).toBe(40000);
   });
 });

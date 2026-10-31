@@ -387,11 +387,23 @@ export interface NewBillDraft {
   taxable: number;
   gst: number;
   itc: boolean;
-  /** Gross settled now (COGS may be part; an expense bill is paid in full). */
+  /** Gross settled now (cash + TDS); 0 = not typed (see newBillPay). R-2321: an expense bill may be part too. */
   pay: number;
 }
 
 export const newBillTotal = (b: Pick<NewBillDraft, "taxable" | "gst">) => Math.max(0, Math.round(b.taxable || 0)) + Math.max(0, Math.round(b.gst || 0));
+
+/**
+ * R-2321: what a new bill typed on the spot settles now ("Paying now", cash + TDS), never more than
+ * the bill. Typed → that. Not typed → a COGS bill: the whole bill (as before); an expense bill: the
+ * bank line (its cash) plus the bill's TDS, which goes with this first part (R-1915). Below the
+ * bill → the rest stays due on it; more than the line → the maths shows the gap (no save).
+ */
+export function newBillPay(bill: Pick<NewBillDraft, "kind" | "pay">, total: number, tds: number, debit: number): number {
+  const typed = Math.round(bill.pay || 0);
+  const want = typed > 0 ? typed : bill.kind === "expense" ? Math.max(0, Math.round(debit)) + Math.max(0, tds) : total;
+  return Math.max(0, Math.min(total, want));
+}
 
 /* ─── RPC arguments ─────────────────────────────────────────────────────────────────── */
 
