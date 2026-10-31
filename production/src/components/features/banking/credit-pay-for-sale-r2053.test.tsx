@@ -54,12 +54,14 @@ function newSale(credit: number) {
 const price = (unit: string) => (screen.getByLabelText(`Unit price ${unit}`) as HTMLInputElement).value;
 
 describe("R-2053 (1) a typed price is kept when Commitment changes", () => {
-  it("type 3000 → Monthly flex 250 ₹/user/month → Annual 3000 ₹/user/year; saved as typed", () => {
+  it("type 3000 → Monthly flex keeps 3000 and asks (R-2178) → Annual 3000 ₹/user/year; saved as typed", () => {
     newSale(35400);
     fireEvent.change(screen.getByLabelText("Unit price ₹/user/year"), { target: { value: "3000" } });
     fireEvent.change(screen.getByLabelText("Commitment"), { target: { value: "monthly" } });
-    expect(price("₹/user/month")).toBe("250");
+    expect(price("₹/user/month")).toBe("3000");
+    expect(screen.getByRole("button", { name: "Use ₹250/user/month (₹3,000 ÷ 12)" })).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Commitment"), { target: { value: "annual_yearly" } });
+    expect(screen.queryByRole("group", { name: "Typed price check" })).toBeNull();
     expect(price("₹/user/year")).toBe("3000");
     fireEvent.click(screen.getByRole("button", { name: "Record sale & reconcile ₹35,400" }));
     expect(state.sale.mock.calls[0][0].lines[0]).toMatchObject({ rate: 3000, cycle: "annual_yearly", qty: 10 });
@@ -71,6 +73,40 @@ describe("R-2053 (1) a typed price is kept when Commitment changes", () => {
     expect(price("₹/user/month")).toBe("325");
     fireEvent.change(screen.getByLabelText("Commitment"), { target: { value: "annual_yearly" } });
     expect(price("₹/user/year")).toBe("3240");
+  });
+});
+
+/* R-2178 — staging 31 Oct (LOOK BOOK FLY): 7 × ₹1,800/user/year typed, Commitment switched
+   One-time → Monthly flex → Annual: the quote came out ₹1,78,416 (₹21,600 a user) instead of ₹14,868. */
+describe("R-2178 a typed price never changes silently on a Commitment switch", () => {
+  it("owner's path: 7 × 1800, Annual → One-time → Monthly flex → Annual saves ₹1,800 and ₹14,868", () => {
+    newSale(14868);
+    fireEvent.change(screen.getByLabelText("Seats"), { target: { value: "7" } });
+    fireEvent.change(screen.getByLabelText("Unit price ₹/user/year"), { target: { value: "1800" } });
+    for (const c of ["one_time", "monthly", "annual_yearly"]) {
+      fireEvent.change(screen.getByLabelText("Commitment"), { target: { value: c } });
+    }
+    expect(price("₹/user/year")).toBe("1800");
+    expect(screen.getByText(/Total ₹14,868/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Record sale & reconcile ₹14,868" }));
+    expect(state.sale.mock.calls[0][0].lines[0]).toMatchObject({ rate: 1800, cycle: "annual_yearly", qty: 7 });
+  });
+  it("typed under Monthly flex then Annual: kept, asked, Save waits; × 12 is a button and Undo puts it back", () => {
+    newSale(14868);
+    fireEvent.change(screen.getByLabelText("Commitment"), { target: { value: "monthly" } });
+    fireEvent.change(screen.getByLabelText("Unit price ₹/user/month"), { target: { value: "1800" } });
+    fireEvent.change(screen.getByLabelText("Commitment"), { target: { value: "annual_yearly" } });
+    expect(price("₹/user/year")).toBe("1800");
+    expect(screen.getByText("₹1,800 was typed as ₹/user/month. The line is now ₹/user/year — the number was kept.")).toBeTruthy();
+    const save = screen.getByRole("button", { name: /Record sale & reconcile/ }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Use ₹21,600/user/year (₹1,800 × 12)" }));
+    expect(price("₹/user/year")).toBe("21600");
+    fireEvent.click(screen.getByRole("button", { name: "Undo — back to ₹1,800" }));
+    expect(price("₹/user/year")).toBe("1800");
+    fireEvent.click(screen.getByRole("button", { name: "Keep ₹1,800/user/year" }));
+    expect(screen.queryByRole("group", { name: "Typed price check" })).toBeNull();
+    expect((screen.getByRole("button", { name: /Record sale & reconcile/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
 

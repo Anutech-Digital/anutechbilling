@@ -63,7 +63,7 @@ function fillOpening() {
   set("pricePerSeat", "1000");
   set("seats", "40");
   set("startDate", "2026-04-01");
-  set("renewalDate", "2027-03-31");
+  set("renewalDate", "2027-04-01");   // R-2178: the anniversary
   const btn = Array.from(document.querySelectorAll("button"))
     .find((b) => (b.textContent ?? "").includes("Opening — already billed & paid"));
   expect(btn, "the Opening choice is on the form").toBeTruthy();
@@ -86,12 +86,12 @@ describe("R-2097 Add Subscription → Opening (billed & paid before this app)", 
     expect(sub).toMatchObject({
       seats: 40,
       start_date: "2026-04-01",
-      renewal_date: "2027-03-31",
+      renewal_date: "2027-04-01",
       status: "active",
       outstanding_amount: 0,
       payment_due_date: null,
       external_source: "opening",
-      billed_externally_until: "2027-03-31",
+      billed_externally_until: "2027-03-31",   // R-2178: the last covered day (renewal − 1)
       billing_cycle: "yearly",
       term_months: 12,
     });

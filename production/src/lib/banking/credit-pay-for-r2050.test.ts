@@ -5,7 +5,7 @@
    (lib/catalog/workspace-floor.ts: Starter ₹270/mo → ₹3,240/yr). Monthly stays ₹/user/month. */
 import { describe, expect, it } from "vitest";
 import {
-  rateFromShownPrice, repriceLine, salePreview, saleLineFromItem, saleLinesPayload, shownPriceUnit, shownUnitPrice, type SaleLine,
+  convertTypedPrice, rateFromShownPrice, repriceLine, salePreview, saleLineFromItem, saleLinesPayload, shownPriceUnit, shownUnitPrice, type SaleLine,
 } from "./credit-pay-for";
 
 /* The local E2E catalogue row as it is today: a stale ₹136/month, no tiers. */
@@ -50,10 +50,12 @@ describe("R-2050 Annual commitment: unit price per user per YEAR, never below th
     /* The stale E2E row is lifted on Monthly too (floorWorkspaceRow floors the monthly msrp). */
     expect(shownUnitPrice(repriceLine(saleLineFromItem(E2E_STARTER, "annual_yearly", 10), E2E_STARTER, "monthly"))).toBe(270);
   });
-  it("a line with no catalogue row converts the shown value on switch (÷12 / ×12, whole rupees)", () => {
+  it("a line with no catalogue row: the switch keeps the number; ÷12 / ×12 only by the explicit button (R-2178)", () => {
     const loose: SaleLine = { itemId: null, name: "Custom plan", qty: 2, rate: 3250, cost: 0, cycle: "annual_yearly", perSeat: true, monthPriced: true };
     const m = repriceLine(loose, undefined, "monthly");
-    expect(m).toMatchObject({ cycle: "monthly", rate: 271 });
-    expect(repriceLine(m, undefined, "annual_yearly")).toMatchObject({ cycle: "annual_yearly", rate: 3252 });
+    expect(m).toMatchObject({ cycle: "monthly", rate: 3250, typedFor: "annual_yearly" });
+    const converted = { ...m, ...convertTypedPrice(m) };
+    expect(converted).toMatchObject({ cycle: "monthly", rate: 271 });
+    expect(repriceLine(m, undefined, "annual_yearly")).toMatchObject({ cycle: "annual_yearly", rate: 3250 });
   });
 });

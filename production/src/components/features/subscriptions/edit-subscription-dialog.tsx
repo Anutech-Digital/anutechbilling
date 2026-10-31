@@ -46,11 +46,12 @@ import type { Subscription } from "@/lib/supabase/database.types";
 import { checkNceLock, lockWarning } from "@/lib/subscriptions/nce-lock";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
-/* Reused rather than rewritten. termEndInclusive carries both the month clamp (31 Jan
-   + 1 month is 28 Feb, not 3 March) and the "last covered day" rule the column holds
-   since 11 Sep 2026; nextTermStart is its inverse; monthsBetween because a term is
-   calendar months, not 30-day arithmetic. */
-import { termEndInclusive, nextTermStart } from "@/lib/billing/schedule";
+/* R-2178 (one rule, coordinator 31 Oct): renewal_date is the NEXT term's start — start + term
+   months (addMonthsClamped: 31 Jan + 1 month is 28 Feb, not 3 March), the date the sale form and
+   record_payment write. followingTermStart reads an older "last covered day" row too;
+   monthsBetween because a term is calendar months, not 30-day arithmetic. */
+import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
+import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { monthsBetween } from "@/lib/accounting/saas-charts";
 import { istToday } from "@/lib/dates/ist";
 
@@ -135,12 +136,11 @@ export function EditSubscriptionDialog({
    */
   const recordTermMonths = React.useMemo(() => {
     if (sub.start_date && sub.renewal_date) {
-      /* Measured to the day AFTER the stored date, because the stored date is the last
-         covered day. Without the +1 a term starting on the 1st reads a month short:
-         1 Sep 2026 → 31 Aug 2027 is calendar-month 11, and correcting the start would
-         then quietly shorten an annual subscription to eleven months. */
+      /* Measured to the next term's start. R-2178: that IS the stored date now; an older row
+         holding the last covered day (1 Sep 2026 → 31 Aug 2027, calendar-month 11) is read
+         one day on by followingTermStart, so an annual subscription never reads eleven months. */
       const gap = monthsBetween(new Date(`${sub.start_date}T00:00:00Z`),
-                                new Date(`${nextTermStart(sub.renewal_date)}T00:00:00Z`));
+                                new Date(`${followingTermStart({ term_months: sub.term_months, start_date: sub.start_date, renewal_date: sub.renewal_date })}T00:00:00Z`));
       if (gap > 0) return gap;
     }
     return sub.term_months && sub.term_months > 0 ? sub.term_months : 12;
@@ -161,7 +161,7 @@ export function EditSubscriptionDialog({
     setStart(next);
     if (!next) return;
     /* R-2095: a changed commitment sets the term length; otherwise the record's own. */
-    setRenewal(termEndInclusive(next, termNext !== termNow ? termNext : recordTermMonths));
+    setRenewal(addMonthsClamped(next, termNext !== termNow ? termNext : recordTermMonths));   // R-2178: the anniversary
   };
 
   /* R-2095 follow-up: a renewed sub keeps its first start date, so its start→renewal span is
@@ -186,7 +186,7 @@ export function EditSubscriptionDialog({
     setTermNext(months);
     const allowed = frequenciesFor(commitmentOf(months));
     if (!allowed.includes(cycleNext)) setCycleNext(allowed.includes(cycleNow) ? cycleNow : allowed[0]);
-    /* Renewal per the inclusive rule, counted from the start; back to the record's own when undone. */
+    /* R-2178: renewal = the next term's start (anniversary), counted from the start; back to the record's own when undone. */
     setRenewal(months === termNow
       ? (sub.renewal_date ?? "")
       : commitmentRenewal({ startDate: sub.start_date, renewalDate: sub.renewal_date, termMonthsNow: termNow, termMonthsNext: months, today: istToday() }) ?? "");
@@ -463,6 +463,7 @@ export function EditSubscriptionDialog({
             <FormField label="Renewal date" htmlFor="sub_renewal">
               <Input id="sub_renewal" type="date" value={renewal} onChange={(e) => setRenewal(e.target.value)} />
               <p className="mt-1 text-2xs leading-snug text-ink-3">
+                {/^\d{4}-\d{2}-\d{2}$/.test(renewal) ? `The next term starts on this date; this term ends ${formatDate(addDaysISO(renewal, -1))}. ` : ""}
                 Override it if the real term differs.
               </p>
             </FormField>

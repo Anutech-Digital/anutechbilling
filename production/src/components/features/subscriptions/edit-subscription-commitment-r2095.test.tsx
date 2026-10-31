@@ -60,12 +60,13 @@ describe("R-2095: Correct details — commitment and payment frequency", () => {
     expect(options("sub_frequency")).toEqual(["monthly"]);
   });
 
-  it("Flexible → Annual: all four frequencies, renewal start + 12m − 1d, cost ₹318 → ₹264, saved with a reason", async () => {
+  /* R-2178: renewal = the next term's start (anniversary), not start + 12m − 1d. */
+  it("Flexible → Annual: all four frequencies, renewal start + 12m, cost ₹318 → ₹264, saved with a reason", async () => {
     render(<EditSubscriptionDialog sub={venus} open onOpenChange={() => {}} />);
     fireEvent.change(select("sub_commitment"), { target: { value: "12" } });
     expect(options("sub_frequency")).toEqual(["yearly", "half_yearly", "quarterly", "monthly"]);
     expect(select("sub_frequency").value).toBe("monthly");
-    expect(document.querySelector<HTMLInputElement>("#sub_renewal")!.value).toBe("2027-06-14");
+    expect(document.querySelector<HTMLInputElement>("#sub_renewal")!.value).toBe("2027-06-15");
     expect(screen.getByTestId("commitment-cost").textContent).toMatch(/₹318.*₹264/);
 
     fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
@@ -74,11 +75,11 @@ describe("R-2095: Correct details — commitment and payment frequency", () => {
     fireEvent.change(document.querySelector("#sub_correct_reason")!, { target: { value: "Annual commitment, paid monthly" } });
     fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
     await vi.waitFor(() => expect(commit).toHaveBeenCalledWith({
-      id: "sub-v", termMonths: 12, billingCycle: "monthly", renewalDate: "2027-06-14", reason: "Annual commitment, paid monthly",
+      id: "sub-v", termMonths: 12, billingCycle: "monthly", renewalDate: "2027-06-15", reason: "Annual commitment, paid monthly",
     }));
     expect(correct).not.toHaveBeenCalled();                    // seats / plan / price untouched
     await vi.waitFor(() => expect(update).toHaveBeenCalled());
-    expect(update.mock.calls[0][0].patch.renewal_date).toBe("2027-06-14");
+    expect(update.mock.calls[0][0].patch.renewal_date).toBe("2027-06-15");
   });
 
   it.each(["quarterly", "half_yearly"])("annual paid monthly → %s keeps the renewal date (null = keep)", async (freq) => {

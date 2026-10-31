@@ -181,6 +181,8 @@ describe("Add Subscription — the billing period drives the price field's unit"
    31 Mar 2027, not 1 Apr 2027 — which is also what the Google Admin console shows.
    The TERM LENGTHS asserted here are unchanged; only which day is named as the last
    one. See termEndInclusive in lib/billing/schedule.ts. */
+/* R-2178 (31 Oct 2026, one rule): the date is the NEXT term's start = start + term (the anniversary,
+   what the sale form and record_payment write); "Term ends" (the day before) is shown under it. */
 describe("Add Subscription — start and expiry dates", () => {
   const dates = () => {
     const start = document.querySelector<HTMLInputElement>("#startDate");
@@ -194,18 +196,19 @@ describe("Add Subscription — start and expiry dates", () => {
     const { start, renew } = dates();
     fireEvent.change(start, { target: { value: "2026-04-01" } });
     expect(start.value).toBe("2026-04-01");
-    /* Not "a year from today" — a year from the date actually entered, and the LAST
-       day of it. 1 Apr 2026 → 31 Mar 2027 is twelve months of service. */
-    expect(renew.value).toBe("2027-03-31");
+    /* Not "a year from today" — a year from the date actually entered: renews 1 Apr 2027,
+       term ends 31 Mar 2027 — twelve months of service. */
+    expect(renew.value).toBe("2027-04-01");
+    expect(document.body.textContent).toContain("Term ends 31 Mar 2027");
   });
 
   it("clamps to the end of a short month instead of rolling into the next", () => {
     renderDialog();
     const { start, renew } = dates();
     /* 31 Jan + 12 is unambiguous; the clamping matters on the flex path below, and
-       termEndInclusive is the shared helper both use. */
+       addMonthsClamped is the shared helper both use. */
     fireEvent.change(start, { target: { value: "2026-01-31" } });
-    expect(renew.value).toBe("2027-01-30");
+    expect(renew.value).toBe("2027-01-31");
   });
 
   it("expiry is still editable after being derived", () => {
@@ -219,7 +222,7 @@ describe("Add Subscription — start and expiry dates", () => {
   it("says which date it is, so a year on a monthly choice is not read as a bug", () => {
     renderDialog();
     /* Default is yearly; the hint names the term rather than leaving it unexplained. */
-    expect(document.body.textContent).toContain("12-month term");
+    expect(document.body.textContent).toContain("The next yearly invoice is due on this date.");
   });
 });
 
@@ -258,9 +261,9 @@ describe("Add Subscription — the billing period drives the term", () => {
   it("FLEX expires in ONE MONTH — the 'date still pointing to yearly' report", () => {
     renderDialog();
     fireEvent.change(start(), { target: { value: "2026-09-09" } });
-    expect(renewal()).toBe("2027-09-08");   // yearly default — the last covered day
+    expect(renewal()).toBe("2027-09-09");   // yearly default — the anniversary (R-2178)
     pick("monthly_flex");
-    expect(renewal()).toBe("2026-10-08");   // one month, not one year
+    expect(renewal()).toBe("2026-10-09");   // one month, not one year
     expect(priceLabel()).toContain("₹/mo");
   });
 
@@ -270,7 +273,7 @@ describe("Add Subscription — the billing period drives the term", () => {
     pick("annual_monthly");
     /* Still a YEAR out. This date marks the commitment ending, not the next invoice —
        shortening it to a month would be the actual defect. */
-    expect(renewal()).toBe("2027-09-08");
+    expect(renewal()).toBe("2027-09-09");
     expect(priceLabel()).toContain("₹/mo");
   });
 
@@ -278,7 +281,7 @@ describe("Add Subscription — the billing period drives the term", () => {
     renderDialog();
     fireEvent.change(start(), { target: { value: "2026-09-09" } });
     pick("annual_quarterly");
-    expect(renewal()).toBe("2027-09-08");
+    expect(renewal()).toBe("2027-09-09");
     expect(priceLabel()).toContain("₹/mo");
     expect(document.body.textContent).toContain("Invoices go out every 3 months.");
   });
@@ -287,9 +290,9 @@ describe("Add Subscription — the billing period drives the term", () => {
     renderDialog();
     fireEvent.change(start(), { target: { value: "2026-09-09" } });
     pick("monthly_flex");
-    expect(renewal()).toBe("2026-10-08");
+    expect(renewal()).toBe("2026-10-09");
     pick("annual_yearly");
-    expect(renewal()).toBe("2027-09-08");
+    expect(renewal()).toBe("2027-09-09");
     expect(priceLabel()).toContain("₹/yr");
   });
 
@@ -297,17 +300,17 @@ describe("Add Subscription — the billing period drives the term", () => {
     renderDialog();
     pick("monthly_flex");
     fireEvent.change(start(), { target: { value: "2026-04-01" } });
-    expect(renewal()).toBe("2026-04-30");
+    expect(renewal()).toBe("2026-05-01");
   });
 
-  it("flex from 31 Jan ends 27 Feb — clamped, not rolled into March", () => {
+  it("flex from 31 Jan renews 28 Feb (term ends 27 Feb) — clamped, not rolled into March", () => {
     renderDialog();
     pick("monthly_flex");
     fireEvent.change(start(), { target: { value: "2026-01-31" } });
     /* 2026 is not a leap year. Naive Date math would give 3 March and walk the
        anniversary later every month. Clamped it is 28 Feb, and the last covered day is
        the 27th — a 28-day month starting on its last day. */
-    expect(renewal()).toBe("2026-02-27");
+    expect(renewal()).toBe("2026-02-28");   // R-2178: the anniversary; the 27th is the last covered day
   });
 });
 
@@ -423,13 +426,13 @@ describe("Add Subscription — R-2095 commitment and payment frequency", () => {
     expect(values(nativeFor("billingChoice"))).toEqual(["yearly", "half_yearly", "quarterly", "monthly"]);
   });
 
-  it.each([["monthly"], ["quarterly"], ["half_yearly"]])("Annual commitment paid %s: annual rate per month, renewal stays start + 12m − 1d", (freq) => {
+  it.each([["monthly"], ["quarterly"], ["half_yearly"]])("Annual commitment paid %s: annual rate per month, renewal stays start + 12m (R-2178)", (freq) => {
     renderDialog();
     fireEvent.change(document.querySelector<HTMLInputElement>("#startDate")!, { target: { value: "2026-06-15" } });
     fireEvent.change(nativeFor("billingChoice"), { target: { value: freq } });
     expect(document.querySelector("#commitmentChoice")?.textContent).toContain("Annual commitment");
     expect(priceLabel()).toContain("₹/mo");
-    expect(renewal()).toBe("2027-06-14");
+    expect(renewal()).toBe("2027-06-15");
   });
 
   it("Flexible: payment frequency is Monthly only, renewal one month", () => {
@@ -437,6 +440,6 @@ describe("Add Subscription — R-2095 commitment and payment frequency", () => {
     fireEvent.change(document.querySelector<HTMLInputElement>("#startDate")!, { target: { value: "2026-06-15" } });
     fireEvent.change(nativeFor("commitmentChoice"), { target: { value: "flex" } });
     expect(values(nativeFor("billingChoice"))).toEqual(["monthly"]);
-    expect(renewal()).toBe("2026-07-14");
+    expect(renewal()).toBe("2026-07-15");
   });
 });

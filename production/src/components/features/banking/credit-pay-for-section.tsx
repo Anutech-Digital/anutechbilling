@@ -47,6 +47,7 @@ import {
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
   paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
   tdsRateToRecord, tdsToRecord, shortChoices, roundOffSplit, saleLineDomainProblem,
+  typedPriceCheck, convertTypedPrice, keepTypedPrice, undoTypedConversion,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
 import { tdsSectionGuess, TDS_SECTION_CHOICES } from "@/lib/banking/tds-section";
@@ -691,10 +692,11 @@ function SaleEditor({ customerDomain, lines, catalog, gstRate, preview, payment,
               <label className="text-xs text-ink-3 space-y-0.5">
                 <span className="block">Unit price {unit}</span>
                 <Input type="number" min={0} step="any" value={String(shownUnitPrice(l))}
-                  onChange={(e) => onChange(idx, { rate: rateFromShownPrice(l, Number(e.target.value)), priceTyped: true })}
+                  onChange={(e) => onChange(idx, { rate: rateFromShownPrice(l, Number(e.target.value)), priceTyped: true, typedFor: l.cycle, convertedFrom: undefined })}
                   aria-label={`Unit price ${unit}`} />
               </label>
             </div>
+            <TypedPriceNote line={l} onChange={(patch) => onChange(idx, patch)} />
             {/* R-2095 (Sept): Zoho bills per end-domain — a subscription line names its own; empty = the customer's. */}
             {l.cycle !== "one_time" && (
               <label className="block text-xs text-ink-3 space-y-0.5">
@@ -791,8 +793,38 @@ function PayerWarning({ payerName, customerName, answer, onAnswer, onWrongCustom
   );
 }
 
-/** A new sale that cannot be saved: no line, a line without product / seats / price, ₹0, or mixed terms. */
+/** A new sale that cannot be saved: no line, a line without product / seats / price, ₹0, mixed terms,
+ *  or (R-2178) a typed price whose unit changed with the Commitment and is not yet converted or kept. */
 function saleInvalidOf(lines: readonly SaleLine[], taxable: number): boolean {
-  return lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0) || saleLineDomainProblem(l.domain) !== null)
+  return lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0) || saleLineDomainProblem(l.domain) !== null
+    || typedPriceCheck(l)?.blocksSave === true)
     || taxable <= 0 || saleTermsMixed(lines);
+}
+
+/* R-2178: a typed price is never changed by a Commitment switch. When its unit changed (₹/year ↔
+   ₹/month, or to/from once) the line says so and the operator picks: convert (÷12 / ×12, undoable)
+   or keep the number. Save waits for the answer. */
+function TypedPriceNote({ line, onChange }: { line: SaleLine; onChange: (patch: Partial<SaleLine>) => void }) {
+  const check = typedPriceCheck(line);
+  if (!check) return null;
+  const btn = "rounded-md border border-hairline bg-paper px-2 py-1 text-xs font-medium text-ink-2 hover:border-amber focus:outline-none focus:ring-2 focus:ring-amber/40";
+  if (check.kind === "converted") {
+    return (
+      <p className="flex flex-wrap items-center gap-2 text-xs text-ink-3">
+        <span>{check.text}</span>
+        <button type="button" className={btn} onClick={() => onChange(undoTypedConversion(line))}>{check.undoLabel}</button>
+      </p>
+    );
+  }
+  return (
+    <div role="group" aria-label="Typed price check" className="rounded-md border border-amber bg-amber-soft/40 px-2.5 py-2 space-y-1.5">
+      <p className="text-xs text-amber-ink">{check.text}</p>
+      <div className="flex flex-wrap gap-2">
+        {check.convertLabel && (
+          <button type="button" className={btn} onClick={() => onChange(convertTypedPrice(line))}>{check.convertLabel}</button>
+        )}
+        <button type="button" className={btn} onClick={() => onChange(keepTypedPrice(line))}>{check.keepLabel}</button>
+      </div>
+    </div>
+  );
 }

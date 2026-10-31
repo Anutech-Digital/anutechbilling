@@ -74,6 +74,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   refund_payment: "money out",
   set_late_fee_mode: "late fee settings",
   split_outstanding_for: "per quote",
+  sync_invoice_subscription_outstanding: "R-2178: one invoice's quote / billing-part link, to re-sync the subscriptions' stored balance after a credit / debit note — not GST or revenue",
   subscription_dues_drift: "R-2154: read-only report — only asks whether a quote has any invoice (then the invoice is the claim)",
   suggest_invoice_write_off: "open balances",
   suspend_subscription: "per subscription",

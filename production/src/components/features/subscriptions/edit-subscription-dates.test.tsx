@@ -51,7 +51,10 @@ function open(s: Subscription) {
   return { start, renew };
 }
 
-/* ── THE RENEWAL DATE IS THE LAST COVERED DAY SINCE 11 SEP 2026 ──────────────
+/* ── R-2178 (31 Oct 2026, one rule): the renewal date is the NEXT term's start (anniversary) ──
+   The fixtures below are older rows that hold the last covered day; they are still read as
+   whole terms (followingTermStart), and a corrected start now writes start + term.
+   Before R-2178 — THE RENEWAL DATE WAS THE LAST COVERED DAY SINCE 11 SEP 2026 ──────────────
    Abhishek's change: a 12-month term starting 3 Sep 2026 ends 2 Sep 2027, not the 3rd.
    Both the fixtures and the expectations below moved one day earlier together, so what
    these cases still assert is the TERM LENGTH — which is what the dialog exists to
@@ -62,22 +65,22 @@ describe("Correct subscription — the renewal date follows the start date", () 
     expect(renew.value).toBe("2027-09-02");
     fireEvent.change(start, { target: { value: "2026-08-01" } });
     // Before the fix this stayed put and the term grew by five weeks.
-    expect(renew.value).toBe("2027-07-31");
+    expect(renew.value).toBe("2027-08-01");   // R-2178: the anniversary
   });
 
   it("keeps a ONE-MONTH term at one month — not a year", () => {
     /* A flex subscription: the record's own gap says one month. */
     const { start, renew } = open(sub({ start_date: "2026-09-03", renewal_date: "2026-10-02" }));
     fireEvent.change(start, { target: { value: "2026-08-15" } });
-    expect(renew.value).toBe("2026-09-14");
+    expect(renew.value).toBe("2026-09-15");
   });
 
   it("clamps into a short month instead of rolling into the next one", () => {
     const { start, renew } = open(sub({ start_date: "2026-09-03", renewal_date: "2026-10-02" }));
     fireEvent.change(start, { target: { value: "2026-01-31" } });
-    /* 2026 is not a leap year, so 31 Jan + 1 month clamps to 28 Feb — and the last day
-       COVERED is the 27th. */
-    expect(renew.value).toBe("2026-02-27");
+    /* 2026 is not a leap year, so 31 Jan + 1 month clamps to 28 Feb (R-2178: the renewal is
+       the next term's start; the last covered day, 27 Feb, is only shown). */
+    expect(renew.value).toBe("2026-02-28");
   });
 
   it("prefers the record's own dates over a term_months column that disagrees", () => {
@@ -88,7 +91,7 @@ describe("Correct subscription — the renewal date follows the start date", () 
       start_date: "2026-09-03", renewal_date: "2026-10-02", term_months: 12,
     }));
     fireEvent.change(start, { target: { value: "2026-11-01" } });
-    expect(renew.value).toBe("2026-11-30");
+    expect(renew.value).toBe("2026-12-01");
   });
 
   it("reads a term that ENDS ON A MONTH BOUNDARY as a full year, not eleven months", () => {
@@ -101,7 +104,7 @@ describe("Correct subscription — the renewal date follows the start date", () 
       start_date: "2026-04-01", renewal_date: "2027-03-31", term_months: 12,
     }));
     fireEvent.change(start, { target: { value: "2026-05-01" } });
-    expect(renew.value).toBe("2027-04-30");   // twelve months, not eleven
+    expect(renew.value).toBe("2027-05-01");   // twelve months, not eleven
   });
 
   it("still lets the renewal date be overridden afterwards", () => {

@@ -61,7 +61,10 @@ import { grossAmount } from "@/lib/quotes/amounts";
    the Google Admin console he reconciles against. Shared rather than open-coded here so
    the ±1 has exactly one home; it also carries the month clamp (31 Jan + 1 month is
    28 Feb, and JavaScript's own Date rolls it to 3 March). */
-import { termEndInclusive } from "@/lib/billing/schedule";
+/* R-2178 (one rule, coordinator 31 Oct): renewal_date is the NEXT term's start = start + term
+   months, the date the sale form and record_payment write; "term ends" (the day before) is shown,
+   never stored. */
+import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
 import { findPlanProduct, type LeadPrefill } from "@/lib/subscriptions/lead-prefill";
 /* The same countdown the subscriptions list and /payments render, so the hint under
    the field cannot disagree with the chip the operator sees a second later. */
@@ -248,7 +251,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
      the billing period moves — see changeStartDate / changeBillingChoice. It stays an
      editable field: the derived value is the sensible default, not a cage. */
   const [renewalDate, setRenewalDate] = React.useState(
-    () => termEndInclusive(todayIST(), 12),        // R-025 — same UTC trap.
+    () => addMonthsClamped(todayIST(), 12),        // R-025 — same UTC trap. R-2178: anniversary.
   );
 
   /**
@@ -339,7 +342,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
        twelve months. That is the commitment ending, not the next invoice, and it looked
        like a bug precisely because the word "Monthly" is in the choice. The hint under
        the field now says which of the two it is. */
-    setRenewalDate(termEndInclusive(startDate, billingTerms(next, selected).termMonths));
+    setRenewalDate(addMonthsClamped(startDate, billingTerms(next, selected).termMonths));
     /* R-876: a catalog plan whose price is still the catalog's suggestion is re-priced
        from the catalog, as before. Anything else — a custom plan, or a number the
        operator typed over the suggestion — is CONVERTED between units (or cleared, for
@@ -378,7 +381,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
     /* billingTerms(...) rather than the `terms` further down — same value, but that one
        is declared below this handler and reading it here would rely on closure timing
        to stay out of its temporal dead zone. Not worth the puzzle. */
-    setRenewalDate(termEndInclusive(next, billingTerms(billingChoice, selected).termMonths));
+    setRenewalDate(addMonthsClamped(next, billingTerms(billingChoice, selected).termMonths));
     /* The payment due date is NOT derived from this. It starts blank and is required
        on a credit sale (Abhishek, 11 Sep 2026) — it used to default to start + 30 and
        fall back to that when left empty, which meant a date nobody had actually agreed
@@ -542,7 +545,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       setItemId(product.id);
       setPlan(product.name);
       setPriceText(String(terms.suggestedSellPerSeat)); setPriceHint(null); priceSwitchMemo.current = null;
-      setRenewalDate(termEndInclusive(startDate, terms.termMonths));
+      setRenewalDate(addMonthsClamped(startDate, terms.termMonths));
     } else if (prefill.plan) {
       setIsCustomPlan(true);
       setItemId(null);
@@ -1031,7 +1034,9 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
           outstanding_amount: 0,
           auto_renew: true,
           external_source: OPENING_SOURCE,
-          billed_externally_until: renewalDate,
+          /* R-2178: billed outside until the LAST covered day (inclusive, billedElsewhere) — the
+             renewal date itself starts the next term, which bills here. */
+          billed_externally_until: addDaysISO(renewalDate, -1),
         });
         if (openErr) throw openErr;
         toast.success(`Opening subscription added for ${cleanCustomerName}`, {
@@ -1706,12 +1711,12 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                 required
               />
               <p className="mt-1 text-2xs leading-snug text-ink-3">
-                Back-dating is fine — the expiry date follows to keep the term
+                Back-dating is fine — the renewal date follows to keep the term
                 {" "}{terms.termMonths === 1 ? "one month" : `${terms.termMonths} months`} long.
               </p>
             </FormField>
 
-            <FormField label="Renewal / Expiry Date" required htmlFor="renewalDate">
+            <FormField label="Renews on" required htmlFor="renewalDate">
               <Input
                 id="renewalDate"
                 type="date"
@@ -1723,15 +1728,16 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                   year out, which looks wrong until you know it marks the end of the
                   commitment and not the next invoice. That confusion was reported. */}
               <p className="mt-1 text-2xs leading-snug text-ink-3">
+                {/^\d{4}-\d{2}-\d{2}$/.test(renewalDate) ? `Term ends ${formatDate(addDaysISO(renewalDate, -1))}. ` : ""}
                 {terms.commitment === "monthly"
                   ? "Flex renews every month — no commitment to expire."
                   : terms.billingCycle === "monthly"
-                    ? "End of the 12-month commitment. Invoices still go out monthly."
+                    ? "The 12-month commitment renews on this date. Invoices still go out monthly."
                     : terms.billingCycle === "quarterly"
-                      ? "End of the 12-month commitment. Invoices go out every 3 months."
+                      ? "The 12-month commitment renews on this date. Invoices go out every 3 months."
                       : terms.billingCycle === "half_yearly"
-                        ? "End of the 12-month commitment. Invoices go out every 6 months."
-                      : "End of the 12-month term, when the next yearly invoice is due."}
+                        ? "The 12-month commitment renews on this date. Invoices go out every 6 months."
+                      : "The next yearly invoice is due on this date."}
               </p>
             </FormField>
           </div>
