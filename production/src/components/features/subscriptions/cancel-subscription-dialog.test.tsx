@@ -12,8 +12,8 @@ vi.mock("@/lib/queries/subscriptions", () => ({
   useSubscriptionInvoices: () => ({ data: invoices, isLoading: false, isError: false }),
 }));
 vi.mock("@/components/features/invoices/issue-credit-note-dialog", () => ({
-  IssueCreditNoteDialog: (p: { open: boolean; invoiceId: string; netPayable: number; defaultReasonCode?: string }) =>
-    p.open ? <div data-testid="cn">{`${p.invoiceId} ${p.netPayable} ${p.defaultReasonCode}`}</div> : null,
+  IssueCreditNoteDialog: (p: { open: boolean; invoiceId: string; amountDue: number; defaultReasonCode?: string }) =>
+    p.open ? <div data-testid="cn">{`${p.invoiceId} ${p.amountDue} ${p.defaultReasonCode}`}</div> : null,
 }));
 
 import { CancelSubscriptionDialog } from "./cancel-subscription-dialog";

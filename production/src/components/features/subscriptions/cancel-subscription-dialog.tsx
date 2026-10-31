@@ -156,7 +156,7 @@ export function CancelSubscriptionDialog({ sub, open, onOpenChange, clearDueDefa
           onOpenChange={(v) => { if (!v) setCnFor(null); }}
           invoiceId={cnFor}
           customerName={cnInvoice?.customer_name ?? sub.customer_name}
-          netPayable={cnDue}
+          amountDue={cnDue}
           taxRate={cnInvoice?.tax_rate ?? null}
           interState={cnInvoice?.inter_state ?? null}
           isExport={(cnInvoice?.tax_rate ?? 18) === 0}
