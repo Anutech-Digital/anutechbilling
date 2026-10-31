@@ -23,6 +23,7 @@ import { useProjectPaymentsByInvoice, useProjectInvoiceIds, useMilestoneByInvoic
 import { RecordProjectPaymentDialog } from "@/components/features/projects/record-project-payment-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { IssueCreditNoteDialog } from "@/components/features/invoices/issue-credit-note-dialog";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { useInvoiceNoteTotals } from "@/lib/queries/invoice-note-totals";
 import { netAfterNotes, type NoteTotals } from "@/lib/invoices/note-totals";
 /* R-060. `status = 'overdue'` has no writer anywhere in the product, so the Overdue tab
@@ -1298,7 +1299,7 @@ function InvoiceRow({
           onOpenChange={setCnOpen}
           invoiceId={inv.id}
           customerName={inv.customer_name}
-          netPayable={inv.net_payable ?? inv.amount}
+          amountDue={invoiceAmountDue(inv)}
           taxRate={inv.tax_rate}
           interState={inv.inter_state}
           isExport={(inv.tax_rate ?? 18) === 0}
@@ -1310,7 +1311,7 @@ function InvoiceRow({
           mode="debit"
           invoiceId={inv.id}
           customerName={inv.customer_name}
-          netPayable={inv.net_payable ?? inv.amount}
+          amountDue={invoiceAmountDue(inv)}
           taxRate={inv.tax_rate}
           interState={inv.inter_state}
           isExport={(inv.tax_rate ?? 18) === 0}
