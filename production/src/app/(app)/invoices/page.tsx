@@ -720,7 +720,7 @@ function InvoicesPageInner() {
               <button
                 type="button"
                 onClick={() => setFillCostsOpen(true)}
-                className="text-3xs font-semibold text-accent hover:underline mt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
+                className="text-3xs font-semibold text-amber-ink hover:underline mt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-sm"
               >
                 Fill missing costs
               </button>

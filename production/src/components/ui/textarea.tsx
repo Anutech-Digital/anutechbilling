@@ -52,7 +52,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
             "focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-paper",
             hasError
               ? "border-rose focus:ring-rose"
-              : "border-hairline focus:ring-amber focus:border-amber",
+              : "border-input focus:ring-amber focus:border-amber",
             "disabled:opacity-50 disabled:cursor-not-allowed",
             autoGrow && "resize-none overflow-hidden",
             className

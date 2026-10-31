@@ -55,7 +55,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
             "focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-offset-paper",
             hasError
               ? "border-rose focus-within:ring-rose"
-              : "border-hairline focus-within:ring-amber focus-within:border-amber",
+              : "border-input focus-within:ring-amber focus-within:border-amber",
             props.disabled && "opacity-50 cursor-not-allowed bg-paper-2"
           )}
         >
