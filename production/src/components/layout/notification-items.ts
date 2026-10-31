@@ -47,6 +47,9 @@ const KIND_META: Record<string, { icon: string; tone: NotifTone }> = {
   "quote.accepted":   { icon: "check",  tone: "emerald" },
   "lead.created":     { icon: "target", tone: "amber"   },
   "ticket.created":   { icon: "help",   tone: "indigo"  },
+  // R-2303: team chat — the href (/team-chat?c=<channel>&m=<message>) opens that exact message.
+  "chat.mention":     { icon: "chat",   tone: "amber"   },
+  "chat.dm":          { icon: "chat",   tone: "indigo"  },
 };
 
 /** End-of-today and start-of-today as UTC ms, computed in IST (matches the

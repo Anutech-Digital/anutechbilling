@@ -123,3 +123,36 @@ describe("task notification opens the linked record (R-1126)", () => {
     expect(linkOf({})).toBe("/tasks");
   });
 });
+
+describe("team chat bell items (R-2303)", () => {
+  const CH = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const MSG = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  // Exactly what chat_post_message (R-2295) writes for a mention.
+  const mention = {
+    id: "n9", kind: "chat.mention", title: "Pardeep Sharma mentioned you in #accounts", body: "@Hitesh Kumar check this",
+    href: `/team-chat?c=${CH}&m=${MSG}`, entity_id: MSG, read_at: null, created_at: new Date(NOW - 60_000).toISOString(),
+  } as unknown as NotificationRow;
+
+  it("'X mentioned you in #accounts' opens that exact message, with the chat icon, unread", () => {
+    const [item] = buildNotifications({ dbNotifs: [mention], readIds: new Set(), now: NOW });
+    expect(item.title).toBe("Pardeep Sharma mentioned you in #accounts");
+    expect(item.link).toBe(`/team-chat?c=${CH}&m=${MSG}`);
+    expect(item.icon).toBe("chat");
+    expect(item.tone).toBe("amber");
+    expect(item.unread).toBe(true);
+    expect(countUnread([item])).toBe(1);
+  });
+
+  it("a direct-message item also gets the chat icon (not the plain bell)", () => {
+    const dm = { ...mention, id: "n10", kind: "chat.dm", title: "New message from Hitesh" } as NotificationRow;
+    const [item] = buildNotifications({ dbNotifs: [dm], readIds: new Set(), now: NOW });
+    expect(item.icon).toBe("chat");
+    expect(item.link).toBe(mention.href);
+  });
+
+  it("notify.server's NotifyInput accepts the team chat kinds", () => {
+    const src = readFileSync(join(__dirname, "../../lib/notifications/notify.server.ts"), "utf8");
+    expect(src).toMatch(/"chat\.mention"/);
+    expect(src).toMatch(/"chat\.dm"/);
+  });
+});
