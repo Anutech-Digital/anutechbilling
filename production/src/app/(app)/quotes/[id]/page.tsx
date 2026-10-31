@@ -109,6 +109,8 @@ import { quoteEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-econo
 import { customerCopyBlock, CUSTOMER_COPY_BLOCKED_TITLE } from "@/lib/quotes/customer-copy-gate";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { useRequestApproval } from "@/lib/queries/quotes";
+import { recordPaymentBlock, recordPaymentStep, quoteHeaderStatus } from "./payment-approval-gate";
+import { PaymentApprovalNotice } from "./payment-approval-notice";
 import { usePaymentsByQuote, totalReceived as sumReceived } from "@/lib/queries/payments";
 import { useCustomer } from "@/lib/queries/customers";
 import { useLead, useUpdateLeadStage } from "@/lib/queries/leads";
@@ -190,6 +192,17 @@ export default function QuoteDetailPage() {
   const qc = useQueryClient();
   const deleteQuote = useDeleteQuote();
   const [paymentOpen, setPaymentOpen] = React.useState(false);
+  /* R-2326: a below-cost quote waiting for the owner takes no money (the DB refuses it) — Record
+     payment shows why and "Open approval" instead of a form the server would refuse after Confirm. */
+  const payBlock = React.useMemo(
+    () => (quote ? recordPaymentBlock(quote as typeof quote & { below_cost?: boolean | null }) : null),
+    [quote],
+  );
+  const [payBlockShown, setPayBlockShown] = React.useState(false);
+  const onRecordPayment = React.useCallback(() => {
+    if (recordPaymentStep(payBlock) === "notice") setPayBlockShown(true);
+    else setPaymentOpen(true);
+  }, [payBlock]);
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [downloadingPdf, setDownloadingPdf] = React.useState(false);
   const [sharingWa, setSharingWa] = React.useState(false);
@@ -383,9 +396,9 @@ export default function QuoteDetailPage() {
     const action = payIntent(payParam, quote, paymentHistory === undefined ? null : totalReceivedSoFar);
     if (action === "none") return;
     payIntentHandled.current = true;
-    if (action === "open" && mayRecordMoney) setPaymentOpen(true);
+    if (action === "open" && mayRecordMoney) onRecordPayment();
     router.replace(`/quotes/${quote.id}` as never);
-  }, [payParam, quote, paymentHistory, totalReceivedSoFar, router, mayRecordMoney]);
+  }, [payParam, quote, paymentHistory, totalReceivedSoFar, router, mayRecordMoney, onRecordPayment]);
 
   /* R-248: ?receipt=<paymentId> (Record payment's "Send receipt" toast button) opens that
      payment's Receipt Voucher — the same dialog as the row's Receipt button. Waits for the
@@ -721,7 +734,11 @@ export default function QuoteDetailPage() {
   /* R-448: a replaced quote reads "Replaced", not "Expired". */
   /* R-1679: a sent / viewed quote past its validity reads "Expired" (one rule: quote-expiry.ts). */
   const shownStatus = shownQuoteStatus(quote);
-  const status = quote.superseded_by ? { kind: "muted" as const, label: QUOTE_STATE_LABEL.replaced } : STATUS_META[shownStatus];
+  /* R-2326: while the quote waits for sign-off the header says the list's "Needs approval", not "Sent". */
+  const status = quoteHeaderStatus(
+    quote as typeof quote & { below_cost?: boolean | null },
+    quote.superseded_by ? { kind: "muted" as const, label: QUOTE_STATE_LABEL.replaced } : STATUS_META[shownStatus],
+  );
   const revise = canReviseQuote(quote, totalReceivedSoFar);
   /* R-1718: one rule with the list — no "Awaiting payment" on a rejected / expired / replaced quote. */
   const paymentBadge = quotePaymentBadge(quote);
@@ -1731,7 +1748,7 @@ export default function QuoteDetailPage() {
               )}
 
               {money.canRecordPayment && mayRecordMoney && (
-                <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={() => setPaymentOpen(true)}>
+                <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={onRecordPayment}>
                   {money.recordLabel}
                 </Button>
               )}
@@ -1784,7 +1801,7 @@ export default function QuoteDetailPage() {
               {/* R-1805: wraps on a phone — three nowrap buttons in a row made the page 459px wide at 375px. */}
               <div className="flex flex-wrap gap-2 min-w-0 max-w-full">
                 {hasBalance && mayRecordMoney && (
-                  <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={() => setPaymentOpen(true)}>
+                  <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={onRecordPayment}>
                     {nothingPaid ? "Record payment" : "Record balance payment"}
                   </Button>
                 )}
@@ -1825,6 +1842,10 @@ export default function QuoteDetailPage() {
             </div>
           );
         })()}
+
+        {payBlockShown && payBlock && mayRecordMoney && (
+          <PaymentApprovalNotice reason={payBlock.reason} onOpenApproval={() => setApprovalOpen(true)} />
+        )}
 
       </Card>
 
