@@ -329,6 +329,7 @@ MIGS=(
   "r2294teamchattables|20261031104420_r2294_team_chat_tables.sql|resellersos_migration|to_regclass('public.chat_message_edits') is not null and to_regprocedure('public.is_chat_member(uuid)') is not null and to_regprocedure('public.chat_can_read(uuid)') is not null"
   "r2297chatstorage|20261031121342_r2297_team_chat_storage.sql|postgres|exists(select 1 from pg_proc where proname='storage_object_allowed' and pronamespace='public'::regnamespace and prosrc like '%R-2297%')"
   "r2295teamchatrpcs|20261031122037_r2295_team_chat_rpcs.sql|resellersos_migration|to_regprocedure('public.chat_post_message(uuid,text,text,uuid,uuid[],jsonb,jsonb)') is not null and to_regprocedure('public.chat_unread_counts()') is not null and to_regprocedure('public.chat_create_channel(text,boolean,text,uuid[])') is not null"
+  "r2296teamchatgeneral|20261031131433_r2296_team_chat_general.sql|resellersos_migration|to_regprocedure('public.chat_general_backfill()') is not null and exists (select 1 from pg_catalog.pg_trigger where tgname = 'trg_users_chat_general' and tgrelid = to_regclass('public.users'))"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
