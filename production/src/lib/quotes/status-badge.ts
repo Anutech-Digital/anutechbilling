@@ -30,6 +30,7 @@ import { istToday } from "@/lib/dates/ist";
 import { QUOTE_STATE_LABEL } from "./state-labels";
 import { isCustomerAdvanceQuote, CUSTOMER_ADVANCE_LABEL } from "./customer-advance";
 import { paidToDateOf, PAID_TO_DATE_LABEL } from "./paid-to-date";
+import { NEEDS_APPROVAL_LABEL } from "./payment-approval";
 
 export type QuoteBadgeKind = "muted" | "success" | "warning" | "danger" | "info";
 
@@ -50,6 +51,9 @@ type QuoteStatusFields = Pick<Quote, "status" | "payment_status" | "amount" | "p
   tax_rate?: number | null;
   billing_cycle?: string | null;
   subscription_billing_id?: string | null;
+  /** R-2213: approval state — a quote waiting on sign-off never reads "Sent". Optional so older callers still fit. */
+  approval_status?: string | null;
+  below_cost?: boolean | null;
 };
 
 /** What is still owed on this quote. Never negative — an overpayment is not a debt. */
@@ -80,6 +84,16 @@ export function unifiedStatus(q: QuoteStatusFields, today: string = istToday()):
     return { label: QUOTE_STATE_LABEL.partial, kind: "danger" };
   }
   if (q.payment_status === "received") return { label: QUOTE_STATE_LABEL.received, kind: "success" };
+
+  /* R-2213: staging July — a below-cost Manage-seats quote waiting for the owner read "Sent". A live
+     quote (sent / viewed / accepted) whose approval is pending, or that is below cost and not
+     approved (payments on it are refused), says so instead. Closed quotes keep their own word. */
+  const live = q.status === "accepted" || q.status === "sent" || q.status === "viewed";
+  const shown = shownQuoteStatus(q, today);
+  if (live && shown !== "expired" && !q.superseded_by
+      && (q.approval_status === "pending" || (q.below_cost && q.approval_status !== "approved"))) {
+    return { label: NEEDS_APPROVAL_LABEL, kind: "warning" };
+  }
 
   if (q.status === "accepted") return { label: QUOTE_STATE_LABEL.accepted, kind: "success" };
 

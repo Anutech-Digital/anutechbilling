@@ -53,6 +53,9 @@ export interface OpenItem {
   seats: number | null;
   renewal_date: string | null;
   lines: ReadonlyArray<{ name?: string | null; qty?: number | null; commitment?: string | null }> | null;
+  /** R-2213: the DB would refuse money on this item's quote (below cost, not approved) — the
+   *  refusal text (lib/quotes/payment-approval.ts). null/absent = it can be paid. */
+  approval_block?: string | null;
 }
 
 /** The key of an open item — an invoice when it has one, else its quote. */

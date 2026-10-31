@@ -23,6 +23,7 @@ import { ADVANCE_PAYMENT_NOTE_PREFIX, advancePaymentIds, type SplitLinePayment }
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { splitArgs, type SplitInput } from "@/lib/banking/credit-pay-for-multi";
 import type { BillingCycle } from "@/lib/supabase/database.types";
+import { paymentApprovalBlock } from "@/lib/quotes/payment-approval";
 
 /* The generated types do not know the R-1838 functions yet (migration not applied there). */
 type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }> };
@@ -38,10 +39,25 @@ export function useBankCreditOpenItems(customerId: string | null) {
     queryFn: async (): Promise<OpenItem[]> => {
       const { data, error } = await rpc("bank_credit_open_items", { p_customer_id: customerId });
       if (error) throw error;
-      return ((data ?? []) as OpenItem[]).map((r) => ({
+      const rows = (data ?? []) as OpenItem[];
+      /* R-2213: which quotes the DB would refuse money on (below cost, not approved) — read from the
+         quote rows, judged by the same rule as the trigger (lib/quotes/payment-approval.ts). */
+      const quoteIds = [...new Set(rows.map((r) => r.quote_id).filter((x): x is string => Boolean(x)))];
+      const blocks = new Map<string, string>();
+      if (quoteIds.length > 0) {
+        const { data: qs, error: qErr } = await createClient()
+          .from("quotes").select("id, below_cost, approval_status").in("id", quoteIds);
+        if (qErr) throw qErr;
+        for (const q of qs ?? []) {
+          const b = paymentApprovalBlock(q);
+          if (b) blocks.set(q.id, b.reason);
+        }
+      }
+      return rows.map((r) => ({
         ...r,
         amount_due: Number(r.amount_due) || 0,
         taxable_value: Number(r.taxable_value) || 0,
+        approval_block: r.quote_id ? blocks.get(r.quote_id) ?? null : null,
       }));
     },
     staleTime: 15_000,

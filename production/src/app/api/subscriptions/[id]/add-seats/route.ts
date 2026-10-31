@@ -213,6 +213,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     graceDays: tenant?.grace_period_days ?? 7,
     effectiveDate: effective.date,
     effectiveDateSetBy: me.full_name?.trim() || me.email || null,
+    requestedBy: authData.user.id,
   });
 
   if (!result.ok) {

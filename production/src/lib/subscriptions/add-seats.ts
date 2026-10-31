@@ -31,6 +31,7 @@ import { buildPlanIndex, matchPlan, type PlanIndex, type CatalogRow } from "./pl
 import { istToday } from "@/lib/dates/ist";
 import { addSeatsQuoteExpiry } from "@/lib/quotes/quote-validity";
 import { addSeatsCustomerNote, composeQuoteNotes } from "@/lib/quotes/customer-notes";
+import { serverApprovalColumns } from "@/lib/quotes/payment-approval";
 
 type SupabaseAdmin = SupabaseClient<Database>;
 
@@ -192,6 +193,9 @@ export interface AddSeatsInput {
   effectiveDate?:     string;
   /** R-800: who chose a backdated effective date — written into the quote note. */
   effectiveDateSetBy?: string | null;
+  /** R-2213: who added the seats — the quote goes into the approvals queue under them when it
+   *  needs sign-off (nobody approves their own quote). Absent = null (not in anyone's queue). */
+  requestedBy?:       string | null;
   /**
    * R-543: the effective date is in the PREVIOUS term (seatChargePlan().previous). The quote
    * then has two lines: this part (effective date → `to`, over the previous term's length) and
@@ -379,6 +383,9 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     tax_rate:         input.taxRatePct,
     is_renewal:       false,
     is_add_seats:     true,   // 0052: record_payment skips sub handling → no duplicate sub
+    /* R-2213: the approval state the quote page shows, written by the same rule (payment-approval.ts).
+       Below cost → the DB refuses money on it until the owner approves (tg_payments_quote_approval). */
+    ...serverApprovalColumns(lineItems, input.requestedBy ?? null),
     /* R-1705: which subscription these seats went on, and the MRR they added — rejecting the
        quote takes exactly that back (trigger trg_quotes_add_seats_take_back). */
     add_seats_subscription_id: input.subscriptionId,
