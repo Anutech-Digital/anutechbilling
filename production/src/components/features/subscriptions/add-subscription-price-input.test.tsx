@@ -443,3 +443,65 @@ describe("Add Subscription — R-2095 commitment and payment frequency", () => {
     expect(renewal()).toBe("2026-07-15");
   });
 });
+
+/**
+ * R-2178 OWNER RULE (Pardeep, 31 Oct) on Add subscription: rates differ by COMMITMENT; under Annual,
+ * PAYMENT FREQUENCY never changes the per-seat-per-month rate (only the amount per bill); a
+ * commitment switch PROPOSES the catalogue rate for the new commitment and applies it only on a
+ * click; the box says its unit and the line under it says the per-month rate and the bill.
+ */
+describe("Add Subscription — R-2178 owner rule: rate by commitment, bill by frequency", () => {
+  beforeEach(() => {
+    catalogRows.length = 0;
+    catalogRows.push({
+      id: "GW-ST", name: "Google Workspace Business Starter", vendor: "google",
+      msrp: 300, wholesale: 264,
+      prices: { annual: { msrp: 300, wholesale: 264 }, monthly: { msrp: 360, wholesale: 318 } },
+      item_type: "subscription", is_active: true,
+    });
+  });
+  const nativeFor = (triggerId: string) =>
+    document.querySelector(`#${triggerId}`)!.parentElement!.querySelector("select")!;
+  const priceBox = () => document.querySelector<HTMLInputElement>("#pricePerSeat")!;
+  const rateLine = () => document.querySelector('[data-testid="rate-per-bill"]')?.textContent ?? "";
+
+  it("Annual: typed ₹3,168/yr → each frequency keeps ₹264/seat/month; only the bill changes", () => {
+    renderDialog();
+    fireEvent.change(priceBox(), { target: { value: "3168" } });
+    expect(priceLabel()).toContain("₹/yr");
+    expect(rateLine()).toBe("Rate ₹264/seat/month · ₹3,168 a seat each yearly bill");
+    fireEvent.change(nativeFor("billingChoice"), { target: { value: "quarterly" } });
+    expect(rateLine()).toBe("Rate ₹264/seat/month · ₹792 a seat each quarterly bill");
+    fireEvent.change(nativeFor("billingChoice"), { target: { value: "half_yearly" } });
+    expect(rateLine()).toBe("Rate ₹264/seat/month · ₹1,584 a seat each half-yearly bill");
+    fireEvent.change(nativeFor("billingChoice"), { target: { value: "monthly" } });
+    expect(rateLine()).toBe("Rate ₹264/seat/month · ₹264 a seat each monthly bill");
+    fireEvent.change(nativeFor("billingChoice"), { target: { value: "yearly" } });
+    expect(priceBox().value).toBe("3168");
+  });
+
+  it("Commitment Annual → Flexible: a typed price is not replaced silently; the Flexible catalogue rate is a button", () => {
+    renderDialog();
+    fireEvent.change(priceBox(), { target: { value: "3168" } });
+    fireEvent.change(nativeFor("commitmentChoice"), { target: { value: "flex" } });
+    expect(priceBox().value).toBe("");                         // cleared and said why — never ₹3,168/mo
+    expect(document.querySelector('[data-testid="price-switch-hint"]')?.textContent).toMatch(/Flex has its own price/);
+    const use = Array.from(document.querySelectorAll("button")).find((b) => /^Use catalogue ₹360\/mo$/.test(b.textContent ?? ""));
+    expect(use, "the Flexible catalogue rate is offered").toBeTruthy();
+    fireEvent.click(use!);
+    expect(priceBox().value).toBe("360");
+    expect(priceLabel()).toContain("₹/mo");
+  });
+
+  it("…and switching straight back to Annual gives the typed rate back (₹264/seat/month, now billed monthly)", () => {
+    renderDialog();
+    fireEvent.change(priceBox(), { target: { value: "3168" } });
+    fireEvent.change(nativeFor("commitmentChoice"), { target: { value: "flex" } });
+    fireEvent.change(nativeFor("commitmentChoice"), { target: { value: "annual" } });
+    expect(priceBox().value).toBe("264");
+    expect(priceLabel()).toContain("₹/mo");
+    expect(rateLine()).toBe("Rate ₹264/seat/month · ₹264 a seat each monthly bill");
+    fireEvent.change(nativeFor("billingChoice"), { target: { value: "yearly" } });
+    expect(priceBox().value).toBe("3168");
+  });
+});

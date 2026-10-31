@@ -13,20 +13,20 @@ const STARTER = {
 const typed = (l: SaleLine, rate: number): SaleLine => ({ ...l, rate, priceTyped: true });
 
 /* R-2178 (staging 31 Oct): the silent ÷12 / ×12 below chained through One-time into a ×12 of a typed
-   ₹1,800/user/year. A typed price is now KEPT as typed; the conversion is an explicit button
-   (credit-pay-for-r2178.test.ts). These keep R-2053's intent: the deal price survives. */
+   ₹1,800/user/year. A typed price is now KEPT as typed; the catalogue rate for the new commitment
+   is an explicit button (credit-pay-for-r2178.test.ts; owner rule: rates differ by commitment). These keep R-2053's intent: the deal price survives. */
 describe("R-2053 (1) a typed price survives a Commitment change", () => {
   it("owner's example: Annual typed 3000 → Monthly flex keeps 3000 (and asks) → Annual 3000", () => {
     const a = typed(saleLineFromItem(STARTER, "annual_yearly", 10), 3000);
     const m = repriceLine(a, STARTER, "monthly");
     expect(m).toMatchObject({ cycle: "monthly", rate: 3000, priceTyped: true, cost: 132 });
-    expect(typedPriceCheck(m)).toMatchObject({ convertRate: 250 });
+    expect(typedPriceCheck(m)).toMatchObject({ convertRate: 325 });   // Flexible's own catalogue rate
     expect(repriceLine(m, STARTER, "annual_yearly")).toMatchObject({ cycle: "annual_yearly", rate: 3000, cost: 1320 });
   });
-  it("whole rupees: typed ₹3,250 a year → the explicit ÷ 12 gives ₹271 a month", () => {
+  it("typed ₹3,250 a year → Monthly flex keeps 3,250; the click takes the Flexible catalogue ₹325", () => {
     const m = repriceLine(typed(saleLineFromItem(STARTER, "annual_yearly", 1), 3250), STARTER, "monthly");
     expect(m.rate).toBe(3250);
-    expect({ ...m, ...convertTypedPrice(m) }.rate).toBe(271);
+    expect({ ...m, ...convertTypedPrice(m) }.rate).toBe(325);
   });
   it("an untouched line takes the floored catalogue price for the new commitment", () => {
     const a = saleLineFromItem(STARTER, "annual_yearly", 10);

@@ -35,7 +35,7 @@ import { matchContacts } from "@/lib/contacts/match-contacts";
 import {
   subscriptionProducts, vendorSelectOptions, productsForVendor, findProduct, judgePrice,
   billingTerms, annualise, firstInvoiceTaxable, BILLING_CHOICES, convertPriceForChoice,
-  COMMITMENT_CHOICES, choiceParts, choiceFromParts, frequencyChoicesFor,
+  COMMITMENT_CHOICES, choiceParts, choiceFromParts, frequencyChoicesFor, rateAndBillText,
   type CatalogProduct, type BillingChoice, type PriceSwitchMemo, type CommitmentChoice,
 } from "@/lib/subscriptions/catalog-options";
 import type { BillingCycle, Item } from "@/lib/supabase/database.types";
@@ -231,6 +231,9 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
   /** R-876: a one-line note under the price after a billing switch converted or
    *  cleared it. Gone as soon as the operator types. */
   const [priceHint, setPriceHint] = React.useState<string | null>(null);
+  /** R-2178 owner rule: after a COMMITMENT switch (Flexible ↔ Annual) cleared a typed price, the
+   *  catalogue rate for the new commitment — offered as a button, never filled in silently. */
+  const [priceProposal, setPriceProposal] = React.useState<number | null>(null);
   /** R-876: the last conversion, so switching straight back restores the exact number. */
   const priceSwitchMemo = React.useRef<PriceSwitchMemo | null>(null);
   const seats = Number.parseInt(seatsText, 10) || 0;
@@ -313,14 +316,14 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
     setVendor(first.vendor);
     setItemId(first.id);
     setPlan(first.name);
-    setPriceText(String(billingTerms(billingChoice, first).suggestedSellPerSeat)); setPriceHint(null); priceSwitchMemo.current = null;
+    setPriceText(String(billingTerms(billingChoice, first).suggestedSellPerSeat)); setPriceHint(null); setPriceProposal(null); priceSwitchMemo.current = null;
   }, [products, vendor, itemId, isCustomPlan, billingChoice]);
 
   const applyProduct = (p: CatalogProduct) => {
     setIsCustomPlan(false);
     setItemId(p.id);
     setPlan(p.name);
-    setPriceText(String(billingTerms(billingChoice, p).suggestedSellPerSeat)); setPriceHint(null); priceSwitchMemo.current = null;
+    setPriceText(String(billingTerms(billingChoice, p).suggestedSellPerSeat)); setPriceHint(null); setPriceProposal(null); priceSwitchMemo.current = null;
   };
 
   /**
@@ -352,7 +355,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       && priceText === String(billingTerms(billingChoice, selected).suggestedSellPerSeat);
     if (untouchedSuggestion) {
       setPriceText(String(billingTerms(next, selected).suggestedSellPerSeat));
-      setPriceHint(null);
+      setPriceHint(null); setPriceProposal(null);
       priceSwitchMemo.current = null;
       return;
     }
@@ -362,6 +365,12 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
     }
     setPriceText(out.text);
     setPriceHint(out.hint);
+    /* R-2178 owner rule (31 Oct): rates differ by COMMITMENT — the catalogue rate for the new one
+       is proposed, shown and confirmed by a click; within Annual, a frequency change keeps the
+       per-month rate (only the unit of the box and the amount per bill change). */
+    const commitmentMoved = choiceParts(next).commitment !== choiceParts(billingChoice).commitment;
+    const suggestion = selected ? billingTerms(next, selected).suggestedSellPerSeat : 0;
+    setPriceProposal(commitmentMoved && out.text === "" && suggestion > 0 ? suggestion : null);
   };
 
   /**
@@ -544,7 +553,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       setIsCustomPlan(false);
       setItemId(product.id);
       setPlan(product.name);
-      setPriceText(String(terms.suggestedSellPerSeat)); setPriceHint(null); priceSwitchMemo.current = null;
+      setPriceText(String(terms.suggestedSellPerSeat)); setPriceHint(null); setPriceProposal(null); priceSwitchMemo.current = null;
       setRenewalDate(addMonthsClamped(startDate, terms.termMonths));
     } else if (prefill.plan) {
       setIsCustomPlan(true);
@@ -1640,12 +1649,26 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                 type="number"
                 min={0}
                 value={priceText}
-                onChange={(e) => { setPriceText(e.target.value); setPriceHint(null); }}
+                onChange={(e) => { setPriceText(e.target.value); setPriceHint(null); setPriceProposal(null); }}
                 required
               />
               {priceHint && (
                 <p className="mt-1 text-2xs leading-snug text-ink-2" data-testid="price-switch-hint">
                   {priceHint}
+                </p>
+              )}
+              {priceProposal !== null && (
+                <button type="button"
+                  className="mt-1 rounded-md border border-hairline bg-paper px-2 py-1 text-2xs font-medium text-ink-2 hover:border-amber focus:outline-none focus:ring-2 focus:ring-amber/40"
+                  onClick={() => { setPriceText(String(priceProposal)); setPriceHint(null); setPriceProposal(null); }}>
+                  Use catalogue {rupee(priceProposal)}{terms.unitLabel.replace(/^₹/, "")}
+                </button>
+              )}
+              {/* R-2178 owner rule: the rate per seat per MONTH and what each bill charges, so a
+                  ₹/yr box is never read as monthly (LOOK BOOK FLY, ₹1,800/user/year × 12). */}
+              {pricePerSeat > 0 && (
+                <p className="mt-1 text-2xs leading-snug text-ink-3 tabular-nums" data-testid="rate-per-bill">
+                  {rateAndBillText(pricePerSeat, terms.unit, terms.billingCycle)}
                 </p>
               )}
               {/* The margin, live, next to the number being typed. The defaults this

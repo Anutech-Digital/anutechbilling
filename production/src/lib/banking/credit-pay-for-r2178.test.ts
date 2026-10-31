@@ -1,8 +1,9 @@
 /* R-2178 — staging reconcile 31 Oct (LOOK BOOK FLY, Q-A378-27-0241): 7 users at a typed ₹1,800/user/year
    became ₹21,600 after the Commitment was switched (via One-time → Monthly flex → Annual), and the
    quote was ₹1,78,416 instead of ₹14,868. Rule now: a typed price NEVER changes when Commitment
-   changes. If the unit changed (₹/year ↔ ₹/month) the line says so and offers the ÷12 / ×12
-   conversion as an explicit button, which can be undone; the sale cannot be saved until the
+   changes. If the unit changed (₹/year ↔ ₹/month) the line says so and offers, as an explicit
+   button that can be undone, the CATALOGUE rate for the new commitment (owner rule 31 Oct: rates
+   differ by commitment — Flexible has its own) or, for a line with no catalogue row, ÷12 / ×12; the sale cannot be saved until the
    operator either converts or keeps the number. */
 import { describe, expect, it } from "vitest";
 import {
@@ -35,16 +36,16 @@ describe("R-2178 (1) a typed price never changes silently on a Commitment switch
     l = repriceLine(l, STARTER, "annual_yearly");
     expect(l.rate).toBe(1800);
     const check = typedPriceCheck(l);
-    expect(check).toMatchObject({ kind: "unit_changed", convertRate: 21600, blocksSave: true });
+    expect(check).toMatchObject({ kind: "unit_changed", convertRate: 3240, convertLabel: "Use catalogue ₹3,240/user/year", blocksSave: true });
     expect(check?.text).toBe("₹1,800 was typed as ₹/user/month. The line is now ₹/user/year — the number was kept.");
   });
-  it("Annual 3000 → Monthly flex: kept at 3000; explicit ÷ 12 gives 250; Undo gives 3000 back", () => {
+  it("Annual 3000 → Monthly flex: kept at 3000; the Flexible catalogue rate is proposed (not ÷ 12); Undo gives 3000 back", () => {
     let l = repriceLine(type(saleLineFromItem(STARTER, "annual_yearly", 10), 3000), STARTER, "monthly");
     expect(l.rate).toBe(3000);
-    expect(typedPriceCheck(l)).toMatchObject({ kind: "unit_changed", convertRate: 250, convertLabel: "Use ₹250/user/month (₹3,000 ÷ 12)", keepLabel: "Keep ₹3,000/user/month" });
+    expect(typedPriceCheck(l)).toMatchObject({ kind: "unit_changed", convertRate: 325, convertLabel: "Use catalogue ₹325/user/month", keepLabel: "Keep ₹3,000/user/month" });
     l = apply(l, convertTypedPrice(l));
-    expect(l.rate).toBe(250);
-    expect(typedPriceCheck(l)).toMatchObject({ kind: "converted", blocksSave: false, undoLabel: "Undo — back to ₹3,000" });
+    expect(l.rate).toBe(325);
+    expect(typedPriceCheck(l)).toMatchObject({ kind: "converted", text: "Catalogue rate used — was ₹3,000/user/year.", blocksSave: false, undoLabel: "Undo — back to ₹3,000" });
     l = apply(l, undoTypedConversion(l));
     expect(l.rate).toBe(3000);
     expect(typedPriceCheck(l)).toMatchObject({ kind: "unit_changed", blocksSave: true });
@@ -61,9 +62,10 @@ describe("R-2178 (1) a typed price never changes silently on a Commitment switch
     expect(back.rate).toBe(3000);
     expect(typedPriceCheck(back)).toBeNull();
   });
-  it("to or from One-time there is no conversion to offer, only Keep", () => {
-    const o = repriceLine(type(saleLineFromItem(STARTER, "annual_yearly", 1), 3000), STARTER, "one_time");
-    expect(typedPriceCheck(o)).toMatchObject({ kind: "unit_changed", convertRate: null, convertLabel: null });
+  it("a line with no catalogue row: ÷ 12 / × 12 is the offer; to or from One-time only Keep", () => {
+    const loose: SaleLine = { itemId: null, name: "Custom plan", qty: 2, rate: 3000, cost: 0, cycle: "annual_yearly", perSeat: true, monthPriced: true, priceTyped: true, typedFor: "annual_yearly" };
+    expect(typedPriceCheck(repriceLine(loose, undefined, "monthly"))).toMatchObject({ convertRate: 250, convertLabel: "Use ₹250/user/month (₹3,000 ÷ 12)" });
+    expect(typedPriceCheck(repriceLine(loose, undefined, "one_time"))).toMatchObject({ kind: "unit_changed", convertRate: null, convertLabel: null });
   });
   it("a line with no catalogue row keeps its number too (it is the operator's only price)", () => {
     const loose: SaleLine = { itemId: null, name: "Custom plan", qty: 2, rate: 3250, cost: 0, cycle: "annual_yearly", perSeat: true, monthPriced: true };

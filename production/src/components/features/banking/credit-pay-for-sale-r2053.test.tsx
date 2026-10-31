@@ -59,7 +59,7 @@ describe("R-2053 (1) a typed price is kept when Commitment changes", () => {
     fireEvent.change(screen.getByLabelText("Unit price ₹/user/year"), { target: { value: "3000" } });
     fireEvent.change(screen.getByLabelText("Commitment"), { target: { value: "monthly" } });
     expect(price("₹/user/month")).toBe("3000");
-    expect(screen.getByRole("button", { name: "Use ₹250/user/month (₹3,000 ÷ 12)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Use catalogue ₹325/user/month" })).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Commitment"), { target: { value: "annual_yearly" } });
     expect(screen.queryByRole("group", { name: "Typed price check" })).toBeNull();
     expect(price("₹/user/year")).toBe("3000");
@@ -91,7 +91,7 @@ describe("R-2178 a typed price never changes silently on a Commitment switch", (
     fireEvent.click(screen.getByRole("button", { name: "Record sale & reconcile ₹14,868" }));
     expect(state.sale.mock.calls[0][0].lines[0]).toMatchObject({ rate: 1800, cycle: "annual_yearly", qty: 7 });
   });
-  it("typed under Monthly flex then Annual: kept, asked, Save waits; × 12 is a button and Undo puts it back", () => {
+  it("typed under Monthly flex then Annual: kept, asked, Save waits; the Annual catalogue rate is a button and Undo puts it back", () => {
     newSale(14868);
     fireEvent.change(screen.getByLabelText("Commitment"), { target: { value: "monthly" } });
     fireEvent.change(screen.getByLabelText("Unit price ₹/user/month"), { target: { value: "1800" } });
@@ -100,13 +100,34 @@ describe("R-2178 a typed price never changes silently on a Commitment switch", (
     expect(screen.getByText("₹1,800 was typed as ₹/user/month. The line is now ₹/user/year — the number was kept.")).toBeTruthy();
     const save = screen.getByRole("button", { name: /Record sale & reconcile/ }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Use ₹21,600/user/year (₹1,800 × 12)" }));
-    expect(price("₹/user/year")).toBe("21600");
+    expect(screen.queryByRole("button", { name: /21,600/ })).toBeNull();   // never ×12 on a catalogue line
+    fireEvent.click(screen.getByRole("button", { name: "Use catalogue ₹3,240/user/year" }));
+    expect(price("₹/user/year")).toBe("3240");
     fireEvent.click(screen.getByRole("button", { name: "Undo — back to ₹1,800" }));
     expect(price("₹/user/year")).toBe("1800");
     fireEvent.click(screen.getByRole("button", { name: "Keep ₹1,800/user/year" }));
     expect(screen.queryByRole("group", { name: "Typed price check" })).toBeNull();
     expect((screen.getByRole("button", { name: /Record sale & reconcile/ }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+/* R-2178 OWNER RULE (Pardeep 31 Oct): under Annual, PAYMENT FREQUENCY never changes the rate — only
+   the amount per bill. The unit price box keeps its number and says its unit (₹/user/year). */
+describe("R-2178 owner rule — payment frequency never changes the rate", () => {
+  it.each(["half_yearly", "quarterly", "monthly"])("Annual 10 × ₹3,240/user/year → %s: same price, same unit, same total", (freq) => {
+    newSale(38232);
+    fireEvent.change(screen.getByLabelText("Payment frequency"), { target: { value: freq } });
+    expect(price("₹/user/year")).toBe("3240");
+    expect(screen.getByText(/Total ₹38,232/)).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Typed price check" })).toBeNull();
+  });
+  it("a TYPED annual price survives a frequency change too", () => {
+    newSale(14868);
+    fireEvent.change(screen.getByLabelText("Seats"), { target: { value: "7" } });
+    fireEvent.change(screen.getByLabelText("Unit price ₹/user/year"), { target: { value: "1800" } });
+    fireEvent.change(screen.getByLabelText("Payment frequency"), { target: { value: "quarterly" } });
+    expect(price("₹/user/year")).toBe("1800");
+    expect(screen.getByText(/Total ₹14,868/)).toBeTruthy();
   });
 });
 

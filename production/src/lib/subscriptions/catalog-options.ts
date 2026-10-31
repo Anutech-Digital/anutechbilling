@@ -33,6 +33,7 @@
  */
 import type { Item } from "@/lib/supabase/database.types";
 import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
+import { rupee } from "@/lib/utils";
 
 export interface CatalogProduct {
   /** items.id — what gets stored in subscriptions.item_id. */
@@ -287,6 +288,22 @@ export function choiceFromParts(commitment: CommitmentChoice, frequency: Billing
   return "annual_yearly";
 }
 
+const MONTHS_PER_BILL: Readonly<Record<BillingTerms["billingCycle"], number>> = { monthly: 1, quarterly: 3, half_yearly: 6, yearly: 12 };
+const BILL_WORD: Readonly<Record<BillingTerms["billingCycle"], string>> = { monthly: "monthly", quarterly: "quarterly", half_yearly: "half-yearly", yearly: "yearly" };
+
+/**
+ * R-2178 owner rule (Pardeep, 31 Oct): the rate is per seat per MONTH and is set by the commitment;
+ * the payment frequency only decides how many months each bill carries (×1 / ×3 / ×6 / ×12).
+ * "Rate ₹264/seat/month · ₹3,168 a seat each yearly bill" — said under the price box, whichever
+ * unit the box is in, so a ₹/yr figure is never read as monthly.
+ */
+export function rateAndBillText(pricePerSeat: number, unit: BillingTerms["unit"], cycle: BillingTerms["billingCycle"]): string {
+  const perMonth = Math.round((unit === "per_seat_year" ? pricePerSeat / 12 : pricePerSeat) * 100) / 100;
+  const perBill = Math.round((unit === "per_seat_year" ? pricePerSeat * MONTHS_PER_BILL[cycle] / 12 : pricePerSeat * MONTHS_PER_BILL[cycle]) * 100) / 100;
+  const r = (n: number) => rupee(n, { decimals: Number.isInteger(n) ? 0 : 2 });
+  return `Rate ${r(perMonth)}/seat/month · ${r(perBill)} a seat each ${BILL_WORD[cycle]} bill`;
+}
+
 /** The frequencies a commitment may be paid in. */
 export function frequencyChoicesFor(commitment: CommitmentChoice): typeof FREQUENCY_CHOICES[number][] {
   return FREQUENCY_CHOICES.filter((f) => commitment === "annual" || f.value === "monthly");
@@ -483,6 +500,13 @@ export function convertPriceForChoice(
      empty box returned early and the typed ₹/yr was lost). */
   if (previous && previous.fromChoice === to && previous.toText === text) {
     return { text: previous.fromText, hint: null };
+  }
+  /* R-2178: back to the SAME commitment on another frequency (Flexible is monthly only, so Annual ·
+     Yearly → Flexible → Annual lands on Annual · Monthly): the typed rate comes back in the new
+     box's unit — the per-month rate is the same (owner rule: frequency never changes the rate). */
+  if (previous && previous.toText === text && previous.fromChoice !== to
+      && choiceParts(previous.fromChoice).commitment === choiceParts(to).commitment) {
+    return convertPriceForChoice(previous.fromText, previous.fromChoice, to);
   }
   const trimmed = text.trim();
   const n = Number.parseFloat(trimmed);
