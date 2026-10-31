@@ -56,6 +56,7 @@ import { PAYER_RELATIONS, payerFromNarration, payerMatchesCustomer, type PayerRe
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
 import { cleanAmount, pickDefault, pickProblem, splitBlocked, splitPartPaid, splitRest, splitSummary, type SplitRest } from "@/lib/banking/credit-pay-for-multi";
 import { CreditPaySplit } from "./credit-pay-for-split";
+import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
 
 const NEW_CUSTOMER = "__new_customer__";
 
@@ -230,7 +231,13 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const splitInvalid = (splitPicked.length === 0 && !splitSale)
     || splitPicked.some((i) => pickProblem(i, picks[itemKey(i)]) !== null)
     || (splitSale && (saleInvalidOf(lines, preview.taxable) || saleAmt <= 0 || saleAmt > preview.total))
-    || splitBlocked(split.state);
+    || splitBlocked(split.state)
+    || splitPicked.some((i) => Boolean(i.approval_block));
+  /* R-2213: the picked quote (or a ticked one in a split) is below cost and waits for approval. */
+  const blockedItem = mode === "item" ? (picked?.approval_block ? picked : null)
+    : mode === "split" ? splitPicked.find((i) => Boolean(i.approval_block)) ?? null : null;
+  const approvalBlocked = blockedItem?.approval_block && blockedItem.quote_id
+    ? { reason: blockedItem.approval_block, quoteId: blockedItem.quote_id } : null;
   const [shortChoice, setShortChoice] = React.useState<ShortChoice>("part");
   /* TDS pre-chosen when the gap IS a common TDS rate; else part payment. Re-decided per item. */
   const tdsLikely = check?.kind === "short" && check.tdsRatePct !== null;
@@ -260,6 +267,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const saleInvalid = saleInvalidOf(lines, preview.taxable);
   const payerUnanswered = payerMismatch && !payerAnswer;
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
+    && !approvalBlocked
     && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : mode === "split" ? !splitInvalid : true);
 
   const save = async () => {
@@ -485,6 +493,19 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
             )
           ) : saleEditorNode}
 
+          {/* R-2213: a below-cost quote waiting for the owner takes no money — the DB refuses it, so
+              Save is locked here with the same reason and the way forward. */}
+          {approvalBlocked && (
+            <div role="alert" className="rounded-md border border-amber/60 bg-amber-soft p-2.5 space-y-1.5">
+              <p className="text-xs text-amber-ink break-words">
+                <b>{NEEDS_APPROVAL_LABEL}.</b> {approvalBlocked.reason}
+              </p>
+              <Button size="sm" variant="default" asChild>
+                <Link href={`/quotes/${approvalBlocked.quoteId}` as never}>Open approval</Link>
+              </Button>
+            </div>
+          )}
+
           {/* Subscription choice — a new subscription sale only */}
           {makesSub && (saleShown || (mode === "item" && picked)) && (
             <div className="rounded-md border border-hairline bg-paper p-2.5 space-y-2">
@@ -573,6 +594,7 @@ function OpenItemRow({ item, credit, selected, onPick }: { item: OpenItem; credi
               {kindLabel(item.kind)}
             </Badge>
             {exact && <Badge kind="success" size="sm">Exact amount</Badge>}
+            {item.approval_block && <Badge kind="warning" size="sm">{NEEDS_APPROVAL_LABEL}</Badge>}
           </span>
           <span className="block text-sm text-ink break-words mt-0.5">{itemDetail(item)}</span>
           <span className="block text-xs text-ink-3">Due {rupee(item.amount_due)} · {formatDate(item.doc_date)}</span>

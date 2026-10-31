@@ -10285,6 +10285,7 @@ export type Database = {
           approved_by: string | null
           approved_discount_bps: number | null
           approved_margin_bps: number | null
+          below_cost: boolean
           billing_cycle: string
           created_at: string
           created_date: string
@@ -10371,6 +10372,7 @@ export type Database = {
           approved_by?: string | null
           approved_discount_bps?: number | null
           approved_margin_bps?: number | null
+          below_cost?: boolean
           billing_cycle?: string
           created_at?: string
           created_date?: string
@@ -10457,6 +10459,7 @@ export type Database = {
           approved_by?: string | null
           approved_discount_bps?: number | null
           approved_margin_bps?: number | null
+          below_cost?: boolean
           billing_cycle?: string
           created_at?: string
           created_date?: string
