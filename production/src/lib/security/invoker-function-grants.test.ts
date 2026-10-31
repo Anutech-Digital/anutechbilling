@@ -43,6 +43,10 @@ const SERVICE_ROLE_ONLY: Record<string, string> = {
     "R-1004: one-time data backfill of customers.account_manager_id, run by the migration " +
     "owner; only service_role may re-run it. authenticated is revoked on purpose " +
     "(r1004_account_manager_backfill.test.sql case 4).",
+  subscription_dues_drift:
+    "R-2154: read-only all-company dues-drift report (R-1823 §7 / r1708-dues-drift-report.sql), " +
+    "run by the manager as the migration login; never called by the app. authenticated is " +
+    "revoked on purpose (r2154_dues_drift_per_quote.test.sql case F).",
 };
 
 /** Invoker functions only ever called from inside SECURITY DEFINER code (runs as owner). */

@@ -427,39 +427,33 @@ select i.tenant_id, i.id as invoice_id, i.status::text as status, i.invoice_date
  order by i.invoice_date desc, i.id
  limit 20;
 
--- ═══ 7. R-1708 ══════════════════════════════════════════════════════════════════════════════
--- Same rule as scripts/ops/r1708-dues-drift-report.sql (that file is the full list): stored
--- subscriptions.outstanding_amount differs from quote_open_balance(quote) by ₹1 or more.
--- quote_invoiced = an invoice exists for the quote (then the invoice is the claim).
+-- ═══ 7. R-1708 (per quote — R-2154) ═════════════════════════════════════════════════════════
+-- Same rule as scripts/ops/r1708-dues-drift-report.sql (that file is the full list), both through
+-- public.subscription_dues_drift() (migration 20261031023525, R-2154 — deploy it before running
+-- this section). ONE row per QUOTE: its subscriptions' stored balances SUMMED (the quote's balance
+-- rides on its first subscription) against what the app stores for that quote —
+--   expected_from 'split_parts_due'    billed in parts: only the parts whose date has come,
+--                                      minus receipts (split_outstanding_for, R-527/R-2044);
+--   expected_from 'quote_open_balance' otherwise (invoiced: its open invoices; else amount − receipts).
+-- Left out: a quote with a written-off subscription; a quote whose subscriptions are all cancelled.
+-- Before R-2154 this compared EACH subscription with the WHOLE quote's open balance (a quote with
+-- two subscriptions came out twice) and counted a split-billed quote's future parts as owed.
 \echo
-\echo '=== 7. R-1708: stored subscription balance differs from quote_open_balance — per tenant ==='
-with drift as (
-  select s.tenant_id, s.id, s.quote_id,
-         coalesce(s.outstanding_amount, 0) - public.quote_open_balance(s.quote_id) as difference
-    from public.subscriptions s
-   where s.quote_id is not null
-     and s.written_off_at is null
-)
-select tenant_id, count(*) as subscriptions,
-       round(sum(difference)::numeric, 2)      as difference_total,
-       round(sum(abs(difference))::numeric, 2) as abs_difference_total
-  from drift where abs(difference) >= 1
- group by tenant_id order by tenant_id;
+\echo '=== 7. R-1708: stored subscription balance differs from what its quote should carry — per tenant ==='
+select d.tenant_id, count(*) as quotes, sum(d.subscriptions) as subscriptions,
+       sum(d.difference)      as difference_total,
+       sum(abs(d.difference)) as abs_difference_total,
+       count(*) filter (where d.expected_from = 'split_parts_due') as billed_in_parts
+  from public.subscription_dues_drift() d
+ group by d.tenant_id order by d.tenant_id;
 
 \echo '--- 7. samples (max 20, biggest difference first) ---'
-select s.tenant_id,
-       s.id                                                                     as subscription_id,
-       s.customer_name,
-       s.quote_id,
-       round(coalesce(s.outstanding_amount, 0)::numeric, 2)                     as stored_outstanding,
-       round(public.quote_open_balance(s.quote_id)::numeric, 2)                 as quote_open_balance,
-       round((coalesce(s.outstanding_amount, 0) - public.quote_open_balance(s.quote_id))::numeric, 2) as difference,
-       exists (select 1 from public.invoices i where i.quote_id = s.quote_id)    as quote_invoiced
-  from public.subscriptions s
- where s.quote_id is not null
-   and s.written_off_at is null
-   and abs(coalesce(s.outstanding_amount, 0) - public.quote_open_balance(s.quote_id)) >= 1
- order by abs(coalesce(s.outstanding_amount, 0) - public.quote_open_balance(s.quote_id)) desc
+select d.tenant_id, d.quote_id, d.customer_name, d.subscriptions, d.subscription_ids,
+       d.subscription_status, d.external_source, d.first_start, d.billing_cycle, d.invoice_on_receipt,
+       d.quote_amount, d.received, d.quote_invoiced,
+       d.stored_outstanding, d.expected_outstanding, d.quote_open_balance, d.difference, d.expected_from
+  from public.subscription_dues_drift() d
+ order by abs(d.difference) desc, d.quote_id
  limit 20;
 
 \echo

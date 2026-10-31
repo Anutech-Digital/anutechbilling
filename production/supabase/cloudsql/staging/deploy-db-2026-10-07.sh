@@ -322,6 +322,7 @@ MIGS=(
   "gpd3paneloutboxdeactivate|20261030162816_gpd3_panel_outbox_deactivate.sql|resellersos_migration|to_regprocedure('public.queue_panel_account_deactivate(uuid,uuid)') is not null and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'panel_account_outbox' and column_name = 'op')"
   "r2095correctsubcommitment|20261030164727_r2095_correct_subscription_commitment.sql|resellersos_migration|to_regprocedure('public.correct_subscription_commitment(uuid,integer,public.billing_cycle,date,text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_contract_amendment()') and prosrc like '%R-2095 commitment%')"
   "r2176persona|20261030221233_r2176_personal_file_support_ticket.sql|resellersos_migration|to_regprocedure('public.personal_file_support_ticket(text,text,text,text)') is not null"
+  "r2154subscriptionduesdrift|20261031023525_r2154_subscription_dues_drift.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.subscription_dues_drift()') and prosrc like '%R-2154%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

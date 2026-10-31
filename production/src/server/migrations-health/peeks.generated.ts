@@ -294,4 +294,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "gpd3paneloutboxdeactivate", peek: "to_regprocedure('public.queue_panel_account_deactivate(uuid,uuid)') is not null and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'panel_account_outbox' and column_name = 'op')" },
   { key: "r2095correctsubcommitment", peek: "to_regprocedure('public.correct_subscription_commitment(uuid,integer,public.billing_cycle,date,text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_contract_amendment()') and prosrc like '%R-2095 commitment%')" },
   { key: "r2176persona", peek: "to_regprocedure('public.personal_file_support_ticket(text,text,text,text)') is not null" },
+  { key: "r2154subscriptionduesdrift", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.subscription_dues_drift()') and prosrc like '%R-2154%')" },
 ];
