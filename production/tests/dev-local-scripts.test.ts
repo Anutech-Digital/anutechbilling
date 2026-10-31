@@ -121,4 +121,11 @@ describe("scripts refuse end to end (exit 1, nothing on stdout)", () => {
     expect(r.err).toMatch(/not local/);
     expect(r.err).not.toContain("not-a-real-key");
   });
+  it("seed-e2e-approval (R-2318): non-local database", () => {
+    const r = run("scripts/dev/seed-e2e-approval.mjs", [], { SUPABASE_URL: "https://ontpnqjoysjgrlsukecm.supabase.co" });
+    expect(r.code).toBe(1);
+    expect(r.out).toBe("");
+    expect(r.err).toMatch(/not local/);
+    expect(r.err).not.toContain("not-a-real-key");
+  });
 });
