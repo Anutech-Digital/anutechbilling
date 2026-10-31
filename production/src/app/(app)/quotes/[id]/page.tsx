@@ -757,11 +757,16 @@ export default function QuoteDetailPage() {
   const total = quote.amount ?? taxable + tax;
   /* R-2182: the Total's period from the PDF's own helper — on an Annual commitment the stored
      total is the YEAR, so "₹38,232 /month" (Q-F588-27-0068) was twelve times the real bill. */
-  const totalPeriods = quoteTotalPeriodsText(quoteTotalPeriods({
+  const periods = quoteTotalPeriods({
     cycle: quote.billing_cycle as BillingCycle | null, lineCommitment: items[0]?.commitment,
     subtotal: quote.subtotal, discount, taxable, tax, total, taxRate: quote.tax_rate,
     oneTime: oneTimeQuote,
-  }));
+  });
+  const totalPeriods = quoteTotalPeriodsText(periods);
+  /* R-2222: when the year is paid in parts, the Subtotal / Taxable / GST rows are ONE bill
+     (like the customer Preview) with the same unit as the Total — they were the year's
+     ₹32,400 / ₹5,832 above "₹3,186 /month", so the column did not add up. */
+  const rowUnit = periods.yearTotal != null ? totalPeriods.unit : "";
 
   /* What can be DONE with the money right now — one tested decision instead of three
      inline conditions that between them left `payment_status = 'none'` (the column
@@ -1900,12 +1905,12 @@ export default function QuoteDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card title="Totals breakdown">
           <div className="space-y-2 text-sm">
-            <Row label="Subtotal" value={rupee(quote.subtotal)} />
-            {discount > 0 && <Row label={`Discount (${quote.discount_pct}%)`} value={`−${rupee(discount)}`} tone="emerald" />}
-            <Row label="Taxable amount" value={rupee(taxable)} />
+            <Row label="Subtotal" value={`${rupee(periods.bill.subtotal)}${rowUnit}`} />
+            {discount > 0 && <Row label={`Discount (${quote.discount_pct}%)`} value={`−${rupee(periods.bill.discount)}${rowUnit}`} tone="emerald" />}
+            <Row label="Taxable amount" value={`${rupee(periods.bill.taxable)}${rowUnit}`} />
             {billOfSupply
               ? <p className="text-2xs text-ink-2" data-testid="bill-of-supply-line">{billOfSupplyBuilderLine(billOfSupply)}</p>
-              : <Row label={`GST (${quote.tax_rate}%)`} value={rupee(tax)} />}
+              : <Row label={`GST (${quote.tax_rate}%)`} value={`${rupee(periods.bill.tax)}${rowUnit}`} />}
             <div className="border-t border-hairline pt-3 flex items-baseline justify-between">
               <span className="text-xs uppercase tracking-wider text-ink-3 font-semibold">Total</span>
               <span className="font-serif text-2xl text-amber tabular-nums">

@@ -21,6 +21,9 @@
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { cycleInvoicesPerYear, cycleFromLegacyCommitment } from "@/lib/quotes/billing";
 import { rupee } from "@/lib/utils";
+import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { taxableAfterDiscount } from "@/lib/quotes/amounts";
+import { isOneTimeQuote } from "@/lib/quotes/service-period";
 import { lineIsPerInvoice, perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-divisor";
 import { quoteInstalmentPlan, type QuoteInstalmentPlan } from "@/lib/billing/instalments";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
@@ -118,6 +121,9 @@ export interface QuoteTotalPeriods {
   unit: QuotePeriodUnit | null;
   /** The year's total incl GST when the year is paid in parts; null when one bill IS the period. */
   yearTotal: number | null;
+  /** R-2222: the Totals rows for ONE bill (what the customer Preview prints), so
+   *  subtotal − discount = taxable and taxable + tax = perBill on every period. */
+  bill: { subtotal: number; discount: number; taxable: number; tax: number };
 }
 
 const CYCLE_UNIT: Record<BillingCycle, QuotePeriodUnit> = {
@@ -127,21 +133,70 @@ const CYCLE_UNIT: Record<BillingCycle, QuotePeriodUnit> = {
 export function quoteTotalPeriods(
   i: Omit<PerPeriodInput, "cycle"> & { cycle: BillingCycle | null | undefined; oneTime?: boolean },
 ): QuoteTotalPeriods {
-  if (i.oneTime) return { perBill: i.total, unit: null, yearTotal: null };
+  const stored = { subtotal: i.subtotal, discount: i.discount, taxable: i.taxable, tax: i.tax };
+  if (i.oneTime) return { perBill: i.total, unit: null, yearTotal: null, bill: stored };
+  /* R-1715 / R-2222: no billing_cycle AND no line commitment — nothing to tell the period
+     from, so no unit (a guessed one is the same wrong-unit bug). */
+  if (!i.cycle && !i.lineCommitment) return { perBill: i.total, unit: null, yearTotal: null, bill: stored };
   /* No billing_cycle (old quote): the PDF's legacy bridge, never a guessed "/month". */
   const cycle = i.cycle ?? cycleFromLegacyCommitment(i.lineCommitment);
   const pp = quotePerPeriodFigures({ ...i, cycle });
   /* Flex: the stored figures ARE one month, billed monthly — no year commitment to show. */
-  if (pp.flex) return { perBill: i.total, unit: "month", yearTotal: null };
-  if (!pp.perInvoice) return { perBill: i.total, unit: "year", yearTotal: null };
-  return { perBill: pp.gross, unit: CYCLE_UNIT[cycle], yearTotal: pp.yearTotal };
+  if (pp.flex) return { perBill: i.total, unit: "month", yearTotal: null, bill: stored };
+  if (!pp.perInvoice) return { perBill: i.total, unit: "year", yearTotal: null, bill: stored };
+  /* One bill: taxable + GST from the instalment plan (= perBill); the discount is what is
+     left between the bill's subtotal and taxable, so the rows always add up. */
+  return {
+    perBill: pp.gross, unit: CYCLE_UNIT[cycle], yearTotal: pp.yearTotal,
+    bill: { subtotal: pp.subtotal, discount: pp.subtotal - pp.taxable, taxable: pp.taxable, tax: pp.tax },
+  };
 }
 
-/** "₹3,186" + "/month" + "₹38,232/year" — the words the Totals card prints. */
-export function quoteTotalPeriodsText(t: QuoteTotalPeriods): { perBill: string; unit: string; year: string | null } {
+/** "₹3,186" + "/month" + "₹38,232/year" — the words the Totals card and the /quotes list print.
+ *  `fmt` formats a ₹ figure (a foreign quote passes its own currency formatter). */
+export function quoteTotalPeriodsText(
+  t: QuoteTotalPeriods,
+  fmt: (inr: number) => string = (v) => rupee(v),
+): { perBill: string; unit: string; year: string | null } {
   return {
-    perBill: rupee(t.perBill),
+    perBill: fmt(t.perBill),
     unit: t.unit ? `/${t.unit}` : "",
-    year: t.yearTotal == null ? null : `${rupee(t.yearTotal)}/year`,
+    year: t.yearTotal == null ? null : `${fmt(t.yearTotal)}/year`,
   };
+}
+
+/* ── R-2222: the same, from a quote ROW (the /quotes list reads select * from quotes) ──────
+   The list put quoteTotalUnit's "/mo" (billing_cycle only) after the stored YEAR total:
+   Q-F588-27-0068 read "₹38,232/mo". The figures are worked out the way the quote page
+   works them out (discount on the subtotal, GST = stored total − taxable, R-804). */
+export interface QuoteRowForPeriods {
+  amount: number | null;
+  subtotal?: number | null;
+  discount_pct?: number | null;
+  tax_rate?: number | null;
+  billing_cycle?: string | null;
+  line_items?: unknown;
+  is_add_seats?: boolean | null;
+  is_one_off?: boolean | null;
+  is_extension?: boolean | null;
+  extension_months?: number | null;
+}
+
+export function quoteRowTotalPeriods(q: QuoteRowForPeriods): QuoteTotalPeriods | null {
+  if (!q.amount) return null;
+  const subtotal = q.subtotal ?? 0;
+  const taxRate = q.tax_rate ?? 0;
+  const taxable = taxableAfterDiscount(subtotal, q.discount_pct ?? 0);
+  const discount = Math.round(subtotal) - taxable;
+  const tax = quoteDisplayTax(taxable, taxRate, q.amount);
+  const lines = Array.isArray(q.line_items) ? (q.line_items as { commitment?: string | null }[]) : [];
+  return quoteTotalPeriods({
+    cycle: (q.billing_cycle ?? null) as BillingCycle | null,
+    lineCommitment: lines[0]?.commitment ?? null,
+    subtotal, discount, taxable, tax, total: q.amount, taxRate,
+    oneTime: isOneTimeQuote({
+      isAddSeats: q.is_add_seats, isOneOff: q.is_one_off,
+      isExtension: q.is_extension, extensionMonths: q.extension_months,
+    }),
+  });
 }

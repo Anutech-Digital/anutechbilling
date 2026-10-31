@@ -80,3 +80,34 @@ describe("R-2182 quote total per period", () => {
     expect(src).not.toMatch(/billing_cycle === "monthly" &&[^\n]*\/month/);
   });
 });
+
+/* R-2222 scope add (R-2182 localhost check): on Q-F588-27-0068 the Subtotal / Taxable / GST rows
+   stayed yearly (₹32,400 / ₹5,832) right above "Total ₹3,186 /month" — the column did not add
+   up. The rows now show ONE BILL, like the customer Preview, and the year stays on its own line. */
+describe("R-2222 quote page Totals rows are per bill, like the Preview", () => {
+  it("Annual + Monthly (Q-F588-27-0068): ₹2,700 + ₹486 GST = ₹3,186 a month", () => {
+    const t = quoteTotalPeriods(annualStarter("monthly"));
+    expect(t.bill).toEqual({ subtotal: 2700, discount: 0, taxable: 2700, tax: 486 });
+    expect(t.bill.taxable + t.bill.tax).toBe(t.perBill);
+  });
+
+  it("Annual + Quarterly with a 10% discount still adds up per bill", () => {
+    const t = quoteTotalPeriods({
+      cycle: "quarterly", lineCommitment: "annual_yearly",
+      subtotal: 32400, discount: 3240, taxable: 29160, tax: 5249, total: 34409, taxRate: 18,
+    });
+    expect(t.bill.subtotal - t.bill.discount).toBe(t.bill.taxable);
+    expect(t.bill.taxable + t.bill.tax).toBe(t.perBill);
+  });
+
+  it("yearly / flex / one-time: the rows are the stored figures", () => {
+    expect(quoteTotalPeriods(annualStarter("yearly")).bill).toEqual({ subtotal: 32400, discount: 0, taxable: 32400, tax: 5832 });
+    expect(quoteTotalPeriods({ ...annualStarter("monthly"), oneTime: true }).bill.taxable).toBe(32400);
+  });
+
+  it("the quote page prints the rows from the helper's per-bill figures", () => {
+    const src = readFileSync(join(__dirname, "../../app/(app)/quotes/[id]/page.tsx"), "utf8");
+    expect(src).toMatch(/periods\.bill\.subtotal/);
+    expect(src).toMatch(/periods\.bill\.tax\b/);
+  });
+});
