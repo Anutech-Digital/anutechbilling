@@ -7,8 +7,8 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
-import { APP_NAV, NOT_IN_NAV, OFF_MENU_ROLES, ROLE_HOME, filterNavForRole, flattenNav, isRouteAllowed, type UserRole } from "./nav";
-import { NAV_APPS, buildSidebarApps } from "./nav-apps";
+import { APP_NAV, NOT_IN_NAV, OFF_MENU_ROLES, ROLE_HOME, crumbForRole, filterNavForRole, flattenNav, isRouteAllowed, type UserRole } from "./nav";
+import { NAV_APPS, PINNED_ITEM_IDS, buildSidebarApps } from "./nav-apps";
 
 const st = vi.hoisted(() => ({ role: "sales" as string | null }));
 vi.mock("@/lib/supabase/client", () => ({ isSupabaseConfigured: () => true }));
@@ -58,17 +58,22 @@ describe("Team chat menu row (R-2300)", () => {
     expect(r.status).toBe(200);
   });
 
+  it("the topbar breadcrumb reads 'Team > Team chat' (it read 'Home > Dashboard' while off-menu)", () => {
+    for (const role of STAFF_ROLES) expect(crumbForRole("/team-chat", role), role).toEqual(["Team", "Team chat"]);
+  });
+
   it("the temporary R-2299 off-menu entries are gone", () => {
     expect(OFF_MENU_ROLES["/team-chat"]).toBeUndefined();
     expect(NOT_IN_NAV["/team-chat"]).toBeUndefined();
   });
 
-  it("sits in the Team app of the sidebar, with its own chat icon (not AI Help's 'message')", () => {
-    const team = NAV_APPS.find((a) => a.id === "team");
-    expect(team?.itemIds).toContain("team-chat");
+  it("is pinned above the app switcher (reachable from every app), with its own chat icon (not AI Help's 'message')", () => {
+    expect(PINNED_ITEM_IDS).toContain("team-chat");
+    expect(NAV_APPS.flatMap((a) => a.itemIds)).not.toContain("team-chat");
     const row = flattenNav(APP_NAV).find((e) => e.item.href === "/team-chat");
     expect(row?.section.section).toBe("Team");
     expect(row?.item.icon).toBe("chat");
-    expect(buildSidebarApps("accountant").apps.find((a) => a.id === "team")?.items.map((i) => i.id)).toContain("team-chat");
+    for (const role of STAFF_ROLES) expect(buildSidebarApps(role).pinned.map((i) => i.id), role).toContain("team-chat");
+    for (const role of OUTSIDE_ROLES) expect(buildSidebarApps(role).pinned.map((i) => i.id), role).not.toContain("team-chat");
   });
 });

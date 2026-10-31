@@ -156,6 +156,11 @@ const ADDED_23OCT_MARKETING_ROLE = [
 ];
 /** R-1879 (25 Oct 2026): Campaign Co-pilot — owner, manager, marketing (RLS on ad_plans, R-1878). */
 const ADDED_25OCT_COPILOT = ["/marketing/copilot"];
+/** R-2300 (G-TEAMCHAT, 31 Oct 2026): Team chat gets its menu row (Team) — every staff role, the
+ *  same people as chat_is_staff() (R-2294); never partner_agent or personal. R-2299 had admitted
+ *  the page by URL (OFF_MENU_ROLES); now the row admits it. */
+const ADDED_31OCT_TEAM_CHAT = ["/team-chat"];
+const TEAM_CHAT_ROLES = ["owner", "manager", "sales", "sales_senior", "billing", "delivery", "accountant", "support", "marketing"];
 const removedFor = (role: string) => REMOVED_3OCT[role] ?? [];
 const addedFor = (role: string) => [
   ...(role === "owner" || role === "manager" ? ADDED_3OCT_OM : []),
@@ -180,6 +185,7 @@ const addedFor = (role: string) => [
   ...(role === "marketing" ? ADDED_23OCT_MARKETING_ROLE : []),
   ...(["owner", "marketing", "billing", "accountant"].includes(role) ? ADDED_23OCT_BUDGET : []),
   ...(["owner", "manager", "marketing"].includes(role) ? ADDED_25OCT_COPILOT : []),
+  ...(TEAM_CHAT_ROLES.includes(role) ? ADDED_31OCT_TEAM_CHAT : []),
   ...(role === "personal" ? ADDED_30OCT_PERSONAL_HOME : ADDED_FOR_EVERY_ROLE),
 ];
 
@@ -285,7 +291,8 @@ describe("2. structure", () => {
     expect(rows).toBeGreaterThanOrEqual(35);
     // 46 since R-204 (6 Oct 2026): Orders (website) left Payments Received's accordion for its own Sell row.
     // 47 since R-382 (7 Oct 2026): Contacts back in Sell — owner decision, one named row only.
-    expect(rows).toBeLessThanOrEqual(47);
+    // 48 since R-2300 (31 Oct 2026): Team chat in Team — G-TEAMCHAT, Pardeep accepted the plan (TC-07).
+    expect(rows).toBeLessThanOrEqual(48);
     // Sell may hold 9 since R-382 (Contacts); every other group stays at 8 or fewer.
     // R-497 (9 Oct): Contacts moved into the Customers accordion, so Sell is one row lighter.
     for (const s of APP_NAV) expect(s.items.length, s.section).toBeLessThanOrEqual(s.section === "Sell" ? 9 : 8);
