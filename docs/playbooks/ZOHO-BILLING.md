@@ -4,8 +4,8 @@ Written for R-2251, 31 Oct 2026, from the G-ZOHO billing audit and a hands-on ru
 **test** organisation (08:32–08:55 UTC). Read it before you compare our billing with Zoho, before
 you build a G-ZOHO billing card (R-2225..R-2260), and before you open Zoho in the browser.
 The numbers below are from the test org's own screens, not from help pages. The full audit lives
-in Pardeep's local `Anutech-HQ/drafts/ZOHO-AUDIT/billing.md`; every item in it is carried by a
-board card (section 5), so you do not need that file.
+in [docs/audits/zoho-2026-10/billing.md](../audits/zoho-2026-10/billing.md) (all audits: [README](../audits/zoho-2026-10/README.md)); every item in it is carried by a
+board card (section 5).
 
 ## 1. How Zoho Billing behaves (measured in test org 60094055943)
 
