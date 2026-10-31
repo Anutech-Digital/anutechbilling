@@ -8,6 +8,10 @@
  * - The body is plain text with safe links (linkify.ts) — never markdown or HTML.
  * - Scrolling to the top loads older messages; a new message scrolls into view only when the
  *   reader is already at the bottom (reading old messages is not interrupted).
+ * - R-2329: an app notice (kind 'system') is the app's own words — it never gets edit / delete
+ *   or any slot (badge, buttons, files), and the server refuses chat_edit_message /
+ *   chat_delete_message on it for everyone. canEditChatMessage / canDeleteChatMessage are the ONE
+ *   place a screen asks whether to offer Edit / Delete (they mirror the server's R-2295 rules).
  */
 "use client";
 
@@ -42,6 +46,28 @@ export interface MessageListProps {
 }
 
 const NEAR_TOP_PX = 80;
+const EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * R-2329: may this user be offered "Edit" on this message? Mirrors chat_edit_message: never an
+ * app notice, never a deleted / still-sending message, only the author, within 15 minutes.
+ */
+export function canEditChatMessage(message: ChatMessage, myUserId: string | null, now: number = Date.now()): boolean {
+  if (message.kind === "system" || message.deleted_at || message.pending) return false;
+  if (!myUserId || message.author_id !== myUserId) return false;
+  const created = Date.parse(message.created_at);
+  return Number.isFinite(created) && now - created <= EDIT_WINDOW_MS;
+}
+
+/**
+ * R-2329: may this user be offered "Delete" on this message? Mirrors chat_delete_message: never an
+ * app notice, never a deleted / still-sending message; the author or the owner.
+ */
+export function canDeleteChatMessage(message: ChatMessage, myUserId: string | null, isOwner: boolean): boolean {
+  if (message.kind === "system" || message.deleted_at || message.pending) return false;
+  if (!myUserId) return false;
+  return message.author_id === myUserId || isOwner;
+}
 const NEAR_BOTTOM_PX = 120;
 
 export function MessageList(props: MessageListProps) {
@@ -168,9 +194,10 @@ function MessageItem({ message, showAuthor, author, channelId, myUserId, teammat
   const deleted = !!message.deleted_at;
   const slot = { message, channelId, myUserId, teammates };
 
+  /* R-2329: an app notice gets no slots — no edit / delete / task buttons, ever. */
   if (message.kind === "system") {
     return (
-      <li className="py-1 text-center text-xs italic text-ink-3">
+      <li data-kind="system" className="py-1 text-center text-xs italic text-ink-3">
         <MessageBody body={message.body} />
       </li>
     );

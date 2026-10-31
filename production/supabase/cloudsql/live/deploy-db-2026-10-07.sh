@@ -331,6 +331,7 @@ MIGS=(
   "r2295teamchatrpcs|20261031122037_r2295_team_chat_rpcs.sql|resellersos_migration|to_regprocedure('public.chat_post_message(uuid,text,text,uuid,uuid[],jsonb,jsonb)') is not null and to_regprocedure('public.chat_unread_counts()') is not null and to_regprocedure('public.chat_create_channel(text,boolean,text,uuid[])') is not null"
   "r2296teamchatgeneral|20261031131433_r2296_team_chat_general.sql|resellersos_migration|to_regprocedure('public.chat_general_backfill()') is not null and exists (select 1 from pg_catalog.pg_trigger where tgname = 'trg_users_chat_general' and tgrelid = to_regclass('public.users'))"
   "r2304chatposttotask|20261031183408_r2304_chat_post_to_task.sql|resellersos_migration|to_regprocedure('public.chat_message_to_task(uuid,uuid,timestamptz)') is not null and to_regprocedure('public.chat_message_report(uuid)') is not null"
+  "r2329chatsystemrowslocked|20261031220929_r2329_chat_system_rows_locked.sql|resellersos_migration|exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'chat_edit_message' and p.prosrc like '%R-2329%') and exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'chat_delete_message' and p.prosrc like '%R-2329%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
