@@ -14,7 +14,7 @@ import { POST } from "./route";
 import {
   testLoginAllowed, hostName, testLoginCreds, e2eVarsFromEnvText, TEST_LOGIN_ROLES,
 } from "./rules";
-import { E2E_ROLES, roleCreds } from "../../../../../e2e/fixtures/e2e-roles.mjs";
+import { E2E_ROLES, E2E_LOCAL_EXTRA_ROLES, roleCreds, roleDbRole } from "../../../../../e2e/fixtures/e2e-roles.mjs";
 
 function req(body: unknown, host = "localhost:3001") {
   return new Request("http://" + host + "/api/dev/test-login", {
@@ -87,6 +87,37 @@ describe("POST /api/dev/test-login — 404 unless every gate passes", () => {
     expect(signInWithPassword).not.toHaveBeenCalled();
   });
 
+  it("R-2318: owner2 → 200, signs in e2e-owner2@example.test with E2E_OWNER2_PASSWORD", async () => {
+    vi.stubEnv("E2E_OWNER2_PASSWORD", "y-test-only-y");
+    vi.stubEnv("E2E_OWNER2_EMAIL", "");
+    const res = await POST(req({ role: "owner2" }, "127.0.0.1:3001"));
+    expect(res.status).toBe(200);
+    expect(signInWithPassword).toHaveBeenCalledWith({ email: "e2e-owner2@example.test", password: "y-test-only-y" });
+    expect(await res.text()).not.toContain("y-test-only-y");
+  });
+
+  it("R-2318: owner2 off localhost / off dev:local / in a build → 404", async () => {
+    vi.stubEnv("E2E_OWNER2_PASSWORD", "y-test-only-y");
+    expect((await POST(req({ role: "owner2" }, "reselleros.anutech.in"))).status).toBe(404);
+    vi.stubEnv("NEXT_PUBLIC_APP_ENV", "staging");
+    expect((await POST(req({ role: "owner2" }))).status).toBe(404);
+    vi.stubEnv("NEXT_PUBLIC_APP_ENV", "local");
+    vi.stubEnv("NODE_ENV", "production");
+    expect((await POST(req({ role: "owner2" }))).status).toBe(404);
+    expect(signInWithPassword).not.toHaveBeenCalled();
+  });
+
+  it("R-2318: owner2 with no password → 412 naming E2E_OWNER2_PASSWORD; look-alike roles refused", async () => {
+    vi.stubEnv("E2E_OWNER2_PASSWORD", "");
+    const res = await POST(req({ role: "owner2" }));
+    expect(res.status).toBe(412);
+    expect((await res.json()).error).toContain("E2E_OWNER2_PASSWORD");
+    for (const role of ["owner3", "Owner2", "owner 2", "owner2 "]) {
+      expect((await POST(req({ role }))).status).toBe(400);
+    }
+    expect(signInWithPassword).not.toHaveBeenCalled();
+  });
+
   it("a failed sign-in → 401", async () => {
     signInWithPassword.mockResolvedValue({ error: { message: "Invalid login credentials" } });
     expect((await POST(req({ role: "owner" }))).status).toBe(401);
@@ -104,12 +135,17 @@ describe("rules", () => {
     expect(testLoginAllowed({ appEnv: undefined, nodeEnv: "development", host: "localhost" })).toBe(false);
   });
   it("same roles, env names and default emails as e2e-roles.mjs (the seed)", () => {
-    expect([...TEST_LOGIN_ROLES].sort()).toEqual([...E2E_ROLES].sort());
+    expect([...TEST_LOGIN_ROLES].sort()).toEqual([...E2E_ROLES, ...E2E_LOCAL_EXTRA_ROLES].sort());
     const env = { E2E_MANAGER_EMAIL: "M@Example.test", E2E_MANAGER_PASSWORD: "p1" };
     for (const r of TEST_LOGIN_ROLES) {
       const a = testLoginCreds(r, env), b = roleCreds(r, env);
       expect(a).toEqual({ email: b.email, password: b.password });
     }
+  });
+  it("R-2318: owner2 is seeded as an owner; CI's required roles stay the four (no new secret)", () => {
+    expect(roleDbRole("owner2")).toBe("owner");
+    expect(roleDbRole("sales")).toBe("sales");
+    expect([...E2E_ROLES]).not.toContain("owner2");
   });
   it("reads only E2E_* lines from .env.test text", () => {
     const vars = e2eVarsFromEnvText("SUPABASE_SERVICE_ROLE_KEY=abc\n# E2E_X=1\nE2E_OWNER_PASSWORD=\"q\"\r\nE2E_SALES_EMAIL = s@x.test\n");

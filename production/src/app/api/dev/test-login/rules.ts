@@ -14,8 +14,12 @@
  *   request host is localhost / 127.0.0.1 / [::1]
  */
 
-/** The roles e2e/fixtures/e2e-roles.mjs seeds. Kept in step by a test. No billing account exists. */
-export const TEST_LOGIN_ROLES = ["owner", "manager", "accountant", "sales"] as const;
+/**
+ * The roles e2e/fixtures/e2e-roles.mjs seeds (E2E_ROLES + E2E_LOCAL_EXTRA_ROLES). Kept in step by
+ * a test. No billing account exists. R-2318: "owner2" is a second owner of the same company, so
+ * "another owner approves" (R-2213) can be checked on localhost.
+ */
+export const TEST_LOGIN_ROLES = ["owner", "manager", "accountant", "sales", "owner2"] as const;
 export type TestLoginRole = (typeof TEST_LOGIN_ROLES)[number];
 
 export function isTestLoginRole(v: unknown): v is TestLoginRole {
