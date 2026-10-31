@@ -33,7 +33,7 @@ import {
   liveGstin, checkGstin, livePhone, commitPhone, checkPhone,
   liveEmail, checkEmail, liveDomain, checkDomain,
 } from "@/lib/forms/poka-yoke";
-import { COUNTRIES } from "@/lib/gst/countries";
+import { CountryCombobox } from "./country-combobox";
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
 import { useCustomerForm } from "./use-customer-form";
 import { ScanCardPanel } from "./scan-card-panel";
@@ -53,7 +53,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
     register, setValue, watch, errors, isSubmitting, isPending, isEdit,
     contactPersonFields, appendContactPerson, removeContactPerson,
     verification, setVerification, watchedGstin,
-    isForeign, foreignStates, countryReg, onCountryChange, submit,
+    isForeign, foreignStates, country, onCountryPick, submit,
     gstTreatment, gstTreatmentAuto, gstTreatmentMeaning, onTreatmentChange, panLocked,
     contactMissing, saveWithoutContact,
   } = useCustomerForm({
@@ -111,14 +111,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
           {/* Country FIRST — it decides the whole form: India = GST flow (GSTIN,
               state code, 6-digit PIN); anything else = export flow (no GST). */}
           <FormField label="Country" htmlFor="country">
-            <select
-              id="country"
-              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
-              {...countryReg}
-              onChange={onCountryChange}
-            >
-              {COUNTRIES.map((ctry) => <option key={ctry} value={ctry}>{ctry}</option>)}
-            </select>
+            <CountryCombobox id="country" value={country} onChange={onCountryPick} />
             {isForeign && (
               <p className="mt-1 flex items-start gap-1 text-2xs leading-snug text-indigo-ink">
                 <span>🌍</span>

@@ -18,6 +18,7 @@
  */
 import { GST_STATE_BY_CODE, gstStateFromGstin } from "@/lib/utils";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { normalizeCountry } from "@/lib/gst/countries";
 import { parsePlaceOfSupply } from "@/lib/import/zoho-opening-invoices";
 import {
   CUSTOMER_GST_TREATMENTS, GST_TREATMENT_OPTIONS, gstTreatmentProblem, suggestGstTreatment,
@@ -168,7 +169,8 @@ export function parseCustomersCsv(text: string, existingNums: Set<string>, exist
 
     const customer_number = cell(idxNum) || undefined;
     const email = cell(idxEmail);
-    const country = cell(idxCountry) || "India";
+    /* R-2180: "USA" / "EE" / "estonia" → the picker's name, so the saved value matches the form. */
+    const country = normalizeCountry(cell(idxCountry)) || "India";
     const foreign = isExportSupply(country);
     const gstin = foreign ? "" : cell(idxGstin).toUpperCase();
 
