@@ -348,10 +348,6 @@ export const OFF_MENU_ROLES: Readonly<Record<string, UserRole[]>> = {
   "/aa": ["owner", "manager", "billing", "accountant"],
   /* GP-07a (R-2115): the personal login's Account page — in the avatar menu, not a sidebar row. */
   "/account": ["personal"],
-  /* R-2299 (G-TEAMCHAT): Team chat, reached by URL until R-2300 gives it its menu row (then this
-     entry goes). Every staff role — the same people as chat_is_staff() (R-2294): never
-     partner_agent (external) or personal. sales_senior is read as sales here. */
-  "/team-chat": ["owner", "manager", "sales", "billing", "delivery", "accountant", "support", "marketing"],
 };
 
 /**
@@ -501,6 +497,9 @@ const SALES_READ: UserRole[] = ["owner", "manager", "billing", "accountant"];
 const PURCHASES: UserRole[] = ["owner", "manager", "billing", "accountant"];
 /** Everyone on the team except the external partner agent. */
 const STAFF: UserRole[] = ["owner", "manager", "sales", "sales_senior", "accountant", "support", "billing", "delivery"];
+/** R-2300 (G-TEAMCHAT): Team chat — the same people as chat_is_staff() (R-2294): every staff
+ *  role incl. marketing; never partner_agent (external) or personal. */
+const TEAM_CHAT: UserRole[] = [...STAFF, "marketing"];
 
 /**
  * App pages that are deliberately NOT a menu row — each with its reason. nav.test.ts fails
@@ -522,7 +521,6 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/products": "Redirects to Products (/items) for people who type the menu name as a URL (R-490)",
   "/settings/company": "redirect to /settings (Company tab), R-1670",
   "/account": "Personal login's account page; opened from the avatar menu (GP-07a)",
-  "/team-chat": "Team chat (R-2299) — reached by URL until R-2300 adds its menu row and topbar icon; remove this line then",
 };
 
 export const APP_NAV: NavSection[] = [
@@ -773,6 +771,8 @@ export const APP_NAV: NavSection[] = [
     section: "Team",
     icon: "users",
     items: [
+      /* R-2300 (G-TEAMCHAT TC-07): channels + DMs; the topbar chat icon shows its unread count. */
+      { id: "team-chat", href: "/team-chat", label: "Team chat", icon: "chat", roles: TEAM_CHAT, hint: "Channels and direct messages with your team" },
       { id: "my-attendance", href: "/attendance/me", label: "My Attendance", icon: "calendar", roles: STAFF, hint: "Mark your own attendance — your login is the proof." },
       /* Was listed twice (Home and Sales & CRM) "for reach". Once is enough now that it
          has a group every staff role can see; the mobile Quick Actions grid still puts it

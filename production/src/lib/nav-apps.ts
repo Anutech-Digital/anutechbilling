@@ -32,8 +32,9 @@ export interface NavAppDef {
   itemIds: string[];
 }
 
-/** Always shown above the switcher, for the roles that can see them. */
-export const PINNED_ITEM_IDS = ["today", "dashboard", "ai-entry"] as const;
+/** Always shown above the switcher, for the roles that can see them. R-2300: Team chat too —
+ *  reachable from every app (and it keeps a 12-row menu like sales' flat). */
+export const PINNED_ITEM_IDS = ["today", "dashboard", "ai-entry", "team-chat"] as const;
 
 export const NAV_APPS: NavAppDef[] = [
   {

@@ -80,7 +80,7 @@ export function AiHelpButton() {
       <IconButton
         icon={alert ? "alert" : "message"}
         aria-label={alert ? "Help — an error was caught, open to report it" : "Help — ask AI or report a problem"}
-        title={alert ? `Error caught: ${alert}` : "Help — ask AI or report a problem (Ctrl+Shift+B to report)"}
+        title={alert ? `Error caught: ${alert}` : "Help & AI — ask AI or report a problem (Ctrl+Shift+B to report)"}
         aria-pressed={showing}
         data-topbar="help"
         onClick={() => setHelpUi(showing ? { open: false, minimized: false } : { open: true, minimized: false, tab: alert ? "report" : helpUi.tab })}
