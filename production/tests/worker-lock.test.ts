@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import { execFileSync, spawnSync } from "node:child_process";
+// @ts-expect-error — plain .mjs ops script, no types
+import { migrationOrderGate, normaliseClaimAreas } from "../scripts/ops/worker-lock.mjs";
 // @ts-expect-error — plain .mjs ops script, no types
 import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, CI_DEFAULT_TIMEOUT_MIN, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript } from "../scripts/ops/worker-lock.mjs";
 
@@ -505,5 +510,72 @@ describe("R-1936: a changed migration runs its related SQL tests on the local DB
     const m = { file: "m.sql", src: "create index concurrently if not exists i on public.vendor_notes(id);\ncreate table if not exists public.vendor_notes (id uuid);" };
     expect(runRelatedSql({ changed: [m], tests, psql: () => ({ status: 1, out: "" }) })).toMatchObject({ ok: true, skipped: true });
     expect(relatedTestScript([], "begin;\nrollback;")).toBe("begin;\n\n\nbegin;\nrollback;\n");
+  });
+});
+
+/* ───────── R-2106 (31 Oct 2026) ───────── */
+
+describe("R-2106: push runs CI's migration-order check before pushing", () => {
+  it("a red check refuses with the script's own problem lines; green passes", () => {
+    const red = migrationOrderGate(() => ({ status: 1, out: "base x\n\nMigration check FAILED:\n  edited an existing migration: 20261030131008_a.sql — it has likely run already\n" }));
+    expect(red.ok).toBe(false);
+    expect(red.message).toMatch(/edited an existing migration: 20261030131008_a\.sql/);
+    expect(red.message).toMatch(/-- deploy-/);
+    expect(migrationOrderGate(() => ({ status: 0, out: "migrations OK" })).ok).toBe(true);
+  });
+
+  it("asks the check with base anutech/manager-pardeep (what CI's github.event.before is after the rebase)", () => {
+    let seen: string[] = [];
+    migrationOrderGate((args: string[]) => { seen = args; return { status: 0, out: "" }; });
+    expect(seen).toEqual(["scripts/migration-order-check.mjs", "--base", "anutech/manager-pardeep"]);
+  });
+
+  it("push calls it after the rebase and before tsc / guard suites / the git push", () => {
+    const src = readFileSync(path.join(__dirname, "..", "scripts", "ops", "worker-lock.mjs"), "utf8");
+    const body = src.slice(src.indexOf("async function pushWithTurn"));
+    const at = (s: string) => body.indexOf(s);
+    expect(at("migrationOrderGate(")).toBeGreaterThan(at("rebaseResolvingDerived("));
+    expect(at("migrationOrderGate(")).toBeLessThan(at("tscWithTurn("));
+    expect(at("migrationOrderGate(")).toBeLessThan(at("git push -q anutech"));
+  });
+
+  it("the real script on a throwaway repo: a non-header edit of an existing migration is red, a header-only edit green", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "r2106-mo-"));
+    try {
+      const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.test", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.test" };
+      const g = (...a: string[]) => execFileSync("git", a, { cwd: tmp, env, stdio: ["ignore", "pipe", "pipe"] });
+      fs.mkdirSync(path.join(tmp, "production", "scripts"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "production", "supabase", "migrations"), { recursive: true });
+      fs.copyFileSync(path.join(__dirname, "..", "scripts", "migration-order-check.mjs"), path.join(tmp, "production", "scripts", "migration-order-check.mjs"));
+      const mig = path.join(tmp, "production", "supabase", "migrations", "20261030131008_a.sql");
+      fs.writeFileSync(mig, "-- deploy-peek: true\nselect 1;\n");
+      g("init", "-q", "-b", "main"); g("add", "-A"); g("commit", "-q", "-m", "base"); g("branch", "base");
+      const run = (args: string[]) => { const r = spawnSync(process.execPath, args, { cwd: path.join(tmp, "production"), encoding: "utf8" }); return { status: r.status, out: `${r.stdout}${r.stderr}` }; };
+
+      fs.writeFileSync(mig, "-- deploy-peek: to_regclass('public.a') is not null\nselect 1;\n");
+      g("commit", "-qam", "header only");
+      expect(migrationOrderGate(run, "base").ok).toBe(true);
+
+      fs.writeFileSync(mig, "-- deploy-peek: to_regclass('public.a') is not null\n-- a note\nselect 1;\n");
+      g("commit", "-qam", "comment line");
+      const r = migrationOrderGate(run, "base");
+      expect(r.ok).toBe(false);
+      expect(r.message).toMatch(/edited an existing migration: 20261030131008_a\.sql/);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+});
+
+describe("R-2106: claim paths are normalised (29 Oct: R-2102/R-2104/R-2098 own files refused at push)", () => {
+  it("splits comma-joined strings, strips production/ and the worktree's absolute path, dedupes", () => {
+    const wt = "C:/Users/me/reselleros-w-r-1";
+    expect(normaliseClaimAreas([
+      "production/src/lib/deals,src/lib/deals/x.ts, src/app/(app)/leads",
+      String.raw`C:\Users\me\reselleros-w-r-1\production\src\lib\quotes`,
+      `${wt}/docs/WORKER-STEPS.md`,
+      "src/lib/deals",
+    ], wt)).toEqual(["src/lib/deals", "src/lib/deals/x.ts", "src/app/(app)/leads", "src/lib/quotes", "../docs/WORKER-STEPS.md"]);
+  });
+  it("leaves plain paths alone", () => {
+    expect(normaliseClaimAreas(["src/lib/x.ts", "../docs/A.md"], "C:/w")).toEqual(["src/lib/x.ts", "../docs/A.md"]);
   });
 });

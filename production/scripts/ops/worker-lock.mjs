@@ -77,6 +77,30 @@ export function normPath(p) {
   return s;
 }
 
+/**
+ * R-2106 (31 Oct 2026): claim areas exactly as push's scope guard reads them. 29 Oct three workers
+ * (R-2102, R-2104, R-2098) had their OWN files refused at push: areas written as one comma-joined
+ * string, or as the worktree's absolute path. Split on commas/newlines, strip the worktree prefix,
+ * then normPath (production/ off); duplicates dropped, order kept.
+ */
+export function normaliseClaimAreas(raw, worktree = "") {
+  const wt = String(worktree ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const out = [];
+  for (const r of raw ?? []) {
+    for (let part of String(r).split(/[,\n]/)) {
+      part = part.trim().replace(/\\/g, "/");
+      if (!part) continue;
+      if (wt && part.toLowerCase().startsWith(wt + "/")) {
+        part = part.slice(wt.length + 1);
+        if (!part.startsWith("production/")) part = "../" + part;
+      }
+      const n = normPath(part);
+      if (n && !out.includes(n)) out.push(n);
+    }
+  }
+  return out;
+}
+
 /** Same path, or one is a folder holding the other. "src/lib/deal" does NOT overlap "src/lib/deals". */
 export function pathsOverlap(a, b) {
   const x = normPath(a), y = normPath(b);
@@ -389,6 +413,29 @@ export function runGuardSuites(card) {
   });
 }
 
+/**
+ * R-2106 (31 Oct 2026): CI's "Migration order check" (scripts/migration-order-check.mjs, base =
+ * github.event.before = manager-pardeep before this push) — run HERE after the rebase, so an edited old
+ * migration fails on the laptop, not 29 min later in CI. 31 Oct R-2106 itself went red twice in CI this
+ * way: two comment lines added to an existing migration, then removed again (both count as edits; only a
+ * `-- deploy-peek/key/user/skip:` header line may change). `run(args)` → { status, out } (node + args).
+ */
+export function migrationOrderGate(run, base = "anutech/manager-pardeep") {
+  const r = run(["scripts/migration-order-check.mjs", "--base", base]);
+  if (r.status === 0) return { ok: true, message: "✓ migration-order-check (CI wala) green" };
+  const out = String(r.out ?? "").trim();
+  const failed = out.includes("Migration check FAILED") ? out.slice(out.indexOf("Migration check FAILED")) : out.split("\n").slice(-8).join("\n");
+  return {
+    ok: false,
+    message: [
+      "✗ Migration order check (CI jaisa) laal — push NAHI hua:",
+      failed,
+      "   Purani migration me sirf `-- deploy-peek/key/user/skip:` header line badal sakti hai — comment/SQL ki koi bhi line jodna YA hatana bhi 'edit' hai.",
+      "   Badlaav wapas lo (git show anutech/manager-pardeep:<file> > <file>) aur nayi forward migration likho.",
+    ].join("\n"),
+  };
+}
+
 async function pushWithTurn(card, ciFlags = {}) {
   /* R-1958: before the rebase (and again after it) — nothing of another card's may be undone. */
   const scope = (exit) => enforceScope(card, "commits", { lockDir: LOCK_DIR, allowOutside: ciFlags.allowOutside, cardPath: ciFlags.cardPath, exit });
@@ -420,6 +467,10 @@ async function pushWithTurn(card, ciFlags = {}) {
       const r = refreshDerived(card, derived);
       if (r.how !== "none") console.log(`  generated files dobara bane (${r.changed.join(", ")}) — ${r.how === "amend" ? "apne aakhri commit me jode" : "alag commit"}.`);
     } catch (e) { console.error("✗ gen-deploy-db fail — push nahi hua (migration ka -- deploy-peek: dekho).\n" + String(e?.stderr ?? e?.message ?? e).slice(-800)); process.exit(1); }
+    /* R-2106: the same migration-order check CI runs first — fail here, not after 29 min of CI. */
+    const mo = migrationOrderGate((a) => { const r = spawnSync(process.execPath, a, { encoding: "utf8" }); return { status: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` }; });
+    if (!mo.ok) { console.error(mo.message); process.exit(5); }
+    console.log(mo.message);
     /* R-910: the Auth.js/gateway code imports a Prisma client that is generated, not committed. */
     if (fs.existsSync("prisma/schema.prisma")) { try { sh("npx prisma generate"); } catch (e) { console.error("✗ prisma generate fail — push nahi hua.\n" + String(e.stderr ?? e.message ?? "").slice(-800)); process.exit(1); } }
     /* R-1814: what THIS worker is pushing, read before anything else can move HEAD. */
@@ -1023,7 +1074,10 @@ function main(argv) {
   if (cmd === "claim") {
     const { rest: ciRest, fixesRed } = parseCiFlags(rest);
     const { rest: claimArgs, wait, priority: askedPriority, waitMin } = parseQueueFlags(ciRest);
-    const [worktree, ...areas] = claimArgs;
+    const [worktree, ...rawAreas] = claimArgs;
+    /* R-2106: one form for every path (commas split, worktree prefix + production/ off) — printed below. */
+    const areas = normaliseClaimAreas(rawAreas, worktree);
+    if (areas.length && rawAreas.join("|") !== areas.join("|")) console.log(`(claim paths normalise kiye: ${areas.join(", ")})`);
     const own0 = readLocks().find((l) => l.card === card) ?? null;
     /* R-1973: `claim <CARD> --fixes-red` (no paths) = take the slot back for a card in ci-wait / ci-red. */
     const reclaim = fixesRed && own0 && !countsTowardCap(own0) && !worktree;
