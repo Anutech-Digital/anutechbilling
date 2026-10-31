@@ -55,7 +55,10 @@ describe("record-payment-dialog wiring (R-404, R-407, R-447, R-444)", () => {
     const fin = src.indexOf("} finally {", save);
     expect(save).toBeGreaterThan(src.indexOf("if (res.isReplay) {"));
     expect(fin).toBeGreaterThan(save);
-    expect(src.slice(fin, fin + 600)).toMatch(/onRecorded\?\.\([\s\S]*onOpenChange\(false\);/);
+    /* R-2184: the sheet closes right at the save (before the after-save steps can throw or
+       stall), so it is closed whatever they do — stronger than closing in `finally`. */
+    expect(src.slice(save, save + 80)).toMatch(/setValue\("reference", ""\);\s*onOpenChange\(false\);/);
+    expect(src.slice(fin, fin + 600)).toMatch(/onRecorded\?\.\(/);
   });
   it("R-447: invoice decision uses paymentBuyerPlace, and the quote state is filled before generate_invoice", () => {
     expect(src).toMatch(/paymentBuyerPlace\(\{ customer: c \?\? null, quote: q, lead: l \?\? null \}\)/);

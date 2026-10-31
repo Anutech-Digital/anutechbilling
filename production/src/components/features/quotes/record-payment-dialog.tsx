@@ -742,6 +742,8 @@ export function RecordPaymentDialog({
         .catch(() => { /* useGenerateInvoice already shows the reason */ });
     } else if (kind === "view-invoice" && action.href) {
       router.push(action.href as never);
+    } else if (kind === "record-another") {
+      onOpenChange(true);   // R-2184: the same sheet, fresh (reset on open), for the next part
     } else if (kind === "send-receipt" && paymentId) {
       router.push(`/quotes/${encodeURIComponent(quoteId)}?receipt=${encodeURIComponent(paymentId)}` as never);
     }
@@ -972,11 +974,15 @@ export function RecordPaymentDialog({
         return;
       }
 
-      /* R-407: the payment IS saved. Clear its reference at once, and close the sheet in
-         `finally` — Abhishek (7 Oct) saw the sheet stay open as "Record additional payment"
-         with the same UTR still filled, one click from being submitted again. Whatever the
-         invoice / toast steps below do, a saved payment always ends with the sheet closed. */
+      /* R-407: the payment IS saved. Clear its reference at once — Abhishek (7 Oct) saw the
+         sheet stay open as "Record additional payment" with the same UTR still filled, one
+         click from being submitted again.
+         R-2184 (Zoho audit 31 Oct): close the sheet HERE, once, not after the invoice /
+         raise-instalments steps below (6–12 s): the payments refetch above flipped the still-open
+         sheet to "Record additional payment", so the save looked failed. The toast that follows
+         names the receipt and offers "Record another". */
       setValue("reference", "");
+      onOpenChange(false);
       /* R-2099 (30 Oct): whether THIS sheet already tried the GST invoice — handed to onRecorded
          so a caller (Subscriptions onboarding) does not call generate_invoice a second time and
          show "INV-… already exists" next to "Paid in full · GST invoice INV-… issued". */
@@ -1122,12 +1128,16 @@ export function RecordPaymentDialog({
           })
         : tAll;
       const run = (action: PaymentToastAction) => () => runToastAction(action, res.newPaymentId ?? null);
+      /* R-2184: the receipt named first; "Record another" in the free button slot. */
+      const descLines = [...(t.receipt ? [t.receipt] : []), ...t.lines];
+      const primaryBtn = t.primary ?? t.another ?? null;
+      const secondaryBtn = t.secondary ?? (t.primary ? t.another ?? null : null);
       (t.tone === "warning" ? toast.warning : toast.success)(t.title, {
-        description: t.lines.length ? t.lines.join("\n") : undefined,
-        duration: t.tone === "warning" || t.primary ? 12000 : 6000,
-        action: t.primary ? { label: t.primary.label, onClick: run(t.primary) } : undefined,
-        cancel: t.secondary ? { label: t.secondary.label, onClick: run(t.secondary) } : undefined,
-        classNames: t.lines.length ? { description: "whitespace-pre-line" } : undefined,
+        description: descLines.length ? descLines.join("\n") : undefined,
+        duration: t.tone === "warning" || primaryBtn ? 12000 : 6000,
+        action: primaryBtn ? { label: primaryBtn.label, onClick: run(primaryBtn) } : undefined,
+        cancel: secondaryBtn ? { label: secondaryBtn.label, onClick: run(secondaryBtn) } : undefined,
+        classNames: descLines.length ? { description: "whitespace-pre-line" } : undefined,
       });
       } catch (e) {
         /* The payment is saved — never let a toast / invoice step leave the sheet open. */
@@ -1143,7 +1153,6 @@ export function RecordPaymentDialog({
           invoiceId: issuedInvoiceId,
           invoiceAttempted,
         });
-        onOpenChange(false);
       }
     },
     onError: (err) => toast.error((err as Error).message),
@@ -1765,6 +1774,9 @@ export function RecordPaymentDialog({
                     amount: Number(watchedAmount) || 0,
                     quoteAmount: expectedAmount,
                     priorReceived: alreadyReceived,
+                    /* R-2184: TDS + advance settle the quote too — "settled in full", not "₹54 outstanding". */
+                    tds: tdsDeducted ? tdsAmount : 0,
+                    creditApplied: appliedCreditAmount,
                     createsCustomer: isProspect,
                     /* Faithful to what record_payment actually keys off: a subscription is
                        created only when a line carries a billing commitment. Without
