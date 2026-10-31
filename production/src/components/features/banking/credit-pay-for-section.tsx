@@ -45,10 +45,11 @@ import {
 import {
   amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
-  paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice,
-  tdsRateToRecord, tdsToRecord,
+  paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
+  tdsRateToRecord, tdsToRecord, shortChoices, roundOffSplit, saleLineDomainProblem,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
+import { tdsSectionGuess, TDS_SECTION_CHOICES } from "@/lib/banking/tds-section";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { PAYER_RELATIONS, payerFromNarration, payerMatchesCustomer, type PayerRelation } from "@/lib/banking/customer-payer";
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
@@ -57,7 +58,7 @@ import { CreditPaySplit } from "./credit-pay-for-split";
 
 const NEW_CUSTOMER = "__new_customer__";
 
-export interface PayForCustomer { id: string; name: string; country?: string | null }
+export interface PayForCustomer { id: string; name: string; country?: string | null; gstin?: string | null; domain?: string | null }
 
 interface Props {
   transaction: BankTransactionRow;
@@ -196,7 +197,9 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const [subRenewal, setSubRenewal] = React.useState<string | null>(null);   // null = follows the term
   React.useEffect(() => { setCreateSub(true); setSubStart(transaction.txn_date); setSubRenewal(null); }, [transaction.id, transaction.txn_date, pickKey, mode]);
   const renewalShown = subRenewal ?? defaultRenewal(subStart || transaction.txn_date, monthly);
-  const datesBad = makesSub && createSub && (!subStart || renewalShown <= subStart);
+  /* R-2095: a 1-year commitment billed in parts renews at the end of the year, not on the next part. */
+  const renewalProblem = makesSub && createSub && saleShown ? splitRenewalProblem(subStart, renewalShown, saleCycle, monthly) : null;
+  const datesBad = makesSub && createSub && (!subStart || renewalShown <= subStart || Boolean(renewalProblem));
   const termText = mode === "sale" ? saleTermText(subStart, renewalShown) : null;
 
   /* ── 3. Amount check ─────────────────────────────────────────────────────────── */
@@ -248,6 +251,11 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
   const tdsAmount = check ? tdsToRecord(check, shortChoice) : 0;
   const tdsRate = check ? tdsRateToRecord(check, taxable) : null;
+  /* R-2095: the section follows the rate and the customer's PAN type (lib/banking/tds-section); changeable. */
+  const tdsGuess = tdsSectionGuess(check?.kind === "short" ? check.tdsRatePct : null, customer?.gstin ?? null);
+  const [tdsSectionPick, setTdsSectionPick] = React.useState<string | null>(null);
+  React.useEffect(() => { setTdsSectionPick(null); }, [pickKey, mode, customerId]);
+  const tdsSection = tdsSectionPick ?? tdsGuess.section;
   const saleInvalid = saleInvalidOf(lines, preview.taxable);
   const payerUnanswered = payerMismatch && !payerAnswer;
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
@@ -260,6 +268,30 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
       subStart: makesSub && createSub ? subStart : null,
       subRenewal: makesSub && createSub ? subRenewal : null,
     };
+    /* R-2095: a round-off (≤ ₹50) on one sale / item settles it in full — saved through the split
+       RPC, which books the difference (R-2098's rule) in the same transaction. */
+    const roundOff = !relink && shortChoice === "round_off" && check?.kind === "short" && (mode === "sale" || (mode === "item" && picked))
+      ? roundOffSplit(mode === "sale" ? { mode: "sale", saleTotal: preview.total } : { mode: "item", item: picked! })
+      : null;
+    if (roundOff) {
+      try {
+        if (payer && payerToRecord) {
+          await setLinePayer.mutateAsync({ transactionId: transaction.id, customerId, payer, relation: payerToRecord.relation, note: payerToRecord.note });
+        }
+        const r = await splitPay.mutateAsync({
+          transactionId: transaction.id, customerId, customerName: customer?.name ?? null,
+          items: roundOff.items,
+          sale: roundOff.saleAmount !== null
+            ? { lines: saleLinesPayload(lines), billingCycle: saleCycle, createSubscription: makesSub ? createSub : false,
+                subStart: subArgs.subStart, subRenewal: subArgs.subRenewal, amount: roundOff.saleAmount }
+            : null,
+          rest: roundOff.rest,
+        });
+        setResult(r);
+        onSaved?.();
+      } catch { /* the hook toasts */ }
+      return;
+    }
     if (mode === "split") {
       try {
         if (payer && payerToRecord) {
@@ -282,13 +314,13 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     const target: RelinkTarget = mode === "item" && picked
       ? {
           path: "item", transactionId: transaction.id, quoteId: picked.quote_id, invoiceId: picked.invoice_id,
-          tdsAmount, tdsRatePct: tdsRate, ...subArgs,
+          tdsAmount, tdsRatePct: tdsRate, tdsSection, ...subArgs,
         }
       : mode === "sale"
         ? {
             path: "new_sale", transactionId: transaction.id, customerId, lines, billingCycle: saleCycle,
             createSubscription: subArgs.createSubscription ?? false, subStart: subArgs.subStart, subRenewal: subArgs.subRenewal,
-            tdsAmount, tdsRatePct: tdsRate,
+            tdsAmount, tdsRatePct: tdsRate, tdsSection,
           }
         : { path: "advance", transactionId: transaction.id, customerId };
     try {
@@ -338,6 +370,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
   const saleEditorNode = (
     <SaleEditor
+      customerDomain={customer?.domain ?? null}
       lines={lines}
       catalog={activeCatalog}
       gstRate={gstRate}
@@ -471,7 +504,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                     <span className="block">Renews on</span>
                     <Input type="date" value={renewalShown} onChange={(e) => setSubRenewal(e.target.value || null)} aria-label="Subscription renewal date" />
                   </label>
-                  {datesBad && <p className="text-xs text-rose-ink sm:col-span-2">The renewal date must be after the start date.</p>}
+                  {datesBad && <p className="text-xs text-rose-ink sm:col-span-2">{renewalProblem ?? "The renewal date must be after the start date."}</p>}
                   {/* R-2053: the term once, then (R-2052) how far the money pays — no date twice. */}
                   {(termText || paidUp) && (
                     <div className="text-xs sm:col-span-2 space-y-0.5 tabular-nums">
@@ -487,7 +520,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           )}
 
           {/* 3. Amount check */}
-          {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice} />}
+          {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice}
+            section={tdsSection} sectionReason={tdsSectionPick ? null : tdsGuess.reason} onSection={setTdsSectionPick} noRoundOff={Boolean(relink)} />}
 
           {/* R-2095 (staging, 30 Oct): a refused save left the drawer open with nothing said — the
               server's reason is shown here too, not only as a toast. */}
@@ -547,9 +581,11 @@ function OpenItemRow({ item, credit, selected, onPick }: { item: OpenItem; credi
   );
 }
 
-function AmountCheckBox({ check, credit, due, choice, onChoice }: {
+function AmountCheckBox({ check, credit, due, choice, onChoice, section, sectionReason, onSection, noRoundOff }: {
   check: AmountCheck; credit: number; due: number; choice: ShortChoice; onChoice: (c: ShortChoice) => void;
+  section: string; sectionReason: string | null; onSection: (s: string) => void; noRoundOff?: boolean;
 }) {
+  const choices = shortChoices(check).filter((c) => !(noRoundOff && c.value === "round_off"));
   if (check.kind === "exact") {
     return <p className="text-xs text-emerald inline-flex items-center gap-1"><Icon name="check" size={12} /> {rupee(credit)} received = {rupee(due)} due.</p>;
   }
@@ -566,8 +602,8 @@ function AmountCheckBox({ check, credit, due, choice, onChoice }: {
         {rupee(credit)} received is <b>{rupee(check.shortBy)} less</b> than {rupee(due)} due.
         {check.tdsRatePct !== null && <> That is {check.tdsRatePct}% TDS on the taxable value.</>}
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5" role="group" aria-label="Why less was received">
-        {([["tds", `TDS deducted (${rupee(check.shortBy)})`], ["part", `Part payment — ${rupee(check.shortBy)} stays due`]] as const).map(([k, label]) => (
+      <div className={`grid grid-cols-1 gap-1.5 ${choices.length > 2 ? "sm:grid-cols-3" : "sm:grid-cols-2"}`} role="group" aria-label="Why less was received">
+        {choices.map(({ value: k, label }) => (
           <button
             key={k}
             type="button"
@@ -579,7 +615,19 @@ function AmountCheckBox({ check, credit, due, choice, onChoice }: {
           </button>
         ))}
       </div>
-      {choice === "tds" && <p className="text-xs text-ink-3">Booked as TDS receivable (section 194J) — collect the customer&apos;s Form 16A.</p>}
+      {choice === "tds" && (
+        <div className="space-y-1">
+          <label className="flex flex-wrap items-center gap-2 text-xs text-ink-2">
+            <span>TDS section</span>
+            <select value={section} onChange={(e) => onSection(e.target.value)} aria-label="TDS section"
+              className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40">
+              {TDS_SECTION_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          </label>
+          {sectionReason && <p className="text-xs text-ink-3">{sectionReason}</p>}
+          <p className="text-xs text-ink-3">Booked as TDS receivable (section {section}) — collect the customer&apos;s Form 16A.</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -591,7 +639,9 @@ type CatalogRow = NonNullable<ReturnType<typeof useItems>["data"]>[number];
    the same commitment), then seats and the unit price — R-2050: ₹/user/YEAR on Annual, ₹/user/month
    on Monthly flex (the line's own rate, never below the Workspace list floor). Under the lines, Payment — how
    often an annual commitment is billed (BILLING_CYCLE_OPTIONS); Monthly flex is monthly only. */
-function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPayCycle, dueNow, laterText, onAdd, onChange, onRemove }: {
+function SaleEditor({ customerDomain, lines, catalog, gstRate, preview, payment, payCycle, onPayCycle, dueNow, laterText, onAdd, onChange, onRemove }: {
+  /** R-2095: shown as each subscription line's default end-domain. */
+  customerDomain: string | null;
   lines: SaleLine[];
   catalog: CatalogRow[];
   gstRate: number;
@@ -645,6 +695,15 @@ function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPay
                   aria-label={`Unit price ${unit}`} />
               </label>
             </div>
+            {/* R-2095 (Sept): Zoho bills per end-domain — a subscription line names its own; empty = the customer's. */}
+            {l.cycle !== "one_time" && (
+              <label className="block text-xs text-ink-3 space-y-0.5">
+                <span className="block">End domain</span>
+                <Input value={l.domain ?? ""} onChange={(e) => onChange(idx, { domain: e.target.value })}
+                  placeholder={customerDomain ? `${customerDomain} (customer's domain)` : "example.com"} aria-label="End domain" />
+                {saleLineDomainProblem(l.domain) && <span className="block text-rose-ink">{saleLineDomainProblem(l.domain)}</span>}
+              </label>
+            )}
             <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(shownUnitPrice(l), { decimals: Number.isInteger(shownUnitPrice(l)) ? 0 : 2 })}{unit.replace(/^₹/, "")} = {rupee(l.qty * l.rate)}{termWord}</p>
           </div>
         );
@@ -653,15 +712,15 @@ function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPay
         <option value="" disabled>{lines.length ? "＋ Add another product…" : "What was sold? Select a product…"}</option>
         {catalog.map((i) => <option key={i.id} value={i.id}>{i.name}{i.vendor ? ` · ${i.vendor}` : ""}</option>)}
       </select>
-      {saleTermsMixed(lines) && <p className="text-xs text-rose-ink">Monthly flex cannot be on one sale with yearly or one-time products — record them as separate sales (or make them all one commitment).</p>}
+      {saleTermsMixed(lines) && <p className="text-xs text-rose-ink">Flexible (monthly) cannot be on one sale with yearly or one-time products — record them as separate sales (or make them all one commitment).</p>}
       {payment.options.length > 0 && (
         <label className="block text-xs text-ink-3 space-y-0.5">
-          <span className="block">Payment</span>
+          <span className="block">Payment frequency</span>
           <select
             value={payCycle}
             disabled={payment.options.length === 1}
             onChange={(e) => onPayCycle(e.target.value as BillingCycle)}
-            aria-label="Payment"
+            aria-label="Payment frequency"
             className={selectCls}
           >
             {payment.options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
@@ -734,5 +793,6 @@ function PayerWarning({ payerName, customerName, answer, onAnswer, onWrongCustom
 
 /** A new sale that cannot be saved: no line, a line without product / seats / price, ₹0, or mixed terms. */
 function saleInvalidOf(lines: readonly SaleLine[], taxable: number): boolean {
-  return lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0)) || taxable <= 0 || saleTermsMixed(lines);
+  return lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0) || saleLineDomainProblem(l.domain) !== null)
+    || taxable <= 0 || saleTermsMixed(lines);
 }

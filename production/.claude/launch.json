@@ -6,6 +6,19 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "ResellerOS local + data gateway (R-2125)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--input-type=module",
+        "-e",
+        "process.env.DATA_GATEWAY='1'; process.env.NEXT_PUBLIC_DATA_GATEWAY='1'; process.argv.splice(1, 0, 'scripts/dev-local.mjs'); await import('./scripts/dev-local.mjs');",
+        "--",
+        "-p",
+        "3001"
+      ],
+      "port": 3001
     }
   ]
 }

@@ -283,6 +283,11 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
 
   /* R-2095: the owner chose "Save without contact" once — the next submit of this form saves. */
   const noContactOk = React.useRef(false);
+  const NO_CONTACT_TOAST = "new-customer-no-contact";
+  /* R-2095 (2nd gap): the form says "no contact" itself and offers the choice in its own footer — in
+     the bank reconcile drawer this form is a sheet over a modal sheet, and the toast below it cannot
+     be clicked (the modal blocks every click outside it). */
+  const [contactMissing, setContactMissing] = React.useState(false);
   const onSubmit = async (data: CustomerFormData) => {
     // Export (non-India) customers have no GSTIN / Indian state code — never
     // persist a stale one if the user typed then switched country.
@@ -309,10 +314,12 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       const problem = newCustomerReachProblem(data);
       if (problem) {
         form.setError("contact_email", { type: "manual", message: problem });
+        setContactMissing(true);
         toast.error("Add an email or a phone number", {
+          id: NO_CONTACT_TOAST,
           description: "The invoice and the payment reminder need somewhere to go. One of the two is enough. No contact at all? Save without one and add it later.",
           duration: 15000,
-          action: { label: "Save without contact", onClick: () => { noContactOk.current = true; form.clearErrors("contact_email"); void onSubmit(data); } },
+          action: { label: "Save without contact", onClick: () => { noContactOk.current = true; setContactMissing(false); form.clearErrors("contact_email"); void onSubmit(data); } },
         });
         return;
       }
@@ -433,6 +440,16 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     onTreatmentChange,
     panLocked: !!panFromForm,
     onSubmit,
+    /* R-2095: true after a save refused for no email / phone — the form shows "Save without contact". */
+    contactMissing,
+    saveWithoutContact: () => {
+      /* The "add an email" toast would still be up after the save — take it down. */
+      toast.dismiss(NO_CONTACT_TOAST);
+      noContactOk.current = true;
+      setContactMissing(false);
+      form.clearErrors("contact_email");
+      return handleSubmit(onSubmit)();
+    },
     /* The state field sits on the Address tab, which may be closed — say what is missing
        instead of a Save button that silently does nothing (R-173). */
     submit: handleSubmit(onSubmit, (errs) => {

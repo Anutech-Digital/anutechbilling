@@ -14846,6 +14846,15 @@ export type Database = {
         Args: { p_label?: string; p_tenant: string }
         Returns: Json
       }
+      backup_tenant_tiered: {
+        Args: {
+          p_keep: number
+          p_label?: string
+          p_only_if_changed?: boolean
+          p_tenant: string
+        }
+        Returns: Json
+      }
       bank_account_current_balance: {
         Args: { p_account_id: string }
         Returns: number

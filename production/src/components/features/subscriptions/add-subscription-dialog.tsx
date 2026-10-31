@@ -35,9 +35,10 @@ import { matchContacts } from "@/lib/contacts/match-contacts";
 import {
   subscriptionProducts, vendorSelectOptions, productsForVendor, findProduct, judgePrice,
   billingTerms, annualise, firstInvoiceTaxable, BILLING_CHOICES, convertPriceForChoice,
-  type CatalogProduct, type BillingChoice, type PriceSwitchMemo,
+  COMMITMENT_CHOICES, choiceParts, choiceFromParts, frequencyChoicesFor,
+  type CatalogProduct, type BillingChoice, type PriceSwitchMemo, type CommitmentChoice,
 } from "@/lib/subscriptions/catalog-options";
-import type { Item } from "@/lib/supabase/database.types";
+import type { BillingCycle, Item } from "@/lib/supabase/database.types";
 
 /** Display names for the vendor enum. All seven — the DB has always allowed them. */
 const VENDOR_LABEL: Record<Item["vendor"], string> = {
@@ -1306,7 +1307,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               )}
             </FormField>
 
-            <FormField label="Customer Company Name *" required htmlFor="custName">
+            <FormField label="Customer Company Name" required htmlFor="custName">
               <Input
                 id="custName"
                 placeholder="e.g. Sharma Cloud Solutions"
@@ -1345,7 +1346,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormField label="Primary Customer Domain *" required htmlFor="subDomain">
+            <FormField label="Primary Customer Domain" required htmlFor="subDomain">
               <Input
                 id="subDomain"
                 placeholder="e.g. example.test"
@@ -1495,7 +1496,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
 
           {/* Vendor & Plan Selection */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormField label="Cloud Vendor *" required htmlFor="vendor">
+            <FormField label="Cloud Vendor" required htmlFor="vendor">
               <Select value={vendor} onValueChange={(val: any) => handleVendorChange(val)}>
                 <SelectTrigger id="vendor">
                   <SelectValue />
@@ -1513,7 +1514,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               </Select>
             </FormField>
 
-            <FormField label="Plan / SKU Product *" required htmlFor="planSelect">
+            <FormField label="Plan / SKU Product" required htmlFor="planSelect">
               {!isCustomPlan ? (
                 <Select value={itemId ?? ""} onValueChange={handlePlanSelect}>
                   <SelectTrigger id="planSelect">
@@ -1576,26 +1577,45 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
             </FormField>
           </div>
 
-          {/* Billing period — decides what the price field MEANS, so it sits above it. */}
-          <FormField label="Billing Period *" required htmlFor="billingChoice">
-            <Select value={billingChoice} onValueChange={(v) => changeBillingChoice(v as BillingChoice)}>
-              <SelectTrigger id="billingChoice">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {BILLING_CHOICES.map((c) => (
-                  <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="mt-1 text-2xs leading-snug text-ink-3">
-              {BILLING_CHOICES.find((c) => c.value === billingChoice)?.hint}
-            </p>
-          </FormField>
+          {/* Commitment + payment frequency — decide what the price field MEANS, so they sit
+              above it. R-2095: two explicit choices (Annual commitment paid monthly must be
+              possible), the same two Correct details and the bank New sale ask. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <FormField label="Commitment" required htmlFor="commitmentChoice">
+              <Select value={choiceParts(billingChoice).commitment}
+                onValueChange={(v) => changeBillingChoice(choiceFromParts(v as CommitmentChoice, choiceParts(billingChoice).frequency))}>
+                <SelectTrigger id="commitmentChoice">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {COMMITMENT_CHOICES.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+            <FormField label="Payment frequency" required htmlFor="billingChoice">
+              <Select value={choiceParts(billingChoice).frequency}
+                disabled={choiceParts(billingChoice).commitment === "flex"}
+                onValueChange={(v) => changeBillingChoice(choiceFromParts(choiceParts(billingChoice).commitment, v as BillingCycle))}>
+                <SelectTrigger id="billingChoice">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {frequencyChoicesFor(choiceParts(billingChoice).commitment).map((f) => (
+                    <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+          </div>
+          <p className="-mt-2 text-2xs leading-snug text-ink-3">
+            {BILLING_CHOICES.find((c) => c.value === billingChoice)?.hint}
+          </p>
 
           {/* Seats, Price & Financial Summary */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <FormField label="License Seats *" required htmlFor="seats">
+            <FormField label="License Seats" required htmlFor="seats">
               <Input
                 id="seats"
                 type="number"
@@ -1677,7 +1697,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
 
           {/* Dates */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormField label="Start Date *" required htmlFor="startDate">
+            <FormField label="Start Date" required htmlFor="startDate">
               <Input
                 id="startDate"
                 type="date"
@@ -1691,7 +1711,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               </p>
             </FormField>
 
-            <FormField label="Renewal / Expiry Date *" required htmlFor="renewalDate">
+            <FormField label="Renewal / Expiry Date" required htmlFor="renewalDate">
               <Input
                 id="renewalDate"
                 type="date"
@@ -1709,13 +1729,15 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                     ? "End of the 12-month commitment. Invoices still go out monthly."
                     : terms.billingCycle === "quarterly"
                       ? "End of the 12-month commitment. Invoices go out every 3 months."
+                      : terms.billingCycle === "half_yearly"
+                        ? "End of the 12-month commitment. Invoices go out every 6 months."
                       : "End of the 12-month term, when the next yearly invoice is due."}
               </p>
             </FormField>
           </div>
 
           {/* Payment Status & Terms */}
-          <FormField label="Payment & Billing Terms (Special Cases Handling) *">
+          <FormField label="Payment & Billing Terms (Special Cases Handling)" required>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <button
                 type="button"
@@ -1794,7 +1816,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               screen said when it was expected — and the app's reminder ladder hangs
               off an invoice this path deliberately never raises. */}
           {paymentTerms === "credit" && (
-            <FormField label="Payment due date *" required htmlFor="paymentDueDate">
+            <FormField label="Payment due date" required htmlFor="paymentDueDate">
               {/* REQUIRED and blank by default. The earlier version pre-filled start + 30
                   and fell back to it when empty; that made it possible to activate credit
                   against a date nobody had agreed. The submit guard above is the real
@@ -1843,9 +1865,9 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                 <div className="mt-1 text-2xs font-semibold text-ink-2">
                   {/* R-826: the first invoice comes from the same split the cron uses
                       (floor per invoice, remainder on the last), not a guess. */}
-                  {terms.billingCycle === "quarterly" ? "Invoiced every 3 months" : "Invoiced monthly"} —{" "}
+                  {terms.billingCycle === "quarterly" ? "Invoiced every 3 months" : terms.billingCycle === "half_yearly" ? "Invoiced every 6 months" : "Invoiced monthly"} —{" "}
                   <b>{rupee(grossAmount(firstInvoiceTaxable(storedTaxable, terms), TAX_RATE_PCT))}</b>
-                  {" "}due {terms.billingCycle === "quarterly" ? "this quarter" : "this month"},
+                  {" "}due {terms.billingCycle === "quarterly" ? "this quarter" : terms.billingCycle === "half_yearly" ? "this half-year" : "this month"},
                   × {terms.invoicesPerTerm} over the committed year.
                 </div>
               )}

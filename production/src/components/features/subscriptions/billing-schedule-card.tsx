@@ -24,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn, rupee, formatDate } from "@/lib/utils";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { subscriptionSchedule, nextTermSchedule, currentTermStart } from "@/lib/billing/subscription-schedule";import { periodLastDay } from "@/lib/billing/schedule";
-import { cycleScheduleLabel } from "@/lib/quotes/billing";
+import { commitmentLabel, FREQUENCY_LABEL } from "@/lib/subscriptions/commitment-change";
 import { useScheduleInvoices } from "@/lib/queries/subscriptions";
 import {
   scheduleInvoices, nextUninvoiced, nextTermShowsNext, scheduleCountLabel, scheduleCounts, termAddSeatInvoices, shownTermTotal,
@@ -77,16 +77,14 @@ export function BillingScheduleCard({ subscription, todayISO }: {
     );
   }
 
-  const termMonths = subscription.term_months ?? 12;
-  const years = termMonths / 12;
-  const termLabel = termMonths % 12 === 0
-    ? `${years} ${years === 1 ? "year" : "years"}`
-    : `${termMonths} months`;
+  /* R-2095 (owner, 30 Oct): the same two facts, in the same words, as Correct details / Add
+     subscription / New sale — Commitment and Payment frequency. */
+  const paidEvery = FREQUENCY_LABEL[subscription.billing_cycle ?? "yearly"] ?? "Yearly";
 
   return (
     <Card
       title="Billing schedule"
-      sub={`${termLabel} term · ${cycleScheduleLabel(subscription.billing_cycle)}`}
+      sub={`${commitmentLabel(subscription.term_months)} · Payment frequency: ${paidEvery}`}
     >
       <ScheduleTable rows={current} todayISO={todayISO} label={ended ? "Billing dates (ended)" : "This term"} invoiced={invoiced} showNext={!ended} extras={extras} />
 

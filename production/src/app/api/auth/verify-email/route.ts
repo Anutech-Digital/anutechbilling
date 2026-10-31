@@ -9,6 +9,9 @@
  * workspace of their own), a join request goes to that owner and the response carries
  * `joinRequestedTo` so the page can say so. The signup route deliberately does NOT do this
  * before verification.
+ *
+ * R-2119 (GP-05, G-PERSONAL): a personal password signup (app_metadata.signup_kind 'personal')
+ * gets its personal workspace HERE, behind PERSONAL_SIGNUP_ENABLED — never a domain join request.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { trustedOrigin } from "@/lib/app-url";
@@ -18,6 +21,8 @@ import { routeVerifiedSignupToCompany } from "@/lib/auth/tenant-match";
 import { landingAfterVerify } from "@/lib/auth/verify-landing";
 import { startSessionAfterVerify } from "@/server/auth/email-link";
 import { rateLimit, clientIp } from "@/lib/security/rate-limit";
+import { personalSignupEnabled } from "@/lib/personal/signup-flag";
+import { createPersonalWorkspace, finishPersonalWorkspace, personalName } from "@/lib/personal/personal-workspace.server";
 
 export async function POST(request: NextRequest) {
   const rl = rateLimit(`verify-email:${clientIp(request.headers)}`, { limit: 20, windowMs: 10 * 60_000 });
@@ -34,13 +39,28 @@ export async function POST(request: NextRequest) {
     try {
       const { data } = await admin.auth.admin.getUserById(result.userId);
       const fullName = (data?.user?.user_metadata?.full_name as string | undefined) ?? null;
-      const routed = await routeVerifiedSignupToCompany({
-        authUserId: result.userId,
-        email:      result.email,
-        fullName,
-        appUrl:     originOf(request),
-      });
-      joinRequestedTo = routed?.tenantName ?? null;
+      /* R-2119 (GP-05): a personal signup (app_metadata — only the server can set it) is NEVER
+         routed to a company's join request by its email domain. Its workspace is made HERE, now
+         that the address is proven: tenant + users row, then consent tenant + identity link. */
+      if (data?.user?.app_metadata?.signup_kind === "personal") {
+        if (personalSignupEnabled()) {
+          const ws = await createPersonalWorkspace(admin, {
+            userId: result.userId,
+            email: result.email,
+            fullName: personalName(fullName, result.email),
+          });
+          if (ws.ok && ws.created) await finishPersonalWorkspace(admin, result.userId, ws.tenantId);
+          else if (!ws.ok) console.warn("[verify-email] personal workspace not created:", ws.code);
+        }
+      } else {
+        const routed = await routeVerifiedSignupToCompany({
+          authUserId: result.userId,
+          email:      result.email,
+          fullName,
+          appUrl:     originOf(request),
+        });
+        joinRequestedTo = routed?.tenantName ?? null;
+      }
     } catch (e) {
       console.warn("[verify-email] company routing skipped:", (e as Error).message);
     }

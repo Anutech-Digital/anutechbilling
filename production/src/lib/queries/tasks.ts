@@ -65,9 +65,11 @@ function todayBoundariesIST(): { startISO: string; endISO: string } {
 // ────────────────────────────────────────────────────────────────
 
 /** All tasks in the tenant. Used by the /tasks list page. */
-export function useTasks(bucket: TaskBucket = "all") {
+/** `enabled` (R-2175): the TopBar bell passes false for a personal session (no tasks there). */
+export function useTasks(bucket: TaskBucket = "all", opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["tasks", bucket],
+    enabled: opts.enabled ?? true,
     queryFn: async (): Promise<TaskWithLink[]> => {
       const supabase = createClient();
       // Embed the linked entity's display name (lead company / customer name /

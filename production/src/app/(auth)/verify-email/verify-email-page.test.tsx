@@ -10,6 +10,7 @@ vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams("
 vi.mock("@/components/features/auth/resend-verification", () => ({ ResendVerification: () => null }));
 
 import VerifyEmailPage from "./page";
+import { VERIFY_LANDINGS } from "@/lib/auth/verify-landing";
 
 const go = vi.fn();
 let reply: Record<string, unknown> = {};
@@ -28,6 +29,33 @@ describe("R-1926 /verify-email", () => {
     await waitFor(() => expect(go).toHaveBeenCalledWith("/setup?welcome=1"));
     expect(screen.getByText(/Opening your setup/i)).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
+  });
+
+  it("R-2119: a personal signup signed in by the link → straight to /money, no Sign in button", async () => {
+    reply = { ok: true, email: "ravi@gmail.test", joinRequestedTo: null, signedIn: true, next: "/money" };
+    render(<VerifyEmailPage />);
+    await waitFor(() => expect(go).toHaveBeenCalledWith("/money"));
+    expect(screen.queryByText(/Opening your setup/i)).toBeNull();
+    expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
+  });
+
+  it("R-2119: every landing the server can give is followed (same list as verify-landing.ts)", async () => {
+    for (const next of VERIFY_LANDINGS) {
+      go.mockReset(); cleanup();
+      reply = { ok: true, signedIn: true, next };
+      render(<VerifyEmailPage />);
+      await waitFor(() => expect(go).toHaveBeenCalledWith(next));
+    }
+  });
+
+  it("R-2119: a same-site path that is not a landing (e.g. /money/../admin, /settings) is never followed", async () => {
+    for (const next of ["/settings", "/money/../admin", "//evil.example", "/money?x=1"]) {
+      go.mockReset(); cleanup();
+      reply = { ok: true, email: "a@b.test", signedIn: true, next };
+      render(<VerifyEmailPage />);
+      await screen.findByRole("link", { name: "Sign in" });
+      expect(go).not.toHaveBeenCalled();
+    }
   });
 
   it("a destination outside the allowed two is never followed", async () => {

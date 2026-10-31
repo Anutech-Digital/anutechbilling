@@ -50,7 +50,7 @@ describe("R-1433 InvoiceSubscriptionCard", () => {
     expect(await screen.findByText("Business Starter")).toBeTruthy();
     expect(screen.getByText("acme.in")).toBeTruthy();
     expect(screen.getByText("Active")).toBeTruthy();
-    expect(screen.getByText(/Annual · billed yearly/)).toBeTruthy();
+    expect(screen.getByText(/Annual · paid yearly/)).toBeTruthy();
     expect(screen.getByText(/Renews/).parentElement?.textContent).toMatch(/2027/);
     const link = screen.getByRole("link", { name: /Open subscription/ });
     expect(link.getAttribute("href")).toBe(`/subscriptions?open=${S}&q=acme.in`);

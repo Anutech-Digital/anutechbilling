@@ -24,7 +24,7 @@ import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function POST(_req: Request, props: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -47,10 +47,14 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
     .from("quotes").select("id").eq("id", params.id).eq("tenant_id", me.tenant_id).maybeSingle();
   if (!quote) return NextResponse.json({ error: "Quote not found." }, { status: 404 });
 
+  /* R-2095 (Sept): the reconcile new sale says afterSale — raise the paid part's invoice only, never
+     a next-period payment request at sale time (staging: a 'sent' H2 request 2 s after the sale). */
+  const body = (await req.json().catch(() => null)) as { afterSale?: unknown } | null;
   const out = await raiseDueInstalmentsForQuote({
     supabase: admin, quoteId: quote.id, tenantId: me.tenant_id, todayISO: istToday(),
     /* R-2095: the owner's own Generate — a part freed by a full credit note is billed again. */
     rebillCredited: true,
+    noNewRequests: body?.afterSale === true,
   });
   return NextResponse.json(out);
 }

@@ -17,6 +17,11 @@
  *   3. finish_panel_account_outbox: done (dms_user_id kept) / wait 1 h (DMS gate shut, held,
  *      busy — no attempt used) / retry with back-off, the 5th failure → 'failed'.
  *
+ * R-2142 (GP-D3): a row with op 'deactivate' (a personal account erase, queued by
+ * queue_panel_account_deactivate) goes through the same claim → send → finish, but sends DMS
+ * `customer.deactivate` (login off, link cleared, services kept) — processPanelAccountRow picks
+ * the command by op. DMS's own gate for it is ENGINE_CUSTOMER_DEACTIVATE_LIVE.
+ *
  * PANEL_ACCOUNTS_LIVE ≠ "1" or no DMS command key → nothing is claimed or sent; one log line
  * and 200 { skipped: "not_configured" }, so the rows wait until it is configured.
  */

@@ -10,9 +10,10 @@ import { identityFromHeaders } from "@/server/postgrest/identity";
 import { gatewayEnabled } from "@/server/postgrest/fetch";
 import { PgrstError } from "@/server/postgrest/parse";
 import {
-  addGatewayRows, embeddedRowsInBody, gatewayGuard, gatewayRole, isGatewayLimitedRole, logRefusal, refusalResponse,
-  rowsFromContentRange, selectHasEmbeds,
+  addGatewayRows, embeddedRowsInBody, gatewayGuard, gatewayRole, isGatewayLimitedRole, isPersonalCaller, logRefusal,
+  refusalResponse, rowsFromContentRange, selectHasEmbeds,
 } from "@/server/postgrest/gateway-limits";
+import { checkPersonalRequest } from "@/server/postgrest/personal-allowlist";
 import { BodyTooLargeError, bodyTooLargeJson, readBodyCapped } from "@/server/postgrest/body-limit";
 import {
   maskContactsInBody, maskedQueryRefusal, mustMaskContacts, stripMaskedContactWrites, touchesContactTables,
@@ -49,7 +50,18 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
        leads / customers / contacts with the phone and email masked — server/postgrest/contact-mask.ts. */
     let maskContacts = false;
     if (identity.mode === "user") {
-      const role = await gatewayRole(identity.userId);
+      const caller = await gatewayRole(identity.userId);
+      const role = caller.role;
+      /* R-2125 (GP-10): a personal session (role personal OR workspace_kind personal) reaches only
+         the tables / RPCs on server/postgrest/personal-allowlist.ts — embeds included. Deny by
+         default: 403 + one gateway_refused log line. Its R-1005 limits still apply after this. */
+      if (isPersonalCaller(caller)) {
+        const refusal = checkPersonalRequest(req.method, joined, req.nextUrl.searchParams);
+        if (refusal) {
+          logRefusal(refusal, { userId: identity.userId, role, workspaceKind: caller.workspaceKind, method: req.method, path: joined });
+          return refusalResponse(refusal);
+        }
+      }
       maskContacts = mustMaskContacts(role);
       if (isGatewayLimitedRole(role)) {
         limitedUser = identity.userId;

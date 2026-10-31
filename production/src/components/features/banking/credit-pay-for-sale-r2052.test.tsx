@@ -50,7 +50,7 @@ function newSale(credit: number, payment: string) {
   fireEvent.click(screen.getByRole("button", { name: "A new sale (no quote yet)" }));
   fireEvent.change(screen.getByLabelText("Add a product"), { target: { value: "GW-ST" } });
   fireEvent.change(screen.getByLabelText("Seats"), { target: { value: "10" } });
-  fireEvent.change(screen.getByLabelText("Payment"), { target: { value: payment } });
+  fireEvent.change(screen.getByLabelText("Payment frequency"), { target: { value: payment } });
 }
 /* R-2053: the old hint gave way to the term line ("Renews on" is the day the next year starts). */
 const TERM = "1 year: 23-10-2026 to 22-10-2027 · renews 23-10-2027";
@@ -72,7 +72,7 @@ describe("R-2052 Create subscription: Renews on stays a year, paid-up line besid
     newSale(9558, "quarterly");
     expect(screen.getByText(/^Paid up to 22-01-2027 · next bill ₹9,558 on 23 Jan 2027/)).toBeTruthy();
     expect((screen.getByLabelText("Subscription renewal date") as HTMLInputElement).value).toBe("2027-10-23");
-    fireEvent.change(screen.getByLabelText("Payment"), { target: { value: "yearly" } });
+    fireEvent.change(screen.getByLabelText("Payment frequency"), { target: { value: "yearly" } });
     expect(screen.queryByText(/Paid up to/)).toBeNull();
     expect(screen.getByText(TERM)).toBeTruthy();   // the term stays; only the paid-up line goes
   });

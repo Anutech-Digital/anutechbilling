@@ -55,6 +55,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
     verification, setVerification, watchedGstin,
     isForeign, foreignStates, countryReg, onCountryChange, submit,
     gstTreatment, gstTreatmentAuto, gstTreatmentMeaning, onTreatmentChange, panLocked,
+    contactMissing, saveWithoutContact,
   } = useCustomerForm({
     customer,
     open,
@@ -435,6 +436,14 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
+            {/* R-2095: same choice as the toast, inside the form — opened from the bank reconcile
+                drawer this sheet sits over a modal sheet and the toast cannot be clicked. */}
+            {contactMissing && !isEdit && (
+              <Button type="button" variant="default" loading={isSubmitting || isPending} onClick={() => void saveWithoutContact()}
+                title="Save this customer with no email or phone — it reads 'No email or phone yet' until one is added">
+                Save without contact
+              </Button>
+            )}
             <Button type="submit" variant="primary" loading={isSubmitting || isPending}>
               {isEdit ? "Save changes" : "Add customer"}
             </Button>

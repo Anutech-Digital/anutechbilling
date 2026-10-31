@@ -18,6 +18,7 @@ export const PUSH_GUARD_SUITES = [
   // ── ratchets ──
   "src/lib/a11y/a11y-ratchet.test.tsx",
   "tests/gen-deploy-db.test.ts",
+  "tests/migrations-deploy-user-ratchet.test.ts", // R-2118: auth.* DDL in a deployed migration runs as postgres
   "src/lib/errors/toast-error-r300.test.ts",
   "src/lib/a11y/a11y-r303.test.ts",
   "src/lib/a11y/a11y-r309.test.ts",
@@ -31,6 +32,7 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/checkout/live-key-staging-ratchet.test.ts", // R-2155: no Razorpay order/link/verify without the staging live-key guard
   "src/app/api/admin-client-ratchet.test.ts",
   "src/app/api/role-gate-ratchet.test.ts", // R-732
+  "src/app/api/personal-gate-ratchet.test.ts", // R-2117: every route under a personal /api prefix is listed + owner-pinned
   "src/app/(app)/page-widths-ratchet.test.ts", // R-1489: §20 page widths
   "src/lib/quotes/discount-copies-ratchet.test.ts", // R-1133: no new hand-written quote discount
   "tests/ops/gen-api-doc.test.ts", // R-1665: docs/API.md regenerated when a route changes

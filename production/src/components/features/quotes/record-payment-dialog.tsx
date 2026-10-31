@@ -80,6 +80,7 @@ import { domainConflictMessage } from "@/lib/quotes/payment-domain";
 import { deskPaymentTagArgs, isReplayResult, replayToast } from "@/lib/payments/record-payment-replay";
 import { instalmentPaymentLines, type InstalmentPaymentResult } from "@/lib/payments/instalment-payment";
 import { splitExpectation, splitPaymentToast, splitOutcomeSentence, type SplitExpectation, type InstalmentRaiseResult } from "@/lib/payments/split-expected";
+import { tdsWithRounding, tdsOnlyReceipt } from "@/lib/payments/tds-rounding";
 import { advanceToUse } from "@/lib/quotes/customer-advance";
 
 const schema = z.object({
@@ -121,7 +122,9 @@ const schema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reference"], message: formatProblem });
     return;
   }
-  if (digital && (ref.length < 4 || !/\d/.test(ref))) {
+  /* R-2095: a Razorpay id (pay_ + 14) passed its own format above — it may have no digit. */
+  const razorpayId = d.method === "razorpay" && /^pay_/i.test(ref);
+  if (digital && !razorpayId && (ref.length < 4 || !/\d/.test(ref))) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["reference"],
@@ -253,6 +256,22 @@ export function TdsShortfallHint({ match, onApply }: { match: TdsShortfallMatch 
         Yes, TDS was deducted
       </Button>
     </div>
+  );
+}
+
+/** R-2095: TDS ticked and ₹0 in bank — the receipt saves as method other with no bank account
+ *  (lib/payments/tds-rounding tdsOnlyReceipt), so the sheet must not ask for either. */
+export function isTdsOnlyEntry(tdsDeducted: boolean, bank: number): boolean {
+  return tdsOnlyReceipt({ method: "other", bankAccountId: null, bank, tdsActive: tdsDeducted, notes: null }).tdsOnly;
+}
+
+/** Shown in place of Payment method + Received in on a TDS-only receipt. */
+export function TdsOnlyNoBankNote() {
+  return (
+    <p data-testid="tds-only-no-bank" className="rounded-md border border-hairline bg-paper-2 px-3 py-2 text-xs text-ink-2">
+      TDS only — no money reached your bank, so there is no payment method or account. Saved as
+      &ldquo;TDS deducted by customer&rdquo;.
+    </p>
   );
 }
 
@@ -499,6 +518,7 @@ export function RecordPaymentDialog({
 
   const watchedAmount = watch("amount") || 0;
   const tdsDeducted   = watch("tdsDeducted") || false;
+  const tdsOnlyEntry  = isTdsOnlyEntry(tdsDeducted, Number(watchedAmount));
   const tdsRatePct    = Number(watch("tdsRatePct") || 0);
   // Has the user hand-edited the bank amount? Until they do, we keep it locked
   // to (remaining − TDS) so net + TDS always settles the quote exactly.
@@ -515,8 +535,6 @@ export function RecordPaymentDialog({
      A rate change, unticking TDS or closing the sheet goes back to rate × taxable. */
   const [typedPartTds, setTypedPartTds] = React.useState<number | null>(null);
   React.useEffect(() => { setTypedPartTds(null); }, [open, tdsDeducted, tdsRatePct]);
-  const tdsAmount = tdsDeducted && typedPartTds !== null ? typedPartTds : tdsAtRate;
-
   // Advance credit applied to this payment — capped at the remaining balance
   // (can't apply more credit than is owed). Reduces the cash the customer needs.
   /* R-2023: "Use advance" — the whole advance that fits by default, or the part the person
@@ -526,6 +544,10 @@ export function RecordPaymentDialog({
   const appliedCreditAmount  = applyCredit
     ? advanceToUse({ available: availableCredit, owed: remaining, typed: typedCredit })
     : 0;
+  /* R-2095: the customer's TDS may be ₹1 off rate × pre-GST (paise rounding) — a typed bank amount
+     ₹1 short / over the balance takes the ₹1 into the TDS (lib/payments/tds-rounding). */
+  const tdsAmount = tdsDeducted && typedPartTds !== null ? typedPartTds
+    : tdsWithRounding({ tdsAtRate, remaining, bank: Number(watchedAmount) || 0, credit: appliedCreditAmount, bankTyped: amountEdited });
   React.useEffect(() => {
     setValue("creditApplied", appliedCreditAmount);
     if (isSubmitted) void trigger("amount");
@@ -758,13 +780,16 @@ export function RecordPaymentDialog({
             : `TDS ${data.tdsSection} withheld ${rupee(tdsAmount)} (${tdsRatePct}% of pre-GST ${rupee(quotePreGST)} = ${rupee(tdsAtRate)})`
           : null,
       ].filter(Boolean).join(" · ") || null;
-      const tagArgs = deskPaymentTagArgs({ receivedDate: data.receivedDate, bankAccountId });
+      /* R-2095: ₹0 in bank + TDS = the customer's TDS, not bank money (no bank account, method other). */
+      const tdsOnlyR = tdsOnlyReceipt({ method, bankAccountId: bankAccountId || null, bank: data.amount, tdsActive, notes });
+      const tagArgsAll = deskPaymentTagArgs({ receivedDate: data.receivedDate, bankAccountId });
+      const tagArgs = tdsOnlyR.tdsOnly ? { ...tagArgsAll, p_bank_account_id: null } : tagArgsAll;
 
       const deskArgs = {
         p_amount:             settledAmount,
-        p_method:             method,
+        p_method:             tdsOnlyR.method,
         p_reference:          data.reference,
-        p_notes:              notes,
+        p_notes:              tdsOnlyR.notes,
         p_credit_customer_id: appliedCreditAmount > 0 && customerId ? customerId : null,
         p_credit_amount:      appliedCreditAmount > 0 && customerId ? appliedCreditAmount : 0,
         p_received_on:        tagArgs.p_received_on,
@@ -1383,7 +1408,11 @@ export function RecordPaymentDialog({
           {/* ── How it was paid, and which of YOUR accounts received it (R-404) ──
               Was one list of hard-coded rows with our own company name shown to every company,
               tagging payments with made-up ids the uuid column refused. Now: a plain method
-              list, and this company's own bank / cash accounts. */}
+              list, and this company's own bank / cash accounts.
+              R-2095: a TDS-only receipt (TDS ticked, ₹0 in bank) has neither — it saves as method
+              other with no account, so both fields give way to one line saying so. */}
+          <input type="hidden" {...register("method")} value={method} />
+          {tdsOnlyEntry ? <TdsOnlyNoBankNote /> : (<>
           <FormField label={PAYMENT_FIELD_LABELS.method} required htmlFor="paymentMethod">
             <Select
               value={method}
@@ -1403,7 +1432,6 @@ export function RecordPaymentDialog({
                 ))}
               </SelectContent>
             </Select>
-            <input type="hidden" {...register("method")} value={method} />
           </FormField>
 
           <FormField label={PAYMENT_FIELD_LABELS.receivedIn} htmlFor="depositAccount">
@@ -1415,6 +1443,7 @@ export function RecordPaymentDialog({
               onChange={(id) => { setAccountTouched(true); setBankAccountId(id); }}
             />
           </FormField>
+          </>)}
 
           {/* Received on */}
           <FormField label={PAYMENT_FIELD_LABELS.receivedOn} required htmlFor="receivedDate">

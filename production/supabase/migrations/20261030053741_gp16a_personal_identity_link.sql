@@ -1,5 +1,6 @@
 -- deploy-peek: to_regclass('public.personal_identity_link') is not null and to_regprocedure('public.link_personal_identity(uuid,uuid,uuid)') is not null
 -- deploy-key: gp16apersonalidentitylink
+-- deploy-user: postgres
 -- 20261030053741_gp16a_personal_identity_link.sql
 --
 -- R-2118 (GP-16a, goal G-PERSONAL, 30 Oct 2026): a verified personal signup gets, all together
@@ -38,6 +39,17 @@
 --     · idempotent: a second call returns already_linked and writes nothing.
 --   trg_gp16a_link_dms_user        panel account done → dms_user_id copied into the link.
 -- Test: supabase/tests/gp16a_personal_identity_link.test.sql
+--
+-- WHY deploy-user: postgres (R-2118 fix, 30 Oct 2026): the staging DB step stopped here with
+-- "permission denied for table users" — auth_user_id references auth.users(id), and on Cloud SQL
+-- resellersos_migration has SELECT on auth.users (cloudsql/06) but not REFERENCES. postgres has it
+-- (member of supabase_auth_admin). At the end the table and both functions are handed back to
+-- resellersos_migration (postgres is a member of it, cloudsql/05-07), like every other app object:
+-- RLS on customers/outboxes is skipped only for their owner (no BYPASSRLS on Cloud SQL, R-450),
+-- the definer reads auth.users with that same SELECT, and later migrations run as that user.
+-- Grants to anon/authenticated/service_role are kept by the owner change. No such role (local
+-- Supabase) → skipped. Re-runnable: if not exists / or replace / drop … if exists throughout,
+-- and the whole file is one transaction, so the failed run left nothing behind.
 
 begin;
 
@@ -286,5 +298,27 @@ create trigger trg_gp16a_link_dms_user
   for each row
   when (new.dms_user_id is not null)
   execute function public.tg_gp16a_link_dms_user();
+
+-- ── owner back to the migration user (R-2118 fix) ───────────────────────────
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'resellersos_migration') then
+    return;                                   -- local Supabase: no such role, postgres keeps them
+  end if;
+  begin   -- also when already a member: a creator may hold ADMIN but no SET (PG16+)
+    execute 'grant resellersos_migration to ' || quote_ident(current_user);   -- as cloudsql/05-07
+  exception when others then
+    raise warning 'R-2118: could not grant resellersos_migration to %: %', current_user, sqlerrm;
+  end;
+  begin
+    alter table public.personal_identity_link owner to resellersos_migration;
+    alter function public.link_personal_identity(uuid, uuid, uuid) owner to resellersos_migration;
+    alter function public.tg_gp16a_link_dms_user() owner to resellersos_migration;
+  exception when others then
+    -- Never stop the DB step for this: the objects work, owned by postgres. Logged so it is fixed by hand.
+    raise warning 'R-2118: personal_identity_link / link_personal_identity stay owned by % (%) — run cloudsql/05 then re-run this file', current_user, sqlerrm;
+  end;
+end
+$$;
 
 commit;

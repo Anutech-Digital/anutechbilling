@@ -1395,7 +1395,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
               Licence questions only, like the one above. */}
           {!isProject && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <FormField label="Billing cycle" htmlFor="billing_cycle">
+            <FormField label="Payment frequency" htmlFor="billing_cycle">
               <select
                 id="billing_cycle"
                 {...register("billing_cycle")}
@@ -1518,7 +1518,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
                     <Review label="Seats"       value={watchedSeats == null || Number.isNaN(watchedSeats) ? "" : String(watchedSeats)} />
                     <Review label="Price / seat" value={priceText ? `₹${priceText}/month` : ""} />
                     <Review label="Deal value"  value={valueText ? `₹${valueText}/year` : ""} />
-                    <Review label="Billing"     value={billingCycleLabel(watch("billing_cycle"))} />
+                    <Review label="Payment frequency" value={billingCycleLabel(watch("billing_cycle"))} />
                     <Review label="Current provider" value={watch("current_provider")} />
                   </>
                 )}

@@ -12,6 +12,7 @@ const update = vi.fn(async () => ({}));
 vi.mock("@/lib/queries/subscriptions", () => ({
   useUpdateSubscription: () => ({ mutateAsync: update, isPending: false }),
   useCorrectSubscriptionTerms: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCorrectSubscriptionCommitment: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useScheduleInvoices: () => ({ data: undefined }),
 }));
 vi.mock("@/lib/queries/items", () => ({ useItems: () => ({ data: [] }) }));

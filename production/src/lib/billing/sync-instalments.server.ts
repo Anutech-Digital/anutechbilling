@@ -70,6 +70,9 @@ export interface InstalmentSyncResult {
   /** R-2095: due parts whose invoice credit notes cancelled in full — not re-billed by this run
    *  (only the owner's own Generate re-bills them: rebillCredited). */
   heldCredited?: { period_index: number; credited: string[] }[];
+  /** R-2095 (Sept): due parts that would have got a NEW payment request, left for the billing job
+   *  because this run follows a sale's payment (noNewRequests). */
+  requestsHeld?: number[];
 }
 
 export async function syncSubscriptionInstalments(args: {
@@ -87,6 +90,9 @@ export async function syncSubscriptionInstalments(args: {
    *  credit note often means "customer cancelled / we don't bill this" — the billing job and the
    *  auto-raise after a payment leave it alone. */
   rebillCredited?: boolean;
+  /** R-2095 (Sept reconcile): the run right after a sale's payment — invoice what the money covers,
+   *  never make a next-period payment request (that is the billing job's, on the part's own date). */
+  noNewRequests?: boolean;
 }): Promise<InstalmentSyncResult> {
   const { supabase, sub, quote, todayISO } = args;
   const dryRun = args.dryRun ?? false;
@@ -212,6 +218,15 @@ export async function syncSubscriptionInstalments(args: {
     if (credited.length > 0 && !args.rebillCredited) {
       (out.heldCredited ??= []).push({ period_index: row.period_index, credited });
       continue;
+    }
+    if (args.noNewRequests && !dryRun) {
+      /* R-2095: look first (dry run) — a part that would get a NEW request is left for its own run. */
+      const { data: peek, error: pErr } = await billSubscriptionInstalment(supabase, row.id, true);
+      if (pErr) throw new Error(pErr.message);
+      if ((peek as { action?: string } | null)?.action === "request") {
+        (out.requestsHeld ??= []).push(row.period_index);
+        continue;
+      }
     }
     const { data, error } = await billSubscriptionInstalment(supabase, row.id, dryRun);
     if (error) throw new Error(error.message);
@@ -400,6 +415,8 @@ export async function raiseDueInstalmentsForQuote(args: {
   todayISO: string;
   /** R-2095: the owner's own Generate — re-bill parts freed by a full credit note. */
   rebillCredited?: boolean;
+  /** R-2095 (Sept): right after a sale's payment — no next-period payment request. */
+  noNewRequests?: boolean;
 }): Promise<QuoteInstalmentOutcome> {
   const { supabase, quoteId, tenantId, todayISO } = args;
   const out: QuoteInstalmentOutcome = { raised: [], errors: [], splitBilled: false, invoices: [] };
@@ -454,7 +471,7 @@ export async function raiseDueInstalmentsForQuote(args: {
   }
   for (const sub of subs) {
     try {
-      const r = await syncSubscriptionInstalments({ supabase, sub, quote: facts, todayISO, rebillCredited: args.rebillCredited });
+      const r = await syncSubscriptionInstalments({ supabase, sub, quote: facts, todayISO, rebillCredited: args.rebillCredited, noNewRequests: args.noNewRequests });
       if (r.skip?.code === "not_split_billed") continue;
       out.splitBilled = true;
       for (const x of r.raised) { out.raised.push({ subscription_id: sub.id, ...x }); raisedNow.add(x.invoice_id); }

@@ -59,7 +59,7 @@ export function mockGstinVerification(gstin: string): GstinVerification {
     registration_type:  "Regular",
     valid_from:         "2017-07-01",
     valid_upto:         null,
-    last_return_filed:  "2026-04-20",
+    details_last_updated: "2026-04-20",
     jurisdiction:       `State - ${stateCode} (Mock)`,
     state_code:         stateCode,
     principal_address,

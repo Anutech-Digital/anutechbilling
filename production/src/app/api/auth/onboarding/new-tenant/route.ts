@@ -21,6 +21,9 @@
  * sell?" question. Missing / null / 'both' writes nothing (the column default is Both); any other
  * value is a 400. Stored with a separate update after the tenant insert, so a workspace is still
  * created on a database that does not have tenants.sell_mode yet.
+ *
+ * R-2119 (GP-05, G-PERSONAL): { kind: 'personal', consent: true, marketing? } makes a free
+ * PERSONAL workspace instead (createPersonal below) — behind PERSONAL_SIGNUP_ENABLED, 404 when off.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { trustedOrigin } from "@/lib/app-url";
@@ -31,9 +34,18 @@ import { normalizeEmail } from "@/lib/auth/membership";
 import { emailDomain, isPublicEmailDomain } from "@/lib/auth/domain";
 import { routeVerifiedSignupToCompany } from "@/lib/auth/tenant-match";
 import { SELL_MODES, type SellMode } from "@/lib/sell-mode";
+import { personalSignupEnabled, PERSONAL_HOME, PERSONAL_SIGNUP_OFF } from "@/lib/personal/signup-flag";
+import { recordAccountConsent } from "@/lib/consent/account-consent.server";
+import {
+  createPersonalWorkspace,
+  finishPersonalWorkspace,
+  personalConsentChoices,
+  personalName,
+  PERSONAL_CONSENT_VERSION,
+} from "@/lib/personal/personal-workspace.server";
 
 const schema = z.object({
-  companyName: z.string().trim().min(2, "Company name is required").max(120),
+  companyName: z.string({ required_error: "Company name is required", invalid_type_error: "Company name is required" }).trim().min(2, "Company name is required").max(120),
   gstin:       z.string().trim().max(20).optional().nullable(),
   businessType: z.enum(["proprietor", "partnership", "llp", "pvt_ltd"], {
     message: "Pick Proprietorship, Partnership, LLP or Private Limited — or leave it empty and set it later in Settings.",
@@ -43,7 +55,21 @@ const schema = z.object({
   }).optional().nullable(),
 });
 
+/* R-2119 (GP-05): the personal branch — no companyName, no business type, no sell mode. */
+const personalSchema = z.object({
+  kind:      z.literal("personal"),
+  consent:   z.boolean().optional().nullable(),
+  marketing: z.boolean().optional().nullable(),
+});
+
 export async function POST(request: NextRequest) {
+  const raw = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  const isPersonal = raw?.kind === "personal";
+  /* R-2119: behind PERSONAL_SIGNUP_ENABLED (default off) the personal door does not exist. */
+  if (isPersonal && !personalSignupEnabled()) {
+    return NextResponse.json(PERSONAL_SIGNUP_OFF, { status: 404 });
+  }
+
   const supabase = createClient();
   const { data: authData } = await supabase.auth.getUser();
   if (!authData?.user) {
@@ -51,7 +77,9 @@ export async function POST(request: NextRequest) {
   }
   const authUser = authData.user;
 
-  const parsed = schema.safeParse(await request.json().catch(() => null));
+  if (isPersonal) return createPersonal(request, authUser, raw);
+
+  const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     return NextResponse.json(
       { error: parsed.error.issues[0]?.message ?? "Enter your company name." },
@@ -154,4 +182,80 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, tenantId });
+}
+
+type SessionUser = {
+  id: string;
+  email?: string | null;
+  email_confirmed_at?: string | null;
+  user_metadata?: Record<string, unknown> | null;
+};
+
+/**
+ * R-2119 (GP-05, G-PERSONAL): the Google / Auth.js door of a free personal account.
+ *
+ * Order: consent tick required (400) → existing users row keeps the 409 → the email must be
+ * confirmed (403) → consent proof (no proof = nothing created) → personal tenant + users row
+ * (admin client; workspace_kind is platform-owned, R-720) → consent tenant + identity link (D4).
+ * Never decideOnboarding / work-domain routing, never a domain claim: a personal account is
+ * one person's own, whatever their email domain.
+ */
+async function createPersonal(request: NextRequest, authUser: SessionUser, raw: unknown) {
+  const parsed = personalSchema.safeParse(raw);
+  if (!parsed.success || parsed.data.consent !== true) {
+    return NextResponse.json(
+      { error: "Tick the box to accept the Terms and Privacy Policy and let us process your money records.", field: "consent" },
+      { status: 400 },
+    );
+  }
+
+  const admin = createAdminClient();
+  const { data: existing } = await admin
+    .from("users")
+    .select("tenant_id")
+    .eq("id", authUser.id)
+    .maybeSingle();
+  if (existing?.tenant_id) {
+    return NextResponse.json(
+      { error: "You already belong to a workspace.", tenantId: existing.tenant_id },
+      { status: 409 },
+    );
+  }
+
+  if (!authUser.email_confirmed_at) {
+    return NextResponse.json(
+      { error: "Confirm your email first — open the link we sent you, then come back here." },
+      { status: 403 },
+    );
+  }
+
+  const email = normalizeEmail(authUser.email);
+  const fullName = personalName(
+    (authUser.user_metadata?.full_name as string | undefined) || (authUser.user_metadata?.name as string | undefined),
+    email,
+  );
+
+  const recorded = await recordAccountConsent(admin, {
+    userId: authUser.id,
+    tenantId: null,
+    purposes: personalConsentChoices(parsed.data.marketing === true),
+    version: PERSONAL_CONSENT_VERSION,
+    req: request,
+    source: "signup",
+    page: "/welcome",
+  });
+  if (!recorded) {
+    return NextResponse.json({ error: "Could not save your consent. Nothing was created — please try again." }, { status: 500 });
+  }
+
+  const ws = await createPersonalWorkspace(admin, { userId: authUser.id, email, fullName });
+  if (!ws.ok) {
+    return NextResponse.json({ error: "Could not create your personal space. Please try again." }, { status: 500 });
+  }
+  if (!ws.created) {
+    return NextResponse.json({ error: "You already belong to a workspace.", tenantId: ws.tenantId }, { status: 409 });
+  }
+
+  await finishPersonalWorkspace(admin, authUser.id, ws.tenantId);
+  return NextResponse.json({ ok: true, tenantId: ws.tenantId, kind: "personal", next: PERSONAL_HOME });
 }

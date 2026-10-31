@@ -27,6 +27,7 @@ import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { BILLING_CYCLE_OPTIONS, cycleScheduleLabel } from "@/lib/quotes/billing";
 import { COMMIT_CHOICES, type CommitChoice } from "@/lib/quotes/line-commit-choice";
 import { isSplitBilled, quoteInstalmentPlan } from "@/lib/billing/instalments";
+import { ROUND_OFF_LIMIT } from "@/lib/banking/credit-pay-for-multi";
 import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
 import { rupee, formatDate } from "@/lib/utils";
 import { knownPayerCustomer, payerFromNarration, type KnownPayer } from "@/lib/banking/customer-payer";
@@ -181,8 +182,27 @@ export function amountCheck(credit: number, due: number, taxable: number | null)
   return { kind: "short", shortBy: due - credit, tdsRatePct: tdsRateFor(credit, due, taxable && taxable > 0 ? taxable : null) };
 }
 
-/** What the operator decided about a short payment. */
-export type ShortChoice = "tds" | "part";
+/** What the operator decided about a short payment. R-2095: or a round-off (≤ ROUND_OFF_LIMIT). */
+export type ShortChoice = "tds" | "part" | "round_off";
+
+/** R-2095 (Sept reconcile): the answers to "why less came in" — round-off only up to ₹50 (R-2098). */
+export function shortChoices(check: AmountCheck): Array<{ value: ShortChoice; label: string }> {
+  if (check.kind !== "short") return [];
+  const out: Array<{ value: ShortChoice; label: string }> = [
+    { value: "tds", label: `TDS deducted (${rupee(check.shortBy)})` },
+    { value: "part", label: `Part payment — ${rupee(check.shortBy)} stays due` },
+  ];
+  if (check.shortBy <= ROUND_OFF_LIMIT) out.push({ value: "round_off", label: `Round off ${rupee(check.shortBy)} — settled in full` });
+  return out;
+}
+
+/** R-2095: a round-off on ONE sale / item is saved through the split (R-2098: it settles in full). */
+export function roundOffSplit(a: { mode: "sale"; saleTotal: number } | { mode: "item"; item: Pick<OpenItem, "quote_id" | "invoice_id" | "amount_due"> }):
+  { items: Array<{ quote_id: string | null; invoice_id: string | null; amount: number }>; saleAmount: number | null; rest: "round_off" } {
+  return a.mode === "sale"
+    ? { items: [], saleAmount: a.saleTotal, rest: "round_off" }
+    : { items: [{ quote_id: a.item.quote_id, invoice_id: a.item.invoice_id, amount: a.item.amount_due }], saleAmount: null, rest: "round_off" };
+}
 
 /** The TDS amount to send: the whole shortfall when the operator says it was TDS, else 0. */
 export function tdsToRecord(check: AmountCheck, choice: ShortChoice): number {
@@ -219,6 +239,22 @@ export interface SaleLine {
   /** R-2053: the owner typed this line's price (a deal). A commitment change then converts it
    *  instead of taking the catalogue price. A new product line starts without it. */
   priceTyped?: boolean;
+  /** R-2095 (Sept): the subscription's END-domain (Zoho bills per end-domain); empty = the customer's. */
+  domain?: string | null;
+}
+
+/** R-2095: a line's end-domain, as the server will store it (lower-case, trimmed), or null. */
+export function saleLineDomain(l: Pick<SaleLine, "domain" | "cycle">): string | null {
+  if (l.cycle === "one_time") return null;
+  const d = (l.domain ?? "").trim().toLowerCase();
+  return d || null;
+}
+
+/** R-2095: null when the typed end-domain is fine (or empty); the same rule the server checks. */
+export function saleLineDomainProblem(domain: string | null | undefined): string | null {
+  const d = (domain ?? "").trim().toLowerCase();
+  if (!d) return null;
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?([.][a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(d) ? null : "Domain must look like example.com.";
 }
 
 type CatalogRow = Pick<Item, "id" | "name" | "vendor" | "msrp" | "wholesale" | "prices"> & { item_type?: string | null };
@@ -357,7 +393,7 @@ export function paymentChoice(lines: ReadonlyArray<Pick<SaleLine, "cycle">>): Pa
   if (lines.some((l) => l.cycle === "monthly")) {
     return {
       options: BILLING_CYCLE_OPTIONS.filter((o) => o.id === "monthly"),
-      why: "Monthly flex has no commitment, so it is paid monthly only. Choose Annual (1-yr) for yearly, half-yearly or quarterly payment.",
+      why: "Flexible (monthly) has no commitment, so it is paid monthly only. Choose Annual commitment for yearly, half-yearly or quarterly payment.",
     };
   }
   if (!lines.some((l) => l.cycle === "annual_yearly")) return { options: [], why: null };
@@ -396,13 +432,17 @@ export function saleSchedule(lines: readonly SaleLine[], gstRatePct: number, cyc
   const effective = saleBillingCycle(lines, cycle);
   const flex = lines.some((l) => l.cycle === "monthly");
   if (!flex && isSplitBilled(effective) && p.taxable > 0) {
-    const plan = quoteInstalmentPlan({
-      cycle: effective, termTaxable: p.taxable, termGross: p.total, taxRate: gstRatePct, termStart: startISO,
-    });
+    /* R-2095 (Sept reconcile): only the subscription lines are split; a one-time line (setup) is
+       billed once, in the first part — before, it was spread across the parts. */
+    const recurring = salePreview(lines.filter((l) => l.cycle !== "one_time"), gstRatePct);
+    const once = salePreview(lines.filter((l) => l.cycle === "one_time"), gstRatePct);
+    const plan = recurring.taxable > 0 ? quoteInstalmentPlan({
+      cycle: effective, termTaxable: recurring.taxable, termGross: recurring.total, taxRate: gstRatePct, termStart: startISO,
+    }) : null;
     if (plan && plan.lines.length > 1) {
       return {
-        dueNow: plan.lines[0].gross,
-        dueTaxable: plan.lines[0].taxable,
+        dueNow: plan.lines[0].gross + once.total,
+        dueTaxable: plan.lines[0].taxable + once.taxable,
         later: plan.lines.slice(1).map((l) => ({ billOn: l.billOn, gross: l.gross })),
         everyMonth: false,
       };
@@ -415,7 +455,7 @@ export function saleSchedule(lines: readonly SaleLine[], gstRatePct: number, cyc
 
 /** "Next 3 bills ₹4,814 each, on 21 Jan 2027, 21 Apr 2027 and 21 Jul 2027." */
 export function laterBillsText(s: SaleSchedule, cycle: BillingCycle): string | null {
-  if (s.everyMonth) return `Then ${rupee(s.monthlyGross ?? s.dueNow)} every month while the plan runs (Monthly flex).`;
+  if (s.everyMonth) return `Then ${rupee(s.monthlyGross ?? s.dueNow)} every month while the Flexible (monthly) plan runs.`;
   const n = s.later.length;
   if (n === 0) return null;
   const same = s.later.every((b) => b.gross === s.later[0].gross);
@@ -535,6 +575,7 @@ export function saleLinesPayload(lines: readonly SaleLine[]) {
     rate: paiseRate(l.rate),   // R-2095: paise kept
     cost: Math.round(l.cost),
     commitment: l.cycle,
+    ...(saleLineDomain(l) ? { domain: saleLineDomain(l) } : {}),   // R-2095: end-domain per line
   }));
 }
 
@@ -551,6 +592,19 @@ export function saleTermsMixed(lines: readonly SaleLine[]): boolean {
 /** The renewal date record_payment would file: start + 1 month (monthly) or + 1 year. */
 export function defaultRenewal(startISO: string, monthly: boolean): string {
   return addMonthsClamped(startISO, monthly ? 1 : 12);
+}
+
+/**
+ * R-2095 (Sept reconcile): a 1-year commitment billed in parts renews at the END of the year — never on
+ * the next part's date. Staging: renewal 19 Dec on a half-yearly sale from 19 Jun made the schedule
+ * count the year back from 19 Dec and bill the paid half again. The database refuses it too
+ * (bank_credit_pay_item). Null when fine; a Monthly flex plan (no commitment) is not checked.
+ */
+export function splitRenewalProblem(startISO: string, renewalISO: string, cycle: BillingCycle | null | undefined, monthlyFlex: boolean): string | null {
+  if (monthlyFlex || !startISO || !renewalISO || !isSplitBilled(cycle)) return null;
+  const yearEnd = addMonthsClamped(startISO, 12);
+  if (renewalISO >= addDaysISO(yearEnd, -1)) return null;
+  return `Billed ${String(cycle).replace("_", "-")} on a 1-year commitment, so it renews on ${formatDate(yearEnd)} — the next part is billed on its own date. Leave Renews on at the end of the year.`;
 }
 
 /** Is a quote's subscription monthly? (its lines say so) */

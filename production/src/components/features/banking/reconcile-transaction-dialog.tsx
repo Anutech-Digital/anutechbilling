@@ -71,6 +71,8 @@ import { isRazorpaySettlementLine } from "@/lib/razorpay/settlement-match";
 import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-section";
 import { EmiRepaymentSection } from "@/components/features/banking/emi-repayment-section";
 import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
+import { OtherIncomeSection } from "@/components/features/banking/other-income-section";
+import { OwnTransferSection } from "@/components/features/banking/own-transfer-section";
 import { IncentiveFromBankSection } from "@/components/features/banking/incentive-from-bank-section";
 import { EmployeeAdvanceBankSection } from "@/components/features/banking/employee-advance-bank-section";
 import { useComplianceProfile } from "@/lib/compliance/profile";
@@ -287,7 +289,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      customer and WHAT it pays (renewal / add-seats / new-product quote, unpaid invoice, or a new
      sale with seats × unit price) and books it through record_payment in one transaction. It
      replaces the old "Create invoice" form, which booked every receipt as a one-off sale. */
-  const { data: customers } = useCustomers();
+  const customersQuery = useCustomers();
+  const customers = customersQuery.data;
   /* R-2006: the same "who paid" guess CreditPayForSection makes (same lib, same inputs) — only
      to open the Customer tile by itself. The section still makes and shows its own guess. */
   const creditAmt = transaction?.credit ?? 0;
@@ -306,6 +309,14 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      picks the customer it creates. */
   const [newCustomerOpen, setNewCustomerOpen] = React.useState(false);
   const [createdCustomer, setCreatedCustomer] = React.useState<string | null>(null);
+  /* R-2095 (Sept reconcile): the new customer is picked only once the list has it — before, the pick
+     sometimes landed before the customers list refetched and the drawer showed no customer. */
+  const refetchCustomers = customersQuery.refetch;
+  const pickCreatedCustomer = React.useCallback(async (id: string) => {
+    setNewCustomerOpen(false);
+    await Promise.resolve(refetchCustomers?.()).catch(() => undefined);
+    setCreatedCustomer(id); setProjCustomer(id);
+  }, [refetchCustomers]);
   const [payForDone, setPayForDone] = React.useState(false);
   /* "Project payment" — which project (existing or new) this money is for; booked here
      instead of sending the operator off to the projects page. */
@@ -1090,13 +1101,24 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         </>);
 
       case "transfer":
-        return manualBox(false, <>
+        /* R-2095: post it against the other account (an FD sweep) — or, below, just mark it. */
+        return <>
+          <OwnTransferSection transaction={transaction} onDone={() => onOpenChange(false)} />
+          {manualBox(false, <>
           Money moved between your own bank accounts is not income or expense. Mark this line reconciled — and the
           matching line in the other account the same way.
-        </>);
+        </>)}
+        </>;
 
       case "other":
-        if (isCredit) return manualBox(false);
+        /* R-2095: interest on an FD / savings → other income (P&L); else mark it reconciled. */
+        /* R-2095 follow-up: the default manual words listed interest as a no-entry case, against the
+           box above — on money in, interest has one home (the box), so the words say so. */
+        if (isCredit) return <><OtherIncomeSection transaction={transaction} onDone={() => onOpenChange(false)} />{manualBox(false, <>
+          Interest and other income go in the box above, so they reach the P&amp;L. Mark this line reconciled
+          without any entry only when nothing is earned — e.g. a <b>failed / reversed transaction</b> (debited,
+          then credited back): mark <b>both</b> the −₹ and the +₹ line this way. They cancel out.
+        </>)}</>;
         return (
           <>
             {/* Book directly as an expense — creates the expense (P&L) and reconciles this line,
@@ -1329,7 +1351,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
       <AddCustomerForm
         open={newCustomerOpen}
         onOpenChange={setNewCustomerOpen}
-        onCreated={(id) => { setCreatedCustomer(id); setProjCustomer(id); setNewCustomerOpen(false); }}
+        onCreated={(id) => { void pickCreatedCustomer(id); }}
       />
     </Sheet>
   );

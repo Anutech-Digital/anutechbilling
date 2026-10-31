@@ -61,6 +61,8 @@ import {
 } from "./reminders";
 import { renewalRisk } from "./risk";
 import { priorTermDueText } from "./prior-due";
+import { partsDue } from "@/lib/renewals/split-billed-next-part";
+import { istToday } from "@/lib/dates/ist";
 import { openRenewalQuoteMap, withRenewalQuote } from "./open-renewal-quotes";
 import { GraceOverCard } from "./grace-over-card";
 import { classifyRenewals, expiredGraceText, isStopped } from "./classify";
@@ -242,6 +244,8 @@ function RenewalBucket({
           {rows.map(({ sub, daysUntil: days }) => {
             const risk = renewalRisk(sub);
             const priorDue = priorTermDueText(sub);  // R-1703
+            /* R-2095: a sub billed in parts that is periods behind — Generate bills them oldest first. */
+            const behind = partsDue({ billing_cycle: sub.billing_cycle, term_months: sub.term_months ?? 12, start_date: sub.start_date, renewal_date: sub.renewal_date }, istToday());
             return (
               <li
                 key={sub.id}
@@ -297,6 +301,11 @@ function RenewalBucket({
                   <p role="status" className="mb-2 flex items-center gap-1 text-xs font-medium text-rose-600">
                     <Icon name="alert" size={12} className="shrink-0" />
                     {priorDue}
+                  </p>
+                )}
+                {behind && (
+                  <p role="status" className="mb-2 text-xs font-medium text-rose-600" title={`Generate bills them one by one, oldest first, from ${formatDate(behind.from)}`}>
+                    {behind.text} · from {formatDate(behind.from)}
                   </p>
                 )}
 
@@ -403,6 +412,8 @@ function RenewalBucket({
                   {rows.map(({ sub, daysUntil: days }) => {
                     const risk = renewalRisk(sub);
                     const priorDue = priorTermDueText(sub);  // R-1703
+                    /* R-2095: periods behind, billed oldest first by Generate. */
+                    const behind = partsDue({ billing_cycle: sub.billing_cycle, term_months: sub.term_months ?? 12, start_date: sub.start_date, renewal_date: sub.renewal_date }, istToday());
                     return (
                       <tr
                         key={sub.id}
@@ -521,6 +532,11 @@ function RenewalBucket({
                         {/* Action */}
                         <td className="px-4 py-3">
                           <div className="flex flex-col items-start gap-1.5">
+                            {behind && (
+                              <p role="status" className="text-2xs font-medium text-rose-600" title={`Generate bills them one by one, oldest first, from ${formatDate(behind.from)}`}>
+                                {behind.text} · from {formatDate(behind.from)}
+                              </p>
+                            )}
                             {priorDue && (
                               <p role="status" className="flex items-center gap-1 text-2xs font-medium text-rose-600" title="Paying the renewal quote covers only the new term — record the earlier amount separately under Payments → Subscription dues.">
                                 <Icon name="alert" size={12} className="shrink-0" />

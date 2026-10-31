@@ -89,7 +89,7 @@ describe("R-2053 (2) the term under Create subscription", () => {
   });
   it("Half-yearly → the term line and the paid-up line; no date said twice; the old hint is gone", () => {
     newSale(19116);
-    fireEvent.change(screen.getByLabelText("Payment"), { target: { value: "half_yearly" } });
+    fireEvent.change(screen.getByLabelText("Payment frequency"), { target: { value: "half_yearly" } });
     expect(screen.getByText("1 year: 23-10-2026 to 22-10-2027 · renews 23-10-2027")).toBeTruthy();
     expect(screen.getByText("Paid up to 22-04-2027 · next bill ₹19,116 on 23 Apr 2027.")).toBeTruthy();
     expect(screen.queryByText(/Renews on is the end of the 1-year commitment/)).toBeNull();

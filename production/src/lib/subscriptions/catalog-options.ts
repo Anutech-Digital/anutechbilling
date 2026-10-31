@@ -228,7 +228,7 @@ export function findProduct(
  * B9, in the opposite direction. `periods` below is that rule, in one number.
  */
 export type BillingChoice =
-  | "monthly_flex" | "annual_monthly" | "annual_quarterly" | "annual_yearly";
+  | "monthly_flex" | "annual_monthly" | "annual_quarterly" | "annual_half_yearly" | "annual_yearly";
 
 export interface BillingChoiceMeta {
   value: BillingChoice;
@@ -242,11 +242,55 @@ export const BILLING_CHOICES: readonly BillingChoiceMeta[] = [
     hint: "Annual commitment, paid upfront. The default." },
   { value: "annual_monthly", label: "Monthly — annual commitment",
     hint: "Same annual rate, invoiced every month. Customer is committed for 12 months." },
+  /* R-2095 (Sept reconcile): Zoho subs billed every 6 months could not be entered as they are. */
+  { value: "annual_half_yearly", label: "Half-yearly — annual commitment",
+    hint: "Same annual rate, priced per month, invoiced every 6 months (2 invoices). Committed for 12 months." },
   { value: "annual_quarterly", label: "Quarterly — annual commitment",
     hint: "Same annual rate, priced per month, invoiced every 3 months (4 invoices). Committed for 12 months." },
   { value: "monthly_flex",   label: "Monthly — no commitment (flex)",
     hint: "Cancel any time. Higher rate — this is its own price, not the annual one ÷ 12." },
 ] as const;
+
+/* ─── R-2095: COMMITMENT and PAYMENT FREQUENCY as two explicit choices ────────────────
+ * The screen asks the two facts separately (the same two that Correct details and the bank
+ * reconcile New sale ask): Commitment = Annual / Flexible, Payment frequency = Yearly /
+ * Half-yearly / Quarterly / Monthly (Flexible: Monthly only). A BillingChoice is exactly one pair,
+ * so billingTerms() and everything priced from it are unchanged. */
+export type CommitmentChoice = "annual" | "flex";
+
+export const COMMITMENT_CHOICES: ReadonlyArray<{ value: CommitmentChoice; label: string; hint: string }> = [
+  { value: "annual", label: "Annual commitment", hint: "Committed for 12 months at the annual price. Pay yearly, half-yearly, quarterly or monthly." },
+  { value: "flex",   label: "Flexible (monthly)", hint: "No commitment — cancel any month. Its own, higher price; paid monthly only." },
+];
+
+export const FREQUENCY_CHOICES: ReadonlyArray<{ value: "yearly" | "half_yearly" | "quarterly" | "monthly"; label: string }> = [
+  { value: "yearly", label: "Yearly" },
+  { value: "half_yearly", label: "Half-yearly" },
+  { value: "quarterly", label: "Quarterly" },
+  { value: "monthly", label: "Monthly" },
+];
+
+export function choiceParts(c: BillingChoice): { commitment: CommitmentChoice; frequency: BillingTerms["billingCycle"] } {
+  if (c === "monthly_flex") return { commitment: "flex", frequency: "monthly" };
+  if (c === "annual_monthly") return { commitment: "annual", frequency: "monthly" };
+  if (c === "annual_quarterly") return { commitment: "annual", frequency: "quarterly" };
+  if (c === "annual_half_yearly") return { commitment: "annual", frequency: "half_yearly" };
+  return { commitment: "annual", frequency: "yearly" };
+}
+
+/** The pair → its BillingChoice. Flexible is monthly whatever frequency is passed. */
+export function choiceFromParts(commitment: CommitmentChoice, frequency: BillingTerms["billingCycle"]): BillingChoice {
+  if (commitment === "flex") return "monthly_flex";
+  if (frequency === "monthly") return "annual_monthly";
+  if (frequency === "quarterly") return "annual_quarterly";
+  if (frequency === "half_yearly") return "annual_half_yearly";
+  return "annual_yearly";
+}
+
+/** The frequencies a commitment may be paid in. */
+export function frequencyChoicesFor(commitment: CommitmentChoice): typeof FREQUENCY_CHOICES[number][] {
+  return FREQUENCY_CHOICES.filter((f) => commitment === "annual" || f.value === "monthly");
+}
 
 export interface BillingTerms {
   /** What a number typed into the price field MEANS for this choice. */
@@ -269,7 +313,7 @@ export interface BillingTerms {
   /** What goes on the quote line. Only two values are written for new quotes. */
   commitment: "monthly" | "annual_yearly";
   /** quotes.billing_cycle and subscriptions.billing_cycle. */
-  billingCycle: "monthly" | "quarterly" | "yearly";
+  billingCycle: "monthly" | "quarterly" | "half_yearly" | "yearly";
   /** subscriptions.term_months — 1 for flex, 12 for a commitment. */
   termMonths: number;
 }
@@ -309,6 +353,17 @@ export function billingTerms(
       flexPriceMissing: false,
       periods: 12, invoicesPerTerm: 4,
       commitment: "annual_yearly", billingCycle: "quarterly", termMonths: 12,
+    };
+  }
+  if (choice === "annual_half_yearly") {
+    /* R-2095: as annual_quarterly (per month at the annual rate, stored as the year) — 2 invoices. */
+    return {
+      unit: "per_seat_month", unitLabel: "₹/mo",
+      suggestedSellPerSeat: product?.annualMonthlySellPerSeat ?? 0,
+      costPerSeat: product?.annualMonthlyCostPerSeat ?? null,
+      flexPriceMissing: false,
+      periods: 12, invoicesPerTerm: 2,
+      commitment: "annual_yearly", billingCycle: "half_yearly", termMonths: 12,
     };
   }
   if (choice === "annual_monthly") {

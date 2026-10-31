@@ -25,6 +25,16 @@ import { useTasks } from "@/lib/queries/tasks";
 import { useRecentLeads } from "@/lib/queries/leads";
 import { useCelebrations } from "@/lib/queries/contacts";
 import { useNotifications, useMarkNotificationRead, useMarkAllNotificationsRead } from "@/lib/queries/notifications";
+import { useBusinessShell } from "@/lib/hooks/useBusinessShell";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { isPersonalSession } from "@/lib/workspace/kind";
+
+/** R-2175: the empty bell says what WOULD show up — a personal workspace has no leads or follow-ups. */
+export function bellEmptyBody(business: boolean): string {
+  return business
+    ? "Follow-ups due today and new leads will show up here."
+    : "Updates about your account will show up here.";
+}
 
 /**
  * R-1122: the list + unread count that BOTH the bell badge (topbar) and this panel show.
@@ -32,11 +42,14 @@ import { useNotifications, useMarkNotificationRead, useMarkAllNotificationsRead 
  * "Mark all read" clears the badge. react-query dedupes the reads between the two.
  */
 export function useNotificationFeed() {
-  const { data: tasks, isLoading: tasksLoading } = useTasks("all");
+  /* R-2175: tasks, leads and contacts are business records — a personal session has none and
+     the data gateway refuses them (R-2125). Its bell shows only its own notifications. */
+  const business = useBusinessShell();
+  const { data: tasks, isLoading: tasksLoading } = useTasks("all", { enabled: business });
   /* Only the leads it shows: created in the last 7 days, 30 at most, five columns (S40).
      This panel is mounted on every page and used to load every lead with select("*"). */
-  const { data: leads, isLoading: leadsLoading } = useRecentLeads();
-  const { data: celebrations, isLoading: celebrationsLoading } = useCelebrations(7);
+  const { data: leads, isLoading: leadsLoading } = useRecentLeads(business);
+  const { data: celebrations, isLoading: celebrationsLoading } = useCelebrations(7, { enabled: business });
   /* Asli events — DB se (audit B4): payment/quote-accept/lead/ticket. Read-state
      row par hai, har device par ek. */
   const { data: dbNotifs, isLoading: notifsLoading } = useNotifications();
@@ -65,6 +78,9 @@ export function NotificationPanel({
 }) {
   const router = useRouter();
   const { items, unreadCount, loading } = useNotificationFeed();
+  const { data: me } = useCurrentUser();
+  /* R-2176: /tasks is a business page — a personal session's bell has no "All tasks" footer. */
+  const personal = isPersonalSession(me ? { role: me.role } : null);
   const markDbRead = useMarkNotificationRead();
   const markDbAll  = useMarkAllNotificationsRead();
 
@@ -140,7 +156,7 @@ export function NotificationPanel({
             <EmptyState
               icon="bell"
               title="You're all caught up"
-              body="Follow-ups due today and new leads will show up here."
+              body={bellEmptyBody(!personal)}
             />
           ) : (
             items.map((n) => (
@@ -197,6 +213,7 @@ export function NotificationPanel({
         </div>
 
         {/* Footer */}
+        {!personal && (
         <div className="flex items-center justify-between p-3 border-t border-hairline bg-paper-2 flex-shrink-0">
           <Button
             variant="ghost"
@@ -210,6 +227,7 @@ export function NotificationPanel({
             All tasks
           </Button>
         </div>
+        )}
       </SheetContent>
     </Sheet>
   );

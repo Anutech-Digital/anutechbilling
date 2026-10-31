@@ -39,7 +39,7 @@ describe("R-2026 price by commitment (catalogue tier, editable; R-2050: Annual �
   });
   it("commitments: Annual first, then Monthly flex, then One-time (builder labels); a one-time row is One-time only", () => {
     expect(commitmentOptions(false).map((c) => [c.cycle, c.label])).toEqual([
-      ["annual_yearly", "Annual (1-yr)"], ["monthly", "Monthly flex"], ["one_time", "One-time"],
+      ["annual_yearly", "Annual commitment"], ["monthly", "Flexible (monthly)"], ["one_time", "One-time"],
     ]);
     expect(commitmentOptions(true).map((c) => c.cycle)).toEqual(["one_time"]);
     expect(shownPriceUnit(saleLineFromItem(SETUP))).toBe("₹ once");
@@ -56,7 +56,7 @@ describe("R-2026 payment frequency follows the commitment", () => {
     const lines = [saleLineFromItem(STARTER, "monthly", 5)];
     const p = paymentChoice(lines);
     expect(p.options.map((o) => o.id)).toEqual(["monthly"]);
-    expect(p.why).toMatch(/Monthly flex has no commitment, so it is paid monthly only/);
+    expect(p.why).toMatch(/Flexible \(monthly\) has no commitment, so it is paid monthly only/);
     expect(saleBillingCycle(lines, "quarterly")).toBe("monthly");
   });
   it("one-time only → nothing to ask, saved yearly (not split)", () => {
@@ -89,7 +89,7 @@ describe("R-2026 amount due now = the first bill", () => {
   it("Monthly flex: the month's bill now, then the same every month", () => {
     const s = saleSchedule([saleLineFromItem(STARTER, "monthly", 10)], 18, "quarterly", "2026-10-21");
     expect(s).toMatchObject({ dueNow: 3835, dueTaxable: 3250, later: [], everyMonth: true });
-    expect(laterBillsText(s, "monthly")).toBe("Then ₹3,835 every month while the plan runs (Monthly flex).");
+    expect(laterBillsText(s, "monthly")).toBe("Then ₹3,835 every month while the Flexible (monthly) plan runs.");
   });
 });
 

@@ -4,7 +4,8 @@
  * /verify-email?token=…  — the link in the signup confirmation email (R-048, 4 Oct 2026).
  * Confirms the address. R-1926: a new owner is signed in by the link and goes straight to
  * the setup wizard; anyone else is sent to sign in as before. Every outcome says what to do
- * next; an expired or used link offers a fresh one.
+ * next; an expired or used link offers a fresh one. R-2119: a personal signup lands on /money —
+ * the allowed landings come from lib/auth/verify-landing.ts (VERIFY_LANDINGS), one list.
  */
 import * as React from "react";
 import Link from "next/link";
@@ -14,11 +15,9 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { ResendVerification } from "@/components/features/auth/resend-verification";
+import { isVerifyLanding, SETUP_WELCOME_PATH } from "@/lib/auth/verify-landing";
 
 type State = "checking" | "ok" | "opening" | "expired" | "used" | "invalid" | "error";
-
-/** R-1926: the only places the server may send a just-confirmed, signed-in person. */
-const LANDINGS = new Set(["/setup?welcome=1", "/dashboard"]);
 
 export default function VerifyEmailPage() {
   return (
@@ -34,6 +33,8 @@ function VerifyEmail() {
   const [email, setEmail] = React.useState("");
   /** R-822: the workspace whose owner was asked to add this person, if any. */
   const [joinTo, setJoinTo] = React.useState<string | null>(null);
+  /** Where the link is taking them (only ever a VERIFY_LANDINGS entry). */
+  const [opening, setOpening] = React.useState<string>("");
   const ran = React.useRef(false);
 
   React.useEffect(() => {
@@ -49,7 +50,10 @@ function VerifyEmail() {
       .then((j: { ok?: boolean; email?: string; reason?: string; joinRequestedTo?: string | null; signedIn?: boolean; next?: string }) => {
         /* R-1926 (OB-5): the link signed them in — go straight on (hard navigation so the new
            session cookie reaches the next request), no password retype. */
-        if (j.ok && j.signedIn && j.next && LANDINGS.has(j.next)) {
+        /* R-2119: the allowlist is verify-landing.ts's own list (incl. the personal home /money),
+           so the page follows every landing the server can give and nothing else. */
+        if (j.ok && j.signedIn && isVerifyLanding(j.next)) {
+          setOpening(j.next);
           setState("opening");
           window.location.replace(j.next);
           return;
@@ -70,7 +74,7 @@ function VerifyEmail() {
         <div className="text-center">
           <Icon name="check_circle" size={36} className="text-emerald mx-auto mb-3" />
           <h1 className="font-serif text-3xl mb-2">Email confirmed</h1>
-          <p className="text-sm text-ink-3" role="status">You&apos;re signed in. Opening your setup…</p>
+          <p className="text-sm text-ink-3" role="status">You&apos;re signed in. {opening === SETUP_WELCOME_PATH ? "Opening your setup…" : "Opening your account…"}</p>
         </div>
       </Card>
     );

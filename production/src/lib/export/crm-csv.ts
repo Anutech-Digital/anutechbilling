@@ -50,7 +50,7 @@ export function leadsCsvRows(rows: readonly CsvLead[]): Cell[][] {
 
 export const QUOTES_CSV_HEADERS = [
   "Quote no", "Customer", "Status", "Payment status", "Subtotal (₹)", "GST rate %",
-  "Total (₹)", "Billing cycle", "Created", "Expires",
+  "Total (₹)", "Payment frequency", "Created", "Expires",
 ] as const;
 
 export function quotesCsvRows(rows: readonly Quote[]): Cell[][] {

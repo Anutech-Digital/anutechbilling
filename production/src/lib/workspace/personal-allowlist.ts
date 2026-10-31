@@ -84,3 +84,21 @@ export function isPersonalApiAllowed(pathname: string): boolean {
 
 /** The 403 body a personal session gets from a business API route. */
 export const PERSONAL_API_REFUSAL = "Not available for personal accounts. Upgrade to business to use this.";
+
+/**
+ * GP-07c (R-2117) — every route.ts a PERSONAL session can reach through PERSONAL_API_PREFIXES,
+ * keyed by its path under src/app/api (as role-gate-ratchet.test.ts names routes), with how it is
+ * scoped to the caller. The middleware allowlist above is by prefix, so a new route under
+ * /api/personal or /api/vault/personal is open to every free login the day it merges;
+ * personal-gate-ratchet.test.ts fails until it is listed here — a reviewed step, not an accident.
+ * A listed route that uses the service role must also show a session read AND an
+ * owner_user_id / user_id pin to that session's user (the same test checks it).
+ */
+export const PERSONAL_API_ROUTES: Readonly<Record<string, string>> = {
+  "vault/personal/pin":
+    "the caller's own Money PIN — requireOwner() reads the session; every service-role RPC is createAdminClientFor(who.userId) with p_user_id: who.userId (GP-02b)",
+  "personal/support-ticket":
+    "R-2176: files the SESSION user's Help report as a support-desk ticket — the caller's own session calls personal_file_support_ticket (SECURITY DEFINER, auth.uid() only: personal check, own personal_identity_link, hourly cap); no service role, no id from the request",
+  "dms/sso":
+    "signs the SESSION user into the DMS panel — email from auth.getUser(), customer from portal_my_customer(); no service role, no id from the request",
+};

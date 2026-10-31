@@ -614,6 +614,101 @@ async function groundedText(args: { apiKey: string; model: string; system: strin
   return (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("\n") || null;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// R-2160 (G-ADS-AI, AI-04): image generation with Imagen, through this same door.
+//
+// Same rules as geminiJson: the company's monthly AI cap is reserved BEFORE Google is asked
+// (one image = one AI call; a company's own key is counted, never refused), a timeout, and a
+// sentence a person can act on for every failure. Its OWN breaker: Imagen needs a billed
+// project, so a key that drafts text fine can get 403 on every image — that must not pause
+// the reply drafter for a minute. The key goes in the x-goog-api-key header, not the URL
+// (URLs end up in logs). Imagen reports no tokens, so only the call is counted.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Default Imagen model — env IMAGEN_MODEL overrides (a model id, e.g. imagen-4.0-fast-generate-001). */
+export const DEFAULT_IMAGEN_MODEL = "imagen-4.0-generate-001";
+
+const imagenBreaker = { failures: 0, openedAt: 0 };
+
+export type ImagenResult =
+  | { ok: true; bytes: Buffer; mimeType: string; model: string }
+  | { ok: false; code: "cap" | "no_key" | "blocked" | "failed"; message: string };
+
+export async function geminiImagenImage(args: {
+  apiKey: string | null;
+  model: string;
+  prompt: string;
+  aspectRatio: "1:1" | "9:16";
+  /** Counted against this company's monthly AI cap before the call (R-1877). */
+  tenantId: string;
+  /** Log prefix and the feature the call is counted under. */
+  label: string;
+  timeoutMs?: number;
+}): Promise<ImagenResult> {
+  const key = valid(args.apiKey);
+  if (!key || isClaudeKey(key)) {
+    return { ok: false, code: "no_key", message: "Image generation needs a Gemini API key with billing on. Add it in Settings → Integrations → AI, or set GEMINI_API_KEY on the server." };
+  }
+
+  const gate = await reserveAiCall(args.tenantId, args.label, isServerAiKey(key));
+  if (!gate.allowed) {
+    console.warn(`[${args.label}] AI cap reached for ${args.tenantId} (${gate.used}/${gate.cap}) — image not made`);
+    return { ok: false, code: "cap", message: gate.message };
+  }
+
+  const now = Date.now();
+  if (imagenBreaker.failures >= BREAKER_THRESHOLD) {
+    if (now - imagenBreaker.openedAt < BREAKER_COOLDOWN_MS) {
+      return { ok: false, code: "failed", message: "Image generation failed repeatedly just now, so it is paused for a minute. Try again shortly." };
+    }
+    imagenBreaker.failures = 0;
+  }
+  const fail = (message: string): ImagenResult => {
+    imagenBreaker.failures += 1;
+    if (imagenBreaker.failures >= BREAKER_THRESHOLD) imagenBreaker.openedAt = now;
+    return { ok: false, code: "failed", message };
+  };
+
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(args.model)}:predict`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify({
+        instances: [{ prompt: args.prompt }],
+        parameters: { sampleCount: 1, aspectRatio: args.aspectRatio, personGeneration: "allow_adult" },
+      }),
+      signal: AbortSignal.timeout(args.timeoutMs ?? 60_000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(`[${args.label}] Imagen HTTP ${res.status}:`, body.slice(0, 500));
+      if (res.status === 404) {
+        return fail(`Google does not have the image model "${args.model}" for this key. Set IMAGEN_MODEL on the server to a current Imagen model.`);
+      }
+      return fail(failureReason(res.status, body));
+    }
+    const data = (await res.json()) as { predictions?: Array<{ bytesBase64Encoded?: string; mimeType?: string; raiFilteredReason?: string }> };
+    const first = data.predictions?.find((p) => p.bytesBase64Encoded);
+    if (!first?.bytesBase64Encoded) {
+      imagenBreaker.failures = 0; // Google answered; the prompt was the problem, not the service.
+      const why = data.predictions?.find((p) => p.raiFilteredReason)?.raiFilteredReason;
+      return { ok: false, code: "blocked", message: `Google's safety filter did not make this image${why ? ` (${why.split(/\r?\n/)[0].slice(0, 200)})` : ""}. Change the image description and try again.` };
+    }
+    imagenBreaker.failures = 0;
+    return { ok: true, bytes: Buffer.from(first.bytesBase64Encoded, "base64"), mimeType: first.mimeType || "image/png", model: args.model };
+  } catch (e) {
+    const err = e as Error;
+    console.error(`[${args.label}] Imagen call failed:`, err?.message);
+    return fail(err?.name === "TimeoutError" ? "Image generation took too long and was stopped. Try again." : "Could not reach Google to make the image. Try again.");
+  }
+}
+
+/** Test-only: reset the Imagen breaker. */
+export function __resetImagenBreaker() {
+  imagenBreaker.failures = 0;
+  imagenBreaker.openedAt = 0;
+}
+
 /** Test-only: reset breaker state between cases. */
 export function __resetGeminiBreaker() {
   breaker.failures = 0;

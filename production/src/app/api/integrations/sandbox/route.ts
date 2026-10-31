@@ -12,7 +12,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
-import { sandboxBaseProblem, SANDBOX_DEFAULT_BASE } from "@/lib/net/safe-fetch";
+import { sandboxBaseProblem, sandboxBaseForKey, sandboxKeyBaseProblem, SANDBOX_DEFAULT_BASE } from "@/lib/net/safe-fetch";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -87,7 +87,8 @@ export async function GET() {
     api_key_mask: r.isOwner ? mask(data?.sandbox_api_key) : null,
     api_secret_mask: r.isOwner ? mask(data?.sandbox_api_secret) : null,
     can_manage:   r.isOwner,
-    api_base:     data?.sandbox_api_base ?? SANDBOX_DEFAULT_BASE,
+    // R-2168: the address actually used — a blank/default base follows the key prefix.
+    api_base:     data?.sandbox_api_key ? sandboxBaseForKey(data.sandbox_api_key, data.sandbox_api_base) : (data?.sandbox_api_base ?? SANDBOX_DEFAULT_BASE),
     updated_at:   data?.updated_at ?? null,
   });
 }
@@ -106,6 +107,10 @@ export async function POST(req: NextRequest) {
     );
   }
   const { api_key, api_secret, api_base } = parsed.data;
+  /* R-2168: the base follows the key prefix (blank/default + key_test_ → test-api); a saved URL
+     that contradicts the key is refused here, not discovered later as a Sandbox 403. */
+  const keyBaseProblem = sandboxKeyBaseProblem(api_key, api_base);
+  if (keyBaseProblem) return NextResponse.json({ ok: false, error: keyBaseProblem }, { status: 400 });
 
   const admin = r.admin;
   // Upsert so first-time and edit both work.
@@ -115,7 +120,7 @@ export async function POST(req: NextRequest) {
       tenant_id:           r.tenantId,
       sandbox_api_key:     api_key,
       sandbox_api_secret:  api_secret,
-      sandbox_api_base:    api_base || SANDBOX_DEFAULT_BASE,
+      sandbox_api_base:    sandboxBaseForKey(api_key, api_base),
     }, { onConflict: "tenant_id" });
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

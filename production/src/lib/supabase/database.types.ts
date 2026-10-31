@@ -36,7 +36,10 @@ export type GstinVerification = {
   registration_type: string | null;            // Regular / Composition / SEZ / Casual / ...
   valid_from:        string | null;            // ISO date
   valid_upto:        string | null;            // ISO date (typically null for non-Casual)
-  last_return_filed: string | null;            // ISO date or null
+  /** R-2168: GSTN lstupdt — when the registration record was last updated (not a return filing). */
+  details_last_updated?: string | null;
+  /** @deprecated R-2168: only on rows cached before the rename — read via gstDetailsLastUpdated(). */
+  last_return_filed?: string | null;
   jurisdiction:      string | null;
   state_code:        string | null;
   /** Principal place of business — structured form, ready to push into

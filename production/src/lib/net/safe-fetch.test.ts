@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   isPrivateAddress, checkUrlShape, checkUrl, safeFetch, UnsafeUrlError,
   SANDBOX_HOSTS, sandboxBaseProblem,
+  sandboxKeyKind, sandboxBaseForKey, sandboxKeyBaseProblem, SANDBOX_TEST_BASE, SANDBOX_DEFAULT_BASE,
 } from "./safe-fetch";
 
 const publicDns = async () => ["104.18.1.1"];
@@ -96,5 +97,39 @@ describe("sandboxBaseProblem — what Settings refuses to save", () => {
     const msg = sandboxBaseProblem("http://169.254.169.254");
     expect(msg).toMatch(/https:\/\/api\.sandbox\.co\.in/);
     expect(msg).toMatch(/clear/i);
+  });
+});
+
+/* R-2168: a live key on the test host (or a test key on the live host) made Sandbox answer 403
+   "Use test API key for test environment", shown to the owner as "Could not reach GSTIN provider". */
+describe("R-2168 — the base URL follows the key prefix", () => {
+  it("reads the key prefix", () => {
+    expect(sandboxKeyKind("key_test_abc")).toBe("test");
+    expect(sandboxKeyKind(" key_live_abc ")).toBe("live");
+    expect(sandboxKeyKind("k")).toBeNull();
+  });
+  it("blank or default base → inferred from the key", () => {
+    expect(sandboxBaseForKey("key_test_abc", "")).toBe(SANDBOX_TEST_BASE);
+    expect(sandboxBaseForKey("key_test_abc", null)).toBe(SANDBOX_TEST_BASE);
+    expect(sandboxBaseForKey("key_test_abc", SANDBOX_DEFAULT_BASE)).toBe(SANDBOX_TEST_BASE);
+    expect(sandboxBaseForKey("key_test_abc", "https://api.sandbox.co.in/")).toBe(SANDBOX_TEST_BASE);
+    expect(sandboxBaseForKey("key_live_abc", "")).toBe(SANDBOX_DEFAULT_BASE);
+    expect(sandboxBaseForKey("key_live_abc", undefined)).toBe(SANDBOX_DEFAULT_BASE);
+  });
+  it("an unknown prefix keeps the saved base (or the default)", () => {
+    expect(sandboxBaseForKey("k", "https://test-api.sandbox.co.in/")).toBe(SANDBOX_TEST_BASE);
+    expect(sandboxBaseForKey("k", "")).toBe(SANDBOX_DEFAULT_BASE);
+  });
+  it("a base that contradicts the key is refused with a clear message, never the key", () => {
+    const live = sandboxKeyBaseProblem("key_live_abc", "https://test-api.sandbox.co.in");
+    expect(live).toMatch(/live API key/i);
+    expect(live).toMatch(/https:\/\/api\.sandbox\.co\.in/);
+    expect(live).not.toContain("key_live_abc");
+    expect(sandboxKeyBaseProblem("key_test_abc", "https://test-api.sandbox.co.in")).toBeNull();
+    expect(sandboxKeyBaseProblem("key_live_abc", "https://api.sandbox.co.in")).toBeNull();
+    // blank / the default with a test key is inferred, not refused
+    expect(sandboxKeyBaseProblem("key_test_abc", SANDBOX_DEFAULT_BASE)).toBeNull();
+    expect(sandboxKeyBaseProblem("key_test_abc", "")).toBeNull();
+    expect(sandboxKeyBaseProblem("k", "https://test-api.sandbox.co.in")).toBeNull();
   });
 });

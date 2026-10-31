@@ -34,6 +34,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { tiersApprovableBy } from "@/lib/quotes/awaiting-approval";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { useBusinessShell } from "@/lib/hooks/useBusinessShell";
 import { badgesFromCounts, type NavBadges } from "@/lib/hooks/nav-badge-counts";
 
 async function fetchNavBadges(tiers: string[]): Promise<NavBadges> {
@@ -44,7 +45,10 @@ async function fetchNavBadges(tiers: string[]): Promise<NavBadges> {
 }
 
 export function useNavBadges(): NavBadges {
-  const { data: me, isLoading: meLoading } = useCurrentUser();
+  const { data: me } = useCurrentUser();
+  /* R-2175: nav_badges counts business records — a personal session has none and the data
+     gateway refuses the RPC for it (R-2125). useBusinessShell also waits for identity. */
+  const business = useBusinessShell();
   const tiers = tiersApprovableBy(me?.role ?? null);
 
   const { data } = useQuery({
@@ -54,7 +58,7 @@ export function useNavBadges(): NavBadges {
     queryFn:  () => fetchNavBadges(tiers),
     /* Wait for identity so the first call already carries the right tiers, instead of
        one call without them and a second one a moment later. */
-    enabled:  !meLoading,
+    enabled:  business,
     refetchInterval: 60_000,   // refresh every 60 seconds
     refetchIntervalInBackground: false,   // a hidden tab does not poll
     staleTime:       30_000,

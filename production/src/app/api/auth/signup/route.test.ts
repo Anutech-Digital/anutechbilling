@@ -20,12 +20,14 @@ const st = vi.hoisted(() => ({
   insertErr: {} as Record<string, { message: string; code?: string }>, // per table
   calls: [] as string[],
   inserted: {} as Record<string, Record<string, unknown>>, // R-1927: last insert payload per table
+  createArgs: null as Record<string, unknown> | null, // R-2119: what createUser was asked for
+  verifyCalls: 0,
 }));
 
 vi.mock("@/lib/security/turnstile-guard", () => ({ turnstileRefusal: async () => null }));
 vi.mock("@/lib/app-url", () => ({ trustedOrigin: () => "http://localhost:3001" }));
 vi.mock("@/lib/auth/tenant-match", () => ({ findVerifiedDomainTenant: async () => null }));
-vi.mock("@/lib/auth/email-verification", () => ({ startEmailVerification: async () => ({ sent: true }) }));
+vi.mock("@/lib/auth/email-verification", () => ({ startEmailVerification: async () => { st.verifyCalls++; return { sent: true }; } }));
 vi.mock("@/lib/auth/domain", async (orig) => ({
   ...(await orig<typeof import("@/lib/auth/domain")>()),
   emailDomain: () => "",
@@ -55,11 +57,12 @@ vi.mock("@/lib/supabase/server", () => {
     },
     auth: {
       admin: {
-        createUser: async () => {
+        createUser: async (args: Record<string, unknown>) => {
           st.calls.push("createUser");
+          st.createArgs = args;
           return st.createErr
             ? { data: { user: null }, error: st.createErr }
-            : { data: { user: { id: "new-user" } }, error: null };
+            : { data: { user: { id: "33333333-3333-4333-8333-333333333333" } }, error: null };
         },
         deleteUser: async () => { st.calls.push("deleteUser"); return { error: null }; },
       },
@@ -89,6 +92,9 @@ beforeEach(() => {
   st.insertErr = {};
   st.calls = [];
   st.inserted = {};
+  st.createArgs = null;
+  st.verifyCalls = 0;
+  vi.unstubAllEnvs();
 });
 
 /* R-1137 follow-up (23 Oct 2026): the tenant / users insert failures and the catch-all sent
@@ -224,5 +230,72 @@ describe("R-1927: the GSTIN typed at signup sets the company's state", () => {
     expect(st.inserted.tenants.state ?? null).toBeNull();
     await post({ ...base, gstin: "07ABDCA0298H1ZX" });
     expect(st.inserted.tenants.state_code ?? null).toBeNull();
+  });
+});
+
+/* R-2119 (GP-05, G-PERSONAL): the password door for a free personal account. Before this card
+   the route had no `kind` at all — every signup needed a company name and created a business
+   tenant + owner row BEFORE the email was confirmed. A personal signup now makes ONLY the login
+   (unconfirmed) and the consent proof; the workspace is created by verify-email. */
+describe("R-2119: personal signup (password door)", () => {
+  const NEW_USER = "33333333-3333-4333-8333-333333333333";
+  const personal = { kind: "personal", email: "Meera@Gmail.com", password: "Str0ng-pass-123!", fullName: "Meera Iyer", consent: true };
+
+  it("with the flag off, kind personal is a 404 and nothing is created", async () => {
+    vi.stubEnv("PERSONAL_SIGNUP_ENABLED", "");
+    const res = await post(personal);
+    expect(res.status).toBe(404);
+    expect(st.calls).toEqual([]);
+  });
+
+  it("creates the login + consent rows only — NO tenant, NO users row, before the email is confirmed", async () => {
+    vi.stubEnv("PERSONAL_SIGNUP_ENABLED", "1");
+    const res = await post(personal);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("created");
+    expect(body).not.toHaveProperty("tenantId");
+    expect(st.calls).not.toContain("tenants.insert");
+    expect(st.calls).not.toContain("users.insert");
+    expect(st.calls).not.toContain("tenant_domains.insert");
+    expect(st.createArgs).toMatchObject({ email: "meera@gmail.com", email_confirm: false, app_metadata: { signup_kind: "personal" } });
+    const consent = st.inserted.consent_events as unknown as Array<Record<string, unknown>>;
+    expect(consent.map((r) => r.purpose).sort()).toEqual(["account_terms", "marketing", "personal_finance_processing"]);
+    expect(consent.every((r) => r.tenant_id === null && r.user_id === NEW_USER && r.source === "signup")).toBe(true);
+    expect(consent.find((r) => r.purpose === "marketing")?.choice).toBe("denied");
+    expect(st.verifyCalls).toBe(1);
+  });
+
+  it("no consent tick → 400 before any account exists", async () => {
+    vi.stubEnv("PERSONAL_SIGNUP_ENABLED", "1");
+    const res = await post({ ...personal, consent: false });
+    expect(res.status).toBe(400);
+    expect((await res.json()).field).toBe("consent");
+    expect(st.calls).not.toContain("createUser");
+  });
+
+  it("does not need a company name — but a business signup still does", async () => {
+    vi.stubEnv("PERSONAL_SIGNUP_ENABLED", "1");
+    expect((await post(personal)).status).toBe(200);
+    st.calls = [];
+    const res = await post({ ...base, companyName: "" });
+    expect(res.status).toBe(400);
+    expect(st.calls).not.toContain("createUser");
+  });
+
+  it("if the consent proof cannot be written, the login is removed (no account without proof)", async () => {
+    vi.stubEnv("PERSONAL_SIGNUP_ENABLED", "1");
+    st.insertErr = { consent_events: { message: "boom" } };
+    const res = await post(personal);
+    expect(res.status).toBe(500);
+    expect(st.calls).toContain("deleteUser");
+  });
+
+  it("a pending invite for the email keeps the 409 — a personal signup cannot skip the invite", async () => {
+    vi.stubEnv("PERSONAL_SIGNUP_ENABLED", "1");
+    st.pending = { id: "inv", expires_at: FUTURE };
+    const res = await post(personal);
+    expect(res.status).toBe(409);
+    expect(st.calls).not.toContain("createUser");
   });
 });

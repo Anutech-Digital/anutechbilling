@@ -99,9 +99,27 @@ async function fetchPnlMasters(supabase: Client) {
 }
 
 async function pnlFor(supabase: Client, range: Range, masters: (r: Range) => PnlMasters): Promise<PnLNumbers> {
-  const rpc = await supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to });
+  const [rpc, other] = await Promise.all([
+    supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
+    otherIncomeRows(supabase, range),
+  ]);
   const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
-  return assemblePnl(range, row, masters(range));
+  return assemblePnl(range, { ...row, other_income: other }, masters(range));
+}
+
+type OtherIncomeRpc = (
+  fn: "report_pnl_other_income", args: { p_from: string; p_to: string },
+) => PromiseLike<{ data: { head: string; amount: number; n: number }[] | null; error: { code?: string; message: string } | null }>;
+
+/**
+ * R-2095: Other income (interest received / other, booked from bank lines) — companion of
+ * report_pnl like report_pnl_revenue_by_product. On a database without the function the P&L shows
+ * no Other income block (null), never a guessed figure.
+ */
+async function otherIncomeRows(supabase: Client, range: Range): Promise<{ head: string; amount: number; n: number }[] | null> {
+  const rpc = supabase.rpc as unknown as OtherIncomeRpc;
+  const { data, error } = await rpc.call(supabase, "report_pnl_other_income", { p_from: range.from, p_to: range.to });
+  return error || !Array.isArray(data) ? null : data;
 }
 
 type RevenueByProductRpc = (
@@ -128,13 +146,14 @@ export function usePnL(range: Range, enabled = true) {
     enabled,
     queryFn: async (): Promise<PnLNumbers> => {
       const supabase = createClient();
-      const [rpc, masters, byProduct] = await Promise.all([
+      const [rpc, masters, byProduct, other] = await Promise.all([
         supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
         fetchPnlMasters(supabase),
         revenueByProductRows(supabase, range),
+        otherIncomeRows(supabase, range),   // R-2095
       ]);
       const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
-      return assemblePnl(range, { ...row, revenue_by_product: byProduct }, masters(range));
+      return assemblePnl(range, { ...row, revenue_by_product: byProduct, other_income: other }, masters(range));
     },
   });
 }

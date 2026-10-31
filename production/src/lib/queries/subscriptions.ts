@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { guardErrorToast } from "@/lib/ui/guard-toast";
 import { createClient } from "@/lib/supabase/client";
-import type { Subscription } from "@/lib/supabase/database.types";
+import type { BillingCycle, Subscription } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { rupee } from "@/lib/utils";
 
@@ -190,6 +190,36 @@ export function useCorrectSubscriptionTerms() {
         p_item_id: input.itemId,
         p_seats: input.seats,
         p_mrr: input.mrr,
+        p_reason: input.reason,
+      });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+    },
+    onError: (err) => toastError(err),
+  });
+}
+
+/**
+ * R-2095: change an existing subscription's COMMITMENT (term_months: 1 Flexible / 12 Annual / 36) and
+ * PAYMENT FREQUENCY (billing_cycle) through correct_subscription_commitment — reason, role, no annual
+ * reduction mid-term, licence cost from the catalogue tier, change history (migration 20261030164727).
+ */
+export function useCorrectSubscriptionCommitment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; termMonths: number; billingCycle: BillingCycle; renewalDate: string | null; reason: string }) => {
+      const supabase = createClient();
+      const rpc = supabase.rpc as unknown as (
+        fn: "correct_subscription_commitment",
+        args: { p_subscription_id: string; p_term_months: number; p_billing_cycle: BillingCycle; p_renewal_date: string | null; p_reason: string },
+      ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+      const { error } = await rpc.call(supabase, "correct_subscription_commitment", {
+        p_subscription_id: input.id,
+        p_term_months: input.termMonths,
+        p_billing_cycle: input.billingCycle,
+        p_renewal_date: input.renewalDate,
         p_reason: input.reason,
       });
       if (error) throw new Error(error.message);

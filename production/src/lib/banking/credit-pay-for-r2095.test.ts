@@ -17,7 +17,7 @@ describe("R-2095 Monthly flex: the monthly bill leaves the one-time lines out", 
   it("due now = month + setup; then only the month again", () => {
     const s = saleSchedule(lines, 18, "monthly", "2026-10-21");
     expect(s.dueNow).toBe(Math.round((3250 + 2000) * 1.18));
-    expect(laterBillsText(s, "monthly")).toBe("Then ₹3,835 every month while the plan runs (Monthly flex).");
+    expect(laterBillsText(s, "monthly")).toBe("Then ₹3,835 every month while the Flexible (monthly) plan runs.");
   });
 });
 
