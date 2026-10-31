@@ -52,7 +52,11 @@ export type CustomerInsights = {
   totalMRR: number;
   seatsTotal: number;
   seatsUsed: number;
-  outstanding: number;        // subscriptions + project receivables
+  outstanding: number;        // subscriptions + project receivables — or, given the statement, its closing (R-2183)
+  /** R-2183: money the customer has with us (a statement closing below zero); 0 otherwise. */
+  credit: number;
+  /** R-2183: "Advance ₹1,554 against Q-…, ₹1,632 still due" — the same line as the Statement. */
+  outstandingNote?: string;
   projectReceivable: number;  // money owed on accepted projects
   lifetimePaid: number;
   overdueCount: number;
@@ -76,6 +80,10 @@ export function deriveCustomerInsights(
    *  direct invoices). Project milestone receipts come from projects[].paid;
    *  the two tables never overlap, so adding them = true cash collected. */
   receivedPayments = 0,
+  /** R-2183: the customer's Statement (buildCustomerStatement). When given, Outstanding IS its
+   *  closing — one balance from one function, so the Overview and the Statement can never give
+   *  opposite answers (ABDCA: "₹1,632" vs "₹1,554 credit"). */
+  statement?: { closing: number; advanceNotes: readonly string[] },
 ): CustomerInsights {
   const activeSubs = subs.filter((s) => s.status === "active");
   const totalMRR = activeSubs.reduce((s, x) => s + (x.mrr ?? 0), 0);
@@ -104,7 +112,10 @@ export function deriveCustomerInsights(
   const standaloneUnpaid = invoices
     .filter((i) => (i.status === "pending" || i.status === "overdue") && !!i.quote_id && !subQuoteIds.has(i.quote_id))
     .reduce((s, i) => s + Math.max(0, i.net_payable ?? i.amount ?? 0), 0);
-  const outstanding = subsOutstanding + projectReceivable + standaloneUnpaid;
+  const closing = statement ? Math.round(statement.closing * 100) / 100 : null;
+  const outstanding = closing !== null ? Math.max(0, closing) : subsOutstanding + projectReceivable + standaloneUnpaid;
+  const credit = closing !== null && closing < 0 ? -closing : 0;
+  const outstandingNote = statement?.advanceNotes.length ? statement.advanceNotes.join(" · ") : undefined;
 
   // Actual cash collected = project milestone receipts + received payments
   // (subscription/direct). NOT the sum of "paid" invoices — that missed
@@ -135,7 +146,7 @@ export function deriveCustomerInsights(
     draftCount: draftQuotes.length, openCount: openQuotes.length, actionableQuoteId: actionableQuote?.id,
   });
 
-  return { activeSubs, totalMRR, seatsTotal, seatsUsed, outstanding, projectReceivable, lifetimePaid, overdueCount, nearestRenewal, renewalDays, nba };
+  return { activeSubs, totalMRR, seatsTotal, seatsUsed, outstanding, credit, outstandingNote, projectReceivable, lifetimePaid, overdueCount, nearestRenewal, renewalDays, nba };
 }
 
 function computeNBA(args: {
@@ -280,13 +291,14 @@ export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0, faile
    *  TDS ₹B = ₹C" so the bank money can be matched. */
   lifetimeTds?: number;
 }) {
-  const { outstanding, projectReceivable, overdueCount, lifetimePaid, totalMRR, activeSubs, nearestRenewal, renewalDays } = insights;
+  const { outstanding, credit, outstandingNote, projectReceivable, overdueCount, lifetimePaid, totalMRR, activeSubs, nearestRenewal, renewalDays } = insights;
   // Exact figures (not compact lakh) for the money KPIs so they match the
   // Next-Best-Action + Transactions to the rupee — "₹15.2L" vs "₹15,16,000"
   // for the same number read as two different amounts.
   const outHint = [
     overdueCount > 0 ? `${overdueCount} overdue` : null,
     projectReceivable > 0 ? `${rupee(projectReceivable)} project` : null,
+    outstandingNote ?? null,   // R-2183: the advance line, same words as the Statement
   ].filter(Boolean).join(" · ") || undefined;
   // auto-fit → columns follow the CONTAINER width (not the viewport), so this
   // strip fits whether it's in the narrow split-view panel, the full-width panel,
@@ -304,7 +316,8 @@ export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0, faile
     <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
       <MetricCard
         label="Outstanding"
-        value={outstanding > 0 ? rupee(outstanding) : "All clear"}
+        /* R-2183: a credit balance reads "₹X credit" — the Statement's closing words — not "All clear". */
+        value={outstanding > 0 ? rupee(outstanding) : credit > 0 ? `${rupee(credit)} credit` : "All clear"}
         tone={outstanding > 0 ? "danger" : "success"}
         hint={outHint}
       />
