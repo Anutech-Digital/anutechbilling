@@ -34,6 +34,7 @@ import { useNextPartRequest } from "./next-part-request";
 import { useQuotePartInvoices } from "./part-invoices";
 import { PaymentHistoryCard } from "./payment-history-card";
 import { planForQuote, splitDue } from "@/lib/billing/instalments";
+import { quoteTotalPeriods, quoteTotalPeriodsText } from "@/lib/quotes/per-period-figures";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-quote";
 import { addSeatsCount } from "@/lib/subscriptions/seat-quotes-pending";
@@ -754,6 +755,13 @@ export default function QuoteDetailPage() {
   /* R-804: GST shown = stored total − taxable, so Subtotal + GST = Total (₹853 + ₹153 = ₹1,006). */
   const tax = quoteDisplayTax(taxable, quote.tax_rate, quote.amount);
   const total = quote.amount ?? taxable + tax;
+  /* R-2182: the Total's period from the PDF's own helper — on an Annual commitment the stored
+     total is the YEAR, so "₹38,232 /month" (Q-F588-27-0068) was twelve times the real bill. */
+  const totalPeriods = quoteTotalPeriodsText(quoteTotalPeriods({
+    cycle: quote.billing_cycle as BillingCycle | null, lineCommitment: items[0]?.commitment,
+    subtotal: quote.subtotal, discount, taxable, tax, total, taxRate: quote.tax_rate,
+    oneTime: oneTimeQuote,
+  }));
 
   /* What can be DONE with the money right now — one tested decision instead of three
      inline conditions that between them left `payment_status = 'none'` (the column
@@ -1901,12 +1909,17 @@ export default function QuoteDetailPage() {
             <div className="border-t border-hairline pt-3 flex items-baseline justify-between">
               <span className="text-xs uppercase tracking-wider text-ink-3 font-semibold">Total</span>
               <span className="font-serif text-2xl text-amber tabular-nums">
-                {rupee(total)}
-                {/* Flex quote ka total MAHINE ka hai — bina ikai ye wahi "per kya?" sawaal
-                   chhod deta jo line items par abhi band kiya. */}
-                {quote.billing_cycle === "monthly" && <span className="text-sm text-ink-3 font-sans"> /month</span>}
+                {/* R-2182: one bill with its period (₹3,186 /month); the year on the line under it
+                   when the year is paid in parts. A one-time charge carries no period. */}
+                {totalPeriods.perBill}
+                {totalPeriods.unit && <span className="text-sm text-ink-3 font-sans"> {totalPeriods.unit}</span>}
               </span>
             </div>
+            {totalPeriods.year && (
+              <div className="flex justify-end text-sm text-ink-2 tabular-nums" data-testid="quote-total-year">
+                {totalPeriods.year}
+              </div>
+            )}
           </div>
         </Card>
 
