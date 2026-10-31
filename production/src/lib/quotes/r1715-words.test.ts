@@ -14,7 +14,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { paymentMethodLabel } from "@/lib/payments/method-label";
-import { quoteTotalUnit, extensionBadgeLabel } from "./billing";
+import { extensionBadgeLabel } from "./billing";
+import { quoteRowTotalPeriods } from "./per-period-figures";
 import { historyTime } from "./history-time";
 import { recordPaymentConsequences } from "@/lib/payments/record-consequences";
 import { statementBalanceText } from "@/components/features/customers/customer-statement";
@@ -68,12 +69,15 @@ describe("history times come from the stored event, never updated_at", () => {
 
 describe("no '/yr' on a one-time charge", () => {
   it("add-seats, one-off and month-extension totals carry no period", () => {
-    expect(quoteTotalUnit({ billing_cycle: "yearly", is_add_seats: true })).toBe("");
-    expect(quoteTotalUnit({ billing_cycle: "yearly", is_one_off: true })).toBe("");
-    expect(quoteTotalUnit({ billing_cycle: "yearly", is_extension: true, extension_months: 3 })).toBe("");
-    expect(quoteTotalUnit({ billing_cycle: "yearly" })).toBe("/yr");
-    expect(quoteTotalUnit({ billing_cycle: "monthly" })).toBe("/mo");
-    expect(quoteTotalUnit({ billing_cycle: null })).toBe("");
+    /* R-2222: the /quotes list now reads quoteRowTotalPeriods (one helper with the quote page). */
+    const unit = (q: Record<string, unknown>) =>
+      quoteRowTotalPeriods({ amount: 1006, subtotal: 853, tax_rate: 18, ...q })?.unit ?? null;
+    expect(unit({ billing_cycle: "yearly", is_add_seats: true })).toBe(null);
+    expect(unit({ billing_cycle: "yearly", is_one_off: true })).toBe(null);
+    expect(unit({ billing_cycle: "yearly", is_extension: true, extension_months: 3 })).toBe(null);
+    expect(unit({ billing_cycle: "yearly" })).toBe("year");
+    expect(unit({ billing_cycle: "monthly", line_items: [{ commitment: "monthly" }] })).toBe("month");
+    expect(unit({ billing_cycle: null })).toBe(null);
   });
 
   it("an extension badge says its months (was 'Ext · 0yr' for 3 months)", () => {

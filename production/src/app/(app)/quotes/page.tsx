@@ -81,22 +81,28 @@ import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { quoteListTab, quoteTabCounts, isPipelineQuote } from "@/lib/quotes/list-tab";
 import { paidToDateOf } from "@/lib/quotes/paid-to-date";
 import { QUOTE_STATE_LABEL, QUOTE_WITH_CUSTOMER_LABEL } from "@/lib/quotes/state-labels";
-import { quoteTotalUnit, extensionBadgeLabel } from "@/lib/quotes/billing";
+import { extensionBadgeLabel } from "@/lib/quotes/billing";
+import { quoteRowTotalPeriods, quoteTotalPeriodsText } from "@/lib/quotes/per-period-figures";
 import { useQuoteOpenBalances, withOpenBalances } from "@/lib/quotes/open-balances";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
 import { isSupportUpgradeQuote } from "@/lib/support/upgrade-quote";
 
-/** A quote's total in ITS billing currency (foreign quotes show $/€…; books stay ₹). */
-function quoteMoney(q: { amount: number | null; currency?: string | null; exchange_rate?: number | null }): string {
-  if (!q.amount) return "—";
-  if (isForeignCurrency(q.currency)) {
-    return formatForeign(foreignEquivalent(q.amount, q.exchange_rate && q.exchange_rate > 0 ? q.exchange_rate : 1), q.currency ?? "");
-  }
-  return rupee(q.amount);
+/**
+ * R-2222: a row's total with its period, in ITS billing currency (foreign quotes show $/€…;
+ * books stay ₹) — the same helper and words as the quote page's Totals card (R-2182):
+ * "₹3,186/month" + "₹38,232/year" for an Annual sale paid monthly. It used to be the
+ * stored YEAR with a billing-cycle-only "/mo" after it ("₹38,232/mo").
+ */
+function rowTotal(q: Parameters<typeof quoteRowTotalPeriods>[0] & { currency?: string | null; exchange_rate?: number | null }) {
+  const t = quoteRowTotalPeriods(q);
+  if (!t) return { perBill: "—", unit: "", year: null };
+  const fx = q.exchange_rate && q.exchange_rate > 0 ? q.exchange_rate : 1;
+  return quoteTotalPeriodsText(
+    t,
+    isForeignCurrency(q.currency) ? (v) => formatForeign(foreignEquivalent(v, fx), q.currency ?? "") : undefined,
+  );
 }
-
-/* R-1715: the total's unit ("/mo", "/yr", none on a one-time charge) is quoteTotalUnit in lib/quotes/billing.ts. */
 
 /**
  * A quote's margin, from its LINE ITEMS.
@@ -859,9 +865,12 @@ export default function QuotesPage() {
                     </div>
                     <div className="text-right shrink-0">
                       <p className="font-serif text-base font-bold tabular-nums text-ink">
-                        {quoteMoney(q)}
-                        <span className="text-2xs font-normal text-ink-3">{quoteTotalUnit(q)}</span>
+                        {rowTotal(q).perBill}
+                        <span className="text-2xs font-normal text-ink-3">{rowTotal(q).unit}</span>
                       </p>
+                      {rowTotal(q).year && (
+                        <p className="text-2xs text-ink-3 tabular-nums">{rowTotal(q).year}</p>
+                      )}
                       <p className="text-2xs text-ink-3 tabular-nums">
                         {q.seats ?? "—"} seats
                       </p>
@@ -982,9 +991,12 @@ export default function QuotesPage() {
                       <td className="px-3 py-2.5 text-right align-top">
                         <div className="flex flex-col items-end gap-0.5">
                           <span className="tabular-nums text-sm font-medium text-ink">
-                            {quoteMoney(q)}
-                            <span className="text-3xs font-normal text-ink-3">{quoteTotalUnit(q)}</span>
+                            {rowTotal(q).perBill}
+                            <span className="text-3xs font-normal text-ink-3">{rowTotal(q).unit}</span>
                           </span>
+                          {rowTotal(q).year && (
+                            <span className="text-3xs text-ink-3 tabular-nums whitespace-nowrap">{rowTotal(q).year}</span>
+                          )}
                           {/* Foreign quote: show the ₹ base underneath so the amount
                               reconciles with the (all-INR) pipeline totals. */}
                           {isForeignCurrency(q.currency) && q.amount ? (
