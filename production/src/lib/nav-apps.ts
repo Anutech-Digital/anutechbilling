@@ -56,7 +56,7 @@ export const NAV_APPS: NavAppDef[] = [
   },
   {
     id: "team", label: "Team", icon: "users",
-    itemIds: ["my-attendance", "my-expenses", "employees", "attendance-reg", "payroll", "team"],
+    itemIds: ["team-chat", "my-attendance", "my-expenses", "employees", "attendance-reg", "payroll", "team"],
   },
   {
     id: "settings", label: "Settings", icon: "settings",

@@ -16,8 +16,9 @@ import { CommandPalette, useCommandPalette } from "./command-palette";
 import { NotificationPanel, useNotificationFeed } from "./notification-panel";
 import { QuickActionsPanel } from "./quick-actions-panel";
 import { TopBarBreadcrumb } from "./topbar-breadcrumb";
+import { TeamChatButton, TeamChatMenuItem, TeamChatUnreadDot } from "./team-chat-button";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { crumbForRole, getParentListHref } from "@/lib/nav";
+import { canOpenRoute, crumbForRole, getParentListHref } from "@/lib/nav";
 import type { Route } from "next";
 import { logLoginOnce } from "@/lib/queries/activity";
 
@@ -49,6 +50,10 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
   // "Mark all read" clears it and the panel header always agrees. It used to add every
   // due task on top, which no read-state could ever clear.
   const { unreadCount } = useNotificationFeed();
+
+  /* R-2300: the Team chat icon (and its 30 s unread poll) only for roles that may open it —
+     never the partner agent or the personal login. */
+  const showTeamChat = !!me?.role && canOpenRoute(me.role, "/team-chat");
 
   // Mount-only flag to avoid theme hydration mismatch
   const [mounted, setMounted] = React.useState(false);
@@ -162,6 +167,10 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
         <TooltipContent>Quick actions</TooltipContent>
       </Tooltip>
 
+      {/* R-2300 (G-TEAMCHAT): Team chat with its unread count — left of the bell (people → alerts).
+          Phone: in the More menu (the 375px row has no room), with a dot on More while unread. */}
+      {showTeamChat && <TeamChatButton className="hidden sm:inline-flex" />}
+
       {/* Notifications */}
       <div className="relative">
         <Tooltip>
@@ -187,15 +196,19 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
       {/* R-203: phone only — Report a problem, theme and Quick actions live here below sm so the
           topbar never gets wider than a 375px screen. From sm up they are their own buttons. */}
       <DropdownMenu modal={false}>
-        <DropdownMenuTrigger asChild>
-          <IconButton
-            icon="more_h"
-            aria-label="More actions"
-            className="sm:hidden"
-            data-topbar="more"
-          />
-        </DropdownMenuTrigger>
+        <div className="relative sm:hidden">
+          <DropdownMenuTrigger asChild>
+            <IconButton
+              icon="more_h"
+              aria-label="More actions"
+              className="sm:hidden"
+              data-topbar="more"
+            />
+          </DropdownMenuTrigger>
+          {showTeamChat && <TeamChatUnreadDot />}
+        </div>
         <DropdownMenuContent align="end" className="w-56">
+          {showTeamChat && <TeamChatMenuItem />}
           <DropdownMenuItem onSelect={() => setActionsOpen(true)}>
             <Icon name="sparkles" size={14} /> Quick actions
           </DropdownMenuItem>
