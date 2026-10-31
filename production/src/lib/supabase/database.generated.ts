@@ -2428,6 +2428,327 @@ export type Database = {
           },
         ]
       }
+      chat_attachments: {
+        Row: {
+          channel_id: string
+          created_at: string
+          file_name: string
+          file_path: string
+          id: string
+          message_id: string
+          mime: string
+          size_bytes: number
+          tenant_id: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          channel_id: string
+          created_at?: string
+          file_name: string
+          file_path: string
+          id?: string
+          message_id: string
+          mime: string
+          size_bytes: number
+          tenant_id: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          channel_id?: string
+          created_at?: string
+          file_name?: string
+          file_path?: string
+          id?: string
+          message_id?: string
+          mime?: string
+          size_bytes?: number
+          tenant_id?: string
+          uploaded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_attachments_message_fk"
+            columns: ["tenant_id", "channel_id", "message_id"]
+            isOneToOne: false
+            referencedRelation: "chat_messages"
+            referencedColumns: ["tenant_id", "channel_id", "id"]
+          },
+          {
+            foreignKeyName: "chat_attachments_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_channels: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          created_by: string | null
+          dm_key: string | null
+          id: string
+          is_private: boolean
+          kind: string
+          name: string | null
+          slug: string | null
+          tenant_id: string
+          topic: string | null
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          dm_key?: string | null
+          id?: string
+          is_private?: boolean
+          kind: string
+          name?: string | null
+          slug?: string | null
+          tenant_id: string
+          topic?: string | null
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          dm_key?: string | null
+          id?: string
+          is_private?: boolean
+          kind?: string
+          name?: string | null
+          slug?: string | null
+          tenant_id?: string
+          topic?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_channels_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_channels_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_channels_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_members: {
+        Row: {
+          channel_id: string
+          joined_at: string
+          last_read_at: string | null
+          member_role: string
+          notify: string
+          tenant_id: string
+          user_id: string
+        }
+        Insert: {
+          channel_id: string
+          joined_at?: string
+          last_read_at?: string | null
+          member_role?: string
+          notify?: string
+          tenant_id: string
+          user_id: string
+        }
+        Update: {
+          channel_id?: string
+          joined_at?: string
+          last_read_at?: string | null
+          member_role?: string
+          notify?: string
+          tenant_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_members_channel_fk"
+            columns: ["tenant_id", "channel_id"]
+            isOneToOne: false
+            referencedRelation: "chat_channels"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "chat_members_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_message_edits: {
+        Row: {
+          channel_id: string
+          edited_at: string
+          edited_by: string | null
+          id: string
+          message_id: string
+          old_body: string
+          tenant_id: string
+        }
+        Insert: {
+          channel_id: string
+          edited_at?: string
+          edited_by?: string | null
+          id?: string
+          message_id: string
+          old_body: string
+          tenant_id: string
+        }
+        Update: {
+          channel_id?: string
+          edited_at?: string
+          edited_by?: string | null
+          id?: string
+          message_id?: string
+          old_body?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_message_edits_edited_by_fkey"
+            columns: ["edited_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_message_edits_message_fk"
+            columns: ["tenant_id", "channel_id", "message_id"]
+            isOneToOne: false
+            referencedRelation: "chat_messages"
+            referencedColumns: ["tenant_id", "channel_id", "id"]
+          },
+        ]
+      }
+      chat_messages: {
+        Row: {
+          author_id: string | null
+          body: string
+          channel_id: string
+          created_at: string
+          deleted_at: string | null
+          deleted_by: string | null
+          edited_at: string | null
+          feedback_id: string | null
+          id: string
+          kind: string
+          links: Json
+          mentions: string[]
+          parent_id: string | null
+          pinned_at: string | null
+          pinned_by: string | null
+          post_status: string | null
+          task_id: string | null
+          tenant_id: string
+        }
+        Insert: {
+          author_id?: string | null
+          body?: string
+          channel_id: string
+          created_at?: string
+          deleted_at?: string | null
+          deleted_by?: string | null
+          edited_at?: string | null
+          feedback_id?: string | null
+          id?: string
+          kind?: string
+          links?: Json
+          mentions?: string[]
+          parent_id?: string | null
+          pinned_at?: string | null
+          pinned_by?: string | null
+          post_status?: string | null
+          task_id?: string | null
+          tenant_id: string
+        }
+        Update: {
+          author_id?: string | null
+          body?: string
+          channel_id?: string
+          created_at?: string
+          deleted_at?: string | null
+          deleted_by?: string | null
+          edited_at?: string | null
+          feedback_id?: string | null
+          id?: string
+          kind?: string
+          links?: Json
+          mentions?: string[]
+          parent_id?: string | null
+          pinned_at?: string | null
+          pinned_by?: string | null
+          post_status?: string | null
+          task_id?: string | null
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_channel_fk"
+            columns: ["tenant_id", "channel_id"]
+            isOneToOne: false
+            referencedRelation: "chat_channels"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "chat_messages_deleted_by_fkey"
+            columns: ["deleted_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_feedback_id_fkey"
+            columns: ["feedback_id"]
+            isOneToOne: false
+            referencedRelation: "feedback"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_parent_fk"
+            columns: ["tenant_id", "channel_id", "parent_id"]
+            isOneToOne: false
+            referencedRelation: "chat_messages"
+            referencedColumns: ["tenant_id", "channel_id", "id"]
+          },
+          {
+            foreignKeyName: "chat_messages_pinned_by_fkey"
+            columns: ["pinned_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       loans_given: {
         Row: {
           bank_txn_id: string | null
@@ -14977,6 +15298,10 @@ export type Database = {
         }
         Returns: Json
       }
+      chat_can_read: { Args: { p_channel_id: string }; Returns: boolean }
+      chat_can_read_edits: { Args: { p_channel_id: string }; Returns: boolean }
+      chat_is_staff: { Args: never; Returns: boolean }
+      chat_links_ok: { Args: { p_links: Json }; Returns: boolean }
       claim_customer: { Args: { p_customer_id: string }; Returns: undefined }
       combine_quotes: { Args: { p_quote_ids: string[] }; Returns: Json }
       compute_advance_adjustment: {
@@ -15462,6 +15787,7 @@ export type Database = {
           seller_state_code: string
         }[]
       }
+      is_chat_member: { Args: { p_channel_id: string }; Returns: boolean }
       is_demo_visitor: { Args: never; Returns: boolean }
       issue_credit_note: {
         Args: {
