@@ -15300,8 +15300,47 @@ export type Database = {
       }
       chat_can_read: { Args: { p_channel_id: string }; Returns: boolean }
       chat_can_read_edits: { Args: { p_channel_id: string }; Returns: boolean }
+      chat_create_channel: {
+        Args: {
+          p_is_private?: boolean
+          p_member_ids?: string[]
+          p_name: string
+          p_topic?: string
+        }
+        Returns: string
+      }
+      chat_delete_message: { Args: { p_message_id: string }; Returns: Json }
+      chat_edit_message: {
+        Args: { p_body: string; p_message_id: string }
+        Returns: undefined
+      }
       chat_is_staff: { Args: never; Returns: boolean }
       chat_links_ok: { Args: { p_links: Json }; Returns: boolean }
+      chat_mark_read: {
+        Args: { p_at?: string; p_channel_id: string }
+        Returns: string
+      }
+      chat_open_dm: { Args: { p_user_id: string }; Returns: string }
+      chat_post_message: {
+        Args: {
+          p_attachments?: Json
+          p_body: string
+          p_channel_id: string
+          p_kind?: string
+          p_links?: Json
+          p_mentions?: string[]
+          p_parent_id?: string
+        }
+        Returns: string
+      }
+      chat_unread_counts: {
+        Args: never
+        Returns: {
+          channel_id: string
+          mentions: number
+          unread: number
+        }[]
+      }
       claim_customer: { Args: { p_customer_id: string }; Returns: undefined }
       combine_quotes: { Args: { p_quote_ids: string[] }; Returns: Json }
       compute_advance_adjustment: {
