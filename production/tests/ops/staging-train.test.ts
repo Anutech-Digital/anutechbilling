@@ -1,5 +1,5 @@
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import {
   parseArgs,
@@ -16,6 +16,8 @@ import {
   newestDeployDb,
   summaryLines,
   PUSH_ARGS,
+  resolvePinned,
+  pinnedDbStepLines,
   // @ts-expect-error — plain .mjs ops script, no types
 } from "../../scripts/ops/staging-train.mjs";
 
@@ -30,10 +32,10 @@ const run = (status: string, conclusion: string) => ({ status, conclusion });
 
 describe("staging train — args", () => {
   it("defaults to a dry run", () => {
-    expect(parseArgs([])).toEqual({ dbDone: false, push: false, help: false });
+    expect(parseArgs([])).toEqual({ dbDone: false, push: false, help: false, sha: null, dryRun: false });
   });
   it("takes --db-done and --push", () => {
-    expect(parseArgs(["--push", "--db-done"])).toEqual({ dbDone: true, push: true, help: false });
+    expect(parseArgs(["--push", "--db-done"])).toEqual({ dbDone: true, push: true, help: false, sha: null, dryRun: false });
   });
   it("rejects anything else (no --force, no branch names)", () => {
     expect(() => parseArgs(["--force"])).toThrow(/--force/);
@@ -189,5 +191,58 @@ describe("R-540: migrations staging already has under prisma/migrations", () => 
     const tree = "production/prisma/migrations/0_init\nproduction/prisma/migrations/20261006130000_feedback_checked\nproduction/prisma/migrations/migration_lock.toml\n";
     expect(dropAlreadyInPrisma(added, tree)).toEqual(["production/supabase/migrations/20261010050000_attendance_change_log.sql"]);
     expect(dropAlreadyInPrisma(added, "")).toEqual(added);
+  });
+});
+
+/* R-2106 (31 Oct 2026): twice on 29-30 Oct the newest-green rule picked a NEWER commit between the dry
+   run and the DB step (migrations not on the staging DB yet, cards not localhost-checked); 30 Oct the
+   coordinator merged dd02c3e1 by hand. --sha pins the train to one commit. All fakes — never the real remote. */
+describe("R-2106: --sha pins the train, --dry-run never pushes", () => {
+  const SHA = "dd02c3e1".padEnd(40, "0");
+  it("parses --sha <x> / --sha=<x> and --dry-run; --dry-run with --push is refused", () => {
+    expect(parseArgs(["--sha", "dd02c3e1", "--dry-run"])).toMatchObject({ sha: "dd02c3e1", dryRun: true, push: false });
+    expect(parseArgs(["--sha=dd02c3e1", "--push", "--db-done"])).toMatchObject({ sha: "dd02c3e1", push: true });
+    expect(() => parseArgs(["--sha"])).toThrow(/--sha/);
+    expect(() => parseArgs(["--dry-run", "--push"])).toThrow(/dry-run/);
+  });
+
+  /** git fake: rev-parse resolves, merge-base --is-ancestor answers from the sets. */
+  const fakeGit = ({ onManager = true, inStaging = false, exists = true } = {}) => (args: string[]) => {
+    if (args[0] === "rev-parse") { if (!exists) throw new Error("unknown revision"); return SHA + "\n"; }
+    if (args[0] === "merge-base" && args[1] === "--is-ancestor") {
+      const ok = args[3] === "anutech/manager-pardeep" ? onManager : args[3] === "anutech/staging" ? inStaging : false;
+      if (!ok) throw new Error("not ancestor");
+      return "";
+    }
+    throw new Error(`unexpected git ${args.join(" ")}`);
+  };
+  const green = () => [run("completed", "success")];
+
+  it("a green commit on manager-pardeep that staging lacks → pinned", () => {
+    const r = resolvePinned("dd02c3e1", { git: fakeGit(), runsFor: green });
+    expect(r).toMatchObject({ ok: true, pick: SHA, alreadyInStaging: false });
+  });
+  it("refuses: unknown sha, not on manager-pardeep, CI red / running / no run", () => {
+    expect(resolvePinned("nope", { git: fakeGit({ exists: false }), runsFor: green }).message).toMatch(/nahi mila/);
+    expect(resolvePinned("dd02c3e1", { git: fakeGit({ onManager: false }), runsFor: green }).message).toMatch(/manager-pardeep par nahi/);
+    expect(resolvePinned("dd02c3e1", { git: fakeGit(), runsFor: () => [run("completed", "failure")] })).toMatchObject({ ok: false });
+    expect(resolvePinned("dd02c3e1", { git: fakeGit(), runsFor: () => [run("in_progress", "")] })).toMatchObject({ ok: false });
+    expect(resolvePinned("dd02c3e1", { git: fakeGit(), runsFor: () => [] }).message).toMatch(/CI run nahi mila/);
+  });
+  it("already in staging → nothing to do (still ok, not a refusal)", () => {
+    expect(resolvePinned("dd02c3e1", { git: fakeGit({ inStaging: true }), runsFor: green })).toMatchObject({ ok: true, alreadyInStaging: true });
+  });
+  it("DB step for a pinned sha runs THAT commit's deploy-db script from a temp worktree of it", () => {
+    const lines = pinnedDbStepLines(SHA, ["Caddyfile", "deploy-db-2026-10-07.sh", "deploy-db-2026-10-30.sh"], "C:/tmp/train-db");
+    const text = lines.join("\n");
+    expect(text).toMatch(new RegExp(`git worktree add --detach "C:/tmp/train-db" ${SHA}`));
+    expect(text).toMatch(/"C:\/tmp\/train-db\/production\/supabase\/cloudsql\/staging\/deploy-db-2026-10-30\.sh"/);
+    expect(text).toMatch(/git worktree remove "C:\/tmp\/train-db"/);
+    expect(text).not.toMatch(/prune/);
+    expect(pinnedDbStepLines(SHA, ["Caddyfile"], "C:/x")[0]).toMatch(/nahi mila/);
+  });
+  it("the script never runs `git worktree prune` (docs/WORKER-STEPS.md rule)", () => {
+    const src = readFileSync(path.resolve(__dirname, "../../scripts/ops/staging-train.mjs"), "utf8");
+    expect(src).not.toMatch(/["']worktree["'],\s*["']prune["']/);
   });
 });
