@@ -348,6 +348,10 @@ export const OFF_MENU_ROLES: Readonly<Record<string, UserRole[]>> = {
   "/aa": ["owner", "manager", "billing", "accountant"],
   /* GP-07a (R-2115): the personal login's Account page — in the avatar menu, not a sidebar row. */
   "/account": ["personal"],
+  /* R-2299 (G-TEAMCHAT): Team chat, reached by URL until R-2300 gives it its menu row (then this
+     entry goes). Every staff role — the same people as chat_is_staff() (R-2294): never
+     partner_agent (external) or personal. sales_senior is read as sales here. */
+  "/team-chat": ["owner", "manager", "sales", "billing", "delivery", "accountant", "support", "marketing"],
 };
 
 /**
