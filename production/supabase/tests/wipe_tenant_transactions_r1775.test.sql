@@ -238,8 +238,8 @@ begin
   -- So: only USER triggers that are enabled now are disabled one by one, foreign keys stay fully live,
   -- and each trigger is put back to its exact mode (O / A / R) before this transaction ends. ALTER TABLE
   -- is transactional: if anything fails, the rollback restores them too.
-  -- R-2296: run pending deferred trigger events first (e.g. the users #general trigger after the
-  -- fixture's reporter insert) - ALTER TABLE refuses a table with pending trigger events.
+  -- R-2296: fire any pending deferred trigger events first (e.g. the users #general trigger after a
+  -- users insert in this transaction) - ALTER TABLE refuses a table with pending trigger events.
   set constraints all immediate;
   for r in select t.tgrelid, t.tgname, t.tgenabled::text as mode
              from pg_trigger t where t.tgrelid = any (v_rels) and not t.tgisinternal and t.tgenabled <> 'D'
