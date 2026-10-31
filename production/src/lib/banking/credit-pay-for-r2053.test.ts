@@ -4,7 +4,7 @@
    is said once: "1 year: 23-10-2026 to 22-10-2027 · renews 23-10-2027" — the saved renewal date
    (start + whole terms) is unchanged. Decisions: Pardeep delegated, 28 Oct. */
 import { describe, expect, it } from "vitest";
-import { paidUpText, repriceLine, saleLineFromItem, salePaidUp, saleSchedule, saleTermText, type SaleLine } from "./credit-pay-for";
+import { convertTypedPrice, paidUpText, repriceLine, saleLineFromItem, salePaidUp, saleSchedule, saleTermText, typedPriceCheck, type SaleLine } from "./credit-pay-for";
 
 const STARTER = {
   id: "GW-ST", name: "Google Workspace Business Starter", vendor: "google", msrp: 270, wholesale: 110,
@@ -12,17 +12,21 @@ const STARTER = {
 } as never;
 const typed = (l: SaleLine, rate: number): SaleLine => ({ ...l, rate, priceTyped: true });
 
+/* R-2178 (staging 31 Oct): the silent ÷12 / ×12 below chained through One-time into a ×12 of a typed
+   ₹1,800/user/year. A typed price is now KEPT as typed; the conversion is an explicit button
+   (credit-pay-for-r2178.test.ts). These keep R-2053's intent: the deal price survives. */
 describe("R-2053 (1) a typed price survives a Commitment change", () => {
-  it("owner's example: Annual typed 3000 → Monthly flex 250 → Annual 3000", () => {
+  it("owner's example: Annual typed 3000 → Monthly flex keeps 3000 (and asks) → Annual 3000", () => {
     const a = typed(saleLineFromItem(STARTER, "annual_yearly", 10), 3000);
     const m = repriceLine(a, STARTER, "monthly");
-    expect(m).toMatchObject({ cycle: "monthly", rate: 250, priceTyped: true, cost: 132 });
+    expect(m).toMatchObject({ cycle: "monthly", rate: 3000, priceTyped: true, cost: 132 });
+    expect(typedPriceCheck(m)).toMatchObject({ convertRate: 250 });
     expect(repriceLine(m, STARTER, "annual_yearly")).toMatchObject({ cycle: "annual_yearly", rate: 3000, cost: 1320 });
   });
-  it("whole rupees: typed ₹3,250 a year → ₹271 a month → ₹3,252 a year", () => {
+  it("whole rupees: typed ₹3,250 a year → the explicit ÷ 12 gives ₹271 a month", () => {
     const m = repriceLine(typed(saleLineFromItem(STARTER, "annual_yearly", 1), 3250), STARTER, "monthly");
-    expect(m.rate).toBe(271);
-    expect(repriceLine(m, STARTER, "annual_yearly").rate).toBe(3252);
+    expect(m.rate).toBe(3250);
+    expect({ ...m, ...convertTypedPrice(m) }.rate).toBe(271);
   });
   it("an untouched line takes the floored catalogue price for the new commitment", () => {
     const a = saleLineFromItem(STARTER, "annual_yearly", 10);

@@ -478,6 +478,12 @@ export function convertPriceForChoice(
   text: string, from: BillingChoice, to: BillingChoice, previous?: PriceSwitchMemo | null,
 ): PriceSwitch {
   if (from === to) return { text, hint: null };
+  /* Undoing the last switch, box untouched since: give back exactly what was typed. R-2178: checked
+     first, so a switch into Flexible that CLEARED the box gives the typed rate back too (before, the
+     empty box returned early and the typed ₹/yr was lost). */
+  if (previous && previous.fromChoice === to && previous.toText === text) {
+    return { text: previous.fromText, hint: null };
+  }
   const trimmed = text.trim();
   const n = Number.parseFloat(trimmed);
   if (trimmed === "" || !Number.isFinite(n) || n === 0) return { text, hint: null };
@@ -489,11 +495,6 @@ export function convertPriceForChoice(
         ? "Flex has its own price (not the annual rate ÷ 12). Please enter the flex price per month."
         : "Flex was its own price. Please enter the annual-commitment price.",
     };
-  }
-
-  /* Undoing the last switch, box untouched since: give back exactly what was typed. */
-  if (previous && previous.fromChoice === to && previous.toText === text) {
-    return { text: previous.fromText, hint: null };
   }
 
   const fromUnit = billingTerms(from).unit;
