@@ -19,6 +19,11 @@
  *     not reported yet → "Report as bug" (problem) / "Report as idea" (suggestion) →
  *     chat_message_report files it like the in-app report form; triage is asked after, never fatal.
  *   Both RPCs (migration 20261031183408) are idempotent and also allow the owner / a manager.
+ *
+ * R-2328 (R-2305 audit): in a DM or a PRIVATE channel the server (migration 20261031221356) lets
+ * only the poster do either, and saves NO text — only the link back, under a neutral "Team chat
+ * post (private)" title — because Tasks and reports are read by the whole company. Here the
+ * buttons stay poster-only, and both ask first with one line: PRIVATE_LINK_ONLY.
  */
 "use client";
 
@@ -41,9 +46,9 @@ import { FormField } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
 import { toastError } from "@/lib/errors/toast-error";
-import { teamChatKeys, toChatError } from "@/lib/queries/team-chat";
+import { teamChatKeys, toChatError, useChatChannels } from "@/lib/queries/team-chat";
 import { memberLabel } from "@/lib/queries/team";
-import type { ChatMessage } from "@/lib/team-chat/types";
+import type { ChatChannel, ChatMessage } from "@/lib/team-chat/types";
 import { cn } from "@/lib/utils";
 import type { ChatExtension, ComposerDraft, ComposerSlotProps, MessageSlotProps } from "../composer-slots";
 
@@ -78,6 +83,27 @@ export function postStatusChip(m: Pick<ChatMessage, "kind" | "post_status">): { 
 
 /** Where "Open task" goes — the Tasks page opens that task's dialog (R-341). */
 export const chatTaskHref = (taskId: string): Route => `/tasks?tab=all&task=${encodeURIComponent(taskId)}` as Route;
+
+/** R-2328: the one-line confirm on a DM / private-channel post's Make a task / Report. */
+export const PRIVATE_LINK_ONLY = "Only a link is saved — the text stays in this chat.";
+
+/**
+ * R-2328: is this channel a DM or a private channel? Not loaded / not found → true (the safe
+ * side: the server decides anyway; this only adds the confirm line). Pure — tested directly.
+ */
+export function chatChannelIsPrivate(
+  channels: readonly Pick<ChatChannel, "id" | "kind" | "is_private">[] | undefined,
+  channelId: string,
+): boolean {
+  const c = channels?.find((ch) => ch.id === channelId);
+  return !c || c.kind === "dm" || c.is_private;
+}
+
+/** R-2328: the channel of a message slot is private (reads the page's channel list). */
+function useChannelIsPrivate(channelId: string): boolean {
+  const { data } = useChatChannels();
+  return chatChannelIsPrivate(data, channelId);
+}
 
 /** Tomorrow as YYYY-MM-DD in India time (the default due date). */
 export function tomorrowIst(now: Date = new Date()): string {
@@ -132,8 +158,8 @@ function useRefreshChat(message: ChatMessage, channelId: string) {
 }
 
 function MakeTaskDialog({
-  open, onOpenChange, message, channelId, myUserId, teammates,
-}: MessageSlotProps & { open: boolean; onOpenChange: (o: boolean) => void }) {
+  open, onOpenChange, message, channelId, myUserId, teammates, isPrivate,
+}: MessageSlotProps & { open: boolean; onOpenChange: (o: boolean) => void; isPrivate: boolean }) {
   const qc = useQueryClient();
   const refresh = useRefreshChat(message, channelId);
   const [owner, setOwner] = React.useState<string>(myUserId ?? "");
@@ -167,7 +193,9 @@ function MakeTaskDialog({
         <DialogHeader>
           <DialogTitle>Make a task</DialogTitle>
           <DialogDescription>
-            The task gets this post&apos;s text and a link back to it, and shows in Tasks.
+            {isPrivate
+              ? PRIVATE_LINK_ONLY
+              : "The task gets this post’s text and a link back to it, and shows in Tasks."}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -214,7 +242,9 @@ function MakeTaskDialog({
 function PostActions(props: MessageSlotProps) {
   const { message, channelId, myUserId } = props;
   const refresh = useRefreshChat(message, channelId);
+  const isPrivate = useChannelIsPrivate(channelId);
   const [dialog, setDialog] = React.useState(false);
+  const [confirmReport, setConfirmReport] = React.useState(false);
 
   const report = useMutation({
     mutationFn: async () => {
@@ -236,6 +266,7 @@ function PostActions(props: MessageSlotProps) {
     },
     onSuccess: () => {
       refresh();
+      setConfirmReport(false);
       toast.success(message.kind === "problem" ? "Reported as a bug" : "Sent as an idea");
     },
     onError: (err) => toastError(err),
@@ -246,6 +277,7 @@ function PostActions(props: MessageSlotProps) {
   const showMake = mine && !message.task_id;
   const showReport = mine && !message.feedback_id;
   if (!message.task_id && !showMake && !showReport) return null;
+  const reportLabel = message.kind === "problem" ? "Report as bug" : "Report as idea";
 
   return (
     <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -259,11 +291,33 @@ function PostActions(props: MessageSlotProps) {
         </Button>
       ) : null}
       {showReport && (
-        <Button type="button" variant="default" size="sm" loading={report.isPending} onClick={() => report.mutate()}>
-          {message.kind === "problem" ? "Report as bug" : "Report as idea"}
+        <Button
+          type="button"
+          variant="default"
+          size="sm"
+          loading={report.isPending && !isPrivate}
+          onClick={() => (isPrivate ? setConfirmReport(true) : report.mutate())}
+        >
+          {reportLabel}
         </Button>
       )}
-      {dialog && <MakeTaskDialog {...props} open={dialog} onOpenChange={setDialog} />}
+      {dialog && <MakeTaskDialog {...props} isPrivate={isPrivate} open={dialog} onOpenChange={setDialog} />}
+      {confirmReport && (
+        <Dialog open={confirmReport} onOpenChange={setConfirmReport}>
+          <DialogContent className="sm:!max-w-md">
+            <DialogHeader>
+              <DialogTitle>{reportLabel}</DialogTitle>
+              <DialogDescription>{PRIVATE_LINK_ONLY}</DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setConfirmReport(false)}>Cancel</Button>
+              <Button type="button" variant="primary" icon="check" loading={report.isPending} onClick={() => report.mutate()}>
+                {message.kind === "problem" ? "Report" : "Send idea"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
