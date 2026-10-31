@@ -15320,6 +15320,11 @@ export type Database = {
         Args: { p_at?: string; p_channel_id: string }
         Returns: string
       }
+      chat_message_report: { Args: { p_message_id: string }; Returns: string }
+      chat_message_to_task: {
+        Args: { p_due_at?: string; p_message_id: string; p_owner_id?: string }
+        Returns: string
+      }
       chat_open_dm: { Args: { p_user_id: string }; Returns: string }
       chat_post_message: {
         Args: {
