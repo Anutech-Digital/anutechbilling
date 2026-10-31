@@ -11,8 +11,9 @@
 --   1. Other tenant reads 0 rows of tenant A from every chat table (and still sees its own).
 --   2. A non-member reads 0 from a private channel and from a DM — the OWNER included for a DM
 --      between two staff — but reads a public channel.
---   3. A member reads their private channel / DM, its members and its attachment; owner/manager
---      read edit history of a channel they can read, never of a DM (not even their own DM);
+--   3. A member reads their private channel / DM, its members and its attachment; the owner
+--      (R-2331: + the message author; was owner/manager) reads edit history of a channel they can
+--      read, never of a DM (not even their own DM);
 --      sales reads none.
 --   4. partner_agent, personal and deactivated users read 0 — even with a (bad) member row.
 --   5. No tenant (unknown login / no login) → 0 rows; is_chat_member(NULL) and
@@ -296,7 +297,8 @@ begin
 
   perform pg_temp.tc01_as(v_mgr);
   v_s := pg_temp.tc01_seen(v_gen);
-  if v_s <> 'ch=1 mem=6 msg=1 att=1 ed=1' then raise exception 'FAIL 3: manager on public #general sees %', v_s; end if;
+  -- R-2331: edit history is the author's and the owner's only — the manager reads none of it
+  if v_s <> 'ch=1 mem=6 msg=1 att=1 ed=0' then raise exception 'FAIL 3: manager on public #general sees %', v_s; end if;
 
   ------------------------------------------------------------------ 4. outsiders
   foreach v_who in array array[v_partner, v_pers, v_gone] loop
