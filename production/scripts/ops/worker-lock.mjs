@@ -58,7 +58,7 @@ import { restoreBuildInfo, saveBuildInfo, dropBuildInfo, parseTscFlags, TSC_FULL
 import { execSync, execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites } from "./push-guard-suites.mjs";
-import { enforceScope, parseScopeFlags } from "./worker-lock-guards.mjs";
+import { enforceScope, parseScopeFlags, normaliseClaimAreas, realMigrationOrderGate } from "./worker-lock-guards.mjs";
 import { runRelatedSql } from "./worker-lock-sql.mjs";
 import { isDerived, withoutDerived, refreshDerived, rebaseResolvingDerived, realDerivedDeps, settleLocks } from "./worker-lock-derived.mjs";
 import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue } from "./worker-lock-queue.mjs";
@@ -420,6 +420,8 @@ async function pushWithTurn(card, ciFlags = {}) {
       const r = refreshDerived(card, derived);
       if (r.how !== "none") console.log(`  generated files dobara bane (${r.changed.join(", ")}) — ${r.how === "amend" ? "apne aakhri commit me jode" : "alag commit"}.`);
     } catch (e) { console.error("✗ gen-deploy-db fail — push nahi hua (migration ka -- deploy-peek: dekho).\n" + String(e?.stderr ?? e?.message ?? e).slice(-800)); process.exit(1); }
+    /* R-2106: the same migration-order check CI runs first — fail here, not after 29 min of CI. */
+    if (!realMigrationOrderGate()) process.exit(5);
     /* R-910: the Auth.js/gateway code imports a Prisma client that is generated, not committed. */
     if (fs.existsSync("prisma/schema.prisma")) { try { sh("npx prisma generate"); } catch (e) { console.error("✗ prisma generate fail — push nahi hua.\n" + String(e.stderr ?? e.message ?? "").slice(-800)); process.exit(1); } }
     /* R-1814: what THIS worker is pushing, read before anything else can move HEAD. */
@@ -1023,7 +1025,8 @@ function main(argv) {
   if (cmd === "claim") {
     const { rest: ciRest, fixesRed } = parseCiFlags(rest);
     const { rest: claimArgs, wait, priority: askedPriority, waitMin } = parseQueueFlags(ciRest);
-    const [worktree, ...areas] = claimArgs;
+    /* R-2106: one form for every path (commas split, worktree prefix + production/ off) — printed when it changed anything. */
+    const [worktree, ...rawAreas] = claimArgs, areas = normaliseClaimAreas(rawAreas, worktree, (l) => console.log(l));
     const own0 = readLocks().find((l) => l.card === card) ?? null;
     /* R-1973: `claim <CARD> --fixes-red` (no paths) = take the slot back for a card in ci-wait / ci-red. */
     const reclaim = fixesRed && own0 && !countsTowardCap(own0) && !worktree;

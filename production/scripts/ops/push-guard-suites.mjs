@@ -111,6 +111,7 @@ export const PUSH_GUARD_SUITES = [
   "src/site/lib/site-split.test.ts",
   // ── repo-wide file scans ──
   "tests/ops/deploy-targets.test.ts", // R-1604: only live + staging deploy targets
+  "tests/ops/dev-local-resend.test.ts", // R-2106: dev:local never lets a send key (Resend/SMTP/…) through; cron:local secret = dev-local's
 ];
 
 /** Soft budget: the push prints a warning above this so the list gets trimmed, not ignored. */
