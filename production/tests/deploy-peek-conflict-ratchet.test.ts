@@ -13,6 +13,11 @@ import { splitScript } from "../scripts/ops/gen-deploy-db.mjs";
 // Rule: no migration's peek may require an object to exist when a LATER migration's peek requires
 // that same object to be absent. Objects read here: to_regprocedure / to_regclass / to_regtype
 // ("is not null" vs "is null") and pg_trigger tgname ("exists" vs "not exists").
+//
+// Fixing such a pair: change ONLY the `-- deploy-peek:` line of the old file. scripts/migration-order-check.mjs
+// (CI) allows a header-only edit of a shipped migration and nothing else — not even a comment line
+// (R-2106's first push added two comment lines and turned CI red, and removing them was red again,
+// because CI diffs each push against the previous one).
 
 // The deploy scripts' MIGS lines are exactly what runs, in apply order (old files without a header
 // are not in them). tests/gen-deploy-db.test.ts proves the scripts match supabase/migrations.
