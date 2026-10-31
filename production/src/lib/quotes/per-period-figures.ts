@@ -19,7 +19,8 @@
  *     rounding, R-527); a foreign quote has no plan and divides by invoices-per-year at 2dp.
  */
 import type { BillingCycle } from "@/lib/supabase/database.types";
-import { cycleInvoicesPerYear } from "@/lib/quotes/billing";
+import { cycleInvoicesPerYear, cycleFromLegacyCommitment } from "@/lib/quotes/billing";
+import { rupee } from "@/lib/utils";
 import { lineIsPerInvoice, perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-divisor";
 import { quoteInstalmentPlan, type QuoteInstalmentPlan } from "@/lib/billing/instalments";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
@@ -96,5 +97,51 @@ export function quotePerPeriodFigures(i: PerPeriodInput): PerPeriodFigures {
     gross:    first ? first.gross   : div(i.total),
     yearTotal: plan ? plan.instalmentsGross : annualContractValue(i.total, n, i.lineCommitment),
     plan,
+  };
+}
+
+/* ── R-2182: the quote's TOTAL with its period, for the quote detail page ─────────────────
+   The Totals card printed the stored figure with "/month" whenever billing_cycle was monthly.
+   On an annual commitment the stored figure is the YEAR, so Q-F588-27-0068 (Starter × 10,
+   Annual, paid monthly) read "₹38,232 /month" — twelve times the real ₹3,186 — and paid
+   quarterly it read "₹38,232" with no unit at all. The bill amount comes from
+   quotePerPeriodFigures above (what the PDF and the email print), so the page cannot drift.
+   Owner rule (R-2178): under Annual the frequency changes only the amount per bill, never
+   the per-month rate — ₹3,186 × 12 = ₹9,558 × 4 = ₹38,232. All figures incl. GST, like the
+   Total they replace. */
+export type QuotePeriodUnit = "month" | "quarter" | "half-year" | "year";
+
+export interface QuoteTotalPeriods {
+  /** What one bill asks for, incl GST. */
+  perBill: number;
+  /** The period one bill covers; null = paid once (add seats, one-off, month extension). */
+  unit: QuotePeriodUnit | null;
+  /** The year's total incl GST when the year is paid in parts; null when one bill IS the period. */
+  yearTotal: number | null;
+}
+
+const CYCLE_UNIT: Record<BillingCycle, QuotePeriodUnit> = {
+  monthly: "month", quarterly: "quarter", half_yearly: "half-year", yearly: "year",
+};
+
+export function quoteTotalPeriods(
+  i: Omit<PerPeriodInput, "cycle"> & { cycle: BillingCycle | null | undefined; oneTime?: boolean },
+): QuoteTotalPeriods {
+  if (i.oneTime) return { perBill: i.total, unit: null, yearTotal: null };
+  /* No billing_cycle (old quote): the PDF's legacy bridge, never a guessed "/month". */
+  const cycle = i.cycle ?? cycleFromLegacyCommitment(i.lineCommitment);
+  const pp = quotePerPeriodFigures({ ...i, cycle });
+  /* Flex: the stored figures ARE one month, billed monthly — no year commitment to show. */
+  if (pp.flex) return { perBill: i.total, unit: "month", yearTotal: null };
+  if (!pp.perInvoice) return { perBill: i.total, unit: "year", yearTotal: null };
+  return { perBill: pp.gross, unit: CYCLE_UNIT[cycle], yearTotal: pp.yearTotal };
+}
+
+/** "₹3,186" + "/month" + "₹38,232/year" — the words the Totals card prints. */
+export function quoteTotalPeriodsText(t: QuoteTotalPeriods): { perBill: string; unit: string; year: string | null } {
+  return {
+    perBill: rupee(t.perBill),
+    unit: t.unit ? `/${t.unit}` : "",
+    year: t.yearTotal == null ? null : `${rupee(t.yearTotal)}/year`,
   };
 }
