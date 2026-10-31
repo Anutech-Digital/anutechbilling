@@ -104,13 +104,16 @@ const config: Config = {
           DEFAULT: "hsl(var(--slate) / <alpha-value>)",
           soft: "hsl(var(--slate-soft) / <alpha-value>)",
         },
+        // R-2261: text on the amber / rose fills — white in light, dark paper in dark.
+        "on-primary": "hsl(var(--on-primary) / <alpha-value>)",
         // shadcn/ui compatibility
         border: "hsl(var(--hairline) / <alpha-value>)",
-        input: "hsl(var(--hairline) / <alpha-value>)",
+        // R-2261: form-field borders (>= 3:1); the hairline stays for dividers and cards.
+        input: "hsl(var(--input-border) / <alpha-value>)",
         ring: "hsl(var(--amber) / <alpha-value>)",
         primary: {
           DEFAULT: "hsl(var(--amber) / <alpha-value>)",
-          foreground: "hsl(0 0% 100% / <alpha-value>)",
+          foreground: "hsl(var(--on-primary) / <alpha-value>)",
         },
         secondary: {
           DEFAULT: "hsl(var(--paper-2) / <alpha-value>)",
@@ -118,7 +121,7 @@ const config: Config = {
         },
         destructive: {
           DEFAULT: "hsl(var(--rose) / <alpha-value>)",
-          foreground: "hsl(0 0% 100% / <alpha-value>)",
+          foreground: "hsl(var(--on-primary) / <alpha-value>)",
         },
         muted: {
           DEFAULT: "hsl(var(--paper-2) / <alpha-value>)",
