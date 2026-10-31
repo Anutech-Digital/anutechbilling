@@ -408,3 +408,62 @@ describe("R-1918 — new vendor from the bank line", () => {
     expect(saveButton().disabled).toBe(true);
   });
 });
+
+/* R-2321 (staging money-out reconcile, 31 Oct): Shri Balaji was paid ₹67,500 against a ₹71,500
+   bill. "Record it now" → Expense bill had no "Paying now", so the line could not be booked —
+   neither for an existing vendor nor in the new-vendor form. The money work is proven by
+   supabase/tests/r2321_new_expense_part_pay.test.sql. */
+describe("R-2321 — part-pay a new expense bill from Reconcile", () => {
+  const fillBill = (taxable: string, gst: string) => {
+    fireEvent.click(screen.getByLabelText(/The bill is not in the books yet/));
+    fireEvent.click(screen.getByRole("button", { name: "Expense bill" }));
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "Other" } });
+    fireEvent.change(screen.getByLabelText("Value before GST"), { target: { value: taxable } });
+    fireEvent.change(screen.getByLabelText("GST on the bill"), { target: { value: gst } });
+  };
+
+  it("new-vendor form, owner's case: Paying now = the ₹67,500 line, ₹4,000 stays due; only ₹67,500 reaches the bill", async () => {
+    state.pay.mockResolvedValue(result({
+      vendor_name: "Shri Balaji Traders", vendor_created: true,
+      new_bill: { source: "expense", doc_id: "EXP-1", bill_no: "SB-71", settled: 67500, cash: 67500, tds: 0, tds_section: null, status: "partial", still_due: 4000, total: 71500 },
+    }));
+    render(<DebitPayForSection transaction={txn(67500, "NEFT DR-SBIN0001234-SHRI BALAJI TRADERS")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Vendor paid"), { target: { value: "__new_vendor__" } });
+    fireEvent.change(screen.getByLabelText("New vendor name"), { target: { value: "Shri Balaji Traders" } });
+    fillBill("60594", "10906");
+    expect((screen.getByLabelText("Amount paid on the new bill") as HTMLInputElement).value).toBe("67500");
+    expect(screen.getByText(/part payment — ₹4,000 stays due on the bill/)).toBeTruthy();
+    expect((screen.getByLabelText("Advance to vendor") as HTMLInputElement).value).toBe("0");
+    expect(saveButton().disabled).toBe(false);
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay).toHaveBeenCalledTimes(1);
+    const arg = state.pay.mock.calls[0][0];
+    expect(arg.newBill).toMatchObject({ kind: "expense", taxable: 60594, gst: 10906, pay: 67500, tds: 0 });
+    expect(arg.advance).toBe(0);
+    expect(screen.getByText(/Bill now part paid, ₹4,000 still due/)).toBeTruthy();
+  });
+
+  it("existing vendor: paying less than the line keeps the difference as an advance (the existing rule)", async () => {
+    state.pay.mockResolvedValue(result({ vendor_id: "v2", vendor_name: "Google Cloud India" }));
+    render(<DebitPayForSection transaction={txn(67500, "CARD SOMETHING")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Vendor paid"), { target: { value: "v2" } });
+    fillBill("60594", "10906");
+    fireEvent.change(screen.getByLabelText("Amount paid on the new bill"), { target: { value: "60000" } });
+    expect(screen.getByText(/part payment — ₹11,500 stays due on the bill/)).toBeTruthy();
+    expect((screen.getByLabelText("Advance to vendor") as HTMLInputElement).value).toBe("7500");
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0]).toMatchObject({ newBill: { kind: "expense", pay: 60000 }, advance: 7500 });
+  });
+
+  it("Paying now cannot go above the bill: a bill smaller than the line is paid in full, the rest is an advance", () => {
+    render(<DebitPayForSection transaction={txn(67500, "CARD SOMETHING")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Vendor paid"), { target: { value: "v2" } });
+    fillBill("50000", "0");
+    fireEvent.change(screen.getByLabelText("Amount paid on the new bill"), { target: { value: "90000" } });
+    expect((screen.getByLabelText("Amount paid on the new bill") as HTMLInputElement).value).toBe("50000");
+    expect(screen.queryByText(/stays due on the bill/)).toBeNull();
+    expect((screen.getByLabelText("Advance to vendor") as HTMLInputElement).value).toBe("17500");
+  });
+});
