@@ -299,4 +299,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2181revdrill", peek: "to_regprocedure('public.report_pnl_revenue_lines(date,date,text[])') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_pnl_revenue_by_product(date,date)') and prosrc like '%R-2181%')" },
   { key: "r2213belowcost", peek: "to_regprocedure('public.tg_payments_quote_approval()') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'quotes' and column_name = 'below_cost')" },
   { key: "r2294teamchattables", peek: "to_regclass('public.chat_message_edits') is not null and to_regprocedure('public.is_chat_member(uuid)') is not null and to_regprocedure('public.chat_can_read(uuid)') is not null" },
+  { key: "r2297chatstorage", peek: "exists(select 1 from pg_proc where proname='storage_object_allowed' and pronamespace='public'::regnamespace and prosrc like '%R-2297%')" },
 ];
