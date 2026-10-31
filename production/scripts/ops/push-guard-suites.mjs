@@ -19,6 +19,7 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/a11y/a11y-ratchet.test.tsx",
   "tests/gen-deploy-db.test.ts",
   "tests/migrations-deploy-user-ratchet.test.ts", // R-2118: auth.* DDL in a deployed migration runs as postgres
+  "tests/deploy-peek-conflict-ratchet.test.ts", // R-2106: no earlier peek needs an object a later peek needs absent
   "src/lib/errors/toast-error-r300.test.ts",
   "src/lib/a11y/a11y-r303.test.ts",
   "src/lib/a11y/a11y-r309.test.ts",
