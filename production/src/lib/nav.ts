@@ -348,6 +348,10 @@ export const OFF_MENU_ROLES: Readonly<Record<string, UserRole[]>> = {
   "/aa": ["owner", "manager", "billing", "accountant"],
   /* GP-07a (R-2115): the personal login's Account page — in the avatar menu, not a sidebar row. */
   "/account": ["personal"],
+  /* R-2299 (G-TEAMCHAT): Team chat, reached by URL until R-2300 gives it its menu row (then this
+     entry goes). Every staff role — the same people as chat_is_staff() (R-2294): never
+     partner_agent (external) or personal. sales_senior is read as sales here. */
+  "/team-chat": ["owner", "manager", "sales", "billing", "delivery", "accountant", "support", "marketing"],
 };
 
 /**
@@ -518,6 +522,7 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/products": "Redirects to Products (/items) for people who type the menu name as a URL (R-490)",
   "/settings/company": "redirect to /settings (Company tab), R-1670",
   "/account": "Personal login's account page; opened from the avatar menu (GP-07a)",
+  "/team-chat": "Team chat (R-2299) — reached by URL until R-2300 adds its menu row and topbar icon; remove this line then",
 };
 
 export const APP_NAV: NavSection[] = [
