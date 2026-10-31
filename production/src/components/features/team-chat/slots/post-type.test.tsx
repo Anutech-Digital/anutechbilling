@@ -6,12 +6,14 @@
  * plus "Report as bug / idea" (decision 8: both shown, the poster chooses); "Make a task" sends
  * the chosen teammate + due date to chat_message_to_task; "Report" calls chat_message_report and
  * asks triage after.
+ * R-2328: in a DM / private channel both ask first — "Only a link is saved — the text stays in
+ * this chat." (the server saves no text there; team_chat_private_to_task.test.sql).
  */
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ChatMessage } from "@/lib/team-chat/types";
+import type { ChatChannel, ChatMessage } from "@/lib/team-chat/types";
 import type { TeamMember } from "@/lib/queries/team";
 
 const mutate = vi.fn();
@@ -27,7 +29,10 @@ const toastError = vi.fn();
 vi.mock("@/lib/errors/toast-error", () => ({ toastError: (e: unknown) => toastError(e) }));
 
 import { Composer } from "../composer";
-import { chatTaskHref, dueAtFromDate, postStatusChip, postTypeExtension, tomorrowIst } from "./post-type";
+import { teamChatKeys } from "@/lib/queries/team-chat";
+import {
+  PRIVATE_LINK_ONLY, chatChannelIsPrivate, chatTaskHref, dueAtFromDate, postStatusChip, postTypeExtension, tomorrowIst,
+} from "./post-type";
 
 const CH = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ME = "11111111-1111-4111-8111-111111111111";
@@ -45,8 +50,12 @@ const msg = (over: Partial<ChatMessage> = {}): ChatMessage => ({
   created_at: "2026-10-31T10:00:00Z", attachments: [], ...over,
 }) as ChatMessage;
 
-function renderOnMessage(message: ChatMessage, myUserId: string | null = ME) {
+const channel = (over: Partial<ChatChannel> = {}) =>
+  ({ id: CH, kind: "channel", is_private: false, ...over }) as ChatChannel;
+
+function renderOnMessage(message: ChatMessage, myUserId: string | null = ME, channels: ChatChannel[] = [channel()]) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  qc.setQueryData(teamChatKeys.channels(), channels);
   const slot = { message, channelId: CH, myUserId, teammates };
   const Chip = ext.MessageBadge!;
   const Below = ext.MessageBelow!;
@@ -196,6 +205,55 @@ describe("R-2304 actions call the RPCs", () => {
     fireEvent.click(screen.getByRole("button", { name: "Report as idea" }));
     await waitFor(() => expect(success).toHaveBeenCalledWith("Sent as an idea"));
     expect(toastError).not.toHaveBeenCalled();
+  });
+});
+
+describe("R-2328 DM / private channel: only a link is saved", () => {
+  const dm = [channel({ kind: "dm", is_private: true })];
+  const priv = [channel({ is_private: true })];
+
+  it("chatChannelIsPrivate: DM and private yes, public no, unknown counts as private", () => {
+    expect(chatChannelIsPrivate(dm, CH)).toBe(true);
+    expect(chatChannelIsPrivate(priv, CH)).toBe(true);
+    expect(chatChannelIsPrivate([channel()], CH)).toBe(false);
+    expect(chatChannelIsPrivate(undefined, CH)).toBe(true);
+    expect(chatChannelIsPrivate([channel()], "other")).toBe(true);
+  });
+
+  it("someone else's DM post (the owner looking): no Make a task / Report", () => {
+    renderOnMessage(msg({ author_id: ABHISHEK }), ME, dm);
+    expect(screen.queryByRole("button", { name: "Make a task" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /report as/i })).toBeNull();
+  });
+
+  it("my DM post → Make a task says only a link is saved, then calls the RPC", async () => {
+    renderOnMessage(msg(), ME, dm);
+    fireEvent.click(screen.getByRole("button", { name: "Make a task" }));
+    expect(screen.getByText(PRIVATE_LINK_ONLY)).toBeTruthy();
+    expect(screen.queryByText(/gets this post/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Make task" }));
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("chat_message_to_task", expect.objectContaining({ p_message_id: "m1" })));
+  });
+
+  it("my private-channel post → Report asks first; Cancel sends nothing, Report sends it", async () => {
+    rpc.mockResolvedValueOnce({ data: "fb-3", error: null });
+    renderOnMessage(msg(), ME, priv);
+    fireEvent.click(screen.getByRole("button", { name: "Report as bug" }));
+    expect(screen.getByText(PRIVATE_LINK_ONLY)).toBeTruthy();
+    expect(rpc).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(rpc).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Report as bug" }));
+    fireEvent.click(screen.getByRole("button", { name: "Report" }));
+    await waitFor(() => expect(success).toHaveBeenCalledWith("Reported as a bug"));
+    expect(rpc).toHaveBeenCalledWith("chat_message_report", { p_message_id: "m1" });
+  });
+
+  it("public channel: Make a task keeps today's text, Report needs no confirm", () => {
+    renderOnMessage(msg());
+    fireEvent.click(screen.getByRole("button", { name: "Make a task" }));
+    expect(screen.queryByText(PRIVATE_LINK_ONLY)).toBeNull();
+    expect(screen.getByText(/gets this post/i)).toBeTruthy();
   });
 });
 

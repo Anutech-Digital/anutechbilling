@@ -14,8 +14,10 @@
 --   2. Idempotent: a second call returns the same task — no second task, no second reply.
 --   3. Defaults: no owner / due → the caller owns it, due tomorrow; a lead link fills lead_id.
 --   4. Refused: a plain text message, a deleted post, an owner from another company / inactive,
---      a member who is neither the poster nor owner/manager, a non-member, another company
+--      a member who is neither the poster nor owner/manager, a non-member (42501), another company
 --      (not found), no login / partner (28000). Nothing is written by a refused call.
+--   R-2328: #support is a PUBLIC channel here — a DM / private channel post keeps no text and
+--   only its poster may use it; that is team_chat_private_to_task.test.sql.
 --   5. All in one transaction: a task insert that fails (bad due date) leaves no task, no status.
 --   6. Report: a problem → feedback 'bug', a suggestion → 'feature'; title = first line,
 --      page_path = the link back, reported_by = the caller; image files become feedback
@@ -83,10 +85,10 @@ insert into public.customers (id, tenant_id, name) values
 insert into public.leads (id, tenant_id, company) values
   ('TC11-LEAD-1', 'c2304000-0000-0000-0000-0000000000f1', 'TC11 Lead Co');
 
--- c1 #support (private, so a non-member cannot even read it): owner, acct, sales + a bad row for
--- the partner; c9 tenant B
+-- c1 #support (public — R-2328: private posts are team_chat_private_to_task.test.sql): owner,
+-- acct, sales + a bad row for the partner; c9 tenant B
 insert into public.chat_channels (id, tenant_id, kind, name, slug, is_private, created_by) values
-  ('c2304000-0000-0000-0000-0000000000c1', 'c2304000-0000-0000-0000-0000000000f1', 'channel', 'support', 'support', true,  'c2304000-0000-0000-0000-0000000000a1'),
+  ('c2304000-0000-0000-0000-0000000000c1', 'c2304000-0000-0000-0000-0000000000f1', 'channel', 'support', 'support', false, 'c2304000-0000-0000-0000-0000000000a1'),
   ('c2304000-0000-0000-0000-0000000000c9', 'c2304000-0000-0000-0000-0000000000f2', 'channel', 'general', 'general', false, 'c2304000-0000-0000-0000-0000000000b1');
 insert into public.chat_members (tenant_id, channel_id, user_id, member_role) values
   ('c2304000-0000-0000-0000-0000000000f1', 'c2304000-0000-0000-0000-0000000000c1', 'c2304000-0000-0000-0000-0000000000a1', 'admin'),
@@ -170,10 +172,10 @@ begin
   perform pg_temp.tc11_refused('4 B task', format('select public.chat_message_to_task(%L)', v_e1), 'P0002', '%not found%');
   perform pg_temp.tc11_refused('4 B report', format('select public.chat_message_report(%L)', v_e1), 'P0002', '%not found%');
 
-  -- a staff member who is not in the (private) channel: not found
+  -- a staff member who is not in the (public) channel: can read it, but is not a member
   perform pg_temp.tc11_as('c2304000-0000-0000-0000-0000000000a7');
-  perform pg_temp.tc11_refused('4 non-member task', format('select public.chat_message_to_task(%L)', v_e1), 'P0002', '%not found%');
-  perform pg_temp.tc11_refused('4 non-member report', format('select public.chat_message_report(%L)', v_e1), 'P0002', '%not found%');
+  perform pg_temp.tc11_refused('4 non-member task', format('select public.chat_message_to_task(%L)', v_e1), '42501', '%not a member%');
+  perform pg_temp.tc11_refused('4 non-member report', format('select public.chat_message_report(%L)', v_e1), '42501', '%not a member%');
 
   -- a member who is neither the poster nor owner/manager
   perform pg_temp.tc11_as('c2304000-0000-0000-0000-0000000000a3');
