@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'quotes' and column_name = 'invoice_on_receipt') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%invoice_on_receipt%') and to_regprocedure('public.tg_bank_txn_payment_link()') is not null
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'quotes' and column_name = 'invoice_on_receipt') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%invoice_on_receipt%')
 -- deploy-key: r2095saleinvoiceonreceipt
 -- 20261030123423_r2095_sale_invoice_on_receipt.sql
 --

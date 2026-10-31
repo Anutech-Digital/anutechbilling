@@ -1,6 +1,8 @@
--- deploy-peek: to_regprocedure('public.tg_bank_txn_payment_link()') is null and not exists(select 1 from pg_trigger where tgname = 'trg_bank_txn_payment_link')
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'quotes' and column_name = 'invoice_on_receipt') and to_regprocedure('public.tg_bank_txn_payment_link()') is null and not exists(select 1 from pg_trigger where tgname = 'trg_bank_txn_payment_link')
 -- deploy-key: r2095receiptlinkundo
 -- 20261030131008_r2095_receipt_link_undo.sql
+-- R-2106 (31 Oct): peek = 123423 has run (its quotes.invoice_on_receipt column) AND its trigger/function are gone,
+-- so it is false before 123423 and while the trigger exists; 123423's peek no longer asks for the trigger.
 --
 -- R-2095 fix of red SQL CI (tb_money_events_balanced, G1b razorpay settlement net of fee).
 -- 20261030123423 filled payments.bank_txn_id for EVERY receipt matched to a bank line. That column
