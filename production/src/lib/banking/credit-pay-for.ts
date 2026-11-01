@@ -224,6 +224,9 @@ export function tdsRateToRecord(check: AmountCheck, taxable: number): number | n
 export type SaleCycle = "annual_yearly" | "monthly" | "one_time";
 
 export interface SaleLine {
+  /** R-2216: this line's own stable key — its row (and End-domain box) is keyed by it, never by
+   *  position, so a removed or re-ordered line never hands its domain to a neighbour. */
+  key?: string;
   itemId: string | null;
   name: string;
   /** Seats for a per-seat product, else quantity. */
@@ -284,10 +287,12 @@ function listRateFor(it: CatalogRow, cycle: SaleCycle): { rate: number; cost: nu
 }
 
 /** A catalogue product → a sale line priced the way the quote builder prices it. */
+let saleLineSeq = 0;
 export function saleLineFromItem(it: CatalogRow, cycle: SaleCycle = defaultCycle(it), seats?: number | null): SaleLine {
   const unit = billingUnitOf(it);
   const p = listRateFor(it, cycle);
   return {
+    key: `sale-line-${++saleLineSeq}`,   // R-2216
     itemId: it.id,
     name: it.name,
     qty: defaultQtyForUnit(unit, seats ?? null),
