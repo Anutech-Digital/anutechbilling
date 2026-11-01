@@ -16,10 +16,10 @@ name: CI
 # vitest); a red commit fails there and never reaches Cloud Run.
 #
 # This workflow is the WIDER gate: everything below is blocking (nothing is
-# continue-on-error in `checks` any more) — typecheck, unit tests, lint with a per-rule
+# continue-on-error in the gate jobs any more) — typecheck, unit tests, lint with a per-rule
 # warning ratchet, migration file order, and the full `next build`. It gates MERGES once
-# GitHub branch protection marks `checks` as a required status for main/deploy (a repo
-# setting — not something this file can switch on).
+# GitHub branch protection marks `checks` (since R-2349 the summary job) as a required status
+# for main/deploy (a repo setting — not something this file can switch on).
 #
 # ─── THE THREE WORKING BRANCHES WERE NOT WATCHED EITHER (WC-ci, 30 Sep 2026) ──
 # Day-to-day work lands on manager-pardeep / billing-abhishek / website-pawan (and QA on
@@ -46,14 +46,16 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/deploy' && github.ref != 'refs/heads/manager-pardeep' }}
 jobs:
-  checks:
+  # ─── R-2349 (1 Nov 2026): THE GATE RUNS AS PARALLEL JOBS ─────────────────
+  # Until today one `checks` job ran everything one after another — run 41333752288: npm ci 1.1,
+  # typecheck 7.0, test 8.2, lint 0.9 + ratchet 0.9, build 10.9 min = a 30-min job, and pushes
+  # queued behind it. Now static / typecheck / test (2 shards) / build each start at once with
+  # their own checkout + npm ci; the slowest (build) sets the wall time. Same commands, same env,
+  # all blocking. `checks` below is a summary job that is red unless all of them are green — one
+  # stable name for a required status. tests/ops/ci-workflow.test.ts pins all of this.
+  static:
     runs-on: ubuntu-latest
-    # A normal run takes 17-20 min (gh run list, 18 Oct). A hung build/test stops here instead
-    # of burning GitHub's 6-hour default.
-    # R-1991 (26 Oct 2026): 30 was too tight. R-1978's run (actions/runs/40347350851) was
-    # cancelled at ~30 min in the "Restore Next build cache" post-step although every real
-    # step passed; the Build step alone took 13 min (15:51-16:04Z). Raised to 45.
-    timeout-minutes: 45
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: production
@@ -77,8 +79,8 @@ jobs:
           MIGRATION_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
         run: node scripts/migration-order-check.mjs
 
-      # The NEXT_PUBLIC_* values below must be the ones production/Dockerfile builds with
-      # (and cloudbuild.yaml substitutes). Files only, no install needed — so it runs first.
+      # The NEXT_PUBLIC_* values in the build job must be the ones production/Dockerfile builds
+      # with (and cloudbuild.yaml substitutes). Files only, no install needed — so it runs first.
       - name: Config drift check (ci.yml / cloudbuild.yaml vs Dockerfile)
         run: node scripts/check-config-drift.mjs
 
@@ -98,20 +100,81 @@ jobs:
       - name: npm audit (production deps, high+) — advisory
         continue-on-error: true
         run: npm audit --omit=dev --audit-level=high
+      # Blocking since S18. `next lint` fails on any ESLint ERROR; the ratchet fails when any
+      # rule has more WARNINGS than lint-baseline.json allows (no-explicit-any, max-lines…).
+      # Not type-aware, and .eslintrc ignores the generated Prisma client — no generate needed.
+      - run: npm run lint
+      - run: npm run lint:ratchet
+
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: production/package-lock.json
+      - run: npm ci
       # 11 Oct 2026 (R-712): `tsc --noEmit` now hits the same default ~2 GB old-space cap the
       # build hit on 28 Aug (exit 134, "Ineffective mark-compacts near heap limit") on three
-      # runs in a row with no TypeScript change. Same fix as the build step below.
+      # runs in a row with no TypeScript change. Same fix as the build job below.
       # R-1802 (23 Oct 2026): 4096 is now too small too — runs for 72f27e0c, 2073625e and 1f02c2c6
       # died the same way at ~4030 MB after ~8 min. ubuntu-latest has 16 GB and nothing else runs
       # in this job while tsc does, so 8192.
       - run: npm run typecheck
         env:
           NODE_OPTIONS: --max-old-space-size=8192
-      - run: npm run test
-      # Blocking since S18. `next lint` fails on any ESLint ERROR; the ratchet fails when any
-      # rule has more WARNINGS than lint-baseline.json allows (no-explicit-any, max-lines…).
-      - run: npm run lint
-      - run: npm run lint:ratchet
+
+  # vitest splits the test FILES between the shards (`vitest run --shard=N/2`); together they
+  # run every file once (run 41333752288: 1926 files, 23353 tests). fail-fast off: a red shard
+  # still lets the other finish, so the log names every failing test.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    defaults:
+      run:
+        working-directory: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history, as in the old single job (some tests read git).
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: production/package-lock.json
+      - run: npm ci
+      # The tests ran after `npm run typecheck` before R-2349, which made the Prisma client
+      # (src/server/db/generated, gitignored) and the route types. Same two steps here.
+      - run: npx prisma generate && npx next typegen
+      - run: npm run test -- --shard=${{ matrix.shard }}/2
+
+  build:
+    runs-on: ubuntu-latest
+    # R-1991 raised the old whole-gate job to 45 min (Build alone 13 min in 40347350851). The
+    # build now has its own job: 10.9-13 min (41333752288), so 30 still leaves room.
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: production/package-lock.json
+      - run: npm ci
 
       # R-1593: Next's own build cache (webpack/SWC output). Keyed on the lockfile + every
       # source/config file, so an unchanged tree is an exact hit; on any change the restore-key
@@ -147,7 +210,7 @@ jobs:
       # definition (anon key) and already committed there — this is not a new exposure.
       # ⚠️ It IS a second copy. Until 30 Sep 2026 it still said the old hosted project
       # (ontpnqjoysjgrlsukecm.supabase.co) after the Dockerfile moved to api.anutech.in;
-      # scripts/check-config-drift.mjs (step above) now fails the job when they differ.
+      # scripts/check-config-drift.mjs (static job) now fails the run when they differ.
       - name: Build (catches what typecheck cannot — see comment)
         env:
           NEXT_PUBLIC_SUPABASE_URL: "https://api.anutech.in"
@@ -178,6 +241,22 @@ jobs:
           CATALOG_ORIGIN: "http://127.0.0.1:9"
         run: npm run build
 
+  # R-2349: the one result for the whole gate (red unless every job above is green — also when
+  # one was cancelled or timed out). The run's own conclusion is red on any red job either way;
+  # worker-lock ci reads that.
+  checks:
+    needs: [static, typecheck, test, build]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: All gate jobs green
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "static typecheck test build: $RESULTS"
+          for r in $RESULTS; do [ "$r" = success ] || exit 1; done
+
   # ── No-auth E2E smoke ──────────────────────────────────────────────
   # Runs the auth-free Playwright specs (smoke.spec.ts + money-spine public
   # buy page) against the deployed app. This is a funnel canary: it catches a
@@ -192,7 +271,7 @@ jobs:
   # are absent. To light them up: add the anon key as a CI secret and seed the
   # Tenant-A/B fixtures on a Supabase branch, then drop `continue-on-error`.
   #
-  # Non-blocking for now (unlike `checks`) so a transient prod blip never blocks a
+  # Non-blocking for now (unlike the gate jobs) so a transient prod blip never blocks a
   # merge; flip to required once it has proven stable.
   e2e-smoke:
     runs-on: ubuntu-latest
