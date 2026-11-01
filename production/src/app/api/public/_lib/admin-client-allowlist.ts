@@ -293,6 +293,20 @@ export const PUBLIC_ADMIN_CLIENT: Record<string, PublicAdminEntry> = {
     reads: {},
     writes: ["leads", "tasks"],
   },
+  "privacy-request/route.ts": {
+    reason: "R-2013 data-rights form: saves the unconfirmed request + the code's hash, reads the company name for the code email",
+    scope: `${WEBSITE}; Turnstile + per-IP/per-email limits; insert only, never says whether the person is known`,
+    mustContain: ["websiteTenantId", "rateLimit", "turnstileRefusal"],
+    reads: { tenants: { columns: ["name"], by: ["id"] } },
+    writes: ["privacy_requests"],
+  },
+  "privacy-request/verify/route.ts": {
+    reason: "R-2013 code check: one RPC confirms the request (and records a consent withdrawal)",
+    scope: `${WEBSITE}; request id + hashed 6-digit code, 5 tries + expiry in the RPC; per-IP limit`,
+    mustContain: ["websiteTenantId", "rateLimit", "privacyCodeHash"],
+    reads: {},
+    writes: ["privacy_request_verify"],
+  },
   "unsubscribe/route.ts": {
     reason: "email unsubscribe link: records the suppression",
     scope: "signed unsubscribe token (verifyUnsubscribe); upsert of that one address",
