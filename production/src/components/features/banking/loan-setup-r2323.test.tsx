@@ -18,6 +18,7 @@ vi.mock("@/lib/queries/emi", () => ({
 }));
 vi.mock("@/lib/banking/loan-setup-query", () => ({
   useSetUpEmiLoan: () => ({ mutateAsync: setUp, isPending: false }),
+  useLoanDisbursalLines: () => ({ data: [], isLoading: false }), // R-2341: no statement credit in these tests
 }));
 vi.mock("@/lib/queries/bank", () => ({
   useBankAccounts: () => ({ data: [
