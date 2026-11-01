@@ -269,7 +269,7 @@ function PreviewCard({ link, role, ready }: { link: ChatLink & { type: RecordLin
       </div>
     );
   }
-  const head = [p.title, p.amount != null ? rupee(p.amount) : null, p.status].filter(Boolean).join(" · ");
+  const head = [p.title, p.amountText, p.status].filter(Boolean).join(" · ");
   return (
     <Link href={p.href as Route} className={cn(box, "hover:bg-paper-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber/40")}>
       <Icon name="link" size={14} className="mt-0.5 text-ink-3" />

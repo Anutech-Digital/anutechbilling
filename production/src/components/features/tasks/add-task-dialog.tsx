@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { TaskChatLink } from "@/components/features/tasks/task-notes";
 import { useCreateTask, useUpdateTask } from "@/lib/queries/tasks";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import {
@@ -359,6 +360,8 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
               rows={3}
               {...register("notes")}
             />
+            {/* R-2327: a task made from Team chat opens that post from here too. */}
+            <TaskChatLink notes={task?.notes} className="mt-1" />
           </FormField>
 
           </div>  {/* close scrollable form body */}

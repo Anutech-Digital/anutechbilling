@@ -27,6 +27,12 @@ const reads: { table: string; id: string }[] = [];
 const ROWS: Record<string, Record<string, unknown>> = {
   "quotes:Q-2026-0042": { id: "Q-2026-0042", customer_name: "Acme Pvt Ltd", amount: 23600, status: "sent" },
   "invoices:INV-0007": { id: "INV-0007", customer_name: "Acme Pvt Ltd", amount: 118000, status: "sent" },
+  // R-2327 (4): Annual sale paid monthly — the /quotes list reads ₹3,186/month · ₹38,232/year.
+  "quotes:Q-F588-27-0068": {
+    id: "Q-F588-27-0068", customer_name: "Acme Pvt Ltd", amount: 38232, status: "sent", subtotal: 32400, discount_pct: 0,
+    tax_rate: 18, billing_cycle: "monthly", line_items: [{ commitment: "annual_yearly" }],
+    is_add_seats: false, is_one_off: false, is_extension: false, extension_months: null,
+  },
 };
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => ({
@@ -149,6 +155,13 @@ describe("R-2302 composer: pasted / picked app links become {type,id} links", ()
 });
 
 describe("R-2302 message: live preview under the READER's own access (NO-LEAK)", () => {
+  it("R-2327: an Annual quote paid monthly shows the per-bill figure with /month and the year, like the /quotes list", async () => {
+    renderMessage([{ type: "quote", id: "Q-F588-27-0068" }]);
+    const link = await screen.findByRole("link", { name: /Quote Q-F588-27-0068/ });
+    expect(link.textContent).toContain("₹3,186/month · ₹38,232/year");
+    expect(link.textContent).not.toMatch(/Q-F588-27-0068 · ₹38,232 ·/);
+  });
+
   it("the owner sees the quote's number, amount and status, and the card opens the quote", async () => {
     renderMessage([{ type: "quote", id: "Q-2026-0042" }]);
     const link = await screen.findByRole("link", { name: /Quote Q-2026-0042/ });

@@ -22,7 +22,17 @@ vi.mock("@/lib/queries/team-chat", async (importOriginal) => ({
   usePostChatMessage: () => ({ mutate, isPending: false }),
 }));
 const rpc = vi.fn(async (_fn: string, _args: Record<string, unknown>) => ({ data: "task-1" as string | null, error: null as unknown }));
-vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc }) }));
+/* R-2327 (9): tasks.owner_id of a made task (who it is assigned to); other tables are not served. */
+const taskRow = { owner_id: null as string | null };
+const fromTable = vi.fn((table: string) => {
+  const chain: Record<string, unknown> = {};
+  for (const m of ["select", "eq", "is", "order", "limit"]) chain[m] = () => chain;
+  chain.maybeSingle = async () => (table === "tasks" ? { data: { owner_id: taskRow.owner_id }, error: null } : { data: null, error: { message: "not served" } });
+  chain.then = (ok: (v: unknown) => unknown, bad: (e: unknown) => unknown) =>
+    Promise.reject(new Error("not served")).then(ok, bad);
+  return chain;
+});
+vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc, from: fromTable }) }));
 const success = vi.fn();
 vi.mock("sonner", () => ({ toast: { success: (m: string) => success(m), error: vi.fn() } }));
 const toastError = vi.fn();
@@ -31,7 +41,7 @@ vi.mock("@/lib/errors/toast-error", () => ({ toastError: (e: unknown) => toastEr
 import { Composer } from "../composer";
 import { teamChatKeys } from "@/lib/queries/team-chat";
 import {
-  PRIVATE_LINK_ONLY, chatChannelIsPrivate, chatTaskHref, dueAtFromDate, postStatusChip, postTypeExtension, tomorrowIst,
+  PRIVATE_LINK_ONLY, chatChannelIsPrivate, mayOpenChatTask, chatTaskHref, dueAtFromDate, postStatusChip, postTypeExtension, tomorrowIst,
 } from "./post-type";
 
 const CH = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -75,6 +85,8 @@ beforeEach(() => {
   success.mockClear();
   toastError.mockClear();
   fetchMock.mockClear();
+  fromTable.mockClear();
+  taskRow.owner_id = null;
   vi.stubGlobal("fetch", fetchMock);
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -254,6 +266,49 @@ describe("R-2328 DM / private channel: only a link is saved", () => {
     fireEvent.click(screen.getByRole("button", { name: "Make a task" }));
     expect(screen.queryByText(PRIVATE_LINK_ONLY)).toBeNull();
     expect(screen.getByText(/gets this post/i)).toBeTruthy();
+  });
+});
+
+describe("R-2327 (9) DM / private post with a task: Open task only for the poster and the assignee", () => {
+  const dm = [channel({ kind: "dm", is_private: true })];
+  const priv = [channel({ is_private: true })];
+  const made = (over: Partial<ChatMessage> = {}) => msg({ author_id: ABHISHEK, post_status: "task", task_id: "t-9", ...over });
+
+  it("mayOpenChatTask: public = everyone; private = poster or assignee only; unknown assignee = no", () => {
+    expect(mayOpenChatTask({ isPrivate: false, myUserId: ME, authorId: ABHISHEK, taskOwnerId: null })).toBe(true);
+    expect(mayOpenChatTask({ isPrivate: true, myUserId: ABHISHEK, authorId: ABHISHEK, taskOwnerId: null })).toBe(true);
+    expect(mayOpenChatTask({ isPrivate: true, myUserId: ME, authorId: ABHISHEK, taskOwnerId: ME })).toBe(true);
+    expect(mayOpenChatTask({ isPrivate: true, myUserId: ME, authorId: ABHISHEK, taskOwnerId: ABHISHEK })).toBe(false);
+    expect(mayOpenChatTask({ isPrivate: true, myUserId: ME, authorId: ABHISHEK, taskOwnerId: null })).toBe(false);
+    expect(mayOpenChatTask({ isPrivate: true, myUserId: null, authorId: ABHISHEK, taskOwnerId: null })).toBe(false);
+  });
+
+  it("the other owner looking at someone else's DM post whose task is assigned to the poster: no Open task, no button at all", async () => {
+    taskRow.owner_id = ABHISHEK;
+    const { container } = renderOnMessage(made(), ME, dm);
+    await waitFor(() => expect(fromTable).toHaveBeenCalledWith("tasks"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByRole("link", { name: /open task/i })).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(container.textContent).toBe("Problem · Task made");
+  });
+
+  it("the teammate the private-channel task is assigned to sees Open task", async () => {
+    taskRow.owner_id = ME;
+    renderOnMessage(made(), ME, priv);
+    expect(await screen.findByRole("link", { name: /open task/i })).toBeTruthy();
+  });
+
+  it("the poster of a DM post sees Open task without any extra read", () => {
+    renderOnMessage(made({ author_id: ME }), ME, dm);
+    expect(screen.getByRole("link", { name: /open task/i }).getAttribute("href")).toBe(chatTaskHref("t-9"));
+    expect(fromTable).not.toHaveBeenCalledWith("tasks");
+  });
+
+  it("a public channel keeps Open task for everyone, with no extra read", () => {
+    renderOnMessage(made(), ME);
+    expect(screen.getByRole("link", { name: /open task/i })).toBeTruthy();
+    expect(fromTable).not.toHaveBeenCalledWith("tasks");
   });
 });
 

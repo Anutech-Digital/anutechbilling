@@ -5,7 +5,9 @@
  * - The open conversation is in the URL (`?c=<channel id>`), so a link or reload opens it.
  * - Laptop/tablet: both panes; #general opens by itself when nothing is chosen.
  * - Phone (< 768 px, §20): the list first; a tap opens the conversation full screen with a
- *   "Back to conversations" button.
+ *   "Back to conversations" button. R-2327: opening one ADDS a history entry, so the phone's own
+ *   Back button / gesture returns to the list (useUrlState alone replaces the entry, and Back
+ *   left Team chat); the in-page Back steps back through that same entry.
  * - Opening a conversation marks it read (useMarkChatRead), and so does every new message
  *   that arrives while it is open — the bold/count in the list clears at once.
  * - New messages arrive by polling (useChatMessages, every 5 s while the tab is visible).
@@ -75,6 +77,32 @@ export function TeamChatView() {
     markMutate({ channelId: selectedId });
   }, [selectedId, newestId, markMutate]);
 
+  /* R-2327: on a phone, opening a conversation pushes a history entry first (useUrlState then
+     only rewrites that new entry), so the phone's Back pops it and useUrlState's popstate
+     listener shows the list again. A laptop keeps one entry: picking a channel is not a page. */
+  const pushedEntry = React.useRef(false);
+  const openConversation = React.useCallback((id: string) => {
+    if (isPhone && id && typeof window !== "undefined") {
+      const qs = new URLSearchParams(window.location.search);
+      qs.set("c", id);
+      window.history.pushState(window.history.state, "", `${window.location.pathname}?${qs.toString()}${window.location.hash}`);
+      pushedEntry.current = true;
+    }
+    setSelected(id);
+  }, [isPhone, setSelected]);
+  const backToList = () => {
+    setSelected("");
+    if (pushedEntry.current) {
+      pushedEntry.current = false;
+      window.history.back();
+    }
+  };
+  React.useEffect(() => {
+    const onPop = () => { pushedEntry.current = false; };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
   const showList = !isPhone || !selected;
   const showConversation = !isPhone || !!selected;
 
@@ -92,8 +120,8 @@ export function TeamChatView() {
               isLoading={channelsQ.isLoading}
               isError={channelsQ.isError}
               onRetry={() => void channelsQ.refetch?.()}
-              onSelect={setSelected}
-              onOpenDm={(userId) => openDm.mutate({ userId }, { onSuccess: (id) => setSelected(id) })}
+              onSelect={openConversation}
+              onOpenDm={(userId) => openDm.mutate({ userId }, { onSuccess: (id) => openConversation(id) })}
               openingDm={openDm.isPending}
             />
           </aside>
@@ -103,7 +131,7 @@ export function TeamChatView() {
             {selected ? (
               <>
                 <header className="flex items-center gap-2 border-b border-hairline px-3 py-2 md:px-5 md:py-3">
-                  {isPhone && <IconButton icon="chevron-left" aria-label="Back to conversations" onClick={() => setSelected("")} />}
+                  {isPhone && <IconButton icon="chevron-left" aria-label="Back to conversations" onClick={backToList} />}
                   <div className="min-w-0">
                     <h2 className="truncate text-base font-semibold text-ink">{label}</h2>
                     {selected.topic && <p className="truncate text-xs text-ink-3">{selected.topic}</p>}

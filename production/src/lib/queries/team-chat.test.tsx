@@ -65,6 +65,7 @@ import {
   useChatThread,
   useChatUnreadCounts,
   usePostChatMessage,
+  useUploadChatFile,
   useDeleteChatMessage,
   useMarkChatRead,
   chatUnreadTotals,
@@ -469,5 +470,37 @@ describe("delete and mark read", () => {
     await act(async () => { done({ data: null, error: { message: "Sign in as a team member to use team chat", code: "28000" } }); });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(qc.getQueryData(teamChatKeys.unread())).toEqual(before);
+  });
+});
+
+describe("R-2327 (6) + (7) — files on a just-sent message, one place for an upload refusal", () => {
+  it("(6) the pending copy already shows the uploaded files — not only after the next 5 s poll", async () => {
+    serveMessages([msg(0)]);
+    const { result } = renderHook(() => ({ list: useChatMessages(CH), send: usePostChatMessage() }), { wrapper });
+    await waitFor(() => expect(result.current.list.isSuccess).toBe(true));
+    h.rpc.mockImplementation(() => new Promise<Answer>(() => undefined)); // still sending
+    const files = [
+      { path: `t/chat/${CH}/u_a.pdf`, name: "a.pdf", mime: "application/pdf", size: 10 },
+      { path: `t/chat/${CH}/u_b.png`, name: "b.png", mime: "image/png", size: 2048 },
+    ];
+    act(() => result.current.send.mutate({ channelId: CH, body: "", attachments: files, authorId: ME }));
+    await waitFor(() => expect(result.current.list.messages.at(-1)?.pending).toBe(true));
+    const sent = result.current.list.messages.at(-1)!;
+    expect(sent.attachments.map((a) => ({ path: a.file_path, name: a.file_name, mime: a.mime, size: Number(a.size_bytes) }))).toEqual(files);
+    expect(sent.attachments.every((a) => a.message_id === sent.id && a.channel_id === CH && a.uploaded_by === ME)).toBe(true);
+    expect(new Set(sent.attachments.map((a) => a.id)).size).toBe(2);
+  });
+
+  it("(7) an upload the server refuses is NOT toasted — the file's own chip is the one place that says why", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "You are not a member of this conversation." }), { status: 403 })));
+    try {
+      const { result } = renderHook(() => useUploadChatFile(), { wrapper });
+      let caught: unknown = null;
+      await act(async () => {
+        await result.current.mutateAsync({ channelId: CH, file: new File(["x"], "x.pdf") }).catch((e: unknown) => { caught = e; });
+      });
+      expect((caught as Error).message).toBe("You are not a member of this conversation.");
+      expect(vi.mocked(toastError)).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
   });
 });

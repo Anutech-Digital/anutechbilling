@@ -17,7 +17,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { canOpenRoute } from "@/lib/nav";
 import { USER_ROLES } from "@/lib/auth/roles";
+import { quoteRowTotalPeriods, quoteTotalPeriodsText } from "@/lib/quotes/per-period-figures";
 import {
+  QUOTE_PREVIEW_COLUMNS,
   RECORD_LINK_TYPES,
   chatLinkKey,
   fetchRecordPreview,
@@ -185,9 +187,45 @@ describe("fetchRecordPreview — NO-LEAK: read under the viewer's own access", (
     const p = await fetchRecordPreview(db, { type: "quote", id: "Q-2026-0042" }, "owner");
     expect(p).toEqual({
       state: "ok", type: "quote", id: "Q-2026-0042", label: "Quote",
-      title: "Quote Q-2026-0042", subtitle: "Acme Pvt Ltd", amount: 23600, status: "Sent", href: "/quotes/Q-2026-0042",
+      title: "Quote Q-2026-0042", subtitle: "Acme Pvt Ltd", amount: 23600, amountText: "₹23,600", status: "Sent", href: "/quotes/Q-2026-0042",
     });
-    expect(reads).toEqual([{ table: "quotes", cols: "id, customer_name, amount, status", id: "Q-2026-0042" }]);
+    expect(reads).toEqual([{ table: "quotes", cols: QUOTE_PREVIEW_COLUMNS, id: "Q-2026-0042" }]);
+  });
+
+  /* R-2327 (4) — localhost check: the quote card read "₹38,232" (the whole YEAR) while the
+     /quotes list read "₹3,186/month" + "₹38,232/year" (R-2222). The card now prints the list's
+     own words, from the list's own helpers (quoteRowTotalPeriods + quoteTotalPeriodsText). */
+  it("R-2327: an Annual quote paid monthly reads like the /quotes list — ₹3,186/month · ₹38,232/year", async () => {
+    const row = {
+      id: "Q-F588-27-0068", customer_name: "Acme", amount: 38232, status: "sent", subtotal: 32400, discount_pct: 0,
+      tax_rate: 18, billing_cycle: "monthly", line_items: [{ name: "Starter", qty: 10, rate: 3240, commitment: "annual_yearly" }],
+      is_add_seats: false, is_one_off: false, is_extension: false, extension_months: null,
+    };
+    const { db } = fakeDb(row);
+    const p = await fetchRecordPreview(db, { type: "quote", id: row.id }, "owner");
+    const list = quoteTotalPeriodsText(quoteRowTotalPeriods(row)!);
+    expect(list).toEqual({ perBill: "₹3,186", unit: "/month", year: "₹38,232/year" });
+    expect(p).toMatchObject({ state: "ok", amount: 38232, amountText: "₹3,186/month · ₹38,232/year" });
+    expect((p as { amountText: string }).amountText).toBe(`${list.perBill}${list.unit} · ${list.year}`);
+  });
+
+  it("R-2327: a quarterly quote and a yearly quote read like the list too; no amount → no figure", async () => {
+    const base = {
+      id: "Q-1", customer_name: "Acme", amount: 38232, status: "sent", subtotal: 32400, discount_pct: 0, tax_rate: 18,
+      line_items: [{ commitment: "annual_yearly" }], is_add_seats: false, is_one_off: false, is_extension: false, extension_months: null,
+    };
+    const text = async (over: Record<string, unknown>) =>
+      ((await fetchRecordPreview(fakeDb({ ...base, ...over }).db, { type: "quote", id: "Q-1" }, "owner")) as { amountText: string | null }).amountText;
+    expect(await text({ billing_cycle: "quarterly" })).toBe("₹9,558/quarter · ₹38,232/year");
+    expect(await text({ billing_cycle: "yearly" })).toBe("₹38,232/year");
+    expect(await text({ billing_cycle: "monthly", amount: null })).toBeNull();
+  });
+
+  it("R-2327: invoice and payment cards print their amount; a customer card has none", async () => {
+    const inv = await fetchRecordPreview(fakeDb({ id: "INV-1", customer_name: "Acme", amount: 118000, status: "sent" }).db, { type: "invoice", id: "INV-1" }, "owner");
+    expect(inv).toMatchObject({ amountText: "₹1,18,000" });
+    const cust = await fetchRecordPreview(fakeDb({ id: "c1", name: "acme" }).db, { type: "customer", id: "c1" }, "owner");
+    expect(cust).toMatchObject({ amountText: null });
   });
 
   it("a row the viewer's RLS hides comes back as 'not found or no access' — no amount", async () => {
