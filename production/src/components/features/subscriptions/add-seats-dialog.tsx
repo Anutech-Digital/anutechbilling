@@ -214,7 +214,9 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg flex flex-col gap-0 overflow-hidden p-0 pt-3 md:p-0">
+        {/* R-2268: the body scrolls; the footer (Cancel + primary) stays on screen below it. */}
+        <div className="flex-1 min-h-0 overflow-y-auto grid gap-4 [&>*]:min-w-0 px-5 pt-2 pb-5 md:p-6" data-testid="dialog-scroll-body">
         <header className="border-b border-hairline pb-3 mb-4">
           <p className="text-3xs uppercase tracking-wider font-semibold text-amber-ink mb-1">
             Subscription · Add seats
@@ -405,8 +407,9 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
             {submitError}
           </p>
         )}
+        </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0 border-t border-hairline bg-paper px-5 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6 md:pb-4" data-testid="dialog-sticky-footer">
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
             Cancel
           </Button>

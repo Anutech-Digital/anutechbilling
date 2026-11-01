@@ -343,7 +343,9 @@ export function EditSubscriptionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="md:!max-w-md">
+      <DialogContent className="md:!max-w-md flex flex-col gap-0 overflow-hidden p-0 pt-3 md:p-0">
+        {/* R-2268: the body scrolls; the footer (Cancel + primary) stays on screen below it. */}
+        <div className="flex-1 min-h-0 overflow-y-auto grid gap-4 [&>*]:min-w-0 px-5 pt-2 pb-5 md:p-6" data-testid="dialog-scroll-body">
         <DialogHeader>
           <DialogTitle>Correct subscription</DialogTitle>
           <DialogDescription>
@@ -582,8 +584,9 @@ export function EditSubscriptionDialog({
             <p className="text-xs leading-relaxed text-amber-ink">{nceHeadsUp}</p>
           </div>
         )}
+        </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0 border-t border-hairline bg-paper px-5 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6 md:pb-4" data-testid="dialog-sticky-footer">
           <Button type="button" variant="default" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button
             type="button" variant="primary" loading={update.isPending || correctData.isPending || correctTerms.isPending || correctCommitment.isPending}
