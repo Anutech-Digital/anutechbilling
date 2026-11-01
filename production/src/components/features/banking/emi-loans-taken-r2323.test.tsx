@@ -7,6 +7,11 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 
 vi.mock("@/components/features/accounting/emi-loan-dialogs", () => ({ EmiScheduleDialog: () => <div>schedule dialog</div> }));
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({}) }));
+/* R-2339: the row's Edit / Delete need a login role, the confirm dialog and the mutations. */
+vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { role: "owner" } }) }));
+vi.mock("@/components/providers/confirm-provider", () => ({ useConfirm: () => async () => false }));
+vi.mock("./emi-loan-edit-query", () => ({ useDeleteEmiLoan: () => ({ mutate: () => {} }) }));
+vi.mock("./emi-loan-edit-dialog", () => ({ EmiLoanEditDialog: () => null }));
 
 import { EmiLoansTaken } from "./emi-loans-taken";
 import type { EmiPurchase } from "@/lib/queries/emi";
