@@ -22,6 +22,7 @@ vi.mock("@/lib/queries/subscriptions", () => ({
   useUpdateSubscription: () => ({ mutateAsync: vi.fn(), isPending: false }),
   /* R-1684: seats / plan / price (not exercised by date edits). */
   useCorrectSubscriptionTerms: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCorrectSubscriptionData: () => ({ mutateAsync: vi.fn(), isPending: false }),  // R-2228
   useCorrectSubscriptionCommitment: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useScheduleInvoices: () => ({ data: undefined }),
 }));

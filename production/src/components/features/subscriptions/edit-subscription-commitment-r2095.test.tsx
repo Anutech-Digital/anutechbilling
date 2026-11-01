@@ -15,6 +15,7 @@ let role = "owner";
 vi.mock("@/lib/queries/subscriptions", () => ({
   useUpdateSubscription: () => ({ mutateAsync: update, isPending: false }),
   useCorrectSubscriptionTerms: () => ({ mutateAsync: correct, isPending: false }),
+  useCorrectSubscriptionData: () => ({ mutateAsync: vi.fn(), isPending: false }),  // R-2228
   useCorrectSubscriptionCommitment: () => ({ mutateAsync: commit, isPending: false }),
   useScheduleInvoices: () => ({ data: undefined }),
 }));

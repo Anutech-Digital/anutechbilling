@@ -1,4 +1,9 @@
 /**
+ * R-2228 (1 Nov 2026): seats and MRR are no longer changed in the normal Correct details flow —
+ * Manage seats bills / credits the change; a wrong record is fixed by the owner's Data correction
+ * (correct_subscription_data, reason 10+). The rules below still describe that owner path and the
+ * plan change.
+ *
  * R-1684: the rule for "Correct details" changing a subscription's COMMERCIAL terms (seats, plan,
  * price) — what the dialog shows and asks for. The database enforces the same rule
  * (correct_subscription_terms, migration 20261024030954): reason required, seat cut / plan change
@@ -27,6 +32,23 @@ const PRICE_ROLES = new Set(["owner", "manager", "accountant", "billing"]);
 
 /** The reason must be at least this long — the same floor as pausing (R-1681). */
 export const MIN_CORRECTION_REASON = 3;
+
+/**
+ * R-2228: the owner's Data correction (seats / MRR on a wrong record) needs a longer reason — it
+ * changes money figures with no bill or credit, so the log must say why. Same floor as the server
+ * (correct_subscription_data).
+ */
+export const MIN_DATA_CORRECTION_REASON = 10;
+
+/** R-2228: only the owner may use Data correction (managers / accountants use Manage seats). */
+export function mayDataCorrect(role: StaffRole): boolean {
+  return role === "owner";
+}
+
+/** R-2228: MRR as derived — "15 seats × ₹1,080 per seat". Null when there are no seats to divide by. */
+export function perSeatMonth(mrr: number, seats: number): number | null {
+  return seats > 0 ? Math.round(mrr / seats) : null;
+}
 
 export interface CorrectionFacts {
   role: StaffRole;

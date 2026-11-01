@@ -14,7 +14,8 @@ import { useListKeys } from "@/lib/hooks/useKeyboard";
 import { KeyHintBar, ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { useRouter } from "next/navigation";
 import { useSubscriptions, useSetSubscriptionDomain, useDeleteSubscription } from "@/lib/queries/subscriptions";
-import { useOutstandingReceivables } from "@/lib/queries/payments";
+import { useOutstandingReceivables, useResumeSubscription } from "@/lib/queries/payments";
+import { SuspendSubscriptionDialog } from "@/components/features/subscriptions/suspend-subscription-dialog";
 import { sheetHandledInvoice } from "@/lib/payments/record-payment-invoice";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
@@ -366,6 +367,9 @@ export default function SubscriptionsPage() {
   /* R-2225: Won't renew (drawer) — the dialog, and Undo straight from the drawer. */
   const [nonRenewSub, setNonRenewSub] = React.useState<Subscription | null>(null);
   const setNonRenewing = useSetNonRenewing();
+  /* R-2228: status no longer changes in Correct details — its Suspend / Resume links open these. */
+  const [suspendSub, setSuspendSub] = React.useState<Subscription | null>(null);
+  const resumeSub = useResumeSubscription();
   const delSub = useDeleteSubscription();
   /* R-718: deleting a subscription is owner / accountant only — the database refuses the rest. */
   const canDeleteSub = canDeleteMoney(useCurrentUser().data?.role);
@@ -1993,12 +1997,32 @@ export default function SubscriptionsPage() {
         />
       )}
 
+      {/* R-2228: Suspend, opened from Correct details (asks why; can tie it to the unpaid invoice). */}
+      {suspendSub && (
+        <SuspendSubscriptionDialog
+          sub={suspendSub}
+          open={!!suspendSub}
+          forUnpaidDefault={(suspendSub.outstanding_amount ?? 0) > 0}
+          onOpenChange={(v) => { if (!v) setSuspendSub(null); }}
+        />
+      )}
+
       {/* Correct subscription details */}
       {editSub && (
         <EditSubscriptionDialog
           sub={editSub}
           open={!!editSub}
           onOpenChange={(v) => { if (!v) setEditSub(null); }}
+          /* R-2228: seats / status are read-only there — each link closes it and opens the real action. */
+          actions={{
+            manageSeats: !isSupportSkuId(editSub.item_id)   // a support plan has no seats (R-2087)
+              ? () => { const sub = editSub; setEditSub(null); openAddSeats(sub); } : undefined,
+            suspend: () => { const sub = editSub; setEditSub(null); setSuspendSub(sub); },
+            resume: () => { const sub = editSub; setEditSub(null); resumeSub.mutate(sub.id); },
+            cancel: () => { const sub = editSub; setEditSub(null); setCancelSub(sub); },
+            wontRenew: canNonRenew && canEndAtTermEnd(editSub)
+              ? () => { const sub = editSub; setEditSub(null); setNonRenewSub(sub); } : undefined,
+          }}
         />
       )}
 

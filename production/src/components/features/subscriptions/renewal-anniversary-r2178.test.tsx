@@ -15,6 +15,7 @@ import type { Subscription } from "@/lib/supabase/database.types";
 vi.mock("@/lib/queries/subscriptions", () => ({
   useUpdateSubscription: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCorrectSubscriptionTerms: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCorrectSubscriptionData: () => ({ mutateAsync: vi.fn(), isPending: false }),  // R-2228
   useCorrectSubscriptionCommitment: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useScheduleInvoices: () => ({ data: undefined }),
 }));
