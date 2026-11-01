@@ -63,6 +63,7 @@ import { unifiedStatus, cashNote } from "@/lib/quotes/status-badge";
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { awaitsMyApproval } from "@/lib/quotes/awaiting-approval";
 import { ApprovalsStrip } from "@/components/features/quotes/approvals-strip";
+import { QUOTES_TABLE_COLS } from "@/components/features/quotes/quotes-table-cols";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
@@ -921,7 +922,14 @@ export default function QuotesPage() {
       {!commitmentOn && !isLoading && !error && filtered.length > 0 && (
         <div className="hidden xl:block">
           <Card flush>
-            <table className="w-full">
+            {/* R-2264: fixed layout + a column budget so the table fits a 1280 laptop
+                with the sidebar open — Actions never goes behind a side-scroll. */}
+            <table className="w-full table-fixed">
+              <colgroup>
+                {QUOTES_TABLE_COLS.map((c) => (
+                  <col key={c.key} style={c.width != null ? { width: c.width } : undefined} />
+                ))}
+              </colgroup>
               <thead className="bg-paper-2 border-b border-hairline-strong">
                 <tr>
                   <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Quote</th>
@@ -958,7 +966,7 @@ export default function QuotesPage() {
                     >
                       {/* Compact ID — the tail number as a chip; full ID on hover. */}
                       <td className="px-3 py-2.5 align-top" title={q.id}>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1">
                           <span className="inline-flex items-center rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-2xs font-semibold text-ink">
                             #{q.id.split("-").pop()}
                           </span>
@@ -975,15 +983,17 @@ export default function QuotesPage() {
                           ) : null}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 align-top">
-                        <div className="font-medium text-ink leading-snug break-words max-w-[220px]" title={cleanDisplayName(partyOf(q))}>{cleanDisplayName(partyOf(q))}</div>
+                      {/* R-2264: Customer and Plan are one line each — the full text is
+                          the hover title (and the quote page). Wrapping them onto 2–3
+                          lines made rows ~103px and pushed Actions off-screen. */}
+                      <td className="px-3 py-2.5 align-top min-w-0">
+                        <div className="font-medium text-ink leading-snug truncate" title={cleanDisplayName(partyOf(q))}>{cleanDisplayName(partyOf(q))}</div>
                         {phoneSuffixOf(partyOf(q)) && (
-                          <div className="text-3xs text-ink-3 tabular-nums mt-0.5">{phoneSuffixOf(partyOf(q))}</div>
+                          <div className="text-3xs text-ink-3 tabular-nums mt-0.5 truncate">{phoneSuffixOf(partyOf(q))}</div>
                         )}
                       </td>
-                      {/* Plan — wraps to a second line rather than truncating with "…". */}
-                      <td className="px-3 py-2.5 text-sm text-ink-2 align-top">
-                        <div className="leading-snug break-words max-w-[240px]">{q.plan ?? "—"}</div>
+                      <td className="px-3 py-2.5 text-sm text-ink-2 align-top min-w-0">
+                        <div className="leading-snug truncate" title={q.plan ?? undefined}>{q.plan ?? "—"}</div>
                         {q.seats != null && (
                           <div className="text-3xs text-ink-3 mt-0.5"><span className="font-semibold text-ink-2 tabular-nums">{q.seats}</span> seats</div>
                         )}
@@ -1038,7 +1048,7 @@ export default function QuotesPage() {
                           const note = cashNote(q);
                           return (
                             <div className="flex flex-col items-start gap-0.5">
-                              <Badge kind={uStatus.kind} dot>{uStatus.label}</Badge>
+                              <Badge kind={uStatus.kind} dot className="whitespace-normal">{uStatus.label}</Badge>
                               {/* Did this quote actually become a service? "Accepted"
                                   alone never said.
 
@@ -1087,31 +1097,28 @@ export default function QuotesPage() {
                           <span className="text-xs text-ink-3 tabular-nums">{dl}d left</span>
                         )}
                       </td>
-                      <td className="px-2 py-2.5 text-right align-top" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1.5">
+                      {/* R-2264: at most ONE action button per row (never primary — the
+                          page's one primary is "New quote") + the ⋯ menu with every
+                          other action. Opening the quote is the row click / ⋯ "Open / edit". */}
+                      <td data-col="actions" className="px-2 py-2.5 text-right align-top" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex min-w-0 items-center justify-end gap-1 [&>a]:min-w-0 [&>a]:overflow-hidden [&>button]:min-w-0 [&>button]:overflow-hidden">
                           {q.status === "draft" && (
-                            <Button asChild size="sm" variant="primary" icon="send">
+                            <Button asChild size="sm" icon="send">
                               <Link href={`/quotes/${q.id}` as any}>Send</Link>
                             </Button>
                           )}
                           {(q.status === "sent" || q.status === "viewed") && (
-                            <div className="flex gap-1">
-                              <Button
-                                size="sm"
-                                variant="primary"
-                                icon="whatsapp"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ${rupee(q.amount ?? 0)}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
-                                  window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
-                                }}
-                              >
-                                WhatsApp
-                              </Button>
-                              <Button asChild size="sm" icon="external">
-                                <Link href={`/quotes/${q.id}` as any}>Open</Link>
-                              </Button>
-                            </div>
+                            <Button
+                              size="sm"
+                              icon="whatsapp"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ${rupee(q.amount ?? 0)}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+                                window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
+                              }}
+                            >
+                              WhatsApp
+                            </Button>
                           )}
                           {q.status === "accepted" && (() => {
                             // What happens NEXT on an accepted quote depends on
@@ -1137,7 +1144,7 @@ export default function QuotesPage() {
                             }
                             if (ps === "received") {
                               return (
-                                <Button asChild size="sm" variant="primary" icon="receipt">
+                                <Button asChild size="sm" icon="receipt">
                                   <Link href={`/quotes/${q.id}` as any}>Generate invoice</Link>
                                 </Button>
                               );
@@ -1159,7 +1166,7 @@ export default function QuotesPage() {
                             }
                             // 'none' or 'awaiting' — money hasn't started flowing yet
                             return (
-                              <Button asChild size="sm" variant="primary" icon={canRecordMoney(me?.role) ? "rupee" : "file"}>
+                              <Button asChild size="sm" icon={canRecordMoney(me?.role) ? "rupee" : "file"}>
                                 {/* R-718: sales / support cannot record money — same link, honest label. */}
                                 <Link href={`/quotes/${q.id}` as any}>{canRecordMoney(me?.role) ? "Record payment" : "Open quote"}</Link>
                               </Button>
