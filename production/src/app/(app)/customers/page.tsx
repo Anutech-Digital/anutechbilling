@@ -621,8 +621,10 @@ export default function CustomersPage() {
               </>)}
             </DropdownMenuContent>
           </DropdownMenu>
+          {/* R-2265: one primary per view — with a company open, its panel's "New quote" is the
+              next step, so Add company goes quiet there. */}
           {canWrite && (
-            <Button variant="primary" size="sm" icon="plus" onClick={goAdd} className="whitespace-nowrap font-semibold shadow-xs">
+            <Button variant={selectedId ? "default" : "primary"} size="sm" icon="plus" onClick={goAdd} className="whitespace-nowrap font-semibold shadow-xs">
               Add company
             </Button>
           )}
@@ -740,7 +742,7 @@ export default function CustomersPage() {
               </button>
             )}
             {canWrite && (
-              <Button variant="primary" size="sm" icon="plus" onClick={goAdd} className="shrink-0 font-semibold shadow-xs hidden sm:inline-flex">
+              <Button size="sm" icon="plus" onClick={goAdd} className="shrink-0 font-semibold hidden sm:inline-flex">
                 Add company
               </Button>
             )}

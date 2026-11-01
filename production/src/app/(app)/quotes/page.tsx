@@ -663,7 +663,7 @@ export default function QuotesPage() {
                         /* Until 2 Oct 2026 this button toasted "Nudge sent for N expiring
                            quotes" and sent nothing — a success message for an action that
                            never happened. It now opens the quotes it is about. */
-                        <Button size="sm" variant="primary" icon="eye" onClick={() => focusOn("review")}>
+                        <Button size="sm" icon="eye" onClick={() => focusOn("review")}>
                           Show these quotes
                         </Button>
                       }
