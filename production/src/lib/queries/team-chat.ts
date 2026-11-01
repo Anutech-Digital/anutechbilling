@@ -336,6 +336,7 @@ type SendContext = { key: QueryKey; prev: unknown; tempId: string };
 let tempSeq = 0;
 
 function optimisticMessage(input: PostChatMessageInput, tempId: string): ChatMessage {
+  const now = new Date().toISOString();
   return {
     id: tempId,
     tenant_id: "",
@@ -354,8 +355,21 @@ function optimisticMessage(input: PostChatMessageInput, tempId: string): ChatMes
     edited_at: null,
     deleted_at: null,
     deleted_by: null,
-    created_at: new Date().toISOString(),
-    attachments: [],
+    created_at: now,
+    // R-2327: the files are already stored (uploaded before Send) — show them on the
+    // just-sent message at once, not only after the next 5 s poll.
+    attachments: (input.attachments ?? []).map((a, i): ChatAttachment => ({
+      id: `${tempId}-file-${i}`,
+      tenant_id: "",
+      channel_id: input.channelId,
+      message_id: tempId,
+      file_name: a.name,
+      file_path: a.path,
+      mime: a.mime,
+      size_bytes: a.size,
+      uploaded_by: input.authorId ?? null,
+      created_at: now,
+    })),
     pending: true,
   };
 }
@@ -548,10 +562,13 @@ export function useCreateChatChannel() {
   });
 }
 
-/** Upload one file for the composer; resolves to the attachment chat_post_message takes. */
+/**
+ * Upload one file for the composer; resolves to the attachment chat_post_message takes.
+ * R-2327: no toast here — a refused file shows its reason on its own chip in the files bar
+ * (slots/attachments.tsx), the ONE place for it (it used to show twice: toast + chip).
+ */
 export function useUploadChatFile() {
   return useMutation<ChatAttachmentInput, ChatError, { channelId: string; file: File }>({
     mutationFn: ({ channelId, file }) => uploadChatFile(channelId, file).catch((e) => { throw toChatError(e); }),
-    onError: (err) => toastError(err),
   });
 }

@@ -204,6 +204,7 @@ function MessageItem({ message, showAuthor, author, channelId, myUserId, teammat
   }
 
   const name = message.author_id === myUserId && !author ? "You" : personName(author);
+  const badges = deleted ? null : extensions.map((ext) => ext.MessageBadge && <ext.MessageBadge key={`badge-${ext.id}`} {...slot} />);
   return (
     <li className={cn("group flex gap-3 rounded-md px-1 py-0.5 hover:bg-paper-2/60", showAuthor && "mt-2", message.pending && "opacity-70")}>
       <div className="w-9 shrink-0">
@@ -212,12 +213,17 @@ function MessageItem({ message, showAuthor, author, channelId, myUserId, teammat
         )}
       </div>
       <div className="min-w-0 flex-1">
-        {showAuthor && (
+        {showAuthor ? (
           <div className="flex flex-wrap items-baseline gap-x-2">
             <span className="text-sm font-semibold text-ink">{name}</span>
             <time dateTime={message.created_at} className="text-xs text-ink-3">{chatTime(message.created_at)}</time>
-            {!deleted && extensions.map((ext) => ext.MessageBadge && <ext.MessageBadge key={`badge-${ext.id}`} {...slot} />)}
+            {badges}
           </div>
+        ) : (
+          /* R-2327: a compact line (same person within 5 minutes) keeps its chip too — a
+             Problem / Suggestion sent right after another message used to show none. A slot
+             that draws nothing leaves the row empty, and `empty:hidden` takes it away. */
+          !deleted && <div className="flex flex-wrap items-center gap-x-2 empty:hidden">{badges}</div>
         )}
         {deleted ? (
           <p className="text-sm italic text-ink-3">This message was deleted.</p>

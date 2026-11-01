@@ -27,6 +27,7 @@ import { toastError } from "@/lib/errors/toast-error";
 import type { TaskKind } from "@/lib/supabase/database.types";
 import { leadTitle } from "@/lib/leads/display-name";
 import { taskContact } from "./task-contact";
+import { TaskNotes } from "./task-notes";
 
 /** R-279: the linked lead's company, else its contact/email/phone; null when it has no name at all. */
 export function taskLeadName(task: TaskWithLink): string | null {
@@ -194,9 +195,8 @@ export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit
           </div>
         )}
 
-        {task.notes && (
-          <p className="text-[12px] text-ink-3 mt-1.5 whitespace-pre-line">{task.notes}</p>
-        )}
+        {/* R-2327: the "From team chat: …" line shows as an "Open in team chat" link. */}
+        <TaskNotes notes={task.notes} />
       </div>
 
       {/* Actions */}

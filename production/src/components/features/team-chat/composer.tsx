@@ -173,12 +173,15 @@ export function Composer({ channelId, channelLabel, myUserId, members, teammates
         />
       </div>
       {extensions.map((ext) => ext.BelowInput && <ext.BelowInput key={`below-${ext.id}`} {...slotProps(ext)} />)}
-      <div className="mt-2 flex items-center gap-2">
+      {/* R-2327 (fit 1280): the keyboard hint shows only from 1280 px (xl) — below that it wrapped
+          to 4 lines and pushed Send off the edge. A hold reason ("Uploading 2 files…") shows at
+          every width on one truncated line; the row may wrap and Send never shrinks. */}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         {extensions.map((ext) => ext.Toolbar && <ext.Toolbar key={`tool-${ext.id}`} {...slotProps(ext)} />)}
-        <p className="ml-auto hidden text-xs text-ink-3 sm:block" aria-live="polite">
-          {blockReason ?? "Enter to send · Shift+Enter for a new line"}
+        <p className="ml-auto min-w-0 truncate text-xs text-ink-3" aria-live="polite" title={blockReason ?? undefined}>
+          {blockReason ?? <span className="hidden xl:inline">Enter to send · Shift+Enter for a new line</span>}
         </p>
-        <Button type="submit" variant="primary" size="sm" icon="send" disabled={!canSend} className="ml-auto sm:ml-0">
+        <Button type="submit" variant="primary" size="sm" icon="send" disabled={!canSend} className="shrink-0">
           Send
         </Button>
       </div>

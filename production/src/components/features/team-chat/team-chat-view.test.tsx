@@ -229,4 +229,41 @@ describe("R-2299 Team chat page", () => {
     expect(screen.getByRole("navigation", { name: "Conversations" })).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: /message/i })).toBeNull();
   });
+
+  /* R-2327 (5): the URL used to be swapped with replaceState, so the phone's own Back left Team chat. */
+  it("phone: opening a conversation adds a history entry, so the phone's Back returns to the list", async () => {
+    h.mobile = true;
+    renderView();
+    const before = window.history.length;
+    fireEvent.click(screen.getByRole("button", { name: /#general/ }));
+    expect(await screen.findByRole("textbox", { name: /message/i })).toBeTruthy();
+    expect(window.history.length).toBe(before + 1);
+    expect(new URLSearchParams(window.location.search).get("c")).toBe(GENERAL);
+    window.history.back(); // the phone's Back button / gesture
+    await waitFor(() => expect(screen.getByRole("navigation", { name: "Conversations" })).toBeTruthy());
+    expect(screen.queryByRole("textbox", { name: /message/i })).toBeNull();
+    expect(window.location.pathname).toBe("/team-chat");
+    expect(new URLSearchParams(window.location.search).get("c")).toBeNull();
+  });
+
+  it("phone: the in-page Back button also steps back in history (no dead extra entry)", async () => {
+    h.mobile = true;
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: /#general/ }));
+    await screen.findByRole("textbox", { name: /message/i });
+    const popped = new Promise<void>((res) => window.addEventListener("popstate", () => res(), { once: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to conversations" }));
+    await popped;
+    expect(new URLSearchParams(window.location.search).get("c")).toBeNull();
+    expect(screen.getByRole("navigation", { name: "Conversations" })).toBeTruthy();
+  });
+
+  it("laptop: picking a conversation adds NO history entry (Back still leaves the page)", async () => {
+    renderView();
+    await screen.findByText("No messages in #general yet");
+    const before = window.history.length;
+    fireEvent.click(screen.getByRole("button", { name: /#sales/ }));
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("c")).toBe(SALES));
+    expect(window.history.length).toBe(before);
+  });
 });

@@ -24,13 +24,18 @@
  * only the poster do either, and saves NO text — only the link back, under a neutral "Team chat
  * post (private)" title — because Tasks and reports are read by the whole company. Here the
  * buttons stay poster-only, and both ask first with one line: PRIVATE_LINK_ONLY.
+ *
+ * R-2327 (R-2330 check): on a DM / private post whose task is made, "Open task" too is shown
+ * only to the poster and the task's assignee (mayOpenChatTask) — the other owner reading the DM
+ * saw it. A public channel keeps it for everyone. The assignee is read (tasks.owner_id) only
+ * when it decides anything: a private post, a task made, and the reader is not the poster.
  */
 "use client";
 
 import * as React from "react";
 import Link from "next/link";
 import type { Route } from "next";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -103,6 +108,37 @@ export function chatChannelIsPrivate(
 function useChannelIsPrivate(channelId: string): boolean {
   const { data } = useChatChannels();
   return chatChannelIsPrivate(data, channelId);
+}
+
+/**
+ * R-2327: may this reader see "Open task" on a post whose task is made? A public channel:
+ * everyone. A DM / private channel: only the poster and the task's assignee (unknown assignee —
+ * still loading or not readable — counts as no). Pure — tested directly.
+ */
+export function mayOpenChatTask(a: {
+  isPrivate: boolean;
+  myUserId: string | null;
+  authorId: string | null;
+  taskOwnerId: string | null;
+}): boolean {
+  if (!a.isPrivate) return true;
+  if (!a.myUserId) return false;
+  return a.authorId === a.myUserId || a.taskOwnerId === a.myUserId;
+}
+
+/** R-2327: who a made task is assigned to (tasks.owner_id) — read only when `enabled`. */
+function useChatTaskOwner(taskId: string | null, enabled: boolean): string | null {
+  const q = useQuery({
+    queryKey: ["tasks", "chat-task-owner", taskId],
+    enabled: enabled && !!taskId,
+    staleTime: 60_000,
+    queryFn: async (): Promise<string | null> => {
+      const { data, error } = await createClient().from("tasks").select("owner_id").eq("id", taskId!).maybeSingle();
+      if (error) throw toChatError(error);
+      return (data as { owner_id: string | null } | null)?.owner_id ?? null;
+    },
+  });
+  return q.data ?? null;
 }
 
 /** Tomorrow as YYYY-MM-DD in India time (the default due date). */
@@ -245,6 +281,8 @@ function PostActions(props: MessageSlotProps) {
   const isPrivate = useChannelIsPrivate(channelId);
   const [dialog, setDialog] = React.useState(false);
   const [confirmReport, setConfirmReport] = React.useState(false);
+  const mineEarly = !!myUserId && message.author_id === myUserId;
+  const taskOwnerId = useChatTaskOwner(message.task_id, isPrivate && !mineEarly && !message.pending);
 
   const report = useMutation({
     mutationFn: async () => {
@@ -273,18 +311,22 @@ function PostActions(props: MessageSlotProps) {
   });
 
   if ((message.kind !== "problem" && message.kind !== "suggestion") || message.pending) return null;
-  const mine = !!myUserId && message.author_id === myUserId;
+  const mine = mineEarly;
   const showMake = mine && !message.task_id;
   const showReport = mine && !message.feedback_id;
-  if (!message.task_id && !showMake && !showReport) return null;
+  const showOpen = !!message.task_id
+    && mayOpenChatTask({ isPrivate, myUserId, authorId: message.author_id, taskOwnerId });
+  if (!showOpen && !showMake && !showReport) return null;
   const reportLabel = message.kind === "problem" ? "Report as bug" : "Report as idea";
 
   return (
     <div className="mt-1 flex flex-wrap items-center gap-2">
       {message.task_id ? (
-        <Button asChild variant="primary" size="sm" icon="arrow_right">
-          <Link href={chatTaskHref(message.task_id)}>Open task</Link>
-        </Button>
+        showOpen && (
+          <Button asChild variant="primary" size="sm" icon="arrow_right">
+            <Link href={chatTaskHref(message.task_id)}>Open task</Link>
+          </Button>
+        )
       ) : showMake ? (
         <Button type="button" variant="primary" size="sm" icon="check" onClick={() => setDialog(true)}>
           Make a task

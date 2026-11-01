@@ -20,6 +20,8 @@ import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
 import { paymentHref, subscriptionStatusLabel } from "@/app/(app)/subscriptions/palette-links";
 import { paymentMethodLabel } from "@/lib/payments/method-label";
 import { quoteStateLabel } from "@/lib/quotes/state-labels";
+import { quoteRowTotalPeriods, quoteTotalPeriodsText, type QuoteRowForPeriods } from "@/lib/quotes/per-period-figures";
+import { rupee } from "@/lib/utils";
 
 export const RECORD_LINK_TYPES = ["quote", "invoice", "customer", "subscription", "lead", "payment"] as const;
 export type RecordLinkType = (typeof RECORD_LINK_TYPES)[number];
@@ -200,7 +202,10 @@ export function viewerMayOpen(role: string | null | undefined, type: RecordLinkT
 export type RecordPreview =
   | {
       state: "ok"; type: RecordLinkType; id: string; label: string;
-      title: string; subtitle: string | null; amount: number | null; status: string | null; href: string;
+      title: string; subtitle: string | null; amount: number | null;
+      /** R-2327: the amount as the record's own list prints it (a quote: "₹3,186/month · ₹38,232/year"). */
+      amountText: string | null;
+      status: string | null; href: string;
     }
   | { state: "no_access" | "not_found" | "error"; type: RecordLinkType; id: string; label: string; message: string };
 
@@ -236,12 +241,41 @@ interface PreviewSpec {
   /** Only what the preview shows — never more. */
   columns: string;
   shape: (r: Row, link: ChatLink) => { title: string; subtitle: string | null; amount: number | null; status: string | null; href: string };
+  /** R-2327: how the amount reads; default ₹ of `amount`. */
+  amountText?: (r: Row, amount: number | null) => string | null;
+}
+
+/**
+ * R-2327: a quote card reads its total like the /quotes list (R-2222) — the SAME helpers
+ * (quoteRowTotalPeriods + quoteTotalPeriodsText): "₹3,186/month · ₹38,232/year" for an Annual
+ * sale paid monthly, not the whole year alone. The extra columns are the ones those helpers read.
+ */
+export const QUOTE_PREVIEW_COLUMNS =
+  "id, customer_name, amount, status, subtotal, discount_pct, tax_rate, billing_cycle, line_items, is_add_seats, is_one_off, is_extension, extension_months";
+
+function quoteAmountText(r: Row, amount: number | null): string | null {
+  const t = quoteRowTotalPeriods({
+    amount,
+    subtotal: num(r.subtotal),
+    discount_pct: num(r.discount_pct),
+    tax_rate: num(r.tax_rate),
+    billing_cycle: str(r.billing_cycle),
+    line_items: r.line_items,
+    is_add_seats: r.is_add_seats === true,
+    is_one_off: r.is_one_off === true,
+    is_extension: r.is_extension === true,
+    extension_months: num(r.extension_months),
+  } satisfies QuoteRowForPeriods);
+  if (!t) return null;
+  const x = quoteTotalPeriodsText(t);
+  return [`${x.perBill}${x.unit}`, x.year].filter(Boolean).join(" · ");
 }
 
 const SPEC: Record<RecordLinkType, PreviewSpec> = {
   quote: {
     table: "quotes",
-    columns: "id, customer_name, amount, status",
+    columns: QUOTE_PREVIEW_COLUMNS,
+    amountText: quoteAmountText,
     shape: (r, l) => ({
       title: `Quote ${l.id}`, subtitle: str(r.customer_name), amount: num(r.amount),
       status: quoteStatus(r.status),
@@ -302,5 +336,9 @@ export async function fetchRecordPreview(db: PreviewDb, link: ChatLink, role: st
   if (!data || typeof data !== "object") {
     return { state: "not_found", ...base, message: `${label} — not found or you don't have access` };
   }
-  return { state: "ok", ...base, ...spec.shape(data as Row, link) };
+  const shaped = spec.shape(data as Row, link);
+  const amountText = spec.amountText
+    ? spec.amountText(data as Row, shaped.amount)
+    : shaped.amount != null ? rupee(shaped.amount) : null;
+  return { state: "ok", ...base, ...shaped, amountText };
 }

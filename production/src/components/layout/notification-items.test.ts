@@ -156,3 +156,54 @@ describe("team chat bell items (R-2303)", () => {
     expect(src).toMatch(/"chat\.dm"/);
   });
 });
+
+/* R-2327 (3) — localhost check: a NEW @mention sat at the BOTTOM of the bell, under older task
+   items, because every due task was listed first. Unread team chat items (mention / DM) now come
+   first, newest first; then due tasks (R-247: still never dropped by the cap); then the rest. */
+describe("R-2327 bell order: a new chat item is on top", () => {
+  const { start } = todayBoundsIST(NOW);
+  const chat = (id: string, kind: string, minsAgo: number, read = false) => ({
+    id, kind, title: `${kind} ${id}`, body: null, href: "/team-chat?c=x&m=y", entity_id: id,
+    read_at: read ? new Date(NOW).toISOString() : null, created_at: new Date(NOW - minsAgo * 60_000).toISOString(),
+  }) as unknown as NotificationRow;
+
+  it("an unread @mention from 1 minute ago is first, above today's and overdue tasks", () => {
+    const items = buildNotifications({
+      dbNotifs: [chat("n1", "chat.mention", 1)],
+      tasks: [task("old", start - 3 * DAY), task("today", start + 3600_000)],
+      readIds: new Set(), now: NOW,
+    });
+    expect(items.map((i) => i.id)).toEqual(["db-n1", "task-today", "task-old"]);
+  });
+
+  it("unread chat items are newest first among themselves (mention and DM mixed by time)", () => {
+    const items = buildNotifications({
+      dbNotifs: [chat("old", "chat.dm", 30), chat("new", "chat.mention", 2), chat("mid", "chat.dm", 10)],
+      tasks: [task("t", start + 3600_000)],
+      readIds: new Set(), now: NOW,
+    });
+    expect(items.map((i) => i.id)).toEqual(["db-new", "db-mid", "db-old", "task-t"]);
+  });
+
+  it("a chat item already read drops back among the rest by time", () => {
+    const items = buildNotifications({
+      dbNotifs: [chat("r", "chat.mention", 1, true)],
+      tasks: [task("t", start + 3600_000)],
+      leads: [{ id: "L1", company: "Acme", value: null, contact_name: null, created_at: new Date(NOW - 5 * 60_000).toISOString() }],
+      readIds: new Set(), now: NOW,
+    });
+    expect(items.map((i) => i.id)).toEqual(["task-t", "db-r", "lead-L1"]);
+  });
+
+  it("the cap still never drops a due task, even under many unread chat items", () => {
+    const many = Array.from({ length: NOTIFICATION_LIMIT + 5 }, (_, n) => chat(`c${n}`, "chat.mention", n + 1));
+    const items = buildNotifications({
+      dbNotifs: many,
+      tasks: [task("old", start - 20 * DAY)],
+      readIds: new Set(), now: NOW,
+    });
+    expect(items).toHaveLength(NOTIFICATION_LIMIT);
+    expect(items.map((i) => i.id)).toContain("task-old");
+    expect(items[0].id).toBe("db-c0");
+  });
+});
