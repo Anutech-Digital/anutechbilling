@@ -50,7 +50,6 @@ import { Input } from "@/components/ui/input";
 import {
   bulkReminderTargets,
   bulkReminderConfirm,
-  isTerminalRenewal,
   sendNowStep,
   sendNowConfirm,
   sentToastText,
@@ -63,9 +62,10 @@ import { renewalRisk } from "./risk";
 import { priorTermDueText } from "./prior-due";
 import { partsDue } from "@/lib/renewals/split-billed-next-part";
 import { istToday } from "@/lib/dates/ist";
-import { openRenewalQuoteMap, withRenewalQuote } from "./open-renewal-quotes";
+import { openRenewalQuoteMap, openRenewalQuoteStatus, withRenewalQuote } from "./open-renewal-quotes";
+import { renewalRowAction, type RowAction } from "./row-action";
 import { GraceOverCard } from "./grace-over-card";
-import { classifyRenewals, chasedRenewal, expiredGraceText, isStopped } from "./classify";
+import { classifyRenewals, chasedRenewal, expiredGraceText, isFlexNextPart, isStopped } from "./classify";
 import { isNonRenewing, nonRenewingLabel } from "@/lib/subscriptions/non-renewing";
 import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
 
@@ -88,6 +88,26 @@ function VendorPill({ vendor }: { vendor: string }) {
     >
       {v.label}
     </span>
+  );
+}
+
+// ─── R-2232: the row's renewal-quote line ("Renewal sent Q-x · due …") ─────────
+
+function RowActionLine({ action, canQuotes, className }: { action: RowAction; canQuotes: boolean; className?: string }) {
+  if (!action.text) return null;
+  const q = action.quoteId;
+  const at = q ? action.text.indexOf(q) : -1;
+  if (!q || at < 0) return <p className={cn("text-ink-3", className)}>{action.text}</p>;
+  return (
+    <p className={cn("text-ink-2", className)}>
+      {action.text.slice(0, at)}
+      {canQuotes ? (
+        <Link href={`/quotes/${q}` as never} className="font-mono underline underline-offset-2 hover:text-ink">{q}</Link>
+      ) : (
+        <span className="font-mono">{q}</span>
+      )}
+      {action.text.slice(at + q.length)}
+    </p>
   );
 }
 
@@ -124,6 +144,9 @@ function RenewalBucket({
   const { data: me } = useCurrentUser();
   const canQuotes = canOpenQuotes(me?.role);
   const confirm = useConfirm();
+  /* R-2232: draft vs sent for the row's "Renewal sent Q-x" line (same cached query as the page). */
+  const { data: openRenewals } = useOpenRenewalQuotes();
+  const quoteStatus = React.useMemo(() => openRenewalQuoteStatus(openRenewals ?? []), [openRenewals]);
 
   async function handleGenerateQuote(sub: Subscription) {
     setGenerating(sub.id);
@@ -247,6 +270,7 @@ function RenewalBucket({
             const priorDue = priorTermDueText(sub);  // R-1703
             /* R-2095: a sub billed in parts that is periods behind — Generate bills them oldest first. */
             const behind = partsDue({ billing_cycle: sub.billing_cycle, term_months: sub.term_months ?? 12, start_date: sub.start_date, renewal_date: sub.renewal_date }, istToday());
+            const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
             return (
               <li
                 key={sub.id}
@@ -315,48 +339,36 @@ function RenewalBucket({
                   </p>
                 )}
 
+                {/* R-2232: one action per row — "Renewal sent Q-x · due …" + Resend, never a second Generate;
+                    nothing to send on a Renewed / Won't renew / stopped row. */}
+                <RowActionLine action={action} canQuotes={canQuotes} className="mb-2 text-xs" />
+
                 {/* Bottom row: actions */}
                 <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-hairline/60">
-                  {sub.renewal_quote_id && !canQuotes ? (
-                    <span className="flex-1 truncate text-center font-mono text-2xs text-ink-3" title="Renewal quote ready — owner or sales sends it">
-                      {sub.renewal_quote_id}
-                    </span>
-                  ) : sub.renewal_quote_id ? (
-                    <Button
-                      asChild
-                      variant="default"
-                      size="sm"
-                      className="flex-1"
-                    >
-                      <Link href={`/quotes/${sub.renewal_quote_id}` as never}>
-                        <Icon name="file" size={12} />
-                        Open quote
-                      </Link>
-                    </Button>
-                  ) : (
+                  {action.kind === "generate" && (
                     <Button
                       variant={kind === "rose" ? "primary" : "default"}
                       size="sm"
                       className="flex-1"
                       loading={generating === sub.id}
-                      disabled={isNonRenewing(sub) || isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                       onClick={() => handleGenerateQuote(sub)}
                     >
                       <Icon name="plus" size={12} />
                       Generate
                     </Button>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="flex-1"
-                    loading={sending === sub.id}
-                    disabled={isNonRenewing(sub) || isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
-                    onClick={() => handleSendNow(sub)}
-                  >
-                    <Icon name="mail" size={12} />
-                    Send now
-                  </Button>
+                  {action.kind !== "none" && (
+                    <Button
+                      variant={action.kind === "generate" ? "ghost" : "default"}
+                      size="sm"
+                      className="flex-1"
+                      loading={sending === sub.id}
+                      onClick={() => handleSendNow(sub)}
+                    >
+                      <Icon name="mail" size={12} />
+                      {action.kind === "generate" ? "Send now" : action.label}
+                    </Button>
+                  )}
                   {sub.customer_id && (
                     <AiDraftButton customerId={sub.customer_id} channel="whatsapp" purpose="renewal" label="✨ Nudge" variant="ghost" />
                   )}
@@ -420,6 +432,7 @@ function RenewalBucket({
                     const priorDue = priorTermDueText(sub);  // R-1703
                     /* R-2095: periods behind, billed oldest first by Generate. */
                     const behind = partsDue({ billing_cycle: sub.billing_cycle, term_months: sub.term_months ?? 12, start_date: sub.start_date, renewal_date: sub.renewal_date }, istToday());
+                    const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
                     return (
                       <tr
                         key={sub.id}
@@ -554,27 +567,14 @@ function RenewalBucket({
                                 {priorDue}
                               </p>
                             )}
+                            {/* R-2232: "Renewal sent Q-x · due …" + Resend only; nothing on a Renewed row. */}
+                            <RowActionLine action={action} canQuotes={canQuotes} className="text-2xs" />
                             <div className="flex flex-wrap items-center gap-1.5">
-                              {sub.renewal_quote_id && !canQuotes ? (
-                                <span className="text-2xs text-ink-3" title="Owner or sales sends it">Renewal quote ready</span>
-                              ) : sub.renewal_quote_id ? (
-                                <Button
-                                  asChild
-                                  variant="default"
-                                  size="sm"
-                                  title="Open the existing renewal quote — edit seats/plan or send"
-                                >
-                                  <Link href={`/quotes/${sub.renewal_quote_id}` as never}>
-                                    <Icon name="file" size={12} />
-                                    Open quote
-                                  </Link>
-                                </Button>
-                              ) : (
+                              {action.kind === "generate" && (
                                 <Button
                                   variant={kind === "rose" ? "primary" : "default"}
                                   size="sm"
                                   loading={generating === sub.id}
-                                  disabled={isNonRenewing(sub) || isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                                   onClick={() => handleGenerateQuote(sub)}
                                   title="Create the renewal quote now (early, e.g. customer asked 60 days ahead) — same logic as the T-15 cron auto-create"
                                 >
@@ -582,17 +582,20 @@ function RenewalBucket({
                                   Generate quote
                                 </Button>
                               )}
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                loading={sending === sub.id}
-                                disabled={isNonRenewing(sub) || isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
-                                onClick={() => handleSendNow(sub)}
-                                title="Send the appropriate renewal email immediately (overrides daily cron)"
-                              >
-                                <Icon name="mail" size={12} />
-                                Send now
-                              </Button>
+                              {action.kind !== "none" && (
+                                <Button
+                                  variant={action.kind === "generate" ? "ghost" : "default"}
+                                  size="sm"
+                                  loading={sending === sub.id}
+                                  onClick={() => handleSendNow(sub)}
+                                  title={action.kind === "generate"
+                                    ? "Send the appropriate renewal email immediately (overrides daily cron)"
+                                    : "Email the renewal reminder again, with this renewal quote"}
+                                >
+                                  <Icon name="mail" size={12} />
+                                  {action.kind === "generate" ? "Send now" : action.label}
+                                </Button>
+                              )}
                               {sub.customer_id && (
                                 <AiDraftButton customerId={sub.customer_id} channel="whatsapp" purpose="renewal" label="✨ Nudge" variant="ghost" />
                               )}
@@ -600,11 +603,6 @@ function RenewalBucket({
                                 <VoiceNoteButton customerId={sub.customer_id} purpose="renewal" customerName={sub.customer_name} label="🔊 Voice" variant="ghost" />
                               )}
                             </div>
-                            {sub.renewal_quote_id && (
-                              <p className="text-2xs text-ink-3 font-mono">
-                                Quote: {sub.renewal_quote_id}
-                              </p>
-                            )}
                           </div>
                         </td>
                       </tr>
@@ -728,7 +726,8 @@ export default function RenewalsPage() {
   const maxForecast = Math.max(1, ...forecast.months.map((m) => m.amount));
 
   /* R-2225: the renewals pipeline export leaves out Won't renew subscriptions. */
-  const upcoming90   = enriched.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 90 && chasedRenewal(r.sub));
+  /* R-2232: nor a flex subscription's next monthly part (a billing part, not a renewal). */
+  const upcoming90   = enriched.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 90 && chasedRenewal(r.sub) && !isFlexNextPart(r.sub, r.daysUntil));
   const highRiskSubs = groups.atRisk;
 
   /* R-239: the search narrows the bucket lists (and their tab counts) only. */
@@ -1004,6 +1003,12 @@ export default function RenewalsPage() {
               { id: "risk",     label: "At risk",           count: riskShown.length || undefined },
             ] satisfies TabBarItem[]}
           />
+          {/* R-2232: Renewals = end of commitment only — say where the flex months went. */}
+          {groups.flexParts.length > 0 && (
+            <p className="mt-2 text-xs text-ink-3">
+              {groups.flexParts.length} flex {groups.flexParts.length === 1 ? "subscription is" : "subscriptions are"} not listed: each month is a billing part — its payment request is raised on its date (see the subscription&apos;s billing schedule).
+            </p>
+          )}
         </div>
         {/* R-1124: the Urgent tab keeps lapsed rows (sidebar badge parity, R-1541) but in their
             own groups — nothing past its renewal date is listed under "Next 7 days". */}

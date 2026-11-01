@@ -22,8 +22,15 @@
  * R-2225: a subscription marked Won't renew (auto_renew off) is not a renewal to chase. It is in
  * none of the urgency groups (nor the sidebar badge — nav_badges() reads the same rule); while it
  * still runs it is listed as `nonRenewing` and counted At risk (that revenue is leaving).
+ *
+ * R-2232 (Zoho audit A8): Renewals = end of commitment only. A FLEX subscription (1-month term,
+ * billed in parts) has no commitment to end: its next month is a billing-schedule part — the
+ * renewals cron rolls the term and the billing job raises the payment request (R-808, R-2044).
+ * It is in none of the urgency groups, nor At risk, nor the sidebar badge (nav_badges() reads
+ * the same rule); it is counted apart as `flexParts`. Once its date has PASSED unbilled it is
+ * listed again as Expired — a part nobody billed, which Generate bills (R-2095).
  */
-import { renewalBucket } from "@/lib/renewals/buckets";
+import { renewalBucket, isFlexNextPart } from "@/lib/renewals/buckets";
 import { effectiveGraceDays, serviceStopDate } from "@/lib/renewals/cadence";
 import { formatIstDate } from "@/lib/dates/ist";
 import { isTerminalRenewal } from "./reminders";
@@ -32,6 +39,8 @@ export interface ClassifySub {
   renewal_state?: string | null;
   renewal_date: string | null;
   term_months?: number | null;
+  /** R-2232: a 1-month term billed in parts (flex) — its next month is a billing part. */
+  billing_cycle?: string | null;
   status?: string | null;
   /** R-2225: false = Won't renew. */
   auto_renew?: boolean | null;
@@ -52,6 +61,8 @@ export interface RenewalGroups<T> {
   stopped:  T[];
   /** R-2225: Won't renew, still running (renewal date today or later). */
   nonRenewing: T[];
+  /** R-2232: flex subscriptions whose next month is a billing part, not a renewal. */
+  flexParts: T[];
   /** expired + due7 + stopped — the Urgent tab and the sidebar badge (R-1541). */
   urgentTab: T[];
   atRisk:   T[];
@@ -64,6 +75,9 @@ export function chasedRenewal(sub: { auto_renew?: boolean | null }): boolean {
   return sub.auto_renew !== false;
 }
 
+/** R-2232: the rule lives in lib/renewals/buckets.ts (the Renewals page rules), shared with Bulk reminder. */
+export { isFlexNextPart };
+
 export function isStopped(sub: ClassifySub): boolean {
   return sub.renewal_state === "suspended" || sub.status === "suspended";
 }
@@ -74,11 +88,15 @@ export function classifyRenewals<T extends ClassifyRow>(
   today: Date = new Date(),
 ): RenewalGroups<T> {
   const g: RenewalGroups<T> = {
-    expired: [], due7: [], upcoming: [], future: [], stopped: [], nonRenewing: [], urgentTab: [], atRisk: [], atRiskArr: 0,
+    expired: [], due7: [], upcoming: [], future: [], stopped: [], nonRenewing: [], flexParts: [], urgentTab: [], atRisk: [], atRiskArr: 0,
   };
   for (const r of rows) {
     if (!chasedRenewal(r.sub)) {
       if (r.daysUntil >= 0 && r.sub.status !== "expired") g.nonRenewing.push(r);
+      continue;
+    }
+    if (isFlexNextPart(r.sub, r.daysUntil)) {
+      g.flexParts.push(r);
       continue;
     }
     if (r.daysUntil < 0) {
