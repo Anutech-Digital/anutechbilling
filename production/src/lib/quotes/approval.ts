@@ -99,6 +99,10 @@ export function marginBps(e: QuoteEconomics): number | null {
   return Math.round(((e.subtotal - e.totalCost) / e.subtotal) * 10_000);
 }
 
+/** The reason given when a line's cost is unknown. R-2028: screens name the line(s) in its
+ *  place (lib/quotes/missing-cost-reason.ts) — the rule itself is unchanged. */
+export const COST_UNKNOWN_REASON = "At least one line has no vendor cost, so the margin on this quote is unknown.";
+
 const fmtPct = (bps: number) => `${(bps / 100).toFixed(bps % 100 === 0 ? 0 : 2)}%`;
 
 /**
@@ -131,7 +135,7 @@ export function requiredApproval(e: QuoteEconomics): ApprovalRequirement {
   }
 
   if (e.costUnknown) {
-    reasons.push("At least one line has no vendor cost, so the margin on this quote is unknown.");
+    reasons.push(COST_UNKNOWN_REASON);
     raise("owner");
   } else if (mBps !== null && mBps < OWNER_MARGIN_FLOOR_BPS) {
     reasons.push(`Gross margin is ${fmtPct(mBps)} — below the ${fmtPct(OWNER_MARGIN_FLOOR_BPS)} floor.`);
