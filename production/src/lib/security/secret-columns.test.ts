@@ -68,6 +68,8 @@ const REVIEWED_NOT_SECRET: Record<string, string> = {
   "vault_passwords.password_fingerprint": "keyed truncated HMAC for reuse detection, not crackable; owner/manager only (R-716 RLS); the vault list shows reuse from it",
   "consent_events.ip_hash": "R-2010: keyed HMAC (SECRETS_MASTER_KEY) of a website visitor IP for the DPDP consent record — not a credential; owner-only read by RLS, insert-only",
   "phone_otps.code_hash": "R-1903: keyed HMAC (server secret) of a 5-minute OTP; phone_otps has no authenticated policy or grant — service role + SECURITY DEFINER RPCs only (r1903_phone_otp.test.sql check 1d)",
+  "privacy_requests.otp_hash": "R-2013: keyed HMAC (R-1903 server secret) of a 15-minute code bound to the request id, wiped on use; no column grant to authenticated (r2013_privacy_requests.test.sql D2) — service role + privacy_request_verify only",
+  "privacy_requests.ip_hash": "R-2013: keyed HMAC (SECRETS_MASTER_KEY) of the requester's IP, as consent_events.ip_hash — not a credential; no column grant to authenticated, service role only",
   "personal_transactions.dedupe_hash": "R-2127: hash of a bank-statement line used only to skip duplicate imports; own rows only (RLS owner_user_id = auth.uid()), no credential",
   "personal_vault_pin.pin_hash": "own row only (RLS user_id = auth.uid()); /api/vault/personal/pin verifies with it",
   "tenants.attendance_ingest_key": "emptied by R-607 (20261010000000) — always null, key moved to attendance_settings.ingest_key",
