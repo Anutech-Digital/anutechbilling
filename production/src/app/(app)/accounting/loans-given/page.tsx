@@ -171,7 +171,7 @@ export default function LoansGivenPage() {
                           <button type="button" className="text-left font-medium text-ink hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded" onClick={() => setOpenId(l.id)}>
                             {l.borrower_name}
                           </button>
-                          <div className="text-xs text-ink-3">{l.director_id ? "Director" : l.borrower_type === "company" ? "Company" : "Person"}{Number(l.interest_rate) > 0 ? ` · ${Number(l.interest_rate)}% a year` : " · interest-free"}</div>
+                          <div className="text-xs text-ink-3">{l.director_id ? "Director" : l.borrower_type === "company" ? "Company" : "Person"}{Number(l.interest_rate) > 0 ? ` · ${Number(l.interest_rate)}% a year` : " · interest-free"}{l.repayment_plan === "emi" && l.terms.emi ? ` · ${rupee(l.terms.emi)} × ${l.instalments}` : ""}</div>
                         </td>
                         <td className="px-4 py-3 text-ink-2">
                           <div className="font-mono">{rupee(l.principal)}</div>
@@ -180,6 +180,7 @@ export default function LoansGivenPage() {
                         <td className="px-4 py-3 text-right">
                           <div className="font-mono font-semibold text-ink">{rupee(l.position.outstanding)}</div>
                           {l.position.interestDue > 0 && <div className="text-xs text-ink-3">incl. {rupee(l.position.interestDue)} interest</div>}
+                          {l.repayments.length > 0 && <div className="text-xs text-ink-3">{l.repayments.length} {l.repayments.length === 1 ? "receipt" : "receipts"} got · {rupee(l.position.principalRepaid + l.position.interestReceived)}</div>}
                         </td>
                         <td className="px-4 py-3 text-ink-2"><NextDueText loan={l} /></td>
                         <td className="px-4 py-3"><StatusBadge loan={l} /></td>
@@ -207,6 +208,7 @@ export default function LoansGivenPage() {
                         </div>
                         <div className="text-sm text-ink-3 mb-2">
                           {rupee(l.principal)} given {formatDate(l.given_on)} · <NextDueText loan={l} />
+                          {l.repayments.length > 0 && <> · {l.repayments.length} {l.repayments.length === 1 ? "receipt" : "receipts"} got</>}
                         </div>
                       </button>
                       <div className="flex items-center justify-between gap-2">
@@ -258,8 +260,10 @@ function NextDueText({ loan }: { loan: LoanGiven }) {
   if (loan.status === "closed") return <span>Repaid{loan.closed_on ? ` ${formatDate(loan.closed_on)}` : ""}</span>;
   const n = loan.next;
   if (!n) return <span>—</span>;
-  if (!n.dueOn) return <span>{rupee(n.unpaid)} · no fixed date</span>;
-  return <span className={cn(n.state === "overdue" && "text-rose font-medium")}>{rupee(n.unpaid)} on {formatDate(n.dueOn)}</span>;
+  /* R-2340: an EMI loan shows the whole receipt due (principal + that month's interest). */
+  const due = n.amount !== undefined && n.unpaid === n.principal ? n.amount : n.unpaid;
+  if (!n.dueOn) return <span>{rupee(due)} · no fixed date</span>;
+  return <span className={cn(n.state === "overdue" && "text-rose font-medium")}>{rupee(due)} on {formatDate(n.dueOn)}</span>;
 }
 
 const STATE_LABEL: Record<ScheduleState, string> = { paid: "Paid", part: "Part paid", overdue: "Overdue", due: "Due" };
@@ -294,7 +298,7 @@ function LoanDetailDialog({ loan, onClose, onRepay }: { loan: LoanGiven; onClose
           <DialogDescription>
             {rupee(loan.principal)} given {formatDate(loan.given_on)}
             {loan.paid_from_account_id ? ` from ${acctName.get(loan.paid_from_account_id) ?? "account"}` : ""}
-            {" · "}{Number(loan.interest_rate) > 0 ? `${Number(loan.interest_rate)}% a year, simple` : "interest-free"}
+            {" · "}{Number(loan.interest_rate) > 0 ? `${Number(loan.interest_rate)}% a year, ${loan.repayment_plan === "emi" ? "reducing balance" : "simple"}` : "interest-free"}
           </DialogDescription>
         </DialogHeader>
 
@@ -308,20 +312,27 @@ function LoanDetailDialog({ loan, onClose, onRepay }: { loan: LoanGiven; onClose
 
           <section aria-labelledby="lg-schedule">
             <h3 id="lg-schedule" className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-2">
-              {loan.repayment_plan === "instalments" ? `Schedule — ${loan.instalments} monthly parts` : "Due"}
+              {loan.repayment_plan === "instalments" ? `Schedule — ${loan.instalments} monthly parts`
+                : loan.repayment_plan === "emi" ? `Schedule — ${loan.instalments} monthly receipts` : "Due"}
             </h3>
             <ul className="space-y-1.5">
               {loan.schedule.map((r) => (
                 <li key={r.n} className="flex items-center justify-between gap-3 rounded-md border border-hairline px-3 py-2 text-sm">
                   <span className="text-ink-2">{r.dueOn ? formatDate(r.dueOn) : "No fixed date"}</span>
                   <span className="flex items-center gap-2">
-                    <span className="font-mono text-ink">{rupee(r.unpaid > 0 && r.unpaid < r.principal ? r.unpaid : r.principal)}</span>
+                    <span className="font-mono text-ink">{rupee(r.amount !== undefined ? r.amount : r.unpaid > 0 && r.unpaid < r.principal ? r.unpaid : r.principal)}</span>
                     <Badge kind={STATE_KIND[r.state]}>{STATE_LABEL[r.state]}</Badge>
                   </span>
                 </li>
               ))}
             </ul>
-            {Number(loan.interest_rate) > 0 && <p className="mt-1.5 text-xs text-ink-3">Loan amounts only. Interest is added on what is still owed.</p>}
+            {Number(loan.interest_rate) > 0 && (
+              <p className="mt-1.5 text-xs text-ink-3">
+                {loan.repayment_plan === "emi"
+                  ? "Each receipt = principal + that month's interest on what is still owed; the last one clears the rest."
+                  : "Loan amounts only. Interest is added on what is still owed."}
+              </p>
+            )}
           </section>
 
           <section aria-labelledby="lg-repayments">
@@ -620,7 +631,10 @@ function RepayDialog({ loan, onClose }: { loan: LoanGiven; onClose: () => void }
 
   const [date, setDate] = React.useState(istToday());
   const split0 = splitRepayment(loan.terms, loan.parts, istToday(), 0);
-  const suggested = loan.next ? Math.min(loan.next.unpaid + loan.position.interestDue, split0.maxAmount) : split0.maxAmount;
+  /* R-2340: an EMI loan's next receipt is the scheduled amount (principal + that month's interest). */
+  const nextAmount = loan.next && loan.next.amount !== undefined && loan.next.unpaid === loan.next.principal
+    ? loan.next.amount : (loan.next?.unpaid ?? 0) + loan.position.interestDue;
+  const suggested = loan.next ? Math.min(nextAmount, split0.maxAmount) : split0.maxAmount;
   const [amount, setAmount] = React.useState(suggested > 0 ? String(suggested) : "");
   const [mode, setMode] = React.useState<RepaymentMode>("bank");
   const [accountId, setAccountId] = React.useState("");

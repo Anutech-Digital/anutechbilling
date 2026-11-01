@@ -70,6 +70,7 @@ import { RazorpaySettlementSection } from "@/components/features/banking/razorpa
 import { isRazorpaySettlementLine } from "@/lib/razorpay/settlement-match";
 import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-section";
 import { EmiRepaymentSection } from "@/components/features/banking/emi-repayment-section";
+import { LoanGivenReceiptSection } from "@/components/features/banking/loan-given-receipt-section";
 import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
 import { CustomerRefundSection } from "@/components/features/banking/customer-refund-section";
 import { OtherIncomeSection } from "@/components/features/banking/other-income-section";
@@ -1093,6 +1094,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
           <>
             {/* R-1864: an EMI — matched to the loan's instalment, split into principal + interest. */}
             {!isCredit && <EmiRepaymentSection transaction={transaction} onDone={() => onOpenChange(false)} />}
+            {/* R-2340: money back on a loan the company GAVE — receipt N (principal back + interest income). */}
+            {isCredit && <LoanGivenReceiptSection transaction={transaction} onDone={() => onOpenChange(false)} />}
             {advanceBox}
           </>
         );
