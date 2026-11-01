@@ -67,10 +67,11 @@ describe("planTds — the app's TDS rule on the bills paid together", () => {
   it("the vendor's earlier payments this year count toward the limit", () => {
     expect(planTds([exp({ tds_base: 40000, amount_due: 47200 })], j("194J", { base: 20000, baseWithoutTds: 0 }))[0].tds).toBe(4000);
   });
-  it("a bill that already carries TDS keeps it; a COGS bill takes none", () => {
+  it("a bill that already carries TDS keeps it; a small COGS bill stays under the 194C limit", () => {
     const t = planTds([exp({ tds_amount: 5000, tds_section: "194J" }), B1], j("194C"));
     expect(t[0]).toMatchObject({ tds: 5000, section: "194J", fixed: true });
     expect(t[1].tds).toBe(0);
+    expect(t[1].reason).toMatch(/within the limit/);
   });
   it("no section / 'no TDS' → nothing", () => {
     expect(planTds([E1, E2], j(null)).every((x) => x.tds === 0)).toBe(true);
@@ -107,8 +108,8 @@ describe("planTds — R-1891 194Q on a COGS bill: the database's figure, only fo
     expect(planTds([big], with194q([q({ buyer: null })]))[0].tds).toBe(0);
     expect(planTds([big], with194q([q({ buyer: false })]))[0].tds).toBe(0);
   });
-  it("another section, 'No TDS', or nothing due → none", () => {
-    expect(planTds([big], { ...with194q([q()]), section: "194C" })[0].tds).toBe(0);
+  it("'No TDS', or nothing due → none; R-2320: a services section takes its own rate, not 194Q", () => {
+    expect(planTds([big], { ...with194q([q()]), section: "194C" })[0]).toMatchObject({ tds: 40000, section: "194C", fixed: false });
     expect(planTds([big], { ...with194q([q()]), off: true })[0].tds).toBe(0);
     expect(planTds([big], with194q([q({ base: 0, tds_total: 0, tds_due: 0 })]))[0].tds).toBe(0);
   });
