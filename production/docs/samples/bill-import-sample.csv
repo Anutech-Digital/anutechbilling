@@ -1,0 +1,5 @@
+Vendor Name,Vendor GSTIN,Bill Number,Bill Date,Due Date,Taxable Value,CGST,SGST,IGST,Category
+Mehta Cloud Distributors,,MCD-24001,2026-09-02,2026-10-02,40000,3600,3600,0,COGS-Workspace
+Mehta Cloud Distributors,,MCD-24002,2026-09-05,2026-10-05,25000,2250,2250,0,COGS-Workspace
+Mehta Cloud Distributors,,MCD-24003,2026-09-09,2026-10-09,10000,900,900,0,COGS-Workspace
+T-Unknown Supplier,,UNK-1,2026-09-10,,5000,0,0,900,
