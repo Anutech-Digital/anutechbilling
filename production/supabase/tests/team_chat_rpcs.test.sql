@@ -111,6 +111,16 @@ insert into public.chat_members (tenant_id, channel_id, user_id, member_role) va
 update public.chat_members set notify = 'none'
  where channel_id = 'c2295000-0000-0000-0000-0000000000c2' and user_id = 'c2295000-0000-0000-0000-0000000000a7';
 
+-- R-2332: an attachment must be a file its poster stored through the upload route — the
+-- storage rows the route would have left (type + size are read from here, not the caller).
+insert into storage.objects (bucket_id, name, owner, metadata) values
+  ('documents', 'c2295000-0000-0000-0000-0000000000f1/chat/c2295000-0000-0000-0000-0000000000c1/a1a1a1a1-0000-4000-8000-000000000001_bill.pdf',
+   'c2295000-0000-0000-0000-0000000000a1', '{"mimetype":"application/pdf","size":1200}'),
+  ('documents', 'c2295000-0000-0000-0000-0000000000f1/chat/c2295000-0000-0000-0000-0000000000c1/b2b2b2b2-0000-4000-8000-000000000002_shot.png',
+   'c2295000-0000-0000-0000-0000000000a2', '{"mimetype":"image/png","size":500}'),
+  ('documents', 'c2295000-0000-0000-0000-0000000000f1/chat/c2295000-0000-0000-0000-0000000000c1/c3c3c3c3-0000-4000-8000-000000000003_big.pdf',
+   'c2295000-0000-0000-0000-0000000000a1', '{"mimetype":"application/pdf","size":10485761}');
+
 -- message ids the RPCs return, passed between steps
 create temp table tc02_ids (k text primary key, v uuid);
 grant all on tc02_ids to authenticated;
@@ -165,7 +175,7 @@ begin
           'c2295000-0000-0000-0000-0000000000b1',   -- another company → no
           'c2295000-0000-0000-0000-0000000000e9']::uuid[], -- nobody → no
     '[{"type":"invoice","id":"INV-7"}]'::jsonb,
-    '[{"path":"c2295000-0000-0000-0000-0000000000f1/chat/c2295000-0000-0000-0000-0000000000c1/x_bill.pdf","name":"bill.pdf","mime":"application/pdf","size":1200}]'::jsonb);
+    '[{"path":"c2295000-0000-0000-0000-0000000000f1/chat/c2295000-0000-0000-0000-0000000000c1/a1a1a1a1-0000-4000-8000-000000000001_bill.pdf","name":"bill.pdf","mime":"application/pdf","size":1200}]'::jsonb);
   insert into tc02_ids values ('m1', v_id);
 
   -- 2. private channel accounts (owner, acct, muted manager): mentioning sales (staff, not a member) is
@@ -179,7 +189,7 @@ begin
   perform pg_temp.tc02_as('c2295000-0000-0000-0000-0000000000a2');
   v_id := public.chat_post_message('c2295000-0000-0000-0000-0000000000c1', 'acct note', 'problem', null,
     '{}'::uuid[], '[]'::jsonb,
-    '[{"path":"c2295000-0000-0000-0000-0000000000f1/chat/c2295000-0000-0000-0000-0000000000c1/y_shot.png","name":"shot.png","mime":"image/png","size":500}]'::jsonb);
+    '[{"path":"c2295000-0000-0000-0000-0000000000f1/chat/c2295000-0000-0000-0000-0000000000c1/b2b2b2b2-0000-4000-8000-000000000002_shot.png","name":"shot.png","mime":"image/png","size":500}]'::jsonb);
   insert into tc02_ids values ('m3', v_id);
   -- acct in the DM with sales
   v_id := public.chat_post_message('c2295000-0000-0000-0000-0000000000c3', 'dm text', 'text', null,
@@ -199,7 +209,7 @@ begin
     '22023', '%link%');
   perform pg_temp.tc02_refused('1a attachment outside folder', $q$select public.chat_post_message('c2295000-0000-0000-0000-0000000000c1', 'x', 'text', null, '{}'::uuid[], '[]'::jsonb, '[{"path":"c2295000-0000-0000-0000-0000000000f2/chat/c2295000-0000-0000-0000-0000000000c1/a.pdf","name":"a.pdf","mime":"application/pdf","size":10}]'::jsonb)$q$,
     '22023', '%attachment%');
-  perform pg_temp.tc02_refused('1a too big', $q$select public.chat_post_message('c2295000-0000-0000-0000-0000000000c1', 'x', 'text', null, '{}'::uuid[], '[]'::jsonb, '[{"path":"c2295000-0000-0000-0000-0000000000f1/chat/c2295000-0000-0000-0000-0000000000c1/a.pdf","name":"a.pdf","mime":"application/pdf","size":10485761}]'::jsonb)$q$,
+  perform pg_temp.tc02_refused('1a too big', $q$select public.chat_post_message('c2295000-0000-0000-0000-0000000000c1', 'x', 'text', null, '{}'::uuid[], '[]'::jsonb, '[{"path":"c2295000-0000-0000-0000-0000000000f1/chat/c2295000-0000-0000-0000-0000000000c1/c3c3c3c3-0000-4000-8000-000000000003_big.pdf","name":"a.pdf","mime":"application/pdf","size":10485761}]'::jsonb)$q$,
     '22023', '%10 MB%');
   perform pg_temp.tc02_refused('1a reply to another channel', format($q$select public.chat_post_message('c2295000-0000-0000-0000-0000000000c2', 'x', 'text', %L, '{}'::uuid[], '[]'::jsonb, '[]'::jsonb)$q$, pg_temp.tc02_id('m1')),
     'P0002', '%reply%');
@@ -355,7 +365,7 @@ begin
     'P0002', '%not found%');
   -- the owner deletes the accountant's message in #general
   v_res := public.chat_delete_message(pg_temp.tc02_id('m3'));
-  if (v_res -> 'file_paths') <> '["c2295000-0000-0000-0000-0000000000f1/chat/c2295000-0000-0000-0000-0000000000c1/y_shot.png"]'::jsonb then
+  if (v_res -> 'file_paths') <> '["c2295000-0000-0000-0000-0000000000f1/chat/c2295000-0000-0000-0000-0000000000c1/b2b2b2b2-0000-4000-8000-000000000002_shot.png"]'::jsonb then
     raise exception 'FAIL 5: delete should return the removed file paths, got %', v_res;
   end if;
   -- again: idempotent, nothing more to remove
