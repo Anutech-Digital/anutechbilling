@@ -16,8 +16,9 @@
  *   is the same for ciphertext — the token itself never reaches the browser.
  * - LEGACY rows written before this are plaintext. They keep working (decrypt
  *   passes plaintext through) and are sealed on the next write to the row
- *   (`resealIfPlain` rides along with the access-token update), so there is no
- *   bulk rewrite.
+ *   (`resealIfPlain` rides along with the access-token update). Rows nobody touches are
+ *   sealed in bulk by scripts/ops/reseal-oauth-tokens.mjs (R-2351, dry run first).
+ * - R-2351: the ACCESS token is sealed the same way (helpers at the end of this file).
  *
  * Server-only (node:crypto through vault.ts).
  */
