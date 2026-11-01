@@ -42,6 +42,7 @@ import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 import { applySeatIncrease, SEAT_INCREASE_SELECT } from "@/lib/subscriptions/apply-seat-increase";
 import { checkSeatEffectiveDate } from "@/lib/subscriptions/seat-effective-date";
 import { istToday } from "@/lib/dates/ist";
+import { MAX_TYPED_SEAT_RATE } from "@/lib/subscriptions/seat-rate-check";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -53,6 +54,9 @@ const bodySchema = z.object({
   idempotency_key: z.string().trim().min(8, "idempotency_key must be at least 8 characters").max(128),
   /* R-800: optional — absent means today. Range is checked against the subscription below. */
   effective_date: z.string().trim().max(10).optional().nullable(),
+  /* R-2292: ₹/seat/year typed for THIS quote only — whole rupees above 0. Absent = the
+     subscription's rate. The subscription's stored rate is never changed by it. */
+  annual_rate_per_seat: z.number().int("The rate must be whole rupees").min(1, "The rate must be above ₹0").max(MAX_TYPED_SEAT_RATE).optional().nullable(),
 });
 
 /**
@@ -70,7 +74,7 @@ const UNIQUE_VIOLATION = "23505";
  * so the claim is kept as `failed` and a replay reports the half-done state instead of
  * raising a second quote on top of the first.
  */
-const WROTE_NOTHING = new Set(["invalid_seats", "invalid_effective_date", "no_renewal_date", "term_ended", "no_doc_number", "insert_failed"]);
+const WROTE_NOTHING = new Set(["invalid_seats", "invalid_rate", "invalid_effective_date", "no_renewal_date", "term_ended", "no_doc_number", "insert_failed"]);
 
 export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -214,6 +218,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     effectiveDate: effective.date,
     effectiveDateSetBy: me.full_name?.trim() || me.email || null,
     requestedBy: authData.user.id,
+    annualPerSeatOverride: parsed.data.annual_rate_per_seat ?? null,
   });
 
   if (!result.ok) {
