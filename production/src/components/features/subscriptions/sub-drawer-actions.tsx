@@ -20,6 +20,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { isNonRenewing, nonRenewingLabel, nonRenewingNote, type NonRenewingFields } from "@/lib/subscriptions/non-renewing";
 
 /** Red outline on the shared `default` button — no new variant on the shared primitive. */
 const DANGER_OUTLINE = "w-full border-rose/60 text-rose hover:bg-rose-soft/40 hover:text-rose-ink";
@@ -76,16 +78,50 @@ export function SubDrawerActions({
   );
 }
 
-export function SubDrawerDangerZone({ cancelledNote, canDelete, onCancel, onDelete }: {
+/**
+ * R-2225: the subscription is marked Won't renew — the status, what the customer said, and Undo.
+ * Right under the header, so the drawer never reads as an ordinary renewing subscription.
+ */
+export function SubDrawerNonRenewing({ sub, onUndo, undoing }: {
+  sub: NonRenewingFields;
+  onUndo: () => void;
+  undoing: boolean;
+}) {
+  if (!isNonRenewing(sub)) return null;
+  return (
+    <div className="mb-4 rounded-lg border border-amber/40 bg-amber-soft/40 p-3" data-testid="sub-drawer-non-renewing">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <Badge kind="warning" size="md" dot>{nonRenewingLabel(sub)}</Badge>
+          <p className="mt-1.5 text-2xs leading-snug text-ink-2">{nonRenewingNote(sub)}</p>
+          <p className="mt-1 text-2xs leading-snug text-ink-3">No renewal quote or reminder goes out. It ends after this date.</p>
+        </div>
+        <Button size="sm" icon="refresh" onClick={onUndo} loading={undoing} className="shrink-0">
+          Undo Won&apos;t renew
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export function SubDrawerDangerZone({ cancelledNote, canDelete, onCancel, onDelete, onWontRenew }: {
   /** Set when the subscription is already cancelled — shown instead of the button. */
   cancelledNote: string | null;
   /** R-718: owner / accountant only. */
   canDelete: boolean;
   onCancel: () => void;
   onDelete: () => void;
+  /** R-2225: set only for a live, still-renewing subscription with a renewal date. */
+  onWontRenew?: () => void;
 }) {
   return (
     <div className="mt-6 pt-4 border-t border-hairline space-y-2" data-testid="sub-drawer-danger">
+      {/* R-2225: the customer is leaving at the end of the term — softer than Cancel, so not red. */}
+      {onWontRenew && (
+        <Button icon="clock" className="w-full" onClick={onWontRenew}>
+          Won&apos;t renew
+        </Button>
+      )}
       {/* R-455: Cancel = the customer is leaving (keeps the record). Delete = this entry
           should never have existed. Two different things, two buttons. */}
       {cancelledNote != null ? (
