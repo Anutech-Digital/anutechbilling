@@ -21,6 +21,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import { renewalStateLabel, renewalStateTone, type RenewalState } from "@/lib/renewals/cadence";
 import { paymentDueState, paymentDueChipLabel, todayIST } from "./payment-due";
 import { subscriptionEnded } from "./renewal-display";
+import { nonRenewingLabel } from "./non-renewing";
 
 export type ExceptionTone = "muted" | "info" | "warning" | "danger" | "success";
 
@@ -38,6 +39,8 @@ export interface SubExceptionFields {
   /** R-1685: an ended (cancelled / expired) subscription has no renewal and no payment clock. */
   status?: string | null;
   auto_renew?: boolean | null;
+  /** R-2225: the Non-renewing chip says the day it ends. */
+  renewal_date?: string | null;
   renewal_state?: RenewalState | null;
   reminder_count?: number | null;
   last_reminder_sent_at_v2?: string | null;
@@ -63,12 +66,14 @@ export function subscriptionExceptions(s: SubExceptionFields): SubExceptionFlag[
   // Auto-renew off means the renewals cron generates no quote and the
   // subscription lapses to `expired` on its date with nobody told. This was
   // not surfaced anywhere in the app — mobile or desktop.
+  /* R-2225: the customer said they won't renew (or turned auto-renew off in the portal) — it is
+     the Non-renewing status, with the day it ends, not an alarm. */
   if (s.auto_renew === false && !ended) {
     out.push({
       key: "auto_renew_off",
-      label: "Won't auto-renew",
-      tone: "danger",
-      title: "Auto-renew is off — no renewal quote will be generated and this will lapse on its renewal date",
+      label: nonRenewingLabel(s),
+      tone: "warning",
+      title: "Won't renew — no renewal quote or reminder goes out, and it lapses (ends) after its renewal date",
     });
   }
 

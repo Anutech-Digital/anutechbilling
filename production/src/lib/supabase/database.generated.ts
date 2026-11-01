@@ -12019,6 +12019,10 @@ export type Database = {
           last_reminder_at: string | null
           last_reminder_sent_at_v2: string | null
           mrr: number
+          non_renew_reason: string | null
+          non_renew_said_on: string | null
+          non_renew_set_at: string | null
+          non_renew_set_by: string | null
           outstanding_amount: number
           parent_subscription_id: string | null
           payment_due_date: string | null
@@ -12067,6 +12071,10 @@ export type Database = {
           last_reminder_at?: string | null
           last_reminder_sent_at_v2?: string | null
           mrr: number
+          non_renew_reason?: string | null
+          non_renew_said_on?: string | null
+          non_renew_set_at?: string | null
+          non_renew_set_by?: string | null
           outstanding_amount?: number
           parent_subscription_id?: string | null
           payment_due_date?: string | null
@@ -12115,6 +12123,10 @@ export type Database = {
           last_reminder_at?: string | null
           last_reminder_sent_at_v2?: string | null
           mrr?: number
+          non_renew_reason?: string | null
+          non_renew_said_on?: string | null
+          non_renew_set_at?: string | null
+          non_renew_set_by?: string | null
           outstanding_amount?: number
           parent_subscription_id?: string | null
           payment_due_date?: string | null
@@ -16738,6 +16750,15 @@ export type Database = {
           p_retained_earnings?: number
         }
         Returns: undefined
+      }
+      set_subscription_non_renewing: {
+        Args: {
+          p_on: boolean
+          p_reason?: string
+          p_said_on?: string
+          p_subscription_id: string
+        }
+        Returns: Json
       }
       set_subscription_auto_renew: {
         Args: { p_sub_id: string; p_value: boolean }
