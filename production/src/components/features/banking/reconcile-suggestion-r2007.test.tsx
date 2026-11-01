@@ -36,6 +36,11 @@ vi.mock("@/lib/queries/customer-payers", () => ({
   useSetBankLinePayer: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+/* R-2325: no suggested expense is reconciled elsewhere here (that read is tested in reconcile-suggestions-reconciled-r2325). */
+vi.mock("@/lib/banking/reconciled-suggestions", async (orig) => ({
+  ...(await orig<typeof import("@/lib/banking/reconciled-suggestions")>()),
+  useReconciledExpenseIds: () => ({ data: new Set<string>(), isLoading: false }),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc: state.rpc }) }));
 vi.mock("@/lib/queries/bank", () => ({
