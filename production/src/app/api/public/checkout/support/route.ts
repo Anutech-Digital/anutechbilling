@@ -40,6 +40,8 @@ import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
 import { bookSupportPrice, supportBookSku } from "@/lib/catalog/catalog-prices";
 import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { captureFromRequest } from "@/lib/marketing/utm";
+import { readFormConsent } from "@/lib/consent/data-notice";
+import { recordFormConsent } from "@/lib/consent/marketing-consent.server";
 import { publicDbError } from "@/app/api/public/_lib/db-error";
 import {
   buildSupportOrder, supportCheckoutSchema, type SupportBuyPlan, type SupportBuyTerm, type SupportItemRow,
@@ -195,6 +197,8 @@ export async function POST(request: NextRequest) {
       console.error("[checkout/support] lead insert failed:", leadErr.message);
       return fail(500, `Could not start checkout. ${NOTHING_CHARGED} Please try again.`);
     }
+    /* R-2011: the checkout's data notice + the marketing opt-in (yes/no) for this lead. */
+    await recordFormConsent(admin, { tenantId, leadId, consent: readFormConsent(body), headers: request.headers, page: "/buy/support" });
 
     /* ── Quote ────────────────────────────────────────────────────────────────── */
     const { data: qid, error: numErr } = await admin.rpc("next_document_number", { p_doc_type: "quote", p_tenant_id: tenantId });

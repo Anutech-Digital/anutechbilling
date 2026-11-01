@@ -21,6 +21,7 @@ import { WHATSAPP_URL, WHATSAPP_READY } from "@/site/lib/config";
 import { hideFloatingOn } from "@/site/components/chrome/Chrome";
 import { floatingLauncher, useAvoidFloating, useIsMobile } from "@/site/components/chrome/floating";
 import { useTurnstile } from "@/components/shared/turnstile";
+import { DataNotice } from "@/site/components/legal/DataNotice";
 
 interface Msg {
   role: "user" | "assistant";
@@ -373,6 +374,9 @@ export function AgentChat() {
               Send
             </button>
           </form>
+          {/* R-2011: what the chat collects and why, under the box. No offers box here — the chat
+              takes no order or enquiry form, and no marketing opt-in is recorded from it. */}
+          <DataNotice purpose="chat" compact style={{ fontSize: 11.5, margin: 0, padding: "0 12px 10px", color: "var(--text-muted)" }} />
         </div>
       )}
     </>

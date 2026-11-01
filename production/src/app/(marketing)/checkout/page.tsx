@@ -53,6 +53,8 @@ import { Field, TermsCheckbox, TERMS_NUDGE_ID } from "./fields";
 import { usePaymentMode, useRazorpayTestOffered } from "./payment-mode";
 import { payButtonLabel } from "@/lib/checkout/checkout-payment-mode";
 import { HOSTING_TRIAL_DAYS } from "@/lib/trials/trial-days";
+import { formConsent } from "@/lib/consent/data-notice";
+import { DataNotice } from "@/site/components/legal/DataNotice";
 
 /* 30 Sep 2026: the choice was never sent anywhere, so every option opened the same Razorpay
    window, and "Bank transfer — NEFT/RTGS, activated on credit" was not a path this checkout
@@ -122,6 +124,8 @@ export default function CheckoutPage() {
   const [addrPin, setAddrPin] = useState("");
   const [method, setMethod] = useState<string>("UPI");
   const [agreed, setAgreed] = useState(false);
+  /* R-2011: the separate "Send me offers" box — unticked, never needed to order. */
+  const [optIn, setOptIn] = useState(false);
   const [paying, setPaying] = useState(false);
   /* True while the server prepares a PAID order, until Razorpay's own window opens — the
      progress panel must not keep counting behind Razorpay (30 Sep 2026). */
@@ -316,6 +320,7 @@ export default function CheckoutPage() {
           phone: phone.trim(),
           domain: domain.trim() || undefined,
           lines: cart.lines.map((l) => ({ sku: l.sku, label: l.label, qty: l.qty, cycle: l.cycle })),
+          ...formConsent("cart_checkout", optIn), // R-2011
         }),
       });
       const json = (await res.json().catch(() => ({}))) as { success?: boolean; trial?: boolean; error?: string; confirmationSent?: boolean } & ProblemFlags;
@@ -374,6 +379,7 @@ export default function CheckoutPage() {
           /* R-1502: with no Razorpay keys on a laptop the server takes only a simulated
              payment — without this every hosting/domain order stopped at "not set up yet". */
           simulate: paymentMode === "simulation" && !useRazorpayTest,
+          ...formConsent("cart_checkout", optIn), // R-2011
         }),
       });
       const json = (await res.json().catch(() => ({}))) as {
@@ -692,9 +698,12 @@ export default function CheckoutPage() {
                       {" "}and we will set your trial up by hand.
                     </div>
                   ) : (
+                  <>
+                  <DataNotice purpose="trial" optIn={optIn} onOptIn={setOptIn} idPrefix="cart-trial" style={{ color: "var(--text-secondary)" }} />
                   <button className="btn btn-primary" style={{ width: "100%", marginTop: 8 }} disabled={paying || trialMixed} onClick={() => proceed(() => void startTrial())}>
                     {paying ? "Starting your trial…" : `Start my ${HOSTING_TRIAL_DAYS}-day free trial`}
                   </button>
+                  </>
                   )}
                   <p className="meta" style={{ marginTop: 10 }}>
                     We email you a link to confirm your address; the account is set up once you click it.
@@ -738,6 +747,7 @@ export default function CheckoutPage() {
                   <a href="/refund" target="_blank" rel="noopener" style={{ color: "var(--primary)", fontWeight: 600 }}>refund policy</a>, including that domain
                   registrations are non-refundable once submitted to the registry.
               </TermsCheckbox>
+              <DataNotice purpose="order" adultLine optIn={optIn} onOptIn={setOptIn} idPrefix="cart" style={{ color: "var(--text-secondary)", margin: "4px 0 14px" }} />
 
               {priceCheck && (
                 <div role="alert" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>

@@ -27,6 +27,8 @@ import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { enquiryStateName } from "@/app/(public)/enquiry/enquiry-outcome";
 import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
+import { readFormConsent } from "@/lib/consent/data-notice";
+import { recordFormConsent } from "@/lib/consent/marketing-consent.server";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
 const APP_URL    = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
@@ -124,6 +126,9 @@ export async function POST(request: NextRequest) {
         { status: 500 },
       );
     }
+
+    /* R-2011: the notice they saw + the marketing opt-in (yes/no), recorded for this lead. */
+    await recordFormConsent(admin, { tenantId, leadId, consent: readFormConsent(body), headers: request.headers, page: (body as { pageUrl?: string }).pageUrl });
 
     /* In-app khabar (audit B4) — lead COMMIT ke baad, best-effort. */
     await notifyTenantOwners({

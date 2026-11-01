@@ -45,6 +45,8 @@ import { PLUS_NOT_SOLD_ONLINE, isPublicPriceHiddenTier } from "@/lib/catalog/pub
 import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { reportPurchaseToMeta } from "@/lib/meta/capi.server";
 import { recordCheckoutConsent } from "@/app/api/public/consent/record.server";
+import { readFormConsent } from "@/lib/consent/data-notice";
+import { recordFormConsent } from "@/lib/consent/marketing-consent.server";
 import { clientIp } from "@/lib/security/rate-limit";
 import { splitDomain } from "@/lib/domains/live-lookup";
 import { priceDomainLines } from "@/lib/checkout/cart-checkout";
@@ -567,6 +569,8 @@ export async function POST(request: NextRequest) {
       metaConsent: (body as { metaConsent?: unknown }).metaConsent === true,
       ip: clientIp(request.headers), userAgent: request.headers.get("user-agent"),
     });
+    /* R-2011: the checkout's data notice + the marketing opt-in (yes/no) for this lead. */
+    await recordFormConsent(admin, { tenantId: BUY_PAGE_TENANT_ID, leadId, quoteId, consent: readFormConsent(body), headers: request.headers, page: "/buy/workspace" });
 
     /* R-1985: monthly + new domain → the domain's own quote, on the same lead. The order total is
        the two quotes' totals; the coupon and the site promo stayed on the Workspace (above). */

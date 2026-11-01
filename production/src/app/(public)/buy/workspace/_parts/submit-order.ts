@@ -13,6 +13,7 @@ import { postJson, NOT_REACHED } from "../post-json";
 import { landingForForm } from "@/site/lib/ad-attribution";
 import { fbpCookie, metaConsent } from "@/site/lib/meta-pixel";
 import { consentAnonId } from "@/site/lib/consent";
+import { formConsent } from "@/lib/consent/data-notice";
 import { thanksUrl } from "../thanks/thanks-url";
 import { saveWorkspacePayment } from "../thanks/payment-handoff";
 import { buyerStateCode, domainValue, orderCompany, type BuyerDetails, type DomainChoice, type PayMethod } from "./checkout-form";
@@ -91,6 +92,8 @@ export interface SubmitContext {
   ts: { headers: Record<string, string>; reset: () => void };
   /** Name on the Razorpay window — the website tenant (falls back to the site config). */
   sellerName: string;
+  /** R-2011: the "Send me offers" box under the data notice — false unless the buyer ticked it. */
+  marketingOptIn?: boolean;
 }
 
 /**
@@ -105,7 +108,8 @@ export async function payOrder(
   retry: () => void,
 ): Promise<void> {
   const { ts } = ctx;
-  const r = await postJson<CheckoutApiResponse>("/api/public/checkout/workspace", { ...body, ...landingForForm(), metaConsent: metaConsent(), fbp: fbpCookie(), consentAnonId: consentAnonId() }, ts.headers); // R-1978 the ad; R-1979 Meta consent + _fbp; R-2010 consent record id
+  const optIn = formConsent("buy_checkout", ctx.marketingOptIn === true); // R-2011 the offers box
+  const r = await postJson<CheckoutApiResponse>("/api/public/checkout/workspace", { ...body, ...landingForForm(), metaConsent: metaConsent(), fbp: fbpCookie(), consentAnonId: consentAnonId(), ...optIn }, ts.headers); // R-1978 the ad; R-1979 Meta consent + _fbp; R-2010 consent record id
   ts.reset(); // R-737: a token works once
   if (!r.reached) { notReached("No money was taken.", retry); return; }
   const json = r.json;
@@ -161,7 +165,7 @@ export async function startTrial(ctx: SubmitContext, retry: () => void): Promise
     phone: ctx.buyer.phone.trim(), seats: Math.min(ctx.seats, 300), domain: domainValue(ctx.domain), tierId: ctx.plan.id,
     message: ctx.domain.mode === "new" ? `New domain to register: ${domainValue(ctx.domain)}` : undefined,
   };
-  const r = await postJson<{ success: boolean; error: string }>("/api/public/trial/workspace", { ...values, ...landingForForm() }, ts.headers);
+  const r = await postJson<{ success: boolean; error: string }>("/api/public/trial/workspace", { ...values, ...landingForForm(), ...formConsent("buy_trial", ctx.marketingOptIn === true) }, ts.headers);
   ts.reset();
   if (!r.reached) { notReached("Your trial was not requested.", retry); return false; }
   if (!r.ok || r.json.error) { buyFail(r.json.error, "Could not start the trial.", "Your trial was not requested yet."); return false; }
@@ -181,7 +185,7 @@ export async function requestQuote(ctx: SubmitContext, retry: () => void): Promi
     phone: ctx.buyer.phone.trim(), seats: ctx.seats, tierId: ctx.plan.id, billing: ctx.billing, stateCode, state,
     message: domain ? `Domain: ${domain}${ctx.domain.mode === "new" ? " (new — please register it)" : ""}` : undefined,
   };
-  const r = await postJson<{ success: boolean; error: string }>("/api/public/enquiry/workspace", { ...values, ...landingForForm() }, ts.headers);
+  const r = await postJson<{ success: boolean; error: string }>("/api/public/enquiry/workspace", { ...values, ...landingForForm(), ...formConsent("buy_quote", ctx.marketingOptIn === true) }, ts.headers);
   ts.reset();
   if (!r.reached) { notReached("We did not receive your enquiry.", retry); return false; }
   if (!r.ok || r.json.error) { buyFail(r.json.error, "Could not send your enquiry.", "We did not receive it yet."); return false; }

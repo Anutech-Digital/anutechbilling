@@ -55,6 +55,8 @@ import {
 } from "@/lib/pricing/workspace";
 import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
+import { readFormConsent } from "@/lib/consent/data-notice";
+import { recordFormConsent } from "@/lib/consent/marketing-consent.server";
 import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 
 /* The owner inbox used to be hardcoded here, with the comment "Hardcoded for v1
@@ -194,6 +196,9 @@ export async function POST(request: NextRequest) {
         { status: 500 },
       );
     }
+
+    /* R-2011: the notice they saw + the marketing opt-in (yes/no), recorded for this lead. */
+    await recordFormConsent(admin, { tenantId, leadId, consent: readFormConsent(body), headers: request.headers, page: (body as { pageUrl?: string }).pageUrl });
 
     /* In-app khabar (audit B4) — lead COMMIT ke baad, best-effort. */
     await notifyTenantOwners({

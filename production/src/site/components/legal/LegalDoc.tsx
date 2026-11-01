@@ -7,6 +7,11 @@ import { LEGAL } from "@/site/lib/data/misc";
    /privacy is the software's, and the buyer's privacy policy is at /privacy-policy. */
 const HREF: Record<keyof typeof LEGAL, string> = { terms: "/terms-and-conditions", refund: "/refund", privacy: "/privacy-policy" };
 
+/** R-2011: each block can be linked (/privacy-policy#your-rights, #grievances) — the forms' data notice does. */
+export function legalBlockId(heading: string): string {
+  return heading.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
 export function LegalDoc({ page }: { page: keyof typeof LEGAL }) {
   const doc = LEGAL[page];
   return (
@@ -16,7 +21,7 @@ export function LegalDoc({ page }: { page: keyof typeof LEGAL }) {
         <div className="mono-label" style={{ color: "var(--text-muted)", marginBottom: 16 }}>{doc.updated.toUpperCase()}</div>
         <p className="body-lg" style={{ margin: "0 0 30px" }}>{doc.intro}</p>
         {doc.blocks.map((b) => (
-          <div key={b.h} style={{ borderTop: "1px solid var(--border-light)", padding: "22px 0" }}>
+          <div key={b.h} id={legalBlockId(b.h)} style={{ borderTop: "1px solid var(--border-light)", padding: "22px 0", scrollMarginTop: 80 }}>
             <h2 style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-0.02em", marginBottom: 8 }}>{b.h}</h2>
             <p style={{ fontSize: 16, lineHeight: 1.6, color: "var(--text-secondary)", margin: 0 }}>{b.p}</p>
           </div>

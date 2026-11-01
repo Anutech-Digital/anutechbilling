@@ -25,6 +25,8 @@ import { sendCustomerEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
+import { readFormConsent } from "@/lib/consent/data-notice";
+import { recordFormConsent } from "@/lib/consent/marketing-consent.server";
 import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 import { IST_TZ } from "@/lib/dates/ist";
@@ -138,6 +140,9 @@ export async function POST(request: NextRequest) {
         { status: 500 },
       );
     }
+
+    /* R-2011: the notice they saw + the marketing opt-in (yes/no), recorded for this lead. */
+    await recordFormConsent(admin, { tenantId: BUY_PAGE_TENANT_ID, leadId, consent: readFormConsent(body), headers: request.headers, page: (body as { pageUrl?: string }).pageUrl });
 
     // Auto-create follow-up tasks via tasks system —
     //   T-7  (Day 7):  "Mid-trial check-in"

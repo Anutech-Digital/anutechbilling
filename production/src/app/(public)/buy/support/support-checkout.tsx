@@ -27,6 +27,8 @@ import { yearlySavingPct, type SupportBuyPlan, type SupportBuyTerm, type Support
 import { STATE_OPTIONS } from "../workspace/_parts/checkout-form";
 import { postJson, NOT_REACHED } from "../workspace/post-json";
 import { saveSupportPayment, supportThanksUrl } from "./payment-handoff";
+import { formConsent } from "@/lib/consent/data-notice";
+import { DataNotice } from "@/site/components/legal/DataNotice";
 
 export interface SupportPlanCard {
   id: SupportBuyPlan;
@@ -89,6 +91,8 @@ export function SupportCheckout(p: Props) {
     phone: p.prefill?.phone ?? "", gstin: "", stateCode: p.prefill?.stateCode ?? "",
   });
   const [agree, setAgree] = React.useState(false);
+  /* R-2011: the separate "Send me offers" box — unticked, never needed to order. */
+  const [optIn, setOptIn] = React.useState(false);
   const [errors, setErrors] = React.useState<Partial<Record<Field, string>>>({});
   const [busy, setBusy] = React.useState(false);
   const ts = useTurnstile();
@@ -124,6 +128,7 @@ export function SupportCheckout(p: Props) {
         phone: f.phone.trim(), gstin: f.gstin.trim() || undefined, stateCode: f.stateCode,
         billingCustomerId: p.billingCustomerId || undefined,
         simulate: p.paymentMode === "simulation" ? true : undefined,
+        ...formConsent("support_checkout", optIn), // R-2011
       }, ts.headers);
       ts.reset();
       if (!r.reached) return stop(`${NOT_REACHED} No money was taken — check your connection and press Pay again.`);
@@ -274,6 +279,7 @@ export function SupportCheckout(p: Props) {
               <span>I agree to the <a href="/terms-and-conditions" target="_blank" rel="noopener noreferrer" className="text-amber-ink underline underline-offset-[3px]">Terms</a> and the <a href="/refund" target="_blank" rel="noopener noreferrer" className="text-amber-ink underline underline-offset-[3px]">Refund policy</a>.</span>
             </label>
             <p id="sup-agree-err" className="text-[13px] text-rose min-h-5 mt-1">{errors.agree ?? ""}</p>
+            <DataNotice purpose="order" adultLine optIn={optIn} onOptIn={setOptIn} idPrefix="sup" className="text-ink-2" style={{ margin: "0 0 14px" }} />
             {ts.widget}
             </>)}
             {canPay ? (
