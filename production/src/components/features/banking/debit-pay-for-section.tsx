@@ -41,7 +41,7 @@ import type { BankTransactionRow } from "@/lib/queries/bank";
 import { useVendorOpenItems, usePayVendorFromBankDebit, useVendor194q, useSet194qBuyer, useVendorNarrationAliases } from "@/lib/queries/bank-debit-pay-for";
 import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
 import {
-  allocateOldestFirst, cashDue, guessVendor, isRecorded, itemKey, itemLabel, newBillPay, newBillTds, newBillTotal, planTds, preselect,
+  allocateOldestFirst, cashDue, guessVendor, isRecorded, itemKey, itemLabel, newBillPay, newBillTds, newBillTotal, pickOldestUpTo, planTds, preselect,
   resultLines, summarise, tdsMap, vendorPan, wholeRupeeNote, TDS_OVERRIDE_MIN,
   type NewBillDraft, type VendorLite, type VendorOpenItem, type VendorPayResult,
 } from "@/lib/banking/debit-pay-for";
@@ -367,6 +367,13 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
     );
   }
 
+  /* R-2324: one payment for 40–54 bills (R-2319) — tick the open bills oldest first until they
+     cover the bank amount (the last one part-paid), instead of ticking each by hand. */
+  const pickable = open.filter((i) => !isRecorded(i) && !i.in_run).length;
+  const pickUpTo = () => {
+    setPicked(new Set(pickOldestUpTo(open, debit, (bills) => tdsMap(planTds(bills, { ...tdsOpts, fyOthers: othersFor(bills) })))));
+    setCashEdit({});
+  };
   const toggle = (i: VendorOpenItem) => setPicked((s) => {
     const n = new Set(s); const k = itemKey(i);
     if (n.has(k)) n.delete(k); else n.add(k);
@@ -451,7 +458,15 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
           {/* 2a. Open bills */}
           {vendor && (itemsLoading ? <Skeleton className="h-16" /> : open.length === 0 ? (
             <p className="text-xs text-ink-3">{vendor.name} has no unpaid bills. Record the bill below, or keep the money as an advance.</p>
-          ) : (
+          ) : (<>
+            {pickable > 1 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" variant="default" icon="check" onClick={pickUpTo}>
+                  Select bills oldest first, up to {rupee(debit)}
+                </Button>
+                <span className="text-xs text-ink-3">{pickable} open bills · {pickedItems.length} ticked</span>
+              </div>
+            )}
             <ul className="space-y-1.5" aria-label="Open bills of this vendor">
               {open.map((i) => {
                 const k = itemKey(i);
@@ -533,7 +548,7 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
                 );
               })}
             </ul>
-          ))}
+          </>))}
 
           {/* TDS */}
           {/* R-2320: COGS bills (open or new) carry TDS too — Zoho's 2% 194C on Google, Sidhshree. */}

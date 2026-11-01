@@ -404,6 +404,34 @@ export function preselect(
   return { keys: [], noTds: false };
 }
 
+/**
+ * R-2324 — "Select bills oldest first, up to the bank amount": one distributor payment can pay
+ * 40–54 bills (R-2319), and preselect ticks nothing unless the amount is exactly one bill or all
+ * of them. The vendor's open bills (not in a payment run, not a payment already recorded) are
+ * taken oldest first until, after the TDS planned on them, they cover the debit — the last one is
+ * then part-paid by allocateOldestFirst. A bill that cannot be part-paid and does not fit in what
+ * is left is passed over (it would get nothing and block the save).
+ */
+export function pickOldestUpTo(
+  items: readonly VendorOpenItem[],
+  debit: number,
+  tdsFor: (bills: readonly VendorOpenItem[]) => ReadonlyMap<string, number>,
+): string[] {
+  const open = items.filter((i) => !isRecorded(i) && !i.in_run)
+    .sort((a, b) => a.doc_date.localeCompare(b.doc_date) || a.doc_id.localeCompare(b.doc_id));
+  const cash = (bills: readonly VendorOpenItem[]) => {
+    const t = tdsFor(bills);
+    return bills.reduce((s, i) => s + cashDue(i, t.get(itemKey(i)) ?? 0), 0);
+  };
+  const chosen: VendorOpenItem[] = [];
+  for (const i of open) {
+    if (cash(chosen) >= debit) break;
+    if (!i.can_part && cash([...chosen, i]) > debit) continue;
+    chosen.push(i);
+  }
+  return chosen.map(itemKey);
+}
+
 /** planTds as a key → TDS map. */
 export function tdsMap(lines: readonly TdsLine[]): Map<string, number> {
   return new Map(lines.map((t) => [t.key, t.tds]));
