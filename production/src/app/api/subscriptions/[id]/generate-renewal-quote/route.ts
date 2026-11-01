@@ -23,6 +23,7 @@
  * Returns: { quoteId, created (bool), amount, alreadyExisted (bool) }
  */
 
+import { renewalRefusal } from "@/lib/subscriptions/non-renewing";
 import { NextResponse } from "next/server";
 import { createAdminClientFor } from "@/lib/supabase/server";
 import { withRoute } from "@/lib/api/with-route";
@@ -50,7 +51,7 @@ export const POST = withRoute({
     .from("subscriptions")
     .select(
       `id, tenant_id, customer_id, customer_name, plan, item_id, seats, mrr,
-       renewal_date, status, renewal_state, renewal_quote_id, term_months, billing_cycle, start_date`
+       renewal_date, status, renewal_state, renewal_quote_id, term_months, billing_cycle, start_date, auto_renew`
     )
     .eq("id", params.id)
     .single();
@@ -62,6 +63,11 @@ export const POST = withRoute({
   }
   if (!sub.renewal_date) {
     return NextResponse.json({ error: "subscription has no renewal_date set" }, { status: 400 });
+  }
+  /* R-2225: the customer said Won't renew — no renewal quote, no next term, no reminder. */
+  const nonRenewing = renewalRefusal(sub);
+  if (nonRenewing) {
+    return NextResponse.json({ error: nonRenewing, code: "non_renewing" }, { status: 400 });
   }
   /* R-808: billed in parts → no whole-term renewal quote (it was proven to bill the renewed
      year twice). The renewals cron rolls the term and the instalments keep coming. */
