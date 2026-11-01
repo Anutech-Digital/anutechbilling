@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
   applyAdvance: vi.fn(),
   aliases: [] as Array<{ narration_key: string; vendor_id: string }>,
   rules: [] as unknown[],
+  role: "owner" as string,
 }));
 
 vi.mock("@/lib/queries/vendors", () => ({
@@ -29,6 +30,8 @@ vi.mock("@/lib/queries/vendors", () => ({
       { id: "v1", name: "Sharma Associates", pan: "AAKFS1866A", gstin: "07AAKFS1866A1Z5", default_tds_section: "194J", default_category: "Professional Services" },
       { id: "v2", name: "Google Cloud India", gstin: "29AACCG1866B1Z9", default_category: "COGS-Workspace" },
       { id: "v3", name: "Ingram Micro India", pan: "AAACI1891A", default_tds_section: "194Q", default_category: "COGS-Hardware" },
+      { id: "v4", name: "Sidhshree Infotech", pan: "AAKFS2320A", default_tds_section: "194C", default_category: "COGS-Other" },
+      { id: "v5", name: "Pankaj Kumar CA", pan: "ABCPK2320A", default_tds_section: "194J", default_category: "Professional Services" },
     ],
   }),
 }));
@@ -50,6 +53,8 @@ vi.mock("@/lib/queries/txn-category-rules", () => ({ useTxnCategoryRules: () => 
 /* R-1913: the vendor's advance (Prepaid) and "Apply advance". */
 vi.mock("@/lib/queries/prepaid-advances", () => ({ usePrepaidAdvances: () => ({ data: state.advances }) }));
 vi.mock("@/lib/queries/vendor-advance", () => ({ useApplyVendorAdvance: () => ({ mutate: state.applyAdvance, isPending: false }) }));
+/* R-2320: only the owner may take TDS below the threshold. */
+vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { role: state.role } }) }));
 
 import { DebitPayForSection } from "./debit-pay-for-section";
 
@@ -64,6 +69,63 @@ beforeEach(() => {
   state.q194 = {};
   state.aliases = [];
   state.rules = [];
+  state.role = "owner";
+});
+
+/* R-2320 (staging money-out reconcile, 31 Oct): Zoho's 2% 194C on a COGS bill, and the owner's
+   override of "below the threshold" (Pankaj CA ₹14,580 net of 10% 194J). */
+describe("R-2320 DebitPayForSection — TDS on a COGS bill, owner override below the threshold", () => {
+  const S1: VendorOpenItem = {
+    source: "vendor_bill", doc_id: "S1", bill_no: "SI-77", doc_date: "2026-10-02", due_date: null, category: "COGS-Other",
+    total: 118000, amount_due: 118000, gst: 18000, tds_base: 100000, tds_amount: 0, tds_section: null, can_part: true, in_run: null,
+  };
+  const PK: VendorOpenItem = {
+    source: "expense", doc_id: "PK1", bill_no: "PK-9", doc_date: "2026-10-03", due_date: null, category: "Professional Services",
+    total: 16200, amount_due: 16200, gst: 0, tds_base: 16200, tds_amount: 0, tds_section: null, can_part: true, in_run: null,
+  };
+
+  it("Sidhshree ₹1,16,000 line: the COGS bill is ticked net of 194C ₹2,000 and the TDS reaches the server", async () => {
+    state.fy = { base: 0, baseWithoutTds: 0 };
+    state.items.v4 = [S1];
+    state.pay.mockResolvedValue(result({ vendor_id: "v4", vendor_name: "Sidhshree Infotech" }));
+    render(<DebitPayForSection transaction={txn(116000, "NEFT SIDHSHREE INFOTECH")} onDone={() => {}} />);
+    expect((screen.getByLabelText(/^Pay Bill SI-77 · /) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("TDS section") as HTMLSelectElement).value).toBe("194C");
+    expect(screen.getByText(/Bills ₹1,18,000/).textContent).toContain("TDS ₹2,000");
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    const arg = state.pay.mock.calls[0][0];
+    expect(arg.items.map((x: { item: VendorOpenItem; cash: number; tds: number; section: string }) => [x.item.doc_id, x.cash, x.tds, x.section]))
+      .toEqual([["S1", 116000, 2000, "194C"]]);
+  });
+
+  it("Pankaj CA ₹14,580: below the 194J limit — the owner deducts anyway with a reason; it is sent", async () => {
+    state.fy = { base: 0, baseWithoutTds: 0 };
+    state.items.v5 = [PK];
+    state.pay.mockResolvedValue(result({ vendor_id: "v5", vendor_name: "Pankaj Kumar CA" }));
+    render(<DebitPayForSection transaction={txn(14580, "IMPS PANKAJ KUMAR CA")} onDone={() => {}} />);
+    /* Without TDS the line is only a part of the bill — ₹1,620 (the TDS Zoho deducted) would stay due. */
+    expect((screen.getByLabelText(/^Pay Bill PK-9 · /) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText(/part payment — ₹1,620 stays due/)).toBeTruthy();
+    expect(screen.getByText(/within the limit/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Deduct TDS anyway (owner)" }));
+    fireEvent.change(screen.getByLabelText("Reason for deducting TDS below the threshold"), { target: { value: "Deducted in Zoho, CA advised" } });
+    expect(screen.getByText(/Owner override: TDS taken anyway — Deducted in Zoho, CA advised/)).toBeTruthy();
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    const it0 = state.pay.mock.calls[0][0].items[0];
+    expect([it0.item.doc_id, it0.cash, it0.tds, it0.section, it0.override]).toEqual(["PK1", 14580, 1620, "194J", "Deducted in Zoho, CA advised"]);
+  });
+
+  it("an accountant is told only the owner can deduct below the threshold — no override offered", () => {
+    state.role = "accountant";
+    state.fy = { base: 0, baseWithoutTds: 0 };
+    state.items.v5 = [PK];
+    render(<DebitPayForSection transaction={txn(14580, "IMPS PANKAJ KUMAR CA")} onDone={() => {}} />);
+    expect((screen.getByLabelText(/^Pay Bill PK-9 · /) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText("Only the owner can deduct TDS below the threshold.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Deduct TDS anyway (owner)" })).toBeNull();
+  });
 });
 
 describe("R-1919 DebitPayForSection — one vendor guess, learned from the last payment", () => {
