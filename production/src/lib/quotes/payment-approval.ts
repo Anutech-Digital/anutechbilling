@@ -63,19 +63,28 @@ export interface PaymentApprovalFacts {
   id: string;
   below_cost?: boolean | null;
   approval_status?: string | null;
+  /** R-2054 part payment request — no approval step, never blocked (R-2344, same in the DB). */
+  subscription_billing_id?: string | null;
 }
 
-/** The DB trigger's refusal, word for word — the sheet shows it before Save is pressed. */
-export function belowCostRefusal(quoteId: string): string {
-  return `This quote is below cost and waits for the owner's approval. Approve it first (Quotes → ${quoteId} → Approve), then record the payment.`;
+/** What the refused step was — the end of the server's sentence (public.quote_cost_approval_refusal). */
+export type ApprovalBlockedStep = "record the payment" | "raise the invoice" | "activate it";
+
+/** The DB's refusal, word for word — the screen shows it before the button is pressed. */
+export function belowCostRefusal(quoteId: string, then: ApprovalBlockedStep = "record the payment"): string {
+  return `This quote is below cost and waits for the owner's approval. Approve it first (Quotes → ${quoteId} → Approve), then ${then}.`;
 }
 
 /**
  * Would the DB refuse money (other than Razorpay) on this quote right now? Mirrors
- * tg_payments_quote_approval exactly: below_cost and not approved.
+ * public.quote_waits_cost_approval (R-2213 / R-2344): below_cost, not approved, not a part request.
  */
-export function paymentApprovalBlock(q: PaymentApprovalFacts): { reason: string } | null {
+export function paymentApprovalBlock(
+  q: PaymentApprovalFacts,
+  then: ApprovalBlockedStep = "record the payment",
+): { reason: string } | null {
   if (!q.below_cost) return null;
   if (q.approval_status === "approved") return null;
-  return { reason: belowCostRefusal(q.id) };
+  if (q.subscription_billing_id) return null;
+  return { reason: belowCostRefusal(q.id, then) };
 }

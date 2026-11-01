@@ -109,7 +109,7 @@ import { quoteEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-econo
 import { customerCopyBlock, CUSTOMER_COPY_BLOCKED_TITLE } from "@/lib/quotes/customer-copy-gate";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { useRequestApproval } from "@/lib/queries/quotes";
-import { recordPaymentBlock, recordPaymentStep, quoteHeaderStatus, withApprovalStep } from "./payment-approval-gate";
+import { recordPaymentBlock, recordPaymentStep, quoteHeaderStatus, withApprovalStep, activateOnCreditBlock } from "./payment-approval-gate";
 import { PaymentApprovalNotice } from "./payment-approval-notice";
 import { usePaymentsByQuote, totalReceived as sumReceived } from "@/lib/queries/payments";
 import { useCustomer } from "@/lib/queries/customers";
@@ -372,9 +372,20 @@ export default function QuoteDetailPage() {
         trialLead,
       )
     : false;
+  /* R-2344: below cost and waiting for the owner — the server refuses the credit activation
+     (trg_subscriptions_quote_approval), so the menu item says why, with Open approval, and the
+     action-row button is not offered (the step box already shows Open approval). */
+  const creditBlock = React.useMemo(
+    () => (quote ? activateOnCreditBlock(quote as typeof quote & { below_cost?: boolean | null; subscription_billing_id?: string | null }) : null),
+    [quote],
+  );
   /* One click handler for both places "Activate now, pay later" appears (More menu and,
      R-379 (i), the accepted-and-unpaid action row) — same gate, same reasons. */
   const openActivateOnCredit = () => {
+    if (creditBlock) {
+      toast.info(creditBlock.reason, { action: { label: "Open approval", onClick: () => setApprovalOpen(true) } });
+      return;
+    }
     if (!creditDbReady) { toast.info(NEEDS_DB_UPDATE_MESSAGE); return; }
     /* R-370: split billing would bill twice (credit invoice + instalments) — say why. */
     const split = splitBillingCreditEligibility(creditQuote?.billing_cycle);
@@ -1736,7 +1747,7 @@ export default function QuoteDetailPage() {
 
               {/* R-379 (i): credit sale beside Record payment, not only in More. Same gate
                   as the menu item (showActivateOnCredit), so it vanishes once activated. */}
-              {showCredit && money.stage === "unpaid" && (
+              {showCredit && money.stage === "unpaid" && !creditBlock && (
                 <Button variant="default" icon="check_circle" onClick={openActivateOnCredit}>
                   Activate now, pay later
                 </Button>
