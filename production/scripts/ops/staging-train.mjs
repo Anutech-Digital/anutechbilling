@@ -37,9 +37,15 @@
  * `SMOKE_EMAIL=… SMOKE_PASSWORD=… npm run smoke -- <staging URL>` (scripts/ops/smoke-check.mjs,
  * docs/ARCHITECTURE.md §8): 17 real pages, logged in, exit 1 on any red page.
  *
+ * R-2035 (1 Nov 2026): after a real push (--push, only then) it also runs the READ-ONLY staging
+ * smoke (scripts/ops/staging-smoke.mjs — build sha = the merge commit, migrations, buy page brand +
+ * prices, /login, consent route via OPTIONS) and prints one line per check + "SMOKE GREEN" or
+ * "SMOKE RED: <checks>". It writes nothing; the merge/push above is unchanged.
+ *
  * Exit 0 = ok (dry run done / pushed / nothing new). 1 = error or refused. 2 = merge conflict.
  * 3 = DB step needed. 4 = pushed, but the migration check could not run. 5 = pushed, and the
- * staging DB is missing migrations. Run from production/.
+ * staging DB is missing migrations. 6 = pushed, migrations fine, but the smoke is red.
+ * Run from production/.
  */
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -48,6 +54,7 @@ import os from "node:os";
 import path from "node:path";
 import { REPO, REMOTE, BRANCH, WORKFLOW, ciDecision } from "./staging-gate.mjs";
 import { runCheck, colour, STAGING_URL } from "./migrations-health-check.mjs";
+import { runSmoke } from "./staging-smoke.mjs";
 
 export const STAGING = "staging";
 export const MIGRATIONS_DIR = "production/supabase/migrations";
@@ -456,6 +463,10 @@ async function main() {
     console.log(`
 ${colour(v)}`);
     if (v.exitCode && !exitCode) exitCode = v.exitCode;
+    /* R-2035: read-only smoke of the new build (the sha wait above has usually finished already). */
+    console.log("");
+    const smoke = await runSmoke({ base: process.env.STAGING_URL || STAGING_URL, expectSha: pushedSha });
+    if (smoke.exitCode && !exitCode) exitCode = 6;
   }
   for (const l of summaryLines({ pick, cards, migrations, decision, merged, pushed })) console.log(l);
   process.exit(exitCode);
