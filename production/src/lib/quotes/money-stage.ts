@@ -63,7 +63,14 @@ export interface QuoteMoneyInput {
   /** R-2055: on a SALE quote billed in parts, the open payment request (R-2044) of the next
    *  part, when the billing run has raised it. The part is collected there — one way only. */
   nextPartRequest?: { id: string; number: string } | null;
+  /** R-2334: the R-2326 gate (quotes/[id]/payment-approval-gate recordPaymentBlock →
+   *  paymentApprovalBlock, the DB trigger's rule) refuses money right now — below cost, not approved. */
+  approvalWait?: boolean;
 }
+
+/** R-2334: the step-box line while a below-cost quote waits for the owner's sign-off. */
+export const APPROVAL_WAIT_NOTE =
+  "Waiting for the owner's approval. This quote is below cost — no payment can be taken until it is approved.";
 
 export type MoneyStage =
   /** Not sent yet — nothing to collect. */
@@ -95,9 +102,23 @@ export interface MoneyActions {
   outstanding: number;
   /** R-2055: the next part's payment request to open instead of recording here. */
   openRequest?: { id: string; number: string } | null;
+  /** R-2334: offer "Open approval" — the quote waits for the owner before any money. */
+  openApproval?: boolean;
 }
 
 export function quoteMoneyActions(q: QuoteMoneyInput, rupees: (n: number) => string): MoneyActions {
+  const out = moneyActionsToday(q, rupees);
+  /* R-2334: Q-F588-27-0070 (below cost, pending) said "Waiting on the customer. You can still
+     record a payment…" under a "Needs approval" header — and the server refuses that payment.
+     While the R-2326 gate holds, the money row waits for the owner instead. A part payment
+     request (R-2054) has no approval step; invoiced / closed rows take no money here anyway. */
+  if (q.approvalWait && !q.partRequest && (out.stage === "open" || out.canRecordPayment)) {
+    return { ...out, note: APPROVAL_WAIT_NOTE, canRecordPayment: false, openRequest: null, openApproval: true };
+  }
+  return out;
+}
+
+function moneyActionsToday(q: QuoteMoneyInput, rupees: (n: number) => string): MoneyActions {
   const outstanding = Math.max(0, q.total - q.received);
   const stage = moneyStage(q);
 

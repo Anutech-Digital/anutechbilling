@@ -109,7 +109,7 @@ import { quoteEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-econo
 import { customerCopyBlock, CUSTOMER_COPY_BLOCKED_TITLE } from "@/lib/quotes/customer-copy-gate";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { useRequestApproval } from "@/lib/queries/quotes";
-import { recordPaymentBlock, recordPaymentStep, quoteHeaderStatus } from "./payment-approval-gate";
+import { recordPaymentBlock, recordPaymentStep, quoteHeaderStatus, withApprovalStep } from "./payment-approval-gate";
 import { PaymentApprovalNotice } from "./payment-approval-notice";
 import { usePaymentsByQuote, totalReceived as sumReceived } from "@/lib/queries/payments";
 import { useCustomer } from "@/lib/queries/customers";
@@ -817,6 +817,7 @@ export default function QuoteDetailPage() {
       total,
       received:      totalReceivedSoFar,
       partRequest,   // R-2054: no "formally accept" sentence on a part payment request
+      approvalWait: Boolean(payBlock), // R-2334: the R-2326 block — the row waits for the owner
       nextPartRequest: paidToDate ? nextPartRequest : null, // R-2055: one way to take the next part
       /* R-446: same test the database trigger uses — any subscription of this quote that
          is not yearly (or the quote's own cycle, before the subscription exists). */
@@ -1329,7 +1330,8 @@ export default function QuoteDetailPage() {
       {/* Quote-to-cash lifecycle */}
       {lifecycle && (
         <Card>
-          <LifecycleStepper steps={partRequest ? partRequestSteps(lifecycle.steps, lifecycle.dead) : (trialSteps ?? lifecycle.steps)} dead={lifecycle.dead} />
+          {/* R-2334: Sent → Owner approval (current) while the R-2326 block holds. */}
+          <LifecycleStepper steps={partRequest ? partRequestSteps(lifecycle.steps, lifecycle.dead) : withApprovalStep(trialSteps ?? lifecycle.steps, payBlock, lifecycle.dead)} dead={lifecycle.dead} />
           {/* R-282: the trial's last day IS the payment due date — said in words, because the
               stepper's detail line is hidden on a phone. */}
           {quote.status === "accepted" && totalReceivedSoFar === 0 && trialState && trialState.kind !== "converted" && (
@@ -1744,6 +1746,14 @@ export default function QuoteDetailPage() {
               {money.openRequest && (
                 <Button asChild variant={variantFor(primary, "record_payment")} icon="receipt">
                   <Link href={`/quotes/${money.openRequest.id}` as never}>Open payment request</Link>
+                </Button>
+              )}
+
+              {/* R-2334: below cost and waiting for the owner — the same "Open approval" as the
+                  R-2326 notice, instead of a Record payment the server would refuse. */}
+              {money.openApproval && approvalEconomics && approvalNeed && approvalRec && me && (
+                <Button variant="default" icon="check_circle" onClick={() => setApprovalOpen(true)}>
+                  Open approval
                 </Button>
               )}
 
