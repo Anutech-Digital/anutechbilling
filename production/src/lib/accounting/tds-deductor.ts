@@ -9,7 +9,8 @@
  * Thresholds as they stand for FY 2026-27 (Finance Act 2025 raised most of them from
  * 1 Apr 2025). Aggregates are per payee per financial year, on the value BEFORE GST:
  *   194C  single payment > ₹30,000 OR year > ₹1,00,000 · 2% (individual / HUF 1%)
- *   194J  year > ₹50,000 · 10% (professional; technical services 2%)
+ *   194J  year > ₹50,000 · 10% (professional; technical services 2%) — R-2338: 194J(a) technical
+ *         2%, 194J(b) professional 10% and 194J royalty 10% share this one limit per vendor
  *   194I  year > ₹6,00,000 · 10% (land / building; plant & machinery 2%)
  *   194H  year > ₹20,000 · 2%
  *   194A  year > ₹10,000 · 10% (interest other than from a bank)
@@ -19,7 +20,7 @@
  * payee — the earlier untaxed ones are reported as `catchUpBase` so the operator can
  * deduct them from this payment or a later one.
  */
-import { TDS_SECTION_RATES } from "./tds-rates";
+import { TDS_SECTION_RATES, tdsSectionName, tdsThresholdSection } from "./tds-rates";
 import { rupee } from "@/lib/utils";
 
 export type DeducteeType = "individual" | "huf" | "company" | "firm" | "aop" | "trust" | "other";
@@ -116,7 +117,8 @@ export function tdsRatePct(section: string, pan: string | null | undefined): num
 export function tdsDecision(i: TdsDecisionInput): TdsDecision {
   const sec = i.section.trim().toUpperCase();
   const rate = TDS_SECTION_RATES[sec];
-  const th = TDS_THRESHOLDS[sec];
+  /* R-2338: 194J(a) / (b) / royalty use 194J's limit — the caller's year total holds all three. */
+  const th = TDS_THRESHOLDS[tdsThresholdSection(sec)];
   const base = Math.max(0, Math.round(i.base || 0));
   const pan = (i.pan ?? "").trim().toUpperCase();
   const noPan = !isPan(pan);
@@ -125,6 +127,8 @@ export function tdsDecision(i: TdsDecisionInput): TdsDecision {
     ({ applies: false, ratePct: 0, tds: 0, catchUpBase: 0, catchUpTds: 0, noPan, deducteeType, reason, headroom });
   if (!rate || !th) return none(`${sec}: the app does not know this section's rate — ask your CA and enter the amount yourself.`);
 
+  /* R-2338: the 194J sub-sections are named in the reason ("194J(a) Technical services"). */
+  const secName = /^194J[A-Z]$/.test(sec) ? tdsSectionName(sec) : sec;
   // Rate: the section's default, the deductee's variant, then s.206AA.
   const ratePct = tdsRatePct(sec, pan) ?? rate.ratePct;
 
@@ -134,7 +138,7 @@ export function tdsDecision(i: TdsDecisionInput): TdsDecision {
   if (!crossedSingle && !crossedYear) {
     const room = th.aggregate - yearTotal;
     return none(
-      `${sec}: this year so far ${inr(i.fyBaseSoFar)} + this ${inr(base)} = ${inr(yearTotal)} — within the limit of ${inr(th.aggregate)}` +
+      `${secName}: this year so far ${inr(i.fyBaseSoFar)} + this ${inr(base)} = ${inr(yearTotal)} — within the limit of ${inr(th.aggregate)}` +
       (th.single ? ` (single payment ${inr(th.single)})` : "") + `, TDS not required. ${inr(room)} left.`,
       room,
     );
@@ -149,11 +153,11 @@ export function tdsDecision(i: TdsDecisionInput): TdsDecision {
   const who = noPan ? `No PAN → s.206AA ${ratePct}%` : `PAN ${pan}${deducteeType ? ` · ${DEDUCTEE_LABEL[deducteeType]}` : ""}`;
   let reason: string;
   if (th.onlyAbove) {
-    reason = `${sec}: purchases this year ${inr(yearTotal)} — ${ratePct}% on the ${inr(taxableNow)} above ${inr(th.aggregate)} (${who}).`;
+    reason = `${secName}: purchases this year ${inr(yearTotal)} — ${ratePct}% on the ${inr(taxableNow)} above ${inr(th.aggregate)} (${who}).`;
   } else if (crossedSingle && !crossedYear) {
-    reason = `${sec}: single payment ${inr(base)} > ${inr(th.single ?? 0)} → ${ratePct}% (${who}).`;
+    reason = `${secName}: single payment ${inr(base)} > ${inr(th.single ?? 0)} → ${ratePct}% (${who}).`;
   } else {
-    reason = `${sec}: this year ${inr(i.fyBaseSoFar)} + this ${inr(base)} = ${inr(yearTotal)} > ${inr(th.aggregate)} → ${ratePct}% (${who}).`;
+    reason = `${secName}: this year ${inr(i.fyBaseSoFar)} + this ${inr(base)} = ${inr(yearTotal)} > ${inr(th.aggregate)} → ${ratePct}% (${who}).`;
     if (catchUpBase > 0) reason += ` TDS was not deducted on the earlier ${inr(catchUpBase)} — ${inr(catchUpTds)} more must be deducted (from this or the next payment).`;
   }
   return { applies: true, ratePct, tds, catchUpBase, catchUpTds, noPan, deducteeType, reason, headroom: null };

@@ -133,8 +133,10 @@ begin
   if (select sum(tds_amount) from public.expenses where id in ('EXP-R1866-E1','EXP-R1866-E2')) is distinct from 6000 then
     raise exception 'FAIL C: TDS on the bills %', (select sum(tds_amount) from public.expenses where id in ('EXP-R1866-E1','EXP-R1866-E2')); end if;
   if (r->>'tds_total')::int is distinct from 6000 or r->>'tds_section' is distinct from '194J' then raise exception 'FAIL C: result %', r; end if;
-  if (select default_tds_section from public.vendors where id = 'eeeeeeee-0000-0000-0000-000000186601') is distinct from '194J' then
-    raise exception 'FAIL C: vendor did not learn 194J'; end if;
+  -- R-2338 (owner + CA, 1 Nov 2026): the vendor's TDS section is saved only when the owner ticks
+  -- "Remember for this vendor" (remember_tds_section) — never learned by itself any more.
+  if (select default_tds_section from public.vendors where id = 'eeeeeeee-0000-0000-0000-000000186601') is not null then
+    raise exception 'FAIL C: vendor section set by itself (R-2338: only on the owner''s Remember)'; end if;
   select * into bs from public.report_balance_sheet('2026-10-31');
   if bs.dues_vendor_tds is distinct from 6000 then raise exception 'FAIL C: TDS payable % (want 6000)', bs.dues_vendor_tds; end if;
   -- only the other vendor's unpaid rent (20,000) is still payable

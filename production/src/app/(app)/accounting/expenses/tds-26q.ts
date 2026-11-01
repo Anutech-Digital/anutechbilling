@@ -12,7 +12,7 @@
  */
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { panFromGstin } from "@/lib/accounting/tds-deductor";
-import { TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
+import { TDS_SECTION_RATES, tds26qSection } from "@/lib/accounting/tds-rates";
 import type { createClient } from "@/lib/supabase/client";
 import { fetchCogsBillTds } from "@/lib/queries/cogs-bill-tds";
 
@@ -66,7 +66,8 @@ export function build26QRows(read: Awaited<ReturnType<typeof read26Q>>): { rows:
   const expRows = read.exps.map((e): Row26Q => [
     e.vendor_name ?? "—",
     e.vendor_id ? panByVid.get(e.vendor_id) ?? "" : "",
-    e.tds_section ?? "",
+    /* R-2338: the 194J sub-section — (a) technical services / (b) professional or royalty. */
+    tds26qSection(e.tds_section),
     e.expense_date,
     (e.amount ?? 0) - (e.gst_paid ?? 0),   // amount on which TDS applies (ex-GST base)
     e.tds_amount ?? 0,
@@ -87,7 +88,7 @@ export function build26QRows(read: Awaited<ReturnType<typeof read26Q>>): { rows:
   const goodsRows = (read.goods ?? []).map((g): Row26Q => [
     (g.vendor_id ? nameByVid.get(g.vendor_id) : null) ?? "—",
     g.vendor_id ? panByVid.get(g.vendor_id) ?? "" : "",
-    g.tds_section ?? "194Q",
+    tds26qSection(g.tds_section ?? "194Q"),
     g.tds_on ?? "",
     g.tds_base ?? 0,
     g.tds_amount ?? 0,

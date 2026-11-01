@@ -34,6 +34,7 @@ export type Expense = ExpenseRow;
 export { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
 import { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
 import { COMMISSION_CATEGORY, fyStartOf } from "@/lib/accounting/commission-tds";
+import { sameTdsThreshold } from "@/lib/accounting/tds-rates";
 
 /**
  * Guess an expense category from the free-text "what was this for?" note.
@@ -715,7 +716,8 @@ export function useVendorTdsThisFy(vendorId: string | null, vendorName: string, 
         q = vendorId ? q.eq("vendor_id", vendorId) : q.ilike("vendor_name", name.replace(/[%_\\]/g, (c) => "\\" + c));
         return q.order("id", { ascending: true }).range(rFrom, rTo);
       });
-      const rows = all.filter((r) => r.id !== excludeId && (!r.tds_section || r.tds_section === sec));
+      /* R-2338: 194J(a) / (b) / royalty (and old plain 194J) share one yearly limit per vendor. */
+      const rows = all.filter((r) => r.id !== excludeId && (!r.tds_section || sameTdsThreshold(r.tds_section, sec)));
       const baseOf = (r: { amount: number | null; gst_paid: number | null }) => Math.max(0, (r.amount ?? 0) - (r.gst_paid ?? 0));
       return {
         base: rows.reduce((s, r) => s + baseOf(r), 0),
