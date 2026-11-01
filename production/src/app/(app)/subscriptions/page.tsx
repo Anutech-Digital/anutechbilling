@@ -154,10 +154,11 @@ function vendorMeta(v: string): { label: string; kind: "info" | "success" | "mut
  * because none of these branches fire against today's production data — a bug
  * in any of them would look exactly like silence on screen.
  */
-function SubExceptions({ sub, payBy, size = "sm" }: { sub: Subscription; payBy?: string | null; size?: "sm" | "md" }) {
+function SubExceptions({ sub, payBy, payByKind, size = "sm" }: { sub: Subscription; payBy?: string | null; payByKind?: "invoice" | "request" | null; size?: "sm" | "md" }) {
   /* R-1689: payBy = the oldest unpaid invoice's due date (credit / invoice-now rows), else the agreed date. */
   /* R-2225: a non-renewing row says so in its status pill — the chip would say it twice. */
-  const flags = subscriptionExceptions({ ...sub, pay_by: payBy })
+  /* R-2230: payByKind says whether that date is an unpaid invoice's or a part payment request's. */
+  const flags = subscriptionExceptions({ ...sub, pay_by: payBy, pay_by_kind: payByKind })
     .filter((f) => !(f.key === "auto_renew_off" && isNonRenewing(sub)));
   if (flags.length === 0) return null;
   return (
@@ -265,6 +266,10 @@ export default function SubscriptionsPage() {
   const { data: dues } = useOutstandingReceivables();
   const payByOf = React.useMemo(
     () => new Map((dues ?? []).map((o) => [o.subscription_id, o.pay_by ?? null] as const)),
+    [dues],
+  );
+  const payByKindOf = React.useMemo(
+    () => new Map((dues ?? []).map((o) => [o.subscription_id, o.pay_by_kind ?? null] as const)),
     [dues],
   );
   /* The catalogue is what makes a margin real rather than a multiplier — see
@@ -1289,7 +1294,7 @@ export default function SubscriptionsPage() {
                         {pill.nonRenewing ? pill.label : s.status}
                       </Badge>
                     ); })()}
-                    <SubExceptions sub={s} payBy={payByOf.get(s.id)} />
+                    <SubExceptions sub={s} payBy={payByOf.get(s.id)} payByKind={payByKindOf.get(s.id)} />
                   </div>
                   <div className="text-right shrink-0">
                     {/* The date needs saying what it IS. On desktop the column
@@ -1623,7 +1628,7 @@ export default function SubscriptionsPage() {
                             suspension, write-off — one shared component so the
                             table and the mobile card can never drift apart. */}
                         <div className="flex flex-col items-start gap-1 mt-1 empty:mt-0">
-                          <SubExceptions sub={s} payBy={payByOf.get(s.id)} size="md" />
+                          <SubExceptions sub={s} payBy={payByOf.get(s.id)} payByKind={payByKindOf.get(s.id)} size="md" />
                         </div>
                       </td>
                       {/* ── ONE ⋮ MENU ON THE ROW (R-2263) ──────────────────────

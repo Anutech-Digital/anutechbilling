@@ -50,6 +50,8 @@ export interface SubExceptionFields {
   /** R-1689: when the money is due — the oldest unpaid invoice's due date, else the agreed date
    *  (OutstandingRow.pay_by). Absent = not read; the agreed date alone is used. */
   pay_by?: string | null;
+  /** R-2230: pay_by is an unpaid invoice's due date or an open part payment request's. */
+  pay_by_kind?: "invoice" | "request" | null;
   seats?: number | null;
   used?: number | null;
   suspended_at?: string | null;
@@ -143,6 +145,8 @@ export function subscriptionExceptions(s: SubExceptionFields): SubExceptionFlag[
           : "warning",
       title: state.kind === "none"
         ? "No agreed payment date — set one via the row's ⋯ menu → Correct subscription, and the countdown starts"
+        : fromInvoice && s.pay_by_kind === "request"
+          ? `Payment request — ${rupee(n(s.outstanding_amount))} due, the request falls due on ${formatDate(payBy!)}`
         : fromInvoice
           ? `Unpaid invoice — ${rupee(n(s.outstanding_amount))} due, the invoice falls due on ${formatDate(payBy!)}`
           : `Postpaid — ${rupee(n(s.outstanding_amount))} due on ${formatDate(payBy!)}`,
