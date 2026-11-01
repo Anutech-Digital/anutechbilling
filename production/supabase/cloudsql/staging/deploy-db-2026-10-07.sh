@@ -356,6 +356,7 @@ MIGS=(
   "r2232navbadgesflexparts|20261101165305_r2232_nav_badges_flex_parts.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.nav_badges(text[])') and prosrc like '%R-2232%')"
   "r2230partduedates|20261101184900_r2230_part_due_dates.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscription_billings' and column_name = 'due_on') and to_regprocedure('public.open_part_requests(uuid,uuid)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%R-2230%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') and prosrc like '%R-2230%')"
   "r2011formconsent|20261101203103_r2011_form_consent.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'consent_events' and column_name = 'form') and exists(select 1 from pg_constraint where conname = 'consent_events_source_check' and pg_get_constraintdef(oid) like '%form%')"
+  "r2039leadairuns|20261101205400_r2039_lead_ai_runs.sql|resellersos_migration|to_regclass('public.lead_ai_runs') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'leads' and column_name = 'ai_status_at')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
