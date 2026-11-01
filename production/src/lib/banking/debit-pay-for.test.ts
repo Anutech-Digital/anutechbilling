@@ -253,14 +253,14 @@ describe("resultLines — what happened, in the owner's words", () => {
   };
   const lines = resultLines(r);
   it("names the bill, amount, vendor, TDS and the new status, with a link", () => {
-    expect(lines[0].text).toBe("Paid Bill #PS-101 (₹59,000) to Sharma Associates · TDS ₹5,000 deducted (194J) · Bill now Paid");
+    expect(lines[0].text).toBe("Paid Bill #PS-101 (₹59,000) to Sharma Associates · TDS ₹5,000 deducted (194J(b)) · Bill now Paid");   // R-2338: old 194J = 194J(b)
     expect(lines[0].href).toBe("/accounting/expenses?edit=E1");
     expect(lines[1].text).toBe("Paid Bill #G-2 (₹10,000) to Sharma Associates · Bill now part paid, ₹13,600 still due");
   });
   it("advance, bank charge and TDS payable each say where they went", () => {
     expect(lines.some((l) => l.text.includes("₹4,600 kept as an advance") && l.href === "/accounting/prepaid")).toBe(true);
     expect(lines.some((l) => l.text.includes("Bank charge ₹25"))).toBe(true);
-    expect(lines.some((l) => l.text.includes("TDS ₹5,000 (194J) withheld"))).toBe(true);
+    expect(lines.some((l) => l.text.includes("TDS ₹5,000 (194J(b)) withheld"))).toBe(true);
   });
 });
 

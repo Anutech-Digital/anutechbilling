@@ -337,6 +337,8 @@ export function useUpsertVendor() {
       msmeCategory?: "micro" | "small" | "medium" | null;
       /** Bank details for payment runs (R-163). `undefined` = mat chhuo, same as MSME. */
       bank?: { accountName: string | null; accountNo: string | null; ifsc: string | null; upiId: string | null };
+      /** R-2338: the vendor's default TDS section ("" / null = none). `undefined` = mat chhuo. */
+      defaultTdsSection?: string | null;
     }) => {
       const supabase = createClient();
       const { data: authData } = await supabase.auth.getUser();
@@ -368,11 +370,15 @@ export function useUpsertVendor() {
           upi_id:            input.bank.upiId?.trim() || null,
         } : {}),
       };
+      /* R-2338: the vendor's default TDS section (the column predates the generated types). */
+      const withTds = (input.defaultTdsSection !== undefined
+        ? { ...row, default_tds_section: input.defaultTdsSection?.trim().toUpperCase() || null }
+        : row) as typeof row;
       if (input.id) {
-        const { error } = await supabase.from("vendors").update(row).eq("id", input.id);
+        const { error } = await supabase.from("vendors").update(withTds).eq("id", input.id);
         if (error) throw new Error(bankMessage(error.message));
       } else {
-        const { error } = await supabase.from("vendors").insert({ ...row, tenant_id: me.tenant_id });
+        const { error } = await supabase.from("vendors").insert({ ...withTds, tenant_id: me.tenant_id });
         if (error) throw new Error(error.message.includes("vendors_tenant_name_uniq") ? "A vendor with this name already exists." : bankMessage(error.message));
       }
     },

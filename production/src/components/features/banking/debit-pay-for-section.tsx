@@ -36,7 +36,7 @@ import { VENDOR_BILL_CATEGORIES, attachBillFile } from "@/lib/queries/vendor-bil
 import { readBillFile, checkBillFile, type BillRead } from "@/lib/accounting/bill-reader";
 import { buyerWarningText } from "@/app/api/ai/extract-bill/buyer-check";
 import { billVendorCheck, newBillFromRead, newVendorFromRead } from "@/lib/banking/bill-read-new-bill";
-import { TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
+import { TDS_PICK_SECTIONS, normalizeTdsSection, rememberTdsOffer, tds26qSection, tdsSectionOption } from "@/lib/accounting/tds-rates";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import { useVendorOpenItems, usePayVendorFromBankDebit, useVendor194q, useSet194qBuyer, useVendorNarrationAliases } from "@/lib/queries/bank-debit-pay-for";
 import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
@@ -55,7 +55,8 @@ import { useApplyVendorAdvance } from "@/lib/queries/vendor-advance";
 const NEW_VENDOR = "__new_vendor__";
 const EMPTY_NV = { name: "", gstin: "", pan: "", tdsSection: "", accountNo: "", ifsc: "", upi: "" };
 const FIELD_WORD: Record<NewVendorField, string> = { name: "name", accountNo: "account number", ifsc: "IFSC", upi: "UPI ID" };
-const TDS_SECTIONS = Object.keys(TDS_SECTION_RATES);
+/* R-2338: 194J(a) technical 2% / 194J(b) professional 10% / 194J royalty 10% — never the old plain 194J. */
+const TDS_SECTIONS = TDS_PICK_SECTIONS;
 const EXPENSE_CATS = EXPENSE_CATEGORIES.filter((c) => c !== "Salaries");
 /* R-1914: an advance may be for goods (COGS) too — Google, AWS. */
 const ADVANCE_HEADS: readonly string[] = [...EXPENSE_CATS, ...VENDOR_BILL_CATEGORIES];
@@ -134,14 +135,20 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
   const advLeft = vendor ? vendorAdvanceLeft(advanceRows ?? [], vendor.id, vendor.name) : 0;
   const applyAdv = useApplyVendorAdvance();
 
-  /* TDS — the vendor's usual section, else the one already on its bills. */
+  /* TDS — the vendor's usual section, else the one already on its bills. R-2338: an old plain
+     "194J" shows as 194J(b) professional 10%; nothing else is ever picked for the owner. */
   const [section, setSection] = React.useState("");
   const [noTds, setNoTds] = React.useState(false);
   React.useEffect(() => {
     const fromBills = open.find((i) => i.tds_section)?.tds_section ?? "";
-    setSection((isNew ? nv.tdsSection : vendor?.default_tds_section) || fromBills || "");
+    setSection(normalizeTdsSection((isNew ? nv.tdsSection : vendor?.default_tds_section) || fromBills || ""));
     setNoTds(false);
   }, [vendor?.id, vendor?.default_tds_section, isNew, nv.tdsSection, open]);
+  /* R-2338: "Remember for this vendor" — offered when the section picked is not the vendor's saved
+     one, never ticked by itself; the server saves it only when ticked. */
+  const [remember, setRemember] = React.useState(false);
+  React.useEffect(() => { setRemember(false); }, [vendorId, section, noTds]);
+  const offerRemember = !!vendor && !isNew && !noTds && rememberTdsOffer(vendor.default_tds_section, section);
   const pan = isNew ? (nv.pan.trim() || null) : vendorPan(vendor);
   const { data: fy } = useVendorTdsThisFy(vendor?.id ?? null, vendorName, section, transaction.txn_date);
   const pickedItems = React.useMemo(() => open.filter((i) => picked.has(itemKey(i))), [open, picked]);
@@ -323,6 +330,7 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
         advanceCategory: advance > 0 ? advCat : null,
         bankCharge: charge,
         note: null,
+        rememberSection: offerRemember && remember,
       });
       /* R-2005: the uploaded bill goes on the bill / expense the transaction created — its id comes
          back from the RPC. Like Add COGS Bill, a failed upload never undoes the saved payment. */
@@ -428,7 +436,7 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
           </div>
           <select aria-label="Usual TDS section" value={nv.tdsSection} onChange={(e) => setNv({ ...nv, tdsSection: e.target.value })} className={`${selectCls} sm:col-span-2`}>
             <option value="">No TDS usually</option>
-            {TDS_SECTIONS.map((s) => <option key={s} value={s}>{s} · {TDS_SECTION_RATES[s].ratePct}%</option>)}
+            {TDS_SECTIONS.map((s) => <option key={s} value={s}>{tdsSectionOption(s)}</option>)}
           </select>
           {filledFromLine.length > 0 && (
             <p className="text-xs text-ink-3 sm:col-span-2">
@@ -511,11 +519,11 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
                             <Input type="number" min={0} className="w-28 h-8" aria-label={`Amount paid on ${itemLabel(i)}`}
                               value={String(cash)}
                               onChange={(e) => setCashEdit((c) => ({ ...c, [k]: Math.max(0, Math.round(Number(e.target.value) || 0)) }))} />
-                            {tds > 0 && cash > 0 && <span>+ TDS {rupee(tds)} ({t?.section}) = {rupee(cash + tds)} settled</span>}
+                            {tds > 0 && cash > 0 && <span>+ TDS {rupee(tds)} ({tds26qSection(t?.section)}) = {rupee(cash + tds)} settled</span>}
                             {cash > 0 && cash + tds < i.amount_due && <span className="text-amber-ink">part payment — {rupee(i.amount_due - cash - tds)} stays due</span>}
                           </label>
                         ) : cash > 0 ? (
-                          <span>{rupee(i.amount_due)}{tds > 0 ? <> − TDS {rupee(tds)} ({t?.section}) = <b>{rupee(cash)}</b> from bank</> : <> from bank</>}</span>
+                          <span>{rupee(i.amount_due)}{tds > 0 ? <> − TDS {rupee(tds)} ({tds26qSection(t?.section)}) = <b>{rupee(cash)}</b> from bank</> : <> from bank</>}</span>
                         ) : (
                           <span className="text-rose-ink">Not enough left for this bill ({rupee(cashDue(i, tds))} needed) — untick it or record the rest as an advance.</span>
                         )}
@@ -535,8 +543,14 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
                 <span className="text-xs font-medium text-ink-2">TDS deducted</span>
                 <select aria-label="TDS section" value={noTds ? "" : section} onChange={(e) => { setSection(e.target.value); setNoTds(!e.target.value); }} className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink">
                   <option value="">No TDS</option>
-                  {TDS_SECTIONS.map((s) => <option key={s} value={s}>{s} · {TDS_SECTION_RATES[s].ratePct}%</option>)}
+                  {TDS_SECTIONS.map((s) => <option key={s} value={s}>{tdsSectionOption(s)}</option>)}
                 </select>
+                {offerRemember && (
+                  <label className="flex items-center gap-1.5 text-xs text-ink-2">
+                    <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+                    Remember for this vendor
+                  </label>
+                )}
               </div>
               {[...tdsLines.filter((t) => t.reason && (!t.fixed || t.section === "194Q")).map((t) => t.reason), showNew ? billTds.reason : null]
                 .filter(Boolean).slice(-1).map((r) => <p key="r" className="text-xs text-ink-3">{r}</p>)}
@@ -671,7 +685,7 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
                 )}
                 {billTotal > 0 && (
                   <p className="text-xs text-ink-2 tabular-nums">
-                    {billPay < billTotal ? `Paying ${rupee(billPay)}` : `Bill ${rupee(billTotal)}`}{billTds.tds > 0 ? <> − TDS {rupee(billTds.tds)} ({billTds.section})</> : null} = <b>{rupee(newBillCash)}</b> from bank
+                    {billPay < billTotal ? `Paying ${rupee(billPay)}` : `Bill ${rupee(billTotal)}`}{billTds.tds > 0 ? <> − TDS {rupee(billTds.tds)} ({tds26qSection(billTds.section)})</> : null} = <b>{rupee(newBillCash)}</b> from bank
                   </p>
                 )}
               </div>

@@ -38,7 +38,7 @@ import { useVendorTdsThisFy } from "@/lib/queries/expenses";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import { itcEligibility } from "@/lib/gst/itc";
 import { tdsDecision, panFromGstin } from "@/lib/accounting/tds-deductor";
-import { TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
+import { TDS_PICK_SECTIONS, tdsSectionOption } from "@/lib/accounting/tds-rates";
 import { istToday } from "@/lib/dates/ist";
 import { splitTaxHeads } from "@/lib/gst/tax-split";
 
@@ -636,7 +636,8 @@ function BookInvoiceDialog({ advances, onClose }: { advances: PrepaidAdvance[]; 
               <select id="inv_tds_sec" value={tdsSection} onChange={(e) => { setTdsSection(e.target.value); setTdsEdited(false); }}
                 className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40">
                 <option value="">No TDS</option>
-                {Object.keys(TDS_SECTION_RATES).map((s) => <option key={s} value={s}>{s}{s === "194C" ? " · Contractor / advertising" : s === "194J" ? " · Professional / technical" : ""}</option>)}
+                {/* R-2338: 194J(a) technical 2% / 194J(b) professional 10% / royalty 10%. */}
+                {TDS_PICK_SECTIONS.map((s) => <option key={s} value={s}>{s === "194C" ? "194C Contractor / advertising · 2% — s.393(1) Sl. 6(i)" : tdsSectionOption(s)}</option>)}
               </select>
             </FormField>
             {tdsSection && (

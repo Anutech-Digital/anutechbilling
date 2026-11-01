@@ -124,3 +124,19 @@ describe("R-2338 — 'Remember for this vendor' is offered, never ticked for the
     expect(rememberTdsOffer(null, "")).toBe(false);
   });
 });
+
+describe("R-2338 — the 26Q working shows the 194J sub-section", () => {
+  it("Sidhshree 194J(a), CA 194J(b), Google royalty 194J(b) royalty, an old 194J row as 194J(b)", async () => {
+    const { build26QRows } = await import("@/app/(app)/accounting/expenses/tds-26q");
+    const exp = (id: string, name: string, sec: string, tds: number) =>
+      ({ id, expense_date: "2026-10-05", vendor_name: name, vendor_id: `v-${id}`, amount: 1_00_000, gst_paid: 0, tds_section: sec, tds_amount: tds });
+    const read = {
+      exps: [exp("1", "Sidhshree", "194JA", 2_000), exp("2", "CA", "194JB", 10_000), exp("3", "Google", "194JR", 10_000), exp("4", "Old CA", "194J", 10_000)],
+      vends: [], comms: [], partners: [], goods: [],
+    } as unknown as Parameters<typeof build26QRows>[0];
+    const { rows } = build26QRows(read);
+    expect(Object.fromEntries(rows.map((r) => [r[0], r[2]]))).toEqual({
+      Sidhshree: "194J(a)", CA: "194J(b)", Google: "194J(b) royalty", "Old CA": "194J(b)",
+    });
+  });
+});

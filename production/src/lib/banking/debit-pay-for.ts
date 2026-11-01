@@ -23,6 +23,7 @@
  */
 import { customerNameTokens, narrationNames } from "@/lib/accounting/credit-match";
 import { tdsDecision, tdsRatePct, panFromGstin } from "@/lib/accounting/tds-deductor";
+import { tds26qSection } from "@/lib/accounting/tds-rates";
 import { rupee, formatDate } from "@/lib/utils";
 import { cleanAccountNo, cleanIfsc } from "@/lib/banking/bank-details";
 import { categoriseByRules, type CategoryRule } from "@/lib/banking/categorise";
@@ -585,7 +586,7 @@ function docLine(d: PaidDoc, vendor: string, isNew: boolean): ResultLine {
     };
   }
   const name = d.bill_no ? `Bill #${d.bill_no}` : d.source === "expense" ? "Expense bill" : "COGS bill";
-  const tds = d.tds > 0 ? ` · TDS ${rupee(d.tds)} deducted (${d.tds_section})` : "";
+  const tds = d.tds > 0 ? ` · TDS ${rupee(d.tds)} deducted (${tds26qSection(d.tds_section)})` : "";
   return {
     text: `${isNew ? "Recorded and paid" : "Paid"} ${name} (${rupee(d.settled)}) to ${vendor}${tds} · ${isNew && d.status === "paid" ? "Paid" : `Bill now ${statusWord(d)}`}`,
     href: docHref(d),
@@ -599,7 +600,7 @@ export function resultLines(r: VendorPayResult): ResultLine[] {
   if (r.new_bill) out.push(docLine(r.new_bill, r.vendor_name, true));
   if (r.advance) out.push({ text: `${rupee(r.advance.amount)} kept as an advance to ${r.vendor_name} (${r.advance.category}) — adjust a later bill on Prepaid`, href: "/accounting/prepaid" });
   if (r.bank_charge) out.push({ text: `Bank charge ${rupee(r.bank_charge.amount)} booked as an expense`, href: `/accounting/expenses?edit=${encodeURIComponent(r.bank_charge.expense_id)}` });
-  if (r.tds_total > 0) out.push({ text: `TDS ${rupee(r.tds_total)} (${r.tds_section}) withheld — now in TDS payable and the 26Q list`, href: "/accounting/balance-sheet" });
+  if (r.tds_total > 0) out.push({ text: `TDS ${rupee(r.tds_total)} (${tds26qSection(r.tds_section)}) withheld — now in TDS payable and the 26Q list`, href: "/accounting/balance-sheet" });
   out.push({ text: `${r.vendor_name}: see bills and payments`, href: "/accounting/vendors" });
   return out;
 }

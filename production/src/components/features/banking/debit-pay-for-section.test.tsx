@@ -114,7 +114,7 @@ describe("R-2320 DebitPayForSection — TDS on a COGS bill, owner override below
     fireEvent.click(saveButton());
     await screen.findByText("Done — this bank line is reconciled");
     const it0 = state.pay.mock.calls[0][0].items[0];
-    expect([it0.item.doc_id, it0.cash, it0.tds, it0.section, it0.override]).toEqual(["PK1", 14580, 1620, "194J", "Deducted in Zoho, CA advised"]);
+    expect([it0.item.doc_id, it0.cash, it0.tds, it0.section, it0.override]).toEqual(["PK1", 14580, 1620, "194JB", "Deducted in Zoho, CA advised"]);   // R-2338: old "194J" = 194J(b)
   });
 
   it("an accountant is told only the owner can deduct below the threshold — no override offered", () => {
@@ -187,8 +187,8 @@ describe("R-1866 DebitPayForSection", () => {
     const arg = state.pay.mock.calls[0][0];
     expect(arg).toMatchObject({ transactionId: "t-64800", vendorId: "v1", advance: 0, bankCharge: 0, newBill: null });
     expect(arg.items.map((x: { item: VendorOpenItem; cash: number; tds: number; section: string }) => [x.item.doc_id, x.cash, x.tds, x.section]))
-      .toEqual([["E1", 54000, 5000, "194J"], ["E2", 10800, 1000, "194J"]]);
-    expect(screen.getByText("Paid Bill #PS-101 (₹59,000) to Sharma Associates · TDS ₹5,000 deducted (194J) · Bill now Paid")).toBeTruthy();
+      .toEqual([["E1", 54000, 5000, "194JB"], ["E2", 10800, 1000, "194JB"]]);   // R-2338: the vendor's old "194J" = 194J(b) professional
+    expect(screen.getByText("Paid Bill #PS-101 (₹59,000) to Sharma Associates · TDS ₹5,000 deducted (194J(b)) · Bill now Paid")).toBeTruthy();
   });
 
   it("part payment: ₹10,000 on a ₹23,600 COGS bill stays part due", async () => {
@@ -214,11 +214,11 @@ describe("R-1866 DebitPayForSection", () => {
     fireEvent.change(screen.getByLabelText("Bill number"), { target: { value: "PS-130" } });
     fireEvent.change(screen.getByLabelText("Value before GST"), { target: { value: "20000" } });
     fireEvent.change(screen.getByLabelText("GST on the bill"), { target: { value: "3600" } });
-    expect(screen.getByText(/Bill ₹23,600/).textContent).toContain("TDS ₹2,000 (194J) = ₹21,600 from bank");
+    expect(screen.getByText(/Bill ₹23,600/).textContent).toContain("TDS ₹2,000 (194J(b)) = ₹21,600 from bank");
     fireEvent.click(saveButton());
     await screen.findByText("Done — this bank line is reconciled");
     expect(state.pay.mock.calls[0][0].newBill).toMatchObject({
-      kind: "expense", billNo: "PS-130", category: "Professional Services", taxable: 20000, gst: 3600, itc: true, pay: 23600, tds: 2000, tdsSection: "194J",
+      kind: "expense", billNo: "PS-130", category: "Professional Services", taxable: 20000, gst: 3600, itc: true, pay: 23600, tds: 2000, tdsSection: "194JB",
     });
   });
 
@@ -577,5 +577,50 @@ describe("R-2325 — inline Expense bill categories = the Expenses page list", (
     fireEvent.click(screen.getByRole("button", { name: "Expense bill" }));
     const opts = [...(screen.getByLabelText("Category") as HTMLSelectElement).options].map((o) => o.value).filter(Boolean);
     expect(opts).toEqual(["Professional Services", "Advertising", "Bank Charges", "Other"]);
+  });
+});
+
+/* R-2338 (owner + CA, 1 Nov 2026): 194J split; the vendor's section is remembered only on the
+   owner's tick. Sidhshree's saved section here is 194C (an old guess) — the owner switches to
+   194J(a) technical services 2%. */
+describe("R-2338 DebitPayForSection — 194J(a) 2% and 'Remember for this vendor'", () => {
+  const SB: VendorOpenItem = {
+    source: "expense", doc_id: "SB1", bill_no: "SW-1", doc_date: "2026-10-02", due_date: null, category: "Software",
+    total: 100000, amount_due: 100000, gst: 0, tds_base: 100000, tds_amount: 0, tds_section: null, can_part: true, in_run: null,
+  };
+
+  it("the picker offers the three 194J choices with the Act 2025 number; 194J(a) → 2%; Remember is unticked and sent only when ticked", async () => {
+    state.fy = { base: 0, baseWithoutTds: 0 };
+    state.items.v4 = [SB];
+    state.pay.mockResolvedValue(result({ vendor_id: "v4", vendor_name: "Sidhshree Infotech" }));
+    render(<DebitPayForSection transaction={txn(98000, "NEFT SIDHSHREE INFOTECH")} onDone={() => {}} />);
+    const sel = screen.getByLabelText("TDS section") as HTMLSelectElement;
+    const labels = Array.from(sel.options).map((o) => o.textContent);
+    expect(labels).toContain("194J(a) Technical services · 2% — s.393(1) Sl. 6(iii)(a)");
+    expect(labels).toContain("194J(b) Professional fees · 10% — s.393(1) Sl. 6(iii)(b)");
+    expect(labels).toContain("194J Royalty – software licence · 10% — s.393(1) Sl. 6(iii)(d)");
+    expect(Array.from(sel.options).map((o) => o.value)).not.toContain("194J");
+    expect(sel.value).toBe("194C");   // the vendor's saved section, pre-picked
+    expect(screen.queryByLabelText("Remember for this vendor")).toBeNull();   // already its section
+    fireEvent.change(sel, { target: { value: "194JA" } });
+    const remember = screen.getByLabelText("Remember for this vendor") as HTMLInputElement;
+    expect(remember.checked).toBe(false);
+    expect(screen.getByText(/Bills ₹1,00,000/).textContent).toContain("TDS ₹2,000");
+    fireEvent.click(remember);
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    const arg = state.pay.mock.calls[0][0];
+    expect([arg.items[0].tds, arg.items[0].section, arg.rememberSection]).toEqual([2000, "194JA", true]);
+  });
+
+  it("not ticked → the section is used for this payment only", async () => {
+    state.fy = { base: 0, baseWithoutTds: 0 };
+    state.items.v4 = [SB];
+    state.pay.mockResolvedValue(result({ vendor_id: "v4", vendor_name: "Sidhshree Infotech" }));
+    render(<DebitPayForSection transaction={txn(98000, "NEFT SIDHSHREE INFOTECH")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("TDS section"), { target: { value: "194JA" } });
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay.mock.calls[0][0].rememberSection).toBe(false);
   });
 });
