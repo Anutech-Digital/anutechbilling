@@ -15,6 +15,11 @@
  * Paging is keyset (lib/queries/keyset.ts): 50 messages per page, newest page first, "Load
  * older" asks for messages strictly older than the oldest one shown. `messages` reads oldest →
  * newest, ready to render top to bottom.
+ *
+ * R-2330: the 5 s poll reads ONLY the newest page and merges it into the first loaded page;
+ * older pages are read once (React Query used to refetch every loaded page every 5 s). The
+ * older-page filter also carries `created_at <= t`, so the database range-scans the
+ * (channel_id, created_at desc, id desc) index instead of filtering every newer row.
  */
 "use client";
 
@@ -63,6 +68,8 @@ export const teamChatKeys = {
   channels: () => ["team_chat", "channels"] as const,
   members: (channelId: string) => ["team_chat", "members", channelId] as const,
   messages: (channelId: string) => ["team_chat", "messages", channelId] as const,
+  /** R-2330: the 5 s "anything new?" poll of an open channel (newest page only). */
+  messagesHead: (channelId: string) => ["team_chat", "messages_head", channelId] as const,
   thread: (parentId: string) => ["team_chat", "thread", parentId] as const,
   unread: () => ["team_chat", "unread"] as const,
 };
@@ -142,7 +149,8 @@ export async function fetchChatMessagesPage(channelId: string, cursor: ChatCurso
     .select("*")
     .eq("channel_id", channelId)
     .is("parent_id", null);
-  if (cursor) q = q.or(chatCursorFilter(cursor));
+  // R-2330: `created_at <= t` lets the index range-scan; the `or` breaks the tie on id.
+  if (cursor) q = q.lte("created_at", cursor.createdAt).or(chatCursorFilter(cursor));
   const { data, error } = await q
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
@@ -154,6 +162,46 @@ export async function fetchChatMessagesPage(channelId: string, cursor: ChatCurso
     rows,
     next: rows.length === CHAT_PAGE_SIZE && oldest ? { createdAt: oldest.created_at, id: oldest.id } : null,
   };
+}
+
+/** Sort key of a PostgREST timestamp to the microsecond (a Date keeps only milliseconds). */
+function chatTimeKey(ts: string): number {
+  const micros = /\.(\d{1,6})/.exec(ts)?.[1] ?? "";
+  const base = Date.parse(ts.replace(/\.\d+/, ""));
+  return base * 1000 + Number(micros.padEnd(6, "0") || 0);
+}
+
+/** Newest first: created_at desc, then id desc — the page order. */
+function newestFirst(a: ChatMessage, b: ChatMessage): number {
+  const d = chatTimeKey(b.created_at) - chatTimeKey(a.created_at);
+  if (d !== 0) return d;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+}
+
+/**
+ * R-2330: merge a freshly read newest page into the loaded pages without re-reading the older
+ * ones. Fresh rows replace their old copy (edits, deletes, files); rows not in the fresh page
+ * stay (messages are never hard-deleted, and a pending row being sent must not vanish). When the
+ * fresh page is full and everything loaded is older than all of it, more than a page arrived
+ * since the last look — the loaded pages are dropped so no gap is shown ("Load older" reads
+ * them again).
+ */
+export function mergeNewestChatPage(
+  old: InfiniteData<ChatMessagesPage, ChatCursor | null> | undefined,
+  fresh: ChatMessagesPage,
+): InfiniteData<ChatMessagesPage, ChatCursor | null> | undefined {
+  if (!old || old.pages.length === 0) return old;
+  const [first, ...rest] = old.pages;
+  const pending = first.rows.filter((r) => r.pending);
+  const oldestFresh = fresh.rows.at(-1);
+  const loaded = old.pages.flatMap((p) => p.rows).filter((r) => !r.pending);
+  const gap = fresh.rows.length >= CHAT_PAGE_SIZE && !!oldestFresh && loaded.length > 0
+    && loaded.every((r) => newestFirst(r, oldestFresh) > 0);
+  if (gap) return { pages: [{ ...fresh, rows: [...pending, ...fresh.rows] }], pageParams: [null] };
+  const freshIds = new Set(fresh.rows.map((r) => r.id));
+  const kept = first.rows.filter((r) => !r.pending && !freshIds.has(r.id));
+  const rows = [...pending, ...[...fresh.rows, ...kept].sort(newestFirst)];
+  return { ...old, pages: [{ ...first, rows }, ...rest] };
 }
 
 /** POST /api/team-chat/upload (R-2297): store one file, get what chat_post_message needs. */
@@ -205,17 +253,34 @@ export function useChatChannelMembers(channelId: string | null | undefined) {
 }
 
 /**
- * A channel's top-level messages, 50 per page, polled every 5 s while visible.
+ * A channel's top-level messages, 50 per page; the newest page is polled every 5 s while
+ * visible (R-2330: only the newest page — older pages are read once).
  * `messages` = oldest → newest; `fetchNextPage()` loads OLDER messages; `hasNextPage` says
  * whether there are any.
  */
 export function useChatMessages(channelId: string | null | undefined) {
+  const qc = useQueryClient();
   const q = useInfiniteQuery({
     queryKey: teamChatKeys.messages(channelId ?? ""),
     enabled: !!channelId,
     initialPageParam: null as ChatCursor | null,
     queryFn: ({ pageParam }) => fetchChatMessagesPage(channelId!, pageParam),
     getNextPageParam: (last) => last.next,
+    refetchOnWindowFocus: false,
+  });
+  // R-2330: the poll — newest page only, merged into the loaded pages. It starts after the
+  // first load; initialData marks it fresh so it does not read the same page twice at once.
+  useQuery({
+    queryKey: teamChatKeys.messagesHead(channelId ?? ""),
+    enabled: !!channelId && q.isSuccess,
+    queryFn: async (): Promise<number> => {
+      const fresh = await fetchChatMessagesPage(channelId!, null);
+      qc.setQueryData<MessagesCache>(teamChatKeys.messages(channelId!), (old) => mergeNewestChatPage(old, fresh));
+      return Date.now();
+    },
+    initialData: () => Date.now(),
+    initialDataUpdatedAt: () => Date.now(),
+    staleTime: CHAT_POLL_MS,
     refetchInterval: CHAT_POLL_MS,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
