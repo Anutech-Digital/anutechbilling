@@ -30,6 +30,7 @@ import {
   useEmiPurchases, useRecordEmiPayment, useEmiPayments,
   EMI_CATEGORY_LABEL, type EmiPurchase,
 } from "@/lib/queries/emi";
+import { isLoanOnly } from "@/lib/accounting/loan-setup";
 import { istToday } from "@/lib/dates/ist";
 import { EmiPurchaseDialog, EmiScheduleDialog } from "@/components/features/accounting/emi-loan-dialogs";
 
@@ -49,7 +50,8 @@ export default function AssetsPage() {
   const openHistory = (p: EmiPurchase) => (p.first_emi_on ? setScheduleFor(p.id) : setHistoryFor(p));
   const scheduled = scheduleFor ? (q.data ?? []).find((r) => r.id === scheduleFor) : undefined;
 
-  const rows = q.data ?? [];
+  /* R-2323: a loan set up from an EMI line has no asset — it is listed on Business Loans. */
+  const rows = (q.data ?? []).filter((r) => !isLoanOnly(r));
   const assetValue   = rows.reduce((s, r) => s + r.total_cost, 0);
   const outstanding  = rows.reduce((s, r) => s + r.outstanding, 0);
   const activeCount  = rows.filter((r) => r.status === "active").length;

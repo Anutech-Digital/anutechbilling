@@ -50,7 +50,7 @@ export interface BsRawRows {
   loans: { id: string; principal: N }[];
   loanReps: { amount: N }[];
   advs: { total_amount: N; consumed_amount: N }[];
-  emiP: { id: string; total_cost: N; financed: N }[];
+  emiP: { id: string; total_cost: N; financed: N; kind?: string | null }[];
   emiPay: { principal_part: N }[];
   fa: (AssetLike & { emi_purchase_id: string | null })[];
   bizLoans: { id: string; principal: N }[];
@@ -118,7 +118,8 @@ export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSh
   const registeredEmi = new Set(r.fa.map((a) => a.emi_purchase_id).filter(Boolean));
   /* R-1578: net block (cost − depreciation charged to date), same as report-rpc.ts. */
   const block           = netBlockAt(r.fa as AssetLike[], todayIso);
-  const emiUnregistered = r.emiP.filter((x) => !registeredEmi.has(x.id)).reduce((s, x) => s + (x.total_cost ?? 0), 0);
+  // R-2323: a loan taken with no asset (kind 'loan') is a liability only, never an asset.
+  const emiUnregistered = r.emiP.filter((x) => x.kind !== "loan" && !registeredEmi.has(x.id)).reduce((s, x) => s + (x.total_cost ?? 0), 0);
   const fixedAssets     = block.net + emiUnregistered;
   const emiFinanced     = r.emiP.reduce((s, x) => s + (x.financed ?? 0), 0);
   const emiPrincipalPaid = r.emiPay.reduce((s, x) => s + (x.principal_part ?? 0), 0);

@@ -23,6 +23,7 @@ import {
   useEmiMatches, useEmiPurchases, useEmiSchedule, useReconcileDebitToEmi, type EmiMatch,
 } from "@/lib/queries/emi";
 import { EmiPurchaseDialog, EmiPrepayDialog, type EmiFromTxn } from "@/components/features/accounting/emi-loan-dialogs";
+import { LoanSetupDialog } from "./loan-setup-dialog";
 
 type Txn = { id: string; debit: number; txn_date: string; bank_account_id: string; description: string | null };
 
@@ -50,6 +51,8 @@ export function EmiRepaymentSection({ transaction, onDone }: { transaction: Txn;
   const [extraAs, setExtraAs] = React.useState<ExtraAs>("late_fee");
   const [purchaseOpen, setPurchaseOpen] = React.useState(false);
   const [prepayFor, setPrepayFor] = React.useState<string>("");
+  /* R-2323: no loan in the books for this EMI → set one up from the line. */
+  const [setUpOpen, setSetUpOpen] = React.useState(false);
 
   const m = matches.find((x) => matchKey(x) === picked) ?? null;
   const scheduleQ = useEmiSchedule(m && m.kind === "instalment" ? m.purchase_id : undefined);
@@ -106,9 +109,16 @@ export function EmiRepaymentSection({ transaction, onDone }: { transaction: Txn;
         <Icon name={open ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
       </button>
       {!open ? (
-        <p className="text-xs text-ink-3 mt-1 leading-relaxed">
-          An EMI is principal (reduces the loan) + interest (expense) — never the whole amount as an expense.
-        </p>
+        <>
+          <p className="text-xs text-ink-3 mt-1 leading-relaxed">
+            An EMI is principal (reduces the loan) + interest (expense) — never the whole amount as an expense.
+          </p>
+          {!busy && !anyMatch && (
+            <Button size="sm" variant="primary" icon="plus" className="mt-2" onClick={() => setSetUpOpen(true)}>
+              Set up this loan
+            </Button>
+          )}
+        </>
       ) : busy ? (
         <p className="text-xs text-ink-3 mt-2">Looking for the loan…</p>
       ) : (
@@ -172,11 +182,14 @@ export function EmiRepaymentSection({ transaction, onDone }: { transaction: Txn;
               </Button>
             </>
           ) : (
-            <p className="text-xs text-ink-3">
-              {activeLoans.length > 0
-                ? `No EMI of ${rupee(amount)} is due around ${formatDate(transaction.txn_date)}.`
-                : "No loan is recorded yet."}
-            </p>
+            <div className="space-y-2">
+              <p className="text-xs text-ink-3">
+                {activeLoans.length > 0
+                  ? `No EMI of ${rupee(amount)} is due around ${formatDate(transaction.txn_date)}.`
+                  : "No loan is recorded yet."}
+              </p>
+              <Button size="sm" variant="primary" icon="plus" onClick={() => setSetUpOpen(true)}>Set up this loan</Button>
+            </div>
           )}
 
           <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-xs">
@@ -195,6 +208,13 @@ export function EmiRepaymentSection({ transaction, onDone }: { transaction: Txn;
             )}
           </div>
         </div>
+      )}
+      {setUpOpen && (
+        <LoanSetupDialog
+          fromTxn={{ id: transaction.id, amount, date: transaction.txn_date, description: transaction.description ?? "" }}
+          onClose={() => setSetUpOpen(false)}
+          onSaved={() => { setSetUpOpen(false); onDone(); }}
+        />
       )}
       {purchaseOpen && <EmiPurchaseDialog fromTxn={fromTxn} onSaved={onDone} onClose={() => setPurchaseOpen(false)} />}
       {prepayPurchase && (
