@@ -14,29 +14,25 @@ import * as React from "react";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { DashCardBody } from "@/components/features/dashboard/card-load-state";
 import { Icon } from "@/components/ui/icon";
 import { useTrialsExpiringSoon } from "@/lib/queries/trials";
 
 export function TrialsExpiringCard() {
-  const { data: trials, isLoading } = useTrialsExpiringSoon();
+  const trialsQ = useTrialsExpiringSoon();
+  const trials = trialsQ.data ?? [];
 
+  /* R-2239: "No trials expiring" only once the list RESOLVED empty — a failed or slow load
+     shows an error / a skeleton (+ "Still loading…" after 10 s), never the all-clear. */
   return (
     <Card title="Trials expiring soon" sub="Next 7 days · click to open lead">
-      {isLoading && (
-        <div className="space-y-2">
-          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
-        </div>
-      )}
-
-      {!isLoading && (!trials || trials.length === 0) && (
-        <div className="text-xs text-ink-3 italic py-2 flex items-center gap-1.5">
-          <Icon name="check_circle" size={12} className="text-emerald" />
-          No trials expiring in the next 7 days.
-        </div>
-      )}
-
-      {!isLoading && trials && trials.length > 0 && (
+      <DashCardBody queries={[trialsQ]} what="Trials" isEmpty={trials.length === 0}
+        empty={
+          <div className="text-xs text-ink-3 italic py-2 flex items-center gap-1.5">
+            <Icon name="check_circle" size={12} className="text-emerald" />
+            No trials expiring in the next 7 days.
+          </div>
+        }>
         <ul className="space-y-1.5">
           {trials.map((t) => {
             const dr = t.days_remaining ?? 0;
@@ -65,7 +61,7 @@ export function TrialsExpiringCard() {
             );
           })}
         </ul>
-      )}
+      </DashCardBody>
     </Card>
   );
 }

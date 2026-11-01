@@ -6,7 +6,7 @@
  */
 import * as React from "react";
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, act } from "@testing-library/react";
 
 type Q = { data?: unknown; isError?: boolean; isSuccess?: boolean; error?: unknown; refetch: () => void };
 const pending = (): Q => ({ data: undefined, isError: false, isSuccess: false, refetch: vi.fn() });
@@ -63,7 +63,7 @@ vi.mock("@/components/shared/portal-dock", () => ({ PortalDock: () => null }));
 
 import DashboardPage from "./page";
 
-afterEach(() => { cleanup(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 const EMPTY_TEXTS = [
   "No subs yet",
@@ -90,6 +90,16 @@ describe("Dashboard while loading / failed / empty (R-2239)", () => {
     for (const t of EMPTY_TEXTS) expect(screen.queryByText(t, { exact: false }), t).toBeNull();
     expect(customersCount()).not.toMatch(/0$/);
     expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
+  });
+
+  it("still loading after 10 s → \"Still loading…\", still no empty text", () => {
+    vi.useFakeTimers();
+    setAll(pending);
+    render(<DashboardPage />);
+    expect(screen.queryAllByText("Still loading…")).toHaveLength(0);
+    act(() => { vi.advanceTimersByTime(10_000); });
+    expect(screen.getAllByText("Still loading…").length).toBeGreaterThan(0);
+    for (const t of EMPTY_TEXTS) expect(screen.queryByText(t, { exact: false }), t).toBeNull();
   });
 
   it("failed → error states, no empty text, no 'Customers 0'", () => {
