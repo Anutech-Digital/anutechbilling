@@ -65,7 +65,8 @@ import { partsDue } from "@/lib/renewals/split-billed-next-part";
 import { istToday } from "@/lib/dates/ist";
 import { openRenewalQuoteMap, withRenewalQuote } from "./open-renewal-quotes";
 import { GraceOverCard } from "./grace-over-card";
-import { classifyRenewals, expiredGraceText, isStopped } from "./classify";
+import { classifyRenewals, chasedRenewal, expiredGraceText, isStopped } from "./classify";
+import { isNonRenewing, nonRenewingLabel } from "@/lib/subscriptions/non-renewing";
 import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
 
 // ─── Vendor logo pill ─────────────────────────────────────────────────────────
@@ -279,9 +280,14 @@ function RenewalBucket({
                   ) : (
                     <Badge kind="muted" size="sm">{days}d</Badge>
                   )}
-                  <Badge kind={renewalStateTone(sub.renewal_state)} size="sm" dot>
-                    {renewalStateLabel(sub.renewal_state)}
-                  </Badge>
+                  {/* R-2225: Won't renew — the status with its end date, not a reminder stage. */}
+                  {isNonRenewing(sub) ? (
+                    <Badge kind="warning" size="sm" dot>{nonRenewingLabel(sub)}</Badge>
+                  ) : (
+                    <Badge kind={renewalStateTone(sub.renewal_state)} size="sm" dot>
+                      {renewalStateLabel(sub.renewal_state)}
+                    </Badge>
+                  )}
                   {risk.level === "high" && (
                     <Badge kind="danger" size="sm">HIGH RISK</Badge>
                   )}
@@ -333,7 +339,7 @@ function RenewalBucket({
                       size="sm"
                       className="flex-1"
                       loading={generating === sub.id}
-                      disabled={isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
+                      disabled={isNonRenewing(sub) || isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                       onClick={() => handleGenerateQuote(sub)}
                     >
                       <Icon name="plus" size={12} />
@@ -345,7 +351,7 @@ function RenewalBucket({
                     size="sm"
                     className="flex-1"
                     loading={sending === sub.id}
-                    disabled={isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
+                    disabled={isNonRenewing(sub) || isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                     onClick={() => handleSendNow(sub)}
                   >
                     <Icon name="mail" size={12} />
@@ -482,9 +488,14 @@ function RenewalBucket({
 
                         {/* Cadence (renewal_state from automation) */}
                         <td className="px-4 py-3">
-                          <Badge kind={renewalStateTone(sub.renewal_state)} dot>
-                            {renewalStateLabel(sub.renewal_state)}
-                          </Badge>
+                          {/* R-2225: Won't renew — the status with its end date, not a reminder stage. */}
+                          {isNonRenewing(sub) ? (
+                            <Badge kind="warning" dot>{nonRenewingLabel(sub)}</Badge>
+                          ) : (
+                            <Badge kind={renewalStateTone(sub.renewal_state)} dot>
+                              {renewalStateLabel(sub.renewal_state)}
+                            </Badge>
+                          )}
                           {sub.reminder_count > 0 && (
                             <p className="mt-1 text-2xs text-ink-3 tabular-nums">
                               {sub.reminder_count} email{sub.reminder_count === 1 ? "" : "s"} sent
@@ -563,7 +574,7 @@ function RenewalBucket({
                                   variant={kind === "rose" ? "primary" : "default"}
                                   size="sm"
                                   loading={generating === sub.id}
-                                  disabled={isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
+                                  disabled={isNonRenewing(sub) || isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                                   onClick={() => handleGenerateQuote(sub)}
                                   title="Create the renewal quote now (early, e.g. customer asked 60 days ahead) — same logic as the T-15 cron auto-create"
                                 >
@@ -575,7 +586,7 @@ function RenewalBucket({
                                 variant="ghost"
                                 size="sm"
                                 loading={sending === sub.id}
-                                disabled={isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
+                                disabled={isNonRenewing(sub) || isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                                 onClick={() => handleSendNow(sub)}
                                 title="Send the appropriate renewal email immediately (overrides daily cron)"
                               >
@@ -712,10 +723,12 @@ export default function RenewalsPage() {
 
   /* Forecast (audit B7): agle 6 mahine, mahina-war — "is quarter kitna aayega?"
      ab list jodne se nahi, curve se dikhta hai. Flex alag (12x-sabak: forecast.ts). */
-  const forecast = renewalForecast(all, new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()));
+  /* R-2225: a Won't renew subscription brings no renewal money. */
+  const forecast = renewalForecast(all.filter(chasedRenewal), new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()));
   const maxForecast = Math.max(1, ...forecast.months.map((m) => m.amount));
 
-  const upcoming90   = enriched.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 90);
+  /* R-2225: the renewals pipeline export leaves out Won't renew subscriptions. */
+  const upcoming90   = enriched.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 90 && chasedRenewal(r.sub));
   const highRiskSubs = groups.atRisk;
 
   /* R-239: the search narrows the bucket lists (and their tab counts) only. */
@@ -732,6 +745,7 @@ export default function RenewalsPage() {
   // (NPS/logins) we don't collect on a money screen.
   const topReasons    = highRiskSubs[0]
     ? [
+        ...(isNonRenewing(highRiskSubs[0].sub) ? ["Customer said they won't renew"] : []),
         ...(highRiskSubs[0].daysUntil < 0 ? [`Renewal ${Math.abs(highRiskSubs[0].daysUntil)}d overdue, not paid`] : []),
         ...renewalRisk(highRiskSubs[0].sub).reasons,
       ]
@@ -779,6 +793,7 @@ export default function RenewalsPage() {
     /* R-239: renewed / suspended customers are never reminded, and nobody is emailed
        until the operator has seen the count and the names. */
     /* R-1124: lapsed rows still in grace are included (and named apart in the confirm). */
+    /* R-2225: a Won't renew row is left out inside bulkReminderTargets. */
     const targets = bulkReminderTargets(enriched, today, graceDays);
     if (targets.length === 0) { toast.info("No renewals due in the next 30 days, and none lapsed in grace"); return; }
     await sendReminders(targets);

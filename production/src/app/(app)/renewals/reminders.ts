@@ -20,6 +20,8 @@ export interface RenewalSubLike {
   term_months?: number | null;
   /** R-1621: the owner's "+N days" for this term (select * carries it). */
   grace_until?: string | null;
+  /** R-2225: false = Won't renew — never reminded. */
+  auto_renew?: boolean | null;
 }
 
 export interface RenewalRowLike {
@@ -52,6 +54,7 @@ export function isTerminalRenewal(
  */
 export function bulkReminderTargets<T extends RenewalRowLike>(rows: T[], today: Date = new Date(), tenantGraceDays = 0): T[] {
   return rows.filter((r) => {
+    if (r.sub.auto_renew === false) return false;   // R-2225: they said Won't renew — no reminder
     if (r.daysUntil > 30) return false;
     if (isTerminalRenewal(r.sub.renewal_state, r.sub.renewal_date, r.sub.term_months, today)) return false;
     if (r.daysUntil >= 0) return true;

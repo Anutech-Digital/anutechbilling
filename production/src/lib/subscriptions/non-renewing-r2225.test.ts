@@ -79,3 +79,16 @@ describe("Cancel → At end of term is offered only when there is a term end to 
     expect(canEndAtTermEnd(LEAVING)).toBe(false);   // already set
   });
 });
+
+describe("roles — the same as Cancel (and the SQL function)", () => {
+  it("owner / manager / accountant only", async () => {
+    const { mayMarkNonRenewing } = await import("./non-renewing");
+    for (const r of ["owner", "manager", "accountant"]) expect(mayMarkNonRenewing(r)).toBe(true);
+    for (const r of ["billing", "sales", "support", null, undefined]) expect(mayMarkNonRenewing(r)).toBe(false);
+  });
+  it("the SQL function names the same roles", async () => {
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const f = readdirSync("supabase/migrations").find((n) => n.endsWith("_r2225_non_renewing.sql"))!;
+    expect(readFileSync(`supabase/migrations/${f}`, "utf8")).toMatch(/current_user_has_role\('owner', 'manager', 'accountant'\)/);
+  });
+});

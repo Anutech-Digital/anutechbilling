@@ -77,7 +77,10 @@ import { ImportSubscriptionsDialog } from "@/components/features/subscriptions/i
 import { ReconcileGoogleDialog } from "@/components/features/subscriptions/reconcile-google-dialog";
 import { ImportGoogleSubsDialog } from "@/components/features/subscriptions/import-google-subs-dialog";
 import { MarginAlertsCard, marginAlertCounts } from "@/components/features/subscriptions/margin-alerts-card";
-import { SubDrawerActions, SubDrawerDangerZone } from "@/components/features/subscriptions/sub-drawer-actions";
+import { SubDrawerActions, SubDrawerDangerZone, SubDrawerNonRenewing } from "@/components/features/subscriptions/sub-drawer-actions";
+import { NonRenewingDialog } from "@/components/features/subscriptions/non-renewing-dialog";
+import { useSetNonRenewing } from "@/components/features/subscriptions/use-non-renewing";
+import { canEndAtTermEnd, isNonRenewing, mayMarkNonRenewing, subStatusPill } from "@/lib/subscriptions/non-renewing";
 import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -149,7 +152,9 @@ function vendorMeta(v: string): { label: string; kind: "info" | "success" | "mut
  */
 function SubExceptions({ sub, payBy, size = "sm" }: { sub: Subscription; payBy?: string | null; size?: "sm" | "md" }) {
   /* R-1689: payBy = the oldest unpaid invoice's due date (credit / invoice-now rows), else the agreed date. */
-  const flags = subscriptionExceptions({ ...sub, pay_by: payBy });
+  /* R-2225: a non-renewing row says so in its status pill — the chip would say it twice. */
+  const flags = subscriptionExceptions({ ...sub, pay_by: payBy })
+    .filter((f) => !(f.key === "auto_renew_off" && isNonRenewing(sub)));
   if (flags.length === 0) return null;
   return (
     <>
@@ -358,6 +363,9 @@ export default function SubscriptionsPage() {
   const [editSub,     setEditSub]     = React.useState<Subscription | null>(null);
   /* R-455: END a real subscription (customer left) — separate from Delete (wrong entry). */
   const [cancelSub,   setCancelSub]   = React.useState<Subscription | null>(null);
+  /* R-2225: Won't renew (drawer) — the dialog, and Undo straight from the drawer. */
+  const [nonRenewSub, setNonRenewSub] = React.useState<Subscription | null>(null);
+  const setNonRenewing = useSetNonRenewing();
   const delSub = useDeleteSubscription();
   /* R-718: deleting a subscription is owner / accountant only — the database refuses the rest. */
   const canDeleteSub = canDeleteMoney(useCurrentUser().data?.role);
@@ -365,6 +373,8 @@ export default function SubscriptionsPage() {
   const canQuotesHere = canOpenQuotes(useCurrentUser().data?.role);
   /* R-2073: Upgrade plan makes a quote that changes the bill — the Extend / Add seats roles. */
   const canChangeTerms = mayDo(useCurrentUser().data?.role, "seats.change");
+  /* R-2225: Won't renew / Undo — the Cancel roles (owner / manager / accountant). */
+  const canNonRenew = mayMarkNonRenewing(useCurrentUser().data?.role);
   const confirm = useConfirm();
   const handleDeleteSub = async (s: Subscription) => {
     const body = `This removes the subscription (and any draft purchase order for it). `
@@ -1232,17 +1242,12 @@ export default function SubscriptionsPage() {
                     count is shown for live rows — see renewalClock() (R-1774). */}
                 <div className="flex items-end justify-between gap-2 mt-2 pt-2 border-t border-hairline/60">
                   <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                    <Badge
-                      kind={
-                        s.status === "active"    ? "success" :
-                        s.status === "paused"    ? "warning" :
-                        s.status === "cancelled" ? "danger"  : "muted"
-                      }
-                      size="sm"
-                      dot
-                    >
-                      {s.status}
-                    </Badge>
+                    {/* R-2225: "Non-renewing · ends …" replaces "active" when the customer said Won't renew. */}
+                    {(() => { const pill = subStatusPill(s); return (
+                      <Badge kind={pill.kind} size="sm" dot>
+                        {pill.nonRenewing ? pill.label : s.status}
+                      </Badge>
+                    ); })()}
                     <SubExceptions sub={s} payBy={payByOf.get(s.id)} />
                   </div>
                   <div className="text-right shrink-0">
@@ -1554,6 +1559,9 @@ export default function SubscriptionsPage() {
                       <td className="px-3 py-2.5 align-middle">
                         {s.status === "expired" && dl !== null ? (
                           <Badge kind="danger" dot>Expired {Math.abs(dl)}d</Badge>
+                        ) : isNonRenewing(s) ? (
+                          /* R-2225: Won't renew — the status, with the day it ends. */
+                          <Badge kind="warning" dot>{subStatusPill(s).label}</Badge>
                         ) : s.status === "active" ? (
                           <Badge kind="success" dot>Active</Badge>
                         ) : (
@@ -1851,6 +1859,18 @@ export default function SubscriptionsPage() {
               <div className="mb-3 empty:hidden" data-testid="sub-drawer-vendor-hold">
                 <VendorHoldBadge sub={scheduleSub} size="md" />
               </div>
+              {/* R-2225: Won't renew — the status, what the customer said, and Undo. */}
+              <SubDrawerNonRenewing
+                sub={scheduleSub}
+                undoing={setNonRenewing.isPending}
+                onUndo={() => {
+                  if (!canNonRenew) { toast.error("Only an owner, manager or accountant can undo Won't renew."); return; }
+                  const sub = scheduleSub;
+                  setNonRenewing.mutate({ id: sub.id, on: false }, {
+                    onSuccess: () => setScheduleSub({ ...sub, auto_renew: true, non_renew_reason: null, non_renew_said_on: null }),
+                  });
+                }}
+              />
               <SubDrawerActions
                 hasCustomer={!!scheduleSub.customer_id}
                 primary={!leakFixShown}
@@ -1946,6 +1966,9 @@ export default function SubscriptionsPage() {
                 cancelledNote={scheduleSub.status === "cancelled" ? cancelNote(scheduleSub) : null}
                 canDelete={canDeleteSub}
                 onCancel={() => { const sub = scheduleSub; setScheduleSub(null); setCancelSub(sub); }}
+                onWontRenew={canNonRenew && canEndAtTermEnd(scheduleSub)
+                  ? () => { const sub = scheduleSub; setScheduleSub(null); setNonRenewSub(sub); }
+                  : undefined}
                 onDelete={() => { const sub = scheduleSub; setScheduleSub(null); handleDeleteSub(sub); }}
               />
             </div>
@@ -1953,6 +1976,14 @@ export default function SubscriptionsPage() {
             })()}
           </SheetContent>
         </Sheet>
+      )}
+
+      {nonRenewSub && (
+        <NonRenewingDialog
+          sub={nonRenewSub}
+          open={!!nonRenewSub}
+          onOpenChange={(v) => { if (!v) setNonRenewSub(null); }}
+        />
       )}
 
       {cancelSub && (

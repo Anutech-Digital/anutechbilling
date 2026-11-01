@@ -43,3 +43,14 @@ describe("R-2225 classifyRenewals with non-renewing rows", () => {
     expect(chasedRenewal({})).toBe(true);
   });
 });
+
+describe("R-2225 Bulk reminder skips a Won't renew row", () => {
+  it("leaves it out even inside 30 days", async () => {
+    const { bulkReminderTargets } = await import("./reminders");
+    const rows = [
+      { daysUntil: 5, sub: { id: "a", customer_name: "A", renewal_state: "notice_sent", renewal_date: "2026-10-23", term_months: 12 } },
+      { daysUntil: 5, sub: { id: "b", customer_name: "B", renewal_state: "notice_sent", renewal_date: "2026-10-23", term_months: 12, auto_renew: false } },
+    ];
+    expect(bulkReminderTargets(rows, TODAY).map((r) => r.sub.id)).toEqual(["a"]);
+  });
+});

@@ -67,3 +67,9 @@ export function nonRenewingInputError(i: { reason: string; saidOn: string; today
 export function canEndAtTermEnd(s: NonRenewingFields): boolean {
   return (s.status === "active" || s.status === "paused") && s.auto_renew !== false && !!s.renewal_date;
 }
+
+/** Who may mark Won't renew / Undo — the roles of Cancel (set_subscription_non_renewing checks the same). */
+export const NON_RENEWING_ROLES = ["owner", "manager", "accountant"] as const;
+export function mayMarkNonRenewing(role: string | null | undefined): boolean {
+  return !!role && (NON_RENEWING_ROLES as readonly string[]).includes(role);
+}
