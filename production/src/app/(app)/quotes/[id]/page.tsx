@@ -106,6 +106,7 @@ import { requiredApproval, canSend, canApprove, approvalBadge } from "@/lib/quot
 import { eligibleApprovers, approverSentence } from "@/lib/quotes/awaiting-approval";
 import { useTeamMembers } from "@/lib/queries/team";
 import { quoteEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-economics";
+import { linesMissingCost, missingCostReason, namedApprovalReasons, addCostHref } from "@/lib/quotes/missing-cost-reason";
 import { customerCopyBlock, CUSTOMER_COPY_BLOCKED_TITLE } from "@/lib/quotes/customer-copy-gate";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { useRequestApproval } from "@/lib/queries/quotes";
@@ -266,6 +267,13 @@ export default function QuoteDetailPage() {
   const approvalEconomics = React.useMemo(() => quote ? quoteEconomics(quote) : null, [quote]);
   const approvalNeed      = React.useMemo(() => approvalEconomics ? requiredApproval(approvalEconomics) : null, [approvalEconomics]);
   const approvalRec       = React.useMemo(() => quote ? quoteApprovalRecord(quote) : null, [quote]);
+  /* R-2028 (3): the reason names the line with no vendor cost; "Add cost" opens its cost box.
+     Display only — the approval rule (requiredApproval) is unchanged. */
+  const missingCostLines  = React.useMemo(() => linesMissingCost(quote?.line_items ?? []), [quote]);
+  const shownApprovalReasons = React.useMemo(
+    () => (approvalNeed ? namedApprovalReasons(approvalNeed.reasons, quote?.line_items ?? []) : []),
+    [approvalNeed, quote],
+  );
   /* R-2048: a part's payment request (R-2044) is never approved, signed or accepted — it is paid,
      then invoiced. No approval gate, badge or accept row on it. */
   const partRequest       = isPartRequest(quote as { subscription_billing_id?: string | null } | null | undefined);
@@ -1418,12 +1426,21 @@ export default function QuoteDetailPage() {
                   <p className="mt-0.5 text-[12px] leading-snug text-ink-2">{sendGate.nextStep}</p>
                   {approvalNeed && approvalNeed.reasons.length > 0 && approvalRec?.status === "not_required" && (
                     <ul className="mt-1.5 space-y-0.5">
-                      {approvalNeed.reasons.map((r) => (
+                      {shownApprovalReasons.map((r) => (
                         <li key={r} className="text-2xs leading-snug text-ink-3">· {r}</li>
                       ))}
                     </ul>
                   )}
+                  {/* R-2028 (3): which line has no cost — named even while the approval waits. */}
+                  {missingCostLines.length > 0 && approvalRec?.status !== "not_required" && (
+                    <p className="mt-1.5 text-2xs leading-snug text-ink-3" data-testid="missing-cost-reason">· {missingCostReason(missingCostLines)}</p>
+                  )}
                   <div className="mt-2 flex flex-wrap gap-2">
+                    {missingCostLines.length > 0 && (
+                      <Button size="sm" variant="default" asChild>
+                        <Link href={addCostHref(quote.id, missingCostLines[0].lineNo) as never}>Add cost</Link>
+                      </Button>
+                    )}
                     {approvalRec?.status !== "pending" && (
                       <Button
                         size="sm"
@@ -2178,7 +2195,7 @@ export default function QuoteDetailPage() {
           quoteId={quote.id}
           quoteLabel={quote.id}
           economics={approvalEconomics}
-          requirement={approvalNeed}
+          requirement={{ ...approvalNeed, reasons: shownApprovalReasons }}
           record={approvalRec}
           viewer={{ id: me.userId, role: me.role }}
         />

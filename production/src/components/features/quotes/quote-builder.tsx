@@ -105,6 +105,8 @@ import {
 import { slabPricing, nextSlabUpsell } from "@/lib/quotes/volume-tiers";
 import { lineCostUnknown, fillUnknownCosts } from "@/lib/quotes/line-cost";
 import { matchCatalogItemForPlan } from "@/lib/quotes/lead-plan-match";
+import { linesMissingCost } from "@/lib/quotes/missing-cost-reason";
+import { CatalogMatchSuggestion } from "./catalog-match-suggestion";
 import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice, markOneTimeLines } from "@/lib/quotes/line-commit-choice";
 import { leadLinePrice } from "./lead-line-commitment";
 import { leadSeatCount } from "@/lib/quotes/seat-lines";
@@ -530,6 +532,9 @@ function QuoteBuilderBody() {
      Refs, not state: they steer the effects below and never render anything. */
   const costPendingRef = React.useRef<Set<string>>(new Set());
   const costTypedRef   = React.useRef<Set<string>>(new Set());
+  /* R-2028: typed lines linked to a catalogue row by "Use cost ₹X" — their typed price is
+     never re-priced by a catalogue (re)load (R-2178). */
+  const typedPriceRef  = React.useRef<Set<string>>(new Set());
 
   // No react-hook-form here, so "dirty" is defined explicitly: a line item
   // added, or a customer chosen. Deliberately NOT every keystroke — a quote
@@ -575,6 +580,8 @@ function QuoteBuilderBody() {
     }
     setLineItems((prev) => prev.map((l) => {
       if (!l.item_id || l.bulk) return l;
+      /* R-2028: a typed line linked by "Use cost ₹X" keeps the price the user typed. */
+      if (typedPriceRef.current.has(l.id)) return l;
       const it = catalog.find((c) => c.id === l.item_id);
       if (!it) return l;
       /* R-369: "annualRate" is the line's STORED unit — the year on an annual line, one
@@ -934,6 +941,8 @@ function QuoteBuilderBody() {
      uses (lib/quotes/line-cost.ts), so the builder and the approval never disagree. */
   const costUnknown       = lineCostUnknown;
   const costlessLines     = lineItems.filter(costUnknown);
+  /* R-2028 (3): the same lines, by their number on the quote. */
+  const missingCost       = linesMissingCost(lineItems);
   /* One-tap product chips for an empty quote, from the lead's interest. */
   const planChips         = suggestPlanProducts(catalog, leadPlan);
   const chipSeats         = leadSeats && parseInt(leadSeats, 10) > 0 ? parseInt(leadSeats, 10) : null;
@@ -1202,18 +1211,61 @@ function QuoteBuilderBody() {
   const updateAdjustable = (id: string, patch: Partial<QuoteLineItem>) => {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   };
+  /** The item's real USD tier and rate when this quote bills on it (else the ₹ catalogue path). */
+  const catalogUsdFor = (it: (typeof catalog)[number]) => {
+    const usd = it.prices?.usd;
+    const fx = exchangeRate && exchangeRate > 0 ? exchangeRate : 1;
+    return (currency ?? "INR").toUpperCase() === "USD" && usdPricingBasis === "international" && usd && usd.msrp > 0
+      ? { msrp: usd.msrp, wholesale: usd.wholesale, fx }
+      : null;
+  };
+  /* R-2028 (1): a hand-typed line's cost from the catalogue row it matches — the same
+     catalogLineListRate every catalogue-linked line is priced through, for the line's commitment. */
+  const typedLineCatalogCost = (item: (typeof catalog)[number], line: QuoteLineItem) =>
+    catalogLineListRate(item, line.commitment, catalogUsdFor(item)).cost;
+  /** "Use cost ₹X": link the catalogue item and fill its cost. The typed sell price (rate) and
+   *  its list price stay as typed — R-2178: a typed price is never changed silently. */
+  const linkCatalogItem = (lineId: string, item: (typeof catalog)[number]) => {
+    costTypedRef.current.delete(lineId);
+    costPendingRef.current.delete(lineId);
+    typedPriceRef.current.add(lineId);
+    setLineItems((s) => s.map((l) => {
+      if (l.id !== lineId || l.item_id) return l;
+      const cost = typedLineCatalogCost(item, l);
+      if (!(cost > 0)) return l;
+      return { ...l, item_id: item.id, cost, list_rate: l.list_rate ?? l.rate };
+    }));
+    toast.success(`Linked to ${item.name}`, { description: "Cost filled from your catalogue. Your price is unchanged." });
+  };
+  /* R-2028 (3): "Add cost" — open and focus a line's cost box. Both layouts render it; the
+     visible one wins (the phone card folds it inside "More"). */
+  const focusLineCost = React.useCallback((lineId: string) => {
+    const boxes = [...document.querySelectorAll<HTMLInputElement>("input[data-cost-line]")]
+      .filter((b) => b.dataset.costLine === lineId);
+    if (boxes.length === 0) return false;
+    const box = boxes.find((b) => b.getClientRects().length > 0) ?? boxes[boxes.length - 1];
+    const fold = box.closest("details");
+    if (fold && !fold.open) fold.open = true;
+    box.scrollIntoView?.({ block: "center" });
+    box.focus();
+    box.select?.();
+    return true;
+  }, []);
+  /* ?addCost=<line number> — the quote screen's "Add cost" (lib/quotes/missing-cost-reason.ts). */
+  const addCostLineNo = Number(searchParams.get("addCost") ?? "");
+  const addCostDone = React.useRef(false);
+  React.useEffect(() => {
+    if (!(addCostLineNo >= 1) || addCostDone.current) return;
+    const target = lineItems[addCostLineNo - 1];
+    if (!target) return;
+    if (focusLineCost(target.id)) addCostDone.current = true;
+  }, [addCostLineNo, lineItems, focusLineCost]);
   const updateCommitment = (id: string, commitment: LineCommitment | null) => {
     /* R-389 (F4): "One-time" = no commitment — record_payment makes no subscription for it.
        A typed (custom) line keeps its rate: a one-time price has no per-month / per-year unit.
        R-1668: a CATALOGUE line is re-priced to the catalogue price once per unit — it used to
        keep its ×12 annual rate, so a ₹199 migration stayed ₹2,388 a seat on a One-time line. */
-    const usdFor = (it: (typeof catalog)[number]) => {
-      const usd = it.prices?.usd;
-      const fx = exchangeRate && exchangeRate > 0 ? exchangeRate : 1;
-      return (currency ?? "INR").toUpperCase() === "USD" && usdPricingBasis === "international" && usd && usd.msrp > 0
-        ? { msrp: usd.msrp, wholesale: usd.wholesale, fx }
-        : null;
-    };
+    const usdFor = catalogUsdFor;
     if (commitment === null) {
       setLineItems((s) => s.map((l) => {
         if (l.id !== id) return l;
@@ -1749,22 +1801,32 @@ function QuoteBuilderBody() {
         <div className="mb-3 flex items-start gap-2.5 rounded-lg border border-amber/60 bg-amber-soft p-3.5 text-xs shadow-sm">
           <Icon name="alert" size={18} className="shrink-0 text-amber-ink" />
           <div className="min-w-0 flex-1">
+            {/* R-2028 (3): name the line by its number, and "Add cost" opens its cost box. */}
             <b className="text-amber-ink">
-              {costlessLines.length === 1
-                ? `"${costlessLines[0].name}" has no cost, so the margin below is not real.`
-                : `${costlessLines.length} lines have no cost, so the margin below is not real.`}
+              {missingCost.length === 1
+                ? `Line ${missingCost[0].lineNo} "${missingCost[0].name}" has no cost, so the margin below is not real.`
+                : `Lines ${missingCost.map((m) => m.lineNo).join(", ")} have no cost, so the margin below is not real.`}
             </b>
             <p className="mt-0.5 text-ink-2">
               These plans have no catalogue row, so what the vendor charges is unknown — the quote is
-              showing 100% margin on them. Add them to the catalogue, or type the cost on each line.
+              showing 100% margin on them. Use the catalogue match under the line, or type the cost on each line.
             </p>
-            <button
-              type="button"
-              onClick={() => router.push("/items" as any)}
-              className="mt-1.5 inline-flex items-center gap-1.5 rounded-md border border-hairline bg-paper px-2.5 py-1 text-2xs font-semibold text-ink hover:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
-            >
-              Open catalogue
-            </button>
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => focusLineCost(missingCost[0].id)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-amber/60 bg-paper px-2.5 py-1 text-2xs font-semibold text-amber-ink hover:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+              >
+                Add cost
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/items" as any)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-hairline bg-paper px-2.5 py-1 text-2xs font-semibold text-ink hover:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+              >
+                Open catalogue
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2405,6 +2467,7 @@ function QuoteBuilderBody() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="font-medium text-sm text-ink">{line.name}<OptionalTag line={line} /></div>
+                      <CatalogMatchSuggestion line={line} catalog={catalog} costFor={typedLineCatalogCost} onUse={(it) => linkCatalogItem(line.id, it)} />
                       {line.bulk && line.domains && line.domains.length > 0 && (
                         <button
                           type="button"
@@ -2521,6 +2584,7 @@ function QuoteBuilderBody() {
                     <span>Cost {isUsdBill ? "$" : "₹"}</span>
                     <input
                       aria-label={`Cost for ${line.name}`}
+                      data-cost-line={line.id}
                       type="number" min={0} step={isUsdBill ? "0.01" : "1"}
                       value={isUsdBill ? Number((displayCost / fxRate).toFixed(2)) : displayCost}
                       onChange={(e) => { const v = parseFloat(e.target.value) || 0; updateCost(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * lineDiv); }}
@@ -2591,6 +2655,7 @@ function QuoteBuilderBody() {
                   <tr key={line.id} className="border-b border-hairline last:border-0">
                     <td className="p-3">
                       <div className="font-medium text-sm text-ink">{line.name}<OptionalTag line={line} /></div>
+                      <CatalogMatchSuggestion line={line} catalog={catalog} costFor={typedLineCatalogCost} onUse={(it) => linkCatalogItem(line.id, it)} />
                       {line.bulk && line.domains && line.domains.length > 0 && (
                         <button
                           type="button"
@@ -2604,6 +2669,7 @@ function QuoteBuilderBody() {
                         <span>Cost {isUsdBill ? "$" : "₹"}</span>
                         <input
                           aria-label={`Cost for ${line.name}`}
+                      data-cost-line={line.id}
                           type="number"
                           min={0}
                           step={isUsdBill ? "0.01" : "1"}
