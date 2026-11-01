@@ -161,6 +161,8 @@ const ADDED_25OCT_COPILOT = ["/marketing/copilot"];
  *  the page by URL (OFF_MENU_ROLES); now the row admits it. */
 const ADDED_31OCT_TEAM_CHAT = ["/team-chat"];
 const TEAM_CHAT_ROLES = ["owner", "manager", "sales", "sales_senior", "billing", "delivery", "accountant", "support", "marketing"];
+/** R-2013 (G-DPDP, 2 Nov 2026): Settings → Privacy Requests — owner / manager (RLS + RPC check the same). */
+const ADDED_2NOV_PRIVACY_REQUESTS = ["/settings/privacy-requests"];
 const removedFor = (role: string) => REMOVED_3OCT[role] ?? [];
 const addedFor = (role: string) => [
   ...(role === "owner" || role === "manager" ? ADDED_3OCT_OM : []),
@@ -186,6 +188,7 @@ const addedFor = (role: string) => [
   ...(["owner", "marketing", "billing", "accountant"].includes(role) ? ADDED_23OCT_BUDGET : []),
   ...(["owner", "manager", "marketing"].includes(role) ? ADDED_25OCT_COPILOT : []),
   ...(TEAM_CHAT_ROLES.includes(role) ? ADDED_31OCT_TEAM_CHAT : []),
+  ...(role === "owner" || role === "manager" ? ADDED_2NOV_PRIVACY_REQUESTS : []),
   ...(role === "personal" ? ADDED_30OCT_PERSONAL_HOME : ADDED_FOR_EVERY_ROLE),
 ];
 
