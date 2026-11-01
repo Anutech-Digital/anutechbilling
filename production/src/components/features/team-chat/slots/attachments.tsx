@@ -32,6 +32,7 @@ import { useUploadChatFile } from "@/lib/queries/team-chat";
 import { createClient } from "@/lib/supabase/client";
 import { CHAT_MAX_ATTACHMENTS } from "@/lib/team-chat/types";
 import {
+  CHAT_FILE_BUCKET,
   CHAT_FILE_MAX_BYTES,
   CHAT_FILE_TOO_LARGE,
   checkChatFile,
@@ -142,6 +143,18 @@ function addFiles(files: File[], { channelId, draft }: Pick<ComposerSlotProps, "
   }
 }
 
+/**
+ * R-2332: a file taken out of the composer is deleted from storage with the user's own session.
+ * The storage rule allows it only for the uploader and only while the file is on no message, so
+ * this can never pull a sent file. Best effort: if it fails, the file is on no message and the
+ * rule hides it from everyone but its uploader and the owner.
+ */
+function dropStored(path: string) {
+  void Promise.resolve()
+    .then(() => createClient().storage.from(CHAT_FILE_BUCKET).remove([path]))
+    .catch(() => undefined);
+}
+
 function usePending(channelId: string): PendingFile[] {
   return React.useSyncExternalStore(subscribe, () => getPending(channelId), () => EMPTY);
 }
@@ -192,7 +205,7 @@ function FilesBar({ channelId, draft, setDraft, setBlocking }: ComposerSlotProps
       upload
         .mutateAsync({ channelId, file: p.file })
         .then((att) => {
-          if (!isPending(channelId, p.id)) { revoke(p.preview); return; } // removed while uploading
+          if (!isPending(channelId, p.id)) { revoke(p.preview); dropStored(att.path); return; } // removed while uploading
           if (p.preview) previews.set(att.path, p.preview);
           setPending(channelId, (list) => list.filter((x) => x.id !== p.id));
           setDraft((d) => ({ ...d, attachments: [...d.attachments, att] }));
@@ -223,6 +236,7 @@ function FilesBar({ channelId, draft, setDraft, setBlocking }: ComposerSlotProps
     revoke(previews.get(path));
     previews.delete(path);
     setDraft((d) => ({ ...d, attachments: d.attachments.filter((a) => a.path !== path) }));
+    dropStored(path);
   };
   const removePending = (p: PendingFile) => {
     revoke(p.preview);

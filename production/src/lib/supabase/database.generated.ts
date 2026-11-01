@@ -2749,6 +2749,27 @@ export type Database = {
           },
         ]
       }
+      chat_upload_tickets: {
+        Row: {
+          created_at: string
+          path: string
+          tenant_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          path: string
+          tenant_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          path?: string
+          tenant_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       loans_given: {
         Row: {
           bank_txn_id: string | null
@@ -15338,6 +15359,13 @@ export type Database = {
         }
         Returns: string
       }
+      chat_stored_file: {
+        Args: { p_path: string }
+        Returns: {
+          mime: string
+          size_bytes: number
+        }[]
+      }
       chat_unread_counts: {
         Args: never
         Returns: {
@@ -15345,6 +15373,14 @@ export type Database = {
           mentions: number
           unread: number
         }[]
+      }
+      chat_upload_ticket_close: {
+        Args: { p_path: string }
+        Returns: undefined
+      }
+      chat_upload_ticket_open: {
+        Args: { p_path: string; p_user_id: string }
+        Returns: undefined
       }
       claim_customer: { Args: { p_customer_id: string }; Returns: undefined }
       combine_quotes: { Args: { p_quote_ids: string[] }; Returns: Json }

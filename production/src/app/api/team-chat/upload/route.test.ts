@@ -12,11 +12,38 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { newFakeDb, fakeServerModule, signInAs, TENANT_A, type FakeDb } from "@/test/fake-route-db";
 
-const h = vi.hoisted(() => ({ db: null as unknown as FakeDb }));
+type Err = { message: string; code?: string } | null;
+const h = vi.hoisted(() => ({ db: null as unknown as FakeDb, ticketError: null as Err, uploadError: null as Err }));
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: () => fakeServerModule(h.db).createClient(),
+  createClient: () => {
+    const c = fakeServerModule(h.db).createClient();
+    /* R-2332: let a test make storage refuse the upload (the rule without a ticket would). */
+    return {
+      ...c,
+      storage: {
+        from: (bucket: string) => {
+          const b = c.storage.from(bucket);
+          return {
+            ...b,
+            upload: async (path: string): Promise<{ error: Err }> => (h.uploadError ? { error: h.uploadError } : b.upload(path)),
+          };
+        },
+      },
+    };
+  },
   createAdminClientFor: () => fakeServerModule(h.db).createAdminClientFor(),
-  createAdminClient: () => fakeServerModule(h.db).createAdminClient(),
+  createAdminClient: () => {
+    const c = fakeServerModule(h.db).createAdminClient();
+    const rpc = c.rpc;
+    /* R-2332: the ticket RPCs answer on their own (is_chat_member keeps h.db.rpcResult). */
+    c.rpc = async (fn: string, args: unknown) => {
+      const out = await rpc(fn, args);
+      if (fn === "chat_upload_ticket_open") return { data: null, error: h.ticketError };
+      if (fn === "chat_upload_ticket_close") return { data: null, error: null };
+      return out;
+    };
+    return c;
+  },
 }));
 
 import { POST } from "./route";
@@ -49,6 +76,8 @@ const uploads = () => h.db.writes.filter(([, , op]) => op === "upload");
 
 beforeEach(() => {
   h.db = newFakeDb();
+  h.ticketError = null;
+  h.uploadError = null;
   h.db.rpcResult = { data: true, error: null }; // is_chat_member → true unless a test says no
 });
 
@@ -160,6 +189,43 @@ describe("team chat upload — stored path (R-2297)", () => {
     expect(out).toMatchObject({ fileName: "Quote Oct (final).pdf", mime: "application/pdf", sizeBytes: PDF.length });
     // the caller's own session, so the storage rule (member + uploader) decides too
     expect(uploads()).toEqual([["user", "documents", "upload", out.path]]);
+  });
+
+  it("R-2332: the upload rides on a one-time ticket — opened (service role) for the exact path before the upload, closed after", async () => {
+    const res = await call(PDF, "bill.pdf", "application/pdf");
+    expect(res.status).toBe(200);
+    const { path } = await res.json();
+    const steps = h.db.writes
+      .filter(([who, what, op]) => op === "upload" || (who === "admin" && op === "rpc") || what === "is_chat_member")
+      .map(([who, what, op, arg]) => [who, op === "upload" ? "upload" : what, arg]);
+    expect(steps).toEqual([
+      ["user", "is_chat_member", { p_channel_id: CH }],
+      ["admin", "chat_upload_ticket_open", { p_user_id: "u-sales", p_path: path }],
+      ["user", "upload", path],
+      ["admin", "chat_upload_ticket_close", { p_path: path }],
+    ]);
+  });
+
+  it("R-2332: no ticket → 500 with a plain message, nothing stored", async () => {
+    h.ticketError = { message: "permission denied for function chat_upload_ticket_open", code: "42501" };
+    const res = await call(PDF, "bill.pdf", "application/pdf");
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Could not store the file. Try again.");
+    expect(uploads()).toHaveLength(0);
+  });
+
+  it("R-2332: a refused upload still closes its ticket", async () => {
+    h.uploadError = { message: "new row violates row-level security policy" };
+    const res = await call(PDF, "bill.pdf", "application/pdf");
+    expect(res.status).toBe(500);
+    expect(h.db.writes.filter(([who, what]) => who === "admin" && what === "chat_upload_ticket_close")).toHaveLength(1);
+  });
+
+  it("R-2332: a non-member never gets a ticket", async () => {
+    h.db.rpcResult = { data: false, error: null };
+    const res = await call(PDF, "bill.pdf", "application/pdf");
+    expect(res.status).toBe(403);
+    expect(h.db.writes.filter(([who]) => who === "admin")).toHaveLength(0);
   });
 
   it("a PNG and a Word .docx are stored with their real type", async () => {

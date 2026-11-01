@@ -15,10 +15,15 @@
  *   - the first bytes must be what the type says (a fake PDF is refused).
  * The upload goes through the CALLER's own session, so the storage rule
  * (public.storage_object_allowed, chat branch) checks membership again and records the caller
- * as the file's owner — which is what lets the uploader delete it later. No admin client.
+ * as the file's owner — which is what lets the uploader delete it later.
+ * R-2332: the service role is used for ONE thing — a single-use upload ticket for the exact path
+ * (public.chat_upload_ticket_open / _close), opened only after every check above. The storage rule
+ * refuses a chat-folder upload without it, so these checks cannot be skipped by uploading
+ * straight to storage. The bytes themselves still go up with the caller's session.
  * Files are opened through 5-minute signed URLs (chat-files.ts), never a public URL.
  */
 import { withRoute, RouteError } from "@/lib/api/with-route";
+import { createAdminClient } from "@/lib/supabase/server";
 import { logDbError } from "@/lib/errors/db-error";
 import { BodyTooLargeError, readBytesCapped } from "@/server/postgrest/body-limit";
 import type { UserRole } from "@/lib/auth/roles";
@@ -47,7 +52,7 @@ export const POST = withRoute(
     roles: CHAT_ROLES,
     roleHint: "Team chat is only for staff logins of this workspace.",
   },
-  async ({ req, supabase, tenantId }) => {
+  async ({ req, supabase, tenantId, user }) => {
     let form: FormData;
     try {
       const raw = await readBytesCapped(req, CHAT_FILE_MAX_BYTES + MULTIPART_SLACK_BYTES);
@@ -76,9 +81,25 @@ export const POST = withRoute(
     }
 
     const path = chatFilePath(tenantId, channelId, file.name);
-    const { error: upErr } = await supabase.storage
-      .from(CHAT_FILE_BUCKET)
-      .upload(path, Buffer.from(bytes), { upsert: false, contentType: check.mime });
+
+    /* R-2332: the storage rule takes a chat upload only with a ticket for its exact path, and only
+       this route (service role) can open one — so a browser cannot push other bytes, or a bigger
+       file, straight into a chat folder. Single-use: closed as soon as the upload is over. */
+    const admin = createAdminClient();
+    const { error: ticketErr } = await admin.rpc("chat_upload_ticket_open", { p_user_id: user.id, p_path: path });
+    if (ticketErr) {
+      logDbError("team-chat:upload:ticket", ticketErr);
+      throw new RouteError(500, "Could not store the file. Try again.");
+    }
+    let upErr: unknown = null;
+    try {
+      ({ error: upErr } = await supabase.storage
+        .from(CHAT_FILE_BUCKET)
+        .upload(path, Buffer.from(bytes), { upsert: false, contentType: check.mime }));
+    } finally {
+      const { error: closeErr } = await admin.rpc("chat_upload_ticket_close", { p_path: path });
+      if (closeErr) logDbError("team-chat:upload:ticket-close", closeErr);
+    }
     if (upErr) {
       /* Storage's own text names the bucket and the tenant-foldered path — log only (R-880). */
       logDbError("team-chat:upload", upErr);

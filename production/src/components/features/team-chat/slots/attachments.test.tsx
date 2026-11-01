@@ -19,7 +19,8 @@ vi.mock("@/lib/queries/team-chat", () => ({
   useUploadChatFile: () => ({ mutateAsync: upload }),
 }));
 const createSignedUrl = vi.fn(async (path: string, _sec: number) => ({ data: { signedUrl: `/signed/${path}?t=${Math.random()}` }, error: null }));
-const from = vi.fn((_bucket: string) => ({ createSignedUrl }));
+const remove = vi.fn(async (_paths: string[]) => ({ data: [], error: null }));
+const from = vi.fn((_bucket: string) => ({ createSignedUrl, remove }));
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ storage: { from } }) }));
 
 import { Composer } from "../composer";
@@ -60,6 +61,7 @@ beforeEach(() => {
   mutate.mockReset();
   upload.mockReset();
   createSignedUrl.mockClear();
+  remove.mockClear();
   from.mockClear();
   (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = vi.fn((b: Blob) => `blob:${(b as File).name}`);
   (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = vi.fn();
@@ -172,6 +174,41 @@ describe("R-2301 composer — attach files", () => {
     fireEvent.change(box(), { target: { value: "hi" } });
     fireEvent.click(sendBtn());
     expect(mutate.mock.calls[0][0].attachments).toEqual([]);
+  });
+
+  /* R-2332 (R-2305 audit #5): a removed file used to stay in storage, readable by the channel. */
+  it("R-2332: removing an uploaded chip deletes that file from storage (own session), and only that one", async () => {
+    const up = controlledUploads();
+    renderComposer();
+    pick([pdf("keep.pdf"), pdf("drop.pdf")]);
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
+    await up.finishAll();
+    fireEvent.click(screen.getByRole("button", { name: "Remove drop.pdf" }));
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
+    expect(from).toHaveBeenCalledWith("documents");
+    expect(remove).toHaveBeenCalledWith([`t/chat/${CH}/u_drop.pdf`]);
+  });
+
+  it("R-2332: a file removed while uploading is deleted from storage when its upload lands", async () => {
+    const up = controlledUploads();
+    renderComposer();
+    pick([pdf("slow.pdf")]);
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Remove slow.pdf" }));
+    expect(remove).not.toHaveBeenCalled();
+    await up.finishAll();
+    await waitFor(() => expect(remove).toHaveBeenCalledWith([`t/chat/${CH}/u_slow.pdf`]));
+  });
+
+  it("R-2332: sending does not delete the sent files", async () => {
+    const up = controlledUploads();
+    renderComposer();
+    pick([pdf("sent.pdf")]);
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    await up.finishAll();
+    fireEvent.click(sendBtn());
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("a file over 10 MB and a refused type each say why, per file; the good one still uploads", async () => {
