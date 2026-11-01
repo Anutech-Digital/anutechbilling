@@ -25,7 +25,7 @@ import { SubDrawerDangerZone, SubDrawerNonRenewing } from "./sub-drawer-actions"
 const SUB = {
   id: "sub-1", customer_name: "E2E Test Co", plan: "Business Starter", outstanding_amount: 0,
   start_date: "2025-12-16", quote_id: "Q-1", renewal_quote_id: null,
-  status: "active", auto_renew: true, renewal_date: "2026-12-15",
+  status: "active" as const, auto_renew: true, renewal_date: "2026-12-15" as string | null,
 };
 
 beforeEach(() => { cancelMutate.mockReset(); nrMutate.mockReset(); });

@@ -84,7 +84,8 @@ export function SubDrawerActions({
  */
 export function SubDrawerNonRenewing({ sub, onUndo, undoing }: {
   sub: NonRenewingFields;
-  onUndo: () => void;
+  /** Only for the roles that may undo it (owner / manager / accountant) — else no button. */
+  onUndo?: () => void;
   undoing: boolean;
 }) {
   if (!isNonRenewing(sub)) return null;
@@ -96,9 +97,11 @@ export function SubDrawerNonRenewing({ sub, onUndo, undoing }: {
           <p className="mt-1.5 text-2xs leading-snug text-ink-2">{nonRenewingNote(sub)}</p>
           <p className="mt-1 text-2xs leading-snug text-ink-3">No renewal quote or reminder goes out. It ends after this date.</p>
         </div>
-        <Button size="sm" icon="refresh" onClick={onUndo} loading={undoing} className="shrink-0">
-          Undo Won&apos;t renew
-        </Button>
+        {onUndo && (
+          <Button size="sm" icon="refresh" onClick={onUndo} loading={undoing} className="shrink-0">
+            Undo Won&apos;t renew
+          </Button>
+        )}
       </div>
     </div>
   );

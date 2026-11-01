@@ -1863,13 +1863,12 @@ export default function SubscriptionsPage() {
               <SubDrawerNonRenewing
                 sub={scheduleSub}
                 undoing={setNonRenewing.isPending}
-                onUndo={() => {
-                  if (!canNonRenew) { toast.error("Only an owner, manager or accountant can undo Won't renew."); return; }
+                onUndo={canNonRenew ? () => {
                   const sub = scheduleSub;
                   setNonRenewing.mutate({ id: sub.id, on: false }, {
                     onSuccess: () => setScheduleSub({ ...sub, auto_renew: true, non_renew_reason: null, non_renew_said_on: null }),
                   });
-                }}
+                } : undefined}
               />
               <SubDrawerActions
                 hasCustomer={!!scheduleSub.customer_id}
