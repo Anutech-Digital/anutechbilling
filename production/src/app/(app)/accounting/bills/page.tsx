@@ -60,6 +60,7 @@ import { istToday, fyBounds } from "@/lib/dates/ist";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { BILL_SORT, billOutstanding, filterBills, readBillsView, type BillStatusFilter } from "./bills-table";
 import { useAddBillFromUrl } from "./add-from-url";
+import { ImportBillsDialog } from "./import-bills-dialog";
 import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
 import { cogsBillAdvanceView } from "@/lib/accounting/vendor-account";
 import { useApplyVendorAdvance, useUndoVendorAdvance } from "@/lib/queries/vendor-advance";
@@ -90,6 +91,8 @@ export default function VendorBillsPage() {
   /* R-118: in the URL, so the Outstanding tile (and a link) can open the owed bills. */
   const [statusFilter, setStatusFilter] = useUrlChoice<BillStatusFilter>("status", BILL_STATUSES, "");
   const [addOpen, setAddOpen] = React.useState(false);
+  /* R-2324: many bills at once from a CSV (Zoho Books export or the simple template). */
+  const [importOpen, setImportOpen] = React.useState(false);
   /* R-1511: "Record a bill" on a vendor lands here with ?add=1&vendor=<id> — open Add Bill
      with that vendor filled in. Manual "Add Bill" opens it empty (prefill cleared on close). */
   const [addPrefill, setAddPrefill] = React.useState<VendorBillPrefill | undefined>(undefined);
@@ -204,14 +207,14 @@ export default function VendorBillsPage() {
             <span className="block mt-0.5 text-[12px] text-ink-3">Office/overhead bills (stationery, your own software, rent) go in <b>Expenses</b> instead.</span>
           </p>
         </div>
-        <Button
-          variant="primary"
-          icon="plus"
-          className="hidden md:inline-flex"
-          onClick={() => setAddOpen(true)}
-        >
-          Add Bill
-        </Button>
+        <div className="hidden md:flex items-center gap-2">
+          <Button variant="default" icon="upload" onClick={() => setImportOpen(true)}>
+            Import bills
+          </Button>
+          <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
+            Add Bill
+          </Button>
+        </div>
       </div>
 
       {/* Bills that arrived at billing@ and have not been posted yet. Above the
@@ -295,6 +298,7 @@ export default function VendorBillsPage() {
       <FAB icon="plus" label="Bill" onClick={() => setAddOpen(true)} ariaLabel="Add Bill" />
 
       {/* Add dialog */}
+      <ImportBillsDialog open={importOpen} onOpenChange={setImportOpen} />
       {addOpen && <AddVendorBillDialog prefill={addPrefill} onClose={() => { setAddOpen(false); setAddPrefill(undefined); }} />}
       {payBill && <PayBillDialog bill={payBill} onClose={() => setPayBill(null)} />}
       {detailBill && <BillDetailDialog bill={detailBill} onClose={() => setDetailBill(null)} />}
