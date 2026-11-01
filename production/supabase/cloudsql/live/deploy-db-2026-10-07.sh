@@ -358,6 +358,7 @@ MIGS=(
   "r2011formconsent|20261101203103_r2011_form_consent.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'consent_events' and column_name = 'form') and exists(select 1 from pg_constraint where conname = 'consent_events_source_check' and pg_get_constraintdef(oid) like '%form%')"
   "r2039leadairuns|20261101205400_r2039_lead_ai_runs.sql|resellersos_migration|to_regclass('public.lead_ai_runs') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'leads' and column_name = 'ai_status_at')"
   "r2017storageanon|20261101211500_r2017_storage_anon_grants.sql|postgres|(to_regclass('storage.objects') is not null and not has_table_privilege('anon', 'storage.objects', 'INSERT') and not has_table_privilege('anon', 'storage.objects', 'TRUNCATE') and not has_table_privilege('authenticated', 'storage.objects', 'TRUNCATE'))"
+  "r2013privacyrequests|20261101215539_r2013_privacy_requests.sql|resellersos_migration|to_regclass('public.privacy_requests') is not null and to_regprocedure('public.privacy_request_verify(uuid,uuid,text)') is not null and to_regprocedure('public.privacy_request_action(uuid,text,text)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
