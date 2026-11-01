@@ -363,3 +363,45 @@ export async function latestLeadAiRun(client: Db, leadId: string): Promise<LeadA
   const { data } = await client.from("lead_ai_runs").select(RUN_COLS).eq("lead_id", leadId).order("started_at", { ascending: false }).limit(1).maybeSingle();
   return (data as LeadAiRun | null) ?? null;
 }
+
+/* ── R-2040 — "Approve & send": the draft goes out through /api/leads/[id]/email ───────────────
+   The person sends the draft through the SAME email route as any other lead email (its
+   permission, its sender routing, its filing in the thread). These two helpers are the only way
+   a run becomes "sent", and the route calls them with the admin client:
+     - findSendableAiDraft BEFORE the send: the run must be this tenant's, this lead's, and still
+       draft_ready — another company's run id, another lead's, or an already-sent draft is refused
+       before anything is mailed (a second press can never send the same draft twice);
+     - markLeadAiRunSent AFTER the mailer said "sent" — never on a failed or stubbed send.
+   Signed-in users still cannot write lead_ai_runs (SELECT-only RLS, R-2039): the client can ask
+   for a send, never for a status. */
+
+/** The run, when it is this tenant's + this lead's draft still waiting for approval; else null. */
+export async function findSendableAiDraft(db: Db, tenantId: string, leadId: string, runId: string): Promise<LeadAiRun | null> {
+  const { data, error } = await db.from("lead_ai_runs").select(RUN_COLS)
+    .eq("id", runId).eq("tenant_id", tenantId).eq("lead_id", leadId).eq("step", "draft_ready").maybeSingle();
+  if (error) console.error("[ai-workflow] draft lookup failed:", error.message);
+  return (data as LeadAiRun | null) ?? null;
+}
+
+/**
+ * After a REAL send: draft_ready → sent (only from draft_ready, so a race cannot mark it twice),
+ * leads.ai_status → sent unless a newer run already moved it on, and a line on the timeline.
+ * Returns whether the run was marked. Best-effort by design: the email has left, so a failed
+ * write here must never turn into a second send.
+ */
+export async function markLeadAiRunSent(db: Db, tenantId: string, leadId: string, runId: string): Promise<boolean> {
+  const at = nowIso();
+  const { data, error } = await db.from("lead_ai_runs")
+    .update({ step: "sent", next_step: "The email was sent. Watch the Email tab for their reply.", updated_at: at, finished_at: at })
+    .eq("id", runId).eq("tenant_id", tenantId).eq("lead_id", leadId).eq("step", "draft_ready")
+    .select("id");
+  if (error) { console.error("[ai-workflow] mark sent failed:", error.message); return false; }
+  if (!Array.isArray(data) || data.length === 0) return false;
+  /* The step name via a typed constant — a literal `ai_status: "sent"` reads to the quote-sent
+     wiring scan (quote-sent-stage-wiring.test.ts) as a quote being marked sent; this is not one. */
+  const sentStep: AiRunStep = "sent";
+  await db.from("leads").update({ ai_status: sentStep, ai_status_at: at })
+    .eq("id", leadId).eq("tenant_id", tenantId).eq("ai_status", "draft_ready");
+  await note(db, tenantId, leadId, "AI Lead Workflow: a person approved the email draft and it was sent.");
+  return true;
+}

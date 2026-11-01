@@ -40,6 +40,7 @@ import { nextActionFor, type NextAction } from "@/lib/leads/next-action";
 import { LeadDetailsTab } from "@/components/features/leads/lead-detail-details-tab";
 import { LeadActivityTab } from "@/components/features/leads/lead-detail-activity-tab";
 import { LeadEmailTab } from "@/components/features/leads/lead-detail-email-tab";
+import { LeadAiDraftCard, type AiDraft } from "@/components/features/leads/lead-ai-draft-card";
 import { LeadFollowupsTab } from "@/components/features/leads/lead-detail-followups-tab";
 import { LeadDetailFooter } from "@/components/features/leads/lead-detail-footer";
 import { LeadDetailHeader } from "@/components/features/leads/lead-detail-header";
@@ -143,6 +144,8 @@ export function LeadDetailSheet({
      control: two ways to be on the email view would have drifted apart, and the tab is the
      one a URL or a keyboard could ever reach. */
   const [emailComposerOpen, setEmailComposerOpen] = React.useState(false);
+  /* R-2040: set when the composer was opened from the AI draft card ("Review & send"). */
+  const [aiDraft, setAiDraft] = React.useState<AiDraft | null>(null);
   /* ── Which tab a lead opens on ─────────────────────────────────────────────
      Was always "details". Moving the tabs to the top was half the fix for
      "Follow-ups and Conversation should be first"; this is the other half — the
@@ -170,6 +173,7 @@ export function LeadDetailSheet({
   const autoPickedFor = React.useRef<string | null>(null);
   React.useEffect(() => {
     setEmailComposerOpen(false);
+    setAiDraft(null);
     autoPickedFor.current = null;
   }, [lead?.id]);
 
@@ -358,6 +362,7 @@ export function LeadDetailSheet({
       toast.error("No email on this lead — add one with Edit, then you can write to them from here.");
       return;
     }
+    setAiDraft(null);
     setEmailComposerOpen(true);
   };
 
@@ -685,6 +690,15 @@ export function LeadDetailSheet({
               It renders after Activity in source rather than before it, so that the reply
               composer below can stay where it is instead of being lifted over 200 lines of
               JSX. Tab ORDER is set by the array in the strip, not by this. */}
+          {/* R-2040: the AI Lead Workflow's email draft (R-2039), on top of the thread it would
+              join — "Review & send" opens the same composer pre-filled; nothing auto-sends. */}
+          {drawerTab === "email" && (
+            <LeadAiDraftCard
+              leadId={lead.id}
+              hasEmail={Boolean(lead.contact_email)}
+              onReview={(d) => { setAiDraft(d); setEmailComposerOpen(true); }}
+            />
+          )}
           {drawerTab === "email" && (
             <LeadEmailTab
               lead={lead}
@@ -754,6 +768,7 @@ export function LeadDetailSheet({
           contactName={lead.contact_name}
           plan={lead.plan}
           senderName={currentUser?.tenantName ?? null}
+          draft={aiDraft}
         />
       )}
 

@@ -28,6 +28,7 @@ import { createAdminClientFor } from "@/lib/supabase/server";
 import { withRoute } from "@/lib/api/with-route";
 import { sendCustomerEmail } from "@/lib/messaging";
 import { SENT_REPLY_STATUS } from "@/lib/inbound/sent";
+import { findSendableAiDraft, markLeadAiRunSent } from "@/lib/leads/ai-workflow.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,6 +37,10 @@ const bodySchema = z.object({
   subject: z.string().trim().min(1).max(300),
   /* Long enough for a real first email, bounded so a paste-bomb cannot be relayed. */
   body:    z.string().trim().min(1).max(20_000),
+  /* R-2040: "Approve & send" on an AI Lead Workflow draft. The text is whatever the person
+     approved (they may have edited it) and goes through this route exactly like any other lead
+     email; the id only says WHICH run to mark sent — and only after the mailer said "sent". */
+  aiRunId: z.string().uuid().optional(),
 });
 
 /* R-732: an email to a lead needs the can_contact_customers permission (every internal role;
@@ -65,6 +70,19 @@ export const POST = withRoute({
       { error: "This lead has no email address, so there is nowhere to send. Open the lead and add one with Edit." },
       { status: 422 },
     );
+  }
+
+  /* R-2040 — checked BEFORE anything is mailed: the run must be this tenant's, this lead's, and
+     still waiting for approval. Another company's run, another lead's, or a draft already sent
+     is refused here, so a stale screen or a forged id can neither mark a run nor send twice. */
+  if (parsed.aiRunId) {
+    const draft = await findSendableAiDraft(admin as never, tenantId, lead.id, parsed.aiRunId);
+    if (!draft) {
+      return NextResponse.json(
+        { error: "This AI draft is no longer waiting to be sent on this lead — it may have been sent already. Nothing was sent. Close this box and open the lead again to see its latest status." },
+        { status: 409 },
+      );
+    }
   }
 
   const sent = await sendCustomerEmail({
@@ -113,6 +131,16 @@ export const POST = withRoute({
     logged = !logErr;
   }
 
+  /* R-2040 — the AI run becomes "sent" only here, after a REAL send (not failed, not stubbed). */
+  let aiRunSent = false;
+  if (parsed.aiRunId && sent.status === "sent") {
+    try {
+      aiRunSent = await markLeadAiRunSent(admin as never, tenantId, lead.id, parsed.aiRunId);
+    } catch (err) {
+      console.error("[api/leads/[id]/email] marking the AI run sent failed:", err);
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     /* "stubbed" means no provider is configured and NOTHING left. Reported so the screen
@@ -122,5 +150,7 @@ export const POST = withRoute({
     /* Reported rather than assumed, so the screen can say "sent, but not filed" instead of
        implying both worked. */
     logged,
+    /* R-2040: whether the AI draft's run was marked sent (only when aiRunId was passed). */
+    ...(parsed.aiRunId ? { aiRunSent } : {}),
   });
 });
