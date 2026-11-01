@@ -62,6 +62,12 @@ export function tdsSectionName(section: string | null | undefined): string {
   return TDS_SECTION_RATES[s]?.label ?? s;
 }
 
+/** R-2343: the section a new entry opens on — the vendor's saved Default TDS section (old plain
+ *  194J = 194J(b)), else "" (No TDS). The app never picks one the owner did not set. */
+export function vendorTdsPrefill(vendorDefault: string | null | undefined): string {
+  return normalizeTdsSection(vendorDefault);
+}
+
 /** R-2338: the section whose threshold applies — the three 194J choices (and old 194J) share 194J's. */
 export function tdsThresholdSection(section: string | null | undefined): string {
   const s = (section ?? "").trim().toUpperCase();
