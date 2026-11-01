@@ -550,14 +550,15 @@ function PayBillDialog({ bill, onClose }: { bill: VendorBill; onClose: () => voi
           {/* R-2335: TDS — the same line as Reconcile (R-2320). */}
           {inr && (
             <div className="rounded-md border border-hairline bg-paper p-2.5 space-y-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <label htmlFor="bills-tds-section" className="text-xs font-medium text-ink-2">TDS deducted</label>
+              {/* R-2345: min-w-0 + flex-1 + truncate so a long section (194C …) can't widen the dialog. */}
+              <div className="flex min-w-0 items-center gap-2">
+                <label htmlFor="bills-tds-section" className="shrink-0 text-xs font-medium text-ink-2">TDS deducted</label>
                 <select id="bills-tds-section" aria-label="TDS section" value={sec} onChange={(e) => { setSection(e.target.value); setNoTds(!e.target.value); }}
-                  className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber">
+                  className="w-full min-w-0 flex-1 truncate rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber">
                   <option value="">No TDS</option>
                   {TDS_PICK_SECTIONS.map((s) => <option key={s} value={s}>{tdsSectionOption(s)}</option>)}
                 </select>
-                {tds.tds > 0 && <span className="text-xs text-ink">{rupee(tds.tds)}</span>}
+                {tds.tds > 0 && <span className="shrink-0 text-xs text-ink">{rupee(tds.tds)}</span>}
               </div>
               {sec && partPaid && sec !== "194Q" && tds.tds === 0 && (
                 <p className="text-xs text-ink-3">TDS on this bill goes with its first payment — this part is paid without TDS.</p>
