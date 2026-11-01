@@ -17,6 +17,7 @@ import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Database, VendorBillRow } from "@/lib/supabase/database.types";
 import { billItcEligibility } from "@/lib/gst/bill-itc";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
+import { payVendorBillArgs } from "@/lib/accounting/bill-pay-tds";
 
 type VendorBillInsert = Database["public"]["Tables"]["vendor_bills"]["Insert"];
 type VendorBillUpdate = Database["public"]["Tables"]["vendor_bills"]["Update"];
@@ -192,19 +193,21 @@ export function useUpdateVendorBill() {
 export function usePayVendorBill() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { billId: string; amount: number; paidOn: string; bankAccountId: string; method?: string | null }) => {
+    /* R-2335: `amount` leaves the bank; the bill is settled by amount + TDS (the 8-argument
+       pay_vendor_bill, migration 20261101071500 — same rules as Reconcile, R-2320). */
+    mutationFn: async (input: {
+      billId: string; amount: number; paidOn: string; bankAccountId: string; method?: string | null;
+      tds?: number; tdsSection?: string | null; tdsOverride?: string | null;
+    }) => {
       const supabase = createClient();
-      const { error } = await supabase.rpc("pay_vendor_bill", {
-        p_bill_id:         input.billId,
-        p_amount:          Math.round(input.amount),
-        p_paid_on:         input.paidOn,
-        p_bank_account_id: input.bankAccountId,
-        p_method:          input.method ?? null,
-      });
+      const args = payVendorBillArgs({ ...input, tds: input.tds ?? 0, tdsSection: input.tdsSection ?? null });
+      /* The 8-argument form is not in the generated types yet. */
+      const { error } = await supabase.rpc("pay_vendor_bill", args as never);
       if (error) throw new Error(error.message);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["vendor_bills"] });
+      qc.invalidateQueries({ queryKey: ["expenses", "vendor-tds-fy"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
       qc.invalidateQueries({ queryKey: ["bank_accounts"] });
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
