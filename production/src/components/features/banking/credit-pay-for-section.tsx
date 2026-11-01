@@ -687,7 +687,7 @@ function SaleEditor({ customerDomain, lines, catalog, gstRate, preview, payment,
         const unit = shownPriceUnit(l);
         const termWord = l.cycle === "annual_yearly" ? " a year" : l.cycle === "monthly" ? " a month" : "";
         return (
-          <div key={idx} className="rounded-md border border-hairline bg-paper p-2.5 space-y-2">
+          <div key={l.key ?? idx} className="rounded-md border border-hairline bg-paper p-2.5 space-y-2">
             <div className="flex items-start justify-between gap-2">
               <p className="text-sm font-medium text-ink break-words min-w-0">{l.name}</p>
               <button type="button" onClick={() => onRemove(idx)} aria-label={`Remove ${l.name}`} className="text-ink-3 hover:text-rose shrink-0">
@@ -719,15 +719,20 @@ function SaleEditor({ customerDomain, lines, catalog, gstRate, preview, payment,
               </label>
             </div>
             <TypedPriceNote line={l} onChange={(patch) => onChange(idx, patch)} />
-            {/* R-2095 (Sept): Zoho bills per end-domain — a subscription line names its own; empty = the customer's. */}
-            {l.cycle !== "one_time" && (
-              <label className="block text-xs text-ink-3 space-y-0.5">
+            {/* R-2095 (Sept): Zoho bills per end-domain — a subscription line names its own; empty = the customer's.
+                R-2216 (July): EVERY line has the box (optional on a one-time line), so the boxes follow Zoho's
+                line order one-to-one and a domain is never typed onto the next subscription line. */}
+            <div className="text-xs text-ink-3 space-y-0.5">
+              <label className="block space-y-0.5">
                 <span className="block">End domain</span>
                 <Input value={l.domain ?? ""} onChange={(e) => onChange(idx, { domain: e.target.value })}
-                  placeholder={customerDomain ? `${customerDomain} (customer's domain)` : "example.com"} aria-label="End domain" />
-                {saleLineDomainProblem(l.domain) && <span className="block text-rose-ink">{saleLineDomainProblem(l.domain)}</span>}
+                  placeholder={l.cycle === "one_time" ? "Optional — example.com" : customerDomain ? `${customerDomain} (customer's domain)` : "example.com"} aria-label="End domain" />
               </label>
-            )}
+              {saleLineDomainProblem(l.domain) && <p className="text-rose-ink">{saleLineDomainProblem(l.domain)}</p>}
+              {l.cycle === "one_time" && (l.domain ?? "").trim() !== "" && (
+                <p>One-time: no subscription is filed, so this domain is not saved.</p>
+              )}
+            </div>
             <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(shownUnitPrice(l), { decimals: Number.isInteger(shownUnitPrice(l)) ? 0 : 2 })}{unit.replace(/^₹/, "")} = {rupee(l.qty * l.rate)}{termWord}</p>
           </div>
         );
