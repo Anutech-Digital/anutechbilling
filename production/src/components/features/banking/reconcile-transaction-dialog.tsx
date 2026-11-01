@@ -71,6 +71,7 @@ import { isRazorpaySettlementLine } from "@/lib/razorpay/settlement-match";
 import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-section";
 import { EmiRepaymentSection } from "@/components/features/banking/emi-repayment-section";
 import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
+import { CustomerRefundSection } from "@/components/features/banking/customer-refund-section";
 import { OtherIncomeSection } from "@/components/features/banking/other-income-section";
 import { OwnTransferSection } from "@/components/features/banking/own-transfer-section";
 import { IncentiveFromBankSection } from "@/components/features/banking/incentive-from-bank-section";
@@ -835,6 +836,10 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     if (!transaction) return null;
     switch (t) {
       case "customer":
+        /* R-2322: on a money-out line the Customer refund tile — money paid back to a customer. */
+        if (!isCredit) {
+          return <CustomerRefundSection transaction={transaction} customers={customers ?? []} onDone={() => onOpenChange(false)} />;
+        }
         /* R-1838: "This money is for:" — renewal / add seats / new-product quote, unpaid invoice,
            or a new sale — booked through record_payment. Project money keeps its own section. */
         return showProject ? (

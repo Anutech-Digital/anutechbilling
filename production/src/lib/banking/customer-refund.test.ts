@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  guessRefundCustomer, pickDefaultRefundItem, refundItemLabel, refundItemProblem, refundReasonProblem,
+  defaultRefundReason, guessRefundCustomer, pickDefaultRefundItem, refundItemLabel, refundItemProblem, refundReasonProblem,
   type RefundableItem,
 } from "./customer-refund";
 
@@ -67,5 +67,12 @@ describe("guessRefundCustomer", () => {
     expect(guessRefundCustomer("NEFT SYSTEMS UPGRADE", customers)).toBeNull();
     expect(guessRefundCustomer("NOVOGUILD ACME", customers)).toBeNull();
     expect(guessRefundCustomer(null, customers)).toBeNull();
+  });
+});
+
+describe("defaultRefundReason", () => {
+  it("names what is refunded, so the voucher says it without typing", () => {
+    expect(defaultRefundReason(cn)).toBe("Refund of credit note CN-ANU-26-0007 on INV-ANU-26-0042");
+    expect(defaultRefundReason(adv)).toBe("Refund of unused advance RV-0050");
   });
 });

@@ -77,3 +77,10 @@ export function guessRefundCustomer(
   }
   return hits.size === 1 ? [...hits][0] : null;
 }
+
+/** A reason the operator can keep or edit (smart default; printed on the refund voucher). */
+export function defaultRefundReason(i: RefundableItem): string {
+  return i.kind === "credit_note"
+    ? `Refund of ${i.credit_notes ? `credit note ${i.credit_notes}` : "credit-note credit"} on ${i.invoice_id ?? "the invoice"}`
+    : `Refund of unused advance${i.voucher_no ? ` ${i.voucher_no}` : ""}`;
+}
