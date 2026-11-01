@@ -429,6 +429,7 @@ export function LeadDetailSheet({
           confirm={confirm}
           changeStage={changeStage}
           onClose={onClose}
+          onOpenEmailTab={() => setDrawerTab("email")}
         />
 
         {/* ── Tabs, PINNED ─────────────────────────────────────────────────────

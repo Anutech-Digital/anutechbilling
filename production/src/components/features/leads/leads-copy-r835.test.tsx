@@ -8,6 +8,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { render, screen, cleanup } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
@@ -19,14 +20,17 @@ afterEach(cleanup);
 
 const board = (noun?: "lead" | "deal") =>
   render(
-    <LeadsKanbanBoard
-      boardLeads={[]}
-      stages={DEAL_STAGES.filter((s) => s.id === "new" || s.id === "contact")}
-      changeStage={vi.fn() as never}
-      setSelected={() => {}}
-      setAddOpen={() => {}}
-      noun={noun}
-    />,
+    /* R-2042: the board reads its cards' AI badges with one query (empty board → no read). */
+    <QueryClientProvider client={new QueryClient()}>
+      <LeadsKanbanBoard
+        boardLeads={[]}
+        stages={DEAL_STAGES.filter((s) => s.id === "new" || s.id === "contact")}
+        changeStage={vi.fn() as never}
+        setSelected={() => {}}
+        setAddOpen={() => {}}
+        noun={noun}
+      />
+    </QueryClientProvider>,
   );
 
 describe("R-835: the board speaks the page's word", () => {

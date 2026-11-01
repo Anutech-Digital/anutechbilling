@@ -29,6 +29,7 @@ import {
 } from "@/components/features/leads/lead-list-grid";
 import { RowActions } from "@/components/features/leads/lead-row-actions";
 import { CloseDateBadge } from "@/components/features/leads/close-date-badge";
+import { LeadAiStatusBadge } from "@/components/features/leads/lead-ai-status";
 
 type TeamMember = NonNullable<ReturnType<typeof useTeamMembers>["data"]>[number];
 
@@ -52,12 +53,14 @@ export interface LeadListRowProps {
   onSendQuote: (l: LeadListRow) => void;
   onFollowUp: (l: LeadListRow) => void;
   onWhatsApp?: (l: LeadListRow) => void;
+  /** R-2042: leads.ai_status (useLeadAiStatuses in the list view) — the "AI: …" badge. */
+  aiStatus?: string | null;
 }
 
 export function LeadListRow({
   lead, rowIndex, selectedIds, leadKeys, selectedLeadRef, onRowClick, toggleId, openTaskByLead,
   firstReplies, nowForWait, leadQuotes, planCosts, updateLead, ownerById, dupIds, onMerge,
-  onSendQuote, onFollowUp, onWhatsApp,
+  onSendQuote, onFollowUp, onWhatsApp, aiStatus,
 }: LeadListRowProps) {
     const isSelected  = selectedIds.has(lead.id);
     // Heat → visual hierarchy. High-value (big money) wins the emerald
@@ -268,6 +271,8 @@ export function LeadListRow({
                   {contactLines.email}
                 </span>
               ) : null}
+              {/* R-2042: own line, so it never pushes the name into an ellipsis. */}
+              {aiStatus ? <div className="mt-0.5"><LeadAiStatusBadge status={aiStatus} /></div> : null}
               {/* Contact ka naam aur phone 26 Aug 2026 ko yahan se NIKAL kar apne
                   column me gaye the ("jaise excel sheet banti hai"). Naam 29 Aug ko
                   wapas AAYA — par pehchan bankar, ek line ke roop me nahi; aur phone
