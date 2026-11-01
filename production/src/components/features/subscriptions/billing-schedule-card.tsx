@@ -35,6 +35,8 @@ import { subscriptionEnded } from "@/lib/subscriptions/renewal-display";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenRoute } from "@/lib/nav";
 import { InvoicePeekDialog } from "./invoice-peek-dialog";
+import { partRequestFor, partRequestChipText, type OpenPartRequest } from "@/lib/billing/part-request-dues";
+import { paymentDueState } from "@/lib/subscriptions/payment-due";
 
 export function BillingScheduleCard({ subscription, todayISO }: {
   subscription: Subscription;
@@ -86,7 +88,8 @@ export function BillingScheduleCard({ subscription, todayISO }: {
       title="Billing schedule"
       sub={`${commitmentLabel(subscription.term_months)} · Payment frequency: ${paidEvery}`}
     >
-      <ScheduleTable rows={current} todayISO={todayISO} label={ended ? "Billing dates (ended)" : "This term"} invoiced={invoiced} showNext={!ended} extras={extras} />
+      <ScheduleTable rows={current} todayISO={todayISO} label={ended ? "Billing dates (ended)" : "This term"} invoiced={invoiced} showNext={!ended} extras={extras}
+        requests={inv?.requests ?? []} subscriptionId={subscription.id} />
 
       {next.length > 0 && (
         <div className="mt-4 border-t border-hairline pt-4">
@@ -104,7 +107,7 @@ export function BillingScheduleCard({ subscription, todayISO }: {
 
 const EMPTY = new Map<number, ScheduleInvoice>();
 
-function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true, extras = [] }: {
+function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true, extras = [], requests = [], subscriptionId }: {
   rows: ReturnType<typeof subscriptionSchedule>;
   todayISO: string;
   label: string;
@@ -114,6 +117,9 @@ function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true
   showNext?: boolean;
   /** R-1683: the add-seats invoices raised inside this term — listed under its billing dates. */
   extras?: AddSeatInvoice[];
+  /** R-2230: open part payment requests — a row with one shows what is due and by when. */
+  requests?: readonly OpenPartRequest[];
+  subscriptionId?: string;
 }) {
   /* R-1683: invoiced rows count their invoice's own figure; the term's add-seats invoices are added. */
   const total = shownTermTotal(rows, invoiced, extras);
@@ -135,7 +141,10 @@ function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true
       <ul className="divide-y divide-hairline">
         {rows.map((p) => {
           const inv = invoiced.get(p.index);
-          const past = !inv && p.billOn < todayISO;
+          const req = !inv && subscriptionId
+            ? partRequestFor(requests, { subscriptionId, termStart: rows[0]?.periodStart, periodIndex: p.index })
+            : undefined;
+          const past = !inv && !req && p.billOn < todayISO;
           const isNext = p.index === nextIndex;
           const dim = !!inv || past;
           return (
@@ -145,6 +154,7 @@ function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true
                   {formatDate(p.billOn)}
                   {isNext && <Badge kind="warning" size="sm" className="ml-2">next</Badge>}
                   {inv && <InvoicedChip inv={inv} />}
+                  {req && <PartRequestChip req={req} todayISO={todayISO} />}
                   {past && <span className="ml-2 text-3xs uppercase tracking-wider text-ink-3">date passed</span>}
                 </p>
                 <p className="text-2xs text-ink-3">
@@ -173,6 +183,16 @@ function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true
         ))}
       </ul>
     </div>
+  );
+}
+
+/** R-2230: "Payment request Q-… · ₹1,632 due 16 Nov 2026" — red once it is overdue. */
+export function PartRequestChip({ req, todayISO }: { req: OpenPartRequest; todayISO: string }) {
+  const state = paymentDueState(req.due_on, todayISO, req.still_due);
+  return (
+    <span className="ml-2">
+      <Badge kind={state.kind === "overdue" ? "danger" : "warning"} size="sm">{partRequestChipText(req, todayISO)}</Badge>
+    </span>
   );
 }
 

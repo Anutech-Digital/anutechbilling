@@ -12,6 +12,8 @@ import { guardErrorToast } from "@/lib/ui/guard-toast";
 import { createClient } from "@/lib/supabase/client";
 import type { BillingCycle, Subscription } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { fetchOpenPartRequests } from "@/lib/queries/payments";
+import type { OpenPartRequest } from "@/lib/billing/part-request-dues";
 import { rupee } from "@/lib/utils";
 
 export function useSubscriptions() {
@@ -434,6 +436,9 @@ export function useScheduleInvoices(sub: Pick<Subscription, "id" | "quote_id"> |
         }
       }
       const inv = (id: string | null) => (id ? byId.get(id) : undefined);
+      /* R-2230: this subscription's open part payment requests — the schedule shows each one's
+         amount still due and its due date. Unavailable (DB not updated yet) → none shown. */
+      const requests: OpenPartRequest[] = await fetchOpenPartRequests(supabase, { subscriptionId: sub!.id }).catch(() => []);
 
       type Inv = { invoiceId: string; status: string; exGst: number };
       let sale: Inv | null = null;
@@ -464,6 +469,7 @@ export function useScheduleInvoices(sub: Pick<Subscription, "id" | "quote_id"> |
           part_ex_gst: r.taxable_amount ?? null,   // R-2101: this subscription's share of a combined invoice
         })),
         saleQuote,
+        requests,
       };
     },
   });

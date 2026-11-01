@@ -14,9 +14,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/lib/errors/toast-error";
-import { rupee } from "@/lib/utils";
+import { rupee, formatDate } from "@/lib/utils";
 import { CREDIT_DEFAULT_LIMIT, effectiveCreditLimit, owedOnInvoices, NEEDS_DB_UPDATE_MESSAGE } from "@/lib/credit/activate-on-credit";
-import { useCustomerOpenInvoices, useUpdateCustomerCredit } from "@/lib/credit/queries";
+import { useCustomerOpenInvoices, useCustomerOpenPartRequests, useUpdateCustomerCredit } from "@/lib/credit/queries";
+import { unpaidNow } from "@/lib/billing/part-request-dues";
 
 interface Props {
   customer: { id: string; allow_pay_later?: boolean | null; credit_limit?: number | null };
@@ -39,6 +40,8 @@ export function CreditSettingsCard({ customer, isOwner }: Props) {
   const [limitText, setLimitText] = React.useState(savedLimit === null ? "" : String(savedLimit));
   const update = useUpdateCustomerCredit();
   const { data: openInvoices } = useCustomerOpenInvoices(customer.id, dbReady);
+  /* R-2230: open part payment requests count as unpaid too — the same sum the credit-limit check uses. */
+  const { data: partRequests } = useCustomerOpenPartRequests(customer.id, dbReady);
 
   React.useEffect(() => {
     setAllow(savedAllow);
@@ -56,7 +59,10 @@ export function CreditSettingsCard({ customer, isOwner }: Props) {
   const parsed = parseCreditLimit(limitText);
   const limitOk = parsed !== undefined;
   const dirty = allow !== savedAllow || (limitOk && parsed !== savedLimit);
-  const owed = openInvoices ? owedOnInvoices(openInvoices) : null;
+  const unpaid = openInvoices && partRequests !== undefined
+    ? unpaidNow(owedOnInvoices(openInvoices), partRequests ?? [])
+    : null;
+  const owed = unpaid?.total ?? null;
   const limit = effectiveCreditLimit(savedLimit);
 
   const onSave = () => {
@@ -95,7 +101,13 @@ export function CreditSettingsCard({ customer, isOwner }: Props) {
         </div>
         {owed !== null && (
           <p className="text-xs text-ink-3">
-            Unpaid invoices now: <b className="text-ink-2">{rupee(owed)}</b>
+            Unpaid now: <b className="text-ink-2">{rupee(owed)}</b>
+            {unpaid && unpaid.requests > 0 && (
+              <>
+                {" "}(invoices {rupee(unpaid.invoices)} + payment requests {rupee(unpaid.requests)}
+                {unpaid.requestsDueFrom ? `, due from ${formatDate(unpaid.requestsDueFrom)}` : ""})
+              </>
+            )}
             {owed > limit && <span className="text-rose"> · above the limit</span>}
           </p>
         )}

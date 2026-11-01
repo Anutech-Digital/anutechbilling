@@ -354,6 +354,7 @@ MIGS=(
   "r2225navbadgesnonrenewing|20261101135057_r2225_nav_badges_non_renewing.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.nav_badges(text[])') and prosrc like '%R-2225%')"
   "r2228correctdetailslock|20261101145415_r2228_correct_details_money_lock.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_subscription_data(uuid,integer,integer,text)') and prosrc like '%R-2228%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_subscription_terms(uuid,text,integer,integer,text)') and prosrc like '%R-2228%')"
   "r2232navbadgesflexparts|20261101165305_r2232_nav_badges_flex_parts.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.nav_badges(text[])') and prosrc like '%R-2232%')"
+  "r2230partduedates|20261101184900_r2230_part_due_dates.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscription_billings' and column_name = 'due_on') and to_regprocedure('public.open_part_requests(uuid,uuid)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%R-2230%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') and prosrc like '%R-2230%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

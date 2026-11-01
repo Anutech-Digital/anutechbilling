@@ -30,7 +30,8 @@ import {
   activateQuoteOnCredit, NeedsDatabaseUpdateError,
   annualLineNames, annualCreditDecision, ANNUAL_OVERRIDE_MIN_REASON, splitBillingCreditEligibility,
 } from "@/lib/credit/activate-on-credit";
-import { useCustomerOpenInvoices } from "@/lib/credit/queries";
+import { useCustomerOpenInvoices, useCustomerOpenPartRequests } from "@/lib/credit/queries";
+import { partRequestsOwed } from "@/lib/billing/part-request-dues";
 import { quoteSeatCount } from "@/lib/quotes/seat-lines";
 
 interface Props {
@@ -58,7 +59,11 @@ export function ActivateOnCreditDialog({ open, onOpenChange, quote, customer, ro
   const [overrideAnnual, setOverrideAnnual] = React.useState(false);
   const [overrideReason, setOverrideReason] = React.useState("");
   const [saving, setSaving] = React.useState(false);
-  const { data: openInvoices, isLoading: loadingOwed, error: owedError } = useCustomerOpenInvoices(customer.id, open);
+  const { data: openInvoices, isLoading: loadingInvoices, error: invoicesError } = useCustomerOpenInvoices(customer.id, open);
+  /* R-2230: open part payment requests are owed too — activate_quote_on_credit counts them. */
+  const { data: partRequests, isLoading: loadingRequests, error: requestsError } = useCustomerOpenPartRequests(customer.id, open);
+  const loadingOwed = loadingInvoices || loadingRequests;
+  const owedError = invoicesError ?? requestsError;
 
   React.useEffect(() => {
     if (open) { setDays(String(initialDays)); setApprove(false); setOverrideAnnual(false); setOverrideReason(""); }
@@ -67,8 +72,9 @@ export function ActivateOnCreditDialog({ open, onOpenChange, quote, customer, ro
   const nDays = Number(days);
   const daysOk = validCreditDays(nDays);
   const plan = daysOk ? planCredit(new Date(), nDays) : null;
-  const exposure = openInvoices
-    ? creditExposure({ openInvoices, quoteAmount: quote.amount, quoteInvoiceId: quote.invoice_id, creditLimit: customer.credit_limit })
+  const exposure = openInvoices && partRequests !== undefined
+    ? creditExposure({ openInvoices, quoteAmount: quote.amount, quoteInvoiceId: quote.invoice_id, creditLimit: customer.credit_limit,
+        partRequestsOwed: partRequestsOwed(partRequests ?? []) })
     : null;
   const decision = exposure ? overLimitDecision(exposure, role, rupee) : null;
   /* R-368: annual plans need payment first. Owner only: tick override + write why. */
