@@ -149,6 +149,22 @@ export function AddVendorBillDialog({
   const { data: vendors } = useVendors();
   const [vendorId, setVendorId] = React.useState<string | null>(null);
   const [vendorOpen, setVendorOpen] = React.useState(false);
+  // R-2342: the suggestion list is drawn OVER the fields below it, so it closes the moment the
+  // owner presses anywhere outside it (or focus leaves the vendor box) — never on a blur timer,
+  // which left it on screen to swallow the first click on Category.
+  const vendorBoxRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!vendorOpen) return;
+    const closeIfOutside = (e: Event) => {
+      if (!vendorBoxRef.current?.contains(e.target as Node)) setVendorOpen(false);
+    };
+    document.addEventListener("pointerdown", closeIfOutside, true);
+    document.addEventListener("mousedown", closeIfOutside, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeIfOutside, true);
+      document.removeEventListener("mousedown", closeIfOutside, true);
+    };
+  }, [vendorOpen]);
 
   // ── AI bill reader ────────────────────────────────────────────────────────
   // Upload a photo/PDF → Gemini extracts the fields → we PRE-FILL the form. The
@@ -527,7 +543,7 @@ export function AddVendorBillDialog({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormField label="Vendor name" required htmlFor="vendor_name">
-              <div className="relative">
+              <div className="relative" ref={vendorBoxRef}>
                 <Input
                   id="vendor_name"
                   placeholder="e.g. Google Cloud"
@@ -535,7 +551,9 @@ export function AddVendorBillDialog({
                   error={errors.vendor_name?.message}
                   {...register("vendor_name", { onChange: () => { setVendorId(null); setVendorOpen(true); } })}
                   onFocus={() => setVendorOpen(true)}
-                  onBlur={() => setTimeout(() => setVendorOpen(false), 130)}
+                  onBlur={(e) => {
+                    if (!vendorBoxRef.current?.contains(e.relatedTarget as Node | null)) setVendorOpen(false);
+                  }}
                 />
                 {vendorOpen && (vendors ?? []).length > 0 && (() => {
                   const q = (watch("vendor_name") || "").trim().toLowerCase();
