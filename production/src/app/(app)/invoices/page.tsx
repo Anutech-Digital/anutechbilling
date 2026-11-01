@@ -478,7 +478,7 @@ function InvoicesPageInner() {
                 {pendingSelected.size > 0 && (
                   <Button
                     size="sm"
-                    variant="primary"
+                    variant="outline"
                     icon="receipt"
                     loading={generating}
                     onClick={(e) => {
@@ -1173,12 +1173,12 @@ function InvoiceRow({
           const payDue = moneyDue && canRecordMoney(me?.role);
           return (
         <div className="flex gap-1 items-center justify-end">
-          {/* One contextual primary action keeps the column tight (no h-scroll).
-              Money-due invoices lead with Record payment; everything else with View. */}
+          {/* One contextual action keeps the column tight (no h-scroll).
+              Money-due invoices lead with Record payment; everything else with View.
+              R-2265: not primary — the page's one amber button is "New invoice". */}
           {payDue ? (
             <Button
               size="sm"
-              variant="primary"
               icon="rupee"
               onClick={() => (isProject ? setPayOpen(true) : setSubPayOpen(true))}
             >
@@ -1496,7 +1496,7 @@ function PendingRowAction({ act, busy, onWhole, onPart }: {
   if (act?.kind === "part") {
     return (
       <div className="inline-flex flex-col items-end gap-0.5">
-        <Button size="sm" variant="primary" icon="receipt" loading={busy} onClick={onPart}>
+        <Button size="sm" icon="receipt" loading={busy} onClick={onPart}>
           {`Generate invoice for ${act.part}${act.amount != null ? ` ${rupee(act.amount)}` : ""}`}
         </Button>
         {act.period && <span className="text-3xs text-ink-3 whitespace-nowrap">{act.period}</span>}
@@ -1504,7 +1504,7 @@ function PendingRowAction({ act, busy, onWhole, onPart }: {
     );
   }
   return (
-    <Button size="sm" variant="primary" icon="receipt" loading={busy} onClick={onWhole}>
+    <Button size="sm" icon="receipt" loading={busy} onClick={onWhole}>
       Generate
     </Button>
   );
