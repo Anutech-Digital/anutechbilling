@@ -8,6 +8,7 @@ import Link from "next/link";
 import { PARTNER_BADGE } from "@/site/lib/config";
 import type { BuyBrand, BuyContact } from "./brand";
 import { goTo } from "./wordmark";
+import { TenantLogo } from "./tenant-logo";
 
 export const NAV: ReadonlyArray<{ id: string; label: string }> = [
   { id: "plans", label: "Plans" },
@@ -36,14 +37,8 @@ export function BrandMark({ brand, pending = false }: { brand: BuyBrand | null; 
   const name = brand?.name ?? "Google Workspace";
   return (
     <Link href="/" className="flex items-center gap-2.5 min-w-0 no-underline text-ink" aria-label={`${name} home`}>
-      {brand?.logoUrl ? (
-        /* eslint-disable-next-line @next/next/no-img-element -- tenant logo, any host */
-        <img src={brand.logoUrl} alt="" className="h-9 w-9 shrink-0 rounded-lg object-contain bg-white" />
-      ) : (
-        <span aria-hidden className="h-9 w-9 shrink-0 rounded-lg bg-ink text-paper grid place-items-center font-serif text-xl">
-          {name.charAt(0).toUpperCase()}
-        </span>
-      )}
+      {/* R-1969: the real logo, or none (the name says who sells) — never a letter tile */}
+      <TenantLogo brand={brand} className="h-9 w-9 shrink-0 rounded-lg object-contain bg-white" />
       <span className="min-w-0">
         <span className="block font-serif text-[17px] leading-none truncate">{name}</span>
         <span className="block text-[11px] text-ink-3 mt-[3px] truncate">{PARTNER_BADGE}</span>

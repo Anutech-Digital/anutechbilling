@@ -12,6 +12,7 @@ import { CookieSettingsButton } from "@/site/components/chrome/ConsentBanner";
 import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 import { AFTER_PAY_STEPS } from "./plans";
 import { stateName, whatsappHref, type BuyBrand, type BuyContact } from "./brand";
+import { TenantLogo } from "./tenant-logo";
 
 const H2 = "font-serif font-normal text-[clamp(30px,3.6vw,42px)] leading-[1.1]";
 
@@ -169,21 +170,31 @@ export function SupportBand({ brand, contact, waMessage, onQuote }: { brand: Buy
   );
 }
 
+/* R-1969: the website's own legal pages (src/app/(marketing)/…). */
 export const FOOTER_LINKS = [
   { href: "/privacy-policy", label: "Privacy policy" },
-  { href: "/terms-and-conditions", label: "Terms of service" },
+  { href: "/terms-and-conditions", label: "Terms and conditions" },
   { href: "/refund", label: "Refund and cancellation" },
-  { href: "/contact", label: "Contact" },
+  { href: "/contact", label: "Contact us" },
 ] as const;
 
+/**
+ * R-1969: the same footer on the laptop page, the phone flow and the thank-you page — the legal
+ * links and the seller's registered name, address and GSTIN number, all from the tenant row.
+ */
 export function SiteFooter({ brand }: { brand: BuyBrand | null }) {
-  const legal = [brand?.address, brand?.gstin ? `GSTIN ${brand.gstin}` : null].filter(Boolean).join(" · ");
   return (
     <footer className="border-t border-hairline">
       <div className="max-w-[1200px] mx-auto px-4 sm:px-5 py-8 flex flex-wrap gap-5 justify-between">
-        <div className="text-[13px] text-ink-3 leading-[1.7] max-w-[560px] min-w-0">
-          {brand && <div className="font-serif text-base text-ink">{brand.name}</div>}
-          {legal && <div>{legal}</div>}
+        <div className="text-[13px] text-ink-3 leading-[1.7] max-w-[560px] min-w-0 break-words">
+          {brand && (
+            <div className="flex items-center gap-2.5 mb-1">
+              <TenantLogo brand={brand} alt={brand.name} className="h-8 w-8 shrink-0 rounded-lg object-contain bg-white" />
+              <span className="font-serif text-base text-ink">{brand.name}</span>
+            </div>
+          )}
+          {brand?.address && <div>Registered office: {brand.address}</div>}
+          {brand?.gstin && <div>GSTIN {brand.gstin}</div>}
           <div>
             Google Workspace and related marks are trademarks of Google LLC.
             {brand ? ` ${brand.name} is a Google Workspace reseller.` : ""}
