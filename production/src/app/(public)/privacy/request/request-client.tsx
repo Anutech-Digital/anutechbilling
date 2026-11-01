@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { cn } from "@/lib/utils";
 import { PRIVACY_REQUEST_KINDS, DPDP_RESPONSE_DAYS, type PrivacyRequestKind } from "@/lib/privacy/requests";
@@ -61,6 +62,7 @@ export function PrivacyRequestClient() {
     e.preventDefault();
     if (step.at !== "code") return;
     setError(null);
+    if (code.length !== 6) { setError("Enter the 6-digit code from the email."); return; }
     setBusy(true);
     try {
       const { ok, json } = await post("/api/public/privacy-request/verify", { requestId: step.requestId, code });
@@ -105,7 +107,8 @@ export function PrivacyRequestClient() {
                   value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} />
               </FormField>
               {error && <div role="alert" className="rounded-md border border-rose/40 bg-rose-soft px-3 py-2 text-sm text-rose-ink">{error}</div>}
-              <Button type="submit" variant="primary" className="w-full" loading={busy} disabled={code.length !== 6}>
+              <BusyPanel active={busy} title="Checking your code" steps={["Checking the code", "Sending your request to the company"]} />
+              <Button type="submit" variant="primary" className="w-full" loading={busy}>
                 Confirm my request
               </Button>
               <button type="button" className="w-full text-center text-xs text-ink-3 underline" onClick={() => { setStep({ at: "form" }); setCode(""); setError(null); }}>
@@ -164,6 +167,7 @@ export function PrivacyRequestClient() {
               <p className="text-xs text-ink-3">
                 We use these details only to answer this request. <a href="/privacy-policy#your-rights" className="underline">Your rights</a>
               </p>
+              <BusyPanel active={busy} title="Sending your request" steps={["Saving your request", "Emailing you a code"]} />
               {ts.widget}
               <Button type="submit" variant="primary" className="w-full" loading={busy}>
                 Email me a code
