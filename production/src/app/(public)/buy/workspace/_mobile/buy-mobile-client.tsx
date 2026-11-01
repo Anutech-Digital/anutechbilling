@@ -26,7 +26,8 @@ import { buildTiers, type CatalogItem } from "../_parts/tiers";
 import { useBuyCatalog } from "../_parts/use-buy-catalog";
 import { useActiveSitePromo, computeSitePromoDiscount, SitePromoBanner } from "../_parts/site-promo";
 import { orderTotals } from "../_parts/checkout-form";
-import { TestModeBar } from "../_parts/info-sections";
+import { TestModeBar, SiteFooter } from "../_parts/info-sections";
+import { TenantLogo } from "../_parts/tenant-logo";
 import { readMobileState, writeMobileState, continueHref, MOBILE_MAX_ONLINE, type MobileState, type Intent } from "./url-state";
 import { mobilePlans } from "./prices";
 import { PlansStep, licences } from "./plans-step";
@@ -66,12 +67,8 @@ function TopBar({ brand, pending, href }: { brand: BuyBrand | null; pending: boo
       <div className="max-w-[480px] mx-auto flex justify-between items-center gap-3 px-4 py-2">
         {!brand && pending ? <BrandSkeleton size="sm" /> : (
         <Link href="/" className="flex items-center gap-2.5 min-w-0 no-underline text-ink">
-          {brand?.logoUrl ? (
-            /* eslint-disable-next-line @next/next/no-img-element -- tenant logo, any host */
-            <img src={brand.logoUrl} alt="" className="h-8 w-8 shrink-0 rounded-lg object-contain bg-white" />
-          ) : (
-            <span aria-hidden className="h-8 w-8 shrink-0 rounded-lg bg-ink text-paper grid place-items-center font-serif text-[17px]">{name.charAt(0).toUpperCase()}</span>
-          )}
+          {/* R-1969: the real logo, or none (the name says who sells) — never a letter tile */}
+          <TenantLogo brand={brand} className="h-8 w-8 shrink-0 rounded-lg object-contain bg-white" />
           <span className="flex flex-col min-w-0">
             <span className="font-serif text-[15px] leading-tight truncate">{name}</span>
             <span className="text-xs text-ink-3 truncate">{PARTNER_BADGE}</span>
@@ -119,7 +116,7 @@ export function BuyMobileClient({ catalogItems = null, ...props }: MobileProps) 
       <ConsentBanner />
       {(props.paymentMode ?? "simulation") === "simulation" && <TestModeBar />}
       <TopBar brand={brand} pending={brandPending} href={helpHref} />
-      <main className="max-w-[480px] mx-auto pb-[160px]">
+      <main className="max-w-[480px] mx-auto pb-6">
         <div className="px-4 pt-6 flex flex-col gap-3">
           <h1 className="font-serif font-normal text-[30px] leading-tight m-0">Buy Google Workspace</h1>
           {loading ? (
@@ -150,6 +147,8 @@ export function BuyMobileClient({ catalogItems = null, ...props }: MobileProps) 
           )}
         </div>
       </main>
+      {/* R-1969: the buy page footer — legal links, registered name, address, GSTIN; the room below keeps it clear of the sticky bar */}
+      <div className="pb-[160px]"><SiteFooter brand={brand} /></div>
       {loading && (
         <div data-m-bar className="fixed inset-x-0 bottom-0 z-30 bg-white border-t border-hairline shadow-[0_-12px_24px_-16px_rgba(26,24,21,0.3)]">
           <div className="max-w-[480px] mx-auto px-4 pt-3 pb-[max(16px,env(safe-area-inset-bottom))] flex flex-col gap-1.5">
@@ -256,7 +255,7 @@ function BuyMobileBody({
       {paymentMode === "simulation" && <TestModeBar />}
       <TopBar brand={brand} pending={brandPending} href={helpHref} />
       {sitePromo && <SitePromoBanner promo={sitePromo} />}
-      <main className="max-w-[480px] mx-auto pb-[160px]">
+      <main className="max-w-[480px] mx-auto pb-6">
         {state.step === "compare" ? (
           <CompareStep plans={plans} onBack={() => update({ step: "plans" })} onChoose={(t) => { update({ step: "plans", tier: t }); trackFunnel("plan_selected", { tier: t, seats: state.seats, billing: state.billing }); }} />
         ) : plan ? (
@@ -282,6 +281,8 @@ function BuyMobileBody({
           </div>
         )}
       </main>
+      {/* R-1969: the buy page footer — legal links, registered name, address, GSTIN; the room below keeps it clear of the sticky bar */}
+      <div className="pb-[160px]"><SiteFooter brand={brand} /></div>
 
       {state.step === "plans" && plan && (
         <div data-m-bar data-testid="mobile-continue-bar" className="fixed inset-x-0 bottom-0 z-30 bg-white border-t border-hairline shadow-[0_-12px_24px_-16px_rgba(26,24,21,0.3)]">
