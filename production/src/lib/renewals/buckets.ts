@@ -7,6 +7,8 @@
  * (lib/hooks/nav-badge-parity.test.ts reads the SQL against them).
  */
 import { daysBetween } from "@/lib/utils";
+import { isSplitBilled } from "@/lib/billing/instalments";
+import type { BillingCycle } from "@/lib/supabase/database.types";
 
 /** Urgent = renews within this many IST days — or has already lapsed (in grace). */
 export const RENEWAL_URGENT_DAYS = 7;
@@ -21,6 +23,23 @@ export type RenewalBucket = "urgent" | "upcoming" | "future";
 /** Is this subscription on the renewals page at all? It needs a renewal date and must not be cancelled. */
 export function onRenewalsPage(s: { status: string; renewal_date: string | null }): boolean {
   return s.renewal_date !== null && s.status !== RENEWAL_EXCLUDED_STATUS;
+}
+
+/**
+ * R-2232 (Zoho audit A8): Renewals = end of commitment only. Is this a FLEX subscription's next
+ * part rather than a renewal? A 1-month term billed in parts has no commitment to end — the
+ * renewals cron rolls the term and the billing job raises the part's payment request (R-808,
+ * R-2044). Part date today or later only: once it has passed unbilled the row is listed again
+ * (Generate bills it — R-2095). A 1-month term NOT billed in parts renews by a renewal quote,
+ * so it stays a renewal row. nav_badges() 'renewals' leaves out the same rows.
+ */
+export function isFlexNextPart(
+  sub: { term_months?: number | null; billing_cycle?: string | null },
+  daysUntil: number,
+): boolean {
+  return (sub.term_months ?? 12) <= 1
+    && isSplitBilled((sub.billing_cycle ?? null) as BillingCycle | null)
+    && daysUntil >= 0;
 }
 
 /** Days from today (IST calendar days) to the renewal; negative = lapsed. */

@@ -325,4 +325,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2225nonrenewing", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.set_subscription_non_renewing(uuid,boolean,text,date)') and prosrc like '%R-2225%')" },
   { key: "r2225navbadgesnonrenewing", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.nav_badges(text[])') and prosrc like '%R-2225%')" },
   { key: "r2228correctdetailslock", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_subscription_data(uuid,integer,integer,text)') and prosrc like '%R-2228%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_subscription_terms(uuid,text,integer,integer,text)') and prosrc like '%R-2228%')" },
+  { key: "r2232navbadgesflexparts", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.nav_badges(text[])') and prosrc like '%R-2232%')" },
 ];

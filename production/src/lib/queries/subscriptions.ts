@@ -477,11 +477,12 @@ export function useScheduleInvoices(sub: Pick<Subscription, "id" | "quote_id"> |
 export function useOpenRenewalQuotes() {
   return useQuery({
     queryKey: ["quotes", "open-renewal"],
-    queryFn: async (): Promise<Array<{ id: string; notes: string | null }>> => {
+    /* R-2232: status too — a draft renewal quote reads "not sent yet", a sent one "Renewal sent". */
+    queryFn: async (): Promise<Array<{ id: string; notes: string | null; status: string | null }>> => {
       const supabase = createClient();
       return fetchAllRows((from, to) => supabase
         .from("quotes")
-        .select("id, notes")
+        .select("id, notes, status")
         .eq("is_renewal", true)
         .in("status", ["draft", "sent", "viewed", "accepted"])
         .in("payment_status", ["none", "awaiting", "partial"])
