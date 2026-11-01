@@ -16,6 +16,15 @@ export function recordPaymentBlock(q: PaymentApprovalFacts): { reason: string } 
   return paymentApprovalBlock(q);
 }
 
+/**
+ * R-2344: "Activate now, pay later" while the same block holds — the server
+ * (trg_subscriptions_quote_approval / trg_invoices_quote_approval) refuses it with this text.
+ * The credit sale only exists with no money in, so no "money already in" exception here.
+ */
+export function activateOnCreditBlock(q: PaymentApprovalFacts): { reason: string } | null {
+  return paymentApprovalBlock(q, "activate it");
+}
+
 /** What pressing Record payment does: the approval notice while blocked, else the form. */
 export function recordPaymentStep(block: { reason: string } | null): "notice" | "form" {
   return block ? "notice" : "form";

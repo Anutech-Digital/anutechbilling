@@ -68,9 +68,10 @@ export interface QuoteMoneyInput {
   approvalWait?: boolean;
 }
 
-/** R-2334: the step-box line while a below-cost quote waits for the owner's sign-off. */
+/** R-2334: the step-box line while a below-cost quote waits for the owner's sign-off.
+ *  R-2344: the server also refuses its invoice and "Activate now, pay later" until then. */
 export const APPROVAL_WAIT_NOTE =
-  "Waiting for the owner's approval. This quote is below cost — no payment can be taken until it is approved.";
+  "Waiting for the owner's approval. This quote is below cost — no payment, invoice or pay later activation until it is approved.";
 
 export type MoneyStage =
   /** Not sent yet — nothing to collect. */
@@ -113,7 +114,10 @@ export function quoteMoneyActions(q: QuoteMoneyInput, rupees: (n: number) => str
      While the R-2326 gate holds, the money row waits for the owner instead. A part payment
      request (R-2054) has no approval step; invoiced / closed rows take no money here anyway. */
   if (q.approvalWait && !q.partRequest && (out.stage === "open" || out.canRecordPayment)) {
-    return { ...out, note: APPROVAL_WAIT_NOTE, canRecordPayment: false, openRequest: null, openApproval: true };
+    /* R-2344: no "Invoice now" either — the invoices trigger refuses it. With money already in
+       (Razorpay) the server raises that invoice, so the button stays. */
+    const canGenerateInvoice = out.canGenerateInvoice && q.received > 0;
+    return { ...out, note: APPROVAL_WAIT_NOTE, canRecordPayment: false, canGenerateInvoice, openRequest: null, openApproval: true };
   }
   return out;
 }
