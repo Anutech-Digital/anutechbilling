@@ -13,6 +13,9 @@
  *   5. send shows the message at once (pending) and takes it back when the server refuses,
  *      with the server's plain message handed to toastError (§24);
  *   6. delete removes the returned files from storage; mark-read zeroes the badge at once.
+ *   7. R-2330: the 5 s poll reads ONLY the newest page (one request, no cursor) and merges it —
+ *      older pages are not re-read; "Load older" sends `created_at <= t` + the tie-break so the
+ *      index range-scans; more than a page of new messages drops the stale pages (no gap).
  */
 import * as React from "react";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
@@ -36,7 +39,7 @@ vi.mock("@/lib/supabase/client", () => {
     const ops: Op[] = [];
     h.calls.push({ table, ops });
     const chain: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "is", "or", "order", "limit", "in", "lt", "not"]) {
+    for (const m of ["select", "eq", "is", "or", "order", "limit", "in", "lt", "lte", "not"]) {
       chain[m] = (...a: unknown[]) => { ops.push([m, a]); return chain; };
     }
     chain.then = (ok: (v: Answer) => unknown, bad: (e: unknown) => unknown) =>
@@ -67,6 +70,7 @@ import {
   chatUnreadTotals,
   uploadChatFile,
   dmOtherUserId,
+  mergeNewestChatPage,
 } from "@/lib/queries/team-chat";
 import { CHAT_PAGE_SIZE, CHAT_POLL_MS, CHAT_UNREAD_POLL_MS, ChatError, type ChatMessagesPage, type ChatUnread } from "@/lib/team-chat/types";
 
@@ -89,6 +93,8 @@ function msg(i: number, channel = CH) {
 function serveMessages(all: ReturnType<typeof msg>[]) {
   h.tables.chat_messages = (ops) => {
     let rows = [...all].sort((a, b) => (a.created_at === b.created_at ? (a.id < b.id ? 1 : -1) : a.created_at < b.created_at ? 1 : -1));
+    const lte = ops.find(([m, a]) => m === "lte" && a[0] === "created_at")?.[1][1] as string | undefined;
+    if (lte) rows = rows.filter((r) => r.created_at <= lte);
     const or = ops.find(([m]) => m === "or")?.[1][0] as string | undefined;
     if (or) {
       const at = /created_at\.lt\."([^"]+)"/.exec(or)![1];
@@ -156,7 +162,10 @@ describe("cursor paging — 50 per page, older on demand", () => {
 
     await act(async () => { await result.current.fetchNextPage(); });
     await waitFor(() => expect(result.current.messages).toHaveLength(60));
-    const older = msgCalls().at(-1)!.ops.find(([m]) => m === "or")![1][0] as string;
+    const olderOps = msgCalls().at(-1)!.ops;
+    // R-2330: the range bound the (channel_id, created_at desc, id desc) index can scan from
+    expect(olderOps).toContainEqual(["lte", ["created_at", msg(10).created_at]]);
+    const older = olderOps.find(([m]) => m === "or")![1][0] as string;
     expect(older).toBe(`created_at.lt."${msg(10).created_at}",and(created_at.eq."${msg(10).created_at}",id.lt.${msg(10).id})`);
     expect(result.current.messages[0].body).toBe("m0");
     expect(result.current.messages[59].body).toBe("m59");
@@ -243,6 +252,82 @@ describe("polling only while the tab is visible", () => {
     expect(chatUnreadTotals([{ channel_id: CH, unread: 2, mentions: 1 }, { channel_id: CH2, unread: 3, mentions: 0 }]))
       .toEqual({ unread: 5, mentions: 1 });
     expect(chatUnreadTotals(undefined)).toEqual({ unread: 0, mentions: 0 });
+  });
+});
+
+describe("R-2330 — the poll reads only the newest page", () => {
+  it("with two pages loaded, each 5 s poll is ONE request for the newest page, and a new message shows", async () => {
+    vi.useFakeTimers();
+    const all = Array.from({ length: 70 }, (_, i) => msg(i));
+    serveMessages(all);
+    const { result } = renderHook(() => useChatMessages(CH), { wrapper });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    await act(async () => { await result.current.fetchNextPage(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(result.current.messages).toHaveLength(70);
+    const loaded = msgCalls().length;
+    expect(loaded).toBe(2);
+
+    all.push(msg(70));
+    await act(async () => { await vi.advanceTimersByTimeAsync(CHAT_POLL_MS); });
+    const polls = msgCalls().slice(loaded);
+    expect(polls).toHaveLength(1);
+    expect(polls[0].ops.some(([m]) => m === "or" || m === "lte")).toBe(false);
+    expect(polls[0].ops).toContainEqual(["limit", [CHAT_PAGE_SIZE]]);
+    expect(result.current.messages).toHaveLength(71);
+    expect(result.current.messages[0].body).toBe("m0");
+    expect(result.current.messages.at(-1)!.body).toBe("m70");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(CHAT_POLL_MS * 2); });
+    expect(msgCalls().slice(loaded)).toHaveLength(3);
+    expect(msgCalls().slice(loaded).every((c) => !c.ops.some(([m]) => m === "or"))).toBe(true);
+    expect(result.current.messages).toHaveLength(71);
+  });
+
+  it("an edit or delete inside the newest page replaces the old copy; older pages stay as loaded", () => {
+    const page = (rows: ReturnType<typeof msg>[], next: { createdAt: string; id: string } | null) =>
+      ({ rows: rows.map((r) => ({ ...r, attachments: [] })), next }) as ChatMessagesPage;
+    const p0 = page(Array.from({ length: 50 }, (_, i) => msg(69 - i)), { createdAt: msg(20).created_at, id: msg(20).id });
+    const p1 = page(Array.from({ length: 20 }, (_, i) => msg(19 - i)), null);
+    const fresh = page([{ ...msg(70) }, { ...msg(69), body: "edited" }, ...Array.from({ length: 48 }, (_, i) => msg(68 - i))],
+      { createdAt: msg(21).created_at, id: msg(21).id });
+    const out = mergeNewestChatPage({ pages: [p0, p1], pageParams: [null, p0.next] }, fresh)!;
+    expect(out.pages).toHaveLength(2);
+    expect(out.pages[1]).toBe(p1);
+    expect(out.pages[0].next).toEqual(p0.next);
+    const bodies = out.pages[0].rows.map((r) => r.body);
+    expect(bodies[0]).toBe("m70");
+    expect(bodies[1]).toBe("edited");
+    expect(bodies.at(-1)).toBe("m20");
+    expect(new Set(out.pages[0].rows.map((r) => r.id)).size).toBe(51);
+  });
+
+  it("more than a page of new messages drops the stale pages, so no gap is shown", () => {
+    const page = (rows: ReturnType<typeof msg>[], next: { createdAt: string; id: string } | null) =>
+      ({ rows: rows.map((r) => ({ ...r, attachments: [] })), next }) as ChatMessagesPage;
+    const p0 = page(Array.from({ length: 50 }, (_, i) => msg(49 - i)), null);
+    const fresh = page(Array.from({ length: 50 }, (_, i) => msg(119 - i)), { createdAt: msg(70).created_at, id: msg(70).id });
+    const out = mergeNewestChatPage({ pages: [p0], pageParams: [null] }, fresh)!;
+    expect(out.pages).toHaveLength(1);
+    expect(out.pageParams).toEqual([null]);
+    expect(out.pages[0].rows.map((r) => r.body)).toEqual(fresh.rows.map((r) => r.body));
+    expect(out.pages[0].next).toEqual({ createdAt: msg(70).created_at, id: msg(70).id });
+  });
+
+  it("a message being sent (pending) is kept by the poll", () => {
+    const pendingRow = { ...msg(99), id: "pending-1", body: "sending", pending: true, attachments: [] };
+    const p0 = { rows: [pendingRow, { ...msg(1), attachments: [] }, { ...msg(0), attachments: [] }], next: null } as ChatMessagesPage;
+    const fresh = { rows: [{ ...msg(2), attachments: [] }, { ...msg(1), attachments: [] }, { ...msg(0), attachments: [] }], next: null } as ChatMessagesPage;
+    const out = mergeNewestChatPage({ pages: [p0], pageParams: [null] }, fresh)!;
+    expect(out.pages[0].rows.map((r) => r.body)).toEqual(["sending", "m2", "m1", "m0"]);
+    expect(mergeNewestChatPage(undefined, fresh)).toBeUndefined();
+  });
+
+  it("microsecond timestamps sort correctly (Date alone would tie them)", () => {
+    const a = { ...msg(0), id: "00000000-0000-4000-8000-00000000000a", created_at: "2026-10-31T08:00:00.000001+00:00", attachments: [] };
+    const b = { ...msg(0), id: "00000000-0000-4000-8000-000000000001", created_at: "2026-10-31T08:00:00.000002+00:00", attachments: [] };
+    const out = mergeNewestChatPage({ pages: [{ rows: [], next: null }], pageParams: [null] }, { rows: [a, b], next: null })!;
+    expect(out.pages[0].rows.map((r) => r.created_at)).toEqual([b.created_at, a.created_at]);
   });
 });
 
