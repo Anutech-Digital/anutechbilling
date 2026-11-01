@@ -30,15 +30,11 @@ import { useProjectReceivablesByCustomer } from "@/lib/queries/projects";
 import { useTasks } from "@/lib/queries/tasks";
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { useQuery } from "@tanstack/react-query";
-import { createClient } from "@/lib/supabase/client";
-import type { PartnerMetricsRow, TenantWithParent } from "@/lib/supabase/database.types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { KPI } from "@/components/shared/kpi";
 import { StatStrip } from "@/components/shared/stat-strip";
 import { Icon } from "@/components/ui/icon";
-import { Skeleton } from "@/components/ui/skeleton";
 import { rupee, daysBetween, formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { renewalStateLabel, renewalStateTone } from "@/lib/renewals/cadence";
@@ -49,6 +45,7 @@ import { HealthCard } from "@/components/features/dashboard/health-card";
 import { MoneyHealthCard } from "@/components/features/dashboard/money-health-card";
 import { AiPerformanceCard } from "@/components/features/dashboard/ai-performance-card";
 import { PriorityActionHub } from "@/components/features/dashboard/priority-action-hub";
+import { PartnerRenewalAlertCard } from "@/components/features/dashboard/partner-renewal-alert-card";
 import { DealsStrip } from "@/components/features/deals/deals-strip";
 import { CompanySection } from "@/components/features/dashboard/company-section";
 import { useDealRows } from "@/lib/queries/deals";
@@ -64,6 +61,9 @@ import { toChaseSummary, chaseNote } from "@/lib/accounting/receivables-due";
 import { DEFAULT_SELL_MODE } from "@/lib/sell-mode";
 import { useActiveProjectSales, useSellMode } from "@/lib/queries/sell-mode";
 import { leadsWithProjects, panelAvailable, summarizeOpenProjects } from "@/components/features/dashboard/sell-mode-dashboard";
+import {
+  DashCardBody, loadView, useStillLoading, kpiTileState, countText as statValue, type LoadView,
+} from "@/components/features/dashboard/card-load-state";
 
 // ============================================================
 // Helpers
@@ -119,6 +119,14 @@ export default function DashboardPage() {
      with no hint. One banner names it and retries just the failed ones. */
   const moneyQueries = [leadsQ, dashLeadsQ, customersQ, quotesQ, subscriptionsQ, projRecvQ];
   const failedQueries = moneyQueries.filter((q) => q.isError);
+  /* R-2239 (Zoho B1): "none" only once a query RESOLVED empty — while loading or after a
+     failure the cards show a skeleton / an error, never "No subs yet" or "Customers 0". */
+  const leadsView     = loadView(leadsQ);
+  const customersView = loadView(customersQ);
+  const quotesView    = loadView(quotesQ);
+  const subsView      = loadView(subscriptionsQ);
+  const chaseView     = loadView(subscriptionsQ, projRecvQ);
+  const retryMoney    = () => failedQueries.forEach((q) => q.refetch());
   const { data: tasksToday }    = useTasks("today");
   const { data: tasksOverdue }  = useTasks("overdue");
   const { data: currentUser }   = useCurrentUser();
@@ -134,6 +142,7 @@ export default function DashboardPage() {
   const sellMode = sell?.mode ?? DEFAULT_SELL_MODE;
   const projectsFirst = leadsWithProjects(sellMode, subscriptions ? subscriptions.length > 0 : undefined);
   const activeProjectsQ = useActiveProjectSales(projectsFirst);
+  const projectsView = loadView(activeProjectsQ);
   const openProjects = summarizeOpenProjects(activeProjectsQ.data ?? []);
 
   // Draggable-card order per column (persisted). Starts at the default order;
@@ -191,7 +200,8 @@ export default function DashboardPage() {
      stage 'won' by its IST won date, pipeline = open demo/trial/quote deals) for everyone who
      can see Deals; other roles keep the old quote/lead-based figures. */
   const dealsAllowed = canSeeDeals(currentUser?.role);
-  const { data: dealRows } = useDealRows(dealsAllowed);
+  const dealRowsQ = useDealRows(dealsAllowed);
+  const { data: dealRows } = dealRowsQ;
   const dealStrip = dealsAllowed && dealRows ? summarizeDealStrip(dealRows) : null;
   const closedThisMonthValue = dealStrip ? dealStrip.wonThisMonth.value : quotesClosedValue;
   const closedThisMonthCount = dealStrip ? dealStrip.wonThisMonth.count : closedThisMonth.length;
@@ -200,6 +210,14 @@ export default function DashboardPage() {
     : `${closedThisMonthCount} quote${closedThisMonthCount === 1 ? "" : "s"} accepted`;
   const moneyPipeline = totalPipeline;
   const moneyPipelineTrend = `${activeCount} open deal${activeCount === 1 ? "" : "s"}`;
+  /* R-2239: the "won" figures come from Deals for deal roles, else from quotes. */
+  const wonQueries = dealsAllowed ? [dealRowsQ] : [quotesQ];
+  const wonView = loadView(...wonQueries);
+  const kpiSlow = useStillLoading(
+    [wonView, leadsView, projectsFirst ? projectsView : subsView, customersView, quotesView].includes("loading"),
+  );
+  const kpiState = (view: LoadView, trend: string) => kpiTileState(view, trend, kpiSlow);
+  const moneyText = (view: LoadView, v: number) => (view === "ready" ? rupee(v, { compact: true }) : "—");
 
   // "Chase the cash" — money owed to us. Real receivables = subscription dues +
   // project invoiced-but-unpaid (same basis as the Customers list / Aging), not
@@ -271,13 +289,13 @@ export default function DashboardPage() {
       note: `${rupee(acceptedValue, { compact: true })} ready to invoice`,
       action: "Process", cta: drillHref("quotesAccepted"),
     },
-    totalCustomers === 0 && {
+    customersView === "ready" && totalCustomers === 0 && {
       icon: "users", tone: "amber",
       title: "Add your first customer",
       note: "Start tracking customer health + renewals",
       action: "Add", cta: "/customers",
     },
-    {
+    dashLeads !== undefined && {
       icon: "flame", tone: "rose",
       title: `${newToday} new lead${newToday === 1 ? "" : "s"} today`,
       note: newToday > 0 ? "Worth focusing on early" : "Quiet day",
@@ -375,40 +393,44 @@ export default function DashboardPage() {
       <Card title="Today's focus" sub="What needs your attention now"
         actions={<Button size="sm" variant="ghost" icon="filter">All</Button>} flush>
         <div className="px-4 pb-3">
-          {focus.map((f, i) => (
-            <FocusRow key={i} icon={f.icon} tone={f.tone} title={f.title} note={f.note}
-              action={f.action} onClick={() => router.push(f.cta as any)} isLast={i === focus.length - 1} />
-          ))}
+          <DashCardBody queries={[leadsQ, dashLeadsQ, customersQ, quotesQ, subscriptionsQ]} what="Today's focus"
+            isEmpty={false} empty={null} rows={4}>
+            {focus.map((f, i) => (
+              <FocusRow key={i} icon={f.icon} tone={f.tone} title={f.title} note={f.note}
+                action={f.action} onClick={() => router.push(f.cta as any)} isLast={i === focus.length - 1} />
+            ))}
+          </DashCardBody>
         </div>
       </Card>
     ),
     activity: (
       <Card title="Recent activity" sub="Last 24 hours"
         actions={<Button size="sm" variant="ghost" iconRight="external">Full feed</Button>}>
-        {activity.length === 0 ? (
-          <div className="py-6 text-center text-sm text-ink-3">
-            Nothing happened in the last 24 hours.<br/>
-            <span className="text-2xs">Add a lead or send a quote to see activity here.</span>
-          </div>
-        ) : (
+        <DashCardBody queries={[dashLeadsQ, quotesQ]} what="Recent activity" isEmpty={activity.length === 0}
+          empty={
+            <div className="py-6 text-center text-sm text-ink-3">
+              Nothing happened in the last 24 hours.<br/>
+              <span className="text-2xs">Add a lead or send a quote to see activity here.</span>
+            </div>
+          }>
           <div className="space-y-3">
             {activity.map((a, i) => <ActivityRow key={i} icon={a.icon} tone={a.tone} title={a.title} time={a.time} />)}
           </div>
-        )}
+        </DashCardBody>
       </Card>
     ),
     pipeline: (
       <Card title="Pipeline by stage"
-        sub={activeCount > 0
+        sub={leadsView !== "ready" ? undefined
+          : activeCount > 0
           ? `${rupee(totalPipeline, { compact: true })} across ${activeCount} deal${activeCount === 1 ? "" : "s"}`
           : "No active deals yet"}>
-        {!leads ? (
-          <div className="space-y-2">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-6" />)}</div>
-        ) : activeCount === 0 ? (
-          <div className="py-6 text-center text-sm text-ink-3">
-            Add your first lead at <Link href={"/leads" as any} className="text-amber-ink underline">/leads</Link>
-          </div>
-        ) : (
+        <DashCardBody queries={[leadsQ]} what="Pipeline" rows={4} isEmpty={activeCount === 0}
+          empty={
+            <div className="py-6 text-center text-sm text-ink-3">
+              Add your first lead at <Link href={"/leads" as any} className="text-amber-ink underline">/leads</Link>
+            </div>
+          }>
           <div className="space-y-3">
             {/* R-1474: only the open deal stages — these rows add up to the header. */}
             {pipeline.stages.map((row) => {
@@ -440,7 +462,7 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-        )}
+        </DashCardBody>
       </Card>
     ),
     chase: (
@@ -464,6 +486,7 @@ export default function DashboardPage() {
     ),
     leaderboard: (
       <Card title="Sales leaderboard" sub="This month">
+        <DashCardBody queries={wonQueries} what="Leaderboard" rows={1} isEmpty={false} empty={null}>
         <div className="space-y-3">
           {leaderboard.map((p) => (
             <div key={p.rank} className="grid grid-cols-[auto_1fr_auto] items-center gap-3">
@@ -478,19 +501,20 @@ export default function DashboardPage() {
           ))}
           {leaderboard.length === 0 && <div className="text-center text-sm text-ink-3 py-2">No won deals yet</div>}
         </div>
+        </DashCardBody>
       </Card>
     ),
     renewals: (
       <Card title="Renewals coming up"
-        sub={enrichedRenewals.length === 0
+        sub={subsView !== "ready" ? undefined
+          : enrichedRenewals.length === 0
           ? "No subscriptions renewing in 30 days"
           : `${enrichedRenewals.length} sub${enrichedRenewals.length === 1 ? "" : "s"} · ${rupee(renewalsRevAtRisk, { compact: true })} ARR`}
         actions={enrichedRenewals.length > 0 ? (
           <Button asChild size="sm" variant="ghost" iconRight="arrow_right"><Link href={"/renewals" as any}>View all</Link></Button>
         ) : undefined}>
-        {enrichedRenewals.length === 0 ? (
-          <div className="py-3 text-center text-xs text-ink-3">Once you have active subscriptions, those nearing renewal will surface here.</div>
-        ) : (
+        <DashCardBody queries={[subscriptionsQ]} what="Renewals" isEmpty={enrichedRenewals.length === 0}
+          empty={<div className="py-3 text-center text-xs text-ink-3">Once you have active subscriptions, those nearing renewal will surface here.</div>}>
           <div className="space-y-2.5">
             {enrichedRenewals.slice(0, 5).map(({ sub, daysUntil }) => (
               <div key={sub.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3">
@@ -518,19 +542,20 @@ export default function DashboardPage() {
               <p className="text-2xs text-ink-3 pt-2 border-t border-hairline">+ {enrichedRenewals.length - 5} more renewing soon</p>
             )}
           </div>
-        )}
+        </DashCardBody>
       </Card>
     ),
     trials: <TrialsExpiringCard />,
     comingup: (
       <Card title="Coming up"
         sub={upcoming.some((u) => u.time.includes("overdue")) ? "⚠ Overdue first, then next 7 days" : "Next 7 days · scheduled follow-ups"}>
-        {upcoming.length === 0 ? (
-          <div className="py-6 text-center">
-            <p className="text-sm text-ink-3 mb-2">No follow-ups scheduled.</p>
-            <Link href={"/leads" as any} className="inline-flex items-center gap-1 text-xs text-amber-ink hover:underline">Schedule one from a lead →</Link>
-          </div>
-        ) : (
+        <DashCardBody queries={[dashLeadsQ]} what="Follow-ups" isEmpty={upcoming.length === 0}
+          empty={
+            <div className="py-6 text-center">
+              <p className="text-sm text-ink-3 mb-2">No follow-ups scheduled.</p>
+              <Link href={"/leads" as any} className="inline-flex items-center gap-1 text-xs text-amber-ink hover:underline">Schedule one from a lead →</Link>
+            </div>
+          }>
           <div className="space-y-3">
             {upcoming.map((u, i) => (
               <button key={i} onClick={() => router.push(u.href as any)}
@@ -547,7 +572,7 @@ export default function DashboardPage() {
               </button>
             ))}
           </div>
-        )}
+        </DashCardBody>
       </Card>
     ),
     /* R-1451: Not set up rows link to Settings → Integrations (owner/manager), else "ask the owner". */
@@ -574,9 +599,9 @@ export default function DashboardPage() {
           {/* Money one-liner — the greeting row also carries business signal so
               the seller sees "how am I doing" before scanning anything. */}
           <p className="text-sm text-ink-3 mt-1">
-            <b className="text-emerald tabular-nums">{rupee(closedThisMonthValue, { compact: true })}</b> won this month
+            <b className="text-emerald tabular-nums">{moneyText(wonView, closedThisMonthValue)}</b> won this month
             <span className="mx-1.5">·</span>
-            <b className="text-ink tabular-nums">{rupee(moneyPipeline, { compact: true })}</b> in pipeline
+            <b className="text-ink tabular-nums">{moneyText(leadsView, moneyPipeline)}</b> in pipeline
             <span className="hidden sm:inline"> · {workspaceName}</span>
           </p>
         </div>
@@ -657,6 +682,8 @@ export default function DashboardPage() {
         pendingCollectValue={toCollect}
         pendingCollectNote={chaseNote(chase)}
         showRenewals={!projectsFirst}
+        views={{ renewals: subsView, drafts: quotesView, collect: chaseView }}
+        onRetry={retryMoney}
       />
 
       {/* KPI — money-first, 2-tier. The three ₹ metrics get big coloured tiles
@@ -665,9 +692,9 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <KPI
           label="Won this month"
-          value={rupee(closedThisMonthValue, { compact: true })}
+          value={moneyText(wonView, closedThisMonthValue)}
           accent="emerald"
-          trend={closedTrend}
+          {...kpiState(wonView, closedTrend)}
           trendKind="up"
           trendIcon="check"
           icon="check_circle"
@@ -677,8 +704,8 @@ export default function DashboardPage() {
         />
         <KPI
           label="Pipeline"
-          value={rupee(moneyPipeline, { compact: true })}
-          trend={moneyPipelineTrend}
+          value={moneyText(leadsView, moneyPipeline)}
+          {...kpiState(leadsView, moneyPipelineTrend)}
           trendKind="up"
           trendIcon="trending_up"
           icon="target"
@@ -690,9 +717,9 @@ export default function DashboardPage() {
             label="Open projects"
             value={activeProjectsQ.data ? rupee(openProjects.value, { compact: true }) : "—"}
             accent={openProjects.value > 0 ? "emerald" : "ink"}
-            trend={openProjects.count === 0
+            {...kpiState(projectsView, openProjects.count === 0
               ? "No active projects"
-              : `${openProjects.count} active project${openProjects.count === 1 ? "" : "s"}`}
+              : `${openProjects.count} active project${openProjects.count === 1 ? "" : "s"}`)}
             trendKind={openProjects.count > 0 ? "up" : "neutral"}
             icon="package"
             href="/projects"
@@ -702,11 +729,11 @@ export default function DashboardPage() {
           label="Monthly revenue"
           value={subscriptions ? rupee(activeMRR, { compact: true }) : "—"}
           accent={activeMRR > 0 ? "emerald" : "ink"}
-          trend={
+          {...kpiState(subsView,
             activeSubs.length === 0
               ? "No subs yet"
-              : `${activeSubs.length} active sub${activeSubs.length === 1 ? "" : "s"}`
-          }
+              : `${activeSubs.length} active sub${activeSubs.length === 1 ? "" : "s"}`,
+          )}
           trendKind={activeMRR > 0 ? "up" : "neutral"}
           trendIcon={activeMRR > 0 ? "trending_up" : undefined}
           icon="rupee"
@@ -717,13 +744,13 @@ export default function DashboardPage() {
       <StatStrip
         className="mb-6"
         items={[
-          { label: "Customers", value: totalCustomers, href: "/customers" },
-          { label: "Drafts to send", value: draftQuotes, href: drillHref("quotesDraft") },
+          { label: "Customers", value: statValue(customersView, totalCustomers), href: "/customers" },
+          { label: "Drafts to send", value: statValue(quotesView, draftQuotes), href: drillHref("quotesDraft") },
           /* R-1862: one fact, one place — the Open projects tile above already carries the count,
              so a one-time business gets no third count here instead of "Renewals · 30d: 0". */
           ...(projectsFirst ? [] : [{
             label: "Renewals · 30d",
-            value: enrichedRenewals.length,
+            value: statValue(subsView, enrichedRenewals.length),
             tone: urgentRenewals.length > 0 ? ("rose" as const) : undefined,
             href: drillHref("subsExpiring"),
           }]),
@@ -884,86 +911,5 @@ function DashWidget({ id, children }: { id: string; children: React.ReactNode })
       </button>
       {children}
     </Reorder.Item>
-  );
-}
-
-// ============================================================
-// PartnerRenewalAlertCard (Slice 4 — distributor inventory alerts)
-// ============================================================
-
-/**
- * Banner-style card shown on a distributor tenant's dashboard summarising
- * upcoming renewals across all sub-resellers. Lets Demo Co see "Anutech
- * has X seats renewing this month — confirm Google Workspace inventory"
- * at a glance, without having to navigate to /partners.
- *
- * Only renders when:
- *   • caller's tenant tier = 'distributor'
- *   • at least one partner has renewals_due_30d > 0
- *
- * Re-uses get_partner_metrics() RPC from Slice 3 — no extra schema needed.
- */
-function PartnerRenewalAlertCard() {
-  const { data: hierarchy } = useQuery({
-    queryKey: ["tenant", "hierarchy", "dashboard-partner-alert"],
-    queryFn: async (): Promise<TenantWithParent | null> => {
-      const supabase = createClient();
-      const { data } = await supabase.rpc("get_my_tenant_with_parent");
-      const row = Array.isArray(data) ? data[0] : data;
-      return (row as TenantWithParent | undefined) ?? null;
-    },
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const isDistributor = hierarchy?.tier === "distributor";
-
-  const { data: metrics } = useQuery({
-    enabled: isDistributor,
-    queryKey: ["partner-metrics", "dashboard-summary"],
-    queryFn: async (): Promise<PartnerMetricsRow[]> => {
-      const supabase = createClient();
-      const { data } = await supabase.rpc("get_partner_metrics");
-      return (data ?? []) as PartnerMetricsRow[];
-    },
-  });
-
-  const totals = React.useMemo(() => {
-    if (!metrics) return null;
-    return metrics.reduce(
-      (acc, m) => ({
-        renewals:        acc.renewals + m.renewals_due_30d,
-        renewal_value:   acc.renewal_value + m.renewal_revenue_30d,
-        partners_w_due:  acc.partners_w_due + (m.renewals_due_30d > 0 ? 1 : 0),
-      }),
-      { renewals: 0, renewal_value: 0, partners_w_due: 0 },
-    );
-  }, [metrics]);
-
-  if (!isDistributor) return null;
-  if (!totals || totals.renewals === 0) return null;
-
-  return (
-    <Card className="p-4 mb-6 bg-amber-soft/40 border-amber-soft">
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="h-9 w-9 rounded-lg bg-amber/15 text-amber-ink flex items-center justify-center shrink-0">
-          <Icon name="alert" size={16} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-ink">
-            <b className="text-amber-ink">{totals.renewals}</b> partner renewal
-            {totals.renewals === 1 ? "" : "s"} due in 30 days
-            <span className="text-ink-3 font-normal"> ·</span>
-            <span className="text-ink-2 font-mono font-medium ml-1.5">{rupee(totals.renewal_value)}</span>
-            <span className="text-ink-3 font-normal text-xs ml-1">projected annual</span>
-          </p>
-          <p className="text-2xs text-ink-3">
-            {totals.partners_w_due} of your sub-reseller{totals.partners_w_due === 1 ? "" : "s"} have customer renewals coming up. Confirm inventory + cash flow.
-          </p>
-        </div>
-        <Button asChild variant="ghost" size="sm" icon="link">
-          <Link href={"/partners" as any}>View partners →</Link>
-        </Button>
-      </div>
-    </Card>
   );
 }
