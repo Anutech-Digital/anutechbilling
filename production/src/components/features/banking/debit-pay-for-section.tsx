@@ -30,6 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import { useVendors } from "@/lib/queries/vendors";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useVendorTdsThisFy, EXPENSE_CATEGORIES } from "@/lib/queries/expenses";
 import { VENDOR_BILL_CATEGORIES, attachBillFile } from "@/lib/queries/vendor-bills";
 import { readBillFile, checkBillFile, type BillRead } from "@/lib/accounting/bill-reader";
@@ -41,7 +42,7 @@ import { useVendorOpenItems, usePayVendorFromBankDebit, useVendor194q, useSet194
 import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
 import {
   allocateOldestFirst, cashDue, guessVendor, isRecorded, itemKey, itemLabel, newBillPay, newBillTds, newBillTotal, planTds, preselect,
-  resultLines, summarise, tdsMap, vendorPan,
+  resultLines, summarise, tdsMap, vendorPan, TDS_OVERRIDE_MIN,
   type NewBillDraft, type VendorLite, type VendorOpenItem, type VendorPayResult,
 } from "@/lib/banking/debit-pay-for";
 import type { VendorFocus } from "@/lib/banking/vendor-line-guard";
@@ -161,7 +162,14 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
   const q194 = React.useMemo(() => new Map((q194rows ?? []).map((r) => [r.doc_id, r])), [q194rows]);
   const buyer = q194rows?.[0]?.buyer ?? null;
   const setBuyer = useSet194qBuyer();
-  const tdsOpts = { section: section || null, pan, fyOthers, off: noTds, q194 };
+  /* R-2320: TDS the app finds below the threshold — the owner may take it anyway, with a reason
+     (the server checks the role and logs the reason). */
+  const { data: me } = useCurrentUser();
+  const isOwner = me?.role === "owner";
+  const [ovrOpen, setOvrOpen] = React.useState(false);
+  const [ovrReason, setOvrReason] = React.useState("");
+  React.useEffect(() => { setOvrOpen(false); setOvrReason(""); }, [transaction.id, vendorId, section]);
+  const tdsOpts = { section: section || null, pan, fyOthers, off: noTds, q194, override: isOwner && ovrOpen ? ovrReason : null };
   const tdsLines = planTds(pickedItems, tdsOpts);
   const tdsByKey = tdsMap(tdsLines);
 
@@ -251,7 +259,9 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
   }, [isNew, billRead, nv]);
   const buyerBlock = showNew && Boolean(billRead?.buyer) && !buyerOk;
   const billTotal = newBillTotal(bill);
-  const billTds = bill.kind === "expense" ? newBillTds(Math.round(bill.taxable || 0), tdsOpts) : { tds: 0, section: null, reason: null };
+  /* R-2320: a new COGS bill takes services TDS too (194Q is worked out on a saved bill). */
+  const billTds = newBillTds(Math.round(bill.taxable || 0), tdsOpts, bill.kind);
+  const belowThreshold = tdsLines.some((t) => t.belowThreshold) || (showNew && billTds.belowThreshold);
   /* R-2321: an expense bill can be part-paid too — "Paying now" defaults to the bank line. */
   const billPay = newBillPay(bill, billTotal, billTds.tds, debit);
   const newBillCash = showNew && billTotal > 0 ? Math.max(0, billPay - billTds.tds) : 0;
@@ -306,9 +316,9 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
         } : null,
         items: pickedItems.map((i) => {
           const t = tdsLines.find((x) => x.key === itemKey(i));
-          return { item: i, cash: cashOf(i), tds: t?.tds ?? 0, section: t?.section ?? null };
+          return { item: i, cash: cashOf(i), tds: t?.tds ?? 0, section: t?.section ?? null, override: t?.override ?? null };
         }),
-        newBill: showNew ? { ...bill, pay: billPay, tds: billTds.tds, tdsSection: billTds.section } : null,
+        newBill: showNew ? { ...bill, pay: billPay, tds: billTds.tds, tdsSection: billTds.section, tdsOverride: billTds.override } : null,
         advance,
         advanceCategory: advance > 0 ? advCat : null,
         bankCharge: charge,
@@ -518,7 +528,8 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
           ))}
 
           {/* TDS */}
-          {(pickedItems.some((i) => i.source === "expense") || (showNew && bill.kind === "expense") || goodsOver) && (
+          {/* R-2320: COGS bills (open or new) carry TDS too — Zoho's 2% 194C on Google, Sidhshree. */}
+          {(pickedItems.some((i) => i.source === "expense" || i.source === "vendor_bill") || showNew || goodsOver) && (
             <div className="rounded-md border border-hairline bg-paper p-2.5 space-y-1.5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-medium text-ink-2">TDS deducted</span>
@@ -529,6 +540,24 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
               </div>
               {[...tdsLines.filter((t) => t.reason && (!t.fixed || t.section === "194Q")).map((t) => t.reason), showNew ? billTds.reason : null]
                 .filter(Boolean).slice(-1).map((r) => <p key="r" className="text-xs text-ink-3">{r}</p>)}
+              {/* R-2320: below the threshold — the owner may deduct anyway, with a reason (logged). */}
+              {belowThreshold && !noTds && (isOwner ? (
+                ovrOpen ? (
+                  <label className="flex flex-wrap items-center gap-1.5 text-xs text-ink-2">
+                    <span>Reason for deducting TDS anyway (saved in the activity log)</span>
+                    <Input className="h-8 flex-1 min-w-[12rem]" aria-label="Reason for deducting TDS below the threshold" value={ovrReason}
+                      placeholder="e.g. Deducted in Zoho, CA advised" onChange={(e) => setOvrReason(e.target.value)} />
+                    {ovrReason.trim().length < TDS_OVERRIDE_MIN && <span className="text-amber-ink">at least {TDS_OVERRIDE_MIN} letters</span>}
+                    <button type="button" className="underline hover:no-underline" onClick={() => { setOvrOpen(false); setOvrReason(""); }}>Cancel</button>
+                  </label>
+                ) : (
+                  <button type="button" className="text-xs text-ink-2 underline hover:no-underline" onClick={() => setOvrOpen(true)}>
+                    Deduct TDS anyway (owner)
+                  </button>
+                )
+              ) : (
+                <p className="text-xs text-ink-3">Only the owner can deduct TDS below the threshold.</p>
+              ))}
               {/* R-1891: 194Q needs one answer about the company, asked here the first time. */}
               {goodsOver && !noTds && section === "194Q" && buyer === null && (
                 <div className="rounded-md border border-amber/50 bg-amber-soft/30 p-2 space-y-1.5" role="group" aria-label="194Q turnover question">

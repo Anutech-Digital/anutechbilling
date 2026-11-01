@@ -95,6 +95,24 @@ export interface TdsDecision {
 /* R-1138: the shared formatter (lakh grouping, sign, rounding) — not a local copy. */
 const inr = (n: number) => rupee(n);
 
+/**
+ * The rate a section deducts at for this payee: the section's default, the deductee's variant
+ * (194C individual / HUF 1%), then s.206AA without a PAN. null = the app does not know the
+ * section. The one rule tdsDecision uses — R-2320's owner override (TDS below the threshold)
+ * takes the same rate.
+ */
+export function tdsRatePct(section: string, pan: string | null | undefined): number | null {
+  const sec = section.trim().toUpperCase();
+  const rate = TDS_SECTION_RATES[sec];
+  if (!rate) return null;
+  const p = (pan ?? "").trim().toUpperCase();
+  const deducteeType = deducteeTypeFromPan(p);
+  let ratePct = rate.ratePct;
+  if (sec === "194C" && (deducteeType === "individual" || deducteeType === "huf")) ratePct = 1;
+  if (!isPan(p)) ratePct = sec === "194Q" ? 5 : Math.max(ratePct, NO_PAN_RATE_PCT);
+  return ratePct;
+}
+
 export function tdsDecision(i: TdsDecisionInput): TdsDecision {
   const sec = i.section.trim().toUpperCase();
   const rate = TDS_SECTION_RATES[sec];
@@ -108,9 +126,7 @@ export function tdsDecision(i: TdsDecisionInput): TdsDecision {
   if (!rate || !th) return none(`${sec}: the app does not know this section's rate — ask your CA and enter the amount yourself.`);
 
   // Rate: the section's default, the deductee's variant, then s.206AA.
-  let ratePct = rate.ratePct;
-  if (sec === "194C" && (deducteeType === "individual" || deducteeType === "huf")) ratePct = 1;
-  if (noPan) ratePct = sec === "194Q" ? 5 : Math.max(ratePct, NO_PAN_RATE_PCT);
+  const ratePct = tdsRatePct(sec, pan) ?? rate.ratePct;
 
   const yearTotal = i.fyBaseSoFar + base;
   const crossedSingle = th.single !== null && base > th.single;
