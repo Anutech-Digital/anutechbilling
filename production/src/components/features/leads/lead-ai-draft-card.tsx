@@ -27,12 +27,24 @@ export interface LeadAiRunView {
   pitch: string | null;
   draft_subject: string | null;
   updated_at: string;
+  /* R-2042 (the header's live chips) reads these too — GET returns the whole run. */
+  qualify_result?: { verdict: "qualified" | "unqualified"; reasons: string[] } | null;
+  error?: string | null;
+  next_step?: string | null;
+  finished_at?: string | null;
+}
+
+/** R-2042: thrown when the route refuses the caller's ROLE (403) — the header hides its button. */
+export class LeadAiForbiddenError extends Error {
+  readonly status = 403;
+  constructor() { super("Your role cannot use the AI Lead Workflow."); }
 }
 
 export interface AiDraft { runId: string; subject: string; body: string }
 
 export async function fetchLeadAiRun(leadId: string): Promise<LeadAiRunView | null> {
   const res = await fetch(`/api/leads/${encodeURIComponent(leadId)}/ai-workflow`);
+  if (res.status === 403) throw new LeadAiForbiddenError();
   if (!res.ok) return null;
   const json = await res.json() as { run?: LeadAiRunView | null };
   return json.run ?? null;
