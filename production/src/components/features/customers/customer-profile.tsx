@@ -69,6 +69,8 @@ import { InvoiceChooserDialog } from "@/components/features/invoices/invoice-cho
 import { DeleteBlockedDialog } from "@/components/shared/delete-blocked-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+/* R-2350 (G-DPDP): who opened this customer goes in Settings → Security log. */
+import { useRecordView } from "@/lib/security-log/record-view";
 import { canWriteSales } from "@/lib/nav";
 import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
@@ -111,6 +113,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const linkOpts = { canQuotes };
 
   const { data: customer, isLoading, error } = useCustomer(params.id);
+  /* R-2350: one access-log row per open, page and side pane alike (10-minute debounce). */
+  useRecordView("customer", customer ? params.id : null);
   const { data: allGroups } = useCustomerGroups();
   const subsQ = useCustomerSubscriptions(params.id);
   const invoicesQ = useCustomerInvoices(params.id);

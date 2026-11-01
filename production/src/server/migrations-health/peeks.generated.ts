@@ -331,4 +331,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2039leadairuns", peek: "to_regclass('public.lead_ai_runs') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'leads' and column_name = 'ai_status_at')" },
   { key: "r2017storageanon", peek: "(to_regclass('storage.objects') is not null and not has_table_privilege('anon', 'storage.objects', 'INSERT') and not has_table_privilege('anon', 'storage.objects', 'TRUNCATE') and not has_table_privilege('authenticated', 'storage.objects', 'TRUNCATE'))" },
   { key: "r2013privacyrequests", peek: "to_regclass('public.privacy_requests') is not null and to_regprocedure('public.privacy_request_verify(uuid,uuid,text)') is not null and to_regprocedure('public.privacy_request_action(uuid,text,text)') is not null" },
+  { key: "r2350accesslog", peek: "to_regclass('public.record_access_log') is not null and to_regprocedure('public.log_record_view(text,text)') is not null and to_regclass('public.security_log') is not null" },
 ];

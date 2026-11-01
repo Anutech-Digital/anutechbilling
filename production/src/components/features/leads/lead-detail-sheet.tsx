@@ -48,6 +48,8 @@ import { leadTitle } from "@/lib/leads/display-name";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { leadQuoteHref } from "@/lib/leads/lead-quote-href";
 import { usableContact } from "@/lib/contacts/reveal-client";
+/* R-2350 (G-DPDP): who opened this lead goes in Settings → Security log. */
+import { useRecordView } from "@/lib/security-log/record-view";
 
 type DrawerTab = "email" | "details" | "followups" | "activity";
 /* "auto" = no tab chosen yet: the drawer picks one from what the lead has (below). */
@@ -84,6 +86,8 @@ export function LeadDetailSheet({
   const { data: drawerCatalog } = useItems();
   const drawerPlanCosts = React.useMemo(() => buildPlanCostIndex(drawerCatalog ?? []), [drawerCatalog]);
   const { data: activities = [] } = useLeadActivities(lead?.id);
+  /* R-2350: one access-log row per drawer open (10-minute debounce). */
+  useRecordView("lead", lead?.id ?? null);
 
   /* The mail this lead last SENT US — the thread a reply attaches to.
      Replies we sent are excluded: replying to our own message would thread the conversation
