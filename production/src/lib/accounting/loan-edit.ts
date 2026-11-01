@@ -82,3 +82,7 @@ export function loanEditPayload(purchaseId: string, i: LoanEditInput, rows: Sche
 
 /** Delete is offered only while no EMI of the loan is paid (the database refuses it too). */
 export const canDeleteEmiLoan = (l: { emisPaid: number }) => l.emisPaid === 0;
+
+/** Who may edit / delete these loans — emi_guard's roles. Unknown role (still loading) → shown; the database is the guard. */
+const EMI_LOAN_ROLES = ["owner", "manager", "accountant"];
+export const canChangeEmiLoan = (role: string | null | undefined) => !role || EMI_LOAN_ROLES.includes(role);
