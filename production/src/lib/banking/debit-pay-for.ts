@@ -486,6 +486,9 @@ export interface PayInput {
   advanceCategory: string | null;
   bankCharge: number;
   note: string | null;
+  /** R-2338: the owner ticked "Remember for this vendor" — the server saves the section used as the
+   *  vendor's default TDS section. Never set by itself. */
+  rememberSection?: boolean;
 }
 
 /** R-1918: the new vendor's bank details for the server. The IFSC goes only with an account
@@ -519,6 +522,7 @@ export function payArgs(i: PayInput) {
       tds_amount: n(x.tds),
       tds_section: x.tds > 0 ? x.section : null,
       ...(x.tds > 0 && overrideReason(x.override) ? { tds_override_reason: overrideReason(x.override) } : {}),
+      ...(x.tds > 0 && i.rememberSection ? { remember_tds_section: true } : {}),
     })),
     p_new_bill: i.newBill && {
       kind: i.newBill.kind,
@@ -531,6 +535,7 @@ export function payArgs(i: PayInput) {
       tds_amount: n(i.newBill.tds),
       tds_section: i.newBill.tds > 0 ? i.newBill.tdsSection : null,
       ...(i.newBill.tds > 0 && overrideReason(i.newBill.tdsOverride) ? { tds_override_reason: overrideReason(i.newBill.tdsOverride) } : {}),
+      ...(i.newBill.tds > 0 && i.rememberSection ? { remember_tds_section: true } : {}),
       pay: n(i.newBill.pay),
     },
     p_advance: n(i.advance),
