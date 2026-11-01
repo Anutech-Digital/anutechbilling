@@ -826,6 +826,9 @@ export const APP_NAV: NavSection[] = [
           /* R-2013 (DPDP): data-rights requests from the website form, with their due-by date.
              Owner/manager — the database shows them to no one else. */
           { id: "privacy-requests", href: "/settings/privacy-requests", label: "Privacy Requests", icon: "shield", roles: OM, hint: "See / correct / delete requests from your website — answer within 30 days" },
+          /* R-2350 (DPDP): who opened which customer / lead, and every export. Owner only —
+             the database shows the log to no one else. */
+          { id: "security-log", href: "/settings/security-log", label: "Security Log", icon: "shield", roles: ["owner"], hint: "Who opened which customer or lead, and who exported data" },
         ],
       },
       /* "App khud kya bhejta hai — aur band karne ka switch". A brake nobody can find is
