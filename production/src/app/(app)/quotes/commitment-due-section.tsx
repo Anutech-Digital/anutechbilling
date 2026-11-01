@@ -41,7 +41,7 @@ export function CommitmentDueStrip({ count, total, onShow }: CommitmentDueStripP
         </b>{" "}
         Committed under an annual plan, not yet invoiced — so not in receivables.
       </p>
-      <Button size="sm" variant="primary" icon="filter" onClick={onShow}>
+      <Button size="sm" variant="outline" icon="filter" onClick={onShow}>
         Commitment due
       </Button>
     </div>
@@ -92,7 +92,7 @@ function Actions({ r, props }: { r: CommitmentDueRow; props: CommitmentDueSectio
   if (!props.mayRecordMoney) return null;
   return (
     <div className="flex items-center justify-end gap-1.5">
-      <Button size="sm" variant="primary" icon="rupee" onClick={() => props.onRecordPayment(r.quoteId)}>
+      <Button size="sm" icon="rupee" onClick={() => props.onRecordPayment(r.quoteId)}>
         Record payment
       </Button>
       {/* Same rule as the quote page (showCustomerStopped): only while nothing was received. */}

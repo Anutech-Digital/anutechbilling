@@ -80,6 +80,10 @@ describe("R-2265 — one primary per list view", () => {
     expect(withRows(INVOICES).map((h) => h.label)).toEqual(["New invoice"]);
   });
 
+  it("Quotes' Commitment due banner and section (shown on the list) add no primary", () => {
+    expect(withRows("src/app/(app)/quotes/commitment-due-section.tsx")).toEqual([]);
+  });
+
   it("Companies: only the header Add company is primary — the toolbar copy is not", () => {
     expect(withRows(CUSTOMERS).map((h) => h.label)).toEqual(["Add company"]);
   });
