@@ -14,8 +14,8 @@
 --      for ₹59,000 and Paid, ₹59,000 is still due on the rest.
 --   3. c3 B: ₹50,000 (no invoice) then ₹30,000 (invoice ticked) on one kist → the invoice is for the
 --      whole kist with paid_amount ₹80,000 and ₹38,000 outstanding — not ₹1,18,000.
---   4. Refused, nothing written: the instalments add up to MORE than the line; LESS than the line
---      (c4 — extra money is an advance, R-1997); one kist given more than its balance; the same kist
+--   4. Refused, nothing written: the instalments add up to MORE than the line (LESS is no longer
+--      refused — c4, the rest is the customer's advance since R-1997); one kist given more than its balance; the same kist
 --      twice; a kist of another project; a line already reconciled; another company's line; a
 --      money-out line; a sales user (role gate).
 --   5. All or nothing: kist 1 is written, kist 2's invoice then fails (company has no GSTIN) → no
@@ -229,9 +229,8 @@ select pg_temp.must_refuse(format($q$select public.allocate_project_receipt(%L, 
   (select v from ids where k = 'line_118'), (select v from ids where k = 'c4_p'), (select v from ids where k = 'c4_m1'), (select v from ids where k = 'c4_m2')),
   'total ₹2,36,000 on a ₹1,18,000 line', 'more than this bank line', (select v::uuid from ids where k = 'line_118'));
 
-select pg_temp.must_refuse(format($q$select public.allocate_project_receipt(%L, %L, pg_temp.alloc(pg_temp.a(%L, 118000)))$q$,
-  (select v from ids where k = 'line_150'), (select v from ids where k = 'c4_p'), (select v from ids where k = 'c4_m1')),
-  'c4: ₹1,50,000 line, only ₹1,18,000 on instalments (extra → advance is R-1997)', 'not on any instalment', (select v::uuid from ids where k = 'line_150'));
+-- c4: a ₹1,50,000 line with only ₹1,18,000 on instalments is no longer refused — since R-1997 the
+-- ₹32,000 rest is the customer's advance (decision D1); proven in r1997_project_receipt_advance.test.sql.
 
 select pg_temp.must_refuse(format($q$select public.allocate_project_receipt(%L, %L, pg_temp.alloc(pg_temp.a(%L, 150000)))$q$,
   (select v from ids where k = 'line_150'), (select v from ids where k = 'c4_p'), (select v from ids where k = 'c4_m1')),

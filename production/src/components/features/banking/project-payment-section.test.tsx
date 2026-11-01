@@ -6,7 +6,8 @@
        Save sends both to allocate_project_receipt;
      · ₹1,50,000 → kist 1 full + ₹32,000 on kist 2 (part);
      · ₹2,12,400 with ₹23,600 TDS → the sums match only once the TDS is in; Save sends the TDS;
-     · ₹4,00,000 → more than everything due: no Save, the advance path (R-1997) is named;
+     · ₹4,00,000 → more than everything due: all kists ticked, "₹46,000 kept as advance for Acme
+       Traders", Save on (R-1997, D1);
      · an RPC refusal is shown with its hint link. */
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -120,11 +121,22 @@ describe("R-1998 TDS line", () => {
   });
 });
 
-describe("R-1998 more money than is due (D1 — advance is R-1997)", () => {
-  it("₹4,00,000 on ₹3,54,000 due: no Save, the extra and the advance path are said", () => {
+describe("R-1997 more money than is due → the customer's advance (D1)", () => {
+  it("₹4,00,000 on ₹3,54,000 due: all 3 kists ticked, '₹46,000 kept as advance for Acme Traders', Save sends the kists", async () => {
     renderFor(400000);
-    expect(screen.getByText(/₹46,000 more than/)).toBeTruthy();
-    expect(screen.getByText(/This money is for → Advance/)).toBeTruthy();
+    expect(screen.getByText(/₹46,000 kept as advance for Acme Traders/)).toBeTruthy();
+    expect((save() as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(save());
+    await waitFor(() => expect(state.allocate).toHaveBeenCalledTimes(1));
+    /* the kists only — the RPC keeps the rest (bank line − kists) as the advance itself */
+    expect(state.allocate.mock.calls[0][0].allocations.map((a: { amount: number }) => a.amount)).toEqual([118000, 118000, 118000]);
+  });
+
+  it("a kist edited below its balance → not an advance: the gap is shown and Save is off", () => {
+    renderFor(400000);
+    fireEvent.change(screen.getByLabelText("Amount for Kist 3"), { target: { value: "100000" } });
+    expect(screen.queryByText(/kept as advance/)).toBeNull();
+    expect(screen.getByText(/₹64,000 short/)).toBeTruthy();
     expect((save() as HTMLButtonElement).disabled).toBe(true);
   });
 });
