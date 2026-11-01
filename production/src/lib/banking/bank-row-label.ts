@@ -17,6 +17,7 @@ export function bankRowStatusLabel(t: BankTransactionRow["matched_to_type"], isA
          t === "transfer"     ? "Inter-account" :
          t === "split"        ? "Salaries" :
          t === "owner_equity" ? "Owner drawings / capital" :
+         (t as string | null) === "customer_refund" ? "Customer refund" :   // R-2322 (newer than the BankTransactionRow union)
          t                    ? "Reconciled" : "Unmatched";
 }
 

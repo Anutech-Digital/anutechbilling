@@ -115,7 +115,7 @@ describe("R-2006 Reconcile sheet — 'Who is this money for?' tiles", () => {
     cleanup();
     render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={moneyOut} />);
     expect(tiles().map((t) => within(t).getByText(/./, { selector: "span.truncate" }).textContent)).toEqual([
-      "Vendor", "Employee / salary", "Owner", "Loan / EMI", "Tax / GST / TDS", "Own transfer", "Bank charge / other",
+      "Vendor", "Employee / salary", "Owner", "Loan / EMI", "Tax / GST / TDS", "Customer refund", "Own transfer", "Bank charge / other",
     ]);
     expect(tiles().every((t) => t.getAttribute("aria-checked") === "false")).toBe(true);
   });
@@ -133,7 +133,7 @@ describe("R-2006 Reconcile sheet — 'Who is this money for?' tiles", () => {
     expect(screen.queryByRole("region", { name: "Paying a vendor" })).toBeNull(); // mounted but hidden
     expect(screen.queryByRole("radiogroup")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Change who this money is for" }));
-    expect(tiles()).toHaveLength(7);
+    expect(tiles()).toHaveLength(8);
     expect(screen.queryByRole("region", { name: "EMI form" })).toBeNull();
   });
 
@@ -177,8 +177,8 @@ describe("R-2006 Reconcile sheet — 'Who is this money for?' tiles", () => {
     expect(document.activeElement).toBe(t[1]);
     fireEvent.keyDown(t[1], { key: "ArrowLeft" });
     fireEvent.keyDown(t[0], { key: "ArrowLeft" });
-    expect(document.activeElement).toBe(t[6]);
-    fireEvent.click(t[6]);
+    expect(document.activeElement).toBe(t[7]);
+    fireEvent.click(t[7]);
     expect(screen.getByLabelText("Expense category")).toBeTruthy();
   });
 

@@ -72,6 +72,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   record_payment: "payments on quotes",
   record_project_payment: "payments on projects",
   refund_payment: "money out",
+  r2322_refund_scope: "R-2322: snapshot of the rows a customer refund touches (to undo it exactly) — not GST or revenue",
   set_late_fee_mode: "late fee settings",
   split_outstanding_for: "per quote",
   sync_invoice_subscription_outstanding: "R-2178: one invoice's quote / billing-part link, to re-sync the subscriptions' stored balance after a credit / debit note — not GST or revenue",

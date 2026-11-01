@@ -134,7 +134,7 @@ export function amountOf(t: Pick<FilterLine, "debit" | "credit">): number {
 export function matchGroupOf(type: string | null): MatchGroup | null {
   if (type === null) return null;
   switch (type) {
-    case "payment": case "project":                 return "customer";
+    case "payment": case "project": case "customer_refund": return "customer";   // R-2322: a refund to a customer
     case "vendor_bill": case "vendor_payment":      return "vendor";
     case "salary": case "split":                    return "salary";
     case "expense": case "prepaid":                 return "expense";

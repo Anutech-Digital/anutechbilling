@@ -290,3 +290,9 @@ describe("active chips, remove one, clear all", () => {
     expect(chip({ from: "2026-09-01" })).toBe(`From ${formatDate("2026-09-01")}`);
   });
 });
+
+describe("R-2322 customer refund line", () => {
+  it("is in the Customer group, not Other", () => {
+    expect(matchGroupOf("customer_refund")).toBe("customer");
+  });
+});

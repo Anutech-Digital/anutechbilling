@@ -36,6 +36,8 @@ export const MONEY_OUT_TILES: readonly TileDef[] = [
   { id: "owner",    label: "Owner",              hint: "Drawings or paid to a director",      icon: "user" },
   { id: "loan",     label: "Loan / EMI",         hint: "EMI or a loan given / repaid",        icon: "wallet" },
   { id: "tax",      label: "Tax / GST / TDS",    hint: "ESI, PF, TDS, GST, income tax",       icon: "shield" },
+  /* R-2322: money paid back to a customer (credit-note credit or an unused advance). */
+  { id: "customer", label: "Customer refund",    hint: "Money paid back to a customer",       icon: "users" },
   { id: "transfer", label: "Own transfer",       hint: "To your other bank account",          icon: "refresh" },
   { id: "other",    label: "Bank charge / other", hint: "Book an expense, or mark manually",  icon: "more_horizontal" },
 ];
