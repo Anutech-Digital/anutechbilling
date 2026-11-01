@@ -74,6 +74,7 @@ import { QUOTES_PAGE_SIZE, quotesPagingKey } from "./paging";
 /* R-2046: Commitment due — unpaid part payment requests, with the SAME dialogs as elsewhere. */
 import { COMMITMENT_CHOICES, commitmentDueRows, isCommitmentDue, type CommitmentQuote } from "./commitment-due";
 import { CommitmentDueSection, CommitmentDueStrip } from "./commitment-due-section";
+import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
 import { RecordQuotePaymentDialog } from "../payments/record-quote-payment";
 import { CustomerStoppedDialog } from "./[id]/customer-stopped-dialog";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
@@ -194,7 +195,6 @@ export default function QuotesPage() {
   const [editProject, setEditProject] = React.useState<ProjectSaleWithTotals | null>(null);
   const deleteProject = useDeleteProjectSale();
   const [previewing, setPreviewing] = React.useState<Quote | null>(null);
-  const [kpiOpen, setKpiOpen] = React.useState(true);
   const [helpOpen, setHelpOpen] = React.useState(false);
   const confirm = useConfirm();
 
@@ -391,8 +391,6 @@ export default function QuotesPage() {
   const marginablePipeline = pipelineQuotes.map((q) => estimateMarginForQuote(q));
   const pipelineMargin = marginablePipeline.filter((m) => m.known).reduce((s, m) => s + m.margin, 0);
   const pipelineMarginUnknownCount = marginablePipeline.filter((m) => !m.known).length;
-  /* Every accepted quote (invoiced ones too) — the same set as the Accepted tile's value. */
-  const acceptedCount = quotesByWorkspace.filter((q) => quoteInFocus(q, "accepted")).length;
   /* R-1713: the Accepted tile is the Accepted TAB now; the win rate still counts every won quote. */
   const wonCount = quotesByWorkspace.filter((q) => q.status === "accepted").length;
   const sentishCount = quotesByWorkspace.filter((q) => quoteInFocus(q, "review")).length;
@@ -573,32 +571,46 @@ export default function QuotesPage() {
 
       {view === "subscription" && (
         <>
-          {/* Collapsible KPI & Quote Intelligence Banner */}
+          {/* R-2266: ONE strip, closed by default (remembered per user). The closed line carries
+              Pipeline / With customer / Accepted; the Quote intelligence count and Commitment due
+              sit on the line as linked counts instead of two banners pushing the list down. */}
           {!isLoading && quotes && quotes.length > 0 && (
-            <div className="mb-4 bg-paper border border-hairline rounded-lg overflow-hidden transition-all shadow-xs">
-              <button
-                type="button"
-                onClick={() => setKpiOpen((o) => !o)}
-                className="w-full flex items-center justify-between px-3.5 py-2.5 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer"
-              >
-                <div className="flex items-center gap-2 flex-wrap text-xs">
-                  <Icon name="bar_chart" size={15} className="text-amber-ink" />
-                  <span className="font-semibold text-ink">Quote Analytics &amp; Intelligence</span>
-                  <span className="text-ink-3">·</span>
-                  <span className="text-ink-2 font-mono font-medium">Pipeline: <b className="text-amber-ink">{rupee(totalValue, { compact: true })}</b></span>
-                  <span className="text-ink-3 font-mono">·</span>
-                  <span className="text-ink-2 font-mono font-medium">{QUOTE_WITH_CUSTOMER_LABEL}: <b className="text-ink">{rupee(sentValue, { compact: true })}</b> ({sentishCount})</span>
-                  <span className="text-ink-3 font-mono">·</span>
-                  <span className="text-ink-2 font-mono font-medium">{QUOTE_STATE_LABEL.accepted}: <b className="text-emerald">{rupee(acceptedValue, { compact: true })}</b> ({acceptedCount})</span>
-                </div>
-                <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
-                  <span>{kpiOpen ? "Collapse" : "Expand"}</span>
-                  <Icon name={kpiOpen ? "chevron_up" : "chevron_down"} size={14} />
-                </div>
-              </button>
-
-              {kpiOpen && (
-                <div className="p-3 border-t border-hairline space-y-3 bg-paper">
+            <CollapsibleKpiStrip
+              stripId="quotes"
+              userId={me?.userId}
+              title="Insights"
+              summary={
+                <>
+                  <StripFact label="Pipeline" value={rupee(totalValue, { compact: true })} tone="amber" />
+                  <StripFact label={QUOTE_WITH_CUSTOMER_LABEL} value={rupee(sentValue, { compact: true })} />
+                  <StripFact label={QUOTE_STATE_LABEL.accepted} value={rupee(acceptedValue, { compact: true })} tone="emerald" />
+                </>
+              }
+              extras={
+                (expiringCount > 0 || (!commitmentOn && commitment.rows.length > 0)) ? (
+                  <>
+                    {expiringCount > 0 && (
+                      <StripLink
+                        onClick={() => focusOn("review")}
+                        title="Quote intelligence — sent or viewed, waiting on the customer. Follow-ups run on day 2, 4 and 7."
+                      >
+                        {expiringCount} waiting on customer
+                      </StripLink>
+                    )}
+                    {/* R-2046 Commitment due — the same strip component, as a linked count. */}
+                    {!commitmentOn && (
+                      <CommitmentDueStrip
+                        compact
+                        count={commitment.rows.length}
+                        total={commitment.total}
+                        onShow={() => setCommitmentParam("due")}
+                      />
+                    )}
+                  </>
+                ) : undefined
+              }
+            >
+              <>
                   {/* Interactive KPI Stat Grid */}
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
                     <button
@@ -672,9 +684,8 @@ export default function QuotesPage() {
                       <b>{expiringCount} quote{expiringCount === 1 ? "" : "s"} sent or viewed, waiting on the customer.</b> Follow-ups run on their own on day 2, 4 and 7 after sending — drafted on the lead while the follow-up setting is on hold.
                     </GeminiCard>
                   )}
-                </div>
-              )}
-            </div>
+              </>
+            </CollapsibleKpiStrip>
           )}
 
           {/* ── Somebody is waiting on you ───────────────────────────
@@ -695,10 +706,10 @@ export default function QuotesPage() {
             }}
           />
 
-          {/* R-2046: Commitment due — a strip above the tabs (not a tab: these quotes already sit
-              in Sent / Awaiting payment, R-469); opening it shows its own section in place of the
-              tabbed list, with Record payment / Customer stopped on each row. */}
-          {!isLoading && !error && quotes && (commitmentOn ? (
+          {/* R-2046: Commitment due — not a tab (these quotes already sit in Sent / Awaiting
+              payment, R-469). R-2266: its count is a link on the Insights strip; opening it shows
+              this section in place of the tabbed list, with Record payment / Customer stopped. */}
+          {!isLoading && !error && quotes && commitmentOn && (
             <CommitmentDueSection
               rows={commitment.rows}
               total={commitment.total}
@@ -707,13 +718,7 @@ export default function QuotesPage() {
               onCustomerStopped={setStopQuoteId}
               onClose={() => setCommitmentParam("")}
             />
-          ) : (
-            <CommitmentDueStrip
-              count={commitment.rows.length}
-              total={commitment.total}
-              onShow={() => setCommitmentParam("due")}
-            />
-          ))}
+          )}
 
           {/* Sticky Horizontal TabBar + Date Range + Search */}
           {!commitmentOn && !isLoading && quotes && quotes.length > 0 && (

@@ -68,6 +68,7 @@ import { GraceOverCard } from "./grace-over-card";
 import { classifyRenewals, chasedRenewal, expiredGraceText, isFlexNextPart, isStopped } from "./classify";
 import { isNonRenewing, nonRenewingLabel } from "@/lib/subscriptions/non-renewing";
 import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
+import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
 
 // ─── Vendor logo pill ─────────────────────────────────────────────────────────
 
@@ -629,7 +630,6 @@ export default function RenewalsPage() {
   const router = useRouter();
   const [bucketTab, setBucketTab] = useUrlChoice<string>("bucket", RENEWAL_BUCKETS, "urgent"); // R-118
   const [bulkSending, setBulkSending] = React.useState(false);
-  const [kpiOpen, setKpiOpen] = React.useState(true);
   const confirm = useConfirm();
   /* R-239: customer / domain search across the buckets (KPIs stay whole-book). */
   const [search, setSearch] = React.useState("");
@@ -833,19 +833,8 @@ export default function RenewalsPage() {
           <h1 className="font-serif text-3xl text-ink">Renewals</h1>
           <p className="mt-1 text-sm text-ink-3">
             {activeSubs} active subscription{activeSubs !== 1 ? "s" : ""}
-            {groups.atRiskArr > 0 && (
-              <>
-                {" · "}
-                <button
-                  type="button"
-                  onClick={() => setBucketTab("risk")}
-                  className="font-medium text-rose-600 underline-offset-2 hover:underline"
-                  title="Expired and unpaid, or high risk within 90 days — the At risk list"
-                >
-                  {rupee(groups.atRiskArr, { compact: true })} yearly value at risk ({highRiskSubs.length})
-                </button>
-              </>
-            )}
+            {/* R-2266: the at-risk ARR figure lived here AND in the strip — it is only on the
+                strip line now, and the At risk tab below opens the list. */}
           </p>
         </div>
 
@@ -871,31 +860,35 @@ export default function RenewalsPage() {
         </div>
       </div>
 
-      {/* Collapsible Renewals Analytics Banner */}
-      <div className="mb-6 bg-paper border border-hairline rounded-lg overflow-hidden transition-all shadow-xs">
-        <button
-          type="button"
-          onClick={() => setKpiOpen((o) => !o)}
-          className="w-full flex items-center justify-between px-3.5 py-2.5 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer"
-        >
-          <div className="flex items-center gap-2 flex-wrap text-xs">
-            <Icon name="bar_chart" size={15} className="text-amber-ink" />
-            <span className="font-semibold text-ink">Renewals Churn &amp; Revenue Risk</span>
-            <span className="text-ink-3">·</span>
-            <span className="text-ink-2 font-mono font-medium">Urgent (≤7d or lapsed): <b className="text-rose-600">{urgent.length} ({rupee(urgentMrr, { compact: true })})</b></span>
-            <span className="text-ink-3 font-mono">·</span>
-            <span className="text-ink-2 font-mono font-medium">Upcoming (30d): <b className="text-amber-ink">{upcoming.length} ({rupee(upcomingMrr, { compact: true })})</b></span>
-            <span className="text-ink-3 font-mono">·</span>
-            <span className="text-ink-2 font-mono font-medium">At risk ARR: <b className="text-rose-600">{rupee(groups.atRiskArr, { compact: true })}</b> ({highRiskSubs.length})</span>
-          </div>
-          <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
-            <span>{kpiOpen ? "Collapse" : "Expand"}</span>
-            <Icon name={kpiOpen ? "chevron_up" : "chevron_down"} size={14} />
-          </div>
-        </button>
-
-        {kpiOpen && (
-          <div className="p-3 border-t border-hairline space-y-3 bg-paper">
+      {/* R-2266: ONE strip, closed by default (remembered per user). The closed line carries the
+          money (the tabs below carry the counts — one fact, one place); the Renewal AI top pick
+          is a link on the line. */}
+      <CollapsibleKpiStrip
+        stripId="renewals"
+        userId={me?.userId}
+        title="Insights"
+        className="mb-4"
+        summary={
+          <>
+            <StripFact label="Urgent MRR" value={rupee(urgentMrr, { compact: true })} tone="rose" />
+            <StripFact label="Upcoming 30d MRR" value={rupee(upcomingMrr, { compact: true })} tone="amber" />
+            <StripFact label="At risk ARR" value={rupee(groups.atRiskArr, { compact: true })} tone="rose" />
+          </>
+        }
+        extras={highRiskSubs.length > 0 ? (
+          <StripLink
+            tone="rose"
+            title="Renewal AI · next best action — the top renewal at risk"
+            onClick={() => {
+              const cid = highRiskSubs[0]?.sub.customer_id;
+              router.push((cid ? `/customers/${cid}` : "/customers") as never);
+            }}
+          >
+            Top risk: {topHighRisk}
+          </StripLink>
+        ) : undefined}
+      >
+          <>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               <button type="button" onClick={() => setBucketTab("urgent")} aria-pressed={bucketTab === "urgent"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
                 <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Urgent (≤7d or lapsed)</p>
@@ -974,9 +967,8 @@ export default function RenewalsPage() {
                 Call or WhatsApp this week to secure the renewal.
               </GeminiCard>
             )}
-          </div>
-        )}
-      </div>
+          </>
+      </CollapsibleKpiStrip>
 
       {/* R-1621: grace ended unpaid → the owner stops the service or gives more days. */}
       <GraceOverCard />

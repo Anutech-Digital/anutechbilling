@@ -419,6 +419,8 @@ export default function SubscriptionsPage() {
   const canChangeTerms = mayDo(useCurrentUser().data?.role, "seats.change");
   /* R-2225: Won't renew / Undo — the Cancel roles (owner / manager / accountant). */
   const canNonRenew = mayMarkNonRenewing(useCurrentUser().data?.role);
+  /* R-2266: the Insights strip remembers open / closed per signed-in user. */
+  const meUserId = useCurrentUser().data?.userId;
   const confirm = useConfirm();
   const handleDeleteSub = async (s: Subscription) => {
     const body = `This removes the subscription (and any draft purchase order for it). `
@@ -935,6 +937,7 @@ export default function SubscriptionsPage() {
           carries the counts, so closing hides the detail, never the warning. */}
       {!isLoading && subs && subs.length > 0 && (
         <SubsInsightsStrip
+          userId={meUserId}
           mrr={activeMRR}
           arr={activeARR}
           seats={seatsPhrase(activeSubs)}

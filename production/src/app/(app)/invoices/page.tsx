@@ -39,6 +39,7 @@ import {
 import { invoiceMarginMtd } from "@/lib/invoices/margin-mtd";
 import { FillCostsDialog } from "@/components/features/invoices/fill-costs-dialog";
 import { FocusBanner } from "@/components/shared/focus-banner";
+import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -668,9 +669,29 @@ function InvoicesPageInner() {
         );
       })()}
 
-      {/* Interactive KPI Stat Grid */}
+      {/* R-2266: the KPI tiles sit in ONE strip, closed by default (remembered per user); the
+          closed line carries Outstanding / Overdue / Paid this month, and "Fill missing costs"
+          stays one click away on the line. */}
       {!isLoading && invoices && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 mb-5">
+        <CollapsibleKpiStrip
+          stripId="invoices"
+          userId={me?.userId}
+          title="Insights"
+          className="mb-4"
+          summary={
+            <>
+              <StripFact label="Outstanding" value={rupee(outstanding, { compact: true })} tone="rose" />
+              <StripFact label="Overdue" value={rupee(overdueTotal, { compact: true })} />
+              <StripFact label="Paid this month" value={rupee(collectedMTD, { compact: true })} tone="emerald" />
+            </>
+          }
+          extras={isOwner && marginMtd.missingLines > 0 ? (
+            <StripLink onClick={() => setFillCostsOpen(true)} title="Some invoice lines this month have no cost, so Margin MTD is partial">
+              Fill missing costs ({marginMtd.missingLines})
+            </StripLink>
+          ) : undefined}
+        >
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
           <button
             type="button"
             onClick={() => focusOn("unpaid")}
@@ -725,7 +746,6 @@ function InvoicesPageInner() {
                 Fill missing costs
               </button>
             )}
-            {isOwner && <FillCostsDialog open={fillCostsOpen} onOpenChange={setFillCostsOpen} />}
           </div>
           {/* Averaged over every paid invoice — the Paid tab is that set. */}
           <button
@@ -737,7 +757,10 @@ function InvoicesPageInner() {
             <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{avgCollection}d</p>
           </button>
         </div>
+        </CollapsibleKpiStrip>
       )}
+      {/* Outside the strip so the line's "Fill missing costs" opens it while the strip is closed. */}
+      {isOwner && <FillCostsDialog open={fillCostsOpen} onOpenChange={setFillCostsOpen} />}
 
       {/* Tabs, Date Range Filter & Search */}
       {!isLoading && invoices && invoices.length > 0 && (

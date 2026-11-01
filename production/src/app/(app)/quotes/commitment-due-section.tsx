@@ -23,12 +23,30 @@ export interface CommitmentDueStripProps {
   /** ₹ still due across the requests. */
   total: number;
   onShow: () => void;
+  /** R-2266: a short linked count for the Quotes Insights strip line, not a banner. */
+  compact?: boolean;
 }
 
-/** The strip above the tabs. Silent at zero. */
-export function CommitmentDueStrip({ count, total, onShow }: CommitmentDueStripProps) {
+/** The strip above the tabs (or, compact, a linked count on the Insights strip). Silent at zero. */
+export function CommitmentDueStrip({ count, total, onShow, compact }: CommitmentDueStripProps) {
   if (count <= 0) return null;
   const one = count === 1;
+  const sentence = `${count} part payment request${one ? "" : "s"} unpaid · ${rupee(total)} due.`;
+  if (compact) {
+    return (
+      <button
+        type="button"
+        onClick={onShow}
+        title={`${sentence} Committed under an annual plan, not yet invoiced — so not in receivables.`}
+        aria-label={`Commitment due — ${sentence}`}
+        className="inline-flex items-center gap-1 rounded-full bg-amber-soft px-2 py-0.5 text-2xs font-semibold text-amber-ink whitespace-nowrap tabular-nums cursor-pointer hover:underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+      >
+        <Icon name="clock" size={11} />
+        Commitment due {count} · {rupee(total, { compact: true })}
+        <Icon name="arrow_right" size={11} />
+      </button>
+    );
+  }
   return (
     <div
       role="status"

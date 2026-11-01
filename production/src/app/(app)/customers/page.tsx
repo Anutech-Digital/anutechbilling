@@ -46,6 +46,7 @@ import { CreateProjectQuoteDialog } from "@/components/features/projects/create-
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatStrip } from "@/components/shared/stat-strip";
+import { CollapsibleKpiStrip, StripFact } from "@/components/shared/collapsible-kpi-strip";
 import { LoadErrorBanner, loadErrorBody } from "@/components/shared/load-error";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -175,6 +176,8 @@ export default function CustomersPage() {
   const goAdd = () => router.push("/customers/new" as never);
   /* R-255: the accountant reads customers; adding, importing and editing stay with the team. */
   const myRole = useCurrentUser().data?.role;
+  /* R-2266: the Insights strip remembers open / closed per signed-in user. */
+  const myUserId = useCurrentUser().data?.userId;
   const canWrite = canWriteSales(myRole);
   /* R-885: deleting a customer is owner / accountant only (delete_customer refuses the rest). */
   const canDeleteCustomer = canDeleteMoney(myRole);
@@ -230,7 +233,6 @@ export default function CustomersPage() {
   const [showArchived, setShowArchived] = React.useState(false);
   const [sort, setSort] = React.useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "recent", dir: "desc" });
   const [visible, setVisible] = React.useState(CUSTOMERS_PAGE_SIZE);
-  const [kpiOpen, setKpiOpen] = React.useState(true);
   // Row action → "Create invoice": open the invoice chooser for that customer.
   const [invoiceForCustomer, setInvoiceForCustomer] = React.useState<string | null>(null);
   const [projInvoiceForCustomer, setProjInvoiceForCustomer] = React.useState<string | null>(null);
@@ -637,27 +639,29 @@ export default function CustomersPage() {
         <LoadErrorBanner onRetry={() => moneyFailed.forEach((q) => void q.refetch())} />
       )}
 
-      {/* Collapsible Customer Analytics Banner */}
+      {/* R-2266: ONE strip, closed by default (remembered per user). The closed line carries the
+          money; the company count is NOT repeated here — the "All" chip below says it (the audit
+          found "45" three times: strip badge, tile, chip). */}
       {stats.length > 0 && !selectedId && (
-        <div className="mb-4 bg-paper border border-hairline rounded-lg overflow-hidden transition-all shadow-xs">
-          <button
-            type="button"
-            onClick={() => setKpiOpen((o) => !o)}
-            className="w-full flex items-center justify-between px-3.5 py-2.5 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer"
-          >
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              <Icon name="bar_chart" size={15} className="text-amber-ink" />
-              <span className="font-semibold text-ink">Company Portfolio &amp; Receivables</span>
-              <Badge kind="info" size="sm" className="ml-1">{total} Accounts</Badge>
-            </div>
-            <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
-              <span>{kpiOpen ? "Collapse" : "Expand"}</span>
-              <Icon name={kpiOpen ? "chevron_up" : "chevron_down"} size={14} />
-            </div>
-          </button>
-
-          {kpiOpen && (
-            <div className="p-3 border-t border-hairline bg-paper">
+        <CollapsibleKpiStrip
+          stripId="customers"
+          userId={myUserId}
+          title="Insights"
+          className="mb-4"
+          summary={
+            <>
+              {stats.filter((t) => t.label !== "Companies").map((t) => (
+                <StripFact
+                  key={t.label}
+                  label={t.label.replace(" (subscriptions)", "")}
+                  value={t.value}
+                  tone={t.tone === "rose" ? "rose" : t.tone === "emerald" ? "emerald" : "default"}
+                />
+              ))}
+            </>
+          }
+        >
+            <div>
               {/* Built from `stats` (R-005). A redesign hardcoded four tiles here and the
                   "Project value" tile added to `stats` silently stopped showing. */}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
@@ -681,8 +685,7 @@ export default function CustomersPage() {
                 })}
               </div>
             </div>
-          )}
-        </div>
+        </CollapsibleKpiStrip>
       )}
 
       {/* Sticky Segment chips + search */}
