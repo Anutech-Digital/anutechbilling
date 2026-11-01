@@ -8,6 +8,12 @@
  * EMI kept); EMI 1's split is shown before saving. When the first EMI is this line, Save also
  * reconciles it as EMI 1 (one transaction on the server). Later EMIs are then suggested on their
  * own bank lines (R-1864 matching).
+ *
+ * R-2341: "Loan money came into <account>" lists the unmatched money-in lines on that account for
+ * the loan amount (±₹1) within 15 days of when the money came in (lib/banking/loan-disbursal-lines.ts)
+ * and picks the nearest — Save links the loan to THAT line, no new line. A new money-in line is
+ * made only when the owner says the credit is not in the imported statement (warned: otherwise it
+ * is counted twice). The default stays "Taken before these books — no bank entry" (owner, 1 Nov).
  */
 "use client";
 
@@ -18,12 +24,16 @@ import { Input } from "@/components/ui/input";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
-import { rupee } from "@/lib/utils";
+import { formatDate, rupee } from "@/lib/utils";
 import { useBankAccounts } from "@/lib/queries/bank";
 import {
   guessLender, loanSetupErrors, loanSetupPayload, loanSetupSchedule, type LoanSetupInput,
 } from "@/lib/accounting/loan-setup";
-import { useSetUpEmiLoan } from "@/lib/banking/loan-setup-query";
+import { useLoanDisbursalLines, useSetUpEmiLoan } from "@/lib/banking/loan-setup-query";
+import { disbursalCandidates, disbursalWindow } from "@/lib/banking/loan-disbursal-lines";
+
+/* R-2341: which statement line is the loan money — undefined = the nearest one, "none" = not in the statement. */
+const NOT_IN_STATEMENT = "none";
 
 const inputCls = "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber";
 const labelCls = "block text-xs font-medium text-ink-2 mb-1";
@@ -54,15 +64,25 @@ export function LoanSetupDialog({ fromTxn, onClose, onSaved }: { fromTxn: LoanSe
   const [firstDue, setFirstDue] = React.useState(fromTxn.date);
   const [accountId, setAccountId] = React.useState("");
   const [receivedOn, setReceivedOn] = React.useState("");
+  const [linePick, setLinePick] = React.useState<string | undefined>(undefined);
+
+  const principal = Math.round(toNum(owed));
+  /* R-2341: the statement's money-in lines that can be this loan's money. */
+  const lineWindow = accountId ? disbursalWindow(receivedOn, firstDue) : null;
+  const linesQ = useLoanDisbursalLines(accountId || null, principal, lineWindow);
+  const candidates = accountId ? disbursalCandidates(linesQ.data ?? [], principal, lineWindow) : [];
+  const chosenLine = linePick === NOT_IN_STATEMENT
+    ? null
+    : candidates.find((c) => c.id === linePick) ?? candidates[0] ?? null;
 
   const input: LoanSetupInput = {
     lender,
-    principal: Math.round(toNum(owed)),
+    principal,
     annualRatePct: toNum(rate),
     emi: Number(emi) > 0 ? Math.round(Number(emi)) : null,
     months: Math.round(toNum(months)),
     firstDueOn: firstDue,
-    receivedInto: accountId ? { accountId, receivedOn } : null,
+    receivedInto: accountId ? { accountId, receivedOn: chosenLine ? chosenLine.txn_date : receivedOn } : null,
   };
   const errors = loanSetupErrors(input);
   const sched = errors.length === 0 ? loanSetupSchedule(input) : null;
@@ -73,7 +93,10 @@ export function LoanSetupDialog({ fromTxn, onClose, onSaved }: { fromTxn: LoanSe
 
   async function submit() {
     if (!canSave || !sched) return;
-    await save.mutateAsync(loanSetupPayload(input, sched.rows, reconcilesThisLine ? fromTxn.id : null));
+    await save.mutateAsync({
+      ...loanSetupPayload(input, sched.rows, reconcilesThisLine ? fromTxn.id : null),
+      received_txn_id: chosenLine?.id ?? null,
+    });
     onSaved();
   }
 
@@ -109,15 +132,54 @@ export function LoanSetupDialog({ fromTxn, onClose, onSaved }: { fromTxn: LoanSe
             <Input id="loan-setup-first" type="date" value={firstDue} onChange={(e) => setFirstDue(e.target.value)} />
           </Field>
           <Field htmlFor="loan-setup-account" label="Loan money came into">
-            <select id="loan-setup-account" className={inputCls} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+            <select id="loan-setup-account" className={inputCls} value={accountId} onChange={(e) => { setAccountId(e.target.value); setLinePick(undefined); }}>
               <option value="">Taken before these books — no bank entry</option>
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </Field>
-          {accountId && (
+          {accountId && !chosenLine && (
             <Field htmlFor="loan-setup-received" label="Received on">
               <Input id="loan-setup-received" type="date" value={receivedOn} onChange={(e) => setReceivedOn(e.target.value)} />
             </Field>
+          )}
+          {accountId && (
+            <div className="sm:col-span-2 space-y-1.5" data-testid="loan-setup-statement-line">
+              {!(principal > 0) ? (
+                <p className="text-xs text-ink-3">Enter the amount still owed to find the loan money in your imported statement.</p>
+              ) : candidates.length > 0 ? (
+                <fieldset className="space-y-1">
+                  <legend className={labelCls}>The loan money in your statement</legend>
+                  {candidates.map((c) => (
+                    <label key={c.id} className="flex items-start gap-2 text-sm text-ink cursor-pointer">
+                      <input type="radio" name="loan-setup-statement-line" className="mt-1" checked={chosenLine?.id === c.id}
+                        onChange={() => setLinePick(c.id)} />
+                      <span>
+                        <span className="font-mono tabular-nums">{formatDate(c.txn_date)} · {rupee(Number(c.credit))}</span>
+                        <span className="text-ink-2"> · {c.description || "Money in"}</span>
+                      </span>
+                    </label>
+                  ))}
+                  <label className="flex items-start gap-2 text-sm text-ink cursor-pointer">
+                    <input type="radio" name="loan-setup-statement-line" className="mt-1" checked={!chosenLine}
+                      onChange={() => setLinePick(NOT_IN_STATEMENT)} />
+                    <span>Not in my imported statement — add a new money-in line</span>
+                  </label>
+                  {chosenLine && (
+                    <p className="text-xs text-ink-3">This line is reconciled to the loan — no new bank entry is made.</p>
+                  )}
+                </fieldset>
+              ) : (
+                <p className="text-xs text-ink-3">
+                  No unmatched money-in line of {rupee(principal)} on this account
+                  {lineWindow ? ` from ${formatDate(lineWindow.from)} to ${formatDate(lineWindow.to)}` : ""}.
+                </p>
+              )}
+              {!chosenLine && (
+                <p className="text-xs text-amber-ink">
+                  A new money-in line will be added. Only if this credit is not in your imported statement — otherwise it is counted twice.
+                </p>
+              )}
+            </div>
           )}
         </div>
 
