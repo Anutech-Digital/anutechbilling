@@ -7,6 +7,7 @@ import { ENQUIRY_FOLDERS, PAGE_CHOICES } from "@/lib/navigation/drilldown";
 import { groupTasks, taskTabCounts } from "@/components/features/tasks/task-groups";
 import { TASK_OPEN_STATUSES } from "@/lib/queries/tasks";
 import { RENEWAL_EXCLUDED_STATUS, RENEWAL_URGENT_DAYS, daysUntilRenewal, onRenewalsPage, renewalBucket } from "@/lib/renewals/buckets";
+import { chasedRenewal } from "@/app/(app)/renewals/classify";
 import { INVOICE_OWED_STATUSES, invoiceInFocus } from "@/lib/invoices/kpis";
 import { QUOTE_TO_INVOICE_PAYMENT_STATUS, quoteInFocus } from "@/lib/quotes/focus";
 import { INBOX_HIDDEN_STATUSES, MAIL_FOLDERS, inboxUnread } from "@/lib/inbound/folders";
@@ -105,15 +106,18 @@ describe("R-1541: renewals — badge == /renewals?bucket=urgent", () => {
     { status: "active", renewal_date: "2026-10-26" },     // +8 → upcoming, no
     { status: "cancelled", renewal_date: "2026-10-19" },  // cancelled — no
     { status: "active", renewal_date: null },             // no date — no
+    { status: "active", renewal_date: "2026-10-20", auto_renew: false },  // R-2225: Won't renew — no
   ];
   it("the page's Urgent tab holds 3", () => {
-    const urgent = rows.filter(onRenewalsPage).filter((r) => renewalBucket(daysUntilRenewal(r.renewal_date!, today)) === "urgent");
+    const urgent = rows.filter(onRenewalsPage).filter(chasedRenewal)
+      .filter((r) => renewalBucket(daysUntilRenewal(r.renewal_date!, today)) === "urgent");
     expect(urgent.length).toBe(3);
   });
   it("SQL: not cancelled, has a date, within RENEWAL_URGENT_DAYS of the IST today", () => {
     const sql = countSql("renewals");
     expect(sql).toContain(`s.status <> '${RENEWAL_EXCLUDED_STATUS}'`);
     expect(sql).toMatch(/s\.renewal_date is not null/);
+    expect(sql, "R-2225: a non-renewing subscription is not counted").toMatch(/and s\.auto_renew and/);
     expect(sql).toContain(`s.renewal_date <= v_today + ${RENEWAL_URGENT_DAYS}`);
     expect(SQL).toMatch(/v_today\s+date := \(now\(\) at time zone 'Asia\/Kolkata'\)::date/);
   });
