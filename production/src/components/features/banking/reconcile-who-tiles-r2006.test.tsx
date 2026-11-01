@@ -77,6 +77,7 @@ vi.mock("@/components/features/banking/employee-advance-bank-section", () => ({ 
 vi.mock("@/components/features/banking/emi-repayment-section", () => ({
   EmiRepaymentSection: () => <section aria-label="EMI form">EMI</section>,
 }));
+vi.mock("@/components/features/banking/loan-given-receipt-section", () => ({ LoanGivenReceiptSection: () => null }));   // R-2340
 vi.mock("@/components/features/banking/debit-pay-for-section", async () => {
   const R = await import("react");
   return {

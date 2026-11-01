@@ -164,7 +164,7 @@ export function LoanGivenSetupDialog({ fromTxn, onClose, onSaved }: {
 
   const principal = Math.round(toNum(lent));
   const linesQ = useLoanGivenDisbursalLines(principal > 0 ? principal : 0, firstDue);
-  const lines = linesQ.data ?? [];
+  const lines = React.useMemo(() => linesQ.data ?? [], [linesQ.data]);
   React.useEffect(() => { if (lineId && !lines.some((l) => l.id === lineId)) setLineId(BEFORE_BOOKS); }, [lines, lineId]);
 
   const input: LoanGivenSetupInput = {
