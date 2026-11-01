@@ -56,6 +56,7 @@ import { PAYER_RELATIONS, payerFromNarration, payerMatchesCustomer, type PayerRe
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
 import { cleanAmount, pickDefault, pickProblem, splitBlocked, splitPartPaid, splitRest, splitSummary, type SplitRest } from "@/lib/banking/credit-pay-for-multi";
 import { CreditPaySplit } from "./credit-pay-for-split";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
 
 const NEW_CUSTOMER = "__new_customer__";
@@ -82,6 +83,9 @@ interface Props {
   /** R-2007: the Suggestion card's open item (and whether the gap is TDS) — "Change" opens this
    *  section with it ticked. */
   suggested?: { itemKey: string; tds: boolean } | null;
+  /** R-2348: the Reconcile sheet draws this section's Save in its sticky footer. Given → no inline
+   *  button; the footer gets the same label, disabled rule and save. */
+  onFooterSave?: (save: FooterSave | null) => void;
 }
 
 type Mode = "item" | "sale" | "advance" | "split";
@@ -101,7 +105,7 @@ const MODES: ReadonlyArray<readonly [Mode, string, string]> = [
 const selectCls =
   "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
 
-export function CreditPayForSection({ transaction, customers, onNewCustomer, pickedCustomerId, onProjectPayment, onSaved, onDone, relink, suggested }: Props) {
+export function CreditPayForSection({ transaction, customers, onNewCustomer, pickedCustomerId, onProjectPayment, onSaved, onDone, relink, suggested, onFooterSave }: Props) {
   const credit = transaction.credit;
 
   /* ── 1. Customer ─────────────────────────────────────────────────────────────── */
@@ -350,6 +354,24 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     } catch { /* the hook toasts */ }
   };
 
+  /* R-2348: in the Reconcile sheet the Save sits in the sticky footer — same label, same canSave,
+     same save(). Shown once a customer is picked, as the inline button was. */
+  const saveLabel = `${relink ? "Relink: " : ""}${mode === null
+    ? "Choose what this money is for"
+    : mode === "item"
+    ? picked ? `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile` : "Pick what it pays"
+    : mode === "split"
+      ? `Record on ${splitCount} item${splitCount === 1 ? "" : "s"} & reconcile ${rupee(credit)}`
+    : mode === "sale"
+      ? `Record sale & reconcile ${rupee(credit)}`
+      : `Keep ${rupee(credit)} as advance & reconcile`}`;
+  useFooterSaveReport(onFooterSave, credit > 0 && !result && customerId
+    ? {
+        label: saveLabel, onSave: () => { void save(); }, disabled: !canSave, loading: busy,
+        disabledReason: payerUnanswered && mode !== null ? "Say who paid before saving." : null,
+      }
+    : null);
+
   if (credit <= 0) return null;
 
   if (result) {
@@ -553,23 +575,15 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
           <div className="flex flex-wrap gap-2">
             {/* Wraps on a phone: the quote number makes the label longer than 375px allows. */}
-            <Button size="sm" variant="primary" icon="check" disabled={!canSave} loading={busy} onClick={save}
-              className="whitespace-normal h-auto min-h-8 py-1.5 text-left max-w-full">
-
-              {relink ? "Relink: " : ""}
-              {mode === null
-                ? "Choose what this money is for"
-                : mode === "item"
-                ? picked ? `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile` : "Pick what it pays"
-                : mode === "split"
-                  ? `Record on ${splitCount} item${splitCount === 1 ? "" : "s"} & reconcile ${rupee(credit)}`
-                : mode === "sale"
-                  ? `Record sale & reconcile ${rupee(credit)}`
-                  : `Keep ${rupee(credit)} as advance & reconcile`}
-            </Button>
+            {!onFooterSave && (
+              <Button size="sm" variant="primary" icon="check" disabled={!canSave} loading={busy} onClick={save}
+                className="whitespace-normal h-auto min-h-8 py-1.5 text-left max-w-full">
+                {saveLabel}
+              </Button>
+            )}
             {onProjectPayment && <Button size="sm" variant="default" icon="briefcase" onClick={() => onProjectPayment(customerId)}>Project payment</Button>}
           </div>
-          {payerUnanswered && mode !== null && <p className="text-xs text-amber-ink">Say who paid (above) before saving.</p>}
+          {payerUnanswered && mode !== null && !onFooterSave && <p className="text-xs text-amber-ink">Say who paid (above) before saving.</p>}
         </>
       )}
     </section>

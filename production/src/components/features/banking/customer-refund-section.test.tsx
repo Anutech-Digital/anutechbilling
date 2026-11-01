@@ -6,7 +6,7 @@
    Save → reconcile_bank_debit_as_customer_refund with this line and that payment. */
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import type { RefundableItem } from "@/lib/banking/customer-refund";
@@ -23,7 +23,7 @@ vi.mock("@/lib/banking/customer-refund-query", () => ({
 }));
 
 import { CustomerRefundSection } from "./customer-refund-section";
-import { MONEY_OUT_TILES } from "./reconcile-who-tiles";
+import { MONEY_OUT_TILES, ReconcileFooter, type FooterSave } from "./reconcile-who-tiles";
 
 const line = {
   id: "txn-1", debit: 41832, credit: 0, txn_date: "2026-10-31",
@@ -109,5 +109,33 @@ describe("Customer refund on a money-out line (R-2322)", () => {
     expect(screen.queryByLabelText("Refund reason")).toBeNull();
     expect((screen.getByRole("button", { name: /as customer refund/ }) as HTMLButtonElement).disabled).toBe(true);
     expect(state.book).not.toHaveBeenCalled();
+  });
+});
+
+/* R-2348: in the Reconcile sheet the refund hands its Save to the sticky footer — same label, same
+   rule (blocked), same save(); nothing to save inside the form. */
+function InSheet() {
+  const [save, setSave] = React.useState<FooterSave | null>(null);
+  return (
+    <>
+      <div data-testid="reconcile-scroll-body"><CustomerRefundSection transaction={line} customers={customers} onDone={() => {}} onFooterSave={setSave} /></div>
+      <ReconcileFooter amount={41832} save={save} hint="pick the customer" onClose={() => {}} />
+    </>
+  );
+}
+describe("R-2348 Customer refund — Save in the sticky footer", () => {
+  it("books the same refund from the footer; nothing refundable keeps it disabled", async () => {
+    render(<InSheet />);
+    const body = screen.getByTestId("reconcile-scroll-body");
+    const footer = screen.getByTestId("reconcile-footer");
+    expect(within(body).queryByRole("button", { name: /as customer refund/ })).toBeNull();
+    const btn = within(footer).getByRole("button", { name: "Book ₹41,832 as customer refund" }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText("Customer refunded"), { target: { value: "c-acme" } });
+    await vi.waitFor(() => expect((within(footer).getByRole("button", { name: /as customer refund/ }) as HTMLButtonElement).disabled).toBe(true));
+    fireEvent.change(screen.getByLabelText("Customer refunded"), { target: { value: "c-novo" } });
+    await vi.waitFor(() => expect((within(footer).getByRole("button", { name: /as customer refund/ }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(footer).getByRole("button", { name: /as customer refund/ }));
+    await vi.waitFor(() => expect(state.book).toHaveBeenCalledWith({ transactionId: "txn-1", paymentId: "p-cn", reason: "Refund of credit note CN-2 on INV-2" }));
   });
 });

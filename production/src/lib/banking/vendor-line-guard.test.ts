@@ -16,7 +16,7 @@ describe("R-1917 expenseGuard", () => {
   it("B8: Sharma ₹11,800 line, Sharma's PS-2 ₹11,800 open → blocked, sentence names PS-2", () => {
     const g = expenseGuard(sharma([item({})]), "Sharma Associates", 11800);
     expect(g?.blocked).toBe(true);
-    expect(g?.message).toBe("Sharma Associates has an open bill PS-2 for ₹11,800 — pay it with Record payment above instead of booking a new expense, or the cost is counted twice.");
+    expect(g?.message).toBe("Sharma Associates has an open bill PS-2 for ₹11,800 — pay it with Record payment on the Vendor tile instead of booking a new expense, or the cost is counted twice.");
   });
 
   it("the expense form's vendor typed in another case / with spaces is the same vendor", () => {

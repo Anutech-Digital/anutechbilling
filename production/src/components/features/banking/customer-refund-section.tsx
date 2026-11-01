@@ -21,14 +21,18 @@ import {
   defaultRefundReason, guessRefundCustomer, pickDefaultRefundItem, refundItemLabel, refundItemProblem, refundReasonProblem,
 } from "@/lib/banking/customer-refund";
 import { useBookCustomerRefund, useCustomerRefundables } from "@/lib/banking/customer-refund-query";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
 const selectCls =
   "w-full rounded-md border border-hairline bg-paper px-2.5 py-2 text-sm text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber/50";
 
-export function CustomerRefundSection({ transaction, customers, onDone }: {
+export function CustomerRefundSection({ transaction, customers, onDone, onFooterSave }: {
   transaction: BankTransactionRow;
   customers: ReadonlyArray<{ id: string; name: string }>;
   onDone: () => void;
+  /** R-2348: the Reconcile sheet draws the Save in its sticky footer. Given → no inline button;
+   *  the footer gets the same label, disabled rule and save. */
+  onFooterSave?: (save: FooterSave | null) => void;
 }) {
   const amount = transaction.debit ?? 0;
   const guess = React.useMemo(() => guessRefundCustomer(transaction.description, customers), [transaction.description, customers]);
@@ -58,6 +62,10 @@ export function CustomerRefundSection({ transaction, customers, onDone }: {
       onDone();
     } catch { /* the hook shows the error */ }
   }
+
+  /* R-2348: same label, same rule (blocked), same save() — in the footer when the sheet asks. */
+  const saveLabel = `Book ${rupee(amount)} as customer refund`;
+  useFooterSaveReport(onFooterSave, { label: saveLabel, onSave: () => { void save(); }, disabled: Boolean(blocked), loading: book.isPending });
 
   return (
     <div className="rounded-md border border-hairline p-3 space-y-3" data-testid="customer-refund-section">
@@ -109,9 +117,11 @@ export function CustomerRefundSection({ transaction, customers, onDone }: {
       )}
 
       {blocked && customerId && items.length > 0 && <p className="text-xs text-ink-3">{blocked}</p>}
-      <Button size="sm" variant="primary" icon="check" loading={book.isPending} disabled={Boolean(blocked)} onClick={save}>
-        Book {rupee(amount)} as customer refund
-      </Button>
+      {!onFooterSave && (
+        <Button size="sm" variant="primary" icon="check" loading={book.isPending} disabled={Boolean(blocked)} onClick={save}>
+          {saveLabel}
+        </Button>
+      )}
     </div>
   );
 }

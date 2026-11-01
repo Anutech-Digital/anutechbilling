@@ -24,6 +24,14 @@ const state = vi.hoisted(() => ({
   bookExpense: vi.fn(),
   suggestions: [] as unknown[],
   expenses: [] as unknown[],
+  /* R-2348: the handlers the footer must call — the same ones the in-form buttons called. */
+  vendorPay: vi.fn(),
+  customerPay: vi.fn(),
+  refundPay: vi.fn(),
+  reconcile: vi.fn(),
+  reconcileExpenses: vi.fn(),
+  salarySplit: vi.fn(),
+  salaries: [] as unknown[],
 }));
 const { mutation } = vi.hoisted(() => ({ mutation: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }) }));
 
@@ -40,14 +48,14 @@ vi.mock("@/lib/banking/reconciled-suggestions", async (orig) => ({
 }));
 vi.mock("@/lib/queries/bank", () => ({
   useSuggestMatches: () => ({ data: state.suggestions, isLoading: false }),
-  useReconcileTransaction: mutation,
-  useReconcileExpensesToBankTxn: mutation,
+  useReconcileTransaction: () => ({ mutateAsync: state.reconcile, isPending: false }),
+  useReconcileExpensesToBankTxn: () => ({ mutateAsync: state.reconcileExpenses, isPending: false }),
   useBookTxnAsExpense: () => ({ mutateAsync: state.bookExpense, isPending: false }),
   useBookBankCredit: mutation,
   useBookBankAdvance: mutation,
   useBookBankTxnAsStatutory: mutation,
   useBookBankTxnAsCommission: mutation,
-  useReconcileSalaryAdvanceSplit: mutation,
+  useReconcileSalaryAdvanceSplit: () => ({ mutateAsync: state.salarySplit, isPending: false }),
   useOpenInvoicesForCreditMatch: () => ({ data: [] }),
 }));
 vi.mock("@/lib/queries/expenses", () => ({
@@ -56,7 +64,7 @@ vi.mock("@/lib/queries/expenses", () => ({
   suggestCategory: () => null,
 }));
 vi.mock("@/lib/queries/txn-category-rules", () => ({ useTxnCategoryRules: () => ({ data: [] }) }));
-vi.mock("@/lib/queries/payroll", () => ({ useUnreconciledSalaries: () => ({ data: [] }), useEmployees: () => ({ data: [] }) }));
+vi.mock("@/lib/queries/payroll", () => ({ useUnreconciledSalaries: () => ({ data: state.salaries }), useEmployees: () => ({ data: [] }) }));
 vi.mock("@/lib/queries/customers", () => ({ useCustomers: () => ({ data: [] }) }));
 vi.mock("@/lib/queries/tax-payments", () => ({ useBookBankTxnAsTax: mutation }));
 vi.mock("@/lib/queries/salary-from-bank", () => ({ useBookSalaryLines: mutation }));
@@ -71,7 +79,26 @@ vi.mock("@/components/features/banking/reconcile-suggestion-card", () => ({
 vi.mock("@/lib/compliance/profile", () => ({ useComplianceProfile: () => ({ data: { businessType: "pvt_ltd" } }) }));
 vi.mock("@/components/features/customers/add-customer-form", () => ({ AddCustomerForm: () => null }));
 vi.mock("@/components/features/banking/project-payment-section", () => ({ ProjectPaymentSection: () => null }));
-vi.mock("@/components/features/banking/credit-pay-for-section", () => ({ CreditPayForSection: () => null }));
+/* R-2348: the Customer / Customer refund sections are tested on their own (credit-pay-for-section.test,
+   customer-refund-section.test); here stubs that hand the footer their Save the way the real ones do. */
+vi.mock("@/components/features/banking/credit-pay-for-section", async () => {
+  const { useFooterSaveReport } = await import("./reconcile-who-tiles");
+  return {
+    CreditPayForSection: ({ onFooterSave }: { onFooterSave?: Parameters<typeof useFooterSaveReport>[0] }) => {
+      useFooterSaveReport(onFooterSave, { label: "Record ₹11,800 on Q-7 & reconcile", onSave: state.customerPay });
+      return <section aria-label="This money is for" />;
+    },
+  };
+});
+vi.mock("@/components/features/banking/customer-refund-section", async () => {
+  const { useFooterSaveReport } = await import("./reconcile-who-tiles");
+  return {
+    CustomerRefundSection: ({ onFooterSave }: { onFooterSave?: Parameters<typeof useFooterSaveReport>[0] }) => {
+      useFooterSaveReport(onFooterSave, { label: "Book ₹11,800 as customer refund", onSave: state.refundPay, disabled: false });
+      return <section aria-label="Customer refund" />;
+    },
+  };
+});
 vi.mock("@/components/features/banking/owner-equity-section", () => ({ OwnerEquitySection: () => null }));
 /* R-2095: the transfer / other-income sections have their own tests (own-transfer-section-r2095). */
 vi.mock("@/components/features/banking/other-income-section", () => ({ OtherIncomeSection: () => null }));
@@ -85,13 +112,19 @@ vi.mock("@/components/features/banking/emi-repayment-section", async () => {
 vi.mock("@/components/features/banking/debit-pay-for-section", async () => {
   const R = await import("react");
   const { Button } = await import("@/components/ui/button");
+  const { useFooterSaveReport } = await import("./reconcile-who-tiles");
   return {
-    DebitPayForSection: ({ onVendorChange }: { onVendorChange?: (f: unknown) => void }) => {
+    DebitPayForSection: ({ onVendorChange, onFooterSave }: {
+      onVendorChange?: (f: unknown) => void; onFooterSave?: Parameters<typeof useFooterSaveReport>[0];
+    }) => {
       R.useEffect(() => { onVendorChange?.(state.focus); }, [onVendorChange]);
       const f = state.focus as VendorFocus | null;
+      const label = f ? `Record payment ₹11,800 to ${f.vendorName} & reconcile` : "";
+      /* R-2348: like the real section — the Save goes to the footer when the sheet asks for it. */
+      useFooterSaveReport(onFooterSave, f ? { label, onSave: state.vendorPay } : null);
       return (
         <section aria-label="Paying a vendor">
-          {f && <Button variant="primary">Record payment ₹11,800 to {f.vendorName} &amp; reconcile</Button>}
+          {f && !onFooterSave && <Button variant="primary">{label}</Button>}
         </section>
       );
     },
@@ -116,6 +149,8 @@ const primaryButtons = () =>
 afterEach(cleanup);
 beforeEach(() => {
   state.bookExpense.mockReset();
+  for (const fn of [state.vendorPay, state.customerPay, state.refundPay, state.reconcile, state.reconcileExpenses, state.salarySplit]) fn.mockReset().mockResolvedValue({});
+  state.salaries = [];
   state.focus = { vendorId: "v1", vendorName: "Sharma Associates", openItems: [PS2] } satisfies VendorFocus;
   state.suggestions = [{ match_type: "expense", match_id: "E2", match_label: "Sharma Associates · PS-2", match_amount: 11800, match_date: "2026-09-10", match_confidence: "exact" }];
   state.expenses = [
@@ -145,7 +180,8 @@ describe("R-1917 Reconcile sheet — one way for a vendor's money-out line", () 
     expect((screen.getByLabelText("Vendor / payee (optional)") as HTMLInputElement).value).toBe("Sharma Associates");
     fireEvent.change(screen.getByLabelText("Expense category"), { target: { value: "Professional Services" } });
     const alert = screen.getByRole("alert");
-    expect(alert.textContent).toContain("Sharma Associates has an open bill PS-2 for ₹11,800 — pay it with Record payment above");
+    expect(alert.textContent).toContain("Sharma Associates has an open bill PS-2 for ₹11,800 — pay it with Record payment on the Vendor tile instead");
+    expect(alert.textContent).not.toMatch(/above/i);
     const book = screen.getByRole("button", { name: /Book ₹11,800 as Professional Services/ }) as HTMLButtonElement;
     expect(book.disabled).toBe(true);
     fireEvent.click(book);
@@ -205,5 +241,114 @@ describe("R-2268 Reconcile sheet — the save is in the sticky footer", () => {
     render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={sharmaLine} />);
     const footer = screen.getByTestId("reconcile-footer");
     expect(footer.textContent).not.toMatch(/above/i);
+  });
+});
+
+/* R-2348 (follow-up of R-2268): the tiles that kept their own button inside the form — Vendor
+   "Record payment", Customer, Customer refund, salary "Pay in full", Combine multiple expenses,
+   Overpaid salary — now save from the sticky footer: the button is in reconcile-footer, outside the
+   scrolling body, it is the footer's ONLY primary, and it calls the same handler. */
+describe("R-2348 Reconcile sheet — every tile saves from the sticky footer", () => {
+  const plainOut = { ...sharmaLine, description: "UPI 9876@okhdfc" } as BankTransactionRow;
+  const parts = () => {
+    const footer = screen.getByTestId("reconcile-footer");
+    const body = screen.getByTestId("reconcile-scroll-body");
+    expect(body.contains(footer)).toBe(false);
+    const footerPrimaries = within(footer).getAllByRole("button").filter((b) => b.className.split(/\s+/).includes("bg-amber"));
+    expect(footerPrimaries).toHaveLength(1);
+    return { footer, body, primary: footerPrimaries[0] as HTMLButtonElement };
+  };
+
+  it("Vendor: Record payment is in the footer, not in the body, and runs the vendor section's save", () => {
+    render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={sharmaLine} />);
+    const { body, primary } = parts();
+    expect(primary.textContent).toBe("Record payment ₹11,800 to Sharma Associates & reconcile");
+    expect(within(body).queryByRole("button", { name: /Record payment/ })).toBeNull();
+    fireEvent.click(primary);
+    expect(state.vendorPay).toHaveBeenCalledTimes(1);
+  });
+
+  it("Customer (money in): the section's save is the footer's primary", () => {
+    state.focus = null;
+    const credit = { ...sharmaLine, debit: 0, credit: 11800, description: "NEFT ACME CORP" } as BankTransactionRow;
+    render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={credit} />);
+    fireEvent.click(screen.getByRole("radio", { name: /^Customer/ }));
+    const { body, primary } = parts();
+    expect(primary.textContent).toBe("Record ₹11,800 on Q-7 & reconcile");
+    expect(within(body).queryByRole("button", { name: /& reconcile/ })).toBeNull();
+    fireEvent.click(primary);
+    expect(state.customerPay).toHaveBeenCalledTimes(1);
+  });
+
+  it("Customer refund (money out): the refund's save is the footer's primary", () => {
+    state.focus = null;
+    render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={plainOut} />);
+    fireEvent.click(screen.getByRole("radio", { name: /^Customer refund/ }));
+    const { primary } = parts();
+    expect(primary.textContent).toBe("Book ₹11,800 as customer refund");
+    fireEvent.click(primary);
+    expect(state.refundPay).toHaveBeenCalledTimes(1);
+  });
+
+  it("Salary: pick the salary in the list → Pay in full / Apply ₹X in the footer; more than due stays disabled", async () => {
+    state.focus = null;
+    state.salaries = [
+      { id: "S1", employee_name: "Asha", period: "2026-09", paid_status: "unpaid", paid_amount: 0, net: 11800, remaining: 11800 },
+      { id: "S2", employee_name: "Ravi", period: "2026-09", paid_status: "unpaid", paid_amount: 0, net: 5000, remaining: 5000 },
+      { id: "S3", employee_name: "Meena", period: "2026-09", paid_status: "unpaid", paid_amount: 0, net: 20000, remaining: 20000 },
+    ];
+    render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={plainOut} />);
+    fireEvent.click(screen.getByRole("radio", { name: /^Employee \/ salary/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Pay a salary (full or part)" }));
+    // nothing picked yet → no save in the footer
+    expect(within(screen.getByTestId("reconcile-footer")).queryAllByRole("button").map((b) => b.textContent)).toEqual(["Close"]);
+    // the old rule: a salary with less left than this line cannot take it
+    const ravi = screen.getByRole("button", { name: /^Ravi · 2026-09/ }) as HTMLButtonElement;
+    expect(ravi.disabled).toBe(true);
+    expect(ravi.title).toBe("This line (₹11,800) is more than the ₹5,000 left on this salary");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Meena · 2026-09/ }));
+    expect(parts().primary.textContent).toBe("Apply ₹11,800 · Meena · 2026-09");
+    fireEvent.click(screen.getByRole("button", { name: /^Asha · 2026-09/ }));
+    const { body, primary } = parts();
+    expect(primary.textContent).toBe("Pay in full · Asha · 2026-09");
+    expect(within(body).queryByRole("button", { name: /^(Pay in full|Apply ₹)/ })).toBeNull();
+    fireEvent.click(primary);
+    await vi.waitFor(() => expect(state.reconcile).toHaveBeenCalledWith({ transactionId: "t1", matchedToType: "salary", matchedToId: "S1", confidence: "manual" }));
+  });
+
+  it("Overpaid salary: the salary picked in the select → Pay salary + book ₹X advance in the footer", async () => {
+    state.focus = null;
+    state.salaries = [{ id: "S2", employee_name: "Ravi", period: "2026-09", paid_status: "unpaid", paid_amount: 0, net: 5000, remaining: 5000 }];
+    render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={plainOut} />);
+    fireEvent.click(screen.getByRole("radio", { name: /^Employee \/ salary/ }));
+    fireEvent.change(screen.getByLabelText("Salary to settle"), { target: { value: "S2" } });
+    const { body, primary } = parts();
+    expect(primary.textContent).toBe("Pay salary + book ₹6,800 advance");
+    expect(within(body).queryByRole("button", { name: /Pay salary \+ book/ })).toBeNull();
+    fireEvent.click(primary);
+    await vi.waitFor(() => expect(state.salarySplit).toHaveBeenCalledWith({ transactionId: "t1", salaryId: "S2", advanceAmount: 6800, employeeName: "Ravi" }));
+  });
+
+  it("Combine multiple expenses: Reconcile N expenses in the footer, disabled until the ticks add up", async () => {
+    state.focus = null;
+    render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={plainOut} />);
+    fireEvent.click(screen.getByRole("radio", { name: /Bank charge \/ other/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Combine multiple expenses" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Rent · Kapoor Estates/ }));
+    let p = parts();
+    expect(p.primary.textContent).toBe("Reconcile 1 expense");
+    expect(p.primary.disabled).toBe(true);
+    expect(p.footer.textContent).toContain("₹18,200 more than the line");
+    fireEvent.click(p.primary);
+    expect(state.reconcileExpenses).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Rent · Kapoor Estates/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Professional Services · Sharma Associates/ }));
+    p = parts();
+    expect(p.primary.disabled).toBe(false);
+    expect(within(p.body).queryByRole("button", { name: /^Reconcile \d* ?expense/ })).toBeNull();
+    fireEvent.click(p.primary);
+    await vi.waitFor(() => expect(state.reconcileExpenses).toHaveBeenCalledWith({ transactionId: "t1", expenseIds: ["E2"] }));
   });
 });

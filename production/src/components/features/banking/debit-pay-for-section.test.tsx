@@ -6,7 +6,7 @@
    SQL test supabase/tests/r1866_bank_debit_vendor.test.sql. */
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
 import type { VendorOpenItem, VendorPayResult } from "@/lib/banking/debit-pay-for";
 import type { BankTransactionRow } from "@/lib/queries/bank";
@@ -57,6 +57,7 @@ vi.mock("@/lib/queries/vendor-advance", () => ({ useApplyVendorAdvance: () => ({
 vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { role: state.role } }) }));
 
 import { DebitPayForSection } from "./debit-pay-for-section";
+import { ReconcileFooter, type FooterSave } from "./reconcile-who-tiles";
 
 afterEach(cleanup);
 beforeEach(() => {
@@ -622,5 +623,52 @@ describe("R-2338 DebitPayForSection — 194J(a) 2% and 'Remember for this vendor
     fireEvent.click(saveButton());
     await screen.findByText("Done — this bank line is reconciled");
     expect(state.pay.mock.calls[0][0].rememberSection).toBe(false);
+  });
+});
+
+/* R-2348: in the Reconcile sheet the section hands its Save to the sticky footer (onFooterSave) —
+   the same label, the same disabled rule (canSave) and the same save(); no button in the form. */
+function InSheet({ line }: { line: BankTransactionRow }) {
+  const [save, setSave] = React.useState<FooterSave | null>(null);
+  return (
+    <>
+      <div data-testid="reconcile-scroll-body"><DebitPayForSection transaction={line} onDone={() => {}} onFooterSave={setSave} /></div>
+      <ReconcileFooter amount={line.debit ?? 0} save={save} hint="pick the vendor" onClose={() => {}} />
+    </>
+  );
+}
+describe("R-2348 DebitPayForSection — Record payment in the sticky footer", () => {
+  it("the Sharma two-bill payment saves from the footer with the same RPC call", async () => {
+    state.items.v1 = [exp({}), exp({ doc_id: "E2", bill_no: "PS-102", doc_date: "2026-09-15", total: 11800, amount_due: 11800, gst: 1800, tds_base: 10000 })];
+    state.pay.mockResolvedValue(result({ bank_amount: 64800 }));
+    render(<InSheet line={txn(64800, "IMPS SHARMA ASSOCIATES FEES")} />);
+    const body = screen.getByTestId("reconcile-scroll-body");
+    const footer = screen.getByTestId("reconcile-footer");
+    expect(within(body).queryByRole("button", { name: /^Record payment/ })).toBeNull();
+    const btn = within(footer).getByRole("button", { name: "Record payment ₹64,800 to Sharma Associates & reconcile" }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    expect(footer.textContent).toContain("Bank ₹64,800 = ₹64,800 ✓");
+    fireEvent.click(btn);
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay).toHaveBeenCalledTimes(1);
+    expect(state.pay.mock.calls[0][0]).toMatchObject({ transactionId: "t-64800", vendorId: "v1", advance: 0, bankCharge: 0, newBill: null });
+    // booked → the footer has no Save any more (the section shows its Done panel)
+    await vi.waitFor(() => expect(within(footer).queryByRole("button", { name: /^Record payment/ })).toBeNull());
+  });
+
+  it("the disabled rule is unchanged: amounts that do not add up keep the footer button disabled", () => {
+    state.items.v1 = [exp({}), exp({ doc_id: "E2", bill_no: "PS-102", doc_date: "2026-09-15", total: 11800, amount_due: 11800, gst: 1800, tds_base: 10000 })];
+    render(<InSheet line={txn(64800, "IMPS SHARMA ASSOCIATES FEES")} />);
+    fireEvent.change(screen.getByLabelText("Bank charge"), { target: { value: "500" } });
+    const footer = screen.getByTestId("reconcile-footer");
+    const btn = within(footer).getByRole("button", { name: /^Record payment/ }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    fireEvent.click(btn);
+    expect(state.pay).not.toHaveBeenCalled();
+  });
+
+  it("no vendor picked yet: no Save in the footer", () => {
+    render(<InSheet line={txn(5000, "UPI 9876@okhdfc")} />);
+    expect(within(screen.getByTestId("reconcile-footer")).getAllByRole("button").map((b) => b.textContent)).toEqual(["Close"]);
   });
 });

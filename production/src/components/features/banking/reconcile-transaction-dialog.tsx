@@ -123,7 +123,12 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const [pickedExpenses, setPickedExpenses] = React.useState<Set<string>>(new Set());
   const [showSplit, setShowSplit] = React.useState(false);
   const [showSalary, setShowSalary] = React.useState(false);
-  React.useEffect(() => { setPickedExpenses(new Set()); setShowSplit(false); setShowSalary(false); }, [transaction?.id]);
+  /* R-2348: the salary picked in "Pay a salary (full or part)" — paid from the footer. */
+  const [salaryPick, setSalaryPick] = React.useState("");
+  /* R-2348: the Save the Vendor / Customer (or Customer refund) section hands the footer. */
+  const [vendorSave, setVendorSave] = React.useState<FooterSave | null>(null);
+  const [customerSave, setCustomerSave] = React.useState<FooterSave | null>(null);
+  React.useEffect(() => { setPickedExpenses(new Set()); setShowSplit(false); setShowSalary(false); setSalaryPick(""); }, [transaction?.id]);
   const toggleExpense = (id: string) =>
     setPickedExpenses((prev) => {
       const next = new Set(prev);
@@ -617,18 +622,48 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     loading: bookSalary.isPending,
     disabledReason: !salaryEmp ? "Pick the employee." : !salaryPeriod ? "Pick the salary month." : null,
   };
+  /* R-2348: the buttons that used to sit inside the forms, now in the footer — same label, same
+     disabled rule, same handler. "Pay a salary (full or part)": the picked salary. */
+  const salaryPicked = showSalary && salaryPick ? (payableSalaries ?? []).find((s) => s.id === salaryPick) ?? null : null;
+  const salaryPaySave: FooterSave | null = salaryPicked ? {
+    label: `${salaryPicked.remaining === amount ? "Pay in full" : `Apply ${rupee(amount)}`} · ${salaryPicked.employee_name} · ${salaryPicked.period}`,
+    onSave: () => { void handleSalaryMatch(salaryPicked.id); },
+    loading: reconcile.isPending,
+    /* guard against over-paying a salary — the rule the row's own button had */
+    disabledReason: salaryPicked.remaining >= amount ? null
+      : `This line (${rupee(amount)}) is more than the ${rupee(salaryPicked.remaining)} left on this salary`,
+  } : null;
+  /* "Overpaid a salary? (salary + advance)": the salary chosen in its select. */
+  const splitSalary = splitSalaryId ? (payableSalaries ?? []).find((s) => s.id === splitSalaryId) ?? null : null;
+  const salarySplitSave: FooterSave | null = splitSalary ? {
+    label: `Pay salary + book ${rupee(amount - splitSalary.remaining)} advance`,
+    onSave: () => { void handleSalarySplit(); },
+    loading: salarySplit.isPending,
+  } : null;
+  /* "Combine multiple expenses": once an expense is ticked. */
+  const expenseSplitSave: FooterSave | null = showSplit && pickedExpenses.size > 0 ? {
+    label: `Reconcile ${pickedExpenses.size} expense${pickedExpenses.size === 1 ? "" : "s"}`,
+    onSave: () => { void handleExpenseSplit(); },
+    disabled: pickedExpenseTotal !== amount,
+    loading: reconcileExpenses.isPending,
+    booked: pickedExpenseTotal,
+  } : null;
   const footerSave: FooterSave | null = payForDone || !tile ? null
     : tile === "tax" ? statutorySave
-    : tile === "other" ? (isCredit ? manualSave : expenseSave)
+    : tile === "other" ? (isCredit ? manualSave : expenseSplitSave ?? expenseSave)
     : tile === "transfer" || tile === "tax_refund" ? manualSave
     : tile === "owner" ? (showCreditBox ? creditSave : null)
     : tile === "loan" ? advanceSave
-    : tile === "employee" && !isCredit && salaryHint ? salarySave
+    : tile === "vendor" ? (isCredit ? null : vendorSave)
+    : tile === "customer" ? customerSave
+    : tile === "employee" && !isCredit ? salaryPaySave ?? salarySplitSave ?? (salaryHint ? salarySave : null)
     : null;
   const footerHint = payForDone ? "booked"
     : suggestion ? "check the suggestion above, or pick who this money is for"
     : !tile ? "pick who this money is for"
-    /* R-2268: no "button above" — this form keeps its own button (vendor, customer, salary pick). */
+    : tile === "vendor" && !isCredit ? "pick the vendor — its Record payment shows here"
+    : tile === "customer" && !(isCredit && showProject) ? "pick the customer — the save shows here"
+    /* R-2268: no "button above" — this form keeps its own button (e.g. an employee advance). */
     : "save with the chosen form's own button";
 
   /* The statutory / tax form (Tax tile). Settles the statutory payable against THIS imported
@@ -850,7 +885,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
       case "customer":
         /* R-2322: on a money-out line the Customer refund tile — money paid back to a customer. */
         if (!isCredit) {
-          return <CustomerRefundSection transaction={transaction} customers={customers ?? []} onDone={() => onOpenChange(false)} />;
+          return <CustomerRefundSection transaction={transaction} customers={customers ?? []} onDone={() => onOpenChange(false)} onFooterSave={setCustomerSave} />;
         }
         /* R-1838: "This money is for:" — renewal / add seats / new-product quote, unpaid invoice,
            or a new sale — booked through record_payment. Project money keeps its own section. */
@@ -878,6 +913,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
             onProjectPayment={(id) => { setProjCustomer(id); setShowProject(true); }}
             onSaved={() => setPayForDone(true)}
             onDone={() => onOpenChange(false)}
+            onFooterSave={setCustomerSave}
           />
         );
 
@@ -963,13 +999,22 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                     Paid a salary from this {rupee(amount)}? Pick it — if it&apos;s less than the full salary, the rest stays owed as a balance.
                   </p>
                 ) : (
-                  <ul className="mt-2 space-y-1 max-h-56 overflow-y-auto pr-1">
+                  /* R-2348: pick the salary here; "Pay in full" / "Apply ₹X" is the footer button. */
+                  <ul className="mt-2 space-y-1 max-h-56 overflow-y-auto pr-1" aria-label="Salaries to pay">
                     {(payableSalaries ?? []).map((s) => {
                       const fits = s.remaining >= amount; // guard against over-paying a salary
                       const full = s.remaining === amount;
+                      const on = salaryPick === s.id;
                       return (
                         <li key={s.id}>
-                          <div className="flex items-center gap-2 rounded-md border border-hairline px-2.5 py-1.5">
+                          <button
+                            type="button"
+                            aria-pressed={on}
+                            disabled={!fits}
+                            title={fits ? undefined : `This line (${rupee(amount)}) is more than the ${rupee(s.remaining)} left on this salary`}
+                            onClick={() => { setSalaryPick(on ? "" : s.id); setSplitSalaryId(""); }}
+                            className={`w-full flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-left disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/50 ${on ? "border-amber bg-amber-soft/40" : "border-hairline"}`}
+                          >
                             <span className="flex-1 min-w-0">
                               <span className="block text-sm text-ink truncate">
                                 {s.employee_name} · {s.period}
@@ -980,16 +1025,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                                   : `Salary ${rupee(s.net)}`}
                               </span>
                             </span>
-                            <Button
-                              size="sm"
-                              variant={fits ? "primary" : "ghost"}
-                              disabled={!fits || reconcile.isPending}
-                              title={fits ? undefined : `This line (${rupee(amount)}) is more than the ${rupee(s.remaining)} left on this salary`}
-                              onClick={() => handleSalaryMatch(s.id)}
-                            >
-                              {full ? "Pay in full" : `Apply ${rupee(amount)}`}
-                            </Button>
-                          </div>
+                            <span className="shrink-0 text-xs text-ink-3">{fits ? (full ? "Pay in full" : `Apply ${rupee(amount)}`) : "More than due"}</span>
+                          </button>
                         </li>
                       );
                     })}
@@ -1008,7 +1045,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 </p>
                 <select aria-label="Salary to settle"
                   value={splitSalaryId}
-                  onChange={(e) => setSplitSalaryId(e.target.value)}
+                  onChange={(e) => { setSplitSalaryId(e.target.value); setSalaryPick(""); }}
                   className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-indigo/40 mb-2"
                 >
                   <option value="">Choose the salary…</option>
@@ -1027,9 +1064,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                         {" · "}
                         <span className="text-amber-ink font-medium">{rupee(advance)}</span> → advance (recoverable)
                       </p>
-                      <Button size="sm" variant="primary" icon="check" loading={salarySplit.isPending} onClick={handleSalarySplit}>
-                        Pay salary + book {rupee(advance)} advance
-                      </Button>
+                      {/* R-2348: "Pay salary + book ₹X advance" is the footer button. */}
                     </>
                   );
                 })()}
@@ -1241,16 +1276,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                         {rupee(pickedExpenseTotal)} / {rupee(amount)}{pickedExpenseTotal === amount ? " ✓" : ""}
                       </span>
                     </div>
-                    <Button
-                      size="sm"
-                      variant="default"
-                      icon="check"
-                      disabled={pickedExpenses.size === 0 || pickedExpenseTotal !== amount || reconcileExpenses.isPending}
-                      loading={reconcileExpenses.isPending}
-                      onClick={handleExpenseSplit}
-                    >
-                      Reconcile {pickedExpenses.size || ""} expense{pickedExpenses.size === 1 ? "" : "s"}
-                    </Button>
+                    {/* R-2348: "Reconcile N expenses" is the footer button once one is ticked. */}
                   </div>
                 )}
               </div>
@@ -1345,7 +1371,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 mounts it only when the operator picks Vendor himself. */}
             {!isCredit && (!govtHint || tile === "vendor") && (
               <div hidden={tile !== "vendor"}>
-                <DebitPayForSection transaction={transaction} onSaved={() => setPayForDone(true)} onDone={() => onOpenChange(false)} onVendorChange={setVendorFocus} />
+                <DebitPayForSection transaction={transaction} onSaved={() => setPayForDone(true)} onDone={() => onOpenChange(false)} onVendorChange={setVendorFocus} onFooterSave={setVendorSave} />
               </div>
             )}
 

@@ -141,9 +141,35 @@ export interface FooterSave {
   onSave: () => void;
   /** Set → the Save button is disabled and this sentence says why. */
   disabledReason?: string | null;
+  /** R-2348: disabled with no footer sentence — the section already says why (e.g. its maths line). */
+  disabled?: boolean;
   loading?: boolean;
   /** Rupees this save books from the bank line (default: the whole line). */
   booked?: number;
+}
+
+/**
+ * R-2348 — a section with its own Save (Vendor "Record payment", Customer, Customer refund) hands
+ * it to the sticky footer instead of drawing it in the scrolling body. The section calls this on
+ * every render; only a change in what the footer SHOWS (label, disabled, loading, booked) reaches
+ * the parent, and a click always runs the section's latest handler — the one its own button ran.
+ * Unmounted, or `save` null → the footer gets no Save from this section.
+ */
+export function useFooterSaveReport(report: ((save: FooterSave | null) => void) | undefined, save: FooterSave | null) {
+  const onSaveRef = React.useRef<(() => void) | null>(null);
+  React.useLayoutEffect(() => { onSaveRef.current = save ? save.onSave : null; });
+  const run = React.useCallback(() => { onSaveRef.current?.(); }, []);
+  const has = save !== null;
+  const label = save?.label ?? "";
+  const disabledReason = save?.disabledReason ?? null;
+  const disabled = Boolean(save?.disabled);
+  const loading = Boolean(save?.loading);
+  const booked = save?.booked;
+  React.useEffect(() => {
+    if (!report) return;
+    report(has ? { label, onSave: run, disabledReason, disabled, loading, booked } : null);
+  }, [report, run, has, label, disabledReason, disabled, loading, booked]);
+  React.useEffect(() => () => { report?.(null); }, [report]);
 }
 
 /** "Bank ₹X = ₹Y ✓" when the save books the whole line, else "₹Z left". */
@@ -179,9 +205,10 @@ export function ReconcileFooter({ amount, save, hint, onClose }: {
             type="button"
             variant="primary"
             icon="check"
-            disabled={Boolean(save.disabledReason) || save.loading}
+            disabled={Boolean(save.disabledReason) || save.disabled || save.loading}
             loading={save.loading}
             onClick={save.onSave}
+            className="whitespace-normal h-auto min-h-9 py-1.5 text-left max-w-full"
           >
             {save.label}
           </Button>

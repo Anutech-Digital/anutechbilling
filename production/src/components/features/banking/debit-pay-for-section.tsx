@@ -46,6 +46,7 @@ import {
   type NewBillDraft, type VendorLite, type VendorOpenItem, type VendorPayResult,
 } from "@/lib/banking/debit-pay-for";
 import type { VendorFocus } from "@/lib/banking/vendor-line-guard";
+import { useFooterSaveReport, type FooterSave } from "@/components/features/banking/reconcile-who-tiles";
 import { newVendorFromNarration, tailMismatch, type NewVendorField } from "@/lib/banking/narration-bank-details";
 import { checkBankDetails } from "@/lib/banking/bank-details";
 import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
@@ -72,9 +73,12 @@ interface Props {
   /** R-1917: the vendor this line is being paid to (guessed or picked) and its open items — the
    *  sheet makes this section the one way and guards "Book as expense" with it. null = no vendor. */
   onVendorChange?: (focus: VendorFocus | null) => void;
+  /** R-2348: the Reconcile sheet draws this section's Save in its sticky footer. Given → no inline
+   *  button; the footer gets the same label, disabled rule and save. */
+  onFooterSave?: (save: FooterSave | null) => void;
 }
 
-export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChange }: Props) {
+export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChange, onFooterSave }: Props) {
   const debit = transaction.debit ?? 0;
 
   /* ── 1. Vendor ───────────────────────────────────────────────────────────── */
@@ -343,6 +347,13 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
       onSaved?.();
     } catch { /* the hook toasts */ }
   };
+
+  /* R-2348: in the Reconcile sheet the Save sits in the sticky footer — same label, same canSave,
+     same save(). Shown only once a vendor is picked, as the inline button was. */
+  const saveLabel = onlyMatch ? `Match ${rupee(debit)} to the payment already recorded & reconcile` : `Record payment ${rupee(debit)} to ${vendorName} & reconcile`;
+  useFooterSaveReport(onFooterSave, debit > 0 && !result && vendorName
+    ? { label: saveLabel, onSave: () => { void save(); }, disabled: !canSave, loading: pay.isPending, booked: sum.total }
+    : null);
 
   if (debit <= 0) return null;
 
@@ -737,10 +748,12 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
               : <p className="text-rose-ink">{sum.diff > 0 ? `${rupee(sum.diff)} of the ${rupee(debit)} is not placed yet` : `${rupee(-sum.diff)} more than the ${rupee(debit)} the bank paid`} — adjust the amounts.</p>}
           </div>
 
-          <Button size="sm" variant="primary" icon="check" disabled={!canSave} loading={pay.isPending} onClick={save}
-            className="whitespace-normal h-auto min-h-8 py-1.5 text-left max-w-full">
-            {onlyMatch ? `Match ${rupee(debit)} to the payment already recorded & reconcile` : `Record payment ${rupee(debit)} to ${vendorName} & reconcile`}
-          </Button>
+          {!onFooterSave && (
+            <Button size="sm" variant="primary" icon="check" disabled={!canSave} loading={pay.isPending} onClick={save}
+              className="whitespace-normal h-auto min-h-8 py-1.5 text-left max-w-full">
+              {saveLabel}
+            </Button>
+          )}
         </>
       )}
     </section>

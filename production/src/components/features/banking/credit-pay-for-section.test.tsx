@@ -5,7 +5,7 @@
    the server (one RPC per save) — the money work itself is proven by the SQL test. */
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
 import type { OpenItem, PayForResult } from "@/lib/banking/credit-pay-for";
 import type { BankTransactionRow } from "@/lib/queries/bank";
@@ -45,6 +45,7 @@ vi.mock("@/lib/queries/items", () => ({
 vi.mock("@/lib/compliance/gst-registration-query", () => ({ useGstRegistration: () => ({ data: { saved: null } }) }));
 
 import { CreditPayForSection } from "./credit-pay-for-section";
+import { ReconcileFooter, type FooterSave } from "./reconcile-who-tiles";
 
 afterEach(cleanup);
 beforeEach(() => { state.pay.mockReset(); state.sale.mockReset(); state.adv.mockReset(); state.relink.mockReset(); state.items = []; });
@@ -216,5 +217,56 @@ describe("R-2004 Project payment keeps the customer chosen in “Who paid?”", 
     fireEvent.change(screen.getByLabelText("Customer who paid"), { target: { value: "c2" } });
     fireEvent.click(screen.getByRole("button", { name: "Project payment" }));
     expect(onProjectPayment).toHaveBeenCalledWith("c2");
+  });
+});
+
+/* R-2348: in the Reconcile sheet the section hands its Save to the sticky footer (onFooterSave) —
+   the same label, the same disabled rule (canSave) and the same save(); no Save in the form. */
+function InSheet({ credit }: { credit: number }) {
+  const [save, setSave] = React.useState<FooterSave | null>(null);
+  return (
+    <>
+      <div data-testid="reconcile-scroll-body">
+        <CreditPayForSection transaction={txn(credit)} customers={customers} onNewCustomer={() => {}} onProjectPayment={() => {}} onDone={() => {}} onFooterSave={setSave} />
+      </div>
+      <ReconcileFooter amount={credit} save={save} hint="pick the customer" onClose={() => {}} />
+    </>
+  );
+}
+const footerBtn = (name: string | RegExp) => within(screen.getByTestId("reconcile-footer")).getByRole("button", { name }) as HTMLButtonElement;
+describe("R-2348 CreditPayForSection — the save in the sticky footer", () => {
+  it("nothing chosen yet → the footer button is disabled; an open quote → same label, same RPC", async () => {
+    state.items = [item({ kind: "renewal", quote_id: "Q-REN", amount_due: 35400, taxable_value: 30000 })];
+    state.pay.mockResolvedValue(done({ kind: "renewal", quote_id: "Q-REN", amount: 35400 }));
+    render(<InSheet credit={35400} />);
+    const body = screen.getByTestId("reconcile-scroll-body");
+    expect(footerBtn("Choose what this money is for").disabled).toBe(true);
+    choose("An open quote / invoice");
+    expect(within(body).queryByRole("button", { name: /& reconcile/ })).toBeNull();
+    // Project payment is not the save — it stays in the form
+    expect(within(body).getByRole("button", { name: "Project payment" })).toBeTruthy();
+    const btn = footerBtn("Record ₹35,400 on Q-REN & reconcile");
+    expect(btn.disabled).toBe(false);
+    fireEvent.click(btn);
+    await screen.findByText("Done — this bank line is reconciled");
+    expect(state.pay).toHaveBeenCalledTimes(1);
+    expect(state.pay.mock.calls[0][0]).toMatchObject({ transactionId: "t1", quoteId: "Q-REN" });
+  });
+
+  it("advance: Keep ₹X as advance & reconcile from the footer → the one advance call", async () => {
+    state.adv.mockResolvedValue(done({ kind: "advance", quote_id: "Q-9", amount: 25000, advance_credit: 25000, customer_id: "c1", customer_name: "Acme Traders" }));
+    render(<InSheet credit={25000} />);
+    choose("Advance — nothing to invoice yet");
+    fireEvent.click(footerBtn("Keep ₹25,000 as advance & reconcile"));
+    await vi.waitFor(() => expect(state.adv).toHaveBeenCalledTimes(1));
+    expect(state.adv.mock.calls[0][0]).toMatchObject({ path: "advance", transactionId: "t1", customerId: "c1" });
+  });
+
+  it("several quotes / invoices (split): its Record on N items is the footer button too", () => {
+    state.items = [item({ quote_id: "Q-1", amount_due: 11800 }), item({ quote_id: "Q-2", amount_due: 5900 })];
+    render(<InSheet credit={17700} />);
+    choose("Several quotes / invoices");
+    expect(footerBtn(/^Record on \d+ items? & reconcile ₹17,700$/)).toBeTruthy();
+    expect(within(screen.getByTestId("reconcile-scroll-body")).queryByRole("button", { name: /^Record on/ })).toBeNull();
   });
 });
