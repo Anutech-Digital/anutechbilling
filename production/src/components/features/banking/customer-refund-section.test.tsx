@@ -15,9 +15,10 @@ const state = vi.hoisted(() => ({
   items: {} as Record<string, RefundableItem[]>,
   book: vi.fn(),
   asked: [] as Array<string | null>,
+  asOf: [] as Array<string | null | undefined>,
 }));
 vi.mock("@/lib/banking/customer-refund-query", () => ({
-  useCustomerRefundables: (id: string | null) => { state.asked.push(id); return { data: id ? state.items[id] ?? [] : undefined, isLoading: false }; },
+  useCustomerRefundables: (id: string | null, asOf?: string | null) => { state.asked.push(id); state.asOf.push(asOf); return { data: id ? state.items[id] ?? [] : undefined, isLoading: false }; },
   useBookCustomerRefund: () => ({ mutateAsync: state.book, isPending: false }),
 }));
 
@@ -33,6 +34,7 @@ const customers = [{ id: "c-novo", name: "Novoguild Technologies Pvt Ltd" }, { i
 beforeEach(() => {
   state.book.mockReset().mockResolvedValue({});
   state.asked = [];
+  state.asOf = [];
   state.items = {
     "c-novo": [
       { payment_id: "p-small", kind: "credit_note", refundable: 5000, whole_only: false, invoice_id: "INV-1", credit_notes: "CN-1", voucher_no: "RV-1", received_on: "2026-08-01" },
@@ -76,6 +78,35 @@ describe("Customer refund on a money-out line (R-2322)", () => {
     render(<CustomerRefundSection transaction={line} customers={customers} onDone={() => {}} />);
     fireEvent.change(screen.getByLabelText("Refund reason"), { target: { value: "ok" } });
     expect(screen.getByText("Write why the money went back (at least 5 characters).")).toBeTruthy();
+    expect((screen.getByRole("button", { name: /as customer refund/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(state.book).not.toHaveBeenCalled();
+  });
+
+  /* R-2336 — owner's example (R-2322 localhost check, 1 Nov): the 7 Apr 2026 ₹500 line (UPI KUNAL GARG)
+     offered and pre-picked E2E Customer's advances received 12 and 14 Jun 2026. */
+  it("R-2336: advances that came in after the bank line are shown disabled with the reason, never pre-picked", () => {
+    const apr = {
+      id: "txn-apr", debit: 500, credit: 0, txn_date: "2026-04-07",
+      description: "UPI-KUNAL GARG-9350568051", bank_account_id: "acc-1",
+    } as unknown as BankTransactionRow;
+    const late = (id: string, rv: string, d: string, label: string): RefundableItem => ({
+      payment_id: id, kind: "advance", refundable: 500, whole_only: true, invoice_id: null, credit_notes: null, voucher_no: rv,
+      received_on: d, dated_on: d, late_reason: `This advance came in on ${label}, after this bank line (7 Apr 2026).`,
+    });
+    state.items["c-e2e"] = [
+      late("p-16", "RV-F588-27-0016", "2026-06-12", "12 Jun 2026"),
+      late("p-19", "RV-F588-27-0019", "2026-06-14", "14 Jun 2026"),
+    ];
+    render(<CustomerRefundSection transaction={apr} customers={[...customers, { id: "c-e2e", name: "E2E Customer Pvt Ltd" }]} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Customer refunded"), { target: { value: "c-e2e" } });
+
+    expect(state.asOf.at(-1)).toBe("2026-04-07");
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(radios).toHaveLength(2);
+    expect(radios.every((r) => r.disabled && !r.checked)).toBe(true);
+    expect(screen.getByText("This advance came in on 12 Jun 2026, after this bank line (7 Apr 2026).")).toBeTruthy();
+    expect(screen.getByText("This advance came in on 14 Jun 2026, after this bank line (7 Apr 2026).")).toBeTruthy();
+    expect(screen.queryByLabelText("Refund reason")).toBeNull();
     expect((screen.getByRole("button", { name: /as customer refund/ }) as HTMLButtonElement).disabled).toBe(true);
     expect(state.book).not.toHaveBeenCalled();
   });
