@@ -185,3 +185,25 @@ describe("R-1917 Reconcile sheet — one way for a vendor's money-out line", () 
     expect(screen.getByLabelText("Expense category")).toBeTruthy();
   });
 });
+
+/* R-2268 (design audit D8): Save always visible. The save sits in the sticky footer, under the
+   scrolling body; the footer never sends the owner looking for a "button above". */
+describe("R-2268 Reconcile sheet — the save is in the sticky footer", () => {
+  it("Bank charge / other: the Book button is inside the footer, the footer is outside the scrolling body", () => {
+    state.focus = null;
+    render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={{ ...sharmaLine, description: "UPI 9876@okhdfc" } as BankTransactionRow} />);
+    fireEvent.click(screen.getByRole("radio", { name: /Bank charge \/ other/ }));
+    const footer = screen.getByTestId("reconcile-footer");
+    expect(within(footer).getByRole("button", { name: /^Book ₹11,800/ })).toBeTruthy();
+    expect(within(footer).getByRole("button", { name: "Close" })).toBeTruthy();
+    const body = screen.getByTestId("reconcile-scroll-body");
+    expect(body.contains(footer)).toBe(false);
+    expect(body.className.split(/\s+/)).toEqual(expect.arrayContaining(["flex-1", "min-h-0", "overflow-y-auto"]));
+  });
+
+  it("a form that keeps its own button: the footer hint never says 'above'", () => {
+    render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={sharmaLine} />);
+    const footer = screen.getByTestId("reconcile-footer");
+    expect(footer.textContent).not.toMatch(/above/i);
+  });
+});

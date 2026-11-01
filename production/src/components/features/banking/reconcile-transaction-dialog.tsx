@@ -628,7 +628,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const footerHint = payForDone ? "booked"
     : suggestion ? "check the suggestion above, or pick who this money is for"
     : !tile ? "pick who this money is for"
-    : "save with the button in the form above";
+    /* R-2268: no "button above" — this form keeps its own button (vendor, customer, salary pick). */
+    : "save with the chosen form's own button";
 
   /* The statutory / tax form (Tax tile). Settles the statutory payable against THIS imported
      line — no duplicate line is made. GST / income tax go to tax_payments. */
@@ -1275,11 +1276,11 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         </SheetHeader>
 
         {!transaction ? (
-          <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
+          <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4" data-testid="reconcile-scroll-body">
             <Skeleton className="h-32" />
           </div>
         ) : (
-          <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
+          <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4" data-testid="reconcile-scroll-body">
             {/* 1. The bank line */}
             <div className="rounded-md border border-hairline bg-paper-2/40 p-4">
               <div className="flex items-start justify-between gap-3">
