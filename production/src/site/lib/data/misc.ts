@@ -67,7 +67,8 @@ export interface LegalPage {
   title: string;
   updated: string;
   intro: string;
-  blocks: readonly { h: string; p: string }[];
+  /** R-2013: an optional link under the block (e.g. the data-rights request form). */
+  blocks: readonly { h: string; p: string; link?: { href: string; label: string } }[];
 }
 
 export const LEGAL: Readonly<Record<"terms" | "privacy" | "refund", LegalPage>> = {
@@ -101,7 +102,7 @@ export const LEGAL: Readonly<Record<"terms" | "privacy" | "refund", LegalPage>> 
       { h: "Sharing", p: "We share data only with the vendor whose product you bought, with payment processors to collect payment, and where compelled by law, and, only if you accept Advertising measurement (Meta), with Meta to measure our advertising (see Advertising measurement). Each processor is bound by contract to purpose limitation." },
       { h: "Advertising measurement (Meta)", p: "If you accept Advertising measurement (Meta) in our cookie banner, our website loads the Meta Pixel (Meta Platforms). It tells Meta which pages you viewed and whether you started checkout or completed a purchase, so we can measure and improve our Facebook and Instagram ads. When you buy, our server also tells Meta about that purchase through Meta's Conversions API: the order value before GST, the plan you bought, and your email address and mobile number in hashed (unreadable) form, so the same purchase is counted only once. Both the Pixel and our server also give Meta your IP address and your browser's user agent (browser and device type), which Meta uses to match and count the event. We never send your name, postal address, GSTIN or payment details to Meta. If you choose Only necessary, nothing is sent to Meta. Meta handles this data under its own privacy policy (facebook.com/privacy/policy). You can withdraw consent at any time from Cookie settings at the bottom of every page (it takes effect at once), or by writing to support@anutech.in." },
       { h: "Retention", p: "Invoices and tax records are retained as long as GST law requires. Other personal data is deleted within ninety days of a valid deletion request or of the account closing, whichever is later." },
-      { h: "Your rights", p: "You may ask for access to your data, correction of it, or its deletion, and you may nominate another person to exercise these rights on your behalf. Write to us and we respond inside thirty days." },
+      { h: "Your rights", p: "You may ask for access to your data, correction of it, or its deletion, and you may nominate another person to exercise these rights on your behalf. Write to us, or use the request form, and we respond inside thirty days.", link: { href: "/privacy/request", label: "Make a request about your data" } },
       { h: "Grievances", p: "Our Grievance Officer is Anutech Digital Pvt Ltd, Rohini, Delhi. Write to support@anutech.in with \"Grievance\" in the subject. If it is not resolved, you may escalate to the Data Protection Board of India." },
     ],
   },

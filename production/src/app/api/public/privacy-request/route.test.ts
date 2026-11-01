@@ -33,6 +33,7 @@ vi.mock("@/lib/messaging", () => ({
 
 import { POST as start } from "./route";
 import { POST as verify } from "./verify/route";
+import { otpHashSecret } from "@/lib/sms/otp";
 
 let n = 0;
 const req = (path: string, b: Record<string, unknown>) => new NextRequest(`https://example.invalid/api/public/${path}`, {
@@ -62,7 +63,7 @@ describe("start: the request is saved unconfirmed and a code is emailed", () => 
     expect(String(mail.text)).toContain("Acme Cloud");
     // the stored hash is the code's hash for THIS request — never the code itself
     expect(JSON.stringify(row)).not.toContain(code);
-    expect(row.otp_hash).toBe(createHmac("sha256", "r1903-local-dev-otp-key").update(`r1903:${body.requestId}:privacy-request:${code}`).digest("hex"));
+    expect(row.otp_hash).toBe(createHmac("sha256", otpHashSecret()!).update(`r1903:${body.requestId}:privacy-request:${code}`).digest("hex"));
   });
 
   it("refuses a correction with nothing to correct, and a bad email", async () => {

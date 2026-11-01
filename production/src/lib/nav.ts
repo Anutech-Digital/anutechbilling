@@ -823,6 +823,9 @@ export const APP_NAV: NavSection[] = [
           /* Owner-only: restore points and the data reset. A safety feature nobody can
              find is not a safety feature — it had no nav entry at all until Aug 2026. */
           { id: "backup",    href: "/settings/backup",      label: "Backup & Restore", icon: "database", roles: ["owner"] },
+          /* R-2013 (DPDP): data-rights requests from the website form, with their due-by date.
+             Owner/manager — the database shows them to no one else. */
+          { id: "privacy-requests", href: "/settings/privacy-requests", label: "Privacy Requests", icon: "shield", roles: OM, hint: "See / correct / delete requests from your website — answer within 30 days" },
         ],
       },
       /* "App khud kya bhejta hai — aur band karne ka switch". A brake nobody can find is

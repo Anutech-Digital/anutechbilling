@@ -43,6 +43,7 @@ import {
   loadLoopLead,
   scheduleSalesLoop,
 } from "@/lib/ai/sales-loops.server";
+import { consentWithdrawnLeadIds, suppressedEmailKeys } from "@/lib/privacy/suppression.server";
 import type { CatalogueItemPrice } from "@/lib/quotes/quote-from-enquiry";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
@@ -237,6 +238,19 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
       }
 
       const lead = read.lead;
+
+      /* R-2013 (DPDP): the person withdrew consent (privacy request: newest marketing row
+         'withdrawn') or unsubscribed (email_suppressions) — no AI follow-up, ever. The row is
+         closed so it never comes back; a failed read throws into the catch below and is
+         counted as failed (nothing is sent). */
+      const withdrawn = (await consentWithdrawnLeadIds(admin, loop.tenantId, [loop.leadId])).has(loop.leadId) ||
+        (lead.contactEmail ? (await suppressedEmailKeys(admin, [{ tenantId: loop.tenantId, email: lead.contactEmail }])).size > 0 : false);
+      if (withdrawn) {
+        result.skipped++;
+        result.outcomes.push({ lead_id: loop.leadId, result: "skipped — the person withdrew consent or unsubscribed" });
+        await closeLoop({ id: loop.id, tenantId: loop.tenantId, outcome: "closed unactioned — the person withdrew consent or unsubscribed (R-2013)" });
+        continue;
+      }
 
       /* Read once and reused by decideStep, shouldNudge and the WhatsApp window check. Three
          separate reads of "when did they last write" could disagree inside one iteration. */

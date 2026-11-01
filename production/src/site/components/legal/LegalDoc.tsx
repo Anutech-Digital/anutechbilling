@@ -24,6 +24,11 @@ export function LegalDoc({ page }: { page: keyof typeof LEGAL }) {
           <div key={b.h} id={legalBlockId(b.h)} style={{ borderTop: "1px solid var(--border-light)", padding: "22px 0", scrollMarginTop: 80 }}>
             <h2 style={{ fontSize: 19, fontWeight: 700, letterSpacing: "-0.02em", marginBottom: 8 }}>{b.h}</h2>
             <p style={{ fontSize: 16, lineHeight: 1.6, color: "var(--text-secondary)", margin: 0 }}>{b.p}</p>
+            {b.link && (
+              <p style={{ margin: "10px 0 0" }}>
+                <Link href={b.link.href} style={{ color: "var(--primary)", fontWeight: 600, fontSize: 15 }}>{b.link.label}</Link>
+              </p>
+            )}
           </div>
         ))}
         <nav aria-label="Related documents" style={{ borderTop: "1px solid var(--border-light)", paddingTop: 22, display: "flex", gap: 20, flexWrap: "wrap" }}>

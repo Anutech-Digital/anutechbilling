@@ -168,6 +168,11 @@ export default function PrivacyPage() {
           </a>
           . We respond within <b>7 working days</b> (DPDP requirement: 30 days).
         </p>
+        {/* R-2013: the self-service way — the code proves the email is yours. */}
+        <p className="mt-3">
+          Or use the form:{" "}
+          <a href="/privacy/request" className="text-amber underline">Make a request about your data</a>.
+        </p>
       </Section>
 
       <Section id="security" n={7} title="Security">
