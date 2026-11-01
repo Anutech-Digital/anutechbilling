@@ -352,6 +352,7 @@ MIGS=(
   "r1997projectreceiptadvance|20261101131404_r1997_project_receipt_advance.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.allocate_project_receipt_with_tds(uuid,uuid,jsonb,jsonb,date,text)') and prosrc like '%R-1997%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.unreconcile_bank_receipt(uuid,boolean)') and prosrc like '%R-1997%')"
   "r2225nonrenewing|20261101135056_r2225_non_renewing.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.set_subscription_non_renewing(uuid,boolean,text,date)') and prosrc like '%R-2225%')"
   "r2225navbadgesnonrenewing|20261101135057_r2225_nav_badges_non_renewing.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.nav_badges(text[])') and prosrc like '%R-2225%')"
+  "r2228correctdetailslock|20261101145415_r2228_correct_details_money_lock.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_subscription_data(uuid,integer,integer,text)') and prosrc like '%R-2228%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_subscription_terms(uuid,text,integer,integer,text)') and prosrc like '%R-2228%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
