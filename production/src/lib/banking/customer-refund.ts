@@ -20,6 +20,10 @@ export interface RefundableItem {
   credit_notes: string | null;
   voucher_no: string | null;
   received_on: string | null;
+  /** R-2336: the day the money came in (receipt date) — from customer_refundable_items(customer, line date). */
+  dated_on?: string | null;
+  /** R-2336: set when that money came in after the bank line — the item cannot take this line. */
+  late_reason?: string | null;
 }
 
 /** One line per refundable item, in the words on the documents. */
@@ -34,6 +38,8 @@ export function refundItemLabel(i: RefundableItem): string {
 
 /** Why this item cannot take this bank line, or null when it can. */
 export function refundItemProblem(i: RefundableItem, lineAmount: number): string | null {
+  /* R-2336: the refund is dated on the bank line — money that came in later cannot go back on it. */
+  if (i.late_reason) return i.late_reason;
   if (i.whole_only || i.kind === "advance") {
     return lineAmount === i.refundable
       ? null

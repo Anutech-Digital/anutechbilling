@@ -37,7 +37,8 @@ export function CustomerRefundSection({ transaction, customers, onDone }: {
   const [reason, setReason] = React.useState("");
   React.useEffect(() => { setCustomerId(guess ?? ""); setPaymentId(null); setReason(""); }, [transaction.id, guess]);
 
-  const itemsQ = useCustomerRefundables(customerId || null);
+  /* R-2336: ask for this line's date — money that came in after it is shown disabled with the reason. */
+  const itemsQ = useCustomerRefundables(customerId || null, transaction.txn_date ?? null);
   const items = React.useMemo(() => itemsQ.data ?? [], [itemsQ.data]);
   React.useEffect(() => { setPaymentId(pickDefaultRefundItem(items, amount)); }, [items, amount]);
   const book = useBookCustomerRefund();

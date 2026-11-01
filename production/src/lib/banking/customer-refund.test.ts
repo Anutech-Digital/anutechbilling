@@ -76,3 +76,28 @@ describe("defaultRefundReason", () => {
     expect(defaultRefundReason(adv)).toBe("Refund of unused advance RV-0050");
   });
 });
+
+/* R-2336 — owner's example (R-2322 localhost check, 1 Nov): a 7 Apr 2026 ₹500 money-out line offered
+   and PRE-PICKED advances received 12 / 14 Jun 2026. The server (customer_refundable_items with the
+   line date) flags them with late_reason; the screen must disable them and never pre-pick one. */
+describe("R-2336 — money that came in after the bank line", () => {
+  const june12: RefundableItem = {
+    payment_id: "p-jun12", kind: "advance", refundable: 500, whole_only: true, invoice_id: null, credit_notes: null,
+    voucher_no: "RV-F588-27-0016", received_on: "2026-06-12", dated_on: "2026-06-12",
+    late_reason: "This advance came in on 12 Jun 2026, after this bank line (7 Apr 2026).",
+  };
+  const june14: RefundableItem = {
+    ...june12, payment_id: "p-jun14", voucher_no: "RV-F588-27-0019", received_on: "2026-06-14", dated_on: "2026-06-14",
+    late_reason: "This advance came in on 14 Jun 2026, after this bank line (7 Apr 2026).",
+  };
+
+  it("the late reason is the problem, even when the amount fits", () => {
+    expect(refundItemProblem(june12, 500)).toBe("This advance came in on 12 Jun 2026, after this bank line (7 Apr 2026).");
+  });
+  it("nothing is pre-picked when every item came in after the line", () => {
+    expect(pickDefaultRefundItem([june12, june14], 500)).toBeNull();
+  });
+  it("an item on or before the line (no late reason) is still picked", () => {
+    expect(pickDefaultRefundItem([june12, { ...adv, refundable: 500, late_reason: null }], 500)).toBe("p-adv");
+  });
+});

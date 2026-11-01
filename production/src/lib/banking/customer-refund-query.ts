@@ -21,13 +21,14 @@ const untyped = () => createClient() as unknown as SupabaseClient;
 
 export const CUSTOMER_REFUNDABLE_KEY = ["customer_refundable_items"] as const;
 
-/** What this customer can be refunded (open credit-note credit, unused advances). */
-export function useCustomerRefundables(customerId: string | null) {
+/** What this customer can be refunded (open credit-note credit, unused advances) on a bank line of
+ *  `asOf` (R-2336: money that came in after that date comes back with late_reason). */
+export function useCustomerRefundables(customerId: string | null, asOf: string | null) {
   return useQuery({
-    queryKey: [...CUSTOMER_REFUNDABLE_KEY, customerId],
+    queryKey: [...CUSTOMER_REFUNDABLE_KEY, customerId, asOf],
     enabled: Boolean(customerId),
     queryFn: async (): Promise<RefundableItem[]> => {
-      const { data, error } = await untyped().rpc("customer_refundable_items", { p_customer_id: customerId });
+      const { data, error } = await untyped().rpc("customer_refundable_items", { p_customer_id: customerId, p_as_of: asOf });
       if (error) throw new Error(error.message);
       return (data ?? []) as RefundableItem[];
     },
