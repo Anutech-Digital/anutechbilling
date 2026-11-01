@@ -42,10 +42,10 @@ describe("the silent case — 54 of 54 production rows", () => {
 });
 
 describe("auto_renew off — the silent lapse", () => {
-  it("is flagged, in danger tone", () => {
+  it("is flagged — R-2225: as the Non-renewing status (warning), not a red alarm", () => {
     const [f] = subscriptionExceptions({ ...HEALTHY, auto_renew: false });
     expect(f.key).toBe("auto_renew_off");
-    expect(f.tone).toBe("danger");
+    expect(f.tone).toBe("warning");
   });
 
   it("explains the consequence, not just the state", () => {
