@@ -25,6 +25,7 @@ import { invoiceBucket, type OverdueInvoice } from "@/lib/invoices/overdue";
 import { invoiceIsSale } from "@/lib/accounting/sale-documents";
 import { invoiceBalance, invoiceInFocus } from "@/lib/invoices/kpis";
 import { folderCounts, folderMrr, type FolderRow } from "@/lib/subscriptions/folders";
+import { totalMrr, type MrrSubLike } from "@/lib/subscriptions/mrr-of";
 import { captureChannel } from "@/lib/leads/capture-channel";
 import { cashReceived } from "@/lib/payments/cash-received";
 
@@ -156,21 +157,21 @@ export function newCustomersInMonth(
 export interface SubscriptionSummary {
   /** status = active — the /subscriptions "Active MRR" tile counts these. */
   activeCount: number;
-  /** Sum of mrr over active subscriptions — /subscriptions "Active MRR". */
+  /** MRR of the active subscriptions (R-2229 mrrOf: one-time / no-term lines add 0) — /subscriptions "Active MRR". */
   mrr: number;
   /** The Expiring tab on /subscriptions: renews within 30 days, or lapsed and still live. */
   renewalsDue: CountValue;
 }
 
 export function subscriptionSummary(
-  subs: readonly (FolderRow & { mrr: number | null })[],
+  subs: readonly (FolderRow & MrrSubLike)[],
   now: Date = new Date(),
 ): SubscriptionSummary {
   const today = istToday(now);
   const active = subs.filter((s) => s.status === "active");
   return {
     activeCount: active.length,
-    mrr: active.reduce((sum, s) => sum + (s.mrr ?? 0), 0),
+    mrr: totalMrr(active),
     renewalsDue: { count: folderCounts(subs, today).expiring, value: folderMrr(subs, "expiring", today) },
   };
 }

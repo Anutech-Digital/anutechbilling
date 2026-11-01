@@ -119,6 +119,7 @@ import { cn } from "@/lib/utils";
 import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import type { Subscription } from "@/lib/supabase/database.types";
+import { totalMrr } from "@/lib/subscriptions/mrr-of";
 
 /* R-317: ?price=missing on the list (Reports links here). */
 const PRICE_FILTERS = ["", "missing"] as const;
@@ -803,7 +804,9 @@ export default function SubscriptionsPage() {
 
   // KPIs
   const activeSubs = subsByWorkspace.filter((s) => subInFocus(s, "active"));
-  const activeMRR = activeSubs.reduce((s, x) => s + x.mrr, 0);
+  /* R-2229: the one MRR rule — the same figure as SaaS Metrics and the dashboard; a one-time
+     line filed as a subscription or a row with no recurring term adds 0. */
+  const activeMRR = totalMrr(activeSubs);
   const activeARR = activeMRR * 12;
   /* R-1727: the closed Insights strip's counts — the same rows its two boxes count. */
   const leakTotals = leakageTotals(leakageRows(subsByWorkspace, catalog).map((r) => r.result));

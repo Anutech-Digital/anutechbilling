@@ -1,7 +1,7 @@
 /**
  * SaaS metrics — the heartbeat of a recurring revenue business.
  *
- *   MRR    Monthly Recurring Revenue (sum of active subscription MRR)
+ *   MRR    Monthly Recurring Revenue (mrrOf: active, recurring lines only; R-2229)
  *   ARR    MRR × 12
  *   ARPC   Average Revenue Per Customer = MRR / active customers
  *   LTV    Lifetime value ≈ ARPC / monthly churn rate
@@ -32,11 +32,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { LoadError } from "@/components/shared/load-error";
 import { Icon } from "@/components/ui/icon";
-import { reconstructWaterfall, type MrrWaterfall } from "@/lib/accounting/mrr-waterfall";
-import {
-  mrrTrend, trendCaveats, retentionCurve, retentionVelocity,
-  type MrrPoint, type RetentionPoint, type RetentionVelocity,
-} from "@/lib/accounting/saas-charts";
+import type { MrrWaterfall } from "@/lib/accounting/mrr-waterfall";
+import { computeSaasMetrics, type MetricsData, type SubRow } from "./compute";
 import { MrrTrendChart, RetentionVelocityChart } from "@/components/features/accounting/saas-metrics-charts";
 /* Moved here from /subscriptions, 12 Sep 2026 — it fills in the Expansion and
    Contraction the waterfall above can only print as "Not tracked". */
@@ -47,97 +44,11 @@ import { printReport, reportFilename } from "@/lib/reports/print";
 import { rupee } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
-import { toIstDate } from "@/lib/dates/ist";
 
 // ────────────────────────────────────────────────────────────────
 // Data hook
 // ────────────────────────────────────────────────────────────────
 
-interface SubRow {
-  id:              string;
-  customer_id:     string | null;
-  customer_name:   string | null;
-  plan:            string | null;
-  vendor:          string | null;        // 'google' | 'microsoft' | 'zoho' | 'other'
-  seats:           number | null;
-  mrr:             number | null;
-  start_date:      string;
-  renewal_date:    string | null;
-  status:          string;                // 'active' | 'paused' | 'expired' | 'cancelled'
-  updated_at:      string;
-}
-
-interface CohortRow {
-  monthLabel:    string;     // "May 2026"
-  monthKey:      string;     // "2026-05"
-  startedCount:  number;     // subs started in that month
-  startedMRR:    number;
-  retainedCount: number;     // still active today
-  retentionPct:  number;
-}
-
-interface MetricsData {
-  // Headline
-  mrr:              number;
-  arr:              number;
-  activeCustomers:  number;
-  arpc:             number;
-
-  // 30-day movement
-  newMRR30d:        number;
-  newCustomers30d:  number;
-  churnMRR30d:      number;
-  churnedCustomers30d: number;
-  netMRRChange30d:  number;
-
-  // Derived
-  monthlyChurnRate: number;  // % (churn customers / active customers, monthly)
-  ltvEstimate:      number;  // ARPC / monthlyChurnRate (capped if churn=0)
-  /** Starting → New → Expansion → Contraction → Churn → Ending, with the parts
-   *  this schema cannot know left explicitly null. See lib/accounting/mrr-waterfall. */
-  waterfall:        MrrWaterfall;
-
-  // Breakdowns
-  mrrByVendor:      Array<{ vendor: string; mrr: number; count: number; pct: number }>;
-  mrrByTier:        Array<{ tier:   string; mrr: number; count: number; pct: number }>;
-
-  // Cohort retention
-  cohorts:          CohortRow[];
-
-  /** Charts. Computed by lib/accounting/saas-charts.ts, never in the component. */
-  mrrTrend:         MrrPoint[];
-  trendCaveats:     string[];
-  retentionCurve:   RetentionPoint[];
-  retentionVelocity: RetentionVelocity;
-}
-
-/** How far back the trend looks. Twelve months is the reseller's renewal cycle. */
-const TREND_MONTHS = 12;
-
-function vendorLabel(v: string | null): string {
-  if (!v) return "Other";
-  return v === "google"    ? "Google Workspace"
-       : v === "microsoft" ? "Microsoft 365"
-       : v === "zoho"      ? "Zoho"
-       :                     v.charAt(0).toUpperCase() + v.slice(1);
-}
-
-function tierFromPlan(plan: string | null): string {
-  if (!plan) return "Unknown";
-  const p = plan.toLowerCase();
-  if (p.includes("starter"))    return "Starter";
-  if (p.includes("standard"))   return "Standard";
-  if (p.includes("plus"))       return "Plus";
-  if (p.includes("enterprise")) return "Enterprise";
-  return plan;
-}
-
-function monthKey(d: Date): string {
-  return d.toISOString().slice(0, 7);                  // "2026-05"
-}
-function monthLabel(d: Date): string {
-  return d.toLocaleString("en-IN", { month: "short", year: "numeric", timeZone: "UTC" });
-}
 
 /**
  * One column of the waterfall.
@@ -248,147 +159,11 @@ function useSaasMetrics() {
          would silently count only the first 1000. */
       const subs = await fetchAllRows((a, b) => supabase
         .from("subscriptions")
-        .select("id, customer_id, customer_name, plan, vendor, seats, mrr, start_date, renewal_date, status, updated_at")
+        .select("id, customer_id, customer_name, plan, vendor, seats, mrr, term_months, start_date, renewal_date, status, updated_at")
         .order("id")
         .range(a, b));
 
-      const all: SubRow[] = subs as SubRow[];
-      const active = all.filter((s) => s.status === "active");
-
-      const mrr = active.reduce((s, x) => s + (x.mrr ?? 0), 0);
-      const arr = mrr * 12;
-      const activeCustomers = new Set(active.map((s) => s.customer_id ?? s.id)).size;
-      const arpc = activeCustomers > 0 ? Math.round(mrr / activeCustomers) : 0;
-
-      // 30-day window
-      const now = new Date();
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      const thirtyDaysAgoISO = thirtyDaysAgo.toISOString();
-      const thirtyDaysAgoDate = toIstDate(thirtyDaysAgo);
-
-      const newSubs30d   = all.filter((s) => s.start_date >= thirtyDaysAgoDate);
-      const churnedSubs30d = all.filter((s) =>
-        (s.status === "cancelled" || s.status === "expired") &&
-        s.updated_at >= thirtyDaysAgoISO,
-      );
-
-      // ── MRR waterfall ────────────────────────────────────────────────────
-      // Computed by a tested library rather than inline, because this is the
-      // figure an owner quotes to a lender or a buyer.
-      //
-      // `endDate` is `updated_at`, and only for rows that are already dead. That
-      // is a PROXY, not a cancellation date: `subscriptions` has no such column
-      // (only `suspended_at`, migration 0008), and `updated_at` moves on ANY
-      // edit — so a subscription cancelled last year whose row was touched
-      // yesterday looks like this month's churn. The caveat is surfaced in the
-      // UI instead of being buried here.
-      const waterfall = reconstructWaterfall(
-        all.map((s) => ({
-          id: s.id,
-          mrr: s.mrr ?? 0,
-          startDate: s.start_date ?? null,
-          endDate: (s.status === "cancelled" || s.status === "expired")
-            ? (s.updated_at ?? null)
-            : null,
-          status: s.status,
-        })),
-        thirtyDaysAgoISO,
-        now.toISOString(),
-      );
-
-      const newMRR30d   = newSubs30d.reduce((s, x) => s + (x.mrr ?? 0), 0);
-      const churnMRR30d = churnedSubs30d.reduce((s, x) => s + (x.mrr ?? 0), 0);
-
-      // Monthly churn rate — naive: churned customers / active customers, monthly proxy.
-      // For a robust SaaS metric, we'd track status transitions over time. Good enough
-      // for v1; refine when transition log exists.
-      const monthlyChurnRate = activeCustomers > 0
-        ? (churnedSubs30d.length / activeCustomers) * 100
-        : 0;
-      const ltvEstimate = monthlyChurnRate > 0
-        ? Math.round(arpc / (monthlyChurnRate / 100))
-        : arpc * 36; // floor — assume 3 years if no churn data
-
-      // MRR by vendor
-      const vendorMap = new Map<string, { mrr: number; count: number }>();
-      for (const s of active) {
-        const v = vendorLabel(s.vendor);
-        const cur = vendorMap.get(v) ?? { mrr: 0, count: 0 };
-        cur.mrr += s.mrr ?? 0;
-        cur.count += 1;
-        vendorMap.set(v, cur);
-      }
-      const mrrByVendor = Array.from(vendorMap.entries())
-        .map(([vendor, v]) => ({ vendor, mrr: v.mrr, count: v.count, pct: mrr > 0 ? (v.mrr / mrr) * 100 : 0 }))
-        .sort((a, b) => b.mrr - a.mrr);
-
-      // MRR by tier
-      const tierMap = new Map<string, { mrr: number; count: number }>();
-      for (const s of active) {
-        const t = tierFromPlan(s.plan);
-        const cur = tierMap.get(t) ?? { mrr: 0, count: 0 };
-        cur.mrr += s.mrr ?? 0;
-        cur.count += 1;
-        tierMap.set(t, cur);
-      }
-      const mrrByTier = Array.from(tierMap.entries())
-        .map(([tier, v]) => ({ tier, mrr: v.mrr, count: v.count, pct: mrr > 0 ? (v.mrr / mrr) * 100 : 0 }))
-        .sort((a, b) => b.mrr - a.mrr);
-
-      // Cohorts — group by start_date month, count retained (status='active' now)
-      const cohortMap = new Map<string, { label: string; startedCount: number; startedMRR: number; retainedCount: number }>();
-      for (const s of all) {
-        const start = new Date(s.start_date + "T00:00:00Z");
-        const key = monthKey(start);
-        const label = monthLabel(start);
-        const cur = cohortMap.get(key) ?? { label, startedCount: 0, startedMRR: 0, retainedCount: 0 };
-        cur.startedCount += 1;
-        cur.startedMRR   += s.mrr ?? 0;
-        if (s.status === "active") cur.retainedCount += 1;
-        cohortMap.set(key, cur);
-      }
-      const cohorts: CohortRow[] = Array.from(cohortMap.entries())
-        .map(([monthKey, c]) => ({
-          monthKey,
-          monthLabel:    c.label,
-          startedCount:  c.startedCount,
-          startedMRR:    c.startedMRR,
-          retainedCount: c.retainedCount,
-          retentionPct:  c.startedCount > 0 ? (c.retainedCount / c.startedCount) * 100 : 0,
-        }))
-        .sort((a, b) => b.monthKey.localeCompare(a.monthKey));
-
-      /* ── Chart series ──────────────────────────────────────────────────
-         Built from `all` and `cohorts`, the same rows every figure above comes from, so a
-         chart cannot disagree with the number printed beside it. The arithmetic lives in
-         lib/accounting/saas-charts.ts with tests — see its header for what a reconstructed
-         trend can and cannot see, and for why `mrr_snapshots` was not used. */
-      const lifespans = all.map((s) => ({
-        startDate: s.start_date,
-        mrr: s.mrr,
-        status: s.status,
-        updatedAt: s.updated_at,
-      }));
-      const curve = retentionCurve(cohorts, now);
-
-      return {
-        mrr, arr, activeCustomers, arpc,
-        newMRR30d,
-        newCustomers30d: newSubs30d.length,
-        churnMRR30d,
-        churnedCustomers30d: churnedSubs30d.length,
-        netMRRChange30d: newMRR30d - churnMRR30d,
-        monthlyChurnRate,
-        ltvEstimate,
-        waterfall,
-        mrrByVendor,
-        mrrByTier,
-        cohorts,
-        mrrTrend: mrrTrend(lifespans, TREND_MONTHS, now),
-        trendCaveats: trendCaveats(lifespans),
-        retentionCurve: curve,
-        retentionVelocity: retentionVelocity(curve),
-      };
+      return computeSaasMetrics(subs as SubRow[]);
     },
   });
 }

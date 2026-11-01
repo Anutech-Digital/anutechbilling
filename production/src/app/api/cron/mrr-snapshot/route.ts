@@ -22,6 +22,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
+import { isRecurringSub, recurringMrr } from "@/lib/subscriptions/mrr-of";
 import { fetchAllRows, errorMessage } from "@/lib/ops/fetch-all";
 import { chunk } from "@/lib/ops/p-limit";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
@@ -77,11 +78,11 @@ async function handle(req: Request): Promise<NextResponse<SnapshotResult | { err
   /* WC-scale: paged. One select stopped at PostgREST's 1000-row cap without saying so, and
      every subscription past the thousandth was simply missing from the month — NRR then
      reads that as churn. Ordered by id so the offset pages cannot overlap or skip. */
-  let subs: { tenant_id: string; customer_id: string | null; mrr: number | null }[];
+  let subs: { tenant_id: string; customer_id: string | null; mrr: number | null; plan?: string | null; term_months?: number | null }[];
   try {
     subs = await fetchAllRows((from, to) => supabase
       .from("subscriptions")
-      .select("tenant_id, customer_id, mrr")
+      .select("tenant_id, customer_id, mrr, plan, term_months")
       .eq("status", "active")
       .order("id", { ascending: true })
       .range(from, to));
@@ -97,6 +98,8 @@ async function handle(req: Request): Promise<NextResponse<SnapshotResult | { err
 
   for (const s of subs) {
     /* R-897 */ if (!cronTenantAllowed(s.tenant_id)) continue;
+    /* R-2229: the same MRR rule as every screen — a one-time or no-term row is not MRR. */
+    if (!isRecurringSub(s)) continue;
     if (!s.customer_id) {
       /* A subscription with no customer cannot be attributed, and guessing would put
          revenue against the wrong retention cohort. Counted so the gap is visible. */
@@ -106,7 +109,7 @@ async function handle(req: Request): Promise<NextResponse<SnapshotResult | { err
     tenantIds.add(s.tenant_id);
     const key = `${s.tenant_id}:${s.customer_id}`;
     const prev = byCustomer.get(key) ?? { tenantId: s.tenant_id, customerId: s.customer_id, mrr: 0, count: 0 };
-    prev.mrr += Math.max(0, Math.round(s.mrr ?? 0));
+    prev.mrr += recurringMrr({ status: "active", ...s });
     prev.count += 1;
     byCustomer.set(key, prev);
   }
