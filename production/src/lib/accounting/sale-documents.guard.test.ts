@@ -176,6 +176,7 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/components/features/collections/write-off-suggestions-card.tsx": "open balances",
   "src/components/features/invoices/issue-credit-note-dialog.tsx": "a trigger refuses notes on an opening invoice",
   "src/components/features/subscriptions/invoice-peek-dialog.tsx": "one subscription invoice",
+  "src/components/features/subscriptions/use-expected-seat-rate.ts": "the last invoiced seat rate of one item (R-2292; skips opening invoices itself)",
   "src/lib/ai/help-data-tools.ts": "overdue balances",
   "src/lib/ai/performance.server.ts": "lead → invoice status",
   "src/lib/billing/sync-instalments.server.ts": "our instalment invoices",

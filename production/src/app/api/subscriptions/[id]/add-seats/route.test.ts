@@ -263,3 +263,27 @@ describe("R-800 — effective date", () => {
     expect(state.claims[0].requested_by).toBe("U1");
   });
 });
+
+describe("R-2292 — a rate typed for this quote only", () => {
+  it("annual_rate_per_seat is passed to applySeatIncrease", async () => {
+    const res = await post({ additional_seats: 1, idempotency_key: KEY, annual_rate_per_seat: 3055 });
+    expect(res.status).toBe(200);
+    const args = (state.apply as ReturnType<typeof vi.fn>).mock.calls[0][0] as { annualPerSeatOverride?: number | null };
+    expect(args.annualPerSeatOverride).toBe(3055);
+  });
+
+  it("absent → no typed rate (the subscription's rate, as before)", async () => {
+    await post({ additional_seats: 1, idempotency_key: KEY });
+    const args = (state.apply as ReturnType<typeof vi.fn>).mock.calls[0][0] as { annualPerSeatOverride?: number | null };
+    expect(args.annualPerSeatOverride ?? null).toBeNull();
+  });
+
+  it("0, negative or fractional rates are refused with 400 before any claim", async () => {
+    for (const bad of [0, -5, 30.5]) {
+      const res = await post({ additional_seats: 1, idempotency_key: KEY, annual_rate_per_seat: bad });
+      expect(res.status).toBe(400);
+    }
+    expect(state.claims).toHaveLength(0);
+    expect(state.apply).not.toHaveBeenCalled();
+  });
+});
