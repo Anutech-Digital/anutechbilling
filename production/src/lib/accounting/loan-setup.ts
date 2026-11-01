@@ -75,7 +75,8 @@ export function loanSetupPayload(i: LoanSetupInput, rows: ScheduleRow[], reconci
 }
 
 /** A loan set up with no asset (R-2323) — not shown in the asset register / Assets & EMIs. */
-export const isLoanOnly = (p: { kind?: string | null }) => p.kind === "loan";
+/* emi_purchases.kind is newer than the generated types (R-2323), so it is read off the row. */
+export const isLoanOnly = (p: object) => (p as { kind?: unknown }).kind === "loan";
 
 /* Common Indian lenders, as a statement narration names them → the name to show. */
 const LENDERS: readonly [RegExp, string][] = [
