@@ -142,6 +142,8 @@ function BroadcastTab({ goTemplates }: { goTemplates: () => void }) {
         <div className="rounded-lg border border-hairline bg-paper-2/40 p-3 space-y-2 text-sm">
           <p>Goes to <b>{p.recipients}</b> leads
             {p.skippedOptOut > 0 && <> · {p.skippedOptOut} skipped (sent STOP)</>}
+            {/* R-2011: only leads who ticked "Send me offers" get a broadcast. */}
+            {p.skippedNoConsent > 0 && <> · <span className="text-amber-ink">{p.skippedNoConsent} skipped — no consent</span></>}
             {p.noPhone > 0 && <> · {p.noPhone} without a valid mobile number</>}
             {p.overCap > 0 && <> · {p.overCap} next time (250 per send)</>}
           </p>

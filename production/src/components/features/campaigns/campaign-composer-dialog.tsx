@@ -260,7 +260,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
       toast.success(
         `${json.campaignId} sent · ${json.sentCount}/${json.recipientsCount} delivered${
           json.failedCount > 0 ? ` · ${json.failedCount} failed` : ""
-        }${json.skippedOptOut > 0 ? ` · ${json.skippedOptOut} unsubscribed, skipped` : ""}${modeNote}`
+        }${json.skippedOptOut > 0 ? ` · ${json.skippedOptOut} unsubscribed, skipped` : ""}${json.skippedNoConsent > 0 ? ` · ${json.skippedNoConsent} skipped — no consent` : ""}${modeNote}`
       );
       onOpenChange(false);
     } catch (err) {
@@ -551,6 +551,10 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
           )}
         </div>
 
+        {/* R-2011 (DPDP): the server sends only to people who ticked "Send me offers". */}
+        <p className="text-xs text-ink-3" data-testid="campaign-consent-note">
+          Only people who agreed to offers get this email — the rest are skipped (no consent).
+        </p>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>Cancel</Button>
           <Button
@@ -559,7 +563,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
             onClick={onSubmit}
             disabled={submitting || recipientCount === 0}
           >
-            {submitting ? "Sending…" : `Send to ${recipientCount} ${hasPreset ? "contact" : "lead"}${recipientCount === 1 ? "" : "s"}`}
+            {submitting ? "Sending…" : `Send — up to ${recipientCount} ${hasPreset ? "contact" : "lead"}${recipientCount === 1 ? "" : "s"}`}
           </Button>
         </DialogFooter>
       </DialogContent>

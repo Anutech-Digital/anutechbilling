@@ -18,6 +18,8 @@ import { NextRequest } from "next/server";
 const db = vi.hoisted(() => ({
   me: { tenant_id: "T1", role: "sales" } as { tenant_id: string; role: string } | null,
   rows: {} as Record<string, unknown>,
+  /* R-2011: what a list read (await on the query) returns per table — leads, consent_events. */
+  list: {} as Record<string, unknown[]>,
   reads: [] as string[],
   actors: [] as string[], // R-051: who createAdminClientFor() was opened for
   writes: [] as Array<{ table: string; op: string; data: unknown }>,
@@ -32,7 +34,7 @@ function chain(table: string, user: boolean) {
   const one = async () => ({ data: table === "users" && user ? db.me : (db.rows[table] ?? null), error: null });
   q.single = one;
   q.maybeSingle = one;
-  q.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(ok);
+  q.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: db.list[table] ?? [], error: null }).then(ok);
   return q;
 }
 
@@ -69,6 +71,11 @@ beforeEach(() => {
   vi.stubEnv("UNSUBSCRIBE_SIGNING_SECRET", "test-only-unsubscribe-secret");
   db.me = { tenant_id: "T1", role: "sales" };
   db.rows = { tenants: { name: "Anutech", email: "hi@example.invalid", phone: null } };
+  /* The hand-picked address is lead L-1, who ticked "Send me offers" (R-2011). */
+  db.list = {
+    leads: [{ id: "L-1", contact_email: "buyer@example.invalid" }],
+    consent_events: [{ lead_id: "L-1", choice: "granted", created_at: "2026-11-01T10:00:00Z" }],
+  };
   db.reads = [];
   db.actors = [];
   db.writes = [];
@@ -102,5 +109,54 @@ describe("campaigns send — role gate (R-217)", () => {
     db.me = { tenant_id: "T1", role: "owner" };
     expect((await call({ name: "x" })).status).toBe(400);
     expect(mail.send).not.toHaveBeenCalled();
+  });
+});
+
+describe("campaigns send — marketing consent (R-2011, DPDP)", () => {
+  beforeEach(() => { db.me = { tenant_id: "T1", role: "owner" }; });
+
+  it("a hand-picked address with no consent record is skipped — nothing mailed, the reply says why", async () => {
+    db.list = { leads: [{ id: "L-1", contact_email: "buyer@example.invalid" }], consent_events: [] };
+    const res = await call(body);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("1 skipped (no consent)");
+    expect(mail.send).not.toHaveBeenCalled();
+    expect(db.writes.some((w) => w.table === "campaigns")).toBe(false);
+  });
+
+  it("an address that is no lead of ours is skipped (unknown consent = no)", async () => {
+    db.list = { leads: [], consent_events: [] };
+    expect((await call(body)).status).toBe(400);
+    expect(mail.send).not.toHaveBeenCalled();
+  });
+
+  it("the latest choice wins: yes earlier, no later → skipped", async () => {
+    db.list = {
+      leads: [{ id: "L-1", contact_email: "buyer@example.invalid" }],
+      /* Newest first, as the query orders it. */
+      consent_events: [
+        { lead_id: "L-1", choice: "denied", created_at: "2026-11-02T10:00:00Z" },
+        { lead_id: "L-1", choice: "granted", created_at: "2026-11-01T10:00:00Z" },
+      ],
+    };
+    expect((await call(body)).status).toBe(400);
+    expect(mail.send).not.toHaveBeenCalled();
+  });
+
+  it("audience mode: only the lead who said yes is mailed, the other counted as skipped — no consent", async () => {
+    db.list = {
+      leads: [
+        { id: "L-1", contact_name: "Ravi", contact_email: "yes@example.invalid", company: "A", stage: "new", source: "x" },
+        { id: "L-2", contact_name: "Old", contact_email: "old@example.invalid", company: "B", stage: "new", source: "x" },
+      ],
+      consent_events: [{ lead_id: "L-1", choice: "granted", created_at: "2026-11-01T10:00:00Z" }],
+    };
+    const { recipients: _r, ...audienceBody } = body;
+    void _r;
+    const res = await call({ ...audienceBody, audience: { stages: ["new"] } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ recipientsCount: 1, skippedNoConsent: 1, sentCount: 1 });
+    expect(mail.send).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(mail.send.mock.calls[0][0])).toContain("yes@example.invalid");
   });
 });

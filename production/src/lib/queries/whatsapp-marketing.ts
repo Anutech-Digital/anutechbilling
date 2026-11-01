@@ -140,7 +140,7 @@ export function useWaBroadcasts() {
 }
 
 export interface BroadcastInput { templateId: string; audience: { stages?: string[]; sources?: string[] } }
-export interface BroadcastPreview { recipients: number; overCap: number; skippedOptOut: number; noPhone: number; sample: string | null; connected: boolean }
+export interface BroadcastPreview { recipients: number; overCap: number; skippedOptOut: number; skippedNoConsent: number; noPhone: number; sample: string | null; connected: boolean }
 
 async function post<T>(body: unknown): Promise<T> {
   const res = await fetch("/api/marketing/whatsapp/broadcast", {
@@ -161,10 +161,10 @@ export function useBroadcastPreview() {
 export function useSendBroadcast() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: BroadcastInput) => post<{ sent: number; failed: number; skippedOptOut: number; recipients: number }>(v),
+    mutationFn: (v: BroadcastInput) => post<{ sent: number; failed: number; skippedOptOut: number; skippedNoConsent?: number; recipients: number }>(v),
     onSuccess: (j) => {
       qc.invalidateQueries({ queryKey: BC });
-      toast.success(`${j.sent}/${j.recipients} sent${j.failed ? ` · ${j.failed} failed` : ""}${j.skippedOptOut ? ` · ${j.skippedOptOut} opted-out skipped` : ""}`);
+      toast.success(`${j.sent}/${j.recipients} sent${j.failed ? ` · ${j.failed} failed` : ""}${j.skippedOptOut ? ` · ${j.skippedOptOut} opted-out skipped` : ""}${j.skippedNoConsent ? ` · ${j.skippedNoConsent} skipped — no consent` : ""}`);
     },
     onError: (err) => toastError(err),
   });
