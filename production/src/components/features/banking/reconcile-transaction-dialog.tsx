@@ -83,6 +83,7 @@ import { matchCreditToInvoices } from "@/lib/banking/invoice-credit-match";
 import { guessCustomer, itemKey as creditItemKey } from "@/lib/banking/credit-pay-for";
 import { usePayerMemory } from "@/lib/queries/customer-payers";
 import { useReconcileSuggestion, SuggestionCard, logSuggestion } from "@/components/features/banking/reconcile-suggestion-card";
+import { dropReconciledExpenses, expenseSuggestionIds, useReconciledExpenseIds } from "@/lib/banking/reconciled-suggestions";
 import {
   WhoTiles, ChosenTileBar, ReconcileFooter, SectionSlot, tileLabel,
   type WhoTile, type FooterSave,
@@ -96,7 +97,16 @@ interface Props {
 
 export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: Props) {
   const router = useRouter();
-  const { data: suggestions, isLoading: sugLoading } = useSuggestMatches(transaction?.id ?? null);
+  const { data: rawSuggestions, isLoading: rawSugLoading } = useSuggestMatches(transaction?.id ?? null);
+  /* R-2325: an expense already reconciled to another bank line is never suggested again. */
+  const sugExpenseIds = React.useMemo(() => expenseSuggestionIds(rawSuggestions), [rawSuggestions]);
+  const { data: reconciledExp, isLoading: recLoading } = useReconciledExpenseIds(transaction?.id ?? null, sugExpenseIds);
+  const suggestions = React.useMemo(
+    /* until the read answers (or if it fails) the expenses are held back — never offered unchecked */
+    () => dropReconciledExpenses(rawSuggestions, reconciledExp ?? new Set(sugExpenseIds)),
+    [rawSuggestions, reconciledExp, sugExpenseIds],
+  );
+  const sugLoading = rawSugLoading || (sugExpenseIds.length > 0 && recLoading);
   const reconcile = useReconcileTransaction();
   const bookExpense = useBookTxnAsExpense();
   const bookCredit = useBookBankCredit();
