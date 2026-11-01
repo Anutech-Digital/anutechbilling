@@ -444,6 +444,18 @@ export interface NewBillDraft {
 export const newBillTotal = (b: Pick<NewBillDraft, "taxable" | "gst">) => Math.max(0, Math.round(b.taxable || 0)) + Math.max(0, Math.round(b.gst || 0));
 
 /**
+ * R-2325: a bill's figures may carry paise (Zoho's GST ₹23.58), but the books keep whole rupees
+ * (expenses / vendor_bills money columns are integers; payArgs and the RPC round). The form keeps
+ * what was typed and says, once, how it is booked. null = nothing has paise.
+ */
+export function wholeRupeeNote(b: Pick<NewBillDraft, "taxable" | "gst">): string | null {
+  const parts = ([["Value before GST", b.taxable], ["GST", b.gst]] as const)
+    .filter(([, v]) => v > 0 && Math.round(v * 100) % 100 !== 0)
+    .map(([label, v]) => `${label} ${rupee(v, { decimals: 2 })} is booked as ${rupee(Math.round(v))}`);
+  return parts.length ? `${parts.join("; ")} — the books keep whole rupees.` : null;
+}
+
+/**
  * R-2321: what a new bill typed on the spot settles now ("Paying now", cash + TDS), never more than
  * the bill. Typed → that. Not typed → a COGS bill: the whole bill (as before); an expense bill: the
  * bank line (its cash) plus the bill's TDS, which goes with this first part (R-1915). Below the

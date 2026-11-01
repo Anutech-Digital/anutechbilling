@@ -42,7 +42,7 @@ import { useVendorOpenItems, usePayVendorFromBankDebit, useVendor194q, useSet194
 import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
 import {
   allocateOldestFirst, cashDue, guessVendor, isRecorded, itemKey, itemLabel, newBillPay, newBillTds, newBillTotal, planTds, preselect,
-  resultLines, summarise, tdsMap, vendorPan, TDS_OVERRIDE_MIN,
+  resultLines, summarise, tdsMap, vendorPan, wholeRupeeNote, TDS_OVERRIDE_MIN,
   type NewBillDraft, type VendorLite, type VendorOpenItem, type VendorPayResult,
 } from "@/lib/banking/debit-pay-for";
 import type { VendorFocus } from "@/lib/banking/vendor-line-guard";
@@ -265,7 +265,7 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
   /* R-2321: an expense bill can be part-paid too — "Paying now" defaults to the bank line. */
   const billPay = newBillPay(bill, billTotal, billTds.tds, debit);
   const newBillCash = showNew && billTotal > 0 ? Math.max(0, billPay - billTds.tds) : 0;
-  const newBillBad = showNew && (!(bill.taxable > 0) || !bill.category || !(billPay > billTds.tds));
+  const newBillBad = showNew && (!(Math.round(bill.taxable || 0) > 0) || !bill.category || !(billPay > billTds.tds));
 
   /* (c) Advance + bank charge. */
   const [charge, setCharge] = React.useState(0);
@@ -643,13 +643,15 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
                   </select>
                   <label className="text-xs text-ink-3 space-y-0.5">
                     <span className="block">Value before GST ₹</span>
-                    <Input type="number" min={0} aria-label="Value before GST" value={bill.taxable ? String(bill.taxable) : ""} onChange={(e) => setBill({ ...bill, taxable: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
+                    {/* R-2325: keep what was typed (paise too); payArgs books whole rupees. */}
+                    <Input type="number" min={0} step="0.01" aria-label="Value before GST" value={bill.taxable ? String(bill.taxable) : ""} onChange={(e) => setBill({ ...bill, taxable: Math.max(0, Number(e.target.value) || 0) })} />
                   </label>
                   <label className="text-xs text-ink-3 space-y-0.5">
                     <span className="block">GST ₹</span>
-                    <Input type="number" min={0} aria-label="GST on the bill" value={bill.gst ? String(bill.gst) : ""} onChange={(e) => setBill({ ...bill, gst: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
+                    <Input type="number" min={0} step="0.01" aria-label="GST on the bill" value={bill.gst ? String(bill.gst) : ""} onChange={(e) => setBill({ ...bill, gst: Math.max(0, Number(e.target.value) || 0) })} />
                   </label>
                 </div>
+                {wholeRupeeNote(bill) && <p className="text-xs text-ink-3">{wholeRupeeNote(bill)}</p>}
                 {bill.gst > 0 && (
                   <label className="flex items-center gap-2 text-xs text-ink-2 cursor-pointer">
                     <input type="checkbox" checked={bill.itc} onChange={(e) => setBill({ ...bill, itc: e.target.checked })} />

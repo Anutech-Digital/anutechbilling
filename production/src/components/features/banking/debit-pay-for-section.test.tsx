@@ -529,3 +529,53 @@ describe("R-2321 — part-pay a new expense bill from Reconcile", () => {
     expect((screen.getByLabelText("Advance to vendor") as HTMLInputElement).value).toBe("17500");
   });
 });
+
+/* R-2325 (staging money-out reconcile, 31 Oct): Zoho booked a bill with GST ₹23.58. Typing that
+   in "GST ₹" turned the box into 24 at once (and "23.5" + "8" became 248). The books keep whole
+   rupees (expenses / vendor_bills money columns are integers — production/CLAUDE.md), so the
+   save still sends ₹24; the box now keeps what was typed and says how it is booked. */
+describe("R-2325 — inline new bill: typed paise stay in the box, booked as whole rupees", () => {
+  const openExpenseBill = () => {
+    fireEvent.click(screen.getByLabelText(/The bill is not in the books yet/));
+    fireEvent.click(screen.getByRole("button", { name: "Expense bill" }));
+  };
+
+  it("GST 23.58 stays 23.58 in the box; the note and the save say ₹24", async () => {
+    const { payArgs } = await import("@/lib/banking/debit-pay-for");
+    state.pay.mockResolvedValue(result({}));
+    render(<DebitPayForSection transaction={txn(155, "UPI ZOHO AUTOPAY")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Vendor paid"), { target: { value: "v1" } });
+    openExpenseBill();
+    fireEvent.change(screen.getByLabelText("TDS section"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Value before GST"), { target: { value: "131" } });
+    fireEvent.change(screen.getByLabelText("GST on the bill"), { target: { value: "23.58" } });
+    expect((screen.getByLabelText("GST on the bill") as HTMLInputElement).value).toBe("23.58");
+    expect(screen.getByText("GST ₹23.58 is booked as ₹24 — the books keep whole rupees.")).toBeTruthy();
+    expect(screen.getByText(/Bill ₹155/)).toBeTruthy();
+    fireEvent.click(saveButton());
+    await screen.findByText("Done — this bank line is reconciled");
+    const sent = payArgs(state.pay.mock.calls[0][0]);
+    expect(sent.p_new_bill).toMatchObject({ taxable: 131, gst: 24 });
+  });
+
+  it("whole rupees typed → no note", () => {
+    render(<DebitPayForSection transaction={txn(23600, "UPI SHARMA ASSOC")} onDone={() => {}} />);
+    openExpenseBill();
+    fireEvent.change(screen.getByLabelText("Value before GST"), { target: { value: "20000" } });
+    fireEvent.change(screen.getByLabelText("GST on the bill"), { target: { value: "3600" } });
+    expect(screen.queryByText(/the books keep whole rupees/)).toBeNull();
+  });
+});
+
+/* R-2325: an Expense bill recorded on the line offers the same categories as Expenses → Add
+   expense (EXPENSE_CATEGORIES less Salaries) — also for a vendor whose usual head is COGS. */
+describe("R-2325 — inline Expense bill categories = the Expenses page list", () => {
+  it("Google (usual head COGS-Workspace) → Expense bill → the full expense list, no COGS heads", () => {
+    render(<DebitPayForSection transaction={txn(2566, "NEFT GOOGLE CLOUD INDIA")} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Vendor paid"), { target: { value: "v2" } });
+    fireEvent.click(screen.getByLabelText(/The bill is not in the books yet/));
+    fireEvent.click(screen.getByRole("button", { name: "Expense bill" }));
+    const opts = [...(screen.getByLabelText("Category") as HTMLSelectElement).options].map((o) => o.value).filter(Boolean);
+    expect(opts).toEqual(["Professional Services", "Advertising", "Bank Charges", "Other"]);
+  });
+});
