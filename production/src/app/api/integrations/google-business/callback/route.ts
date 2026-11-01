@@ -9,7 +9,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { googleOAuthCreds, originFromRequest, gbpRedirectUri, exchangeCode, fetchGoogleEmail } from "@/lib/google/oauth";
-import { refuseConnectWithoutVault, sealRefreshToken } from "@/lib/google/token-vault";
+import { refuseConnectWithoutVault, sealGoogleToken, sealRefreshToken } from "@/lib/google/token-vault";
 import { scopesLost, scopeLossMessage, hasGbpScope } from "@/lib/google/scope-union";
 import { syncTenantGbp } from "@/lib/google/gbp-api";
 
@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
 
     const { error } = await admin.from("user_google_tokens").upsert({
       user_id: user.id, tenant_id: me.tenant_id, google_email: email,
-      access_token: tokens.access_token,
+      access_token: sealGoogleToken(tokens.access_token), // R-2351: sealed, never plaintext
       token_expiry: new Date(Date.now() + (tokens.expires_in ?? 3600) * 1000).toISOString(),
       scopes: tokens.scope ?? null, last_error: lossNote,
       // refresh_token only arrives on first consent — never overwrite a stored one with nothing.

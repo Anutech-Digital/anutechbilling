@@ -15,7 +15,7 @@ import { cookies } from "next/headers";
 import { encode, getToken } from "next-auth/jwt";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { googleOAuthCreds, refreshAccessToken } from "@/lib/google/oauth";
-import { resealIfPlain } from "@/lib/google/token-vault";
+import { accessTokenCachePatch, openGoogleToken } from "@/lib/google/token-vault";
 import { hasContactsScope, hasResellerScope } from "@/lib/google/scope-union";
 import { authProvider } from "./authjs";
 import {
@@ -103,8 +103,17 @@ export async function getGoogleAccessToken(need: GoogleNeed, userId: string): Pr
       if (!row) return null;
       connOwner = row.user_id;
       connStoredRefresh = row.refresh_token;
+      let accessToken: string | null;
+      try {
+        // R-2351: stored sealed; a wrong / missing key is logged by name here (the resolver
+        // turns the throw into "not connected" and never calls Google with it).
+        accessToken = openGoogleToken(row.access_token);
+      } catch (e) {
+        console.error(`[google-token] ${e instanceof Error ? e.message : "could not open the stored Google token"}`);
+        throw e;
+      }
       return {
-        accessToken: row.access_token,
+        accessToken,
         refreshToken: row.refresh_token,
         expiresAt: row.token_expiry ? Date.parse(row.token_expiry) || 0 : 0,
         scopes: row.scopes,
@@ -118,11 +127,9 @@ export async function getGoogleAccessToken(need: GoogleNeed, userId: string): Pr
     },
     async saveConnection(r) {
       if (!connOwner) return;
-      await createAdminClient().from("user_google_tokens").update({
-        access_token: r.accessToken,
-        token_expiry: new Date(r.expiresAt).toISOString(),
-        ...resealIfPlain(connStoredRefresh),
-      }).eq("user_id", connOwner);
+      // R-2351: cached sealed; no master key → nothing written (never plaintext).
+      const patch = accessTokenCachePatch(r.accessToken, r.expiresAt, connStoredRefresh, "google-token");
+      if (patch) await createAdminClient().from("user_google_tokens").update(patch).eq("user_id", connOwner);
     },
 
     async readSession(): Promise<SessionGoogle | null> {
