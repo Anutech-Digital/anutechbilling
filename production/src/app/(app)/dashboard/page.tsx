@@ -61,6 +61,7 @@ import { toChaseSummary, chaseNote } from "@/lib/accounting/receivables-due";
 import { DEFAULT_SELL_MODE } from "@/lib/sell-mode";
 import { useActiveProjectSales, useSellMode } from "@/lib/queries/sell-mode";
 import { leadsWithProjects, panelAvailable, summarizeOpenProjects } from "@/components/features/dashboard/sell-mode-dashboard";
+import { totalMrr } from "@/lib/subscriptions/mrr-of";
 import {
   DashCardBody, loadView, useStillLoading, kpiTileState, countText as statValue, type LoadView,
 } from "@/components/features/dashboard/card-load-state";
@@ -228,9 +229,9 @@ export default function DashboardPage() {
   const toCollect = chase.total;
   const overdueFollowups = dashLeads?.overdueFollowups ?? 0;
 
-  // Subscription aggregates — sum MRR across active subs only
+  // Subscription aggregates — R-2229: the one MRR rule (active, recurring lines only)
   const activeSubs    = (subscriptions ?? []).filter((s) => s.status === "active");
-  const activeMRR     = activeSubs.reduce((s, x) => s + (x.mrr ?? 0), 0);
+  const activeMRR     = totalMrr(activeSubs);
 
   // Renewal pipeline — what's coming due in the next 30 days. Drives both
   // the "Today's Focus" urgent-renewal row and the "Renewals coming up"

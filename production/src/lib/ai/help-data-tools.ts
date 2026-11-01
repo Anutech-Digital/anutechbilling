@@ -87,7 +87,7 @@ const TOOLS: Record<HelpDataToolName, ToolDef> = {
     label: "Open active subscriptions",
     async run(c, { tenantId, now }) {
       const rows = await fetchAllRows<{ status: string | null; renewal_date: string | null; mrr: number | null }>((from, to) =>
-        c.from("subscriptions").select("status, renewal_date, mrr").eq("tenant_id", tenantId)
+        c.from("subscriptions").select("status, renewal_date, mrr, plan, term_months").eq("tenant_id", tenantId)
           .order("id", { ascending: true }).range(from, to));
       const s = subscriptionSummary(rows, now);
       return `Active subscriptions: ${num(s.activeCount)}. MRR: ${rupee(s.mrr)} a month.`;
