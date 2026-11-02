@@ -10,8 +10,9 @@ import { z } from "zod";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { gstinProblem } from "@/site/lib/checkout-details";
 
-export const BUY_TERMS_ERROR = "Tick the box to agree to the terms and refund policy before you pay";
-export const BUY_ANNUAL_NOTE = "Annual plan — billed for 12 months; Google does not allow mid-term cancellation.";
+/* R-2021: the three sentences live in buy-notes.ts (no zod) so the phone checkout reads the same words. */
+export { BUY_TERMS_ERROR, BUY_ANNUAL_NOTE, BUY_MONTHLY_NOTE } from "./buy-notes";
+import { BUY_TERMS_ERROR } from "./buy-notes";
 
 export const buyNowSchema = z.object({
   fullName:    z.string().min(2, "Your name"),

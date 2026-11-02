@@ -52,6 +52,8 @@ import { splitDomain } from "@/lib/domains/live-lookup";
 import { priceDomainLines } from "@/lib/checkout/cart-checkout";
 import { normalisePhone, splitName, type Registrant } from "@/lib/provisioning/domain-registration";
 import { insertDomainQuote, splitOrderNotes, withGst, type DomainQuote } from "./domain-quote.server";
+import { buyIntentNote } from "./buy-intent";
+import { buyIntentFields } from "./buy-intent-schema";
 
 /* R-079: the hard-coded dev tenant only off production; "" (fails closed) when unset there. */
 const BUY_PAGE_TENANT_ID = buyPageTenantIdOrEmpty();
@@ -75,7 +77,8 @@ const checkoutSchema = z.object({
   email:       z.string().email().max(200),
   phone:       z.string().min(10).max(20),
   seats:       z.coerce.number().int().min(1).max(10000),
-  domain:      z.string().min(3).max(120),
+  /* R-2021: min 3 checked below — empty only with domainMode "later". */
+  domain:      z.string().max(120),
   tierId:      z.enum(["starter", "standard", "plus", "enterprise"]),
   gstin:       z.string().optional(),
   /** R-173: GST place of supply ("07" or a state name). Required unless a valid GSTIN gives it. */
@@ -101,6 +104,17 @@ const checkoutSchema = z.object({
   addressLine1: z.string().max(200).optional(),
   city:         z.string().max(80).optional(),
   pinCode:      z.string().max(12).optional(),
+  /** R-2021: the phone flow's intent / domainMode / migrationSource — optional, notes only. */
+  ...buyIntentFields,
+}).superRefine((v, ctx) => {
+  /* R-2021: "Decide later" (phone flow) is the ONLY order that may come without a domain — the
+     team agrees it on the setup call. Every other order still needs one, as before. */
+  if (v.domainMode !== "later" && v.domain.trim().length < 3) {
+    ctx.addIssue({ code: z.ZodIssueCode.too_small, minimum: 3, type: "string", inclusive: true, path: ["domain"], message: "String must contain at least 3 character(s)" });
+  }
+  if (v.domainMode === "later" && v.domainNew) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["domainNew"], message: "A new domain needs its name — choose one, or decide later without it" });
+  }
 });
 
 // R-206: pricing (catalogue row → floored ₹/seat/month → lines → GST total) lives in ./pricing.
@@ -408,7 +422,8 @@ export async function POST(request: NextRequest) {
       isSimulation ? `[SIMULATION] Test buy — no real payment` : `DIRECT BUY · proceeding to Razorpay`,
       domainLine
         ? `Domain: ${cleanDomain} — NEW: bought with this order${isMonthly ? ", on its own GST invoice" : ""} (${rupee(domainLine.rate)} + GST, 1 year); registered in the buyer's name after payment`
-        : domainNew ? `Domain: ${cleanDomain} — NEW: register it for the buyer and call them (not checked yet)` : `Domain: ${cleanDomain}`,
+        : domainNew ? `Domain: ${cleanDomain} — NEW: register it for the buyer and call them (not checked yet)` : cleanDomain ? `Domain: ${cleanDomain}` : `Domain: not chosen yet — agree it on the setup call`,
+      buyIntentNote(parsed.data), // R-2021: the phone flow's intent / domain mode / email today
       `Plan: Google Workspace ${tierName}`,
       `Seats: ${seats}`,
       isMonthly ? `Billing: monthly (flex) — this is one month` : `Billing: annual (1-year plan)`,
@@ -430,7 +445,7 @@ export async function POST(request: NextRequest) {
       source:        sourceTag,
       // Migration 0232 — inbound attribution. Nulls when nothing was captured. R-1978: + utm_content/utm_term.
       ...attribution,
-      domain:        cleanDomain,        // structured — flows lead→quote→subscription
+      domain:        cleanDomain || null, // structured — flows lead→quote→subscription (R-2021: null = decide later)
       notes:         leadNotes,
       // R-173: copied to the customer by record_payment; generate_invoice needs state_code.
       state_code:    buyerStateCode,
@@ -547,7 +562,7 @@ export async function POST(request: NextRequest) {
       status:         "sent",              // direct buy — auto-sent
       payment_status: "awaiting",          // webhook flips to 'received'
       owner_id:       null,
-      domain:         cleanDomain,         // structured — record_payment copies to subscription
+      domain:         cleanDomain || null, // structured — record_payment copies to subscription (R-2021: null = decide later)
       created_date:   createdDate,
       expires_date:   expiresDate,
       notes:          quoteNotes,
@@ -666,7 +681,7 @@ ORDER SUMMARY
   Order ID    ${quoteId}
   Plan        Google Workspace ${tierName}
   Seats       ${seats}
-  Domain      ${cleanDomain}
+  Domain      ${cleanDomain || "to be agreed on the setup call"}
   Total       ${amountFmt} (incl 18% GST)
 
 ${customerSetupSteps({ domain: cleanDomain, seats, tierName: `Google Workspace ${tierName}`, contactName: leadOwner?.name ?? sellerPerson })}
@@ -704,7 +719,7 @@ COMPANY     ${companyName}
 CONTACT     ${fullName} <${email}>
 PLAN        Google Workspace ${tierName}
 SEATS       ${seats}
-DOMAIN      ${cleanDomain}
+DOMAIN      ${cleanDomain || "not chosen yet — agree it on the setup call"}
 TOTAL       ${amountFmt}
 ORDER ID    ${quoteId}
 LEAD ID     ${leadId}

@@ -30,6 +30,8 @@ import { recordFormConsent } from "@/lib/consent/marketing-consent.server";
 import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 import { IST_TZ } from "@/lib/dates/ist";
+import { buyIntentNote } from "@/app/api/public/checkout/workspace/buy-intent";
+import { buyIntentFields } from "@/app/api/public/checkout/workspace/buy-intent-schema";
 
 /* The owner recipient was hardcoded here to an address on a retired domain
    (CLAUDE.md §1). Resolved from the storefront tenant's row now — see
@@ -49,6 +51,8 @@ const trialSchema = z.object({
   domain:      z.string().min(3).max(120),               // e.g. acme.in
   tierId:      z.enum(["starter", "standard", "plus", "enterprise"]).optional(),
   message:     z.string().max(2000).optional(),
+  /** R-2021: the phone flow's intent / domainMode / migrationSource — optional, notes only. */
+  ...buyIntentFields,
 });
 
 export async function POST(request: NextRequest) {
@@ -95,6 +99,7 @@ export async function POST(request: NextRequest) {
       `Plan to trial: Google Workspace ${tierName}`,
       `Seats: ${seats}`,
       `Submitted via /buy/workspace`,
+      buyIntentNote(parsed.data),
       message ? `Message: ${message}` : null,
       ``,
       `NEXT STEPS:`,

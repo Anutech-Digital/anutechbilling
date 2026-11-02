@@ -11,7 +11,7 @@ import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 import { rupee } from "@/lib/utils";
 import { SLA, WHATSAPP_READY } from "@/site/lib/config";
 import { normalizeGstinInput } from "@/site/lib/checkout-details";
-import { buyNowSchema, BUY_ANNUAL_NOTE, BUY_TERMS_ERROR } from "../buy-now-schema";
+import { buyNowSchema, BUY_ANNUAL_NOTE, BUY_MONTHLY_NOTE, BUY_TERMS_ERROR } from "../buy-now-schema";
 import { stateName, whatsappHref, type BuyBrand, type BuyContact } from "./brand";
 import {
   STATE_OPTIONS, buyerErrors, checkoutBody, domainValue, orderCompany, stateFromGstin,
@@ -23,8 +23,6 @@ import { payOrder, requestQuote, startTrial, type SubmitContext } from "./submit
 import { OrderSummary } from "./order-summary";
 import { DataNotice } from "@/site/components/legal/DataNotice";
 import type { CheckoutState, Step } from "./use-checkout";
-
-export const BUY_MONTHLY_NOTE = "Monthly plan — billed each month for your users.";
 
 const METHODS: ReadonlyArray<{ id: PayMethod; label: string; sub: string }> = [
   { id: "upi", label: "UPI", sub: "GPay, PhonePe, Paytm, BHIM" },
