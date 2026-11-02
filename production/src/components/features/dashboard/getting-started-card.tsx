@@ -1,38 +1,16 @@
 /**
- * GettingStartedCard — first-run onboarding for a new reseller.
+ * GettingStartedCard — R-1931 (G-ONBOARD OB-10): the ONE onboarding list, "Get to your first
+ * quote", on the Dashboard. The /setup Done screen renders the same rows (FirstQuoteRows).
  *
- * A new tenant lands on an empty dashboard with no idea what to do first. This card gives a
- * guided path — each step checks off from REAL data (no fake ticks), routes to the right
- * screen, and the whole card auto-hides once the reseller is set up.
+ * The items, their order and every tick live in setup-checklist.ts (pure, unit-tested): State /
+ * GSTIN, Price list, First quote, Send link, Turn on customer messages, then Bank/UPI and Team.
+ * Each open item has its own button to the page that does it; the next open item is the one
+ * primary button. Ticks come from saved data and real counts only. The card retires itself once
+ * every item it shows is done.
  *
- * ─── THE GST STEP IS SEPARATE, AND THAT IS A BUG FIX ────────────────────────
- * It used to be one row: "Set up your business & GST profile", ticked by `setupDone` — which
- * is `tenants.setup_completed_at`, stamped by the final Continue of the setup wizard.
- *
- * GSTIN IS OPTIONAL IN THAT WIZARD. Nothing blocks Continue with the field empty
- * (app/(app)/setup/page.tsx — the GSTIN Field has no required rule and no gate on the
- * button). So a reseller could run the wizard, skip GSTIN, and get a green tick with a line
- * through the words "GST profile" while holding no GSTIN at all. Every invoice this app
- * issues is a GST tax invoice; that tick was the app telling somebody they were compliant
- * when the one field that makes them compliant was blank.
- *
- * The fix is not a longer label. The two facts are separate and are checked separately, and
- * GST is set when a GSTIN passes `isValidGstin` — format AND checksum, the same function
- * Settings → Company uses. A mistyped GSTIN leaves the step open rather than ticking it.
- *
- * ─── S31: "BEFORE YOU BILL" — ONE CHECKLIST, NOT TWO ────────────────────────
- * A new workspace could save its name and still be unable to bill: no invoice code (the
- * database then prints 4 letters of the tenant id), no bank/UPI on the invoice, no sending
- * email, nobody invited. Those rows were added HERE, above the first-sale steps, rather than
- * in a second card. Each is judged from saved data in setup-checklist.ts (pure, unit-tested)
- * and links to the exact settings spot. The company row is now address + state — saved
- * facts — not the wizard's `setup_completed_at` stamp. Setup rows are shown to the owner only
- * (R-1129: the company save is owner-only in the database); a manager sees one "ask the owner"
- * line, and other roles cannot open those settings.
- *
- * ─── WHY THE FIRST-SALE STEPS STAY ──────────────────────────────────────────
- * A quote that nobody paid proves the app can draft, not that the money-spine works, and
- * this card's whole job is to walk somebody to their first real sale.
+ * Roles (kept from R-253 / R-1129): owner-only items (company save, the messages switch, bank,
+ * invites) are shown to the owner only — a manager gets one "ask the owner" line instead; an
+ * item on a page the role cannot open (billing: /quotes, /items) is left out.
  */
 "use client";
 
@@ -43,91 +21,121 @@ import { Card } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenRoute } from "./route-access";
-import { buildSetupSteps, setupLoading, type SetupFacts } from "./setup-checklist";
-import { firstProductStep } from "./sell-mode-dashboard";
+import { buildFirstQuoteSteps, firstQuoteLoading, type FirstQuoteFacts, type FirstQuoteStep } from "./setup-checklist";
 import { DEFAULT_SELL_MODE, type SellMode } from "@/lib/sell-mode";
 
-interface Step {
-  id:    string;
-  group: "setup" | "sale";
-  label: string;
-  hint:  string;
-  href:  string;
-  cta:   string;
-  done:  boolean;
-}
-
-const GROUP_TITLE: Record<Step["group"], string> = {
-  setup: "Before you bill",
-  sale:  "Your first sale",
+const GROUP_TITLE: Record<FirstQuoteStep["group"], string> = {
+  first: "To your first quote",
+  after: "After that",
 };
 
-export function GettingStartedCard({
-  setup, hasCustomer, hasCatalog, hasQuote, hasSale, workspaceName, ready = true, sellMode = DEFAULT_SELL_MODE,
-}: {
-  /**
-   * False while any of the facts above is still loading. Until then the card renders nothing:
-   * judged on half-loaded data it showed every step open for a second and then vanished,
-   * the largest layout shift on the Dashboard (R-134, 3 Oct 2026).
-   */
-  ready?:       boolean;
-  /** S31: the "before you bill" facts — from useSetupFacts(); see setup-checklist.ts. */
-  setup:        SetupFacts;
-  hasCustomer:  boolean;
-  /**
-   * Kya catalogue me ek bhi item hai? 1 Sep 2026 ke audit ka B2: naya tenant
-   * "Create your first quote" par pahunchta tha aur quote-builder KHALI milta
-   * tha — default-catalog ka button sirf /items ke empty-state me chhupa tha.
-   * Ab wo kadam guided raaste ka hissa hai.
-   */
-  hasCatalog:   boolean;
-  hasQuote:     boolean;
-  hasSale:      boolean;
-  workspaceName: string;
-  /** R-1862: "What do you sell?" — decides where the first-product step opens. Default Both. */
-  sellMode?:    SellMode;
-}) {
+/** The items this role can act on, plus whether the owner still has items to finish. */
+function useVisibleSteps(facts: FirstQuoteFacts, sellMode: SellMode) {
   const { data: me } = useCurrentUser();
   const role = me?.role ?? null;
-  if (!ready || setupLoading(setup)) return null;
-
-  /* R-1129: only the owner runs setup — the company save is owner-only in the database
-     (tenants_self_update), so a manager sent here got a raw error. While the role loads,
-     keep the owner view (R-134). A manager gets one line to ask the owner instead. */
-  const showSetup = role === null || role === "owner";
-  const allSetup = buildSetupSteps(setup);
-  const setupSteps: Step[] = showSetup
-    ? allSetup.map((s) => ({ ...s, group: "setup" as const }))
-    : [];
-  const askOwner = role === "manager" && allSetup.some((s) => !s.done);
-  const saleSteps: Step[] = [
-    { id: "customer", group: "sale", label: "Add your first customer",   hint: "Or import from CSV — takes a minute.",                         href: "/customers",  cta: "Add customer", done: hasCustomer },
-    /* R-1862: a one-time business adds its first one-time product (Products → One-time tab). */
-    { id: "catalog",  group: "sale", ...firstProductStep(sellMode), done: hasCatalog },
-    { id: "quote",    group: "sale", label: "Create your first quote",   hint: "Pick from your catalog, send on WhatsApp/email.",              href: "/quotes/new", cta: "New quote",    done: hasQuote },
-    { id: "sale",     group: "sale", label: "Record your first payment", hint: "When a customer pays, the sale + invoice happen here.",        href: "/quotes",     cta: "View quotes",  done: hasSale },
-  ];
-  /* R-253: billing cannot open /quotes or /items, so those buttons threw them back to
-     /invoices. Their payment step goes to Payments Received (Record payment works there for
-     every role); a step on a page the role cannot open is someone else's job and is left out. */
-  const steps: Step[] = [...setupSteps, ...saleSteps]
-    .map((s) => (s.id === "sale" && !canOpenRoute(role, s.href) && canOpenRoute(role, "/payments")
-      ? { ...s, href: "/payments", cta: "Record payment", hint: "When a customer pays, record it here. The invoice follows." }
-      : s))
+  const all = buildFirstQuoteSteps(facts, sellMode);
+  /* While the role loads, keep the owner view (R-134). */
+  const isOwnerView = role === null || role === "owner";
+  const steps = all
+    .filter((s) => isOwnerView || !s.ownerOnly)
     .filter((s) => canOpenRoute(role, s.href));
-  if (steps.length === 0) return null;
+  const askOwner = role === "manager" && all.some((s) => s.ownerOnly && !s.done);
+  return { steps, askOwner };
+}
+
+function StepRows({ steps }: { steps: FirstQuoteStep[] }) {
+  // The next open item gets the one primary button; the rest are quiet.
+  const nextId = steps.find((s) => !s.done)?.id;
+  const groups = (["first", "after"] as const)
+    .map((g) => ({ g, rows: steps.filter((s) => s.group === g) }))
+    .filter((x) => x.rows.length > 0);
+  return (
+    <div className="space-y-4">
+      {groups.map(({ g, rows }) => (
+        <section key={g} aria-label={GROUP_TITLE[g]}>
+          {groups.length > 1 && (
+            <p className="text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-1.5">{GROUP_TITLE[g]}</p>
+          )}
+          <ul className="space-y-2">
+            {rows.map((s) => {
+              const isNext = s.id === nextId;
+              return (
+                <li
+                  key={s.id}
+                  className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors ${
+                    s.done ? "border-hairline bg-paper/60" : isNext ? "border-amber/40 bg-paper" : "border-hairline bg-paper"
+                  }`}
+                >
+                  <span
+                    className={`grid place-items-center h-6 w-6 rounded-full shrink-0 ${
+                      s.done ? "bg-emerald text-white" : "border-2 border-hairline-strong text-transparent"
+                    }`}
+                    aria-label={s.done ? "Done" : "Not done"}
+                  >
+                    {s.done && <Icon name="check" size={13} />}
+                  </span>
+                  <span className="min-w-0 flex-1 text-left">
+                    <span className={`block text-sm font-medium ${s.done ? "text-ink-3 line-through" : "text-ink"}`}>{s.label}</span>
+                    {!s.done && <span className="block text-2xs text-ink-3">{s.hint}</span>}
+                  </span>
+                  {!s.done && (
+                    <Link
+                      href={s.href as Route}
+                      className={`shrink-0 text-xs font-semibold px-3 py-2 min-h-[36px] inline-flex items-center rounded-md transition-colors ${
+                        isNext ? "bg-amber text-white hover:bg-amber-ink" : "border border-hairline text-ink-2 hover:bg-paper-2"
+                      }`}
+                    >
+                      {s.cta}
+                    </Link>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function AskOwnerNote() {
+  return (
+    <p className="mb-3 flex items-start gap-2 rounded-lg border border-hairline bg-paper px-3 py-2.5 text-xs text-ink-2 text-left">
+      <Icon name="info" size={14} className="mt-0.5 shrink-0 text-ink-3" />
+      <span>Only the owner can finish the company details, customer messages, bank and team. Ask the workspace owner to do them from their dashboard.</span>
+    </p>
+  );
+}
+
+/** The same rows, for the /setup Done screen. Renders nothing while a fact is loading. */
+export function FirstQuoteRows({ facts, sellMode = DEFAULT_SELL_MODE }: { facts: FirstQuoteFacts; sellMode?: SellMode }) {
+  const { steps, askOwner } = useVisibleSteps(facts, sellMode);
+  if (firstQuoteLoading(facts) || steps.length === 0) return null;
+  return (
+    <>
+      {askOwner && <AskOwnerNote />}
+      <StepRows steps={steps} />
+    </>
+  );
+}
+
+export function GettingStartedCard({
+  facts, sellMode = DEFAULT_SELL_MODE,
+}: {
+  /** From useFirstQuoteFacts() — see setup-checklist.ts. */
+  facts: FirstQuoteFacts;
+  /** R-1862: "What do you sell?" — decides where the price-list step opens. Default Both. */
+  sellMode?: SellMode;
+}) {
+  const { steps, askOwner } = useVisibleSteps(facts, sellMode);
+  /* Judged on half-loaded data the card showed every step open for a second and then vanished
+     (R-134) — so nothing renders until every fact is in. */
+  if (firstQuoteLoading(facts) || steps.length === 0) return null;
 
   const doneCount = steps.filter((s) => s.done).length;
   // Once everything is done, the card retires itself — no clutter for an active user.
   if (doneCount === steps.length) return null;
-
   const pct = Math.round((doneCount / steps.length) * 100);
-  // The next actionable step gets the spotlight (primary CTA); the rest are quiet.
-  const nextStep = steps.find((s) => !s.done);
-  const setupLeft = steps.filter((s) => s.group === "setup" && !s.done).length;
-  const groups = (["setup", "sale"] as const)
-    .map((g) => ({ g, rows: steps.filter((s) => s.group === g) }))
-    .filter((x) => x.rows.length > 0);
 
   return (
     <Card id="setup-checklist" className="mb-3 border-amber/30 bg-amber-soft/20 scroll-mt-20">
@@ -135,73 +143,19 @@ export function GettingStartedCard({
         <div className="min-w-0">
           <h2 className="font-serif text-xl text-ink leading-tight flex items-center gap-2">
             <Icon name="rocket" size={18} className="text-amber shrink-0" />
-            <span>Welcome{workspaceName ? <> to <span className="text-amber-ink">{workspaceName}</span></> : null} — let&apos;s get you selling</span>
+            <span>Get to your first quote</span>
           </h2>
-          <p className="text-[12px] text-ink-3 mt-0.5">
-            {doneCount} of {steps.length} done.
-            {setupLeft > 0 ? ` ${setupLeft} left before you can bill.` : askOwner ? "" : " Ready to bill."}
-          </p>
+          <p className="text-[12px] text-ink-3 mt-0.5">{doneCount} of {steps.length} done.</p>
         </div>
         <span className="font-serif text-2xl text-amber tabular-nums shrink-0">{pct}%</span>
       </div>
 
-      {/* Progress bar */}
       <div className="h-1.5 w-full rounded-full bg-paper-2 overflow-hidden mb-4">
         <div className="h-full bg-amber transition-all" style={{ width: `${pct}%` }} />
       </div>
 
-      {askOwner && (
-        <p className="mb-3 flex items-start gap-2 rounded-lg border border-hairline bg-paper px-3 py-2.5 text-xs text-ink-2">
-          <Icon name="info" size={14} className="mt-0.5 shrink-0 text-ink-3" />
-          <span>Only the owner can finish setup (company details, invoice numbering, bank, email). Ask the workspace owner to complete it from their dashboard.</span>
-        </p>
-      )}
-
-      <div className="space-y-4">
-        {groups.map(({ g, rows }) => (
-          <section key={g} aria-label={GROUP_TITLE[g]}>
-            {groups.length > 1 && (
-              <p className="text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-1.5">{GROUP_TITLE[g]}</p>
-            )}
-            <ul className="space-y-2">
-              {rows.map((s) => {
-                const isNext = nextStep?.id === s.id;
-                return (
-                  <li
-                    key={s.id}
-                    className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors ${
-                      s.done ? "border-hairline bg-paper/60" : isNext ? "border-amber/40 bg-paper" : "border-hairline bg-paper"
-                    }`}
-                  >
-                    <span
-                      className={`grid place-items-center h-6 w-6 rounded-full shrink-0 ${
-                        s.done ? "bg-emerald text-white" : "border-2 border-hairline-strong text-transparent"
-                      }`}
-                      aria-label={s.done ? "Done" : "Not done"}
-                    >
-                      {s.done && <Icon name="check" size={13} />}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className={`block text-sm font-medium ${s.done ? "text-ink-3 line-through" : "text-ink"}`}>{s.label}</span>
-                      {!s.done && <span className="block text-2xs text-ink-3">{s.hint}</span>}
-                    </span>
-                    {!s.done && (
-                      <Link
-                        href={s.href as Route}
-                        className={`shrink-0 text-xs font-semibold px-3 py-2 min-h-[36px] inline-flex items-center rounded-md transition-colors ${
-                          isNext ? "bg-amber text-white hover:bg-amber-ink" : "border border-hairline text-ink-2 hover:bg-paper-2"
-                        }`}
-                      >
-                        {s.cta}
-                      </Link>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        ))}
-      </div>
+      {askOwner && <AskOwnerNote />}
+      <StepRows steps={steps} />
     </Card>
   );
 }

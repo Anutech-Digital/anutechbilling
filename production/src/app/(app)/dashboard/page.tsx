@@ -28,7 +28,6 @@ import { quoteActivityTitle } from "./activity-title";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { useProjectReceivablesByCustomer } from "@/lib/queries/projects";
 import { useTasks } from "@/lib/queries/tasks";
-import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -40,7 +39,7 @@ import { cn } from "@/lib/utils";
 import { renewalStateLabel, renewalStateTone } from "@/lib/renewals/cadence";
 import { TrialsExpiringCard } from "@/components/features/trials/trials-expiring-card";
 import { GettingStartedCard } from "@/components/features/dashboard/getting-started-card";
-import { useSetupFacts } from "@/lib/onboarding/use-setup-facts";
+import { useFirstQuoteFacts } from "@/lib/onboarding/use-first-quote-facts";
 import { HealthCard } from "@/components/features/dashboard/health-card";
 import { MoneyHealthCard } from "@/components/features/dashboard/money-health-card";
 import { AiPerformanceCard } from "@/components/features/dashboard/ai-performance-card";
@@ -131,10 +130,9 @@ export default function DashboardPage() {
   const { data: tasksToday }    = useTasks("today");
   const { data: tasksOverdue }  = useTasks("overdue");
   const { data: currentUser }   = useCurrentUser();
-  const setupFacts              = useSetupFacts();
-  /* Getting-started ke "Load your price list" kadam ke liye — khali catalogue
-     naye tenant ka pehla deadend tha (audit B2). */
-  const { data: catalogItems, isSuccess: catalogLoaded }  = useItems();
+  /* R-1931: the one "Get to your first quote" list — every fact from a real read
+     (price list, quotes, customer messages, company, team). */
+  const firstQuoteFacts         = useFirstQuoteFacts();
 
   /* R-1862: "What do you sell?" (lib/sell-mode.ts). A one-time business with no subscription
      sees Open projects instead of MRR and no Renewals / Trials panels; a subscription on file
@@ -660,20 +658,10 @@ export default function DashboardPage() {
           failure the request exists to prevent. Silent when nothing is pending. */}
       <PendingJoinRequestsCard isOwner={currentUser?.role === "owner"} />
 
-      {/* First-run onboarding — guides a new reseller to their first quote, then
-          retires itself once they're set up (all steps derived from real data). */}
-      <GettingStartedCard
-        /* S31: company, GSTIN, invoice numbering, bank/UPI, email, team — read from the
-           same sources the settings screens save to (lib/onboarding/use-setup-facts.ts). */
-        setup={setupFacts}
-        hasCustomer={(customers?.length ?? 0) > 0}
-        hasCatalog={(catalogItems?.length ?? 0) > 0}
-        hasQuote={(quotes?.length ?? 0) > 0}
-        hasSale={(subscriptions?.length ?? 0) > 0}
-        workspaceName={currentUser?.tenantName ?? ""}
-        sellMode={sellMode}
-        ready={Boolean(currentUser) && catalogLoaded && customersQ.isSuccess && quotesQ.isSuccess && subscriptionsQ.isSuccess}
-      />
+      {/* R-1931 (G-ONBOARD OB-10): the ONE onboarding list — "Get to your first quote" (state /
+          GSTIN, price list, first quote, send link, customer messages, then bank/UPI and team).
+          Every tick from real data; it retires itself once everything is done. */}
+      <GettingStartedCard facts={firstQuoteFacts} sellMode={sellMode} />
 
       {/* Priority Action Hub for actionable alerts */}
       <PriorityActionHub
