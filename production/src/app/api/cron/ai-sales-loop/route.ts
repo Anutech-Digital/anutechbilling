@@ -46,6 +46,7 @@ import {
 import { consentWithdrawnLeadIds, suppressedEmailKeys } from "@/lib/privacy/suppression.server";
 import type { CatalogueItemPrice } from "@/lib/quotes/quote-from-enquiry";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
+import { sellerIdentityLookup } from "@/lib/ai/seller-identity";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -211,6 +212,8 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
   /* Cached per sweep for the same reason the catalogue is: a run usually touches one or two
      tenants and this is one row each. */
   const valueDropByTenant = new Map<string, string | null>();
+  /* R-1929: the follow-up is signed with the lead's own tenant name, read once per tenant. */
+  const sellerFor = sellerIdentityLookup(admin);
 
   for (const loop of due) {
     /* R-897 */ if (!cronTenantAllowed(loop.tenantId)) continue;
@@ -391,7 +394,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
           outcome.step.kind === "expiry" ? expiryFact(quoteExpiresOn, now) ?? "" : "",
           loop.triggerCondition,
         ].filter(Boolean).join("\n"),
-        sellerName: "ANUTECH DIGITAL PVT LTD",
+        sellerName: (await sellerFor(loop.tenantId)).sellerName,
         sellerEmail: FROM_EMAIL,
       });
 

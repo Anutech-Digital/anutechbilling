@@ -15,6 +15,7 @@ import { istToday, addDaysISO } from "@/lib/dates/ist";
 import * as React from "react";
 import { convertRateForCommitment, isAnnualTier } from "@/lib/quotes/commitment-rate";
 import { quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
+import { defaultLeadQuoteNotes, pricingValidityLine } from "@/lib/quotes/default-quote-notes";
 import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
 import { isMixedTerm, ONE_TERM_MESSAGE } from "@/lib/quotes/single-term";
 import { storedLineRate, quoteTotalsDivisor, lineAmountSuffix, lineRateUnitSuffix } from "@/lib/quotes/line-rate-unit";
@@ -765,13 +766,12 @@ function QuoteBuilderBody() {
       toast.info(`Add line items for ${leadName}'s quote`);
     }
 
-    // Pre-fill notes with friendly customer-facing message
-    setNotes(
-      `Quote for ${leadName}\n` +
-      (leadContactInit && leadContactInit !== leadName ? `Attn: ${leadContactInit}\n` : "") +
-      `\nPricing valid for 30 days. Onboarding includes DNS, MX, SPF, DKIM, DMARC setup. Free training (2 sessions).`,
-    );
-  }, [prefillFrom, leadCompanyInit, leadContactInit, leadEmailInit, leadPhoneInit, leadFromQuery, leadPlan, leadSeats, catalog, catalogPending, linkedLeadId, leadsPending, leadCycle]);
+    /* Pre-fill notes for the customer. R-1929: only what the app knows (who it is for, how long
+       the price holds) — never another company's onboarding / free-training promise. Extra
+       promises belong in Terms & conditions. prefilledRef makes this run once, so validityDays
+       in the deps cannot rewrite notes the user has edited. */
+    setNotes(defaultLeadQuoteNotes({ leadName, contactName: leadContactInit, validityDays }));
+  }, [prefillFrom, leadCompanyInit, leadContactInit, leadEmailInit, leadPhoneInit, leadFromQuery, leadPlan, leadSeats, catalog, catalogPending, linkedLeadId, leadsPending, leadCycle, validityDays]);
 
   /* ── R-388: fill UNKNOWN costs when the catalogue arrives ───────────────────────
      The prefill above waits for the catalogue, but if that query failed (or a row
@@ -2860,7 +2860,7 @@ function QuoteBuilderBody() {
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder={isInvoiceMode
                   ? "Appears on the invoice — e.g. what the charge is for, payment terms."
-                  : "Pricing valid for 30 days. Onboarding includes DNS, MX, SPF, DKIM, DMARC setup. Free training (2 sessions)."}
+                  : pricingValidityLine(validityDays) /* R-1929: no other company's promises */}
                 rows={6}
               />
               <p className="text-2xs text-ink-3 mt-1">Shown on customer-facing {isInvoiceMode ? "invoice" : "quote"} PDF.</p>
