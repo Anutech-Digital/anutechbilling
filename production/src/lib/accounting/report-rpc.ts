@@ -86,6 +86,8 @@ export interface BalanceSheetRpcRow {
   salary_other_deductions?: number | null;
   /** R-1580: partner commission earned, not yet paid (net). Absent before that migration. */
   commissions_payable?: number | null;
+  /** R-2373: negative overdraft balances (a borrowing). Absent before that migration. */
+  bank_overdraft?: number | null;
 }
 
 /**
@@ -134,6 +136,8 @@ export function balanceSheetFromRpc(r: BalanceSheetRpcRow): BalanceSheetAuto {
     salaryDuesPayable,
     reimbursementsPayable: r.reimbursements_payable,
     creditCardPayable: r.credit_card_payable,
+    /* R-2373: migration se pehle 0 — OD tab cash_and_bank me netted tha (aaj tak wala number). */
+    bankOverdraft: r.bank_overdraft ?? 0,
     emiLoansPayable: r.emi_loans_payable,
     businessLoansPayable: r.business_loans_payable,
     gstPayable,

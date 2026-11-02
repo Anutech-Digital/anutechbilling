@@ -16607,6 +16607,7 @@ export type Database = {
           advances_from_customers: number
           as_of: string
           bill_itc_groups: Json
+          bank_overdraft: number
           bills_gst: number
           business_loans_payable: number
           cash_and_bank: number

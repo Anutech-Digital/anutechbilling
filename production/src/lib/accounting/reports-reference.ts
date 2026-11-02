@@ -73,11 +73,15 @@ export interface BsRawRows {
 export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSheetAuto {
   let cashAndBank = 0;
   let creditCardPayable = 0;
+  let bankOverdraft = 0;   // R-2373 — jaan-boojh kar badlaav: OD below zero is a borrowing
   for (const a of r.accounts) {
     const bal = r.balanceOf[a.id];
     const balance = (bal as number | null) ?? a.opening_balance ?? 0;
     if (a.account_type === "credit_card") {
       if (balance < 0) creditCardPayable += -balance;
+      else             cashAndBank += balance;
+    } else if (a.account_type === "overdraft") {
+      if (balance < 0) bankOverdraft += -balance;
       else             cashAndBank += balance;
     } else {
       cashAndBank += balance;
@@ -163,7 +167,7 @@ export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSh
   const advanceTaxPaid = incomeTaxPaidForFy(r.taxRows, fyStartYear);
   const gstPayable = outputGST - billsGst - expGst - gstPaid;
 
-  return { cashAndBank, undepositedFunds, receivables, advancesFromCustomers, projectReceivable, tdsReceivable, employeeLoans, prepaidAdvances, fixedAssets, fixedAssetsCost: block.cost + emiUnregistered, accumulatedDepreciation: block.accumulated, payables, salaryPayable, salaryDuesPayable, reimbursementsPayable, creditCardPayable, emiLoansPayable, businessLoansPayable, gstPayable, gstPaid, advanceTaxPaid,
+  return { cashAndBank, undepositedFunds, receivables, advancesFromCustomers, projectReceivable, tdsReceivable, employeeLoans, prepaidAdvances, fixedAssets, fixedAssetsCost: block.cost + emiUnregistered, accumulatedDepreciation: block.accumulated, payables, salaryPayable, salaryDuesPayable, reimbursementsPayable, creditCardPayable, bankOverdraft, emiLoansPayable, businessLoansPayable, gstPayable, gstPaid, advanceTaxPaid,
     /* S45 slice 2 heads (migration 20261009170000) are SQL-only — the old per-row code never had them. */
     expensesPayable: 0, expensesPaidUnbanked: 0, salaryOtherDeductions: 0, fyLabel };
 }
