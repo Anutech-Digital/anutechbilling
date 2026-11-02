@@ -35,6 +35,7 @@ import { isEstimatedBasis, licenceCostHint } from "@/lib/accounting/pnl";
 import {
   COMPARE_OPTIONS, compareRange, rangeLabel, periodName, runningNote,
   opexBreakdown, revenueBreakdown, licenceBreakdown, licenceEstimates, pnlCsv,
+  financeCost, financeCostBreakdown, operatingExpenses,
   type CompareMode, type Sense,
 } from "@/lib/accounting/pnl-compare";
 import { Row, SubRows, UnknownRow, GstCompare, Divider, HIDDEN_NOTE, type Cmp } from "./statement-rows";
@@ -186,6 +187,7 @@ export default function PnLPage() {
   const revenueLines = data ? revenueBreakdown(data, prev, { showAll: showAll.revenue }) : null;
   const licenceLines = data ? licenceBreakdown(data, prev, { showAll: showAll.licence }) : null;
   const opexLines = data ? opexBreakdown(data, prev, { showAll: showAll.opex }) : null;
+  const financeLines = data ? financeCostBreakdown(data, prev, { showAll: showAll.finance }) : null;
   const cmpOn = cmpRange !== null;
   /** The compare cell for a statement line: undefined while the compare period loads. */
   const cmp = (now: number | null, was: (p: NonNullable<typeof prev>) => number | null, sense: Sense, neg = false): Cmp | undefined =>
@@ -392,11 +394,11 @@ export default function PnLPage() {
               )}
 
               <Row label={<>− <Term k="opex">Operating expenses</Term></>}
-                   amount={-(data.expenses - data.model.projectCost)}
-                   hint={`${data.expensesCount} ${data.expensesCount === 1 ? "entry" : "entries"}${data.model.projectCost > 0 ? ` · ${rupee(data.model.projectCost)} moved to project cost` : ""}`}
+                   amount={-operatingExpenses(data)}
+                   hint={`${data.expensesCount} ${data.expensesCount === 1 ? "entry" : "entries"}${data.model.projectCost > 0 ? ` · ${rupee(data.model.projectCost)} moved to project cost` : ""}${financeCost(data) > 0 ? " · interest in Finance cost below" : ""}`}
                    onHint={() => { setDrill({ kind: "expenses" }); }}
                    tone="rose"
-                   cmp={cmp(data.expenses - data.model.projectCost, (p) => p.expenses - p.model.projectCost, "more-is-bad", true)} />
+                   cmp={cmp(operatingExpenses(data), (p) => operatingExpenses(p), "more-is-bad", true)} />
 
               {/* R-1833: the expense heads inside the statement, adding up to the line above;
                   a category opens its entries. The Expense report card below keeps vendors and months. */}
@@ -404,6 +406,22 @@ export default function PnLPage() {
                 <SubRows group={opexLines} cmpOn={cmpOn} cmpLoading={cmpOn && !prev}
                          showAll={!!showAll.opex} onToggleAll={() => toggleAll("opex")}
                          onOpen={(l) => setDrill({ kind: "expenses", category: l.category ?? null })} />
+              )}
+
+              {/* R-2374: interest on loans / OD / flexi lines — finance cost, apart from running costs. */}
+              {(financeCost(data) > 0 || (prev ? financeCost(prev) : 0) > 0) && (
+                <>
+                  <Row label="− Finance cost"
+                       amount={-financeCost(data)}
+                       hint="Interest on loans, OD and credit lines — the principal repaid is not an expense"
+                       tone="rose"
+                       cmp={cmp(financeCost(data), (p) => financeCost(p), "more-is-bad", true)} />
+                  {financeLines && (
+                    <SubRows group={financeLines} cmpOn={cmpOn} cmpLoading={cmpOn && !prev}
+                             showAll={!!showAll.finance} onToggleAll={() => toggleAll("finance")}
+                             onOpen={(l) => setDrill({ kind: "expenses", category: l.category ?? null })} />
+                  )}
+                </>
               )}
 
               {(data.commissions > 0 || (prev?.commissions ?? 0) > 0) && (

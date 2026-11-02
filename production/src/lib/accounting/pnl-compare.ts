@@ -17,6 +17,7 @@ import { rupee } from "@/lib/utils";
 import type { PnLNumbers } from "@/lib/accounting/pnl-assemble";
 import { vendorLabel } from "@/lib/accounting/pnl";
 import { utcDateISO } from "@/lib/dates/ist";
+import { isFinanceCost } from "@/lib/accounting/credit-line";
 
 export interface DateRange { from: string; to: string }
 export type CompareMode = "none" | "prev" | "yoy";
@@ -261,9 +262,33 @@ type Opts = { showAll?: boolean };
 
 export type OpexSource = Pick<PnLNumbers, "expenses" | "expenseReport" | "model">;
 
-const opexItems = (d: OpexSource): Item[] => d.expenseReport.byCategory.map((c) => ({
+/* R-2374: finance cost (interest on loans / OD) is its own line below operating expenses. */
+const opexItems = (d: OpexSource): Item[] => d.expenseReport.byCategory.filter((c) => !isFinanceCost(c.category)).map((c) => ({
   key: `cat:${c.category}`, label: c.category, category: c.category, now: c.total, was: 0, sense: "more-is-bad",
 }));
+const financeItems = (d: OpexSource): Item[] => d.expenseReport.byCategory.filter((c) => isFinanceCost(c.category)).map((c) => ({
+  key: `fin:${c.category}`, label: c.category, category: c.category, now: c.total, was: 0, sense: "more-is-bad",
+}));
+
+/**
+ * R-2374: the P&L "Finance cost" line — interest on loans, OD and flexi lines (the expense heads
+ * in FINANCE_COST_CATEGORIES). It is part of the expenses total; the statement shows it apart
+ * (Schedule III "Finance costs"), so Operating expenses = expenses − salary on projects − this.
+ * Interest carries no GST, so the heads' totals are what is in `expenses`.
+ */
+export function financeCost(d: OpexSource): number {
+  return r2(financeItems(d).reduce((s, i) => s + i.now, 0));
+}
+
+export function financeCostBreakdown(cur: OpexSource, prev?: OpexSource | null, opts: Opts = {}): SubLines {
+  const items = merge(financeItems(cur), prev ? financeItems(prev) : []);
+  return { lines: rollUp(items, !!opts.showAll, "heads"), itemCount: itemCount(items) };
+}
+
+/** Operating expenses on the statement: expenses − salary on projects − finance cost. */
+export function operatingExpenses(d: OpexSource): number {
+  return r2(d.expenses - d.model.projectCost - financeCost(d));
+}
 
 export function opexBreakdown(cur: OpexSource, prev?: OpexSource | null, opts: Opts = {}): SubLines {
   const items = merge(opexItems(cur), prev ? opexItems(prev) : []);
@@ -412,8 +437,10 @@ function csvLines(data: PnLNumbers, prev: PnLNumbers | null): Line[] {
     { label: "Licence cost basis", value: (d) => d.model.cogsBasis },
     { label: "Gross margin",
       value: (d) => d.model.grossMargin ?? (d.model.projectCostHidden ? "hidden for your role (needs project salary)" : "unknown") },
-    { label: "Operating expenses", value: (d) => -(d.expenses - d.model.projectCost) },
+    { label: "Operating expenses", value: (d) => -operatingExpenses(d) },
     ...subRows(opexBreakdown, data, prev, -1),
+    { label: "Finance cost", value: (d) => -financeCost(d) },
+    ...subRows(financeCostBreakdown, data, prev, -1),
     { label: "Commissions", value: (d) => -d.commissions },
     { label: "Depreciation", value: (d) => -d.depreciation },
     { label: "Net profit", value: (d) => d.model.netProfit ?? "unknown (cost of goods not recorded)" },

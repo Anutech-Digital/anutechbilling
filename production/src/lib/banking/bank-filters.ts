@@ -146,6 +146,7 @@ export function matchGroupOf(type: string | null): MatchGroup | null {
     case "transfer":                                return "transfer";
     case "loan_given":                              return "loan";       // R-2346 (R-2340's type)
     case "business_loan":                           return "loan";       // R-2377: Add loan linked an imported credit
+    case "loan_drawdown": case "loan_repayment":    return "loan";       // R-2374: credit line drawdown / lender repayment
   }
   if (/loan|emi/.test(type)) return "loan";
   return "other";
@@ -158,6 +159,8 @@ export function lineStatusLabel(type: string | null): string {
   if (type === "split") return "Salary";
   if (type === "loan_given") return "Loan given";   // R-2346: same word as the row badge
   if (type === "business_loan") return "Loan received";   // R-2377: same word as the row badge
+  if (type === "loan_drawdown") return "Credit line drawdown";   // R-2374: same words as the row badge
+  if (type === "loan_repayment") return "Loan repayment";
   return g === "other" ? "Reconciled" : MATCH_GROUP_LABEL[g];
 }
 

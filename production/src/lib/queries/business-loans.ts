@@ -24,6 +24,9 @@ import type { BusinessLoanRow, BusinessLoanPaymentRow } from "@/lib/supabase/dat
 export type BusinessLoan = BusinessLoanRow & {
   director_id?: string | null;
   director_declaration?: boolean | null;
+  /** R-2374: 'credit_line' = an OD / flexi line (principal = everything drawn); else 'term'. */
+  kind?: string | null;
+  credit_limit?: number | null;
   principalPaid: number;   // sum of principal parts repaid
   interestPaid:  number;   // sum of interest parts (total finance cost so far)
   outstanding:   number;   // principal − principalPaid
@@ -189,6 +192,77 @@ export function useDeleteBusinessLoan() {
       if (error) throw new Error(error.message);
     },
     onSuccess: () => { invalidate(qc); toast.success("Loan removed"); },
+    onError: (err) => toastError(err),
+  });
+}
+
+// ─── R-2374: credit line (OD / flexi) ────────────────────────────────────────────────────
+
+/** R-2374: kind / credit_limit are newer than database.types.ts ('term' for every older loan). */
+export function loanKind(l: { kind?: string | null }): "term" | "credit_line" {
+  return l.kind === "credit_line" ? "credit_line" : "term";
+}
+export function creditLimitOf(l: { credit_limit?: number | null }): number | null {
+  return l.credit_limit ?? null;
+}
+
+/** Set up a credit line — record_credit_line (R-2374). Drawdowns and repayments come from bank lines. */
+export function useRecordCreditLine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      lender: string; purpose?: string | null; limit?: number | null; interestRate?: number | null;
+      startOn: string; opening?: number | null;
+    }) => {
+      // Untyped: record_credit_line (R-2374) is newer than database.generated.ts.
+      const supabase = createClient() as unknown as SupabaseClient;
+      const { data, error } = await supabase.rpc("record_credit_line", {
+        p_lender:        input.lender,
+        p_purpose:       input.purpose ?? null,
+        p_limit:         input.limit != null ? Math.round(input.limit) : null,
+        p_interest_rate: input.interestRate ?? null,
+        p_start:         input.startOn,
+        p_opening:       input.opening != null ? Math.round(input.opening) : 0,
+      });
+      if (error) throw new Error(error.message);
+      return data as string;
+    },
+    onSuccess: () => { invalidate(qc); toast.success("Credit line set up"); },
+    onError: (err) => toastError(err),
+  });
+}
+
+/** Money in on a credit line = a drawdown (reconcile_bank_credit_to_credit_line, R-2374). */
+export function useReconcileCreditToCreditLine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { txnId: string; loanId: string }) => {
+      const supabase = createClient() as unknown as SupabaseClient;
+      const { data, error } = await supabase.rpc("reconcile_bank_credit_to_credit_line", {
+        p_bank_txn_id: input.txnId, p_loan_id: input.loanId,
+      });
+      if (error) throw new Error(error.message);
+      return data as string;
+    },
+    onSuccess: () => { invalidate(qc); toast.success("Drawdown booked — the credit line outstanding went up"); },
+    onError: (err) => toastError(err),
+  });
+}
+
+/** Money out to a lender = principal + interest − TDS (reconcile_bank_debit_to_business_loan, R-2374). */
+export function useReconcileDebitToBusinessLoan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { txnId: string; loanId: string; principal: number; interest: number; tds: number }) => {
+      const supabase = createClient() as unknown as SupabaseClient;
+      const { data, error } = await supabase.rpc("reconcile_bank_debit_to_business_loan", {
+        p_bank_txn_id: input.txnId, p_loan_id: input.loanId,
+        p_principal: Math.round(input.principal), p_interest: Math.round(input.interest), p_tds: Math.round(input.tds),
+      });
+      if (error) throw new Error(error.message);
+      return data as string;
+    },
+    onSuccess: () => { invalidate(qc); toast.success("Repayment booked — principal off the loan, interest to Finance cost"); },
     onError: (err) => toastError(err),
   });
 }
