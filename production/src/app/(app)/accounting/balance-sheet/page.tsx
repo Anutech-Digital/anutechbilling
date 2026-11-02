@@ -225,6 +225,7 @@ export default function BalanceSheetPage() {
         ["EMI loans payable", auto.emiLoansPayable ?? 0],
         ...(loansTaken.fromDirectors > 0 ? [["Loans from directors (unsecured)", loansTaken.fromDirectors] as [string, number]] : []),
         ["Business loans payable", loansTaken.others],
+        ["Bank overdraft", auto.bankOverdraft ?? 0],
         ["GST payable", gstPayable],
         ...manualLiabRows.map((r): [string, number] => [r.label, r.amount]),
         ["Total liabilities", totalLiab],
@@ -425,6 +426,9 @@ export default function BalanceSheetPage() {
                 )}
                 {loansTaken.others > 0 && (
                   <BSLine label="Bank / business loans" hint="outstanding principal on borrowings" amount={loansTaken.others} kind="auto" source="Business Loans" href="/accounting/business-loans" />
+                )}
+                {(auto?.bankOverdraft ?? 0) > 0 && (
+                  <BSLine label="Bank overdraft" hint="amount drawn on overdraft / cash-credit accounts" amount={auto?.bankOverdraft ?? 0} kind="auto" source="Banking" href="/accounting/banking" />
                 )}
                 {gstPayable > 0 && (
                   <BSLine
