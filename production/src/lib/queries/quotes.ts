@@ -226,6 +226,25 @@ export function useUpdateQuoteStatus() {
 // silently covering numbers nobody agreed to.
 // ============================================================
 
+/**
+ * R-2367: who made, revised, owns or asked approval for any quote of this revision family —
+ * none of them may approve it (the server trigger trg_quote_approval_not_by_maker refuses
+ * them too). A failed read throws (R-1655); the screen then keeps the old requester-only rule
+ * and the server still refuses.
+ */
+export function useQuoteChainMakers(quoteId: string | undefined) {
+  return useQuery({
+    queryKey: ["quotes", "chain-makers", quoteId],
+    enabled: !!quoteId,
+    queryFn: async (): Promise<string[]> => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("quote_chain_makers", { p_quote_id: quoteId! });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
 /** Push a quote into the approvals queue. */
 export function useRequestApproval() {
   const qc = useQueryClient();

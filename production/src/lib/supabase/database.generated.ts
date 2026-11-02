@@ -10630,6 +10630,7 @@ export type Database = {
           below_cost: boolean
           billing_cycle: string
           created_at: string
+          created_by: string | null
           created_date: string
           credit_activated_at: string | null
           credit_activated_by: string | null
@@ -10717,6 +10718,7 @@ export type Database = {
           below_cost?: boolean
           billing_cycle?: string
           created_at?: string
+          created_by?: string | null
           created_date?: string
           credit_activated_at?: string | null
           credit_activated_by?: string | null
@@ -10804,6 +10806,7 @@ export type Database = {
           below_cost?: boolean
           billing_cycle?: string
           created_at?: string
+          created_by?: string | null
           created_date?: string
           credit_activated_at?: string | null
           credit_activated_by?: string | null
@@ -16245,6 +16248,7 @@ export type Database = {
       }
       portal_touch_login: { Args: never; Returns: undefined }
       purge_ux_events: { Args: never; Returns: number }
+      quote_chain_makers: { Args: { p_quote_id: string }; Returns: string[] }
       quote_line_terms_mixed: { Args: { p_lines: Json }; Returns: boolean }
       quote_open_balance: { Args: { p_quote_id: string }; Returns: number }
       quote_split_due: {

@@ -363,6 +363,7 @@ MIGS=(
   "r2360zohoinv|20261102061607_r2360_zoho_invoice_number_on_sale.sql|resellersos_migration|to_regprocedure('public.set_invoice_external_number(text,text)') is not null and to_regprocedure('public.reconcile_bank_credit_new_sale(uuid,uuid,jsonb,boolean,date,date,integer,numeric,text,text,text)') is not null and to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text,text)') is not null"
   "r2361manualreconcilereason|20261102091144_r2361_manual_reconcile_reason.sql|resellersos_migration|to_regprocedure('public.reconcile_bank_txn_manual(uuid,text,uuid)') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bank_transactions' and column_name = 'reversal_of')"
   "r2366interestincomefdclosure|20261102100702_r2366_interest_income_fd_closure.sql|resellersos_migration|to_regprocedure('public.book_bank_credit_as_interest(uuid,text,uuid,integer,integer,integer,text)') is not null and to_regprocedure('public.tg_other_income_deleted_r2366()') is not null and to_regprocedure('public.tg_bank_txn_unmatched_r2366()') is not null"
+  "r2367chainapproval|20261102121211_r2367_quote_chain_self_approval.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_quote_approval_not_by_maker' and tgrelid = to_regclass('public.quotes')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.quote_chain_makers(text)') and prosrc like '%R-2367%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

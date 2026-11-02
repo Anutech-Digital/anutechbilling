@@ -162,6 +162,10 @@ export interface ApprovalRecord {
   approvedDiscountBps: number | null;
   approvedMarginBps: number | null;
   rejectionReason: string | null;
+  /** R-2367: everyone who made, revised, owns or asked approval for ANY quote of this
+   *  revision family (DB quote_chain_makers). None of them may approve it. Undefined = not
+   *  loaded yet; the server refuses them anyway (trg_quote_approval_not_by_maker). */
+  makers?: readonly string[];
 }
 
 /**
@@ -281,6 +285,11 @@ export function canApprove(
   if (now.tier === "none") return { allowed: false, reason: "This quote does not need approval." };
   if (record.requestedBy && record.requestedBy === viewer.id) {
     return { allowed: false, reason: "You cannot approve your own quote." };
+  }
+  /* R-2367: a revision (-R2) starts with no approval record, so requestedBy alone let the
+     person who made or revised the family approve the new copy. */
+  if (record.makers?.includes(viewer.id)) {
+    return { allowed: false, reason: "You made or revised this quote (or an earlier version of it) — another approver must clear it." };
   }
   if (!now.approvers.includes((viewer.role ?? "") as UserRole)) {
     return {

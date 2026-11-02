@@ -136,6 +136,18 @@ describe("nobody approves their own quote", () => {
     expect(r.reason).toMatch(/Only the owner/);
   });
 
+  it("R-2367: refuses whoever made or revised the family on a revision with no approval record", () => {
+    /* Staging 2 Nov: Q-…-0565-R2 starts with requestedBy null — the maker saw Approve. */
+    const r = canApprove({ id: "u1", role: "manager" }, rec({ makers: ["u1", "u3"] }), need);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/made or revised this quote/);
+    expect(canApprove({ id: "u3", role: "owner" }, rec({ makers: ["u1", "u3"] }), need).allowed).toBe(false);
+  });
+
+  it("R-2367: another approver outside the family still approves", () => {
+    expect(canApprove({ id: "u2", role: "owner" }, rec({ makers: ["u1", "u3"] }), need).allowed).toBe(true);
+  });
+
   it("refuses everyone on a quote that needs no approval", () => {
     expect(canApprove({ id: "u2", role: "owner" }, rec(), requiredApproval(healthy)).allowed).toBe(false);
   });
