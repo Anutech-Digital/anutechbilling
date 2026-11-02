@@ -43,6 +43,7 @@ import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
 import { useCustomerPayments, useDeletePayment } from "@/lib/queries/payments";
 import { useTdsReceivables } from "@/lib/queries/tds-receivable";
 import { receiptSplitLine, tdsByPayment } from "@/lib/accounting/tds-receipt";
+import { PaymentTdsLine, tdsInfoByPayment } from "./payment-tds-line";
 import { useCustomerProjects, useCustomerProjectPayments } from "@/lib/queries/projects";
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 import { Card } from "@/components/ui/card";
@@ -247,6 +248,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   // R-523: TDS inside Lifetime paid — on received quote/invoice payments (tds_receivable by
   // payment) plus project milestones, where the TDS is its own project payment (method 'tds').
   const tdsOnPayment = tdsByPayment(customerTds ?? []);
+  /* R-2365: the same TDS (+ its section) under a payment's amount on the Transactions tab. */
+  const tdsInfoOnPayment = tdsInfoByPayment(customerTds ?? []);
   const lifetimeTds =
     customerPayments.filter((p) => p.status === "received").reduce((s, p) => s + (tdsOnPayment[p.id] ?? 0), 0) +
     (projPay?.payments ?? []).filter((p) => p.method === "tds").reduce((s, p) => s + (p.amount ?? 0), 0);
@@ -744,6 +747,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
                           {t.due != null && t.due > 0 && (
                             <span className="text-3xs text-amber-ink tabular-nums">{rupee(t.due)} due</span>
                           )}
+                          {t.type === "Payment" && payId ? <PaymentTdsLine amount={t.amount} tds={tdsInfoOnPayment[payId]} /> : null}
                         </span>,
                         <span key="s" className="text-ink-2 capitalize">{t.status}</span>,
                         // Delete — only on payments from the `payments` table.
