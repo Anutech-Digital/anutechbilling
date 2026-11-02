@@ -372,6 +372,7 @@ MIGS=(
   "r2373bankoverdraftbs|20261102145600_r2373_bank_overdraft_bs.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-2373%')"
   "r2374creditline|20261102151425_r2374_credit_line.sql|resellersos_migration|to_regclass('public.business_loan_drawdowns') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_debit_to_business_loan(uuid,uuid,integer,integer,integer)') and prosrc like '%R-2374%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.delete_business_loan(uuid)') and prosrc like '%R-2374%')"
   "r2380mergeemployees|20261102162342_r2380_merge_employees.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.merge_employees(uuid,uuid,boolean,boolean)') and prosrc like '%R-2380%')"
+  "r2386personalowehold|20261102175034_r2386_personal_owe_hold.sql|resellersos_migration|(to_regclass('public.personal_owe_hold') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'personal_owe_hold' and policyname = 'personal_owe_hold_service_role'))"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

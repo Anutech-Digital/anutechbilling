@@ -17,6 +17,8 @@
  * All amounts are whole rupees.
  */
 
+import { openOweHoldTotal, owedTotal, type OweHoldLike } from "./owe-hold";
+
 export type AccountKind = "savings" | "current" | "credit_card" | "fd" | "rd" | "ppf" | "cash" | "wallet";
 
 export type AssetClass =
@@ -93,9 +95,13 @@ export interface NetWorth {
   liquidAssets: number;
   /** Market value of the investment portfolio. */
   investments: number;
-  /** Credit-card debt and anything else owed. Positive number. */
+  /** Credit-card debt (what is owed on cards). Positive number. */
   liabilities: number;
-  /** liquidAssets + investments - liabilities. Can legitimately be negative. */
+  /** R-2386: open "Money I owe / hold for others" — advances received, money held for someone. */
+  oweHoldOpen: number;
+  /** Everything owed: liabilities (cards) + oweHoldOpen (+ loans, R-2388). */
+  owedTotal: number;
+  /** liquidAssets + investments - owedTotal. Can legitimately be negative. */
   net: number;
 
   investedTotal: number;
@@ -144,6 +150,8 @@ export function computeNetWorth(
   accounts: PersonalAccountLike[],
   holdings: PersonalHoldingLike[],
   now: Date,
+  /** R-2386: "Money I owe / hold for others" — only OPEN entries are subtracted. */
+  oweHold: readonly OweHoldLike[] = [],
 ): NetWorth {
   let liquidAssets = 0;
   let liabilities = 0;
@@ -217,11 +225,16 @@ export function computeNetWorth(
     // Biggest holding first — that is the one a decision is about.
     .sort((a, b) => b.currentValue - a.currentValue);
 
+  const oweHoldOpen = openOweHoldTotal(oweHold);
+  const owed = owedTotal({ cardDues: liabilities, oweHoldOpen });
+
   return {
     liquidAssets,
     investments,
     liabilities,
-    net: liquidAssets + investments - liabilities,
+    oweHoldOpen,
+    owedTotal: owed,
+    net: liquidAssets + investments - owed,
     investedTotal,
     portfolioGain: investments - investedTotal,
     portfolioGainPct: investedTotal > 0 ? ((investments - investedTotal) / investedTotal) * 100 : null,

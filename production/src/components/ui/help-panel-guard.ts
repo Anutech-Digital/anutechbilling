@@ -40,6 +40,34 @@ export function cameFromHelp(target: EventTarget | null | undefined): boolean {
   return isInHelpPanel(target) || (target != null && target === lastHelpPress);
 }
 
+/* R-2386 (Private Vault → Banking → New account, 2 Nov: "Type dropdown mouse se click karo to
+   poora dialog band"): a Select / Popover / Combobox list opened from a dialog is PORTALLED to
+   the end of <body>, outside the dialog's DOM box. Whenever Radix reports a press there as
+   "outside" — a list portalled by a component that is not a React child of the dialog, or a
+   press reported after the pick already removed the list — the dialog closed with the pick.
+   A press inside any portalled popover list is never "outside" the dialog. */
+export const POPOVER_LIST_SELECTOR =
+  "[data-radix-popper-content-wrapper],[data-radix-select-viewport],[role=listbox]";
+
+let lastPopoverPress: EventTarget | null = null;
+
+/** Remember a pointer-down inside a popover list (window capture, before the pick removes it). */
+export function notePopoverPress(target: EventTarget | null): void {
+  lastPopoverPress = typeof Element !== "undefined" && target instanceof Element && target.closest(POPOVER_LIST_SELECTOR)
+    ? target : null;
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pointerdown", (e) => notePopoverPress(e.target), true);
+}
+
+/** Inside a portalled popover list now, or the list element that was just pressed (maybe removed since). */
+export function isInPortalledPopover(target: EventTarget | null | undefined): boolean {
+  if (target == null) return false;
+  if (target === lastPopoverPress) return true;
+  return typeof Element !== "undefined" && target instanceof Element && target.closest(POPOVER_LIST_SELECTOR) !== null;
+}
+
 /**
  * Wrap a dialog's onInteractOutside / onEscapeKeyDown: the caller's own handler still runs,
  * then a click, focus or Escape that came from the help panel never closes the dialog.
@@ -48,6 +76,17 @@ export function keepOpenForHelp<E extends Event>(handler?: (e: E) => void): (e: 
   return (e: E) => {
     handler?.(e);
     if (cameFromHelp(outsideTarget(e))) e.preventDefault();
+  };
+}
+
+/**
+ * Wrap a dialog's onInteractOutside (only — never Escape): a press or focus inside a
+ * portalled popover list never closes the dialog (R-2386).
+ */
+export function keepOpenForPopover<E extends Event>(handler?: (e: E) => void): (e: E) => void {
+  return (e: E) => {
+    handler?.(e);
+    if (isInPortalledPopover(outsideTarget(e))) e.preventDefault();
   };
 }
 
