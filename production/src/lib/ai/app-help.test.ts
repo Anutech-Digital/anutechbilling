@@ -64,6 +64,12 @@ describe("prompt", () => {
   it("the model is told it does not file anything itself", () => {
     expect(helpSystemPrompt({ pagePath: "/x", userName: null, role: null })).toMatch(/Do not say the report is filed/);
   });
+  /* R-1929: any reseller asks "what is this app" — the answer is the product, not one company's own app. */
+  it("describes ResellerOS as software for resellers, never as one company's own app", () => {
+    const p = helpSystemPrompt({ pagePath: "/x", userName: null, role: null });
+    expect(p).toContain("ResellerOS is software for resellers");
+    expect(p).not.toMatch(/Anutech Digital|ANUTECH/);
+  });
 });
 
 describe("wiring", () => {
