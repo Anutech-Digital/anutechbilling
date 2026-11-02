@@ -21,6 +21,7 @@
  *   node scripts/ops/worker-lock.mjs prep    R-197 <path>...   (manager, before a card is given out)
  *   node scripts/ops/worker-lock.mjs wip     R-197               (R-1898: worktree HEAD → anutech wip/r-197)
  *   node scripts/ops/worker-lock.mjs resume  R-197 <worktree>    (R-1898: any laptop picks up a stopped card)
+ *   node scripts/ops/worker-lock.mjs cleanup R-197 [--worktree <path>] [--dry-run]   (R-2385: junction FIRST, then .env.local, worktree, branch)
  *
  * prep — card prep (6 Oct: R-202's card named a page that does not exist; R-197's page was a
  * re-export of leads/page.tsx). For every path: does it exist, and if it is a one-line
@@ -1137,6 +1138,8 @@ function main(argv) {
   if (cmd === "tsc") beat(card);
   if (cmd === "tsc") return tscWithTurn(card, parseTscFlags(rest)).then((ok) => { if (ok) console.log("✓ tsc green"); else process.exit(1); });
   if (cmd === "prep") return prep(card, rest);
+  /* R-2385: never delete through the node_modules junction — link first, then env files, worktree, branch. */
+  if (cmd === "cleanup") return import("./worker-lock-cleanup.mjs").then(({ runCleanup, parseCleanupFlags, realCleanupDeps }) => { const f = parseCleanupFlags(args), r = runCleanup(card, { worktree: f.worktree, dryRun: f.dryRun }, realCleanupDeps()); if (r.code) process.exit(r.code); });
   if (cmd === "release") { fs.rmSync(lockFile(card), { force: true }); return console.log(`✓ ${card} ka lock hata.`); }
   if (cmd === "wip" || cmd === "resume") {
     /* R-1898: real git, same interface the tests fake. */
@@ -1148,7 +1151,7 @@ function main(argv) {
     console.log(r.message);
     return;
   }
-  console.error("claim [--wait --priority p0] | beat | check | push | ci | sql-related | wip | resume | tsc | prep | release | list | guard-push   (claim/push need --card <card.json>; tsc/push take --full-tsc)");
+  console.error("claim [--wait --priority p0] | beat | check | push | ci | sql-related | wip | resume | tsc | prep | release | cleanup [--worktree <path>] [--dry-run] | list | guard-push   (claim/push need --card <card.json>; tsc/push take --full-tsc)");
   process.exit(1);
 }
 
