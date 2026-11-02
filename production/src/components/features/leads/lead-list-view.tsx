@@ -34,6 +34,7 @@ import {
 } from "@/components/features/leads/lead-list-grid";
 import { useLeadListColumns } from "@/components/features/leads/use-lead-list-columns";
 import { LeadListRow } from "@/components/features/leads/lead-list-row";
+import { useLeadAiStatuses } from "@/components/features/leads/lead-ai-status";
 import { LeadListFooter } from "@/components/features/leads/lead-list-footer";
 import { planBulkStage } from "@/components/features/leads/bulk-stage";
 
@@ -111,6 +112,8 @@ export function LeadListView({
 
   /* Har lead ki quote — PLAN cell ka pill isi se banta hai. Ek map, ek query. */
   const { data: leadQuotes } = useLeadQuotes(leadIds);
+  /* R-2042: the "AI: …" badge of each row on screen — one read, like the quote pills. */
+  const aiStatuses = useLeadAiStatuses(leadIds);
 
   /* Stage options now come from the LEAD, not from the page — rowStageOptions() in
      lib/leads/stage-options.ts (17 tests), which is where the quote-first gate and the
@@ -333,6 +336,7 @@ export function LeadListView({
             onChangeStage={(s) => void changeStage(lead, s)}
             onSendQuote={onSendQuote}
             onOutcome={(o, l) => callLog.run(o, l)}
+            aiStatus={aiStatuses.get(lead.id)}
           />
         );
       })}
@@ -497,6 +501,7 @@ export function LeadListView({
               onSendQuote={onSendQuote}
               onFollowUp={onFollowUp}
               onWhatsApp={onWhatsApp}
+              aiStatus={aiStatuses.get(lead.id)}
             />
           ))}
         </tbody>

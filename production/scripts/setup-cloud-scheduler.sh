@@ -87,6 +87,8 @@ JOBS=(
   # company saves a key: the route returns `disabled: true` without calling IndiaMART.
   "resellersos-indiamart-leads|*/15 8-21 * * *|/api/cron/indiamart-leads|IndiaMART Lead Manager pull → leads"
   "resellersos-attendance-retention|0 2 * * *|/api/cron/attendance-retention|Erase attendance face images past retention"
+  # R-2337: team chat files on no message (browser delete failed), older than 24 h — max 500 a night.
+  "resellersos-chat-files-cleanup|15 3 * * *|/api/cron/chat-files-cleanup|Delete team chat files that belong to no message"
   # Midnight IST, before the other jobs touch anything — a restore point of the
   # day that just ended, not of a day already half-modified by the 09:00 renewal
   # cron. Keeps the newest 30 per tenant (0244).

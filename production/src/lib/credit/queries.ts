@@ -17,6 +17,8 @@ import {
   type DatedPayment, type InterestNoteRow,
 } from "./late-interest";
 import { toIstDate } from "@/lib/dates/ist";
+import { fetchOpenPartRequests } from "@/lib/queries/payments";
+import type { OpenPartRequest } from "@/lib/billing/part-request-dues";
 
 /** Unpaid invoices of one customer — the "already owed" half of the limit check. */
 export function useCustomerOpenInvoices(customerId: string | null | undefined, enabled = true) {
@@ -31,6 +33,26 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined, e
         .in("status", ["pending", "overdue"]).is("written_off_at", null);
       if (error) throw error;
       return (data ?? []) as OpenInvoice[];
+    },
+  });
+}
+
+/**
+ * R-2230: the customer's open part payment requests — the other half of "Unpaid now" and of the
+ * credit-limit check (activate_quote_on_credit counts them too). null = the database has no
+ * open_part_requests yet (the screen then shows invoices only, and says nothing false).
+ */
+export function useCustomerOpenPartRequests(customerId: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["quotes", "customer-part-requests", customerId],
+    enabled: Boolean(customerId) && enabled,
+    queryFn: async (): Promise<OpenPartRequest[] | null> => {
+      try {
+        return await fetchOpenPartRequests(createClient(), { customerId: customerId! });
+      } catch (e) {
+        if (isMissingDbObject(e as { code?: string; message?: string })) return null;
+        throw e;
+      }
     },
   });
 }

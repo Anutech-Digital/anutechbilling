@@ -520,7 +520,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           onOpenChange={setCnOpen}
           invoiceId={invoice.id}
           customerName={invoice.customer_name}
-          netPayable={invoice.net_payable ?? invoice.amount}
+          amountDue={invoiceAmountDue(invoice)}
           taxRate={invoice.tax_rate}
           interState={invoice.inter_state}
           isExport={(invoice.tax_rate ?? 18) === 0}

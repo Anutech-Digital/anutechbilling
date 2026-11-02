@@ -1,4 +1,4 @@
--- deploy-peek: to_regprocedure('public.tg_bank_txn_payment_link()') is null and not exists(select 1 from pg_trigger where tgname = 'trg_bank_txn_payment_link')
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'quotes' and column_name = 'invoice_on_receipt') and to_regprocedure('public.tg_bank_txn_payment_link()') is null and not exists(select 1 from pg_trigger where tgname = 'trg_bank_txn_payment_link')
 -- deploy-key: r2095receiptlinkundo
 -- 20261030131008_r2095_receipt_link_undo.sql
 --

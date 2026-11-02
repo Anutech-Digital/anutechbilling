@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { deleteBlockAction } from "@/lib/accounting/delete-block";
 import { createClient } from "@/lib/supabase/client";
-import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { fetchAllRows, fetchAllRowsIn, type PageQuery } from "@/lib/ops/fetch-all";
 import type { Database, ExpenseRow } from "@/lib/supabase/database.types";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { expenseStillOwed } from "@/lib/accounting/vendor-account";
@@ -34,6 +34,7 @@ export type Expense = ExpenseRow;
 export { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
 import { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
 import { COMMISSION_CATEGORY, fyStartOf } from "@/lib/accounting/commission-tds";
+import { vendorFyTdsTotal, type FyCogsBillRow, type FyCogsTdsRow, type FyExpenseRow, type VendorFyTds } from "@/lib/accounting/vendor-tds-fy";
 
 /**
  * Guess an expense category from the free-text "what was this for?" note.
@@ -696,31 +697,50 @@ export function toastDeleteBlocked(err: unknown, description: string) {
  * Matched by vendor id when the row has one, else by name; rows under another section
  * are left out (a contractor's rent is not contract work).
  */
-export function useVendorTdsThisFy(vendorId: string | null, vendorName: string, section: string, onDate: string, excludeId?: string | null) {
+export function useVendorTdsThisFy(vendorId: string | null, vendorName: string, section: string, onDate: string, excludeId?: string | null, excludeBillIds?: readonly string[] | null) {
   const name = vendorName.trim();
   const sec = section.trim();
+  const skipBills = [...(excludeBillIds ?? [])].sort();
   return useQuery({
-    queryKey: ["expenses", "vendor-tds-fy", vendorId ?? "", name.toLowerCase(), sec, onDate.slice(0, 10), excludeId ?? null],
+    queryKey: ["expenses", "vendor-tds-fy", vendorId ?? "", name.toLowerCase(), sec, onDate.slice(0, 10), excludeId ?? null, skipBills.join(",")],
     enabled: sec.length > 0,
-    queryFn: async (): Promise<{ base: number; baseWithoutTds: number }> => {
+    queryFn: async (): Promise<VendorFyTds> => {
       if (!vendorId && name.length < 2) return { base: 0, baseWithoutTds: 0 };
       const supabase = createClient();
+      const from = fyStartOf(onDate);
+      const to = onDate.slice(0, 10);
+      const byName = name.replace(/[%_\\]/g, (c) => "\\" + c);
       // R-1519: paged — a busy vendor's year can pass the gateway's 1000-row cap.
-      const all = await fetchAllRows<{ id: string; amount: number | null; gst_paid: number | null; tds_amount: number | null; tds_section: string | null }>((rFrom, rTo) => {
-        let q = supabase
-          .from("expenses")
-          .select("id, amount, gst_paid, tds_amount, tds_section")
-          .gte("expense_date", fyStartOf(onDate))
-          .lte("expense_date", onDate.slice(0, 10));
-        q = vendorId ? q.eq("vendor_id", vendorId) : q.ilike("vendor_name", name.replace(/[%_\\]/g, (c) => "\\" + c));
-        return q.order("id", { ascending: true }).range(rFrom, rTo);
-      });
-      const rows = all.filter((r) => r.id !== excludeId && (!r.tds_section || r.tds_section === sec));
-      const baseOf = (r: { amount: number | null; gst_paid: number | null }) => Math.max(0, (r.amount ?? 0) - (r.gst_paid ?? 0));
-      return {
-        base: rows.reduce((s, r) => s + baseOf(r), 0),
-        baseWithoutTds: rows.filter((r) => !(r.tds_amount && r.tds_amount > 0)).reduce((s, r) => s + baseOf(r), 0),
-      };
+      const [expenses, cogsBills] = await Promise.all([
+        fetchAllRows<FyExpenseRow>((rFrom, rTo) => {
+          let q = supabase
+            .from("expenses")
+            .select("id, amount, gst_paid, tds_amount, tds_section")
+            .gte("expense_date", from)
+            .lte("expense_date", to);
+          q = vendorId ? q.eq("vendor_id", vendorId) : q.ilike("vendor_name", byName);
+          return q.order("id", { ascending: true }).range(rFrom, rTo);
+        }),
+        /* R-2335: the vendor's COGS bills paid (in part) this FY count toward the same limit. */
+        fetchAllRows<FyCogsBillRow>((rFrom, rTo) => {
+          let q = supabase
+            .from("vendor_bills")
+            .select("id, subtotal, paid_amount, currency, fx_rate")
+            .gte("bill_date", from)
+            .lte("bill_date", to)
+            .gt("paid_amount", 0);
+          q = vendorId ? q.eq("vendor_id", vendorId) : q.ilike("vendor_name", byName);
+          return q.order("id", { ascending: true }).range(rFrom, rTo);
+        }),
+      ]);
+      /* Their TDS sits on bank_vendor_payment_lines (R-1891 / R-2320 / R-2335 — not in the generated types). */
+      const cogsTds = await fetchAllRowsIn<FyCogsTdsRow, string>(cogsBills.map((b) => b.id), (run, rFrom, rTo) => supabase
+        .from("bank_vendor_payment_lines" as never)
+        .select("vendor_bill_id, tds_amount, tds_section")
+        .in("vendor_bill_id", run).gt("tds_amount", 0)
+        .order("id", { ascending: true }).range(rFrom, rTo) as unknown as PageQuery<FyCogsTdsRow>);
+      /* R-2338: 194J(a) / (b) / royalty (and old plain 194J) share one yearly limit per vendor. */
+      return vendorFyTdsTotal({ section: sec, expenses, cogsBills, cogsTds, excludeId, excludeBillIds: skipBills });
     },
     staleTime: 30_000,
   });

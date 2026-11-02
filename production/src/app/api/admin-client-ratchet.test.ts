@@ -89,6 +89,8 @@ const PUBLIC_BY_DESIGN: Record<string, string> = {
   "public/checkout/workspace": "public buy flow; creates a draft quote for the buy-page tenant only",
   "public/checkout/support": "public buy flow (R-2083); creates a lead + draft quote for the buy-page tenant only, priced on the server",
   "public/consent": "R-2010 cookie-consent record: insert-only row for the website tenant only (never a tenant the caller names); per-IP rate limit; IP kept only as an HMAC",
+  "public/privacy-request": "R-2013 data-rights form: unconfirmed request for the website tenant only; Turnstile + per-IP/per-email limits",
+  "public/privacy-request/verify": "R-2013 code check for the website tenant only; hashed code, 5 tries + expiry in the RPC; per-IP limit",
   "public/coupons/validate": "dry-run coupon check for the buy-page tenant; records nothing",
   "public/enquiry/general": "website enquiry form; Turnstile",
   "public/enquiry/workspace": "website workspace enquiry; Turnstile",

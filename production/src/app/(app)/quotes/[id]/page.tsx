@@ -34,6 +34,7 @@ import { useNextPartRequest } from "./next-part-request";
 import { useQuotePartInvoices } from "./part-invoices";
 import { PaymentHistoryCard } from "./payment-history-card";
 import { planForQuote, splitDue } from "@/lib/billing/instalments";
+import { quoteTotalPeriods, quoteTotalPeriodsText } from "@/lib/quotes/per-period-figures";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-quote";
 import { addSeatsCount } from "@/lib/subscriptions/seat-quotes-pending";
@@ -105,9 +106,12 @@ import { requiredApproval, canSend, canApprove, approvalBadge } from "@/lib/quot
 import { eligibleApprovers, approverSentence } from "@/lib/quotes/awaiting-approval";
 import { useTeamMembers } from "@/lib/queries/team";
 import { quoteEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-economics";
+import { linesMissingCost, missingCostReason, namedApprovalReasons, addCostHref } from "@/lib/quotes/missing-cost-reason";
 import { customerCopyBlock, CUSTOMER_COPY_BLOCKED_TITLE } from "@/lib/quotes/customer-copy-gate";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { useRequestApproval } from "@/lib/queries/quotes";
+import { recordPaymentBlock, recordPaymentStep, quoteHeaderStatus, withApprovalStep, activateOnCreditBlock } from "./payment-approval-gate";
+import { PaymentApprovalNotice } from "./payment-approval-notice";
 import { usePaymentsByQuote, totalReceived as sumReceived } from "@/lib/queries/payments";
 import { useCustomer } from "@/lib/queries/customers";
 import { useLead, useUpdateLeadStage } from "@/lib/queries/leads";
@@ -189,6 +193,17 @@ export default function QuoteDetailPage() {
   const qc = useQueryClient();
   const deleteQuote = useDeleteQuote();
   const [paymentOpen, setPaymentOpen] = React.useState(false);
+  /* R-2326: a below-cost quote waiting for the owner takes no money (the DB refuses it) — Record
+     payment shows why and "Open approval" instead of a form the server would refuse after Confirm. */
+  const payBlock = React.useMemo(
+    () => (quote ? recordPaymentBlock(quote as typeof quote & { below_cost?: boolean | null }) : null),
+    [quote],
+  );
+  const [payBlockShown, setPayBlockShown] = React.useState(false);
+  const onRecordPayment = React.useCallback(() => {
+    if (recordPaymentStep(payBlock) === "notice") setPayBlockShown(true);
+    else setPaymentOpen(true);
+  }, [payBlock]);
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [downloadingPdf, setDownloadingPdf] = React.useState(false);
   const [sharingWa, setSharingWa] = React.useState(false);
@@ -252,6 +267,13 @@ export default function QuoteDetailPage() {
   const approvalEconomics = React.useMemo(() => quote ? quoteEconomics(quote) : null, [quote]);
   const approvalNeed      = React.useMemo(() => approvalEconomics ? requiredApproval(approvalEconomics) : null, [approvalEconomics]);
   const approvalRec       = React.useMemo(() => quote ? quoteApprovalRecord(quote) : null, [quote]);
+  /* R-2028 (3): the reason names the line with no vendor cost; "Add cost" opens its cost box.
+     Display only — the approval rule (requiredApproval) is unchanged. */
+  const missingCostLines  = React.useMemo(() => linesMissingCost(quote?.line_items ?? []), [quote]);
+  const shownApprovalReasons = React.useMemo(
+    () => (approvalNeed ? namedApprovalReasons(approvalNeed.reasons, quote?.line_items ?? []) : []),
+    [approvalNeed, quote],
+  );
   /* R-2048: a part's payment request (R-2044) is never approved, signed or accepted — it is paid,
      then invoiced. No approval gate, badge or accept row on it. */
   const partRequest       = isPartRequest(quote as { subscription_billing_id?: string | null } | null | undefined);
@@ -358,9 +380,20 @@ export default function QuoteDetailPage() {
         trialLead,
       )
     : false;
+  /* R-2344: below cost and waiting for the owner — the server refuses the credit activation
+     (trg_subscriptions_quote_approval), so the menu item says why, with Open approval, and the
+     action-row button is not offered (the step box already shows Open approval). */
+  const creditBlock = React.useMemo(
+    () => (quote ? activateOnCreditBlock(quote as typeof quote & { below_cost?: boolean | null; subscription_billing_id?: string | null }) : null),
+    [quote],
+  );
   /* One click handler for both places "Activate now, pay later" appears (More menu and,
      R-379 (i), the accepted-and-unpaid action row) — same gate, same reasons. */
   const openActivateOnCredit = () => {
+    if (creditBlock) {
+      toast.info(creditBlock.reason, { action: { label: "Open approval", onClick: () => setApprovalOpen(true) } });
+      return;
+    }
     if (!creditDbReady) { toast.info(NEEDS_DB_UPDATE_MESSAGE); return; }
     /* R-370: split billing would bill twice (credit invoice + instalments) — say why. */
     const split = splitBillingCreditEligibility(creditQuote?.billing_cycle);
@@ -382,9 +415,9 @@ export default function QuoteDetailPage() {
     const action = payIntent(payParam, quote, paymentHistory === undefined ? null : totalReceivedSoFar);
     if (action === "none") return;
     payIntentHandled.current = true;
-    if (action === "open" && mayRecordMoney) setPaymentOpen(true);
+    if (action === "open" && mayRecordMoney) onRecordPayment();
     router.replace(`/quotes/${quote.id}` as never);
-  }, [payParam, quote, paymentHistory, totalReceivedSoFar, router, mayRecordMoney]);
+  }, [payParam, quote, paymentHistory, totalReceivedSoFar, router, mayRecordMoney, onRecordPayment]);
 
   /* R-248: ?receipt=<paymentId> (Record payment's "Send receipt" toast button) opens that
      payment's Receipt Voucher — the same dialog as the row's Receipt button. Waits for the
@@ -720,7 +753,11 @@ export default function QuoteDetailPage() {
   /* R-448: a replaced quote reads "Replaced", not "Expired". */
   /* R-1679: a sent / viewed quote past its validity reads "Expired" (one rule: quote-expiry.ts). */
   const shownStatus = shownQuoteStatus(quote);
-  const status = quote.superseded_by ? { kind: "muted" as const, label: QUOTE_STATE_LABEL.replaced } : STATUS_META[shownStatus];
+  /* R-2326: while the quote waits for sign-off the header says the list's "Needs approval", not "Sent". */
+  const status = quoteHeaderStatus(
+    quote as typeof quote & { below_cost?: boolean | null },
+    quote.superseded_by ? { kind: "muted" as const, label: QUOTE_STATE_LABEL.replaced } : STATUS_META[shownStatus],
+  );
   const revise = canReviseQuote(quote, totalReceivedSoFar);
   /* R-1718: one rule with the list — no "Awaiting payment" on a rejected / expired / replaced quote. */
   const paymentBadge = quotePaymentBadge(quote);
@@ -754,6 +791,18 @@ export default function QuoteDetailPage() {
   /* R-804: GST shown = stored total − taxable, so Subtotal + GST = Total (₹853 + ₹153 = ₹1,006). */
   const tax = quoteDisplayTax(taxable, quote.tax_rate, quote.amount);
   const total = quote.amount ?? taxable + tax;
+  /* R-2182: the Total's period from the PDF's own helper — on an Annual commitment the stored
+     total is the YEAR, so "₹38,232 /month" (Q-F588-27-0068) was twelve times the real bill. */
+  const periods = quoteTotalPeriods({
+    cycle: quote.billing_cycle as BillingCycle | null, lineCommitment: items[0]?.commitment,
+    subtotal: quote.subtotal, discount, taxable, tax, total, taxRate: quote.tax_rate,
+    oneTime: oneTimeQuote,
+  });
+  const totalPeriods = quoteTotalPeriodsText(periods);
+  /* R-2222: when the year is paid in parts, the Subtotal / Taxable / GST rows are ONE bill
+     (like the customer Preview) with the same unit as the Total — they were the year's
+     ₹32,400 / ₹5,832 above "₹3,186 /month", so the column did not add up. */
+  const rowUnit = periods.yearTotal != null ? totalPeriods.unit : "";
 
   /* What can be DONE with the money right now — one tested decision instead of three
      inline conditions that between them left `payment_status = 'none'` (the column
@@ -787,6 +836,7 @@ export default function QuoteDetailPage() {
       total,
       received:      totalReceivedSoFar,
       partRequest,   // R-2054: no "formally accept" sentence on a part payment request
+      approvalWait: Boolean(payBlock), // R-2334: the R-2326 block — the row waits for the owner
       nextPartRequest: paidToDate ? nextPartRequest : null, // R-2055: one way to take the next part
       /* R-446: same test the database trigger uses — any subscription of this quote that
          is not yearly (or the quote's own cycle, before the subscription exists). */
@@ -1299,7 +1349,8 @@ export default function QuoteDetailPage() {
       {/* Quote-to-cash lifecycle */}
       {lifecycle && (
         <Card>
-          <LifecycleStepper steps={partRequest ? partRequestSteps(lifecycle.steps, lifecycle.dead) : (trialSteps ?? lifecycle.steps)} dead={lifecycle.dead} />
+          {/* R-2334: Sent → Owner approval (current) while the R-2326 block holds. */}
+          <LifecycleStepper steps={partRequest ? partRequestSteps(lifecycle.steps, lifecycle.dead) : withApprovalStep(trialSteps ?? lifecycle.steps, payBlock, lifecycle.dead)} dead={lifecycle.dead} />
           {/* R-282: the trial's last day IS the payment due date — said in words, because the
               stepper's detail line is hidden on a phone. */}
           {quote.status === "accepted" && totalReceivedSoFar === 0 && trialState && trialState.kind !== "converted" && (
@@ -1375,12 +1426,21 @@ export default function QuoteDetailPage() {
                   <p className="mt-0.5 text-[12px] leading-snug text-ink-2">{sendGate.nextStep}</p>
                   {approvalNeed && approvalNeed.reasons.length > 0 && approvalRec?.status === "not_required" && (
                     <ul className="mt-1.5 space-y-0.5">
-                      {approvalNeed.reasons.map((r) => (
+                      {shownApprovalReasons.map((r) => (
                         <li key={r} className="text-2xs leading-snug text-ink-3">· {r}</li>
                       ))}
                     </ul>
                   )}
+                  {/* R-2028 (3): which line has no cost — named even while the approval waits. */}
+                  {missingCostLines.length > 0 && approvalRec?.status !== "not_required" && (
+                    <p className="mt-1.5 text-2xs leading-snug text-ink-3" data-testid="missing-cost-reason">· {missingCostReason(missingCostLines)}</p>
+                  )}
                   <div className="mt-2 flex flex-wrap gap-2">
+                    {missingCostLines.length > 0 && (
+                      <Button size="sm" variant="default" asChild>
+                        <Link href={addCostHref(quote.id, missingCostLines[0].lineNo) as never}>Add cost</Link>
+                      </Button>
+                    )}
                     {approvalRec?.status !== "pending" && (
                       <Button
                         size="sm"
@@ -1704,7 +1764,7 @@ export default function QuoteDetailPage() {
 
               {/* R-379 (i): credit sale beside Record payment, not only in More. Same gate
                   as the menu item (showActivateOnCredit), so it vanishes once activated. */}
-              {showCredit && money.stage === "unpaid" && (
+              {showCredit && money.stage === "unpaid" && !creditBlock && (
                 <Button variant="default" icon="check_circle" onClick={openActivateOnCredit}>
                   Activate now, pay later
                 </Button>
@@ -1717,8 +1777,16 @@ export default function QuoteDetailPage() {
                 </Button>
               )}
 
+              {/* R-2334: below cost and waiting for the owner — the same "Open approval" as the
+                  R-2326 notice, instead of a Record payment the server would refuse. */}
+              {money.openApproval && approvalEconomics && approvalNeed && approvalRec && me && (
+                <Button variant="default" icon="check_circle" onClick={() => setApprovalOpen(true)}>
+                  Open approval
+                </Button>
+              )}
+
               {money.canRecordPayment && mayRecordMoney && (
-                <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={() => setPaymentOpen(true)}>
+                <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={onRecordPayment}>
                   {money.recordLabel}
                 </Button>
               )}
@@ -1771,7 +1839,7 @@ export default function QuoteDetailPage() {
               {/* R-1805: wraps on a phone — three nowrap buttons in a row made the page 459px wide at 375px. */}
               <div className="flex flex-wrap gap-2 min-w-0 max-w-full">
                 {hasBalance && mayRecordMoney && (
-                  <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={() => setPaymentOpen(true)}>
+                  <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={onRecordPayment}>
                     {nothingPaid ? "Record payment" : "Record balance payment"}
                   </Button>
                 )}
@@ -1812,6 +1880,10 @@ export default function QuoteDetailPage() {
             </div>
           );
         })()}
+
+        {payBlockShown && payBlock && mayRecordMoney && (
+          <PaymentApprovalNotice reason={payBlock.reason} onOpenApproval={() => setApprovalOpen(true)} />
+        )}
 
       </Card>
 
@@ -1892,21 +1964,26 @@ export default function QuoteDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card title="Totals breakdown">
           <div className="space-y-2 text-sm">
-            <Row label="Subtotal" value={rupee(quote.subtotal)} />
-            {discount > 0 && <Row label={`Discount (${quote.discount_pct}%)`} value={`−${rupee(discount)}`} tone="emerald" />}
-            <Row label="Taxable amount" value={rupee(taxable)} />
+            <Row label="Subtotal" value={`${rupee(periods.bill.subtotal)}${rowUnit}`} />
+            {discount > 0 && <Row label={`Discount (${quote.discount_pct}%)`} value={`−${rupee(periods.bill.discount)}${rowUnit}`} tone="emerald" />}
+            <Row label="Taxable amount" value={`${rupee(periods.bill.taxable)}${rowUnit}`} />
             {billOfSupply
               ? <p className="text-2xs text-ink-2" data-testid="bill-of-supply-line">{billOfSupplyBuilderLine(billOfSupply)}</p>
-              : <Row label={`GST (${quote.tax_rate}%)`} value={rupee(tax)} />}
+              : <Row label={`GST (${quote.tax_rate}%)`} value={`${rupee(periods.bill.tax)}${rowUnit}`} />}
             <div className="border-t border-hairline pt-3 flex items-baseline justify-between">
               <span className="text-xs uppercase tracking-wider text-ink-3 font-semibold">Total</span>
               <span className="font-serif text-2xl text-amber tabular-nums">
-                {rupee(total)}
-                {/* Flex quote ka total MAHINE ka hai — bina ikai ye wahi "per kya?" sawaal
-                   chhod deta jo line items par abhi band kiya. */}
-                {quote.billing_cycle === "monthly" && <span className="text-sm text-ink-3 font-sans"> /month</span>}
+                {/* R-2182: one bill with its period (₹3,186 /month); the year on the line under it
+                   when the year is paid in parts. A one-time charge carries no period. */}
+                {totalPeriods.perBill}
+                {totalPeriods.unit && <span className="text-sm text-ink-3 font-sans"> {totalPeriods.unit}</span>}
               </span>
             </div>
+            {totalPeriods.year && (
+              <div className="flex justify-end text-sm text-ink-2 tabular-nums" data-testid="quote-total-year">
+                {totalPeriods.year}
+              </div>
+            )}
           </div>
         </Card>
 
@@ -2118,7 +2195,7 @@ export default function QuoteDetailPage() {
           quoteId={quote.id}
           quoteLabel={quote.id}
           economics={approvalEconomics}
-          requirement={approvalNeed}
+          requirement={{ ...approvalNeed, reasons: shownApprovalReasons }}
           record={approvalRec}
           viewer={{ id: me.userId, role: me.role }}
         />

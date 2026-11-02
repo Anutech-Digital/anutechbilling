@@ -46,6 +46,12 @@ import {
 import { useBankAccounts } from "@/lib/queries/bank";
 import { AddVendorBillDialog, type VendorBillPrefill } from "@/components/features/accounting/add-vendor-bill-dialog";
 import { useVendors } from "@/lib/queries/vendors";
+import { useVendorTdsThisFy } from "@/lib/queries/expenses";
+import { useVendor194q } from "@/lib/queries/bank-debit-pay-for";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { TDS_PICK_SECTIONS, normalizeTdsSection, tds26qSection, tdsSectionOption } from "@/lib/accounting/tds-rates";
+import { vendorPan, TDS_OVERRIDE_MIN } from "@/lib/banking/debit-pay-for";
+import { billPayTds } from "@/lib/accounting/bill-pay-tds";
 import { InboundBillsQueue } from "@/components/features/accounting/inbound-bills-queue";
 import { BillDetailDialog } from "@/components/features/accounting/bill-detail-dialog";
 import { DocViewerDialog } from "@/components/features/documents/doc-viewer-dialog";
@@ -54,6 +60,7 @@ import { istToday, fyBounds } from "@/lib/dates/ist";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { BILL_SORT, billOutstanding, filterBills, readBillsView, type BillStatusFilter } from "./bills-table";
 import { useAddBillFromUrl } from "./add-from-url";
+import { ImportBillsDialog } from "./import-bills-dialog";
 import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
 import { cogsBillAdvanceView } from "@/lib/accounting/vendor-account";
 import { useApplyVendorAdvance, useUndoVendorAdvance } from "@/lib/queries/vendor-advance";
@@ -84,6 +91,8 @@ export default function VendorBillsPage() {
   /* R-118: in the URL, so the Outstanding tile (and a link) can open the owed bills. */
   const [statusFilter, setStatusFilter] = useUrlChoice<BillStatusFilter>("status", BILL_STATUSES, "");
   const [addOpen, setAddOpen] = React.useState(false);
+  /* R-2324: many bills at once from a CSV (Zoho Books export or the simple template). */
+  const [importOpen, setImportOpen] = React.useState(false);
   /* R-1511: "Record a bill" on a vendor lands here with ?add=1&vendor=<id> — open Add Bill
      with that vendor filled in. Manual "Add Bill" opens it empty (prefill cleared on close). */
   const [addPrefill, setAddPrefill] = React.useState<VendorBillPrefill | undefined>(undefined);
@@ -198,14 +207,14 @@ export default function VendorBillsPage() {
             <span className="block mt-0.5 text-[12px] text-ink-3">Office/overhead bills (stationery, your own software, rent) go in <b>Expenses</b> instead.</span>
           </p>
         </div>
-        <Button
-          variant="primary"
-          icon="plus"
-          className="hidden md:inline-flex"
-          onClick={() => setAddOpen(true)}
-        >
-          Add Bill
-        </Button>
+        <div className="hidden md:flex items-center gap-2">
+          <Button variant="default" icon="upload" onClick={() => setImportOpen(true)}>
+            Import bills
+          </Button>
+          <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
+            Add Bill
+          </Button>
+        </div>
       </div>
 
       {/* Bills that arrived at billing@ and have not been posted yet. Above the
@@ -289,6 +298,7 @@ export default function VendorBillsPage() {
       <FAB icon="plus" label="Bill" onClick={() => setAddOpen(true)} ariaLabel="Add Bill" />
 
       {/* Add dialog */}
+      <ImportBillsDialog open={importOpen} onOpenChange={setImportOpen} />
       {addOpen && <AddVendorBillDialog prefill={addPrefill} onClose={() => { setAddOpen(false); setAddPrefill(undefined); }} />}
       {payBill && <PayBillDialog bill={payBill} onClose={() => setPayBill(null)} />}
       {detailBill && <BillDetailDialog bill={detailBill} onClose={() => setDetailBill(null)} />}
@@ -480,20 +490,53 @@ function PayBillDialog({ bill, onClose }: { bill: VendorBill; onClose: () => voi
   const outstanding = bill.total - (bill.paid_amount ?? 0);
 
   const [amount, setAmount] = React.useState(String(outstanding));
+  const [amountTouched, setAmountTouched] = React.useState(false);
   const [date, setDate] = React.useState(todayISO());
   const [accountId, setAccountId] = React.useState("");
   const [method, setMethod] = React.useState("bank transfer");
 
   React.useEffect(() => { if (!accountId && accounts.length > 0) setAccountId(accounts[0].id); }, [accounts, accountId]);
 
+  /* R-2335: the vendor's TDS — the same line as Reconcile (R-2320): the vendor's usual section
+     pre-filled and editable, the threshold counting this year's expense AND COGS bills, and the
+     owner's "deduct anyway" below the threshold (reason saved in the activity log). */
+  const vendorsQ = useVendors();
+  const vendor = React.useMemo(() => (vendorsQ.data ?? []).find((v) => v.id === bill.vendor_id)
+    ?? (vendorsQ.data ?? []).find((v) => !bill.vendor_id && v.name.trim().toUpperCase() === bill.vendor_name.trim().toUpperCase()) ?? null,
+  [vendorsQ.data, bill.vendor_id, bill.vendor_name]);
+  const inr = (bill.currency ?? "INR").toUpperCase() === "INR";
+  const [section, setSection] = React.useState("");
+  const [noTds, setNoTds] = React.useState(false);
+  /* vendors.default_tds_section (R-1866) is not in the generated row type yet. */
+  const vendorSection = (vendor as { default_tds_section?: string | null } | null)?.default_tds_section ?? "";
+  React.useEffect(() => { setSection(normalizeTdsSection(vendorSection)); }, [vendor?.id, vendorSection]);
+  const pan = vendorPan(vendor ?? { pan: null, gstin: bill.vendor_gstin });
+  const sec = noTds ? "" : section;
+  const { data: fy } = useVendorTdsThisFy(vendor?.id ?? null, bill.vendor_name, inr ? sec : "", date, null, [bill.id]);
+  const { data: q194rows } = useVendor194q(inr && sec === "194Q" ? vendor?.id ?? null : null);
+  const q194 = React.useMemo(() => new Map((q194rows ?? []).map((r) => [r.doc_id, r])), [q194rows]);
+  const { data: me } = useCurrentUser();
+  const isOwner = me?.role === "owner";
+  const [ovrOpen, setOvrOpen] = React.useState(false);
+  const [ovrReason, setOvrReason] = React.useState("");
+  React.useEffect(() => { setOvrOpen(false); setOvrReason(""); }, [sec]);
+  const tds = billPayTds(bill, { section: sec || null, pan, fyOthers: fy ?? null, off: noTds || !sec, q194, override: isOwner && ovrOpen ? ovrReason : null });
+  const tdsLoading = inr && !!sec && sec !== "194Q" && !fy;
+  React.useEffect(() => { if (!amountTouched) setAmount(String(tds.cash)); }, [tds.cash, amountTouched]);
+  const partPaid = (bill.paid_amount ?? 0) > 0;
+
   const amt = Math.round(Number(amount) || 0);
-  const tooMuch = amt > outstanding;
-  const valid = amt > 0 && !tooMuch && Boolean(accountId);
+  const settled = amt + tds.tds;
+  const tooMuch = settled > outstanding;
+  const valid = amt > 0 && !tooMuch && Boolean(accountId) && !tdsLoading;
 
   const save = async () => {
     if (!valid) return;
     try {
-      await pay.mutateAsync({ billId: bill.id, amount: amt, paidOn: date, bankAccountId: accountId, method });
+      await pay.mutateAsync({
+        billId: bill.id, amount: amt, paidOn: date, bankAccountId: accountId, method,
+        tds: tds.tds, tdsSection: tds.section, tdsOverride: tds.override,
+      });
       onClose();
     } catch { /* hook toasts */ }
   };
@@ -508,15 +551,63 @@ function PayBillDialog({ bill, onClose }: { bill: VendorBill; onClose: () => voi
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          {/* R-2335: TDS — the same line as Reconcile (R-2320). */}
+          {inr && (
+            <div className="rounded-md border border-hairline bg-paper p-2.5 space-y-1.5">
+              {/* R-2345: min-w-0 + flex-1 + truncate so a long section (194C …) can't widen the dialog. */}
+              <div className="flex min-w-0 items-center gap-2">
+                <label htmlFor="bills-tds-section" className="shrink-0 text-xs font-medium text-ink-2">TDS deducted</label>
+                <select id="bills-tds-section" aria-label="TDS section" value={sec} onChange={(e) => { setSection(e.target.value); setNoTds(!e.target.value); }}
+                  className="w-full min-w-0 flex-1 truncate rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber">
+                  <option value="">No TDS</option>
+                  {TDS_PICK_SECTIONS.map((s) => <option key={s} value={s}>{tdsSectionOption(s)}</option>)}
+                </select>
+                {tds.tds > 0 && <span className="shrink-0 text-xs text-ink">{rupee(tds.tds)}</span>}
+              </div>
+              {sec && partPaid && sec !== "194Q" && tds.tds === 0 && (
+                <p className="text-xs text-ink-3">TDS on this bill goes with its first payment — this part is paid without TDS.</p>
+              )}
+              {tdsLoading ? <p className="text-xs text-ink-3">Working out this vendor&apos;s year so far…</p>
+                : tds.reason && <p className="text-xs text-ink-3">{tds.reason}</p>}
+              {/* R-2320: below the threshold — the owner may deduct anyway, with a reason (logged). */}
+              {tds.belowThreshold && !!sec && (isOwner ? (
+                ovrOpen ? (
+                  <label className="flex flex-wrap items-center gap-1.5 text-xs text-ink-2">
+                    <span>Reason for deducting TDS anyway (saved in the activity log)</span>
+                    <Input className="h-8 flex-1 min-w-[12rem]" aria-label="Reason for deducting TDS below the threshold" value={ovrReason}
+                      placeholder="e.g. Deducted in Zoho, CA advised" onChange={(e) => setOvrReason(e.target.value)} />
+                    {ovrReason.trim().length < TDS_OVERRIDE_MIN && <span className="text-amber-ink">at least {TDS_OVERRIDE_MIN} letters</span>}
+                    <button type="button" className="underline hover:no-underline" onClick={() => { setOvrOpen(false); setOvrReason(""); }}>Cancel</button>
+                  </label>
+                ) : (
+                  <button type="button" className="text-xs text-ink-2 underline hover:no-underline" onClick={() => setOvrOpen(true)}>
+                    Deduct TDS anyway (owner)
+                  </button>
+                )
+              ) : (
+                <p className="text-xs text-ink-3">Only the owner can deduct TDS below the threshold.</p>
+              ))}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
-            <FormField htmlFor="bills-amount" label="Amount (₹)" required>
-              <Input id="bills-amount" type="number" min={1} value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
+            <FormField htmlFor="bills-amount" label={tds.tds > 0 ? "From bank (₹)" : "Amount (₹)"} required>
+              <Input id="bills-amount" type="number" min={1} value={amount} onChange={(e) => { setAmount(e.target.value); setAmountTouched(true); }} autoFocus />
             </FormField>
             <FormField htmlFor="bills-date" label="Date">
               <Input id="bills-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </FormField>
           </div>
-          {tooMuch && <p className="text-xs text-rose">Cannot be more than the outstanding {rupee(outstanding)}.</p>}
+          {tds.tds > 0 && !tooMuch && amt > 0 && (
+            <p className="text-xs text-ink-2">
+              {rupee(amt)} from bank + TDS {rupee(tds.tds)} ({tds26qSection(tds.section)}) = <b className="text-ink">{rupee(settled)}</b> settled
+              {settled === outstanding ? " — nothing left due." : `, ${rupee(outstanding - settled)} still due.`}
+            </p>
+          )}
+          {tooMuch && (
+            <p className="text-xs text-rose">
+              {tds.tds > 0 ? `From bank + TDS cannot be more than the outstanding ${rupee(outstanding)} — pay at most ${rupee(Math.max(0, outstanding - tds.tds))}.` : `Cannot be more than the outstanding ${rupee(outstanding)}.`}
+            </p>
+          )}
           <FormField htmlFor="bills-pay-from" label="Pay from">
             <select id="bills-pay-from" value={accountId} onChange={(e) => setAccountId(e.target.value)} className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber">
               {accounts.length === 0 && <option value="">No accounts — add one in Banking</option>}

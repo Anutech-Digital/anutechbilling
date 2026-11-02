@@ -28,6 +28,7 @@ import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed, isCronDryRun, noteWouldSend } from "@/lib/automation/cron-gate";
+import { suppressedEmailKeys, suppressionKey } from "@/lib/privacy/suppression.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -39,6 +40,8 @@ interface GreetingResult {
   sent:          number;
   stubbed:       number;
   skipped_no_email: number;
+  /** R-2013: unsubscribed or withdrew consent (email_suppressions) — never greeted. */
+  skipped_opted_out: number;
   already_done:  number;
   failed:        number;
   errors:        { contact_id: string; message: string }[];
@@ -101,7 +104,7 @@ async function handle(req: Request): Promise<NextResponse<GreetingResult | { err
   const result: GreetingResult = {
     ran_at:     new Date().toISOString(),
     email_mode: isEmailConfigured() ? "real" : "stub",
-    matched: 0, sent: 0, stubbed: 0, skipped_no_email: 0, already_done: 0, failed: 0,
+    matched: 0, sent: 0, stubbed: 0, skipped_no_email: 0, skipped_opted_out: 0, already_done: 0, failed: 0,
     errors: [],
   };
 
@@ -153,6 +156,18 @@ async function handle(req: Request): Promise<NextResponse<GreetingResult | { err
     return t;
   };
 
+  /* R-2013 (DPDP): a person who withdrew consent (privacy request) or unsubscribed is on their
+     company's email_suppressions list — no greeting. Read once for today's matches; a failed
+     read sends nothing (fail closed). */
+  let optedOut: Set<string>;
+  try {
+    optedOut = await suppressedEmailKeys(admin, contacts
+      .filter((c) => c.email && (isToday(c.birthday) || isToday(c.anniversary)))
+      .map((c) => ({ tenantId: c.tenant_id, email: c.email })));
+  } catch (e) {
+    return cronDbFailure("birthday-greetings", e, `suppression list read failed: ${errorMessage(e)}`);
+  }
+
   for (const c of contacts) {
     /* R-897 */ if (!cronTenantAllowed(c.tenant_id)) continue;
     const kinds: Kind[] = [];
@@ -164,6 +179,7 @@ async function handle(req: Request): Promise<NextResponse<GreetingResult | { err
       result.matched += 1;
 
       if (!c.email) { result.skipped_no_email += 1; continue; }
+      if (optedOut.has(suppressionKey(c.tenant_id, c.email))) { result.skipped_opted_out += 1; continue; }
       /* R-897: practice run — note who would get it, claim nothing, send nothing. */
       if (isCronDryRun()) { noteWouldSend({ tenantId: c.tenant_id, to: c.email, channel: "email", kind: `greeting_${kind}` }); continue; }
 

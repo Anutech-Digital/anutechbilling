@@ -31,7 +31,8 @@ const OPEN_WEB = { allowHttp: true, maxRedirects: 5 } as const;
 
 export interface FinderRunResult { discovered: number; skippedDupe: number; saved: number; noContact: number; errors: string[] }
 
-async function mxLookup(domain: string): Promise<{ provider: MxProvider; hosts: string[] | null }> {
+/** MX provider of a domain (DNS-over-HTTPS). Also used by the AI Lead Workflow (R-2039). */
+export async function mxLookup(domain: string): Promise<{ provider: MxProvider; hosts: string[] | null }> {
   const r = await resolveDoh(domain, DNS_TYPE.MX, 5000);
   if (!r.ok) return r.kind === "nxdomain" ? { provider: "none", hosts: [] } : { provider: "unknown", hosts: null };
   return { provider: mxProvider(r.data), hosts: r.data };

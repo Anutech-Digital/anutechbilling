@@ -21,7 +21,7 @@ import { scopesLost, scopeLossMessage } from "@/lib/google/scope-union";
 import {
   outcomeFromGoogleError, outcomeFromExchangeError, type GmailConnectOutcome,
 } from "@/lib/google/gmail-connect-result";
-import { refuseConnectWithoutVault, sealRefreshToken } from "@/lib/google/token-vault";
+import { refuseConnectWithoutVault, sealGoogleToken, sealRefreshToken } from "@/lib/google/token-vault";
 
 export const dynamic = "force-dynamic";
 
@@ -105,7 +105,7 @@ export async function GET(request: NextRequest) {
       user_id: user.id,
       tenant_id: me.tenant_id,
       google_email: email,
-      access_token: tokens.access_token,
+      access_token: sealGoogleToken(tokens.access_token), // R-2351: sealed, never plaintext
       token_expiry: expiry,
       scopes: tokens.scope ?? null,
       /* Nuksaan hua to wahi likho, `null` nahi. Ye wo jagah hai jahan ek toota hua

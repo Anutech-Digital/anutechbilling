@@ -61,20 +61,21 @@ describe("licence cost follows the commitment's catalogue tier", () => {
   });
 });
 
-describe("renewal after a commitment change — inclusive last day, counted from the start", () => {
-  it("Flexible → Annual: the 12-month term that holds the current month (start + 12m − 1d)", () => {
+/* R-2178 (one renewal rule, coordinator 31 Oct): renewal = the next term's start (anniversary). */
+describe("renewal after a commitment change — the anniversary, counted from the start", () => {
+  it("Flexible → Annual: the 12-month term that holds the current month (start + 12m)", () => {
     expect(commitmentRenewal({ startDate: "2026-06-15", renewalDate: "2026-11-14", termMonthsNow: 1, termMonthsNext: 12, today: "2026-10-30" }))
-      .toBe("2027-06-14");
+      .toBe("2027-06-15");
   });
 
   it("a flex sub older than a year lands on the annual term that covers today, not a past one", () => {
     expect(commitmentRenewal({ startDate: "2025-06-15", renewalDate: "2026-11-14", termMonthsNow: 1, termMonthsNext: 12, today: "2026-10-30" }))
-      .toBe("2027-06-14");
+      .toBe("2027-06-15");
   });
 
-  it("month-end start clamps like termEndInclusive (31 Jan → 30 Jan next year)", () => {
+  it("month-end start: 31 Jan → 31 Jan next year", () => {
     expect(commitmentRenewal({ startDate: "2026-01-31", renewalDate: "2026-11-30", termMonthsNow: 1, termMonthsNext: 12, today: "2026-11-10" }))
-      .toBe("2027-01-30");
+      .toBe("2027-01-31");
   });
 
   it("same commitment (only the frequency changes) keeps the renewal date", () => {
@@ -82,9 +83,9 @@ describe("renewal after a commitment change — inclusive last day, counted from
       .toBe("2027-06-14");
   });
 
-  it("Annual → Flexible after the annual term has ended keeps the term end; next term is a month", () => {
+  it("Annual → Flexible after the annual term has ended renews on the next term's start; next term is a month", () => {
     expect(commitmentRenewal({ startDate: "2025-06-15", renewalDate: "2026-06-14", termMonthsNow: 12, termMonthsNext: 1, today: "2026-10-30" }))
-      .toBe("2026-06-14");
+      .toBe("2026-06-15");
   });
 
   it("no start date → the renewal is left as it is", () => {

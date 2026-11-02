@@ -47,8 +47,11 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   invoiceId: string;
   customerName: string | null;
-  /** Amount still owed on the invoice. */
-  netPayable: number;
+  /** R-2219: what is still owed — ALWAYS `invoiceAmountDue(invoice)` (lib/payments/amount-due),
+   *  the same number the invoice page shows as "Balance due" (net_payable − paid_amount; the note
+   *  RPCs keep net_payable = amount − credit notes + debit notes). Never `net_payable` alone: it
+   *  ignores receipts, so a part-paid invoice read as wholly unpaid. */
+  amountDue: number;
   taxRate: number | null;
   interState: boolean | null;
   isExport?: boolean;
@@ -77,7 +80,7 @@ function useInvoiceDate(invoiceId: string, enabled: boolean) {
 }
 
 export function IssueCreditNoteDialog({
-  open, onOpenChange, invoiceId, customerName, netPayable, taxRate, interState, isExport, mode = "credit", invoiceDate, defaultReasonCode, onIssued,
+  open, onOpenChange, invoiceId, customerName, amountDue, taxRate, interState, isExport, mode = "credit", invoiceDate, defaultReasonCode, onIssued,
 }: Props) {
   const isDebit = mode === "debit";
   const { data: fetchedDate } = useInvoiceDate(invoiceId, open && !isDebit && invoiceDate === undefined);
@@ -93,17 +96,24 @@ export function IssueCreditNoteDialog({
 
   React.useEffect(() => {
     if (open) {
-      // Credit defaults to the amount owed; a debit is a fresh add, so start blank.
-      setAmount(isDebit ? "" : String(Math.max(0, netPayable)));
+      // Credit defaults to the balance still owed (blank when nothing is owed); a debit is a
+      // fresh add, so start blank.
+      const owed = Math.max(0, Math.round(amountDue));
+      setAmount(isDebit || owed <= 0 ? "" : String(owed));
       setReasonCode(isDebit ? "undercharge" : (defaultReasonCode ?? "seats_reduced"));
       setReason("");
     }
-  }, [open, netPayable, isDebit, defaultReasonCode]);
+  }, [open, amountDue, isDebit, defaultReasonCode]);
 
   const gross = Math.round(Number(amount) || 0);
   const rate = isExport ? 0 : (taxRate ?? 18);
   const taxable = rate === 0 ? gross : Math.round((gross * 100) / (100 + rate));
   const tax = gross - taxable;
+  /* R-2219: a credit above the balance is allowed (a refund of money already received), but the
+     owner sees what the extra means before issuing it — issue_credit_note_core turns it into
+     open customer credit. */
+  const owedNow = Math.max(0, Math.round(amountDue));
+  const overBalance = !isDebit && gross > owedNow ? gross - owedNow : 0;
 
   const noun = isDebit ? "debit note" : "credit note";
   const verb = isDebit ? "raises" : "reduces";
@@ -141,8 +151,8 @@ export function IssueCreditNoteDialog({
               <b>Past the GST credit note time limit.</b> {lateWarning}
             </div>
           )}
-          <div className="rounded-md bg-paper-2/50 border border-hairline px-3 py-2 text-2xs text-ink-3">
-            Amount still owed on this invoice: <b className="text-ink">{rupee(netPayable)}</b>
+          <div data-testid="note-amount-owed" className="rounded-md bg-paper-2/50 border border-hairline px-3 py-2 text-2xs text-ink-3">
+            Amount still owed on this invoice: <b className="text-ink">{rupee(owedNow)}</b>
           </div>
 
           <FormField label={`${isDebit ? "Debit" : "Credit"} amount (₹, incl GST)`} htmlFor="note_amount">
@@ -160,6 +170,13 @@ export function IssueCreditNoteDialog({
                 ? "Export (zero-rated) — no GST on the note."
                 : `Splits as ${interState ? "IGST" : "CGST + SGST"} @ ${rate}%: taxable ${rupee(taxable)} + tax ${rupee(tax)}.`}
             </p>
+            {overBalance > 0 && (
+              <p data-testid="note-over-balance" role="status" className="mt-2 rounded-md bg-amber-soft/60 border border-amber/40 px-3 py-2 text-2xs text-amber-ink leading-relaxed">
+                This is {rupee(overBalance)} more than is still owed ({rupee(owedNow)}). The extra{" "}
+                {rupee(overBalance)} is money already received — it becomes customer credit to refund
+                or adjust against a later invoice.
+              </p>
+            )}
           </FormField>
 
           <FormField label="Reason" htmlFor="note_reason_code">

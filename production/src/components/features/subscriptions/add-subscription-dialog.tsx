@@ -35,7 +35,7 @@ import { matchContacts } from "@/lib/contacts/match-contacts";
 import {
   subscriptionProducts, vendorSelectOptions, productsForVendor, findProduct, judgePrice,
   billingTerms, annualise, firstInvoiceTaxable, BILLING_CHOICES, convertPriceForChoice,
-  COMMITMENT_CHOICES, choiceParts, choiceFromParts, frequencyChoicesFor,
+  COMMITMENT_CHOICES, choiceParts, choiceFromParts, frequencyChoicesFor, rateAndBillText,
   type CatalogProduct, type BillingChoice, type PriceSwitchMemo, type CommitmentChoice,
 } from "@/lib/subscriptions/catalog-options";
 import type { BillingCycle, Item } from "@/lib/supabase/database.types";
@@ -61,7 +61,10 @@ import { grossAmount } from "@/lib/quotes/amounts";
    the Google Admin console he reconciles against. Shared rather than open-coded here so
    the ±1 has exactly one home; it also carries the month clamp (31 Jan + 1 month is
    28 Feb, and JavaScript's own Date rolls it to 3 March). */
-import { termEndInclusive } from "@/lib/billing/schedule";
+/* R-2178 (one rule, coordinator 31 Oct): renewal_date is the NEXT term's start = start + term
+   months, the date the sale form and record_payment write; "term ends" (the day before) is shown,
+   never stored. */
+import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
 import { findPlanProduct, type LeadPrefill } from "@/lib/subscriptions/lead-prefill";
 /* The same countdown the subscriptions list and /payments render, so the hint under
    the field cannot disagree with the chip the operator sees a second later. */
@@ -228,6 +231,9 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
   /** R-876: a one-line note under the price after a billing switch converted or
    *  cleared it. Gone as soon as the operator types. */
   const [priceHint, setPriceHint] = React.useState<string | null>(null);
+  /** R-2178 owner rule: after a COMMITMENT switch (Flexible ↔ Annual) cleared a typed price, the
+   *  catalogue rate for the new commitment — offered as a button, never filled in silently. */
+  const [priceProposal, setPriceProposal] = React.useState<number | null>(null);
   /** R-876: the last conversion, so switching straight back restores the exact number. */
   const priceSwitchMemo = React.useRef<PriceSwitchMemo | null>(null);
   const seats = Number.parseInt(seatsText, 10) || 0;
@@ -248,7 +254,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
      the billing period moves — see changeStartDate / changeBillingChoice. It stays an
      editable field: the derived value is the sensible default, not a cage. */
   const [renewalDate, setRenewalDate] = React.useState(
-    () => termEndInclusive(todayIST(), 12),        // R-025 — same UTC trap.
+    () => addMonthsClamped(todayIST(), 12),        // R-025 — same UTC trap. R-2178: anniversary.
   );
 
   /**
@@ -310,14 +316,14 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
     setVendor(first.vendor);
     setItemId(first.id);
     setPlan(first.name);
-    setPriceText(String(billingTerms(billingChoice, first).suggestedSellPerSeat)); setPriceHint(null); priceSwitchMemo.current = null;
+    setPriceText(String(billingTerms(billingChoice, first).suggestedSellPerSeat)); setPriceHint(null); setPriceProposal(null); priceSwitchMemo.current = null;
   }, [products, vendor, itemId, isCustomPlan, billingChoice]);
 
   const applyProduct = (p: CatalogProduct) => {
     setIsCustomPlan(false);
     setItemId(p.id);
     setPlan(p.name);
-    setPriceText(String(billingTerms(billingChoice, p).suggestedSellPerSeat)); setPriceHint(null); priceSwitchMemo.current = null;
+    setPriceText(String(billingTerms(billingChoice, p).suggestedSellPerSeat)); setPriceHint(null); setPriceProposal(null); priceSwitchMemo.current = null;
   };
 
   /**
@@ -339,7 +345,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
        twelve months. That is the commitment ending, not the next invoice, and it looked
        like a bug precisely because the word "Monthly" is in the choice. The hint under
        the field now says which of the two it is. */
-    setRenewalDate(termEndInclusive(startDate, billingTerms(next, selected).termMonths));
+    setRenewalDate(addMonthsClamped(startDate, billingTerms(next, selected).termMonths));
     /* R-876: a catalog plan whose price is still the catalog's suggestion is re-priced
        from the catalog, as before. Anything else — a custom plan, or a number the
        operator typed over the suggestion — is CONVERTED between units (or cleared, for
@@ -349,7 +355,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       && priceText === String(billingTerms(billingChoice, selected).suggestedSellPerSeat);
     if (untouchedSuggestion) {
       setPriceText(String(billingTerms(next, selected).suggestedSellPerSeat));
-      setPriceHint(null);
+      setPriceHint(null); setPriceProposal(null);
       priceSwitchMemo.current = null;
       return;
     }
@@ -359,6 +365,12 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
     }
     setPriceText(out.text);
     setPriceHint(out.hint);
+    /* R-2178 owner rule (31 Oct): rates differ by COMMITMENT — the catalogue rate for the new one
+       is proposed, shown and confirmed by a click; within Annual, a frequency change keeps the
+       per-month rate (only the unit of the box and the amount per bill change). */
+    const commitmentMoved = choiceParts(next).commitment !== choiceParts(billingChoice).commitment;
+    const suggestion = selected ? billingTerms(next, selected).suggestedSellPerSeat : 0;
+    setPriceProposal(commitmentMoved && out.text === "" && suggestion > 0 ? suggestion : null);
   };
 
   /**
@@ -378,7 +390,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
     /* billingTerms(...) rather than the `terms` further down — same value, but that one
        is declared below this handler and reading it here would rely on closure timing
        to stay out of its temporal dead zone. Not worth the puzzle. */
-    setRenewalDate(termEndInclusive(next, billingTerms(billingChoice, selected).termMonths));
+    setRenewalDate(addMonthsClamped(next, billingTerms(billingChoice, selected).termMonths));
     /* The payment due date is NOT derived from this. It starts blank and is required
        on a credit sale (Abhishek, 11 Sep 2026) — it used to default to start + 30 and
        fall back to that when left empty, which meant a date nobody had actually agreed
@@ -541,8 +553,8 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       setIsCustomPlan(false);
       setItemId(product.id);
       setPlan(product.name);
-      setPriceText(String(terms.suggestedSellPerSeat)); setPriceHint(null); priceSwitchMemo.current = null;
-      setRenewalDate(termEndInclusive(startDate, terms.termMonths));
+      setPriceText(String(terms.suggestedSellPerSeat)); setPriceHint(null); setPriceProposal(null); priceSwitchMemo.current = null;
+      setRenewalDate(addMonthsClamped(startDate, terms.termMonths));
     } else if (prefill.plan) {
       setIsCustomPlan(true);
       setItemId(null);
@@ -1031,7 +1043,9 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
           outstanding_amount: 0,
           auto_renew: true,
           external_source: OPENING_SOURCE,
-          billed_externally_until: renewalDate,
+          /* R-2178: billed outside until the LAST covered day (inclusive, billedElsewhere) — the
+             renewal date itself starts the next term, which bills here. */
+          billed_externally_until: addDaysISO(renewalDate, -1),
         });
         if (openErr) throw openErr;
         toast.success(`Opening subscription added for ${cleanCustomerName}`, {
@@ -1635,12 +1649,26 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                 type="number"
                 min={0}
                 value={priceText}
-                onChange={(e) => { setPriceText(e.target.value); setPriceHint(null); }}
+                onChange={(e) => { setPriceText(e.target.value); setPriceHint(null); setPriceProposal(null); }}
                 required
               />
               {priceHint && (
                 <p className="mt-1 text-2xs leading-snug text-ink-2" data-testid="price-switch-hint">
                   {priceHint}
+                </p>
+              )}
+              {priceProposal !== null && (
+                <button type="button"
+                  className="mt-1 rounded-md border border-hairline bg-paper px-2 py-1 text-2xs font-medium text-ink-2 hover:border-amber focus:outline-none focus:ring-2 focus:ring-amber/40"
+                  onClick={() => { setPriceText(String(priceProposal)); setPriceHint(null); setPriceProposal(null); }}>
+                  Use catalogue {rupee(priceProposal)}{terms.unitLabel.replace(/^₹/, "")}
+                </button>
+              )}
+              {/* R-2178 owner rule: the rate per seat per MONTH and what each bill charges, so a
+                  ₹/yr box is never read as monthly (LOOK BOOK FLY, ₹1,800/user/year × 12). */}
+              {pricePerSeat > 0 && (
+                <p className="mt-1 text-2xs leading-snug text-ink-3 tabular-nums" data-testid="rate-per-bill">
+                  {rateAndBillText(pricePerSeat, terms.unit, terms.billingCycle)}
                 </p>
               )}
               {/* The margin, live, next to the number being typed. The defaults this
@@ -1706,12 +1734,12 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                 required
               />
               <p className="mt-1 text-2xs leading-snug text-ink-3">
-                Back-dating is fine — the expiry date follows to keep the term
+                Back-dating is fine — the renewal date follows to keep the term
                 {" "}{terms.termMonths === 1 ? "one month" : `${terms.termMonths} months`} long.
               </p>
             </FormField>
 
-            <FormField label="Renewal / Expiry Date" required htmlFor="renewalDate">
+            <FormField label="Renews on" required htmlFor="renewalDate">
               <Input
                 id="renewalDate"
                 type="date"
@@ -1723,15 +1751,16 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                   year out, which looks wrong until you know it marks the end of the
                   commitment and not the next invoice. That confusion was reported. */}
               <p className="mt-1 text-2xs leading-snug text-ink-3">
+                {/^\d{4}-\d{2}-\d{2}$/.test(renewalDate) ? `Term ends ${formatDate(addDaysISO(renewalDate, -1))}. ` : ""}
                 {terms.commitment === "monthly"
                   ? "Flex renews every month — no commitment to expire."
                   : terms.billingCycle === "monthly"
-                    ? "End of the 12-month commitment. Invoices still go out monthly."
+                    ? "The 12-month commitment renews on this date. Invoices still go out monthly."
                     : terms.billingCycle === "quarterly"
-                      ? "End of the 12-month commitment. Invoices go out every 3 months."
+                      ? "The 12-month commitment renews on this date. Invoices go out every 3 months."
                       : terms.billingCycle === "half_yearly"
-                        ? "End of the 12-month commitment. Invoices go out every 6 months."
-                      : "End of the 12-month term, when the next yearly invoice is due."}
+                        ? "The 12-month commitment renews on this date. Invoices go out every 6 months."
+                      : "The next yearly invoice is due on this date."}
               </p>
             </FormField>
           </div>

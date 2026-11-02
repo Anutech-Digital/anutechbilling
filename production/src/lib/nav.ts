@@ -497,6 +497,9 @@ const SALES_READ: UserRole[] = ["owner", "manager", "billing", "accountant"];
 const PURCHASES: UserRole[] = ["owner", "manager", "billing", "accountant"];
 /** Everyone on the team except the external partner agent. */
 const STAFF: UserRole[] = ["owner", "manager", "sales", "sales_senior", "accountant", "support", "billing", "delivery"];
+/** R-2300 (G-TEAMCHAT): Team chat — the same people as chat_is_staff() (R-2294): every staff
+ *  role incl. marketing; never partner_agent (external) or personal. */
+const TEAM_CHAT: UserRole[] = [...STAFF, "marketing"];
 
 /**
  * App pages that are deliberately NOT a menu row — each with its reason. nav.test.ts fails
@@ -768,6 +771,8 @@ export const APP_NAV: NavSection[] = [
     section: "Team",
     icon: "users",
     items: [
+      /* R-2300 (G-TEAMCHAT TC-07): channels + DMs; the topbar chat icon shows its unread count. */
+      { id: "team-chat", href: "/team-chat", label: "Team chat", icon: "chat", roles: TEAM_CHAT, hint: "Channels and direct messages with your team" },
       { id: "my-attendance", href: "/attendance/me", label: "My Attendance", icon: "calendar", roles: STAFF, hint: "Mark your own attendance — your login is the proof." },
       /* Was listed twice (Home and Sales & CRM) "for reach". Once is enough now that it
          has a group every staff role can see; the mobile Quick Actions grid still puts it
@@ -818,6 +823,12 @@ export const APP_NAV: NavSection[] = [
           /* Owner-only: restore points and the data reset. A safety feature nobody can
              find is not a safety feature — it had no nav entry at all until Aug 2026. */
           { id: "backup",    href: "/settings/backup",      label: "Backup & Restore", icon: "database", roles: ["owner"] },
+          /* R-2013 (DPDP): data-rights requests from the website form, with their due-by date.
+             Owner/manager — the database shows them to no one else. */
+          { id: "privacy-requests", href: "/settings/privacy-requests", label: "Privacy Requests", icon: "shield", roles: OM, hint: "See / correct / delete requests from your website — answer within 30 days" },
+          /* R-2350 (DPDP): who opened which customer / lead, and every export. Owner only —
+             the database shows the log to no one else. */
+          { id: "security-log", href: "/settings/security-log", label: "Security Log", icon: "shield", roles: ["owner"], hint: "Who opened which customer or lead, and who exported data" },
         ],
       },
       /* "App khud kya bhejta hai — aur band karne ka switch". A brake nobody can find is

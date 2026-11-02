@@ -63,6 +63,7 @@ import { CloseDateBadge } from "@/components/features/leads/close-date-badge";
 import { leadTitle } from "@/lib/leads/display-name";
 import { followRevealed, isMaskedContact } from "@/lib/contacts/reveal-client";
 import { waFrom } from "./lead-row-actions";
+import { LeadAiStatusBadge } from "@/components/features/leads/lead-ai-status";
 
 // R-290: the stage chip reads the shared table (lib/leads/stage-meta) — this used to be a
 // private copy, and copies are how stage order and labels drift between screens.
@@ -99,9 +100,11 @@ interface SwipeLeadCardProps {
    * looked exactly like yours (29 Sep 2026).
    */
   ownerName?: string | null;
+  /** R-2042: leads.ai_status (useLeadAiStatuses in the list view) — the "AI: …" badge. */
+  aiStatus?: string | null;
 }
 
-export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutcome, task, quoteRef, ownerName }: SwipeLeadCardProps) {
+export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutcome, task, quoteRef, ownerName, aiStatus }: SwipeLeadCardProps) {
   // Derived here rather than passed in, so the card is the single place that
   // decides how a lead looks on mobile — callers can't hand it a stale rule
   // that disagrees with the desktop table.
@@ -273,6 +276,7 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
               <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 min-w-0">
                 <span className={cn("w-2 h-2 rounded-full shrink-0", prio.color)} title={prio.title} />
                 <p className="font-medium text-ink truncate text-[15px]" title={leadTitle(lead).hint ?? undefined}>{leadTitle(lead).label}</p>
+                <LeadAiStatusBadge status={aiStatus} />
                 {/* Intent tier + stale nudge — same lib/leads/heat helpers the
                     desktop table uses, so phone and desktop can never disagree
                     about the same lead. (The old `stale` prop used its own

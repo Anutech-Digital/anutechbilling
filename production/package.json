@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "dev:local": "node scripts/dev-local.mjs",
+    "localhost:update": "node scripts/ops/localhost-update.mjs",
+    "cron:local": "node scripts/cron-local.mjs",
     "build": "prisma generate && next build",
     "gate": "node --no-warnings scripts/gate.mjs",
     "start": "next start",

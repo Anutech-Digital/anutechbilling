@@ -17,6 +17,15 @@ import type { Subscription } from "@/lib/supabase/database.types";
 export interface OpenRenewalQuote {
   id: string;
   notes: string | null;
+  /** R-2232: draft = generated, not sent yet. */
+  status?: string | null;
+}
+
+/** R-2232: open renewal quote id → its status (draft / sent / viewed / accepted). */
+export function openRenewalQuoteStatus(quotes: readonly OpenRenewalQuote[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const q of quotes) if (q.status) out.set(q.id, q.status);
+  return out;
 }
 
 const SUB_ID = /subscription ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;

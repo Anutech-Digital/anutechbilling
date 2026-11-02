@@ -134,13 +134,14 @@ export function amountOf(t: Pick<FilterLine, "debit" | "credit">): number {
 export function matchGroupOf(type: string | null): MatchGroup | null {
   if (type === null) return null;
   switch (type) {
-    case "payment": case "project":                 return "customer";
+    case "payment": case "project": case "customer_refund": return "customer";   // R-2322: a refund to a customer
     case "vendor_bill": case "vendor_payment":      return "vendor";
     case "salary": case "split":                    return "salary";
     case "expense": case "prepaid":                 return "expense";
     case "statutory":                               return "tax";
     case "owner_equity":                            return "owner";
     case "transfer":                                return "transfer";
+    case "loan_given":                              return "loan";       // R-2346 (R-2340's type)
   }
   if (/loan|emi/.test(type)) return "loan";
   return "other";
@@ -151,6 +152,7 @@ export function lineStatusLabel(type: string | null): string {
   const g = matchGroupOf(type);
   if (g === null) return "Unmatched";
   if (type === "split") return "Salary";
+  if (type === "loan_given") return "Loan given";   // R-2346: same word as the row badge
   return g === "other" ? "Reconciled" : MATCH_GROUP_LABEL[g];
 }
 

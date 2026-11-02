@@ -7,7 +7,8 @@
    3. ₹20,500 down-payment line → "Match down payment" (the manual line is replaced, seq 0). */
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { ReconcileFooter, type FooterSave } from "./reconcile-who-tiles";
 
 import type { EmiMatch } from "@/lib/queries/emi";
 
@@ -76,5 +77,46 @@ describe("R-1864 reconcile — EMI / loan repayment", () => {
     render(<EmiRepaymentSection transaction={txn(5000)} onDone={vi.fn()} />);
     expect(screen.getByText(/never the whole amount as an expense/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Reconcile as EMI/ })).toBeNull();
+  });
+});
+
+/* R-2008: in the Reconcile sheet "Reconcile as EMI N" is the sticky footer's Save — same label,
+   same rule, same save(); nothing to save inside the form. */
+function InSheet({ debit }: { debit: number }) {
+  const [footer, setFooter] = React.useState<FooterSave | null>(null);
+  return (
+    <>
+      <div data-testid="reconcile-scroll-body"><EmiRepaymentSection transaction={txn(debit)} onDone={() => {}} onFooterSave={setFooter} /></div>
+      <ReconcileFooter amount={debit} save={footer} hint="pick the EMI" onClose={() => {}} />
+    </>
+  );
+}
+describe("R-2008 EMI — Save in the sticky footer", () => {
+  it("an exact EMI: the footer's 'Reconcile as EMI 1' books the same split; 'Bank ₹X = ₹Y ✓'", async () => {
+    matches = [m({})];
+    render(<InSheet debit={8979} />);
+    const body = screen.getByTestId("reconcile-scroll-body");
+    const footer = screen.getByTestId("reconcile-footer");
+    const btn = await vi.waitFor(() => within(footer).getByRole("button", { name: "Reconcile as EMI 1" }) as HTMLButtonElement);
+    expect(within(body).queryByRole("button", { name: /Reconcile as EMI/ })).toBeNull();
+    expect(btn.disabled).toBe(false);
+    expect(footer.textContent).toContain("Bank ₹8,979 = ₹8,979 ✓");
+    fireEvent.click(btn);
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({
+      txnId: "t1", purchaseId: "p1", seq: 1, principal: 7812, interest: 1167, charges: 0, newSchedule: null,
+    }));
+  });
+
+  it("the down payment: the footer says 'Match down payment ₹20,500' and sends seq 0", async () => {
+    matches = [m({ seq: 0, kind: "down_payment", expected: 20500, principal: 0, interest: 0, due_on: "2026-10-05", confidence: "high" })];
+    render(<InSheet debit={20500} />);
+    const footer = screen.getByTestId("reconcile-footer");
+    fireEvent.click(await vi.waitFor(() => within(footer).getByRole("button", { name: "Match down payment ₹20,500" })));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({ txnId: "t1", purchaseId: "p1", seq: 0 }));
+  });
+
+  it("no EMI found: nothing in the footer (Set up this loan stays in the form)", () => {
+    render(<InSheet debit={5000} />);
+    expect(within(screen.getByTestId("reconcile-footer")).queryAllByRole("button").map((b) => b.textContent)).toEqual(["Close"]);
   });
 });

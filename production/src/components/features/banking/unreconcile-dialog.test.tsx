@@ -55,7 +55,7 @@ describe("R-1920 un-reconcile a vendor payment — preview first", () => {
     render(<UnreconcileDialog txn={txn} onClose={onClose} />);
     const items = screen.getAllByRole("listitem").map((li) => li.textContent);
     expect(items[0]).toContain("Expense bill PS-101 goes back to Unpaid, ₹59,000 due again");
-    expect(items[0]).toContain("TDS ₹5,000 (194J) taken off");
+    expect(items[0]).toContain("TDS ₹5,000 (194J(b)) taken off");
     expect(items[1]).toContain("Advance of ₹1,000 to the vendor is removed");
     expect(items[2]).toContain("Bank charge of ₹20 is removed");
     expect(screen.getByText(/This line paid/).textContent).toContain("Sharma Associates");
@@ -79,7 +79,7 @@ describe("R-1920 un-reconcile a vendor payment — preview first", () => {
     expect(screen.queryByRole("button", { name: /Un-reconcile/ })).toBeNull();
     const open = screen.getByRole("link", { name: "Open Banking" });
     expect(open.getAttribute("href")).toBe("/accounting/banking/acc-2");
-    expect(screen.getAllByRole("listitem")[0].textContent).toContain("Expense bill PS-101: ₹54,000 from this line comes off; TDS ₹5,000 (194J) taken off");
+    expect(screen.getAllByRole("listitem")[0].textContent).toContain("Expense bill PS-101: ₹54,000 from this line comes off; TDS ₹5,000 (194J(b)) taken off");
   });
 });
 

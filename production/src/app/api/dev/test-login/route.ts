@@ -1,5 +1,5 @@
 /**
- * POST /api/dev/test-login  { role: "owner" | "manager" | "accountant" | "sales" }
+ * POST /api/dev/test-login  { role: "owner" | "manager" | "accountant" | "sales" | "owner2" }
  *
  * R-281: local-only sign-in as a seeded E2E test account. Rules and the why: ./rules.ts.
  * Anywhere but `npm run dev:local` on localhost it answers 404. The password is read here on

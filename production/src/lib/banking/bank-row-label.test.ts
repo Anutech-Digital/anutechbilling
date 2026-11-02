@@ -53,3 +53,9 @@ describe("R-2098 a line that paid several items", () => {
     ])).toBe("₹3,906 · INV-1 (RV-1)\n₹460 · Q-ADV");
   });
 });
+
+describe("R-2322 a money-out line booked as a customer refund", () => {
+  it("reads Customer refund", () => {
+    expect(bankRowStatusLabel("customer_refund" as never, false)).toBe("Customer refund");
+  });
+});

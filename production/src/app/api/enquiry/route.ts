@@ -45,6 +45,7 @@ import { POST as generalEnquiry } from "@/app/api/public/enquiry/general/route";
 import { POST as workspaceEnquiry } from "@/app/api/public/enquiry/workspace/route";
 import { siteVisitorLimit, waitPhrase } from "@/lib/security/rate-limit";
 import { redactContacts } from "@/lib/security/redact-contact";
+import { readFormConsent } from "@/lib/consent/data-notice";
 
 /** The app's two public enquiry endpoints — handled by this deployment (R-1598). */
 const ENQUIRY_API = "/api/public/enquiry/general";
@@ -142,11 +143,15 @@ export async function POST(req: NextRequest) {
 
   /* R-1598: where the visitor landed (gclid/utm) and came from — the lead handlers store them
      (captureFromRequest). Without them every /quote and /trial lead read "direct". */
-  const attribution: Record<string, string> = {};
+  const attribution: Record<string, unknown> = {};
   const pageUrl = pageField(body.pageUrl);
   const pageReferrer = pageField(body.pageReferrer);
   if (pageUrl) attribution.pageUrl = pageUrl;
   if (pageReferrer) attribution.pageReferrer = pageReferrer;
+  /* R-2011: the data notice the form showed + the marketing opt-in travel to the handler,
+     which records them for the lead. Malformed or absent → not sent, nothing recorded. */
+  const consent = readFormConsent(body);
+  if (consent) attribution.consent = consent;
 
   /* R-020: the visitor's Turnstile token (with Referer and IP) travels in the passed-through
      headers to the ONE handler call below — a token works once, never two calls with it. */

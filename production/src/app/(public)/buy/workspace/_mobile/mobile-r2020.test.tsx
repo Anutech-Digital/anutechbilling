@@ -20,7 +20,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { buyViewFor } from "./device";
-import { readMobileState, writeMobileState, continueHref, MOBILE_MAX_ONLINE } from "./url-state";
+import { readMobileState, writeMobileState, MOBILE_MAX_ONLINE } from "./url-state";
 import { mobilePlans, yearlySaving, compareRows } from "./prices";
 import { BuyMobileClient } from "./buy-mobile-client";
 import { trackFunnel } from "./funnel";
@@ -108,18 +108,12 @@ describe("R-2020: the choices live in the address bar", () => {
     expect(readMobileState(new URLSearchParams("?seats=450")).seats).toBe(450);
   });
 
-  it("Continue (until the phone checkout ships) opens the v2 checkout with the same plan, seats, billing and ad params", () => {
-    const href = continueHref("?utm_source=facebook&fbclid=AbC&step=plans&intent=new", { step: "plans", intent: "new", tier: "starter", seats: 5, billing: "monthly" });
-    const u = new URL(href, "https://x.test");
-    expect(u.pathname).toBe("/buy/workspace");
-    expect(u.searchParams.get("view")).toBe("desktop");
-    expect(u.searchParams.get("tier")).toBe("starter");
-    expect(u.searchParams.get("seats")).toBe("5");
-    expect(u.searchParams.get("billing")).toBe("monthly");
-    expect(u.searchParams.get("buy")).toBe("1");
-    expect(u.searchParams.get("utm_source")).toBe("facebook");
-    expect(u.searchParams.get("fbclid")).toBe("AbC");
-    expect(u.searchParams.get("step")).toBeNull();
+  /* R-2021: Continue now opens the phone checkout (step=domain) in place of the v2 hand-over. */
+  it("Continue goes to the phone checkout's Domain step with the same plan, seats, billing and ad params", () => {
+    const q = writeMobileState("?utm_source=facebook&fbclid=AbC&step=plans&intent=new", { step: "domain", intent: "new", tier: "starter", seats: 5, billing: "monthly" });
+    const u = new URLSearchParams(q);
+    expect([u.get("step"), u.get("tier"), u.get("seats"), u.get("billing")]).toEqual(["domain", "starter", "5", "monthly"]);
+    expect([u.get("utm_source"), u.get("fbclid"), u.get("view"), u.get("buy")]).toEqual(["facebook", "AbC", null, null]);
   });
 });
 
@@ -179,7 +173,7 @@ describe("R-2020: the phone page, as the owner uses it", () => {
     phone();
     const bar = screen.getByRole("banner");
     expect(within(bar).getByText("Tenant Seller Pvt Ltd")).toBeTruthy();
-    expect(within(bar).getByRole("link", { name: "Talk to us" })).toBeTruthy();
+    expect(within(bar).getByRole("button", { name: "Talk to us" })).toBeTruthy();
   });
 
   it("stepper + presets; 301 licences → 'Not available' and a talk-to-us call instead of Continue", () => {
@@ -193,7 +187,7 @@ describe("R-2020: the phone page, as the owner uses it", () => {
     expect(screen.getAllByText("Not available").length).toBe(2);
     expect(screen.getByText(/Online purchase works for up to 300 licences/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
-    expect(screen.getByRole("link", { name: /Get a call back with a quote/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Get a call back with a quote/ })).toBeTruthy();
   });
 
   it("plan cards show the total incl. GST, ~a month, and the per-licence rate — the same numbers as planSum", () => {
@@ -350,15 +344,22 @@ describe("R-2019 goal (Pardeep 27 Oct: 'the moment a user clicks the ad … must
     const m = "₹4,602"; // 12 × 325 = 3,900 + 702 GST
     expect(screen.getByRole("radio", { name: /^Starter/ }).textContent).toContain(m);
     expect(screen.getByTestId("mobile-continue-bar").textContent).toContain(m);
-    const u = new URL(continueHref(window.location.search, readMobileState(new URLSearchParams(window.location.search))), "https://x.test");
-    expect([u.searchParams.get("tier"), u.searchParams.get("seats"), u.searchParams.get("billing")]).toEqual(["starter", "12", "monthly"]);
+    /* R-2021: Continue opens the phone checkout with the same plan, licences and billing */
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    const u = new URLSearchParams(window.location.search);
+    expect([u.get("step"), u.get("tier"), u.get("seats"), u.get("billing")]).toEqual(["domain", "starter", "12", "monthly"]);
+    expect(screen.getByTestId("summary-total").textContent).toBe(m);
   });
 
   it("6. help is one tap away on every step, and the browser Back button keeps every choice", () => {
     phone({ intent: "transfer", tier: "starter", seats: "9", billing: "monthly" });
-    expect(within(screen.getByRole("banner")).getByRole("link", { name: "Talk to us" }).getAttribute("href")).toMatch(/^https:\/\/wa\.me\/|^tel:/);
+    /* R-2021: "Talk to us" opens the Help sheet (WhatsApp / call inside) — one tap, the page is kept */
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: "Talk to us" }));
+    const help = screen.getByRole("dialog", { name: "Talk to us" });
+    expect(within(help).getAllByRole("link").map((a) => a.getAttribute("href")).join(" ")).toMatch(/https:\/\/wa\.me\/|tel:/);
+    fireEvent.click(within(help).getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("button", { name: "Compare plans" }));
-    expect(within(screen.getByRole("banner")).getByRole("link", { name: "Talk to us" })).toBeTruthy();
+    expect(within(screen.getByRole("banner")).getByRole("button", { name: "Talk to us" })).toBeTruthy();
     /* the browser Back button: the URL goes back to the Plans entry, then popstate */
     const back = writeMobileState(window.location.search, { step: "plans", intent: "transfer", tier: "starter", seats: 9, billing: "monthly" });
     act(() => {

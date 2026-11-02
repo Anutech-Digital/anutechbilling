@@ -102,6 +102,8 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
   "public/checkout/workspace": "website checkout",
   "public/checkout/support": "website checkout (R-2083)",
   "public/consent": "website cookie banner — insert-only consent record, per-IP rate limit (R-2010)",
+  "public/privacy-request": "website data-rights form — Turnstile + per-IP/per-email limits, unconfirmed until the emailed code (R-2013)",
+  "public/privacy-request/verify": "website data-rights code check — hashed code, 5 tries + expiry in the RPC, per-IP limit (R-2013)",
   "public/checkout/verify": "website checkout's return from Razorpay — bounded by the Razorpay signature (R-1596)",
   "public/coupons/validate": "website cart",
   "public/demo-session": "anonymous demo (R-524)",

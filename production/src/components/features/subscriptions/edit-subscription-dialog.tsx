@@ -1,8 +1,11 @@
 /**
  * EditSubscriptionDialog — correct a subscription's details (data-entry fix).
  *
- * For fixing a mis-typed plan / vendor / seats / price / dates / status on a
- * subscription. It only updates the subscription record — it does NOT re-bill
+ * For fixing a mis-typed plan / vendor / domain / dates / commitment on a
+ * subscription. R-2228 (Zoho Billing A4): seats, MRR and status are read-only here, with
+ * links to the action that bills or credits them (Manage seats; Suspend / Resume / Cancel /
+ * Won't renew). The owner alone has "Data correction (owner)" for a wrong seats / MRR record
+ * (reason 10+, activity log, no money). It only updates the subscription record — it does NOT re-bill
  * or touch the linked payment / quote / invoice. To remove a whole subscription
  * that was created by mistake, use Delete (which is blocked when it came from a
  * paid quote — fix that at the source by deleting the payment).
@@ -23,7 +26,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import {
-  useUpdateSubscription, useCorrectSubscriptionTerms, useCorrectSubscriptionCommitment, useScheduleInvoices,
+  useUpdateSubscription, useCorrectSubscriptionTerms, useCorrectSubscriptionCommitment, useCorrectSubscriptionData, useScheduleInvoices,
 } from "@/lib/queries/subscriptions";
 import {
   COMMITMENT_OPTIONS, THREE_YEAR_OPTION, FREQUENCY_LABEL, catalogCostPerSeatMonth, commitmentLabel, commitmentOf,
@@ -35,42 +38,61 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { subscriptionProducts, productsForVendor } from "@/lib/subscriptions/catalog-options";
 import { cleanDomain } from "./duplicate-subscription";
 import {
-  correctionVerdict, mrrForSeats, seatCutWarning, MIN_CORRECTION_REASON,
+  correctionVerdict, mrrForSeats, seatCutWarning, MIN_CORRECTION_REASON, MIN_DATA_CORRECTION_REASON,
+  mayDataCorrect, perSeatMonth,
 } from "@/lib/subscriptions/correct-terms";
+import { subStatusPill } from "@/lib/subscriptions/non-renewing";
 import { subscriptionSchedule } from "@/lib/billing/subscription-schedule";
 import { scheduleInvoices } from "./schedule-invoices";
 import { formatDate, rupee } from "@/lib/utils";
 import Link from "next/link";
-import { MIN_SUSPEND_REASON, useSuspendSubscription } from "./suspend-subscription-dialog";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { checkNceLock, lockWarning } from "@/lib/subscriptions/nce-lock";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
-/* Reused rather than rewritten. termEndInclusive carries both the month clamp (31 Jan
-   + 1 month is 28 Feb, not 3 March) and the "last covered day" rule the column holds
-   since 11 Sep 2026; nextTermStart is its inverse; monthsBetween because a term is
-   calendar months, not 30-day arithmetic. */
-import { termEndInclusive, nextTermStart } from "@/lib/billing/schedule";
+/* R-2178 (one rule, coordinator 31 Oct): renewal_date is the NEXT term's start — start + term
+   months (addMonthsClamped: 31 Jan + 1 month is 28 Feb, not 3 March), the date the sale form and
+   record_payment write. followingTermStart reads an older "last covered day" row too;
+   monthsBetween because a term is calendar months, not 30-day arithmetic. */
+import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
+import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { monthsBetween } from "@/lib/accounting/saas-charts";
 import { istToday } from "@/lib/dates/ist";
 
 const VENDORS: Subscription["vendor"][] = ["google", "microsoft", "zoho", "other"];
 /** R-1684: the Plan box value for "keep the plan as recorded" (not in the catalog). */
 const KEEP = "__keep__";
-const STATUSES: Subscription["status"][] = ["active", "paused", "expired", "cancelled"];
+/** R-2228: a small text link to the action that really changes seats / status (bills or credits). */
+const ACTION_LINK =
+  "text-xs font-semibold text-ink underline underline-offset-2 hover:text-amber-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber/40 rounded-sm";
+
+/**
+ * R-2228: where seats and status really change. Each opens its own dialog on the page (the page
+ * closes this one first). A missing handler hides its link (e.g. Won't renew for a role that may not).
+ */
+export interface CorrectDetailsActions {
+  manageSeats?: () => void;
+  suspend?: () => void;
+  resume?: () => void;
+  cancel?: () => void;
+  wontRenew?: () => void;
+}
 /** R-2095: native select, styled like the inputs (the same class the bank reconcile sale uses). */
 const SELECT_CLS =
   "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40 disabled:opacity-70";
 
 export function EditSubscriptionDialog({
-  sub, open, onOpenChange,
+  sub, open, onOpenChange, actions,
 }: {
   sub: Subscription;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** R-2228: links from the read-only seats / status to the action that changes them. */
+  actions?: CorrectDetailsActions;
 }) {
   const update = useUpdateSubscription();
-  const suspend = useSuspendSubscription();
+  /* R-2228: the owner's Data correction of seats / MRR (record fix, no money). */
+  const correctData = useCorrectSubscriptionData();
   /* R-1684: seats / plan / price go through correct_subscription_terms (reason, role, catalog). */
   const correctTerms = useCorrectSubscriptionTerms();
   /* R-2095: commitment (term_months) and payment frequency (billing_cycle) go through correct_subscription_commitment. */
@@ -97,10 +119,9 @@ export function EditSubscriptionDialog({
    *  all, which is the exact silence the countdown was built to end. This is the one
    *  screen that can give those rows a date. */
   const [paymentDue, setPaymentDue] = React.useState(sub.payment_due_date ?? "");
-  const [status, setStatus]   = React.useState<Subscription["status"]>(sub.status);
-  /* R-1681: pausing here asks why (and whether it is for an unpaid invoice), like Payments. */
-  const [pauseReason, setPauseReason] = React.useState("");
-  const [pauseForUnpaid, setPauseForUnpaid] = React.useState((sub.outstanding_amount ?? 0) > 0);
+  /* R-2228: seats / MRR open only behind the owner's "Data correction (owner)" switch. */
+  const [dataFix, setDataFix] = React.useState(false);
+  const canDataFix = mayDataCorrect(me?.role);
   /* R-2095: the commitment (term_months) and the payment frequency (billing_cycle) as recorded. */
   const termNow = Math.max(1, sub.term_months ?? 12);
   const cycleNow = (sub.billing_cycle ?? "yearly") as BillingCycle;
@@ -113,12 +134,14 @@ export function EditSubscriptionDialog({
     setItemId(sub.item_id ?? KEEP); setMrrTouched(false); setReason("");
     setVendor(sub.vendor); setSeats(String(sub.seats)); setDomain(sub.domain ?? "");
     setMrr(String(sub.mrr)); setStart(sub.start_date ?? ""); setRenewal(sub.renewal_date ?? "");
-    setStatus(sub.status); setPaymentDue(sub.payment_due_date ?? "");
-    setPauseReason(""); setPauseForUnpaid((sub.outstanding_amount ?? 0) > 0);
+    setPaymentDue(sub.payment_due_date ?? ""); setDataFix(false);
   }, [sub]);
 
-  const pausing = status === "paused" && sub.status !== "paused";
-  const pauseReasonOk = pauseReason.trim().length >= MIN_SUSPEND_REASON;
+  /** R-2228: switching Data correction off puts seats / MRR back to the record. */
+  const toggleDataFix = (on: boolean) => {
+    setDataFix(on);
+    if (!on) { setSeats(String(sub.seats)); setMrr(String(sub.mrr)); setMrrTouched(false); }
+  };
 
   /**
    * How long THIS subscription's term is, in months — read off the record itself.
@@ -135,12 +158,11 @@ export function EditSubscriptionDialog({
    */
   const recordTermMonths = React.useMemo(() => {
     if (sub.start_date && sub.renewal_date) {
-      /* Measured to the day AFTER the stored date, because the stored date is the last
-         covered day. Without the +1 a term starting on the 1st reads a month short:
-         1 Sep 2026 → 31 Aug 2027 is calendar-month 11, and correcting the start would
-         then quietly shorten an annual subscription to eleven months. */
+      /* Measured to the next term's start. R-2178: that IS the stored date now; an older row
+         holding the last covered day (1 Sep 2026 → 31 Aug 2027, calendar-month 11) is read
+         one day on by followingTermStart, so an annual subscription never reads eleven months. */
       const gap = monthsBetween(new Date(`${sub.start_date}T00:00:00Z`),
-                                new Date(`${nextTermStart(sub.renewal_date)}T00:00:00Z`));
+                                new Date(`${followingTermStart({ term_months: sub.term_months, start_date: sub.start_date, renewal_date: sub.renewal_date })}T00:00:00Z`));
       if (gap > 0) return gap;
     }
     return sub.term_months && sub.term_months > 0 ? sub.term_months : 12;
@@ -161,7 +183,7 @@ export function EditSubscriptionDialog({
     setStart(next);
     if (!next) return;
     /* R-2095: a changed commitment sets the term length; otherwise the record's own. */
-    setRenewal(termEndInclusive(next, termNext !== termNow ? termNext : recordTermMonths));
+    setRenewal(addMonthsClamped(next, termNext !== termNow ? termNext : recordTermMonths));   // R-2178: the anniversary
   };
 
   /* R-2095 follow-up: a renewed sub keeps its first start date, so its start→renewal span is
@@ -186,7 +208,7 @@ export function EditSubscriptionDialog({
     setTermNext(months);
     const allowed = frequenciesFor(commitmentOf(months));
     if (!allowed.includes(cycleNext)) setCycleNext(allowed.includes(cycleNow) ? cycleNow : allowed[0]);
-    /* Renewal per the inclusive rule, counted from the start; back to the record's own when undone. */
+    /* R-2178: renewal = the next term's start (anniversary), counted from the start; back to the record's own when undone. */
     setRenewal(months === termNow
       ? (sub.renewal_date ?? "")
       : commitmentRenewal({ startDate: sub.start_date, renewalDate: sub.renewal_date, termMonthsNow: termNow, termMonthsNext: months, today: istToday() }) ?? "");
@@ -196,7 +218,8 @@ export function EditSubscriptionDialog({
      cancelled more than 7 days after the term starts. Checked against the values
      being SAVED, not the ones on the record, and re-evaluated as the operator
      types so the refusal appears before they press the button rather than after. */
-  const nextSeats = Math.max(0, Math.round(Number(seats) || 0));
+  /* R-2228: outside Data correction the seats / MRR are the record's, whatever the state holds. */
+  const nextSeats = dataFix ? Math.max(0, Math.round(Number(seats) || 0)) : sub.seats;
   const nceCheck = checkNceLock({
     vendor,
     startDate:    startDate || sub.start_date,
@@ -206,7 +229,7 @@ export function EditSubscriptionDialog({
     today:        istToday(),
     currentSeats: sub.seats,
     nextSeats,
-    nextStatus:   status,
+    nextStatus:   sub.status,
   });
   const nceHeadsUp = lockWarning({
     vendor,
@@ -218,7 +241,7 @@ export function EditSubscriptionDialog({
   });
 
   /* ── R-1684: seats / plan / price ─────────────────────────────────────────── */
-  const nextMrr = Math.max(0, Math.round(Number(mrr) || 0));
+  const nextMrr = dataFix ? Math.max(0, Math.round(Number(mrr) || 0)) : sub.mrr;
   const planChoices = React.useMemo(() => productsForVendor(products, vendor), [products, vendor]);
   /* The record's own plan stays choosable when it is not one of this vendor's catalog rows. */
   const recordedInList = !!sub.item_id && planChoices.some((p) => p.id === sub.item_id);
@@ -230,7 +253,10 @@ export function EditSubscriptionDialog({
     itemNow: sub.item_id ?? null, itemNext: nextItem ?? sub.item_id ?? null,
     termMonths: sub.term_months, startDate: sub.start_date, renewalDate: sub.renewal_date, today: istToday(),
   });
-  const reasonOk = reason.trim().length >= MIN_CORRECTION_REASON;
+  /* R-2228: seats / MRR moved only through the owner's Data correction. */
+  const seatsMrrChanged = dataFix && (nextSeats !== sub.seats || nextMrr !== sub.mrr);
+  const reasonOk = reason.trim().length >= (seatsMrrChanged ? MIN_DATA_CORRECTION_REASON : MIN_CORRECTION_REASON);
+  const rate = perSeatMonth(sub.mrr, sub.seats);
   /* The invoice of the term being cut — where a credit note gives money back (the next step). */
   const termInvoice = React.useMemo(() => {
     const periods = subscriptionSchedule(sub);
@@ -252,8 +278,16 @@ export function EditSubscriptionDialog({
       toast.error("Not allowed for your role", { description: verdict.roleBlock });
       return;
     }
+    if (seatsMrrChanged && !canDataFix) {
+      toast.error("Not allowed for your role", { description: "Only the owner can make a data correction. Use Manage seats to bill or credit a change." });
+      return;
+    }
+    if (seatsMrrChanged && !reasonOk) {
+      toast.error("Write why the record is wrong", { description: `At least ${MIN_DATA_CORRECTION_REASON} characters — kept in the activity log.` });
+      return;
+    }
     if (verdict.changed && !reasonOk) {
-      toast.error("Write why the seats, plan or price are changing", { description: "The reason is kept in the subscription's change history." });
+      toast.error("Write why the plan is changing", { description: "The reason is kept in the subscription's change history." });
       return;
     }
     if (commitVerdict.block || commitVerdict.roleBlock) {
@@ -271,12 +305,13 @@ export function EditSubscriptionDialog({
       toast.error("Microsoft NCE lock", { description: nceCheck.reason });
       return;
     }
-    if (pausing && !pauseReasonOk) {
-      toast.error("Write why it is being paused", { description: "The reason is kept in the activity log. Fill it in under Status, then save." });
-      return;
-    }
     try {
-      if (verdict.changed) {
+      if (seatsMrrChanged) {
+        await correctData.mutateAsync({ id: sub.id, seats: nextSeats, mrr: nextMrr, reason: reason.trim() });
+      }
+      /* The plan only — correct_subscription_terms refuses a seats / MRR change (R-2228); after a
+         data correction the record already holds nextSeats / nextMrr. */
+      if (verdict.planChanged) {
         await correctTerms.mutateAsync({ id: sub.id, itemId: nextItem, seats: nextSeats, mrr: nextMrr, reason: reason.trim() });
       }
       if (commitVerdict.changed) {
@@ -299,20 +334,18 @@ export function EditSubscriptionDialog({
              and an operator who empties the field means "there is no agreed date" —
              inventing one would put a countdown against terms nobody set. */
           payment_due_date: paymentDue || null,
-          /* A pause goes through suspend_subscription below (reason + unpaid invoice). */
-          status: pausing ? sub.status : status,
+          /* R-2228: no status here — Suspend / Resume / Cancel / Won't renew change it. */
         },
       });
-      if (pausing) {
-        await suspend.mutateAsync({ id: sub.id, reason: pauseReason, forUnpaid: pauseForUnpaid });
-      }
       onOpenChange(false);
     } catch { /* hook toasts */ }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="md:!max-w-md">
+      <DialogContent className="md:!max-w-md flex flex-col gap-0 overflow-hidden p-0 pt-3 md:p-0">
+        {/* R-2268: the body scrolls; the footer (Cancel + primary) stays on screen below it. */}
+        <div className="flex-1 min-h-0 overflow-y-auto grid gap-4 [&>*]:min-w-0 px-5 pt-2 pb-5 md:p-6" data-testid="dialog-scroll-body">
         <DialogHeader>
           <DialogTitle>Correct subscription</DialogTitle>
           <DialogDescription>
@@ -388,43 +421,78 @@ export function EditSubscriptionDialog({
                 </SelectContent>
               </Select>
             </FormField>
-            <FormField label="Status" htmlFor="sub_status">
-              <Select value={status} onValueChange={(v) => setStatus(v as Subscription["status"])}>
-                <SelectTrigger id="sub_status"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </FormField>
+            {/* R-2228: status is read-only — it changes through its own action (reason, log, money). */}
+            <div>
+              <p className="mb-1.5 text-xs font-medium text-ink-2">Status</p>
+              <p data-testid="sub-status-readonly" className="rounded-md border border-hairline bg-paper-2 px-3 py-2 text-sm text-ink">
+                {subStatusPill(sub).label}
+              </p>
+            </div>
           </div>
+          {actions && (actions.suspend || actions.resume || actions.cancel || actions.wontRenew) && (
+            <p className="-mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-ink-3" data-testid="sub-status-actions">
+              <span>Change the status with:</span>
+              {sub.status === "active" && actions.suspend && <button type="button" className={ACTION_LINK} onClick={actions.suspend}>Suspend</button>}
+              {sub.status === "paused" && actions.resume && <button type="button" className={ACTION_LINK} onClick={actions.resume}>Resume</button>}
+              {sub.status !== "cancelled" && actions.cancel && <button type="button" className={ACTION_LINK} onClick={actions.cancel}>Cancel subscription</button>}
+              {sub.status === "active" && actions.wontRenew && <button type="button" className={ACTION_LINK} onClick={actions.wontRenew}>Won&apos;t renew</button>}
+            </p>
+          )}
 
-          {pausing && (
-            <div className="space-y-2 rounded-md border border-amber/50 bg-amber-soft/30 p-3">
-              <FormField label="Why is it being paused?" htmlFor="sub_pause_reason" required>
-                <Textarea id="sub_pause_reason" rows={2} value={pauseReason} onChange={(e) => setPauseReason(e.target.value)} placeholder="Invoice unpaid for 30+ days" />
+          {/* R-2228: seats and MRR are read-only — Manage seats bills or credits a change. MRR is
+              derived (seats × rate per seat per month), never typed next to the seats. */}
+          {dataFix ? (
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Seats" htmlFor="sub_seats">
+                <Input id="sub_seats" type="number" min={0} step={1} value={seats} onChange={(e) => changeSeats(e.target.value)} />
               </FormField>
-              {!pauseReasonOk && <p className="text-2xs text-ink-3">Needed to save — the reason is kept in the activity log.</p>}
+              <FormField label="MRR (₹ / month)" htmlFor="sub_mrr">
+                <Input id="sub_mrr" type="number" min={0} step={1} value={mrr} onChange={(e) => { setMrrTouched(true); setMrr(e.target.value); }} />
+                {!mrrTouched && nextSeats !== sub.seats && (
+                  <p className="mt-1 text-2xs leading-snug text-ink-3">Follows the seats at this subscription&apos;s own price per seat.</p>
+                )}
+              </FormField>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="mb-1.5 text-xs font-medium text-ink-2">Seats</p>
+                <p data-testid="sub-seats-readonly" className="rounded-md border border-hairline bg-paper-2 px-3 py-2 text-sm tabular-nums text-ink">{sub.seats}</p>
+                {actions?.manageSeats && (
+                  <button type="button" className={`mt-1 ${ACTION_LINK}`} onClick={actions.manageSeats}>Manage seats</button>
+                )}
+              </div>
+              <div>
+                <p className="mb-1.5 text-xs font-medium text-ink-2">MRR</p>
+                <p data-testid="sub-mrr-readonly" className="rounded-md border border-hairline bg-paper-2 px-3 py-2 text-sm text-ink">
+                  <span className="tabular-nums">{rupee(sub.mrr)}</span> / month
+                  {rate != null && (
+                    <span className="block text-2xs text-ink-3">{sub.seats} {sub.seats === 1 ? "seat" : "seats"} × {rupee(rate)} per seat</span>
+                  )}
+                </p>
+              </div>
+            </div>
+          )}
+          {!dataFix && (
+            <p className="-mt-2 text-2xs leading-snug text-ink-3">
+              Seats and MRR change through Manage seats, which bills or credits the change.
+            </p>
+          )}
+
+          {/* R-2228: the owner's record fix — seats / MRR only, reason 10+, logged, no money. */}
+          {canDataFix && (
+            <div className={dataFix ? "space-y-1 rounded-md border border-amber/50 bg-amber-soft/30 p-3" : ""}>
               <label className="flex items-start gap-2 text-sm text-ink-2">
-                <Checkbox id="sub_pause_for_unpaid" checked={pauseForUnpaid} onCheckedChange={(v) => setPauseForUnpaid(v === true)} className="mt-0.5" />
+                <Checkbox id="sub_data_fix" checked={dataFix} onCheckedChange={(v) => toggleDataFix(v === true)} className="mt-0.5" />
                 <span>
-                  Paused because an invoice is unpaid
-                  <span className="block text-2xs text-ink-3">When that invoice is paid it turns back on by itself.</span>
+                  Data correction (owner)
+                  <span className="block text-2xs text-ink-3">
+                    Fix a wrong seats or MRR record — for example after a reconcile. Nothing is billed or credited; the change and your reason go to the activity log.
+                  </span>
                 </span>
               </label>
             </div>
           )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="Seats" htmlFor="sub_seats">
-              <Input id="sub_seats" type="number" min={0} step={1} value={seats} onChange={(e) => changeSeats(e.target.value)} />
-            </FormField>
-            <FormField label="MRR (₹ / month)" htmlFor="sub_mrr">
-              <Input id="sub_mrr" type="number" min={0} step={1} value={mrr} onChange={(e) => { setMrrTouched(true); setMrr(e.target.value); }} />
-              {!mrrTouched && nextSeats !== sub.seats && (
-                <p className="mt-1 text-2xs leading-snug text-ink-3">Follows the seats at this subscription&apos;s own price per seat.</p>
-              )}
-            </FormField>
-          </div>
 
           {/* R-1684: a seat cut inside a running annual term — what it does to money, and the next step. */}
           {verdict.midTermCommitmentCut && (
@@ -442,11 +510,19 @@ export function EditSubscriptionDialog({
 
           {(verdict.changed || commitVerdict.changed) && (
             <FormField
-              label={verdict.changed && commitVerdict.changed ? "Why are these details changing?"
-                : verdict.changed ? "Why are the seats, plan or price changing?" : "Why are the commitment or payment frequency changing?"}
+              label={seatsMrrChanged ? "Why is the record wrong?"
+                : verdict.changed && commitVerdict.changed ? "Why are these details changing?"
+                : verdict.changed ? "Why is the plan changing?" : "Why are the commitment or payment frequency changing?"}
               htmlFor="sub_correct_reason" required>
-              <Textarea id="sub_correct_reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={verdict.changed ? "Customer removed 5 users; credit note issued" : "Annual commitment paid monthly; was booked as Flexible"} />
-              {!reasonOk && <p className="mt-1 text-2xs text-ink-3">Needed to save — kept in the subscription&apos;s change history.</p>}
+              <Textarea id="sub_correct_reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)}
+                placeholder={seatsMrrChanged ? "Zoho reconcile: Google admin shows 12 seats" : verdict.changed ? "Sold Business Plus, booked as Standard" : "Annual commitment paid monthly; was booked as Flexible"} />
+              {!reasonOk && (
+                <p className="mt-1 text-2xs text-ink-3">
+                  {seatsMrrChanged
+                    ? `Needed to save — at least ${MIN_DATA_CORRECTION_REASON} characters, kept in the activity log.`
+                    : "Needed to save — kept in the subscription's change history."}
+                </p>
+              )}
             </FormField>
           )}
           {verdict.roleBlock && (
@@ -463,6 +539,7 @@ export function EditSubscriptionDialog({
             <FormField label="Renewal date" htmlFor="sub_renewal">
               <Input id="sub_renewal" type="date" value={renewal} onChange={(e) => setRenewal(e.target.value)} />
               <p className="mt-1 text-2xs leading-snug text-ink-3">
+                {/^\d{4}-\d{2}-\d{2}$/.test(renewal) ? `The next term starts on this date; this term ends ${formatDate(addDaysISO(renewal, -1))}. ` : ""}
                 Override it if the real term differs.
               </p>
             </FormField>
@@ -507,11 +584,12 @@ export function EditSubscriptionDialog({
             <p className="text-xs leading-relaxed text-amber-ink">{nceHeadsUp}</p>
           </div>
         )}
+        </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0 border-t border-hairline bg-paper px-5 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6 md:pb-4" data-testid="dialog-sticky-footer">
           <Button type="button" variant="default" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button
-            type="button" variant="primary" loading={update.isPending || suspend.isPending || correctTerms.isPending || correctCommitment.isPending}
+            type="button" variant="primary" loading={update.isPending || correctData.isPending || correctTerms.isPending || correctCommitment.isPending}
             disabled={nceCheck.locked || !!verdict.roleBlock || !!commitVerdict.block || (commitVerdict.changed && !!commitVerdict.roleBlock)}
             onClick={save}
           >

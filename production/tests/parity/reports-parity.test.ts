@@ -93,7 +93,7 @@ select json_build_object(
     'loans',     (select coalesce(json_agg(json_build_object('id', id, 'principal', principal)), '[]') from public.employee_loans),
     'loanReps',  (select coalesce(json_agg(json_build_object('amount', amount)), '[]') from public.employee_loan_repayments),
     'advs',      (select coalesce(json_agg(json_build_object('total_amount', total_amount, 'consumed_amount', consumed_amount)), '[]') from public.prepaid_advances),
-    'emiP',      (select coalesce(json_agg(json_build_object('id', id, 'total_cost', total_cost, 'financed', financed)), '[]') from public.emi_purchases),
+    'emiP',      (select coalesce(json_agg(json_build_object('id', id, 'total_cost', total_cost, 'financed', financed, 'kind', kind)), '[]') from public.emi_purchases),
     'emiPay',    (select coalesce(json_agg(json_build_object('principal_part', principal_part)), '[]') from public.emi_payments),
     'fa',        (select coalesce(json_agg(json_build_object('id', id, 'name', name, 'block', block, 'cost', cost, 'put_to_use', put_to_use, 'disposed_on', disposed_on, 'disposal_value', disposal_value, 'emi_purchase_id', emi_purchase_id)), '[]') from public.fixed_assets),
     'bizLoans',  (select coalesce(json_agg(json_build_object('id', id, 'principal', principal)), '[]') from public.business_loans),

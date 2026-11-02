@@ -47,6 +47,7 @@ import {
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
   paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
   tdsRateToRecord, tdsToRecord, shortChoices, roundOffSplit, saleLineDomainProblem,
+  typedPriceCheck, convertTypedPrice, keepTypedPrice, undoTypedConversion,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
 import { tdsSectionGuess, TDS_SECTION_CHOICES } from "@/lib/banking/tds-section";
@@ -55,6 +56,8 @@ import { PAYER_RELATIONS, payerFromNarration, payerMatchesCustomer, type PayerRe
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
 import { cleanAmount, pickDefault, pickProblem, splitBlocked, splitPartPaid, splitRest, splitSummary, type SplitRest } from "@/lib/banking/credit-pay-for-multi";
 import { CreditPaySplit } from "./credit-pay-for-split";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
+import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
 
 const NEW_CUSTOMER = "__new_customer__";
 
@@ -80,6 +83,9 @@ interface Props {
   /** R-2007: the Suggestion card's open item (and whether the gap is TDS) — "Change" opens this
    *  section with it ticked. */
   suggested?: { itemKey: string; tds: boolean } | null;
+  /** R-2348: the Reconcile sheet draws this section's Save in its sticky footer. Given → no inline
+   *  button; the footer gets the same label, disabled rule and save. */
+  onFooterSave?: (save: FooterSave | null) => void;
 }
 
 type Mode = "item" | "sale" | "advance" | "split";
@@ -99,7 +105,7 @@ const MODES: ReadonlyArray<readonly [Mode, string, string]> = [
 const selectCls =
   "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
 
-export function CreditPayForSection({ transaction, customers, onNewCustomer, pickedCustomerId, onProjectPayment, onSaved, onDone, relink, suggested }: Props) {
+export function CreditPayForSection({ transaction, customers, onNewCustomer, pickedCustomerId, onProjectPayment, onSaved, onDone, relink, suggested, onFooterSave }: Props) {
   const credit = transaction.credit;
 
   /* ── 1. Customer ─────────────────────────────────────────────────────────────── */
@@ -229,7 +235,13 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const splitInvalid = (splitPicked.length === 0 && !splitSale)
     || splitPicked.some((i) => pickProblem(i, picks[itemKey(i)]) !== null)
     || (splitSale && (saleInvalidOf(lines, preview.taxable) || saleAmt <= 0 || saleAmt > preview.total))
-    || splitBlocked(split.state);
+    || splitBlocked(split.state)
+    || splitPicked.some((i) => Boolean(i.approval_block));
+  /* R-2213: the picked quote (or a ticked one in a split) is below cost and waits for approval. */
+  const blockedItem = mode === "item" ? (picked?.approval_block ? picked : null)
+    : mode === "split" ? splitPicked.find((i) => Boolean(i.approval_block)) ?? null : null;
+  const approvalBlocked = blockedItem?.approval_block && blockedItem.quote_id
+    ? { reason: blockedItem.approval_block, quoteId: blockedItem.quote_id } : null;
   const [shortChoice, setShortChoice] = React.useState<ShortChoice>("part");
   /* TDS pre-chosen when the gap IS a common TDS rate; else part payment. Re-decided per item. */
   const tdsLikely = check?.kind === "short" && check.tdsRatePct !== null;
@@ -259,6 +271,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const saleInvalid = saleInvalidOf(lines, preview.taxable);
   const payerUnanswered = payerMismatch && !payerAnswer;
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
+    && !approvalBlocked
     && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : mode === "split" ? !splitInvalid : true);
 
   const save = async () => {
@@ -340,6 +353,24 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
       onSaved?.();
     } catch { /* the hook toasts */ }
   };
+
+  /* R-2348: in the Reconcile sheet the Save sits in the sticky footer — same label, same canSave,
+     same save(). Shown once a customer is picked, as the inline button was. */
+  const saveLabel = `${relink ? "Relink: " : ""}${mode === null
+    ? "Choose what this money is for"
+    : mode === "item"
+    ? picked ? `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile` : "Pick what it pays"
+    : mode === "split"
+      ? `Record on ${splitCount} item${splitCount === 1 ? "" : "s"} & reconcile ${rupee(credit)}`
+    : mode === "sale"
+      ? `Record sale & reconcile ${rupee(credit)}`
+      : `Keep ${rupee(credit)} as advance & reconcile`}`;
+  useFooterSaveReport(onFooterSave, credit > 0 && !result && customerId
+    ? {
+        label: saveLabel, onSave: () => { void save(); }, disabled: !canSave, loading: busy,
+        disabledReason: payerUnanswered && mode !== null ? "Say who paid before saving." : null,
+      }
+    : null);
 
   if (credit <= 0) return null;
 
@@ -484,6 +515,19 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
             )
           ) : saleEditorNode}
 
+          {/* R-2213: a below-cost quote waiting for the owner takes no money — the DB refuses it, so
+              Save is locked here with the same reason and the way forward. */}
+          {approvalBlocked && (
+            <div role="alert" className="rounded-md border border-amber/60 bg-amber-soft p-2.5 space-y-1.5">
+              <p className="text-xs text-amber-ink break-words">
+                <b>{NEEDS_APPROVAL_LABEL}.</b> {approvalBlocked.reason}
+              </p>
+              <Button size="sm" variant="default" asChild>
+                <Link href={`/quotes/${approvalBlocked.quoteId}` as never}>Open approval</Link>
+              </Button>
+            </div>
+          )}
+
           {/* Subscription choice — a new subscription sale only */}
           {makesSub && (saleShown || (mode === "item" && picked)) && (
             <div className="rounded-md border border-hairline bg-paper p-2.5 space-y-2">
@@ -531,23 +575,15 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
           <div className="flex flex-wrap gap-2">
             {/* Wraps on a phone: the quote number makes the label longer than 375px allows. */}
-            <Button size="sm" variant="primary" icon="check" disabled={!canSave} loading={busy} onClick={save}
-              className="whitespace-normal h-auto min-h-8 py-1.5 text-left max-w-full">
-
-              {relink ? "Relink: " : ""}
-              {mode === null
-                ? "Choose what this money is for"
-                : mode === "item"
-                ? picked ? `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile` : "Pick what it pays"
-                : mode === "split"
-                  ? `Record on ${splitCount} item${splitCount === 1 ? "" : "s"} & reconcile ${rupee(credit)}`
-                : mode === "sale"
-                  ? `Record sale & reconcile ${rupee(credit)}`
-                  : `Keep ${rupee(credit)} as advance & reconcile`}
-            </Button>
+            {!onFooterSave && (
+              <Button size="sm" variant="primary" icon="check" disabled={!canSave} loading={busy} onClick={save}
+                className="whitespace-normal h-auto min-h-8 py-1.5 text-left max-w-full">
+                {saveLabel}
+              </Button>
+            )}
             {onProjectPayment && <Button size="sm" variant="default" icon="briefcase" onClick={() => onProjectPayment(customerId)}>Project payment</Button>}
           </div>
-          {payerUnanswered && mode !== null && <p className="text-xs text-amber-ink">Say who paid (above) before saving.</p>}
+          {payerUnanswered && mode !== null && !onFooterSave && <p className="text-xs text-amber-ink">Say who paid (above) before saving.</p>}
         </>
       )}
     </section>
@@ -572,6 +608,7 @@ function OpenItemRow({ item, credit, selected, onPick }: { item: OpenItem; credi
               {kindLabel(item.kind)}
             </Badge>
             {exact && <Badge kind="success" size="sm">Exact amount</Badge>}
+            {item.approval_block && <Badge kind="warning" size="sm">{NEEDS_APPROVAL_LABEL}</Badge>}
           </span>
           <span className="block text-sm text-ink break-words mt-0.5">{itemDetail(item)}</span>
           <span className="block text-xs text-ink-3">Due {rupee(item.amount_due)} · {formatDate(item.doc_date)}</span>
@@ -664,7 +701,7 @@ function SaleEditor({ customerDomain, lines, catalog, gstRate, preview, payment,
         const unit = shownPriceUnit(l);
         const termWord = l.cycle === "annual_yearly" ? " a year" : l.cycle === "monthly" ? " a month" : "";
         return (
-          <div key={idx} className="rounded-md border border-hairline bg-paper p-2.5 space-y-2">
+          <div key={l.key ?? idx} className="rounded-md border border-hairline bg-paper p-2.5 space-y-2">
             <div className="flex items-start justify-between gap-2">
               <p className="text-sm font-medium text-ink break-words min-w-0">{l.name}</p>
               <button type="button" onClick={() => onRemove(idx)} aria-label={`Remove ${l.name}`} className="text-ink-3 hover:text-rose shrink-0">
@@ -691,19 +728,25 @@ function SaleEditor({ customerDomain, lines, catalog, gstRate, preview, payment,
               <label className="text-xs text-ink-3 space-y-0.5">
                 <span className="block">Unit price {unit}</span>
                 <Input type="number" min={0} step="any" value={String(shownUnitPrice(l))}
-                  onChange={(e) => onChange(idx, { rate: rateFromShownPrice(l, Number(e.target.value)), priceTyped: true })}
+                  onChange={(e) => onChange(idx, { rate: rateFromShownPrice(l, Number(e.target.value)), priceTyped: true, typedFor: l.cycle, convertedFrom: undefined })}
                   aria-label={`Unit price ${unit}`} />
               </label>
             </div>
-            {/* R-2095 (Sept): Zoho bills per end-domain — a subscription line names its own; empty = the customer's. */}
-            {l.cycle !== "one_time" && (
-              <label className="block text-xs text-ink-3 space-y-0.5">
+            <TypedPriceNote line={l} onChange={(patch) => onChange(idx, patch)} />
+            {/* R-2095 (Sept): Zoho bills per end-domain — a subscription line names its own; empty = the customer's.
+                R-2216 (July): EVERY line has the box (optional on a one-time line), so the boxes follow Zoho's
+                line order one-to-one and a domain is never typed onto the next subscription line. */}
+            <div className="text-xs text-ink-3 space-y-0.5">
+              <label className="block space-y-0.5">
                 <span className="block">End domain</span>
                 <Input value={l.domain ?? ""} onChange={(e) => onChange(idx, { domain: e.target.value })}
-                  placeholder={customerDomain ? `${customerDomain} (customer's domain)` : "example.com"} aria-label="End domain" />
-                {saleLineDomainProblem(l.domain) && <span className="block text-rose-ink">{saleLineDomainProblem(l.domain)}</span>}
+                  placeholder={l.cycle === "one_time" ? "Optional — example.com" : customerDomain ? `${customerDomain} (customer's domain)` : "example.com"} aria-label="End domain" />
               </label>
-            )}
+              {saleLineDomainProblem(l.domain) && <p className="text-rose-ink">{saleLineDomainProblem(l.domain)}</p>}
+              {l.cycle === "one_time" && (l.domain ?? "").trim() !== "" && (
+                <p>One-time: no subscription is filed, so this domain is not saved.</p>
+              )}
+            </div>
             <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(shownUnitPrice(l), { decimals: Number.isInteger(shownUnitPrice(l)) ? 0 : 2 })}{unit.replace(/^₹/, "")} = {rupee(l.qty * l.rate)}{termWord}</p>
           </div>
         );
@@ -791,8 +834,38 @@ function PayerWarning({ payerName, customerName, answer, onAnswer, onWrongCustom
   );
 }
 
-/** A new sale that cannot be saved: no line, a line without product / seats / price, ₹0, or mixed terms. */
+/** A new sale that cannot be saved: no line, a line without product / seats / price, ₹0, mixed terms,
+ *  or (R-2178) a typed price whose unit changed with the Commitment and is not yet converted or kept. */
 function saleInvalidOf(lines: readonly SaleLine[], taxable: number): boolean {
-  return lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0) || saleLineDomainProblem(l.domain) !== null)
+  return lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0) || saleLineDomainProblem(l.domain) !== null
+    || typedPriceCheck(l)?.blocksSave === true)
     || taxable <= 0 || saleTermsMixed(lines);
+}
+
+/* R-2178: a typed price is never changed by a Commitment switch. When its unit changed (₹/year ↔
+   ₹/month, or to/from once) the line says so and the operator picks: convert (÷12 / ×12, undoable)
+   or keep the number. Save waits for the answer. */
+function TypedPriceNote({ line, onChange }: { line: SaleLine; onChange: (patch: Partial<SaleLine>) => void }) {
+  const check = typedPriceCheck(line);
+  if (!check) return null;
+  const btn = "rounded-md border border-hairline bg-paper px-2 py-1 text-xs font-medium text-ink-2 hover:border-amber focus:outline-none focus:ring-2 focus:ring-amber/40";
+  if (check.kind === "converted") {
+    return (
+      <p className="flex flex-wrap items-center gap-2 text-xs text-ink-3">
+        <span>{check.text}</span>
+        <button type="button" className={btn} onClick={() => onChange(undoTypedConversion(line))}>{check.undoLabel}</button>
+      </p>
+    );
+  }
+  return (
+    <div role="group" aria-label="Typed price check" className="rounded-md border border-amber bg-amber-soft/40 px-2.5 py-2 space-y-1.5">
+      <p className="text-xs text-amber-ink">{check.text}</p>
+      <div className="flex flex-wrap gap-2">
+        {check.convertLabel && (
+          <button type="button" className={btn} onClick={() => onChange(convertTypedPrice(line))}>{check.convertLabel}</button>
+        )}
+        <button type="button" className={btn} onClick={() => onChange(keepTypedPrice(line))}>{check.keepLabel}</button>
+      </div>
+    </div>
+  );
 }

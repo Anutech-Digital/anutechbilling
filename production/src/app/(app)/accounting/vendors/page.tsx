@@ -45,6 +45,7 @@ import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import { checkBankDetails, bankToast, type BankField } from "@/lib/banking/bank-details";
 import { panFromGstin, isPan, deducteeTypeFromPan, DEDUCTEE_LABEL } from "@/lib/accounting/tds-deductor";
 import { UDYAM_RE } from "@/lib/accounting/msme";
+import { TDS_PICK_SECTIONS, normalizeTdsSection, tdsSectionOption } from "@/lib/accounting/tds-rates";
 import { toast } from "sonner";
 import type { Route } from "next";
 import { recordBillHref } from "../bills/add-from-url";
@@ -351,6 +352,10 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
   const [state, setState] = React.useState(vendor?.state ?? "");
   const [pincode, setPincode] = React.useState(vendor?.pincode ?? "");
   const [pan, setPan] = React.useState(vendor?.pan ?? "");
+  /* R-2338: the section the CA uses for this vendor — none by default; Reconcile and Expenses
+     pre-pick it (still changeable). Old plain "194J" shows as 194J(b) professional. */
+  const savedTds = (vendor as { default_tds_section?: string | null } | null)?.default_tds_section ?? null;
+  const [tdsSection, setTdsSection] = React.useState(normalizeTdsSection(savedTds));
   const [category, setCategory] = React.useState(vendor?.default_category ?? "");
   /* MSME (S33): Udyam + category se s.43B(h) ka 45-din flag chalta hai (Customer Aging page). */
   const [udyam, setUdyam] = React.useState(vendor?.udyam ?? "");
@@ -432,6 +437,8 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
         udyam: udyam.trim().toUpperCase() || null,
         /* Category Udyam ke bina nahi (DB bhi yahi kehta hai). */
         msmeCategory: udyam.trim() && msmeCategory ? msmeCategory : null,
+        /* R-2338: unchanged old "194J" is left as stored (no data rewrite). */
+        defaultTdsSection: tdsSection === normalizeTdsSection(savedTds) ? undefined : tdsSection || null,
         notes: finalNotes || null,
         bank: { accountName: bankName || null, accountNo: bankNo || null, ifsc: bankIfsc || null, upiId: upiId || null },
       });
@@ -457,9 +464,21 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
           </div>
           {/* PAN decides the TDS rate (194C 1% for an individual, 2% for a company) and, when
               missing, forces 20% u/s 206AA — so it is asked for here, not guessed at 26Q time. */}
-          <FormField htmlFor="vendors-pan-for-tds-26q" label="PAN (for TDS / 26Q)" hint={pan && !isPan(pan) ? "10 characters, e.g. ABCDE1234F" : deducteeTypeFromPan(pan) ? `${DEDUCTEE_LABEL[deducteeTypeFromPan(pan)!]} — this sets the TDS rate` : "Without a PAN, TDS must be deducted at 20% (s.206AA)"}>
-            <Input id="vendors-pan-for-tds-26q" value={pan} onChange={(e) => setPan(e.target.value.toUpperCase())} placeholder="ABCDE1234F" maxLength={10} className="font-mono uppercase" />
-          </FormField>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <FormField htmlFor="vendors-pan-for-tds-26q" label="PAN (for TDS / 26Q)" hint={pan && !isPan(pan) ? "10 characters, e.g. ABCDE1234F" : deducteeTypeFromPan(pan) ? `${DEDUCTEE_LABEL[deducteeTypeFromPan(pan)!]} — this sets the TDS rate` : "Without a PAN, TDS must be deducted at 20% (s.206AA)"}>
+              <Input id="vendors-pan-for-tds-26q" value={pan} onChange={(e) => setPan(e.target.value.toUpperCase())} placeholder="ABCDE1234F" maxLength={10} className="font-mono uppercase" />
+            </FormField>
+            {/* R-2338: the vendor's TDS section — set here by the owner, never by the app. */}
+            <FormField htmlFor="vendors-default-tds-section" label="Default TDS section" hint="Pre-picked when you pay this vendor (Reconcile, Expenses) — you can still change it">
+              <Select value={tdsSection || "none"} onValueChange={(v) => setTdsSection(v === "none" ? "" : v)}>
+                <SelectTrigger id="vendors-default-tds-section"><SelectValue placeholder="No TDS" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No TDS</SelectItem>
+                  {TDS_PICK_SECTIONS.map((s) => <SelectItem key={s} value={s}>{tdsSectionOption(s)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </FormField>
+          </div>
           {/* MSME: micro/small vendor ka bill 45 din (likhit agreement na ho to 15) me na chuke
               to s.43B(h) us saal deduction rok deta hai. Udyam bharne se Aging page flag karta hai. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -15,7 +15,8 @@
 --      only an owner / manager / accountant can say so (sales → 42501).
 --   C. Paid net of 194Q: bill Paid at cash + TDS, the TDS on the payment line (section, base,
 --      date) and in Balance Sheet "TDS payable" (dues_vendor_tds).
---   D. Wrong TDS amount, a services section on a goods bill, TDS below ₹50 lakh → refused.
+--   D. Wrong TDS amount, a services-section TDS as big as the payment (R-2320: services TDS on a
+--      goods bill is allowed now), TDS below ₹50 lakh → refused.
 --   E. Part payment takes the bill's whole TDS once; the next payment takes none.
 --   F. Seller without PAN → 5%.
 --   G. Un-reconcile puts the bill back (paid amount less cash AND TDS) and the TDS leaves TDS payable.
@@ -169,8 +170,9 @@ begin
   end;
   begin
     perform public.reconcile_bank_debit_to_vendor('11111111-0000-0000-0000-000000189102', 'eeeeeeee-0000-0000-0000-000000189101', null,
-      '[{"source":"vendor_bill","doc_id":"BILL-R1891-B3","amount":300000,"tds_amount":500,"tds_section":"194C"}]'::jsonb);
-    raise exception 'FAIL D: 194C on a goods bill accepted';
+      '[{"source":"vendor_bill","doc_id":"BILL-R1891-B3","amount":300000,"tds_amount":300000,"tds_section":"194C"}]'::jsonb);
+    -- R-2320: 194C on a goods bill is allowed now (r2320_cogs_bill_tds); TDS = the whole amount settled is not.
+    raise exception 'FAIL D: 194C TDS equal to the amount settled accepted';
   exception when sqlstate '22023' then null;
   end;
   begin

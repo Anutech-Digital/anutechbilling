@@ -17,15 +17,16 @@
  *     Flexible, prices.annual.wholesale for a commitment — the annual rate is the same whether it is
  *     billed monthly or yearly, database.types ItemPrices);
  *   • seats, selling rate (mrr), domain and start stay as they are;
- *   • renewal_date := the inclusive end (termEndInclusive) of the new-length term that covers the
- *     current period, counted from the start date;
+ *   • renewal_date := R-2178 (one rule, coordinator 31 Oct): the NEXT term's start = the anniversary
+ *     (start + k × new term) of the new-length term that covers the current period — the same date
+ *     the sale form and record_payment write. "Term ends" (renewal − 1 day) is display only;
  *   • the database (correct_subscription_commitment) writes the same, logs old → new on the
  *     contract amendment ledger with the reason, and refuses an annual commitment reduced
  *     mid-term — the customer committed for the year and the vendor holds us to it.
  */
 import type { BillingCycle, Item } from "@/lib/supabase/database.types";
-import { termEndInclusive } from "@/lib/billing/schedule";
-import { currentTermStart } from "@/lib/billing/subscription-schedule";
+import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
+import { currentTermStart, followingTermStart } from "@/lib/billing/subscription-schedule";
 
 export type Commitment = "flex" | "annual" | "three_year";
 
@@ -90,14 +91,14 @@ export interface RenewalInput {
 }
 
 /**
- * The renewal date (inclusive last day) after the commitment changes.
+ * The renewal date after the commitment changes — R-2178: the NEXT term's start (anniversary).
  *
  *   • same length → unchanged (a frequency change does not move the commitment's end);
- *   • longer (Flexible → Annual) → the first start + k×term − 1 day that reaches the current
- *     period's first day: the annual term the customer is in now, from the original start;
+ *   • longer (Flexible → Annual) → the first start + k×term AFTER the current period's first day:
+ *     the anniversary of the annual term the customer is in now, from the original start;
  *   • shorter (only allowed once the longer term has ended or before it began) → after an ended
- *     term the stored end stays (the next term starts the day after it, at the new length);
- *     before the start → start + new term − 1 day.
+ *     term: the next term's start (followingTermStart reads both stored shapes), at the new length
+ *     on the start's grid; before the start → start + new term.
  */
 export function commitmentRenewal(i: RenewalInput): string | null {
   const now = Math.max(1, i.termMonthsNow ?? 12);
@@ -106,16 +107,19 @@ export function commitmentRenewal(i: RenewalInput): string | null {
   const start = i.startDate.slice(0, 10);
 
   let ref: string;
+  let onOrAfter = false;
   if (next > now) {
     ref = currentTermStart({ term_months: now, start_date: start, renewal_date: i.renewalDate }) ?? start;
   } else {
-    const ended = !!i.renewalDate && i.renewalDate.slice(0, 10) < i.today;
-    ref = ended ? i.renewalDate!.slice(0, 10) : start;
+    const nextStart = i.renewalDate ? followingTermStart({ term_months: now, start_date: start, renewal_date: i.renewalDate }) : null;
+    const ended = !!nextStart && nextStart <= i.today;
+    ref = ended ? nextStart! : start;
+    onOrAfter = ended;
   }
   if (ref < start) ref = start;
   for (let k = 1; k <= 200; k++) {
-    const end = termEndInclusive(start, k * next);
-    if (end >= ref) return end;
+    const anniversary = addMonthsClamped(start, k * next);
+    if (onOrAfter ? anniversary >= ref : anniversary > ref) return anniversary;
   }
   return i.renewalDate;
 }
@@ -159,7 +163,10 @@ export function commitmentVerdict(f: CommitmentFacts): CommitmentVerdict {
     block = "Flexible is billed monthly only. Pick Annual commitment to bill quarterly, half-yearly or yearly.";
   } else if (reduced) {
     const termStart = currentTermStart({ term_months: now, start_date: f.startDate, renewal_date: f.renewalDate });
-    const end = f.renewalDate?.slice(0, 10) ?? null;
+    /* R-2178: the stored renewal is the next term's start (an older row may hold the last day —
+       followingTermStart reads both); the term's last covered day is the day before it. */
+    const nextStart = f.renewalDate ? followingTermStart({ term_months: now, start_date: f.startDate, renewal_date: f.renewalDate }) : null;
+    const end = nextStart ? addDaysISO(nextStart, -1) : null;
     const running = termStart != null && end != null && termStart <= f.today && f.today <= end;
     if (running) {
       block = `An ${now >= 36 ? "3-year" : "annual"} commitment cannot be reduced mid-term — the customer committed until ${fmt(end!)}. `

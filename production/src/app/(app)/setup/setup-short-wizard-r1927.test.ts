@@ -103,29 +103,30 @@ describe("R-1927 the price list loads by itself", () => {
 });
 
 describe("R-1927 Done: first quote is the next step, integrations are 'Later'", () => {
-  it("primary button is 'Create your first quote' → /quotes/new", () => {
-    const primary = done.match(/<Button variant="primary" asChild>\s*<Link href="([^"]+)">[\s\S]*?<\/Link>/);
-    expect(primary?.[1]).toBe("/quotes/new");
-    expect(primary?.[0]).toMatch(/Create your first quote/);
+  /* R-1931 (OB-10): the first quote is reached through the ONE first-quote list — its next open
+     item is the primary button (State, Price list, First quote, …), the same list as the
+     Dashboard. The old separate "Create your first quote" primary button is gone. */
+  it("the next step comes from the shared first-quote list, not a second button", () => {
+    expect(done).toMatch(/<FirstQuoteRows\b/);
+    expect(done).not.toMatch(/<Button variant="primary"/);
     expect(done).not.toMatch(/Send first quote/); // one way, one label
   });
 
   const base: DoneInputs = {
-    gstin: null, gstinVerifiedAt: null, stateCode: "07", address: null, upiVpa: null, remitAccountNumber: null,
-    customerCount: 0, catalogCount: 7,
     razorpay: { configured: false }, whatsapp: { configured: false }, googleReseller: { connected: false },
   };
-  it("Razorpay, Google and WhatsApp rows are marked later; the rest are not", () => {
+  it("Razorpay, Google and WhatsApp rows are marked later", () => {
     const later = buildDoneChecklist(base).filter((i) => i.later).map((i) => i.id);
     expect(later).toEqual(["razorpay", "google", "whatsapp"]);
   });
   it("the Done screen shows the later rows under their own 'Later' heading", () => {
     expect(done).toMatch(/>\s*Later\s*</);
     expect(done).toMatch(/\.filter\(\(it\) => it\.later\)/);
-    expect(done).toMatch(/\.filter\(\(it\) => !it\.later\)/);
   });
-  it("next steps do not repeat the first-quote button or the integrations", () => {
-    expect(NEXT_STEPS.map((s) => s.href)).not.toContain("/quotes/new");
-    expect(NEXT_STEPS.map((s) => s.href)).not.toContain("/settings?tab=integrations");
+  it("next steps do not repeat the first-quote list or the integrations", () => {
+    const hrefs = NEXT_STEPS.map((s) => s.href);
+    expect(hrefs).not.toContain("/quotes/new");
+    expect(hrefs).not.toContain("/settings?tab=integrations");
+    expect(hrefs).not.toContain("/team"); // R-1931: Invite your team is a list item now
   });
 });

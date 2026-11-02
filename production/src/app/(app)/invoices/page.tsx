@@ -23,6 +23,7 @@ import { useProjectPaymentsByInvoice, useProjectInvoiceIds, useMilestoneByInvoic
 import { RecordProjectPaymentDialog } from "@/components/features/projects/record-project-payment-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { IssueCreditNoteDialog } from "@/components/features/invoices/issue-credit-note-dialog";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { useInvoiceNoteTotals } from "@/lib/queries/invoice-note-totals";
 import { netAfterNotes, type NoteTotals } from "@/lib/invoices/note-totals";
 /* R-060. `status = 'overdue'` has no writer anywhere in the product, so the Overdue tab
@@ -38,6 +39,7 @@ import {
 import { invoiceMarginMtd } from "@/lib/invoices/margin-mtd";
 import { FillCostsDialog } from "@/components/features/invoices/fill-costs-dialog";
 import { FocusBanner } from "@/components/shared/focus-banner";
+import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -477,7 +479,7 @@ function InvoicesPageInner() {
                 {pendingSelected.size > 0 && (
                   <Button
                     size="sm"
-                    variant="primary"
+                    variant="outline"
                     icon="receipt"
                     loading={generating}
                     onClick={(e) => {
@@ -667,9 +669,29 @@ function InvoicesPageInner() {
         );
       })()}
 
-      {/* Interactive KPI Stat Grid */}
+      {/* R-2266: the KPI tiles sit in ONE strip, closed by default (remembered per user); the
+          closed line carries Outstanding / Overdue / Paid this month, and "Fill missing costs"
+          stays one click away on the line. */}
       {!isLoading && invoices && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 mb-5">
+        <CollapsibleKpiStrip
+          stripId="invoices"
+          userId={me?.userId}
+          title="Insights"
+          className="mb-4"
+          summary={
+            <>
+              <StripFact label="Outstanding" value={rupee(outstanding, { compact: true })} tone="rose" />
+              <StripFact label="Overdue" value={rupee(overdueTotal, { compact: true })} />
+              <StripFact label="Paid this month" value={rupee(collectedMTD, { compact: true })} tone="emerald" />
+            </>
+          }
+          extras={isOwner && marginMtd.missingLines > 0 ? (
+            <StripLink onClick={() => setFillCostsOpen(true)} title="Some invoice lines this month have no cost, so Margin MTD is partial">
+              Fill missing costs ({marginMtd.missingLines})
+            </StripLink>
+          ) : undefined}
+        >
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
           <button
             type="button"
             onClick={() => focusOn("unpaid")}
@@ -719,12 +741,11 @@ function InvoicesPageInner() {
               <button
                 type="button"
                 onClick={() => setFillCostsOpen(true)}
-                className="text-3xs font-semibold text-accent hover:underline mt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
+                className="text-3xs font-semibold text-amber-ink hover:underline mt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-sm"
               >
                 Fill missing costs
               </button>
             )}
-            {isOwner && <FillCostsDialog open={fillCostsOpen} onOpenChange={setFillCostsOpen} />}
           </div>
           {/* Averaged over every paid invoice — the Paid tab is that set. */}
           <button
@@ -736,7 +757,10 @@ function InvoicesPageInner() {
             <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{avgCollection}d</p>
           </button>
         </div>
+        </CollapsibleKpiStrip>
       )}
+      {/* Outside the strip so the line's "Fill missing costs" opens it while the strip is closed. */}
+      {isOwner && <FillCostsDialog open={fillCostsOpen} onOpenChange={setFillCostsOpen} />}
 
       {/* Tabs, Date Range Filter & Search */}
       {!isLoading && invoices && invoices.length > 0 && (
@@ -1172,12 +1196,12 @@ function InvoiceRow({
           const payDue = moneyDue && canRecordMoney(me?.role);
           return (
         <div className="flex gap-1 items-center justify-end">
-          {/* One contextual primary action keeps the column tight (no h-scroll).
-              Money-due invoices lead with Record payment; everything else with View. */}
+          {/* One contextual action keeps the column tight (no h-scroll).
+              Money-due invoices lead with Record payment; everything else with View.
+              R-2265: not primary — the page's one amber button is "New invoice". */}
           {payDue ? (
             <Button
               size="sm"
-              variant="primary"
               icon="rupee"
               onClick={() => (isProject ? setPayOpen(true) : setSubPayOpen(true))}
             >
@@ -1298,7 +1322,7 @@ function InvoiceRow({
           onOpenChange={setCnOpen}
           invoiceId={inv.id}
           customerName={inv.customer_name}
-          netPayable={inv.net_payable ?? inv.amount}
+          amountDue={invoiceAmountDue(inv)}
           taxRate={inv.tax_rate}
           interState={inv.inter_state}
           isExport={(inv.tax_rate ?? 18) === 0}
@@ -1310,7 +1334,7 @@ function InvoiceRow({
           mode="debit"
           invoiceId={inv.id}
           customerName={inv.customer_name}
-          netPayable={inv.net_payable ?? inv.amount}
+          amountDue={invoiceAmountDue(inv)}
           taxRate={inv.tax_rate}
           interState={inv.inter_state}
           isExport={(inv.tax_rate ?? 18) === 0}
@@ -1495,7 +1519,7 @@ function PendingRowAction({ act, busy, onWhole, onPart }: {
   if (act?.kind === "part") {
     return (
       <div className="inline-flex flex-col items-end gap-0.5">
-        <Button size="sm" variant="primary" icon="receipt" loading={busy} onClick={onPart}>
+        <Button size="sm" icon="receipt" loading={busy} onClick={onPart}>
           {`Generate invoice for ${act.part}${act.amount != null ? ` ${rupee(act.amount)}` : ""}`}
         </Button>
         {act.period && <span className="text-3xs text-ink-3 whitespace-nowrap">{act.period}</span>}
@@ -1503,7 +1527,7 @@ function PendingRowAction({ act, busy, onWhole, onPart }: {
     );
   }
   return (
-    <Button size="sm" variant="primary" icon="receipt" loading={busy} onClick={onWhole}>
+    <Button size="sm" icon="receipt" loading={busy} onClick={onWhole}>
       Generate
     </Button>
   );

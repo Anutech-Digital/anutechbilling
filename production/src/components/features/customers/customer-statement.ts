@@ -152,7 +152,13 @@ export interface StatementInput {
   /** R-2029: is this quote an R-1863 customer-advance holder (isCustomerAdvanceQuote)? Its
    *  payment reads "Advance (RV-…)" — the same credit, the same balance, only the label. */
   isAdvanceQuote?: (quoteId: string) => boolean;
+  /** R-2183: subscription dues no invoice asks for yet (subscriptionReceivable, R-1708) — the
+   *  instalment is owed before its tax invoice is raised. Omitted = none. */
+  uninvoicedDues?: ReadonlyArray<StatementUninvoicedDue>;
 }
+
+/** R-2183: one subscription's balance whose quote has no invoice yet (lib/payments/receivables.ts). */
+export interface StatementUninvoicedDue { quoteId: string; date: string; due: number }
 
 /**
  * R-1680: a running balance below zero is money the customer has with us — "₹5,000 credit",
@@ -162,7 +168,16 @@ export function statementBalanceText(balance: number): string {
   return balance < 0 ? `${rupee(-balance)} credit` : rupee(balance);
 }
 
-export function buildCustomerStatement(input: StatementInput): { rows: StatementRow[]; closing: number } {
+/**
+ * R-2183 (Zoho audit 31 Oct, ABDCA): the Overview said "Outstanding ₹1,632" (the subscription's
+ * balance) and this statement said "Closing ₹1,554 credit" (only the RV received against that
+ * not-yet-invoiced instalment). The instalment is owed before its tax invoice exists, so it is a
+ * debit line here — the due PLUS what was already received on that quote without an invoice
+ * (the subscription balance is already net of it) — and the closing is the ONE customer balance
+ * the Overview shows too (deriveCustomerInsights). advanceNotes: "Advance ₹1,554 against
+ * Q-…, ₹1,632 still due" — shown under both figures.
+ */
+export function buildCustomerStatement(input: StatementInput): { rows: StatementRow[]; closing: number; advanceNotes: string[] } {
   type Raw = Omit<StatementRow, "balance"> & { order: number };
   const raw: Raw[] = [];
   /* R-1632: a void invoice was never a supply (only drafts are voided — an issued one is
@@ -227,6 +242,18 @@ export function buildCustomerStatement(input: StatementInput): { rows: Statement
       link: c.invoice_id ? { kind: "invoice", invoiceId: c.invoice_id } : { kind: "invoice", invoiceId: c.id }, order: 3,
     });
   }
+  const advanceNotes: string[] = [];
+  for (const d of input.uninvoicedDues ?? []) {
+    if (!(d.due > 0)) continue;
+    const advance = input.payments
+      .filter((p) => p.quote_id === d.quoteId && !p.invoice_id && p.status === "received")
+      .reduce((sum, p) => sum + cashReceived({ amount: p.amount ?? 0, credit_applied: p.credit_applied }), 0);
+    raw.push({
+      date: d.date, desc: `Instalment due · ${d.quoteId} (not invoiced yet)`,
+      debit: d.due + advance, credit: 0, link: { kind: "payment", quoteId: d.quoteId }, order: -1,
+    });
+    if (advance > 0) advanceNotes.push(`Advance ${rupee(advance)} against ${d.quoteId}, ${rupee(d.due)} still due`);
+  }
   for (const g of groupProjectReceipts(input.projectPayments)) {
     raw.push({ ...g, debit: 0, order: 2 });
   }
@@ -236,7 +263,7 @@ export function buildCustomerStatement(input: StatementInput): { rows: Statement
     || (a.date ?? "").localeCompare(b.date ?? ""));
   let bal = 0;
   const rows = raw.map(({ order: _order, ...r }) => { bal += r.debit - r.credit; return { ...r, balance: bal }; });
-  return { rows, closing: bal };
+  return { rows, closing: bal, advanceNotes };
 }
 
 /**

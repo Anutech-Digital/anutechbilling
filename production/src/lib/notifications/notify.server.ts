@@ -17,7 +17,9 @@ import type { UserRole } from "@/lib/auth/roles";
 export interface NotifyInput {
   tenantId: string;
   kind: "payment.received" | "payment.refunded" | "quote.accepted" | "quote.expired" | "lead.created" | "ticket.created"
-    | "marketing.budget";
+    | "marketing.budget"
+    // R-2303: team chat. chat_post_message (R-2295) writes chat.mention itself; chat.dm is for a DM bell.
+    | "chat.mention" | "chat.dm";
   title: string;
   body?: string;
   href?: string;

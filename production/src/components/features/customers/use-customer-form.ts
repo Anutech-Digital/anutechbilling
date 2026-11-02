@@ -25,6 +25,7 @@ import { useCreateCustomer, useUpdateCustomer } from "@/lib/queries/customers";
 import { validateGstin, gstStateFromGstin } from "@/lib/utils";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { getStatesForCountry } from "@/lib/gst/states-by-country";
+import { normalizeCountry } from "@/lib/gst/countries";
 import { stateRequiredMessage } from "@/lib/gst/gstin-state";
 import {
   CUSTOMER_GST_TREATMENTS, suggestGstTreatment, nextGstTreatment, gstTreatmentProblem,
@@ -178,7 +179,7 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     if (customer) {
       // Normalize an existing free-text/legacy state to the canonical dropdown
       // option (case-insensitive) so e.g. "california" shows as "California".
-      const stateList = getStatesForCountry(customer.country);
+      const stateList = getStatesForCountry(normalizeCountry(customer.country));
       const normalizedState =
         stateList?.find((s) => s.toLowerCase() === (customer.state ?? "").toLowerCase())
         ?? customer.state ?? "";
@@ -205,7 +206,9 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
         gstin:         customer.gstin ?? "",
         state:         normalizedState,
         state_code:    customer.state_code ?? "",
-        country:       customer.country ?? "India",
+        /* R-2180: an old short form ("USA") opens as its list name ("United States") — the
+           picker shows it and the treatment rules read the same value. */
+        country:       normalizeCountry(customer.country) || "India",
         address:       customer.address ?? "",
         city:          customer.city ?? "",
         pin_code:      customer.pin_code ?? "",
@@ -404,10 +407,14 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
   // For an export country we know the states/emirates of, offer a dropdown
   // instead of free text (stops "california" being saved for a Kuwait customer).
   const foreignStates = isForeign ? getStatesForCountry(watch("country")) : null;
-  // Compose register's onChange so switching country clears a now-wrong state.
-  const countryReg = register("country");
-  const onCountryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    countryReg.onChange(e);
+  // R-2180: the Country picker is a searchable combobox (CountryCombobox), not a
+  // <select> — it writes the value with setValue. Picking a new country clears a
+  // now-wrong state.
+  register("country");
+  const country = watch("country") ?? "";
+  const onCountryPick = (next: string) => {
+    if (next === country) return;
+    setValue("country", next, { shouldDirty: true, shouldValidate: true });
     // Clear the state — it belongs to the OLD country. (India re-derives it from
     // the GSTIN; a foreign country re-picks from the dropdown.)
     setValue("state", "", { shouldDirty: true });
@@ -431,8 +438,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     watchedGstin,
     isForeign,
     foreignStates,
-    countryReg,
-    onCountryChange,
+    country,
+    onCountryPick,
     /* R-1736 */
     gstTreatment: watchedTreatment ?? suggestedTreatment,
     gstTreatmentAuto: (watchedTreatment ?? suggestedTreatment) === suggestedTreatment,

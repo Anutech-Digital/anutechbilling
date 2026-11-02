@@ -37,10 +37,10 @@ const buttonVariants = cva(
           "bg-paper text-ink border border-hairline hover:bg-paper-2 active:bg-paper-2/80",
         // Primary — brand amber
         primary:
-          "bg-amber text-white hover:bg-amber/90 active:bg-amber/80 shadow-sm",
+          "bg-amber text-on-primary hover:bg-amber/90 active:bg-amber/80 shadow-sm",
         // Destructive — for delete, cancel-subscription, etc.
         danger:
-          "bg-rose text-white hover:bg-rose/90 active:bg-rose/80 shadow-sm",
+          "bg-rose text-on-primary hover:bg-rose/90 active:bg-rose/80 shadow-sm",
         // Ghost — minimal, for icon-heavy toolbars
         ghost:
           "bg-transparent text-ink hover:bg-paper-2 active:bg-paper-2/80",

@@ -18,8 +18,19 @@
  * At risk = every expired row (unpaid past its renewal date) + any row up to 90 days out the
  * risk score marks high — minus renewals already paid. The header's "at risk" and the High
  * risk card/tab are this one set, so they cannot disagree again.
+ *
+ * R-2225: a subscription marked Won't renew (auto_renew off) is not a renewal to chase. It is in
+ * none of the urgency groups (nor the sidebar badge — nav_badges() reads the same rule); while it
+ * still runs it is listed as `nonRenewing` and counted At risk (that revenue is leaving).
+ *
+ * R-2232 (Zoho audit A8): Renewals = end of commitment only. A FLEX subscription (1-month term,
+ * billed in parts) has no commitment to end: its next month is a billing-schedule part — the
+ * renewals cron rolls the term and the billing job raises the payment request (R-808, R-2044).
+ * It is in none of the urgency groups, nor At risk, nor the sidebar badge (nav_badges() reads
+ * the same rule); it is counted apart as `flexParts`. Once its date has PASSED unbilled it is
+ * listed again as Expired — a part nobody billed, which Generate bills (R-2095).
  */
-import { renewalBucket } from "@/lib/renewals/buckets";
+import { renewalBucket, isFlexNextPart } from "@/lib/renewals/buckets";
 import { effectiveGraceDays, serviceStopDate } from "@/lib/renewals/cadence";
 import { formatIstDate } from "@/lib/dates/ist";
 import { isTerminalRenewal } from "./reminders";
@@ -28,7 +39,11 @@ export interface ClassifySub {
   renewal_state?: string | null;
   renewal_date: string | null;
   term_months?: number | null;
+  /** R-2232: a 1-month term billed in parts (flex) — its next month is a billing part. */
+  billing_cycle?: string | null;
   status?: string | null;
+  /** R-2225: false = Won't renew. */
+  auto_renew?: boolean | null;
   mrr: number;
   grace_until?: string | null;
 }
@@ -44,12 +59,24 @@ export interface RenewalGroups<T> {
   upcoming: T[];
   future:   T[];
   stopped:  T[];
+  /** R-2225: Won't renew, still running (renewal date today or later). */
+  nonRenewing: T[];
+  /** R-2232: flex subscriptions whose next month is a billing part, not a renewal. */
+  flexParts: T[];
   /** expired + due7 + stopped — the Urgent tab and the sidebar badge (R-1541). */
   urgentTab: T[];
   atRisk:   T[];
   /** Yearly value (MRR × 12) of `atRisk` — the header figure AND the High risk card. */
   atRiskArr: number;
 }
+
+/** R-2225: is this a renewal anybody should chase? Not when the customer said Won't renew. */
+export function chasedRenewal(sub: { auto_renew?: boolean | null }): boolean {
+  return sub.auto_renew !== false;
+}
+
+/** R-2232: the rule lives in lib/renewals/buckets.ts (the Renewals page rules), shared with Bulk reminder. */
+export { isFlexNextPart };
 
 export function isStopped(sub: ClassifySub): boolean {
   return sub.renewal_state === "suspended" || sub.status === "suspended";
@@ -61,9 +88,17 @@ export function classifyRenewals<T extends ClassifyRow>(
   today: Date = new Date(),
 ): RenewalGroups<T> {
   const g: RenewalGroups<T> = {
-    expired: [], due7: [], upcoming: [], future: [], stopped: [], urgentTab: [], atRisk: [], atRiskArr: 0,
+    expired: [], due7: [], upcoming: [], future: [], stopped: [], nonRenewing: [], flexParts: [], urgentTab: [], atRisk: [], atRiskArr: 0,
   };
   for (const r of rows) {
+    if (!chasedRenewal(r.sub)) {
+      if (r.daysUntil >= 0 && r.sub.status !== "expired") g.nonRenewing.push(r);
+      continue;
+    }
+    if (isFlexNextPart(r.sub, r.daysUntil)) {
+      g.flexParts.push(r);
+      continue;
+    }
     if (r.daysUntil < 0) {
       (isStopped(r.sub) ? g.stopped : g.expired).push(r);
     } else {
@@ -76,6 +111,7 @@ export function classifyRenewals<T extends ClassifyRow>(
   g.urgentTab = [...g.expired, ...g.due7, ...g.stopped];
   const paid = (r: T) => isTerminalRenewal(r.sub.renewal_state, r.sub.renewal_date, r.sub.term_months, today);
   g.atRisk = [
+    ...g.nonRenewing,
     ...g.expired.filter((r) => !paid(r)),
     ...[...g.due7, ...g.upcoming, ...g.future].filter((r) => !paid(r) && isHighRisk(r)),
   ];

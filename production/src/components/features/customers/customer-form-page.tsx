@@ -34,7 +34,7 @@ import {
   liveEmail, checkEmail, liveDomain, checkDomain, gstinState,
 } from "@/lib/forms/poka-yoke";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
-import { COUNTRIES } from "@/lib/gst/countries";
+import { CountryCombobox } from "./country-combobox";
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
 import { useCustomerForm } from "./use-customer-form";
 import { ScanCardPanel } from "./scan-card-panel";
@@ -104,7 +104,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
     register, setValue, watch, errors, isSubmitting, isPending, isEdit,
     contactPersonFields, appendContactPerson, removeContactPerson,
     verification, setVerification, watchedGstin,
-    isForeign, foreignStates, countryReg, onCountryChange, submit,
+    isForeign, foreignStates, country, onCountryPick, submit,
     gstTreatment, gstTreatmentAuto, gstTreatmentMeaning, onTreatmentChange, panLocked,
   } = useCustomerForm({
     customer,
@@ -292,9 +292,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
           <div className="grid grid-cols-1 md:grid-cols-[190px_minmax(0,1fr)] gap-1.5 md:gap-5 md:items-center">
             <Label htmlFor="country" required>Customer region</Label>
             <div className="max-w-xl">
-              <select id="country" className={selectClass} {...countryReg} onChange={onCountryChange}>
-                {COUNTRIES.map((ctry) => <option key={ctry} value={ctry}>{ctry}</option>)}
-              </select>
+              <CountryCombobox id="country" value={country} onChange={onCountryPick} />
             </div>
           </div>
           <div className="mt-3 md:pl-[210px]">

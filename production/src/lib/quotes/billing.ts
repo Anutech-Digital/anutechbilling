@@ -15,7 +15,6 @@
  */
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { BILLING_CYCLE_INVOICES_PER_YEAR } from "@/lib/supabase/database.types";
-import { isOneTimeQuote } from "./service-period";
 
 /* R-2048: "payments", not "invoices" — since R-2044 each part of a split year is a payment
    request first and is invoiced when paid (or on its date, for a customer with "Invoice on due
@@ -78,22 +77,8 @@ export function lineScheduleNote(commitment: string | null | undefined, cycle: B
   return `Annual commitment · ${cycleScheduleLabel(cycle ?? cycleFromLegacyCommitment(commitment))}`;
 }
 
-/**
- * R-1715: the unit after a quote's total on /quotes — "/mo", "/yr", or nothing. A one-time
- * charge (add seats pro-rata, a direct invoice, a month extension) is paid once, so it carries
- * no period: "₹1,006/yr" on a pro-rata quote read as a yearly charge. No billing_cycle → nothing
- * (a guessed unit is the same wrong-unit bug).
- */
-export function quoteTotalUnit(q: {
-  billing_cycle?: string | null;
-  is_add_seats?: boolean | null;
-  is_one_off?: boolean | null;
-  is_extension?: boolean | null;
-  extension_months?: number | null;
-}): string {
-  if (isOneTimeQuote({ isAddSeats: q.is_add_seats, isOneOff: q.is_one_off, isExtension: q.is_extension, extensionMonths: q.extension_months })) return "";
-  return q.billing_cycle === "monthly" ? "/mo" : q.billing_cycle === "yearly" ? "/yr" : "";
-}
+/* R-1715's quoteTotalUnit (billing_cycle only) is gone: it put "/mo" after an Annual sale's
+   YEAR total. The /quotes list reads quoteRowTotalPeriods in lib/quotes/per-period-figures (R-2222). */
 
 /** R-1715: the extension badge — "Ext · 3 months" (was "Ext · 0yr"), "Ext · 1 yr" for whole years. */
 export function extensionBadgeLabel(months: number | null | undefined): string {

@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { leadTitle } from "@/lib/leads/display-name";
 import { useItems } from "@/lib/queries/items";
 import { leadPlanDisplay } from "@/lib/leads/lead-plan-display";
+import { LeadAiStatusBadge } from "@/components/features/leads/lead-ai-status";
 
 interface LeadCardProps {
   lead: LeadListRow;
@@ -25,10 +26,12 @@ interface LeadCardProps {
   onQuickQuote?: (lead: LeadListRow) => void;
   dupCount?: number;
   onOpenMerge?: (lead: LeadListRow) => void;
+  /** R-2042: leads.ai_status (useLeadAiStatuses on the board) — the "AI: …" badge. */
+  aiStatus?: string | null;
 }
 
 
-export function LeadCard({ lead, isDragging, onDragStart, onDragEnd, onClick }: LeadCardProps) {
+export function LeadCard({ lead, isDragging, onDragStart, onDragEnd, onClick, aiStatus }: LeadCardProps) {
   const waSender = useWhatsAppSender();
   const ownerInitials = lead.contact_name ? initials(lead.contact_name) : "—";
   const age = formatDate(lead.created_at, "relative");
@@ -103,6 +106,7 @@ export function LeadCard({ lead, isDragging, onDragStart, onDragEnd, onClick }: 
                 {stale7.days}d
               </span>
             )}
+            <LeadAiStatusBadge status={aiStatus} />
           </div>
         </div>
 

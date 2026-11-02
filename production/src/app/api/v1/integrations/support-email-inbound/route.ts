@@ -47,6 +47,7 @@ import { stripQuoted } from "@/lib/inbound/strip-quoted";
 import { localPart } from "@/lib/inbound/routing";
 import { runSupportAgentForMessage } from "@/lib/ai/run-support-agent";
 import { inboundTenantId, inboundTenantMissingMessage } from "@/lib/inbound/tenant";
+import { loadSellerIdentity } from "@/lib/ai/seller-identity";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -57,13 +58,11 @@ export const runtime = "nodejs";
    purpose: two secrets to rotate is one that eventually does not get rotated. */
 const INBOUND_SECRET = process.env.INBOUND_EMAIL_SECRET?.trim() || "";
 
-const SELLER_NAME = process.env.SELLER_LEGAL_NAME?.trim() || "ANUTECH DIGITAL PVT LTD";
 const FROM_EMAIL =
   process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
-/* The address the agent signs as. Env-overridable for the same reason the seller name is: this
-   deployment can point a second reseller's mail at their own tenant, and a hardcoded
-   support@anutech.in would have that reseller's customers replying to somebody else's desk. */
-const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL?.trim() || "support@anutech.in";
+/* R-1929: the name and support desk the agent signs as come from the tenant row the mail
+   belongs to (lib/ai/seller-identity.ts) — a second reseller's customers must never be asked to
+   reply to somebody else's desk. The env values apply only to the platform tenant. */
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
 /* R-1555: the tenant comes from lib/inbound/tenant.ts per request — no hard-coded fallback on a deployment. */
 
@@ -207,8 +206,7 @@ export async function POST(request: NextRequest) {
     /* R-726: a From line is not proof — only a DKIM/DMARC verdict for its domain is. */
     senderVerified: senderDomainVerified(body, headersFromBody(body), mail.fromEmail),
     fromEmail: FROM_EMAIL,
-    sellerName: SELLER_NAME,
-    supportEmail: SUPPORT_EMAIL,
+    ...(await loadSellerIdentity(admin, tenantId)),
     appUrl: APP_URL,
   });
 

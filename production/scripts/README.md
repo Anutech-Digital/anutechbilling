@@ -35,7 +35,7 @@ that is the manager's deploy step (docs/LIVE-OPERATIONS.md).
 | `gen-tenant-context-migration.mjs`, `gen-restore-rehearsal.cjs` | Generate committed SQL from a local db (one-off generators, kept with their output). |
 | `check-config-drift.mjs`, `check-db-types.mjs`, `check-embed-ambiguity.mjs` | Read-only consistency checks. |
 | `a11y-count.mjs`, `count-raw-toast-errors.cjs` | Count UI gaps per owner (numbers for ratchets). |
-| `create-user.mjs`, `setup-e2e-tenants.mjs`, `dev/local-login-link.mjs`, `dev/seed-e2e-catalog.mjs` | Local/test users and fixtures only. |
+| `create-user.mjs`, `setup-e2e-tenants.mjs`, `dev/local-login-link.mjs`, `dev/seed-e2e-catalog.mjs`, `dev/seed-e2e-approval.mjs` (R-2318) | Local/test users and fixtures only. |
 | `dev/scenario.mjs` (+ `dev/scenarios/*.sql`) | R-1957: one-click LOCAL test scenarios for the money cards — `node scripts/dev/scenario.mjs <vendor-sharma|vendor-advance|bills-page-paid|all> [--reset|--clear]`, `--self-test` proves load/reset in a rolled-back run. Local docker DB + E2E Test Co only. |
 | `set-doc-code.mjs` | Changes a tenant's document-number code (doc_code). |
 | `backup-tenant-data.mjs` | Off-database data backup with the service key. |

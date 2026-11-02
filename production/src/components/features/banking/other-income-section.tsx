@@ -11,13 +11,20 @@ import { Button } from "@/components/ui/button";
 import { rupee } from "@/lib/utils";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import { useBookOtherIncome, type OtherIncomeHead } from "@/lib/queries/bank-other-income";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
 /** The narration says interest (INT.PD, INTEREST, FD INT …) — then "Interest received" is picked first. */
 export function looksLikeInterest(description: string | null | undefined): boolean {
   return /\b(int\.?\s?pd|interest|int\s+cr|fd\s+int|sb\s+int|int\.?\s+credit)\b/i.test(description ?? "");
 }
 
-export function OtherIncomeSection({ transaction, onDone }: { transaction: BankTransactionRow; onDone: () => void }) {
+export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
+  transaction: BankTransactionRow;
+  onDone: () => void;
+  /** R-2354: the Reconcile sheet draws "Book ₹X as interest received / other income" in its sticky
+   *  footer. Given → no inline button; the footer gets the same label, disabled rule and submit. */
+  onFooterSave?: (save: FooterSave | null) => void;
+}) {
   const book = useBookOtherIncome();
   const [head, setHead] = React.useState<OtherIncomeHead>(looksLikeInterest(transaction.description) ? "interest" : "other");
   React.useEffect(() => { setHead(looksLikeInterest(transaction.description) ? "interest" : "other"); }, [transaction.id, transaction.description]);
@@ -29,6 +36,10 @@ export function OtherIncomeSection({ transaction, onDone }: { transaction: BankT
       onDone();
     } catch { /* the hook toasts */ }
   }
+
+  /* R-2354: same label, same rule, same submit() — in the footer when the sheet asks. */
+  const saveLabel = `Book ${rupee(amount)} as ${head === "interest" ? "interest received" : "other income"}`;
+  useFooterSaveReport(onFooterSave, { label: saveLabel, onSave: () => { void submit(); }, disabled: amount <= 0, loading: book.isPending });
 
   return (
     <section aria-label="Income that is not a sale" className="rounded-md border border-emerald/40 bg-emerald-soft/20 p-3 space-y-2">
@@ -44,9 +55,11 @@ export function OtherIncomeSection({ transaction, onDone }: { transaction: BankT
           </button>
         ))}
       </div>
-      <Button size="sm" variant="primary" icon="check" onClick={submit} loading={book.isPending} disabled={book.isPending || amount <= 0}>
-        Book {rupee(amount)} as {head === "interest" ? "interest received" : "other income"}
-      </Button>
+      {!onFooterSave && (
+        <Button size="sm" variant="primary" icon="check" onClick={submit} loading={book.isPending} disabled={book.isPending || amount <= 0}>
+          {saveLabel}
+        </Button>
+      )}
     </section>
   );
 }

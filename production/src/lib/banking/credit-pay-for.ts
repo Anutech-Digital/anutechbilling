@@ -53,6 +53,9 @@ export interface OpenItem {
   seats: number | null;
   renewal_date: string | null;
   lines: ReadonlyArray<{ name?: string | null; qty?: number | null; commitment?: string | null }> | null;
+  /** R-2213: the DB would refuse money on this item's quote (below cost, not approved) — the
+   *  refusal text (lib/quotes/payment-approval.ts). null/absent = it can be paid. */
+  approval_block?: string | null;
 }
 
 /** The key of an open item — an invoice when it has one, else its quote. */
@@ -221,6 +224,9 @@ export function tdsRateToRecord(check: AmountCheck, taxable: number): number | n
 export type SaleCycle = "annual_yearly" | "monthly" | "one_time";
 
 export interface SaleLine {
+  /** R-2216: this line's own stable key — its row (and End-domain box) is keyed by it, never by
+   *  position, so a removed or re-ordered line never hands its domain to a neighbour. */
+  key?: string;
   itemId: string | null;
   name: string;
   /** Seats for a per-seat product, else quantity. */
@@ -236,11 +242,21 @@ export interface SaleLine {
    *  commitment changes. False for a row priced per year or once (domain, migration, a
    *  yearly-total plan). Absent = true. */
   monthPriced?: boolean;
-  /** R-2053: the owner typed this line's price (a deal). A commitment change then converts it
-   *  instead of taking the catalogue price. A new product line starts without it. */
+  /** R-2053: the owner typed this line's price (a deal). A commitment change then keeps it
+   *  (R-2178: never converted silently) instead of taking the catalogue price. A new product
+   *  line starts without it. */
   priceTyped?: boolean;
   /** R-2095 (Sept): the subscription's END-domain (Zoho bills per end-domain); empty = the customer's. */
   domain?: string | null;
+  /** R-2178: the commitment the typed price was entered for (its unit: ₹/year, ₹/month, once). A
+   *  Commitment change never rewrites a typed price; when this differs from `cycle` the line asks
+   *  (typedPriceCheck) until the operator converts or keeps the number. */
+  typedFor?: SaleCycle;
+  /** R-2178: the price before an explicit ÷12 / ×12 conversion — Undo puts it back. */
+  convertedFrom?: { rate: number; cost: number; cycle: SaleCycle };
+  /** R-2178 (owner rule 31 Oct): the catalogue rate for the line's CURRENT commitment, set when a
+   *  Commitment switch kept a typed price — proposed on screen, applied only on a click. */
+  proposedRate?: number | null;
 }
 
 /** R-2095: a line's end-domain, as the server will store it (lower-case, trimmed), or null. */
@@ -271,10 +287,12 @@ function listRateFor(it: CatalogRow, cycle: SaleCycle): { rate: number; cost: nu
 }
 
 /** A catalogue product → a sale line priced the way the quote builder prices it. */
+let saleLineSeq = 0;
 export function saleLineFromItem(it: CatalogRow, cycle: SaleCycle = defaultCycle(it), seats?: number | null): SaleLine {
   const unit = billingUnitOf(it);
   const p = listRateFor(it, cycle);
   return {
+    key: `sale-line-${++saleLineSeq}`,   // R-2216
     itemId: it.id,
     name: it.name,
     qty: defaultQtyForUnit(unit, seats ?? null),
@@ -291,22 +309,103 @@ export function isMonthPriced(it: CatalogRow): boolean {
   return headlinePrice(it).unit !== "yr" && unitYearMultiplier(billingUnitOf(it)) === 12;
 }
 
-/** Change the cycle of a catalogue line: re-price it from the catalogue for that term. R-2050: a
- *  line with no catalogue row converts its own price — a year ÷ 12 = a month, a month × 12 = a
- *  year (whole rupees) — so the shown figure keeps its meaning in the new unit. */
+/** Change the cycle of a catalogue line: re-price it from the catalogue for that term.
+ *  R-2178 (staging 31 Oct, LOOK BOOK FLY: ₹1,800/user/year became ₹21,600 after One-time → Monthly
+ *  flex → Annual; quote ₹1,78,416 instead of ₹14,868): a TYPED price — and the price of a line with
+ *  no catalogue row, which is the operator's own — is never changed by a Commitment switch. The line
+ *  remembers the unit it was typed in (typedFor) and typedPriceCheck asks; ÷12 / ×12 is an explicit,
+ *  undoable button (convertTypedPrice / undoTypedConversion). This replaces R-2050 / R-2053's silent
+ *  conversion, which chained through One-time (factor 1) into a × 12. An untouched catalogue line
+ *  still takes the floored catalogue price (R-2050); cost always follows the catalogue tier. */
 export function repriceLine(line: SaleLine, it: CatalogRow | undefined, cycle: SaleCycle): SaleLine {
-  /* R-2053: a year ÷ 12 = a month, a month × 12 = a year; to or from one-time the number is kept. */
-  const factor = line.monthPriced === false ? 1
-    : line.cycle === "annual_yearly" && cycle === "monthly" ? 1 / 12
-    : line.cycle === "monthly" && cycle === "annual_yearly" ? 12 : 1;
-  if (!it) {
-    return { ...line, cycle, rate: Math.round(line.rate * factor), cost: Math.round(line.cost * factor) };
+  if (!it || line.priceTyped) {
+    const p = it ? listRateFor(it, cycle) : null;
+    return { ...line, cycle, typedFor: line.typedFor ?? line.cycle, cost: p ? Math.round(p.cost) : line.cost,
+             proposedRate: p && p.rate > 0 ? Math.round(p.rate) : null };
   }
   const p = listRateFor(it, cycle);
-  /* R-2053 (Pardeep delegated, 28 Oct): a TYPED price (a deal) is kept and converted; only an
-     untouched line takes the floored catalogue price. Cost always follows the catalogue tier. */
-  const rate = line.priceTyped ? Math.round(line.rate * factor) : Math.round(p.rate);
-  return { ...line, cycle, rate, cost: Math.round(p.cost) };
+  return { ...line, cycle, rate: Math.round(p.rate), cost: Math.round(p.cost), typedFor: undefined, convertedFrom: undefined, proposedRate: null };
+}
+
+const UNIT_WORD: Readonly<Record<SaleCycle, string>> = { annual_yearly: "/year", monthly: "/month", one_time: " once" };
+/** "₹/user/year", "₹/month", "₹/user once" — the unit a price is in. */
+function unitOf(perSeat: boolean, cycle: SaleCycle): string {
+  return `₹${perSeat ? "/user" : ""}${UNIT_WORD[cycle]}`;
+}
+const inr = (n: number) => rupee(n, { decimals: Number.isInteger(n) ? 0 : 2 });
+/** "₹250/user/month" */
+const priceIn = (n: number, perSeat: boolean, cycle: SaleCycle) => `${inr(n)}${unitOf(perSeat, cycle).slice(1)}`;
+
+/** What a typed price may be changed to after a Commitment switch — only ever on a click.
+ *  R-2178 owner rule (Pardeep 31 Oct): rates differ by COMMITMENT (Flexible has its own rate,
+ *  Annual another — GW Starter cost ₹318 vs ₹264/seat/month), so a catalogue line proposes the
+ *  catalogue rate for the NEW commitment, never the old rate ÷12 / ×12. Only a line with no
+ *  catalogue row (the operator's own price) is offered the unit conversion ÷12 / ×12 (Annual ↔
+ *  Monthly; never for a row priced per year or once). Null = nothing honest to offer — Keep only. */
+function typedConversion(line: Pick<SaleLine, "rate" | "cycle" | "typedFor" | "monthPriced" | "itemId" | "proposedRate">): number | null {
+  if (!line.typedFor) return null;
+  if (line.itemId) return line.proposedRate != null && line.proposedRate !== line.rate ? line.proposedRate : null;
+  if (line.monthPriced === false) return null;
+  if (line.typedFor === "annual_yearly" && line.cycle === "monthly") return Math.round(line.rate / 12);
+  if (line.typedFor === "monthly" && line.cycle === "annual_yearly") return Math.round(line.rate * 12);
+  return null;
+}
+
+export type TypedPriceCheck =
+  | { kind: "unit_changed"; text: string; convertRate: number | null; convertLabel: string | null; keepLabel: string; blocksSave: true }
+  | { kind: "converted"; text: string; undoLabel: string; blocksSave: false };
+
+/** R-2178: what the line must say about its typed price after a Commitment change, or null. */
+export function typedPriceCheck(line: SaleLine): TypedPriceCheck | null {
+  if (line.typedFor && line.typedFor !== line.cycle) {
+    const convertRate = typedConversion(line);
+    return {
+      kind: "unit_changed",
+      text: `${inr(line.rate)} was typed as ${unitOf(line.perSeat, line.typedFor)}. The line is now ${unitOf(line.perSeat, line.cycle)} — the number was kept.`,
+      convertRate,
+      convertLabel: convertRate === null ? null
+        : line.itemId
+          ? `Use catalogue ${priceIn(convertRate, line.perSeat, line.cycle)}`
+          : `Use ${priceIn(convertRate, line.perSeat, line.cycle)} (${inr(line.rate)} ${line.cycle === "monthly" ? "÷" : "×"} 12)`,
+      keepLabel: `Keep ${priceIn(line.rate, line.perSeat, line.cycle)}`,
+      blocksSave: true,
+    };
+  }
+  if (line.convertedFrom && line.convertedFrom.cycle !== line.cycle) {
+    return {
+      kind: "converted",
+      text: `${line.itemId ? "Catalogue rate used — was" : "Converted from"} ${priceIn(line.convertedFrom.rate, line.perSeat, line.convertedFrom.cycle)}.`,
+      undoLabel: `Undo — back to ${inr(line.convertedFrom.rate)}`,
+      blocksSave: false,
+    };
+  }
+  return null;
+}
+
+/** R-2178: apply the offer — the catalogue rate (catalogue line) or ÷12 / ×12 (a line with no
+ *  catalogue row, whose cost converts the same way). Undoable. */
+export function convertTypedPrice(line: SaleLine): Partial<SaleLine> {
+  const rate = typedConversion(line);
+  if (rate === null) return {};
+  const factor = line.cycle === "monthly" ? 1 / 12 : 12;
+  return {
+    rate,
+    priceTyped: true,
+    cost: line.itemId ? line.cost : Math.round(line.cost * factor),
+    typedFor: line.cycle,
+    convertedFrom: { rate: line.rate, cost: line.cost, cycle: line.typedFor ?? line.cycle },
+  };
+}
+
+/** R-2178: keep the typed number in the new unit — the question is answered. */
+export function keepTypedPrice(line: SaleLine): Partial<SaleLine> {
+  return { typedFor: line.cycle, convertedFrom: undefined };
+}
+
+/** R-2178: put back the price from before the conversion (the line then asks again). */
+export function undoTypedConversion(line: SaleLine): Partial<SaleLine> {
+  if (!line.convertedFrom) return {};
+  return { rate: line.convertedFrom.rate, cost: line.convertedFrom.cost, typedFor: line.convertedFrom.cycle, convertedFrom: undefined };
 }
 
 /**

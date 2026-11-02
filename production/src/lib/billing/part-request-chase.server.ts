@@ -47,6 +47,8 @@ interface ReqRow {
 }
 interface BillRow {
   id: string; subscription_id: string; bill_on: string; period_start: string; period_end: string;
+  /** R-2230: when the request is due (part start + payment terms); older rows fall back to bill_on. */
+  due_on?: string | null;
   period_index: number; request_reminder_step: string | null;
 }
 interface TenantRow { id: string; name: string; email: string | null; auto_suspend_on_overdue: boolean | null; grace_period_days: number | null }
@@ -75,7 +77,7 @@ export async function chasePartRequests(
   const [bills, tenants] = await Promise.all([
     fetchAllRowsIn(open.map((q) => q.subscription_billing_id), (ids, from, to) => db
       .from("subscription_billings")
-      .select("id, subscription_id, bill_on, period_start, period_end, period_index, request_reminder_step")
+      .select("id, subscription_id, bill_on, due_on, period_start, period_end, period_index, request_reminder_step")
       .in("id", ids).order("id", { ascending: true }).range(from, to)) as unknown as Promise<BillRow[]>,
     fetchAllRowsIn(open.map((q) => q.tenant_id), (ids, from, to) => db
       .from("tenants")
@@ -91,12 +93,14 @@ export async function chasePartRequests(
     const t = tenantById.get(q.tenant_id);
     if (!b || !t) continue;
     const amountDue = (q.amount ?? 0) - (q.payment_amount ?? 0);
+    /* R-2230: the request's own due date — the reminders, the email and the pause count from it. */
+    const dueOn = b.due_on ?? b.bill_on;
     /* The request's own wording, "Advance payment for Q2 · 28 Jan–27 Apr 2027" (its first line). */
     const partLabel = q.line_items?.[0]?.name ?? `Advance payment for part ${b.period_index}`;
     try {
       const step: RequestReminderStep | "new" | null = !b.request_reminder_step
         ? "new"
-        : requestReminderStep({ dueOn: b.bill_on, todayISO: opts.todayISO, lastStep: b.request_reminder_step, open: true, amountDue, graceDays: t.grace_period_days ?? 0 });
+        : requestReminderStep({ dueOn, todayISO: opts.todayISO, lastStep: b.request_reminder_step, open: true, amountDue, graceDays: t.grace_period_days ?? 0 });
       if (step) {
         const stepName = step === "new" ? REQUEST_SENT_STEP : step;
         if (opts.dryRun) {
@@ -109,7 +113,7 @@ export async function chasePartRequests(
             const tpl = requestReminderText({
               step, customerName: q.customer_name, companyName: t.name, quoteId: q.id,
               part: partLabel,
-              amount: rupee(amountDue), dueOn: formatDate(b.bill_on),
+              amount: rupee(amountDue), dueOn: formatDate(dueOn),
               payUrl: q.public_token ? quoteAcceptUrl(appUrl, q.id, q.public_token) : null,
             });
             const r = await sendCustomerEmail({
@@ -137,7 +141,7 @@ export async function chasePartRequests(
       if (requestPauseDue({
         companyOn: t.auto_suspend_on_overdue === true,
         graceDays: t.grace_period_days ?? 0,
-        dueOn: b.bill_on, todayISO: opts.todayISO,
+        dueOn, todayISO: opts.todayISO,
         lastStep: b.request_reminder_step, open: true,
       })) {
         if (opts.dryRun) {
@@ -148,7 +152,7 @@ export async function chasePartRequests(
           const { data, error } = await db.from("subscriptions")
             .update({
               status: "paused", suspended_by: "automation", suspended_at: new Date().toISOString(),
-              suspend_reason: requestPauseReason(q.id, b.bill_on, opts.todayISO),
+              suspend_reason: requestPauseReason(q.id, dueOn, opts.todayISO),
             })
             .in("id", subIds).eq("tenant_id", q.tenant_id).eq("status", "active")
             .select("id");

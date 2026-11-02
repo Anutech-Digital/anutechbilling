@@ -11,8 +11,8 @@
 --
 --   OPEN      S1 owes ₹18,232 and its own-quote invoice is open for ₹18,232 → clear refused
 --             (names the invoice, says credit note); S1 still active, still owes ₹18,232
---   CN        a ₹18,232 cancellation credit note on that invoice → cancel + clear → ₹18,232
---             cleared, S1 owes 0, the invoice owes 0 — the two agree
+--   CN        a ₹18,232 cancellation credit note on that invoice → S1 owes 0 at once (R-2178: the
+--             note re-syncs the stored balance) → cancel + clear clears 0; the invoice owes 0 — the two agree
 --   PARTIAL   S2 owes ₹1,500, its instalment invoice ₹1,000 → clear closes ₹500 only; S2 keeps
 --             ₹1,000 and the result names the invoice
 --   NO-INV    S3 (postpaid, no invoice) owes ₹956 → clear closes all of it (R-455 unchanged)
@@ -89,8 +89,13 @@ begin
   -- ════ CN ══════════════════════════════════════════════════════════════════════════
   begin
     perform public.issue_credit_note('R17-OWN', 18232, 'cancellation', 'Unused part — customer left', null);
+    -- R-2178: the credit note itself brings S1's stored balance to what the invoice owes (0),
+    -- as a receipt would; cancel then has nothing left to clear.
+    if (select outstanding_amount from public.subscriptions where id = d1) <> 0 then
+      insert into r1711_fail values ('S1 still owes after a full credit note (R-2178): ' || (select outstanding_amount from public.subscriptions where id = d1));
+    end if;
     v_r := public.cancel_subscription(d1, '2026-10-24', 'Customer moved to another provider', true);
-    if (v_r->>'due_cleared')::int <> 18232 or coalesce((v_r->>'due_kept')::int, -1) <> 0 then
+    if (v_r->>'due_cleared')::int <> 0 or coalesce((v_r->>'due_kept')::int, -1) <> 0 then
       insert into r1711_fail values ('S1 after credit note result wrong: ' || v_r::text);
     end if;
   exception when others then insert into r1711_fail values ('S1 credit note + cancel raised: ' || sqlerrm);
@@ -98,7 +103,7 @@ begin
   select s.status::text as status, s.outstanding_amount, s.cancel_due_cleared,
          greatest(0, coalesce(i.net_payable, i.amount) - coalesce(i.paid_amount, 0)) as inv_due
     into v_s from public.subscriptions s, public.invoices i where s.id = d1 and i.id = 'R17-OWN';
-  if v_s.status <> 'cancelled' or v_s.outstanding_amount <> 0 or v_s.cancel_due_cleared <> 18232 or v_s.inv_due <> 0 then
+  if v_s.status <> 'cancelled' or v_s.outstanding_amount <> 0 or coalesce(v_s.cancel_due_cleared, 0) <> 0 or v_s.inv_due <> 0 then
     insert into r1711_fail values ('S1 balance and invoice disagree: ' || row_to_json(v_s)::text);
   end if;
 

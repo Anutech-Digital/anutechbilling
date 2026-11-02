@@ -53,12 +53,13 @@ For each credit, find it in your Zoho map, then pick **one** path:
 | Payment for an open quote/invoice already in the app | Reconcile → Customer → pick the open item(s). If one line covers several items, use multi-pick (R-2098). Any extra becomes an advance. |
 | New customer, first sale | Reconcile → Customer → **New customer** (Zoho name, GSTIN, PAN, address, phone, email) → **A new sale** → products at Zoho rates → Commitment (annual / monthly / one_time) → Payment (yearly / half-yearly / quarterly) → subscription start = Zoho service-period start. |
 | Pro-rata / extra seats on a plan the app does not have yet (for example a customer whose base was paid before go-live) | **Opening subscription first** (base plan from Zoho's last full-term invoice: seats, rate, start, term). **Then** Subscriptions → **Manage seats** → quote → back to the bank line → reconcile against that open quote. Never the other way round. Manage seats needs the base. |
-| Monthly customer with past months | Past months = one_time sale lines. Latest month = **monthly subscription** with the Zoho period start, so renewals run. |
+| Monthly customer with past months | Past months = one_time sale lines. Latest month = **monthly subscription** with the Zoho period start, so renewals run. A sale cannot mix Flexible-monthly and one-time lines yet: book the whole line as one-time, then add the monthly sub with **Opening subscription** (latest Zoho period start). |
 | Renewal of a monthly sub that is behind | Renewals → Generate. It bills the **oldest** unbilled month first (R-2095). Check the "N months due" text before you click. |
-| Razorpay settlement (`RAZORPAY` narration) | Reconcile → **Fetch settlement** (needs the live key in Settings → Integrations, owner-only). Match each payment to its customer, then **Reconcile settlement** (books the fee and GST). **Never use plain Match**, because it skips the fee. A payment that is not in Zoho goes on the list. |
+| Razorpay settlement (`RAZORPAY` narration) | Reconcile → **Fetch settlement** (needs the live key in Settings → Integrations, owner-only). Match each payment to its customer, then **Reconcile settlement** (books the fee and GST). **Never use plain Match**, because it skips the fee. A payment that is not in Zoho goes on the list. Match by the `pay_` id, never by the app's suggested customer (it can be wrong). One settlement can hold several customers' payments: book every payment in it first, then reconcile the settlement once. |
 | FD sweep-in credit | Own transfer → mark reconciled. |
 | Interest credit | Other / manual for now (gap: no interest-income option yet). |
 | IMPS return pair | Mark the debit and the return as a manual pair. |
+| UPI/wallet reversal (a credit equal to a same-day debit) | Pair the two lines as a reversal. Check for these **before** booking the month's debits as expenses: once the debit is booked as an expense, undoing it is a data repair (owner's list). |
 | Part payment | Book it, leave the rest due (as Zoho does). Never invent TDS to close the gap. |
 
 The amount check at the bottom of the drawer has these outcomes:
@@ -70,8 +71,18 @@ The amount check at the bottom of the drawer has these outcomes:
 
 Old receipts whose shortfall is TDS: **Record balance payment → Customer deducted TDS**.
 
-## 4. Checks after each line
+## 4. Checks before and after each line
 
+Before **Save** (it cannot be undone: Un-reconcile on a new-sale line unlinks the money but leaves the
+customer, quote, invoice and subscriptions behind):
+- **Read back every product line: commitment, quantity, rate, line total.** Changing the commitment can
+  silently turn a typed monthly rate into a yearly one (×12). Set the commitment first, then type the rate,
+  then read it back. A helper script that fills the form must do this check itself and refuse to save.
+- **The quote total equals the Zoho invoice total** (within ₹1). If not, do not save: find which line differs.
+- Before an Opening subscription: open the customer's subscriptions and check the same product + domain is
+  not already there (the app does not warn yet). If it is, use Manage seats or Correct details instead.
+
+After Save:
 - The line leaves Unmatched, and the invoice date is the **bank date** (not today).
 - The customer has no duplicate (search by GSTIN before creating). If the reconcile popup does not show a
   customer you just created, refresh the list. Do not create it again.
@@ -80,7 +91,8 @@ Old receipts whose shortfall is TDS: **Record balance payment → Customer deduc
 
 ## 5. Known app gaps (work around, don't fight)
 
-The live list is on card R-2095 (`gaps30Oct`), with Razorpay on R-2099. If a screen refuses something
+The live list is on card R-2095 (`gaps30Oct`), with Razorpay on R-2099, money bugs on R-2178, exports and
+countries on R-2171, and the August-run gaps on R-2179. If a screen refuses something
 twice, stop. Write the exact message and line on the card as a gap, move to the next line, and come back
 after the fix ships.
 
@@ -134,3 +146,33 @@ One line each, with the amount and date:
   - **Find bank lines by reference number** (UTR / `pay_` id), not by name or amount.
   - **Manage seats → add-seats with effective date = Zoho period start** gives the Zoho amount
     within ₹5. Larger gaps mean the base (seats, rate, term) is wrong: fix the base first.
+- 31 Oct, August run (two workers, ~105 lines in about 2 hours of saving, ~50 lines/hour; the first
+  hour was a pause while a half-applied migration on staging was fixed):
+  - **One wrong booking, caught after save:** a typed monthly rate became a yearly one when the
+    commitment was changed (×12), and the helper did not read it back. Fixing it took a credit note plus
+    a Correct details on the subscription MRR, and the credit note did not lower the subscription's
+    stored balance (app gap R-2178). Lesson: never let a helper pick the commitment without checking the
+    rate afterwards, and compare the quote total with the Zoho invoice total **before** saving (section 4).
+  - **Stop when the coordinator says staging is half-deployed.** Note the lines already saved so they
+    can be re-checked after the fix; do not keep saving.
+  - **Pro-rata on a base the app does not have:** Opening subscription (from Zoho's last full-term
+    invoice) → Manage seats with effective date = Zoho period start. If Zoho shows seat additions the
+    app never had, add them in date order before the current one; the amounts then match Zoho within ₹2.
+  - **Past months = one-time; latest month = monthly sub** (Opening subscription when the sale also has
+    one-time lines). Old-term and pre-base pro-rata at the Zoho amount = one-time too.
+  - **Customer already has an Opening subscription:** sell the line **without a subscription** so no
+    duplicate sub is made.
+  - **Split reconcile (one line, several items) has no TDS.** Leave the 1/2% shortfall due and record it
+    later with Record balance payment → Customer deducted TDS. A ₹1 shortfall on a new sale has no
+    round-off yet: leave it due and list it.
+  - **Part-paid add-seats quote gets no invoice yet** (only new sales invoice on first receipt): list it.
+  - **Razorpay settlements:** fetch with the key in read-only use; map every `pay_` id to its Zoho
+    invoice first. A new customer in a settlement needs a new quote at the Zoho price. A price **below
+    the catalog cost** is always the owner's call, even when it equals Zoho: build the quote, stop at
+    Review & decide, and put all such quotes in ONE needsDecision line so the owner approves them in
+    one go. A Razorpay amount that differs from Zoho for several invoices (fee or FX) goes on the list.
+  - **Country gaps:** before an overseas line, check the customer's country is in the region list.
+    If it is missing, do not book the customer under another country; list the line (country, amount,
+    Zoho invoice) and move on. Region-list gaps are tracked on R-2171.
+  - **If a new customer does not show in the reconcile drawer**, close and reopen the drawer (still
+    seen in August). Never create the customer a second time.

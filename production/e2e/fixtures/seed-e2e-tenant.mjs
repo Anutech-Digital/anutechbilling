@@ -7,6 +7,7 @@
  * Creates, idempotently (re-run any time; nothing is duplicated, nothing is deleted):
  *   - tenant "E2E Test Co" (found again by its marker email e2e-company@example.test)
  *   - four users in it: owner, manager, sales, accountant
+ *     (+ R-2318: a second owner "owner2", only when E2E_OWNER2_PASSWORD is set — local only)
  *       email    = E2E_<ROLE>_EMAIL    (default e2e-<role>@example.test)
  *       password = E2E_<ROLE>_PASSWORD (REQUIRED — no default, never printed)
  *     An existing auth user gets its password reset to the env value, so the specs and
@@ -33,9 +34,9 @@
 import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import {
-  E2E_ROLES, E2E_TENANT_NAME, E2E_TENANT_EMAIL, E2E_CUSTOMER_NAME,
+  E2E_ROLES, E2E_LOCAL_EXTRA_ROLES, E2E_TENANT_NAME, E2E_TENANT_EMAIL, E2E_CUSTOMER_NAME,
   E2E_BANK_NAME, E2E_VENDOR_NAME, E2E_VENDOR_GSTIN,
-  roleCreds, roleEnvNames, productionHostReason,
+  roleCreds, roleEnvNames, roleDbRole, productionHostReason,
 } from "./e2e-roles.mjs";
 
 function die(msg) {
@@ -111,9 +112,16 @@ async function ensureTenant() {
   return { id: data.id, created: true };
 }
 
+/** "E2E Owner", … ; R-2318: "owner2" → "E2E Owner 2". */
+function roleFullName(role) {
+  const m = /^([a-z]+)(\d*)$/.exec(role);
+  const base = m ? m[1] : role;
+  return `E2E ${base[0].toUpperCase()}${base.slice(1)}${m && m[2] ? ` ${m[2]}` : ""}`;
+}
+
 async function ensureUser(tenantId, role) {
   const { email, password } = roleCreds(role);
-  const fullName = `E2E ${role[0].toUpperCase()}${role.slice(1)}`;
+  const fullName = roleFullName(role);
   let authUser = await findAuthUser(email);
 
   if (authUser) {
@@ -139,14 +147,14 @@ async function ensureUser(tenantId, role) {
     authUser = data.user;
   }
 
-  const initials = `E${role[0].toUpperCase()}`;
+  const initials = `E${(/\d$/.exec(role)?.[0]) ?? role[0].toUpperCase()}`;
   const { error: upsertErr } = await admin.from("users").upsert({
     id: authUser.id,
     tenant_id: tenantId,
     email,
     full_name: fullName,
     initials,
-    role,
+    role: roleDbRole(role),
     is_active: true,
     can_view_deals: true,
   }, { onConflict: "id" });
@@ -190,6 +198,15 @@ try {
   const tenant = await ensureTenant();
   console.log(`tenant  "${E2E_TENANT_NAME}"  ${tenant.id}  ${tenant.created ? "created" : "exists"}  (supabase: ${host})`);
   for (const role of E2E_ROLES) {
+    const u = await ensureUser(tenant.id, role);
+    console.log(`user    ${u.role.padEnd(10)} ${u.email}  ${u.id}`);
+  }
+  // R-2318: local-only extra logins (a second owner) — seeded only when their password is set.
+  for (const role of E2E_LOCAL_EXTRA_ROLES) {
+    if (!process.env[roleEnvNames(role).password]) {
+      console.log(`user    ${role.padEnd(10)} skipped — ${roleEnvNames(role).password} not set (local-only login)`);
+      continue;
+    }
     const u = await ensureUser(tenant.id, role);
     console.log(`user    ${u.role.padEnd(10)} ${u.email}  ${u.id}`);
   }

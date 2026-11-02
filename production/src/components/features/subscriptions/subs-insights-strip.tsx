@@ -7,21 +7,23 @@
  * closed by default, whose closed line still carries the numbers — so closing it hides
  * the detail, never the fact that there is something to look at.
  *
- * Open / closed is remembered per viewer (this browser). Starts closed on the server and
- * on first paint, then reads the saved choice — reading storage during render would make
- * the server and client disagree.
+ * R-2266: built on the shared CollapsibleKpiStrip — the same strip Quotes, Invoices,
+ * Renewals and Companies use; open / closed is remembered per signed-in user.
  */
 "use client";
 
 import * as React from "react";
-import { Icon } from "@/components/ui/icon";
 import { cn, rupee } from "@/lib/utils";
+import { CollapsibleKpiStrip, StripFact } from "@/components/shared/collapsible-kpi-strip";
 
-export const INSIGHTS_OPEN_KEY = "ros.subscriptions.insights";
+/** R-2266: this page's strip id (the storage key adds the user id — kpiStripKey). */
+export const INSIGHTS_STRIP_ID = "subscriptions";
 
 export function SubsInsightsStrip({
-  mrr, arr, seats, marginAtRisk, marginUnchecked, leakingMonthly, leakingCount, neverReconciled, children,
+  userId, mrr, arr, seats, marginAtRisk, marginUnchecked, leakingMonthly, leakingCount, neverReconciled, children,
 }: {
+  /** Signed-in user — open / closed is remembered per user (R-2266). */
+  userId: string | null | undefined;
   mrr: number;
   arr: number;
   /** seatsPhrase() of the active subscriptions — "10 seats licensed". */
@@ -35,17 +37,6 @@ export function SubsInsightsStrip({
   neverReconciled: number;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = React.useState(false);
-  const bodyId = React.useId();
-  React.useEffect(() => {
-    try { if (window.localStorage.getItem(INSIGHTS_OPEN_KEY) === "open") setOpen(true); } catch { /* private mode */ }
-  }, []);
-  const toggle = () => setOpen((o) => {
-    const next = !o;
-    try { window.localStorage.setItem(INSIGHTS_OPEN_KEY, next ? "open" : "closed"); } catch { /* private mode */ }
-    return next;
-  });
-
   const warnings: { key: string; text: string; tone: "bad" | "warn" }[] = [];
   if ((marginAtRisk ?? 0) > 0) warnings.push({ key: "margin", text: `Margin at risk ${marginAtRisk}`, tone: "bad" });
   if ((marginUnchecked ?? 0) > 0) warnings.push({ key: "nocost", text: `No vendor cost ${marginUnchecked}`, tone: "warn" });
@@ -54,21 +45,15 @@ export function SubsInsightsStrip({
   const loading = marginAtRisk == null;
 
   return (
-    <div className="mb-4 bg-paper border border-hairline rounded-lg overflow-hidden shadow-xs">
-      <button
-        type="button"
-        onClick={toggle}
-        aria-expanded={open}
-        aria-controls={bodyId}
-        className="w-full flex items-center justify-between gap-2 px-3.5 py-2 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber"
-      >
-        <span className="flex items-center gap-x-2 gap-y-1 flex-wrap text-xs min-w-0">
-          <Icon name="bar_chart" size={15} className="text-amber-ink" />
-          <span className="font-semibold text-ink">Insights</span>
-          <span className="text-ink-3" aria-hidden>·</span>
-          <span className="text-ink-2">MRR <b className="text-ink tabular-nums">{rupee(mrr, { compact: true })}</b></span>
-          <span className="text-ink-3" aria-hidden>·</span>
-          <span className="text-ink-2">ARR <b className="text-ink tabular-nums">{rupee(arr, { compact: true })}</b></span>
+    <CollapsibleKpiStrip
+      stripId={INSIGHTS_STRIP_ID}
+      userId={userId}
+      title="Insights"
+      className="mb-4"
+      summary={
+        <>
+          <StripFact label="MRR" value={rupee(mrr, { compact: true })} />
+          <StripFact label="ARR" value={rupee(arr, { compact: true })} />
           {seats && (
             <>
               <span className="text-ink-3" aria-hidden>·</span>
@@ -89,15 +74,10 @@ export function SubsInsightsStrip({
           {!loading && warnings.length === 0 && (
             <span className="text-2xs text-emerald">No margin or leakage warnings</span>
           )}
-        </span>
-        <span className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0">
-          <span>{open ? "Collapse" : "Expand"}</span>
-          <Icon name={open ? "chevron_up" : "chevron_down"} size={14} />
-        </span>
-      </button>
-      <div id={bodyId} hidden={!open} className="p-3 border-t border-hairline space-y-3 bg-paper">
-        {open && children}
-      </div>
-    </div>
+        </>
+      }
+    >
+      {children}
+    </CollapsibleKpiStrip>
   );
 }

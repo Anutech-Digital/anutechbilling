@@ -11,6 +11,8 @@ import { Icon } from "@/components/ui/icon";
 import { rupee } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenRoute } from "./route-access";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useStillLoading, STILL_LOADING_TEXT, type LoadView } from "./card-load-state";
 
 interface PriorityActionHubProps {
   expiringRenewalsCount: number;
@@ -23,6 +25,33 @@ interface PriorityActionHubProps {
   pendingCollectNote?: string;
   /** R-1862: false for a one-time business with no subscription — no renewals card. Default true. */
   showRenewals?: boolean;
+  /** R-2239: whether each card's figures are in. "No urgent renewals" / "No draft quotes" /
+   *  "Nothing to chase" only when "ready" — never while loading or after a failed load. */
+  views?: { renewals?: LoadView; drafts?: LoadView; collect?: LoadView };
+  /** Retries the failed queries (shown on a card whose figures did not load). */
+  onRetry?: () => void;
+}
+
+/** Heading + line for one card while its figures are not in (R-2239). */
+function NotReady({ view, slow, onRetry }: { view: LoadView; slow: boolean; onRetry?: () => void }) {
+  if (view === "error") {
+    return (
+      <div role="alert">
+        <h4 className="text-sm font-semibold text-foreground mt-2">Didn&apos;t load</h4>
+        <p className="text-xs text-muted-foreground">
+          Your data is safe, it just couldn&apos;t be fetched.{" "}
+          {onRetry && <button type="button" className="underline" onClick={onRetry}>Try again</button>}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-2 space-y-2" data-card-loading="">
+      <Skeleton className="h-4 w-40" />
+      <Skeleton className="h-3 w-56" />
+      {slow && <p className="text-2xs text-muted-foreground" aria-live="polite">{STILL_LOADING_TEXT}</p>}
+    </div>
+  );
 }
 
 export function PriorityActionHub({
@@ -32,10 +61,16 @@ export function PriorityActionHub({
   pendingCollectValue,
   pendingCollectNote,
   showRenewals = true,
+  views = {},
+  onRetry,
 }: PriorityActionHubProps) {
   /* R-253: billing sees the Dashboard but cannot open /quotes — middleware sends it home. */
   const { data: me } = useCurrentUser();
   const canQuotes = canOpenRoute(me?.role ?? null, "/quotes");
+  const renewalsView = views.renewals ?? "ready";
+  const draftsView = views.drafts ?? "ready";
+  const collectView = views.collect ?? "ready";
+  const slow = useStillLoading([renewalsView, draftsView, collectView].includes("loading"));
   return (
     <div className="space-y-4 mb-6">
       {/* Priority Action Banner */}
@@ -46,6 +81,7 @@ export function PriorityActionHub({
           <div className="flex items-start justify-between">
             <div className="space-y-1">
               <StatusPill status="expiring" label="Attention needed" size="sm" />
+              {renewalsView !== "ready" ? <NotReady view={renewalsView} slow={slow} onRetry={onRetry} /> : (<>
               <h4 className="text-sm font-semibold text-foreground mt-2">
                 {expiringRenewalsCount > 0
                   ? `${expiringRenewalsCount} renewals due soon`
@@ -56,6 +92,7 @@ export function PriorityActionHub({
                   ? `Value at risk: ${rupee(expiringRenewalsValue)}. Send reminders before grace period.`
                   : "All subscription renewals are up to date for the next 30 days."}
               </p>
+              </>)}
             </div>
             <div className="h-10 w-10 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 grid place-items-center shrink-0">
               <Icon name="clock" size={20} />
@@ -79,6 +116,7 @@ export function PriorityActionHub({
           <div className="flex items-start justify-between">
             <div className="space-y-1">
               <StatusPill status="sent" label="Draft quotes" size="sm" />
+              {draftsView !== "ready" ? <NotReady view={draftsView} slow={slow} onRetry={onRetry} /> : (<>
               <h4 className="text-sm font-semibold text-foreground mt-2">
                 {draftQuotesCount > 0
                   ? `${draftQuotesCount} draft quotes to finalize`
@@ -89,6 +127,7 @@ export function PriorityActionHub({
                   ? "Send finalized GST quotes to customers to close deals faster."
                   : "Create new quotes with Google, Microsoft or Zoho templates."}
               </p>
+              </>)}
             </div>
             <div className="h-10 w-10 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 grid place-items-center shrink-0">
               <Icon name="file" size={20} />
@@ -115,6 +154,7 @@ export function PriorityActionHub({
           <div className="flex items-start justify-between">
             <div className="space-y-1">
               <StatusPill status="paid" label="Collections" size="sm" />
+              {collectView !== "ready" ? <NotReady view={collectView} slow={slow} onRetry={onRetry} /> : (<>
               <h4 className="text-sm font-semibold text-foreground mt-2">
                 {/* R-1473: this is the "to chase" figure (subscription dues + project
                     invoices), not the invoice-based "Still owed" — it said "All invoices
@@ -128,6 +168,7 @@ export function PriorityActionHub({
                   ? (pendingCollectNote ?? "Subscription dues + project invoices.")
                   : "No subscription dues or unpaid project invoices."}
               </p>
+              </>)}
             </div>
             <div className="h-10 w-10 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 grid place-items-center shrink-0">
               <Icon name="rupee" size={20} />

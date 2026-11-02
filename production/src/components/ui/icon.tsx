@@ -22,7 +22,7 @@ import {
   Smartphone, Sun, Moon, Building2, Briefcase, SlidersHorizontal,
   List, Grid3x3, Send, ArrowUpDown, Bookmark,
   Eye, Bug, Wallet, Printer, Laptop, Camera, Menu, Circle, Image as ImageIcon,
-  Mic, MicOff, Square, MapPin,
+  Mic, MicOff, Square, MapPin, MessagesSquare,
   type LucideIcon,
 } from "lucide-react";
 
@@ -83,6 +83,8 @@ const ICON_MAP: Record<string, LucideIcon> = {
   mail: Mail,
   phone: Phone,
   message: MessageSquare,
+  /* R-2300: Team chat (two bubbles) — never the single bubble of AI Help ("message"). */
+  chat: MessagesSquare,
   // whatsapp → real brand mark, rendered by Icon() below (not a lucide glyph)
 
   // System

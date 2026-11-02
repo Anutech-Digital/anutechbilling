@@ -39,6 +39,9 @@ import { canOpenRoute } from "@/lib/nav";
 import { useComplianceProfile } from "@/lib/compliance/profile";
 import { useCompanyDirectors } from "@/lib/queries/company-directors";
 import { showsDirectorLoans, directorChoices } from "@/lib/accounting/director-loans";
+import { useEmiPurchases } from "@/lib/queries/emi";
+import { isLoanOnly } from "@/lib/accounting/loan-setup";
+import { EmiLoansTaken, useEmiLoansInterest } from "@/components/features/banking/emi-loans-taken";
 
 function todayISO(): string {
   return istToday();
@@ -66,9 +69,14 @@ export default function BusinessLoansPage() {
   }, []);
 
   const loans = q.data ?? [];
-  const totalOutstanding = loans.reduce((s, l) => s + l.outstanding, 0);
-  const activeCount = loans.filter((l) => l.status === "active").length;
-  const totalInterest = loans.reduce((s, l) => s + l.interestPaid, 0);
+  /* R-2323: loans set up from an EMI line (Banking → Reconcile) — EMI loans with no asset. */
+  const emiQ = useEmiPurchases();
+  const emiLoans = (emiQ.data ?? []).filter(isLoanOnly);
+  const emiInterest = useEmiLoansInterest(emiLoans.map((l) => l.id));
+  const totalOutstanding = loans.reduce((s, l) => s + l.outstanding, 0) + emiLoans.reduce((s, l) => s + l.outstanding, 0);
+  const activeCount = loans.filter((l) => l.status === "active").length + emiLoans.filter((l) => l.status === "active").length;
+  const totalInterest = loans.reduce((s, l) => s + l.interestPaid, 0) + emiInterest;
+  const anyLoan = loans.length > 0 || emiLoans.length > 0;
 
   const confirmDelete = async (l: BusinessLoan) => {
     if (await confirm({
@@ -96,7 +104,7 @@ export default function BusinessLoansPage() {
 
       {/* How it works — only when there's nothing yet, so once loans exist the
           money (KPIs) reads first instead of an education banner. English-only. */}
-      {loans.length === 0 && !q.isError && (
+      {!anyLoan && !q.isError && !emiQ.isLoading && (
         <Card className="mb-5 p-3 md:p-4 border-amber/40 bg-amber-soft/25">
           <p className="text-[13px] text-ink-2 leading-relaxed">
             <b className="text-ink">Note:</b> a loan isn&apos;t an expense — it&apos;s cash in the bank plus an equal liability. Each month&apos;s EMI: only the <b>interest</b> is an expense; the <b>principal</b> reduces the loan. The app handles this split for you.
@@ -104,7 +112,7 @@ export default function BusinessLoansPage() {
         </Card>
       )}
 
-      {loans.length > 0 && (
+      {anyLoan && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 md:gap-4 mb-5">
           <KPI label="Outstanding" value={rupee(totalOutstanding)} tone="rose" />
           <KPI label="Active loans" value={String(activeCount)} />
@@ -112,20 +120,22 @@ export default function BusinessLoansPage() {
         </div>
       )}
 
+      <EmiLoansTaken loans={emiLoans} />
+
       {q.isLoading ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-20 w-full" />)}</div>
       ) : q.isError ? (
         <LoadError what="Business loans" onRetry={() => void q.refetch()} />
-      ) : loans.length === 0 ? (
+      ) : loans.length === 0 ? (emiLoans.length > 0 ? null : (
         <Card className="py-2">
           <EmptyState
             icon="rupee"
             title="No business loans yet"
-            body="When the company takes a loan from a bank / NBFC, add it here — the money comes into the bank and the outstanding shows on the Balance Sheet."
+            body="When the company takes a loan from a bank / NBFC, add it here — the money comes into the bank and the outstanding shows on the Balance Sheet. A loan whose EMIs are already on your bank statement can be set up from that EMI line (Banking → Reconcile → Loan / EMI)."
             action={<Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add a loan</Button>}
           />
         </Card>
-      ) : (
+      )) : (
         <>
           {/* Desktop table */}
           <Card className="hidden md:block overflow-x-auto">

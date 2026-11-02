@@ -27,6 +27,8 @@ import { useTurnstile } from "@/components/shared/turnstile";
 import type { MergedEdition } from "@/site/lib/live-catalog";
 import { enquiryReference, referenceNote } from "@/site/lib/enquiry-reference";
 import { landingForForm } from "@/site/lib/ad-attribution";
+import { formConsent } from "@/lib/consent/data-notice";
+import { DataNotice } from "@/site/components/legal/DataNotice";
 import { gstBreakup } from "@/lib/quotes/amounts";
 import { isIndianMobile, quoteMissing, quoteMissingMessage, type QuoteMissingKey } from "@/site/lib/quote-missing";
 
@@ -68,6 +70,8 @@ export function QuoteBuilder({ editions, prices }: { editions?: MergedEdition[];
   const [gstin, setGstin] = useState("");
   const [mailToday, setMailToday] = useState("");
   const [note, setNote] = useState("");
+  /* R-2011: the separate "Send me offers" box — unticked, never needed for a quote. */
+  const [optIn, setOptIn] = useState(false);
   const [touched, setTouched] = useState(false);
   // submit / doc
   const [submitState, setSubmitState] = useState<"idle" | "sending" | "done" | "failed">("idle");
@@ -246,6 +250,7 @@ export function QuoteBuilder({ editions, prices }: { editions?: MergedEdition[];
           /* R-1598: the landing page (first ad URL of the visit, with gclid/utm) and where the
              visitor came from — without them every /quote lead read "direct". */
           ...landingForForm(),
+          ...formConsent("quote_builder", optIn), // R-2011
         }),
       });
       const data = (await res.json().catch(() => ({ ok: false }))) as { ok: boolean; error?: string; ackSent?: boolean; reference?: string | null };
@@ -442,6 +447,7 @@ export function QuoteBuilder({ editions, prices }: { editions?: MergedEdition[];
               title="Preparing your quotation"
               steps={["Sending your requirement to our sales team", "Preparing the quotation with today's prices"]}
             />
+            <DataNotice purpose="quote" optIn={optIn} onOptIn={setOptIn} idPrefix="qb" style={{ color: "var(--text-secondary)" }} />
             {ts.widget}
             <button onClick={generate} disabled={submitState === "sending"} className="btn btn-primary" style={{ width: "100%", marginTop: 14, opacity: submitState === "sending" ? 0.7 : 1 }}>
               {submitState === "sending" ? "Generating…" : "Generate quotation"}

@@ -37,7 +37,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 export const SCOPE_EXIT = 9;
 export const SCOPE_BASE = "anutech/manager-pardeep";
@@ -271,7 +271,9 @@ export function parseScopeFlags(args) {
 /** Claimed areas: the lock's `areas` (from claim — not `files`, which `check` grows) + the card file's `files`. */
 export function claimedAreas(lock, card) {
   const fromCard = Array.isArray(card?.files) ? card.files : Array.isArray(card?.data?.files) ? card.data.files : [];
-  return [...(Array.isArray(lock?.areas) ? lock.areas : []), ...fromCard.filter((f) => typeof f === "string")];
+  /* R-2106: a comma-joined entry ("a,b") is several paths (29 Oct: three workers' own files refused at push). */
+  return [...(Array.isArray(lock?.areas) ? lock.areas : []), ...fromCard.filter((f) => typeof f === "string")]
+    .flatMap((a) => String(a).split(",")).map((a) => a.trim()).filter(Boolean);
 }
 
 /** Real git at the repo top (paths in diff output are repo-root relative). */
@@ -296,5 +298,72 @@ export function enforceScope(card, mode, { lockDir, allowOutside = [], cardPath 
   }
   (r.ok ? console.log : console.error)(r.message);
   if (!r.ok) exit(SCOPE_EXIT);
+  return r.ok;
+}
+
+/* ── R-2106 (31 Oct 2026): moved here from worker-lock.mjs (max-lines); worker-lock re-exports them. ── */
+
+/** worker-lock's normPath: slashes, ./, trailing / and production/ off ("../x" stays — repo-root files). */
+function claimPath(p) {
+  let s = String(p).trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  if (s.startsWith("production/")) s = s.slice("production/".length);
+  return s;
+}
+
+/**
+ * R-2106 (31 Oct 2026): claim areas exactly as push's scope guard reads them. 29 Oct three workers
+ * (R-2102, R-2104, R-2098) had their OWN files refused at push: areas written as one comma-joined
+ * string, or as the worktree's absolute path. Split on commas/newlines, strip the worktree prefix,
+ * then normPath (production/ off); duplicates dropped, order kept.
+ */
+export function normaliseClaimAreas(raw, worktree = "", print = null) {
+  const wt = String(worktree ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const out = [];
+  for (const r of raw ?? []) {
+    for (let part of String(r).split(/[,\n]/)) {
+      part = part.trim().replace(/\\/g, "/");
+      if (!part) continue;
+      if (wt && part.toLowerCase().startsWith(wt + "/")) {
+        part = part.slice(wt.length + 1);
+        if (!part.startsWith("production/")) part = "../" + part;
+      }
+      const n = claimPath(part);
+      if (n && !out.includes(n)) out.push(n);
+    }
+  }
+  if (print && out.length && (raw ?? []).join("|") !== out.join("|")) print(`(claim paths normalise kiye: ${out.join(", ")})`);
+  return out;
+}
+
+/**
+ * R-2106 (31 Oct 2026): CI's "Migration order check" (scripts/migration-order-check.mjs, base =
+ * github.event.before = manager-pardeep before this push) — run HERE after the rebase, so an edited old
+ * migration fails on the laptop, not 29 min later in CI. 31 Oct R-2106 itself went red twice in CI this
+ * way: two comment lines added to an existing migration, then removed again (both count as edits; only a
+ * `-- deploy-peek/key/user/skip:` header line may change). `run(args)` → { status, out } (node + args).
+ */
+export function migrationOrderGate(run, base = "anutech/manager-pardeep") {
+  const r = run(["scripts/migration-order-check.mjs", "--base", base]);
+  if (r.status === 0) return { ok: true, message: "✓ migration-order-check (CI wala) green" };
+  const out = String(r.out ?? "").trim();
+  const failed = out.includes("Migration check FAILED") ? out.slice(out.indexOf("Migration check FAILED")) : out.split("\n").slice(-8).join("\n");
+  return {
+    ok: false,
+    message: [
+      "✗ Migration order check (CI jaisa) laal — push NAHI hua:",
+      failed,
+      "   Purani migration me sirf `-- deploy-peek/key/user/skip:` header line badal sakti hai — comment/SQL ki koi bhi line jodna YA hatana bhi 'edit' hai.",
+      "   Badlaav wapas lo (git show anutech/manager-pardeep:<file> > <file>) aur nayi forward migration likho.",
+    ].join("\n"),
+  };
+}
+
+/** CLI step inside `worker-lock push` (run from production/): real node, prints, returns ok. */
+export function realMigrationOrderGate() {
+  const r = migrationOrderGate((a) => {
+    const p = spawnSync(process.execPath, a, { encoding: "utf8" });
+    return { status: p.status, out: `${p.stdout ?? ""}${p.stderr ?? ""}` };
+  });
+  (r.ok ? console.log : console.error)(r.message);
   return r.ok;
 }

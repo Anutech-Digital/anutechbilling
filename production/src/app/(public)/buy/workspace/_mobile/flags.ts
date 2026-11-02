@@ -7,3 +7,8 @@
  */
 export const SHOW_SOCIAL_PROOF: boolean = false;
 export const FOUNDER_PHOTO_URL: string | null = null;
+/**
+ * R-2021 (R-2019 decision 8): the "See what your invoice will look like" sheet — off until
+ * Pardeep sends a real redacted invoice image and the exact SAC code (never a made-up invoice).
+ */
+export const SHOW_SAMPLE_INVOICE: boolean = false;

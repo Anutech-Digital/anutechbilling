@@ -10,6 +10,7 @@
 import { decideCadence, effectiveGraceDays, renewalIsSettled, renewalStateLabel, type RenewalState } from "@/lib/renewals/cadence";
 import { describeError } from "@/lib/errors/toast-error";
 import { cleanDisplayName } from "@/lib/utils";
+import { isFlexNextPart } from "@/lib/renewals/buckets";
 
 export interface RenewalSubLike {
   id: string;
@@ -18,8 +19,12 @@ export interface RenewalSubLike {
   renewal_state?: string | null;
   renewal_date: string | null;
   term_months?: number | null;
+  /** R-2232: flex (1-month term billed in parts) — its next month is a billing part, never reminded. */
+  billing_cycle?: string | null;
   /** R-1621: the owner's "+N days" for this term (select * carries it). */
   grace_until?: string | null;
+  /** R-2225: false = Won't renew — never reminded. */
+  auto_renew?: boolean | null;
 }
 
 export interface RenewalRowLike {
@@ -52,7 +57,9 @@ export function isTerminalRenewal(
  */
 export function bulkReminderTargets<T extends RenewalRowLike>(rows: T[], today: Date = new Date(), tenantGraceDays = 0): T[] {
   return rows.filter((r) => {
+    if (r.sub.auto_renew === false) return false;   // R-2225: they said Won't renew — no reminder
     if (r.daysUntil > 30) return false;
+    if (isFlexNextPart(r.sub, r.daysUntil)) return false;   // R-2232: a billing part, not a renewal
     if (isTerminalRenewal(r.sub.renewal_state, r.sub.renewal_date, r.sub.term_months, today)) return false;
     if (r.daysUntil >= 0) return true;
     if (!r.sub.renewal_date) return false;

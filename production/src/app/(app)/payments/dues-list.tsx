@@ -174,7 +174,8 @@ function DueChip({ o }: { o: OutstandingRow }) {
     <Badge
       kind={due.kind === "overdue" ? "danger" : due.kind === "upcoming" ? "muted" : "warning"}
       size="sm"
-      title={`${fromInvoice ? "Invoice due date" : "Agreed due date"} ${formatDate(payBy)}`}
+      /* R-2230: an open part payment request has no invoice yet — say which it is. */
+      title={`${fromInvoice ? (o.pay_by_kind === "request" ? "Payment request due date" : "Invoice due date") : "Agreed due date"} ${formatDate(payBy)}`}
     >
       {paymentDueChipLabel(due, formatDate(payBy))}
     </Badge>

@@ -20,6 +20,7 @@ import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import type { SettlementPlan } from "@/lib/razorpay/settlement-match";
 import { useRazorpaySettlement, useReconcileRazorpaySettlement } from "@/lib/queries/razorpay-settlement";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
 export interface RazorpaySettlementLine {
   id: string;
@@ -37,7 +38,14 @@ export function remainingBlockers(plan: SettlementPlan, picks: Record<string, st
   return left;
 }
 
-export function RazorpaySettlementSection({ line, onDone }: { line: RazorpaySettlementLine; onDone: () => void }) {
+export function RazorpaySettlementSection({ line, onDone, onFooterSave }: {
+  line: RazorpaySettlementLine;
+  onDone: () => void;
+  /** R-2354: the Reconcile sheet draws "Reconcile settlement" in its sticky footer once the
+   *  settlement is fetched. Given → no inline button; the footer gets the same label and reconcile,
+   *  off while something still stops it (the list in the box says what). */
+  onFooterSave?: (save: FooterSave | null) => void;
+}) {
   const [open, setOpen] = React.useState(false);
   const [settlementId, setSettlementId] = React.useState<string | null>(null);
   const [picks, setPicks] = React.useState<Record<string, string>>({});
@@ -46,19 +54,7 @@ export function RazorpaySettlementSection({ line, onDone }: { line: RazorpaySett
   const q = useRazorpaySettlement(line.id, settlementId, open);
   const rec = useReconcileRazorpaySettlement();
 
-  if (!open) {
-    return (
-      <div className="rounded-md border border-indigo/40 bg-indigo/5 p-3 flex items-center justify-between gap-3">
-        <p className="text-xs text-ink-2 leading-relaxed min-w-0">
-          <b className="text-ink">Razorpay settlement?</b> One credit for many customer payments, less Razorpay&apos;s fee and GST.
-          Fetch it from Razorpay to match every payment and book the fee in one step.
-        </p>
-        <Button size="sm" variant="primary" icon="download" onClick={() => setOpen(true)}>Fetch settlement</Button>
-      </div>
-    );
-  }
-
-  const r = q.data;
+  const r = open ? q.data : undefined;
   const plan = r?.state === "plan" ? r.plan : null;
   const blockers = plan ? remainingBlockers(plan, picks) : [];
 
@@ -77,6 +73,23 @@ export function RazorpaySettlementSection({ line, onDone }: { line: RazorpaySett
         action: { label: "Fetch again", onClick: () => { void q.refetch(); } },
       });
     }
+  }
+
+  /* R-2354: same label, same rule (nothing left in the blockers list), same reconcile(). */
+  useFooterSaveReport(onFooterSave, plan
+    ? { label: "Reconcile settlement", onSave: () => { void reconcile(); }, disabled: blockers.length > 0, loading: rec.isPending }
+    : null);
+
+  if (!open) {
+    return (
+      <div className="rounded-md border border-indigo/40 bg-indigo/5 p-3 flex items-center justify-between gap-3">
+        <p className="text-xs text-ink-2 leading-relaxed min-w-0">
+          <b className="text-ink">Razorpay settlement?</b> One credit for many customer payments, less Razorpay&apos;s fee and GST.
+          Fetch it from Razorpay to match every payment and book the fee in one step.
+        </p>
+        <Button size="sm" variant="primary" icon="download" onClick={() => setOpen(true)}>Fetch settlement</Button>
+      </div>
+    );
   }
 
   return (
@@ -201,9 +214,11 @@ export function RazorpaySettlementSection({ line, onDone }: { line: RazorpaySett
 
           <div className="flex items-center gap-2 flex-wrap">
             {blockers.length === 0 ? (
-              <Button size="sm" variant="primary" icon="check" loading={rec.isPending} onClick={() => { void reconcile(); }}>
-                Reconcile settlement
-              </Button>
+              !onFooterSave && (
+                <Button size="sm" variant="primary" icon="check" loading={rec.isPending} onClick={() => { void reconcile(); }}>
+                  Reconcile settlement
+                </Button>
+              )
             ) : (
               <Button size="sm" variant="default" onClick={() => { void q.refetch(); }}>Fetch again</Button>
             )}

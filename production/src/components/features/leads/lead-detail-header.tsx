@@ -14,6 +14,7 @@ import { STAGE_LABEL } from "@/lib/leads/stage-meta";
 import { leadTitle } from "@/lib/leads/display-name";
 import { useContact } from "@/lib/queries/contacts";
 import { RelationshipEditor } from "@/components/features/contacts/relationship-chip";
+import { LeadAiWorkflow } from "@/components/features/leads/lead-ai-workflow";
 
 /** R-1740: my relationship with the lead's person — kept on the lead's anchor contact
  *  (leads.contact_id), so the Contacts page, the Map and this chip read one fact. */
@@ -37,9 +38,11 @@ export interface LeadDetailHeaderProps {
   confirm: ReturnType<typeof useConfirm>;
   changeStage: ReturnType<typeof useChangeLeadStage>["changeStage"];
   onClose: () => void;
+  /** R-2042: opens the Email tab, where the AI draft waits (link shown at Draft ready). */
+  onOpenEmailTab?: () => void;
 }
 
-export function LeadDetailHeader({ lead, stageLabel, confirm, changeStage, onClose }: LeadDetailHeaderProps) {
+export function LeadDetailHeader({ lead, stageLabel, confirm, changeStage, onClose, onOpenEmailTab }: LeadDetailHeaderProps) {
   return (
   <SheetHeader className="!p-5 flex flex-row items-start justify-between gap-3 border-b border-hairline">
     <div className="min-w-0 flex-1">
@@ -125,6 +128,10 @@ export function LeadDetailHeader({ lead, stageLabel, confirm, changeStage, onClo
           )}
         </div>
       )}
+
+      {/* R-2042: Run AI Lead Workflow + its live step chips. Pinned with the rest of the
+          header, so the chips stay in view whichever tab is open while the run moves. */}
+      <LeadAiWorkflow leadId={lead.id} onOpenDraft={onOpenEmailTab} />
     </div>
     <IconButton icon="x" aria-label="Close" onClick={onClose} />
   </SheetHeader>

@@ -23,7 +23,7 @@ const ROOT = join(__dirname, "..", "..", "..");
 const SQL_SALE = new Set([
   "report_pnl",            // revenue + output GST
   "report_pnl_monthly",    // revenue trend
-  "report_pnl_revenue_by_product", // R-1835: revenue split by what was sold (same rows as report_pnl)
+  "report_pnl_revenue_lines", // R-2181: the documents behind Revenue per product family (R-1835 report_pnl_revenue_by_product is their sum)
   "report_balance_sheet",  // gst_output (receivables keep the open balance)
   "report_day_book",       // Sales vouchers
   "report_party_ledger",   // 'Opening balance' for opening_balance, not a Sales voucher
@@ -72,8 +72,11 @@ const SQL_NOT_SALE: Record<string, string> = {
   record_payment: "payments on quotes",
   record_project_payment: "payments on projects",
   refund_payment: "money out",
+  r2322_refund_scope: "R-2322: snapshot of the rows a customer refund touches (to undo it exactly) — not GST or revenue",
   set_late_fee_mode: "late fee settings",
   split_outstanding_for: "per quote",
+  sync_invoice_subscription_outstanding: "R-2178: one invoice's quote / billing-part link, to re-sync the subscriptions' stored balance after a credit / debit note — not GST or revenue",
+  subscription_dues_drift: "R-2154: read-only report — only asks whether a quote has any invoice (then the invoice is the claim)",
   suggest_invoice_write_off: "open balances",
   suspend_subscription: "per subscription",
   cancel_subscription: "R-1711: what one subscription's open invoices still ask for, so a cancel never clears it (no money column changes on invoices)",
@@ -146,7 +149,6 @@ const TS_SALE = new Set([
   "src/app/(app)/accounting/gst/report.ts",                       // GSTR-1 / 3B
   "src/app/(app)/accounting/gst/composition-report.ts",           // CMP-08 — bill_of_supply only
   "src/lib/compliance/revised-invoice-query.ts",                  // revised invoices — bill_of_supply only
-  "src/components/features/accounting/pnl-drilldown-dialog.tsx",  // P&L revenue rows
   "src/components/features/accounting/tally-daybook-button.tsx",  // Tally Sales vouchers
   "src/lib/queries/gst-health.ts",                                // GST checks of our invoices
   "src/lib/queries/month-close.ts",                               // month's output GST
@@ -156,6 +158,7 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/app/(public)/buy/workspace/thanks/fetch-order.ts": "R-1971: the number of this order's own GST invoice (by quote_id) for the buyer's thanks page — not a list or a total",
   "src/lib/exports/read-rows.server.ts": "R-1007: the invoice-register CSV lists every invoice the user ticked or can see (opening ones too, as the Invoices screen does) — not GST or revenue",
   "src/lib/integrations/zoho-books/import-store.ts": "R-1753: Zoho numbers already imported as opening invoices (so a second import skips them)",
+  "src/lib/privacy/queries.ts": "R-2013: one person's own invoices for their DPDP data export (every kind, as the person sees them) — not GST or revenue",
   "src/app/(app)/accounting/aging/read.ts": "aging of open balances — includes opening invoices on purpose",
   "src/app/(app)/invoices/[id]/page.tsx": "one invoice; an opening invoice gets its own view",
   "src/app/(app)/quotes/[id]/invoice-created-at.ts": "R-1715: one invoice's created_at by id, for the quote's workflow history time — not a list or a total",
@@ -174,6 +177,7 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/components/features/collections/write-off-suggestions-card.tsx": "open balances",
   "src/components/features/invoices/issue-credit-note-dialog.tsx": "a trigger refuses notes on an opening invoice",
   "src/components/features/subscriptions/invoice-peek-dialog.tsx": "one subscription invoice",
+  "src/components/features/subscriptions/use-expected-seat-rate.ts": "the last invoiced seat rate of one item (R-2292; skips opening invoices itself)",
   "src/lib/ai/help-data-tools.ts": "overdue balances",
   "src/lib/ai/performance.server.ts": "lead → invoice status",
   "src/lib/billing/sync-instalments.server.ts": "our instalment invoices",

@@ -7,7 +7,8 @@
      4. ₹1,200 debit with a pending ₹1,200 reimbursement → "Book ₹1,200 as reimbursement paid". */
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { ReconcileFooter, type FooterSave } from "./reconcile-who-tiles";
 
 import type { BankTransactionRow } from "@/lib/queries/bank";
 
@@ -97,6 +98,50 @@ describe("R-1871 employee advance from a bank line", () => {
     fireEvent.click(screen.getByRole("button", { name: "Book reimbursement" }));
     expect((screen.getByLabelText("Reimbursement") as HTMLSelectElement).value).toBe("r1");
     fireEvent.click(screen.getByRole("button", { name: "Book ₹1,200 as reimbursement paid" }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({ transactionId: "t1", kind: "reimburse", reimbursementId: "r1" }));
+  });
+});
+
+/* R-2008: in the Reconcile sheet the open form's Save (advance / top-up / return / reimbursement)
+   is the sticky footer's — same label, same rule, same submit(). Nothing open → nothing there. */
+function InSheet({ t }: { t: BankTransactionRow }) {
+  const [footer, setFooter] = React.useState<FooterSave | null>(null);
+  return (
+    <>
+      <div data-testid="reconcile-scroll-body"><EmployeeAdvanceBankSection transaction={t} onDone={() => {}} onFooterSave={setFooter} /></div>
+      <ReconcileFooter amount={t.debit || t.credit} save={footer} hint="pick" onClose={() => {}} />
+    </>
+  );
+}
+const footerButtons = () => within(screen.getByTestId("reconcile-footer")).queryAllByRole("button").map((b) => b.textContent);
+describe("R-2008 Employee advance — Save in the sticky footer", () => {
+  it("money-out: closed → nothing; Book advance → the footer books the same new advance", async () => {
+    render(<InSheet t={txn()} />);
+    expect(footerButtons()).toEqual(["Close"]);
+    fireEvent.click(screen.getByRole("button", { name: "Book advance" }));
+    const footer = screen.getByTestId("reconcile-footer");
+    const btn = await vi.waitFor(() => within(footer).getByRole("button", { name: "Book ₹10,000 as advance to Ramesh Kumar" }) as HTMLButtonElement);
+    expect(within(screen.getByTestId("reconcile-scroll-body")).queryByRole("button", { name: /^Book ₹/ })).toBeNull();
+    expect(footer.textContent).toContain("Bank ₹10,000 = ₹10,000 ✓");
+    fireEvent.click(btn);
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({ transactionId: "t1", kind: "give", name: "Ramesh Kumar", note: null }));
+  });
+
+  it("money-in more than the balance: the footer Save stays off (same rule)", async () => {
+    advances = [{ id: "a1", employee_name: "Suresh Pal", status: "active", remaining_balance: 1000, disbursed_date: "2026-09-01" }];
+    render(<InSheet t={txn({ debit: 0, credit: 1500, description: "UPI/SURESH PAL/back" })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Book return" }));
+    const btn = await vi.waitFor(() => within(screen.getByTestId("reconcile-footer")).getByRole("button", { name: "Book ₹1,500 as advance returned" }) as HTMLButtonElement);
+    expect(btn.disabled).toBe(true);
+    fireEvent.click(btn);
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("a pending reimbursement: the footer pays it", async () => {
+    pending = [{ id: "r1", person_name: "Ramesh Kumar", amount: 1200, incurred_on: "2026-10-15", purpose: "Office expenses over the advance", employee_id: "e1" }];
+    render(<InSheet t={txn({ debit: 1200 })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Book reimbursement" }));
+    fireEvent.click(await vi.waitFor(() => within(screen.getByTestId("reconcile-footer")).getByRole("button", { name: "Book ₹1,200 as reimbursement paid" })));
     await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({ transactionId: "t1", kind: "reimburse", reimbursementId: "r1" }));
   });
 });

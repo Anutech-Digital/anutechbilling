@@ -6,6 +6,7 @@
 //   4. ₹15,000 with nothing billed                        → advance
 import { describe, it, expect } from "vitest";
 import {
+  newBillPay,
   allocateOldestFirst, guessVendor, itemKey, newBillTds, payArgs, planTds, preselect, resultLines, summarise,
   tdsMap, vendorPan, type Bill194q, type VendorOpenItem, type VendorPayResult,
 } from "./debit-pay-for";
@@ -66,10 +67,11 @@ describe("planTds — the app's TDS rule on the bills paid together", () => {
   it("the vendor's earlier payments this year count toward the limit", () => {
     expect(planTds([exp({ tds_base: 40000, amount_due: 47200 })], j("194J", { base: 20000, baseWithoutTds: 0 }))[0].tds).toBe(4000);
   });
-  it("a bill that already carries TDS keeps it; a COGS bill takes none", () => {
+  it("a bill that already carries TDS keeps it; a small COGS bill stays under the 194C limit", () => {
     const t = planTds([exp({ tds_amount: 5000, tds_section: "194J" }), B1], j("194C"));
     expect(t[0]).toMatchObject({ tds: 5000, section: "194J", fixed: true });
     expect(t[1].tds).toBe(0);
+    expect(t[1].reason).toMatch(/within the limit/);
   });
   it("no section / 'no TDS' → nothing", () => {
     expect(planTds([E1, E2], j(null)).every((x) => x.tds === 0)).toBe(true);
@@ -106,8 +108,8 @@ describe("planTds — R-1891 194Q on a COGS bill: the database's figure, only fo
     expect(planTds([big], with194q([q({ buyer: null })]))[0].tds).toBe(0);
     expect(planTds([big], with194q([q({ buyer: false })]))[0].tds).toBe(0);
   });
-  it("another section, 'No TDS', or nothing due → none", () => {
-    expect(planTds([big], { ...with194q([q()]), section: "194C" })[0].tds).toBe(0);
+  it("'No TDS', or nothing due → none; R-2320: a services section takes its own rate, not 194Q", () => {
+    expect(planTds([big], { ...with194q([q()]), section: "194C" })[0]).toMatchObject({ tds: 40000, section: "194C", fixed: false });
     expect(planTds([big], { ...with194q([q()]), off: true })[0].tds).toBe(0);
     expect(planTds([big], with194q([q({ base: 0, tds_total: 0, tds_due: 0 })]))[0].tds).toBe(0);
   });
@@ -251,13 +253,35 @@ describe("resultLines — what happened, in the owner's words", () => {
   };
   const lines = resultLines(r);
   it("names the bill, amount, vendor, TDS and the new status, with a link", () => {
-    expect(lines[0].text).toBe("Paid Bill #PS-101 (₹59,000) to Sharma Associates · TDS ₹5,000 deducted (194J) · Bill now Paid");
+    expect(lines[0].text).toBe("Paid Bill #PS-101 (₹59,000) to Sharma Associates · TDS ₹5,000 deducted (194J(b)) · Bill now Paid");   // R-2338: old 194J = 194J(b)
     expect(lines[0].href).toBe("/accounting/expenses?edit=E1");
     expect(lines[1].text).toBe("Paid Bill #G-2 (₹10,000) to Sharma Associates · Bill now part paid, ₹13,600 still due");
   });
   it("advance, bank charge and TDS payable each say where they went", () => {
     expect(lines.some((l) => l.text.includes("₹4,600 kept as an advance") && l.href === "/accounting/prepaid")).toBe(true);
     expect(lines.some((l) => l.text.includes("Bank charge ₹25"))).toBe(true);
-    expect(lines.some((l) => l.text.includes("TDS ₹5,000 (194J) withheld"))).toBe(true);
+    expect(lines.some((l) => l.text.includes("TDS ₹5,000 (194J(b)) withheld"))).toBe(true);
+  });
+});
+
+/* R-2321: "Paying now" on a new bill typed on the spot — an expense bill can be part-paid too. */
+describe("R-2321 newBillPay — what a new bill settles now (cash + TDS)", () => {
+  it("owner's case: ₹71,500 expense bill, ₹67,500 bank line → ₹67,500 now (the line), ₹4,000 stays due", () => {
+    expect(newBillPay({ kind: "expense", pay: 0 }, 71500, 0, 67500)).toBe(67500);
+  });
+  it("default with TDS: the line is the cash, so the bill settles line + TDS", () => {
+    expect(newBillPay({ kind: "expense", pay: 0 }, 23600, 2000, 21600)).toBe(23600);
+    expect(newBillPay({ kind: "expense", pay: 0 }, 59000, 5000, 25000)).toBe(30000);
+  });
+  it("never more than the bill (the rest of the line stays as an advance, as before)", () => {
+    expect(newBillPay({ kind: "expense", pay: 0 }, 50000, 0, 67500)).toBe(50000);
+    expect(newBillPay({ kind: "expense", pay: 90000 }, 71500, 0, 67500)).toBe(71500);
+  });
+  it("a typed amount wins", () => {
+    expect(newBillPay({ kind: "expense", pay: 60000 }, 71500, 0, 67500)).toBe(60000);
+  });
+  it("COGS bill unchanged: empty → the whole bill", () => {
+    expect(newBillPay({ kind: "cogs", pay: 0 }, 71500, 0, 67500)).toBe(71500);
+    expect(newBillPay({ kind: "cogs", pay: 40000 }, 71500, 0, 67500)).toBe(40000);
   });
 });

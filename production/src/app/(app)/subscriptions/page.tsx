@@ -14,7 +14,8 @@ import { useListKeys } from "@/lib/hooks/useKeyboard";
 import { KeyHintBar, ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { useRouter } from "next/navigation";
 import { useSubscriptions, useSetSubscriptionDomain, useDeleteSubscription } from "@/lib/queries/subscriptions";
-import { useOutstandingReceivables } from "@/lib/queries/payments";
+import { useOutstandingReceivables, useResumeSubscription } from "@/lib/queries/payments";
+import { SuspendSubscriptionDialog } from "@/components/features/subscriptions/suspend-subscription-dialog";
 import { sheetHandledInvoice } from "@/lib/payments/record-payment-invoice";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
@@ -77,7 +78,10 @@ import { ImportSubscriptionsDialog } from "@/components/features/subscriptions/i
 import { ReconcileGoogleDialog } from "@/components/features/subscriptions/reconcile-google-dialog";
 import { ImportGoogleSubsDialog } from "@/components/features/subscriptions/import-google-subs-dialog";
 import { MarginAlertsCard, marginAlertCounts } from "@/components/features/subscriptions/margin-alerts-card";
-import { SubDrawerActions, SubDrawerDangerZone } from "@/components/features/subscriptions/sub-drawer-actions";
+import { SubDrawerActions, SubDrawerDangerZone, SubDrawerNonRenewing } from "@/components/features/subscriptions/sub-drawer-actions";
+import { NonRenewingDialog } from "@/components/features/subscriptions/non-renewing-dialog";
+import { useSetNonRenewing } from "@/components/features/subscriptions/use-non-renewing";
+import { canEndAtTermEnd, isNonRenewing, mayMarkNonRenewing, subStatusPill } from "@/lib/subscriptions/non-renewing";
 import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -87,6 +91,8 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { loadErrorBody } from "@/components/shared/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button, IconButton } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { SUBS_TABLE_COLS, vendorShort } from "@/components/features/subscriptions/subs-table-cols";
 import { FAB } from "@/components/ui/fab";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -115,6 +121,7 @@ import { cn } from "@/lib/utils";
 import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import type { Subscription } from "@/lib/supabase/database.types";
+import { totalMrr } from "@/lib/subscriptions/mrr-of";
 
 /* R-317: ?price=missing on the list (Reports links here). */
 const PRICE_FILTERS = ["", "missing"] as const;
@@ -147,9 +154,12 @@ function vendorMeta(v: string): { label: string; kind: "info" | "success" | "mut
  * because none of these branches fire against today's production data — a bug
  * in any of them would look exactly like silence on screen.
  */
-function SubExceptions({ sub, payBy, size = "sm" }: { sub: Subscription; payBy?: string | null; size?: "sm" | "md" }) {
+function SubExceptions({ sub, payBy, payByKind, size = "sm" }: { sub: Subscription; payBy?: string | null; payByKind?: "invoice" | "request" | null; size?: "sm" | "md" }) {
   /* R-1689: payBy = the oldest unpaid invoice's due date (credit / invoice-now rows), else the agreed date. */
-  const flags = subscriptionExceptions({ ...sub, pay_by: payBy });
+  /* R-2225: a non-renewing row says so in its status pill — the chip would say it twice. */
+  /* R-2230: payByKind says whether that date is an unpaid invoice's or a part payment request's. */
+  const flags = subscriptionExceptions({ ...sub, pay_by: payBy, pay_by_kind: payByKind })
+    .filter((f) => !(f.key === "auto_renew_off" && isNonRenewing(sub)));
   if (flags.length === 0) return null;
   return (
     <>
@@ -171,7 +181,7 @@ function SubExceptions({ sub, payBy, size = "sm" }: { sub: Subscription; payBy?:
  * live on the cell rather than the button.
  */
 function SortHeader({
-  label, col, sort, onSort, align = "left", title, hint,
+  label, col, sort, onSort, align = "left", title, hint, label2, col2,
 }: {
   label: string;
   col: SubSortKey;
@@ -181,8 +191,13 @@ function SortHeader({
   title?: string;
   /** Second line under the label, e.g. what the two seat numbers mean. */
   hint?: string;
+  /** R-2263: a second, smaller sort button under the label for a value merged into this
+   *  column (Renewal · Started, Plan · Vendor, MRR · Seats) — no sort was lost. */
+  label2?: string;
+  col2?: SubSortKey;
 }) {
-  const active = sort?.key === col;
+  const active2 = col2 != null && sort?.key === col2;
+  const active = sort?.key === col || active2;
   return (
     <th
       className={cn(
@@ -208,11 +223,38 @@ function SortHeader({
         </span>
         {/* The arrow only appears on the sorted column. An arrow on every header is a
             row of arrows, and none of them says which one is in force. */}
-        <span className={cn("text-3xs", active ? "opacity-100" : "opacity-0")} aria-hidden="true">
+        <span className={cn("text-3xs", active && !active2 ? "opacity-100" : "opacity-0")} aria-hidden="true">
           {active && sort!.dir === "asc" ? "↑" : "↓"}
         </span>
       </button>
+      {col2 && label2 && (
+        <button
+          type="button"
+          onClick={() => onSort(col2)}
+          title={`Sort by ${label2.toLowerCase()}`}
+          className={cn(
+            "flex items-center gap-1 normal-case font-normal tracking-normal text-3xs hover:text-ink transition-colors cursor-pointer",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-sm",
+            align === "right" ? "ml-auto flex-row-reverse" : "",
+            active2 ? "text-ink font-semibold" : "",
+          )}
+        >
+          <span>{label2}</span>
+          <span className={cn(active2 ? "opacity-100" : "opacity-0")} aria-hidden="true">
+            {active2 && sort!.dir === "asc" ? "↑" : "↓"}
+          </span>
+        </button>
+      )}
     </th>
+  );
+}
+
+/** R-2263: the desktop table's column widths (subs-table-cols.ts); Customer and Plan take the rest. */
+function SubsColGroup() {
+  return (
+    <colgroup>
+      {SUBS_TABLE_COLS.map((c) => <col key={c.key} style={{ width: c.width ?? undefined }} />)}
+    </colgroup>
   );
 }
 
@@ -224,6 +266,10 @@ export default function SubscriptionsPage() {
   const { data: dues } = useOutstandingReceivables();
   const payByOf = React.useMemo(
     () => new Map((dues ?? []).map((o) => [o.subscription_id, o.pay_by ?? null] as const)),
+    [dues],
+  );
+  const payByKindOf = React.useMemo(
+    () => new Map((dues ?? []).map((o) => [o.subscription_id, o.pay_by_kind ?? null] as const)),
     [dues],
   );
   /* The catalogue is what makes a margin real rather than a multiplier — see
@@ -358,6 +404,12 @@ export default function SubscriptionsPage() {
   const [editSub,     setEditSub]     = React.useState<Subscription | null>(null);
   /* R-455: END a real subscription (customer left) — separate from Delete (wrong entry). */
   const [cancelSub,   setCancelSub]   = React.useState<Subscription | null>(null);
+  /* R-2225: Won't renew (drawer) — the dialog, and Undo straight from the drawer. */
+  const [nonRenewSub, setNonRenewSub] = React.useState<Subscription | null>(null);
+  const setNonRenewing = useSetNonRenewing();
+  /* R-2228: status no longer changes in Correct details — its Suspend / Resume links open these. */
+  const [suspendSub, setSuspendSub] = React.useState<Subscription | null>(null);
+  const resumeSub = useResumeSubscription();
   const delSub = useDeleteSubscription();
   /* R-718: deleting a subscription is owner / accountant only — the database refuses the rest. */
   const canDeleteSub = canDeleteMoney(useCurrentUser().data?.role);
@@ -365,6 +417,10 @@ export default function SubscriptionsPage() {
   const canQuotesHere = canOpenQuotes(useCurrentUser().data?.role);
   /* R-2073: Upgrade plan makes a quote that changes the bill — the Extend / Add seats roles. */
   const canChangeTerms = mayDo(useCurrentUser().data?.role, "seats.change");
+  /* R-2225: Won't renew / Undo — the Cancel roles (owner / manager / accountant). */
+  const canNonRenew = mayMarkNonRenewing(useCurrentUser().data?.role);
+  /* R-2266: the Insights strip remembers open / closed per signed-in user. */
+  const meUserId = useCurrentUser().data?.userId;
   const confirm = useConfirm();
   const handleDeleteSub = async (s: Subscription) => {
     const body = `This removes the subscription (and any draft purchase order for it). `
@@ -789,7 +845,9 @@ export default function SubscriptionsPage() {
 
   // KPIs
   const activeSubs = subsByWorkspace.filter((s) => subInFocus(s, "active"));
-  const activeMRR = activeSubs.reduce((s, x) => s + x.mrr, 0);
+  /* R-2229: the one MRR rule — the same figure as SaaS Metrics and the dashboard; a one-time
+     line filed as a subscription or a row with no recurring term adds 0. */
+  const activeMRR = totalMrr(activeSubs);
   const activeARR = activeMRR * 12;
   /* R-1727: the closed Insights strip's counts — the same rows its two boxes count. */
   const leakTotals = leakageTotals(leakageRows(subsByWorkspace, catalog).map((r) => r.result));
@@ -879,6 +937,7 @@ export default function SubscriptionsPage() {
           carries the counts, so closing hides the detail, never the warning. */}
       {!isLoading && subs && subs.length > 0 && (
         <SubsInsightsStrip
+          userId={meUserId}
           mrr={activeMRR}
           arr={activeARR}
           seats={seatsPhrase(activeSubs)}
@@ -1232,18 +1291,13 @@ export default function SubscriptionsPage() {
                     count is shown for live rows — see renewalClock() (R-1774). */}
                 <div className="flex items-end justify-between gap-2 mt-2 pt-2 border-t border-hairline/60">
                   <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                    <Badge
-                      kind={
-                        s.status === "active"    ? "success" :
-                        s.status === "paused"    ? "warning" :
-                        s.status === "cancelled" ? "danger"  : "muted"
-                      }
-                      size="sm"
-                      dot
-                    >
-                      {s.status}
-                    </Badge>
-                    <SubExceptions sub={s} payBy={payByOf.get(s.id)} />
+                    {/* R-2225: "Non-renewing · ends …" replaces "active" when the customer said Won't renew. */}
+                    {(() => { const pill = subStatusPill(s); return (
+                      <Badge kind={pill.kind} size="sm" dot>
+                        {pill.nonRenewing ? pill.label : s.status}
+                      </Badge>
+                    ); })()}
+                    <SubExceptions sub={s} payBy={payByOf.get(s.id)} payByKind={payByKindOf.get(s.id)} />
                   </div>
                   <div className="text-right shrink-0">
                     {/* The date needs saying what it IS. On desktop the column
@@ -1276,8 +1330,11 @@ export default function SubscriptionsPage() {
       {!isLoading && !error && filtered.length > 0 && (
         <Card flush className="hidden xl:block">
             {/* R-1481: own scroll box — Card flush overflow-x-auto never scrolls vertically, so a sticky header needs this to stick. */}
+            {/* R-2263: fixed layout on a 944px column budget (see subs-table-cols.ts) — at a
+                1280 laptop Renewal, Status and the ⋮ menu are on screen without a sideways scroll. */}
             <div className="overflow-auto max-h-[calc(100vh-15rem)]">
-            <table className="w-full">
+            <table className="w-full table-fixed">
+              <SubsColGroup />
               <thead className="sticky top-0 z-10 bg-paper-2 border-b border-hairline-strong">
                 <tr>
                   {/* ── Select-all covers the rows ON SCREEN, not the whole filtered set ──
@@ -1321,19 +1378,17 @@ export default function SubscriptionsPage() {
                       reorders what those already selected. Clearing it returns to the
                       newest-first default. */}
                   <SortHeader label="Customer · Domain" col="customer" sort={sort} onSort={toggleSort} />
-                  <SortHeader label="Plan" col="plan" sort={sort} onSort={toggleSort} />
-                  <SortHeader label="Vendor" col="vendor" sort={sort} onSort={toggleSort} />
+                  {/* R-2263: Vendor is a short badge in the Plan cell; Seats share the MRR cell;
+                      Started is the second line of Renewal — each keeps its own sort button. */}
+                  <SortHeader label="Plan" col="plan" label2="Vendor" col2="vendor" sort={sort} onSort={toggleSort} />
                   <SortHeader
-                    label="Seats" col="seats" align="right" sort={sort} onSort={toggleSort}
-                    title="What Google bills us for / what we bill the customer"
-                    hint="Google / you"
+                    label="MRR" col="mrr" align="right" sort={sort} onSort={toggleSort}
+                    label2="Seats · Google / you" col2="seats"
                   />
-                  <SortHeader label="MRR" col="mrr" align="right" sort={sort} onSort={toggleSort} />
                   <SortHeader label="Margin" col="margin" align="right" sort={sort} onSort={toggleSort} title="Monthly margin" />
-                  <SortHeader label="Started" col="started" sort={sort} onSort={toggleSort} />
-                  <SortHeader label="Renewal" col="renewal" sort={sort} onSort={toggleSort} />
+                  <SortHeader label="Renewal" col="renewal" label2="Started" col2="started" sort={sort} onSort={toggleSort} />
                   <SortHeader label="Status" col="status" sort={sort} onSort={toggleSort} />
-                  <th className="px-2 py-2.5 text-right w-28"><span className="sr-only">Actions</span></th>
+                  <th className="px-2 py-2.5 text-right"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -1438,7 +1493,7 @@ export default function SubscriptionsPage() {
                           }}
                         />
                       </td>
-                      <td className="px-3 py-2.5 align-middle">
+                      <td data-col="customer" className="px-3 py-2.5 align-middle min-w-0">
                         <div className="font-medium text-sm text-ink break-words leading-snug flex items-center gap-2 flex-wrap">
                           {/* R-1513: customer name → the customer; "Quote" → the quote behind it. */}
                           <SubCustomerLink sub={s} name={s.customer_name} />
@@ -1448,19 +1503,27 @@ export default function SubscriptionsPage() {
                           <DomainCell sub={s} />
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 text-sm text-ink-2 align-middle">
-                        <div className="break-words leading-snug">{s.plan}</div>
+                      <td data-col="plan" className="px-3 py-2.5 text-sm text-ink-2 align-middle min-w-0">
+                        <div className="break-words leading-snug">
+                          {/* R-2263: Vendor as a short badge — full name for screen readers and on hover. */}
+                          {(() => {
+                            const vs = vendorShort(s.vendor);
+                            return (
+                              <Badge kind={vs.kind} size="sm" className="mr-1.5 align-middle" title={vs.name} role="img" aria-label={`Vendor: ${vs.name}`}>
+                                {vs.short}
+                              </Badge>
+                            );
+                          })()}
+                          {s.plan}
+                        </div>
                         {/* R-1774: same words as the cycle chips; Check term → Correct details. */}
                         <SubCycleBadge
                           cyc={cyc}
-                          className="mt-1"
+                          className="mt-1 max-w-full whitespace-normal"
                           /* R-1685: no renewal amount on an ended subscription. */
                           amount={liveTermAmount(s.status, t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null)}
                           onCorrect={() => setEditSub(s)}
                         />
-                      </td>
-                      <td className="px-3 py-2.5 align-middle">
-                        {(() => { const vm = vendorMeta(s.vendor); return <Badge kind={vm.kind} dot>{vm.label}</Badge>; })()}
                       </td>
                       {/* Seats — used / licensed; flag low utilisation (unused
                           licences = churn risk at renewal OR a missed upsell). */}
@@ -1491,12 +1554,16 @@ export default function SubscriptionsPage() {
 
                           Usage still exists on the subscription and still appears in the
                           drawer, where there is room to say what it means. */}
+                      {/* R-2263: MRR (the money, given weight) and Seats share one cell. */}
                       <td
+                        data-col="seats_mrr"
                         className="px-3 py-2.5 text-right tabular-nums text-sm align-middle"
                         title={leak.kind === "unknown"
                           ? `Never reconciled against Google, so we do not know how many seats they bill us for. You bill this customer for ${s.seats}.`
                           : leak.message}
                       >
+                        <span className="block font-serif text-[15px] font-semibold text-ink">{subscriptionEnded(s.status) ? "—" : rupee(s.mrr)}</span>
+                        <span className="text-2xs">
                         <span className={cn(
                           "font-semibold",
                           leak.kind === "under_billed" ? "text-rose"
@@ -1506,7 +1573,8 @@ export default function SubscriptionsPage() {
                         )}>
                           {leak.kind === "unknown" ? "—" : s.vendor_seats}
                         </span>
-                        <span className="text-ink-3"> / {s.seats}</span>
+                        <span className="text-ink-3"> / {s.seats} seats</span>
+                        </span>
                         <span className={cn(
                           "block text-3xs font-semibold uppercase tracking-wider",
                           leak.kind === "under_billed" ? "text-rose"
@@ -1520,12 +1588,8 @@ export default function SubscriptionsPage() {
                             : "not checked"}
                         </span>
                       </td>
-                      {/* MRR — the money, given weight. */}
-                      <td className="px-3 py-2.5 text-right tabular-nums align-middle">
-                        <span className="font-serif text-[15px] font-semibold text-ink">{subscriptionEnded(s.status) ? "—" : rupee(s.mrr)}</span>
-                      </td>
                       {/* Margin — colour-coded badge. */}
-                      <td className="px-3 py-2.5 text-right align-middle">
+                      <td data-col="margin" className="px-3 py-2.5 text-right align-middle">
                         <div className="flex flex-col items-end gap-0.5">
                           {/* The tooltip carries the SOURCE. A catalogue estimate and a
                               vendor-billed figure look identical on screen and are not
@@ -1539,8 +1603,8 @@ export default function SubscriptionsPage() {
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 text-sm text-ink-2 align-middle whitespace-nowrap">{s.start_date ? formatDate(s.start_date) : "—"}</td>
-                      <td className="px-3 py-2.5 text-sm align-middle whitespace-nowrap">
+                      {/* R-2263: renewal date first (the day's work), Started as a small second line. */}
+                      <td data-col="renewal" className="px-3 py-2.5 text-sm align-middle whitespace-nowrap">
                         <div className="text-ink-2">{s.renewal_date ? formatDate(s.renewal_date) : "—"}</div>
                         {isUrgent && dl !== null ? (
                           <div className="mt-0.5"><Badge kind={dl <= 7 ? "danger" : "warning"} dot>{dl === 0 ? "Due today" : `In ${dl}d`}</Badge></div>
@@ -1550,10 +1614,14 @@ export default function SubscriptionsPage() {
                           // R-1774: a cancelled / expired row reads "Ended …" here.
                           <div className="mt-0.5 text-2xs text-ink-3 tabular-nums">{clock.text}</div>
                         ) : null}
+                        <div className="mt-0.5 text-3xs text-ink-3 tabular-nums whitespace-normal">Started {s.start_date ? formatDate(s.start_date) : "—"}</div>
                       </td>
-                      <td className="px-3 py-2.5 align-middle">
+                      <td data-col="status" className="px-3 py-2.5 align-middle min-w-0 [&_span]:whitespace-normal">
                         {s.status === "expired" && dl !== null ? (
                           <Badge kind="danger" dot>Expired {Math.abs(dl)}d</Badge>
+                        ) : isNonRenewing(s) ? (
+                          /* R-2225: Won't renew — the status, with the day it ends. */
+                          <Badge kind="warning" dot>{subStatusPill(s).label}</Badge>
                         ) : s.status === "active" ? (
                           <Badge kind="success" dot>Active</Badge>
                         ) : (
@@ -1563,31 +1631,53 @@ export default function SubscriptionsPage() {
                             suspension, write-off — one shared component so the
                             table and the mobile card can never drift apart. */}
                         <div className="flex flex-col items-start gap-1 mt-1 empty:mt-0">
-                          <SubExceptions sub={s} payBy={payByOf.get(s.id)} size="md" />
+                          <SubExceptions sub={s} payBy={payByOf.get(s.id)} payByKind={payByKindOf.get(s.id)} size="md" />
                         </div>
                       </td>
-                      {/* ── ONE ACTION ON THE ROW, THE REST IN THE DRAWER ────────
-                          This cell used to carry a ⋯ menu of seven items. They now live
-                          in the drawer the row opens, where they sit beside the
-                          subscription they act on — Abhishek, 19 Sep 2026.
+                      {/* ── ONE ⋮ MENU ON THE ROW (R-2263) ──────────────────────
+                          The full set of actions lives in the drawer the row opens
+                          (Abhishek, 19 Sep 2026). Until R-2263 the row carried one
+                          "Renew" button on expired / urgent rows; at a 1280 laptop that
+                          column sat behind a sideways scroll. Now one ⋮ menu: Renew (same
+                          rows, same target), plus the drawer's everyday jobs — Open
+                          details, Manage seats, Correct details — which open the SAME
+                          dialogs the drawer does. The renewal urgency stays visible in
+                          the Renewal cell ("In 5d" / "Due today").
 
-                          Renew stays because it is the one thing done WHILE SCANNING:
-                          you run down the list looking for what expires soon and send
-                          the quote, and it already appears only on expired or urgent
-                          rows, so it is not clutter on the other thirteen.
-
-                          Delete was NOT promoted to a row icon, which was the other half
-                          of the proposal. It is the most destructive action here — a
-                          subscription carries invoices and payments — and it is
-                          currently the hardest thing to reach. A one-click trash on
-                          every row would make it the easiest thing on the page. It stays
-                          two deliberate clicks away, at the bottom of the drawer. */}
-                      <td className="px-2 py-2.5 text-right align-middle" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1">
-                          {(s.status === "expired" || isUrgent) && (
-                            <Button size="sm" variant={s.status === "expired" ? "danger" : "primary"} icon="refresh" title="Send the renewal quote" onClick={() => router.push("/renewals" as never)}>Renew</Button>
-                          )}
-                        </div>
+                          Delete and Cancel are NOT in this menu: the most destructive
+                          acts stay two deliberate clicks away, at the bottom of the
+                          drawer. */}
+                      <td data-col="actions" className="px-1 py-2.5 text-right align-middle" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                        <DropdownMenu modal={false}>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              aria-label={`Actions for ${s.plan} — ${cleanDisplayName(s.customer_name)}`}
+                              title="Actions"
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-3 hover:bg-paper-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+                            >
+                              <Icon name="more_v" size={18} />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-[12rem]">
+                            {(s.status === "expired" || isUrgent) && (
+                              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" title="Send the renewal quote" onClick={() => router.push("/renewals" as never)}>
+                                <Icon name="refresh" size={16} /><span>Renew</span>
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setScheduleSub(s)}>
+                              <Icon name="eye" size={16} /><span>Open details</span>
+                            </DropdownMenuItem>
+                            {!isSupportSkuId(s.item_id) && (
+                              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => openAddSeats(s)}>
+                                <Icon name="plus" size={16} /><span>Manage seats</span>
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setEditSub(s)}>
+                              <Icon name="edit" size={16} /><span>Correct details</span>
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </td>
                     </tr>
                   );
@@ -1851,6 +1941,17 @@ export default function SubscriptionsPage() {
               <div className="mb-3 empty:hidden" data-testid="sub-drawer-vendor-hold">
                 <VendorHoldBadge sub={scheduleSub} size="md" />
               </div>
+              {/* R-2225: Won't renew — the status, what the customer said, and Undo. */}
+              <SubDrawerNonRenewing
+                sub={scheduleSub}
+                undoing={setNonRenewing.isPending}
+                onUndo={canNonRenew ? () => {
+                  const sub = scheduleSub;
+                  setNonRenewing.mutate({ id: sub.id, on: false }, {
+                    onSuccess: () => setScheduleSub({ ...sub, auto_renew: true, non_renew_reason: null, non_renew_said_on: null }),
+                  });
+                } : undefined}
+              />
               <SubDrawerActions
                 hasCustomer={!!scheduleSub.customer_id}
                 primary={!leakFixShown}
@@ -1946,6 +2047,9 @@ export default function SubscriptionsPage() {
                 cancelledNote={scheduleSub.status === "cancelled" ? cancelNote(scheduleSub) : null}
                 canDelete={canDeleteSub}
                 onCancel={() => { const sub = scheduleSub; setScheduleSub(null); setCancelSub(sub); }}
+                onWontRenew={canNonRenew && canEndAtTermEnd(scheduleSub)
+                  ? () => { const sub = scheduleSub; setScheduleSub(null); setNonRenewSub(sub); }
+                  : undefined}
                 onDelete={() => { const sub = scheduleSub; setScheduleSub(null); handleDeleteSub(sub); }}
               />
             </div>
@@ -1953,6 +2057,14 @@ export default function SubscriptionsPage() {
             })()}
           </SheetContent>
         </Sheet>
+      )}
+
+      {nonRenewSub && (
+        <NonRenewingDialog
+          sub={nonRenewSub}
+          open={!!nonRenewSub}
+          onOpenChange={(v) => { if (!v) setNonRenewSub(null); }}
+        />
       )}
 
       {cancelSub && (
@@ -1963,12 +2075,32 @@ export default function SubscriptionsPage() {
         />
       )}
 
+      {/* R-2228: Suspend, opened from Correct details (asks why; can tie it to the unpaid invoice). */}
+      {suspendSub && (
+        <SuspendSubscriptionDialog
+          sub={suspendSub}
+          open={!!suspendSub}
+          forUnpaidDefault={(suspendSub.outstanding_amount ?? 0) > 0}
+          onOpenChange={(v) => { if (!v) setSuspendSub(null); }}
+        />
+      )}
+
       {/* Correct subscription details */}
       {editSub && (
         <EditSubscriptionDialog
           sub={editSub}
           open={!!editSub}
           onOpenChange={(v) => { if (!v) setEditSub(null); }}
+          /* R-2228: seats / status are read-only there — each link closes it and opens the real action. */
+          actions={{
+            manageSeats: !isSupportSkuId(editSub.item_id)   // a support plan has no seats (R-2087)
+              ? () => { const sub = editSub; setEditSub(null); openAddSeats(sub); } : undefined,
+            suspend: () => { const sub = editSub; setEditSub(null); setSuspendSub(sub); },
+            resume: () => { const sub = editSub; setEditSub(null); resumeSub.mutate(sub.id); },
+            cancel: () => { const sub = editSub; setEditSub(null); setCancelSub(sub); },
+            wontRenew: canNonRenew && canEndAtTermEnd(editSub)
+              ? () => { const sub = editSub; setEditSub(null); setNonRenewSub(sub); } : undefined,
+          }}
         />
       )}
 

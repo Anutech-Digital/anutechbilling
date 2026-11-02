@@ -13,7 +13,8 @@ import { rupee } from "@/lib/utils";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { subscriptionExpectation, type QuoteLine } from "@/lib/subscriptions/orphan-quote";
 
-export type PaymentToastActionKind = "generate-invoice" | "view-invoice" | "send-receipt";
+/** R-2184: "record-another" re-opens Record payment on the same quote (the sheet closed on save). */
+export type PaymentToastActionKind = "generate-invoice" | "view-invoice" | "send-receipt" | "record-another";
 
 export interface PaymentToastAction {
   kind: PaymentToastActionKind;
@@ -56,6 +57,10 @@ export interface PaymentToastInput {
 export interface PaymentToast {
   tone: "success" | "warning";
   title: string;
+  /** R-2184: "Receipt voucher RV-…" — the saved receipt, named, so the save never looks failed. */
+  receipt?: string | null;
+  /** R-2184: "Record another" while money is still due — placed in a free button slot. */
+  another?: PaymentToastAction | null;
   /** Extra facts, one per line. Empty when the headline says it all. */
   lines: string[];
   primary: PaymentToastAction | null;
@@ -125,8 +130,13 @@ export function paymentToast(r: PaymentToastInput): PaymentToast {
   } else {
     primary = sendReceipt;
   }
+  /* R-2184: money still due on the quote → one click to record the next part. Its own field:
+     the toast shows it in the free button slot (secondary, else primary). */
+  const another: PaymentToastAction | null = !r.isFullyPaid && !r.invoicePaid
+    ? { kind: "record-another", label: "Record another" } : null;
 
-  return { tone: warn ? "warning" : "success", title: headline(r), lines, primary, secondary };
+  const receipt = r.receiptVoucherNo ? `Receipt voucher ${r.receiptVoucherNo}` : null;
+  return { tone: warn ? "warning" : "success", title: headline(r), receipt, lines, primary, secondary, another };
 }
 
 export type SubscriptionNote = { kind: "one-off" | "missing"; item: string } | null;
