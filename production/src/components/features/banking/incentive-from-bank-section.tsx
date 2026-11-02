@@ -18,8 +18,15 @@ import { useEmployees } from "@/lib/queries/payroll";
 import { previousPeriod } from "@/lib/banking/salary-lines";
 import { suggestEmployee, useSalaryRecordFor, useBookBankTxnAsIncentive } from "@/lib/queries/incentive-from-bank";
 import type { BankTransactionRow } from "@/lib/queries/bank";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
-export function IncentiveFromBankSection({ transaction, onDone }: { transaction: BankTransactionRow; onDone: () => void }) {
+export function IncentiveFromBankSection({ transaction, onDone, onFooterSave }: {
+  transaction: BankTransactionRow;
+  onDone: () => void;
+  /** R-2008: the Reconcile sheet draws "Book ₹X as incentive" in its sticky footer once the form
+   *  is open. Given → no inline button; same label, disabled rule and submit(). */
+  onFooterSave?: (save: FooterSave | null) => void;
+}) {
   const { data: employees } = useEmployees();
   const book = useBookBankTxnAsIncentive();
   const [open, setOpen] = React.useState(false);
@@ -51,7 +58,15 @@ export function IncentiveFromBankSection({ transaction, onDone }: { transaction:
     } catch { /* the hook shows the error */ }
   }
 
-  if (!((transaction.debit ?? 0) > 0)) return null;
+  /* R-2008: same label, same rule, same submit() — in the footer while the form is open. */
+  const saveDisabled = !employeeId || !period || tdsBad || existing.isLoading || existing.isError;
+  const shown = (transaction.debit ?? 0) > 0;
+  useFooterSaveReport(onFooterSave, shown && open
+    ? { label: `Book ${rupee(paid)} as incentive`, onSave: () => { void submit(); }, disabled: saveDisabled, loading: book.isPending }
+    : null);
+  const footerHasSave = Boolean(onFooterSave);
+
+  if (!shown) return null;
 
   return (
     <div className="rounded-md border border-emerald/40 bg-emerald-soft/20 p-3">
@@ -91,10 +106,12 @@ export function IncentiveFromBankSection({ transaction, onDone }: { transaction:
             </p>
           )}
           <div className="flex gap-2 flex-wrap">
-            <Button size="sm" variant="primary" icon="check" loading={book.isPending}
-              disabled={!employeeId || !period || tdsBad || existing.isLoading || existing.isError} onClick={submit}>
-              Book {rupee(paid)} as incentive
-            </Button>
+            {!footerHasSave && (
+              <Button size="sm" variant="primary" icon="check" loading={book.isPending}
+                disabled={saveDisabled} onClick={submit}>
+                Book {rupee(paid)} as incentive
+              </Button>
+            )}
             <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
           </div>
           <p className="text-xs text-ink-3">

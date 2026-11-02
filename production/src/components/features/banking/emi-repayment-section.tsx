@@ -24,6 +24,7 @@ import {
 } from "@/lib/queries/emi";
 import { EmiPurchaseDialog, EmiPrepayDialog, type EmiFromTxn } from "@/components/features/accounting/emi-loan-dialogs";
 import { LoanSetupDialog } from "./loan-setup-dialog";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
 type Txn = { id: string; debit: number; txn_date: string; bank_account_id: string; description: string | null };
 
@@ -34,7 +35,13 @@ function matchTitle(m: EmiMatch): string {
   return `EMI ${m.seq} · ${m.purchase_name}${m.kind === "paid_by_hand" ? " (paid by hand — this line replaces it)" : ""}`;
 }
 
-export function EmiRepaymentSection({ transaction, onDone }: { transaction: Txn; onDone: () => void }) {
+export function EmiRepaymentSection({ transaction, onDone, onFooterSave }: {
+  transaction: Txn;
+  onDone: () => void;
+  /** R-2008: the Reconcile sheet draws "Reconcile as EMI N" in its sticky footer. Given → no inline
+   *  button; the footer gets the same label, disabled rule and save(). */
+  onFooterSave?: (save: FooterSave | null) => void;
+}) {
   const matchesQ = useEmiMatches(transaction.id);
   const purchasesQ = useEmiPurchases();
   const reconcile = useReconcileDebitToEmi();
@@ -99,6 +106,15 @@ export function EmiRepaymentSection({ transaction, onDone }: { transaction: Txn;
   const prepayPurchase = (purchasesQ.data ?? []).find((p) => p.id === prepayFor);
   const busy = matchesQ.isLoading || purchasesQ.isLoading;
   const waitingForSchedule = Boolean(split?.recompute) && scheduleQ.isLoading;
+
+  /* R-2008: same label, same rule, same save() — in the footer once an EMI is listed to pick (the
+     section open, matches found). It books the whole line (principal + interest + charges). */
+  const saveLabel = m ? (m.kind === "down_payment" ? `Match down payment ${rupee(amount)}` : `Reconcile as EMI ${m.seq}`) : "Pick the EMI";
+  const saveDisabled = !m || Boolean(recomputeError) || waitingForSchedule;
+  useFooterSaveReport(onFooterSave, open && !busy && matches.length > 0
+    ? { label: saveLabel, onSave: () => { void save(); }, disabled: saveDisabled, loading: reconcile.isPending }
+    : null);
+  const footerHasSave = Boolean(onFooterSave);
 
   return (
     <div className={`rounded-md border p-3 ${sure ? "border-indigo/50 bg-indigo-soft/25" : "border-hairline"}`} data-testid="emi-repayment-section">
@@ -176,10 +192,12 @@ export function EmiRepaymentSection({ transaction, onDone }: { transaction: Txn;
               )}
               {recomputeError && <p className="text-xs text-rose-ink">{recomputeError}</p>}
 
-              <Button size="sm" variant="primary" icon="check" disabled={!m || Boolean(recomputeError) || waitingForSchedule}
-                loading={reconcile.isPending} onClick={save}>
-                {m ? (m.kind === "down_payment" ? `Match down payment ${rupee(amount)}` : `Reconcile as EMI ${m.seq}`) : "Pick the EMI"}
-              </Button>
+              {!footerHasSave && (
+                <Button size="sm" variant="primary" icon="check" disabled={saveDisabled}
+                  loading={reconcile.isPending} onClick={save}>
+                  {saveLabel}
+                </Button>
+              )}
             </>
           ) : (
             <div className="space-y-2">

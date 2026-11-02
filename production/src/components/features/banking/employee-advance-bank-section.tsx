@@ -25,6 +25,7 @@ import { useBookBankTxnAsEmployeeAdvance, usePendingReimbursements } from "@/lib
 import { advanceForReturn, openAdvancesOf, samePerson } from "@/lib/accounting/employee-advance";
 import { compactName } from "@/lib/banking/salary-lines";
 import type { BankTransactionRow } from "@/lib/queries/bank";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
 const selectCls = "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
 
@@ -40,7 +41,13 @@ function suggestPerson(description: string | null, employees: { id: string; name
   return hits.length === 1 ? hits[0] : "";
 }
 
-export function EmployeeAdvanceBankSection({ transaction, onDone }: { transaction: BankTransactionRow; onDone: () => void }) {
+export function EmployeeAdvanceBankSection({ transaction, onDone, onFooterSave }: {
+  transaction: BankTransactionRow;
+  onDone: () => void;
+  /** R-2008: the Reconcile sheet draws the open form's Save (advance / top-up / return, or
+   *  reimbursement) in its sticky footer. Given → no inline Save; same label, rule and submit(). */
+  onFooterSave?: (save: FooterSave | null) => void;
+}) {
   const isCredit = (transaction.credit ?? 0) > 0;
   const amount = isCredit ? transaction.credit : transaction.debit;
   const { data: employees } = useEmployees();
@@ -97,14 +104,29 @@ export function EmployeeAdvanceBankSection({ transaction, onDone }: { transactio
     if (open === "reimburse" && !reimbId && matchingReimb.length === 1) setReimbId(matchingReimb[0].id);
   }, [open, reimbId, matchingReimb]);
 
-  if (!(amount > 0)) return null;
-  if (isCredit && returnable.length === 0) return null;
-
   const picked = openAdvances.find((a) => a.id === advanceId) ?? null;
   const tooMuch = isCredit && picked != null && amount > picked.remaining_balance;
   const canBook = isCredit
     ? Boolean(picked) && !tooMuch
     : Boolean(person.trim()) && (mode === "give" || Boolean(picked));
+
+  /* R-2008: the open form's Save — same label, same rule, same submit() — in the footer. Nothing
+     open (or nothing to show) → nothing in the footer. It books the whole line. */
+  const advanceLabel = isCredit
+    ? `Book ${rupee(amount)} as advance returned`
+    : mode === "top_up" && theirs.length > 0
+      ? `Book ${rupee(amount)} as top-up`
+      : `Book ${rupee(amount)} as advance${person ? ` to ${person}` : ""}`;
+  const reimburseLabel = `Book ${rupee(amount)} as reimbursement paid`;
+  const shown = amount > 0 && !(isCredit && returnable.length === 0);
+  useFooterSaveReport(onFooterSave, !shown ? null
+    : open === "advance" ? { label: advanceLabel, onSave: () => { void submit(); }, disabled: !canBook, loading: book.isPending }
+    : open === "reimburse" && !isCredit && matchingReimb.length > 0
+      ? { label: reimburseLabel, onSave: () => { void submit(); }, disabled: !reimbId, loading: book.isPending }
+    : null);
+  const footerHasSave = Boolean(onFooterSave);
+
+  if (!shown) return null;
 
   async function submit() {
     try {
@@ -194,13 +216,11 @@ export function EmployeeAdvanceBankSection({ transaction, onDone }: { transactio
           )}
 
           <div className="flex gap-2 flex-wrap">
-            <Button size="sm" variant="primary" icon="check" loading={book.isPending} disabled={!canBook} onClick={submit}>
-              {isCredit
-                ? `Book ${rupee(amount)} as advance returned`
-                : mode === "top_up" && theirs.length > 0
-                  ? `Book ${rupee(amount)} as top-up`
-                  : `Book ${rupee(amount)} as advance${person ? ` to ${person}` : ""}`}
-            </Button>
+            {!footerHasSave && (
+              <Button size="sm" variant="primary" icon="check" loading={book.isPending} disabled={!canBook} onClick={submit}>
+                {advanceLabel}
+              </Button>
+            )}
             <Button size="sm" variant="ghost" onClick={() => setOpen("")}>Cancel</Button>
           </div>
           {!isCredit && (
@@ -227,9 +247,11 @@ export function EmployeeAdvanceBankSection({ transaction, onDone }: { transactio
                 ))}
               </select>
               <div className="flex gap-2 flex-wrap">
-                <Button size="sm" variant="primary" icon="check" loading={book.isPending} disabled={!reimbId} onClick={submit}>
-                  Book {rupee(amount)} as reimbursement paid
-                </Button>
+                {!footerHasSave && (
+                  <Button size="sm" variant="primary" icon="check" loading={book.isPending} disabled={!reimbId} onClick={submit}>
+                    {reimburseLabel}
+                  </Button>
+                )}
                 <Button size="sm" variant="ghost" onClick={() => setOpen("")}>Cancel</Button>
               </div>
             </div>

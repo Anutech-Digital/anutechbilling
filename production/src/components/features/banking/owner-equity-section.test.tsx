@@ -4,7 +4,8 @@
    introduced; a firm needs the partner; a Pvt Ltd sees "Paid to a director" choices, never drawings. */
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { ReconcileFooter, type FooterSave } from "./reconcile-who-tiles";
 
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import type { OwnerEquityMovement } from "@/lib/accounting/owner-equity";
@@ -148,5 +149,49 @@ describe("R-1839 reconcile — capital introduced (credit)", () => {
     businessType = "pvt_ltd";
     const { container } = render(<OwnerEquitySection transaction={txn({ debit: 0, credit: 15000 })} onDone={vi.fn()} />);
     expect(container.textContent).toBe("");
+  });
+});
+
+/* R-2008: in the Reconcile sheet "Book ₹X as drawings / capital" is the sticky footer's Save — same
+   label, same rule (partner first for a firm), same submit(null). "Use this entry" stays a row choice. */
+function InSheet({ t }: { t: BankTransactionRow }) {
+  const [footer, setFooter] = React.useState<FooterSave | null>(null);
+  return (
+    <>
+      <div data-testid="reconcile-scroll-body"><OwnerEquitySection transaction={t} onDone={() => {}} onFooterSave={setFooter} /></div>
+      <ReconcileFooter amount={t.debit || t.credit} save={footer} hint="pick" onClose={() => {}} />
+    </>
+  );
+}
+describe("R-2008 Owner drawings / capital — Save in the sticky footer", () => {
+  it("proprietor drawings: the footer books the same call; the body has no Book button; 'Bank ₹X = ₹Y ✓'", async () => {
+    render(<InSheet t={txn({})} />);
+    const body = screen.getByTestId("reconcile-scroll-body");
+    const footer = screen.getByTestId("reconcile-footer");
+    const btn = await vi.waitFor(() => within(footer).getByRole("button", { name: "Book ₹5,000 as owner drawings" }) as HTMLButtonElement);
+    expect(within(body).queryByRole("button", { name: /as owner drawings/ })).toBeNull();
+    expect(footer.textContent).toContain("Bank ₹5,000 = ₹5,000 ✓");
+    fireEvent.click(btn);
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({ transactionId: "t1", partner: null, note: null, movementId: null }));
+  });
+
+  it("partnership: the footer Save stays off until the partner is picked, then sends the partner", async () => {
+    businessType = "partnership";
+    render(<InSheet t={txn({})} />);
+    const footer = screen.getByTestId("reconcile-footer");
+    const btn = () => within(footer).getByRole("button", { name: /as partner drawings/ }) as HTMLButtonElement;
+    await vi.waitFor(() => expect(btn().disabled).toBe(true));
+    fireEvent.click(btn());
+    expect(mutateAsync).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Partner"), { target: { value: "Ravi" } });
+    await vi.waitFor(() => expect(btn().disabled).toBe(false));
+    fireEvent.click(btn());
+    await vi.waitFor(() => expect(mutateAsync.mock.calls[0]?.[0]).toMatchObject({ partner: "Ravi", movementId: null }));
+  });
+
+  it("Pvt Ltd: no drawings — nothing in the footer", () => {
+    businessType = "pvt_ltd";
+    render(<InSheet t={txn({})} />);
+    expect(within(screen.getByTestId("reconcile-footer")).queryAllByRole("button").map((b) => b.textContent)).toEqual(["Close"]);
   });
 });
