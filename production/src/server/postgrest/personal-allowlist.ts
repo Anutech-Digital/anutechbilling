@@ -61,6 +61,9 @@ export const PERSONAL_TABLES: Readonly<Record<string, readonly Method[]>> = {
   personal_category_rules: ALL,
   personal_import_batches: ALL,
   personal_owe_hold: ALL,          // R-2386 Money I owe / hold for others
+  personal_loans: ALL,             // R-2388 Loans taken / given
+  personal_loan_payments: ALL,     // R-2388 (writes go through personal_loan_record_payment)
+  personal_loan_balances: READ,    // R-2388 view: outstanding per loan
   users: READ,
   tenants: READ,
   notifications: ["GET", "HEAD", "PATCH"],
@@ -75,6 +78,8 @@ export const PERSONAL_RPCS: readonly string[] = [
   "personal_my_subscriptions",
   "get_my_tenant_with_parent",     // Sidebar workspace name (own tenant only, R-1615 gate)
   "personal_file_support_ticket",  // R-2176 Help → Report a problem → support-desk ticket (auth.uid() only)
+  "personal_loan_record_payment",  // R-2388 EMI / prepayment / repayment + its ledger entries (owner RLS)
+  "personal_loan_undo_payment",    // R-2388
 ];
 
 function refuse(what: string): GatewayRefusal {

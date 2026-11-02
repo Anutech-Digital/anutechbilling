@@ -324,3 +324,28 @@ describe("computeNetWorth — money I owe / hold for others (R-2386)", () => {
   });
 });
 
+// R-2388 — Pardeep: "Given → bhai ko ₹1 L diya → Net worth me asset ki tarah dikhe"; a home
+// loan taken is a liability next to the card dues and owe/hold.
+describe("computeNetWorth — loans given and taken (R-2388)", () => {
+  it("loan given is an asset, loan taken is owed", () => {
+    const r = computeNetWorth(
+      [{ kind: "savings", balance: 5_00_000 }, { kind: "credit_card", balance: 50_000 }],
+      [],
+      NOW,
+      [{ amount: 1_00_000, status: "open" }],
+      { givenOutstanding: 1_00_000, takenOutstanding: 18_93_599 },
+    );
+    expect(r.loansGiven).toBe(1_00_000);
+    expect(r.loansTaken).toBe(18_93_599);
+    expect(r.owedTotal).toBe(50_000 + 1_00_000 + 18_93_599);
+    expect(r.net).toBe(5_00_000 + 1_00_000 - (50_000 + 1_00_000 + 18_93_599));
+  });
+
+  it("no loans = the R-2386 figure", () => {
+    const r = computeNetWorth([{ kind: "savings", balance: 1_000 }], [], NOW);
+    expect(r.loansGiven).toBe(0);
+    expect(r.loansTaken).toBe(0);
+    expect(r.net).toBe(1_000);
+  });
+});
+

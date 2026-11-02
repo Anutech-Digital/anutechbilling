@@ -71,8 +71,8 @@ export function openOweHoldTotal(rows: readonly OweHoldLike[]): number {
 }
 
 /**
- * Everything owed, in one place: card dues + open owe/hold entries (+ loans outstanding once
- * R-2388 lands). Net worth = assets − this.
+ * Everything owed, in one place: card dues + open owe/hold entries + outstanding of loans
+ * taken (R-2388, lib/vault/personal/loans.ts). Net worth = assets (incl. loans given) − this.
  */
 export function owedTotal(parts: { cardDues: number; oweHoldOpen: number; loansOutstanding?: number }): number {
   return rupees(parts.cardDues) + rupees(parts.oweHoldOpen) + rupees(parts.loansOutstanding ?? 0);

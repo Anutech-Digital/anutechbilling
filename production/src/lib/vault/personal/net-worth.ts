@@ -99,9 +99,13 @@ export interface NetWorth {
   liabilities: number;
   /** R-2386: open "Money I owe / hold for others" — advances received, money held for someone. */
   oweHoldOpen: number;
-  /** Everything owed: liabilities (cards) + oweHoldOpen (+ loans, R-2388). */
+  /** R-2388: outstanding of OPEN loans you gave — money owed to you (an asset). */
+  loansGiven: number;
+  /** R-2388: outstanding of OPEN loans you took (home, car, personal…) — a liability. */
+  loansTaken: number;
+  /** Everything owed: liabilities (cards) + oweHoldOpen + loansTaken. */
   owedTotal: number;
-  /** liquidAssets + investments - owedTotal. Can legitimately be negative. */
+  /** liquidAssets + investments + loansGiven - owedTotal. Can legitimately be negative. */
   net: number;
 
   investedTotal: number;
@@ -152,6 +156,8 @@ export function computeNetWorth(
   now: Date,
   /** R-2386: "Money I owe / hold for others" — only OPEN entries are subtracted. */
   oweHold: readonly OweHoldLike[] = [],
+  /** R-2388: open loans outstanding (lib/vault/personal/loans.ts loanTotals). */
+  loans: { givenOutstanding: number; takenOutstanding: number } = { givenOutstanding: 0, takenOutstanding: 0 },
 ): NetWorth {
   let liquidAssets = 0;
   let liabilities = 0;
@@ -226,15 +232,19 @@ export function computeNetWorth(
     .sort((a, b) => b.currentValue - a.currentValue);
 
   const oweHoldOpen = openOweHoldTotal(oweHold);
-  const owed = owedTotal({ cardDues: liabilities, oweHoldOpen });
+  const loansGiven = rupees(loans.givenOutstanding);
+  const loansTaken = rupees(loans.takenOutstanding);
+  const owed = owedTotal({ cardDues: liabilities, oweHoldOpen, loansOutstanding: loansTaken });
 
   return {
     liquidAssets,
     investments,
     liabilities,
     oweHoldOpen,
+    loansGiven,
+    loansTaken,
     owedTotal: owed,
-    net: liquidAssets + investments - owed,
+    net: liquidAssets + investments + loansGiven - owed,
     investedTotal,
     portfolioGain: investments - investedTotal,
     portfolioGainPct: investedTotal > 0 ? ((investments - investedTotal) / investedTotal) * 100 : null,
