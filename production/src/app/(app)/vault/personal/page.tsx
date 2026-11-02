@@ -20,11 +20,13 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { usePersonalAccounts, usePersonalHoldings, usePersonalTransactions } from "@/lib/queries/personal-vault";
 import { usePersonalOweHold } from "@/lib/queries/personal-owe-hold";
+import { usePersonalLoans, usePersonalLoanPayments } from "@/lib/queries/personal-loans";
+import { loanTotals } from "@/lib/vault/personal/loans";
 import { computeNetWorth, STALE_AFTER_DAYS } from "@/lib/vault/personal/net-worth";
 import { summariseIncomeExpense } from "@/lib/vault/personal/income-expense";
 import { VaultPinSettings } from "@/components/features/vault/vault-pin-settings";
 import { VaultLoadError } from "@/components/features/vault/vault-load-error";
-import { rupee } from "@/lib/utils";
+import { formatDate, rupee } from "@/lib/utils";
 import { fyStartISO } from "@/lib/dates/ist";
 
 export default function PersonalVaultOverview() {
@@ -33,14 +35,22 @@ export default function PersonalVaultOverview() {
   const txQ = usePersonalTransactions(500);
   // R-2386: advances received / money held for someone — open entries come off Net worth.
   const oweHoldQ = usePersonalOweHold();
+  // R-2388: loans given (asset) and taken (owed) + the next EMI reminder.
+  const loansQ = usePersonalLoans();
+  const loanPaymentsQ = usePersonalLoanPayments();
 
-  const loading = accountsQ.isLoading || holdingsQ.isLoading || txQ.isLoading || oweHoldQ.isLoading;
-  const error = accountsQ.error || holdingsQ.error || txQ.error || oweHoldQ.error;
+  const loading = accountsQ.isLoading || holdingsQ.isLoading || txQ.isLoading || oweHoldQ.isLoading
+    || loansQ.isLoading || loanPaymentsQ.isLoading;
+  const error = accountsQ.error || holdingsQ.error || txQ.error || oweHoldQ.error || loansQ.error || loanPaymentsQ.error;
 
   const now = React.useMemo(() => new Date(), []);
+  const loans = React.useMemo(
+    () => loanTotals(loansQ.data ?? [], loanPaymentsQ.data ?? []),
+    [loansQ.data, loanPaymentsQ.data],
+  );
   const nw = React.useMemo(
-    () => computeNetWorth(accountsQ.data ?? [], holdingsQ.data ?? [], now, oweHoldQ.data ?? []),
-    [accountsQ.data, holdingsQ.data, oweHoldQ.data, now],
+    () => computeNetWorth(accountsQ.data ?? [], holdingsQ.data ?? [], now, oweHoldQ.data ?? [], loans),
+    [accountsQ.data, holdingsQ.data, oweHoldQ.data, loans, now],
   );
 
   // This financial year so far — the window an Indian owner thinks in.
@@ -63,7 +73,7 @@ export default function PersonalVaultOverview() {
   );
 
   if (error) {
-    return <VaultLoadError error={error} onRetry={() => { void accountsQ.refetch(); void holdingsQ.refetch(); void txQ.refetch(); void oweHoldQ.refetch(); }} />;
+    return <VaultLoadError error={error} onRetry={() => { void accountsQ.refetch(); void holdingsQ.refetch(); void txQ.refetch(); void oweHoldQ.refetch(); void loansQ.refetch(); void loanPaymentsQ.refetch(); }} />;
   }
 
   if (loading) {
@@ -82,7 +92,8 @@ export default function PersonalVaultOverview() {
   const empty = (accountsQ.data?.length ?? 0) === 0
     && (holdingsQ.data?.length ?? 0) === 0
     && (txQ.data?.length ?? 0) === 0
-    && (oweHoldQ.data?.length ?? 0) === 0;
+    && (oweHoldQ.data?.length ?? 0) === 0
+    && (loansQ.data?.length ?? 0) === 0;
 
   return (
     <div className="space-y-5">
@@ -93,7 +104,7 @@ export default function PersonalVaultOverview() {
           <Money amount={nw.net} size="display" />
         </div>
 
-        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-5 border-t border-hairline">
+        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-5 border-t border-hairline">
           <div>
             <p className="text-2xs uppercase tracking-wide text-ink-3">Bank, cash & deposits</p>
             <div className="mt-0.5"><Money amount={nw.liquidAssets} size="display" /></div>
@@ -102,11 +113,29 @@ export default function PersonalVaultOverview() {
             <p className="text-2xs uppercase tracking-wide text-ink-3">Investments</p>
             <div className="mt-0.5"><Money amount={nw.investments} size="display" /></div>
           </div>
+          {/* R-2388: money you lent — owed TO you, an asset. */}
+          <div>
+            <p className="text-2xs uppercase tracking-wide text-ink-3">Loans given</p>
+            <div className="mt-0.5"><Money amount={nw.loansGiven} size="display" /></div>
+            <Link href="/vault/personal/loans?tab=given" className="text-3xs text-primary hover:underline">
+              {nw.loansGiven > 0 ? "See loans given" : "Add money you lent"}
+            </Link>
+          </div>
           <div>
             <p className="text-2xs uppercase tracking-wide text-ink-3">Owed (cards)</p>
             <div className="mt-0.5">
               <Money amount={nw.liabilities} size="display" tone={nw.liabilities > 0 ? "negative" : "default"} autoNegative={false} />
             </div>
+          </div>
+          {/* R-2388: home / car / personal loans still to repay. */}
+          <div>
+            <p className="text-2xs uppercase tracking-wide text-ink-3">Loans taken</p>
+            <div className="mt-0.5">
+              <Money amount={nw.loansTaken} size="display" tone={nw.loansTaken > 0 ? "negative" : "default"} autoNegative={false} />
+            </div>
+            <Link href="/vault/personal/loans" className="text-3xs text-primary hover:underline">
+              {nw.loansTaken > 0 ? "See loans and EMIs" : "Add a loan"}
+            </Link>
           </div>
           {/* R-2386: one line for money that is with you but not yours (byana, held for a child). */}
           <div>
@@ -120,8 +149,16 @@ export default function PersonalVaultOverview() {
           </div>
         </div>
         <p className="mt-3 text-2xs text-ink-3">
-          Net worth = bank, cash &amp; deposits + investments − owed on cards − money you owe / hold for others.
+          Net worth = bank, cash &amp; deposits + investments + loans given − owed on cards − loans taken − money you owe / hold for others.
         </p>
+        {/* R-2388: the reminder — the soonest EMI / interest due on a loan you took. */}
+        {loans.nextEmi && (
+          <p className="mt-2 text-xs text-ink flex items-center gap-1.5">
+            <Icon name="calendar" size={13} className="text-ink-3" />
+            Next EMI due: <b>{formatDate(loans.nextEmi.dueOn)}</b> · {rupee(loans.nextEmi.amount)} · {loans.nextEmi.party}
+            <Link href={`/vault/personal/loans?pay=${loans.nextEmi.loanId}`} className="ml-1 text-primary hover:underline">Mark paid</Link>
+          </p>
+        )}
 
         {/* Said next to the number it qualifies, never on another tab. */}
         {(nw.neverValuedCount > 0 || nw.staleCount > 0) && nw.investments > 0 && (

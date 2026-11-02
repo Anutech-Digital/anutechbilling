@@ -57,6 +57,12 @@ vi.mock("@/lib/queries/personal-owe-hold", () => {
   };
 });
 
+// R-2388: the Overview also reads Loans (Net worth, next EMI) from its own module.
+vi.mock("@/lib/queries/personal-loans", () => ({
+  usePersonalLoans: () => ({ data: [], isLoading: false, error: null, refetch: () => {} }),
+  usePersonalLoanPayments: () => ({ data: [], isLoading: false, error: null, refetch: () => {} }),
+}));
+
 vi.mock("@/components/providers/confirm-provider", () => ({
   useConfirm: () => vi.fn().mockResolvedValue(true),
 }));

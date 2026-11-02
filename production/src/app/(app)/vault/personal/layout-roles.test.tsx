@@ -45,6 +45,11 @@ describe("vault/personal layout — who may open it (GP-07a)", () => {
     expect(screen.getByRole("link", { name: /income & expenses/i })).toBeTruthy();
   });
 
+  it("R-2388: both see a Loans tab", () => {
+    renderAs("owner");
+    expect(screen.getByRole("link", { name: /loans/i }).getAttribute("href")).toBe("/vault/personal/loans");
+  });
+
   it.each(["manager", "sales", "billing", "accountant", "support"])("%s is refused", (role) => {
     renderAs(role);
     expect(screen.queryByText("vault body")).toBeNull();
