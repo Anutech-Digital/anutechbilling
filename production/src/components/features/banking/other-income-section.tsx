@@ -2,20 +2,37 @@
  * R-2095 (30 Oct 2026, September reconcile): Reconcile → money in → "Other / manual" could only mark
  * an interest credit reconciled — the P&L never saw it. "Interest received" books the line as other
  * income (P&L → Other income) and reconciles it, one transaction.
+ *
+ * R-2366 (2 Nov 2026, Pardeep: "app me interest income ka option banao"): interest now says where it
+ * came from (FD / savings / other), may name the FD, and an FD premature closure is ONE save —
+ * principal back from the FD (its balance goes down) + the rest as interest; TDS the bank deducted
+ * goes to TDS receivable and the income is booked gross (book_bank_credit_as_interest).
  */
 "use client";
 
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { rupee } from "@/lib/utils";
-import type { BankTransactionRow } from "@/lib/queries/bank";
-import { useBookOtherIncome, type OtherIncomeHead } from "@/lib/queries/bank-other-income";
+import { useBankAccounts, type BankTransactionRow } from "@/lib/queries/bank";
+import { useBookInterestIncome, useBookOtherIncome, type OtherIncomeHead } from "@/lib/queries/bank-other-income";
+import { guessInterestSource, interestSplit, type InterestSource } from "@/lib/banking/interest-income";
 import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
 /** The narration says interest (INT.PD, INTEREST, FD INT …) — then "Interest received" is picked first. */
 export function looksLikeInterest(description: string | null | undefined): boolean {
-  return /\b(int\.?\s?pd|interest|int\s+cr|fd\s+int|sb\s+int|int\.?\s+credit)\b/i.test(description ?? "");
+  return /\b(int\.?\s?pd|interest|int\s+cr|fd\s+int|sb\s+int|int\.?\s+credit|int\.?\s+on\s+(fd|td|sb|dep\w*))\b/i.test(description ?? "");
+}
+
+type FdLite = { id: string; name: string; account_type?: string | null; is_active?: boolean | null; current_balance?: number | null };
+
+const SOURCES: readonly (readonly [InterestSource, string])[] = [["fd", "Fixed deposit"], ["savings", "Savings account"], ["other", "Other"]];
+
+/** "1,00,000" / "₹ 600" → 100000 / 600; blank → 0. */
+function rupeesIn(s: string): number {
+  const n = Number(s.replace(/[₹,\s]/g, ""));
+  return Number.isFinite(n) ? Math.round(n) : NaN;
 }
 
 export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
@@ -26,20 +43,67 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
   onFooterSave?: (save: FooterSave | null) => void;
 }) {
   const book = useBookOtherIncome();
+  const bookInterest = useBookInterestIncome();
+  const accountsQ = useBankAccounts();
   const [head, setHead] = React.useState<OtherIncomeHead>(looksLikeInterest(transaction.description) ? "interest" : "other");
-  React.useEffect(() => { setHead(looksLikeInterest(transaction.description) ? "interest" : "other"); }, [transaction.id, transaction.description]);
+  const [source, setSource] = React.useState<InterestSource>(guessInterestSource(transaction.description));
+  const [fdId, setFdId] = React.useState("");
+  const [closure, setClosure] = React.useState(false);
+  const [principalText, setPrincipalText] = React.useState("");
+  const [tdsText, setTdsText] = React.useState("");
+  React.useEffect(() => {
+    setHead(looksLikeInterest(transaction.description) ? "interest" : "other");
+    setSource(guessInterestSource(transaction.description));
+    setFdId(""); setClosure(false); setPrincipalText(""); setTdsText("");
+  }, [transaction.id, transaction.description]);
   const amount = transaction.credit ?? 0;
+
+  const fds = ((accountsQ.data ?? []) as FdLite[])
+    .filter((a) => a.account_type === "fixed_deposit" && a.id !== transaction.bank_account_id && a.is_active !== false);
+  const fd = fds.find((a) => a.id === fdId) ?? null;
+  const isClosure = head === "interest" && source === "fd" && !!fd && closure;
+  const principal = isClosure ? rupeesIn(principalText) : 0;
+  const tds = head === "interest" ? rupeesIn(tdsText) : 0;
+  const split = interestSplit({ credit: amount, principal: principal || 0, tds: tds || 0, fdBalance: isClosure ? fd?.current_balance ?? null : null });
+  const badNumber = Number.isNaN(principal) || Number.isNaN(tds);
+  const interestError = head !== "interest" ? null
+    : badNumber ? "Enter amounts in rupees."
+    : isClosure && principal <= 0 ? "Enter the principal coming back from the FD."
+    : split.error;
+
+  function pickFd(id: string) {
+    setFdId(id);
+    if (!id) setClosure(false);
+  }
+  function toggleClosure(on: boolean) {
+    setClosure(on);
+    /* Smart default: the FD's whole balance comes back, when it fits in this line. */
+    const bal = fd?.current_balance ?? 0;
+    if (on && !principalText && bal > 0 && bal < amount) setPrincipalText(String(bal));
+  }
 
   async function submit() {
     try {
-      await book.mutateAsync({ transactionId: transaction.id, head });
+      if (head === "interest") {
+        await bookInterest.mutateAsync({
+          transactionId: transaction.id, source,
+          fdAccountId: source === "fd" && fd ? fd.id : null,
+          principal: isClosure ? principal : 0, interest: split.interest, tds: tds || 0,
+        });
+      } else {
+        await book.mutateAsync({ transactionId: transaction.id, head });
+      }
       onDone();
     } catch { /* the hook toasts */ }
   }
 
   /* R-2354: same label, same rule, same submit() — in the footer when the sheet asks. */
-  const saveLabel = `Book ${rupee(amount)} as ${head === "interest" ? "interest received" : "other income"}`;
-  useFooterSaveReport(onFooterSave, { label: saveLabel, onSave: () => { void submit(); }, disabled: amount <= 0, loading: book.isPending });
+  const saveLabel = head !== "interest" ? `Book ${rupee(amount)} as other income`
+    : isClosure && principal > 0 ? `Book FD closure: ${rupee(principal)} principal + ${rupee(split.gross)} interest`
+    : `Book ${rupee(split.gross)} as interest received`;
+  const pending = book.isPending || bookInterest.isPending;
+  const disabled = amount <= 0 || !!interestError;
+  useFooterSaveReport(onFooterSave, { label: saveLabel, onSave: () => { void submit(); }, disabled, loading: pending });
 
   return (
     <section aria-label="Income that is not a sale" className="rounded-md border border-emerald/40 bg-emerald-soft/20 p-3 space-y-2">
@@ -55,8 +119,70 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
           </button>
         ))}
       </div>
+
+      {head === "interest" && (
+        <div className="space-y-2 border-t border-hairline pt-2">
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Interest from">
+            <span className="text-xs text-ink-3 mr-1">Interest from</span>
+            {SOURCES.map(([k, label]) => (
+              <button key={k} type="button" aria-pressed={source === k} onClick={() => setSource(k)}
+                className={`rounded-md border px-2 py-1 text-xs font-medium ${source === k ? "border-emerald bg-emerald/10 text-ink" : "border-hairline text-ink-2"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {source === "fd" && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-center">
+              <select value={fdId} onChange={(e) => pickFd(e.target.value)} aria-label="FD account"
+                className="min-w-0 rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-emerald/40">
+                <option value="">{fds.length ? "Which FD? (optional)" : "No FD account yet — add one under Own transfer"}</option>
+                {fds.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}{a.current_balance != null ? ` · ${rupee(a.current_balance)}` : ""}</option>
+                ))}
+              </select>
+              {fd && (
+                <label className="flex items-center gap-2 text-xs text-ink-2">
+                  <input type="checkbox" checked={closure} onChange={(e) => toggleClosure(e.target.checked)} />
+                  FD closed — this line has the principal too
+                </label>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {isClosure && (
+              <label className="text-xs text-ink-3 space-y-1">
+                <span>Principal back from the FD (₹)</span>
+                <Input value={principalText} onChange={(e) => setPrincipalText(e.target.value)} inputMode="numeric"
+                  aria-label="Principal back from the FD" placeholder={fd?.current_balance ? String(fd.current_balance) : "0"} />
+              </label>
+            )}
+            <label className="text-xs text-ink-3 space-y-1">
+              <span>TDS deducted by the bank (₹, optional)</span>
+              <Input value={tdsText} onChange={(e) => setTdsText(e.target.value)} inputMode="numeric"
+                aria-label="TDS deducted by the bank" placeholder="0" />
+            </label>
+          </div>
+
+          <p className="text-xs text-ink-2" aria-live="polite">
+            {interestError ? <span className="text-rose-ink">{interestError}</span> : (
+              <>
+                Interest income <b>{rupee(split.gross)}</b>
+                {(isClosure || (tds || 0) > 0) && (
+                  <span className="text-ink-3">
+                    {" "}= {rupee(split.interest)} credited{(tds || 0) > 0 ? ` + ${rupee(tds)} TDS (to TDS receivable)` : ""}
+                    {isClosure ? ` · ${rupee(principal)} principal back from ${fd?.name}` : ""}
+                  </span>
+                )}
+              </>
+            )}
+          </p>
+        </div>
+      )}
+
       {!onFooterSave && (
-        <Button size="sm" variant="primary" icon="check" onClick={submit} loading={book.isPending} disabled={book.isPending || amount <= 0}>
+        <Button size="sm" variant="primary" icon="check" onClick={submit} loading={pending} disabled={pending || disabled}>
           {saveLabel}
         </Button>
       )}

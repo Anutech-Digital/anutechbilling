@@ -45,6 +45,40 @@ export function useBookOtherIncome() {
   });
 }
 
+/** R-2366: interest income from a money-in line — FD / savings / other; an FD closure books the
+ *  principal as money back from the FD (its balance goes down) and the rest as interest; TDS the
+ *  bank deducted → TDS receivable. book_bank_credit_as_interest (migration 20261102100702). */
+export type BookInterestInput = {
+  transactionId: string;
+  source: "fd" | "savings" | "other";
+  fdAccountId: string | null;
+  principal: number;
+  interest: number;
+  tds: number;
+};
+
+export function useBookInterestIncome() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: BookInterestInput) => {
+      const { data, error } = await untyped().rpc("book_bank_credit_as_interest", {
+        p_txn_id: input.transactionId, p_source: input.source, p_fd_account: input.fdAccountId,
+        p_principal: input.principal, p_interest: input.interest, p_tds: input.tds, p_note: null,
+      });
+      if (error) throw new Error(error.message);
+      return data as { interest: number; principal: number; fd_account: string | null };
+    },
+    onSuccess: (r) => {
+      invalidate(qc);
+      qc.invalidateQueries({ queryKey: ["tds_receivable"] });
+      toast.success((r?.principal ?? 0) > 0
+        ? `FD closure booked — principal back from ${r.fd_account ?? "the FD"}, interest in Other income`
+        : "Booked as interest received (other income) & reconciled");
+    },
+    onError: (err) => toastError(err, { fallback: "Couldn't book this line as interest" }),
+  });
+}
+
 export function useReconcileAsTransfer() {
   const qc = useQueryClient();
   return useMutation({

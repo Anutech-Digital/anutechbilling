@@ -15,11 +15,12 @@ import type { SettlementPlan } from "@/lib/razorpay/settlement-match";
 import { buildLoan, type LoanGivenRow } from "@/lib/queries/loans-given";
 
 const s = vi.hoisted(() => ({
-  book: vi.fn(), post: vi.fn(), create: vi.fn(), reconcileLoan: vi.fn(), rzp: vi.fn(),
+  book: vi.fn(), bookInterest: vi.fn(), post: vi.fn(), create: vi.fn(), reconcileLoan: vi.fn(), rzp: vi.fn(),
   loans: [] as unknown[], rzpData: undefined as unknown,
 }));
 vi.mock("@/lib/queries/bank-other-income", () => ({
   useBookOtherIncome: () => ({ mutateAsync: s.book, isPending: false }),
+  useBookInterestIncome: () => ({ mutateAsync: s.bookInterest, isPending: false }),
   useReconcileAsTransfer: () => ({ mutateAsync: s.post, isPending: false }),
 }));
 vi.mock("@/lib/queries/bank", () => ({
@@ -72,7 +73,7 @@ const line = (p: Partial<BankTransactionRow>) => ({
 
 afterEach(cleanup);
 beforeEach(() => {
-  for (const fn of [s.book, s.post, s.create, s.reconcileLoan, s.rzp]) fn.mockReset().mockResolvedValue({});
+  for (const fn of [s.book, s.bookInterest, s.post, s.create, s.reconcileLoan, s.rzp]) fn.mockReset().mockResolvedValue({});
   s.rzp.mockResolvedValue({ payments: 2, fee: 71, fee_booked_now: 71, fee_gst_now: 11 });
   s.loans = [];
   s.rzpData = undefined;
