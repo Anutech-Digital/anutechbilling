@@ -10,6 +10,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 
 import { Card } from "@/components/ui/card";
 import { Money } from "@/components/ui/money";
@@ -18,7 +19,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { usePersonalAccounts, usePersonalHoldings, usePersonalTransactions } from "@/lib/queries/personal-vault";
-import { computeNetWorth, summariseCashFlow, STALE_AFTER_DAYS } from "@/lib/vault/personal/net-worth";
+import { usePersonalOweHold } from "@/lib/queries/personal-owe-hold";
+import { computeNetWorth, STALE_AFTER_DAYS } from "@/lib/vault/personal/net-worth";
+import { summariseIncomeExpense } from "@/lib/vault/personal/income-expense";
 import { VaultPinSettings } from "@/components/features/vault/vault-pin-settings";
 import { VaultLoadError } from "@/components/features/vault/vault-load-error";
 import { rupee } from "@/lib/utils";
@@ -28,14 +31,16 @@ export default function PersonalVaultOverview() {
   const accountsQ = usePersonalAccounts();
   const holdingsQ = usePersonalHoldings();
   const txQ = usePersonalTransactions(500);
+  // R-2386: advances received / money held for someone — open entries come off Net worth.
+  const oweHoldQ = usePersonalOweHold();
 
-  const loading = accountsQ.isLoading || holdingsQ.isLoading || txQ.isLoading;
-  const error = accountsQ.error || holdingsQ.error || txQ.error;
+  const loading = accountsQ.isLoading || holdingsQ.isLoading || txQ.isLoading || oweHoldQ.isLoading;
+  const error = accountsQ.error || holdingsQ.error || txQ.error || oweHoldQ.error;
 
   const now = React.useMemo(() => new Date(), []);
   const nw = React.useMemo(
-    () => computeNetWorth(accountsQ.data ?? [], holdingsQ.data ?? [], now),
-    [accountsQ.data, holdingsQ.data, now],
+    () => computeNetWorth(accountsQ.data ?? [], holdingsQ.data ?? [], now, oweHoldQ.data ?? []),
+    [accountsQ.data, holdingsQ.data, oweHoldQ.data, now],
   );
 
   // This financial year so far — the window an Indian owner thinks in.
@@ -44,12 +49,21 @@ export default function PersonalVaultOverview() {
   const fyStart = React.useMemo(() => fyStartISO(now), [now]);
 
   const flow = React.useMemo(
-    () => summariseCashFlow((txQ.data ?? []).filter((t) => t.occurred_on >= fyStart)),
+    () => {
+      // R-2386: the same income / spent rules as Income & Expenses (R-2387): income = drawing,
+      // salary, interest, dividend, other income, refund; spent = expenses only. Transfers,
+      // card payments and ATM cash move money between your own pockets — they are neither.
+      const s = summariseIncomeExpense((txQ.data ?? []).filter((t) => t.occurred_on >= fyStart));
+      const fromCompany = s.bySource
+        .filter((b) => b.source === "drawing" || b.source === "dividend")
+        .reduce((sum, b) => sum + b.total, 0);
+      return { drawnFromCompany: fromCompany, moneyIn: s.income, moneyOut: s.spent, net: s.saved };
+    },
     [txQ.data, fyStart],
   );
 
   if (error) {
-    return <VaultLoadError error={error} onRetry={() => { void accountsQ.refetch(); void holdingsQ.refetch(); void txQ.refetch(); }} />;
+    return <VaultLoadError error={error} onRetry={() => { void accountsQ.refetch(); void holdingsQ.refetch(); void txQ.refetch(); void oweHoldQ.refetch(); }} />;
   }
 
   if (loading) {
@@ -67,7 +81,8 @@ export default function PersonalVaultOverview() {
   // must show. Transactions count too.
   const empty = (accountsQ.data?.length ?? 0) === 0
     && (holdingsQ.data?.length ?? 0) === 0
-    && (txQ.data?.length ?? 0) === 0;
+    && (txQ.data?.length ?? 0) === 0
+    && (oweHoldQ.data?.length ?? 0) === 0;
 
   return (
     <div className="space-y-5">
@@ -78,7 +93,7 @@ export default function PersonalVaultOverview() {
           <Money amount={nw.net} size="display" />
         </div>
 
-        <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-4 pt-5 border-t border-hairline">
+        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-5 border-t border-hairline">
           <div>
             <p className="text-2xs uppercase tracking-wide text-ink-3">Bank, cash & deposits</p>
             <div className="mt-0.5"><Money amount={nw.liquidAssets} size="display" /></div>
@@ -93,7 +108,20 @@ export default function PersonalVaultOverview() {
               <Money amount={nw.liabilities} size="display" tone={nw.liabilities > 0 ? "negative" : "default"} autoNegative={false} />
             </div>
           </div>
+          {/* R-2386: one line for money that is with you but not yours (byana, held for a child). */}
+          <div>
+            <p className="text-2xs uppercase tracking-wide text-ink-3">I owe / hold for others</p>
+            <div className="mt-0.5">
+              <Money amount={nw.oweHoldOpen} size="display" tone={nw.oweHoldOpen > 0 ? "negative" : "default"} autoNegative={false} />
+            </div>
+            <Link href="/vault/personal/banking#owe-hold-title" className="text-3xs text-primary hover:underline">
+              {nw.oweHoldOpen > 0 ? "See entries" : "Add an advance or held money"}
+            </Link>
+          </div>
         </div>
+        <p className="mt-3 text-2xs text-ink-3">
+          Net worth = bank, cash &amp; deposits + investments − owed on cards − money you owe / hold for others.
+        </p>
 
         {/* Said next to the number it qualifies, never on another tab. */}
         {(nw.neverValuedCount > 0 || nw.staleCount > 0) && nw.investments > 0 && (

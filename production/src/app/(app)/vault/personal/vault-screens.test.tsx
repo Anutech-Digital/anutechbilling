@@ -50,6 +50,17 @@ vi.mock("@/lib/queries/personal-vault", () => ({
   useVerifyPin: () => noopMutation,
 }));
 
+// R-2386: Overview + Banking read "Money I owe / hold for others" from its own module.
+vi.mock("@/lib/queries/personal-owe-hold", () => {
+  const none = { mutate: () => {}, mutateAsync: async () => {}, isPending: false };
+  return {
+    usePersonalOweHold: () => ({ data: [], isLoading: false, error: null, refetch: () => {} }),
+    useSavePersonalOweHold: () => none,
+    useSettlePersonalOweHold: () => none,
+    useDeletePersonalOweHold: () => none,
+  };
+});
+
 vi.mock("@/components/providers/confirm-provider", () => ({
   useConfirm: () => vi.fn().mockResolvedValue(true),
 }));

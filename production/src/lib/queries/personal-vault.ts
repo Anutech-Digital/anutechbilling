@@ -36,7 +36,7 @@ export type PersonalCategoryRule = Database["public"]["Tables"]["personal_catego
 export type PersonalCategoryRuleInsert = Database["public"]["Tables"]["personal_category_rules"]["Insert"];
 
 /** Who is writing. Resolved from the session on every mutation — never cached in a prop. */
-async function requireIdentity(): Promise<{ userId: string; tenantId: string }> {
+export async function requireIdentity(): Promise<{ userId: string; tenantId: string }> {
   const supabase = createClient();
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("You are not signed in — please sign in again.");
@@ -52,7 +52,7 @@ async function requireIdentity(): Promise<{ userId: string; tenantId: string }> 
   return { userId: auth.user.id, tenantId: me.tenant_id };
 }
 
-function invalidateAll(qc: ReturnType<typeof useQueryClient>) {
+export function invalidateAll(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["personal-vault"] });
 }
 

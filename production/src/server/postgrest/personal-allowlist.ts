@@ -60,6 +60,7 @@ export const PERSONAL_TABLES: Readonly<Record<string, readonly Method[]>> = {
   personal_categories: ALL,
   personal_category_rules: ALL,
   personal_import_batches: ALL,
+  personal_owe_hold: ALL,          // R-2386 Money I owe / hold for others
   users: READ,
   tenants: READ,
   notifications: ["GET", "HEAD", "PATCH"],
