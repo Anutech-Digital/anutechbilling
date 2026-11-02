@@ -71,6 +71,7 @@ import { isRazorpaySettlementLine } from "@/lib/razorpay/settlement-match";
 import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-section";
 import { EmiRepaymentSection } from "@/components/features/banking/emi-repayment-section";
 import { LoanGivenReceiptSection } from "@/components/features/banking/loan-given-receipt-section";
+import { CreditLineSection } from "@/components/features/banking/credit-line-section";
 import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
 import { CustomerRefundSection } from "@/components/features/banking/customer-refund-section";
 import { OtherIncomeSection } from "@/components/features/banking/other-income-section";
@@ -139,6 +140,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const [transferSave, setTransferSave] = React.useState<FooterSave | null>(null);
   const [otherIncomeSave, setOtherIncomeSave] = React.useState<FooterSave | null>(null);
   const [loanReceiptSave, setLoanReceiptSave] = React.useState<FooterSave | null>(null);
+  /* R-2374: a drawdown / repayment on a credit line or business loan (Loan / EMI tile). */
+  const [creditLineSave, setCreditLineSave] = React.useState<FooterSave | null>(null);
   const [razorpaySave, setRazorpaySave] = React.useState<FooterSave | null>(null);
   /* R-2008: on a tile with several forms, the one the owner last clicked or typed in owns the footer. */
   const [footerPick, setFooterPick] = React.useState<string | null>(null);
@@ -681,7 +684,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     : tile === "transfer" ? transferSave ?? manualSave
     : tile === "tax_refund" ? manualSave
     : tile === "owner" ? pickFooterSave([["credit", showCreditBox ? creditSave : null], ["equity", equitySave]], footerPick)
-    : tile === "loan" ? pickFooterSave([["emi", isCredit ? null : emiSave], ["receipt", isCredit ? loanReceiptSave : null], ["advance", advanceSave]], footerPick)
+    : tile === "loan" ? pickFooterSave([["emi", isCredit ? null : emiSave], ["receipt", isCredit ? loanReceiptSave : null], ["credit_line", creditLineSave], ["advance", advanceSave]], footerPick)
     : tile === "vendor" ? (isCredit ? null : pickFooterSave([["vendor", vendorSave], ["commission", commissionSave]], footerPick))
     : tile === "customer" ? (isCredit && showProject ? projectSave : customerSave)
     : tile === "employee" ? pickFooterSave([
@@ -1199,6 +1202,11 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 <LoanGivenReceiptSection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setLoanReceiptSave} />
               </div>
             )}
+            {/* R-2374: a lender (bank / NBFC) — drawdown on a credit line, or a repayment split
+                into principal + interest (Finance cost). */}
+            <div {...pickOn("credit_line")}>
+              <CreditLineSection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setCreditLineSave} />
+            </div>
             {/* R-2008: the form clicked (EMI or this one) owns the footer. */}
             <div {...pickOn("advance")}>{advanceBox}</div>
           </>

@@ -6,6 +6,7 @@ import {
   previousPeriod, samePeriodLastYear, compareRange, wholeMonths, periodChange, changeTone,
   formatChange, signedRupee, rangeLabel, periodName, runningNote, parseCompareMode,
   opexBreakdown, revenueBreakdown, licenceBreakdown, subSum, splitByWeight, pnlCsv, MAX_SUB_LINES,
+  financeCost, financeCostBreakdown, operatingExpenses,
 } from "./pnl-compare";
 import { assemblePnl, type PnlRpcRow, type PnlMasters, type PnLNumbers } from "./pnl-assemble";
 import type { VendorInput } from "./pnl";
@@ -338,5 +339,47 @@ describe("R-1835 revenue sub-lines by product", () => {
     expect(subs.reduce((s, r) => s + (r[1] as number), 0)).toBe(rows[idx][1]);
     expect(subs.reduce((s, r) => s + (r[2] as number), 0)).toBe(rows[idx][2]);
     expect(rows.some((r) => r[0] === "  Less: credit notes")).toBe(false);
+  });
+});
+
+/* ── R-2374: interest on loans / OD is Finance cost — its own line, below operating expenses ── */
+describe("R-2374 Finance cost on the P&L", () => {
+  const withInterest = (over: Partial<PnlRpcRow> = {}) => pnl({
+    expense_groups: [
+      ...row().expense_groups,
+      { category: "Interest on loans / OD", vendor_name: "Bajaj Finance", month: "2026-09", amount: 46_000, n: 1 },
+      { category: "Interest", vendor_name: "HDFC", month: "2026-09", amount: 4_000, n: 1 },
+    ],
+    ...over,
+  });
+
+  it("Bajaj ₹46,000 + EMI interest ₹4,000 = Finance cost ₹50,000, not in operating expenses", () => {
+    const d = withInterest();
+    expect(financeCost(d)).toBe(50_000);
+    const fin = financeCostBreakdown(d);
+    expect(fin.lines.map((l) => [l.label, l.now])).toEqual([["Interest on loans / OD", 46_000], ["Interest", 4_000]]);
+    expect(subSum(fin.lines, "now")).toBe(50_000);
+    const opex = opexBreakdown(d);
+    expect(opex.lines.some((l) => l.category === "Interest on loans / OD" || l.category === "Interest")).toBe(false);
+    expect(subSum(opex.lines, "now")).toBe(operatingExpenses(d));
+    // the two lines together are every expense — net profit is unchanged
+    expect(operatingExpenses(d) + financeCost(d)).toBe(d.expenses - d.model.projectCost);
+    expect(d.model.netProfit).toBe(withInterest().model.netProfit);
+  });
+
+  it("no interest → no finance cost, operating expenses as before", () => {
+    const d = pnl();
+    expect(financeCost(d)).toBe(0);
+    expect(financeCostBreakdown(d).lines).toEqual([]);
+    expect(operatingExpenses(d)).toBe(d.expenses - d.model.projectCost);
+  });
+
+  it("CSV: Finance cost line with its heads, and Operating expenses without them", () => {
+    const d = withInterest();
+    const { rows } = pnlCsv(d, SEP);
+    const fin = rows.find((r) => r[0] === "Finance cost");
+    expect(fin?.[1]).toBe(-50_000);
+    expect(rows.find((r) => r[0] === "  Interest on loans / OD")?.[1]).toBe(-46_000);
+    expect(rows.find((r) => r[0] === "Operating expenses")?.[1]).toBe(-operatingExpenses(d));
   });
 });

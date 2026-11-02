@@ -29,6 +29,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import { useBankAccounts } from "@/lib/queries/bank";
 import {
   useBusinessLoans, useRecordBusinessLoan, useRecordDirectorLoanTaken, useRecordLoanEmi, useDeleteBusinessLoan, useLoanPayments,
+  loanKind, creditLimitOf,
   type BusinessLoan,
 } from "@/lib/queries/business-loans";
 import { istToday } from "@/lib/dates/ist";
@@ -43,6 +44,7 @@ import { useEmiPurchases } from "@/lib/queries/emi";
 import { isLoanOnly } from "@/lib/accounting/loan-setup";
 import { EmiLoansTaken, useEmiLoansInterest } from "@/components/features/banking/emi-loans-taken";
 import { LoanMoneyLinePicker, useLoanMoneyLine, type LinePick } from "@/components/features/banking/loan-money-line-picker";
+import { CreditLineDialog } from "@/components/features/banking/credit-line-section";
 
 function todayISO(): string {
   return istToday();
@@ -52,6 +54,8 @@ const selectCls = "w-full rounded-md border border-hairline bg-paper px-3 py-2 t
 export default function BusinessLoansPage() {
   const q = useBusinessLoans();
   const [addOpen, setAddOpen] = React.useState(false);
+  /* R-2374: an OD / flexi line — drawdowns and repayments come from bank lines. */
+  const [creditLineOpen, setCreditLineOpen] = React.useState(false);
   const [emiFor, setEmiFor] = React.useState<BusinessLoan | null>(null);
   const [historyFor, setHistoryFor] = React.useState<BusinessLoan | null>(null);
   const del = useDeleteBusinessLoan();
@@ -100,7 +104,10 @@ export default function BusinessLoansPage() {
             Loans the business took — from a bank or an NBFC{companyLoans ? ", or from a director" : ""}. Recording one adds the money to your bank and the same amount to what the business owes.
           </p>
         </div>
-        <Button variant="primary" icon="plus" className="hidden md:inline-flex" onClick={() => setAddOpen(true)}>Add loan</Button>
+        <div className="hidden md:flex items-center gap-2">
+          <Button variant="default" icon="plus" onClick={() => setCreditLineOpen(true)}>Add credit line (OD)</Button>
+          <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add loan</Button>
+        </div>
       </div>
 
       {/* How it works — only when there's nothing yet, so once loans exist the
@@ -133,7 +140,7 @@ export default function BusinessLoansPage() {
             icon="rupee"
             title="No business loans yet"
             body="When the company takes a loan from a bank / NBFC, add it here — the money comes into the bank and the outstanding shows on the Balance Sheet. A loan whose EMIs are already on your bank statement can be set up from that EMI line (Banking → Reconcile → Loan / EMI)."
-            action={<Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add a loan</Button>}
+            action={<div className="flex flex-wrap justify-center gap-2"><Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add a loan</Button><Button variant="default" icon="plus" onClick={() => setCreditLineOpen(true)}>Add credit line (OD)</Button></div>}
           />
         </Card>
       )) : (
@@ -145,7 +152,7 @@ export default function BusinessLoansPage() {
                 <tr>
                   <th className="text-left  px-4 py-3">Lender</th>
                   <th className="text-left  px-4 py-3">Taken on</th>
-                  <th className="text-right px-4 py-3">Loan amount</th>
+                  <th className="text-right px-4 py-3">Loan / drawn</th>
                   <th className="text-right px-4 py-3">Repaid</th>
                   <th className="text-right px-4 py-3">Outstanding</th>
                   <th className="text-left  px-4 py-3">Status</th>
@@ -159,6 +166,7 @@ export default function BusinessLoansPage() {
                       <div className="font-medium text-ink">{l.lender}</div>
                       {l.purpose && <div className="text-xs text-ink-3">{l.purpose}</div>}
                       <DirectorTag loan={l} />
+                      <CreditLineTag loan={l} />
                     </td>
                     <td className="px-4 py-3 text-ink-2">{formatDate(l.disbursed_on)}</td>
                     <td className="px-4 py-3 text-right font-mono text-ink-2">{rupee(l.principal)}</td>
@@ -172,7 +180,7 @@ export default function BusinessLoansPage() {
                     <td className="px-4 py-3">
                       <div className="flex justify-end">
                         <LoanActions
-                          onEmi={l.status === "active" ? () => setEmiFor(l) : undefined}
+                          onEmi={l.status === "active" && loanKind(l) === "term" ? () => setEmiFor(l) : undefined}
                           onHistory={() => setHistoryFor(l)}
                           onDelete={canDelete && l.emisPaid === 0 ? () => confirmDelete(l) : undefined}
                         />
@@ -194,6 +202,7 @@ export default function BusinessLoansPage() {
                       {l.lender}
                       {l.purpose && <div className="text-xs text-ink-3 font-normal">{l.purpose}</div>}
                       <DirectorTag loan={l} />
+                      <CreditLineTag loan={l} />
                     </div>
                     <div className="font-serif text-xl text-ink leading-none">{rupee(l.outstanding)}</div>
                   </div>
@@ -205,7 +214,7 @@ export default function BusinessLoansPage() {
                       {l.status === "closed" ? "Cleared" : "Active"}
                     </Badge>
                     <LoanActions
-                      onEmi={l.status === "active" ? () => setEmiFor(l) : undefined}
+                      onEmi={l.status === "active" && loanKind(l) === "term" ? () => setEmiFor(l) : undefined}
                       onHistory={() => setHistoryFor(l)}
                       onDelete={canDelete && l.emisPaid === 0 ? () => confirmDelete(l) : undefined}
                     />
@@ -222,8 +231,25 @@ export default function BusinessLoansPage() {
         <AddLoanDialog companyLoans={companyLoans} startAsDirector={addAsDirector}
           onClose={() => { setAddOpen(false); setAddAsDirector(false); }} />
       )}
+      {creditLineOpen && <CreditLineDialog onClose={() => setCreditLineOpen(false)} />}
       {emiFor && <PayEmiDialog loan={emiFor} onClose={() => setEmiFor(null)} />}
       {historyFor && <HistoryDialog loan={historyFor} onClose={() => setHistoryFor(null)} />}
+    </div>
+  );
+}
+
+/** R-2374: "Credit line (OD / flexi)" under the lender, with its limit and what is free on it. */
+function CreditLineTag({ loan }: { loan: BusinessLoan }) {
+  if (loanKind(loan) !== "credit_line") return null;
+  const limit = creditLimitOf(loan);
+  const free = limit === null ? null : limit - loan.outstanding;
+  return (
+    <div className="text-xs font-normal text-ink-3">
+      Credit line (OD / flexi)
+      {limit !== null && <> · limit {rupee(limit)}{free !== null && free < 0
+        ? <span className="text-rose-ink"> · over by {rupee(-free)}</span>
+        : <> · {rupee(free ?? 0)} free</>}</>}
+      <div>Drawdowns and repayments: Banking → Reconcile → Loan / EMI</div>
     </div>
   );
 }
