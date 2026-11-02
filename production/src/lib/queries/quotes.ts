@@ -266,6 +266,7 @@ export function useRequestApproval() {
           approved_discount_bps: null,
           approved_margin_bps: null,
           approval_rejection_reason: null,
+          approval_note: null, // R-2383: a fresh ask starts with no self-approval reason
         })
         .eq("id", id)
         .select()
@@ -294,6 +295,12 @@ export function useDecideApproval() {
       discountBps: number | null;
       marginBps: number | null;
       rejectionReason?: string;
+      /** R-2383: the sole owner's reason for approving their own quote (min 10 chars — the
+       *  server trigger refuses a self-approval without it). */
+      approvalNote?: string;
+      /** R-2383: the tier being cleared, recorded when none was (a sole owner who never
+       *  "requested" approval). The server reads it to decide who else may approve. */
+      approvalTier?: "manager" | "owner";
     }) => {
       const supabase = createClient();
       const { data, error } = await supabase
@@ -307,12 +314,15 @@ export function useDecideApproval() {
                 approved_discount_bps: input.discountBps,
                 approved_margin_bps: input.marginBps,
                 approval_rejection_reason: null,
+                approval_note: input.approvalNote?.trim() || null,
+                ...(input.approvalTier ? { approval_tier: input.approvalTier } : {}),
               }
             : {
                 approval_status: "rejected",
                 approved_by: input.userId,
                 approved_at: new Date().toISOString(),
                 approval_rejection_reason: input.rejectionReason ?? null,
+                approval_note: null,
               },
         )
         .eq("id", input.id)

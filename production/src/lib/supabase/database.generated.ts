@@ -10616,6 +10616,7 @@ export type Database = {
           add_seats_subscription_id: string | null
           add_seats_taken_back_at: string | null
           amount: number | null
+          approval_note: string | null
           approval_rejection_reason: string | null
           approval_requested_at: string | null
           approval_requested_by: string | null
@@ -10703,6 +10704,7 @@ export type Database = {
           add_seats_subscription_id?: string | null
           add_seats_taken_back_at?: string | null
           amount?: number | null
+          approval_note?: string | null
           approval_rejection_reason?: string | null
           approval_requested_at?: string | null
           approval_requested_by?: string | null
@@ -10790,6 +10792,7 @@ export type Database = {
           add_seats_subscription_id?: string | null
           add_seats_taken_back_at?: string | null
           amount?: number | null
+          approval_note?: string | null
           approval_rejection_reason?: string | null
           approval_requested_at?: string | null
           approval_requested_by?: string | null
