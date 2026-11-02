@@ -117,7 +117,7 @@ export function OweHoldSection({ accounts }: { accounts: PersonalAccount[] }) {
       return;
     }
     if (!form.occurred_on) {
-      toast.error("Pick the date the money came in.");
+      toast.error("Pick the date the money came in.", { description: "Use the date field above. Nothing was saved." });
       return;
     }
     setAmountIssue(null);
@@ -143,7 +143,7 @@ export function OweHoldSection({ accounts }: { accounts: PersonalAccount[] }) {
 
   const handleSettle = async () => {
     if (!settling) return;
-    if (!settling.on) { toast.error("Pick the date."); return; }
+    if (!settling.on) { toast.error("Pick the date.", { description: "The day it was refunded, handed over or became part of the sale. Nothing was saved." }); return; }
     try {
       await settle.mutateAsync({
         id: settling.row.id,
