@@ -29,6 +29,7 @@ import {
 import { daysElapsedInPeriod, prorateSalary } from "@/lib/payroll/proration";
 import { exitPayDays, onPayrollFor, employmentStatus } from "@/lib/payroll/exit";
 import { StartExitDialog } from "@/components/features/payroll/start-exit-dialog";
+import { MergeEmployeeDialog } from "@/components/features/payroll/merge-employee-dialog";
 import { nationalHolidaysForYear, FIXED_NATIONAL_HOLIDAYS, indiaPublicHolidaysForYear } from "@/lib/payroll/holidays-india";
 import { computeEsi, isEsiEligible, esiStickyCovered, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
 import { computePf, pfWage, pfWageCeiling, PF_EMPLOYER_RATE } from "@/lib/payroll/pf";
@@ -203,6 +204,8 @@ export function EmployeesTab() {
   const [viewEmp, setViewEmp] = React.useState<Employee | null>(null);
   const [offerEmp, setOfferEmp] = React.useState<Employee | null>(null);
   const [exitEmp, setExitEmp] = React.useState<Employee | null>(null);
+  /* R-2380: the same person added twice → merge the duplicate into the one to keep. */
+  const [mergeEmp, setMergeEmp] = React.useState<Employee | null>(null);
   const rows = q.data ?? [];
 
   const confirmCancelExit = async (e: Employee) => {
@@ -305,7 +308,7 @@ export function EmployeesTab() {
                       </td>
                       <td className="px-4 py-3"><EmployeeStatusBadge e={e} /></td>
                       <td className="px-4 py-3 text-right" onClick={(ev) => ev.stopPropagation()}>
-                        <EmployeeRowMenu e={e} canWrite={canWrite} isOwner={isOwner} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} onStartExit={setExitEmp} onCancelExit={confirmCancelExit} />
+                        <EmployeeRowMenu e={e} canWrite={canWrite} isOwner={isOwner} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} onStartExit={setExitEmp} onCancelExit={confirmCancelExit} onMerge={rows.length > 1 ? setMergeEmp : undefined} />
                       </td>
                     </tr>
                   );
@@ -352,7 +355,7 @@ export function EmployeesTab() {
                     </div>
                     <div className="flex items-center justify-between gap-2" onClick={(ev) => ev.stopPropagation()}>
                       <EmployeeStatusBadge e={e} />
-                      <EmployeeRowMenu e={e} canWrite={canWrite} isOwner={isOwner} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} onStartExit={setExitEmp} onCancelExit={confirmCancelExit} />
+                      <EmployeeRowMenu e={e} canWrite={canWrite} isOwner={isOwner} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} onStartExit={setExitEmp} onCancelExit={confirmCancelExit} onMerge={rows.length > 1 ? setMergeEmp : undefined} />
                     </div>
                   </Card>
                 </li>
@@ -365,6 +368,7 @@ export function EmployeesTab() {
       {edit !== null && <EmployeeDialog employee={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
       {offerEmp && <OfferLetterDialog employee={offerEmp} onClose={() => setOfferEmp(null)} />}
       {exitEmp && isOwner && <StartExitDialog employee={exitEmp} onClose={() => setExitEmp(null)} />}
+      {mergeEmp && canWrite && <MergeEmployeeDialog employee={mergeEmp} employees={rows} onClose={() => setMergeEmp(null)} />}
       <EmployeeDetailDrawer
         employee={viewEmp ? (rows.find((r) => r.id === viewEmp.id) ?? viewEmp) : null}
         open={viewEmp !== null}
@@ -385,7 +389,7 @@ function EmployeeStatusBadge({ e }: { e: Employee }) {
   return <Badge kind={s === "active" ? "success" : "muted"} dot>{s === "active" ? "Active" : "Inactive"}</Badge>;
 }
 
-function EmployeeRowMenu({ e, canWrite, isOwner, onView, onOffer, onEdit, onDelete, onStartExit, onCancelExit }: {
+function EmployeeRowMenu({ e, canWrite, isOwner, onView, onOffer, onEdit, onDelete, onStartExit, onCancelExit, onMerge }: {
   e: Employee;
   canWrite: boolean;
   isOwner: boolean;
@@ -395,6 +399,8 @@ function EmployeeRowMenu({ e, canWrite, isOwner, onView, onOffer, onEdit, onDele
   onDelete: (e: Employee) => void;
   onStartExit: (e: Employee) => void;
   onCancelExit: (e: Employee) => void;
+  /** R-2380 — absent when there is no other employee to merge into. */
+  onMerge?: (e: Employee) => void;
 }) {
   return (
     <DropdownMenu modal={false}>
@@ -428,6 +434,11 @@ function EmployeeRowMenu({ e, canWrite, isOwner, onView, onOffer, onEdit, onDele
                 <Icon name="logout" size={15} /> Start exit
               </DropdownMenuItem>
             ))}
+            {onMerge && (
+              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => onMerge(e)}>
+                <Icon name="users" size={15} /> Merge into…
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem destructive className="gap-2.5 py-2 cursor-pointer" onClick={() => onDelete(e)}>
               <Icon name="trash" size={15} /> Delete employee

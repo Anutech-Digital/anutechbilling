@@ -16031,6 +16031,15 @@ export type Database = {
         }
         Returns: string
       }
+      merge_employees: {
+        Args: {
+          p_dry_run?: boolean
+          p_dup_id: string
+          p_keep_both?: boolean
+          p_keep_id: string
+        }
+        Returns: Json
+      }
       merge_leads: {
         Args: { p_duplicate_id: string; p_primary_id: string }
         Returns: undefined
