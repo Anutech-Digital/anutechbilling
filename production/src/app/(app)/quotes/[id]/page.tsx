@@ -269,7 +269,7 @@ export default function QuoteDetailPage() {
   /* R-2367: everyone who made or revised this quote family — they cannot approve it. */
   const { data: chainMakers } = useQuoteChainMakers(quote?.id);
   const approvalRec       = React.useMemo(
-    () => quote ? { ...quoteApprovalRecord(quote), makers: chainMakers } : null,
+    () => quote ? { ...quoteApprovalRecord(quote), makers: chainMakers, note: (quote as { approval_note?: string | null }).approval_note ?? null } : null,
     [quote, chainMakers],
   );
   /* R-2028 (3): the reason names the line with no vendor cost; "Add cost" opens its cost box.
@@ -296,11 +296,16 @@ export default function QuoteDetailPage() {
     return approverSentence(eligibleApprovers(team ?? [], quote, chainMakers ?? []));
   }, [teamLoaded, team, quote, chainMakers]);
 
-  const sendGate          = !partRequest && approvalNeed && approvalRec ? canSend(approvalRec, approvalNeed, approverNames) : null;
+  /* R-2383: the company's only approver (an owner) may clear their own quote with a reason. */
+  const approvalTeam      = teamLoaded ? (team ?? []) : undefined;
+  const viewerApproval    = approvalNeed && approvalRec && me
+    ? canApprove({ id: me.userId, role: me.role }, approvalRec, approvalNeed, approvalTeam)
+    : null;
+  const sendGate          = !partRequest && approvalNeed && approvalRec
+    ? canSend(approvalRec, approvalNeed, approverNames, { selfApproval: viewerApproval?.selfApproval === true })
+    : null;
   const approvalPill      = !partRequest && approvalNeed && approvalRec ? approvalBadge(approvalRec, approvalNeed) : null;
-  const viewerCanApprove  = approvalNeed && approvalRec && me
-    ? canApprove({ id: me.userId, role: me.role }, approvalRec, approvalNeed).allowed
-    : false;
+  const viewerCanApprove  = viewerApproval?.allowed ?? false;
 
   /* Lifecycle bar. Every step reads a fact that either exists or does not — see
      lib/quotes/lifecycle.ts on why a skipped step must never render as a tick. */
@@ -1147,6 +1152,12 @@ export default function QuoteDetailPage() {
                       {approvalPill.label}
                     </Badge>
                   </button>
+                  {/* R-2383: the sole owner's written reason, where the approval is shown. */}
+                  {approvalRec?.status === "approved" && approvalRec.note && (
+                    <span className="max-w-[28rem] truncate text-ink-2" title={`Self-approved by sole owner: ${approvalRec.note}`} data-testid="self-approval-note">
+                      Self-approved by sole owner: {approvalRec.note}
+                    </span>
+                  )}
                 </>
               )}
               {partRequest && (
@@ -2203,6 +2214,7 @@ export default function QuoteDetailPage() {
           requirement={{ ...approvalNeed, reasons: shownApprovalReasons }}
           record={approvalRec}
           viewer={{ id: me.userId, role: me.role }}
+          team={approvalTeam}
         />
       )}
 
