@@ -51,6 +51,7 @@ import { TDS_PICK_SECTIONS, TDS_SECTION_RATES, normalizeTdsSection, rememberTdsO
 import { tdsDecision, panFromGstin } from "@/lib/accounting/tds-deductor";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { defaultCashAccountId } from "@/lib/payments/deposit-accounts";
+import { pickableAccounts } from "@/lib/banking/account-close";
 import { useVendors, ensureVendor } from "@/lib/queries/vendors";
 import { saveVendorTdsSection } from "@/lib/accounting/vendor-tds-section";
 import { useAddReimbursement } from "@/lib/queries/reimbursements";
@@ -135,7 +136,7 @@ export function AddExpenseDialog({
   const isEdit = Boolean(expense);
   const today  = istToday();
   const { data: bankAccounts } = useBankAccounts();
-  const cashAccounts = (bankAccounts ?? []).filter((a) => a.account_type === "cash");
+  const cashAccounts = (bankAccounts ?? []).filter((a) => a.account_type === "cash" && a.is_active !== false);
   const bankOnlyAccounts = (bankAccounts ?? []).filter((a) => a.account_type !== "cash");
   /* R-1834: Cash starts on the company's Petty Cash (the only cash account, or the auto one among
      several). null = not touched yet → that default; "" = "Don't deduct from petty cash". */
@@ -1746,7 +1747,7 @@ export function AddExpenseDialog({
                 <SelectTrigger id="bank_account"><SelectValue placeholder="Select bank account" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Not sure / pick later</SelectItem>
-                  {bankOnlyAccounts.map((a) => (
+                  {pickableAccounts(bankOnlyAccounts, bankAccountId).map((a) => (
                     <SelectItem key={a.id} value={a.id}>
                       {a.name}{a.bank_name ? ` · ${a.bank_name}` : ""}{a.account_number_last4 ? ` ••${a.account_number_last4}` : ""}
                     </SelectItem>

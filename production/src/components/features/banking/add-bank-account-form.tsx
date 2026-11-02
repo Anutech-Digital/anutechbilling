@@ -74,9 +74,13 @@ const schema = z.object({
   if (val.account_type !== "cash" && val.account_type !== "credit_card") {
     if (!val.bank_name || val.bank_name.length < 2)
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["bank_name"], message: "Bank required" });
-    if (!/^\d{4}$/.test(val.account_number_last4 ?? ""))
+    /* R-2384: a fixed deposit has an FD number, not a statement account — last 4 and IFSC are
+       optional there (checked only when typed). */
+    const isFd = val.account_type === "fixed_deposit";
+    const last4 = (val.account_number_last4 ?? "").trim();
+    if ((!isFd || last4) && !/^\d{4}$/.test(last4))
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["account_number_last4"], message: "Last 4 digits only" });
-    const ifscBad = (val.ifsc ?? "").trim() ? ifscProblem(val.ifsc ?? "") : "Add the IFSC, e.g. HDFC0001234";
+    const ifscBad = (val.ifsc ?? "").trim() ? ifscProblem(val.ifsc ?? "") : isFd ? null : "Add the IFSC, e.g. HDFC0001234";
     if (ifscBad)
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["ifsc"], message: ifscBad });
   }
@@ -162,14 +166,15 @@ export function AddBankAccountForm({ open, onOpenChange, account }: Props) {
 
   const isCash = accountType === "cash";
   const isCard = accountType === "credit_card";
+  const isFd = accountType === "fixed_deposit";
 
   const onSubmit = async (data: FormData) => {
     const payload = {
       name:                 data.name.trim(),
       // Neither a cash account nor a credit card has a bank IFSC / account number.
       bank_name:            isCash ? "Cash in hand" : isCard ? "Credit Card" : (data.bank_name ?? ""),
-      account_number_last4: (isCash || isCard) ? null : (data.account_number_last4 ?? null),
-      ifsc:                 (isCash || isCard) ? null : (data.ifsc ?? null),
+      account_number_last4: (isCash || isCard) ? null : (data.account_number_last4?.trim() || null),
+      ifsc:                 (isCash || isCard) ? null : (data.ifsc?.trim() || null),
       account_type:         data.account_type,
       // A credit card is a liability: the operator enters what they OWE (a
       // positive number); we store it as a NEGATIVE balance so the running
@@ -245,7 +250,7 @@ export function AddBankAccountForm({ open, onOpenChange, account }: Props) {
                 </FormField>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <FormField label="Last 4 digits" required htmlFor="account_number_last4">
+                  <FormField label={isFd ? "Last 4 digits (optional)" : "Last 4 digits"} required={!isFd} htmlFor="account_number_last4">
                     <Input
                       id="account_number_last4"
                       inputMode="numeric"
@@ -259,7 +264,7 @@ export function AddBankAccountForm({ open, onOpenChange, account }: Props) {
                       Last 4 only — full number not stored
                     </p>
                   </FormField>
-                  <FormField label="IFSC" required htmlFor="ifsc">
+                  <FormField label={isFd ? "IFSC (optional)" : "IFSC"} required={!isFd} htmlFor="ifsc">
                     <Input
                       id="ifsc"
                       placeholder="HDFC0001234"

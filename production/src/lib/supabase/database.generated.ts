@@ -2175,6 +2175,8 @@ export type Database = {
         Row: {
           account_number_last4: string | null
           account_type: string
+          closed_note: string | null
+          closed_on: string | null
           bank_name: string
           created_at: string
           id: string
@@ -2191,6 +2193,8 @@ export type Database = {
         Insert: {
           account_number_last4?: string | null
           account_type?: string
+          closed_note?: string | null
+          closed_on?: string | null
           bank_name: string
           created_at?: string
           id?: string
@@ -2207,6 +2211,8 @@ export type Database = {
         Update: {
           account_number_last4?: string | null
           account_type?: string
+          closed_note?: string | null
+          closed_on?: string | null
           bank_name?: string
           created_at?: string
           id?: string
@@ -15398,6 +15404,10 @@ export type Database = {
         Returns: undefined
       }
       claim_customer: { Args: { p_customer_id: string }; Returns: undefined }
+      close_bank_account: {
+        Args: { p_account_id: string; p_closed_on: string; p_note?: string }
+        Returns: undefined
+      }
       combine_quotes: { Args: { p_quote_ids: string[] }; Returns: Json }
       compute_advance_adjustment: {
         Args: { p_quote_id: string }
@@ -16582,6 +16592,7 @@ export type Database = {
         }
         Returns: Json
       }
+      reopen_bank_account: { Args: { p_account_id: string }; Returns: undefined }
       reopen_quote: { Args: { p_quote_id: string }; Returns: undefined }
       remove_opening_invoice_import: {
         Args: {

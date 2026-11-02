@@ -33,7 +33,7 @@ export function MarkPaidDialog({ expense, onClose }: { expense: Expense; onClose
   const [paidDate, setPaidDate] = React.useState<string>(today);
   const [method, setMethod] = React.useState<string>(expense.payment_method ?? "bank_transfer");
   const { data: bankAccounts } = useBankAccounts();
-  const cashAccounts = (bankAccounts ?? []).filter((a) => a.account_type === "cash");
+  const cashAccounts = (bankAccounts ?? []).filter((a) => a.account_type === "cash" && a.is_active !== false);
   /* R-1834: Cash starts on the company's Petty Cash; null = not touched → that default,
      "" = "Don't deduct from petty cash". */
   const [pettyCashPick, setPettyCashAccountId] = React.useState<string | null>(null);
