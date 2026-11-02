@@ -357,7 +357,7 @@ MIGS=(
   "r2230partduedates|20261101184900_r2230_part_due_dates.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscription_billings' and column_name = 'due_on') and to_regprocedure('public.open_part_requests(uuid,uuid)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%R-2230%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') and prosrc like '%R-2230%')"
   "r2011formconsent|20261101203103_r2011_form_consent.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'consent_events' and column_name = 'form') and exists(select 1 from pg_constraint where conname = 'consent_events_source_check' and pg_get_constraintdef(oid) like '%form%')"
   "r2039leadairuns|20261101205400_r2039_lead_ai_runs.sql|resellersos_migration|to_regclass('public.lead_ai_runs') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'leads' and column_name = 'ai_status_at')"
-  "r2017storageanon|20261101211500_r2017_storage_anon_grants.sql|postgres|(to_regclass('storage.objects') is not null and not has_table_privilege('anon', 'storage.objects', 'INSERT') and not has_table_privilege('anon', 'storage.objects', 'TRUNCATE') and not has_table_privilege('authenticated', 'storage.objects', 'TRUNCATE'))"
+  "r2017storageanon|20261101211500_r2017_storage_anon_grants.sql|postgres|not exists(select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace join pg_roles r on r.rolname in ('anon', 'authenticated') where n.nspname = 'storage' and c.relname = 'objects' and (has_table_privilege(r.oid, c.oid, 'TRUNCATE') or (r.rolname = 'anon' and has_table_privilege(r.oid, c.oid, 'INSERT'))))"
   "r2013privacyrequests|20261101215539_r2013_privacy_requests.sql|resellersos_migration|to_regclass('public.privacy_requests') is not null and to_regprocedure('public.privacy_request_verify(uuid,uuid,text)') is not null and to_regprocedure('public.privacy_request_action(uuid,text,text)') is not null"
   "r2350accesslog|20261101231527_r2350_record_access_log.sql|resellersos_migration|to_regclass('public.record_access_log') is not null and to_regprocedure('public.log_record_view(text,text)') is not null and to_regclass('public.security_log') is not null"
 )
@@ -391,9 +391,20 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 printf "notify pgrst, 'reload schema';\n" > "$TMP/reload.sql"
 
 peek() { # $1 = sql file that RAISEs 'PEEK …'; prints the PEEK line (the import is MEANT to fail)
-  gcloud storage cp "$1" "$B/$(basename "$1")" --project="$P" -q >/dev/null 2>&1
+  # R-2357 (2 Nov 2026): never exit from here. Under set -euo pipefail an empty grep (no PEEK line —
+  # the import failed with some OTHER error, that day "permission denied for schema storage") killed
+  # the script inside $(peek …) with no message, before the caller's "Could not read" line. Now: the
+  # PEEK line on stdout, or the import's own error on stderr and nothing on stdout.
+  local ops line
+  if ! gcloud storage cp "$1" "$B/$(basename "$1")" --project="$P" -q >/dev/null 2>&1; then
+    echo "Could not upload $(basename "$1") to $B." >&2; return 0
+  fi
   gcloud sql import sql "$I" "$B/$(basename "$1")" --database="$DB" --user=resellersos_migration --project="$P" --quiet >/dev/null 2>&1 || true
-  gcloud sql operations list --instance="$I" --project="$P" --limit=1 --format=json | grep -oE 'PEEK[^\\"]*' | head -1
+  ops="$(gcloud sql operations list --instance="$I" --project="$P" --limit=1 --format=json 2>&1)" || true
+  line="$(printf '%s\n' "$ops" | grep -oE 'PEEK[^\\"]*' | head -1)" || true
+  if [ -n "$line" ]; then echo "$line"; return 0; fi
+  echo "No PEEK line from the read-only check. What the import said:" >&2
+  printf '%s\n' "$ops" | grep -oE 'ERROR[^\\"]*|"message": *"[^"]*"' | head -3 >&2 || true
 }
 is_true() { echo "$1" | grep -qE "(^| )$2=true([^a-z0-9_]|$)"; }   # $1 = PEEK line, $2 = key (last key is glued to "CONTEXT:")
 
