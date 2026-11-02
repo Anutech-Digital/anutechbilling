@@ -375,6 +375,7 @@ MIGS=(
   "r2387personalincomesource|20261102175100_r2387_personal_income_source.sql|resellersos_migration|exists(select 1 from pg_constraint where conname = 'personal_transactions_income_source_check')"
   "r2386personalowehold|20261102183751_r2386_personal_owe_hold.sql|resellersos_migration|(to_regclass('public.personal_owe_hold') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'personal_owe_hold' and policyname = 'personal_owe_hold_service_role'))"
   "r2389isttodaygrant|20261102184319_r2389_ist_today_grant.sql|resellersos_migration|to_regprocedure('public.ist_today()') is not null and has_function_privilege('authenticated', 'public.ist_today()', 'execute') and has_function_privilege('authenticated', 'public.indian_fiscal_year(date)', 'execute') and has_function_privilege('authenticated', 'public.salary_expense_date(text,date)', 'execute')"
+  "r2391oweholdistdefault|20261102191625_r2391_owe_hold_ist_default.sql|resellersos_migration|exists (select 1 from pg_attrdef d join pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum where d.adrelid = to_regclass('public.personal_owe_hold') and a.attname = 'occurred_on' and pg_get_expr(d.adbin, d.adrelid) ~* 'ist_today\(\)')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
