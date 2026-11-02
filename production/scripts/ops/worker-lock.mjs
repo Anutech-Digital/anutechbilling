@@ -60,6 +60,7 @@ import { fileURLToPath } from "node:url";
 import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites } from "./push-guard-suites.mjs";
 import { enforceScope, parseScopeFlags, normaliseClaimAreas, realMigrationOrderGate } from "./worker-lock-guards.mjs";
 import { runRelatedSql } from "./worker-lock-sql.mjs";
+import { stashSnapshot, enforceStash, stashGit } from "./worker-lock-stash.mjs";
 import { isDerived, withoutDerived, refreshDerived, rebaseResolvingDerived, realDerivedDeps, settleLocks } from "./worker-lock-derived.mjs";
 import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue } from "./worker-lock-queue.mjs";
 const readQueue = () => readQueueIn(LOCK_DIR);
@@ -393,6 +394,8 @@ async function pushWithTurn(card, ciFlags = {}) {
   /* R-1958: before the rebase (and again after it) — nothing of another card's may be undone. */
   const scope = (exit) => enforceScope(card, "commits", { lockDir: LOCK_DIR, allowOutside: ciFlags.allowOutside, cardPath: ciFlags.cardPath, exit });
   scope();
+  /* R-2356: a stash made during the card (shared stash list) stops the push — exit 10. */
+  enforceStash(card, lockFile(card));
   /* R-1973: a card pushing again (e.g. --fixes-red after a red ci) is being built — back in a slot. */
   try { updateLock(card, (l) => lockBeat(countsTowardCap(l) ? l : lockWorking(l), new Date().toISOString())); } catch {}
   /* R-1936: SQL tests of the migrations this push changes — on the local DB, before the push turn. */
@@ -1057,7 +1060,7 @@ function main(argv) {
       /* A re-claim keeps what the card already holds (its ci-wait files stay claimed). */
       const keep = own ? [...(own.areas ?? [])] : [];
       const at = new Date().toISOString();
-      fs.writeFileSync(lockFile(card), JSON.stringify({ card, worktree: path.resolve(worktree), areas: [...new Set([...keep, ...areas.map(normPath)])], files: own?.files ?? [], claimedAt: own?.claimedAt ?? at, beatAt: at, state: LOCK_STATES.working, priority }, null, 2));
+      fs.writeFileSync(lockFile(card), JSON.stringify({ card, worktree: path.resolve(worktree), areas: [...new Set([...keep, ...areas.map(normPath)])], files: own?.files ?? [], claimedAt: own?.claimedAt ?? at, beatAt: at, state: LOCK_STATES.working, priority, stashAtClaim: own?.stashAtClaim ?? stashSnapshot(stashGit, at) }, null, 2));
       console.log(`✓ ${card} ka lock laga (${priority}): ${areas.map(normPath).join(", ")}`);
     };
     const refuseSlot = ({ locks, q }) => {
@@ -1087,6 +1090,7 @@ function main(argv) {
     const f = lockFile(card);
     if (!fs.existsSync(f)) { console.error(`✗ ${card} ka lock nahi hai — pehle claim chalao.`); process.exit(1); }
     const me = JSON.parse(fs.readFileSync(f, "utf8"));
+    enforceStash(card, me); // R-2356: exit 10 on a stash made since claim
     /* R-2105: derived files (deploy-db-*.sh, peeks.generated.ts) stay out of the lock — push regenerates them. */
     const files = withoutDerived(changedFiles());
     const conflicts = findConflicts(card, files, settleCiWaitLocks(card, files, readLocks(), realSettleDeps()));
@@ -1133,11 +1137,7 @@ function main(argv) {
   if (cmd === "tsc") beat(card);
   if (cmd === "tsc") return tscWithTurn(card, parseTscFlags(rest)).then((ok) => { if (ok) console.log("✓ tsc green"); else process.exit(1); });
   if (cmd === "prep") return prep(card, rest);
-  if (cmd === "release") {
-    fs.rmSync(lockFile(card), { force: true });
-    console.log(`✓ ${card} ka lock hata.`);
-    return;
-  }
+  if (cmd === "release") { fs.rmSync(lockFile(card), { force: true }); return console.log(`✓ ${card} ka lock hata.`); }
   if (cmd === "wip" || cmd === "resume") {
     /* R-1898: real git, same interface the tests fake. */
     const git = (gargs, opts = {}) => execFileSync("git", gargs, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...(opts.env ? { env: opts.env } : {}) });
