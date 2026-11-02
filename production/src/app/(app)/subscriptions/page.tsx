@@ -107,7 +107,7 @@ import { useCustomers } from "@/lib/queries/customers";
 import { usePrimaryContacts } from "@/lib/queries/contacts";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { subscriptionExceptions } from "@/lib/subscriptions/exceptions";
-import { renewalClock, termValue, termValueLabel, liveTermAmount, subscriptionEnded } from "@/lib/subscriptions/renewal-display";
+import { renewalClock, termValue, termValueLabel, storedAnnual, liveTermAmount, subscriptionEnded } from "@/lib/subscriptions/renewal-display";
 import {
   subscriptionCycle, matchesCycle, cycleOptions, cycleFromUrl,
   CYCLE_URL_VALUES, type CycleFilter, type CycleUrlValue,
@@ -1282,7 +1282,7 @@ export default function SubscriptionsPage() {
                   <SubCycleBadge
                     cyc={cyc}
                     /* R-1685: no renewal amount on an ended subscription. */
-                          amount={liveTermAmount(s.status, t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null)}
+                          amount={liveTermAmount(s.status, t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s), storedAnnual(s)), rupee) : null)}
                     onCorrect={() => setEditSub(s)}
                   />
                 </div>
@@ -1521,7 +1521,7 @@ export default function SubscriptionsPage() {
                           cyc={cyc}
                           className="mt-1 max-w-full whitespace-normal"
                           /* R-1685: no renewal amount on an ended subscription. */
-                          amount={liveTermAmount(s.status, t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee) : null)}
+                          amount={liveTermAmount(s.status, t ? termValueLabel(termValue(s.mrr, t.months, annualFor(s), storedAnnual(s)), rupee) : null)}
                           onCorrect={() => setEditSub(s)}
                         />
                       </td>

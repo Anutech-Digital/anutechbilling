@@ -12041,6 +12041,7 @@ export type Database = {
           suspended_invoice_id: string | null
           tenant_id: string
           term_months: number
+          term_amount: number | null
           updated_at: string
           used: number | null
           used_synced_at: string | null
@@ -12093,6 +12094,7 @@ export type Database = {
           suspended_invoice_id?: string | null
           tenant_id: string
           term_months?: number
+          term_amount?: number | null
           updated_at?: string
           used?: number | null
           used_synced_at?: string | null
@@ -12145,6 +12147,7 @@ export type Database = {
           suspended_invoice_id?: string | null
           tenant_id?: string
           term_months?: number
+          term_amount?: number | null
           updated_at?: string
           used?: number | null
           used_synced_at?: string | null

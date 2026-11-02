@@ -100,13 +100,23 @@ export interface ExtensionCharge {
  * so ₹100 × 10 is the customer's real price and ₹996 was the rounding error.
  * Saved quotes are untouched — only new extension quotes and the dialog preview use this.
  */
-export function extensionCharge(args: { seats: number; mrr: number; len: ExtensionLength; taxRatePct?: number }): ExtensionCharge {
+export function extensionCharge(args: {
+  seats: number; mrr: number; len: ExtensionLength; taxRatePct?: number;
+  /** R-2369: `subscriptions.term_amount` + `term_months` — the exact sold price; null → from mrr. */
+  termAmount?: number | null; termMonths?: number | null;
+}): ExtensionCharge {
   const seats = Math.max(0, Math.round(args.seats));
   const mrr = Math.max(0, args.mrr ?? 0);
   const taxRatePct = args.taxRatePct ?? 18;
   const count = Math.max(0, Math.round(args.len.count));
 
-  const annualPerSeat = seats > 0 ? Math.round((mrr * 12) / seats) : 0;
+  /* R-2369: annual per seat from the exact sold term amount when the row has it (₹4,250 for 5
+     seats a year → ₹850), not round(mrr × 12 ÷ seats) (mrr ₹355 → ₹852). */
+  const exact = args.termAmount ?? 0;
+  const termMonths = Math.max(1, args.termMonths ?? 12);
+  const annualPerSeat = seats <= 0 ? 0
+    : exact > 0 ? Math.round((exact * 12) / termMonths / seats)
+    : Math.round((mrr * 12) / seats);
   const perSeat = args.len.unit === "years"
     ? annualPerSeat * count
     : Math.round((annualPerSeat * count) / 12);
