@@ -362,6 +362,10 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   <div className="grid grid-cols-2 gap-2 text-ink-2">
                     <div><span className="text-ink-3">Invoice Date:</span> {formatDate(invoice.invoice_date)}</div>
                     <div><span className="text-ink-3">Due Date:</span> {invoice.due_date ? formatDate(invoice.due_date) : "—"}</div>
+                    {/* R-2360: the Zoho Books invoice number this sale was booked from (Find in Zoho). */}
+                    {invoice.external_number ? (
+                      <div className="col-span-2 break-words"><span className="text-ink-3">Zoho no.:</span> {invoice.external_number}</div>
+                    ) : null}
                     {/* R-043: the place of supply and tax head FROZEN on the invoice (Rule 46 name + code), not today's customer. */}
                     <div><span className="text-ink-3">Place of Supply:</span> {placeOfSupplyLabel({ posCode: invoice.pos_state_code, interState: invoice.inter_state ?? !!interState, isExport: invoice.pos_state_code === "96", country: invoice.customer_country })}</div>
                     <div><span className="text-ink-3">Tax Total:</span> {rupee(tax)} ({taxRate}%)</div>

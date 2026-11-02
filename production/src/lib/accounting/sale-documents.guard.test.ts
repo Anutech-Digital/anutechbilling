@@ -74,6 +74,8 @@ const SQL_NOT_SALE: Record<string, string> = {
   refund_payment: "money out",
   r2322_refund_scope: "R-2322: snapshot of the rows a customer refund touches (to undo it exactly) — not GST or revenue",
   set_late_fee_mode: "late fee settings",
+  set_invoice_external_number: "R-2360: stores the Zoho invoice number on one invoice (duplicate check) — not GST or revenue",
+  invoice_external_number_holder: "R-2360: which invoice already is a Zoho number (duplicate check) — not GST or revenue",
   split_outstanding_for: "per quote",
   sync_invoice_subscription_outstanding: "R-2178: one invoice's quote / billing-part link, to re-sync the subscriptions' stored balance after a credit / debit note — not GST or revenue",
   subscription_dues_drift: "R-2154: read-only report — only asks whether a quote has any invoice (then the invoice is the claim)",

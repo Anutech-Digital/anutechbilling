@@ -360,6 +360,7 @@ MIGS=(
   "r2017storageanon|20261101211500_r2017_storage_anon_grants.sql|postgres|not exists(select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace join pg_roles r on r.rolname in ('anon', 'authenticated') where n.nspname = 'storage' and c.relname = 'objects' and (has_table_privilege(r.oid, c.oid, 'TRUNCATE') or (r.rolname = 'anon' and has_table_privilege(r.oid, c.oid, 'INSERT'))))"
   "r2013privacyrequests|20261101215539_r2013_privacy_requests.sql|resellersos_migration|to_regclass('public.privacy_requests') is not null and to_regprocedure('public.privacy_request_verify(uuid,uuid,text)') is not null and to_regprocedure('public.privacy_request_action(uuid,text,text)') is not null"
   "r2350accesslog|20261101231527_r2350_record_access_log.sql|resellersos_migration|to_regclass('public.record_access_log') is not null and to_regprocedure('public.log_record_view(text,text)') is not null and to_regclass('public.security_log') is not null"
+  "r2360zohoinv|20261102061607_r2360_zoho_invoice_number_on_sale.sql|resellersos_migration|to_regprocedure('public.set_invoice_external_number(text,text)') is not null and to_regprocedure('public.reconcile_bank_credit_new_sale(uuid,uuid,jsonb,boolean,date,date,integer,numeric,text,text,text)') is not null and to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text,text)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

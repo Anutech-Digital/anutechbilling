@@ -84,6 +84,7 @@ import { useVendors } from "@/lib/queries/vendors";
 import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
 import { useVendorNarrationAliases } from "@/lib/queries/bank-debit-pay-for";
 import { BankFilterBar, type ImportOption } from "@/components/features/banking/bank-filter-bar";
+import { useZohoMatchSet } from "@/components/features/banking/use-zoho-match-count";
 import { ReconcileCoverageTile } from "@/components/features/banking/reconcile-coverage-tile";
 import { downloadCSV } from "@/lib/csv";
 import { istToday } from "@/lib/dates/ist";
@@ -93,6 +94,8 @@ import { istToday } from "@/lib/dates/ist";
    sort, search, totals and Export CSV. State lives in the URL query (lib/banking/bank-filters). */
 const ALL_NEEDS: readonly NeedKey[] = ["no_customer", "no_vendor", "old_one_off", "duplicates", "large"];
 const READ_ONLY_NEEDS: readonly NeedKey[] = ["duplicates", "large"];
+/* R-2360: + "Money in · Zoho has a match" when the Zoho batch answered (owner / accountant, connected). */
+const ALL_NEEDS_ZOHO: readonly NeedKey[] = [...ALL_NEEDS, "zoho_match"];
 
 // Column order (left→right) + default widths (px) for the resizable table.
 // Status is folded into the last column: an unmatched row just shows the
@@ -164,6 +167,14 @@ export default function BankAccountDetailPage() {
     [transactions],
   );
   const { data: openInvoices } = useOpenInvoicesForCreditMatch(canWrite && hasUnmatchedCredit);
+  /* R-2360: which unmatched money-in lines have a Zoho Books payment — one cached batch read per
+     account (never one Zoho call per line); only the lines STILL unmatched count. */
+  const zohoQ = useZohoMatchSet(accountId, canWrite && hasUnmatchedCredit);
+  const zohoIds = React.useMemo<ReadonlySet<string> | null>(() => {
+    const z = zohoQ.data;
+    if (!z?.available) return null;
+    return new Set((transactions ?? []).filter((t) => t.matched_to_type === null && t.credit > 0 && z.ids.has(t.id)).map((t) => t.id));
+  }, [zohoQ.data, transactions]);
   const invoiceChips = React.useMemo(
     () => certainInvoiceMatches(transactions ?? [], openInvoices ?? []),
     [transactions, openInvoices],
@@ -228,9 +239,9 @@ export default function BankAccountDetailPage() {
   }, [importRows, transactions]);
 
   const filterCtx = React.useMemo<FilterContext>(() => ({
-    sets: { no_customer: noCustomerIds, no_vendor: noVendorIds, old_one_off: new Set(oldById.keys()) },
+    sets: { no_customer: noCustomerIds, no_vendor: noVendorIds, old_one_off: new Set(oldById.keys()), ...(zohoIds ? { zoho_match: zohoIds } : {}) },
     importLines,
-  }), [noCustomerIds, noVendorIds, oldById, importLines]);
+  }), [noCustomerIds, noVendorIds, oldById, importLines, zohoIds]);
 
   const facets = React.useMemo(() => facetCounts(transactions ?? [], filters, filterCtx), [transactions, filters, filterCtx]);
   const visibleTxns = React.useMemo(
@@ -554,7 +565,7 @@ export default function BankAccountDetailPage() {
         onChange={setFilters}
         counts={facets}
         totals={totals}
-        needs={canWrite ? ALL_NEEDS : READ_ONLY_NEEDS}
+        needs={canWrite ? (zohoIds ? ALL_NEEDS_ZOHO : ALL_NEEDS) : READ_ONLY_NEEDS}
         imports={importOptions}
         todayIso={istToday()}
         onExport={exportCsv}

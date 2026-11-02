@@ -345,6 +345,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      (components/features/customers — Billing's form, used as-is, not copied), and
      picks the customer it creates. */
   const [newCustomerOpen, setNewCustomerOpen] = React.useState(false);
+  /* R-2360: "Create customer" from Find in Zoho starts the form with Zoho's name + GSTIN. */
+  const [newCustomerSeed, setNewCustomerSeed] = React.useState<{ name: string; gstin: string | null } | null>(null);
   const [createdCustomer, setCreatedCustomer] = React.useState<string | null>(null);
   /* R-2095 (Sept reconcile): the new customer is picked only once the list has it — before, the pick
      sometimes landed before the customers list refetched and the drawer showed no customer. */
@@ -951,7 +953,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
           <CreditPayForSection
             transaction={transaction}
             customers={customers ?? []}
-            onNewCustomer={() => setNewCustomerOpen(true)}
+            onNewCustomer={(seed) => { setNewCustomerSeed(seed ?? null); setNewCustomerOpen(true); }}
             pickedCustomerId={createdCustomer}
             suggested={creditSuggested}
             onProjectPayment={(id) => { setProjCustomer(id); setShowProject(true); }}
@@ -1474,7 +1476,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
           new customer already picked. */}
       <AddCustomerForm
         open={newCustomerOpen}
-        onOpenChange={setNewCustomerOpen}
+        onOpenChange={(o) => { setNewCustomerOpen(o); if (!o) setNewCustomerSeed(null); }}
+        initial={newCustomerSeed}
         onCreated={(id) => { void pickCreatedCustomer(id); }}
       />
     </Sheet>
