@@ -134,6 +134,11 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const [equitySave, setEquitySave] = React.useState<FooterSave | null>(null);
   const [empAdvanceSave, setEmpAdvanceSave] = React.useState<FooterSave | null>(null);
   const [incentiveSave, setIncentiveSave] = React.useState<FooterSave | null>(null);
+  /* R-2354: and for Own transfer, Other income, a receipt on a loan given and a Razorpay settlement. */
+  const [transferSave, setTransferSave] = React.useState<FooterSave | null>(null);
+  const [otherIncomeSave, setOtherIncomeSave] = React.useState<FooterSave | null>(null);
+  const [loanReceiptSave, setLoanReceiptSave] = React.useState<FooterSave | null>(null);
+  const [razorpaySave, setRazorpaySave] = React.useState<FooterSave | null>(null);
   /* R-2008: on a tile with several forms, the one the owner last clicked or typed in owns the footer. */
   const [footerPick, setFooterPick] = React.useState<string | null>(null);
   const pickOn = (key: string) => ({
@@ -142,6 +147,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     onFocusCapture: () => setFooterPick(key),
     onChangeCapture: () => setFooterPick(key),
   });
+  const unpickRazorpay = () => setFooterPick((p) => (p === "razorpay" ? null : p));
   React.useEffect(() => { setPickedExpenses(new Set()); setShowSplit(false); setShowSalary(false); setSalaryPick(""); setFooterPick(null); }, [transaction?.id]);
   const toggleExpense = (id: string) =>
     setPickedExpenses((prev) => {
@@ -670,12 +676,15 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     disabled: !commissionPick,
     loading: bookCommission.isPending,
   } : null;
-  const footerSave: FooterSave | null = payForDone || !tile ? null
+  /* R-2354: on Own transfer and money-in Other, the section's save is the footer's one primary;
+     "Mark reconciled manually" moves into its box as a secondary button. */
+  const tileSave: FooterSave | null = !tile ? null
     : tile === "tax" ? statutorySave
-    : tile === "other" ? (isCredit ? manualSave : expenseSplitSave ?? expenseSave)
-    : tile === "transfer" || tile === "tax_refund" ? manualSave
+    : tile === "other" ? (isCredit ? otherIncomeSave ?? manualSave : expenseSplitSave ?? expenseSave)
+    : tile === "transfer" ? transferSave ?? manualSave
+    : tile === "tax_refund" ? manualSave
     : tile === "owner" ? pickFooterSave([["credit", showCreditBox ? creditSave : null], ["equity", equitySave]], footerPick)
-    : tile === "loan" ? pickFooterSave([["emi", isCredit ? null : emiSave], ["advance", advanceSave]], footerPick)
+    : tile === "loan" ? pickFooterSave([["emi", isCredit ? null : emiSave], ["receipt", isCredit ? loanReceiptSave : null], ["advance", advanceSave]], footerPick)
     : tile === "vendor" ? (isCredit ? null : pickFooterSave([["vendor", vendorSave], ["commission", commissionSave]], footerPick))
     : tile === "customer" ? (isCredit && showProject ? projectSave : customerSave)
     : tile === "employee" ? pickFooterSave([
@@ -684,6 +693,11 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         ["incentive", isCredit ? null : incentiveSave],
       ], footerPick)
     : null;
+  /* R-2354: a fetched Razorpay settlement (its box sits above the tiles) owns the footer while no
+     tile is chosen, when it was the last box clicked, or when the chosen tile has nothing to save. */
+  const footerSave: FooterSave | null = payForDone ? null
+    : razorpaySave && (!tile || footerPick === "razorpay" || !tileSave) ? razorpaySave
+    : tileSave;
   const footerHint = payForDone ? "booked"
     : suggestion ? "check the suggestion above, or pick who this money is for"
     : !tile ? "pick who this money is for"
@@ -838,9 +852,10 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   /* R-1917: on a vendor's line the Vendor tile is the one way — its open bill is listed there. */
   const showSuggestions = hasSuggestions && !payForDone && !(tile === "vendor" && vendorLine);
 
-  /* Manual reconcile — no income / expense entry. Its Save is the footer's on the Own transfer,
-     Tax refund and money-in Other tiles; on money-out "Bank charge / other" it keeps its own
-     button (the footer there books the expense). */
+  /* Manual reconcile — no income / expense entry. Its Save is the footer's on the Tax refund tile;
+     where the tile's section has its own save (Own transfer's "Post as transfer", money-in Other's
+     "Book as interest received" — R-2354 — and money-out "Bank charge / other"'s expense) that save
+     is the footer's one primary and this keeps its own secondary button. */
   const manualBox = (inlineButton: boolean, words?: React.ReactNode) => (
     <div className="rounded-md border border-hairline bg-paper-2/30 p-3">
       <p className="text-xs font-semibold text-ink-2 mb-1">
@@ -1182,7 +1197,11 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
               </div>
             )}
             {/* R-2340: money back on a loan the company GAVE — receipt N (principal back + interest income). */}
-            {isCredit && <LoanGivenReceiptSection transaction={transaction} onDone={() => onOpenChange(false)} />}
+            {isCredit && (
+              <div {...pickOn("receipt")}>
+                <LoanGivenReceiptSection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setLoanReceiptSave} />
+              </div>
+            )}
             {/* R-2008: the form clicked (EMI or this one) owns the footer. */}
             <div {...pickOn("advance")}>{advanceBox}</div>
           </>
@@ -1209,8 +1228,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
       case "transfer":
         /* R-2095: post it against the other account (an FD sweep) — or, below, just mark it. */
         return <>
-          <OwnTransferSection transaction={transaction} onDone={() => onOpenChange(false)} />
-          {manualBox(false, <>
+          <OwnTransferSection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setTransferSave} />
+          {manualBox(Boolean(transferSave), <>
           Money moved between your own bank accounts is not income or expense. Mark this line reconciled — and the
           matching line in the other account the same way.
         </>)}
@@ -1220,7 +1239,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         /* R-2095: interest on an FD / savings → other income (P&L); else mark it reconciled. */
         /* R-2095 follow-up: the default manual words listed interest as a no-entry case, against the
            box above — on money in, interest has one home (the box), so the words say so. */
-        if (isCredit) return <><OtherIncomeSection transaction={transaction} onDone={() => onOpenChange(false)} />{manualBox(false, <>
+        if (isCredit) return <><OtherIncomeSection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setOtherIncomeSave} />{manualBox(Boolean(otherIncomeSave), <>
           Interest and other income go in the box above, so they reach the P&amp;L. Mark this line reconciled
           without any entry only when nothing is earned — e.g. a <b>failed / reversed transaction</b> (debited,
           then credited back): mark <b>both</b> the −₹ and the +₹ line this way. They cancel out.
@@ -1402,7 +1421,9 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
             {/* R-2099: a Razorpay settlement credit — one press fetches it from Razorpay and books every
                 payment + Razorpay's fee in one step. The tiles below stay for anything else. */}
             {isCredit && !payForDone && isRazorpaySettlementLine(transaction) && (
-              <RazorpaySettlementSection line={{ id: transaction.id, credit: transaction.credit }} onDone={() => onOpenChange(false)} />
+              <div {...pickOn("razorpay")}>
+                <RazorpaySettlementSection line={{ id: transaction.id, credit: transaction.credit }} onDone={() => onOpenChange(false)} onFooterSave={setRazorpaySave} />
+              </div>
             )}
 
             {/* 2. Who is this money for? → only the chosen tile's section. With a suggestion its
@@ -1429,10 +1450,16 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
 
             {/* The Vendor tile's main form is the section above; the others may render nothing
                 for this line (e.g. no open employee advance) — then one line says so. */}
-            {tile === "vendor" ? tileBody(tile) : tile !== null && (
-              <SectionSlot empty="Nothing to book here for this line — use ← Change to pick another.">
-                {tileBody(tile)}
-              </SectionSlot>
+            {/* R-2354: working in the chosen tile's form takes the footer back from the Razorpay box
+                (a keyed form inside sets its own key after this). */}
+            {tile !== null && (
+              <div onClickCapture={unpickRazorpay} onFocusCapture={unpickRazorpay} onChangeCapture={unpickRazorpay}>
+                {tile === "vendor" ? tileBody(tile) : (
+                  <SectionSlot empty="Nothing to book here for this line — use ← Change to pick another.">
+                    {tileBody(tile)}
+                  </SectionSlot>
+                )}
+              </div>
             )}
 
             {/* 3. Suggested matches — only when there is one */}

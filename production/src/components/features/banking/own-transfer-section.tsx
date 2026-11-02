@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { rupee } from "@/lib/utils";
 import { useBankAccounts, useCreateBankAccount, type BankTransactionRow } from "@/lib/queries/bank";
 import { useReconcileAsTransfer } from "@/lib/queries/bank-other-income";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
 type AccountLite = { id: string; name: string; bank_name?: string | null; account_type?: string | null; is_active?: boolean | null };
 
@@ -27,7 +28,13 @@ export function transferAccountLabel(a: AccountLite): string {
   return `${a.name}${a.account_type === "fixed_deposit" ? " · Fixed deposit" : a.bank_name ? ` · ${a.bank_name}` : ""}`;
 }
 
-export function OwnTransferSection({ transaction, onDone }: { transaction: BankTransactionRow; onDone: () => void }) {
+export function OwnTransferSection({ transaction, onDone, onFooterSave }: {
+  transaction: BankTransactionRow;
+  onDone: () => void;
+  /** R-2354: the Reconcile sheet draws "Post ₹X as transfer" in its sticky footer. Given → no inline
+   *  button; the footer gets the same label, disabled rule and submit. */
+  onFooterSave?: (save: FooterSave | null) => void;
+}) {
   const accountsQ = useBankAccounts();
   const createAccount = useCreateBankAccount();
   const post = useReconcileAsTransfer();
@@ -60,6 +67,11 @@ export function OwnTransferSection({ transaction, onDone }: { transaction: BankT
     } catch { /* the hook toasts */ }
   }
 
+  /* R-2354: same label, same rule (an account picked; off while a new FD is being added — the
+     inline button was hidden then), same submit(). */
+  const saveLabel = `Post ${rupee(amount)} as transfer`;
+  useFooterSaveReport(onFooterSave, { label: saveLabel, onSave: () => { void submit(); }, disabled: !pick || adding, loading: post.isPending });
+
   return (
     <section aria-label="Transfer with another account" className="rounded-md border border-indigo/40 bg-indigo-soft/20 p-3 space-y-2">
       <p className="text-xs font-semibold text-ink-2">{isIn ? "Came in from which account?" : "Went to which account?"}</p>
@@ -76,9 +88,11 @@ export function OwnTransferSection({ transaction, onDone }: { transaction: BankT
             {options.map((a) => <option key={a.id} value={a.id}>{transferAccountLabel(a)}</option>)}
             <option value="__new">＋ New fixed deposit account</option>
           </select>
-          <Button size="sm" variant="primary" icon="check" onClick={submit} disabled={!pick || post.isPending} loading={post.isPending}>
-            Post {rupee(amount)} as transfer
-          </Button>
+          {!onFooterSave && (
+            <Button size="sm" variant="primary" icon="check" onClick={submit} disabled={!pick || post.isPending} loading={post.isPending}>
+              {saveLabel}
+            </Button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">

@@ -33,6 +33,7 @@ import {
 import {
   useLoanGivenDisbursalLines, useLoansGiven, useReconcileCreditToLoanGiven, useSetUpLoanGiven,
 } from "@/lib/queries/loans-given";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
 type Txn = { id: string; credit: number | null; txn_date: string; description: string | null };
 
@@ -42,7 +43,13 @@ const toNum = (s: string) => (s.trim() === "" ? NaN : Number(s));
 /** "Lent before these books" in the money-lent select. */
 const BEFORE_BOOKS = "";
 
-export function LoanGivenReceiptSection({ transaction, onDone }: { transaction: Txn; onDone: () => void }) {
+export function LoanGivenReceiptSection({ transaction, onDone, onFooterSave }: {
+  transaction: Txn;
+  onDone: () => void;
+  /** R-2354: the Reconcile sheet draws "Reconcile as receipt N" in its sticky footer. Given → no
+   *  inline button; the footer gets the same label, disabled rule and save. */
+  onFooterSave?: (save: FooterSave | null) => void;
+}) {
   const role = useCurrentUser().data?.role;
   const allowed = canUseLoansGiven(role);
   const loansQ = useLoansGiven(allowed);
@@ -58,8 +65,6 @@ export function LoanGivenReceiptSection({ transaction, onDone }: { transaction: 
   React.useEffect(() => { if (!picked && matches.length > 0) setPicked(matches[0].loanId); }, [matches, picked]);
   const [setUpOpen, setSetUpOpen] = React.useState(false);
 
-  if (!allowed) return null;
-
   const m = matches.find((x) => x.loanId === picked) ?? null;
   const loan = m ? loans.find((l) => l.id === m.loanId) : undefined;
   const split = loan ? splitRepayment(loan.terms, loan.parts, transaction.txn_date, amount) : null;
@@ -73,6 +78,15 @@ export function LoanGivenReceiptSection({ transaction, onDone }: { transaction: 
     });
     onDone();
   }
+
+  /* R-2354: same label, same rule (a loan picked, not more than is owed), same save() — only once a
+     loan given is listed. With none yet, "Set up loan given" opens its own dialog (its Save is there). */
+  const saveLabel = m ? `Reconcile as receipt ${m.seq}` : "Pick the loan";
+  useFooterSaveReport(onFooterSave, allowed && !loansQ.isLoading && matches.length > 0
+    ? { label: saveLabel, onSave: () => { void save().catch(() => { /* the hook shows the error */ }); }, disabled: !m || !split || split.tooMuch, loading: reconcile.isPending }
+    : null);
+
+  if (!allowed) return null;
 
   return (
     <div className={`rounded-md border p-3 space-y-2 ${exact ? "border-indigo/50 bg-indigo-soft/25" : "border-hairline"}`} data-testid="loan-given-receipt-section">
@@ -112,9 +126,11 @@ export function LoanGivenReceiptSection({ transaction, onDone }: { transaction: 
           )}
           {split?.tooMuch && <p className="text-xs text-rose-ink">More than is owed — at most {rupee(split.maxAmount)} can come in on this loan.</p>}
           <div className="flex flex-wrap items-center gap-3">
-            <Button size="sm" variant="primary" icon="check" disabled={!m || !split || split.tooMuch} loading={reconcile.isPending} onClick={save}>
-              {m ? `Reconcile as receipt ${m.seq}` : "Pick the loan"}
-            </Button>
+            {!onFooterSave && (
+              <Button size="sm" variant="primary" icon="check" disabled={!m || !split || split.tooMuch} loading={reconcile.isPending} onClick={save}>
+                {saveLabel}
+              </Button>
+            )}
             <button type="button" className="text-xs text-indigo-ink font-medium underline hover:no-underline" onClick={() => setSetUpOpen(true)}>
               A different loan — set up loan given
             </button>
@@ -123,7 +139,8 @@ export function LoanGivenReceiptSection({ transaction, onDone }: { transaction: 
       ) : (
         <div className="space-y-2">
           <p className="text-xs text-ink-3">No loan you gave is recorded yet.</p>
-          <Button size="sm" variant="primary" icon="plus" onClick={() => setSetUpOpen(true)}>Set up loan given</Button>
+          {/* R-2354: in the sheet the footer holds the one primary (the loan / advance save). */}
+          <Button size="sm" variant={onFooterSave ? "default" : "primary"} icon="plus" onClick={() => setSetUpOpen(true)}>Set up loan given</Button>
         </div>
       )}
       {setUpOpen && (
