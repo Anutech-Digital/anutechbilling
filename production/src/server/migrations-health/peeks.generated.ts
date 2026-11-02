@@ -345,4 +345,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2374creditline", peek: "to_regclass('public.business_loan_drawdowns') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_debit_to_business_loan(uuid,uuid,integer,integer,integer)') and prosrc like '%R-2374%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.delete_business_loan(uuid)') and prosrc like '%R-2374%')" },
   { key: "r2380mergeemployees", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.merge_employees(uuid,uuid,boolean,boolean)') and prosrc like '%R-2380%')" },
   { key: "r2387personalincomesource", peek: "exists(select 1 from pg_constraint where conname = 'personal_transactions_income_source_check')" },
+  { key: "r2389isttodaygrant", peek: "to_regprocedure('public.ist_today()') is not null and has_function_privilege('authenticated', 'public.ist_today()', 'execute') and has_function_privilege('authenticated', 'public.indian_fiscal_year(date)', 'execute') and has_function_privilege('authenticated', 'public.salary_expense_date(text,date)', 'execute')" },
 ];
