@@ -69,6 +69,7 @@ vi.mock("@/lib/queries/prepaid-advances", () => ({ usePrepaidAdvances: () => ({ 
 vi.mock("@/lib/queries/referral-commissions", () => ({ useReferralCommissions: () => ({ data: [] }) }));
 vi.mock("@/lib/compliance/profile", () => ({ useComplianceProfile: () => ({ data: { businessType: "pvt_ltd" } }) }));
 vi.mock("@/components/features/customers/add-customer-form", () => ({ AddCustomerForm: () => null }));
+vi.mock("@/components/features/banking/credit-line-section", () => ({ CreditLineSection: () => null }));   // R-2374
 vi.mock("@/components/features/banking/project-payment-section", () => ({ ProjectPaymentSection: () => null }));
 /* R-2007's Suggestion card has its own test (reconcile-suggestion-r2007.test.tsx); none here. */
 vi.mock("@/components/features/banking/reconcile-suggestion-card", () => ({

@@ -77,6 +77,9 @@ create unique index if not exists business_loan_drawdowns_txn_uq on public.busin
 alter table public.business_loan_drawdowns enable row level security;
 drop policy if exists "tenant isolation read" on public.business_loan_drawdowns;
 create policy "tenant isolation read" on public.business_loan_drawdowns for select using (tenant_id = public.current_tenant_id());
+-- R-450: Cloud SQL has no BYPASSRLS — the server (service_role) client needs its own policy.
+drop policy if exists zzz_service_role_all on public.business_loan_drawdowns;
+create policy zzz_service_role_all on public.business_loan_drawdowns for all to service_role using (true) with check (true);
 -- writes only through the RPCs below (security definer)
 revoke insert, update, delete on public.business_loan_drawdowns from anon, authenticated;
 grant select on public.business_loan_drawdowns to authenticated;
