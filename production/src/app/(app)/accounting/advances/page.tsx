@@ -38,6 +38,7 @@ import {
 import { useEmployees } from "@/lib/queries/payroll";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { defaultCashAccountId } from "@/lib/payments/deposit-accounts";
+import { pickableAccounts } from "@/lib/banking/account-close";
 import { AddBillsDialog } from "./add-bills-dialog";
 import { AdvanceRegister } from "./advance-register";
 import { getBillAttachmentUrl } from "@/lib/queries/vendor-bills";
@@ -477,7 +478,7 @@ function DisburseAdvanceDialog({ open, onOpenChange, prefill }: { open: boolean;
                   <SelectValue placeholder="Select Bank..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {bankAccounts.map((b) => (
+                  {pickableAccounts(bankAccounts, bankId).map((b) => (
                     <SelectItem key={b.id} value={b.id}>
                       {b.name} ({rupee(b.current_balance ?? b.opening_balance)})
                     </SelectItem>

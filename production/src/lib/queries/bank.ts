@@ -41,6 +41,11 @@ export type BankAccountRow = {
   opening_balance:      number;
   opening_balance_date: string;
   is_active:            boolean;
+  /** R-1834: the Petty Cash made with the company (cannot be closed). */
+  is_default_petty_cash?: boolean;
+  /** R-2384: when / why the account was closed (is_active = false); null while open. */
+  closed_on?:           string | null;
+  closed_note?:         string | null;
   notes:                string | null;
   created_at:           string;
   updated_at:           string;
@@ -286,6 +291,49 @@ export function useDeleteBankAccount() {
     },
     onError: (err) => {
       toastError(err, { fallback: "Could not delete account" });
+    },
+  });
+}
+
+/**
+ * R-2384: close (archive) an account at ₹0 / reopen it. The server refuses a close with any
+ * balance, the default Petty Cash, a future date or a date before the last line
+ * (close_bank_account + trg_bank_account_close_guard) — the toast shows its reason.
+ */
+export function useCloseBankAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; closedOn: string; note?: string | null }) => {
+      const { error } = await createClient().rpc("close_bank_account", {
+        p_account_id: input.id,
+        p_closed_on:  input.closedOn,
+        p_note:       input.note?.trim() || undefined,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["bank_accounts"] });
+      toast.success("Account closed — it now sits under Closed accounts");
+    },
+    onError: (err) => {
+      toastError(err, { fallback: "Could not close the account" });
+    },
+  });
+}
+
+export function useReopenBankAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await createClient().rpc("reopen_bank_account", { p_account_id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["bank_accounts"] });
+      toast.success("Account reopened");
+    },
+    onError: (err) => {
+      toastError(err, { fallback: "Could not reopen the account" });
     },
   });
 }

@@ -41,6 +41,7 @@ import { useUpdatePayment, type Payment } from "@/lib/queries/payments";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { rupee, bankLabel } from "@/lib/utils";
 import { blankReference } from "@/lib/payments/record-payment-toast";
+import { pickableAccounts } from "@/lib/banking/account-close";
 
 const METHODS = [
   { value: "upi",           label: "UPI (Google Pay / PhonePe / Paytm)" },
@@ -214,7 +215,7 @@ export function EditPaymentDialog({ open, onOpenChange, payment, customerName }:
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Not linked</SelectItem>
-                  {(bankAccounts ?? []).map((a) => (
+                  {pickableAccounts(bankAccounts, payment?.bank_account_id).map((a) => (
                     <SelectItem key={a.id} value={a.id}>
                       {a.name} · {bankLabel(a.bank_name, a.account_number_last4)}
                     </SelectItem>

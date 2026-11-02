@@ -17,6 +17,8 @@ import {
   lineAmount, reasonProblem, useReconcileManually, useReversalCandidates, MAX_REASON_CHARS,
   type LineLike,
 } from "@/lib/banking/manual-reconcile";
+import { fdMoveWarning } from "@/lib/banking/account-close";
+import { Icon } from "@/components/ui/icon";
 
 export function ManualReconcileDialog({ txn, open, onCancel, onDone }: {
   txn: LineLike | null;
@@ -36,6 +38,9 @@ export function ManualReconcileDialog({ txn, open, onCancel, onDone }: {
   const problem = reasonProblem(reason);
   const amount = txn ? lineAmount(txn) : 0;
   const list = candidates ?? [];
+  /* R-2384: a line that moves money to/from an FD needs Own transfer, or the FD balance stays
+     wrong. Warning only — the save still works. */
+  const fdWarning = fdMoveWarning(txn?.description);
 
   async function submit(e?: React.FormEvent) {
     e?.preventDefault();
@@ -59,6 +64,12 @@ export function ManualReconcileDialog({ txn, open, onCancel, onDone }: {
           </DialogHeader>
 
           <div className="space-y-4 py-2">
+            {fdWarning && (
+              <div role="alert" className="flex items-start gap-2 rounded-md border border-amber/40 bg-amber-soft/50 px-3 py-2 text-sm text-amber-ink">
+                <Icon name="alert" size={15} className="mt-0.5 shrink-0" />
+                <span>{fdWarning}</span>
+              </div>
+            )}
             <div>
               <label htmlFor="manual-reconcile-reason" className="block text-xs font-semibold text-ink-2 mb-1">
                 Reason (required)
