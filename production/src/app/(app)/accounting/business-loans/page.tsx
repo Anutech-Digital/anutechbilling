@@ -42,6 +42,7 @@ import { showsDirectorLoans, directorChoices } from "@/lib/accounting/director-l
 import { useEmiPurchases } from "@/lib/queries/emi";
 import { isLoanOnly } from "@/lib/accounting/loan-setup";
 import { EmiLoansTaken, useEmiLoansInterest } from "@/components/features/banking/emi-loans-taken";
+import { LoanMoneyLinePicker, useLoanMoneyLine, type LinePick } from "@/components/features/banking/loan-money-line-picker";
 
 function todayISO(): string {
   return istToday();
@@ -312,14 +313,18 @@ function AddLoanDialog({ onClose, companyLoans, startAsDirector }: { onClose: ()
   const director = choices.find((d) => d.id === directorId) ?? null;
 
   const amt = Math.round(Number(principal));
-  const valid = (isDirector ? Boolean(director) : Boolean(lender.trim())) && amt > 0 && Boolean(accountId);
+  /* R-2377: the imported money-in line that IS the loan money (no new line — cash counted once). */
+  const [linePick, setLinePick] = React.useState<LinePick>(undefined);
+  const money = useLoanMoneyLine(accountId, amt, date, isDirector ? (director?.name ?? "") : lender, linePick);
+  const valid = (isDirector ? Boolean(director) : Boolean(lender.trim())) && amt > 0 && Boolean(accountId) && !money.loading;
 
   async function submit() {
     if (!valid) return;
+    const bankTxnId = money.chosen?.id ?? null;
     if (isDirector && director) {
       await addDirector.mutateAsync({
         directorId: director.id, principal: amt, interestRate: rate ? Number(rate) : null, disbursedOn: date,
-        depositAccountId: accountId, declaration, purpose: purpose.trim() || null,
+        depositAccountId: accountId, declaration, purpose: purpose.trim() || null, bankTxnId,
       });
       onClose();
       return;
@@ -329,7 +334,7 @@ function AddLoanDialog({ onClose, companyLoans, startAsDirector }: { onClose: ()
       interestRate: rate ? Number(rate) : null,
       tenureMonths: tenure ? Math.round(Number(tenure)) : null,
       emiAmount: emi ? Math.round(Number(emi)) : null,
-      disbursedOn: date, depositAccountId: accountId,
+      disbursedOn: date, depositAccountId: accountId, bankTxnId,
     });
     onClose();
   }
@@ -389,7 +394,7 @@ function AddLoanDialog({ onClose, companyLoans, startAsDirector }: { onClose: ()
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label htmlFor="business-loans-received-into" className="block text-xs font-medium text-ink-2 mb-1">Received into</label>
-              <select id="business-loans-received-into" value={accountId} onChange={(e) => setAccountId(e.target.value)} className={selectCls}>
+              <select id="business-loans-received-into" value={accountId} onChange={(e) => { setAccountId(e.target.value); setLinePick(undefined); }} className={selectCls}>
                 {accounts.length === 0 && <option value="">No accounts — add one in Banking</option>}
                 {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
@@ -399,6 +404,10 @@ function AddLoanDialog({ onClose, companyLoans, startAsDirector }: { onClose: ()
               <Input id="business-loans-taken-on" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
           </div>
+          {accountId && (
+            <LoanMoneyLinePicker principal={amt} window={money.window} candidates={money.candidates}
+              chosen={money.chosen} loading={money.loading} onPick={setLinePick} />
+          )}
           {isDirector ? (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">

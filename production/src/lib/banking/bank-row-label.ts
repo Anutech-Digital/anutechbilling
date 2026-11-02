@@ -19,6 +19,7 @@ export function bankRowStatusLabel(t: BankTransactionRow["matched_to_type"], isA
          t === "owner_equity" ? "Owner drawings / capital" :
          (t as string | null) === "customer_refund" ? "Customer refund" :   // R-2322 (newer than the BankTransactionRow union)
          (t as string | null) === "loan_given" ? "Loan given" :   // R-2346: R-2340 receipt / disbursal, or Record repayment
+         (t as string | null) === "business_loan" ? "Loan received" :   // R-2377: Business Loans → Add loan linked this imported credit
          t                    ? "Reconciled" : "Unmatched";
 }
 

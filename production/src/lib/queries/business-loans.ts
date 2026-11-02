@@ -4,7 +4,9 @@
  * lands in a bank account and becomes a liability; each EMI's principal reduces
  * it while the interest is booked as an expense.
  *
- * record → RPC record_business_loan (cash in + liability)
+ * record → RPC record_business_loan (cash in + liability). R-2377: with bankTxnId the loan is
+ *          linked to that imported money-in line (no new line — cash counted once); without it a
+ *          new money-in line is added, as before.
  * pay EMI → RPC record_loan_emi (cash out; principal↓ liability, interest → expense)
  * delete → RPC delete_business_loan (only before any EMI; reverses the disbursal)
  */
@@ -93,14 +95,22 @@ function invalidate(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["bank_transactions"] });
 }
 
+/** R-2377: a linked imported line adds no cash (it is already in the account). */
+export function loanRecordedMessage(bankTxnId: string | null | undefined, director = false): string {
+  const what = director ? "Loan from the director recorded" : "Loan recorded";
+  return bankTxnId ? `${what} — linked to the bank line` : `${what} — cash added to the account`;
+}
+
 export function useRecordBusinessLoan() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: {
       lender: string; purpose?: string | null; principal: number; interestRate?: number | null;
       tenureMonths?: number | null; emiAmount?: number | null; disbursedOn: string; depositAccountId: string;
+      bankTxnId?: string | null;
     }) => {
-      const supabase = createClient();
+      // Untyped: the 9-arg record_business_loan (R-2377) is newer than database.generated.ts.
+      const supabase = createClient() as unknown as SupabaseClient;
       const { data, error } = await supabase.rpc("record_business_loan", {
         p_lender:          input.lender,
         p_purpose:         input.purpose ?? null,
@@ -110,11 +120,12 @@ export function useRecordBusinessLoan() {
         p_emi_amount:      input.emiAmount != null ? Math.round(input.emiAmount) : null,
         p_disbursed_on:    input.disbursedOn,
         p_deposit_account: input.depositAccountId,
+        p_bank_txn_id:     input.bankTxnId ?? null,
       });
       if (error) throw new Error(error.message);
       return data as string;
     },
-    onSuccess: () => { invalidate(qc); toast.success("Loan recorded — cash added to the account"); },
+    onSuccess: (_id, input) => { invalidate(qc); toast.success(loanRecordedMessage(input.bankTxnId)); },
     onError: (err) => toastError(err),
   });
 }
@@ -125,7 +136,7 @@ export function useRecordDirectorLoanTaken() {
   return useMutation({
     mutationFn: async (input: {
       directorId: string; principal: number; interestRate: number | null; disbursedOn: string;
-      depositAccountId: string; declaration: boolean; purpose: string | null;
+      depositAccountId: string; declaration: boolean; purpose: string | null; bankTxnId?: string | null;
     }) => {
       // Untyped: record_director_loan_taken is newer than database.generated.ts.
       const supabase = createClient() as unknown as SupabaseClient;
@@ -137,11 +148,12 @@ export function useRecordDirectorLoanTaken() {
         p_interest_rate:   input.interestRate,
         p_declaration:     input.declaration,
         p_purpose:         input.purpose,
+        p_bank_txn_id:     input.bankTxnId ?? null,
       });
       if (error) throw new Error(error.message);
       return data as string;
     },
-    onSuccess: () => { invalidate(qc); toast.success("Loan from the director recorded — cash added to the account"); },
+    onSuccess: (_id, input) => { invalidate(qc); toast.success(loanRecordedMessage(input.bankTxnId, true)); },
     onError: (err) => toastError(err),
   });
 }
