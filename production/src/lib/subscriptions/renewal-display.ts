@@ -141,12 +141,28 @@ export interface TermValue {
  * Storing the annual figure would fix this properly and needs a migration; until then, not
  * lying about it is the part that can be done today.
  */
+/** R-2369: ₹/year from `subscriptions.term_amount` (one term) — null when the row has none. */
+export function storedAnnual(sub: { term_amount?: number | null; term_months?: number | null }): number | null {
+  const t = sub.term_amount ?? 0;
+  return t > 0 ? (t * 12) / Math.max(1, sub.term_months ?? 12) : null;
+}
+
 export function termValue(
   mrr: number | null | undefined,
   months: number,
   /** ₹/year from the originating quote line (`rate × qty`), when known. */
   contractedAnnual?: number | null,
+  /**
+   * R-2369: ₹/year from the row's own exact term amount (`subscriptions.term_amount` × 12 ÷
+   * term_months). The database keeps it in step with seats and price, so it wins outright —
+   * the quote-line round trip below refused a 5 × ₹850 sale filed as mrr ₹355 (round(4,250 ÷ 12)
+   * = 354) and showed "about ₹4,260".
+   */
+  storedAnnual?: number | null,
 ): TermValue {
+  if (storedAnnual != null && storedAnnual > 0) {
+    return { amount: Math.round((storedAnnual * months) / 12), exact: true };
+  }
   /* R-1683: the quote line is the contract only while the subscription still matches it. After
      seats are added (or a correction) the stored MRR moves and the old line does not — T-12 showed
      "Annual · ₹1,29,600" (10 seats) beside MRR ₹16,200 (15 seats). The round trip annual → mrr is

@@ -76,8 +76,12 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
     mrr:   sub.mrr ?? 0,
     len:   lenError ? { unit: "years", count: 0 } : len,
     taxRatePct: quoteStartTaxRate(gstSaved),
+    termAmount: sub.term_amount ?? null, termMonths: sub.term_months ?? null,  // R-2369
   });
-  const annualEstimate = Math.max(0, Math.round((sub.mrr ?? 0) * 12));
+  /* R-2369: the exact sold yearly amount when the row has it (₹4,250, not mrr ₹355 × 12). */
+  const annualEstimate = (sub.term_amount ?? 0) > 0
+    ? Math.round(((sub.term_amount ?? 0) * 12) / Math.max(1, sub.term_months ?? 12))
+    : Math.max(0, Math.round((sub.mrr ?? 0) * 12));
 
   // Term preview — the date record_payment will write
   const currentRenewal = sub.renewal_date ? sub.renewal_date.slice(0, 10) : null;

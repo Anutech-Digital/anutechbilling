@@ -51,7 +51,7 @@ export const POST = withRoute({
     .from("subscriptions")
     .select(
       `id, tenant_id, customer_id, customer_name, plan, item_id, seats, mrr,
-       renewal_date, status, renewal_state, renewal_quote_id, term_months, billing_cycle, start_date, auto_renew`
+       renewal_date, status, renewal_state, renewal_quote_id, term_months, term_amount, billing_cycle, start_date, auto_renew`
     )
     .eq("id", params.id)
     .single();
@@ -157,6 +157,7 @@ export const POST = withRoute({
     seats:           sub.seats,
     mrr:             sub.mrr ?? 0,
     termMonths:      sub.term_months ?? null,
+    termAmount:      sub.term_amount ?? null,  // R-2369: the exact sold term amount
     renewalDate:     sub.renewal_date,
     graceDays:       tenant.grace_period_days ?? 0,
     existingQuoteId: sub.renewal_quote_id,

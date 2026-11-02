@@ -13,6 +13,10 @@
  * depending on which screen you were looking at, which is the failure this codebase
  * has already paid for three times over.
  *
+ * R-2369 (2 Nov 2026): that drifted from the sold price (₹1,300/yr → mrr ₹108 → ₹1,296), so
+ * the row now carries `term_amount` — the exact term amount, kept in step with seats and mrr by
+ * the database (NULL whenever it no longer agrees) — and termAmountOf() prefers it.
+ *
  * A multi-year term is mrr × term_months — NOT mrr × 12 × years-with-a-discount.
  * Any multi-year discount is already inside the agreed mrr.
  */
@@ -26,7 +30,20 @@ export const BILLING_LOOKAHEAD_DAYS = 30;
 type ScheduleFields = Pick<Subscription, "mrr" | "billing_cycle" | "term_months"> & {
   start_date: string | null;
   renewal_date: string | null;
+  /** R-2369: `subscriptions.term_amount` — the exact amount for one term; absent/null → mrr × months. */
+  term_amount?: number | null;
 };
+
+/**
+ * R-2369: one term's ex-GST amount — the row's exact `term_amount` (kept from the sold quote line
+ * by the database) when it has one, else mrr × term_months as before. 5 × ₹850/yr filed as mrr
+ * ₹355 is ₹4,250 a year, not ₹4,260; a ₹1,300 domain (mrr ₹108) ₹1,300, not ₹1,296.
+ */
+export function termAmountOf(sub: Pick<ScheduleFields, "mrr" | "term_months" | "term_amount">): number {
+  const exact = sub.term_amount ?? 0;
+  if (exact > 0) return Math.round(exact);
+  return Math.max(0, Math.round((sub.mrr ?? 0) * Math.max(1, sub.term_months ?? 12)));
+}
 
 /**
  * The schedule for the CURRENT term.
@@ -48,7 +65,7 @@ export function subscriptionSchedule(sub: ScheduleFields, termAmountOverride?: n
   /* R-2101: the quote's own term figure when the caller has it (quoteTermAmount — rounding only). */
   const termAmount = termAmountOverride != null && termAmountOverride > 0
     ? Math.round(termAmountOverride)
-    : Math.max(0, Math.round((sub.mrr ?? 0) * termMonths));
+    : termAmountOf(sub);  // R-2369
 
   const start = currentTermStart(sub);
   if (!start || termAmount <= 0) return [];
@@ -95,7 +112,7 @@ export function previousTermStart(sub: Pick<ScheduleFields, "term_months" | "sta
 export function nextTermSchedule(sub: ScheduleFields): BillingPeriod[] {
   if (!sub.renewal_date) return [];
   const termMonths = Math.max(1, sub.term_months ?? 12);
-  const termAmount = Math.max(0, Math.round((sub.mrr ?? 0) * termMonths));
+  const termAmount = termAmountOf(sub);  // R-2369
   if (termAmount <= 0) return [];
   return buildBillingSchedule({
     startDate: followingTermStart(sub),
