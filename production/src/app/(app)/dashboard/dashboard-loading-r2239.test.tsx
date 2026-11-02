@@ -50,7 +50,7 @@ vi.mock("@/lib/queries/sell-mode", () => ({
 vi.mock("@/lib/hooks/useCurrentUser", () => ({
   useCurrentUser: () => ({ data: { role: "billing", fullName: "Pardeep", tenantName: "Anutech" } }),
 }));
-vi.mock("@/lib/onboarding/use-setup-facts", () => ({ useSetupFacts: () => undefined }));
+vi.mock("@/lib/onboarding/use-first-quote-facts", () => ({ useFirstQuoteFacts: () => undefined }));
 /* Cards with their own tests / own queries — not what this test is about. */
 vi.mock("@/components/features/deals/deals-strip", () => ({ DealsStrip: () => null }));
 vi.mock("@/components/features/dashboard/company-section", () => ({ CompanySection: () => null }));

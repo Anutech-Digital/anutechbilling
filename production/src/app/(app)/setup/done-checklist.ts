@@ -1,10 +1,15 @@
 /**
- * R-260 — the "All set" screen's status list, built ONLY from real data.
+ * R-260 — the "All set" screen's status rows, built ONLY from real data.
  *
- * Before this the list was hard-coded: Razorpay always "todo", Google CSP always
+ * Before R-260 the list was hard-coded: Razorpay always "todo", Google CSP always
  * "pending · approval in 5–7 days" (for owners who never applied), WhatsApp always
  * "todo" — even when Settings → Integrations showed them connected. Every row here
- * now comes from a saved tenant field or the same integration GET Settings reads.
+ * comes from the same integration GET Settings reads.
+ *
+ * R-1931 (G-ONBOARD OB-10): the GSTIN / state / payment / customers / price-list rows that used
+ * to be built here are gone — the Done screen now shows the ONE "Get to your first quote" list
+ * (components/features/dashboard/setup-checklist.ts, the same rows as the Dashboard card). What
+ * is left here are the optional integrations, listed under "Later".
  *
  * Input convention for the integration probes:
  *   undefined → still loading  → "checking"
@@ -32,67 +37,15 @@ export interface WhatsAppProbe { configured?: boolean }
 export interface GoogleResellerProbe { connected?: boolean; code?: string }
 
 export interface DoneInputs {
-  gstin: string | null | undefined;
-  gstinVerifiedAt: string | null | undefined;
-  stateCode: string | null | undefined;
-  /** R-1643: the company's registered address — printed on every Tax Invoice / Bill of Supply. */
-  address: string | null | undefined;
-  upiVpa: string | null | undefined;
-  remitAccountNumber: string | null | undefined;
-  /** undefined = loading */
-  customerCount: number | undefined;
-  /** undefined = loading */
-  catalogCount: number | undefined;
   razorpay: RazorpayProbe | null | undefined;
   whatsapp: WhatsAppProbe | null | undefined;
   googleReseller: GoogleResellerProbe | null | undefined;
 }
 
-const COMPANY = "/settings?tab=company";
 const INTEGRATIONS = "/settings?tab=integrations";
-const has = (v: string | null | undefined) => typeof v === "string" && v.trim().length > 0;
 
 export function buildDoneChecklist(i: DoneInputs): ChecklistItem[] {
   const items: ChecklistItem[] = [];
-
-  // Company GSTIN — verified / saved but not verified / missing.
-  if (i.gstinVerifiedAt) {
-    items.push({ id: "gstin", label: "GSTIN verified", status: "done" });
-  } else if (has(i.gstin)) {
-    items.push({ id: "gstin", label: "GSTIN saved", status: "pending", note: "Press Verify in Settings → Company", href: COMPANY });
-  } else {
-    items.push({ id: "gstin", label: "Add your GSTIN", status: "todo", note: "Needed on B2B tax invoices", href: COMPANY });
-  }
-
-  // GST invoices need the company's state (IGST vs CGST+SGST) — and, R-1643, its GSTIN and
-  // address: generate_invoice refuses a Tax Invoice without them (CGST Rule 46).
-  if (!has(i.stateCode)) {
-    items.push({ id: "invoice", label: "Choose your state", status: "todo", note: "Decides IGST vs CGST + SGST", href: COMPANY });
-  } else if (!has(i.gstin) || !has(i.address)) {
-    const missing = !has(i.gstin) && !has(i.address) ? "GSTIN and address" : !has(i.gstin) ? "GSTIN" : "address";
-    items.push({
-      id: "invoice", label: `Add your company's ${missing}`, status: "todo",
-      note: "A GST Tax Invoice must show them. Not GST-registered? Choose Not registered there to issue Bills of Supply.",
-      href: COMPANY,
-    });
-  } else {
-    items.push({ id: "invoice", label: "GST invoices ready", status: "done" });
-  }
-
-  // Getting paid — UPI QR or bank details on the invoice.
-  items.push(has(i.upiVpa) || has(i.remitAccountNumber)
-    ? { id: "payout", label: "Payment details on invoices", status: "done" }
-    : { id: "payout", label: "Add UPI or bank details", status: "todo", note: "Printed on every invoice", href: COMPANY });
-
-  // Customers
-  if (i.customerCount === undefined) items.push({ id: "customers", label: "Customers", status: "checking" });
-  else if (i.customerCount > 0) items.push({ id: "customers", label: `${i.customerCount} customer${i.customerCount === 1 ? "" : "s"} added`, status: "done" });
-  else items.push({ id: "customers", label: "Add your customers", status: "todo", note: "Import a CSV or add one", href: "/customers" });
-
-  // Price list
-  if (i.catalogCount === undefined) items.push({ id: "catalog", label: "Price list", status: "checking" });
-  else if (i.catalogCount > 0) items.push({ id: "catalog", label: "Price list loaded", status: "done" });
-  else items.push({ id: "catalog", label: "Load your price list", status: "todo", note: "Quotes need products", href: "/items" });
 
   // Razorpay — readiness from the server, not a boolean guess.
   if (i.razorpay === undefined) items.push({ later: true, id: "razorpay", label: "Razorpay payments", status: "checking" });
@@ -132,10 +85,9 @@ export function buildDoneChecklist(i: DoneInputs): ChecklistItem[] {
 }
 
 /** Next steps on the Done screen — each one opens the page that does it.
- *  R-1927: the first quote is the Done screen's primary button and the integrations are its
- *  "Later" rows, so neither is repeated here (one way per task). */
+ *  R-1927: the first quote and the integrations are not repeated here (one way per task).
+ *  R-1931: "Invite your team" is an item of the first-quote list now, so not repeated either. */
 export const NEXT_STEPS: ReadonlyArray<{ label: string; href: string }> = [
   { label: "Check your renewals calendar",  href: "/renewals" },
   { label: "Set up reminder automations",   href: "/automation" },
-  { label: "Invite your team",              href: "/team" },
 ];

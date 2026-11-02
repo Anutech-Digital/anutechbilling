@@ -1,11 +1,14 @@
 /**
- * R-260 — setup wizard's last screen. Every status row comes from real data
- * (tenant fields + the same integration GETs as Settings → Integrations) via
- * buildDoneChecklist; nothing here is hard-coded.
+ * R-260 — setup wizard's last screen. Every status row comes from real data; nothing here is
+ * hard-coded.
  *
- * R-1927 (G-ONBOARD OB-6): the next step is the first quote — "Create your first quote" is
- * the primary button. Razorpay, Google and WhatsApp were wizard steps before the quote; they
- * are now the "Later" rows here.
+ * R-1927 (G-ONBOARD OB-6): the next step is the first quote. Razorpay, Google and WhatsApp were
+ * wizard steps before the quote; they are now the "Later" rows here.
+ *
+ * R-1931 (G-ONBOARD OB-10): the screen shows the ONE "Get to your first quote" list — the same
+ * rows and facts as the Dashboard card (FirstQuoteRows + useFirstQuoteFacts). Its next open item
+ * is the one primary button; the screen's own GSTIN / payment / customers / price-list rows and
+ * its separate "Create your first quote" button are gone (one list, one way).
  */
 "use client";
 
@@ -14,10 +17,10 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { useCustomers } from "@/lib/queries/customers";
-import { useItems } from "@/lib/queries/items";
-import { productCount } from "@/lib/items/catalog-state";
+import { FirstQuoteRows } from "@/components/features/dashboard/getting-started-card";
+import { useFirstQuoteFacts } from "@/lib/onboarding/use-first-quote-facts";
+import { useSellMode } from "@/lib/queries/sell-mode";
+import { DEFAULT_SELL_MODE } from "@/lib/sell-mode";
 import { buildDoneChecklist, NEXT_STEPS, type ChecklistItem } from "./done-checklist";
 import { useGoogleResellerStatus, useRazorpayStatus, useWhatsAppStatus } from "./integration-status";
 
@@ -30,27 +33,17 @@ const STATUS_ICON: Record<ChecklistItem["status"], { icon: string; className: st
 };
 
 export function StepDone() {
-  // R-260: every row comes from real data — tenant fields + the same integration
-  // GETs Settings → Integrations reads. Nothing here is hard-coded.
-  const { data: me } = useCurrentUser();
-  const { data: customers, isLoading: customersLoading } = useCustomers();
-  const { data: catalogItems, isLoading: itemsLoading } = useItems();
+  const firstQuoteFacts = useFirstQuoteFacts();
+  const { data: sell } = useSellMode();
   const razorpay = useRazorpayStatus();
   const whatsapp = useWhatsAppStatus();
   const google = useGoogleResellerStatus();
 
-  const doneChecklist = buildDoneChecklist({
-    gstin:              me?.tenantGstin,
-    gstinVerifiedAt:    me?.tenantGstinVerifiedAt,
-    stateCode:          me?.tenantStateCode,
-    address:            me?.tenantAddress,
-    upiVpa:             me?.tenantUpiVpa,
-    remitAccountNumber: me?.tenantRemitAccountNumber,
-    customerCount:      customersLoading ? undefined : (customers?.length ?? 0),
-    catalogCount:       itemsLoading ? undefined : productCount(catalogItems),
-    razorpay:           razorpay.isLoading ? undefined : (razorpay.data ?? null),
-    whatsapp:           whatsapp.isLoading ? undefined : (whatsapp.data ?? null),
-    googleReseller:     google.isLoading ? undefined : (google.data ?? null),
+  // R-260: the "Later" rows come from the same integration GETs Settings → Integrations reads.
+  const laterRows = buildDoneChecklist({
+    razorpay:       razorpay.isLoading ? undefined : (razorpay.data ?? null),
+    whatsapp:       whatsapp.isLoading ? undefined : (whatsapp.data ?? null),
+    googleReseller: google.isLoading ? undefined : (google.data ?? null),
   });
 
   return (
@@ -63,17 +56,18 @@ export function StepDone() {
 
       <h2 className="font-serif text-3xl text-ink">Setup done.</h2>
       <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-ink-3">
-        Send your first quote now. Everything below can be finished later.
+        Next, get to your first quote. The same list stays on your dashboard until it is done.
       </p>
 
-      {/* R-1927: the first quote is the next step — primary, right under the heading. */}
-      <div className="mt-6 flex flex-wrap justify-center gap-2">
-        <Button variant="primary" asChild>
-          <Link href="/quotes/new">
-            <Icon name="file" size={14} />
-            Create your first quote
-          </Link>
-        </Button>
+      {/* R-1931: the one first-quote list (same rows as the Dashboard card). */}
+      <div className="mx-auto mt-6 max-w-md text-left">
+        <p className="mb-2.5 text-3xs font-bold uppercase tracking-widest text-ink-3">
+          Get to your first quote
+        </p>
+        <FirstQuoteRows facts={firstQuoteFacts} sellMode={sell?.mode ?? DEFAULT_SELL_MODE} />
+      </div>
+
+      <div className="mt-4 flex justify-center">
         <Button variant="default" asChild>
           <Link href="/dashboard">
             <Icon name="home" size={14} />
@@ -82,15 +76,12 @@ export function StepDone() {
         </Button>
       </div>
 
-      {/* Status checklist — R-260: from real data, one column on phones */}
-      <ChecklistRows className="mt-6" items={doneChecklist.filter((it) => !it.later)} />
-
       {/* R-1927: optional integrations — finished later, never before the first quote. */}
       <div className="mx-auto mt-6 max-w-md text-left">
         <p className="mb-2.5 text-3xs font-bold uppercase tracking-widest text-ink-3">
           Later
         </p>
-        <ChecklistRows items={doneChecklist.filter((it) => it.later)} />
+        <ChecklistRows items={laterRows.filter((it) => it.later)} />
       </div>
 
       {/* Next steps — links that open the page (the old checkboxes saved nothing). */}
