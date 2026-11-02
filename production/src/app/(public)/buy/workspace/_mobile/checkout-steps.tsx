@@ -53,7 +53,7 @@ export function DomainStep({ intent, form, setForm, errors, seats, billsWithOrde
       <h2 className="font-serif font-normal text-[26px] leading-tight m-0">
         {intent === "transfer" ? "Which domain is on Google Workspace now?" : "What should your email address be?"}
       </h2>
-      <div role="radiogroup" aria-label="Your domain" className="flex flex-col gap-2.5">
+      <div role="radiogroup" aria-label="Domain choice" className="flex flex-col gap-2.5">
         {modes.map((m) => {
           const on = m === mode;
           return (
