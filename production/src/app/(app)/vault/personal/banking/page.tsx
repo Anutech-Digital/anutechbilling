@@ -29,6 +29,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { VaultLoadError } from "@/components/features/vault/vault-load-error";
+import { OweHoldSection } from "@/components/features/vault/owe-hold-section";
 import {
   usePersonalAccounts,
   useSavePersonalAccount,
@@ -252,6 +253,8 @@ export default function PersonalBankingPage() {
                         {a.maturity_date && <> · maturity {formatDate(a.maturity_date)}</>}
                         {a.interest_rate !== null && <> · {a.interest_rate}%</>}
                       </p>
+                      {/* R-2386: the saved note, right under the name — it was saved but never shown. */}
+                      {a.notes && <p className="text-xs text-ink-2 mt-0.5 break-words">{a.notes}</p>}
                     </div>
                     <div className="text-right flex-shrink-0">
                       <Money
@@ -279,6 +282,9 @@ export default function PersonalBankingPage() {
           ))}
         </>
       )}
+
+      {/* R-2386: advances received / money held for someone — taken off Net worth while open. */}
+      {!isLoading && !error && <OweHoldSection accounts={rows} />}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[520px]">
