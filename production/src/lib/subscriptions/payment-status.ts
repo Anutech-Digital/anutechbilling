@@ -117,13 +117,20 @@ export function subscriptionPaymentStatus(input: {
   if (sub.written_off_at) return quiet("Written off");
 
   if (owed > 0) {
-    const dueDate = ymd(due?.pay_by) ?? ymd(due?.age_from) ?? ymd(sub.payment_due_date) ?? ymd(sub.start_date);
+    /* The SAME date and clock as the row highlight and the Status chip (exceptions.ts):
+       pay_by, else the agreed payment_due_date. No date → not "overdue" (a gap, not an alarm);
+       the second line then says since when it is owed (the dues row's age) and that no date is set. */
+    /* R-1685: an ended subscription is on no payment clock — it still shows what it owes. */
+    const ended = sub.status === "cancelled" || sub.status === "expired";
+    const dueDate = ended ? null : ymd(due?.pay_by) ?? ymd(sub.payment_due_date);
     const clock = paymentDueState(dueDate, today, owed);
     const overdue = clock.kind === "overdue";
     const late = overdue || clock.kind === "due_today";
     const part = (due?.paid_amount ?? 0) > 0;
     const days = Math.abs(clock.days);
-    const detail = !dueDate ? null
+    const owedSince = ymd(due?.age_from);
+    const detail = ended ? "subscription ended"
+      : !dueDate ? (owedSince ? `since ${formatDate(owedSince)} · no due date` : "no due date")
       : overdue ? `since ${formatDate(dueDate)} · ${days} ${dayWord(days)}`
       : clock.kind === "due_today" ? "due today"
       : `by ${formatDate(dueDate)}`;

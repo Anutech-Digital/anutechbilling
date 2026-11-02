@@ -103,6 +103,15 @@ describe("subscriptionPaymentStatus", () => {
     expect(p.kind).toBe("no_bill");
   });
 
+  it("owed with no due date set: not overdue (same clock as the row), says since when", () => {
+    const p = subscriptionPaymentStatus({
+      sub: { ...SUB, outstanding_amount: 700 },
+      due: { paid_amount: 0, pay_by: null, age_from: "2026-10-01" },
+      today: TODAY,
+    });
+    expect(p).toMatchObject({ kind: "due", overdue: false, tone: "warning", detail: "since 1 Oct 2026 · no due date" });
+  });
+
   it("ended / written off / billed elsewhere: quiet grey, no clock", () => {
     expect(subscriptionPaymentStatus({ sub: { ...SUB, status: "cancelled" }, today: TODAY }).label).toBe("Ended");
     expect(subscriptionPaymentStatus({ sub: { ...SUB, written_off_at: "2026-10-01T00:00:00Z", outstanding_amount: 500 }, today: TODAY }).label).toBe("Written off");
@@ -116,8 +125,7 @@ describe("subscriptionPaymentStatus", () => {
       due: { paid_amount: 0, pay_by: null, age_from: "2026-10-01" },
       today: TODAY,
     });
-    expect(p.owed).toBe(900);
-    expect(p.overdue).toBe(true);
+    expect(p).toMatchObject({ owed: 900, overdue: false, label: "Due ₹900", detail: "subscription ended" });
   });
 });
 

@@ -122,6 +122,12 @@ import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { totalMrr } from "@/lib/subscriptions/mrr-of";
+import {
+  subscriptionPaymentStatus, matchesPaymentFilter, paymentFilterCounts, paymentStatusText,
+  PAYMENT_FILTERS, type PaymentFilter, type PaymentStatus,
+} from "@/lib/subscriptions/payment-status";
+import { useCurrentBillingPeriods } from "@/lib/queries/subscription-periods";
+import { PaymentStatusCell, PaymentFilterChips } from "@/components/features/subscriptions/payment-status-cell";
 
 /* R-317: ?price=missing on the list (Reports links here). */
 const PRICE_FILTERS = ["", "missing"] as const;
@@ -154,12 +160,14 @@ function vendorMeta(v: string): { label: string; kind: "info" | "success" | "mut
  * because none of these branches fire against today's production data — a bug
  * in any of them would look exactly like silence on screen.
  */
-function SubExceptions({ sub, payBy, payByKind, size = "sm" }: { sub: Subscription; payBy?: string | null; payByKind?: "invoice" | "request" | null; size?: "sm" | "md" }) {
+function SubExceptions({ sub, payBy, payByKind, size = "sm", omit }: { sub: Subscription; payBy?: string | null; payByKind?: "invoice" | "request" | null; size?: "sm" | "md"; omit?: readonly string[] }) {
   /* R-1689: payBy = the oldest unpaid invoice's due date (credit / invoice-now rows), else the agreed date. */
   /* R-2225: a non-renewing row says so in its status pill — the chip would say it twice. */
   /* R-2230: payByKind says whether that date is an unpaid invoice's or a part payment request's. */
   const flags = subscriptionExceptions({ ...sub, pay_by: payBy, pay_by_kind: payByKind })
-    .filter((f) => !(f.key === "auto_renew_off" && isNonRenewing(sub)));
+    .filter((f) => !(f.key === "auto_renew_off" && isNonRenewing(sub)))
+    /* R-2382: the desktop table's Payment column already says what is owed and since when. */
+    .filter((f) => !omit?.includes(f.key));
   if (flags.length === 0) return null;
   return (
     <>
@@ -249,6 +257,9 @@ function SortHeader({
   );
 }
 
+/** R-2382: exception chips the Payment column / card line already shows (owed ₹ and its due clock). */
+const PAYMENT_COLUMN_KEYS = ["outstanding", "payment-due"] as const;
+
 /** R-2263: the desktop table's column widths (subs-table-cols.ts); Customer and Plan take the rest. */
 function SubsColGroup() {
   return (
@@ -312,6 +323,29 @@ export default function SubscriptionsPage() {
         : null,
     [contractedAnnual],
   );
+  /* R-2382: each subscription's Payment status — from the dues rows above, the quotes
+     already read for contractedAnnual, and ONE read of the current split-billing periods.
+     No per-row query (lib/subscriptions/payment-status.ts). */
+  const { data: currentPeriods } = useCurrentBillingPeriods();
+  const paymentOf = React.useMemo(() => {
+    const dueBySub = new Map((dues ?? []).map((o) => [o.subscription_id, o] as const));
+    const quoteById = new Map((allQuotes ?? []).map((q) => [q.id, q] as const));
+    const today = todayIST();
+    const cache = new Map<string, PaymentStatus>();
+    return (sub: Subscription): PaymentStatus => {
+      const hit = cache.get(sub.id);
+      if (hit) return hit;
+      const p = subscriptionPaymentStatus({
+        sub,
+        due: dueBySub.get(sub.id) ?? null,
+        renewalQuote: sub.renewal_quote_id ? quoteById.get(sub.renewal_quote_id) ?? null : null,
+        period: currentPeriods?.get(sub.id) ?? null,
+        today,
+      });
+      cache.set(sub.id, p);
+      return p;
+    };
+  }, [dues, allQuotes, currentPeriods]);
   const [tab, setTab] = useUrlChoice<string>("tab", SUBSCRIPTION_TABS, "all"); // R-118
   /* R-118: the money tiles' exact set (lib/subscriptions/focus.ts) — "" = none. */
   const [focus, setFocus] = useUrlChoice<SubFocus>("focus", SUB_FOCI, "");
@@ -326,6 +360,8 @@ export default function SubscriptionsPage() {
   /* R-1774: old ?cycle=quarterly / half_yearly links still open — on Check term. */
   const [cycleRaw, setCycle] = useUrlChoice<CycleUrlValue>("cycle", CYCLE_URL_VALUES, "all");
   const cycle: CycleFilter = cycleFromUrl(cycleRaw);
+  /* R-2382: ?pay=paid|due|overdue — the Payment chips, kept in the URL like ?cycle=. */
+  const [payFilter, setPayFilter] = useUrlChoice<PaymentFilter>("pay", PAYMENT_FILTERS, "");
   const [search, setSearch] = React.useState("");
   /* R-244: ?q= pre-fills the search — Ctrl+K opens a subscription as the list filtered to it.
      Read once after mount (no useSearchParams: build rule, see ?from_lead below). */
@@ -615,7 +651,10 @@ export default function SubscriptionsPage() {
     return true;
   });
   const cycleChips = cycleOptions(beforeCycle, cycle);
-  const filtered = beforeCycle.filter((s) => matchesCycle(s, cycle));
+  const beforePay = beforeCycle.filter((s) => matchesCycle(s, cycle));
+  /* R-2382: Payment chips count over every other filter, so a chip's number is what a click leaves. */
+  const payCounts = paymentFilterCounts(beforePay.map(paymentOf));
+  const filtered = payFilter ? beforePay.filter((s) => matchesPaymentFilter(paymentOf(s), payFilter)) : beforePay;
 
   /* ── Newest first, except in Expiring ─────────────────────────────────────
      `useSubscriptions` fetches in renewal-date order, which is right for the dashboard
@@ -706,15 +745,17 @@ export default function SubscriptionsPage() {
         start_date: sub.start_date,
         renewal_date: sub.renewal_date,
         vendor_seats: sub.vendor_seats,
-      });
+      }).concat(paymentStatusText(paymentOf(sub)));   // R-2382: the Payment column
     });
-  }, [customers, primaryContacts]);
+  }, [customers, primaryContacts, paymentOf]);
+  /* R-2382: the portable columns, then Payment (the importer maps by header name). */
+  const exportHeaders = [...PORTABLE_SUBSCRIPTION_HEADERS, "Payment"];
 
   const bulkExport = () => {
     if (pickedSubs.length === 0) return;
     downloadCSV(
       `subscriptions-${new Date().toISOString().slice(0, 10)}.csv`,
-      [...PORTABLE_SUBSCRIPTION_HEADERS],
+      exportHeaders,
       exportRows(pickedSubs),
     );
     toast.success(`Exported ${pickedSubs.length} subscription${pickedSubs.length === 1 ? "" : "s"} to CSV`, {
@@ -1126,6 +1167,9 @@ export default function SubscriptionsPage() {
             {tab !== "trials" && (
               <BillingCycleFilter options={cycleChips} value={cycle} onChange={setCycle} />
             )}
+            {tab !== "trials" && (
+              <PaymentFilterChips counts={payCounts} value={payFilter} onChange={setPayFilter} />
+            )}
             <div className="w-full sm:w-64">
               <Input
                 prefix={<Icon name="search" size={14} />}
@@ -1144,7 +1188,7 @@ export default function SubscriptionsPage() {
               onClick={() => {
                 /* R-1696: the rows on screen — tab, vendor, billing cycle and search —
                    not the whole book behind them. */
-                downloadCSV(`subscriptions-${new Date().toISOString().slice(0, 10)}.csv`, [...PORTABLE_SUBSCRIPTION_HEADERS], exportRows(ordered));
+                downloadCSV(`subscriptions-${new Date().toISOString().slice(0, 10)}.csv`, exportHeaders, exportRows(ordered));
                 toast.success(`Exported ${ordered.length} subscription${ordered.length === 1 ? "" : "s"} to CSV`, {
                   description: "Includes the customer and contact details, so this file can be imported back.",
                 });
@@ -1287,6 +1331,11 @@ export default function SubscriptionsPage() {
                   />
                 </div>
 
+                {/* R-2382: the Payment status, same words as the desktop column. */}
+                <div className="mt-2">
+                  <PaymentStatusCell status={paymentOf(s)} />
+                </div>
+
                 {/* Status, anything abnormal, and the renewal clock. The day
                     count is shown for live rows — see renewalClock() (R-1774). */}
                 <div className="flex items-end justify-between gap-2 mt-2 pt-2 border-t border-hairline/60">
@@ -1297,7 +1346,7 @@ export default function SubscriptionsPage() {
                         {pill.nonRenewing ? pill.label : s.status}
                       </Badge>
                     ); })()}
-                    <SubExceptions sub={s} payBy={payByOf.get(s.id)} payByKind={payByKindOf.get(s.id)} />
+                    <SubExceptions sub={s} payBy={payByOf.get(s.id)} payByKind={payByKindOf.get(s.id)} omit={PAYMENT_COLUMN_KEYS} />
                   </div>
                   <div className="text-right shrink-0">
                     {/* The date needs saying what it IS. On desktop the column
@@ -1387,6 +1436,8 @@ export default function SubscriptionsPage() {
                   />
                   <SortHeader label="Margin" col="margin" align="right" sort={sort} onSort={toggleSort} title="Monthly margin" />
                   <SortHeader label="Renewal" col="renewal" label2="Started" col2="started" sort={sort} onSort={toggleSort} />
+                  {/* R-2382: is this period paid, or how much is owed since when. */}
+                  <th className="px-3 py-2.5 text-left text-2xs font-semibold uppercase tracking-wider text-ink-3">Payment</th>
                   <SortHeader label="Status" col="status" sort={sort} onSort={toggleSort} />
                   <th className="px-2 py-2.5 text-right"><span className="sr-only">Actions</span></th>
                 </tr>
@@ -1575,18 +1626,21 @@ export default function SubscriptionsPage() {
                         </span>
                         <span className="text-ink-3"> / {s.seats} seats</span>
                         </span>
+                        {/* R-2382: never-reconciled rows no longer print "NOT CHECKED" — the "—"
+                            seat count and the cell's tooltip already say it, and the line made
+                            every row taller for the Payment column. */}
+                        {leak.kind !== "unknown" && (
                         <span className={cn(
                           "block text-3xs font-semibold uppercase tracking-wider",
                           leak.kind === "under_billed" ? "text-rose"
                             : leak.kind === "over_billed" ? "text-amber-ink"
-                            : leak.kind === "aligned" ? "text-emerald"
-                            : "text-ink-3",
+                            : "text-emerald",
                         )}>
                           {leak.kind === "under_billed" ? "leaking"
                             : leak.kind === "over_billed" ? "over-billed"
-                            : leak.kind === "aligned" ? "matches"
-                            : "not checked"}
+                            : "matches"}
                         </span>
+                        )}
                       </td>
                       {/* Margin — colour-coded badge. */}
                       <td data-col="margin" className="px-3 py-2.5 text-right align-middle">
@@ -1616,6 +1670,9 @@ export default function SubscriptionsPage() {
                         ) : null}
                         <div className="mt-0.5 text-3xs text-ink-3 tabular-nums whitespace-normal">Started {s.start_date ? formatDate(s.start_date) : "—"}</div>
                       </td>
+                      <td data-col="payment" className="px-3 py-2.5 align-middle min-w-0">
+                        <PaymentStatusCell status={paymentOf(s)} />
+                      </td>
                       <td data-col="status" className="px-3 py-2.5 align-middle min-w-0 [&_span]:whitespace-normal">
                         {s.status === "expired" && dl !== null ? (
                           <Badge kind="danger" dot>Expired {Math.abs(dl)}d</Badge>
@@ -1631,7 +1688,7 @@ export default function SubscriptionsPage() {
                             suspension, write-off — one shared component so the
                             table and the mobile card can never drift apart. */}
                         <div className="flex flex-col items-start gap-1 mt-1 empty:mt-0">
-                          <SubExceptions sub={s} payBy={payByOf.get(s.id)} payByKind={payByKindOf.get(s.id)} size="md" />
+                          <SubExceptions sub={s} payBy={payByOf.get(s.id)} payByKind={payByKindOf.get(s.id)} size="md" omit={PAYMENT_COLUMN_KEYS} />
                         </div>
                       </td>
                       {/* ── ONE ⋮ MENU ON THE ROW (R-2263) ──────────────────────

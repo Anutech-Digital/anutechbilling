@@ -9,6 +9,9 @@
  * a short badge inside the Plan cell, Seats and MRR share one cell, and the row action is
  * one ⋮ menu. With `table-fixed` the columns below keep their width; Customer and Plan
  * (width: null) share what is left and wrap — on a wider screen they grow.
+ *
+ * R-2382 (2 Nov): a 9th column, Payment, between Renewal and Status — still inside the
+ * 944px budget (fixed 620 + 2 × 160).
  */
 export type SubsColKey =
   | "select"
@@ -17,6 +20,7 @@ export type SubsColKey =
   | "seats_mrr"
   | "margin"
   | "renewal"
+  | "payment"
   | "status"
   | "actions";
 
@@ -24,10 +28,13 @@ export const SUBS_TABLE_COLS: ReadonlyArray<{ key: SubsColKey; width: number | n
   { key: "select", width: 36 },
   { key: "customer", width: null },
   { key: "plan", width: null },
-  { key: "seats_mrr", width: 120 },
+  { key: "seats_mrr", width: 108 },
   { key: "margin", width: 88 },
-  { key: "renewal", width: 124 },
-  { key: "status", width: 140 },
+  { key: "renewal", width: 112 },
+  /* R-2382: Payment (paid till / due since). Paid for by narrower MRR, Renewal and Status —
+     the owed ₹ and its due chip moved out of Status into this column. */
+  { key: "payment", width: 124 },
+  { key: "status", width: 104 },
   { key: "actions", width: 48 },
 ];
 
