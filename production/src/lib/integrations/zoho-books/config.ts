@@ -25,6 +25,8 @@ export const ZOHO_REVOKE_URL = `${ZOHO_ACCOUNTS_BASE}/oauth/v2/token/revoke`;
 export const ZOHO_BOOKS_SCOPES = [
   "ZohoBooks.contacts.READ",
   "ZohoBooks.invoices.READ",
+  /* R-2359: "Find in Zoho" on a bank credit reads the customer payment whose reference is the UTR. */
+  "ZohoBooks.customerpayments.READ",
   "ZohoBooks.settings.READ",
 ] as const;
 
