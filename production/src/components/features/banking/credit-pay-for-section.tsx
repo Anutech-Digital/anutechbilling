@@ -58,8 +58,8 @@ import { cleanAmount, pickDefault, pickProblem, splitBlocked, splitPartPaid, spl
 import { CreditPaySplit } from "./credit-pay-for-split";
 import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
-import type { ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
-import { ZohoFindPanel } from "./zoho-find-panel";
+import { zohoKeptLines, zohoSaleNumber, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
+import { ZohoFindPanel, type NewCustomerSeed } from "./zoho-find-panel";
 
 const NEW_CUSTOMER = "__new_customer__";
 
@@ -69,8 +69,8 @@ interface Props {
   transaction: BankTransactionRow;
   customers: readonly PayForCustomer[];
   /** Opens the shared Add-customer form; the parent passes back the new id via `pickedCustomerId`.
-   *  Left out (relink) → no "New customer" choice. */
-  onNewCustomer?: () => void;
+   *  Left out (relink) → no "New customer" choice. R-2360: Find in Zoho passes Zoho's name + GSTIN. */
+  onNewCustomer?: (seed?: NewCustomerSeed) => void;
   /** A customer the parent just created — picked here. */
   pickedCustomerId?: string | null;
   /** Left out (relink) → no "Project payment" button. Gets the customer chosen in "Who paid?"
@@ -229,6 +229,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     if (!zohoFill?.subStart || mode !== "sale") return;
     setSubStart(zohoFill.subStart); setSubRenewal(zohoFill.subRenewal);
   }, [zohoFill, mode, pickKey, transaction.id, transaction.txn_date]);
+  /* R-2360: the one Zoho invoice number this sale keeps on its app invoice (none on a relink). */
+  const zohoNumber = relink ? null : zohoSaleNumber(zohoFill);
 
   /* ── 3. Amount check ─────────────────────────────────────────────────────────── */
   /* R-2026: a new sale paid in parts is due its FIRST bill now (Annual + Quarterly = one
@@ -321,6 +323,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                 subStart: subArgs.subStart, subRenewal: subArgs.subRenewal, amount: roundOff.saleAmount }
             : null,
           rest: roundOff.rest,
+          externalNumber: zohoNumber,
         });
         setResult(r);
         onSaved?.();
@@ -340,6 +343,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                 subStart: subArgs.subStart, subRenewal: subArgs.subRenewal, amount: saleAmt }
             : null,
           rest,
+          externalNumber: zohoNumber,
         });
         setResult(r);
         onSaved?.();
@@ -355,7 +359,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         ? {
             path: "new_sale", transactionId: transaction.id, customerId, lines, billingCycle: saleCycle,
             createSubscription: subArgs.createSubscription ?? false, subStart: subArgs.subStart, subRenewal: subArgs.subRenewal,
-            tdsAmount, tdsRatePct: tdsRate, tdsSection,
+            tdsAmount, tdsRatePct: tdsRate, tdsSection, externalNumber: zohoNumber,
           }
         : { path: "advance", transactionId: transaction.id, customerId };
     try {
@@ -403,7 +407,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           <Icon name="check" size={14} className="text-emerald" /> Done — this bank line is reconciled
         </p>
         <ul className="space-y-1">
-          {resultLines(result).map((l, i) => (
+          {[...resultLines(result), ...zohoKeptLines(result)].map((l, i) => (
             <li key={i} className={`text-sm break-words ${l.tone === "warn" ? "text-amber-ink" : "text-ink"}`}>
               {l.href ? <Link href={l.href as never} className="underline hover:no-underline">{l.text}</Link> : l.text}
             </li>

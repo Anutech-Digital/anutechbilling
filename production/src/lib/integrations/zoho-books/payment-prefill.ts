@@ -142,3 +142,35 @@ export function zohoPrefill(
     notes,
   };
 }
+
+/**
+ * R-2360: the Zoho invoice number the sale keeps on its app invoice (invoices.external_number) —
+ * only when the Zoho payment was applied to exactly ONE invoice. Several (or none) → null: one app
+ * sale cannot be several Zoho invoices, so the numbers are only shown.
+ */
+export function zohoSaleNumber(p: Pick<ZohoPrefill, "invoiceNumbers"> | null | undefined): string | null {
+  const nums = (p?.invoiceNumbers ?? []).map((n) => n.trim()).filter(Boolean);
+  return nums.length === 1 ? nums[0] : null;
+}
+
+/** R-2360: the result line about the Zoho number after Save (null = no Zoho number on this sale). */
+export function zohoKeptLine(r: {
+  external_number?: string | null; external_number_saved?: boolean; external_number_error?: string | null;
+  invoice_issued?: string | null; invoice_id?: string | null;
+}): { text: string; tone: "ok" | "warn" } | null {
+  if (!r.external_number) return null;
+  if (r.external_number_error) {
+    return { text: `Zoho invoice ${r.external_number} was not kept on the invoice: ${r.external_number_error}`, tone: "warn" };
+  }
+  if (r.external_number_saved) {
+    const inv = r.invoice_issued ?? r.invoice_id ?? null;
+    return { text: `Zoho invoice ${r.external_number} is kept on ${inv ?? "the invoice"}.`, tone: "ok" };
+  }
+  return { text: `Zoho invoice ${r.external_number} is not on an invoice yet — the first part's invoice was not raised now.`, tone: "warn" };
+}
+
+/** R-2360: zohoKeptLine as a list for the result panel (empty when the sale had no Zoho number). */
+export function zohoKeptLines(r: object): Array<{ text: string; tone: "ok" | "warn" }> {
+  const line = zohoKeptLine(r as Parameters<typeof zohoKeptLine>[0]);
+  return line ? [line] : [];
+}

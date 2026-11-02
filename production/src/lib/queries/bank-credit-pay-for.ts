@@ -93,6 +93,9 @@ export interface NewSaleInput {
   /** R-2026: how often it is billed (the quote's billing_cycle). Null/absent = the server's
    *  default (yearly; Monthly flex is always monthly). */
   billingCycle?: BillingCycle | null;
+  /** R-2360: the Zoho invoice number from "Find in Zoho" — kept on the sale's invoice
+   *  (invoices.external_number); a number already in the app is refused. Absent = none. */
+  externalNumber?: string | null;
 }
 
 /** The RPC arguments — exported so the tests pin exactly what reaches the server. */
@@ -122,7 +125,27 @@ export function newSaleArgs(i: NewSaleInput) {
     p_tds_rate_pct: i.tdsAmount > 0 ? i.tdsRatePct : null,
     p_tds_section: i.tdsAmount > 0 ? (i.tdsSection || "194J") : null,
     p_billing_cycle: i.billingCycle ?? null,
+    /* R-2360: sent only when there is one — without it the call resolves to the old 10-argument function. */
+    ...(i.externalNumber?.trim() ? { p_external_number: i.externalNumber.trim() } : {}),
   };
+}
+
+/** R-2360: what the server said about the Zoho invoice number (migration 20261102061607). */
+export type ZohoKept = { external_number?: string | null; external_number_saved?: boolean; external_number_error?: string | null };
+
+/**
+ * R-2360: a sale billed in parts has no invoice when the RPC returns (external_number_saved =
+ * false); once raiseFirstInstalment has raised the first part's invoice, the Zoho number is kept
+ * on it (set_invoice_external_number — owner/manager/accountant/billing, own company, a number
+ * already in the app refused). The sale is already booked: a failure here only says so.
+ */
+export async function keepZohoNumberOnFirstPart<T extends PayForResult & ZohoKept>(
+  r: T, call: typeof rpc = rpc,
+): Promise<T> {
+  if (!r.external_number || r.external_number_saved !== false || !r.invoice_issued) return r;
+  const { error } = await call("set_invoice_external_number", { p_invoice_id: r.invoice_issued, p_external_number: r.external_number });
+  if (error) return { ...r, external_number_error: error.message };
+  return { ...r, external_number_saved: true };
 }
 
 /**
@@ -257,7 +280,7 @@ export function useNewSaleFromBankCredit() {
       const { data, error } = await rpc("reconcile_bank_credit_new_sale", newSaleArgs(input));
       if (error) throw error;
       if (!data) throw new Error("The sale was not confirmed — refresh the page to see whether it was saved.");
-      return raiseFirstInstalment(data as PayForResult, input.billingCycle);
+      return keepZohoNumberOnFirstPart(await raiseFirstInstalment(data as PayForResult & ZohoKept, input.billingCycle));
     },
     onSuccess: after,
     onError: onPayError,
@@ -306,10 +329,18 @@ export function useSplitFromBankCredit() {
       const { data, error } = await rpc("reconcile_bank_credit_split", splitArgs(input));
       if (error) throw error;
       if (!data) throw new Error("The payments were not confirmed — refresh the page to see whether they were saved.");
-      const r = data as PayForResult;
+      const r = data as PayForResult & ZohoKept;
       const parts = await Promise.all((r.parts ?? []).map((p) =>
         p.new_quote ? raiseFirstInstalment(p, (input.sale?.billingCycle ?? null) as BillingCycle | null) : Promise.resolve(p)));
-      return { ...r, parts, customer_id: input.customerId, customer_name: input.customerName ?? null };
+      /* R-2360: the new sale billed in parts — its first part's invoice gets the Zoho number now. */
+      const sale = parts.find((p) => p.new_quote);
+      const kept = sale && r.external_number
+        ? await keepZohoNumberOnFirstPart({ ...sale, external_number: r.external_number, external_number_saved: r.external_number_saved })
+        : null;
+      return {
+        ...r, parts, customer_id: input.customerId, customer_name: input.customerName ?? null,
+        ...(kept ? { external_number_saved: kept.external_number_saved, external_number_error: kept.external_number_error ?? null } : {}),
+      };
     },
     onSuccess: after,
     onError: onPayError,

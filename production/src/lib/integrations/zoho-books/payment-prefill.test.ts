@@ -4,7 +4,7 @@
  * Owner's example: SUPREME MEDIA & STUDIOS PRIVATE LIMITED, INV/26-27/0613, gptalents.in.
  */
 import { describe, it, expect } from "vitest";
-import { mapZohoCustomer, matchCatalogItem, normCompanyName, zohoPrefill } from "./payment-prefill";
+import { mapZohoCustomer, matchCatalogItem, normCompanyName, zohoKeptLine, zohoPrefill, zohoSaleNumber } from "./payment-prefill";
 import type { ZohoPaymentMatch } from "./payment-match";
 
 const customers = [
@@ -91,5 +91,21 @@ describe("R-2359 pre-fill of the new sale", () => {
     expect(p.lines[0].cycle).toBe("monthly");
     expect(p.subStart).toBeNull();
     expect(p.subRenewal).toBeNull();
+  });
+});
+
+
+describe("R-2360 which Zoho number the sale keeps", () => {
+  it("exactly one Zoho invoice → its number; several or none → null", () => {
+    expect(zohoSaleNumber({ invoiceNumbers: [" INV/26-27/0613 "] })).toBe("INV/26-27/0613");
+    expect(zohoSaleNumber({ invoiceNumbers: ["A", "B"] })).toBeNull();
+    expect(zohoSaleNumber({ invoiceNumbers: [] })).toBeNull();
+    expect(zohoSaleNumber(null)).toBeNull();
+  });
+  it("the result line", () => {
+    expect(zohoKeptLine({})).toBeNull();
+    expect(zohoKeptLine({ external_number: "Z1", external_number_saved: true, invoice_issued: "INV-1" })).toEqual({ text: "Zoho invoice Z1 is kept on INV-1.", tone: "ok" });
+    expect(zohoKeptLine({ external_number: "Z1", external_number_saved: false })?.tone).toBe("warn");
+    expect(zohoKeptLine({ external_number: "Z1", external_number_error: "no" })?.text).toContain("was not kept");
   });
 });

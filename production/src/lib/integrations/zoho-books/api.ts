@@ -317,14 +317,15 @@ export const CF_NEW_BUSINESS = new Set(["newbusiness"]);
  * ZohoBooks.customerpayments.READ scope — a connection made before R-2359 answers 401.
  */
 export function listCustomerPaymentsPage(
-  orgId: string, token: string, filter: { referenceContains?: string; dateStart?: string; dateEnd?: string },
+  orgId: string, token: string, filter: { referenceContains?: string; dateStart?: string; dateEnd?: string; page?: number },
   f: Fetch = fetch,
 ): Promise<ZohoPage> {
   const extra: Record<string, string> = { sort_column: "date", sort_order: "D" };
   if (filter.referenceContains) extra.reference_number_contains = filter.referenceContains;
   if (filter.dateStart) extra.date_start = filter.dateStart;
   if (filter.dateEnd) extra.date_end = filter.dateEnd;
-  return listPage("/customerpayments", "customerpayments", orgId, token, 1, f, extra);
+  /* R-2360: page > 1 for the Banking "Zoho has a match" batch read. */
+  return listPage("/customerpayments", "customerpayments", orgId, token, Math.max(1, Math.floor(filter.page ?? 1)), f, extra);
 }
 
 /** One customer payment with the invoices it was applied to. */

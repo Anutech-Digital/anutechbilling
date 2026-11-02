@@ -15,7 +15,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { rupee, formatDate } from "@/lib/utils";
 import type { FindZohoResult, ZohoPaymentMatch, ZohoPaymentRow } from "@/lib/integrations/zoho-books/payment-match";
-import { zohoPrefill, type AppCustomerLite, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
+import { zohoPrefill, zohoSaleNumber, type AppCustomerLite, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
 
 export const ZOHO_FIND_URL = "/api/integrations/zoho-books/payment-match";
 
@@ -29,11 +29,14 @@ interface Props {
   catalog: Catalog;
   /** Fill the sale form below (nothing is saved). */
   onPrefill: (p: ZohoPrefill) => void;
-  /** Opens the sheet's Add-customer form when Zoho's customer is not in the app. */
-  onNewCustomer?: () => void;
+  /** Opens the sheet's Add-customer form when Zoho's customer is not in the app — R-2360: filled
+   *  with Zoho's company name and GSTIN (the owner checks it and saves). */
+  onNewCustomer?: (seed?: NewCustomerSeed) => void;
 }
 
 type Next = { label: string; href?: string };
+/** R-2360: what the Add-customer form starts with when Zoho's customer is not in the app. */
+export type NewCustomerSeed = { name: string; gstin: string | null };
 type State =
   | { kind: "idle" }
   | { kind: "loading" }
@@ -138,7 +141,8 @@ export function ZohoFindPanel({ transactionId, txnDate, credit, customers, catal
   );
 }
 
-function MatchBox({ match, prefill, onNewCustomer }: { match: ZohoPaymentMatch; prefill: ZohoPrefill; onNewCustomer?: () => void }) {
+function MatchBox({ match, prefill, onNewCustomer }: { match: ZohoPaymentMatch; prefill: ZohoPrefill; onNewCustomer?: (seed?: NewCustomerSeed) => void }) {
+  const kept = zohoSaleNumber(prefill);
   const p = match.payment;
   const lines = match.invoices.flatMap((i) => i.lines);
   return (
@@ -156,11 +160,14 @@ function MatchBox({ match, prefill, onNewCustomer }: { match: ZohoPaymentMatch; 
       {!prefill.customer && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-amber-ink">No match — this customer is not in ResellerOS yet.</span>
-          {onNewCustomer && <Button size="sm" variant="default" icon="plus" onClick={onNewCustomer}>Create customer</Button>}
+          {onNewCustomer && <Button size="sm" variant="default" icon="plus" onClick={() => onNewCustomer({ name: match.customer.name, gstin: match.customer.gstin })}>Create customer</Button>}
         </div>
       )}
       <p className="text-xs text-ink break-words">
         Zoho invoice{prefill.invoiceNumbers.length === 1 ? "" : "s"}: <b>{prefill.invoiceNumbers.join(", ") || "none applied"}</b>
+        {kept
+          ? <span className="text-ink-3"> — kept on the app invoice when you save the new sale</span>
+          : prefill.invoiceNumbers.length > 1 ? <span className="text-ink-3"> — several, so none is kept on the app invoice</span> : null}
       </p>
       {lines.length > 0 && (
         <ul className="text-xs text-ink-2 space-y-0.5">

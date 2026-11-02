@@ -36,9 +36,9 @@ export type StatusFilter = "all" | "unmatched" | "matched";
 export type Direction = "all" | "in" | "out";
 export type SortKey = "newest" | "oldest" | "high" | "low";
 export type MatchGroup = "customer" | "vendor" | "salary" | "expense" | "tax" | "owner" | "loan" | "transfer" | "other";
-export type NeedKey = "no_customer" | "no_vendor" | "old_one_off" | "duplicates" | "large";
+export type NeedKey = "no_customer" | "no_vendor" | "old_one_off" | "duplicates" | "large" | "zoho_match";
 /** The needs-attention lists the PAGE works out (its own rules) and hands in. */
-export type PageNeedKey = "no_customer" | "no_vendor" | "old_one_off";
+export type PageNeedKey = "no_customer" | "no_vendor" | "old_one_off" | "zoho_match";
 export type DatePreset = "this_month" | "last_month" | "this_fy";
 
 export type BankFilters = {
@@ -98,13 +98,16 @@ export const MATCH_GROUP_LABEL: Record<MatchGroup, string> = {
   other:    "Other",
 };
 
-export const NEED_KEYS: readonly NeedKey[] = ["no_customer", "no_vendor", "old_one_off", "duplicates", "large"];
+export const NEED_KEYS: readonly NeedKey[] = ["no_customer", "no_vendor", "old_one_off", "duplicates", "large", "zoho_match"];
 export const NEED_LABEL: Record<NeedKey, string> = {
   no_customer: "Money in · no customer yet",
   no_vendor:   "Money out · no vendor yet",
   old_one_off: "Old one-off bookings",
   duplicates:  "Possible duplicates",
   large:       "Large amounts (≥ ₹1,00,000)",
+  /* R-2360: unmatched money-in lines with a customer payment in Zoho Books (the page hands the set in;
+     shown only to an owner / accountant whose Zoho Books is connected). */
+  zoho_match:  "Money in · Zoho has a match",
 };
 
 export const SORT_LABEL: Record<SortKey, string> = {
@@ -287,7 +290,7 @@ export function facetCounts(lines: readonly FilterLine[], f: BankFilters, ctx: F
     status: { all: 0, unmatched: 0, matched: 0 },
     dir: { all: 0, in: 0, out: 0 },
     types: { customer: 0, vendor: 0, salary: 0, expense: 0, tax: 0, owner: 0, loan: 0, transfer: 0, other: 0 },
-    need: { no_customer: 0, no_vendor: 0, old_one_off: 0, duplicates: 0, large: 0 },
+    need: { no_customer: 0, no_vendor: 0, old_one_off: 0, duplicates: 0, large: 0, zoho_match: 0 },
   };
   const noNeed: BankFilters = { ...f, need: null };
   for (const t of lines) {
@@ -307,7 +310,7 @@ export function facetCounts(lines: readonly FilterLine[], f: BankFilters, ctx: F
     if (lineMatches(t, noNeed, ctx, dupes, null)) {
       if (amountOf(t) >= LARGE_AMOUNT) c.need.large += 1;
       if (dupesAll.has(t.id)) c.need.duplicates += 1;
-      for (const k of ["no_customer", "no_vendor", "old_one_off"] as const) if (ctx.sets?.[k]?.has(t.id)) c.need[k] += 1;
+      for (const k of ["no_customer", "no_vendor", "old_one_off", "zoho_match"] as const) if (ctx.sets?.[k]?.has(t.id)) c.need[k] += 1;
     }
   }
   return c;

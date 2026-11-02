@@ -46,9 +46,11 @@ interface AddCustomerFormProps {
   customer?: Customer | null;
   /** Called with the new customer's id after a successful CREATE (lets a caller auto-select it). */
   onCreated?: (id: string) => void;
+  /** R-2360: a NEW customer starts with these (Find in Zoho: Zoho's company name + GSTIN). Ignored on an edit. */
+  initial?: { name?: string | null; gstin?: string | null } | null;
 }
 
-export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: AddCustomerFormProps) {
+export function AddCustomerForm({ open, onOpenChange, customer, onCreated, initial }: AddCustomerFormProps) {
   const {
     register, setValue, watch, errors, isSubmitting, isPending, isEdit,
     contactPersonFields, appendContactPerson, removeContactPerson,
@@ -64,6 +66,14 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
       onOpenChange(false);
     },
   });
+  /* R-2360: after the hook's own open-reset (declared above, so it runs first), fill the seed. */
+  const seedName = initial?.name?.trim() ?? "";
+  const seedGstin = initial?.gstin?.trim() ?? "";
+  React.useEffect(() => {
+    if (!open || isEdit) return;
+    if (seedName) setValue("name", seedName, { shouldDirty: true });
+    if (seedGstin) setValue("gstin", liveGstin(seedGstin), { shouldDirty: true });
+  }, [open, isEdit, seedName, seedGstin, setValue]);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
