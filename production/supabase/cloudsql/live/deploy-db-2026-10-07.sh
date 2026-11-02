@@ -366,6 +366,7 @@ MIGS=(
   "r2367chainapproval|20261102121211_r2367_quote_chain_self_approval.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_quote_approval_not_by_maker' and tgrelid = to_regclass('public.quotes')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.quote_chain_makers(text)') and prosrc like '%R-2367%')"
   "r2369subscriptiontermamount|20261102123706_r2369_subscription_term_amount.sql|resellersos_migration|to_regprocedure('public.subscription_term_amount_from_quote(uuid,text,text,integer,integer,integer)') is not null and exists(select 1 from pg_trigger where tgname = 'trg_subscriptions_zz_term_amount' and tgrelid = to_regclass('public.subscriptions'))"
   "r2368revisesublink|20261102123939_r2368_revise_keeps_subscription_link.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_quote_revision_renewal_handover' and tgrelid = to_regclass('public.quotes')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quotes_add_seats_take_back()') and prosrc like '%R-2368%')"
+  "r2383soleownerapproval|20261102132142_r2383_sole_owner_self_approval.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'quotes' and column_name = 'approval_note') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2383%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
