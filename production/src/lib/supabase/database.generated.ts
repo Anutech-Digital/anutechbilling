@@ -9394,12 +9394,15 @@ export type Database = {
           dedupe_hash: string | null
           id: string
           import_batch_id: string | null
+          income_source: string | null
           kind: string
           note: string | null
           occurred_on: string
           owner_user_id: string
+          party: string | null
           raw_description: string | null
           reference: string | null
+          repeat_monthly: boolean
           source: string
           tenant_id: string
           updated_at: string
@@ -9413,12 +9416,15 @@ export type Database = {
           dedupe_hash?: string | null
           id?: string
           import_batch_id?: string | null
+          income_source?: string | null
           kind: string
           note?: string | null
           occurred_on: string
           owner_user_id: string
+          party?: string | null
           raw_description?: string | null
           reference?: string | null
+          repeat_monthly?: boolean
           source?: string
           tenant_id: string
           updated_at?: string
@@ -9432,12 +9438,15 @@ export type Database = {
           dedupe_hash?: string | null
           id?: string
           import_batch_id?: string | null
+          income_source?: string | null
           kind?: string
           note?: string | null
           occurred_on?: string
           owner_user_id?: string
+          party?: string | null
           raw_description?: string | null
           reference?: string | null
+          repeat_monthly?: boolean
           source?: string
           tenant_id?: string
           updated_at?: string
