@@ -105,6 +105,11 @@ describe("naming the people who can clear it", () => {
     expect(people.map((p) => p.full_name)).toEqual(["Deepak Sharma", "Omega Co"]);
   });
 
+  it("R-2367: leaves out whoever made or revised the quote family", () => {
+    const people = eligibleApprovers(OWNERS_AND_MANAGERS, theRealQuote, [DEEPAK]);
+    expect(people.map((p) => p.full_name)).toEqual(["Omega Co"]);
+  });
+
   it("reads as a sentence a person would say", () => {
     const people = eligibleApprovers(OWNERS_AND_MANAGERS, theRealQuote);
     expect(approverSentence(people)).toBe("Deepak Sharma or Omega Co");
