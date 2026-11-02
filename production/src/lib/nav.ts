@@ -861,6 +861,7 @@ export const APP_NAV: NavSection[] = [
           { id: "vault-personal", href: "/vault/personal",  label: "Private Vault",    icon: "wallet", roles: ["owner"], hint: "Your personal money — hidden from the team" },
           { id: "vault-personal-banking",  href: "/vault/personal/banking",  label: "Private banking",  icon: "rupee",  roles: ["owner"] },
           { id: "vault-personal-expenses", href: "/vault/personal/expenses", label: "Private expenses", icon: "receipt", roles: ["owner"] },
+          { id: "vault-personal-loans",    href: "/vault/personal/loans",    label: "Private loans",    icon: "rupee",  roles: ["owner"] }, // R-2388
           { id: "vault-personal-wealth",   href: "/vault/personal/wealth",   label: "Private wealth",   icon: "trending_up", roles: ["owner"] },
         ],
       },
@@ -1025,7 +1026,7 @@ export function getCrumb(pathname: string): string[] {
 }
 
 /** A personal login's Money tabs (/vault/personal/*) — the tab names its page header shows. */
-const PERSONAL_MONEY_TABS: Record<string, string> = { banking: "Banking", expenses: "Expenses", wealth: "Wealth" };
+const PERSONAL_MONEY_TABS: Record<string, string> = { banking: "Banking", expenses: "Expenses", loans: "Loans", wealth: "Wealth" };
 
 /**
  * The breadcrumb for this role. Same as getCrumb, except a personal login (GP-07a, R-2115
