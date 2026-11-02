@@ -41,7 +41,7 @@ export function notReached(nothingDone: string, retry: () => void): void {
 }
 
 // ── Razorpay Checkout JS — loaded the first time someone pays ────────────────────────────────
-interface RazorpayCheckoutResponse { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }
+export interface RazorpayCheckoutResponse { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }
 interface RazorpayCheckoutOptions {
   key: string; amount: number; currency: string; name: string; description?: string; order_id: string;
   handler?: (resp: RazorpayCheckoutResponse) => void;
@@ -54,12 +54,13 @@ interface RazorpayCheckoutInstance {
   open: () => void;
   on: (event: "payment.failed", handler: (resp: { error: { description?: string } }) => void) => void;
 }
-type RazorpayCtor = new (options: RazorpayCheckoutOptions) => RazorpayCheckoutInstance;
+export type RazorpayCtor = new (options: RazorpayCheckoutOptions) => RazorpayCheckoutInstance;
 
 const RAZORPAY_CHECKOUT_SRC = "https://checkout.razorpay.com/v1/checkout.js";
 const rzpGlobal = () => (window as unknown as { Razorpay?: RazorpayCtor }).Razorpay;
 
-function loadRazorpayCheckout(): Promise<RazorpayCtor> {
+/** R-2021: the phone checkout opens the same Razorpay window, loaded the same way. */
+export function loadRazorpayCheckout(): Promise<RazorpayCtor> {
   return new Promise((resolve, reject) => {
     if (typeof window === "undefined") return reject(new Error("Razorpay Checkout requires a browser"));
     const have = rzpGlobal();

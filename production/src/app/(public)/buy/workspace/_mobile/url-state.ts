@@ -4,13 +4,20 @@
  * lands on the same screen with the same choices. Every OTHER parameter (utm_*, fbclid, gclid,
  * coupon …, R-1978) is left exactly as it was: only these five keys are ever written.
  * Anything unexpected in a link is ignored, never trusted.
+ *
+ * R-2021 (R-2019b): the phone checkout's three steps — domain, details, review — are steps too,
+ * so a refresh keeps the step. What the buyer TYPED (name, mobile, domain …) never goes in the
+ * address bar: it stays in this phone's own storage (form-state.ts).
  */
 import { clampSeats, type Billing } from "../_parts/plans";
 import { MAX_ONLINE_SEATS } from "@/lib/checkout/buy-link";
 
-/** R-2021 adds domain / details / review after these. */
-export const MOBILE_STEPS = ["plans", "compare"] as const;
+/** Plans and Compare, then the checkout: Domain, Details, Review & pay (R-2021). */
+export const MOBILE_STEPS = ["plans", "compare", "domain", "details", "review"] as const;
 export type MobileStep = (typeof MOBILE_STEPS)[number];
+/** The checkout steps, in order — "Step n of 3". */
+export const CHECKOUT_STEPS = ["domain", "details", "review"] as const;
+export type CheckoutStep = (typeof CHECKOUT_STEPS)[number];
 export type Intent = "transfer" | "new";
 export type MobileTier = "starter" | "standard";
 
@@ -26,7 +33,6 @@ export interface MobileState {
 export const MOBILE_MAX_ONLINE = MAX_ONLINE_SEATS;
 /** R-2019 goal 2 (Pardeep, 27 Oct): 5 licences when the link names none. */
 export const DEFAULT_SEATS = 5;
-const KEYS = ["step", "intent", "tier", "seats", "billing"] as const;
 
 type Params = URLSearchParams | Record<string, string | string[] | undefined>;
 
@@ -62,17 +68,7 @@ export function writeMobileState(search: string, s: MobileState): string {
   return q ? `?${q}` : "";
 }
 
-/**
- * Continue — until the phone checkout (R-2021) ships, the v2 page's own checkout takes over
- * with the same plan, licences and billing (?buy=1 opens it); the ad parameters ride along.
- */
-export function continueHref(search: string, s: MobileState): string {
-  const p = new URLSearchParams(search);
-  for (const k of KEYS) p.delete(k);
-  p.set("view", "desktop");
-  p.set("tier", s.tier);
-  p.set("seats", String(Math.min(s.seats, MOBILE_MAX_ONLINE)));
-  p.set("billing", s.billing);
-  p.set("buy", "1");
-  return `/buy/workspace?${p.toString()}`;
+/** 1-based "Step n of 3" for a checkout step, else 0 (Plans / Compare). */
+export function checkoutStepNumber(step: MobileStep): number {
+  return (CHECKOUT_STEPS as readonly string[]).indexOf(step) + 1;
 }
