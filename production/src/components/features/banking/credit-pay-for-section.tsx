@@ -58,6 +58,8 @@ import { cleanAmount, pickDefault, pickProblem, splitBlocked, splitPartPaid, spl
 import { CreditPaySplit } from "./credit-pay-for-split";
 import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
+import { zohoKeptLines, zohoSaleNumber, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
+import { ZohoFindPanel, type NewCustomerSeed } from "./zoho-find-panel";
 
 const NEW_CUSTOMER = "__new_customer__";
 
@@ -67,8 +69,8 @@ interface Props {
   transaction: BankTransactionRow;
   customers: readonly PayForCustomer[];
   /** Opens the shared Add-customer form; the parent passes back the new id via `pickedCustomerId`.
-   *  Left out (relink) → no "New customer" choice. */
-  onNewCustomer?: () => void;
+   *  Left out (relink) → no "New customer" choice. R-2360: Find in Zoho passes Zoho's name + GSTIN. */
+  onNewCustomer?: (seed?: NewCustomerSeed) => void;
   /** A customer the parent just created — picked here. */
   pickedCustomerId?: string | null;
   /** Left out (relink) → no "Project payment" button. Gets the customer chosen in "Who paid?"
@@ -208,6 +210,28 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const datesBad = makesSub && createSub && (!subStart || renewalShown <= subStart || Boolean(renewalProblem));
   const termText = mode === "sale" ? saleTermText(subStart, renewalShown) : null;
 
+  /* R-2359: "Find in Zoho" fills THIS form — customer, "A new sale", products, seats, rate and the
+     Zoho dates. Declared after the reset effects above so, in the same commit, the Zoho values win
+     over their resets. Nothing is saved: Save stays the owner's press. */
+  const [zohoFill, setZohoFill] = React.useState<ZohoPrefill | null>(null);
+  const [zohoModeFor, setZohoModeFor] = React.useState<string | null>(null);
+  React.useEffect(() => { setZohoFill(null); setZohoModeFor(null); }, [transaction.id]);
+  const applyZoho = (p: ZohoPrefill) => {
+    setZohoFill(p); setZohoModeFor(null);
+    setLines(p.lines);
+    if (p.customer) { setCustomerId(p.customer.id); setTouchedCustomer(true); }
+  };
+  React.useEffect(() => {
+    if (!zohoFill || !customerId || zohoModeFor === customerId || zohoFill.lines.length === 0) return;
+    setMode("sale"); setZohoModeFor(customerId);
+  }, [zohoFill, customerId, zohoModeFor]);
+  React.useEffect(() => {
+    if (!zohoFill?.subStart || mode !== "sale") return;
+    setSubStart(zohoFill.subStart); setSubRenewal(zohoFill.subRenewal);
+  }, [zohoFill, mode, pickKey, transaction.id, transaction.txn_date]);
+  /* R-2360: the one Zoho invoice number this sale keeps on its app invoice (none on a relink). */
+  const zohoNumber = relink ? null : zohoSaleNumber(zohoFill);
+
   /* ── 3. Amount check ─────────────────────────────────────────────────────────── */
   /* R-2026: a new sale paid in parts is due its FIRST bill now (Annual + Quarterly = one
      quarter + GST); the rest of the schedule is shown under it. */
@@ -299,6 +323,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                 subStart: subArgs.subStart, subRenewal: subArgs.subRenewal, amount: roundOff.saleAmount }
             : null,
           rest: roundOff.rest,
+          externalNumber: zohoNumber,
         });
         setResult(r);
         onSaved?.();
@@ -318,6 +343,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                 subStart: subArgs.subStart, subRenewal: subArgs.subRenewal, amount: saleAmt }
             : null,
           rest,
+          externalNumber: zohoNumber,
         });
         setResult(r);
         onSaved?.();
@@ -333,7 +359,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         ? {
             path: "new_sale", transactionId: transaction.id, customerId, lines, billingCycle: saleCycle,
             createSubscription: subArgs.createSubscription ?? false, subStart: subArgs.subStart, subRenewal: subArgs.subRenewal,
-            tdsAmount, tdsRatePct: tdsRate, tdsSection,
+            tdsAmount, tdsRatePct: tdsRate, tdsSection, externalNumber: zohoNumber,
           }
         : { path: "advance", transactionId: transaction.id, customerId };
     try {
@@ -381,7 +407,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           <Icon name="check" size={14} className="text-emerald" /> Done — this bank line is reconciled
         </p>
         <ul className="space-y-1">
-          {resultLines(result).map((l, i) => (
+          {[...resultLines(result), ...zohoKeptLines(result)].map((l, i) => (
             <li key={i} className={`text-sm break-words ${l.tone === "warn" ? "text-amber-ink" : "text-ink"}`}>
               {l.href ? <Link href={l.href as never} className="underline hover:no-underline">{l.text}</Link> : l.text}
             </li>
@@ -423,6 +449,19 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         <p id="payfor-h" className="text-xs font-semibold text-ink-2">{relink ? "This money was really for:" : "Money from a customer? This money is for:"}</p>
         <p className="text-xs text-ink-3 mt-0.5">Pick the customer and what they paid — the renewal, extra seats or new subscription is updated with the payment.</p>
       </div>
+
+      {/* R-2359: look the payment up in Zoho Books and fill the form below (not on a relink). */}
+      {!relink && (
+        <ZohoFindPanel
+          transactionId={transaction.id}
+          txnDate={transaction.txn_date}
+          credit={credit}
+          customers={customers}
+          catalog={activeCatalog}
+          onPrefill={applyZoho}
+          onNewCustomer={onNewCustomer}
+        />
+      )}
 
       {/* 1. Customer */}
       <div className="space-y-1">

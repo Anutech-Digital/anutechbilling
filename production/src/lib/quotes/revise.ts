@@ -23,6 +23,8 @@ export interface RevisableQuote {
   superseded_by?: string | null;
   revision_of?: string | null;
   revision_no?: number | null;
+  /** R-2044 part payment request (not in the generated row type — read off the full row). */
+  subscription_billing_id?: string | null;
 }
 
 export type ReviseCheck = { ok: true } | { ok: false; reason: string };
@@ -31,6 +33,11 @@ export type ReviseCheck = { ok: true } | { ok: false; reason: string };
 export function canReviseQuote(q: RevisableQuote, received: number): ReviseCheck {
   if (q.superseded_by) return { ok: false, reason: `Already replaced by ${q.superseded_by}.` };
   if (q.status === "draft") return { ok: false, reason: "A draft can be edited directly." };
+  /* R-2368: a part payment request IS its part (quotes_subscription_billing_once — one quote per
+     part), so a copy cannot carry the part and paying it would be a new sale. */
+  if (q.subscription_billing_id) {
+    return { ok: false, reason: "This is the payment request for one part of a subscription billed in parts, so it can't be revised. Change the part on the subscription instead." };
+  }
   if (q.status !== "sent" && q.status !== "viewed") {
     return { ok: false, reason: `Only a sent quote can be revised (this one is ${q.status}).` };
   }
@@ -56,13 +63,15 @@ export function nextRevision(q: Pick<RevisableQuote, "id" | "revision_of" | "rev
   return { id: `${root}-R${revisionNo}`, revisionOf: root, revisionNo };
 }
 
-/** The quote columns a revision copies — terms, lines and parties; never money, approval or status. */
+/** The quote columns a revision copies — terms, lines, parties and the subscription link of an
+ *  add-seats quote; never money, approval or status. */
 export type RevisionSource = RevisableQuote & Pick<Quote,
   | "tenant_id" | "customer_id" | "customer_name" | "lead_id" | "owner_id" | "plan" | "seats" | "amount"
   | "line_items" | "subtotal" | "total_cost" | "discount_pct" | "tax_rate" | "notes" | "is_renewal" | "domain"
   | "extension_months" | "is_extension" | "is_add_seats" | "currency" | "exchange_rate" | "is_one_off"
   | "billing_cycle" | "payment_terms_days" | "terms_conditions" | "prospect_state_code" | "prospect_state"
-  | "prospect_country" | "fx_source" | "fx_date" | "created_date" | "expires_date">;
+  | "prospect_country" | "fx_source" | "fx_date" | "created_date" | "expires_date"
+  | "add_seats_subscription_id" | "add_seats_mrr_added">;
 
 /**
  * The new DRAFT row for a revision: a copy of the quote's terms under the next family id.
@@ -98,6 +107,13 @@ export function revisionDraft(q: RevisionSource, next: RevisionId, todayIso: str
     extension_months: q.extension_months,
     is_extension: q.is_extension,
     is_add_seats: q.is_add_seats,
+    /* R-2368: an add-seats quote's revision keeps the subscription it added seats to (and the
+       MRR those seats added) — without it the -R2 was paid with no link to the subscription
+       (staging 2 Nov: Q-A378-27-0565-R2..0567-R2, 0880-R2). A renewal quote's link
+       (renewal_subscription_id / renewal_term_date, one quote per term) moves to the revision
+       when it is SENT — database trigger trg_quote_revision_hands_over_renewal (R-2368). */
+    add_seats_subscription_id: q.add_seats_subscription_id ?? null,
+    add_seats_mrr_added: q.add_seats_mrr_added ?? null,
     currency: q.currency,
     exchange_rate: q.exchange_rate,
     is_one_off: q.is_one_off,

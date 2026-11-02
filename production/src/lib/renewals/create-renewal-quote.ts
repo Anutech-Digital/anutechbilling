@@ -73,6 +73,8 @@ export interface CreateRenewalQuoteInput {
    * term-aware reminder ladder shipped on 22 Aug and never reached the pricing.
    */
   termMonths?:     number | null;
+  /** R-2369: `subscriptions.term_amount` — the exact sold amount for one term; null → from mrr. */
+  termAmount?:     number | null;
   renewalDate:     string;          // ISO date or YYYY-MM-DD
   graceDays:       number;          // tenant.grace_period_days
   /** Existing renewal_quote_id, if any. When present, we just load and return it. */
@@ -176,6 +178,7 @@ export async function createOrGetRenewalQuote(
   const term = renewalTerm({
     mrr: input.mrr,
     termMonths: input.termMonths ?? null,
+    termAmount: input.termAmount ?? null,
     seats: input.seats,
     catalogPerSeatMonth: (catalogItem as { msrp?: number | null } | null)?.msrp ?? null,
   });

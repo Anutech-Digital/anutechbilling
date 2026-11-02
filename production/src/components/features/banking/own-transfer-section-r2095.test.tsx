@@ -8,9 +8,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 
 import type { BankTransactionRow } from "@/lib/queries/bank";
 
-const s = vi.hoisted(() => ({ book: vi.fn(), post: vi.fn(), create: vi.fn() }));
+const s = vi.hoisted(() => ({ book: vi.fn(), bookInterest: vi.fn(), post: vi.fn(), create: vi.fn() }));
 vi.mock("@/lib/queries/bank-other-income", () => ({
   useBookOtherIncome: () => ({ mutateAsync: s.book, isPending: false }),
+  useBookInterestIncome: () => ({ mutateAsync: s.bookInterest, isPending: false }),
   useReconcileAsTransfer: () => ({ mutateAsync: s.post, isPending: false }),
 }));
 vi.mock("@/lib/queries/bank", () => ({
@@ -30,7 +31,7 @@ const line = (p: Partial<BankTransactionRow>) => ({
   debit: 0, credit: 1234, reference: null, category: null, ...p,
 }) as unknown as BankTransactionRow;
 
-afterEach(() => { cleanup(); s.book.mockReset(); s.post.mockReset(); s.create.mockReset(); });
+afterEach(() => { cleanup(); s.book.mockReset(); s.bookInterest.mockReset(); s.post.mockReset(); s.create.mockReset(); });
 
 describe("R-2095 interest received", () => {
   it("an INT.PD narration starts on Interest received and books it", async () => {
@@ -39,7 +40,8 @@ describe("R-2095 interest received", () => {
     const done = vi.fn();
     render(<OtherIncomeSection transaction={line({})} onDone={done} />);
     fireEvent.click(screen.getByRole("button", { name: /Book ₹1,234 as interest received/ }));
-    await waitFor(() => expect(s.book).toHaveBeenCalledWith({ transactionId: "t1", head: "interest" }));
+    /* R-2366: interest goes through book_bank_credit_as_interest (source from the narration). */
+    await waitFor(() => expect(s.bookInterest).toHaveBeenCalledWith({ transactionId: "t1", source: "other", fdAccountId: null, principal: 0, interest: 1234, tds: 0 }));
     expect(done).toHaveBeenCalled();
   });
 });

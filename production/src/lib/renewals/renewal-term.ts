@@ -42,6 +42,13 @@ export interface RenewalTermInput {
   mrr: number | null;
   /** `subscriptions.term_months`. 1 = monthly, 12 = annual. */
   termMonths: number | null;
+  /**
+   * R-2369: `subscriptions.term_amount` — the exact ex-GST amount for one term at the current
+   * seats, kept from the sold quote line. When present it prices the renewal; mrr (whole rupees a
+   * month) only stands in when it is null. Without it, 5 × ₹850/yr filed as mrr ₹355 renewed at
+   * round(355 × 12 ÷ 5) = ₹852 a seat = ₹4,260, and a ₹1,300/yr domain (mrr ₹108) at ₹1,296.
+   */
+  termAmount?: number | null;
   seats: number | null;
   /**
    * The catalogue's MSRP per seat per month for this plan, when it is known.
@@ -120,6 +127,19 @@ export function renewalTerm(input: RenewalTermInput): RenewalTermResult {
      rate × qty on the quote IS the subtotal. Before, subtotal = round(mrr × months) and the
      line carried round(subtotal ÷ seats) "for display": 10 seats at ₹83/mo read
      ₹100 × 10 = ₹1,000 over a ₹996 subtotal. */
+  /* R-2369: the exact sold term amount wins — per seat for the term, rounded ONCE. It is the
+     amount for the subscription's own term_months, which is the term quoted here. */
+  const exact = input.termAmount ?? 0;
+  if (exact > 0) {
+    const exactPerSeat = Math.round(exact / seats);
+    return {
+      ok: true,
+      termMonths,
+      subtotal: exactPerSeat * seats,
+      perSeatRate: exactPerSeat,
+      commitment: termMonths === 1 ? "monthly" : "annual_yearly",
+    };
+  }
   const annualPerSeat = Math.round((mrr * 12) / seats);
   const perSeatRate = termMonths % 12 === 0
     ? annualPerSeat * (termMonths / 12)

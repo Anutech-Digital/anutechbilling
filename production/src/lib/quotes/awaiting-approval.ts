@@ -106,12 +106,15 @@ export function tiersApprovableBy(role: string | null | undefined): ApprovableTi
 export function eligibleApprovers(
   users: readonly ApproverPerson[],
   quote: PendingQuoteFacts,
+  /** R-2367: people who made or revised any quote of the family — they cannot approve it. */
+  makers: readonly string[] = [],
 ): ApproverPerson[] {
   const roles = approversForTier(quote.approval_tier);
   if (roles.length === 0) return [];
   return users.filter(
     (u) =>
       u.id !== quote.approval_requested_by &&
+      !makers.includes(u.id) &&
       roles.includes((u.role ?? "") as UserRole),
   );
 }

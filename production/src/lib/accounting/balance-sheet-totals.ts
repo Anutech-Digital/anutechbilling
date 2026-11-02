@@ -81,7 +81,7 @@ export function balanceSheetTotals(
     + (a?.advanceTaxPaid ?? 0);
   const autoLiab =
     (a?.payables ?? 0) + (a?.advancesFromCustomers ?? 0) + (a?.salaryPayable ?? 0) + (a?.salaryDuesPayable ?? 0)
-    + (a?.reimbursementsPayable ?? 0) + (a?.creditCardPayable ?? 0) + (a?.emiLoansPayable ?? 0)
+    + (a?.reimbursementsPayable ?? 0) + (a?.creditCardPayable ?? 0) + (a?.bankOverdraft ?? 0) + (a?.emiLoansPayable ?? 0)
     + (a?.businessLoansPayable ?? 0) + gstPayable + otherPayables;
 
   const manualAssets = sum("asset");
@@ -101,7 +101,8 @@ export function balanceSheetTotals(
     + (a?.tdsReceivable ?? 0) + gstCredit + (a?.advanceTaxPaid ?? 0) + manualAssets;
   const currentLiab =
     (a?.payables ?? 0) + (a?.advancesFromCustomers ?? 0) + (a?.salaryPayable ?? 0) + (a?.salaryDuesPayable ?? 0)
-    + (a?.reimbursementsPayable ?? 0) + (a?.creditCardPayable ?? 0) + gstPayable + otherPayables + manualLiab;
+    + (a?.reimbursementsPayable ?? 0) + (a?.creditCardPayable ?? 0) + (a?.bankOverdraft ?? 0)   // R-2373: OD is repayable on demand — current
+    + gstPayable + otherPayables + manualLiab;
 
   return {
     gstCredit, gstPayable, totalAssets, totalLiab, netWorth, retained, currentAssets, currentLiab,

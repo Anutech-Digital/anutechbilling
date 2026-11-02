@@ -2175,6 +2175,8 @@ export type Database = {
         Row: {
           account_number_last4: string | null
           account_type: string
+          closed_note: string | null
+          closed_on: string | null
           bank_name: string
           created_at: string
           id: string
@@ -2191,6 +2193,8 @@ export type Database = {
         Insert: {
           account_number_last4?: string | null
           account_type?: string
+          closed_note?: string | null
+          closed_on?: string | null
           bank_name: string
           created_at?: string
           id?: string
@@ -2207,6 +2211,8 @@ export type Database = {
         Update: {
           account_number_last4?: string | null
           account_type?: string
+          closed_note?: string | null
+          closed_on?: string | null
           bank_name?: string
           created_at?: string
           id?: string
@@ -12041,6 +12047,7 @@ export type Database = {
           suspended_invoice_id: string | null
           tenant_id: string
           term_months: number
+          term_amount: number | null
           updated_at: string
           used: number | null
           used_synced_at: string | null
@@ -12093,6 +12100,7 @@ export type Database = {
           suspended_invoice_id?: string | null
           tenant_id: string
           term_months?: number
+          term_amount?: number | null
           updated_at?: string
           used?: number | null
           used_synced_at?: string | null
@@ -12145,6 +12153,7 @@ export type Database = {
           suspended_invoice_id?: string | null
           tenant_id?: string
           term_months?: number
+          term_amount?: number | null
           updated_at?: string
           used?: number | null
           used_synced_at?: string | null
@@ -15395,6 +15404,10 @@ export type Database = {
         Returns: undefined
       }
       claim_customer: { Args: { p_customer_id: string }; Returns: undefined }
+      close_bank_account: {
+        Args: { p_account_id: string; p_closed_on: string; p_note?: string }
+        Returns: undefined
+      }
       combine_quotes: { Args: { p_quote_ids: string[] }; Returns: Json }
       compute_advance_adjustment: {
         Args: { p_quote_id: string }
@@ -16018,6 +16031,15 @@ export type Database = {
         }
         Returns: string
       }
+      merge_employees: {
+        Args: {
+          p_dry_run?: boolean
+          p_dup_id: string
+          p_keep_both?: boolean
+          p_keep_id: string
+        }
+        Returns: Json
+      }
       merge_leads: {
         Args: { p_duplicate_id: string; p_primary_id: string }
         Returns: undefined
@@ -16579,6 +16601,7 @@ export type Database = {
         }
         Returns: Json
       }
+      reopen_bank_account: { Args: { p_account_id: string }; Returns: undefined }
       reopen_quote: { Args: { p_quote_id: string }; Returns: undefined }
       remove_opening_invoice_import: {
         Args: {
@@ -16593,6 +16616,7 @@ export type Database = {
           advances_from_customers: number
           as_of: string
           bill_itc_groups: Json
+          bank_overdraft: number
           bills_gst: number
           business_loans_payable: number
           cash_and_bank: number

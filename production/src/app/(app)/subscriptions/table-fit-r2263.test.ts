@@ -46,8 +46,20 @@ describe("R-2263 — Subscriptions table fits a 1280 laptop", () => {
     expect(SUBS_TABLE_BUDGET_PX).toBeLessThanOrEqual(944);
     expect(fixed + flex.length * SUBS_FLEX_MIN_PX).toBeLessThanOrEqual(SUBS_TABLE_BUDGET_PX);
     expect(SUBS_TABLE_COLS.map((c) => c.key)).toEqual([
-      "select", "customer", "plan", "seats_mrr", "margin", "renewal", "status", "actions",
+      "select", "customer", "plan", "seats_mrr", "margin", "renewal", "payment", "status", "actions",
     ]);
+  });
+
+  it("R-2382: Payment column sits between Renewal and Status, rendered by PaymentStatusCell", () => {
+    const t = desktopTable();
+    const h = headerRow();
+    expect(h.indexOf(">Payment</th>")).toBeGreaterThan(h.indexOf('label="Renewal"'));
+    expect(h.indexOf(">Payment</th>")).toBeLessThan(h.indexOf('label="Status"'));
+    const cell = t.slice(t.indexOf('data-col="payment"'), t.indexOf('data-col="status"'));
+    expect(cell).toContain("<PaymentStatusCell status={paymentOf(s)} />");
+    // One fact one place: the owed ₹ / due chip is not repeated in the Status cell.
+    const status = t.slice(t.indexOf('data-col="status"'), t.indexOf('data-col="actions"'));
+    expect(status).toContain("omit={PAYMENT_COLUMN_KEYS}");
   });
 
   it("the table uses a fixed layout driven by that budget (no auto widths)", () => {

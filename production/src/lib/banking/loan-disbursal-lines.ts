@@ -59,3 +59,42 @@ export function disbursalCandidates(
       && l.txn_date >= window.from && l.txn_date <= window.to)
     .sort((x, y) => Math.abs(toMs(x.txn_date) - a) - Math.abs(toMs(y.txn_date) - a) || x.txn_date.localeCompare(y.txn_date));
 }
+
+/**
+ * R-2377 — Business Loans → "Add loan": the dates to look in are ±15 days around "Taken on"
+ * (there is no first EMI here). The server (record_business_loan, R-2377) re-checks the line.
+ */
+export function takenOnWindow(takenOn: string | null | undefined): { anchor: string; from: string; to: string } | null {
+  if (!takenOn || Number.isNaN(toMs(takenOn))) return null;
+  return {
+    anchor: takenOn,
+    from: toDay(toMs(takenOn) - DISBURSAL_DAYS * DAY),
+    to: toDay(toMs(takenOn) + DISBURSAL_DAYS * DAY),
+  };
+}
+
+/* Words every lender name has — they say nothing about WHICH lender it is. */
+const GENERIC_LENDER_WORDS = new Set([
+  "bank", "ltd", "limited", "pvt", "private", "the", "and", "finance", "financial", "services", "company", "corp", "nbfc", "loan", "loans",
+]);
+
+/** R-2377: the narration names the lender ("FT … BAJAJ FINANCE" for "Bajaj Finance"). */
+export function lenderInNarration(description: string | null | undefined, lender: string | null | undefined): boolean {
+  const words = (lender ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !GENERIC_LENDER_WORDS.has(w));
+  if (words.length === 0) return false;
+  const text = ` ${(description ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  return words.some((w) => text.includes(` ${w}`));   // a word starting with it ("BAJAJFIN" too)
+}
+
+/**
+ * R-2377: the money-in lines that can be this loan's money — the R-2341 rule (account, money in,
+ * not reconciled, amount ±₹1) within ±15 days of "Taken on"; lines naming the lender first, then
+ * nearest date.
+ */
+export function businessLoanCandidates(
+  lines: readonly MoneyInLine[], principal: number, takenOn: string | null | undefined, lender: string | null | undefined,
+): MoneyInLine[] {
+  const near = disbursalCandidates(lines, principal, takenOnWindow(takenOn));
+  const named = near.filter((l) => lenderInNarration(l.description, lender));
+  return [...named, ...near.filter((l) => !named.includes(l))];
+}

@@ -109,7 +109,7 @@ import { quoteEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-econo
 import { linesMissingCost, missingCostReason, namedApprovalReasons, addCostHref } from "@/lib/quotes/missing-cost-reason";
 import { customerCopyBlock, CUSTOMER_COPY_BLOCKED_TITLE } from "@/lib/quotes/customer-copy-gate";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
-import { useRequestApproval } from "@/lib/queries/quotes";
+import { useRequestApproval, useQuoteChainMakers } from "@/lib/queries/quotes";
 import { recordPaymentBlock, recordPaymentStep, quoteHeaderStatus, withApprovalStep, activateOnCreditBlock } from "./payment-approval-gate";
 import { PaymentApprovalNotice } from "./payment-approval-notice";
 import { usePaymentsByQuote, totalReceived as sumReceived } from "@/lib/queries/payments";
@@ -266,7 +266,12 @@ export default function QuoteDetailPage() {
      disagreement is exactly what `canSend` is for. */
   const approvalEconomics = React.useMemo(() => quote ? quoteEconomics(quote) : null, [quote]);
   const approvalNeed      = React.useMemo(() => approvalEconomics ? requiredApproval(approvalEconomics) : null, [approvalEconomics]);
-  const approvalRec       = React.useMemo(() => quote ? quoteApprovalRecord(quote) : null, [quote]);
+  /* R-2367: everyone who made or revised this quote family — they cannot approve it. */
+  const { data: chainMakers } = useQuoteChainMakers(quote?.id);
+  const approvalRec       = React.useMemo(
+    () => quote ? { ...quoteApprovalRecord(quote), makers: chainMakers, note: (quote as { approval_note?: string | null }).approval_note ?? null } : null,
+    [quote, chainMakers],
+  );
   /* R-2028 (3): the reason names the line with no vendor cost; "Add cost" opens its cost box.
      Display only — the approval rule (requiredApproval) is unchanged. */
   const missingCostLines  = React.useMemo(() => linesMissingCost(quote?.line_items ?? []), [quote]);
@@ -288,14 +293,19 @@ export default function QuoteDetailPage() {
   const { data: team, isSuccess: teamLoaded } = useTeamMembers();
   const approverNames = React.useMemo(() => {
     if (!teamLoaded || !quote) return undefined;
-    return approverSentence(eligibleApprovers(team ?? [], quote));
-  }, [teamLoaded, team, quote]);
+    return approverSentence(eligibleApprovers(team ?? [], quote, chainMakers ?? []));
+  }, [teamLoaded, team, quote, chainMakers]);
 
-  const sendGate          = !partRequest && approvalNeed && approvalRec ? canSend(approvalRec, approvalNeed, approverNames) : null;
+  /* R-2383: the company's only approver (an owner) may clear their own quote with a reason. */
+  const approvalTeam      = teamLoaded ? (team ?? []) : undefined;
+  const viewerApproval    = approvalNeed && approvalRec && me
+    ? canApprove({ id: me.userId, role: me.role }, approvalRec, approvalNeed, approvalTeam)
+    : null;
+  const sendGate          = !partRequest && approvalNeed && approvalRec
+    ? canSend(approvalRec, approvalNeed, approverNames, { selfApproval: viewerApproval?.selfApproval === true })
+    : null;
   const approvalPill      = !partRequest && approvalNeed && approvalRec ? approvalBadge(approvalRec, approvalNeed) : null;
-  const viewerCanApprove  = approvalNeed && approvalRec && me
-    ? canApprove({ id: me.userId, role: me.role }, approvalRec, approvalNeed).allowed
-    : false;
+  const viewerCanApprove  = viewerApproval?.allowed ?? false;
 
   /* Lifecycle bar. Every step reads a fact that either exists or does not — see
      lib/quotes/lifecycle.ts on why a skipped step must never render as a tick. */
@@ -1142,6 +1152,12 @@ export default function QuoteDetailPage() {
                       {approvalPill.label}
                     </Badge>
                   </button>
+                  {/* R-2383: the sole owner's written reason, where the approval is shown. */}
+                  {approvalRec?.status === "approved" && approvalRec.note && (
+                    <span className="max-w-[28rem] truncate text-ink-2" title={`Self-approved by sole owner: ${approvalRec.note}`} data-testid="self-approval-note">
+                      Self-approved by sole owner: {approvalRec.note}
+                    </span>
+                  )}
                 </>
               )}
               {partRequest && (
@@ -2198,6 +2214,7 @@ export default function QuoteDetailPage() {
           requirement={{ ...approvalNeed, reasons: shownApprovalReasons }}
           record={approvalRec}
           viewer={{ id: me.userId, role: me.role }}
+          team={approvalTeam}
         />
       )}
 

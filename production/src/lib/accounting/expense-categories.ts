@@ -41,5 +41,9 @@ export const EXPENSE_CATEGORIES = [
      property tax, ROC fees. NOT GST or income tax themselves: those settle a liability or
      sit as an asset, and are booked from the bank line as a tax payment instead. */
   "Rates & Taxes",
+  /* R-2374: interest on a business loan, OD or flexi line — FINANCE COST, shown apart on the
+     P&L (lib/accounting/credit-line.ts). Booked by Banking → Reconcile → Loan / EMI → Credit line
+     / loan repayment; the principal part reduces the loan and is never an expense. */
+  "Interest on loans / OD",
   "Other",
 ] as const;

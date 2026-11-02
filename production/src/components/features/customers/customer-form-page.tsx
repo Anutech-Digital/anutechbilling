@@ -45,6 +45,13 @@ import { GroupFormDialog } from "./group-form-dialog";
 import { useCustomerGroups } from "@/lib/queries/customer-groups";
 import type { Customer } from "@/lib/supabase/database.types";
 import { returnPathFromSearch } from "./return-path";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canRecordMoney } from "@/lib/auth/roles";
+import { TDS_SECTIONS } from "@/lib/queries/tds-receivable";
+import { checkTdsRate } from "@/lib/accounting/tds-rates";
+import {
+  CUSTOMER_TDS_NONE, rateForPickedSection, customerTdsLabel,
+} from "@/lib/accounting/customer-tds-default";
 
 const selectClass =
   "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
@@ -111,6 +118,12 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
     /* R-2108: "?return=" (e.g. Hosting & Domains → Add email) goes back there after Save. */
     onSaved: (id) => router.push((returnPathFromSearch(window.location.search) ?? `/customers/${id}`) as never),
   });
+
+  /* R-2370: TDS section + rate — money roles only (same list as "record money"). */
+  const { data: me } = useCurrentUser();
+  const canSetTds = canRecordMoney(me?.role);
+  const tdsSection = watch("tds_section") ?? CUSTOMER_TDS_NONE;
+  const tdsRateCheck = checkTdsRate(tdsSection, Number(watch("tds_rate_pct") || 0));
 
   // Parent account / group picker — links this company to a common reseller.
   const { data: customerGroups } = useCustomerGroups();
@@ -537,6 +550,48 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
               <option value="45">Net 45</option>
             </select>
           </Row>
+
+          {/* R-2370: the TDS this customer deducts — pre-fills "Customer deducted TDS" on its receipts. */}
+          <Row label="TDS the customer deducts" htmlFor="tds_section" hint="Pre-fills the TDS section and rate when you record this customer's payment.">
+            <div className="grid grid-cols-[minmax(0,1fr)_110px] gap-2">
+              <select
+                id="tds_section" className={selectClass} disabled={!canSetTds}
+                value={tdsSection}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setValue("tds_section", v, { shouldDirty: true });
+                  setValue("tds_rate_pct", rateForPickedSection(v), { shouldDirty: true, shouldValidate: true });
+                }}
+              >
+                <option value={CUSTOMER_TDS_NONE}>No TDS</option>
+                {TDS_SECTIONS.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+                {tdsSection && !TDS_SECTIONS.some((s) => s.value === tdsSection) && (
+                  <option value={tdsSection}>{tdsSection}</option>
+                )}
+              </select>
+              <div className="relative">
+                <Input
+                  id="tds_rate_pct" aria-label="TDS rate (%)" inputMode="decimal"
+                  disabled={!canSetTds || !tdsSection}
+                  placeholder="Rate"
+                  {...register("tds_rate_pct")}
+                  className="pr-7"
+                />
+                <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-ink-3">%</span>
+              </div>
+            </div>
+            {errors.tds_rate_pct?.message && (
+              <p role="alert" className="mt-1 text-xs text-rose">{String(errors.tds_rate_pct.message)}</p>
+            )}
+            {!errors.tds_rate_pct && tdsSection && tdsRateCheck.message && (
+              <p className="mt-1 text-2xs text-ink-3">{tdsRateCheck.message}</p>
+            )}
+            {!canSetTds && (
+              <p className="mt-1 text-2xs text-ink-3">Only an owner, manager, accountant or billing user can change this.</p>
+            )}
+          </Row>
         </section>
 
         {/* ── Address ── */}
@@ -688,6 +743,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
               />
               <ReviewLine label="GST treatment" value={gstTreatmentOption(gstTreatment)?.label} />
               <ReviewLine label="PAN" mono value={isForeign ? "" : watch("pan")} />
+              <ReviewLine label="TDS" value={customerTdsLabel({ section: tdsSection, ratePct: watch("tds_rate_pct") ?? "" })} />
               <ReviewLine label="Contact"  value={[watch("contact_first_name"), watch("contact_last_name")].filter(Boolean).join(" ") || (isIndividual ? "" : companyName?.trim())} />
               <ReviewLine label="Email"    value={watch("contact_email")} />
               <ReviewLine label="Phone"    value={watch("contact_phone")} />

@@ -71,6 +71,7 @@ import { isRazorpaySettlementLine } from "@/lib/razorpay/settlement-match";
 import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-section";
 import { EmiRepaymentSection } from "@/components/features/banking/emi-repayment-section";
 import { LoanGivenReceiptSection } from "@/components/features/banking/loan-given-receipt-section";
+import { CreditLineSection } from "@/components/features/banking/credit-line-section";
 import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
 import { CustomerRefundSection } from "@/components/features/banking/customer-refund-section";
 import { OtherIncomeSection } from "@/components/features/banking/other-income-section";
@@ -85,6 +86,7 @@ import { guessCustomer, itemKey as creditItemKey } from "@/lib/banking/credit-pa
 import { usePayerMemory } from "@/lib/queries/customer-payers";
 import { useReconcileSuggestion, SuggestionCard, logSuggestion } from "@/components/features/banking/reconcile-suggestion-card";
 import { dropReconciledExpenses, expenseSuggestionIds, useReconciledExpenseIds } from "@/lib/banking/reconciled-suggestions";
+import { ManualReconcileDialog } from "@/components/features/banking/manual-reconcile-dialog";
 import {
   WhoTiles, ChosenTileBar, ReconcileFooter, SectionSlot, tileLabel, pickFooterSave,
   type WhoTile, type FooterSave,
@@ -138,6 +140,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const [transferSave, setTransferSave] = React.useState<FooterSave | null>(null);
   const [otherIncomeSave, setOtherIncomeSave] = React.useState<FooterSave | null>(null);
   const [loanReceiptSave, setLoanReceiptSave] = React.useState<FooterSave | null>(null);
+  /* R-2374: a drawdown / repayment on a credit line or business loan (Loan / EMI tile). */
+  const [creditLineSave, setCreditLineSave] = React.useState<FooterSave | null>(null);
   const [razorpaySave, setRazorpaySave] = React.useState<FooterSave | null>(null);
   /* R-2008: on a tile with several forms, the one the owner last clicked or typed in owns the footer. */
   const [footerPick, setFooterPick] = React.useState<string | null>(null);
@@ -345,6 +349,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      (components/features/customers — Billing's form, used as-is, not copied), and
      picks the customer it creates. */
   const [newCustomerOpen, setNewCustomerOpen] = React.useState(false);
+  /* R-2360: "Create customer" from Find in Zoho starts the form with Zoho's name + GSTIN. */
+  const [newCustomerSeed, setNewCustomerSeed] = React.useState<{ name: string; gstin: string | null } | null>(null);
   const [createdCustomer, setCreatedCustomer] = React.useState<string | null>(null);
   /* R-2095 (Sept reconcile): the new customer is picked only once the list has it — before, the pick
      sometimes landed before the customers list refetched and the drawer showed no customer. */
@@ -559,19 +565,13 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     }
   };
 
-  const handleManualReconcile = async () => {
+  /* R-2361: "Mark reconciled manually" no longer saves in one click — it opens a confirm that needs
+     a reason (and can pair a reversal line); the confirm saves (ManualReconcileDialog). */
+  const [manualOpen, setManualOpen] = React.useState(false);
+  React.useEffect(() => { setManualOpen(false); }, [transaction?.id, open]);
+  const handleManualReconcile = () => {
     if (!transaction) return;
-    try {
-      await reconcile.mutateAsync({
-        transactionId: transaction.id,
-        matchedToType: "manual",
-        matchedToId:   null,
-        confidence:    "manual",
-      });
-      onOpenChange(false);
-    } catch {
-      /* hook toasts the error */
-    }
+    setManualOpen(true);
   };
 
   // Direction + amount hint
@@ -622,7 +622,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const manualSave: FooterSave = {
     label: "Mark reconciled manually",
     onSave: handleManualReconcile,
-    loading: reconcile.isPending,
+    loading: false,
   };
   const creditSave: FooterSave = {
     label: `Book ${rupee(amount)} as ${ownerWords.allowed ? "a loan from a partner" : creditKind === "capital" ? "capital" : "director's loan"}`,
@@ -684,7 +684,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     : tile === "transfer" ? transferSave ?? manualSave
     : tile === "tax_refund" ? manualSave
     : tile === "owner" ? pickFooterSave([["credit", showCreditBox ? creditSave : null], ["equity", equitySave]], footerPick)
-    : tile === "loan" ? pickFooterSave([["emi", isCredit ? null : emiSave], ["receipt", isCredit ? loanReceiptSave : null], ["advance", advanceSave]], footerPick)
+    : tile === "loan" ? pickFooterSave([["emi", isCredit ? null : emiSave], ["receipt", isCredit ? loanReceiptSave : null], ["credit_line", creditLineSave], ["advance", advanceSave]], footerPick)
     : tile === "vendor" ? (isCredit ? null : pickFooterSave([["vendor", vendorSave], ["commission", commissionSave]], footerPick))
     : tile === "customer" ? (isCredit && showProject ? projectSave : customerSave)
     : tile === "employee" ? pickFooterSave([
@@ -866,8 +866,9 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
           Mark this reconciled without any income/expense entry. Use it for
           bank charges, interest, own-account transfers — and for a{" "}
           <b>failed / reversed transaction</b> (e.g. ATM didn&apos;t dispense
-          but was debited, then reversed): mark <b>both</b> the −₹ and the +₹
-          line this way. They cancel out, so nothing needs to be booked.
+          but was debited, then reversed): mark one line and pick the other as
+          its <b>reversal</b> — both close together. They cancel out, so nothing needs to be booked.
+          You will be asked for a reason.
         </>}
       </p>
       {inlineButton && (
@@ -877,7 +878,6 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
           icon="check_circle"
           className="mt-3"
           onClick={handleManualReconcile}
-          disabled={reconcile.isPending}
         >
           Mark reconciled manually
         </Button>
@@ -951,7 +951,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
           <CreditPayForSection
             transaction={transaction}
             customers={customers ?? []}
-            onNewCustomer={() => setNewCustomerOpen(true)}
+            onNewCustomer={(seed) => { setNewCustomerSeed(seed ?? null); setNewCustomerOpen(true); }}
             pickedCustomerId={createdCustomer}
             suggested={creditSuggested}
             onProjectPayment={(id) => { setProjCustomer(id); setShowProject(true); }}
@@ -1202,6 +1202,11 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 <LoanGivenReceiptSection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setLoanReceiptSave} />
               </div>
             )}
+            {/* R-2374: a lender (bank / NBFC) — drawdown on a credit line, or a repayment split
+                into principal + interest (Finance cost). */}
+            <div {...pickOn("credit_line")}>
+              <CreditLineSection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setCreditLineSave} />
+            </div>
             {/* R-2008: the form clicked (EMI or this one) owns the footer. */}
             <div {...pickOn("advance")}>{advanceBox}</div>
           </>
@@ -1474,9 +1479,18 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
           new customer already picked. */}
       <AddCustomerForm
         open={newCustomerOpen}
-        onOpenChange={setNewCustomerOpen}
+        onOpenChange={(o) => { setNewCustomerOpen(o); if (!o) setNewCustomerSeed(null); }}
+        initial={newCustomerSeed}
         onCreated={(id) => { void pickCreatedCustomer(id); }}
       />
+      {manualOpen && (
+        <ManualReconcileDialog
+          txn={transaction}
+          open={manualOpen}
+          onCancel={() => setManualOpen(false)}
+          onDone={() => { setManualOpen(false); onOpenChange(false); }}
+        />
+      )}
     </Sheet>
   );
 }

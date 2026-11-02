@@ -57,6 +57,10 @@ export interface BalanceSheetAuto {
   salaryDuesPayable: number; // statutory dues: salary TDS/PF/ESI (both shares) + vendor TDS, less challans
   reimbursementsPayable: number; // company expenses paid from someone's own card/cash, not yet repaid (a liability)
   creditCardPayable: number; // outstanding owed on company credit-card accounts (a liability)
+  /** R-2373: overdraft (OD / cash-credit) accounts below zero — money borrowed from the bank
+   *  (Borrowings, a current liability); left out of cashAndBank. Optional so fixtures stay
+   *  valid; absent = 0. */
+  bankOverdraft?: number;
   emiLoansPayable: number;   // outstanding EMI/asset loans (a liability)
   businessLoansPayable: number; // outstanding principal on loans TAKEN by the company (a liability)
   gstPayable:      number;   // net GST this FY (output − input − GST paid for this FY's returns); may be negative (credit)

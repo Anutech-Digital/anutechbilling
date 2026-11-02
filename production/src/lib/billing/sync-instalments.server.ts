@@ -33,6 +33,8 @@ export interface InstalmentSub {
   mrr: number;
   billing_cycle: Database["public"]["Tables"]["subscriptions"]["Row"]["billing_cycle"];
   term_months: Database["public"]["Tables"]["subscriptions"]["Row"]["term_months"];
+  /** R-2369: the exact amount for one term — the instalments split it, not mrr × months. */
+  term_amount?: number | null;
   start_date: string | null;
   renewal_date: string | null;
   /** R-1763: imported from Zoho Books — periods starting on/before this day were billed there. */
@@ -42,7 +44,7 @@ export interface InstalmentSub {
 }
 
 export const INSTALMENT_SUB_SELECT =
-  "id, tenant_id, quote_id, mrr, billing_cycle, term_months, start_date, renewal_date, external_source, external_ref, billed_externally_until" as const;
+  "id, tenant_id, quote_id, mrr, billing_cycle, term_months, term_amount, start_date, renewal_date, external_source, external_ref, billed_externally_until" as const;
 
 export interface QuotePaymentFacts {
   amount: number | null;

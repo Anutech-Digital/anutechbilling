@@ -162,6 +162,42 @@ export interface ApprovalRecord {
   approvedDiscountBps: number | null;
   approvedMarginBps: number | null;
   rejectionReason: string | null;
+  /** R-2367: everyone who made, revised, owns or asked approval for ANY quote of this
+   *  revision family (DB quote_chain_makers). None of them may approve it. Undefined = not
+   *  loaded yet; the server refuses them anyway (trg_quote_approval_not_by_maker). */
+  makers?: readonly string[];
+  /** R-2383: the sole owner's written reason when they approved their own quote
+   *  (quotes.approval_note). Null otherwise. */
+  note?: string | null;
+}
+
+/** R-2383: a sole owner's self-approval needs a written reason of at least this many characters
+ *  (the server trigger trg_quote_approval_not_by_maker enforces the same number). */
+export const SELF_APPROVAL_MIN_REASON = 10;
+
+/** Who may approve at this tier — the same lists the server trigger uses for "is there anyone
+ *  else?". No tier recorded → the wider (manager) list, the stricter reading for self-approval. */
+export function approverRolesForTier(tier: ApprovalTier | null | undefined): readonly UserRole[] {
+  return tier === "owner" ? OWNER_APPROVERS : MANAGER_APPROVERS;
+}
+
+/**
+ * R-2383 (owner decision 2 Nov 2026): may this viewer clear a quote THEY made, as the only
+ * possible approver? Only when they are an owner AND nobody else active in the company has a
+ * role that may approve this tier. `team` = the company's ACTIVE logins; undefined = not loaded
+ * yet → no (the server decides anyway). The tier is the recorded one, else the one the quote
+ * needs now (the drawer sends it along when none is recorded).
+ */
+export function isSoleApprover(
+  viewer: { id: string; role: string | null | undefined },
+  record: Pick<ApprovalRecord, "tier">,
+  now: Pick<ApprovalRequirement, "tier">,
+  team: readonly { id: string; role: string | null | undefined }[] | undefined,
+): boolean {
+  if (viewer.role !== "owner" || !team) return false;
+  const tier = record.tier ?? (now.tier === "none" ? null : now.tier);
+  const roles = approverRolesForTier(tier);
+  return !team.some((u) => u.id !== viewer.id && roles.includes((u.role ?? "") as UserRole));
 }
 
 /**
@@ -210,10 +246,15 @@ export type SendGate =
  * Build it with eligibleApprovers() + approverSentence() in ./awaiting-approval, so the
  * banner and the approvals queue can never name different people.
  */
+/** R-2383: the next step a sole owner sees on their own quote. */
+export const SOLE_APPROVER_STEP = "You are the only approver — open Review & decide and write why this price is OK.";
+
 export function canSend(
   record: ApprovalRecord,
   now: ApprovalRequirement,
   approvers?: string | null,
+  /** R-2383: the viewer is the company's only approver and may clear it with a reason. */
+  opts?: { selfApproval?: boolean },
 ): SendGate {
   if (now.tier === "none") return { allowed: true };
 
@@ -253,7 +294,9 @@ export function canSend(
          The queue exists now (Quotes → Awaiting my approval, and the sidebar count), so
          the sentence is true, and when the team is loaded it names the actual people
          instead of "the owner", of which this workspace has three. */
-      nextStep: approvers === null
+      nextStep: opts?.selfApproval
+        ? SOLE_APPROVER_STEP
+        : approvers === null
         ? "Nobody else in this workspace can approve it — you cannot approve your own quote. Add another owner, or ask an owner to raise it."
         : "It is in their approvals queue on the Quotes page. Nudge them if it is urgent.",
     };
@@ -263,7 +306,7 @@ export function canSend(
     allowed: false,
     tier: now.tier,
     reason: now.reasons[0] ?? `This quote needs ${who} to approve it.`,
-    nextStep: `Request approval — it goes to ${who}.`,
+    nextStep: opts?.selfApproval ? SOLE_APPROVER_STEP : `Request approval — it goes to ${who}.`,
   };
 }
 
@@ -272,15 +315,28 @@ export function canSend(
  *
  * The self-approval check comes FIRST and applies to every role including owner.
  * A rep who can approve their own quote has a checkbox, not an approval step.
+ * One exception (R-2383): the company's ONLY possible approver, an owner, may clear their
+ * own quote with a written reason (`selfApproval: true`) — otherwise nobody ever could.
  */
 export function canApprove(
   viewer: { id: string; role: string | null | undefined },
   record: ApprovalRecord,
   now: ApprovalRequirement,
-): { allowed: boolean; reason?: string } {
+  /** R-2383: the company's ACTIVE logins (id + role). Undefined = not loaded → a maker is refused. */
+  team?: readonly { id: string; role: string | null | undefined }[],
+): { allowed: boolean; reason?: string; selfApproval?: boolean } {
   if (now.tier === "none") return { allowed: false, reason: "This quote does not need approval." };
-  if (record.requestedBy && record.requestedBy === viewer.id) {
-    return { allowed: false, reason: "You cannot approve your own quote." };
+  const ownRequest = !!record.requestedBy && record.requestedBy === viewer.id;
+  /* R-2367: a revision (-R2) starts with no approval record, so requestedBy alone let the
+     person who made or revised the family approve the new copy. */
+  const madeIt = !!record.makers?.includes(viewer.id);
+  if (ownRequest || madeIt) {
+    /* R-2383: the company's only approver (an owner) may clear it — with a written reason,
+       which the drawer asks for and the server insists on. Anyone else stays refused. */
+    if (isSoleApprover(viewer, record, now, team)) return { allowed: true, selfApproval: true };
+    return ownRequest
+      ? { allowed: false, reason: "You cannot approve your own quote." }
+      : { allowed: false, reason: "You made or revised this quote (or an earlier version of it) — another approver must clear it." };
   }
   if (!now.approvers.includes((viewer.role ?? "") as UserRole)) {
     return {

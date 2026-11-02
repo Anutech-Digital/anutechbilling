@@ -50,6 +50,8 @@ export interface CreateExtensionQuoteInput {
   plan:            string;
   seats:           number;
   mrr:             number;
+  /** R-2369: subscriptions.term_amount — the exact sold amount for one term (termMonths); null → from mrr. */
+  termAmount?:     number | null;
   /** Current subscription.renewal_date — caps the quote expiry (R-820) */
   renewalDate:     string;
   /** Not used for the expiry since R-820 (30 days, capped at renewalDate). */
@@ -168,7 +170,10 @@ export async function createExtensionQuote(
      × seats = subtotal, so rate × qty on every screen equals the subtotal (extension-term.ts). */
   /* R-1532: a Bill of Supply business (not GST-registered / composition) charges no GST. */
   const taxRatePct   = quoteStartTaxRate(await readTenantGstRegistration(input.supabase, input.tenantId));
-  const charge       = extensionCharge({ seats: input.seats, mrr: input.mrr, len, taxRatePct });
+  const charge       = extensionCharge({
+    seats: input.seats, mrr: input.mrr, len, taxRatePct,
+    termAmount: input.termAmount ?? null, termMonths: input.termMonths ?? null,  // R-2369
+  });
   const annualAmount = charge.subtotal;   // ex-GST subtotal = perSeat × seats
   const grossAnnual  = charge.total;      // GST-inclusive payable
   const perSeatRate  = charge.perSeat;

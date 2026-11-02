@@ -31,6 +31,13 @@ vi.mock("@/lib/banking/reconciled-suggestions", async (orig) => ({
   ...(await orig<typeof import("@/lib/banking/reconciled-suggestions")>()),
   useReconciledExpenseIds: () => ({ data: new Set<string>(), isLoading: false }),
 }));
+/* R-2361: "Mark reconciled manually" opens a confirm that needs a reason (manual-reconcile-dialog.test.tsx). */
+const r2361 = vi.hoisted(() => ({ save: vi.fn() }));
+vi.mock("@/lib/banking/manual-reconcile", async (orig) => ({
+  ...(await orig<typeof import("@/lib/banking/manual-reconcile")>()),
+  useReconcileManually: () => ({ mutateAsync: r2361.save, isPending: false }),
+  useReversalCandidates: () => ({ data: [], isLoading: false }),
+}));
 vi.mock("@/lib/queries/bank", () => ({
   useSuggestMatches: () => ({ data: state.suggestions, isLoading: false }),
   useReconcileTransaction: () => ({ mutateAsync: state.reconcile, isPending: false }),
@@ -57,6 +64,7 @@ vi.mock("@/lib/queries/prepaid-advances", () => ({ usePrepaidAdvances: () => ({ 
 vi.mock("@/lib/queries/referral-commissions", () => ({ useReferralCommissions: () => ({ data: [] }) }));
 vi.mock("@/lib/compliance/profile", () => ({ useComplianceProfile: () => ({ data: { businessType: "pvt_ltd" } }) }));
 vi.mock("@/components/features/customers/add-customer-form", () => ({ AddCustomerForm: () => null }));
+vi.mock("@/components/features/banking/credit-line-section", () => ({ CreditLineSection: () => null }));   // R-2374
 vi.mock("@/components/features/banking/project-payment-section", () => ({ ProjectPaymentSection: () => null }));
 /* R-2007's Suggestion card has its own test (reconcile-suggestion-r2007.test.tsx); none here. */
 vi.mock("@/components/features/banking/reconcile-suggestion-card", () => ({
@@ -156,11 +164,17 @@ describe("R-2006 Reconcile sheet — 'Who is this money for?' tiles", () => {
     expect(state.bookExpense).toHaveBeenCalledWith(expect.objectContaining({ transactionId: "d1", category: "Bank Charges" }));
   });
 
-  it("Own transfer: the footer's Save marks the line reconciled manually", () => {
+  it("Own transfer: the footer's Save asks for a reason first, then marks the line reconciled manually (R-2361)", async () => {
+    r2361.save.mockReset(); r2361.save.mockResolvedValue({});
     render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={moneyIn} />);
     fireEvent.click(screen.getByRole("radio", { name: /Own transfer/ }));
     fireEvent.click(within(footer()).getByRole("button", { name: "Mark reconciled manually" }));
-    expect(state.reconcile).toHaveBeenCalledWith(expect.objectContaining({ transactionId: "c1", matchedToType: "manual" }));
+    expect(state.reconcile).not.toHaveBeenCalled();
+    expect(r2361.save).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Reason (required)"), { target: { value: "Own transfer from savings" } });
+    fireEvent.click(screen.getByRole("button", { name: "Mark reconciled" }));
+    await vi.waitFor(() => expect(r2361.save).toHaveBeenCalledWith({ transactionId: "c1", reason: "Own transfer from savings", reversalId: null }));
+    expect(state.reconcile).not.toHaveBeenCalled();
   });
 
   it("no match → one small line, no 'Suggested matches' box; a match → the list shows", () => {

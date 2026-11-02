@@ -81,7 +81,7 @@ function readRenewableSubs(supabase: ReturnType<typeof createAdminClient>) {
     .from("subscriptions")
     .select(`
       id, tenant_id, customer_id, customer_name, plan, item_id, vendor, seats, mrr,
-      renewal_date, status, renewal_state, reminder_count, renewal_quote_id, term_months, domain,
+      renewal_date, status, renewal_state, reminder_count, renewal_quote_id, term_months, term_amount, domain,
       billing_cycle, start_date
     `)
     .eq("status", "active")
@@ -468,6 +468,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
           seats:           sub.seats,
           mrr:             sub.mrr ?? 0,
           termMonths:      sub.term_months ?? null,
+          termAmount:      sub.term_amount ?? null,  // R-2369: the exact sold term amount
           renewalDate:     sub.renewal_date!,
           graceDays,
           existingQuoteId: sub.renewal_quote_id,

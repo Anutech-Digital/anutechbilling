@@ -140,6 +140,8 @@ export function buildTrialBalance(args: {
   put("Liabilities", "Commission payable (partners)", bs.commissionsPayable ?? 0, "credit",
     "Partner commission earned, not yet paid (net of TDS — the TDS is in statutory dues)");
   put("Liabilities", "Credit card payable", bs.creditCardPayable, "credit", "Company cards: amount owed");
+  /* R-2373: overdraft accounts below zero — borrowed from the bank, not negative cash. */
+  put("Liabilities", "Bank overdraft", bs.bankOverdraft ?? 0, "credit", "Overdraft / cash-credit accounts: amount drawn");
   put("Liabilities", "EMI / asset loans", bs.emiLoansPayable, "credit", "Financed − principal repaid");
   put("Liabilities", "Business loans", bs.businessLoansPayable, "credit", "Borrowed − principal repaid");
   put("Liabilities", LICENCE_PROVISION_HEAD, licenceProvision, "credit",

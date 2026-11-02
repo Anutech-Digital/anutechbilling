@@ -120,6 +120,56 @@ export function useStartEmployeeExit() {
   });
 }
 
+/** R-2380 — what merge_employees moves / leaves (its preview and its result are the same shape). */
+export type MergeEmployeesResult = {
+  keep: { id: string; name: string };
+  dup: { id: string; name: string };
+  clashes: { period: string; keep_net: number; dup_net: number; keep_gross: number; dup_gross: number }[];
+  moved: Record<string, number>;
+  left: Record<string, number>;
+  renamed: Record<string, number>;
+  fields: string[];
+  dry_run: boolean;
+};
+
+async function mergeEmployeesRpc(input: { keepId: string; dupId: string; keepBoth?: boolean; dryRun?: boolean }) {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("merge_employees", {
+    p_keep_id: input.keepId,
+    p_dup_id: input.dupId,
+    p_keep_both: input.keepBoth ?? false,
+    p_dry_run: input.dryRun ?? false,
+  });
+  if (error) throw error;
+  return data as unknown as MergeEmployeesResult;
+}
+
+/** R-2380 — preview of a merge (dry run: counts + same-month clashes, nothing written). */
+export function useMergeEmployeesPreview(keepId: string | null, dupId: string) {
+  return useQuery({
+    queryKey: ["employee-merge-preview", keepId, dupId],
+    enabled: !!keepId && keepId !== dupId,
+    queryFn: () => mergeEmployeesRpc({ keepId: keepId!, dupId, dryRun: true }),
+  });
+}
+
+/** R-2380 — merge a duplicate employee into the kept one (one server transaction). */
+export function useMergeEmployees() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { keepId: string; dupId: string; keepBoth: boolean }) =>
+      mergeEmployeesRpc({ ...input, dryRun: false }),
+    onSuccess: (r) => {
+      for (const k of ["employees", "salary-payments", "attendance", "leave-entries", "employee-documents",
+                       "employee-loans", "expenses", "team", "employee-merge-preview"]) {
+        qc.invalidateQueries({ queryKey: [k] });
+      }
+      toast.success(`${r.dup.name} merged into ${r.keep.name}`);
+    },
+    onError: (err) => toastError(err, { fallback: "Could not merge the employees." }),
+  });
+}
+
 /** R-1896 — owner undoes an exit (a mistake, or they stay on). Their login works again. */
 export function useCancelEmployeeExit() {
   const qc = useQueryClient();

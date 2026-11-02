@@ -1,0 +1,134 @@
+import { describe, it, expect, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+// @ts-expect-error — plain .mjs ops script, no types
+import { runCleanup, parseCleanupFlags, realCleanupDeps, inspectNodeModules, CLEANUP_EXIT } from "../scripts/ops/worker-lock-cleanup.mjs";
+
+/**
+ * R-2385 (2 Nov 2026): a worker cleanup deleted files inside the SHARED reselleros-deploy/production/node_modules
+ * through its worktree's junction (@auth/core lost package.json) → localhost Build Error. `worker-lock cleanup`
+ * removes the LINK first and checks it is gone before anything recursive (git worktree remove) runs.
+ */
+const tmps: string[] = [];
+afterEach(() => { for (const d of tmps.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
+
+/** tmp/{shared/node_modules/@auth/core/package.json, main/.git, wt/production/{node_modules→shared, .env.local, src.ts}} */
+function setup({ realDir = false } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "r2385-"));
+  tmps.push(root);
+  const shared = path.join(root, "shared", "node_modules");
+  fs.mkdirSync(path.join(shared, "@auth", "core"), { recursive: true });
+  fs.writeFileSync(path.join(shared, "@auth", "core", "package.json"), "{}");
+  fs.mkdirSync(path.join(root, "main", ".git"), { recursive: true });
+  const wt = path.join(root, "wt");
+  fs.mkdirSync(path.join(wt, "production"), { recursive: true });
+  fs.writeFileSync(path.join(wt, "production", ".env.local"), "X=1");
+  fs.writeFileSync(path.join(wt, "production", "src.ts"), "x");
+  const nm = path.join(wt, "production", "node_modules");
+  if (realDir) { fs.mkdirSync(path.join(nm, "pkg"), { recursive: true }); fs.writeFileSync(path.join(nm, "pkg", "index.js"), ""); }
+  else fs.symlinkSync(shared, nm, process.platform === "win32" ? "junction" : "dir");
+  return { root, shared, wt, nm, main: path.join(root, "main"), sharedFile: path.join(shared, "@auth", "core", "package.json") };
+}
+
+/** Real fs + the real link remover; a fake git whose `worktree remove` is a RECURSIVE delete (the dangerous part). */
+function deps(s: ReturnType<typeof setup>, { merged = true, wip = false, branch = true, keepLink = false } = {}) {
+  const real = realCleanupDeps();
+  const calls: string[][] = [];
+  const out: string[] = [];
+  const git = (args: string[]) => {
+    calls.push(args);
+    const a = args.slice(2).join(" ");
+    if (a.startsWith("rev-parse --path-format=absolute --git-common-dir")) return path.join(s.main, ".git") + "\n";
+    if (a.startsWith("worktree remove")) { fs.rmSync(args[4], { recursive: true, force: true }); return ""; }
+    if (a.startsWith("rev-parse --verify --quiet refs/heads/")) { if (!branch) throw new Error("no"); return "abc\n"; }
+    if (a.startsWith("rev-parse --verify --quiet refs/remotes/anutech/wip/")) { if (!wip) throw new Error("no"); return "abc\n"; }
+    if (a.startsWith("merge-base --is-ancestor")) { if (!merged) throw new Error("no"); return ""; }
+    return "";
+  };
+  return {
+    calls, out,
+    d: { ...real, cwd: () => s.root, chdir: () => {}, git, rmdirLink: keepLink ? () => {} : real.rmdirLink, print: (l: string) => out.push(l), printErr: (l: string) => out.push(l) },
+  };
+}
+
+describe("R-2385: worker-lock cleanup never deletes through the node_modules junction", () => {
+  it("removes the link FIRST, then .env.local, then git worktree remove (no --force) — the shared files survive", () => {
+    const s = setup();
+    const { d, calls, out } = deps(s);
+    const r = runCleanup("R-2385", { worktree: s.wt }, d);
+    expect(r.code).toBe(CLEANUP_EXIT.ok);
+    expect(fs.existsSync(s.sharedFile)).toBe(true); // the 2 Nov damage did not happen
+    expect(fs.existsSync(s.wt)).toBe(false);
+    const remove = calls.find((c) => c.includes("worktree"))!;
+    expect(remove).toEqual(["-C", s.main, "worktree", "remove", path.resolve(s.wt)]);
+    expect(calls.flat()).not.toContain("--force");
+    expect(calls.some((c) => c.join(" ").includes("branch -D w-r-2385"))).toBe(true);
+    const i = (re: RegExp) => out.findIndex((l) => re.test(l));
+    expect(i(/SIRF link hatega/)).toBeGreaterThanOrEqual(0);
+    expect(i(/SIRF link hatega/)).toBeLessThan(i(/\.env\.local hatega/));
+    expect(i(/\.env\.local hatega/)).toBeLessThan(i(/worktree remove/));
+  });
+
+  it("REFUSES when node_modules is a real folder with files — nothing is deleted, git is never asked to remove", () => {
+    const s = setup({ realDir: true });
+    const { d, calls, out } = deps(s);
+    const r = runCleanup("R-2385", { worktree: s.wt }, d);
+    expect(r.code).toBe(CLEANUP_EXIT.refused);
+    expect(out.join("\n")).toMatch(/asli folder hai/);
+    expect(fs.existsSync(path.join(s.nm, "pkg", "index.js"))).toBe(true);
+    expect(fs.existsSync(path.join(s.wt, "production", ".env.local"))).toBe(true);
+    expect(calls.some((c) => c.includes("worktree"))).toBe(false);
+  });
+
+  it("REFUSES when the junction is still there after rmdir — worktree remove never runs", () => {
+    const s = setup();
+    const { d, calls } = deps(s, { keepLink: true });
+    const r = runCleanup("R-2385", { worktree: s.wt }, d);
+    expect(r.code).toBe(CLEANUP_EXIT.refused);
+    expect(calls.some((c) => c.includes("worktree"))).toBe(false);
+    expect(inspectNodeModules(s.nm, d).kind).toBe("link");
+    expect(fs.existsSync(s.sharedFile)).toBe(true);
+  });
+
+  it("keeps the branch when it is neither merged nor on anutech/wip/<card>", () => {
+    const s = setup();
+    const { d, calls, out } = deps(s, { merged: false, wip: false });
+    expect(runCleanup("R-2385", { worktree: s.wt }, d).code).toBe(CLEANUP_EXIT.ok);
+    expect(calls.some((c) => c.includes("-D"))).toBe(false);
+    expect(out.join("\n")).toMatch(/branch w-r-2385 RAKHA/);
+  });
+
+  it("deletes the branch when a wip branch holds it", () => {
+    const s = setup();
+    const { d, calls } = deps(s, { merged: false, wip: true });
+    expect(runCleanup("R-2385", { worktree: s.wt }, d).code).toBe(CLEANUP_EXIT.ok);
+    expect(calls.some((c) => c.join(" ").endsWith("branch -D w-r-2385"))).toBe(true);
+  });
+
+  it("--dry-run prints the steps and changes nothing", () => {
+    const s = setup();
+    const { d, calls, out } = deps(s);
+    const r = runCleanup("R-2385", { worktree: s.wt, dryRun: true }, d);
+    expect(r.code).toBe(CLEANUP_EXIT.ok);
+    expect(inspectNodeModules(s.nm, d).kind).toBe("link");
+    expect(fs.existsSync(path.join(s.wt, "production", ".env.local"))).toBe(true);
+    expect(calls.some((c) => c.includes("remove") || c.includes("-D"))).toBe(false);
+    expect(out.join("\n")).toMatch(/\[dry-run\] kuch nahi badla/);
+  });
+
+  it("refuses the main clone itself", () => {
+    const s = setup();
+    const { d, calls } = deps(s);
+    const git = d.git;
+    d.git = (args: string[]) => (args.join(" ").includes("git-common-dir") ? path.join(s.wt, ".git") + "\n" : git(args));
+    expect(runCleanup("R-2385", { worktree: s.wt }, d).code).toBe(CLEANUP_EXIT.refused);
+    expect(calls.some((c) => c.includes("worktree"))).toBe(false);
+    expect(fs.existsSync(s.sharedFile)).toBe(true);
+  });
+
+  it("parses --worktree and --dry-run", () => {
+    expect(parseCleanupFlags(["--worktree", "C:/x", "--dry-run"])).toEqual({ worktree: "C:/x", dryRun: true, rest: [] });
+    expect(parseCleanupFlags(["--worktree=C:/y"])).toEqual({ worktree: "C:/y", dryRun: false, rest: [] });
+  });
+});

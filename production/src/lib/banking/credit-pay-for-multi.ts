@@ -136,6 +136,8 @@ export interface SplitInput {
   items: ReadonlyArray<Pick<OpenItem, "quote_id" | "invoice_id"> & { amount: number }>;
   sale: SplitSaleInput | null;
   rest: SplitRest | null;
+  /** R-2360: the Zoho invoice number of the NEW sale (Find in Zoho) — kept on its invoice. */
+  externalNumber?: string | null;
 }
 
 /** reconcile_bank_credit_split's arguments — exported so the tests pin what reaches the server. */
@@ -157,5 +159,7 @@ export function splitArgs(i: SplitInput) {
         }
       : null,
     p_rest: i.rest,
+    /* R-2360: only with a new sale — without it the call resolves to the old 5-argument function. */
+    ...(i.sale && i.externalNumber?.trim() ? { p_external_number: i.externalNumber.trim() } : {}),
   };
 }
