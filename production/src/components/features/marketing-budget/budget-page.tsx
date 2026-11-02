@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn, rupee } from "@/lib/utils";
 import {
-  BUDGET_CHANNELS, canApproveBudget, canAskBudget, canPay, channelLabel, paymentProblem,
+  BUDGET_CHANNELS, canApproveBudget, canAskBudget, canPay, channelLabel, paymentProblem, type BudgetChannel,
 } from "@/lib/marketing-budget/budget";
 import {
   BudgetError, useAskBudget, useAskPayment, useBudgets, useCancelBudget, useClosePayment, useDecideBudget, useMarkPaid,
@@ -352,15 +352,15 @@ function PayRow({ payment: p, budget: b }: { payment: BudgetPayment; budget: Bud
   );
 }
 
-function AskBudgetDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AskBudgetDialog({ open, onClose, initialChannel = "google-ads" }: { open: boolean; onClose: () => void; initialChannel?: BudgetChannel }) {
   const ask = useAskBudget();
   const products = useColdProducts();
-  const [channel, setChannel] = React.useState<string>("google-ads");
+  const [channel, setChannel] = React.useState<string>(initialChannel);
   const [productId, setProductId] = React.useState("");
   const [month, setMonth] = React.useState(thisMonth());
   const [amount, setAmount] = React.useState("");
   const [note, setNote] = React.useState("");
-  React.useEffect(() => { if (open) { setChannel("google-ads"); setProductId(""); setMonth(thisMonth()); setAmount(""); setNote(""); } }, [open]);
+  React.useEffect(() => { if (open) { setChannel(initialChannel); setProductId(""); setMonth(thisMonth()); setAmount(""); setNote(""); } }, [open, initialChannel]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

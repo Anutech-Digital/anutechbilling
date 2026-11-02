@@ -36,6 +36,7 @@ import { shownBadge } from "@/lib/hooks/nav-badge-views";
 import { useCurrentUser, useIdentity } from "@/lib/hooks/useCurrentUser";
 import { roleLabel } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
+import { MARKETING_HUB_SECTIONS, TOOL_GROUPS } from "@/lib/marketing/tool-catalog";
 import { AccountMenuItems } from "./account-menu-items";
 
 // ============================================================
@@ -49,6 +50,11 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
   // Which accordion parents (items with children) are expanded. Defaults to
   // open when the current route is the parent or one of its children.
   const [openMenus, setOpenMenus] = React.useState<Record<string, boolean>>({});
+  React.useEffect(() => {
+    if (pathname.startsWith("/marketing/")) {
+      setOpenMenus((menus) => ({ ...menus, "marketing-hub": true }));
+    }
+  }, [pathname]);
   /* Click the logo → see it full size (Pardeep, 3 Oct 2026). */
   const [logoOpen, setLogoOpen] = React.useState(false);
 
@@ -168,6 +174,37 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
   };
 
   // A group item — accordion parent (has children, e.g. Reports) or plain link.
+  const marketingSectionLinks = (item: NavItem) => item.id === "marketing-hub" && !item.headerOnly ? (
+    <div className="space-y-0.5" aria-label="Marketing Hub pages">
+      {[
+        ...MARKETING_HUB_SECTIONS.slice(0, 1).map(({ group, id, href }) => ({ id, href, label: TOOL_GROUPS[group].title })),
+        { id: "roas-cac", href: "/marketing/reports", label: "ROAS & CAC" },
+        ...MARKETING_HUB_SECTIONS.slice(1).map(({ group, id, href }) => ({ id, href, label: TOOL_GROUPS[group].title })),
+      ].map(({ id, href, label }) => {
+        const selected = pathname === href;
+        const relatedChild = item.children?.find((child) => child.id === (id === "paid-ads" ? "marketing-budget" : id === "whatsapp-calling" ? "cold-calling" : ""));
+        return (
+          <React.Fragment key={id}>
+            <Link
+              href={href as Route}
+              onClick={onNavigate}
+              aria-current={selected ? "page" : undefined}
+              className={cn(
+                "flex items-center gap-2 rounded-md pl-8 pr-3 py-1.5 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber",
+                selected ? "bg-amber-soft text-amber-ink font-medium" : "text-ink-2 hover:bg-paper-2 hover:text-ink",
+              )}
+            >
+              <span className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", selected ? "bg-amber" : "bg-ink-3/40")} />
+              <span className="truncate">{label}</span>
+            </Link>
+            {relatedChild && renderLink(relatedChild, true)}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  ) : null;
+
+  // A group item — accordion parent (has children, e.g. Reports) or plain link.
   const renderItem = (item: NavItem) => {
     const active = pathname === item.href;
     /* R-497: a heading-only row (the role may open some children, not the row itself — a
@@ -197,7 +234,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
       );
     }
     if (item.children?.length && !collapsed) {
-      const isOpen = openMenus[item.id] ?? (active || item.children.some((c) => pathname === c.href || pathname.startsWith(c.href + "/")));
+      const isOpen = openMenus[item.id] ?? (active || (item.id === "marketing-hub" && pathname.startsWith("/marketing/")) || item.children.some((c) => pathname === c.href || pathname.startsWith(c.href + "/")));
       return (
         <div key={item.id}>
           <div className="flex items-center">
@@ -225,7 +262,8 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
           </div>
           {isOpen && (
             <div className="mt-0.5 space-y-0.5">
-              {item.children!.map((c) => renderLink(c, true))}
+              {marketingSectionLinks(item)}
+              {item.id !== "marketing-hub" && item.children!.map((c) => renderLink(c, true))}
             </div>
           )}
         </div>

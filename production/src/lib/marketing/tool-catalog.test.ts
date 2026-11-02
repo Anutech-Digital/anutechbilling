@@ -1,8 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { MARKETING_TOOLS, mergeTools, hubSummary, TOOL_GROUPS } from "./tool-catalog";
+import { MARKETING_TOOLS, MARKETING_HUB_SECTIONS, mergeTools, hubSummary, TOOL_GROUPS } from "./tool-catalog";
 import { LEAD_SOURCES } from "@/lib/leads/lead-sources";
 
 describe("marketing tool catalogue", () => {
+  it("gives every marketing tool group one sidebar section link", () => {
+    expect(MARKETING_HUB_SECTIONS.map((section) => section.group).sort()).toEqual(Object.keys(TOOL_GROUPS).sort());
+    expect(new Set(MARKETING_HUB_SECTIONS.map((section) => section.id)).size).toBe(MARKETING_HUB_SECTIONS.length);
+  });
   it("unique keys, a known group, and every channel is a real lead source", () => {
     const keys = MARKETING_TOOLS.map((t) => t.key);
     expect(new Set(keys).size).toBe(keys.length);
@@ -30,7 +34,7 @@ describe("marketing tool catalogue", () => {
     expect(rows.map((r) => r.key)).toEqual(MARKETING_TOOLS.map((t) => t.key));
   });
 
-  it("summary: active count skips not-needed; budget only of active tools; spend once per channel", () => {
+  it("summary: active count skips not-needed; ad budgets count even before activation; spend once per channel", () => {
     const rows = mergeTools([
       { tool_key: "meta-ads", status: "active", account_url: null, owner_name: "Pardeep", monthly_budget: 5000, notes: null },
       { tool_key: "google-ads", status: "paused", account_url: null, owner_name: null, monthly_budget: 9000, notes: null },
@@ -39,7 +43,7 @@ describe("marketing tool catalogue", () => {
     const s = hubSummary(rows);
     expect(s.active).toBe(1);
     expect(s.total).toBe(MARKETING_TOOLS.length - 1);
-    expect(s.budget).toBe(5000);
+    expect(s.budget).toBe(14000);
     expect(s.spent).toBe(7180);            // google-organic shared by two tools, counted once
     expect(s.overBudget.map((r) => r.key)).toEqual(["meta-ads"]);
   });

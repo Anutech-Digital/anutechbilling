@@ -45,7 +45,7 @@ describe("ad platforms", () => {
     const rec = reconcileMonths(rows, new Map([["2026-08", 11800], ["2026-07", 3000]]), "google-ads");
     expect(rec.map((r) => r.month)).toEqual(["2026-09", "2026-08", "2026-07"]);
     expect(rec[1].note).toMatch(/18% GST/);
-    expect(rec[0].note).toMatch(/Google's invoice/);
+    expect(rec[0].note).toMatch(/Google Ads.*invoice/);
     expect(rec[2].note).toMatch(/was the account connected/);
     const meta = reconcileMonths([G("2026-09-01", 4000, { platform: "meta-ads" })], new Map(), "meta-ads");
     expect(meta[0].note).toMatch(/advance/);
@@ -54,9 +54,9 @@ describe("ad platforms", () => {
   it("daily series is dense and split by platform", () => {
     const s = dailySeries([G("2026-09-02", 10), G("2026-09-02", 5, { platform: "meta-ads" })], "2026-09-01", "2026-09-03");
     expect(s).toEqual([
-      { day: "2026-09-01", google: 0, meta: 0, clicks: 0, conversions: 0 },
-      { day: "2026-09-02", google: 10, meta: 5, clicks: 100, conversions: 4 },
-      { day: "2026-09-03", google: 0, meta: 0, clicks: 0, conversions: 0 },
+      { day: "2026-09-01", google: 0, meta: 0, linkedin: 0, clicks: 0, conversions: 0 },
+      { day: "2026-09-02", google: 10, meta: 5, linkedin: 0, clicks: 100, conversions: 4 },
+      { day: "2026-09-03", google: 0, meta: 0, linkedin: 0, clicks: 0, conversions: 0 },
     ]);
   });
 
@@ -76,6 +76,6 @@ describe("ad platforms", () => {
     }, { date_start: "2026-09-01" }], "acc");
     expect(rows).toHaveLength(1);
     expect(rows[0].spend).toBe(250.5); expect(rows[0].conversions).toBe(3);
-    expect(adCsvRows(rows)[0]).toEqual(["2026-09-01", "Facebook / Instagram Ads", "Diwali", 250.5, 900, 20, 3, 0]);
+    expect(adCsvRows(rows, new Map([["acc", "Main Meta account"]]))[0]).toEqual(["2026-09-01", "Facebook / Instagram Ads", "Main Meta account", "Diwali", 250.5, 900, 20, 3, 0]);
   });
 });

@@ -12,6 +12,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { Route } from "next";
 
 import { Card } from "@/components/ui/card";
@@ -26,8 +27,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { rupee, cn, formatDate } from "@/lib/utils";
 import {
-  TOOL_GROUPS, TOOL_STATUS, mergeTools, hubSummary,
-  type ToolGroup, type ToolRow, type ToolStatus,
+  TOOL_GROUPS, TOOL_STATUS, MARKETING_HUB_SECTIONS, mergeTools, hubSummary,
+  type ToolRow, type ToolStatus,
 } from "@/lib/marketing/tool-catalog";
 import {
   useMarketingTools, useSaveMarketingTool, useSpendThisMonth,
@@ -37,17 +38,52 @@ import { useConfirm } from "@/components/providers/confirm-provider";
 import { COPY } from "@/lib/copy";
 import { NavDirectory } from "@/components/layout/nav-directory";
 import { budgetProblem, budgetToSave } from "@/lib/marketing/tool-budget";
-
-const GROUP_ORDER: ToolGroup[] = ["ads", "listings", "messaging", "email", "website", "social"];
+import { useBudgets } from "@/lib/queries/marketing-budget";
+import { approvedMonthlyBudget } from "@/lib/marketing-budget/budget";
+import { istToday } from "@/lib/dates/ist";
 
 export default function MarketingHubPage() {
   const tools = useMarketingTools();
   const spend = useSpendThisMonth();
+  const approvals = useBudgets();
   const [editing, setEditing] = React.useState<ToolRow | null>(null);
 
-  const rows = React.useMemo(() => mergeTools(tools.data ?? [], spend.data ?? {}), [tools.data, spend.data]);
+  const month = istToday().slice(0, 7);
+  const rows = React.useMemo(() => mergeTools(tools.data ?? [], spend.data ?? {}).map((row) => row.group === "ads"
+    ? { ...row, state: { ...row.state, monthly_budget: approvedMonthlyBudget(approvals.data?.budgets ?? [], row.key, month) ?? 0 } }
+    : row), [tools.data, spend.data, approvals.data, month]);
   const sum = hubSummary(rows);
-  const loading = tools.isLoading || spend.isLoading;
+  const loading = tools.isLoading || spend.isLoading || approvals.isLoading;
+
+  React.useEffect(() => {
+    if (loading) return;
+    const scrollToSection = () => {
+      const id = window.location.hash.slice(1);
+      if (MARKETING_HUB_SECTIONS.some((section) => section.id === id)) {
+        document.getElementById(id)?.scrollIntoView({ block: "start" });
+      }
+    };
+    scrollToSection();
+    window.addEventListener("hashchange", scrollToSection);
+    return () => window.removeEventListener("hashchange", scrollToSection);
+  }, [loading]);
+
+  React.useEffect(() => {
+    if (loading || tools.isError) return;
+    const key = new URLSearchParams(window.location.search).get("edit");
+    if (!key) return;
+    const tool = rows.find((row) => row.key === key);
+    if (tool) setEditing(tool);
+  }, [loading, tools.isError, rows]);
+
+  const closeEditor = () => {
+    setEditing(null);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("edit")) {
+      url.searchParams.delete("edit");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-[1240px] p-4 md:p-6 lg:p-8 space-y-6">
@@ -73,9 +109,10 @@ export default function MarketingHubPage() {
         <>
           {/* R-1806: the spend read failed — spend would read ₹0 everywhere below. */}
           {spend.isError && <LoadErrorBanner onRetry={() => void spend.refetch()} />}
+          {approvals.isError && <p className="text-sm text-ink-3">Approved ad budgets could not be loaded. <button type="button" className="underline" onClick={() => void approvals.refetch()}>Try again</button></p>}
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
             <Metric label="Tools running" value={`${sum.active} / ${sum.total}`} sub={`"Not needed" tools are not counted`} />
-            <Metric label="Budget this month" value={rupee(sum.budget)} sub="Running tools only" />
+            <Metric label="Budget this month" value={rupee(sum.budget)} sub="Approved paid ads and running tools" />
             <Metric label="Spend this month" value={spend.isError ? "—" : rupee(sum.spent)} sub="Channel-tagged marketing expenses" />
             <Metric
               label="Over budget"
@@ -85,14 +122,17 @@ export default function MarketingHubPage() {
             />
           </div>
 
-          {GROUP_ORDER.map((g) => {
+          {MARKETING_HUB_SECTIONS.map(({ group: g, id, href }) => {
             const list = rows.filter((r) => r.group === g);
             if (!list.length) return null;
             return (
-              <section key={g} className="space-y-3">
+              <section key={g} id={id} className="space-y-3 scroll-mt-24">
                 <div className="flex items-baseline gap-2 border-b border-hairline pb-1.5">
-                  <h2 className="text-base font-semibold text-ink">{TOOL_GROUPS[g].title}</h2>
+                  <h2 className="text-base font-semibold text-ink">
+                    <Link href={href as Route} className="hover:text-amber-ink focus-visible:outline-none focus-visible:underline">{TOOL_GROUPS[g].title}</Link>
+                  </h2>
                   <span className="text-xs text-ink-3">{TOOL_GROUPS[g].why}</span>
+                  <Link href={href as Route} className="ml-auto shrink-0 text-xs font-medium text-amber-ink hover:underline">Open tools →</Link>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
                   {list.map((r) => <ToolCard key={r.key} r={r} onEdit={() => setEditing(r)} />)}
@@ -105,7 +145,7 @@ export default function MarketingHubPage() {
         </>
       )}
 
-      {editing && <EditTool r={editing} onClose={() => setEditing(null)} />}
+      {editing && <EditTool r={editing} savedBudget={tools.data?.find((tool) => tool.tool_key === editing.key)?.monthly_budget ?? 0} onClose={closeEditor} />}
     </div>
   );
 }
@@ -121,6 +161,7 @@ function Metric({ label, value, sub, warn }: { label: string; value: string; sub
 }
 
 function ToolCard({ r, onEdit }: { r: ToolRow; onEdit: () => void }) {
+  const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const st = TOOL_STATUS[r.state.status];
   const budget = r.state.monthly_budget;
@@ -129,9 +170,28 @@ function ToolCard({ r, onEdit }: { r: ToolRow; onEdit: () => void }) {
   const over = budget > 0 && (spent ?? 0) > budget;
   const account = r.state.account_url || r.homeUrl;
   const external = /^https?:\/\//.test(account);
+  /* Paid-ad cards open the work page, not the external account home. Their small links still
+     go to the specific action (tracking, spend, etc.). */
+  const destination: Route | null = r.key === "linkedin-ads"
+    ? "/marketing/ads"
+    : r.key === "google-ads" || r.key === "meta-ads"
+      ? "/marketing/ads"
+      : null;
+  const openCard = (target: EventTarget | null) => {
+    if (!destination || !(target instanceof HTMLElement) || target.closest("a, button, input, textarea, select, [role=button]")) return;
+    router.push(destination);
+  };
 
   return (
-    <Card className={cn("p-4 space-y-2.5", r.state.status === "not_needed" && "opacity-60")}>
+    <Card
+      className={cn("p-4 space-y-2.5", r.state.status === "not_needed" && "opacity-60", destination && "cursor-pointer hover:border-amber/60 hover:shadow-sm transition")}
+      role={destination ? "link" : undefined}
+      tabIndex={destination ? 0 : undefined}
+      onClick={(event) => openCard(event.target)}
+      onKeyDown={(event) => {
+        if (destination && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); router.push(destination); }
+      }}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="font-medium text-ink">{r.name}</div>
@@ -186,7 +246,7 @@ function ToolCard({ r, onEdit }: { r: ToolRow; onEdit: () => void }) {
   );
 }
 
-function EditTool({ r, onClose }: { r: ToolRow; onClose: () => void }) {
+function EditTool({ r, savedBudget, onClose }: { r: ToolRow; savedBudget: number; onClose: () => void }) {
   const save = useSaveMarketingTool();
   const [status, setStatus] = React.useState<ToolStatus>(r.state.status);
   const [url, setUrl] = React.useState(r.state.account_url ?? "");
@@ -195,14 +255,14 @@ function EditTool({ r, onClose }: { r: ToolRow; onClose: () => void }) {
   const [notes, setNotes] = React.useState(r.state.notes ?? "");
   const urlBad = url.trim() !== "" && !/^https?:\/\/\S+$/i.test(url.trim());
   /* R-472: −5000 used to save as ₹0 in silence. Only checked when the box is in use. */
-  const budgetErr = r.channel ? budgetProblem(budget) : null;
+  const budgetErr = r.channel && r.group !== "ads" ? budgetProblem(budget) : null;
 
   async function submit() {
     if (urlBad || budgetErr) return;
     await save.mutateAsync({
       tool_key: r.key, name: r.name, status,
       account_url: url.trim() || null, owner_name: owner.trim() || null,
-      monthly_budget: budgetToSave(budget), notes: notes.trim() || null,
+      monthly_budget: r.group === "ads" ? savedBudget : budgetToSave(budget), notes: notes.trim() || null,
     });
     onClose();
   }
@@ -212,7 +272,7 @@ function EditTool({ r, onClose }: { r: ToolRow; onClose: () => void }) {
       <DialogContent className="md:!max-w-md">
         <DialogHeader>
           <DialogTitle>{r.name}</DialogTitle>
-          <DialogDescription>Status, account and budget. Spend comes from Expenses automatically.</DialogDescription>
+          <DialogDescription>{r.group === "ads" ? "Update this ad platform's status and account. Its budget comes from approved requests." : "Status, account and budget. Spend comes from Expenses automatically."}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <FormField label="Status" htmlFor="mt_status">
@@ -231,10 +291,14 @@ function EditTool({ r, onClose }: { r: ToolRow; onClose: () => void }) {
             <FormField label="Owner" htmlFor="mt_owner">
               <Input id="mt_owner" placeholder="e.g. Pardeep" value={owner} onChange={(e) => setOwner(e.target.value)} />
             </FormField>
-            <FormField label="Monthly budget (₹)" htmlFor="mt_budget">
-              <Input id="mt_budget" type="number" min={0} prefix="₹" value={budget} onChange={(e) => setBudget(e.target.value)}
-                     disabled={!r.channel} aria-invalid={budgetErr ? true : undefined} aria-describedby={budgetErr ? "mt_budget_err" : undefined} />
-            </FormField>
+            {r.group === "ads" ? (
+              <div className="text-xs text-ink-3">Approved this month: {rupee(r.state.monthly_budget)}. <Link href={"/marketing/budget" as Route} className="underline">Budget &amp; Payments</Link></div>
+            ) : (
+              <FormField label="Monthly budget (₹)" htmlFor="mt_budget">
+                <Input id="mt_budget" type="number" min={0} prefix="₹" value={budget} onChange={(e) => setBudget(e.target.value)}
+                       disabled={!r.channel} aria-invalid={budgetErr ? true : undefined} aria-describedby={budgetErr ? "mt_budget_err" : undefined} />
+              </FormField>
+            )}
           </div>
           {budgetErr && <p id="mt_budget_err" role="alert" className="text-xs text-red-600 -mt-1">{budgetErr}</p>}
           {!r.channel && <p className="text-xs text-ink-3 -mt-1">This tool's spend is not linked to a channel, so it has no budget.</p>}

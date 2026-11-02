@@ -64,12 +64,14 @@ export async function GET(request: NextRequest) {
       const accounts = await listAdAccounts(token);
       if (accounts.length === 0) return done("noaccounts");
       for (const a of accounts) {
-        await admin.from("ad_accounts").upsert({
+        const { error: accountError } = await admin.from("ad_accounts").upsert({
           tenant_id: me.tenant_id, platform: "google-ads", account_id: a.id, name: a.name, currency: a.currency,
           login_customer_id: a.loginCustomerId, connected_user_id: user.id, updated_at: new Date().toISOString(),
         }, { onConflict: "tenant_id,platform,account_id" });
+        if (accountError) throw accountError;
       }
-      await syncTenantAds(admin, me.tenant_id, "connect");
+      const sync = await syncTenantAds(admin, me.tenant_id, "connect");
+      if (sync.errors.length) throw new Error(sync.errors[0]);
     } catch (e) {
       console.error("[google-ads/callback] discovery/sync failed:", (e as Error).message);
       return done("connected_syncfailed", `&why=${encodeURIComponent((e as Error).message.slice(0, 300))}`);

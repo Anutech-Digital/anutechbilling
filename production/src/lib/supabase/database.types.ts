@@ -984,7 +984,7 @@ type ColumnPatches = {
     status: "new" | "approved" | "rejected" | "converted";
   };
   ad_accounts: {
-    platform: "google-ads" | "meta-ads";
+    platform: "google-ads" | "meta-ads" | "linkedin-ads";
   };
   ad_sync_runs: {
     trigger: "manual" | "cron" | "connect";

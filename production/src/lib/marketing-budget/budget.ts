@@ -24,6 +24,18 @@ export function channelLabel(v: string): string {
   return BUDGET_CHANNELS.find((c) => c.value === v)?.label ?? v;
 }
 
+/** Current-month approved requests are the ad platform's planning budget. */
+export function approvedMonthlyBudget(
+  budgets: readonly { channel: string; month: string; status: string; amountApproved: number | null }[],
+  channel: string,
+  month: string,
+): number | null {
+  const amount = budgets
+    .filter((b) => b.channel === channel && b.month.slice(0, 7) === month && b.status === "approved")
+    .reduce((sum, b) => sum + (b.amountApproved ?? 0), 0);
+  return amount > 0 ? amount : null;
+}
+
 /** Who opens the page, and what each may do there. */
 export const BUDGET_ROLES: readonly UserRole[] = ["owner", "marketing", "billing", "accountant"];
 export const canAskBudget = (role: string | null | undefined) => role === "marketing" || role === "owner";

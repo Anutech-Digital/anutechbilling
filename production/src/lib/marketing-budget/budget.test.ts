@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
-  budgetLeft, budgetPaid, canApproveBudget, canAskBudget, canPay, expenseFor, monthStart, paymentProblem,
+  approvedMonthlyBudget, budgetLeft, budgetPaid, canApproveBudget, canAskBudget, canPay, expenseFor, monthStart, paymentProblem,
 } from "./budget";
+
+describe("approvedMonthlyBudget", () => {
+  it("sums only approved requests for the selected platform and month", () => {
+    const budgets = [
+      { channel: "linkedin-ads", month: "2026-11-01", status: "approved", amountApproved: 8000 },
+      { channel: "linkedin-ads", month: "2026-11-01", status: "approved", amountApproved: 2000 },
+      { channel: "linkedin-ads", month: "2026-11-01", status: "pending", amountApproved: null },
+      { channel: "linkedin-ads", month: "2026-10-01", status: "approved", amountApproved: 5000 },
+      { channel: "google-ads", month: "2026-11-01", status: "approved", amountApproved: 3000 },
+    ];
+    expect(approvedMonthlyBudget(budgets, "linkedin-ads", "2026-11")).toBe(10000);
+    expect(approvedMonthlyBudget(budgets, "meta-ads", "2026-11")).toBeNull();
+  });
+});
 
 describe("budgetLeft — what billing may still pay", () => {
   const pays = [

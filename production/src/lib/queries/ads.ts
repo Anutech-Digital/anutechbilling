@@ -12,13 +12,15 @@ import type { Database } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { toastError } from "@/lib/errors/toast-error";
 import { isMarketingCategory } from "@/lib/marketing/ad-channels";
-import type { AdPlatform, AdSpendRow } from "@/lib/marketing/ad-platforms";
+import { addDaysISO, istDayStartUtc } from "@/lib/dates/ist";
+import { LINKEDIN_GROUP_PREFIX, type AdPlatform, type AdSpendRow } from "@/lib/marketing/ad-platforms";
 
 export const ADS_KEY = ["ads"] as const;
 
 export interface AdsStatus {
   google: { configured: boolean; devToken: boolean; connected: boolean; email: string | null; lastError: string | null };
   meta: { configured: boolean; connected: boolean; tokenExpiresAt: string | null };
+  linkedin: { configured: boolean; connected: boolean; tokenExpiresAt: string | null };
   accounts: { id: string; platform: AdPlatform; account_id: string; name: string; currency: string; enabled: boolean; last_synced_at: string | null; last_error: string | null }[];
 }
 
@@ -62,7 +64,7 @@ export async function fetchAdSpend(supabase: SupabaseClient<Database>, fromDay: 
   if (accountsError) throw accountsError;
   const platform = new Map((accounts ?? []).map((a) => [a.id, a.platform as AdPlatform]));
   return data.flatMap((r) => {
-    const p = platform.get(r.ad_account_id); if (!p) return [];
+    const p = platform.get(r.ad_account_id); if (!p || (p === "linkedin-ads" && !r.campaign_id.startsWith(LINKEDIN_GROUP_PREFIX))) return [];
     return [{ platform: p, account_id: r.ad_account_id, day: r.day, campaign_id: r.campaign_id, campaign_name: r.campaign_name, spend: Number(r.spend), impressions: r.impressions, clicks: r.clicks, conversions: Number(r.conversions), conversion_value: Number(r.conversion_value) }];
   });
 }
@@ -90,15 +92,18 @@ export function useBookedAdSpendByMonth(fromDay: string) {
 }
 
 /** Leads per utm_campaign since `fromDay` — for cost per lead on the campaign table. */
-export function useLeadsByCampaign(fromDay: string) {
+export function useLeadsByCampaign(fromDay: string, toDay?: string) {
   return useQuery({
-    queryKey: [...ADS_KEY, "leads-by-campaign", fromDay],
+    queryKey: [...ADS_KEY, "leads-by-campaign", fromDay, toDay],
     queryFn: async (): Promise<Map<string, number>> => {
       const supabase = createClient();
       /* R-1588: paged — a count of the first 1000 leads is not a count. */
-      const data = await fetchAllRows((from, to) => supabase.from("leads").select("utm_campaign")
-        .gte("created_at", fromDay).not("utm_campaign", "is", null)
-        .order("id", { ascending: true }).range(from, to));
+      const data = await fetchAllRows((from, to) => {
+        let query = supabase.from("leads").select("utm_campaign")
+          .gte("created_at", istDayStartUtc(fromDay).toISOString()).not("utm_campaign", "is", null);
+        if (toDay) query = query.lt("created_at", istDayStartUtc(addDaysISO(toDay, 1)).toISOString());
+        return query.order("id", { ascending: true }).range(from, to);
+      });
       const m = new Map<string, number>();
       for (const r of data as { utm_campaign: string | null }[]) if (r.utm_campaign) m.set(r.utm_campaign, (m.get(r.utm_campaign) ?? 0) + 1);
       return m;
@@ -118,15 +123,21 @@ export function useAdSyncRuns() {
   });
 }
 
+export async function syncAdsWindow(window?: { from?: string; to?: string; accountId?: string }): Promise<{ accounts: number; rowsWritten: number; errors: string[] }> {
+  const res = await fetch("/api/marketing/ads/sync", {
+    method: "POST",
+    headers: window ? { "content-type": "application/json" } : undefined,
+    body: window ? JSON.stringify(window) : undefined,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.error ?? "Sync failed");
+  return body as { accounts: number; rowsWritten: number; errors: string[] };
+}
+
 export function useAdsSync() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/marketing/ads/sync", { method: "POST" });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.error ?? "Sync failed");
-      return body as { accounts: number; rowsWritten: number; errors: string[] };
-    },
+    mutationFn: (accountId?: string) => syncAdsWindow(accountId ? { accountId } : undefined),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ADS_KEY });
       if (r.errors?.length) toast.warning(`Synced, but: ${r.errors[0]}`);

@@ -8,6 +8,8 @@ import { googleOAuthCreds } from "@/lib/google/oauth";
 import { hasGoogleAdsScope } from "@/lib/google/scope-union";
 import { googleAdsDeveloperToken } from "@/lib/google/google-ads-api";
 import { metaAppCreds } from "@/lib/meta/meta-ads-api";
+import { linkedInCreds } from "@/lib/integrations/linkedin/config";
+import { readLinkedInAdsCredentials } from "@/lib/integrations/linkedin/store";
 import { withRoute, dbFail } from "@/lib/api/with-route";
 
 export const dynamic = "force-dynamic";
@@ -15,15 +17,19 @@ export const runtime = "nodejs";
 
 export const GET = withRoute({ route: "api/marketing/ads" }, async ({ tenantId, user }) => {
   const admin = createAdminClientFor(user.id);
-  const { data: accounts } = await admin.from("ad_accounts")
+  const { data: accounts, error: accountsError } = await admin.from("ad_accounts")
     .select("id, platform, account_id, name, currency, enabled, connected_user_id, token_expires_at, last_synced_at, last_error")
     .eq("tenant_id", tenantId).order("platform").order("name");
+  dbFail(accountsError, "Ad account status could not be loaded.");
 
   const googleUser = (accounts ?? []).find((a) => a.platform === "google-ads")?.connected_user_id ?? user.id;
-  const { data: tok } = await admin.from("user_google_tokens").select("google_email, refresh_token, scopes, last_error").eq("user_id", googleUser).maybeSingle();
+  const { data: tok, error: tokenError } = await admin.from("user_google_tokens").select("google_email, refresh_token, scopes, last_error").eq("user_id", googleUser).maybeSingle();
+  dbFail(tokenError, "Google Ads status could not be loaded.");
   const googleConnected = Boolean(tok?.refresh_token) && hasGoogleAdsScope(tok?.scopes);
   const metaRows = (accounts ?? []).filter((a) => a.platform === "meta-ads");
   const metaExpiry = metaRows.map((a) => a.token_expires_at).filter(Boolean).sort()[0] ?? null;
+  const linkedInRows = (accounts ?? []).filter((a) => a.platform === "linkedin-ads");
+  const linkedInExpiry = linkedInRows.map((a) => a.token_expires_at).filter(Boolean).sort()[0] ?? null;
 
   return {
     google: {
@@ -32,6 +38,7 @@ export const GET = withRoute({ route: "api/marketing/ads" }, async ({ tenantId, 
       lastError: tok?.last_error ?? null,
     },
     meta: { configured: !!metaAppCreds(), connected: metaRows.length > 0, tokenExpiresAt: metaExpiry },
+    linkedin: { configured: !!linkedInCreds() || !!await readLinkedInAdsCredentials(admin, tenantId), connected: linkedInRows.length > 0, tokenExpiresAt: linkedInExpiry },
     accounts: (accounts ?? []).map((a) => ({ id: a.id, platform: a.platform, account_id: a.account_id, name: a.name, currency: a.currency, enabled: a.enabled, last_synced_at: a.last_synced_at, last_error: a.last_error })),
   };
 });

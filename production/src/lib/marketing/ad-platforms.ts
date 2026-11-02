@@ -1,5 +1,5 @@
 /**
- * Ad platforms (Google Ads, Meta Ads) — the pure part.
+ * Ad platforms (Google Ads, Meta Ads, LinkedIn Ads) — the pure part.
  *
  * What the platforms reported (rows from ad_spend_daily, migration 20260927260000) turned
  * into what the owner wants to know: this month's spend and pace against the budget, each
@@ -10,12 +10,13 @@
 
 import { addDaysISO } from "@/lib/dates/ist";
 
-export type AdPlatform = "google-ads" | "meta-ads";
+export type AdPlatform = "google-ads" | "meta-ads" | "linkedin-ads";
+export const LINKEDIN_GROUP_PREFIX = "group:";
 
-export const PLATFORM_LABEL: Record<AdPlatform, string> = { "google-ads": "Google Ads", "meta-ads": "Facebook / Instagram Ads" };
+export const PLATFORM_LABEL: Record<AdPlatform, string> = { "google-ads": "Google Ads", "meta-ads": "Facebook / Instagram Ads", "linkedin-ads": "LinkedIn Ads" };
 
 /** The `expenses.channel` / `leads.source` key each platform's spend belongs to. */
-export const PLATFORM_CHANNEL: Record<AdPlatform, string> = { "google-ads": "google-ads", "meta-ads": "meta-ads" };
+export const PLATFORM_CHANNEL: Record<AdPlatform, string> = { "google-ads": "google-ads", "meta-ads": "meta-ads", "linkedin-ads": "linkedin-ads" };
 
 /** Both platforms restate the last ~4 weeks (late conversions, invalid-click credits). */
 export const AD_REFRESH_DAYS = 35;
@@ -64,7 +65,7 @@ export function totalsOf(rows: readonly AdSpendRow[]): AdTotals {
 }
 
 export interface CampaignStat extends AdTotals {
-  platform: AdPlatform; campaign_id: string; campaign_name: string;
+  platform: AdPlatform; account_id: string; campaign_id: string; campaign_name: string;
   /** Last day the campaign spent anything in the range. */
   lastActive: string;
   /** App leads attributed to this campaign (utm_campaign match), when known. */
@@ -75,7 +76,7 @@ export interface CampaignStat extends AdTotals {
 /** Per-campaign table for a range, biggest spender first. `leadsByCampaign` keys are utm_campaign (case-insensitive). */
 export function campaignStats(rows: readonly AdSpendRow[], leadsByCampaign: ReadonlyMap<string, number> = new Map()): CampaignStat[] {
   const groups = new Map<string, AdSpendRow[]>();
-  for (const r of rows) { const k = `${r.platform}|${r.campaign_id}`; const a = groups.get(k) ?? []; a.push(r); groups.set(k, a); }
+  for (const r of rows) { const k = `${r.platform}|${r.account_id}|${r.campaign_id}`; const a = groups.get(k) ?? []; a.push(r); groups.set(k, a); }
   const norm = (s: string) => s.trim().toLowerCase();
   const leadsIdx = new Map<string, number>();
   for (const [k, v] of leadsByCampaign) leadsIdx.set(norm(k), (leadsIdx.get(norm(k)) ?? 0) + v);
@@ -84,7 +85,7 @@ export function campaignStats(rows: readonly AdSpendRow[], leadsByCampaign: Read
     const name = g[g.length - 1].campaign_name;
     const leads = leadsIdx.get(norm(name)) ?? leadsIdx.get(norm(g[0].campaign_id)) ?? 0;
     return {
-      ...t, platform: g[0].platform, campaign_id: g[0].campaign_id, campaign_name: name,
+      ...t, platform: g[0].platform, account_id: g[0].account_id, campaign_id: g[0].campaign_id, campaign_name: name,
       lastActive: g.reduce((m, r) => (r.day > m ? r.day : m), g[0].day),
       leads, cpl: leads ? r2(t.spend / leads) : null,
     };
@@ -96,7 +97,7 @@ export function campaignStats(rows: readonly AdSpendRow[], leadsByCampaign: Read
 export interface Pacing {
   month: string;             // YYYY-MM
   spent: number;             // platform spend so far this month
-  budget: number | null;     // from marketing_tools.monthly_budget (per platform) — null when not set
+  budget: number | null;     // current-month approved marketing requests (per platform); null when none
   daysGone: number;
   daysInMonth: number;
   dailyRate: number;         // spent / daysGone
@@ -146,7 +147,7 @@ export function reconcileMonths(platformRows: readonly AdSpendRow[], booksByMont
     const diffPct = p > 0 ? Math.round((diff / p) * 100) : null;
     let note: string;
     if (p === 0 && b === 0) note = "—";
-    else if (b === 0) note = platform === "meta-ads" ? "Nothing in books — consume from the advance to create the expense (Prepaid page)" : "Nothing in books — add an expense (channel Google Ads) when Google's invoice arrives";
+    else if (b === 0) note = platform === "meta-ads" ? "Nothing in books — consume from the advance to create the expense (Prepaid page)" : `Nothing in books — add an expense for ${PLATFORM_LABEL[platform]} when its invoice arrives`;
     else if (p === 0) note = "Platform reported nothing this month — was the account connected?";
     else if (Math.abs(diff - r2(p * gstRate)) <= Math.max(50, p * 0.02)) note = `Difference ≈ ${Math.round(gstRate * 100)}% GST — matches`;
     else if (Math.abs(diff) <= Math.max(50, p * 0.02)) note = "Matches";
@@ -158,14 +159,16 @@ export function reconcileMonths(platformRows: readonly AdSpendRow[], booksByMont
 
 // ── Series ─────────────────────────────────────────────────────────────────
 
-export interface DayPoint { day: string; google: number; meta: number; clicks: number; conversions: number }
+export interface DayPoint { day: string; google: number; meta: number; linkedin: number; clicks: number; conversions: number }
 
 export function dailySeries(rows: readonly AdSpendRow[], from: string, to: string): DayPoint[] {
   const idx = new Map<string, DayPoint>();
-  for (let d = from; d <= to; d = addDays(d, 1)) idx.set(d, { day: d, google: 0, meta: 0, clicks: 0, conversions: 0 });
+  for (let d = from; d <= to; d = addDays(d, 1)) idx.set(d, { day: d, google: 0, meta: 0, linkedin: 0, clicks: 0, conversions: 0 });
   for (const r of rows) {
     const p = idx.get(r.day); if (!p) continue;
-    if (r.platform === "google-ads") p.google = r2(p.google + r.spend); else p.meta = r2(p.meta + r.spend);
+    if (r.platform === "google-ads") p.google = r2(p.google + r.spend);
+    else if (r.platform === "meta-ads") p.meta = r2(p.meta + r.spend);
+    else p.linkedin = r2(p.linkedin + r.spend);
     p.clicks += r.clicks; p.conversions = r2(p.conversions + r.conversions);
   }
   return [...idx.values()];
@@ -232,8 +235,8 @@ export function metaRowsFromInsights(data: readonly MetaInsightRow[], accountId:
 
 // ── CSV ────────────────────────────────────────────────────────────────────
 
-export const AD_CSV_HEADERS = ["Day", "Platform", "Campaign", "Spend", "Impressions", "Clicks", "Conversions", "Conversion value"];
-export function adCsvRows(rows: readonly AdSpendRow[]): (string | number)[][] {
+export const AD_CSV_HEADERS = ["Day", "Platform", "Ad account", "Campaign", "Spend", "Impressions", "Clicks", "Conversions", "Conversion value"];
+export function adCsvRows(rows: readonly AdSpendRow[], accountNames: ReadonlyMap<string, string> = new Map()): (string | number)[][] {
   return [...rows].sort((a, b) => a.day.localeCompare(b.day) || a.platform.localeCompare(b.platform))
-    .map((r) => [r.day, PLATFORM_LABEL[r.platform], r.campaign_name, r.spend, r.impressions, r.clicks, r.conversions, r.conversion_value]);
+    .map((r) => [r.day, PLATFORM_LABEL[r.platform], accountNames.get(r.account_id) ?? r.account_id, r.campaign_name, r.spend, r.impressions, r.clicks, r.conversions, r.conversion_value]);
 }

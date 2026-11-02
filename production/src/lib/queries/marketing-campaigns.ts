@@ -21,6 +21,8 @@ export interface MarketingCampaign {
   id: string; name: string; code: string; start_date: string; end_date: string;
   budget: number; target_leads: number | null; target_won: number | null;
   cancelled: boolean; notes: string | null;
+  ad_platform: "google-ads" | "meta-ads" | "linkedin-ads" | null;
+  ads_manager_url: string | null;
 }
 export interface CampaignExpense { id: string; expense_date: string; vendor_name: string | null; description: string | null; amount: number; category: string | null; channel: string | null }
 export interface CampaignLead { id: string; company: string; stage: string; value: number | null; utm_source: string | null; created_at: string }
@@ -37,7 +39,7 @@ export function useMarketingCampaigns() {
     queryKey: ["expenses", ...KEY],
     queryFn: async (): Promise<CampaignRow[]> => {
       const { data, error } = await db().from("marketing_campaigns")
-        .select("id, name, code, start_date, end_date, budget, target_leads, target_won, cancelled, notes")
+        .select("id, name, code, start_date, end_date, budget, target_leads, target_won, cancelled, notes, ad_platform, ads_manager_url")
         .order("start_date", { ascending: false });
       if (error) throw error;
       const camps = (data ?? []) as MarketingCampaign[];

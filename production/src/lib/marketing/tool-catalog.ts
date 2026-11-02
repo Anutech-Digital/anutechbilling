@@ -23,6 +23,16 @@ export const TOOL_GROUPS: Record<ToolGroup, { title: string; why: string }> = {
   social:    { title: "Social (organic)",      why: "Build trust — free reach" },
 };
 
+/** Shared by the sidebar, section pages, and Marketing Hub anchors. */
+export const MARKETING_HUB_SECTIONS: ReadonlyArray<{ group: ToolGroup; id: string; href: string }> = [
+  { group: "ads", id: "paid-ads", href: "/marketing/ads" },
+  { group: "listings", id: "listings-marketplaces", href: "/marketing/listings" },
+  { group: "messaging", id: "whatsapp-calling", href: "/marketing/whatsapp-calling" },
+  { group: "email", id: "email", href: "/marketing/email" },
+  { group: "website", id: "website-tracking", href: "/marketing/website-tracking" },
+  { group: "social", id: "social-organic", href: "/marketing/social-organic" },
+];
+
 export interface MarketingTool {
   key: string;
   name: string;
@@ -74,8 +84,8 @@ export const MARKETING_TOOLS: readonly MarketingTool[] = [
     key: "linkedin-ads", name: "LinkedIn Ads", group: "ads", channel: "linkedin-ads",
     why: "For large custom software / ERP deals — decision makers are here. Expensive, so start with a small budget.",
     homeUrl: "https://www.linkedin.com/campaignmanager",
-    inApp: [{ href: "/marketing/links", label: "Tracking link" }],
-    setup: ["Create the company page first", "Small test budget, only for projects (custom software)"],
+    inApp: [{ href: "/marketing/ads", label: "Connect & sync metrics" }, { href: "/marketing/linkedin-ads", label: "Manual metrics" }, { href: "/marketing/links", label: "Tracking link" }, { href: "/marketing/linkedin", label: "Company Page posts" }],
+    setup: ["Get LinkedIn Advertising API approval, then connect it in Ad accounts", "Create the company page first", "Small test budget, only for projects (custom software)"],
   },
   // ── Listings ─────────────────────────────────────────────────────────────
   {
@@ -142,8 +152,8 @@ export const MARKETING_TOOLS: readonly MarketingTool[] = [
     key: "linkedin-page", name: "LinkedIn company page", group: "social", channel: "linkedin-organic",
     why: "Custom software clients check the company here.",
     homeUrl: "https://www.linkedin.com/company/setup/new",
-    inApp: [{ href: "/marketing/links", label: "Tracking link for posts" }],
-    setup: ["Create the page and add the team", "Post a case study for every project"],
+    inApp: [{ href: "/marketing/linkedin", label: "Connect & post" }, { href: "/marketing/links", label: "Tracking link for posts" }],
+    setup: ["Create the page and add the team", "Connect LinkedIn and post a case study for every project"],
   },
 ];
 
@@ -193,7 +203,7 @@ export function hubSummary(rows: ToolRow[]) {
   return {
     active: counted.filter((r) => r.state.status === "active").length,
     total: counted.length,
-    budget: rows.reduce((s, r) => s + (r.state.status === "active" ? r.state.monthly_budget : 0), 0),
+    budget: rows.reduce((s, r) => s + (r.group === "ads" || r.state.status === "active" ? r.state.monthly_budget : 0), 0),
     /* Once per channel: Google Business Profile and Search Console share google-organic,
        and adding both would count that spend twice. */
     spent: [...new Map(rows.filter((r) => r.channel).map((r) => [r.channel!, r.spentThisMonth ?? 0])).values()]

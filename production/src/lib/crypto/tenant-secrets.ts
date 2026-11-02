@@ -41,6 +41,10 @@ export const SECRET_COLUMNS = [
   "zoho_books_access_token",
   // R-1979 — Meta Conversions API access token (migration 20261026181411). The pixel id is not secret.
   "meta_capi_token",
+  // LinkedIn Company Page OAuth access token (migration 20261030160000).
+  "linkedin_access_token",
+  // LinkedIn Advertising API app secret (migration 20261031120000).
+  "linkedin_ads_client_secret",
 ] as const;
 
 const SECRET_SET = new Set<string>(SECRET_COLUMNS);

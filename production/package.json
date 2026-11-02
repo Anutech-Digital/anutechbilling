@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:local": "node scripts/dev-local.mjs",
+    "dev:ros": "node scripts/dev-ros.mjs",
     "build": "prisma generate && next build",
     "gate": "node --no-warnings scripts/gate.mjs",
     "start": "next start",

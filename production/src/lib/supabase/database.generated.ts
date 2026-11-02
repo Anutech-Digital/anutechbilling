@@ -12809,6 +12809,14 @@ export type Database = {
           gemini_api_key: string | null
           gemini_model: string | null
           indiamart_crm_key: string | null
+          linkedin_ads_client_id: string | null
+          linkedin_ads_client_secret: string | null
+          linkedin_access_expires_at: string | null
+          linkedin_access_token: string | null
+          linkedin_connected_at: string | null
+          linkedin_connected_by: string | null
+          linkedin_organization_name: string | null
+          linkedin_organization_urn: string | null
           razorpay_key_id: string | null
           razorpay_key_secret: string | null
           razorpay_mode: string | null
@@ -12838,6 +12846,14 @@ export type Database = {
           gemini_api_key?: string | null
           gemini_model?: string | null
           indiamart_crm_key?: string | null
+          linkedin_ads_client_id?: string | null
+          linkedin_ads_client_secret?: string | null
+          linkedin_access_expires_at?: string | null
+          linkedin_access_token?: string | null
+          linkedin_connected_at?: string | null
+          linkedin_connected_by?: string | null
+          linkedin_organization_name?: string | null
+          linkedin_organization_urn?: string | null
           razorpay_key_id?: string | null
           razorpay_key_secret?: string | null
           razorpay_mode?: string | null
@@ -12867,6 +12883,14 @@ export type Database = {
           gemini_api_key?: string | null
           gemini_model?: string | null
           indiamart_crm_key?: string | null
+          linkedin_ads_client_id?: string | null
+          linkedin_ads_client_secret?: string | null
+          linkedin_access_expires_at?: string | null
+          linkedin_access_token?: string | null
+          linkedin_connected_at?: string | null
+          linkedin_connected_by?: string | null
+          linkedin_organization_name?: string | null
+          linkedin_organization_urn?: string | null
           razorpay_key_id?: string | null
           razorpay_key_secret?: string | null
           razorpay_mode?: string | null
