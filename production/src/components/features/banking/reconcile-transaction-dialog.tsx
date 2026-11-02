@@ -85,6 +85,7 @@ import { guessCustomer, itemKey as creditItemKey } from "@/lib/banking/credit-pa
 import { usePayerMemory } from "@/lib/queries/customer-payers";
 import { useReconcileSuggestion, SuggestionCard, logSuggestion } from "@/components/features/banking/reconcile-suggestion-card";
 import { dropReconciledExpenses, expenseSuggestionIds, useReconciledExpenseIds } from "@/lib/banking/reconciled-suggestions";
+import { ManualReconcileDialog } from "@/components/features/banking/manual-reconcile-dialog";
 import {
   WhoTiles, ChosenTileBar, ReconcileFooter, SectionSlot, tileLabel, pickFooterSave,
   type WhoTile, type FooterSave,
@@ -561,19 +562,13 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     }
   };
 
-  const handleManualReconcile = async () => {
+  /* R-2361: "Mark reconciled manually" no longer saves in one click — it opens a confirm that needs
+     a reason (and can pair a reversal line); the confirm saves (ManualReconcileDialog). */
+  const [manualOpen, setManualOpen] = React.useState(false);
+  React.useEffect(() => { setManualOpen(false); }, [transaction?.id, open]);
+  const handleManualReconcile = () => {
     if (!transaction) return;
-    try {
-      await reconcile.mutateAsync({
-        transactionId: transaction.id,
-        matchedToType: "manual",
-        matchedToId:   null,
-        confidence:    "manual",
-      });
-      onOpenChange(false);
-    } catch {
-      /* hook toasts the error */
-    }
+    setManualOpen(true);
   };
 
   // Direction + amount hint
@@ -624,7 +619,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const manualSave: FooterSave = {
     label: "Mark reconciled manually",
     onSave: handleManualReconcile,
-    loading: reconcile.isPending,
+    loading: false,
   };
   const creditSave: FooterSave = {
     label: `Book ${rupee(amount)} as ${ownerWords.allowed ? "a loan from a partner" : creditKind === "capital" ? "capital" : "director's loan"}`,
@@ -868,8 +863,9 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
           Mark this reconciled without any income/expense entry. Use it for
           bank charges, interest, own-account transfers — and for a{" "}
           <b>failed / reversed transaction</b> (e.g. ATM didn&apos;t dispense
-          but was debited, then reversed): mark <b>both</b> the −₹ and the +₹
-          line this way. They cancel out, so nothing needs to be booked.
+          but was debited, then reversed): mark one line and pick the other as
+          its <b>reversal</b> — both close together. They cancel out, so nothing needs to be booked.
+          You will be asked for a reason.
         </>}
       </p>
       {inlineButton && (
@@ -879,7 +875,6 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
           icon="check_circle"
           className="mt-3"
           onClick={handleManualReconcile}
-          disabled={reconcile.isPending}
         >
           Mark reconciled manually
         </Button>
@@ -1480,6 +1475,14 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         initial={newCustomerSeed}
         onCreated={(id) => { void pickCreatedCustomer(id); }}
       />
+      {manualOpen && (
+        <ManualReconcileDialog
+          txn={transaction}
+          open={manualOpen}
+          onCancel={() => setManualOpen(false)}
+          onDone={() => { setManualOpen(false); onOpenChange(false); }}
+        />
+      )}
     </Sheet>
   );
 }

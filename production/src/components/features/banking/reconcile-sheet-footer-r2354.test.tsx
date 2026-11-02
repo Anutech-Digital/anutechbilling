@@ -36,6 +36,13 @@ vi.mock("@/lib/banking/reconciled-suggestions", async (orig) => ({
   ...(await orig<typeof import("@/lib/banking/reconciled-suggestions")>()),
   useReconciledExpenseIds: () => ({ data: new Set<string>(), isLoading: false }),
 }));
+/* R-2361: "Mark reconciled manually" opens a confirm that needs a reason (manual-reconcile-dialog.test.tsx). */
+const r2361 = vi.hoisted(() => ({ save: vi.fn() }));
+vi.mock("@/lib/banking/manual-reconcile", async (orig) => ({
+  ...(await orig<typeof import("@/lib/banking/manual-reconcile")>()),
+  useReconcileManually: () => ({ mutateAsync: r2361.save, isPending: false }),
+  useReversalCandidates: () => ({ data: [], isLoading: false }),
+}));
 vi.mock("@/lib/queries/bank", () => ({
   useSuggestMatches: () => ({ data: state.suggestions, isLoading: false }),
   useReconcileTransaction: () => ({ mutateAsync: state.reconcile, isPending: false }),
@@ -168,8 +175,13 @@ describe("R-2354 Reconcile sheet — Own transfer, Other income, Loan received, 
     expect(manual.className.split(/\s+/)).not.toContain("bg-amber");
     fireEvent.click(primary);
     expect(state.transferPay).toHaveBeenCalledTimes(1);
+    /* R-2361: the manual button opens a confirm that needs a reason — one click saves nothing. */
+    r2361.save.mockReset(); r2361.save.mockResolvedValue({});
     fireEvent.click(manual);
-    await vi.waitFor(() => expect(state.reconcile).toHaveBeenCalledWith(expect.objectContaining({ transactionId: "t1", matchedToType: "manual" })));
+    expect(state.reconcile).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Reason (required)"), { target: { value: "Sweep from own savings account" } });
+    fireEvent.click(screen.getByRole("button", { name: "Mark reconciled" }));
+    await vi.waitFor(() => expect(r2361.save).toHaveBeenCalledWith(expect.objectContaining({ transactionId: "t1", reason: "Sweep from own savings account" })));
   });
 
   it("Other / manual (money in): 'Book ₹X as interest received' is the footer's one primary; manual is secondary", () => {

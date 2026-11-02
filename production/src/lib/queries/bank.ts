@@ -71,6 +71,10 @@ export type BankTransactionRow = {
   updated_at:       string;
   /** R-1623: the Import click that brought this line in; null for lines from before batches. */
   import_batch_id?: string | null;
+  /** R-2361: why the line was reconciled manually (reconcile_bank_txn_manual). */
+  reconcile_note?: string | null;
+  /** R-2361: the opposite line this one cancels out (a reversal pair points both ways). */
+  reversal_of?: string | null;
 };
 
 export type BankAccountInsert = Omit<
