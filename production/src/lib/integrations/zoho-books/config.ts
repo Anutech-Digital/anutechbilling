@@ -44,6 +44,9 @@ export const STATE_TTL_MS = 10 * 60 * 1000;
 /** Who may connect, choose the organization, preview and disconnect. */
 export const ZOHO_BOOKS_MANAGE_ROLES = ["owner", "manager", "accountant"] as const;
 
+/** R-2359: who may press "Find in Zoho" on a bank line (it shows the company's sales records). */
+export const ZOHO_FIND_ROLES = ["owner", "accountant"] as const;
+
 export function canManageZohoBooks(role: string | null | undefined): boolean {
   return !!role && (ZOHO_BOOKS_MANAGE_ROLES as readonly string[]).includes(role);
 }
