@@ -42,6 +42,7 @@ import {
   fifoAllocate, receiptCheck, pickProjectForReceipt, projectReceiptPayload, hintLink, projectsForPicker, type KistRow,
 } from "@/lib/banking/project-receipt-allocation";
 import { describeError } from "@/lib/errors/toast-error";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
 const NEW_CUSTOMER = "__new_customer__";
 const selectCls = "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
@@ -57,12 +58,15 @@ interface Props {
   onDone: () => void;
   /** R-2007: the Suggestion card's TDS — "Change" opens this section with it filled in. */
   initialTds?: { sectionKey: string; amount: number } | null;
+  /** R-2008: the Reconcile sheet draws this section's Save in its sticky footer. Given → no inline
+   *  Save; the footer gets the same label, disabled rule and submit(). */
+  onFooterSave?: (save: FooterSave | null) => void;
 }
 
 /** One instalment row as the owner sees and edits it. */
 interface RowState { on: boolean; amount: string; invoice: boolean }
 
-export function ProjectPaymentSection({ txn, amount, customers, customerId, onCustomerChange, onNewCustomer, onCancel, onDone, initialTds }: Props) {
+export function ProjectPaymentSection({ txn, amount, customers, customerId, onCustomerChange, onNewCustomer, onCancel, onDone, initialTds, onFooterSave }: Props) {
   const { data: projects, isLoading } = useOpenProjects(true);
   const book = useBookBankCreditAsProjectPayment();
   const allocate = useAllocateProjectReceipt();
@@ -219,6 +223,21 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
     });
     onDone();
   }
+
+  /* R-2008: in the Reconcile sheet the Save sits in the sticky footer — same label, same rule
+     (canSubmit, a project picked), same submit(). Amount check: the bank part of the instalments
+     ticked (ticked − TDS); a match or an advance books the whole line. */
+  const saveLabel = listMode ? "Save & reconcile" : "Record project payment & reconcile";
+  const saveDisabled = !canSubmit || (mode === "existing" && !project);
+  const bankBooked = listMode && check.state !== "match" && advance === 0 ? tickedTotal - tdsAmount : undefined;
+  useFooterSaveReport(onFooterSave, {
+    label: saveLabel,
+    onSave: () => { void submit(); },
+    disabled: saveDisabled,
+    loading: listMode ? allocate.isPending : book.isPending,
+    booked: bankBooked === undefined ? undefined : amount - net + bankBooked,
+  });
+  const footerHasSave = Boolean(onFooterSave);
 
   return (
     <div className="space-y-2">
@@ -486,16 +505,18 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
       )}
 
       <div className="flex gap-2 pt-1">
-        <Button
-          size="sm"
-          variant="primary"
-          icon="check"
-          loading={listMode ? allocate.isPending : book.isPending}
-          disabled={!canSubmit || (mode === "existing" && !project)}
-          onClick={submit}
-        >
-          {listMode ? "Save & reconcile" : "Record project payment & reconcile"}
-        </Button>
+        {!footerHasSave && (
+          <Button
+            size="sm"
+            variant="primary"
+            icon="check"
+            loading={listMode ? allocate.isPending : book.isPending}
+            disabled={saveDisabled}
+            onClick={submit}
+          >
+            {saveLabel}
+          </Button>
+        )}
         <Button size="sm" variant="default" onClick={onCancel}>Cancel</Button>
       </div>
     </div>

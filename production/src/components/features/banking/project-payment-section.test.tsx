@@ -27,6 +27,7 @@ vi.mock("@/lib/queries/project-receipts", () => ({
 }));
 
 import { ProjectPaymentSection } from "./project-payment-section";
+import { ReconcileFooter, type FooterSave } from "./reconcile-who-tiles";
 
 const ms = (n: number, paid = 0) => ({
   id: `k${n}`, seq: n, label: `Kist ${n}`, total: 118000, paid, remaining: 118000 - paid, invoiceId: null,
@@ -220,5 +221,75 @@ describe("R-2004 the customer chosen picks the project", () => {
     state.projects = [scnProjects()[1]];
     render(el("c-acme"));
     expect(screen.getByRole("tab", { name: /New project/ }).getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+/* R-2008: in the Reconcile sheet the project receipt hands its Save to the sticky footer — same
+   label, same rule (canSubmit), same submit(); the amount check is the bank part of the ticks. */
+function InSheet({ amount }: { amount: number }) {
+  const [footer, setFooter] = React.useState<FooterSave | null>(null);
+  return (
+    <>
+      <div data-testid="reconcile-scroll-body">
+        <ProjectPaymentSection
+          txn={{ id: "t1", txn_date: "2026-10-20", description: "NEFT CR-ACME TRADERS-UTR77", reference: "UTR77" }}
+          amount={amount} customers={customers} customerId="" onCustomerChange={() => {}} onNewCustomer={() => {}}
+          onCancel={() => {}} onDone={() => {}} onFooterSave={setFooter}
+        />
+      </div>
+      <ReconcileFooter amount={amount} save={footer} hint="pick the customer" onClose={() => {}} />
+    </>
+  );
+}
+const sheet = () => ({ body: screen.getByTestId("reconcile-scroll-body"), footer: screen.getByTestId("reconcile-footer") });
+const footerSave = () => within(sheet().footer).getByRole("button", { name: "Save & reconcile" }) as HTMLButtonElement;
+
+describe("R-2008 Project payment — Save in the sticky footer", () => {
+  it("₹2,36,000 on kist 1 + 2: the footer's Save sends the same allocation; the body has no Save; 'Bank ₹X = ₹Y ✓'", async () => {
+    render(<InSheet amount={236000} />);
+    await waitFor(() => expect(footerSave().disabled).toBe(false));
+    expect(within(sheet().body).queryByRole("button", { name: /save & reconcile/i })).toBeNull();
+    expect(within(sheet().body).getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(sheet().footer.textContent).toContain("Bank ₹2,36,000 = ₹2,36,000 ✓");
+    fireEvent.click(footerSave());
+    await waitFor(() => expect(state.allocate).toHaveBeenCalledTimes(1));
+    expect(state.allocate.mock.calls[0][0]).toEqual({
+      bankTxnId: "t1", projectId: "p-acme",
+      allocations: [
+        { milestoneId: "k1", amount: 118000, raiseInvoice: true },
+        { milestoneId: "k2", amount: 118000, raiseInvoice: true },
+      ],
+      tds: null, receivedAt: "2026-10-20", reference: "UTR77",
+    });
+  });
+
+  it("part payment: kist 2 lowered to ₹1,00,000 → footer says '₹18,000 left' and its Save stays off", async () => {
+    render(<InSheet amount={236000} />);
+    fireEvent.change(screen.getByLabelText("Amount for Kist 2"), { target: { value: "100000" } });
+    await waitFor(() => expect(sheet().footer.textContent).toContain("₹18,000 left"));
+    expect(footerSave().disabled).toBe(true);
+    fireEvent.click(footerSave());
+    expect(state.allocate).not.toHaveBeenCalled();
+  });
+
+  it("TDS: ₹2,12,400 bank + ₹23,600 TDS → the footer check is on the bank amount and Save sends the TDS", async () => {
+    render(<InSheet amount={212400} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: /tds deducted/i }));
+    fireEvent.change(screen.getByLabelText("TDS amount"), { target: { value: "23600" } });
+    await waitFor(() => expect(sheet().footer.textContent).toContain("Bank ₹2,12,400 = ₹2,12,400 ✓"));
+    fireEvent.click(footerSave());
+    await waitFor(() => expect(state.allocate).toHaveBeenCalledTimes(1));
+    expect(state.allocate.mock.calls[0][0].tds).toEqual({ section: "194J", ratePct: 10, amount: 23600 });
+  });
+
+  it("more than is due (advance kept): the whole line is booked — '✓', Save on", async () => {
+    render(<InSheet amount={400000} />);
+    await waitFor(() => expect(footerSave().disabled).toBe(false));
+    expect(sheet().footer.textContent).toContain("Bank ₹4,00,000 = ₹4,00,000 ✓");
+  });
+
+  it("outside the sheet (no onFooterSave) the section keeps its own Save", () => {
+    renderFor(236000);
+    expect(save()).toBeTruthy();
   });
 });

@@ -32,6 +32,14 @@ const state = vi.hoisted(() => ({
   reconcileExpenses: vi.fn(),
   salarySplit: vi.fn(),
   salaries: [] as unknown[],
+  /* R-2008: the handlers the footer must call for the remaining sections. */
+  equityPay: vi.fn(),
+  incentivePay: vi.fn(),
+  advancePay: vi.fn(),
+  emiPay: vi.fn(),
+  projectPay: vi.fn(),
+  commissionPay: vi.fn(),
+  commissions: [] as unknown[],
 }));
 const { mutation } = vi.hoisted(() => ({ mutation: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }) }));
 
@@ -54,7 +62,7 @@ vi.mock("@/lib/queries/bank", () => ({
   useBookBankCredit: mutation,
   useBookBankAdvance: mutation,
   useBookBankTxnAsStatutory: mutation,
-  useBookBankTxnAsCommission: mutation,
+  useBookBankTxnAsCommission: () => ({ mutateAsync: state.commissionPay, isPending: false }),
   useReconcileSalaryAdvanceSplit: () => ({ mutateAsync: state.salarySplit, isPending: false }),
   useOpenInvoicesForCreditMatch: () => ({ data: [] }),
 }));
@@ -69,7 +77,7 @@ vi.mock("@/lib/queries/customers", () => ({ useCustomers: () => ({ data: [] }) }
 vi.mock("@/lib/queries/tax-payments", () => ({ useBookBankTxnAsTax: mutation }));
 vi.mock("@/lib/queries/salary-from-bank", () => ({ useBookSalaryLines: mutation }));
 vi.mock("@/lib/queries/prepaid-advances", () => ({ usePrepaidAdvances: () => ({ data: [] }) }));
-vi.mock("@/lib/queries/referral-commissions", () => ({ useReferralCommissions: () => ({ data: [] }) }));
+vi.mock("@/lib/queries/referral-commissions", () => ({ useReferralCommissions: () => ({ data: state.commissions }) }));
 /* R-2007's Suggestion card has its own test (reconcile-suggestion-r2007.test.tsx); none here. */
 vi.mock("@/components/features/banking/reconcile-suggestion-card", () => ({
   useReconcileSuggestion: () => ({ suggestion: null, accept: async () => false, accepting: false }),
@@ -78,15 +86,26 @@ vi.mock("@/components/features/banking/reconcile-suggestion-card", () => ({
 }));
 vi.mock("@/lib/compliance/profile", () => ({ useComplianceProfile: () => ({ data: { businessType: "pvt_ltd" } }) }));
 vi.mock("@/components/features/customers/add-customer-form", () => ({ AddCustomerForm: () => null }));
-vi.mock("@/components/features/banking/project-payment-section", () => ({ ProjectPaymentSection: () => null }));
+vi.mock("@/components/features/banking/project-payment-section", async () => {
+  const { useFooterSaveReport } = await import("./reconcile-who-tiles");
+  return {
+    /* R-2008: a part payment — ₹10,000 of the ₹11,800 line ticked, so its Save is off. */
+    ProjectPaymentSection: ({ onFooterSave }: { onFooterSave?: Parameters<typeof useFooterSaveReport>[0] }) => {
+      useFooterSaveReport(onFooterSave, { label: "Save & reconcile", onSave: state.projectPay, disabled: true, booked: 10000 });
+      return <section aria-label="Project payment" />;
+    },
+  };
+});
 /* R-2348: the Customer / Customer refund sections are tested on their own (credit-pay-for-section.test,
    customer-refund-section.test); here stubs that hand the footer their Save the way the real ones do. */
 vi.mock("@/components/features/banking/credit-pay-for-section", async () => {
   const { useFooterSaveReport } = await import("./reconcile-who-tiles");
   return {
-    CreditPayForSection: ({ onFooterSave }: { onFooterSave?: Parameters<typeof useFooterSaveReport>[0] }) => {
+    CreditPayForSection: ({ onFooterSave, onProjectPayment }: {
+      onFooterSave?: Parameters<typeof useFooterSaveReport>[0]; onProjectPayment?: (customerId: string) => void;
+    }) => {
       useFooterSaveReport(onFooterSave, { label: "Record ₹11,800 on Q-7 & reconcile", onSave: state.customerPay });
-      return <section aria-label="This money is for" />;
+      return <section aria-label="This money is for"><button type="button" onClick={() => onProjectPayment?.("c1")}>Project payment</button></section>;
     },
   };
 });
@@ -99,15 +118,52 @@ vi.mock("@/components/features/banking/customer-refund-section", async () => {
     },
   };
 });
-vi.mock("@/components/features/banking/owner-equity-section", () => ({ OwnerEquitySection: () => null }));
+/* R-2008: the Owner / Employee / Loan / Project sections are tested on their own (owner-equity-section,
+   employee-advance-bank-section, incentive-from-bank-section, emi-repayment-section,
+   project-payment-section tests); here stubs that hand the footer their Save the way the real ones
+   do — advance / incentive only once opened, like the real forms. */
+vi.mock("@/components/features/banking/owner-equity-section", async () => {
+  const { useFooterSaveReport } = await import("./reconcile-who-tiles");
+  return {
+    OwnerEquitySection: ({ onFooterSave }: { onFooterSave?: Parameters<typeof useFooterSaveReport>[0] }) => {
+      useFooterSaveReport(onFooterSave, { label: "Book ₹11,800 as owner drawings", onSave: state.equityPay });
+      return <section aria-label="Owner drawings"><input aria-label="Note" /></section>;
+    },
+  };
+});
 /* R-2095: the transfer / other-income sections have their own tests (own-transfer-section-r2095). */
 vi.mock("@/components/features/banking/other-income-section", () => ({ OtherIncomeSection: () => null }));
 vi.mock("@/components/features/banking/own-transfer-section", () => ({ OwnTransferSection: () => null }));
-vi.mock("@/components/features/banking/incentive-from-bank-section", () => ({ IncentiveFromBankSection: () => null }));
-vi.mock("@/components/features/banking/employee-advance-bank-section", () => ({ EmployeeAdvanceBankSection: () => null }));
+vi.mock("@/components/features/banking/incentive-from-bank-section", async () => {
+  const R = await import("react");
+  const { useFooterSaveReport } = await import("./reconcile-who-tiles");
+  return {
+    IncentiveFromBankSection: ({ onFooterSave }: { onFooterSave?: Parameters<typeof useFooterSaveReport>[0] }) => {
+      const [open, setOpen] = R.useState(false);
+      useFooterSaveReport(onFooterSave, open ? { label: "Book ₹11,800 as incentive", onSave: state.incentivePay } : null);
+      return <section aria-label="Incentive"><button type="button" onClick={() => setOpen(true)}>Book incentive</button>{open && <input aria-label="TDS deducted" />}</section>;
+    },
+  };
+});
+vi.mock("@/components/features/banking/employee-advance-bank-section", async () => {
+  const R = await import("react");
+  const { useFooterSaveReport } = await import("./reconcile-who-tiles");
+  return {
+    EmployeeAdvanceBankSection: ({ onFooterSave }: { onFooterSave?: Parameters<typeof useFooterSaveReport>[0] }) => {
+      const [open, setOpen] = R.useState(false);
+      useFooterSaveReport(onFooterSave, open ? { label: "Book ₹11,800 as advance to Asha", onSave: state.advancePay } : null);
+      return <section aria-label="Employee advance"><button type="button" onClick={() => setOpen(true)}>Book advance</button></section>;
+    },
+  };
+});
 vi.mock("@/components/features/banking/emi-repayment-section", async () => {
-  const { Button } = await import("@/components/ui/button");
-  return { EmiRepaymentSection: () => <Button variant="primary">Book as EMI</Button> };
+  const { useFooterSaveReport } = await import("./reconcile-who-tiles");
+  return {
+    EmiRepaymentSection: ({ onFooterSave }: { onFooterSave?: Parameters<typeof useFooterSaveReport>[0] }) => {
+      useFooterSaveReport(onFooterSave, { label: "Reconcile as EMI 3", onSave: state.emiPay });
+      return <section aria-label="EMI"><input type="radio" aria-label="EMI 3 · Dell laptop" /></section>;
+    },
+  };
 });
 vi.mock("@/components/features/banking/debit-pay-for-section", async () => {
   const R = await import("react");
@@ -149,8 +205,10 @@ const primaryButtons = () =>
 afterEach(cleanup);
 beforeEach(() => {
   state.bookExpense.mockReset();
-  for (const fn of [state.vendorPay, state.customerPay, state.refundPay, state.reconcile, state.reconcileExpenses, state.salarySplit]) fn.mockReset().mockResolvedValue({});
+  for (const fn of [state.vendorPay, state.customerPay, state.refundPay, state.reconcile, state.reconcileExpenses, state.salarySplit,
+    state.equityPay, state.incentivePay, state.advancePay, state.emiPay, state.projectPay, state.commissionPay]) fn.mockReset().mockResolvedValue({});
   state.salaries = [];
+  state.commissions = [];
   state.focus = { vendorId: "v1", vendorName: "Sharma Associates", openItems: [PS2] } satisfies VendorFocus;
   state.suggestions = [{ match_type: "expense", match_id: "E2", match_label: "Sharma Associates · PS-2", match_amount: 11800, match_date: "2026-09-10", match_confidence: "exact" }];
   state.expenses = [
@@ -350,5 +408,101 @@ describe("R-2348 Reconcile sheet — every tile saves from the sticky footer", (
     expect(within(p.body).queryByRole("button", { name: /^Reconcile \d* ?expense/ })).toBeNull();
     fireEvent.click(p.primary);
     await vi.waitFor(() => expect(state.reconcileExpenses).toHaveBeenCalledWith({ transactionId: "t1", expenseIds: ["E2"] }));
+  });
+});
+
+/* R-2008 (second half of R-2006 / R-2348): Project payment, EMI, Owner drawings, Employee advance,
+   Incentive and the referral commission save from the sticky footer too. A tile with several forms
+   has ONE Save in the footer: the form the owner last clicked or typed in (else the first ready). */
+describe("R-2008 Reconcile sheet — the remaining forms save from the sticky footer", () => {
+  const plainOut = { ...sharmaLine, description: "UPI 9876@okhdfc" } as BankTransactionRow;
+  const credit = { ...sharmaLine, debit: 0, credit: 11800, description: "NEFT ACME CORP" } as BankTransactionRow;
+  const parts = () => {
+    const footer = screen.getByTestId("reconcile-footer");
+    const body = screen.getByTestId("reconcile-scroll-body");
+    expect(body.contains(footer)).toBe(false);
+    expect(footer.textContent).not.toMatch(/above/i);
+    const footerPrimaries = within(footer).getAllByRole("button").filter((b) => b.className.split(/\s+/).includes("bg-amber"));
+    expect(footerPrimaries).toHaveLength(1);
+    return { footer, body, primary: footerPrimaries[0] as HTMLButtonElement };
+  };
+  const footerButtons = () => within(screen.getByTestId("reconcile-footer")).queryAllByRole("button").map((b) => b.textContent);
+
+  it("Project payment (Customer tile): its Save is the footer's; a part payment shows '₹Z left' and stays off", () => {
+    state.focus = null;
+    render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={credit} />);
+    fireEvent.click(screen.getByRole("radio", { name: /^Customer/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Project payment" }));
+    const { footer, primary } = parts();
+    expect(primary.textContent).toBe("Save & reconcile");
+    expect(primary.disabled).toBe(true);
+    expect(footer.textContent).toContain("₹1,800 left");
+    fireEvent.click(primary);
+    expect(state.projectPay).not.toHaveBeenCalled();
+  });
+
+  it("Owner (money out): Book ₹X as owner drawings is the footer's Save and runs the section's save", () => {
+    state.focus = null;
+    render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={plainOut} />);
+    fireEvent.click(screen.getByRole("radio", { name: /^Owner/ }));
+    const { footer, primary } = parts();
+    expect(primary.textContent).toBe("Book ₹11,800 as owner drawings");
+    expect(footer.textContent).toContain("Bank ₹11,800 = ₹11,800 ✓");
+    fireEvent.click(primary);
+    expect(state.equityPay).toHaveBeenCalledTimes(1);
+  });
+
+  it("Employee: nothing open → no Save (and no 'above'); the form opened / typed in last owns the footer", () => {
+    state.focus = null;
+    render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={plainOut} />);
+    fireEvent.click(screen.getByRole("radio", { name: /^Employee \/ salary/ }));
+    expect(footerButtons()).toEqual(["Close"]);
+    expect(screen.getByTestId("reconcile-footer").textContent).toContain("its save shows here");
+    expect(screen.getByTestId("reconcile-footer").textContent).not.toMatch(/above/i);
+
+    fireEvent.click(screen.getByRole("button", { name: "Book incentive" }));
+    expect(parts().primary.textContent).toBe("Book ₹11,800 as incentive");
+    fireEvent.click(screen.getByRole("button", { name: "Book advance" }));
+    expect(parts().primary.textContent).toBe("Book ₹11,800 as advance to Asha");
+    fireEvent.change(screen.getByLabelText("TDS deducted"), { target: { value: "500" } });
+    const { primary } = parts();
+    expect(primary.textContent).toBe("Book ₹11,800 as incentive");
+    fireEvent.click(primary);
+    expect(state.incentivePay).toHaveBeenCalledTimes(1);
+    expect(state.advancePay).not.toHaveBeenCalled();
+  });
+
+  it("Loan / EMI: the EMI's save first; typing in Loan with a person moves the footer there and back", () => {
+    state.focus = null;
+    render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={plainOut} />);
+    fireEvent.click(screen.getByRole("radio", { name: /^Loan \/ EMI/ }));
+    expect(parts().primary.textContent).toBe("Reconcile as EMI 3");
+    expect(within(screen.getByTestId("reconcile-scroll-body")).queryByRole("button", { name: /Reconcile as EMI/ })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Person's name (e.g. Julie Rawat)"), { target: { value: "Julie Rawat" } });
+    expect(parts().primary.textContent).toMatch(/^Book ₹11,800 as a loan/);
+    fireEvent.click(screen.getByRole("radio", { name: "EMI 3 · Dell laptop" }));
+    const { primary } = parts();
+    expect(primary.textContent).toBe("Reconcile as EMI 3");
+    fireEvent.click(primary);
+    expect(state.emiPay).toHaveBeenCalledTimes(1);
+  });
+
+  it("Referral commission (Vendor tile): opened → its Save is the footer's, off until picked; same call as its old button", async () => {
+    state.commissions = [{ id: "rc1", status: "earned", net_payable: 11800, earned_date: "2026-09-30", partner_name: "Mehta Refs" }];
+    render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={sharmaLine} />);
+    expect(parts().primary.textContent).toBe("Record payment ₹11,800 to Sharma Associates & reconcile");
+    fireEvent.click(screen.getByRole("button", { name: "Referral partner commission?" }));
+    let p = parts();
+    expect(p.primary.textContent).toBe("Book ₹11,800 as commission paid");
+    expect(p.primary.disabled).toBe(true);
+    expect(within(p.body).queryByRole("button", { name: /as commission paid/ })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Referral commission"), { target: { value: "rc1" } });
+    p = parts();
+    expect(p.primary.disabled).toBe(false);
+    fireEvent.click(p.primary);
+    await vi.waitFor(() => expect(state.commissionPay).toHaveBeenCalledWith({ transactionId: "t1", accountId: "b1", commissionId: "rc1" }));
+    // back in the vendor section → its Record payment owns the footer again
+    fireEvent.click(screen.getByRole("region", { name: "Paying a vendor" }));
+    expect(parts().primary.textContent).toBe("Record payment ₹11,800 to Sharma Associates & reconcile");
   });
 });

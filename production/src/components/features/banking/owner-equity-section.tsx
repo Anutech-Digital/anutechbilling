@@ -25,6 +25,7 @@ import { useOwnerEquityMovements, useBookBankTxnAsOwnerEquity } from "@/lib/quer
 import { useFirmPartners } from "@/lib/queries/partners";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import { PartnerPicker } from "@/components/features/partners/partner-picker";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
 const dayGap = (a: string, b: string) => Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000;
 
@@ -42,7 +43,13 @@ export function ownerEntryCandidates(
     .slice(0, 3);
 }
 
-export function OwnerEquitySection({ transaction, onDone }: { transaction: BankTransactionRow; onDone: () => void }) {
+export function OwnerEquitySection({ transaction, onDone, onFooterSave }: {
+  transaction: BankTransactionRow;
+  onDone: () => void;
+  /** R-2008: the Reconcile sheet draws "Book ₹X as drawings / capital introduced" in its sticky
+   *  footer. Given → no inline button; the footer gets the same label, disabled rule and submit. */
+  onFooterSave?: (save: FooterSave | null) => void;
+}) {
   const profileQ = useComplianceProfile();
   const words = ownerEquityWords(profileQ.data?.businessType ?? null);
   const movementsQ = useOwnerEquityMovements(words.allowed);
@@ -68,6 +75,16 @@ export function OwnerEquitySection({ transaction, onDone }: { transaction: BankT
     } catch { /* the hook shows the error */ }
   }
 
+  /* R-2008: same label, same rule (partner picked when the firm needs one), same submit(null).
+     A company (no drawings / capital introduced here) hands nothing to the footer. */
+  const label = isDebit ? words.drawings : words.capital;
+  const needPartner = words.needsPartner && !partner.trim();
+  const saveLabel = `Book ${rupee(amount)} as ${label.toLowerCase()}`;
+  useFooterSaveReport(onFooterSave, words.allowed
+    ? { label: saveLabel, onSave: () => { void submit(null); }, disabled: needPartner, loading: book.isPending }
+    : null);
+  const footerHasSave = Boolean(onFooterSave);
+
   if (!words.allowed) {
     // Pvt Ltd: money in is share capital / a director's loan — the existing box above covers it.
     if (!isDebit) return null;
@@ -90,9 +107,6 @@ export function OwnerEquitySection({ transaction, onDone }: { transaction: BankT
       </div>
     );
   }
-
-  const label = isDebit ? words.drawings : words.capital;
-  const needPartner = words.needsPartner && !partner.trim();
 
   return (
     <div className={`rounded-md border p-3 ${isDebit ? "border-indigo/40 bg-indigo/5" : "border-emerald/40 bg-emerald/5"}`}>
@@ -128,10 +142,12 @@ export function OwnerEquitySection({ transaction, onDone }: { transaction: BankT
         <Input aria-label="Note" placeholder={isDebit ? "Note (optional) — e.g. Home rent" : "Note (optional)"} value={note}
           onChange={(e) => setNote(e.target.value)} maxLength={500} />
       </div>
-      <Button size="sm" variant="primary" icon="check" className="mt-3"
-        loading={book.isPending} disabled={needPartner} onClick={() => submit(null)}>
-        Book {rupee(amount)} as {label.toLowerCase()}
-      </Button>
+      {!footerHasSave && (
+        <Button size="sm" variant="primary" icon="check" className="mt-3"
+          loading={book.isPending} disabled={needPartner} onClick={() => submit(null)}>
+          {saveLabel}
+        </Button>
+      )}
       {needPartner && <p className="text-xs text-ink-3 mt-1">Pick the partner first — each partner has their own capital account.</p>}
     </div>
   );

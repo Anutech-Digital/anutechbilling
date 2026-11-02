@@ -86,7 +86,7 @@ import { usePayerMemory } from "@/lib/queries/customer-payers";
 import { useReconcileSuggestion, SuggestionCard, logSuggestion } from "@/components/features/banking/reconcile-suggestion-card";
 import { dropReconciledExpenses, expenseSuggestionIds, useReconciledExpenseIds } from "@/lib/banking/reconciled-suggestions";
 import {
-  WhoTiles, ChosenTileBar, ReconcileFooter, SectionSlot, tileLabel,
+  WhoTiles, ChosenTileBar, ReconcileFooter, SectionSlot, tileLabel, pickFooterSave,
   type WhoTile, type FooterSave,
 } from "@/components/features/banking/reconcile-who-tiles";
 
@@ -128,7 +128,21 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   /* R-2348: the Save the Vendor / Customer (or Customer refund) section hands the footer. */
   const [vendorSave, setVendorSave] = React.useState<FooterSave | null>(null);
   const [customerSave, setCustomerSave] = React.useState<FooterSave | null>(null);
-  React.useEffect(() => { setPickedExpenses(new Set()); setShowSplit(false); setShowSalary(false); setSalaryPick(""); }, [transaction?.id]);
+  /* R-2008: the same for Project payment, EMI, drawings / capital, employee advance and incentive. */
+  const [projectSave, setProjectSave] = React.useState<FooterSave | null>(null);
+  const [emiSave, setEmiSave] = React.useState<FooterSave | null>(null);
+  const [equitySave, setEquitySave] = React.useState<FooterSave | null>(null);
+  const [empAdvanceSave, setEmpAdvanceSave] = React.useState<FooterSave | null>(null);
+  const [incentiveSave, setIncentiveSave] = React.useState<FooterSave | null>(null);
+  /* R-2008: on a tile with several forms, the one the owner last clicked or typed in owns the footer. */
+  const [footerPick, setFooterPick] = React.useState<string | null>(null);
+  const pickOn = (key: string) => ({
+    "data-footer-form": key,
+    onClickCapture: () => setFooterPick(key),
+    onFocusCapture: () => setFooterPick(key),
+    onChangeCapture: () => setFooterPick(key),
+  });
+  React.useEffect(() => { setPickedExpenses(new Set()); setShowSplit(false); setShowSalary(false); setSalaryPick(""); setFooterPick(null); }, [transaction?.id]);
   const toggleExpense = (id: string) =>
     setPickedExpenses((prev) => {
       const next = new Set(prev);
@@ -573,6 +587,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     : isCredit ? (customerGuessed ? "customer" : null)
     : govtHint ? "tax" : vendorFocus ? "vendor" : salaryHint ? "employee" : null;
   React.useEffect(() => { if (!tileTouched) setTile(autoTile); }, [autoTile, tileTouched]);
+  React.useEffect(() => { setFooterPick(null); }, [tile]);
 
   /* Book money-IN as capital / a director's loan (R-1839: a proprietor books it in
      OwnerEquitySection instead; a firm keeps only the loan-from-partner choice). */
@@ -648,23 +663,36 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     loading: reconcileExpenses.isPending,
     booked: pickedExpenseTotal,
   } : null;
+  /* R-2008: a referral partner's commission (Vendor tile) — the button that sat in its box. */
+  const commissionSave: FooterSave | null = !isCredit && showCommission && commissionCandidates.length > 0 ? {
+    label: `Book ${rupee(amount)} as commission paid`,
+    onSave: () => { void handleBookCommission(); },
+    disabled: !commissionPick,
+    loading: bookCommission.isPending,
+  } : null;
   const footerSave: FooterSave | null = payForDone || !tile ? null
     : tile === "tax" ? statutorySave
     : tile === "other" ? (isCredit ? manualSave : expenseSplitSave ?? expenseSave)
     : tile === "transfer" || tile === "tax_refund" ? manualSave
-    : tile === "owner" ? (showCreditBox ? creditSave : null)
-    : tile === "loan" ? advanceSave
-    : tile === "vendor" ? (isCredit ? null : vendorSave)
-    : tile === "customer" ? customerSave
-    : tile === "employee" && !isCredit ? salaryPaySave ?? salarySplitSave ?? (salaryHint ? salarySave : null)
+    : tile === "owner" ? pickFooterSave([["credit", showCreditBox ? creditSave : null], ["equity", equitySave]], footerPick)
+    : tile === "loan" ? pickFooterSave([["emi", isCredit ? null : emiSave], ["advance", advanceSave]], footerPick)
+    : tile === "vendor" ? (isCredit ? null : pickFooterSave([["vendor", vendorSave], ["commission", commissionSave]], footerPick))
+    : tile === "customer" ? (isCredit && showProject ? projectSave : customerSave)
+    : tile === "employee" ? pickFooterSave([
+        ["salary", isCredit ? null : salaryPaySave ?? salarySplitSave ?? (salaryHint ? salarySave : null)],
+        ["advance", empAdvanceSave],
+        ["incentive", isCredit ? null : incentiveSave],
+      ], footerPick)
     : null;
   const footerHint = payForDone ? "booked"
     : suggestion ? "check the suggestion above, or pick who this money is for"
     : !tile ? "pick who this money is for"
     : tile === "vendor" && !isCredit ? "pick the vendor — its Record payment shows here"
     : tile === "customer" && !(isCredit && showProject) ? "pick the customer — the save shows here"
-    /* R-2268: no "button above" — this form keeps its own button (e.g. an employee advance). */
-    : "save with the chosen form's own button";
+    : tile === "employee" ? (isCredit ? "open Book return — its save shows here" : "pick a salary, or open an advance or incentive — its save shows here")
+    : tile === "owner" && !isCredit && !ownerWords.allowed ? "a company has no drawings — open the matching page from the list"
+    /* R-2268 / R-2008: never "button above" — the chosen form's save shows here once it is ready. */
+    : "fill in the form — its save shows here";
 
   /* The statutory / tax form (Tax tile). Settles the statutory payable against THIS imported
      line — no duplicate line is made. GST / income tax go to tax_payments. */
@@ -901,6 +929,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
               onCancel={() => setShowProject(false)}
               onDone={() => { setShowProject(false); onOpenChange(false); }}
               initialTds={projTds}
+              onFooterSave={setProjectSave}
             />
           </div>
         ) : (
@@ -921,7 +950,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         /* DebitPayForSection itself is mounted once, above (it reports the vendor it guesses).
            Here: a referral partner's commission paid from this line. */
         return !isCredit && commissionCandidates.length > 0 ? (
-          <div className="rounded-md border border-hairline p-3">
+          <div className="rounded-md border border-hairline p-3" {...pickOn("commission")}>
             <button type="button" onClick={() => setShowCommission((v) => !v)} aria-expanded={showCommission} className="w-full flex items-center justify-between text-left">
               <span className="text-xs font-semibold text-ink-2">Referral partner commission?</span>
               <Icon name={showCommission ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
@@ -935,9 +964,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                   ))}
                 </select>
                 <p className="text-xs text-ink-3">The line amount must equal the commission's net payable (after TDS).</p>
-                <Button size="sm" variant="default" icon="check" disabled={!commissionPick || bookCommission.isPending} loading={bookCommission.isPending} onClick={handleBookCommission}>
-                  Book {rupee(amount)} as commission paid
-                </Button>
+                {/* R-2008: "Book ₹X as commission paid" is the footer button. */}
               </div>
             )}
           </div>
@@ -949,7 +976,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
             {/* A salary transfer: booked as that employee's salary for that month — the same
                 Payroll path as Banking → Salary lines. Saved from the footer. */}
             {salaryHint && (
-              <div className="rounded-md border border-emerald/40 bg-emerald-soft/25 p-3 space-y-2">
+              <div className="rounded-md border border-emerald/40 bg-emerald-soft/25 p-3 space-y-2" {...pickOn("salary")}>
                 <p className="text-xs font-semibold text-ink-2">
                   Looks like salary{salaryHint.name ? <> for <b>{titleCaseName(salaryHint.name)}</b></> : ""}
                 </p>
@@ -985,7 +1012,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
             {/* Pay (part of) a salary already in Payroll. Less than the full salary → it goes
                 "partially paid" and the rest stays owed. */}
             {!isCredit && (payableSalaries ?? []).length > 0 && (
-              <div className="rounded-md border border-hairline p-3">
+              <div className="rounded-md border border-hairline p-3" {...pickOn("salary")}>
                 <button
                   type="button"
                   onClick={() => setShowSalary((v) => !v)}
@@ -1038,7 +1065,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
             {/* Overpaid a salary — split THIS line into salary + recoverable advance (one atomic
                 RPC). Only when the line exceeds a salary's due. */}
             {!isCredit && (payableSalaries ?? []).some((s) => s.remaining > 0 && s.remaining < amount) && (
-              <div className="rounded-md border border-indigo/40 bg-indigo-soft/20 p-3">
+              <div className="rounded-md border border-indigo/40 bg-indigo-soft/20 p-3" {...pickOn("salary")}>
                 <p className="text-xs font-semibold text-ink-2 mb-1">Overpaid a salary? (salary + advance)</p>
                 <p className="text-xs text-ink-3 mb-2.5 leading-relaxed">
                   Paid more than the salary by mistake? Pick the salary — its balance is settled and the EXTRA is booked as a recoverable <b>advance</b> (recover it later via a salary deduction). No double cash-out — this line is the payment.
@@ -1073,9 +1100,22 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
 
             {/* R-1871: office-expense advance to an employee (give / top-up, or a reimbursement
                 owed) and its unused money coming back (money-in). An asset, not an expense. */}
-            <EmployeeAdvanceBankSection transaction={transaction} onDone={() => onOpenChange(false)} />
+            {isCredit ? (
+              <EmployeeAdvanceBankSection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setEmpAdvanceSave} />
+            ) : (
+              /* R-2008: money out has several forms here — the one clicked owns the footer. (No
+                 wrapper on money in: the advance return is the only form, and an empty tile must
+                 stay empty for SectionSlot's "Nothing to book here".) */
+              <div {...pickOn("advance")}>
+                <EmployeeAdvanceBankSection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setEmpAdvanceSave} />
+              </div>
+            )}
             {/* An employee's incentive is salary (Payroll), never a plain expense. */}
-            {!isCredit && <IncentiveFromBankSection transaction={transaction} onDone={() => onOpenChange(false)} />}
+            {!isCredit && (
+              <div {...pickOn("incentive")}>
+                <IncentiveFromBankSection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setIncentiveSave} />
+              </div>
+            )}
           </>
         );
 
@@ -1085,7 +1125,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
             {/* Money-IN as capital / a director's loan (or a firm's loan from a partner): adds the
                 Balance-Sheet line AND reconciles, in one step. Saved from the footer. */}
             {showCreditBox && (
-              <div className="rounded-md border border-emerald/40 bg-emerald/5 p-3">
+              <div className="rounded-md border border-emerald/40 bg-emerald/5 p-3" {...pickOn("credit")}>
                 <p className="text-xs font-semibold text-ink-2 mb-1">{ownerWords.allowed ? "A loan from a partner?" : "Money put into the business?"}</p>
                 <p className="text-xs text-ink-3 mb-3 leading-relaxed">
                   {ownerWords.allowed
@@ -1121,7 +1161,14 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
             )}
             {/* R-1839: the owner's own money — drawings / capital introduced, or for a Pvt Ltd the
                 "Paid to a director" choices. */}
-            <OwnerEquitySection transaction={transaction} onDone={() => onOpenChange(false)} />
+            {showCreditBox ? (
+              /* R-2008: next to the loan-from-a-partner box, the form clicked owns the footer. */
+              <div {...pickOn("equity")}>
+                <OwnerEquitySection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setEquitySave} />
+              </div>
+            ) : (
+              <OwnerEquitySection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setEquitySave} />
+            )}
           </>
         );
 
@@ -1129,10 +1176,15 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         return (
           <>
             {/* R-1864: an EMI — matched to the loan's instalment, split into principal + interest. */}
-            {!isCredit && <EmiRepaymentSection transaction={transaction} onDone={() => onOpenChange(false)} />}
+            {!isCredit && (
+              <div {...pickOn("emi")}>
+                <EmiRepaymentSection transaction={transaction} onDone={() => onOpenChange(false)} onFooterSave={setEmiSave} />
+              </div>
+            )}
             {/* R-2340: money back on a loan the company GAVE — receipt N (principal back + interest income). */}
             {isCredit && <LoanGivenReceiptSection transaction={transaction} onDone={() => onOpenChange(false)} />}
-            {advanceBox}
+            {/* R-2008: the form clicked (EMI or this one) owns the footer. */}
+            <div {...pickOn("advance")}>{advanceBox}</div>
           </>
         );
 
@@ -1370,7 +1422,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 "Book as expense"; it is only SHOWN on the Vendor tile. A government challan
                 mounts it only when the operator picks Vendor himself. */}
             {!isCredit && (!govtHint || tile === "vendor") && (
-              <div hidden={tile !== "vendor"}>
+              <div hidden={tile !== "vendor"} {...pickOn("vendor")}>
                 <DebitPayForSection transaction={transaction} onSaved={() => setPayForDone(true)} onDone={() => onOpenChange(false)} onVendorChange={setVendorFocus} onFooterSave={setVendorSave} />
               </div>
             )}

@@ -172,6 +172,19 @@ export function useFooterSaveReport(report: ((save: FooterSave | null) => void) 
   React.useEffect(() => () => { report?.(null); }, [report]);
 }
 
+/**
+ * R-2008 — a tile with more than one form (Employee: salary / advance / incentive; Owner: loan from
+ * a partner / drawings; Loan: EMI / loan with a person; Vendor: payment / commission) shows ONE
+ * Save in the footer: the form the owner last clicked or typed in, else the first that has a Save.
+ */
+export function pickFooterSave(
+  forms: ReadonlyArray<readonly [key: string, save: FooterSave | null]>,
+  picked: string | null,
+): FooterSave | null {
+  const chosen = picked ? forms.find(([k]) => k === picked)?.[1] ?? null : null;
+  return chosen ?? forms.find(([, s]) => s !== null)?.[1] ?? null;
+}
+
 /** "Bank ₹X = ₹Y ✓" when the save books the whole line, else "₹Z left". */
 export function amountCheckText(lineAmount: number, booked: number): { text: string; ok: boolean } {
   if (booked === lineAmount) return { text: `Bank ${rupee(lineAmount)} = ${rupee(booked)} ✓`, ok: true };

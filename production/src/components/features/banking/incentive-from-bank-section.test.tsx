@@ -5,7 +5,8 @@
    the RPC gets exactly the employee / month / TDS. Salary, never drawings. */
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { ReconcileFooter, type FooterSave } from "./reconcile-who-tiles";
 
 import type { BankTransactionRow } from "@/lib/queries/bank";
 
@@ -79,5 +80,35 @@ describe("R-1839 employee incentive from a bank line", () => {
   it("not shown on a money-in line", () => {
     const { container } = render(<IncentiveFromBankSection transaction={txn({ debit: 0, credit: 5000 })} onDone={vi.fn()} />);
     expect(container.textContent).toBe("");
+  });
+});
+
+/* R-2008: in the Reconcile sheet "Book ₹X as incentive" is the sticky footer's Save once the form
+   is open — same label, same rule (TDS whole rupees), same submit(). */
+function InSheet({ t }: { t: BankTransactionRow }) {
+  const [footer, setFooter] = React.useState<FooterSave | null>(null);
+  return (
+    <>
+      <div data-testid="reconcile-scroll-body"><IncentiveFromBankSection transaction={t} onDone={() => {}} onFooterSave={setFooter} /></div>
+      <ReconcileFooter amount={t.debit} save={footer} hint="pick" onClose={() => {}} />
+    </>
+  );
+}
+describe("R-2008 Incentive — Save in the sticky footer", () => {
+  it("closed → nothing in the footer; open → the footer books the same incentive; bad TDS keeps it off", async () => {
+    render(<InSheet t={txn()} />);
+    const footer = screen.getByTestId("reconcile-footer");
+    expect(within(footer).queryAllByRole("button").map((b) => b.textContent)).toEqual(["Close"]);
+    fireEvent.click(screen.getByRole("button", { name: "Book incentive" }));
+    const btn = () => within(footer).getByRole("button", { name: "Book ₹8,000 as incentive" }) as HTMLButtonElement;
+    await vi.waitFor(() => expect(btn().disabled).toBe(false));
+    expect(within(screen.getByTestId("reconcile-scroll-body")).queryByRole("button", { name: /as incentive/ })).toBeNull();
+    expect(footer.textContent).toContain("Bank ₹8,000 = ₹8,000 ✓");
+    fireEvent.change(screen.getByLabelText("TDS deducted"), { target: { value: "8.5" } });
+    await vi.waitFor(() => expect(btn().disabled).toBe(true));
+    fireEvent.change(screen.getByLabelText("TDS deducted"), { target: { value: "800" } });
+    await vi.waitFor(() => expect(btn().disabled).toBe(false));
+    fireEvent.click(btn());
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({ transactionId: "t1", employeeId: "e2", period: "2026-09", tds: 800 }));
   });
 });
