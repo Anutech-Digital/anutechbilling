@@ -236,7 +236,10 @@ export default function PersonalExpensesPage() {
     try {
       await save.mutateAsync({
         id: form.id,
-        kind,
+        // database.types.ts still patches kind to the six pre-gp12a values; the DB CHECK
+        // (gp12a) also allows refund / transfer_* / card_payment / atm_cash, which an income
+        // refund or an imported row being edited carries.
+        kind: kind as PersonalTransaction["kind"],
         amount: checked.value,
         occurred_on: form.occurred_on,
         // The source only on income, the category only on spending — never "Salary" next to
@@ -368,7 +371,7 @@ export default function PersonalExpensesPage() {
                 {due.map((d) => (
                   <li key={`${d.from.id}-${d.date}`} className="flex items-center justify-between gap-3 text-sm">
                     <span className="text-ink-2 min-w-0 truncate">
-                      {d.label} <span className="text-ink-3 text-xs">· last ₹{d.from.amount.toLocaleString("en-IN")} on {formatDate(d.from.occurred_on)}</span>
+                      {d.label} <span className="text-ink-3 text-xs">· last {rupee(d.from.amount)} on {formatDate(d.from.occurred_on)}</span>
                     </span>
                     <Button size="sm" variant="outline" onClick={() => openDue(d)}>Add this month&apos;s</Button>
                   </li>
