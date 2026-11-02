@@ -364,6 +364,7 @@ MIGS=(
   "r2361manualreconcilereason|20261102091144_r2361_manual_reconcile_reason.sql|resellersos_migration|to_regprocedure('public.reconcile_bank_txn_manual(uuid,text,uuid)') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bank_transactions' and column_name = 'reversal_of')"
   "r2366interestincomefdclosure|20261102100702_r2366_interest_income_fd_closure.sql|resellersos_migration|to_regprocedure('public.book_bank_credit_as_interest(uuid,text,uuid,integer,integer,integer,text)') is not null and to_regprocedure('public.tg_other_income_deleted_r2366()') is not null and to_regprocedure('public.tg_bank_txn_unmatched_r2366()') is not null"
   "r2367chainapproval|20261102121211_r2367_quote_chain_self_approval.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_quote_approval_not_by_maker' and tgrelid = to_regclass('public.quotes')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.quote_chain_makers(text)') and prosrc like '%R-2367%')"
+  "r2368revisesublink|20261102123939_r2368_revise_keeps_subscription_link.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_quote_revision_renewal_handover' and tgrelid = to_regclass('public.quotes')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quotes_add_seats_take_back()') and prosrc like '%R-2368%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
