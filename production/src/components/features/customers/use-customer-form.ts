@@ -33,6 +33,9 @@ import {
 } from "@/lib/gst/customer-gst-treatment";
 import type { GstinVerification, Customer } from "@/lib/supabase/database.types";
 import { newCustomerReachProblem, defaultContactName, contactIsTheCompany } from "./new-customer-contact";
+import {
+  customerTdsPrefill, customerTdsRateProblem, customerTdsPayload,
+} from "@/lib/accounting/customer-tds-default";
 
 // Schema — GSTIN optional but checksum-validated when present. State code stays
 // in the schema (needed for GST math) but has no visible input; we auto-derive
@@ -81,6 +84,9 @@ export const customerSchema = z.object({
   contact_mobile:     z.string().optional(),
   // Default invoice due terms (net days). "" = unset → falls back to net-30.
   payment_terms_days: z.string().optional(),
+  /* R-2370: the TDS this customer deducts from our receipts — section ("" = none) + rate %. */
+  tds_section:  z.string().optional(),
+  tds_rate_pct: z.string().optional(),
   // Additional people at the customer.
   contact_persons: z.array(z.object({
     salutation:  z.string().optional(),
@@ -110,6 +116,9 @@ export const customerSchema = z.object({
   }
   /* R-173 (6 Oct 2026): an Indian customer with no place of supply cannot be invoiced at all
      (live had 17). GSTIN or not, the state is required; a valid GSTIN supplies it by itself. */
+  /* R-2370: a picked TDS section needs a rate (0–100). */
+  const tdsProblem = customerTdsRateProblem({ section: data.tds_section ?? "", ratePct: data.tds_rate_pct ?? "" });
+  if (tdsProblem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tds_rate_pct"], message: tdsProblem });
   const stateMsg = stateRequiredMessage(data);
   if (stateMsg) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["state"], message: stateMsg });
   /* R-1736: a treatment the facts contradict (Overseas in India, Regular with no GSTIN). */
@@ -221,6 +230,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
         contact_last_name:  lastName,
         contact_mobile:     customer.contact_mobile ?? "",
         payment_terms_days: customer.payment_terms_days != null ? String(customer.payment_terms_days) : "",
+        tds_section:  customerTdsPrefill(customer).section,
+        tds_rate_pct: customerTdsPrefill(customer).ratePct,
         contact_persons: (customer.contact_persons ?? []).map((p) => ({
           salutation: p.salutation ?? "", first_name: p.first_name ?? "", last_name: p.last_name ?? "",
           email: p.email ?? "", phone: p.phone ?? "", mobile: p.mobile ?? "", designation: p.designation ?? "",
@@ -389,9 +400,18 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     };
     // Only stamp verification when newly verified this session — so editing an
     // already-verified customer without re-verifying doesn't wipe its status.
+    /* R-2370: TDS is sent on create when picked, and on edit only when it changed — an edit
+       of the address never rewrites the saved TDS (the receipt dialog also writes it). */
+    const tdsPatch = customerTdsPayload({ section: data.tds_section ?? "", ratePct: data.tds_rate_pct ?? "" });
+    const tdsSaved = customerTdsPayload(customerTdsPrefill(customer));
+    const tdsChanged = isEdit
+      ? (tdsPatch.tds_default_section !== tdsSaved.tds_default_section
+         || tdsPatch.tds_default_rate_pct !== tdsSaved.tds_default_rate_pct)
+      : !!tdsPatch.tds_default_section;
+    const withTds = tdsChanged ? { ...base, ...tdsPatch } : base;
     const payload = (verification && !foreign)
-      ? { ...base, gstin_verification: verification, gstin_verified_at: new Date().toISOString() }
-      : base;
+      ? { ...withTds, gstin_verification: verification, gstin_verified_at: new Date().toISOString() }
+      : withTds;
     if (isEdit && customer) {
       await updateCustomer.mutateAsync({ id: customer.id, patch: payload });
       onSaved?.(customer.id);
@@ -411,6 +431,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
   // <select> — it writes the value with setValue. Picking a new country clears a
   // now-wrong state.
   register("country");
+  /* R-2370: the TDS section select is written with setValue (picking it also fills the rate). */
+  register("tds_section");
   const country = watch("country") ?? "";
   const onCountryPick = (next: string) => {
     if (next === country) return;
