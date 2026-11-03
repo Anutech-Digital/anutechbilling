@@ -42,10 +42,8 @@ import { quoteDueNowUpiAmount } from "@/lib/payments/quote-due-now";
 import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import { rupee } from "@/lib/utils";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
-import { supplyStateMissing } from "@/lib/quotes/quote-assist";
-import { companyStateFixFor } from "@/lib/onboarding/setup-links";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
-import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
+import { customerCopyBlock, supplyCopyBlock } from "@/lib/quotes/customer-copy-gate";
 import { buildCustomerQuoteHtml } from "@/lib/email/quote-template";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
@@ -143,7 +141,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   const approvalBlock = customerCopyBlock(quote);
   if (approvalBlock) {
     return NextResponse.json(
-      { error: `Needs approval first — ${approvalBlock.reason} ${approvalBlock.nextStep}` },
+      { error: approvalBlock.message },
       { status: 409 },
     );
   }
@@ -171,32 +169,16 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     ? await supabase.from("leads").select("state_code, gstin, country, contact_name, contact_email, contact_phone").eq("id", quote.lead_id).maybeSingle()
     : { data: null };
   const pos = quotePlaceOfSupply({ customer, lead, quote, seller: tenant });
-  /* R-2442: a saved draft whose place of supply is unknown — the buyer's state ("Not known yet",
-     R-2363) or the company's own — leaves CGST + SGST vs IGST undecided, and generate_invoice
-     refuses its GST invoice after the customer has paid. The builder's Send already stops on
-     both halves (sellerStateMissing, supplyStateMissing); this route must too, before anything
-     is rendered or emailed. Messages have no closing full stop: the client toast
-     (quoteEmailErrorOutcome) adds ". Nothing was sent…". */
-  if (pos.head.kind === "seller_state_missing") {
-    const fix = companyStateFixFor(me.role);
+  /* R-2442 / R-2448: a quote whose place of supply is unknown — the buyer's state ("Not known
+     yet", R-2363) or the company's own — leaves CGST + SGST vs IGST undecided, and generate_invoice
+     refuses its GST invoice after the customer has paid. The ONE customer-copy gate (the same one
+     Mark as sent and the PDF link ask) refuses it before anything is rendered or emailed, naming
+     the fix ("Set the customer's state" → the customer page). Messages have no closing full stop:
+     the client toast (quoteEmailErrorOutcome) adds ". Nothing was sent…". */
+  const supplyBlock = supplyCopyBlock(quote, { customer, lead, seller: tenant, role: me.role });
+  if (supplyBlock) {
     return NextResponse.json(
-      { error: `${fix.title}. ${fix.description.replace(/\.$/, "")}`, nextStep: fix.action },
-      { status: 409 },
-    );
-  }
-  if (supplyStateMissing({ isExport: pos.isExport, buyerStateCode: pos.posCode })) {
-    const name = customer?.name || quote.customer_name || "This customer";
-    const nextStep = quote.customer_id
-      ? { label: "Set the customer's state", href: `/customers/${quote.customer_id}` }
-      : quote.lead_id
-        ? { label: "Set the lead's state", href: `/leads?lead=${encodeURIComponent(quote.lead_id)}` }
-        : { label: "Pick the customer's state", href: `/quotes/${encodeURIComponent(quote.id)}/edit` };
-    const where = quote.customer_id ? "on the customer page" : quote.lead_id ? "on the lead" : "on the quote";
-    return NextResponse.json(
-      {
-        error: `${name} has no state on record — the state decides CGST + SGST or IGST. ${nextStep.label} ${where}, then send`,
-        nextStep,
-      },
+      { error: supplyBlock.message, ...(supplyBlock.action ? { nextStep: supplyBlock.action } : {}) },
       { status: 409 },
     );
   }

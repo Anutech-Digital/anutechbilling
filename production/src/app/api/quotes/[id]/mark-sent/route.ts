@@ -13,15 +13,20 @@
  * waiting for (or refused) discount / margin approval is not marked sent — 409 with the
  * gate's own reason, which the caller shows instead of copying.
  *
+ * R-2448: the same gate also refuses a quote whose place of supply is unknown (the customer /
+ * lead / typed prospect has no state, or the company has none) — 409 with the send route's own
+ * message and `nextStep` {label, href} ("Set the customer's state" → the customer page).
+ *
  * Moves the lead forward with the same rule as every other sender (stageAfterQuoteSent —
  * never drags a Won or Lost lead back) and says so on the lead's timeline.
  *
  * Returns { quoteStatus, changed, leadMoved, leadReason }.
  */
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
-import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
+import { customerCopyBlock, supplyCopyBlock, supplyRuleApplies } from "@/lib/quotes/customer-copy-gate";
+import { loadCustomerCopyParties } from "@/lib/quotes/customer-copy-supply";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { logDbError } from "@/lib/errors/db-error";
 
@@ -56,7 +61,7 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
 
   const { data: quote } = await supabase
     .from("quotes")
-    .select("id, tenant_id, status, lead_id, line_items, approval_status, approval_tier, approval_requested_by, approved_by, approved_discount_bps, approved_margin_bps, approval_rejection_reason")
+    .select("id, tenant_id, status, lead_id, line_items, approval_status, approval_tier, approval_requested_by, approved_by, approved_discount_bps, approved_margin_bps, approval_rejection_reason, customer_id, customer_name, prospect_state_code, prospect_country, invoice_id")
     .eq("id", params.id)
     .eq("tenant_id", me.tenant_id)
     .maybeSingle();
@@ -70,10 +75,25 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
     return NextResponse.json(done);
   }
 
-  const block = customerCopyBlock(quote as Parameters<typeof customerCopyBlock>[0]);
+  const gateQuote = quote as Parameters<typeof customerCopyBlock>[0];
+  let block = customerCopyBlock(gateQuote);
+  if (!block && supplyRuleApplies(gateQuote)) {
+    /* R-2448: the buyer and the company's state, read with the send route's (admin) client and
+       scoped to this workspace — a customer row the user's RLS hides must not read as "no state". */
+    try {
+      block = supplyCopyBlock(gateQuote, await loadCustomerCopyParties(
+        createAdminClientFor(authData.user.id), { ...quote, tenant_id: me.tenant_id }, (me as { role?: string | null }).role,
+      ));
+    } catch (err) {
+      logDbError("quotes/mark-sent place of supply", { message: err instanceof Error ? err.message : String(err) });
+      return NextResponse.json({ error: "Could not check the customer's state. Reopen the quote and try again." }, { status: 500 });
+    }
+  }
   if (block) {
     return NextResponse.json(
-      { error: `Needs approval first — ${block.reason} ${block.nextStep}`, reason: block.reason, nextStep: block.nextStep },
+      block.kind === "approval"
+        ? { error: block.message, reason: block.reason, nextStep: block.nextStep }
+        : { error: block.message, reason: block.reason, nextStep: block.action },
       { status: 409 },
     );
   }
