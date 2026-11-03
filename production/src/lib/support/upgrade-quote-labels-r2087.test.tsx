@@ -16,6 +16,7 @@ import path from "node:path";
 import { isSupportUpgradeQuote } from "./upgrade-quote";
 import { acceptHint } from "@/lib/quotes/quote-page-actions";
 import { quoteDocumentLabel } from "@/lib/pdf/quote-document-kind";
+import { quoteKindFor } from "@/lib/quotes/quote-kind";
 import { recordPaymentConsequences, UPGRADE_PLAN_CONSEQUENCE } from "@/lib/payments/record-consequences";
 import { invoiceMoneyIn, invoicePaymentState } from "@/lib/invoices/payment-state";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
@@ -79,7 +80,12 @@ describe("R-2087 (1) an upgrade quote is called an upgrade", () => {
     expect(page).toContain("{...quoteKindFlags(quote)");
     expect(page).toContain('quoteDocumentKind(quote) === "upgrade"');
     const list = fs.readFileSync(path.resolve(__dirname, "../../app/(app)/quotes/page.tsx"), "utf8");
-    expect(list.match(/isSupportUpgradeQuote\(q\) \? "Upgrade" : "Renewal"/g)?.length).toBe(2);
+    /* R-2423: both list chips (phone + table) come from quoteKindFor, which asks quoteDocumentKind
+       (isSupportUpgradeQuote first) — so an upgrade's chip reads "Upgrade", never "Renewal". */
+    expect(list.match(/<QuoteKindChip stamp=\{kindChipOf\(q\)\} \/>/g)?.length).toBe(2);
+    const upgrade = { is_renewal: true, is_extension: false, extension_months: 0, line_items: [{ item_id: "SUP-ENT-Y", name: "Enterprise support", rate: 1, qty: 1 }] };
+    expect(quoteKindFor(upgrade)?.chip).toBe("Upgrade");
+    expect(quoteKindFor({ ...upgrade, extension_months: 12, line_items: [{ item_id: "GWS-BS", name: "Business Starter", rate: 1, qty: 1 }] })?.chip).toBe("Renewal");
     expect(list).toContain("!isSupportUpgradeQuote(q)).length");
     const props = fs.readFileSync(path.resolve(__dirname, "../pdf/build-props.ts"), "utf8");
     expect(props).toContain("...quoteKindFlags(quote)");
