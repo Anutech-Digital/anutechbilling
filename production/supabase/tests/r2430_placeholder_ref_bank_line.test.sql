@@ -1,6 +1,6 @@
 -- R-2430 (3 Nov 2026, p1 money): two DIFFERENT bank credits whose reference is a placeholder
 -- (000000000000000) paying the SAME quote / invoice — the second was a silent "idempotent replay"
--- (nothing booked, no error). Migration 20261103192837_r2430_placeholder_ref_bank_line
+-- (nothing booked, no error). Migration 20261103194201_r2430_placeholder_ref_bank_line
 -- (bank_line_payment_reference + reconcile_bank_credit_to_item / bank_credit_book_advance /
 -- reconcile_bank_credit_split redefined).
 -- Self-asserting, ONE transaction, rolled back. Run on a local/test DB only:

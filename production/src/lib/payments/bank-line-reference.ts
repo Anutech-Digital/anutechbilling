@@ -11,7 +11,7 @@ import { isRealBankReference } from "./bank-reference";
  * line is its own receipt, and the same line booked again still replays (booked once).
  *
  * TypeScript twin of public.bank_line_payment_reference(text, uuid)
- * (migration 20261103192837_r2430_placeholder_ref_bank_line).
+ * (migration 20261103194201_r2430_placeholder_ref_bank_line).
  */
 export function bankLinePaymentReference(reference: string | null | undefined, bankTxnId: string): string {
   return isRealBankReference(reference) ? (reference ?? "").trim() : `BANK-${bankTxnId}`;

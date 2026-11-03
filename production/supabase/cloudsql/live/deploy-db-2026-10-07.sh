@@ -393,7 +393,7 @@ MIGS=(
   "r2425banksal|20261103153553_r2425_bank_sale_foreign_currency.sql|resellersos_migration|to_regprocedure('public.reconcile_bank_credit_new_sale_fx(uuid,uuid,jsonb,boolean,date,date,text,text,text,numeric,numeric)') is not null"
   "r2440fxsalet|20261103163318_r2440_fx_sale_trusts_bank.sql|resellersos_migration|exists (select 1 from pg_proc where proname = 'reconcile_bank_credit_new_sale_fx' and prosrc like '%R-2440%')"
   "r2439settlepaymentlinkv2|20261103190855_r2439_settle_payment_link_v2.sql|resellersos_migration|exists(select 1 from pg_proc p where p.oid = to_regprocedure('public.settle_invoice_payment_link(text,text,bigint,text)') and p.prosrc like '%R-2439%')"
-  "r2430placeholderrefbankline|20261103192837_r2430_placeholder_ref_bank_line.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2430%')"
+  "r2430placeholderrefbankline|20261103194201_r2430_placeholder_ref_bank_line.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2430%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
