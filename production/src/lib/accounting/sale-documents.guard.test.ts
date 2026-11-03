@@ -100,6 +100,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   remove_opening_invoice_import: "removes opening invoices",
   tg_note_not_on_opening_invoice: "refuses notes on an opening invoice",
   tg_payments_opening_invoice: "payment ↔ opening invoice",
+  tg_partner_credit_note_to_child_bill: "R-2432: only checks the credit note's invoice belongs to the same company before reducing the reseller's mirrored bill",
 };
 
 function latestSqlFunctions(): Map<string, { file: string; body: string }> {
