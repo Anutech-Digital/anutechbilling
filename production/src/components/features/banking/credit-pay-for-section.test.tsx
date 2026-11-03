@@ -140,20 +140,41 @@ describe("R-1838 CreditPayForSection", () => {
   it("new sale: asks seats and unit price, shows GST, and sends seats × price with Create subscription", () => {
     state.items = [];
     state.sale.mockResolvedValue(done({ new_quote: true }));
-    renderIt(17700);
+    renderIt(118000);
     expect(screen.getByRole("button", { name: "A new sale (no quote yet)" }).getAttribute("aria-pressed")).toBe("false");
     choose("A new sale (no quote yet)");
     fireEvent.change(screen.getByLabelText("Add a product"), { target: { value: "GW-PLUS" } });
     fireEvent.change(screen.getByLabelText("Seats"), { target: { value: "5" } });
-    /* R-2050: on Annual the price is asked ₹/user/YEAR — ₹3,000 typed = ₹3,000 a year on the quote line. */
-    fireEvent.change(screen.getByLabelText("Unit price ₹/user/year"), { target: { value: "3000" } });
-    expect(screen.getByText(/Taxable ₹15,000 · GST 18% ₹2,700/)).toBeTruthy();
-    expect(screen.getByText(/₹17,700 received = ₹17,700 due/)).toBeTruthy();
+    /* R-2050: on Annual the price is asked ₹/user/YEAR — ₹20,000 typed = ₹20,000 a year on the quote line.
+       R-2397: above the ₹18,000/year cost, so it is booked (₹3,000 was below cost — see the test below). */
+    fireEvent.change(screen.getByLabelText("Unit price ₹/user/year"), { target: { value: "20000" } });
+    expect(screen.getByText(/Taxable ₹1,00,000 · GST 18% ₹18,000/)).toBeTruthy();
+    expect(screen.getByText(/₹1,18,000 received = ₹1,18,000 due/)).toBeTruthy();
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Record sale & reconcile ₹17,700" }));
+    fireEvent.click(screen.getByRole("button", { name: "Record sale & reconcile ₹1,18,000" }));
     const args = state.sale.mock.calls[0][0];
     expect(args).toMatchObject({ customerId: "c1", createSubscription: true, subStart: "2026-10-20", tdsAmount: 0 });
-    expect(args.lines[0]).toMatchObject({ itemId: "GW-PLUS", qty: 5, rate: 3000, cycle: "annual_yearly" });
+    expect(args.lines[0]).toMatchObject({ itemId: "GW-PLUS", qty: 5, rate: 20000, cycle: "annual_yearly" });
+  });
+
+  it("R-2397: new sale BELOW cost — says Needs approval before Save, the button sends it for approval, then links the quote", async () => {
+    state.items = [];
+    state.sale.mockResolvedValue(done({
+      quote_id: "Q-WAIT", payment_id: "", is_fully_paid: false, new_quote: true, needs_approval: true, reconciled: false,
+      reason: "This price is below cost, so the sale waits for the owner's approval. Quote Q-WAIT is in Needs approval and the bank line stays unmatched. Approve it (Quotes → Q-WAIT → Approve), then open this bank line again and pick Q-WAIT.",
+    }));
+    renderIt(17700);
+    choose("A new sale (no quote yet)");
+    fireEvent.change(screen.getByLabelText("Add a product"), { target: { value: "GW-PLUS" } });
+    fireEvent.change(screen.getByLabelText("Seats"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Unit price ₹/user/year"), { target: { value: "3000" } });
+    expect(screen.getByText(/This price is below cost, so the sale needs the owner's approval first/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Record sale & reconcile/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send sale for approval (line stays unmatched)" }));
+    expect(state.sale.mock.calls[0][0].lines[0]).toMatchObject({ itemId: "GW-PLUS", qty: 5, rate: 3000 });
+    expect(await screen.findByText(/this bank line is not reconciled/)).toBeTruthy();
+    expect(screen.queryByText(/Done — this bank line is reconciled/)).toBeNull();
+    expect(screen.getByText("Open quote Q-WAIT (Needs approval)").closest("a")?.getAttribute("href")).toBe("/quotes/Q-WAIT");
   });
 
   it("short receipt that is 2% TDS: TDS pre-chosen, ₹200 TDS sent; Part payment sends none", () => {

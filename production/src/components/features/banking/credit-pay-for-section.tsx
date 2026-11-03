@@ -46,7 +46,7 @@ import {
   amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
   paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
-  tdsRateToRecord, tdsToRecord, shortChoices, roundOffSplit, saleLineDomainProblem,
+  tdsRateToRecord, tdsToRecord, shortChoices, roundOffSplit, saleLineDomainProblem, saleLinesBelowCost, BANK_SALE_BELOW_COST_TEXT,
   typedPriceCheck, convertTypedPrice, keepTypedPrice, undoTypedConversion,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
@@ -198,6 +198,9 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
   /* Subscription choice (new subscription sale only). */
   const saleShown = mode === "sale" || (mode === "split" && splitSale);
+  /* R-2397: a sale priced below cost is not booked — the server makes its quote "Needs approval"
+     and leaves the bank line unmatched (same rule as R-2213). Said before Save, not after. */
+  const saleBelowCost = Boolean(saleShown) && saleLinesBelowCost(lines);
   const makesSub = mode === "item" ? Boolean(picked?.makes_subscription) : saleShown && saleMakesSubscription(lines);
   const monthly = mode === "item" ? linesAreMonthly(picked?.lines ?? null) : lines.some((l) => l.cycle === "monthly");
   const [createSub, setCreateSub] = React.useState(true);
@@ -296,6 +299,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const payerUnanswered = payerMismatch && !payerAnswer;
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
     && !approvalBlocked
+    && !(relink && saleBelowCost)   // R-2397: the server refuses a relink to a below-cost sale
     && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : mode === "split" ? !splitInvalid : true);
 
   const save = async () => {
@@ -326,7 +330,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           externalNumber: zohoNumber,
         });
         setResult(r);
-        onSaved?.();
+        if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
       } catch { /* the hook toasts */ }
       return;
     }
@@ -346,7 +350,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           externalNumber: zohoNumber,
         });
         setResult(r);
-        onSaved?.();
+        if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
       } catch { /* the hook toasts */ }
       return;
     }
@@ -376,7 +380,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
             ? await newSale.mutateAsync(target)
             : await advance.mutateAsync(target);
       setResult(r);
-      onSaved?.();
+      if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
     } catch { /* the hook toasts */ }
   };
 
@@ -386,6 +390,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     ? "Choose what this money is for"
     : mode === "item"
     ? picked ? `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile` : "Pick what it pays"
+    : saleBelowCost && !relink
+      ? "Send sale for approval (line stays unmatched)"   // R-2397
     : mode === "split"
       ? `Record on ${splitCount} item${splitCount === 1 ? "" : "s"} & reconcile ${rupee(credit)}`
     : mode === "sale"
@@ -401,13 +407,15 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   if (credit <= 0) return null;
 
   if (result) {
+    /* R-2397: a below-cost sale was NOT booked — its quote waits for the owner, the line stays unmatched. */
+    const wait = Boolean(result.needs_approval);
     return (
-      <section aria-labelledby="payfor-done-h" className="rounded-md border border-emerald/40 bg-emerald-soft/25 p-3 space-y-2">
-        <p id="payfor-done-h" className="text-xs font-semibold text-ink-2 inline-flex items-center gap-1">
-          <Icon name="check" size={14} className="text-emerald" /> Done — this bank line is reconciled
+      <section aria-labelledby="payfor-done-h" className={`rounded-md border p-3 space-y-2 ${wait ? "border-amber/60 bg-amber-soft/40" : "border-emerald/40 bg-emerald-soft/25"}`}>
+        <p id="payfor-done-h" className={`text-xs font-semibold inline-flex items-center gap-1 ${wait ? "text-amber-ink" : "text-ink-2"}`}>
+          {wait ? <>{NEEDS_APPROVAL_LABEL} — this bank line is not reconciled</> : <><Icon name="check" size={14} className="text-emerald" /> Done — this bank line is reconciled</>}
         </p>
         <ul className="space-y-1">
-          {[...resultLines(result), ...zohoKeptLines(result)].map((l, i) => (
+          {[...resultLines(result), ...(wait ? [] : zohoKeptLines(result))].map((l, i) => (
             <li key={i} className={`text-sm break-words ${l.tone === "warn" ? "text-amber-ink" : "text-ink"}`}>
               {l.href ? <Link href={l.href as never} className="underline hover:no-underline">{l.text}</Link> : l.text}
             </li>
@@ -564,6 +572,20 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
               <Button size="sm" variant="default" asChild>
                 <Link href={`/quotes/${approvalBlocked.quoteId}` as never}>Open approval</Link>
               </Button>
+            </div>
+          )}
+
+          {/* R-2397: below cost → the sale's quote waits for the owner; nothing is reconciled. */}
+          {saleBelowCost && !approvalBlocked && (
+            <div role="alert" className="rounded-md border border-amber/60 bg-amber-soft p-2.5">
+              <p className="text-xs text-amber-ink break-words">
+                <b>{NEEDS_APPROVAL_LABEL}.</b> {BANK_SALE_BELOW_COST_TEXT}{" "}
+                {relink
+                  ? "A relink cannot wait for approval — book this line at cost or above, or approve a quote first."
+                  : mode === "split"
+                    ? "Saving creates the quote for approval only — no item on this line is paid until then."
+                    : "Saving creates the quote for approval — pick it on this line once it is approved."}
+              </p>
             </div>
           )}
 

@@ -280,6 +280,8 @@ export function useNewSaleFromBankCredit() {
       const { data, error } = await rpc("reconcile_bank_credit_new_sale", newSaleArgs(input));
       if (error) throw error;
       if (!data) throw new Error("The sale was not confirmed — refresh the page to see whether it was saved.");
+      /* R-2397: below cost — the quote waits for approval, nothing was booked (no instalment). */
+      if ((data as PayForResult).needs_approval) return data as PayForResult;
       return keepZohoNumberOnFirstPart(await raiseFirstInstalment(data as PayForResult & ZohoKept, input.billingCycle));
     },
     onSuccess: after,
@@ -330,6 +332,8 @@ export function useSplitFromBankCredit() {
       if (error) throw error;
       if (!data) throw new Error("The payments were not confirmed — refresh the page to see whether they were saved.");
       const r = data as PayForResult & ZohoKept;
+      /* R-2397: the new sale is below cost — nothing on the line was paid; its quote waits. */
+      if (r.needs_approval) return { ...r, customer_id: input.customerId, customer_name: input.customerName ?? null };
       const parts = await Promise.all((r.parts ?? []).map((p) =>
         p.new_quote ? raiseFirstInstalment(p, (input.sale?.billingCycle ?? null) as BillingCycle | null) : Promise.resolve(p)));
       /* R-2360: the new sale billed in parts — its first part's invoice gets the Zoho number now. */
