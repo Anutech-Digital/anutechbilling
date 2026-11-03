@@ -138,3 +138,71 @@ describe("R-2442: quote send refuses a customer with no state", () => {
     expect(msg.email).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("R-2442 review: the other halves of the builder's rule", () => {
+  const withQuote = (over: Record<string, unknown>) => {
+    db.rows.quotes = { ...(db.rows.quotes as Record<string, unknown>), ...over };
+  };
+  const callTo = () =>
+    POST(
+      new Request("http://localhost:3001/api/quotes/Q-1/send", {
+        method: "POST",
+        headers: { "content-type": "application/json", host: "localhost:3001" },
+        body: JSON.stringify({ to: "ravi@acme.example" }),
+      }),
+      { params: Promise.resolve({ id: "Q-1" }) },
+    );
+
+  it("a quote raised on a lead with no state → 409, next step opens the lead", async () => {
+    setRows({});
+    const LEAD = "44444444-4444-4444-8444-444444444444";
+    withQuote({ customer_id: null, lead_id: LEAD, customer_name: "Ravi Traders" });
+    db.rows.leads = { state_code: null, gstin: null, country: "India", contact_name: "Ravi" };
+    const res = await callTo();
+    expect(res.status).toBe(409);
+    const json = await res.json();
+    expect(json.error).toMatch(/Ravi Traders has no state on record/);
+    expect(json.nextStep).toEqual({ label: "Set the lead's state", href: `/leads?lead=${LEAD}` });
+    expect(msg.email).not.toHaveBeenCalled();
+  });
+
+  it("a quote raised on a lead WITH a state → sends", async () => {
+    setRows({});
+    withQuote({ customer_id: null, lead_id: "44444444-4444-4444-8444-444444444444" });
+    db.rows.leads = { state_code: "27", gstin: null, country: "India", contact_name: "Ravi" };
+    const res = await callTo();
+    expect(res.status).toBe(200);
+    expect(msg.email).toHaveBeenCalledTimes(1);
+  });
+
+  it("a typed prospect with no state → 409, next step opens the quote's edit page", async () => {
+    setRows({});
+    withQuote({ customer_id: null, lead_id: null, prospect_state_code: null, prospect_country: null });
+    const res = await callTo();
+    expect(res.status).toBe(409);
+    expect((await res.json()).nextStep).toEqual({ label: "Pick the customer's state", href: "/quotes/Q-1/edit" });
+    expect(msg.email).not.toHaveBeenCalled();
+  });
+
+  it("the customer row did not load → still refused (judged on the place of supply, not on the row)", async () => {
+    setRows({});
+    db.rows.customers = null;
+    const res = await call();
+    expect(res.status).toBe(409);
+    expect((await res.json()).nextStep).toEqual({ label: "Set the customer's state", href: `/customers/${CUSTOMER}` });
+    expect(msg.email).not.toHaveBeenCalled();
+  });
+
+  it("the company's own state is not set → 409 with the company-state fix (owner: Set company state)", async () => {
+    setRows({ state_code: "06", country: "India" });
+    db.rows.tenants = { name: "Seller Co", email: "seller@example.test", state_code: null, gstin: null };
+    const res = await call();
+    expect(res.status).toBe(409);
+    const json = await res.json();
+    expect(json.error).toMatch(/^Your company's state is not set\./);
+    expect(json.error).not.toMatch(/\.$/);
+    expect(json.nextStep.label).toBe("Set company state");
+    expect(msg.email).not.toHaveBeenCalled();
+    expect(db.writes).toEqual([]);
+  });
+});
