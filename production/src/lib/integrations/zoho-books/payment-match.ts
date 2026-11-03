@@ -44,6 +44,8 @@ export interface ZohoPaymentRow {
   reference: string;
   customerZohoId: string;
   customerName: string;
+  /** R-2402: TDS the customer withheld on this payment (Zoho tax_amount_withheld); 0 / absent = none. */
+  taxWithheld?: number;
 }
 
 export interface ZohoMatchLine {
@@ -145,6 +147,7 @@ export function paymentFromZoho(row: Record<string, unknown>): ZohoPaymentRow | 
     reference: str(row.reference_number) ?? "",
     customerZohoId: str(row.customer_id) ?? "",
     customerName: str(row.customer_name) ?? "",
+    ...(num(row.tax_amount_withheld) ? { taxWithheld: num(row.tax_amount_withheld)! } : {}),
   };
 }
 
