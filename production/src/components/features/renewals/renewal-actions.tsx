@@ -12,6 +12,10 @@
  *                                after it: the existing Cancel subscription dialog (with reason).
  *   Grace over                 → "Renew anyway" (VendorHoldBadge, R-1796) and "Cancel" side by side.
  *
+ * R-2422: the row shows ONE next-step button (renewalNextStep: the rule's primary, else Follow-up)
+ * and a ⋯ menu for the rest (Create quote (don't send), Follow-up, Nudge, Voice note, Customer not
+ * renewing) — the pattern of Payment Follow-up's rows (collections/row-actions.tsx, R-2408).
+ *
  * No new money call: the two routes and the two dialogs (and their RPCs) are the ones the
  * Renewals page and the subscription drawer already used.
  */
@@ -34,7 +38,15 @@ import { openRenewalQuoteMap, openRenewalQuoteStatus } from "@/app/(app)/renewal
 import { NonRenewingDialog } from "@/components/features/subscriptions/non-renewing-dialog";
 import { CancelSubscriptionDialog } from "@/components/features/subscriptions/cancel-subscription-dialog";
 import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
-import { renewalActionSet, type RenewalActionSub } from "./renewal-actions-rules";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { AiDraftButton } from "@/components/shared/ai-draft-button";
+import { useVoiceNoteSend } from "@/components/shared/voice-note-button";
+import {
+  renewalActionSet, renewalNextStep, FOLLOW_UP,
+  type RenewalActionSub, type RenewalButtonKind, type RenewalMenuItem,
+} from "./renewal-actions-rules";
 
 export interface RenewalActionsSub extends RenewalActionSub {
   customer_name: string | null;
@@ -45,9 +57,11 @@ export interface RenewalActionsSub extends RenewalActionSub {
   start_date: string | null;
   quote_id: string | null;
   vendor_hold_override_for?: string | null;
+  /** R-2422: Nudge / Voice note need the customer. */
+  customer_id?: string | null;
 }
 
-export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, extra }: {
+export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, onFollowup, messaging = false }: {
   sub: RenewalActionsSub;
   /** IST days to the renewal date; negative = past it. */
   daysUntil: number;
@@ -55,8 +69,10 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, ex
   layout: "card" | "table";
   /** Urgent rows: the primary button is filled. */
   strong?: boolean;
-  /** Buttons the page adds after these (Nudge / Voice). */
-  extra?: React.ReactNode;
+  /** R-2422: the screen's Follow-up dialog — the next-step button when nothing is left to send, else a ⋯ item. */
+  onFollowup?: () => void;
+  /** R-2422: offer Nudge (AI draft) and Voice note in the ⋯ menu (Renewals). */
+  messaging?: boolean;
 }) {
   const qc = useQueryClient();
   const router = useRouter();
@@ -81,7 +97,8 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, ex
   const name = sub.customer_name ?? "this customer";
 
   const [busy, setBusy] = React.useState<"send-now" | "generate" | null>(null);
-  const [dialog, setDialog] = React.useState<"non-renewing" | "cancel" | null>(null);
+  const [dialog, setDialog] = React.useState<"non-renewing" | "cancel" | "nudge" | null>(null);
+  const voice = useVoiceNoteSend({ customerId: sub.customer_id ?? "", purpose: "renewal", customerName: name });
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["subscriptions"] });
@@ -162,65 +179,105 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, ex
 
   const run = (kind: "send-now" | "generate") => (kind === "send-now" ? onSendNow() : onGenerate());
   const grow = layout === "card" ? "flex-1" : undefined;
+  /* R-2422: ONE next-step button + ⋯ (Payment Follow-up's R-2408 pattern) instead of six stacked buttons. */
+  const step = renewalNextStep(set, { followup: !!onFollowup, messaging: !!messaging && !!sub.customer_id });
+  const button = step.button;
 
   const notRenewingButton = set.notRenewing && (
     <Button
       variant="ghost"
       size="sm"
-      className={cn(grow, "text-rose-700 hover:text-rose-800")}
+      className="text-rose-700 hover:text-rose-800"
       onClick={() => setDialog(set.notRenewing!.dialog)}
-      title={set.notRenewing.dialog === "non-renewing"
-        ? "Mark Won't renew: it runs till the renewal date, then ends — no renewal quote or reminder"
-        : "Cancel the subscription with a reason — it leaves MRR and renewals"}
+      title="Cancel the subscription with a reason — it leaves MRR and renewals"
     >
       <Icon name="x" size={12} />
       {set.notRenewing.label}
     </Button>
   );
 
+  const ITEM = "gap-2.5 py-2 cursor-pointer";
+  const menuItem: Record<RenewalMenuItem, React.ReactNode> = {
+    "create-quote": (
+      <DropdownMenuItem key="create-quote" className={ITEM} disabled={busy !== null} onClick={() => void onGenerate()}>
+        <Icon name="plus" size={15} /> {set.secondary?.label}
+      </DropdownMenuItem>
+    ),
+    followup: (
+      <DropdownMenuItem key="followup" className={ITEM} onClick={() => onFollowup?.()}>
+        <Icon name="phone" size={15} /> {FOLLOW_UP}
+      </DropdownMenuItem>
+    ),
+    nudge: (
+      <DropdownMenuItem key="nudge" className={ITEM} onClick={() => setDialog("nudge")}>
+        <Icon name="sparkles" size={15} /> Nudge
+      </DropdownMenuItem>
+    ),
+    voice: (
+      <DropdownMenuItem key="voice" className={ITEM} disabled={voice.sending} onClick={() => void voice.send()}>
+        <Icon name="whatsapp" size={15} /> Voice note
+      </DropdownMenuItem>
+    ),
+    "not-renewing": (
+      <DropdownMenuItem key="not-renewing" className={cn(ITEM, "text-rose-700")} onClick={() => setDialog(set.notRenewing!.dialog)}>
+        <Icon name="x" size={15} /> {set.notRenewing?.label}
+      </DropdownMenuItem>
+    ),
+  };
+
   return (
     <>
       <div className={cn("flex flex-wrap items-center gap-1.5", layout === "card" && "w-full")}>
-        {set.primary && (
-          <Button
-            variant={strong ? "primary" : "default"}
-            size="sm"
-            className={grow}
-            loading={busy === set.primary.kind}
-            disabled={busy !== null}
-            onClick={() => void run(set.primary!.kind)}
-            title={set.primary.kind === "send-now"
-              ? "Email the customer the renewal quote with its accept / pay link (creates it first if needed)"
-              : "Bill the next part of this subscription (payment request, or the tax invoice when paid)"}
-          >
-            <Icon name={set.primary.kind === "send-now" ? "mail" : "plus"} size={12} />
-            {set.primary.label}
-          </Button>
-        )}
-        {set.secondary && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className={grow}
-            loading={busy === "generate"}
-            disabled={busy !== null}
-            onClick={() => void onGenerate()}
-            title="Create the renewal quote and open it — nothing is emailed until you send it"
-          >
-            <Icon name="plus" size={12} />
-            {set.secondary.label}
-          </Button>
-        )}
-        {set.graceOver ? (
-          /* Grace over — owner decides: Renew anyway and Cancel side by side. */
+        {set.graceOver && (
+          /* Grace over — owner decides: Renew anyway and Cancel side by side (R-2401). */
           <span className="inline-flex flex-wrap items-center gap-1.5" data-testid="grace-over-choice">
             <VendorHoldBadge sub={{ ...sub, customer_name: name, plan: sub.plan }} />
             {notRenewingButton}
           </span>
-        ) : notRenewingButton}
-        {extra}
+        )}
+        {button && button.kind === "followup" && (
+          <Button variant="default" size="sm" icon="phone" className={grow}
+            aria-label={`Log a follow-up for ${name}`} onClick={() => onFollowup?.()}>
+            {button.label}
+          </Button>
+        )}
+        {button && button.kind !== "followup" && (
+          <Button
+            variant={strong ? "primary" : "default"}
+            size="sm"
+            className={grow}
+            loading={busy === button.kind}
+            disabled={busy !== null}
+            onClick={() => void run(button.kind as RenewalButtonKind)}
+            title={button.kind === "send-now"
+              ? "Email the customer the renewal quote with its accept / pay link (creates it first if needed)"
+              : "Bill the next part of this subscription (payment request, or the tax invoice when paid)"}
+          >
+            <Icon name={button.kind === "send-now" ? "mail" : "plus"} size={12} />
+            {button.label}
+          </Button>
+        )}
+        {step.menu.length > 0 && (
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label={`More actions for ${name}`}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-hairline text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+              >
+                <Icon name="more_h" size={16} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[13rem]">
+              {step.menu.map((k) => menuItem[k])}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
+      {dialog === "nudge" && sub.customer_id && (
+        <AiDraftButton customerId={sub.customer_id} channel="whatsapp" purpose="renewal" onClose={() => setDialog(null)} />
+      )}
       {dialog === "non-renewing" && (
         <NonRenewingDialog
           sub={{ id: sub.id, customer_name: name, plan: sub.plan ?? "Subscription", renewal_date: sub.renewal_date }}

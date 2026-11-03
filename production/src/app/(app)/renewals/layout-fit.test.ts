@@ -48,4 +48,25 @@ describe("R-1720 / R-2403 — Renewals table fits its card at 1280", () => {
     for (const r of actionRows) expect(r).toContain("flex-wrap");
     expect(page).toMatch(/className="pt-2 border-t[^"]*">\s*<RenewalActions/);
   });
+
+  it("R-2422: Actions is one next-step button + ⋯ (no stacked extras), so the column is narrower", () => {
+    const actions = QUEUE_TABLE_COLS.find((c) => c.key === "actions")!;
+    expect(actions.width).toBeLessThanOrEqual(224);
+    expect(page).not.toContain("extra={");
+    expect(page).not.toMatch(/<AiDraftButton|<VoiceNoteButton/);
+    const uses = page.match(/<RenewalActions [^>]*\/>/g) ?? [];
+    expect(uses).toHaveLength(2);
+    for (const u of uses) expect(u).toMatch(/onFollowup=\{followupFor\(sub\)\} messaging/);
+    const shared = readFileSync("src/components/features/renewals/renewal-actions.tsx", "utf8");
+    expect(shared).toContain("aria-label={`More actions for ${name}`}");
+  });
+
+  it("R-2422: every row (table and card) shows its payment frequency and Last paid", () => {
+    expect((page.match(/<AmountCell amount=\{amount\} frequency=\{renewalFrequency\(sub\)\}/g) ?? []).length).toBe(2);
+    /* Last paid sits under the customer (contact line) on both layouts. */
+    expect((page.match(/<ContactLine contact=\{contact\} \/>\s*\{lastPaidFor\(sub, "mt-0\.5"\)\}/g) ?? []).length).toBe(2);
+    /* One batched read for the rows on screen, never one per row. */
+    expect((page.match(/useRenewalLastPaid\(/g) ?? []).length).toBe(1);
+    expect(page).toContain("useRenewalLastPaid(rows.map((r) => r.sub))");
+  });
 });

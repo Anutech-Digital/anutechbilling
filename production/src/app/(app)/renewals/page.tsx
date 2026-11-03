@@ -30,8 +30,6 @@ import { useRouter } from "next/navigation";
 import { useSubscriptions, useOpenRenewalQuotes } from "@/lib/queries/subscriptions";
 import { renewalForecast } from "@/lib/renewals/forecast";
 import { toast } from "sonner";
-import { AiDraftButton } from "@/components/shared/ai-draft-button";
-import { VoiceNoteButton } from "@/components/shared/voice-note-button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { loadErrorBody } from "@/components/shared/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -78,6 +76,9 @@ import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, useRenewa
 import { monthOf, renewalTiles, tileMatches, paidRenewalsInMonth, type TileKey, type TileRow } from "./tiles";
 import { RenewalTileRow, TileViewBar } from "./tiles-card";
 import { ForecastPanel } from "./forecast-panel";
+import { renewalFrequency } from "./frequency";
+import { useRenewalLastPaid } from "./last-paid-data";
+import { LastPaidLine, canOpenInvoices } from "./last-paid-cell";
 import {
   renewalFollowup, renewalDecision, showDecision, filterByFollowup, bulkAssignRequests, bulkAssignReport,
   DECISION_LABEL, DECISION_TONE, NO_FOLLOWUP_FILTERS, ASSIGN_NEEDS_ROLE,
@@ -171,11 +172,13 @@ function ContactLine({ contact }: { contact: RowContact | undefined }) {
   );
 }
 
-function AmountCell({ amount, className }: { amount: RenewalAmount; className?: string }) {
+/** R-2422: the second line says how it is paid, in the Subscriptions list's words (frequency.ts). */
+function AmountCell({ amount, frequency, className }: { amount: RenewalAmount; frequency: string | null; className?: string }) {
   return (
     <div className={className}>
       <p className="font-medium tabular-nums text-ink">{amount.text}</p>
-      <p className="text-2xs text-ink-3">{amount.gst}{amount.billing ? ` · ${amount.billing}` : ""}</p>
+      <p className="text-2xs text-ink-3">{amount.gst}</p>
+      {frequency && <p className="text-2xs text-ink-2">{frequency}</p>}
     </div>
   );
 }
@@ -290,6 +293,9 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
   /* R-2232: draft vs sent for the row's "Renewal sent Q-x" line (same cached query as the page). */
   const { data: openRenewals } = useOpenRenewalQuotes();
   const quoteStatus = React.useMemo(() => openRenewalQuoteStatus(openRenewals ?? []), [openRenewals]);
+  /* R-2422: last paid for every row on screen — one batched, paged read (last-paid-data.ts). */
+  const { data: lastPaid, isLoading: lastPaidLoading } = useRenewalLastPaid(rows.map((r) => r.sub));
+  const canInvoices = canOpenInvoices(me?.role);
   const allOn = rows.length > 0 && rows.every((r) => selected.has(r.sub.id));
   const someOn = rows.some((r) => selected.has(r.sub.id));
 
@@ -298,16 +304,12 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
   }
 
   const byId = new Map(rows.map((r) => [r.sub.id, r]));
-  const extraFor = (sub: Subscription) => (sub.customer_id ? (
-    <>
-      {/* R-2404: owner, next date, promise, notes, "confirmed" — Payment Follow-up's dialog, for this renewal. */}
-      <Button size="sm" variant="default" icon="phone" onClick={() => { const it = byId.get(sub.id); if (it) onFollowup(it); }}>
-        Follow-up
-      </Button>
-      <AiDraftButton customerId={sub.customer_id} channel="whatsapp" purpose="renewal" label="✨ Nudge" variant="ghost" />
-      <VoiceNoteButton customerId={sub.customer_id} purpose="renewal" customerName={sub.customer_name} label="🔊 Voice" variant="ghost" />
-    </>
-  ) : null);
+  /* R-2404: owner, next date, promise, notes, "confirmed" — Payment Follow-up's dialog, for this renewal.
+     R-2422: it, Nudge and Voice note sit behind the row's ONE next-step button + ⋯ (RenewalActions). */
+  const followupFor = (sub: Subscription) => (sub.customer_id ? () => { const it = byId.get(sub.id); if (it) onFollowup(it); } : undefined);
+  const lastPaidFor = (sub: Subscription, className?: string) => (
+    <LastPaidLine paid={lastPaid?.get(sub.id)} loading={lastPaidLoading} canInvoices={canInvoices} canQuotes={canQuotes} className={className} />
+  );
 
   return (
     <>
@@ -332,8 +334,9 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
                     {sub.plan} · {sub.seats} seats
                   </p>
                   <ContactLine contact={contact} />
+                  {lastPaidFor(sub, "mt-0.5")}
                 </div>
-                <AmountCell amount={amount} className="text-right shrink-0" />
+                <AmountCell amount={amount} frequency={renewalFrequency(sub)} className="text-right shrink-0" />
               </div>
 
               <div className="flex items-start justify-between gap-2 mb-2">
@@ -366,7 +369,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
               <RowActionLine action={action} canQuotes={canQuotes} className="mb-2 text-xs" />
 
               <div className="pt-2 border-t border-hairline/60">
-                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} extra={extraFor(sub)} />
+                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging />
               </div>
             </li>
           );
@@ -428,6 +431,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
                       <p className="truncate font-semibold text-ink" title={sub.customer_name}>{sub.customer_name}</p>
                     )}
                     <ContactLine contact={contact} />
+                    {lastPaidFor(sub, "mt-0.5")}
                     {atRisk && <AtRiskMark reason={riskReason} />}
                   </td>
 
@@ -452,7 +456,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
 
                   {/* Renewal amount for the term */}
                   <td className="px-3 py-3 text-right">
-                    <AmountCell amount={amount} />
+                    <AmountCell amount={amount} frequency={renewalFrequency(sub)} />
                     {priorDue && (
                       <p role="status" className="mt-1 text-2xs font-medium text-rose-600" title="Paying the renewal quote covers only the new term — record the earlier amount separately under Payments → Subscription dues.">
                         {priorDue}
@@ -475,7 +479,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
                           <VendorHoldBadge sub={sub} />
                         </div>
                       )}
-                      <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} extra={extraFor(sub)} />
+                      <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging />
                     </div>
                   </td>
                 </tr>

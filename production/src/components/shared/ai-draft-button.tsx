@@ -35,11 +35,16 @@ interface Props {
   variant?: "outline" | "ghost" | "primary";
   /** Extra classes for the trigger button (e.g. "w-full" in a drawer). */
   className?: string;
+  /**
+   * R-2422: opened from somewhere else (a row's ⋯ menu) — no trigger button of its own; the
+   * dialog opens and drafts as soon as it mounts, and onClose tells the opener it was closed.
+   */
+  onClose?: () => void;
 }
 
 export function AiDraftButton({
   leadId, customerId, channel = "whatsapp", purpose = "followup",
-  label = "✨ AI draft", phone, size = "sm", variant = "outline", className,
+  label = "✨ AI draft", phone, size = "sm", variant = "outline", className, onClose,
 }: Props) {
   const [open, setOpen] = React.useState(false);
   const [drafting, setDrafting] = React.useState(false);
@@ -74,6 +79,19 @@ export function AiDraftButton({
     void generate();
   }
 
+  /* R-2422: menu-opened — draft once on mount (the ref keeps a dev double-mount from drafting twice). */
+  const autoOpened = React.useRef(false);
+  const openOnMount = React.useRef(onClose ? openAndDraft : null);
+  React.useEffect(() => {
+    if (autoOpened.current || !openOnMount.current) return;
+    autoOpened.current = true;
+    openOnMount.current();
+  }, []);
+  const onOpenChange = (v: boolean) => {
+    setOpen(v);
+    if (!v) onClose?.();
+  };
+
   async function copy() {
     const text = channel === "email" && subject ? `Subject: ${subject}\n\n${message}` : message;
     try {
@@ -91,8 +109,8 @@ export function AiDraftButton({
 
   return (
     <>
-      <Button size={size} variant={variant} className={className} onClick={openAndDraft}>{label}</Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      {!onClose && <Button size={size} variant={variant} className={className} onClick={openAndDraft}>{label}</Button>}
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="md:!max-w-md">
           <DialogHeader>
             <DialogTitle>AI-drafted {purpose === "renewal" ? "renewal nudge" : purpose === "reminder" ? "payment reminder" : "message"}</DialogTitle>

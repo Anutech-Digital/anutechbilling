@@ -355,6 +355,8 @@ export function bulkQuoteConfirm(
  * (measured for /subscriptions, R-2263), so: fixed columns + a readable minimum for the two
  * flexible ones (Customer with its contact line, Product with seats + vendor) stay inside it,
  * and the Actions column is always on screen. `table-fixed` keeps these widths.
+ * R-2422: Actions is ONE next-step button + ⋯ now (was up to six stacked buttons), so it gives
+ * 24px back to Customer, which also carries the "Last paid" line.
  */
 export const QUEUE_TABLE_BUDGET_PX = 944;
 export const QUEUE_FLEX_MIN_PX = 140;
@@ -365,5 +367,5 @@ export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: "select" | "customer" | "pro
   { key: "date", width: 104 },
   { key: "amount", width: 128 },
   { key: "status", width: 140 },
-  { key: "actions", width: 248 },
+  { key: "actions", width: 224 },
 ];
