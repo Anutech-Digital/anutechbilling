@@ -199,11 +199,17 @@ export interface BulkReminderReport {
   retry: boolean;
 }
 
-export function bulkReminderReport(r: BulkReminderResult): BulkReminderReport {
+/** R-2403: the bulk "Send renewal quote" uses the same run + report, with its own verbs. */
+export const RENEWAL_QUOTE_VERBS = { done: "Sent the renewal quote to", failed: "Could not send the renewal quote to" } as const;
+
+export function bulkReminderReport(
+  r: BulkReminderResult,
+  verbs: { done: string; failed: string } = { done: "Reminded", failed: "Could not remind" },
+): BulkReminderReport {
   const n = (c: number) => `${c} customer${c === 1 ? "" : "s"}`;
   const stub = r.stub ? " · stub mode (no real email yet)" : "";
-  if (r.failed.length === 0) return { tone: "success", title: `Reminded ${n(r.sent)}${stub}`, retry: false };
+  if (r.failed.length === 0) return { tone: "success", title: `${verbs.done} ${n(r.sent)}${stub}`, retry: false };
   const description = describeReminderFailures(r.failed);
-  if (r.sent === 0) return { tone: "error", title: `Could not remind ${n(r.failed.length)}`, description, retry: true };
-  return { tone: "warning", title: `Reminded ${n(r.sent)} · ${r.failed.length} refused${stub}`, description, retry: true };
+  if (r.sent === 0) return { tone: "error", title: `${verbs.failed} ${n(r.failed.length)}`, description, retry: true };
+  return { tone: "warning", title: `${verbs.done} ${n(r.sent)} · ${r.failed.length} refused${stub}`, description, retry: true };
 }

@@ -5,6 +5,7 @@
  * Rows are shaped on the staging audit (Anutech-HQ/drafts/RENEWALS-AUDIT/page-audit.md).
  */
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { classifyRenewals, type ClassifyRow } from "./classify";
 import { renewalRowAction } from "./row-action";
 import {
@@ -256,5 +257,31 @@ describe("R-2403 bulk: tick rows → Send renewal quote", () => {
     expect(c.title).toBe("Send the renewal quote to 2 customers?");
     expect(c.body).toContain("ACME, BETA.");
     expect(c.body).toContain("Not sent (3): PARTS — billed in parts — use Bill next part");
+  });
+});
+
+describe("R-2403 the page wires the one queue", () => {
+  const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
+  it("tabs are QUEUE_TABS (no At risk tab); At risk is a chip that filters", () => {
+    expect(page).toContain("items={QUEUE_TABS.map((t) => ({");
+    expect(page).not.toMatch(/\{ id: "risk"/);
+    expect(page).toMatch(/aria-pressed=\{atRiskOn\}\s+onClick=\{\(\) => setAtRisk\(!atRiskOn\)\}/);
+  });
+  it("every row's status and amount come from queue.ts — no '/mo' MRR column, no second status chip", () => {
+    expect(page).toContain("status: renewalRowStatus(r.sub, r.daysUntil,");
+    expect(page).toContain("amount: renewalAmount(r.sub, quoteOf(r.sub)),");
+    expect(page).not.toContain(">/mo<");
+    expect(page).not.toMatch(/renewalStateLabel|expiredGraceText|Expired \{Math\.abs/);
+    expect(page.match(/<StatusChip status=\{status\}/g)?.length).toBe(2);
+  });
+  it("sort + filters + bulk Send renewal quote / Send reminder on the ticked rows", () => {
+    expect(page).toContain("sortQueue(filterQueue(");
+    for (const l of ['aria-label="Sort renewals"', 'aria-label="Filter by product"', 'aria-label="Filter by status"', 'aria-label="Filter by vendor"']) {
+      expect(page).toContain(l);
+    }
+    expect(page).toMatch(/<BulkActionBar count=\{selectedRows\.length\} noun="renewal"/);
+    expect(page).toContain("bulkQuoteTargets(selectedRows,");
+    expect(page).toContain("bulkReminderTargets(selectedRows, today, graceDays)");
+    expect(page.match(/"\/api\/renewals\/send-now"/g)?.length).toBe(1);   // the existing route, one call site
   });
 });

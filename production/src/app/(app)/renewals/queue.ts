@@ -343,3 +343,23 @@ export function bulkQuoteConfirm(
     body: `Each gets the renewal email with its renewal quote and accept / pay link (the quote is created first where there is none).\n${names}${more}.${skip}`,
   };
 }
+
+// ─── Desktop table column budget (fits a 1280px laptop) ─────────────────────
+
+/**
+ * R-2403: the queue table shows from xl (1280px). With the sidebar open its card is ~944px wide
+ * (measured for /subscriptions, R-2263), so: fixed columns + a readable minimum for the two
+ * flexible ones (Customer with its contact line, Product with seats + vendor) stay inside it,
+ * and the Actions column is always on screen. `table-fixed` keeps these widths.
+ */
+export const QUEUE_TABLE_BUDGET_PX = 944;
+export const QUEUE_FLEX_MIN_PX = 140;
+export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: "select" | "customer" | "product" | "date" | "amount" | "status" | "actions"; width: number | null }> = [
+  { key: "select", width: 36 },
+  { key: "customer", width: null },
+  { key: "product", width: null },
+  { key: "date", width: 104 },
+  { key: "amount", width: 128 },
+  { key: "status", width: 140 },
+  { key: "actions", width: 248 },
+];
