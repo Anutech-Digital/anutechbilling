@@ -20,6 +20,7 @@
 import { renewalRowAction, isSettledRenewed, type RowAction, type RowActionSub } from "@/app/(app)/renewals/row-action";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { effectiveGraceDays } from "@/lib/renewals/cadence";
+import { isFlexNextPart } from "@/lib/renewals/buckets";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 
 export const SEND_RENEWAL_QUOTE = "Send renewal quote";
@@ -69,7 +70,12 @@ export function renewalActionSet(
 
   let primary: RenewalActionSet["primary"] = null;
   let secondary: RenewalActionSet["secondary"] = null;
-  if (row.kind === "generate") {
+  /* R-2422: a monthly flex part not yet due is raised by the billing job on its date (R-2044) —
+     "Bill next part" before then would re-bill the current term, so nothing to bill yet. */
+  const flexNotDue = isFlexNextPart(sub, opts.daysUntil);
+  if (row.kind === "generate" && flexNotDue) {
+    /* no button here — renewalNextStep makes it Follow-up */
+  } else if (row.kind === "generate") {
     if (split) primary = { kind: "generate", label: BILL_NEXT_PART };
     else {
       primary = { kind: "send-now", label: SEND_RENEWAL_QUOTE };

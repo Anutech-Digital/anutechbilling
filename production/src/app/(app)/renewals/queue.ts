@@ -63,7 +63,8 @@ export function windowTab(daysUntil: number): QueueTab | null {
 /**
  * Every listed row in exactly ONE tab, built from classify.ts's groups (each row is in at most
  * one of them): Overdue = expired + service stopped; the windows = Next 7 days / upcoming /
- * future + the Won't-renew rows still running, split by date. Flex parts stay out (R-2232).
+ * future + the Won't-renew rows still running, split by date. R-2422: a flex (monthly-commitment)
+ * subscription is a renewal like any other (R-2232's exclusion reversed by the owner, 3 Nov).
  */
 export function queueTabs<T extends { daysUntil: number }>(g: RenewalGroups<T>): Record<QueueTab, T[]> {
   const out: Record<QueueTab, T[]> = { overdue: [], due7: [], d30: [], d60: [], d90: [] };
@@ -267,6 +268,8 @@ export interface QueueRow {
   statusKey: RowStatusKey;
   atRisk: boolean;
   customer: string;
+  /** R-2422: Annual / Monthly (flex) commitment (frequency.ts renewalCommitment); null = unknown. */
+  commitment?: "annual" | "monthly" | null;
 }
 
 /** Date = soonest (most overdue) first; amount = largest first. Ties by customer name. */
@@ -282,16 +285,19 @@ export interface QueueFilters {
   status: RowStatusKey | "";
   vendor: string;    // "" = all
   atRisk: boolean;
+  /** R-2422: All · Annual · Monthly. */
+  commitment: "all" | "annual" | "monthly";
 }
 
-export const NO_FILTERS: QueueFilters = { product: "", status: "", vendor: "", atRisk: false };
+export const NO_FILTERS: QueueFilters = { product: "", status: "", vendor: "", atRisk: false, commitment: "all" };
 
 export function filterQueue<T extends QueueRow>(rows: readonly T[], f: QueueFilters): T[] {
   return rows.filter((r) =>
     (!f.product || (r.plan ?? "") === f.product)
     && (!f.status || r.statusKey === f.status)
     && (!f.vendor || (r.vendor ?? "") === f.vendor)
-    && (!f.atRisk || r.atRisk));
+    && (!f.atRisk || r.atRisk)
+    && (f.commitment === "all" || r.commitment === f.commitment));
 }
 
 /** The distinct, sorted values for a filter's options. */

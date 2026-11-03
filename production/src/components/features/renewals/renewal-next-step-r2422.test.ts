@@ -56,6 +56,18 @@ describe("R-2422 renewalNextStep — one button + ⋯", () => {
     expect(s.menu).toEqual(["create-quote", "not-renewing"]);
   });
 
+  it("monthly flex before its date: no Bill next part (the billing job raises that part on its date) — the button is Follow-up", () => {
+    const flex = sub({ term_months: 1, billing_cycle: "monthly", renewal_date: "2026-11-08" });
+    const set = renewalActionSet(flex, null, { ...OWNER, daysUntil: 5 });
+    expect(set.primary).toBeNull();
+    expect(renewalNextStep(set, RENEWALS).button).toEqual({ kind: "followup", label: FOLLOW_UP });
+  });
+
+  it("monthly flex whose date PASSED unbilled: Bill next part (R-2095 kept)", () => {
+    const flex = sub({ term_months: 1, billing_cycle: "monthly", renewal_date: "2026-10-30", renewal_state: "grace_period" });
+    expect(renewalActionSet(flex, null, { ...OWNER, daysUntil: -2 }).primary).toEqual({ kind: "generate", label: BILL_NEXT_PART });
+  });
+
   it("a role that may not end subscriptions sees no Customer not renewing", () => {
     const s = renewalNextStep(renewalActionSet(sub(), null, { ...OWNER, canEndSubscription: false, daysUntil: 10 }), RENEWALS);
     expect(s.menu).not.toContain("not-renewing");

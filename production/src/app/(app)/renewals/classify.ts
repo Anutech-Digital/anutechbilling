@@ -23,12 +23,13 @@
  * none of the urgency groups (nor the sidebar badge — nav_badges() reads the same rule); while it
  * still runs it is listed as `nonRenewing` and counted At risk (that revenue is leaving).
  *
- * R-2232 (Zoho audit A8): Renewals = end of commitment only. A FLEX subscription (1-month term,
- * billed in parts) has no commitment to end: its next month is a billing-schedule part — the
- * renewals cron rolls the term and the billing job raises the payment request (R-808, R-2044).
- * It is in none of the urgency groups, nor At risk, nor the sidebar badge (nav_badges() reads
- * the same rule); it is counted apart as `flexParts`. Once its date has PASSED unbilled it is
- * listed again as Expired — a part nobody billed, which Generate bills (R-2095).
+ * Flex (monthly-commitment) subscriptions — R-2422 (Pardeep, 3 Nov: "monthly commitment to
+ * renewal hi hoga"), replacing R-2232's "end of commitment only": a flex subscription IS a
+ * renewal. It is bucketed by its next monthly billing date like any row (tabs, tiles, At risk).
+ * Before that date its part is raised by the billing job (R-2044), so its row button is
+ * Follow-up; once the date has PASSED unbilled it is Expired and Bill next part bills it (R-2095).
+ * isFlexNextPart (lib/renewals/buckets.ts) still leaves flex parts out of Bulk reminder, Payment
+ * Follow-up and the sidebar badge (nav_badges SQL) — badge parity is a follow-up card.
  */
 import { renewalBucket, isFlexNextPart } from "@/lib/renewals/buckets";
 import { effectiveGraceDays, serviceStopDate } from "@/lib/renewals/cadence";
@@ -39,7 +40,6 @@ export interface ClassifySub {
   renewal_state?: string | null;
   renewal_date: string | null;
   term_months?: number | null;
-  /** R-2232: a 1-month term billed in parts (flex) — its next month is a billing part. */
   billing_cycle?: string | null;
   status?: string | null;
   /** R-2225: false = Won't renew. */
@@ -61,8 +61,6 @@ export interface RenewalGroups<T> {
   stopped:  T[];
   /** R-2225: Won't renew, still running (renewal date today or later). */
   nonRenewing: T[];
-  /** R-2232: flex subscriptions whose next month is a billing part, not a renewal. */
-  flexParts: T[];
   /** R-2403: past the date but the renewal is paid (its renewal quote is paid) — not overdue. */
   renewedPaid: T[];
   /** expired + due7 + stopped — the Urgent tab and the sidebar badge (R-1541). */
@@ -77,7 +75,7 @@ export function chasedRenewal(sub: { auto_renew?: boolean | null }): boolean {
   return sub.auto_renew !== false;
 }
 
-/** R-2232: the rule lives in lib/renewals/buckets.ts (the Renewals page rules), shared with Bulk reminder. */
+/** R-2232: the rule lives in lib/renewals/buckets.ts, shared with Bulk reminder (R-2422: no longer used to hide rows here). */
 export { isFlexNextPart };
 
 export function isStopped(sub: ClassifySub): boolean {
@@ -92,15 +90,11 @@ export function classifyRenewals<T extends ClassifyRow>(
   isPaid: (row: T) => boolean = () => false,
 ): RenewalGroups<T> {
   const g: RenewalGroups<T> = {
-    expired: [], due7: [], upcoming: [], future: [], stopped: [], nonRenewing: [], flexParts: [], renewedPaid: [], urgentTab: [], atRisk: [], atRiskArr: 0,
+    expired: [], due7: [], upcoming: [], future: [], stopped: [], nonRenewing: [], renewedPaid: [], urgentTab: [], atRisk: [], atRiskArr: 0,
   };
   for (const r of rows) {
     if (!chasedRenewal(r.sub)) {
       if (r.daysUntil >= 0 && r.sub.status !== "expired") g.nonRenewing.push(r);
-      continue;
-    }
-    if (isFlexNextPart(r.sub, r.daysUntil)) {
-      g.flexParts.push(r);
       continue;
     }
     if (r.daysUntil < 0 && !isStopped(r.sub) && isPaid(r)) {

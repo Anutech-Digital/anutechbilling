@@ -63,7 +63,7 @@ describe("R-1720 / R-2403 — Renewals table fits its card at 1280", () => {
   });
 
   it("R-2422: every row (table and card) shows its payment frequency and Last paid", () => {
-    expect((page.match(/<AmountCell amount=\{amount\} frequency=\{renewalFrequency\(sub\)\}/g) ?? []).length).toBe(2);
+    expect((page.match(/<AmountCell amount=\{amount\} frequency=\{frequency\}/g) ?? []).length).toBe(2);
     /* Last paid sits under the customer (contact line) on both layouts. */
     expect((page.match(/<ContactLine contact=\{contact\} \/>\s*\{lastPaidFor\(sub, "mt-0\.5"\)\}/g) ?? []).length).toBe(2);
     /* One batched read for the whole listed queue (tab / tile switches do not read again), never one per row. */

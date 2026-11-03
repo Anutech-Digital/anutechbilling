@@ -55,17 +55,17 @@ describe("R-2403 tabs: Overdue · ≤7 days · 8–30 · 31–60 · 61–90 — 
 
   it("windows by IST days", () => {
     expect(ids("overdue")).toEqual(["lapsed", "stopped"]);
-    expect(ids("due7")).toEqual(["today", "week"]);
+    expect(ids("due7")).toEqual(["today", "week", "flex"]);   // R-2422: a monthly commitment is a renewal
     expect(ids("d30")).toEqual(["eight", "month", "leaver"]);
     expect(ids("d60")).toEqual(["d31", "d60"]);
     expect(ids("d90")).toEqual(["d61", "d90"]);
   });
 
-  it("no row appears in two tabs; past 90 days and flex parts are not listed", () => {
+  it("no row appears in two tabs; past 90 days is not listed; flex IS listed (R-2422)", () => {
     const all = QUEUE_TABS.flatMap((t) => ids(t));
     expect(new Set(all).size).toBe(all.length);
     expect(all).not.toContain("far");
-    expect(all).not.toContain("flex");
+    expect(all).toContain("flex");
   });
 
   it("the At risk tab is gone: at-risk rows are a filter on these tabs, not a second list", () => {
@@ -222,6 +222,13 @@ describe("R-2403 sort and filter", () => {
     expect(filterQueue(rows, { ...NO_FILTERS, status: "overdue" }).map((r) => r.id)).toEqual(["a"]);
     expect(filterQueue(rows, { ...NO_FILTERS, vendor: "google" }).map((r) => r.id)).toEqual(["b", "a"]);
     expect(filterQueue(rows, { ...NO_FILTERS, atRisk: true }).map((r) => r.id)).toEqual(["a"]);
+  });
+  it("R-2422 Commitment filter: All · Annual · Monthly", () => {
+    const mixed = [q("ann", 5, 1, { commitment: "annual" }), q("flex", 3, 1, { commitment: "monthly" }), q("unknown", 4, 1, { commitment: null })];
+    expect(NO_FILTERS.commitment).toBe("all");
+    expect(filterQueue(mixed, NO_FILTERS).map((r) => r.id)).toEqual(["ann", "flex", "unknown"]);
+    expect(filterQueue(mixed, { ...NO_FILTERS, commitment: "annual" }).map((r) => r.id)).toEqual(["ann"]);
+    expect(filterQueue(mixed, { ...NO_FILTERS, commitment: "monthly" }).map((r) => r.id)).toEqual(["flex"]);
   });
   it("filter options are distinct and sorted", () => {
     expect(filterOptions(["M365", "Workspace", "M365", null, ""])).toEqual(["M365", "Workspace"]);

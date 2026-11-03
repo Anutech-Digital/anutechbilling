@@ -65,7 +65,7 @@ import { priorTermDueText } from "./prior-due";
 import { openRenewalQuoteMap, openRenewalQuoteStatus, withRenewalQuote } from "./open-renewal-quotes";
 import { renewalRowAction, type RowAction } from "./row-action";
 import { GraceOverCard } from "./grace-over-card";
-import { classifyRenewals, chasedRenewal, isFlexNextPart } from "./classify";
+import { classifyRenewals, chasedRenewal } from "./classify";
 import {
   QUEUE_TABS, QUEUE_TAB_LABEL, QUEUE_TABLE_COLS, LEGACY_BUCKETS, STATUS_FILTER_LABEL, NO_FILTERS,
   queueTabs, resolveBucket, renewalRowStatus, renewalAmount, isPaidRenewalQuote,
@@ -76,7 +76,7 @@ import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, useRenewa
 import { monthOf, renewalTiles, tileMatches, paidRenewalsInMonth, type TileKey, type TileRow } from "./tiles";
 import { RenewalTileRow, TileViewBar } from "./tiles-card";
 import { ForecastPanel } from "./forecast-panel";
-import { renewalFrequency } from "./frequency";
+import { renewalFrequency, renewalCommitment, type Commitment } from "./frequency";
 import { useRenewalLastPaid } from "./last-paid-data";
 import { LastPaidLine } from "./last-paid-cell";
 import type { LastPaid } from "./last-paid";
@@ -273,6 +273,9 @@ interface QueueItem {
   followup: RenewalFollowup;
   decision: RenewalDecision;
   customerOwnerId: string | null;
+  /** R-2422: worked out once per row (frequency.ts) — the amount cell's words and the Commitment filter. */
+  frequency: string | null;
+  commitment: Commitment;
 }
 
 interface RenewalQueueProps {
@@ -317,7 +320,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
     <>
       {/* Cards — viewports < 1280px (phones and small laptops), two per row from md. */}
       <ul className="xl:hidden p-3 space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0">
-        {rows.map(({ sub, daysUntil: days, status, amount, contact, atRisk, riskReason, followup, decision }) => {
+        {rows.map(({ sub, daysUntil: days, status, amount, frequency, contact, atRisk, riskReason, followup, decision }) => {
           const priorDue = priorTermDueText(sub);  // R-1703
           const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
           return (
@@ -338,7 +341,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
                   <ContactLine contact={contact} />
                   {lastPaidFor(sub, "mt-0.5")}
                 </div>
-                <AmountCell amount={amount} frequency={renewalFrequency(sub)} className="text-right shrink-0" />
+                <AmountCell amount={amount} frequency={frequency} className="text-right shrink-0" />
               </div>
 
               <div className="flex items-start justify-between gap-2 mb-2">
@@ -408,7 +411,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ sub, daysUntil: days, status, amount, contact, atRisk, riskReason, followup, decision }) => {
+            {rows.map(({ sub, daysUntil: days, status, amount, frequency, contact, atRisk, riskReason, followup, decision }) => {
               const priorDue = priorTermDueText(sub);  // R-1703
               const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
               return (
@@ -458,7 +461,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
 
                   {/* Renewal amount for the term */}
                   <td className="px-3 py-3 text-right">
-                    <AmountCell amount={amount} frequency={renewalFrequency(sub)} />
+                    <AmountCell amount={amount} frequency={frequency} />
                     {priorDue && (
                       <p role="status" className="mt-1 text-2xs font-medium text-rose-600" title="Paying the renewal quote covers only the new term — record the earlier amount separately under Payments → Subscription dues.">
                         {priorDue}
@@ -628,8 +631,8 @@ export default function RenewalsPage() {
   const forecast = renewalForecast(all.filter(chasedRenewal), new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()));
 
   /* R-2225: the renewals pipeline export leaves out Won't renew subscriptions. */
-  /* R-2232: nor a flex subscription's next monthly part (a billing part, not a renewal). */
-  const upcoming90   = enriched.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 90 && chasedRenewal(r.sub) && !isFlexNextPart(r.sub, r.daysUntil));
+  /* R-2422: a flex (monthly-commitment) subscription is a renewal too (owner, 3 Nov). */
+  const upcoming90   = enriched.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 90 && chasedRenewal(r.sub));
   const highRiskSubs = groups.atRisk;
   const atRiskIds    = new Set(highRiskSubs.map((r) => r.sub.id));
 
@@ -657,6 +660,8 @@ export default function RenewalsPage() {
         followup,
       }),
       amount: renewalAmount(r.sub, quoteOf(r.sub)),
+      frequency: renewalFrequency(r.sub),
+      commitment: renewalCommitment(r.sub),
       contact: r.sub.customer_id ? contacts?.get(r.sub.customer_id) : undefined,
       atRisk: atRiskIds.has(r.sub.id),
       riskReason: [
@@ -688,7 +693,7 @@ export default function RenewalsPage() {
   /* R-239: the search narrows the tabs (and their counts) only; R-2403: so do the filters. */
   const asQueueRow = (i: QueueItem) => ({
     id: i.sub.id, daysUntil: i.daysUntil, amount: i.amount.value, plan: i.sub.plan, vendor: i.sub.vendor,
-    statusKey: i.status.key, atRisk: i.atRisk, customer: i.sub.customer_name, item: i,
+    statusKey: i.status.key, atRisk: i.atRisk, customer: i.sub.customer_name, commitment: i.commitment, item: i,
   });
   /* R-2404: Mine · Follow-up due · Promise broken narrow the tabs the same way. */
   const narrow = (list: QueueItem[]): QueueItem[] =>
@@ -702,7 +707,7 @@ export default function RenewalsPage() {
   const vendorOptions  = filterOptions(allItems.map((i) => i.sub.vendor));
   const statusOptions  = (Object.keys(STATUS_FILTER_LABEL) as RowStatusKey[]).filter((k) => allItems.some((i) => i.status.key === k));
   const fuOn = fuFilters.mine || fuFilters.followUpDue || fuFilters.promiseBroken;
-  const filtered = !!(filters.product || filters.status || filters.vendor || atRiskOn || fuOn);
+  const filtered = !!(filters.product || filters.status || filters.vendor || filters.commitment !== "all" || atRiskOn || fuOn);
   /* R-2404: chip counts — whole queue, so a person sees "Mine (12)" before pressing it. */
   const fuCount = (f: Partial<FollowupFilters>) => filterByFollowup(allItems, { ...NO_FOLLOWUP_FILTERS, ...f }, me?.userId).length;
   const mineCount = fuCount({ mine: true });
@@ -997,6 +1002,12 @@ export default function RenewalsPage() {
               <option value="">All vendors</option>
               {vendorOptions.map((v) => <option key={v} value={v}>{v[0].toUpperCase() + v.slice(1)}</option>)}
             </select>
+            {/* R-2422: Annual vs Monthly (flex) commitment — both are renewals. */}
+            <select value={filters.commitment} onChange={(e) => setFilters((f) => ({ ...f, commitment: e.target.value as QueueFilters["commitment"] }))} aria-label="Filter by commitment" className={SELECT_CLS}>
+              <option value="all">All commitments</option>
+              <option value="annual">Annual</option>
+              <option value="monthly">Monthly (flex)</option>
+            </select>
             <button
               type="button"
               aria-pressed={atRiskOn}
@@ -1037,12 +1048,6 @@ export default function RenewalsPage() {
               </button>
             )}
           </div>
-          {/* R-2232: Renewals = end of commitment only — say where the flex months went. */}
-          {groups.flexParts.length > 0 && (
-            <p className="mb-2 text-xs text-ink-3">
-              {groups.flexParts.length} flex {groups.flexParts.length === 1 ? "subscription is" : "subscriptions are"} not listed: each month is a billing part — its payment request is raised on its date (see the subscription&apos;s billing schedule).
-            </p>
-          )}
           {groups.renewedPaid.length > 0 && (
             <p className="mb-2 text-xs text-ink-3">
               {groups.renewedPaid.length} paid {groups.renewedPaid.length === 1 ? "renewal is" : "renewals are"} not listed as overdue: the renewal quote is paid, the renewal date moves on with it.
