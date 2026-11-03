@@ -41,6 +41,48 @@ export interface SendQuoteEmailResult {
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** The button a refusal names (route answer `nextStep`) — an in-app path only. */
+export interface RefusalNextStep {
+  label: string;
+  href: string;
+}
+
+/**
+ * R-2448: a send / mark-sent the server refused, with the route's own words, its HTTP status and
+ * — when the route named one (R-2442: "Set the customer's state" → /customers/<id>) — the button
+ * that fixes it. Before, only json.error survived, so the toast had no button and said "try again"
+ * for a 409 that a retry gets again.
+ */
+export class QuoteSendRefusedError extends Error {
+  readonly status: number;
+  readonly nextStep?: RefusalNextStep;
+  constructor(message: string, status: number, nextStep?: RefusalNextStep) {
+    super(message);
+    this.name = "QuoteSendRefusedError";
+    this.status = status;
+    if (nextStep) this.nextStep = nextStep;
+  }
+}
+
+/** The route's `nextStep`, kept only when it is a label plus an in-app path ("/…", never "//…" or "/\…"). */
+export function refusalNextStep(raw: unknown): RefusalNextStep | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const { label, href } = raw as { label?: unknown; href?: unknown };
+  if (typeof label !== "string" || !label.trim() || typeof href !== "string") return undefined;
+  if (!/^\/(?![/\\])/.test(href)) return undefined;
+  return { label, href };
+}
+
+/** The route's refusal (words, status, next step) for a non-2xx answer. */
+export function refusedFrom(
+  res: Response,
+  json: { error?: unknown; nextStep?: unknown },
+  fallback: string,
+): QuoteSendRefusedError {
+  const msg = typeof json.error === "string" && json.error ? json.error : fallback;
+  return new QuoteSendRefusedError(msg, res.status, refusalNextStep(json.nextStep));
+}
+
 /** POST /api/quotes/[id]/send. Throws with the server's own words on a non-2xx. */
 export async function sendQuoteEmail(
   quoteId: string,
@@ -57,9 +99,9 @@ export async function sendQuoteEmail(
       template: input.template === "proforma" ? "proforma" : undefined,
     }),
   });
-  let json: Partial<SendQuoteEmailResult> & { error?: string } = {};
+  let json: Partial<SendQuoteEmailResult> & { error?: string; nextStep?: unknown } = {};
   try { json = await res.json(); } catch { /* non-JSON body — handled below */ }
-  if (!res.ok) throw new Error(json.error ?? `Send failed (${res.status})`);
+  if (!res.ok) throw refusedFrom(res, json, `Send failed (${res.status})`);
   return json as SendQuoteEmailResult;
 }
 
@@ -99,6 +141,10 @@ export interface Outcome {
   ok: boolean;
   title: string;
   description?: string;
+  /** R-2448: the button that fixes a refusal (e.g. "Set the customer's state"). */
+  nextStep?: RefusalNextStep;
+  /** R-2448: a retry would be refused the same way (409) — offer no "Try again". */
+  noRetry?: boolean;
 }
 
 /** Toast copy for the route's answer. `ok` false means the quote was NOT emailed. */
@@ -150,6 +196,7 @@ export type FailedSendButton =
   | { kind: "turn-on-messages"; label: "Turn on customer messages"; href: string }
   | { kind: "copy-link"; label: "Copy link instead"; link: string }
   | { kind: "open-quote"; label: "Open quote"; href: string }
+  | { kind: "next-step"; label: string; href: string }
   | { kind: "retry"; label: "Try again" };
 
 /**
@@ -162,8 +209,13 @@ export type FailedSendButton =
 export function failedSendButtons(
   res: Pick<SendQuoteEmailResult, "refusedReason" | "customerLink"> | null,
   /** onQuotePage: the sender is already on the quote page (Send on WhatsApp is right there). */
-  opts: { role: string | null | undefined; quoteId: string; onQuotePage?: boolean },
+  opts: {
+    role: string | null | undefined; quoteId: string; onQuotePage?: boolean;
+    /** R-2448: the refusal's own fix (route `nextStep`) — it is the one button. */
+    nextStep?: RefusalNextStep;
+  },
 ): { primary: FailedSendButton; secondary?: FailedSendButton; note?: string } {
+  if (opts.nextStep) return { primary: { kind: "next-step", label: opts.nextStep.label, href: opts.nextStep.href } };
   const copy: FailedSendButton | undefined = res?.customerLink
     ? { kind: "copy-link", label: "Copy link instead", link: res.customerLink }
     : undefined;
@@ -190,6 +242,17 @@ export function failedSendButtons(
 /** Toast copy when the request itself failed (network, 4xx/5xx). */
 export function quoteEmailErrorOutcome(err: unknown, opts: { alreadySent?: boolean } = {}): Outcome {
   const msg = err instanceof Error ? err.message : String(err);
+  /* R-2448: a 409 is a refusal (place of supply, approval) — the same send is refused again, so
+     the toast names the fix instead of "try again". */
+  if (err instanceof QuoteSendRefusedError && err.status === 409) {
+    return {
+      ok: false,
+      title: "Email did not go",
+      description: `${withoutFullStop(msg)}. ${opts.alreadySent ? "Nothing was sent." : "The quote is saved as a draft."}`,
+      noRetry: true,
+      ...(err.nextStep ? { nextStep: err.nextStep } : {}),
+    };
+  }
   return {
     ok: false,
     title: "Email did not go",

@@ -13,6 +13,10 @@
 
 import { toast } from "sonner";
 import { markQuoteSent, copyNeedsMarkSent, type MarkQuoteSentResult } from "@/lib/quotes/mark-quote-sent";
+import { QuoteSendRefusedError } from "@/lib/quotes/send-quote-email";
+
+/** Sonner's "never time out" — same as failed-send-toast's (that file imports this one). */
+const STAY_UNTIL_DISMISSED = Infinity;
 
 export type ShareChannel = "copy" | "whatsapp-link" | "whatsapp-dialog";
 
@@ -44,9 +48,13 @@ export async function markSentBeforeShare(args: {
     args.onMarkedSent?.();
     return { ok: true, markedSent: r.changed };
   } catch (err) {
+    /* R-2448: a refusal that names its fix (no state → "Set the customer's state") carries it as
+       the toast's button — the same one a refused Send shows. */
+    const fix = err instanceof QuoteSendRefusedError ? err.nextStep : undefined;
     toast.error(SHARE_REFUSED_TITLE[args.channel], {
       description: err instanceof Error ? err.message : String(err),
-      duration: 15000,
+      duration: fix ? STAY_UNTIL_DISMISSED : 15000,
+      ...(fix ? { action: { label: fix.label, onClick: () => { window.location.assign(fix.href); } } } : {}),
     });
     return { ok: false, markedSent: false };
   }
