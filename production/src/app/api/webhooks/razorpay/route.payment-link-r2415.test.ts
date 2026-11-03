@@ -209,3 +209,49 @@ describe("payment_link.paid (R-2415)", () => {
     expect(db.tables.invoice_payment_links[0].razorpay_link_id).toBe("plink_R2415abc");
   });
 });
+
+/* R-2439 (review of R-2415, item 1): a SECOND, different captured payment on a link that is
+   already paid must reach the owner — refund it or keep it as an advance — never vanish. */
+describe("a second payment on an already-paid pay link (R-2439)", () => {
+  beforeEach(() => { seed(); vi.mocked(notifyTenantOwners).mockClear(); });
+
+  const second = () => {
+    const body = linkPaid();
+    body.payload.payment.entity = { ...body.payload.payment.entity, id: "pay_R2439two", order_id: "order_R2439two" };
+    return body;
+  };
+
+  it("settle says already paid by ANOTHER payment → owner told to refund or keep as advance, nothing booked", async () => {
+    db.rpcImpl = () => ({
+      data: { found: true, already_recorded: true, same_payment: false, paid_payment_id: "pay_R2415one", tenant_id: TENANT, customer_id: "c1" },
+      error: null,
+    });
+    const res = await POST(signed(second()));
+    expect(res.status).toBe(200);
+    const j = await res.json();
+    expect(j).toMatchObject({ needsReview: true });
+    expect(j.alreadyProcessed).toBeUndefined();
+    expect(db.rpcCalls.some((c) => c.name === "record_payment")).toBe(false);
+    expect(notifyTenantOwners).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(notifyTenantOwners).mock.calls[0][0];
+    expect(call.entityId).toBe("pay_R2439two");
+    expect(call.body).toContain("pay_R2439two");
+    expect(call.body).toContain("pay_R2415one");           // the payment that already paid the link
+    expect(call.body).toMatch(/refund/i);
+    expect(call.body).toMatch(/advance/i);
+  });
+
+  it("the SAME payment again (payment_link.paid after payment.captured) stays a quiet replay", async () => {
+    db.rpcImpl = () => ({ data: { found: true, already_recorded: true, same_payment: true, paid_payment_id: "pay_R2415one", tenant_id: TENANT }, error: null });
+    const res = await POST(signed(linkPaid()));
+    expect(await res.json()).toMatchObject({ alreadyProcessed: true });
+    expect(notifyTenantOwners).not.toHaveBeenCalled();
+  });
+
+  it("a passing DB error from settle answers 500 so Razorpay retries (nothing flagged)", async () => {
+    db.rpcImpl = () => ({ data: null, error: { code: "53200", message: "out of memory" } });
+    const res = await POST(signed(linkPaid()));
+    expect(res.status).toBe(500);
+    expect(notifyTenantOwners).not.toHaveBeenCalled();
+  });
+});
