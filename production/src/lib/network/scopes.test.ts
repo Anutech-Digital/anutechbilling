@@ -8,6 +8,11 @@ import { toConnection } from "./client";
 
 const MIGRATION = fs.readFileSync(
   path.join(process.cwd(), "supabase", "migrations", "20261103195606_r2433_tenant_connections.sql"), "utf8");
+/* R-2445 adds the GSTIN-ownership calls (and newer bodies) in its own migration. */
+const R2445_FILE = fs.readdirSync(path.join(process.cwd(), "supabase", "migrations"))
+  .find((f) => /_r2445_gstin_owner_verified\.sql$/.test(f));
+const ALL_NETWORK = MIGRATION + "\n" + (R2445_FILE
+  ? fs.readFileSync(path.join(process.cwd(), "supabase", "migrations", R2445_FILE), "utf8") : "");
 
 describe("network scopes (R-2433)", () => {
   it("match the database's list exactly", () => {
@@ -68,10 +73,10 @@ describe("cross-company access goes only through definer functions (R-2433)", ()
     const called = [...files[0].matchAll(/call\("([a-z_]+)"/g)].map((m) => m[1]);
     expect(called.length).toBeGreaterThanOrEqual(6);
     for (const fn of called) {
-      const def = new RegExp(`create or replace function public\\.${fn}\\([\\s\\S]*?security definer\\s*\\nset search_path to 'public'`).exec(MIGRATION);
+      const def = new RegExp(`create or replace function public\\.${fn}\\([\\s\\S]*?security definer\\s*\\nset search_path to 'public'`).exec(ALL_NETWORK);
       expect(def, `${fn}: no SECURITY DEFINER definition with search_path`).toBeTruthy();
-      expect(MIGRATION).toMatch(new RegExp(`revoke all on function public\\.${fn}\\([^)]*\\) from public, anon;`));
-      expect(MIGRATION).toMatch(new RegExp(`grant execute on function public\\.${fn}\\([^)]*\\) to authenticated;`));
+      expect(ALL_NETWORK).toMatch(new RegExp(`revoke all on function public\\.${fn}\\([^)]*\\) from public, anon;`));
+      expect(ALL_NETWORK).toMatch(new RegExp(`grant execute on function public\\.${fn}\\([^)]*\\) to authenticated;`));
     }
   });
 

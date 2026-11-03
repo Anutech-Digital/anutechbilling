@@ -8,6 +8,7 @@
  */
 import { createClient } from "@/lib/supabase/client";
 import { cleanScopes, type NetworkScope } from "./scopes";
+import { toOwnership, type GstinOwnership } from "./ownership";
 
 type Rpc = (fn: string, args?: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
 
@@ -31,6 +32,8 @@ export interface NetworkConnection {
   respondedAt: string | null;
   revokedAt: string | null;
   revokedByMe: boolean;
+  /** R-2445: the other side still holds the GSTIN it PROVED it owns — needed to accept / share. */
+  otherOwnerVerified: boolean;
 }
 
 export interface NetworkSuggestion {
@@ -60,6 +63,7 @@ export function toConnection(r: Row): NetworkConnection {
     respondedAt: str(r.responded_at),
     revokedAt: str(r.revoked_at),
     revokedByMe: Boolean(r.revoked_by_me),
+    otherOwnerVerified: Boolean(r.other_owner_verified),
   };
 }
 
@@ -101,4 +105,15 @@ export async function revokeConnection(id: string): Promise<string> {
 
 export async function setMyScopes(id: string, scopes: NetworkScope[]): Promise<NetworkScope[]> {
   return cleanScopes((await call("network_set_my_scopes", { p_id: id, p_scopes: scopes })) as string[] | null);
+}
+
+/** R-2445: my company's GSTIN ownership status (owner / manager / accountant; null for other roles). */
+export async function getMyGstinOwnership(): Promise<GstinOwnership | null> {
+  const rows = (await call("network_my_gstin_ownership")) as Row[] | null;
+  return rows?.[0] ? toOwnership(rows[0]) : null;
+}
+
+/** R-2445: ask ResellerOS to confirm we own our GSTIN (owner only). */
+export async function claimGstinOwnership(note: string): Promise<string> {
+  return String(await call("network_claim_gstin_ownership", { p_note: note }));
 }
