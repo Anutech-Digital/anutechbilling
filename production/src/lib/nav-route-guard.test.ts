@@ -171,7 +171,7 @@ describe("personal role: only the personal pages (GP-07a)", () => {
     const nav = filterNavForRole(APP_NAV, "personal");
     expect(nav.map((s) => s.section)).toEqual(["Personal"]);
     expect(nav[0].items.map((i) => [i.label, i.href])).toEqual([
-      ["Money", "/money"], ["My digital assets", "/assets"], ["Support", "/support/my"], ["Upgrade", "/upgrade"],
+      ["Money", "/money"], ["My digital assets", "/assets"], ["Support", "/support/my"], ["Upgrade to business", "/upgrade"],
     ]);
     expect(nav[0].items.every((i) => !i.headerOnly && !i.children?.length && !i.directory?.length)).toBe(true);
   });
@@ -179,7 +179,7 @@ describe("personal role: only the personal pages (GP-07a)", () => {
   it("the sidebar shows the same 4 rows and nothing pinned", () => {
     const m = buildSidebarApps("personal");
     expect(m.pinned).toEqual([]);
-    expect(m.apps.flatMap((a) => a.items.map((i) => i.label))).toEqual(["Money", "My digital assets", "Support", "Upgrade"]);
+    expect(m.apps.flatMap((a) => a.items.map((i) => i.label))).toEqual(["Money", "My digital assets", "Support", "Upgrade to business"]);
   });
 
   /* R-2115 checker: /account read "Home > Dashboard" (no crumb) and /vault/personal read
