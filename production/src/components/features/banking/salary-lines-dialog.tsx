@@ -33,7 +33,7 @@ import { rupee, formatDate, toTitleCase } from "@/lib/utils";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import { useEmployees, useSalaryPayments } from "@/lib/queries/payroll";
 import { useBookSalaryLines, fnfPromptsFrom, type SalaryGroupInput, type SalaryGroupResult } from "@/lib/queries/salary-from-bank";
-import { parseSalaryNarration, matchEmployee, titleCaseName, compactName, payeeKey, bestNameVariant, alreadyInPayroll, salaryLineRisks, type AlreadyInPayroll, type SalaryLineRisk, type SalaryNarration } from "@/lib/banking/salary-lines";
+import { parseSalaryNarration, matchEmployee, titleCaseName, compactName, payeeKey, bestNameVariant, alreadyInPayroll, salaryLineRisks, isFullAndFinalText, type AlreadyInPayroll, type SalaryLineRisk, type SalaryNarration } from "@/lib/banking/salary-lines";
 import { FnfExitPrompt, type FnfExitPromptInput } from "@/components/features/payroll/fnf-exit-prompt";
 
 interface Props {
@@ -172,33 +172,50 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
 
   /* R-2428: the payee accounts each employee's salaries already went to (this account's
      reconciled salary lines) — a NEW record to a different account is warned. */
-  const keysByEmployee = React.useMemo(() => {
-    const m = new Map<string, string[]>();
+  const linkedByEmployee = React.useMemo(() => {
+    const byId = new Map(salaries.map((sp) => [sp.id, sp]));
+    const m = new Map<string, { keys: string[]; fnfPeriods: string[]; salaries: typeof salaries }>();
+    const slot = (emp: string) => {
+      let v = m.get(emp);
+      if (!v) { v = { keys: [], fnfPeriods: [], salaries: [] }; m.set(emp, v); }
+      return v;
+    };
+    for (const sp of salaries) slot(sp.employee_id).salaries.push(sp);
     for (const t of transactions) {
       if (t.matched_to_type !== "salary" || !t.matched_to_id) continue;
+      const sp = byId.get(t.matched_to_id);
+      if (!sp) continue;
+      const v = slot(sp.employee_id);
       const k = payeeKey(t.description ?? "");
-      const emp = salaries.find((sp) => sp.id === t.matched_to_id)?.employee_id;
-      if (!k || !emp) continue;
-      const list = m.get(emp) ?? [];
-      if (!list.includes(k)) list.push(k);
-      m.set(emp, list);
+      if (k && !v.keys.includes(k)) v.keys.push(k);
+      /* A Payroll-made record has no narration in its notes — its linked line tells the F&F. */
+      if (isFullAndFinalText(t.description ?? "")) v.fnfPeriods.push(sp.period);
     }
     return m;
   }, [transactions, salaries]);
 
   /** R-2428: before a NEW record for an existing employee — left already? before joining? … */
-  const risksFor = (l: Line): SalaryLineRisk => {
-    const c = choice[l.txn.id] ?? "";
-    const emp = employees.find((e) => e.id === c);
-    if (!emp || !createsRecord(l)) return { block: null, warnings: [] };
-    return salaryLineRisks({
-      employee: emp,
-      period: period[l.txn.id] ?? l.parsed.period,
-      lineKey: payeeKey(l.txn.description ?? ""),
-      knownKeys: keysByEmployee.get(emp.id) ?? [],
-      salaries,
-    });
-  };
+  const NO_RISK: SalaryLineRisk = { block: null, warnings: [] };
+  const riskByTxn = React.useMemo(() => {
+    const m = new Map<string, SalaryLineRisk>();
+    for (const l of lines) {
+      const c = choice[l.txn.id] ?? "";
+      const emp = employees.find((e) => e.id === c);
+      const per = period[l.txn.id] ?? l.parsed.period;
+      if (!emp || salaries.some((sp) => sp.employee_id === c && sp.period === per)) continue;
+      const linked = linkedByEmployee.get(emp.id);
+      m.set(l.txn.id, salaryLineRisks({
+        employee: emp,
+        period: per,
+        lineKey: payeeKey(l.txn.description ?? ""),
+        knownKeys: linked?.keys ?? [],
+        salaries: linked?.salaries ?? [],
+        fnfPeriods: linked?.fnfPeriods ?? [],
+      }));
+    }
+    return m;
+  }, [lines, choice, period, employees, salaries, linkedByEmployee]);
+  const risksFor = (l: Line): SalaryLineRisk => riskByTxn.get(l.txn.id) ?? NO_RISK;
 
   /** What booking this line would do — or why it cannot. */
   const planFor = (l: Line): { ok: boolean; text: string } => {

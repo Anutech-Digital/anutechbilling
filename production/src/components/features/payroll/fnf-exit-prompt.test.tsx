@@ -9,7 +9,7 @@ const info = vi.hoisted(() => vi.fn());
 vi.mock("sonner", () => ({ toast: { info, success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/queries/payroll", () => ({
   useStartEmployeeExit: () => ({ mutate: vi.fn(), isPending: false }),
-  useEmployees: () => ({ isLoading: false, data: [{ id: "e-k", name: "Keshav Malik", joining_date: "2026-04-01", exit_date: state.exit }] }),
+  useEmployees: () => ({ isLoading: false, isFetching: false, data: [{ id: "e-k", name: "Keshav Malik", joining_date: "2026-04-01", exit_date: state.exit }] }),
 }));
 vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ isLoading: false, data: { role: state.role } }) }));
 

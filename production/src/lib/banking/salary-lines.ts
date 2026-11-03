@@ -18,6 +18,9 @@
  *    its own flow — so they are not offered at all.
  */
 
+import { formatDate } from "@/lib/utils";
+import { periodLabel } from "@/lib/payroll/period-label";
+
 const MONTHS: Array<[RegExp, number]> = [
   [/^JAN(UARY)?$/, 1], [/^FEB(RUARY)?$/, 2], [/^MAR(CH)?$/, 3], [/^APR(IL)?$/, 4],
   [/^MAY$/, 5], [/^JUNE?$/, 6], [/^JULY?$/, 7], [/^AUG(UST)?$/, 8],
@@ -277,15 +280,8 @@ export function alreadyInPayroll(input: {
        a full & final already paid, for an inactive employee, or to a different payee account
        than this employee's other salaries (another company's / another person's transfer). */
 
-const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const monthWords = (period: string) => {
-  const [y, m] = period.split("-").map(Number);
-  return `${MONTH_SHORT[m - 1]} ${y}`;
-};
-const dayWords = (iso: string) => {
-  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
-  return `${d} ${MONTH_SHORT[m - 1]} ${y}`;
-};
+const monthWords = periodLabel;
+const dayWords = (iso: string) => formatDate(iso.slice(0, 10));
 
 export type SalaryLineRiskInput = {
   employee: { id: string; name: string; joining_date: string | null; exit_date: string | null; is_active: boolean };
@@ -297,6 +293,9 @@ export type SalaryLineRiskInput = {
   knownKeys: readonly string[];
   /** Salary records (only this employee's are read). */
   salaries: ReadonlyArray<{ employee_id: string; period: string; notes: string | null }>;
+  /** Months of this employee whose LINKED bank line reads as a full & final (a Payroll-made
+   *  record has no narration in its notes). */
+  fnfPeriods?: readonly string[];
 };
 
 export type SalaryLineRisk = { block: string | null; warnings: string[] };
@@ -310,11 +309,12 @@ export function salaryLineRisks(i: SalaryLineRiskInput): SalaryLineRisk {
   if (e.joining_date && i.period < e.joining_date.slice(0, 7)) {
     warnings.push(`${e.name} joined on ${dayWords(e.joining_date)} — ${monthWords(i.period)} is before they joined. This may be another company's payment.`);
   }
-  const fnf = i.salaries
-    .filter((s) => s.employee_id === e.id && s.period < i.period && isFullAndFinalText(s.notes ?? ""))
-    .sort((a, b) => b.period.localeCompare(a.period))[0];
+  const fnf = [
+    ...i.salaries.filter((s) => s.employee_id === e.id && isFullAndFinalText(s.notes ?? "")).map((s) => s.period),
+    ...(i.fnfPeriods ?? []),
+  ].filter((p) => p < i.period).sort().at(-1);
   if (fnf && !e.exit_date) {
-    warnings.push(`${e.name}'s full & final was paid for ${monthWords(fnf.period)} — they may have left. Start their exit instead of booking more salary.`);
+    warnings.push(`${e.name}'s full & final was paid for ${monthWords(fnf)} — they may have left. Start their exit instead of booking more salary.`);
   }
   if (!e.is_active && !e.exit_date) warnings.push(`${e.name} is marked inactive.`);
   if (i.lineKey && i.knownKeys.length > 0 && !i.knownKeys.includes(i.lineKey)) {

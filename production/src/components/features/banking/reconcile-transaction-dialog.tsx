@@ -187,6 +187,9 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         matchedToId:   salaryId,
         confidence:    "manual",
       });
+      /* R-2428: a full & final paid into a salary already in Payroll → "Start exit?" too. */
+      const sal = (payableSalaries ?? []).find((s) => s.id === salaryId);
+      if (salaryFnf && sal) setFnfPrompt({ employeeId: sal.employee_id, lastDay: transaction.txn_date, amount: transaction.debit });
       onOpenChange(false);
     } catch { /* hook toasts */ }
   };

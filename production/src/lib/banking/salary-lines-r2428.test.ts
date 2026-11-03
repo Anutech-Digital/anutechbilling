@@ -14,7 +14,7 @@ describe("R-2428 salaryLineRisks — before a NEW salary record is made from a b
       employee: { ...keshav, exit_date: "2026-04-16" }, period: "2026-06",
       lineKey: null, knownKeys: [], salaries: [],
     });
-    expect(r.block).toMatch(/Keshav Malik left on 16 Apr 2026 — no salary after Apr 2026/);
+    expect(r.block).toMatch(/Keshav Malik left on 16 Apr 2026 — no salary after April 2026/);
   });
 
   it("the exit month itself is not blocked", () => {
@@ -31,7 +31,7 @@ describe("R-2428 salaryLineRisks — before a NEW salary record is made from a b
       salaries: [{ employee_id: "e-k", period: "2026-04", notes: "Created from bank line: 50100508749370-TPT-FULL N FINAL SALARY-KESHAV MALIK" }],
     });
     expect(r.block).toBeNull();
-    expect(r.warnings.join(" ")).toMatch(/full & final was paid for Apr 2026/);
+    expect(r.warnings.join(" ")).toMatch(/full & final was paid for April 2026/);
   });
 
   it("a month before joining → warned (may be another company's line)", () => {
@@ -51,6 +51,14 @@ describe("R-2428 salaryLineRisks — before a NEW salary record is made from a b
       employee: keshav, period: "2026-04", lineKey: "acct:50100508749370", knownKeys: ["acct:50100508749370"], salaries: [],
     });
     expect(r).toEqual({ block: null, warnings: [] });
+  });
+
+  it("F&F seen on the LINKED bank line of a Payroll-made record (notes empty) → warned", () => {
+    const r = salaryLineRisks({
+      employee: keshav, period: "2026-07", lineKey: null, knownKeys: [],
+      salaries: [{ employee_id: "e-k", period: "2026-04", notes: null }], fnfPeriods: ["2026-04"],
+    });
+    expect(r.warnings.join(" ")).toMatch(/full & final was paid for April 2026/);
   });
 
   it("inactive with no exit date → warned", () => {

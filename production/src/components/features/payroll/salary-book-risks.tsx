@@ -23,7 +23,9 @@ export function SalaryBookRisks({ employee, period, onChange }: {
   const history = useEmployeeSalaryHistory(employee.id);
   const [confirmed, setConfirmed] = React.useState(false);
   const risk = React.useMemo<SalaryLineRisk>(() => {
-    const rows = history.data ?? [];
+    /* Until the records are read, nothing can be judged — hold the save (a few hundred ms). */
+    if (!history.data) return { block: "Checking this employee's salary records…", warnings: [] };
+    const rows = history.data;
     if (!period || rows.some((r) => r.period === period)) return NONE;
     return salaryLineRisks({ employee, period, lineKey: null, knownKeys: [], salaries: rows });
   }, [history.data, employee, period]);
@@ -33,6 +35,7 @@ export function SalaryBookRisks({ employee, period, onChange }: {
     onChange(risk.block || confirmed ? { block: risk.block, warnings: [] } : risk);
   }, [risk, confirmed, onChange]);
 
+  if (!history.data) return null;
   if (risk.block) return <p className="text-xs text-rose-ink">{risk.block}</p>;
   if (risk.warnings.length === 0) return null;
   return (

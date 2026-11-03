@@ -17,7 +17,7 @@ describe("R-2428 SalaryBookRisks", () => {
   it("after the last working day → refused", () => {
     const onChange = vi.fn();
     render(<SalaryBookRisks employee={{ ...keshav, exit_date: "2026-04-16" }} period="2026-06" onChange={onChange} />);
-    expect(screen.getByText(/left on 16 Apr 2026 — no salary after Apr 2026/)).toBeTruthy();
+    expect(screen.getByText(/left on 16 Apr 2026 — no salary after April 2026/)).toBeTruthy();
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ block: expect.stringMatching(/left on/) }));
   });
 

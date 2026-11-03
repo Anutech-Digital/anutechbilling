@@ -492,6 +492,8 @@ export type UnreconciledSalary = {
   id: string; period: string; pay_date: string;
   net: number; paid_amount: number; remaining: number;
   paid_status: "unpaid" | "partial" | "paid"; employee_name: string;
+  /** R-2428: who it is for — the "Start exit?" prompt after a full & final. */
+  employee_id: string;
 };
 export function useUnreconciledSalaries() {
   return useQuery({
@@ -519,6 +521,7 @@ export function useUnreconciledSalaries() {
         id: r.id, period: r.period, pay_date: r.pay_date,
         net: r.net, paid_amount: r.paid_amount, remaining: Math.max(0, r.net - r.paid_amount),
         paid_status: r.paid_status, employee_name: names.get(r.employee_id) ?? "Employee",
+        employee_id: r.employee_id,
       }));
     },
     staleTime: 30_000,

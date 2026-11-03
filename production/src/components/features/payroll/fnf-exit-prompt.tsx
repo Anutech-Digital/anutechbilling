@@ -21,12 +21,13 @@ import { formatDate, rupee } from "@/lib/utils";
 export type FnfExitPromptInput = { employeeId: string; lastDay: string; amount: number };
 
 export function FnfExitPrompt({ prompt, onClose }: { prompt: FnfExitPromptInput | null; onClose: () => void }) {
-  const { data: employees, isLoading } = useEmployees();
+  /* isFetching too: an F&F that also CREATED the employee refetches the list — wait for it. */
+  const { data: employees, isLoading, isFetching } = useEmployees();
   const me = useCurrentUser();
   const role = me.data?.role;
   const emp = prompt ? (employees ?? []).find((e) => e.id === prompt.employeeId) ?? null : null;
   const isOwner = role === "owner";
-  const ready = !!prompt && !isLoading && !me.isLoading;
+  const ready = !!prompt && !isLoading && !me.isLoading && (!!emp || !isFetching);
 
   React.useEffect(() => {
     if (!ready || !prompt) return;

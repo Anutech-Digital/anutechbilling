@@ -38,7 +38,7 @@ export function AdjustSalaryLopDialog({ name, salary, onClose }: {
   const days = Math.max(0, Math.round((Number(lopDays) || 0) * 10) / 10);
   const net = netAfterLop(salary, lop);
   const problem = lopProblem(salary, lop, reason);
-  const reasonGiven = reason.trim().length >= 3;
+  const hasStatutory = salary.tds + salary.pf + salary.esi > 0;
 
   const save = () => {
     if (problem) return;
@@ -85,7 +85,12 @@ export function AdjustSalaryLopDialog({ name, salary, onClose }: {
             {salary.paid_amount > 0 && net === salary.paid_amount ? " — equals what was paid, so it shows as Paid." : null}
             {salary.paid_amount > 0 && net > salary.paid_amount ? ` — ${rupee(net - salary.paid_amount)} still to pay.` : null}
           </p>
-          {problem && reasonGiven && <p className="text-xs text-rose-ink">{problem}</p>}
+          {hasStatutory && (
+            <p className="text-xs text-amber-ink">
+              TDS / PF / ESI on this salary stay as booked. If they must change too, un-reconcile the bank line, then Undo and run the salary again.
+            </p>
+          )}
+          {problem && <p className="text-xs text-rose-ink">{problem}</p>}
         </div>
 
         <DialogFooter>

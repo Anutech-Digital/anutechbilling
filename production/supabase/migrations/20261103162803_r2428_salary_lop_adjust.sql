@@ -91,7 +91,9 @@ begin
                    else 'unpaid' end;
   if v_status = 'paid' and v_sal.paid_amount > 0 then
     select t.id into v_last_txn from public.bank_transactions t
-     where t.tenant_id = v_tenant and t.matched_to_type = 'salary' and t.matched_to_id = v_sal.id::text
+     where t.tenant_id = v_tenant
+       and ((t.matched_to_type = 'salary' and t.matched_to_id = v_sal.id::text)
+            or (t.matched_to_type = 'expense' and v_sal.expense_id is not null and t.matched_to_id = v_sal.expense_id))
      order by t.txn_date desc, t.id desc limit 1;
   end if;
 
