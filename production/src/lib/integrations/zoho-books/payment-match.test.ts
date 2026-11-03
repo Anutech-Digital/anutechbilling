@@ -85,7 +85,12 @@ describe("R-2359 findInZoho", () => {
     if (r.kind !== "match") return;
     expect(r.match.by).toBe("utr");
     expect(r.match.payment.reference).toBe("IDFB6202M2890149");
-    expect(r.match.customer).toEqual({ zohoId: "cust-supreme", name: "SUPREME MEDIA & STUDIOS PRIVATE LIMITED", gstin: "07AAACS0000A1Z5" });
+    expect(r.match.customer).toEqual({
+      zohoId: "cust-supreme", name: "SUPREME MEDIA & STUDIOS PRIVATE LIMITED", gstin: "07AAACS0000A1Z5",
+      /* R-2363: where the customer is, from the same invoice. This made-up GSTIN fails the checksum,
+         so no state is read from it (never a guess). */
+      country: "India", gstTreatment: null, state: null,
+    });
     expect(r.match.invoices.map((i) => i.number)).toEqual(["INV/26-27/0613"]);
     expect(r.match.invoices[0].lines[0]).toMatchObject({
       name: "Google Workspace Business Starter", sku: "GWS-BS", qty: 9, rate: 2550,

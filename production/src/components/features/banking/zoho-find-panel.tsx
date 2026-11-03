@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { rupee, formatDate } from "@/lib/utils";
 import { formatForeign } from "@/lib/currency";
 import type { FindZohoResult, ZohoPaymentMatch, ZohoPaymentRow } from "@/lib/integrations/zoho-books/payment-match";
+import type { CustomerSeed } from "@/components/features/customers/use-customer-form";
 import { zohoPrefill, zohoSaleNumber, type AppCustomerLite, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
 
 export const ZOHO_FIND_URL = "/api/integrations/zoho-books/payment-match";
@@ -36,8 +37,21 @@ interface Props {
 }
 
 type Next = { label: string; href?: string };
-/** R-2360: what the Add-customer form starts with when Zoho's customer is not in the app. */
-export type NewCustomerSeed = { name: string; gstin: string | null };
+/** R-2360: what the Add-customer form starts with when Zoho's customer is not in the app.
+ *  R-2363: also where it is (country, GST treatment, state) — an overseas Zoho customer is
+ *  created overseas, not as India / unregistered. */
+export type NewCustomerSeed = CustomerSeed;
+
+/** R-2363: the Add-customer seed for a Zoho match's customer (only the facts Zoho gave). */
+export function newCustomerSeedFromZoho(c: ZohoPaymentMatch["customer"]): NewCustomerSeed {
+  return {
+    name: c.name, gstin: c.gstTreatment === "overseas" ? null : c.gstin,
+    ...(c.country ? { country: c.country } : {}),
+    ...(c.gstTreatment ? { gst_treatment: c.gstTreatment } : {}),
+    ...(c.state ? { state: c.state } : {}),
+  };
+}
+
 type State =
   | { kind: "idle" }
   | { kind: "loading" }
@@ -158,6 +172,8 @@ function MatchBox({ match, prefill, onNewCustomer }: { match: ZohoPaymentMatch; 
       </p>
       <p className="text-xs text-ink break-words">
         Customer in Zoho: <b>{match.customer.name}</b>{match.customer.gstin ? ` · GSTIN ${match.customer.gstin}` : ""}
+        {/* R-2363: an overseas customer says so — "Create customer" makes it in that country. */}
+        {match.customer.gstTreatment === "overseas" ? ` · Overseas${match.customer.country ? ` (${match.customer.country})` : ""}` : ""}
         {prefill.customer ? (
           <span className="text-ink-3"> → {prefill.customer.name} (matched by {prefill.customer.by === "gstin" ? "GSTIN" : "name"})</span>
         ) : null}
@@ -165,7 +181,7 @@ function MatchBox({ match, prefill, onNewCustomer }: { match: ZohoPaymentMatch; 
       {!prefill.customer && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-amber-ink">No match — this customer is not in ResellerOS yet.</span>
-          {onNewCustomer && <Button size="sm" variant="default" icon="plus" onClick={() => onNewCustomer({ name: match.customer.name, gstin: match.customer.gstin })}>Create customer</Button>}
+          {onNewCustomer && <Button size="sm" variant="default" icon="plus" onClick={() => onNewCustomer(newCustomerSeedFromZoho(match.customer))}>Create customer</Button>}
         </div>
       )}
       <p className="text-xs text-ink break-words">

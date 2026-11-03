@@ -35,7 +35,7 @@ import {
 } from "@/lib/forms/poka-yoke";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import { CountryCombobox } from "./country-combobox";
-import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
+import { GST_STATE_OPTIONS, STATE_NOT_KNOWN, STATE_NOT_KNOWN_LABEL, STATE_NOT_KNOWN_NOTE } from "@/lib/gst/gstin-state";
 import { useCustomerForm } from "./use-customer-form";
 import { ScanCardPanel } from "./scan-card-panel";
 import { ContactPersonsTable } from "./contact-persons-table";
@@ -631,11 +631,15 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
               <>
                 <select id="state" className={selectClass} aria-invalid={!!errors.state} {...register("state")}>
                   <option value="">Select state…</option>
-                  {watch("state") && !GST_STATE_OPTIONS.some((o) => o.name.toLowerCase() === watch("state")!.toLowerCase()) && (
+                  {/* R-2363: advance-only customer, state unknown — saved with no state (never a
+                      guess); its quote / GST invoice still waits for the state. */}
+                  <option value={STATE_NOT_KNOWN}>{STATE_NOT_KNOWN_LABEL}</option>
+                  {watch("state") && watch("state") !== STATE_NOT_KNOWN && !GST_STATE_OPTIONS.some((o) => o.name.toLowerCase() === watch("state")!.toLowerCase()) && (
                     <option value={watch("state")!}>{watch("state")} (not a GST state — pick one)</option>
                   )}
                   {GST_STATE_OPTIONS.map((o) => <option key={o.code} value={o.name}>{o.name}</option>)}
                 </select>
+                {watch("state") === STATE_NOT_KNOWN && <p className="mt-1 text-xs text-amber-ink">{STATE_NOT_KNOWN_NOTE}</p>}
                 {errors.state?.message && <p className="mt-1 text-xs text-rose">{String(errors.state.message)}</p>}
               </>
             )}
@@ -735,11 +739,12 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
               />
               <ReviewLine
                 label="Place of supply"
-                value={watch("state")}
+                value={watch("state") === STATE_NOT_KNOWN ? "Not known yet" : watch("state")}
                 /* Spelled out because it decides IGST vs CGST+SGST, and because a
                    customer with a GSTIN but no state is the commonest shape in these
                    books — 36 of 41 of them. */
-                note={watch("state_code") ? `code ${watch("state_code")}` : "no state code — GST head cannot be fixed"}
+                note={watch("state") === STATE_NOT_KNOWN ? "no quote or GST invoice until the state is set"
+                  : watch("state_code") ? `code ${watch("state_code")}` : "no state code — GST head cannot be fixed"}
               />
               <ReviewLine label="GST treatment" value={gstTreatmentOption(gstTreatment)?.label} />
               <ReviewLine label="PAN" mono value={isForeign ? "" : watch("pan")} />
