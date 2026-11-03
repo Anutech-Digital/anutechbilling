@@ -78,6 +78,8 @@ import {
   type StatusFilter,
 } from "@/lib/banking/bank-filters";
 import { reconcileCoverage } from "@/lib/banking/reconcile-coverage";
+import { balanceText, bankBalanceOf, runningBalances, type RunningBalance } from "@/lib/banking/running-balance";
+import { RunningBalanceText } from "./running-balance-text";
 import { revealTxn } from "@/lib/banking/txn-deep-link";
 import { guessVendor, type VendorLite } from "@/lib/banking/debit-pay-for";
 import { useVendors } from "@/lib/queries/vendors";
@@ -88,6 +90,7 @@ import { useZohoMatchSet } from "@/components/features/banking/use-zoho-match-co
 import { ReconcileCoverageTile } from "@/components/features/banking/reconcile-coverage-tile";
 import { lineNoteLines, useOwnerBookingNotes, type LineNoteLines } from "@/lib/banking/manual-reconcile";
 import { downloadCSV } from "@/lib/csv";
+import { ZohoBulkReconcileButton } from "@/components/features/banking/zoho-bulk-reconcile";
 import { istToday } from "@/lib/dates/ist";
 
 /* R-1869: one filter system — status tabs, Money in / out, a Filters panel (date, amount, matched
@@ -103,11 +106,11 @@ const ALL_NEEDS_ZOHO: readonly NeedKey[] = [...ALL_NEEDS, "zoho_match"];
 // "Reconcile" button (so "Unmatched" is implied — no separate column needed);
 // a reconciled row shows WHAT it matched (green pill) + "Un-reconcile". That
 // frees a whole column for the description + amounts.
-const BANK_COL_ORDER = ["date", "description", "nikasi", "jama", "reconcile"];
+const BANK_COL_ORDER = ["date", "description", "nikasi", "jama", "balance", "reconcile"];
 // Widths tuned to fit a laptop content area WITHOUT a horizontal scrollbar
-// (≈830px total). Description flexes widest; users can still drag any column.
+// (≈930px total, R-2400 Balance included). Description flexes widest; users can still drag any column.
 const BANK_COL_DEFAULTS: Record<string, number> = {
-  date: 118, description: 340, nikasi: 116, jama: 116, reconcile: 140,
+  date: 118, description: 320, nikasi: 116, jama: 116, balance: 124, reconcile: 140,
 };
 
 export default function BankAccountDetailPage() {
@@ -157,6 +160,11 @@ export default function BankAccountDetailPage() {
     const unmatched = all - matched;
     return { all, unmatched, matched };
   }, [transactions]);
+  /* R-2400: the balance after each line — over ALL the account's lines (a filtered or paged
+     view looks its rows up here), same formula as "Balance in bank" (lib/banking/running-balance). */
+  const openingForRunning = account?.opening_balance ?? 0;
+  const running = React.useMemo(() => runningBalances(transactions ?? [], openingForRunning), [transactions, openingForRunning]);
+  const ledgerSeq = React.useMemo(() => new Map([...running].map(([id, r]) => [id, r.seq])), [running]);
   const salaryLines = React.useMemo(() => salaryLinesOf(transactions ?? []), [transactions]);
   const salaryLineCount = salaryLines.length;
 
@@ -247,7 +255,8 @@ export default function BankAccountDetailPage() {
   const filterCtx = React.useMemo<FilterContext>(() => ({
     sets: { no_customer: noCustomerIds, no_vendor: noVendorIds, old_one_off: new Set(oldById.keys()), ...(zohoIds ? { zoho_match: zohoIds } : {}) },
     importLines,
-  }), [noCustomerIds, noVendorIds, oldById, importLines, zohoIds]);
+    order: ledgerSeq,
+  }), [noCustomerIds, noVendorIds, oldById, importLines, zohoIds, ledgerSeq]);
 
   const facets = React.useMemo(() => facetCounts(transactions ?? [], filters, filterCtx), [transactions, filters, filterCtx]);
   const visibleTxns = React.useMemo(
@@ -397,8 +406,9 @@ export default function BankAccountDetailPage() {
   //    anything and showed ₹-19,17,804 on a healthy account. Coverage, never cash: always ≥ 0.
   const openingBal = account.opening_balance ?? 0;
   const allTxns    = transactions ?? [];
-  const sumDelta   = (list: typeof allTxns) => list.reduce((s, t) => s + (t.credit ?? 0) - (t.debit ?? 0), 0);
-  const bankBalance = openingBal + sumDelta(allTxns);
+  /* R-2400: one formula — the newest row's running Balance is this same figure. */
+  const bankBalance = bankBalanceOf(allTxns, openingBal);
+  const dateSorted  = filters.sort === "newest" || filters.sort === "oldest";
   const coverage    = reconcileCoverage(allTxns);
   const filtersOn   = hasAnyFilter(filters);
   /* Plain call, not a hook — this runs after the early returns above. Cheap: one pass. */
@@ -476,7 +486,7 @@ export default function BankAccountDetailPage() {
           <div>
             <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Balance in bank</p>
             <p className={`font-serif text-2xl mt-1 ${bankBalance >= 0 ? "text-ink" : "text-rose"}`}>
-              {rupee(bankBalance)}
+              {balanceText(bankBalance)}
             </p>
             <p className="text-xs text-ink-3 mt-0.5">
               {/* R-1829: red only for a real gap — a few rupees of paise rounding is not one. */}
@@ -536,6 +546,8 @@ export default function BankAccountDetailPage() {
                 {`Salary lines (${salaryLineCount})`}
               </Button>
             )}
+            {/* R-2402: bulk "Reconcile from Zoho" — owner / accountant, when Zoho has payments for these lines. */}
+            {zohoIds && zohoIds.size > 0 && (role === "owner" || role === "accountant") && <ZohoBulkReconcileButton accountId={account.id} accountName={account.name} count={zohoIds.size} />}
             <Button
               icon="sparkles"
               variant="default"
@@ -636,6 +648,14 @@ export default function BankAccountDetailPage() {
                     <th className="px-4 py-2 font-semibold whitespace-nowrap">Description</th>
                     <th className="px-4 py-2 font-semibold text-right whitespace-nowrap">Nikasi (Dr.)</th>
                     <th className="px-4 py-2 font-semibold text-right whitespace-nowrap">Jama (Cr.)</th>
+                    <th
+                      className="px-4 py-2 font-semibold text-right whitespace-nowrap"
+                      title={dateSorted
+                        ? "Balance after this line: opening balance + every line up to it, in date order"
+                        : "Balance after this line, in date order (the list is sorted by amount)"}
+                    >
+                      Balance
+                    </th>
                     <th className="px-4 py-2 font-semibold text-right whitespace-nowrap">Reconcile</th>
                   </tr>
                 </thead>
@@ -644,6 +664,7 @@ export default function BankAccountDetailPage() {
                     <TransactionRow
                       key={txn.id}
                       txn={txn}
+                      running={running.get(txn.id)}
                       highlighted={txn.id === highlightId}
                       invoiceMatch={canWrite ? invoiceChips.get(txn.id) : undefined}
                       onReconcile={canWrite ? () => openReconcile(txn) : undefined}
@@ -668,6 +689,7 @@ export default function BankAccountDetailPage() {
               <TransactionCard
                 key={txn.id}
                 txn={txn}
+                running={running.get(txn.id)}
                 highlighted={txn.id === highlightId}
                 invoiceMatch={canWrite ? invoiceChips.get(txn.id) : undefined}
                 onReconcile={canWrite ? () => openReconcile(txn) : undefined}
@@ -755,8 +777,11 @@ function TransactionRow({
   isAdvance = false,
   splitPays,
   notes = null,
+  running,
 }: {
   txn: BankTransactionRow;
+  /** R-2400: the balance after this line, from ALL the account's lines. */
+  running?: RunningBalance;
   highlighted?: boolean;
   /** R-2361: manual reason / owner note + reversal pair, shown under the badge. */
   notes?: LineNoteLines | null;
@@ -796,6 +821,9 @@ function TransactionRow({
       </td>
       <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-medium text-emerald">
         {txn.credit > 0 ? rupee(txn.credit) : <span className="text-ink-3">—</span>}
+      </td>
+      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-medium">
+        <RunningBalanceText running={running} />
       </td>
       <td className="px-4 py-3 text-right">
         {txn.matched_to_type === "transfer" ? (
@@ -843,8 +871,8 @@ function TransactionRow({
 // ============================================================
 // Card (mobile)
 // ============================================================
-function TransactionCard({ txn, highlighted = false, invoiceMatch, onReconcile, onUnreconcile, onRelink, isAdvance = false, splitPays, notes = null }: {
-  txn: BankTransactionRow; highlighted?: boolean; invoiceMatch?: InvoiceMatch; onReconcile?: () => void; onUnreconcile?: () => void; onRelink?: () => void; isAdvance?: boolean;
+function TransactionCard({ txn, running, highlighted = false, invoiceMatch, onReconcile, onUnreconcile, onRelink, isAdvance = false, splitPays, notes = null }: {
+  txn: BankTransactionRow; running?: RunningBalance; highlighted?: boolean; invoiceMatch?: InvoiceMatch; onReconcile?: () => void; onUnreconcile?: () => void; onRelink?: () => void; isAdvance?: boolean;
   splitPays?: readonly SplitLinePayment[];
   notes?: LineNoteLines | null;
 }) {
@@ -866,6 +894,11 @@ function TransactionCard({ txn, highlighted = false, invoiceMatch, onReconcile, 
           </div>
           <div className="shrink-0 text-right font-serif text-base tabular-nums">
             <TxnAmount txn={txn} />
+            {running && (
+              <div className="mt-0.5 font-sans text-xs text-ink-3">
+                Balance <RunningBalanceText running={running} />
+              </div>
+            )}
           </div>
         </div>
         <div className="mt-2 flex items-center justify-between gap-2">

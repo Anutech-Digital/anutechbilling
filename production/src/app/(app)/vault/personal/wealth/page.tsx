@@ -44,6 +44,9 @@ import {
 import { formatDate, rupee } from "@/lib/utils";
 import { parseRupees, MAX_RUPEES, MAX_UNITS } from "@/lib/vault/personal/parse-rupees";
 import { istToday } from "@/lib/dates/ist";
+import { PropertySaleDialog, liveSaleOf, type SaleHolding } from "@/components/features/vault/property-sale-section";
+import { usePersonalPropertySales } from "@/lib/queries/personal-property-sales";
+import { SALE_STATUS_LABEL } from "@/lib/vault/personal/property-sale";
 
 interface FormState {
   id?: string;
@@ -86,6 +89,9 @@ export default function PersonalWealthPage() {
 
   const [open, setOpen] = React.useState(false);
   const [form, setForm] = React.useState<FormState>(emptyForm);
+  // R-2393: "Sell this property" on a real-estate holding.
+  const salesQ = usePersonalPropertySales();
+  const [selling, setSelling] = React.useState<SaleHolding | null>(null);
 
   const now = React.useMemo(() => new Date(), []);
   // Memoised: a fresh [] each render would re-run computeNetWorth on every keystroke.
@@ -229,15 +235,20 @@ export default function PersonalWealthPage() {
           <Card className="p-0 overflow-hidden">
             <ul className="divide-y divide-hairline">
               {rows.map((h) => {
-                const stale = stalenessNote(h.valued_on, now);
+                // R-2393: a sold property stays listed (history) but is out of every total above.
+                const soldOn = (h as PersonalHolding & { sold_on?: string | null }).sold_on ?? null;
+                const deal = h.asset_class === "real_estate" ? liveSaleOf(h.id, salesQ.data?.sales ?? []) : null;
+                const stale = soldOn ? null : stalenessNote(h.valued_on, now);
                 const gain = h.current_value - h.invested;
                 return (
-                  <li key={h.id} className="px-4 py-3 flex items-center gap-3">
+                  <li key={h.id} className={`px-4 py-3 flex items-center gap-3${soldOn ? " opacity-70" : ""}`}>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-medium text-ink">{h.name}</span>
                         <Badge kind="muted" size="sm">{ASSET_CLASS_LABEL[h.asset_class]}</Badge>
                         {stale && <Badge kind="warning" size="sm">{stale}</Badge>}
+                        {soldOn && <Badge kind="success" size="sm">Sold {formatDate(soldOn)}</Badge>}
+                        {!soldOn && deal && <Badge kind="info" size="sm">{SALE_STATUS_LABEL[deal.status]}</Badge>}
                       </div>
                       <p className="text-xs text-ink-3 mt-0.5">
                         invested {rupee(h.invested)}
@@ -252,7 +263,13 @@ export default function PersonalWealthPage() {
                         {gain >= 0 ? "+" : ""}{rupee(gain)}
                       </p>
                     </div>
-                    <div className="flex gap-1 flex-shrink-0">
+                    <div className="flex gap-1 flex-shrink-0 items-center">
+                      {h.asset_class === "real_estate" && (
+                        <Button size="sm" variant={deal && !soldOn ? "primary" : "outline"}
+                          onClick={() => setSelling({ id: h.id, name: h.name, invested: h.invested })}>
+                          {soldOn ? "Sale details" : deal ? "Sale deal" : "Sell"}
+                        </Button>
+                      )}
                       <Button size="sm" variant="ghost" onClick={() => openEdit(h)} aria-label="Edit">
                         <Icon name="edit" size={14} />
                       </Button>
@@ -267,6 +284,8 @@ export default function PersonalWealthPage() {
           </Card>
         </>
       )}
+
+      <PropertySaleDialog holding={selling} open={selling !== null} onOpenChange={(o) => { if (!o) setSelling(null); }} />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[500px]">

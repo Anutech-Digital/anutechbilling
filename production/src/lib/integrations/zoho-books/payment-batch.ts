@@ -75,6 +75,31 @@ export function linesWithZohoMatch(lines: readonly BatchLine[], payments: readon
   return lines.filter((l) => l.credit > 0 && lineHasZohoMatch(l, payments)).map((l) => l.id);
 }
 
+/**
+ * R-2402: WHICH Zoho payment a line is, from an already-read list — R-2359's order (its UTR in the
+ * reference, the same amount winning among several; else amount ±₹2 within ±3 days, nearest first).
+ * Pure; the bulk reconcile reads the window once instead of searching Zoho line by line.
+ */
+export function findInPaymentList(line: BankCreditLine, payments: readonly ZohoPaymentRow[]):
+  | { kind: "one"; by: "utr" | "amount_date"; payment: ZohoPaymentRow }
+  | { kind: "several"; by: "utr" | "amount_date"; candidates: ZohoPaymentRow[] }
+  | { kind: "none" } {
+  for (const utr of utrCandidates(line)) {
+    const hits = payments.filter((p) => referenceHasUtr(p.reference, utr));
+    if (hits.length === 0) continue;
+    if (hits.length === 1) return { kind: "one", by: "utr", payment: hits[0] };
+    const same = hits.filter((p) => amountClose(p.amount, line.credit));
+    if (same.length === 1) return { kind: "one", by: "utr", payment: same[0] };
+    return { kind: "several", by: "utr", candidates: (same.length ? same : hits).slice(0, 10) };
+  }
+  const d = day(line.txnDate);
+  const gap = (p: ZohoPaymentRow) => (p.date ? Math.abs(day(p.date) - d) / 86_400_000 : Infinity);
+  const nearBy = payments.filter((p) => amountClose(p.amount, line.credit) && gap(p) <= DATE_WINDOW_DAYS).sort((a, b) => gap(a) - gap(b));
+  if (nearBy.length === 1) return { kind: "one", by: "amount_date", payment: nearBy[0] };
+  if (nearBy.length > 1) return { kind: "several", by: "amount_date", candidates: nearBy.slice(0, 10) };
+  return { kind: "none" };
+}
+
 /** Every Zoho customer payment dated inside the window, page by page (stops at MAX_PAYMENT_PAGES). */
 export async function readZohoPaymentsInWindow(from: string, to: string, deps: ZohoReadDeps): Promise<ZohoPaymentsRead> {
   const f = deps.fetch ?? fetch;

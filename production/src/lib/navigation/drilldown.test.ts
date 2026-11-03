@@ -10,7 +10,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DRILL, PAGE_CHOICES, LEAD_VIEWS, drillHref, type DrillName } from "./drilldown";
+import { DRILL, PAGE_CHOICES, LEAD_VIEWS, RENEWAL_BUCKETS, drillHref, type DrillName } from "./drilldown";
 import { pickChoice, withChoice } from "@/lib/hooks/use-url-choice";
 import { summarizeDealStrip, wonDate, type DealRow } from "@/lib/deals/pipeline-summary";
 import { wonThisMonth } from "@/lib/leads/list-selectors";
@@ -211,12 +211,18 @@ describe("subscription money tiles open status = active", () => {
 });
 
 describe("renewals and payments tiles", () => {
-  it("every renewals tile opens a bucket the page has, High risk included", () => {
+  /* R-2403 (changed expectation): the tiles open the queue tabs; "At risk" is a filter chip now
+     (the At risk tab duplicated Overdue). The old ?bucket= values stay accepted (resolveBucket). */
+  /* R-2405 (changed expectation): the tiles no longer open a tab — each one lists exactly the rows
+     it adds up (tiles.ts tileMatches; proven in renewals/tiles-r2405.test.ts). The tabs, the old
+     ?bucket= values and the At risk chip stay. */
+  it("every renewals tab is a ?bucket= value; the tiles filter the queue; the At risk chip turns the filter on", async () => {
     const page = read("app/(app)/renewals/page.tsx");
-    for (const b of ["urgent", "upcoming", "future", "risk"]) {
-      expect(page).toContain(`onClick={() => setBucketTab("${b}")}`);
-    }
-    expect(page).toMatch(/bucketTab === "risk"/);
+    const { QUEUE_TABS } = await import("@/app/(app)/renewals/queue");
+    for (const b of QUEUE_TABS) expect(RENEWAL_BUCKETS as readonly string[]).toContain(b);
+    for (const old of ["urgent", "upcoming", "future", "risk"]) expect(RENEWAL_BUCKETS as readonly string[]).toContain(old);
+    expect(page).toMatch(/<RenewalTileRow[^>]*onPick=\{pickTile\}/);
+    expect(page).toMatch(/aria-pressed=\{atRiskOn\}\s*onClick=\{\(\) => setAtRisk\(!atRiskOn\)\}/);
   });
   it("PAYMENT_FOCUS / QUOTE_FOCUS match their pages", async () => {
     const { PAYMENT_FOCI, paymentInFocus, projectReceivedInMonth } = await import("@/lib/payments/focus");

@@ -17,7 +17,7 @@ import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { FollowupHistoryRow, FollowupRequest } from "@/lib/collections/followup-rules";
 
 const HISTORY_COLS =
-  "id, kind, note, promised_amount, promised_on, next_follow_up_on, assigned_to, created_by, created_at, invoice_id, quote_id, subscription_id";
+  "id, kind, note, outcome, promised_amount, promised_on, next_follow_up_on, assigned_to, created_by, created_at, invoice_id, quote_id, subscription_id";
 
 export const followupsKey = (customerId: string | null | undefined) => ["payment-followups", customerId] as const;
 

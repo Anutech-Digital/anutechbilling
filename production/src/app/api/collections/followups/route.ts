@@ -29,7 +29,8 @@ export const POST = withRoute(
   {
     route: "api/collections/followups",
     input: followupRequestSchema,
-    pages: ["/collections"],
+    /* R-2404: the Renewals follow-up (incl. support, who open Renewals but not Payment Follow-up). */
+    pages: ["/collections", "/renewals"],
     roleHint: "Your role cannot log payment follow-ups. Ask your manager to add it, or to give you access to Payment Follow-up.",
   },
   async ({ supabase, input, user, tenantId, role }) =>

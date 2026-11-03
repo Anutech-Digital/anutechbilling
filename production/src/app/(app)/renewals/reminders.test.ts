@@ -105,8 +105,11 @@ describe("R-239 page wiring", () => {
   const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "page.tsx"), "utf8");
   it("bulk + send now ask first", () => {
     expect(src).toMatch(/bulkReminderConfirm\(/);
-    expect(src).toMatch(/sendNowConfirm\(/);
     expect(src).toMatch(/await confirm\(/);
+    /* R-2401: Send renewal quote (was Send now) lives in the shared RenewalActions. */
+    const shared = readFileSync(join(process.cwd(), "src/components/features/renewals/renewal-actions.tsx"), "utf8");
+    expect(shared).toMatch(/sendNowConfirm\(/);
+    expect(shared).toMatch(/await confirm\(/);
   });
   it("no raw error text or raw step in toasts", () => {
     expect(src).not.toMatch(/Failed: \$\{/);
