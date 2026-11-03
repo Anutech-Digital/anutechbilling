@@ -66,6 +66,8 @@ export const PERSONAL_TABLES: Readonly<Record<string, readonly Method[]>> = {
   personal_loan_balances: READ,    // R-2388 view: outstanding per loan
   personal_contacts: ALL,          // R-2392 People (personal contacts; owner-only RLS)
   personal_account_balances: READ, // R-2394 view: computed balance per account (Banking, Overview)
+  personal_property_sales: ALL,    // R-2393 property sale deals (owner-only RLS)
+  personal_property_sale_receipts: ALL, // R-2393 (writes go through the personal_property_sale_* RPCs)
   users: READ,
   tenants: READ,
   notifications: ["GET", "HEAD", "PATCH"],
@@ -84,6 +86,10 @@ export const PERSONAL_RPCS: readonly string[] = [
   "personal_loan_undo_payment",    // R-2388
   "personal_bank_reconcile",       // R-2394 match one statement line (owner RLS)
   "personal_bank_unreconcile",     // R-2394 undo a match
+  "personal_property_sale_add_receipt",    // R-2393 byana / instalment / final payment (owner RLS)
+  "personal_property_sale_delete_receipt", // R-2393
+  "personal_property_sale_register",       // R-2393 registry: TDS, deal registered, holding sold
+  "personal_property_sale_cancel",         // R-2393 refund / forfeit
 ];
 
 function refuse(what: string): GatewayRefusal {

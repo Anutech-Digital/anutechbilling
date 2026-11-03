@@ -75,6 +75,8 @@ export interface PersonalHoldingLike {
   invested: number;
   current_value: number;
   valued_on?: string | null;
+  /** R-2393: the day a property was registered to its buyer. A sold holding is history, not wealth. */
+  sold_on?: string | null;
 }
 
 export interface ClassRollup {
@@ -180,6 +182,8 @@ export function computeNetWorth(
   const byClassMap = new Map<AssetClass, ClassRollup>();
 
   for (const h of holdings) {
+    // R-2393: a property sold at registry left the owner's wealth; its money is in the accounts.
+    if (h.sold_on) continue;
     const current = rupees(h.current_value);
     const invested = rupees(h.invested);
 
