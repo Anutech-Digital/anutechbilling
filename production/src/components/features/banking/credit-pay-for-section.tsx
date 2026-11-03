@@ -39,7 +39,7 @@ import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { useOpenInvoicesForCreditMatch, type BankTransactionRow } from "@/lib/queries/bank";
 import { matchCreditToInvoices } from "@/lib/banking/invoice-credit-match";
 import {
-  useAdvanceFromBankCredit, useBankCreditOpenItems, useNewSaleFromBankCredit, useNewSaleFxFromBankCredit, usePayItemFromBankCredit,
+  useAdvanceFromBankCredit, useBankCreditOpenItems, useNewSaleFromBankCredit, usePayItemFromBankCredit,
   useRelinkOneOffSale, useSplitFromBankCredit, type RelinkTarget,
 } from "@/lib/queries/bank-credit-pay-for";
 import {
@@ -278,15 +278,14 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   /* ── 4. Save ─────────────────────────────────────────────────────────────────── */
   const payItem = usePayItemFromBankCredit();
   const newSale = useNewSaleFromBankCredit();
-  const newSaleFx = useNewSaleFxFromBankCredit();
   const advance = useAdvanceFromBankCredit();
   const relinkSale = useRelinkOneOffSale();
   const splitPay = useSplitFromBankCredit();
   const [result, setResult] = React.useState<PayForResult | null>(null);
   React.useEffect(() => { setResult(null); }, [transaction.id]);
   const splitCount = splitPicked.length + (splitSale ? 1 : 0);
-  const busy = payItem.isPending || newSale.isPending || newSaleFx.isPending || advance.isPending || relinkSale.isPending || splitPay.isPending || setLinePayer.isPending;
-  const saveErrorObj = splitPay.error ?? newSale.error ?? newSaleFx.error ?? payItem.error ?? advance.error ?? relinkSale.error ?? setLinePayer.error;
+  const busy = payItem.isPending || newSale.isPending || advance.isPending || relinkSale.isPending || splitPay.isPending || setLinePayer.isPending;
+  const saveErrorObj = splitPay.error ?? newSale.error ?? payItem.error ?? advance.error ?? relinkSale.error ?? setLinePayer.error;
   const saveError = saveErrorObj ? (saveErrorObj as { message?: string }).message ?? String(saveErrorObj) : null;
 
   const tdsAmount = check ? tdsToRecord(check, shortChoice) : 0;
@@ -382,7 +381,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         : target.path === "item"
           ? await payItem.mutateAsync(target)
           : target.path === "new_sale"
-            ? saleFx ? await newSaleFx.mutateAsync({ input: target, fx: saleFx }) : await newSale.mutateAsync(target)
+            ? await newSale.mutateAsync(saleFx ? { ...target, fx: saleFx } : target)
             : await advance.mutateAsync(target);
       setResult(r);
       if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
