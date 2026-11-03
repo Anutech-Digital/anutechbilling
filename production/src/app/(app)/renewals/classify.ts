@@ -28,8 +28,9 @@
  * renewal. It is bucketed by its next monthly billing date like any row (tabs, tiles, At risk).
  * Before that date its part is raised by the billing job (R-2044), so its row button is
  * Follow-up; once the date has PASSED unbilled it is Expired and Bill next part bills it (R-2095).
- * isFlexNextPart (lib/renewals/buckets.ts) still leaves flex parts out of Bulk reminder, Payment
- * Follow-up and the sidebar badge (nav_badges SQL) — badge parity is a follow-up card.
+ * R-2431: the sidebar badge counts flex rows too (nav_badges SQL = buckets.ts inRenewalsBadge).
+ * isFlexNextPart (lib/renewals/buckets.ts) — a part still ahead — is skipped by Bulk reminder (and
+ * named in its confirm) and not chased on Payment Follow-up until its date has passed unbilled.
  */
 import { renewalBucket, isFlexNextPart } from "@/lib/renewals/buckets";
 import { effectiveGraceDays, serviceStopDate } from "@/lib/renewals/cadence";

@@ -41,7 +41,7 @@ import { Icon } from "@/components/ui/icon";
 import { FAB } from "@/components/ui/fab";
 import { BulkActionBar, BulkBarButton } from "@/components/ui/bulk-action-bar";
 import { rupee, formatDate } from "@/lib/utils";
-import { daysUntilRenewal, onRenewalsPage, RENEWAL_FUTURE_DAYS } from "@/lib/renewals/buckets";
+import { daysUntilRenewal, isFlexSubscription, onRenewalsPage, RENEWAL_FUTURE_DAYS } from "@/lib/renewals/buckets";
 import { cn } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import type { Subscription } from "@/lib/supabase/database.types";
@@ -51,8 +51,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { Input } from "@/components/ui/input";
 import {
-  bulkReminderTargets,
+  bulkReminderPlan,
   bulkReminderConfirm,
+  bulkReminderSkipLine,
+  type BulkReminderSkip,
   matchesRenewalSearch,
   readJsonSafe,
   sendBulkReminders,
@@ -626,9 +628,14 @@ export default function RenewalsPage() {
   const tabs     = queueTabs(groups);
 
   /* Forecast (audit B7): agle 6 mahine, mahina-war — "is quarter kitna aayega?"
-     ab list jodne se nahi, curve se dikhta hai. Flex alag (12x-sabak: forecast.ts). */
-  /* R-2225: a Won't renew subscription brings no renewal money. */
-  const forecast = renewalForecast(all.filter(chasedRenewal), new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()));
+     ab list jodne se nahi, curve se dikhta hai. */
+  /* R-2225: a Won't renew subscription brings no renewal money.
+     R-2431: each renewal at its term amount before GST (termAmountOf — the tiles' amount for a row
+     without a renewal quote), flex parts included, one per month. */
+  const forecast = renewalForecast(
+    enriched.map((r) => r.sub).filter(chasedRenewal),
+    new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()),
+  );
 
   /* R-2225: the renewals pipeline export leaves out Won't renew subscriptions. */
   /* R-2422: a flex (monthly-commitment) subscription is a renewal too (owner, 3 Nov). */
@@ -752,6 +759,7 @@ export default function RenewalsPage() {
       .sort((a, b) => a.daysUntil - b.daysUntil)
       .map(({ sub, daysUntil }) => {
         const risk = renewalRisk(sub);
+        const amount = renewalAmount(sub, quoteOf(sub));
         return [
           sub.customer_name,
           sub.plan,
@@ -759,16 +767,19 @@ export default function RenewalsPage() {
           sub.seats,
           sub.used,
           sub.mrr,
-          sub.mrr * 12,
+          amount.value,   // R-2431: the row's renewal amount (the tiles' money), not mrr × 12
           sub.renewal_date ? formatDate(sub.renewal_date) : "",
           daysUntil,
           sub.outstanding_amount,
           risk.label,
+          /* R-2431: new columns at the END, so a template reading by position still lines up. */
+          amount.fromQuote ? "Renewal quote, incl. GST" : "Term amount, + GST",
+          isFlexSubscription(sub) ? "Monthly (flex)" : renewalCommitment(sub) === "monthly" ? "Monthly" : "Annual",
         ];
       });
     downloadCSV(
       "renewals-next-90-days.csv",
-      ["Customer", "Plan", "Vendor", "Seats", "Used", "MRR (₹)", "ARR (₹)", "Renewal date", "Days until", "Outstanding (₹)", "Risk"],
+      ["Customer", "Plan", "Vendor", "Seats", "Used", "MRR (₹)", "Renewal amount (₹)", "Renewal date", "Days until", "Outstanding (₹)", "Risk", "Amount basis", "Commitment"],
       rows,
     );
     toast.success(`Exported ${rows.length} renewal${rows.length === 1 ? "" : "s"}`);
@@ -782,29 +793,37 @@ export default function RenewalsPage() {
     /* R-239: renewed / suspended customers are never reminded, and nobody is emailed
        until the operator has seen the count and the names. */
     /* R-1124: lapsed rows still in grace are included (and named apart in the confirm). */
-    /* R-2225: a Won't renew row is left out inside bulkReminderTargets. */
-    const targets = bulkReminderTargets(enriched, today, graceDays);
-    if (targets.length === 0) { toast.info("No renewals due in the next 30 days, and none lapsed in grace"); return; }
-    await sendReminders(targets);
+    /* R-2225: a Won't renew row is left out inside bulkReminderPlan. */
+    /* R-2431: a flex part is skipped (its request goes out on its date) — and named. */
+    const { send: targets, skipped } = bulkReminderPlan(enriched, today, graceDays);
+    if (targets.length === 0) {
+      if (skipped.length > 0) toast.info("No reminders to send", { description: bulkReminderSkipLine(skipped) });
+      else toast.info("No renewals due in the next 30 days, and none lapsed in grace");
+      return;
+    }
+    await sendReminders(targets, skipped);
   }
 
   /* R-2403: Send reminder on the ticked rows — the same rule (≤30 days or in grace) and confirm. */
   async function handleSelectedReminder() {
     if (bulkSending) return;
-    const targets = bulkReminderTargets(selectedRows, today, graceDays);
+    const { send: targets, skipped } = bulkReminderPlan(selectedRows, today, graceDays);
     if (targets.length === 0) {
       toast.info("None of the selected renewals is due for a reminder", {
-        description: "A reminder goes to renewals due in the next 30 days, or past the date and still in grace. Use Send renewal quote for the others.",
+        description: [
+          "A reminder goes to renewals due in the next 30 days, or past the date and still in grace. Use Send renewal quote for the others.",
+          bulkReminderSkipLine(skipped),
+        ].filter(Boolean).join(" "),
       });
       return;
     }
-    await sendReminders(targets);
+    await sendReminders(targets, skipped);
   }
 
   /* R-1642: names who failed and why, and "Retry failed" re-sends only those (after the
      same confirm — R-239: nobody is emailed without seeing the names first). */
-  async function sendReminders<T extends (typeof enriched)[number]>(targets: T[]) {
-    const ok = await confirm({ ...bulkReminderConfirm(targets), confirmLabel: `Email ${targets.length}`, icon: "mail" });
+  async function sendReminders<T extends (typeof enriched)[number]>(targets: T[], skipped: readonly BulkReminderSkip[] = []) {
+    const ok = await confirm({ ...bulkReminderConfirm(targets, skipped), confirmLabel: `Email ${targets.length}`, icon: "mail" });
     if (!ok) return;
     await runSend(targets, undefined, (failed) => void sendReminders(failed));
   }

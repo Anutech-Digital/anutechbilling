@@ -1,19 +1,21 @@
 \set ON_ERROR_STOP on
 -- R-2232 (Zoho Billing audit A8): Renewals = end of commitment only — the sidebar Renewals badge.
 -- Migration: 20261101165305_r2232_nav_badges_flex_parts.
+-- R-2431 (3 Nov 2026): the owner reversed R-2232 on R-2422 ("monthly commitment to renewal hi hoga") — a flex part IS a
+-- renewal and counts in the badge (20261104000444_r2431_nav_badges_renewals_tabs). The same rows now give 6.
 -- Self-asserting, ONE transaction, rolled back — safe anywhere:
 --
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/tests/r2232_nav_badges_flex_parts.test.sql
 --
 -- Expect "PASS r2232_nav_badges_flex_parts".
 --
---   f1  flex (1-month term, billed monthly), next part in 3 days   → NOT counted (a billing part)
---   f2  flex, part date today                                       → NOT counted
+--   f1  flex (1-month term, billed monthly), next part in 3 days   → counted since R-2431 (flex is a renewal)
+--   f2  flex, part date today                                       → counted since R-2431
 --   f3  flex, part date 2 days ago (unbilled — listed as Expired)  → counted
 --   a1  annual term billed monthly, ends in 4 days                  → counted (end of commitment)
 --   a2  annual term billed yearly, ends in 5 days                   → counted
 --   m1  1-month term billed yearly (one bill, renewal quote), in 2 days → counted
---   So the owner's badge = 4 (f3, a1, a2, m1). Without the migration it is 6.
+--   So the owner's badge = 6 (all of them) — it was 4 under R-2232 alone.
 
 begin;
 select set_config('request.jwt.claims', '', true);
@@ -53,8 +55,8 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'e2232000-0000-4000-8000-0000000000a1', 'role', 'authenticated')::text, true);
   set local role authenticated;
   v_n := (public.nav_badges('{}')->>'renewals')::int;
-  if v_n <> 4 then
-    insert into r2232_fail values ('owner badge = ' || v_n || ' (want 4: f3 lapsed flex, a1, a2, m1 — not the flex parts f1, f2)');
+  if v_n <> 6 then
+    insert into r2232_fail values ('owner badge = ' || v_n || ' (want 6 since R-2431: flex parts f1, f2 count too, with f3, a1, a2, m1)');
   end if;
   reset role;
 end $$;

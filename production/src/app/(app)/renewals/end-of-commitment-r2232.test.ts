@@ -70,10 +70,10 @@ describe("R-2422: a flex (monthly-commitment) sub is a renewal row (R-2232's exc
     expect(targets.map((r) => r.sub.id)).toEqual(["annual"]);
   });
 
-  it("forecast: flex is run-rate, never a renewal count", () => {
+  it("forecast (R-2431): flex is IN the total — one part in each month of the horizon, the annual one once", () => {
     const subs = [flex.sub, annual.sub].map((s) => ({ ...s, renewal_date: "2026-11-04" })) as unknown as Subscription[];
     const f = renewalForecast(subs, "2026-11-01");
-    expect(f.totalCount).toBe(1);
+    expect(f.totalCount).toBe(7);
     expect(f.flexCount).toBe(1);
   });
 });
@@ -122,12 +122,13 @@ describe("R-2232: the page wires the one rule", () => {
     expect(src.match(/renewalRowAction\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
     expect(src).not.toMatch(/disabled=\{isNonRenewing\(sub\) \|\| isTerminalRenewal/);
   });
-  it("the sidebar badge leaves out a flex part (nav_badges SQL)", () => {
+  it("R-2431: the sidebar badge counts a flex part like any renewal (nav_badges SQL — R-2232's exclusion gone)", () => {
     const dir = join(process.cwd(), "supabase", "migrations");
     const files = readdirSync(dir).filter((f: string) => f.endsWith(".sql")).sort();
     const hit = files.filter((f: string) => /function\s+public\.nav_badges\s*\(/i.test(readFileSync(join(dir, f), "utf8"))).pop()!;
     const sql = readFileSync(join(dir, hit), "utf8");
     const line = sql.match(/^\s*'renewals',\s*(.*)$/m)?.[1] ?? "";
-    expect(line).toMatch(/not \(coalesce\(s\.term_months, 12\) <= 1 and s\.billing_cycle in \('monthly', 'quarterly', 'half_yearly'\) and s\.renewal_date >= v_today\)/);
+    expect(line).toContain("s.renewal_date <= v_today + 7");
+    expect(line).not.toMatch(/billing_cycle/);
   });
 });
