@@ -72,7 +72,7 @@ describe("R-2125 personal caller — allowed", () => {
   test("every personal money page table is reachable", () => {
     for (const t of ["personal_accounts", "personal_transactions", "personal_holdings", "personal_categories",
       "personal_category_rules", "personal_import_batches", "personal_owe_hold",
-      "personal_loans", "personal_loan_payments", "personal_loan_balances"]) {
+      "personal_loans", "personal_loan_payments", "personal_loan_balances", "personal_contacts"]) {
       expect(checkPersonalRequest("GET", t, q("select=*"))).toBeNull();
     }
   });

@@ -167,6 +167,8 @@ const ADDED_2NOV_PRIVACY_REQUESTS = ["/settings/privacy-requests"];
 const ADDED_2NOV_SECURITY_LOG = ["/settings/security-log"];
 /** R-2388 (G-PERSONAL, 3 Nov 2026): Private Vault → Loans — owner only, a menu row next to its siblings (RLS is per owner_user_id). */
 const ADDED_3NOV_PRIVATE_LOANS = ["/vault/personal/loans"];
+/** R-2392 (G-PERSONAL, 3 Nov 2026): Private Vault → People (personal contacts) — owner only, next to Loans. */
+const ADDED_3NOV_PRIVATE_PEOPLE = ["/vault/personal/people"];
 const removedFor = (role: string) => REMOVED_3OCT[role] ?? [];
 const addedFor = (role: string) => [
   ...(role === "owner" || role === "manager" ? ADDED_3OCT_OM : []),
@@ -195,6 +197,7 @@ const addedFor = (role: string) => [
   ...(role === "owner" || role === "manager" ? ADDED_2NOV_PRIVACY_REQUESTS : []),
   ...(role === "owner" ? ADDED_2NOV_SECURITY_LOG : []),
   ...(role === "owner" ? ADDED_3NOV_PRIVATE_LOANS : []),
+  ...(role === "owner" ? ADDED_3NOV_PRIVATE_PEOPLE : []),
   ...(role === "personal" ? ADDED_30OCT_PERSONAL_HOME : ADDED_FOR_EVERY_ROLE),
 ];
 

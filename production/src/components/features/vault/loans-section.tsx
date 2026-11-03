@@ -20,10 +20,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { PersonalAccount } from "@/lib/queries/personal-vault";
 import {
+  usePersonalLoans,
   useSavePersonalLoan,
   useRecordLoanPayment,
   type PersonalLoan,
 } from "@/lib/queries/personal-loans";
+import { PersonPicker } from "@/components/features/vault/person-picker";
+import { pastLenders } from "@/lib/vault/personal/contacts";
 import {
   GIVEN_KINDS,
   PAYMENT_KIND_LABEL,
@@ -73,6 +76,8 @@ function AccountSelect({ id, value, onChange, accounts }: {
 interface LoanForm {
   loan_kind: LoanKind;
   party: string;
+  /** R-2392: the picked person (loan_kind 'person'); null for a bank / NBFC / other. */
+  contact_id: string | null;
   principal: string;
   start_date: string;
   annual_rate: string;
@@ -89,7 +94,8 @@ interface LoanForm {
 function formFor(direction: LoanDirection, loan: PersonalLoan | null): LoanForm {
   if (loan) {
     return {
-      loan_kind: loan.loan_kind, party: loan.party, principal: String(loan.principal), start_date: loan.start_date,
+      loan_kind: loan.loan_kind, party: loan.party, contact_id: loan.contact_id ?? null,
+      principal: String(loan.principal), start_date: loan.start_date,
       annual_rate: loan.annual_rate == null ? "" : String(loan.annual_rate), repay_type: loan.repay_type,
       tenure_months: loan.tenure_months == null ? "" : String(loan.tenure_months),
       emi_amount: loan.emi_amount == null ? "" : String(loan.emi_amount), emiTyped: true,
@@ -97,7 +103,7 @@ function formFor(direction: LoanDirection, loan: PersonalLoan | null): LoanForm 
     };
   }
   return {
-    loan_kind: direction === "taken" ? "home" : "person", party: "", principal: "", start_date: istToday(),
+    loan_kind: direction === "taken" ? "home" : "person", party: "", contact_id: null, principal: "", start_date: istToday(),
     annual_rate: "", repay_type: direction === "taken" ? "emi" : "no_interest", tenure_months: "", emi_amount: "",
     emiTyped: false, first_due_on: "", account_id: NO_ACCOUNT, note: "",
   };
@@ -141,10 +147,24 @@ export function LoanFormDialog({ open, onOpenChange, direction, loan, accounts }
 
   const kinds = direction === "taken" ? TAKEN_KINDS : GIVEN_KINDS;
   const set = (patch: Partial<LoanForm>) => { setF((s) => ({ ...s, ...patch })); setIssue(null); };
+  // R-2392: a loan from / to a person picks one of your People; a bank / NBFC stays typed,
+  // with the lenders typed on earlier loans as suggestions.
+  const isPerson = f.loan_kind === "person";
+  const { data: allLoans = [] } = usePersonalLoans();
+  const lenderSuggestions = React.useMemo(() => pastLenders(allLoans), [allLoans]);
+  const lendersListId = React.useId();
+  const setKind = (k: LoanKind) =>
+    set(k === "person" ? { loan_kind: k } : { loan_kind: k, contact_id: null });
 
   const handleSave = async () => {
+    if (isPerson && !f.contact_id) {
+      setIssue(direction === "taken"
+        ? "Pick the person you borrowed from — or + New contact to add them."
+        : "Pick the person you lent the money to — or + New contact to add them.");
+      return;
+    }
     if (!f.party.trim()) {
-      setIssue(direction === "taken" ? "Type the lender — e.g. SBI Home Loan or a person's name." : "Type who you lent the money to.");
+      setIssue(direction === "taken" ? "Type the lender — e.g. SBI Home Loan." : "Type who you lent the money to.");
       return;
     }
     if (!principal.ok || principal.value <= 0) {
@@ -177,6 +197,7 @@ export function LoanFormDialog({ open, onOpenChange, direction, loan, accounts }
         direction,
         loan_kind: f.loan_kind,
         party: f.party.trim(),
+        contact_id: isPerson ? f.contact_id : null,
         principal: principal.value,
         start_date: f.start_date,
         annual_rate: rate,
@@ -210,7 +231,7 @@ export function LoanFormDialog({ open, onOpenChange, direction, loan, accounts }
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label htmlFor="ln-kind" className={LABEL}>Type of loan</label>
-              <Select value={f.loan_kind} onValueChange={(v) => set({ loan_kind: v as LoanKind })}>
+              <Select value={f.loan_kind} onValueChange={(v) => setKind(v as LoanKind)}>
                 <SelectTrigger id="ln-kind"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {kinds.map((k) => <SelectItem key={k} value={k}>{loanKindLabel(k, direction)}</SelectItem>)}
@@ -218,9 +239,22 @@ export function LoanFormDialog({ open, onOpenChange, direction, loan, accounts }
               </Select>
             </div>
             <div>
-              <label htmlFor="ln-party" className={LABEL}>{direction === "taken" ? "Lender" : "Lent to"}</label>
-              <Input id="ln-party" value={f.party} onChange={(e) => set({ party: e.target.value })}
-                placeholder={direction === "taken" ? "SBI Home Loan" : "Brother"} />
+              <label htmlFor="ln-party" className={LABEL}>{isPerson ? "Person" : direction === "taken" ? "Lender" : "Lent to"}</label>
+              {isPerson ? (
+                <PersonPicker id="ln-party" value={{ contactId: f.contact_id, name: f.party }}
+                  onChange={(v) => set({ contact_id: v.contactId, party: v.name })} />
+              ) : (
+                <>
+                  <Input id="ln-party" value={f.party} onChange={(e) => set({ party: e.target.value })}
+                    list={lenderSuggestions.length > 0 ? lendersListId : undefined}
+                    placeholder={direction === "taken" ? "SBI Home Loan" : "Who you lent to"} />
+                  {lenderSuggestions.length > 0 && (
+                    <datalist id={lendersListId}>
+                      {lenderSuggestions.map((l) => <option key={l} value={l} />)}
+                    </datalist>
+                  )}
+                </>
+              )}
             </div>
           </div>
 
