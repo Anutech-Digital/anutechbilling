@@ -28,6 +28,7 @@ import type { LinePayerAnswer } from "@/lib/queries/customer-payers";
 import { mapGstTreatment } from "@/lib/integrations/zoho-books/import-plan";
 import { suggestGstTreatment, panFromGstin } from "@/lib/gst/customer-gst-treatment";
 import { describeError } from "@/lib/errors/toast-error";
+import { rupee } from "@/lib/utils";
 import { defaultContactName } from "@/components/features/customers/new-customer-contact";
 import { bankLinePaymentReference } from "@/lib/payments/bank-line-reference";
 import {
@@ -309,7 +310,7 @@ export async function bookRows(
         subscriptions: (res.subscriptions ?? []).map((s) => ({ id: s.id, plan: s.plan })),
         todo,
         text: res.already_recorded ? "Already recorded before — nothing booked again."
-          : fxPay ? `Paid invoice ${book.item?.invoiceId} in full in ${fxPay.currency}${fxPay.bankCharges ? ` — Bank Charges ₹${fxPay.bankCharges.toLocaleString("en-IN")}` : ""}${fxPay.forex ? ` — forex ${fxPay.forex < 0 ? "gain" : "loss"} ₹${Math.abs(fxPay.forex).toLocaleString("en-IN")}` : ""} — line reconciled.`
+          : fxPay ? `Paid invoice ${book.item?.invoiceId} in full in ${fxPay.currency}${fxPay.bankCharges ? ` — Bank Charges ${rupee(fxPay.bankCharges)}` : ""}${fxPay.forex ? ` — forex ${fxPay.forex < 0 ? "gain" : "loss"} ${rupee(Math.abs(fxPay.forex))}` : ""} — line reconciled.`
           : book.kind === "pay_item" ? `Paid open ${book.item?.invoiceId ? `invoice ${book.item.invoiceId}` : `quote ${book.item?.quoteId ?? res.quote_id}`} — line reconciled.`
           : book.fx ? `Booked in ${book.fx.currency} at the bank's rate (₹${book.fx.rate}) and reconciled.${book.fx.billed && book.fx.billed > book.fx.foreignAmount ? " The short part is booked as Bank Charges." : ""}`
           : "Booked and reconciled.",
