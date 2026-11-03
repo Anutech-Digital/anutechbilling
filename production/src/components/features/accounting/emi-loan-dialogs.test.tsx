@@ -9,14 +9,20 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const mutateAsync = vi.fn();
 vi.mock("@/lib/queries/bank", () => ({
-  useBankAccounts: () => ({ data: [{ id: "acc-1", name: "HDFC Current", is_active: true, account_type: "current" }] }),
+  useBankAccounts: () => ({ data: [
+    { id: "acc-1", name: "HDFC Current", is_active: true, account_type: "current", opening_balance_date: "2026-01-01" },
+    { id: "fd-1", name: "HDFC FD", is_active: true, account_type: "fixed_deposit", opening_balance_date: "2026-08-29" },
+  ] }),
 }));
+vi.mock("@/lib/compliance/profile", () => ({ useComplianceProfile: () => ({ data: { businessType: "proprietor" } }) }));
 vi.mock("@/lib/queries/emi", () => ({
   useRecordEmiAssetPurchase: () => ({ mutateAsync, isPending: false }),
   useEmiSchedule: () => ({ data: { rows: [], payments: [] }, isLoading: false }),
   usePayNextEmi: () => ({ mutate: vi.fn(), isPending: false }),
   usePrepayEmiLoan: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUndoEmiPayment: () => ({ mutate: vi.fn(), isPending: false }),
+  useEmiDownPayment: () => ({ data: undefined, isLoading: false }),
+  useChangeEmiDownPaymentSource: () => ({ mutateAsync: vi.fn(), isPending: false }),
   EMI_STATUS_LABEL: { linked: "Paid · in bank", paid_by_hand: "Paid · awaiting statement", due: "Due", overdue: "Overdue" },
 }));
 
@@ -35,6 +41,7 @@ describe("R-1864 Bought on EMI / loan", () => {
     type(/^Cost/, "120000");
     type("Purchase date", "2026-10-05");
     type(/^Down payment/, "20000");
+    type("Paid from", "acc-1");
     type("Lender", "Bajaj Finance");
     type(/^Interest rate/, "14");
     type("Number of EMIs", "12");
@@ -79,6 +86,35 @@ describe("R-1864 Bought on EMI / loan", () => {
     fireEvent.click(screen.getByRole("button", { name: "Record purchase & loan" }));
     await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     expect(mutateAsync.mock.calls[0][0]).toMatchObject({ downPayment: 20000, downBankTxnId: "t1", accountId: null });
+  });
+
+  it("R-2395: Paid from starts empty — no save until picked; an FD opened later cannot be picked", () => {
+    render(<EmiPurchaseDialog onClose={vi.fn()} />);
+    type("Item", "Thar Roxx");
+    type(/^Cost/, "1970000");
+    type("Purchase date", "2026-02-03");
+    type(/^Down payment/, "200000");
+    type("Lender", "HDFC BANK");
+    type(/^Interest rate/, "9");
+    expect((screen.getByLabelText("Paid from") as HTMLSelectElement).value).toBe("");
+    expect(screen.getByText("Pick where the down payment was paid from")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Record purchase & loan" }) as HTMLButtonElement).disabled).toBe(true);
+    const fd = screen.getByRole("option", { name: /HDFC FD — opened/ }) as HTMLOptionElement;
+    expect(fd.disabled).toBe(true);
+  });
+
+  it("R-2395: Paid by owner — no account, paidByOwner sent", async () => {
+    render(<EmiPurchaseDialog onClose={vi.fn()} />);
+    type("Item", "Thar Roxx");
+    type(/^Cost/, "1970000");
+    type("Purchase date", "2026-02-03");
+    type(/^Down payment/, "200000");
+    type("Paid from", "__owner__");
+    type("Lender", "HDFC BANK");
+    type(/^Interest rate/, "9");
+    fireEvent.click(screen.getByRole("button", { name: "Record purchase & loan" }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ downPayment: 200000, accountId: null, paidByOwner: true });
   });
 
   it("missing rate: the save button stays off and says why", () => {

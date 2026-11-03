@@ -32,9 +32,12 @@ import {
   type Recompute, type ScheduleRow,
 } from "@/lib/accounting/emi-schedule";
 import {
-  useRecordEmiAssetPurchase, useEmiSchedule, usePayNextEmi, usePrepayEmiLoan, useUndoEmiPayment,
+  useRecordEmiAssetPurchase, useEmiSchedule, useEmiDownPayment, usePayNextEmi, usePrepayEmiLoan, useUndoEmiPayment,
   EMI_STATUS_LABEL, type EmiPurchase, type EmiRowStatus, type EmiScheduleLine,
 } from "@/lib/queries/emi";
+import { useComplianceProfile } from "@/lib/compliance/profile";
+import { ownerEquityWords } from "@/lib/accounting/owner-equity";
+import { DownPaymentSourceSelect, EmiDownPaymentDialog, OWNER } from "./emi-down-payment-dialog";
 
 const selectCls = "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber";
 const labelCls = "block text-xs font-medium text-ink-2 mb-1";
@@ -68,7 +71,6 @@ function useActiveAccounts() {
 
 /* ── Bought on EMI / loan ─────────────────────────────────────────────────────────────── */
 export function EmiPurchaseDialog({ onClose, fromTxn, onSaved }: { onClose: () => void; fromTxn?: EmiFromTxn | null; onSaved?: () => void }) {
-  const accounts = useActiveAccounts();
   const record = useRecordEmiAssetPurchase();
 
   const [name, setName] = React.useState("");
@@ -86,8 +88,10 @@ export function EmiPurchaseDialog({ onClose, fromTxn, onSaved }: { onClose: () =
   const [firstDue, setFirstDue] = React.useState("");
   const [fee, setFee] = React.useState("");
   const [feeGst, setFeeGst] = React.useState("");
-
-  React.useEffect(() => { if (!accountId && accounts.length > 0) setAccountId(accounts[0].id); }, [accounts, accountId]);
+  const [partner, setPartner] = React.useState("");
+  // R-2395: "Paid from" starts empty — the owner picks (no silent first account).
+  const words = ownerEquityWords(useComplianceProfile().data?.businessType ?? null);
+  const byOwner = !fromTxn && accountId === OWNER;
 
   const costN = num(cost);
   const feeN = num(fee);
@@ -117,7 +121,8 @@ export function EmiPurchaseDialog({ onClose, fromTxn, onSaved }: { onClose: () =
     !lender.trim() && "Enter the lender",
     !noCost && rate.trim() === "" && "Enter the interest rate, or tick No-cost EMI",
     monthsN <= 0 && "Enter the number of EMIs",
-    (downN + feeN + feeGstN) > 0 && !accountId && "Pick the account the down payment was paid from",
+    (downN + feeN + feeGstN) > 0 && !accountId && "Pick where the down payment was paid from",
+    byOwner && words.needsPartner && !partner.trim() && `Pick the ${words.person} who paid the down payment`,
     fromTxn && fromTxn.amount < feeN + feeGstN && "The bank line is smaller than the processing fee",
     scheduleError,
   ].filter((x): x is string => Boolean(x));
@@ -126,7 +131,8 @@ export function EmiPurchaseDialog({ onClose, fromTxn, onSaved }: { onClose: () =
     if (problems.length > 0) return;
     await record.mutateAsync({
       name: name.trim(), block, cost: costN, purchasedOn: date, downPayment: downN,
-      accountId: fromTxn ? null : (downN + feeN + feeGstN > 0 ? accountId : null), downBankTxnId: fromTxn?.id ?? null,
+      accountId: fromTxn || byOwner ? null : (downN + feeN + feeGstN > 0 ? accountId : null), downBankTxnId: fromTxn?.id ?? null,
+      paidByOwner: byOwner && downN + feeN + feeGstN > 0, partner: byOwner ? partner.trim() || null : null,
       lender: lender.trim(), lenderRef: lenderRef.trim() || null, interestRate: rateN, noCost,
       processingFee: feeN, processingFeeGst: feeGstN, schedule,
     });
@@ -170,12 +176,14 @@ export function EmiPurchaseDialog({ onClose, fromTxn, onSaved }: { onClose: () =
                 <Field htmlFor="emi-down" label="Down payment (₹)">
                   <Input id="emi-down" type="number" min={0} inputMode="numeric" value={down} onChange={(e) => setDown(e.target.value)} placeholder="0" />
                 </Field>
-                <Field htmlFor="emi-account" label="Paid from" hint="Matched to the statement line later — never counted twice">
-                  <select id="emi-account" value={accountId} onChange={(e) => setAccountId(e.target.value)} className={selectCls}>
-                    {accounts.length === 0 && <option value="">Add an account in Banking</option>}
-                    {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
+                <Field htmlFor="emi-account" label="Paid from" hint={byOwner ? "The owner's capital goes up — no bank line" : "Matched to the statement line later — never counted twice"}>
+                  <DownPaymentSourceSelect id="emi-account" value={accountId} onChange={setAccountId} date={date || null} />
                 </Field>
+                {byOwner && words.needsPartner && (
+                  <Field htmlFor="emi-partner" label={`Which ${words.person}`}>
+                    <Input id="emi-partner" value={partner} onChange={(e) => setPartner(e.target.value)} />
+                  </Field>
+                )}
               </>
             )}
           </div>
@@ -297,7 +305,16 @@ export function EmiScheduleDialog({ purchase, onClose }: { purchase: EmiPurchase
   const undo = useUndoEmiPayment();
   const [accountId, setAccountId] = React.useState("");
   const [prepayOpen, setPrepayOpen] = React.useState(false);
+  const [downOpen, setDownOpen] = React.useState(false);
+  const allAccounts = useBankAccounts().data ?? [];
   React.useEffect(() => { if (!accountId && accounts.length > 0) setAccountId(accounts[0].id); }, [accounts, accountId]);
+  // R-2395: an asset's down payment (with the fee) — where it was paid from can be changed.
+  const downCash = (purchase.down_payment ?? 0) + (purchase.processing_fee ?? 0) + (purchase.processing_fee_gst ?? 0);
+  const isAsset = ((purchase as { kind?: string }).kind ?? "asset") === "asset";
+  const downQ = useEmiDownPayment(isAsset && downCash > 0 ? purchase : null);
+  const down = downQ.data;
+  const downFrom = !down ? "…" : down.kind === "owner" ? "Paid by owner"
+    : down.kind === "account" ? (allAccounts.find((a) => a.id === down.accountId)?.name ?? "An account") : "Not recorded";
 
   const rows = q.data?.rows ?? [];
   const payments = q.data?.payments ?? [];
@@ -312,7 +329,7 @@ export function EmiScheduleDialog({ purchase, onClose }: { purchase: EmiPurchase
 
   return (
     <>
-      <Dialog open={!prepayOpen} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <Dialog open={!prepayOpen && !downOpen} onOpenChange={(v) => { if (!v) onClose(); }}>
         <DialogContent className="md:!max-w-xl">
           <DialogHeader>
             <DialogTitle>EMI schedule — {purchase.name}</DialogTitle>
@@ -332,6 +349,15 @@ export function EmiScheduleDialog({ purchase, onClose }: { purchase: EmiPurchase
                 <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Due later</div>
                 <div className="font-mono tabular-nums text-ink">{rupee(split.nonCurrent)}</div>
               </div>
+            </div>
+          )}
+          {isAsset && downCash > 0 && (
+            <div className="flex items-center justify-between gap-2 rounded-md bg-paper-2/50 px-3 py-2 text-sm" data-testid="emi-down-row">
+              <span className="min-w-0 text-ink-2">
+                Down payment <b className="text-ink">{rupee(downCash)}</b> · paid from{" "}
+                <b className="text-ink">{downFrom}</b>
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => setDownOpen(true)}>Change paid from</Button>
             </div>
           )}
           <div className="max-h-[48vh] overflow-y-auto rounded-md border border-hairline">
@@ -377,6 +403,7 @@ export function EmiScheduleDialog({ purchase, onClose }: { purchase: EmiPurchase
         </DialogContent>
       </Dialog>
       {prepayOpen && <EmiPrepayDialog purchase={purchase} onClose={() => setPrepayOpen(false)} />}
+      {downOpen && <EmiDownPaymentDialog purchase={purchase} onClose={() => setDownOpen(false)} />}
     </>
   );
 }
