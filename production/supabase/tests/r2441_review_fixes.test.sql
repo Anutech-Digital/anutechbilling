@@ -9,7 +9,7 @@
 --      that tier — owner tier (old or new tier 'owner', or below cost) → owner; otherwise owner or
 --      manager. A sales / billing login cannot approve, and a manager cannot lower the tier to slip
 --      past the owner.
--- Migration 20261103172531_r2441_approval_role_and_prefixed_refs.
+-- Migration 20261103191637_r2441_approval_role_and_prefixed_refs.
 -- Self-asserting, ONE transaction, rolled back. Run on a local/test DB only.
 
 begin;

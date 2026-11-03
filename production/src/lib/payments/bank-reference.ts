@@ -14,7 +14,7 @@
  * "one character repeated" test, so "NEFT-000000000000" / "UPI/000000000000" are placeholders too;
  * a real UTR with such a prefix stays real and keeps its key.
  * The database applies the SAME rule in public.bank_reference_is_real(text) (migrations
- * 20261103144041_r2424_placeholder_bank_ref, 20261103172531_r2441_approval_role_and_prefixed_refs), which public.payment_ref_key uses — a placeholder
+ * 20261103144041_r2424_placeholder_bank_ref, 20261103191637_r2441_approval_role_and_prefixed_refs), which public.payment_ref_key uses — a placeholder
  * gets no key, so it never blocks and is never blocked. Keep the two in step:
  * bank-reference.test.ts and supabase/tests/r2424_placeholder_bank_ref.test.sql check the same cases.
  */

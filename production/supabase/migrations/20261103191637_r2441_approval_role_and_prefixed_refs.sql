@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2441%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_reference_is_real(text)') and prosrc like '%NEFT%')
 -- deploy-key: r2441approvalroleprefixedrefs
--- 20261103172531_r2441_approval_role_and_prefixed_refs
+-- 20261103191637_r2441_approval_role_and_prefixed_refs
 --
 -- R-2441 (3 Nov 2026) — fixes from the independent money review 2
 -- (Anutech-HQ/drafts/REVIEWS/2026-11-03-money-cards-2.md).
