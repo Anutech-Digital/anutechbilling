@@ -227,7 +227,8 @@ begin
     v_doc_type,
     coalesce(NEW.currency, 'INR'),
     coalesce(NEW.fx_rate, 1)
-  );
+  )
+  on conflict do nothing;   -- an id taken already (never block the distributor's issue)
 
   return NEW;
 end $function$;
