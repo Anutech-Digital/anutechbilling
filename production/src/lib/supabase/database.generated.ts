@@ -16825,6 +16825,15 @@ export type Database = {
         Args: { p_amount: number; p_label: string; p_milestone_id: string }
         Returns: string
       }
+      adjust_salary_lop: {
+        Args: {
+          p_lop_amount: number
+          p_lop_days: number
+          p_reason: string
+          p_salary_id: string
+        }
+        Returns: Json
+      }
       start_employee_exit: {
         Args: {
           p_employee_id: string

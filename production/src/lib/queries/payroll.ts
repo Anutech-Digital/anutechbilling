@@ -492,6 +492,8 @@ export type UnreconciledSalary = {
   id: string; period: string; pay_date: string;
   net: number; paid_amount: number; remaining: number;
   paid_status: "unpaid" | "partial" | "paid"; employee_name: string;
+  /** R-2428: who it is for — the "Start exit?" prompt after a full & final. */
+  employee_id: string;
 };
 export function useUnreconciledSalaries() {
   return useQuery({
@@ -519,6 +521,7 @@ export function useUnreconciledSalaries() {
         id: r.id, period: r.period, pay_date: r.pay_date,
         net: r.net, paid_amount: r.paid_amount, remaining: Math.max(0, r.net - r.paid_amount),
         paid_status: r.paid_status, employee_name: names.get(r.employee_id) ?? "Employee",
+        employee_id: r.employee_id,
       }));
     },
     staleTime: 30_000,
@@ -588,6 +591,33 @@ export function usePaySalary() {
       toast.success("Salary booked", { description: "It shows as Paid once its bank line is linked." });
     },
     onError: (err) => toastError(err),
+  });
+}
+
+/** R-2428: set loss of pay on an unpaid / part-paid salary so its net is what was really paid
+ *  (adjust_salary_lop — net, booked expense and paid status together, with the reason). */
+export function useAdjustSalaryLop() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { salaryId: string; lopDays: number; lopAmount: number; reason: string }) => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("adjust_salary_lop", {
+        p_salary_id: input.salaryId,
+        p_lop_days: input.lopDays,
+        p_lop_amount: input.lopAmount,
+        p_reason: input.reason,
+      });
+      if (error) throw error;
+      return data as { net: number; paid_status: string } | null;
+    },
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["salary-payments"] });
+      qc.invalidateQueries({ queryKey: ["expenses"] });
+      qc.invalidateQueries({ queryKey: ["balance-sheet"] });
+      qc.invalidateQueries({ queryKey: ["statutory-dues"] });
+      toast.success(res?.paid_status === "paid" ? "Salary set to the amount paid — now Paid" : "Salary updated");
+    },
+    onError: (err) => toastError(err, { fallback: "Could not change the salary." }),
   });
 }
 
