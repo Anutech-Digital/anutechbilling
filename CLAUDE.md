@@ -1,6 +1,7 @@
 # ResellerOS — har Claude session ke liye (repo root)
 
 Project rulebook: [`production/CLAUDE.md`](production/CLAUDE.md) and [`AGENTS.md`](AGENTS.md). Team rules: [`docs/TEAM-PROTOCOL.md`](docs/TEAM-PROTOCOL.md). How the team works with AI: [`docs/AI-WORK-SYSTEM.md`](docs/AI-WORK-SYSTEM.md).
+Goals bigger than one card: spec in [`docs/specs/`](docs/specs/README.md), made with the repo skill [`goal-spec`](.claude/skills/goal-spec/SKILL.md) (R-2420).
 
 ## Session start — automatic, before the first reply
 
