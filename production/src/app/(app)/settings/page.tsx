@@ -70,6 +70,7 @@ import { isValidVpa } from "@/lib/payments/upi";
 import type { RazorpayReadiness } from "@/lib/payments/razorpay-readiness";
 import { resellerTierView } from "./reseller-tier-view";
 import { resolveSettingsTab, settingsTabHref } from "./settings-tab";
+import { NetworkTab } from "./network-tab";
 import { useScrollToHash } from "@/lib/onboarding/use-scroll-to-hash";
 
 // ─── Demo data ────────────────────────────────────────────────────────────────
@@ -90,6 +91,8 @@ const TABS: TabBarItem[] = [
   { id: "security",      label: "Security"      },
   /* R-1739: bringing data over from Zoho Books — open invoices (the same dialog as Invoices). */
   { id: "import",        label: "Import"        },
+  /* R-2433 (G-NETWORK): connect with customers / vendors who also use ResellerOS. */
+  { id: "network",       label: "Network"       },
 ];
 
 // ─── Field wrapper ────────────────────────────────────────────────────────────
@@ -1258,6 +1261,7 @@ function SettingsPageInner() {
       {tab === "notifications" && <NotificationsCard />}
       {tab === "security"      && <div className="max-w-md"><ChangePasswordCard /><TwoFactorCard /><MobileNumberCard /></div>}
       {tab === "import"        && <ImportTab />}
+      {tab === "network"       && <NetworkTab />}
     </div>
   );
 }

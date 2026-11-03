@@ -33,3 +33,4 @@ Which cards are built lives on the board (filter by `goal`), not here.
 |---|---|
 | [g-collect.md](g-collect.md) | G-COLLECT — Payment Follow-up a team can work from |
 | [razorpay-fee.md](razorpay-fee.md) | Who pays the online payment (Razorpay) fee |
+| [g-network.md](g-network.md) | G-NETWORK — when my customer or vendor also uses ResellerOS |

@@ -392,6 +392,7 @@ MIGS=(
   "r2426soleownersanytier|20261103153445_r2426_sole_owner_any_tier.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2426%')"
   "r2425banksal|20261103153553_r2425_bank_sale_foreign_currency.sql|resellersos_migration|to_regprocedure('public.reconcile_bank_credit_new_sale_fx(uuid,uuid,jsonb,boolean,date,date,text,text,text,numeric,numeric)') is not null"
   "r2440fxsalet|20261103163318_r2440_fx_sale_trusts_bank.sql|resellersos_migration|exists (select 1 from pg_proc where proname = 'reconcile_bank_credit_new_sale_fx' and prosrc like '%R-2440%')"
+  "r2433tenantconnections|20261103191141_r2433_tenant_connections.sql|resellersos_migration|to_regclass('public.tenant_connections') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.get_partner_metrics()') and prosrc like '%R-2433%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
