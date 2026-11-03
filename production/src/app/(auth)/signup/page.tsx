@@ -18,8 +18,11 @@ import { describeError } from "@/lib/errors/toast-error";
 import { checkNewPassword } from "@/lib/auth/password-rules";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { GoogleAuthButton } from "@/components/features/auth/google-button";
-import { ResendVerification } from "@/components/features/auth/resend-verification";
 import { PRICING_LINE } from "@/site/lib/data/reselleros-home";
+import { usePersonalSignupEnabled } from "./signup-flag-context";
+import { SignupChoice, type SignupKind } from "./signup-choice";
+import { PersonalSignupForm } from "./personal-signup-form";
+import { CheckEmailCard } from "./check-email-card";
 
 const schema = z.object({
   companyName: z.string().min(2, "Company name is required"),
@@ -37,7 +40,30 @@ const schema = z.object({
 });
 type FormData = z.infer<typeof schema>;
 
+/**
+ * R-2396 (G-PERSONAL): with PERSONAL_SIGNUP_ENABLED on, /signup first asks "Business account" or
+ * "Personal account (free)". Off (the default, staging and live), it is the business form as
+ * before. An invite link (?invite=…) always opens the business form — invites join a company.
+ * ?type=personal / ?type=business skips the question (links from the website).
+ */
 export default function SignupPage() {
+  const personalEnabled = usePersonalSignupEnabled();
+  const [kind, setKind] = React.useState<SignupKind | null>(null);
+
+  React.useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const type = q.get("type");
+    if (q.get("invite")) setKind("business");
+    else if (type === "personal" || type === "business") setKind(type);
+  }, []);
+
+  if (!personalEnabled) return <BusinessSignupForm />;
+  if (kind === "personal") return <PersonalSignupForm onBack={() => setKind(null)} />;
+  if (kind === "business") return <BusinessSignupForm onBack={() => setKind(null)} />;
+  return <SignupChoice onChoose={setKind} />;
+}
+
+function BusinessSignupForm({ onBack }: { onBack?: () => void }) {
   const [showPassword, setShowPassword] = React.useState(false);
   const [gstLoading, setGstLoading] = React.useState(false);
   /** Set when the signup matched an existing workspace's verified domain. */
@@ -189,30 +215,15 @@ export default function SignupPage() {
     );
   }
 
-  if (verifyEmail) {
-    return (
-      <Card>
-        <div className="text-center mb-5">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-amber-soft">
-            <Icon name="mail" size={22} className="text-amber-ink" />
-          </div>
-          <h1 className="font-serif text-2xl mb-2">Check your inbox</h1>
-          <p className="text-sm text-ink-2 leading-relaxed">
-            We sent a confirmation link to <b className="text-ink">{verifyEmail}</b>. Open it to finish
-            creating your account — then sign in. The link works for 48 hours.
-          </p>
-        </div>
-        <details className="text-sm">
-          <summary className="cursor-pointer text-ink-3 text-center">Didn&apos;t get it?</summary>
-          <div className="mt-3"><ResendVerification initialEmail={verifyEmail} /></div>
-        </details>
-        <Link href="/login" className="mt-5 block text-center text-sm text-amber font-medium hover:underline">Back to sign in</Link>
-      </Card>
-    );
-  }
+  if (verifyEmail) return <CheckEmailCard email={verifyEmail} />;
 
   return (
     <Card>
+      {onBack && (
+        <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-xs text-ink-3 hover:text-ink">
+          <Icon name="arrow_left" size={13} /> Back
+        </button>
+      )}
       <div className="text-center mb-6">
         <h1 className="font-serif text-3xl mb-2">Create your ResellerOS workspace</h1>
         {/* R-463: one pricing line for the whole product site — site/lib/data/reselleros-home.ts */}

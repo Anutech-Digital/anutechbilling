@@ -43,6 +43,7 @@ import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { VaultPinGate } from "@/components/features/vault/vault-pin-gate";
+import { PersonalWelcome } from "@/components/features/personal/personal-welcome";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -132,6 +133,10 @@ export default function PersonalVaultLayout({ children }: { children: React.Reac
             );
           })}
         </nav>
+
+        {/* R-2396: the personal home — welcome steps + what is free — above the Overview only,
+            for a personal login only (never the business owner's Private Vault). */}
+        {personal && pathname === "/vault/personal" && <PersonalWelcome />}
 
         {children}
       </div>

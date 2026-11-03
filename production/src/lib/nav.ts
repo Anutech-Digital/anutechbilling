@@ -889,7 +889,7 @@ export const APP_NAV: NavSection[] = [
       { id: "personal-money",   href: "/money",      label: "Money",             icon: "wallet",  roles: ["personal"], covers: ["/vault/personal"], hint: "Your bank, cash and cards, spending and savings" },
       { id: "personal-assets",  href: "/assets",     label: "My digital assets", icon: "globe",   roles: ["personal"], hint: "Your domains, subscriptions and bills in one place" },
       { id: "personal-support", href: "/support/my", label: "Support",           icon: "ticket",  roles: ["personal"], hint: "Ask for help and follow your requests" },
-      { id: "personal-upgrade", href: "/upgrade",    label: "Upgrade",           icon: "sparkles", roles: ["personal"], hint: "Turn on GST invoices, quotes and other business tools" },
+      { id: "personal-upgrade", href: "/upgrade",    label: "Upgrade to business", icon: "sparkles", roles: ["personal"], hint: "Turn on GST invoices, quotes and other business tools" },
     ],
   },
 ];
