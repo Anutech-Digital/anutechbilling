@@ -1,5 +1,5 @@
 /**
- * GET /api/customers/{id}/pending-dues — R-1526 "Send pending dues" preview: what the statement
+ * GET / POST /api/customers/{id}/pending-dues — R-1526 "Send pending dues" preview: what the statement
  * will list, the total, whether it carries a pay QR (and if not, why — §24), and where it can go
  * (the customer's own email / WhatsApp number, or why not). SENDS NOTHING (R-1514).
  *

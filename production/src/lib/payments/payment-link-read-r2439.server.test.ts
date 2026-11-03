@@ -107,3 +107,15 @@ describe("getOrCreateInvoicePayLink readOnly (R-2439)", () => {
     expect(db.tables.invoice_payment_links[0].status).toBe("active");
   });
 });
+
+describe("readOnly while another request is making the link (R-2439 review)", () => {
+  it("a 'creating' row → no link and the read's own notice (not 'press Draft again'); nothing written", async () => {
+    const db = world({ ...live(11_800), status: "creating", razorpay_link_id: null, short_url: null, created_at: "2026-11-03T13:59:50Z" });
+    const fetchImpl = vi.fn();
+    const out = await read(db, fetchImpl as unknown as typeof fetch);
+    expect(out.link).toBeNull();
+    expect(out.notice?.reason).toBe("not_made");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(db.writes).toEqual([]);
+  });
+});

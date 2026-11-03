@@ -241,6 +241,19 @@ describe("a second payment on an already-paid pay link (R-2439)", () => {
     expect(call.body).toMatch(/advance/i);
   });
 
+  it("link waiting for a check on an EARLIER payment → this one is flagged as a second payment, not 'record it'", async () => {
+    db.rpcImpl = () => ({
+      data: { found: true, review: true, same_payment: false, paid_payment_id: "pay_R2415one", why: "Razorpay paid 100 but the link was for ₹11800", tenant_id: TENANT },
+      error: null,
+    });
+    const res = await POST(signed(second()));
+    expect(await res.json()).toMatchObject({ needsReview: true });
+    const call = vi.mocked(notifyTenantOwners).mock.calls[0][0];
+    expect(call.body).toContain("waiting for a check on Razorpay payment pay_R2415one");
+    expect(call.body).toMatch(/second payment/);
+    expect(call.body).not.toMatch(/If the bill is still open/);
+  });
+
   it("the SAME payment again (payment_link.paid after payment.captured) stays a quiet replay", async () => {
     db.rpcImpl = () => ({ data: { found: true, already_recorded: true, same_payment: true, paid_payment_id: "pay_R2415one", tenant_id: TENANT }, error: null });
     const res = await POST(signed(linkPaid()));

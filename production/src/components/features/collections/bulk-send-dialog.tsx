@@ -7,7 +7,7 @@
  *      nothing late yet; owes nothing; no customer record);
  *   2. READS each recipient's message through the SAME routes the Send reminder dialog uses
  *      (R-2412): reminder → POST /api/collections/reminder/draft with `standard: true` (the plain
- *      template, no AI call per customer — every amount from the books); statement → GET
+ *      template, no AI call per customer — every amount from the books); statement → POST (R-2439)
  *      /api/customers/{id}/pending-dues. Reading sends nothing;
  *   3. lists every recipient (name · email · amount) and every skipped customer (why), with one
  *      Next follow-up date for all;
@@ -41,7 +41,7 @@ import {
   bulkSendReport, bulkSendTargets, skipSummary, type BulkSendMode, type Skipped,
 } from "@/lib/collections/bulk-actions";
 import type { CollectionRow } from "@/lib/queries/collections";
-import { pendingDuesUrl, type PendingDuesPreview, type ReminderDraftResponse } from "./send-reminder-dialog";
+import { pendingDuesUrl, readStatementPreview, type ReminderDraftResponse } from "./send-reminder-dialog";
 
 /** One recipient, read and ready to send. */
 export interface BulkRecipient {
@@ -82,8 +82,7 @@ async function readOne(row: CollectionRow, mode: BulkSendMode): Promise<BulkReci
       if (!d.email) return { row, reason: d.emailBlocked ? `${d.emailBlocked}` : NO_EMAIL };
       return { row, email: d.email, subject: d.subject, text: d.message, amount: d.amountDue, about: d.about, requestId: crypto.randomUUID() };
     }
-    /* R-2439: POST makes / reuses the statement's Razorpay link (the GET only reads it). */
-    const p = await postJson<PendingDuesPreview>(pendingDuesUrl(customerId), {});
+    const p = await readStatementPreview(customerId);   // R-2439: POST makes / reuses the link
     if (p.total <= 0) return { row, reason: "owes nothing now" };
     if (!p.email) return { row, reason: p.emailBlocked ? `${p.emailBlocked}` : NO_EMAIL };
     return { row, email: p.email, subject: p.subject, text: p.emailText, amount: p.total, about: p.about, requestId: crypto.randomUUID() };

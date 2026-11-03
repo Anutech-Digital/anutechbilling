@@ -174,10 +174,15 @@ async function settle(admin: Admin, link: LinkRow, paid: Paid, deps: PaymentLink
   /* R-2439: a DIFFERENT payment on a link another payment already paid (a late-authorised
      payment on the same order, say) is real money nobody booked — tell the owner, never drop it.
      Nothing is booked here: the owner refunds it or keeps it as an advance. */
-  if (r.already_recorded && r.same_payment === false) {
+  /* Also when the link is waiting for a check on an EARLIER payment: this one is another payment
+     for the same bills, never "record it if the bill is still open" (that would count it twice). */
+  const waitingOnOther = !!r.review && r.same_payment === false && !!r.paid_payment_id;
+  if ((r.already_recorded && r.same_payment === false) || waitingOnOther) {
     const first = r.paid_payment_id ? `Razorpay payment ${r.paid_payment_id}` : "another payment";
     return review(
-      `the link was already paid by ${first} — this is a second payment for the same bills`,
+      r.already_recorded
+        ? `the link was already paid by ${first} — this is a second payment for the same bills`
+        : `the link is already waiting for a check on ${first} — this is a second payment for the same bills`,
       `Nothing was booked for ${paid.paymentId}. Refund it from the Razorpay dashboard, or keep it as this customer's advance — record it as customer credit with reference ${paid.paymentId}.`,
     );
   }

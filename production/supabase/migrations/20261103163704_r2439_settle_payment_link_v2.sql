@@ -15,13 +15,14 @@
 --       the same link was dropped without anyone being told (fixed in payment-link-paid.server.ts).
 --
 -- ─── THE FIX ─────────────────────────────────────────────────────────────────────────────────
---   • Passing errors are raised again: SQLSTATE class 08 (connection), 40 (rollback), 53
+--   • Passing errors are raised again: SQLSTATE class 08 (connection), 40 (rollback), 53 (but not 53400)
 --     (insufficient resources), 57 (operator intervention, e.g. 57014 statement timeout — never
---     caught by OTHERS anyway) and 55P03 (lock not available). The whole call rolls back (the
+--     caught by OTHERS anyway), 58 (system / IO) and 55P03 (lock not available). The call rolls back (the
 --     link stays active, nothing booked), the webhook answers 5xx and Razorpay retries.
 --     Everything else (a business refusal from record_payment: P0001, 22xxx, 23xxx, 42501 …)
 --     still goes to needs_review — nothing booked, the owner told why.
---   • already_recorded now also returns paid_payment_id (the payment that booked the link).
+--   • already_recorded AND an already needs_review link return same_payment + paid_payment_id
+--     (the payment that paid / is waiting on the link), so the webhook flags a second payment.
 -- Grants unchanged: service role only.
 
 begin;
@@ -84,8 +85,11 @@ begin
       'paid_payment_id', v_link.razorpay_payment_id);
   end if;
   if v_link.status = 'needs_review' then
+    /* R-2439: say whether THIS is the payment that is already waiting for a check, or another one. */
     return jsonb_build_object('found', true, 'review', true, 'tenant_id', v_link.tenant_id,
-      'customer_id', v_link.customer_id, 'link_row', v_link.id, 'why', v_link.review_reason);
+      'customer_id', v_link.customer_id, 'link_row', v_link.id, 'why', v_link.review_reason,
+      'same_payment', v_link.razorpay_payment_id is not distinct from p_payment_id,
+      'paid_payment_id', v_link.razorpay_payment_id);
   end if;
 
   if v_link.status <> 'active' then
@@ -166,11 +170,13 @@ begin
     when sqlstate 'R2415' then
       v_why := 'this Razorpay payment was already recorded on one of its invoices another way';
     when others then
-      /* R-2439: a passing DB error — connection (08), rollback / deadlock (40), resources (53),
-         operator intervention (57) or lock not available (55P03) — is raised again: the whole
-         call rolls back (link still active, nothing booked), the webhook answers 5xx and
-         Razorpay's retry can still book it. */
-      if left(sqlstate, 2) in ('08', '40', '53', '57') or sqlstate = '55P03' then
+      /* R-2439: a passing DB error — connection (08), rollback / deadlock (40), resources (53,
+         except 53400 configuration limit, which no retry fixes), operator intervention (57),
+         system / IO (58) or lock not available (55P03) — is raised again: the whole call rolls
+         back (link still active, nothing booked), the webhook answers 5xx and Razorpay's retry
+         can still book it. */
+      if (left(sqlstate, 2) in ('08', '40', '53', '57', '58') and sqlstate <> '53400')
+         or sqlstate = '55P03' then
         raise;
       end if;
       /* Any other refusal from record_payment would answer 500 for a day of retries and then be
@@ -195,7 +201,7 @@ end;
 $function$;
 
 comment on function public.settle_invoice_payment_link(text, text, bigint, text) is
-  'R-2415/R-2439: book a paid Razorpay payment link (payment_link.paid) on the invoices it was made for, once — record_payment per bill in one transaction; anything that does not match the frozen link → needs_review, nothing booked; a passing DB error (class 08/40/53/57, 55P03) is raised so Razorpay retries. already_recorded returns same_payment + paid_payment_id. Service role only.';
+  'R-2415/R-2439: book a paid Razorpay payment link (payment_link.paid) on the invoices it was made for, once — record_payment per bill in one transaction; anything that does not match the frozen link → needs_review, nothing booked; a passing DB error (class 08/40/53 but 53400/57/58, 55P03) is raised so Razorpay retries. already_recorded and needs_review return same_payment + paid_payment_id. Service role only.';
 
 revoke all on function public.settle_invoice_payment_link(text, text, bigint, text) from public, anon, authenticated;
 grant execute on function public.settle_invoice_payment_link(text, text, bigint, text) to service_role;

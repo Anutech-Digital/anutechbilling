@@ -508,7 +508,7 @@ export async function getOrCreateInvoicePayLink(args: {
     }
 
     const plan = planInvoiceLink(existing, { amount, allocations: pick.allocations }, nowMs);
-    if (plan.action === "wait") return none("busy");
+    if (plan.action === "wait") return none(readOnly ? "not_made" : "busy");
     if (plan.action === "reuse" && existing?.short_url) {
       return {
         link: { url: existing.short_url, amount: existing.amount, billAmount: existing.bill_amount, mode: existing.mode ?? keys.mode },

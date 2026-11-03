@@ -11,7 +11,10 @@
 --               retries); the link stays active and nothing is booked — a retry can still book it.
 --               Before R-2439 'when others' turned these into a permanent needs_review.
 --   RETRY       after the passing error is gone, the same payment books normally.
---   REFUSAL     a business refusal (plain raise, P0001) still goes to needs_review, nothing booked.
+--   REFUSAL     a business refusal (plain raise, P0001) still goes to needs_review, nothing booked;
+--               so does 53400 (configuration limit — no retry fixes it).
+--   REVIEW+2ND  a different payment on a link that is waiting for a check → review with
+--               same_payment false and paid_payment_id = the earlier payment.
 --   SECOND      a DIFFERENT payment on an already-paid link → already_recorded, same_payment false,
 --               and paid_payment_id names the payment that DID book it (the webhook flags the
 --               second one for review / refund); still only one payment on the bill.
@@ -27,7 +30,7 @@ insert into public.customers (id, tenant_id, name, state_code, country) values
 
 insert into public.invoices (id, tenant_id, customer_name, customer_id, amount, net_payable, taxable_value, invoice_date, quote_id)
 select v.id, 'e2439000-0000-0000-0000-0000000000a0'::uuid, 'R2439', 'e2439000-0000-4000-8000-0000000000c1'::uuid, 1180, 1180, 1000, '2026-10-01'::date, null
-  from (values ('R39-I1'), ('R39-I2'), ('R39-I3')) v(id);
+  from (values ('R39-I1'), ('R39-I2'), ('R39-I3'), ('R39-I4')) v(id);
 
 insert into public.quotes (id, tenant_id, lead_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items, invoice_id)
 select 'Q-' || i.id, i.tenant_id, null, i.customer_id, 'R2439', i.amount, i.taxable_value, 18, 'accepted', 'invoiced', '[]'::jsonb, i.id
@@ -39,7 +42,7 @@ select ('e2439000-0000-4000-8000-00000000010' || n)::uuid, 'e2439000-0000-0000-0
        'R39-I' || n, 'invoice:R39-I' || n,
        jsonb_build_array(jsonb_build_object('invoice_id', 'R39-I' || n, 'quote_id', 'Q-R39-I' || n, 'amount', 1180)),
        1180, 1180, 'test', 'active', 'plink_R2439n' || n, 'https://rzp.io/i/r2439n' || n
-  from generate_series(1, 3) n;
+  from generate_series(1, 4) n;
 
 -- A test-only trigger that makes the payment insert fail with a chosen SQLSTATE (rolled back).
 create temp table r2439_boom (code text) on commit drop;
@@ -71,7 +74,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('role', 'service_role')::text, true);
 
   -- ════ TRANSIENT ════════════════════════════════════════════════════════════════════
-  foreach v_code in array array['53200', '08006', '40001'] loop
+  foreach v_code in array array['53200', '08006', '40001', '58030'] loop
     delete from r2439_boom; insert into r2439_boom values (v_code);
     v_r := pg_temp.r2439_settle('plink_R2439n1', 'pay_R2439one');
     if coalesce(v_r->>'raised', '') <> v_code then
@@ -102,6 +105,22 @@ begin
   if v_s <> 'needs_review' then insert into r2439_fail values ('REFUSAL: link is ' || v_s); end if;
   select count(*) into v_n from public.payments where quote_id = 'Q-R39-I2';
   if v_n <> 0 then insert into r2439_fail values ('REFUSAL booked ' || v_n); end if;
+  delete from r2439_boom;
+
+  -- ════ REVIEW+2ND: another payment on the link that is waiting for a check ═════════════════
+  v_r := pg_temp.r2439_settle('plink_R2439n2', 'pay_R2439twoB');
+  if not coalesce((v_r->>'review')::boolean, false)
+     or coalesce((v_r->>'same_payment')::boolean, true)
+     or coalesce(v_r->>'paid_payment_id', '') <> 'pay_R2439two' then
+    insert into r2439_fail values ('REVIEW+2ND: expected review, same_payment false, paid_payment_id pay_R2439two; got ' || v_r::text);
+  end if;
+  v_r := pg_temp.r2439_settle('plink_R2439n2', 'pay_R2439two');
+  if not coalesce((v_r->>'same_payment')::boolean, false) then insert into r2439_fail values ('REVIEW+2ND: retry of the first is not same_payment: ' || v_r::text); end if;
+
+  -- ════ 53400: configuration limit → review, not a retry loop ═══════════════════════════════
+  insert into r2439_boom values ('53400');
+  v_r := pg_temp.r2439_settle('plink_R2439n4', 'pay_R2439four');
+  if not coalesce((v_r->>'review')::boolean, false) then insert into r2439_fail values ('53400 not review: ' || v_r::text); end if;
   delete from r2439_boom;
 
   -- ════ SECOND ═══════════════════════════════════════════════════════════════════════

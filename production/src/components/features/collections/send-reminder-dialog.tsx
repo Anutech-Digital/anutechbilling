@@ -7,7 +7,8 @@
  *   • "This invoice" — one open bill (the most overdue unless they pick another). The AI drafts
  *     the reminder (POST /api/collections/reminder/draft with the bill), money-checked; the text
  *     carries a UPI pay link for exactly that bill's amount.
- *   • "Full statement" — every open bill and the total (GET /api/customers/{id}/pending-dues).
+ *   • "Full statement" — every open bill and the total (POST /api/customers/{id}/pending-dues —
+ *     R-2439: the POST also makes the Razorpay link; a GET only reads it).
  *     WhatsApp carries the 7-day statement PDF link; email attaches the PDF. Both carry the UPI
  *     pay link for the total.
  * …and HOW: WhatsApp first (when the customer has a mobile number), email as the fallback.
@@ -119,6 +120,8 @@ export interface PendingDuesPreview extends Reach {
 }
 
 class SendError extends Error {}
+/** R-2439: middleware refused a write because this is a demo visitor (read-only). */
+class DemoRefusal extends SendError {}
 
 async function readJson<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
@@ -127,7 +130,8 @@ async function readJson<T>(url: string, init?: RequestInit): Promise<T> {
   } catch {
     throw new SendError("Could not reach the server — check your internet and try again.");
   }
-  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; demo?: boolean };
+  if (!res.ok && json.demo === true) throw new DemoRefusal(json.error || "This is a demo — changes are off.");
   if (!res.ok || !json.ok) throw new SendError(json.error || "Something went wrong — try again.");
   return json as T;
 }
@@ -135,6 +139,20 @@ const postJson = <T,>(url: string, body: unknown) =>
   readJson<T>(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
 export const pendingDuesUrl = (customerId: string) => `/api/customers/${encodeURIComponent(customerId)}/pending-dues`;
+
+/**
+ * R-2439: the statement preview. POST — it also makes / reuses the statement's Razorpay link
+ * (a GET of the same URL only reads it, so a prefetch or reload can never make or cancel one).
+ * A demo visitor's POSTs are refused by middleware: they get the read-only GET (no link made).
+ */
+export async function readStatementPreview(customerId: string): Promise<PendingDuesPreview> {
+  try {
+    return await postJson<PendingDuesPreview>(pendingDuesUrl(customerId), {});
+  } catch (e) {
+    if (e instanceof DemoRefusal) return readJson<PendingDuesPreview>(pendingDuesUrl(customerId));
+    throw e;
+  }
+}
 
 // ─── The form (same for both choices) ────────────────────────────────────────
 
@@ -191,9 +209,7 @@ export function SendReminderDialog({
   const preview = useQuery({
     queryKey: ["pending-dues", customerId],
     enabled: open && scope === "statement",
-    /* R-2439: POST — opening "Full statement" makes / reuses the statement's Razorpay link; a GET
-       of the same URL only reads it (a prefetch or reload can never make or cancel one). */
-    queryFn: () => postJson<PendingDuesPreview>(pendingDuesUrl(customerId), {}),
+    queryFn: () => readStatementPreview(customerId),   // R-2439: POST (makes the link); demo → GET
     staleTime: 0,
     gcTime: 0,
     retry: false,

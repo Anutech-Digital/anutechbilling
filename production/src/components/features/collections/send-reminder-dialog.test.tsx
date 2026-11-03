@@ -228,3 +228,25 @@ describe("Send reminder — Razorpay card / net-banking link (R-2415)", () => {
     expect(screen.getByRole("link", { name: "Open Settings" }).getAttribute("href")).toBe("/settings?tab=integrations");
   });
 });
+
+/* R-2439: the statement preview is a POST (it makes the Razorpay link). A demo visitor's POSTs
+   are all refused by middleware ({demo: true}) — the dialog then READS the statement with GET
+   (no link is made for a demo), instead of showing an error. */
+describe("Full statement for a demo visitor (R-2439)", () => {
+  it("POST refused as demo → falls back to the read-only GET and shows the statement", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+      const method = init?.method ?? "GET";
+      st.calls.push({ url, method, body: null });
+      if (method !== "GET") {
+        return { ok: false, status: 403, json: async () => ({ ok: false, error: "This is a demo — changes are off.", demo: true }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => preview() } as unknown as Response;
+    }));
+    wrap(<SendReminderDialog open onOpenChange={() => {}} customerId={CUST} customerName="Sharma Traders" defaultScope="statement" />);
+    await box("₹73,900 across 2 bills");
+    expect(st.calls.map((c) => [c.method, c.url])).toEqual([
+      ["POST", `/api/customers/${CUST}/pending-dues`],
+      ["GET", `/api/customers/${CUST}/pending-dues`],
+    ]);
+  });
+});
