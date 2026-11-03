@@ -512,6 +512,7 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/mobile": "Install-as-app guide; linked from the account menu",
   "/attendance/kiosk": "Runs on the office kiosk device, not in a person's menu",
   "/platform": "Founder-only cross-tenant view; any other owner would be refused by the server",
+  /* R-2445 */ "/platform/gstin-claims": "Founder-only GSTIN-ownership queue; linked from Platform → Signups, the server refuses anyone else",
   "/aa/simulate-approval": "Mock consent screen for the bank-statement (Account Aggregator) test flow",
   /* R-1849: admitted by the Balance Sheet row (prefix); billing denied with it. */
   "/accounting/balance-sheet/profit-split": "Year-end profit split of a partnership; opened from Balance Sheet → partners' capital accounts",
