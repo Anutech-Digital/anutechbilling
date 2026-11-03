@@ -272,7 +272,7 @@ async function tenantKeys(db: Db, tenantId: string): Promise<Keys | { refusal: N
     .select("razorpay_key_id, razorpay_key_secret")
     .eq("tenant_id", tenantId)
     .maybeSingle();
-  const secrets = decryptTenantSecrets(raw as Parameters<typeof decryptTenantSecrets>[0]);
+  const secrets = decryptTenantSecrets((raw ?? null) as { razorpay_key_id: string | null; razorpay_key_secret: string | null } | null);
   const keyId = secrets?.razorpay_key_id?.trim() ?? "";
   const keySecret = secrets?.razorpay_key_secret?.trim() ?? "";
   if (!keyId || !keySecret) return { refusal: "not_configured" };

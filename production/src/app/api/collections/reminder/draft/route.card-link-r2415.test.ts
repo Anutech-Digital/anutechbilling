@@ -52,9 +52,6 @@ vi.mock("@/lib/collections/reminder-draft.server", async (orig) => {
 });
 vi.mock("@/lib/sentry", () => ({ Sentry: { captureException: vi.fn() } }));
 
-import { POST } from "./route";
-import { NO_PHONE } from "@/lib/collections/reminder-draft";
-import { NOTE_NO_KEY } from "@/lib/collections/reminder-draft.server";
 
 const card = vi.hoisted(() => ({
   fn: vi.fn(),
