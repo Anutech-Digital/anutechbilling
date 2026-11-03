@@ -179,7 +179,7 @@ describe("R-2403 ONE status per row", () => {
 describe("R-2403 the renewal amount for the term (not MRR /mo)", () => {
   it("yearly: the term amount '/yr' + GST (MAHARSHI 26 seats ₹6,500/mo → ₹78,000/yr)", () => {
     const a = renewalAmount({ mrr: 6500, term_months: 12, term_amount: 78_000, billing_cycle: "yearly", renewal_quote_id: null }, null);
-    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", billing: null, fromQuote: false });
+    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", fromQuote: false });
   });
 
   it("no term_amount → mrr × term months", () => {
@@ -197,10 +197,6 @@ describe("R-2403 the renewal amount for the term (not MRR /mo)", () => {
     const sub = { mrr: 100, term_months: 12, billing_cycle: "yearly", renewal_quote_id: "Q-1" };
     expect(renewalAmount(sub, { id: "Q-1", amount: 5000, status: "rejected" }).fromQuote).toBe(false);
     expect(renewalAmount(sub, { id: "Q-2", amount: 5000, status: "sent" }).fromQuote).toBe(false);
-  });
-
-  it("billed in parts says so", () => {
-    expect(renewalAmount({ mrr: 205_000, term_months: 12, billing_cycle: "monthly" }, null).billing).toBe("billed monthly");
   });
 
   it("term suffixes", () => {

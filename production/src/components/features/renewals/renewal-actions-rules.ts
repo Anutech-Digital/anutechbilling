@@ -93,3 +93,34 @@ export function renewalActionSet(
 
   return { row, primary, secondary, notRenewing, graceOver };
 }
+
+// ─── R-2422: one next-step button + a ⋯ menu ─────────────────────────────────
+
+export const FOLLOW_UP = "Follow-up";
+
+/** What the ⋯ menu may hold, in the order it shows (the ending action last). */
+export type RenewalMenuItem = "create-quote" | "followup" | "nudge" | "voice" | "not-renewing";
+
+export interface RenewalNextStep {
+  /** The ONE visible button: the R-2401 rule's primary, else Follow-up; null = nothing to do here. */
+  button: { kind: RenewalButtonKind | "followup"; label: string } | null;
+  menu: RenewalMenuItem[];
+}
+
+/**
+ * R-2422 (Pardeep, 3 Nov — staging Renewals: six stacked buttons, ~4 rows a screen): the row
+ * shows ONE next-step button and a ⋯ menu for the rest — Payment Follow-up's pattern (R-2408).
+ * `followup` / `messaging` = the screen offers a Follow-up dialog / Nudge + Voice (Renewals does;
+ * Payment Follow-up's renewal rows have their own Follow-up, so they pass neither).
+ * Grace over keeps Renew anyway + Cancel side by side (R-2401), so Cancel is not in the menu.
+ */
+export function renewalNextStep(set: RenewalActionSet, offers: { followup: boolean; messaging: boolean }): RenewalNextStep {
+  const button: RenewalNextStep["button"] = set.primary
+    ?? (offers.followup ? { kind: "followup", label: FOLLOW_UP } : null);
+  const menu: RenewalMenuItem[] = [];
+  if (set.secondary) menu.push("create-quote");
+  if (offers.followup && button?.kind !== "followup") menu.push("followup");
+  if (offers.messaging) menu.push("nudge", "voice");
+  if (set.notRenewing && !set.graceOver) menu.push("not-renewing");
+  return { button, menu };
+}
