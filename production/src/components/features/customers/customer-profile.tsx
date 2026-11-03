@@ -37,6 +37,7 @@ import { LateChargesPreview } from "@/components/features/late-charges/customer-
 import { CreditSettingsCard } from "@/components/features/customers/credit-settings-card";
 import { RenewalGraceCard } from "@/components/features/customers/renewal-grace-card";
 import { InvoiceOnDueDateCard } from "@/components/features/customers/invoice-on-due-date-card";
+import { OnlineFeeCustomerCard } from "@/components/features/customers/online-fee-customer-card";
 import { CustomerFollowupCard } from "@/components/features/collections/customer-followup-card";
 import { EntitlementCard } from "@/components/features/support/entitlement-card";
 import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
@@ -598,6 +599,12 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
 
           {/* R-2044: parts billed as payment requests first, unless this customer is invoiced on the due date. */}
           <InvoiceOnDueDateCard customerId={params.id} canEdit={me?.role === "owner" || me?.role === "manager"} />
+
+          {/* R-2416: who pays the online (Razorpay) fee for this customer — owner / manager / accountant. */}
+          <OnlineFeeCustomerCard
+            customerId={params.id}
+            canEdit={me?.role === "owner" || me?.role === "manager" || me?.role === "accountant"}
+          />
 
           {/* R-1517: payment follow-ups — log a call / promise, next date, full history. */}
           <CustomerFollowupCard customerId={params.id} customerName={c.name} />

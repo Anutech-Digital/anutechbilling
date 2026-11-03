@@ -58,6 +58,7 @@ import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { gatewayFeeFromPayment } from "@/lib/razorpay/gateway-money";
 import { handleRefundProcessed } from "./refund-event.server";
 import { bookGatewayFeeExpense } from "@/lib/razorpay/fee-expense.server";
+import { recordFeeBearer } from "@/lib/payments/online-fee.server";
 import {
   receivedOnQuote, settleLatePayment, settleOnReplacedQuote, settleStaleRenewal, STALE_RENEWAL_RE, type LateArgs,
 } from "./late-payment.server";
@@ -1125,6 +1126,9 @@ async function recordGatewayFee(
   reference: string,
   payment: RazorpayPayment,
 ): Promise<void> {
+  /* R-2416: who bore the online fee under the policy in force (fee_charged 0 until R-2417).
+     Before the fee check: a capture that carries no fee still has a bearer. Written once. */
+  await recordFeeBearer(admin, tenantId, quoteId, reference);
   const fee = gatewayFeeFromPayment(payment);
   if (!fee) return;
   const { data: rows, error } = await admin
