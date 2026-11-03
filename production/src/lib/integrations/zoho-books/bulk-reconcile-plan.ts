@@ -35,6 +35,8 @@ import { parsePlaceOfSupply } from "@/lib/import/zoho-opening-invoices";
 import type { FindZohoResult, ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
 import { mapZohoCustomer, normCompanyName, zohoSaleLine, zohoSaleNumber } from "./payment-prefill";
 
+/** Lines the bulk-match route plans per request (each costs about 2–4 Zoho calls). */
+export const BULK_PAGE = 8;
 /** ₹ the sale total may differ from the money (bank credit + TDS) and still be booked as it is. */
 export const AMOUNT_SLACK = 1;
 /** Days a pro-rata line's end may sit from an existing subscription's renewal and still be its add-on. */
@@ -49,6 +51,9 @@ export interface BulkLine {
   description: string | null;
   reference: string | null;
 }
+
+/** One line of the bulk-match route's answer. */
+export interface BulkMatchRow { line: BulkLine; result: FindZohoResult; contact: ZohoContactInfo | null }
 
 /** What Zoho says about the customer (its contact), for a customer the app does not have yet. */
 export interface ZohoContactInfo {
