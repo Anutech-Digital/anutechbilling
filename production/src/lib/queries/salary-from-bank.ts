@@ -18,7 +18,7 @@
  * rolled back by hand from the browser, which could fail halfway itself.
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { compactName } from "@/lib/banking/salary-lines";
+import { compactName, isFullAndFinalText } from "@/lib/banking/salary-lines";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { toastError } from "@/lib/errors/toast-error";
@@ -43,7 +43,25 @@ export type SalaryGroupResult = {
   ok: boolean;
   /** What happened, in words the operator can act on. */
   message: string;
+  /** R-2428: who was paid (once known) — for the "Start exit?" prompt after a full & final. */
+  employeeId?: string;
+  /** R-2428: a line in this group reads as a full & final settlement. */
+  fullAndFinal?: boolean;
+  /** R-2428: the latest payment date in the group (the default last working day). */
+  lastPayDate?: string;
+  /** R-2428: what the group's lines paid. */
+  paid?: number;
 };
+
+/** R-2428: the full & final settlements just booked → one "Start exit?" prompt each. */
+export function fnfPromptsFrom(results: readonly SalaryGroupResult[]): Array<{ employeeId: string; lastDay: string; amount: number }> {
+  const seen = new Set<string>();
+  return results.flatMap((r) => {
+    if (!r.ok || !r.fullAndFinal || !r.employeeId || !r.lastPayDate || seen.has(r.employeeId)) return [];
+    seen.add(r.employeeId);
+    return [{ employeeId: r.employeeId, lastDay: r.lastPayDate, amount: r.paid ?? 0 }];
+  });
+}
 
 async function currentTenantId(supabase: ReturnType<typeof createClient>): Promise<string> {
   const { data: authData } = await supabase.auth.getUser();
@@ -162,6 +180,10 @@ async function bookGroup(
 
   return {
     period: g.period, label, ok: true,
+    employeeId,
+    fullAndFinal: g.lines.some((l) => isFullAndFinalText(l.description)),
+    lastPayDate: g.lines.map((l) => l.txnDate).sort().at(-1),
+    paid: total,
     message: created
       ? `Salary record created (₹${total}) and ${linked} line${linked === 1 ? "" : "s"} reconciled.`
       : `${linked} line${linked === 1 ? "" : "s"} reconciled to the existing salary record.`,

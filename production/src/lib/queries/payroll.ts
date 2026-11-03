@@ -591,6 +591,33 @@ export function usePaySalary() {
   });
 }
 
+/** R-2428: set loss of pay on an unpaid / part-paid salary so its net is what was really paid
+ *  (adjust_salary_lop — net, booked expense and paid status together, with the reason). */
+export function useAdjustSalaryLop() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { salaryId: string; lopDays: number; lopAmount: number; reason: string }) => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("adjust_salary_lop", {
+        p_salary_id: input.salaryId,
+        p_lop_days: input.lopDays,
+        p_lop_amount: input.lopAmount,
+        p_reason: input.reason,
+      });
+      if (error) throw error;
+      return data as { net: number; paid_status: string } | null;
+    },
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["salary-payments"] });
+      qc.invalidateQueries({ queryKey: ["expenses"] });
+      qc.invalidateQueries({ queryKey: ["balance-sheet"] });
+      qc.invalidateQueries({ queryKey: ["statutory-dues"] });
+      toast.success(res?.paid_status === "paid" ? "Salary set to the amount paid — now Paid" : "Salary updated");
+    },
+    onError: (err) => toastError(err, { fallback: "Could not change the salary." }),
+  });
+}
+
 /** Undo a salary payment (only while unpaid + not bank-reconciled). Atomic
  *  reversal via the RPC: restores any advance recovery, deletes the booked
  *  Salaries expense, removes the salary_payment — so the row reverts to

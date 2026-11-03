@@ -391,6 +391,7 @@ MIGS=(
   "r2415invoicepaymentlinks|20261103151556_r2415_invoice_payment_links.sql|resellersos_migration|(to_regclass('public.invoice_payment_links') is not null and to_regprocedure('public.settle_invoice_payment_link(text,text,bigint,text)') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'invoice_payment_links' and policyname = 'invoice_payment_links_service_role'))"
   "r2426soleownersanytier|20261103153445_r2426_sole_owner_any_tier.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2426%')"
   "r2425banksal|20261103153553_r2425_bank_sale_foreign_currency.sql|resellersos_migration|to_regprocedure('public.reconcile_bank_credit_new_sale_fx(uuid,uuid,jsonb,boolean,date,date,text,text,text,numeric,numeric)') is not null"
+  "r2428salarylop|20261103162803_r2428_salary_lop_adjust.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.adjust_salary_lop(uuid,numeric,integer,text)') and prosrc like '%R-2428%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

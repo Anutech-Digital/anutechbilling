@@ -48,6 +48,11 @@ export type SalaryNarration = {
   director: boolean;
 };
 
+/** A full & final settlement: "FULL N FINAL", "Full and final", "F&F", "FNF". */
+export function isFullAndFinalText(text: string): boolean {
+  return /\bFULL\s*(N|AND|&)\s*FINAL\b|\bF\s*&\s*F\b|\bFNF\b/.test(text.toUpperCase());
+}
+
 export function parseSalaryNarration(description: string, txnDate: string): SalaryNarration | null {
   const text = description.toUpperCase();
   if (!/\bSALARY\b/.test(text)) return null;
@@ -87,7 +92,7 @@ export function parseSalaryNarration(description: string, txnDate: string): Sala
     name,
     period: period ?? previousPeriod(txnDate),
     periodFromNarration: period !== null,
-    fullAndFinal: /\bFULL\s*(N|AND|&)\s*FINAL\b|\bF\s*&\s*F\b|\bFNF\b/.test(text),
+    fullAndFinal: isFullAndFinalText(text),
     director: /\bDIRECTORS?\b/.test(text),
   };
 }
@@ -261,4 +266,59 @@ export function alreadyInPayroll(input: {
     }
   }
   return null;
+}
+
+/* ─── BEFORE A NEW SALARY RECORD IS MADE FROM A BANK LINE (R-2428, 3 Nov 2026) ───────────
+   Staging Anutech, 3 Nov: Keshav Malik left in his first month (full & final paid 16 Apr), yet
+   salary lines made ₹24,358 records for Jun–Sep (₹97,432 falsely "not paid") and a March one
+   from another company's bank line. A new record is now:
+     • refused for a month after the last working day (the database refuses it too — R-1896);
+     • warned (starts unticked, the operator decides) when it is before the joining month, after
+       a full & final already paid, for an inactive employee, or to a different payee account
+       than this employee's other salaries (another company's / another person's transfer). */
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const monthWords = (period: string) => {
+  const [y, m] = period.split("-").map(Number);
+  return `${MONTH_SHORT[m - 1]} ${y}`;
+};
+const dayWords = (iso: string) => {
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  return `${d} ${MONTH_SHORT[m - 1]} ${y}`;
+};
+
+export type SalaryLineRiskInput = {
+  employee: { id: string; name: string; joining_date: string | null; exit_date: string | null; is_active: boolean };
+  /** YYYY-MM the new record would be for. */
+  period: string;
+  /** payeeKey() of this bank line (null when the narration has none). */
+  lineKey: string | null;
+  /** payeeKey()s of this employee's earlier salary lines. */
+  knownKeys: readonly string[];
+  /** Salary records (only this employee's are read). */
+  salaries: ReadonlyArray<{ employee_id: string; period: string; notes: string | null }>;
+};
+
+export type SalaryLineRisk = { block: string | null; warnings: string[] };
+
+export function salaryLineRisks(i: SalaryLineRiskInput): SalaryLineRisk {
+  const e = i.employee;
+  if (e.exit_date && i.period > e.exit_date.slice(0, 7)) {
+    return { block: `${e.name} left on ${dayWords(e.exit_date)} — no salary after ${monthWords(e.exit_date.slice(0, 7))}.`, warnings: [] };
+  }
+  const warnings: string[] = [];
+  if (e.joining_date && i.period < e.joining_date.slice(0, 7)) {
+    warnings.push(`${e.name} joined on ${dayWords(e.joining_date)} — ${monthWords(i.period)} is before they joined. This may be another company's payment.`);
+  }
+  const fnf = i.salaries
+    .filter((s) => s.employee_id === e.id && s.period < i.period && isFullAndFinalText(s.notes ?? ""))
+    .sort((a, b) => b.period.localeCompare(a.period))[0];
+  if (fnf && !e.exit_date) {
+    warnings.push(`${e.name}'s full & final was paid for ${monthWords(fnf.period)} — they may have left. Start their exit instead of booking more salary.`);
+  }
+  if (!e.is_active && !e.exit_date) warnings.push(`${e.name} is marked inactive.`);
+  if (i.lineKey && i.knownKeys.length > 0 && !i.knownKeys.includes(i.lineKey)) {
+    warnings.push(`This line pays a different account than ${e.name}'s other salaries — it may be another company's or another person's payment.`);
+  }
+  return { block: null, warnings };
 }
