@@ -44,6 +44,15 @@ insert into public.tenants (id, name, email, state_code, doc_code, gstin, gstin_
   ('24330000-0000-4000-8000-000000000011', 'R2433 Personal child', 'r2433g@example.test', '07', 'R243G', null, null, 'personal',
    '24330000-0000-4000-8000-00000000000d');
 
+-- R-2445: connections need a PROVED GSTIN (registered is not enough) — the verified business
+-- tenants here proved theirs (platform-admin approval); the personal one and the unverified one did not.
+update public.tenants
+   set gstin_owner_verified_at = now(), gstin_owner_verified_gstin = upper(btrim(gstin)),
+       gstin_owner_verified_how = 'platform_admin', gstin_owner_verified_by = 'admin@example.test'
+ where id in ('24330000-0000-4000-8000-00000000000a', '24330000-0000-4000-8000-00000000000b',
+              '24330000-0000-4000-8000-00000000000c', '24330000-0000-4000-8000-00000000000d',
+              '24330000-0000-4000-8000-00000000000f');
+
 insert into public.users (id, tenant_id, email, full_name, role, is_active) values
   ('24330000-0000-4000-8000-0000000000a1', '24330000-0000-4000-8000-00000000000a', 'r2433-owner-a@example.test', 'R2433 Owner A', 'owner', true),
   ('24330000-0000-4000-8000-0000000000a2', '24330000-0000-4000-8000-00000000000a', 'r2433-acct-a@example.test',  'R2433 Acct A',  'accountant', true),
