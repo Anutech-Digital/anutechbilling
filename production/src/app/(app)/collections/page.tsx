@@ -33,10 +33,11 @@ import { PendingDuesDialog } from "@/components/features/collections/pending-due
 import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
 import { canRecordMoney } from "@/lib/auth/roles";
 import { CollectionsOwnerReport } from "@/components/features/collections/owner-report";
+import { RenewalActions } from "@/components/features/renewals/renewal-actions";
 import { maySeeCollectionsReport } from "@/lib/collections/weekly-report";
 import {
   COLLECTION_VIEWS, defaultCollectionView, filterCollectionRows, useCollections,
-  type CollectionRow, type CollectionView, type OwedItem,
+  type CollectionRow, type CollectionView, type OwedItem, type RenewalItem,
 } from "@/lib/queries/collections";
 
 const VIEW_LABEL: Record<CollectionView, string> = {
@@ -79,11 +80,15 @@ export default function CollectionsPage() {
   const canPay = canRecordMoney(role);
   const showReport = maySeeCollectionsReport(role);
   const owing = React.useMemo(
-    () => (rows ?? []).filter((r) => !!r.customerId).map((r) => ({ customerId: r.customerId!, customerName: r.customerName, amountDue: r.amountDue })),
+    /* R-2401: a renewal-only row owes nothing yet — the weekly report stays real dues. */
+    () => (rows ?? []).filter((r) => !!r.customerId && r.amountDue > 0).map((r) => ({ customerId: r.customerId!, customerName: r.customerName, amountDue: r.amountDue })),
     [rows],
   );
 
   const total = shown.reduce((s, r) => s + r.amountDue, 0);
+  /* R-2401: renewals to chase (no invoice yet) — shown apart from "due". */
+  const renewalLines = shown.reduce((n, r) => n + r.renewals.length, 0);
+  const renewalTotal = shown.reduce((s, r) => s + r.renewalAmount, 0);
   const todayCount = shown.filter((r) => r.followUpDue || r.promiseBroken).length;
 
   return (
@@ -115,6 +120,7 @@ export default function CollectionsPage() {
         {!isLoading && !isError && shown.length > 0 && (
           <span className="text-sm text-ink-3 ml-auto tabular-nums">
             {shown.length} {shown.length === 1 ? "customer" : "customers"} · <b className="text-ink">{rupee(total)}</b> due
+            {renewalLines > 0 && <> · {renewalLines} {renewalLines === 1 ? "renewal" : "renewals"} {rupee(renewalTotal)}</>}
             {todayCount > 0 && <> · <span className="text-rose">{todayCount} to chase today</span></>}
           </span>
         )}
@@ -139,7 +145,7 @@ export default function CollectionsPage() {
                     <div className="min-w-0 break-words font-medium text-ink leading-tight">
                       <CustomerName r={r} canOpen={canOpen} />
                     </div>
-                    <div className="shrink-0 font-serif text-lg text-ink leading-none tabular-nums whitespace-nowrap">{rupee(r.amountDue)}</div>
+                    <div className="shrink-0 text-right"><AmountCell r={r} className="font-serif text-lg leading-none" /></div>
                   </div>
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     <OverdueBadge days={r.daysOverdue} />
@@ -148,6 +154,7 @@ export default function CollectionsPage() {
                   </div>
                   <ul className="mt-3 space-y-1.5">
                     {r.items.map((i) => <li key={`${i.kind}:${i.id}`}><OwedLine item={i} canOpen={canOpen} /></li>)}
+                    {r.renewals.map((i) => <li key={`renewal:${i.id}`}><RenewalLine item={i} canOpen={canOpen} /></li>)}
                   </ul>
                   <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 mt-3 text-sm">
                     <dt className="text-ink-3">Promise</dt>
@@ -208,9 +215,10 @@ export default function CollectionsPage() {
                     <td className="px-3 py-3">
                       <ul className="space-y-1">
                         {r.items.map((i) => <li key={`${i.kind}:${i.id}`}><OwedLine item={i} canOpen={canOpen} /></li>)}
+                        {r.renewals.map((i) => <li key={`renewal:${i.id}`}><RenewalLine item={i} canOpen={canOpen} /></li>)}
                       </ul>
                     </td>
-                    <td className="px-3 py-3 text-right font-mono font-semibold text-ink tabular-nums">{rupee(r.amountDue)}</td>
+                    <td className="px-3 py-3 text-right"><AmountCell r={r} className="font-mono font-semibold" /></td>
                     <td className="px-3 py-3"><OverdueBadge days={r.daysOverdue} /></td>
                     <td className="px-3 py-3"><PromiseText r={r} /></td>
                     <td className="px-3 py-3"><NextText r={r} /></td>
@@ -230,7 +238,13 @@ export default function CollectionsPage() {
           customerId={fuRow.customerId}
           customerName={fuRow.customerName}
           ownerId={fuRow.ownerId}
-          items={fuRow.items}
+          /* R-2401: a renewal can be the follow-up's subject too — linked as its subscription. */
+          items={[
+            ...fuRow.items,
+            ...fuRow.renewals
+              .filter((i) => !fuRow.items.some((o) => o.kind === "subscription" && o.id === i.id))
+              .map((i) => ({ kind: "subscription" as const, id: i.id, label: `${i.label} (renewal)`, quoteId: i.quoteId })),
+          ]}
           stillOwes={fuRow.amountDue > 0}
           payments={fuRow.payments}
           amountDue={fuRow.amountDue}
@@ -351,6 +365,46 @@ function MaybeLink({ href, canOpen, children, className }: { href: string | null
 
 function CustomerName({ r, canOpen }: { r: CollectionRow; canOpen: CanOpen }) {
   return <MaybeLink href={r.customerHref} canOpen={canOpen}>{r.customerName}</MaybeLink>;
+}
+
+/** Real dues; a renewal-only row shows "—" there and its renewal amount under it (R-2401). */
+function AmountCell({ r, className }: { r: CollectionRow; className?: string }) {
+  return (
+    <>
+      <div className={`text-ink tabular-nums whitespace-nowrap ${className ?? ""}`}>{r.amountDue > 0 ? rupee(r.amountDue) : "—"}</div>
+      {r.renewalAmount > 0 && (
+        <div className="mt-1 text-xs text-ink-3 tabular-nums whitespace-nowrap" title="Renewal not invoiced yet — not counted in the amount due">
+          + {rupee(r.renewalAmount)} renewal
+        </div>
+      )}
+    </>
+  );
+}
+
+/** R-2401: a renewal to chase — when it renews / renewed, its amount, and the shared renewal buttons. */
+function RenewalLine({ item, canOpen }: { item: RenewalItem; canOpen: CanOpen }) {
+  const days = item.daysOverdue;   // >0 = past the renewal date
+  const when = days > 0
+    ? `Expired ${formatDate(item.renewalDate)} · ${days} ${days === 1 ? "day" : "days"} ago`
+    : days === 0 ? "Renews today" : `Renews ${formatDate(item.renewalDate)} · in ${-days} ${days === -1 ? "day" : "days"}`;
+  return (
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="text-3xs uppercase tracking-wider text-ink-3">Renewal</span>
+        <MaybeLink href={item.href} canOpen={canOpen} className="font-mono text-xs break-all">{item.label}</MaybeLink>
+        <span className="font-mono text-xs text-ink-2 tabular-nums" title={item.estimate ? "Term amount before GST — no renewal quote yet" : "Amount of the renewal quote"}>
+          {rupee(item.amount)}{item.estimate ? " est." : ""}
+        </span>
+        {item.quoteHref && item.quoteId && (
+          <MaybeLink href={item.quoteHref} canOpen={canOpen} className="text-xs text-ink-3">Quote {item.quoteId}</MaybeLink>
+        )}
+      </div>
+      <p className={`mt-0.5 text-xs ${days > 0 ? "text-rose-600 font-medium" : "text-ink-3"}`}>{when}</p>
+      <div className="mt-1">
+        <RenewalActions sub={item.sub} daysUntil={-days} layout="table" />
+      </div>
+    </div>
+  );
 }
 
 function OwedLine({ item, canOpen }: { item: OwedItem; canOpen: CanOpen }) {

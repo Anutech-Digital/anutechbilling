@@ -45,14 +45,10 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "@/components/providers/confirm-provider";
-import { toastError } from "@/lib/errors/toast-error";
 import { Input } from "@/components/ui/input";
 import {
   bulkReminderTargets,
   bulkReminderConfirm,
-  sendNowStep,
-  sendNowConfirm,
-  sentToastText,
   matchesRenewalSearch,
   readJsonSafe,
   sendBulkReminders,
@@ -68,6 +64,8 @@ import { GraceOverCard } from "./grace-over-card";
 import { classifyRenewals, chasedRenewal, expiredGraceText, isFlexNextPart, isStopped } from "./classify";
 import { isNonRenewing, nonRenewingLabel } from "@/lib/subscriptions/non-renewing";
 import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
+import { RenewalActions } from "@/components/features/renewals/renewal-actions";
+import { isGraceOver } from "@/components/features/renewals/renewal-actions-rules";
 import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
 
 // ─── Vendor logo pill ─────────────────────────────────────────────────────────
@@ -136,90 +134,15 @@ function RenewalBucket({
 }: RenewalBucketProps) {
   const [open, setOpen] = React.useState(defaultOpen);
   const isOpen = embedded || open;
-  const [sending, setSending] = React.useState<string | null>(null);
-  const [generating, setGenerating] = React.useState<string | null>(null);
-  const qc = useQueryClient();
-  const router = useRouter();
   /* R-237: billing + support see Renewals but cannot open /quotes (middleware sends them
-     home) — no "Open quote" link for them, and Generate stays on this page. */
+     home) — no "Open quote" link for them. */
   const { data: me } = useCurrentUser();
   const canQuotes = canOpenQuotes(me?.role);
-  const confirm = useConfirm();
   /* R-2232: draft vs sent for the row's "Renewal sent Q-x" line (same cached query as the page). */
   const { data: openRenewals } = useOpenRenewalQuotes();
   const quoteStatus = React.useMemo(() => openRenewalQuoteStatus(openRenewals ?? []), [openRenewals]);
-
-  async function handleGenerateQuote(sub: Subscription) {
-    setGenerating(sub.id);
-    try {
-      const res = await fetch(`/api/subscriptions/${sub.id}/generate-renewal-quote`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      /* R-239: an HTML 500 used to surface as "Failed: Unexpected token <". */
-      const json = (await readJsonSafe(res)) as { error?: string; alreadyExisted?: boolean; quoteId?: string; split?: boolean; message?: string; href?: string | null };
-      if (!res.ok) {
-        toastError(new Error(json.error ?? "Could not generate renewal quote"), {
-          action: { label: "Retry", onClick: () => void handleGenerateQuote(sub) },
-        });
-        return;
-      }
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["quotes"] });
-      /* R-2095: billed in parts → Generate billed the next part (request or invoice), not a quote. */
-      if (json.split) {
-        qc.invalidateQueries({ queryKey: ["invoices"] });
-        toast.success(json.message ?? "Next part billed", { duration: 6000 });
-        if (json.href && (canQuotes || json.href.startsWith("/invoices"))) router.push(json.href as never);
-        return;
-      }
-      const msg = json.alreadyExisted
-        ? `Opening existing renewal quote for ${sub.customer_name}`
-        : `Renewal quote ${json.quoteId} created for ${sub.customer_name}`;
-      toast.success(msg, { duration: 3500 });
-      // Navigate so the operator can edit before sending (only roles that can open quotes)
-      if (canQuotes) router.push(`/quotes/${json.quoteId}` as never);
-    } catch (err) {
-      toastError(err, {
-        fallback: "Could not generate renewal quote",
-        action: { label: "Retry", onClick: () => void handleGenerateQuote(sub) },
-      });
-    } finally {
-      setGenerating(null);
-    }
-  }
-
-  /* R-239: an email to a customer is never one stray click — say who and which email. */
-  async function handleSendNow(sub: Subscription) {
-    const step = sendNowStep(sub, graceDays);
-    const ok = await confirm({ ...sendNowConfirm(sub, step), confirmLabel: "Send email", icon: "mail" });
-    if (!ok) return;
-    setSending(sub.id);
-    try {
-      const res = await fetch("/api/renewals/send-now", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ subscription_id: sub.id }),
-      });
-      const json = (await readJsonSafe(res)) as { error?: string; email_mode?: string; status?: string; step?: string };
-      if (!res.ok) {
-        toastError(new Error(json.error ?? "Could not send the renewal email"), {
-          action: { label: "Retry", onClick: () => void handleSendNow(sub) },
-        });
-        return;
-      }
-      const mode = json.email_mode === "stub" ? " (stub mode — no real email)" : "";
-      toast.success(`${sentToastText(json, sub.customer_name)}${mode}`);
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-    } catch (err) {
-      toastError(err, {
-        fallback: "Could not send the renewal email",
-        action: { label: "Retry", onClick: () => void handleSendNow(sub) },
-      });
-    } finally {
-      setSending(null);
-    }
-  }
+  /* R-2401: the buttons (Send renewal quote / Create quote (don't send) / Customer not renewing)
+     are the shared RenewalActions — the same component as Payment Follow-up's renewal rows. */
 
   const dotCls =
     kind === "rose"
@@ -318,10 +241,13 @@ function RenewalBucket({
                   )}
                 </div>
 
-                {/* R-1796: unpaid past the renewal date — the vendor renewal waits for the payment. */}
-                <div className="mb-2 empty:hidden">
-                  <VendorHoldBadge sub={sub} />
-                </div>
+                {/* R-1796: unpaid past the renewal date — the vendor renewal waits for the payment.
+                    R-2401: grace over → it sits next to Cancel in the actions below. */}
+                {!isGraceOver(sub, days, graceDays) && (
+                  <div className="mb-2 empty:hidden">
+                    <VendorHoldBadge sub={sub} />
+                  </div>
+                )}
 
                 {/* R-1124: an expired row says when the service stops (or that the owner decides). */}
                 {!isStopped(sub) && expiredGraceText(sub, days, graceDays) && (
@@ -345,37 +271,19 @@ function RenewalBucket({
                 <RowActionLine action={action} canQuotes={canQuotes} className="mb-2 text-xs" />
 
                 {/* Bottom row: actions */}
-                <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-hairline/60">
-                  {action.kind === "generate" && (
-                    <Button
-                      variant={kind === "rose" ? "primary" : "default"}
-                      size="sm"
-                      className="flex-1"
-                      loading={generating === sub.id}
-                      onClick={() => handleGenerateQuote(sub)}
-                    >
-                      <Icon name="plus" size={12} />
-                      Generate
-                    </Button>
-                  )}
-                  {action.kind !== "none" && (
-                    <Button
-                      variant={action.kind === "generate" ? "ghost" : "default"}
-                      size="sm"
-                      className="flex-1"
-                      loading={sending === sub.id}
-                      onClick={() => handleSendNow(sub)}
-                    >
-                      <Icon name="mail" size={12} />
-                      {action.kind === "generate" ? "Send now" : action.label}
-                    </Button>
-                  )}
-                  {sub.customer_id && (
-                    <AiDraftButton customerId={sub.customer_id} channel="whatsapp" purpose="renewal" label="✨ Nudge" variant="ghost" />
-                  )}
-                  {sub.customer_id && (
-                    <VoiceNoteButton customerId={sub.customer_id} purpose="renewal" customerName={sub.customer_name} label="🔊 Voice" variant="ghost" />
-                  )}
+                <div className="pt-2 border-t border-hairline/60">
+                  <RenewalActions
+                    sub={sub}
+                    daysUntil={days}
+                    layout="card"
+                    strong={kind === "rose"}
+                    extra={sub.customer_id ? (
+                      <>
+                        <AiDraftButton customerId={sub.customer_id} channel="whatsapp" purpose="renewal" label="✨ Nudge" variant="ghost" />
+                        <VoiceNoteButton customerId={sub.customer_id} purpose="renewal" customerName={sub.customer_name} label="🔊 Voice" variant="ghost" />
+                      </>
+                    ) : null}
+                  />
                 </div>
               </li>
             );
@@ -515,10 +423,13 @@ function RenewalBucket({
                               {sub.reminder_count} email{sub.reminder_count === 1 ? "" : "s"} sent
                             </p>
                           )}
-                          {/* R-1796: vendor renewal hold + the owner/manager "Renew anyway". */}
-                          <div className="mt-1 empty:hidden">
-                            <VendorHoldBadge sub={sub} />
-                          </div>
+                          {/* R-1796: vendor renewal hold + the owner/manager "Renew anyway".
+                              R-2401: grace over → it sits next to Cancel in the Action column. */}
+                          {!isGraceOver(sub, days, graceDays) && (
+                            <div className="mt-1 empty:hidden">
+                              <VendorHoldBadge sub={sub} />
+                            </div>
+                          )}
                           {!isStopped(sub) && expiredGraceText(sub, days, graceDays) && (
                             /* R-1621: nothing suspends by itself any more — at the end of grace
                                the owner gets a "Stop service" task (Grace over list above).
@@ -570,40 +481,18 @@ function RenewalBucket({
                             )}
                             {/* R-2232: "Renewal sent Q-x · due …" + Resend only; nothing on a Renewed row. */}
                             <RowActionLine action={action} canQuotes={canQuotes} className="text-2xs" />
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              {action.kind === "generate" && (
-                                <Button
-                                  variant={kind === "rose" ? "primary" : "default"}
-                                  size="sm"
-                                  loading={generating === sub.id}
-                                  onClick={() => handleGenerateQuote(sub)}
-                                  title="Create the renewal quote now (early, e.g. customer asked 60 days ahead) — same logic as the T-15 cron auto-create"
-                                >
-                                  <Icon name="plus" size={12} />
-                                  Generate quote
-                                </Button>
-                              )}
-                              {action.kind !== "none" && (
-                                <Button
-                                  variant={action.kind === "generate" ? "ghost" : "default"}
-                                  size="sm"
-                                  loading={sending === sub.id}
-                                  onClick={() => handleSendNow(sub)}
-                                  title={action.kind === "generate"
-                                    ? "Send the appropriate renewal email immediately (overrides daily cron)"
-                                    : "Email the renewal reminder again, with this renewal quote"}
-                                >
-                                  <Icon name="mail" size={12} />
-                                  {action.kind === "generate" ? "Send now" : action.label}
-                                </Button>
-                              )}
-                              {sub.customer_id && (
-                                <AiDraftButton customerId={sub.customer_id} channel="whatsapp" purpose="renewal" label="✨ Nudge" variant="ghost" />
-                              )}
-                              {sub.customer_id && (
-                                <VoiceNoteButton customerId={sub.customer_id} purpose="renewal" customerName={sub.customer_name} label="🔊 Voice" variant="ghost" />
-                              )}
-                            </div>
+                            <RenewalActions
+                              sub={sub}
+                              daysUntil={days}
+                              layout="table"
+                              strong={kind === "rose"}
+                              extra={sub.customer_id ? (
+                                <>
+                                  <AiDraftButton customerId={sub.customer_id} channel="whatsapp" purpose="renewal" label="✨ Nudge" variant="ghost" />
+                                  <VoiceNoteButton customerId={sub.customer_id} purpose="renewal" customerName={sub.customer_name} label="🔊 Voice" variant="ghost" />
+                                </>
+                              ) : null}
+                            />
                           </div>
                         </td>
                       </tr>
