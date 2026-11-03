@@ -386,6 +386,7 @@ MIGS=(
   "r2416onlinefeepolicy|20261103112829_r2416_online_fee_policy.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'payments' and column_name = 'fee_bearer') and to_regprocedure('public.online_fee_exception_guard()') is not null"
   "r2410writeoffsmallbalance|20261103123242_r2410_write_off_small_balance.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.write_off_small_invoice_balance(text,text)') and prosrc like '%R-2410%')"
   "r2421leftoverpartpaidwaivelock|20261103134813_r2421_leftover_part_paid_and_waive_lock.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.write_off_small_invoice_balance(text,text)') and prosrc like '%R-2421%') and exists(select 1 from pg_trigger where tgname = 'trg_books_lock' and tgrelid = to_regclass('public.invoices') and pg_get_triggerdef(oid) like '%online_fee_waive_reason%')"
+  "r2424placeholderbankref|20261103144041_r2424_placeholder_bank_ref.sql|resellersos_migration|to_regprocedure('public.bank_reference_is_real(text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.payment_ref_key(text,text)') and prosrc like '%bank_reference_is_real%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

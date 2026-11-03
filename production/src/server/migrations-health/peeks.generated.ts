@@ -358,4 +358,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2416onlinefeepolicy", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'payments' and column_name = 'fee_bearer') and to_regprocedure('public.online_fee_exception_guard()') is not null" },
   { key: "r2410writeoffsmallbalance", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.write_off_small_invoice_balance(text,text)') and prosrc like '%R-2410%')" },
   { key: "r2421leftoverpartpaidwaivelock", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.write_off_small_invoice_balance(text,text)') and prosrc like '%R-2421%') and exists(select 1 from pg_trigger where tgname = 'trg_books_lock' and tgrelid = to_regclass('public.invoices') and pg_get_triggerdef(oid) like '%online_fee_waive_reason%')" },
+  { key: "r2424placeholderbankref", peek: "to_regprocedure('public.bank_reference_is_real(text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.payment_ref_key(text,text)') and prosrc like '%bank_reference_is_real%')" },
 ];
