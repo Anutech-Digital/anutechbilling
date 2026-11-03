@@ -73,6 +73,9 @@ export type FilterContext = {
   sets?: Partial<Record<PageNeedKey, ReadonlySet<string>>>;
   /** Line ids per import key (lib/banking/import-history importKey). */
   importLines?: ReadonlyMap<string, ReadonlySet<string>>;
+  /** R-2400: each line's place in statement order (lib/banking/running-balance seq) — the
+      same-day tie-break of the sorts, so the running Balance reads down the list. */
+  order?: ReadonlyMap<string, number>;
 };
 
 export const DEFAULT_FILTERS: BankFilters = {
@@ -260,9 +263,15 @@ function lazyDupes(lines: readonly FilterLine[], f: BankFilters): () => Set<stri
   return () => (cache ??= f.need === "duplicates" ? possibleDuplicateIds(lines) : new Set());
 }
 
-function compare(f: BankFilters) {
+function compare(f: BankFilters, order?: ReadonlyMap<string, number>) {
+  const sameDay = (a: FilterLine, b: FilterLine) => {
+    const oa = order?.get(a.id);
+    const ob = order?.get(b.id);
+    if (oa !== undefined && ob !== undefined && oa !== ob) return oa - ob;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  };
   const byDate = (a: FilterLine, b: FilterLine) =>
-    a.txn_date < b.txn_date ? -1 : a.txn_date > b.txn_date ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    a.txn_date < b.txn_date ? -1 : a.txn_date > b.txn_date ? 1 : sameDay(a, b);
   switch (f.sort) {
     case "oldest": return byDate;
     case "high":   return (a: FilterLine, b: FilterLine) => amountOf(b) - amountOf(a) || -byDate(a, b);
@@ -274,7 +283,7 @@ function compare(f: BankFilters) {
 /** The lines that pass every filter, in the chosen order. The input list is not changed. */
 export function applyBankFilters<T extends FilterLine>(lines: readonly T[], f: BankFilters, ctx: FilterContext = {}): T[] {
   const dupes = lazyDupes(lines, f);
-  return lines.filter((t) => lineMatches(t, f, ctx, dupes, null)).sort(compare(f));
+  return lines.filter((t) => lineMatches(t, f, ctx, dupes, null)).sort(compare(f, ctx.order));
 }
 
 export type FacetCounts = {
