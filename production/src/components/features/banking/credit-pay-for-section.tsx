@@ -300,8 +300,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const payerUnanswered = payerMismatch && !payerAnswer;
   /* R-2440: Find in Zoho left prices in USD (no bank rate fitting Zoho's) — no Save until they are in ₹. */
   const fxUnconverted = saleShown ? zohoUnconvertedProblem(zohoFill, lines) : null;
-  /* R-2427 (3): a Find-in-Zoho bill in USD filled in ₹ at the bank's rate is saved IN USD (the narration's figures) —
-     the quote and invoice carry the currency and rate, as Reconcile from Zoho books it. Not on a relink. */
+  /* R-2427 (3): a Find-in-Zoho USD bill (₹ at the bank's rate) saves IN USD with the narration's figures; not on a relink. */
   const saleFx = mode === "sale" && !relink ? prefillSaleFx(zohoFill, transaction.description, credit) : null;
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
     && !approvalBlocked && !fxUnconverted
@@ -650,8 +649,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
             )}
             {onProjectPayment && <Button size="sm" variant="default" icon="briefcase" onClick={() => onProjectPayment(customerId)}>Project payment</Button>}
           </div>
-          {fxUnconverted && !onFooterSave && <p className="text-xs text-amber-ink break-words">{fxUnconverted}</p>}
-          {saleFx && <p className="text-xs text-muted-foreground break-words">Saved in {saleFx.currency} at the bank&apos;s rate (₹{saleFx.rate}) — the invoice shows {saleFx.currency}; 0% GST, export of services under LUT.</p>}
+          {fxUnconverted && !onFooterSave ? <p className="text-xs text-amber-ink break-words">{fxUnconverted}</p> : saleFx ? <p className="text-xs text-muted-foreground break-words">Saved in {saleFx.currency} at the bank&apos;s rate (₹{saleFx.rate}) — the invoice shows {saleFx.currency}; 0% GST, export of services under LUT.</p> : null}
           {payerUnanswered && mode !== null && !onFooterSave && <p className="text-xs text-amber-ink">Say who paid (above) before saving.</p>}
         </>
       )}
