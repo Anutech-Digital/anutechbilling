@@ -264,12 +264,15 @@ describe("an approval is for specific numbers", () => {
     const deep = requiredApproval({ subtotal: 55_000, listTotal: 100_000, totalCost: 60_000 });
     expect(isStale(rec({ status: "approved", tier: "manager", approvedDiscountBps: null, approvedMarginBps: null }), deep)).toBe(true);
     expect(isStale(rec({ status: "approved", tier: "manager", approvedDiscountBps: 1500, approvedMarginBps: null }), deep)).toBe(true);
-    expect(isStale(rec({ status: "approved", tier: "manager", approvedDiscountBps: null, approvedMarginBps: 3000 }), requiredApproval(healthy))).toBe(true);
+    const thin = requiredApproval({ subtotal: 100_000, listTotal: 100_000, totalCost: 92_000 });
+    expect(isStale(rec({ status: "approved", tier: "owner", approvedDiscountBps: 0, approvedMarginBps: null }), thin)).toBe(true);
   });
 
-  it("R-2447: signed as unknown and still unknown is not stale", () => {
+  it("R-2447: signed as unknown and still unknown — or now known and healthy — is not stale", () => {
     const unknown = requiredApproval({ subtotal: 50_000, listTotal: 0, totalCost: 0, costUnknown: true });
     expect(isStale(rec({ status: "approved", tier: "owner", approvedDiscountBps: null, approvedMarginBps: null }), unknown)).toBe(false);
+    /* cost filled in after an "unknown" sign-off, 40% margin, no discount → the approval stands */
+    expect(isStale(rec({ status: "approved", tier: "owner", approvedDiscountBps: null, approvedMarginBps: null }), requiredApproval(healthy))).toBe(false);
   });
 
   it("only applies to approved records", () => {

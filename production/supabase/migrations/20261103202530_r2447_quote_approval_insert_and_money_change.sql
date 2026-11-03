@@ -14,7 +14,7 @@
 --      below-cost quote go out under the old approval.
 --
 -- ─── 1. INSERT (new trigger trg_quote_insert_approval_guard, SECURITY INVOKER) ───
---   A login's direct insert (PostgREST runs it as role authenticated / anon) may not create a quote
+--   A login's direct insert (PostgREST: authenticated / anon; the Cloud SQL gateway: app_runtime / app_anon) may not create a quote
 --   that is already approved or rejected — the inserter is the maker, and a maker never clears their
 --   own quote except the sole owner WITH a reason, which the app does through Review & decide after
 --   saving; nothing in the app inserts an approved quote. A pending / not-required insert keeps no
@@ -32,15 +32,20 @@
 --     login and the R-2367/R-2441 role checks run (a rep is refused; the signer may re-sign numbers
 --     within their role) — F1 "refused unless the same update re-approves";
 --   • otherwise, below_cost turns true, or a line edit makes the approval STALE → back to pending
---     (tier owner when below cost or already owner, else the old tier), asked by the login, the old
+--     (tier = what the NEW numbers need: owner when below cost, already owner, margin unknown / under
+--     12% or discount over 20%, else manager), asked by the login (whoever moved the price is a maker), the old
 --     verdict cleared, one activity_log line 'quote.approval_reset'.
 --   "Stale" is isStale() of src/lib/quotes/approval.ts on the numbers lineEconomics() gives for the
 --   NEW lines (public.quote_lines_approval_bps, same maths): discount deeper, margin thinner, margin
---   now unknown, or a number known now that was unknown when signed — and only when the lines' numbers
+--   now unknown, or a number unknown when signed that now needs sign-off by itself (discount over 10%,
+--   margin under 12%) — and only when the lines' numbers
 --   actually moved. Why not "any line edit → pending" (decision recorded on the card): the existing
 --   flow (approval.ts header, isStale) keeps an approval when the rep IMPROVES the deal, and the
 --   bank-credit RPCs (R-1838/R-2044/R-2095/R-2098) write start/renewal dates into the lines of
 --   approved quotes under a login — neither may knock the approval off.
+--   • below_cost turning false by a login while the lines are still below cost (bank_sale_lines_below_cost,
+--     R-2397 = linesBelowCost) is refused — the R-2213 money guard reads that mark; the owner approves,
+--     or the price is raised first.
 --   A service path with no login is unchanged (as since R-2367).
 --
 -- Test: supabase/tests/r2447_quote_approval_insert_and_money_change.test.sql
@@ -49,9 +54,26 @@
 
 begin;
 
+-- A line's number as JS reads it for the maths: a JSON number, or a numeric string ("5" * 500 = 2500
+-- in JS); anything else is null (missing).
+create or replace function public.quote_line_num(p_val jsonb)
+returns numeric
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select case when jsonb_typeof(p_val) = 'number' then (p_val #>> '{}')::numeric
+              when jsonb_typeof(p_val) = 'string' and btrim(p_val #>> '{}') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                then btrim(p_val #>> '{}')::numeric end
+$$;
+
+revoke all on function public.quote_line_num(jsonb) from public, anon;
+grant execute on function public.quote_line_num(jsonb) to authenticated, service_role;   -- pure parsing
+
 -- lineEconomics() + discountBps() + marginBps() of src/lib/quotes/approval-economics.ts / approval.ts —
--- keep in step. Math.round(x) = floor(x + 0.5). A missing / non-numeric value reads as JS would treat
--- a missing one (rate/qty 0; list_rate → rate; cost unknown).
+-- keep in step (supabase/tests/r2447_… pins the numbers). Math.round(x) = floor(x + 0.5). A missing
+-- value reads as a missing one does in JS (rate/qty 0; list_rate → rate; cost unknown).
 create or replace function public.quote_lines_approval_bps(p_lines jsonb, out discount_bps integer, out margin_bps integer)
 language sql
 immutable
@@ -59,15 +81,14 @@ parallel safe
 set search_path = ''
 as $$
   with l as (
-    select q, r, coalesce(lr, r) as lr, c, coalesce(dp, 0) as dp, item_id
-      from (select case when jsonb_typeof(li->'qty') = 'number' then (li->>'qty')::numeric else 0 end          as q,
-                   case when jsonb_typeof(li->'rate') = 'number' then (li->>'rate')::numeric else 0 end        as r,
-                   case when jsonb_typeof(li->'list_rate') = 'number' then (li->>'list_rate')::numeric end     as lr,
-                   case when jsonb_typeof(li->'cost') = 'number' then (li->>'cost')::numeric end               as c,
-                   case when jsonb_typeof(li->'discount_pct') = 'number' then (li->>'discount_pct')::numeric end as dp,
-                   li->>'item_id' as item_id
-              from jsonb_array_elements(case when jsonb_typeof(p_lines) = 'array' then p_lines else '[]'::jsonb end) li
-             where jsonb_typeof(li) = 'object') s
+    select coalesce(public.quote_line_num(li->'qty'), 0)  as q,
+           coalesce(public.quote_line_num(li->'rate'), 0) as r,
+           coalesce(public.quote_line_num(li->'list_rate'), public.quote_line_num(li->'rate'), 0) as lr,
+           public.quote_line_num(li->'cost')              as c,
+           coalesce(public.quote_line_num(li->'discount_pct'), 0) as dp,
+           li->>'item_id'                                 as item_id
+      from jsonb_array_elements(case when jsonb_typeof(p_lines) = 'array' then p_lines else '[]'::jsonb end) li
+     where jsonb_typeof(li) = 'object'
   ), e as (
     select coalesce(sum(q * r - floor(q * r * dp / 100 + 0.5)), 0) as sub,
            coalesce(sum(q * lr), 0)                                as list,
@@ -107,6 +128,15 @@ declare
 begin
   if v_uid is null then return new; end if;
 
+  /* R-2447: the below-cost mark (R-2213 money guard) is not taken off by a login while the lines ARE
+     below cost (bank_sale_lines_below_cost = linesBelowCost) — the owner approves the quote, or the
+     price is raised first. */
+  if coalesce(old.below_cost, false) and not coalesce(new.below_cost, false)
+     and public.bank_sale_lines_below_cost(new.line_items) then
+    raise exception 'Quote % is below cost — that mark cannot be removed while the price is under cost. The owner approves it, or raise the price first.', new.id
+      using errcode = '42501';
+  end if;
+
   /* R-2447: an approved quote that stays approved under the same signer. */
   if old.approval_status::text = 'approved' and new.approval_status::text = 'approved'
      and new.approved_by is not distinct from old.approved_by then
@@ -124,15 +154,17 @@ begin
           v_stale := (old.approved_discount_bps is not null and v_new_d is not null and v_new_d > old.approved_discount_bps)
                   or (old.approved_margin_bps is not null and v_new_m is not null and v_new_m < old.approved_margin_bps)
                   or (old.approved_margin_bps is not null and v_new_m is null)
-                  or (old.approved_discount_bps is null and v_new_d is not null)
-                  or (old.approved_margin_bps is null and v_new_m is not null);
+                  or (old.approved_discount_bps is null and v_new_d is not null and v_new_d > 1000)   -- AUTO_APPROVE_DISCOUNT_BPS
+                  or (old.approved_margin_bps is null and v_new_m is not null and v_new_m < 1200);    -- OWNER_MARGIN_FLOOR_BPS
         end if;
       end if;
       if v_stale or (coalesce(new.below_cost, false) and not coalesce(old.below_cost, false)) then
         new.approval_status := 'pending';
+        /* the tier the NEW numbers need (requiredApproval): owner when below cost, already owner, margin
+           unknown / under 12% or discount over 20%; else manager. */
         new.approval_tier := case when coalesce(new.below_cost, false) or old.approval_tier::text = 'owner'
-                                       or new.approval_tier::text = 'owner' then 'owner'
-                                  else coalesce(new.approval_tier, old.approval_tier, 'manager') end;
+                                       or (v_stale and (v_new_m is null or v_new_m < 1200 or coalesce(v_new_d, 0) > 2000))
+                                  then 'owner' else 'manager' end;
         new.approval_requested_by := v_uid;
         new.approval_requested_at := now();
         new.approved_by := null;
@@ -175,13 +207,8 @@ begin
   end if;
 
   if new.approval_status::text <> 'approved' then return new; end if;
-  if old.approval_status::text = 'approved' and new.approved_by is not distinct from old.approved_by
-     and new.approved_discount_bps is not distinct from old.approved_discount_bps
-     and new.approved_margin_bps is not distinct from old.approved_margin_bps
-     and new.approval_tier is not distinct from old.approval_tier
-     and new.approved_at is not distinct from old.approved_at then
-    return new;
-  end if;
+  /* (R-2447: an approved quote re-saved under the same signer with the same signed numbers already
+     returned above — from here on every row is a signing.) */
 
   /* R-2367: the sign-off is in the signer's own name — a login cannot approve as someone else. */
   new.approved_by := v_uid;
@@ -263,10 +290,11 @@ security invoker
 set search_path = ''
 as $$
 begin
-  /* R-2447: only a login's DIRECT insert (PostgREST: role authenticated / anon). Inside a SECURITY
+  /* R-2447: only a login's DIRECT insert — PostgREST (authenticated / anon) or the Cloud SQL data
+     gateway (app_runtime / app_anon, src/server/db/gateway.ts; same list as R-1903). Inside a SECURITY
      DEFINER function (combine_quotes, R-1527, copies its sources' approval) current_user is the
      function's owner; a service / cron path runs as service_role — both unchanged. */
-  if current_user::text not in ('authenticated', 'anon') then return new; end if;
+  if current_user::text not in ('authenticated', 'anon', 'authenticator', 'app_runtime', 'app_anon') then return new; end if;
   if new.approval_status::text in ('approved', 'rejected') then
     raise exception 'A new quote cannot be saved already % — save it first, then ask for approval (Review & decide).', new.approval_status
       using errcode = '42501';

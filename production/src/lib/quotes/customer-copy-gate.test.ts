@@ -34,7 +34,7 @@ describe("customerCopyBlock (R-1669)", () => {
 
   it("approved for these numbers → allowed", () => {
     expect(customerCopyBlock(q({
-      approval_status: "approved", approval_tier: "manager", approved_by: "u2", approved_discount_bps: 1800, approved_margin_bps: 1870, // R-2447: the drawer signs both numbers
+      approval_status: "approved", approval_tier: "manager", approved_by: "u2", approved_discount_bps: 1800,
     }))).toBeNull();
   });
 

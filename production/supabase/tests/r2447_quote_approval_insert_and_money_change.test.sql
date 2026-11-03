@@ -4,12 +4,13 @@
 --   1. INSERT: a login's direct insert cannot create a quote that is already approved / rejected, and
 --      cannot carry signed numbers or a signer; combine_quotes (SECURITY DEFINER) still copies its
 --      sources' approval onto the combined quote.
---   2. below_cost turning true on an approved quote sends it back for (owner) approval.
+--   2. below_cost turning true on an approved quote sends it back for (owner) approval; a login cannot
+--      take the below-cost mark off.
 --   3. F1: on an approved quote the signed numbers (approved_discount_bps / approved_margin_bps),
 --      approval_tier and approved_at cannot be rewritten without a fresh signing — the role check
 --      runs again (a rep is refused; the approver re-signing is fine).
 --   4. F1: a line edit that makes the approval stale (discount deeper, margin thinner, margin now
---      unknown, or a number now known that was not at sign-off — the same rule as isStale in
+--      unknown, or a number unknown at sign-off that now needs sign-off by itself — the same rule as isStale in
 --      src/lib/quotes/approval.ts) sends the quote back to pending; an edit that improves the deal
 --      or does not move money (dates on a line — the bank-credit RPCs) keeps the approval.
 --   5. A service path (no login) is unchanged.
@@ -201,6 +202,22 @@ begin
   end if;
   raise notice 'PASS 2: below_cost on an approved quote sends it back for owner approval';
 end $$;
+-- 2b. a login cannot take the below-cost mark off while the lines are below cost (the R-2213 money
+--     guard reads it); the R-2397 fixture path (lines at cost) still may — r2397 test E
+update public.quotes set line_items = pg_temp.r2447_lines(300, 350) where id = 'Q-R2447-B1';
+do $$
+declare v_msg text;
+begin
+  begin
+    update public.quotes set below_cost = false where id = 'Q-R2447-B1';
+    v_msg := 'ACCEPTED';
+  exception when others then v_msg := sqlerrm;
+  end;
+  if v_msg not like 'Quote Q-R2447-B1 is below cost — that mark cannot be removed while the price is under cost%' then
+    raise exception 'FAIL 2b: a login cleared below_cost: %', v_msg;
+  end if;
+  raise notice 'PASS 2b: the below-cost mark cannot be cleared by a login';
+end $$;
 
 -- ── 3. F1: signed numbers / tier / approved_at cannot be rewritten without re-signing ───────
 select pg_temp.r2447_approved_quote('Q-R2447-F1', 'aaaaaaaa-0000-0000-0000-000000244703', 'manager', 1500, 3000);
@@ -257,26 +274,35 @@ select pg_temp.r2447_approved_quote('Q-R2447-L3', 'aaaaaaaa-0000-0000-0000-00000
 select pg_temp.r2447_approved_quote('Q-R2447-L4', 'aaaaaaaa-0000-0000-0000-000000244703');   -- price raised
 select pg_temp.r2447_approved_quote('Q-R2447-L5', 'aaaaaaaa-0000-0000-0000-000000244703');   -- only a date on the line
 select pg_temp.r2447_approved_quote('Q-R2447-L6', 'aaaaaaaa-0000-0000-0000-000000244703', 'owner', null, null);  -- signed with unknown numbers
+select pg_temp.r2447_approved_quote('Q-R2447-L7', 'aaaaaaaa-0000-0000-0000-000000244703', 'owner', null, null);  -- signed unknown, now healthy
+select pg_temp.r2447_approved_quote('Q-R2447-L8', 'aaaaaaaa-0000-0000-0000-000000244703');   -- numbers as strings
 update public.quotes set line_items = pg_temp.r2447_lines(275, 350)  where id = 'Q-R2447-L1';   -- 45% off, below cost
 update public.quotes set line_items = pg_temp.r2447_lines(500, 520)  where id = 'Q-R2447-L2';   -- margin -4%
 update public.quotes set line_items = pg_temp.r2447_lines(500, 0)    where id = 'Q-R2447-L3';   -- cost unknown
 update public.quotes set line_items = pg_temp.r2447_lines(550, 350, 550) where id = 'Q-R2447-L4';   -- better deal
 update public.quotes set line_items = pg_temp.r2447_lines(500, 350, 500, '2026-11-05') where id = 'Q-R2447-L5';
-update public.quotes set line_items = pg_temp.r2447_lines(450, 350)  where id = 'Q-R2447-L6';   -- numbers now known
+update public.quotes set line_items = pg_temp.r2447_lines(300, 280)  where id = 'Q-R2447-L6';   -- 40% off, 6.7% margin
+update public.quotes set line_items = pg_temp.r2447_lines(520, 350, 520) where id = 'Q-R2447-L7';   -- 0% off, 32.7% margin
+update public.quotes set line_items = '[{"id":"l1","name":"GW","qty":"3","rate":"275","list_rate":500,"cost":350}]'::jsonb
+ where id = 'Q-R2447-L8';                                                                          -- 45% off as strings
 do $$
 declare v_id text;
 begin
-  foreach v_id in array array['Q-R2447-L1', 'Q-R2447-L2', 'Q-R2447-L3', 'Q-R2447-L6'] loop
+  foreach v_id in array array['Q-R2447-L1', 'Q-R2447-L2', 'Q-R2447-L3', 'Q-R2447-L6', 'Q-R2447-L8'] loop
     if pg_temp.r2447_status(v_id) <> 'pending'
        or (select approved_by is not null or approved_discount_bps is not null from public.quotes where id = v_id) then
       raise exception 'FAIL 4: % kept its approval after a line edit that makes it stale', v_id;
     end if;
   end loop;
-  foreach v_id in array array['Q-R2447-L4', 'Q-R2447-L5'] loop
+  foreach v_id in array array['Q-R2447-L4', 'Q-R2447-L5', 'Q-R2447-L7'] loop
     if pg_temp.r2447_status(v_id) <> 'approved' then
       raise exception 'FAIL 4: % lost its approval on an edit that does not favour the customer', v_id;
     end if;
   end loop;
+  -- the tier follows the NEW numbers: L1 was manager-tier, now 45% off → owner
+  if (select approval_tier::text from public.quotes where id = 'Q-R2447-L1') <> 'owner' then
+    raise exception 'FAIL 4: L1 went back to the manager queue with owner-tier numbers';
+  end if;
   raise notice 'PASS 4: a stale line edit sends the quote back; improving it or editing a date keeps the approval';
 end $$;
 

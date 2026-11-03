@@ -108,7 +108,7 @@ describe("GET /api/v1/documents/quote/[id]/pdf — R-1669 approval gate", () => 
 
   it("approved → renders", async () => {
     tenantRow = { ...baseTenant, upi_vpa: null };
-    quoteOver = { status: "draft", line_items: discounted, approval_status: "approved", approval_tier: "manager", approved_by: "u2", approved_discount_bps: 1800, approved_margin_bps: 1870 }; // R-2447: both numbers signed
+    quoteOver = { status: "draft", line_items: discounted, approval_status: "approved", approval_tier: "manager", approved_by: "u2", approved_discount_bps: 1800 };
     expect((await call("")).status).toBe(200);
     expect(rendered).toHaveLength(1);
   });
