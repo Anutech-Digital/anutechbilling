@@ -1,6 +1,6 @@
 -- R-2433 (G-NETWORK N1) — business connections: request → accept by verified GSTIN, per-side
 -- scopes, revoke, suggestions, and partner metrics only with the reseller's consent.
--- Migration: 20261103191141_r2433_tenant_connections.sql. FAILS without it (the functions and
+-- Migration: 20261103193313_r2433_tenant_connections.sql. FAILS without it (the functions and
 -- the table do not exist, and get_partner_metrics shows a child nobody connected).
 --
 --   1. no accepted connection → nothing readable (has_scope false, lists empty)
@@ -145,8 +145,13 @@ begin
   perform pg_temp.must_fail('3 unknown scope', $q$select public.network_request_connection('29ABCDE1234F1Z5', array['everything'])$q$, '22023', 'Unknown sharing choice');
 
   v_id := public.network_request_connection(' 29abcde1234f1z5', array['invoices']);
-  v_id2 := public.network_request_connection('29ABCDE1234F1Z5', array['invoices']);
+  v_id2 := public.network_request_connection('29ABCDE1234F1Z5', array['invoices', 'statements'], true);
   if v_id2 <> v_id then raise exception 'FAIL 3: asking twice made a second request'; end if;
+  if (select my_scopes from public.network_my_connections() where id = v_id) <> array['invoices', 'statements']
+     or not (select related_party from public.network_my_connections() where id = v_id) then
+    raise exception 'FAIL 3: asking again dropped the new choices';
+  end if;
+  perform public.network_request_connection('29ABCDE1234F1Z5', array['invoices'], false);
   select direction into v_s from public.network_my_connections() where id = v_id;
   if v_s <> 'sent' then raise exception 'FAIL 3: A sees direction %', v_s; end if;
   if exists (select 1 from public.network_suggestions() s where s.tenant_id = B::uuid) then
@@ -183,7 +188,8 @@ declare
 begin
   -- ── 5. B accepts, sharing payments ──
   perform pg_temp.as_user('24330000-0000-4000-8000-0000000000b1');
-  select id into v_id from public.network_my_connections() where direction = 'received' and status = 'requested';
+  select id into v_id from public.network_my_connections() where direction = 'received' and status = 'requested'
+     and other_tenant_id = '24330000-0000-4000-8000-00000000000a';
   if v_id is null then raise exception 'FAIL 5: B does not see the request'; end if;
   v_s := public.network_respond_connection(v_id, true, array['payments']);
   if v_s <> 'accepted' then raise exception 'FAIL 5: respond returned %', v_s; end if;
@@ -202,6 +208,13 @@ do $$ begin
     raise exception 'FAIL 5: A never shared payments — scope not respected'; end if;
   if pg_temp.shares('24330000-0000-4000-8000-00000000000a', '24330000-0000-4000-8000-00000000000c', 'invoices') then
     raise exception 'FAIL 5: C (not connected) can read A'; end if;
+  -- B loses its verified GSTIN → nothing flows to or from it until it is verified again
+  update public.tenants set gstin_verified_at = null where id = '24330000-0000-4000-8000-00000000000b';
+  if pg_temp.shares('24330000-0000-4000-8000-00000000000a', '24330000-0000-4000-8000-00000000000b', 'invoices') then
+    raise exception 'FAIL 5: B''s GSTIN is no longer verified but A still shares with it'; end if;
+  update public.tenants set gstin_verified_at = now() where id = '24330000-0000-4000-8000-00000000000b';
+  if not pg_temp.shares('24330000-0000-4000-8000-00000000000a', '24330000-0000-4000-8000-00000000000b', 'invoices') then
+    raise exception 'FAIL 5: re-verified B does not get A''s invoices again'; end if;
 end $$;
 set local role authenticated;
 
@@ -293,6 +306,22 @@ begin
   perform pg_temp.as_user('24330000-0000-4000-8000-0000000000d1');
   select count(*) into v_n from public.get_partner_metrics();
   if v_n <> 0 then raise exception 'FAIL 8: child switched partner metrics off but the parent still sees it'; end if;
+
+  -- no parent link needed: C asks B, B shares partner metrics → C sees B
+  perform pg_temp.as_user('24330000-0000-4000-8000-0000000000c1');
+  perform public.network_request_connection('29ABCDE1234F1Z5');
+  perform pg_temp.as_user('24330000-0000-4000-8000-0000000000b1');
+  select id into v_id from public.network_my_connections() where direction = 'received' and status = 'requested'
+     and other_tenant_id = '24330000-0000-4000-8000-00000000000c';
+  perform public.network_respond_connection(v_id, true, array['partner_metrics']);
+  perform pg_temp.as_user('24330000-0000-4000-8000-0000000000c1');
+  if not exists (select 1 from public.get_partner_metrics() where tenant_id = '24330000-0000-4000-8000-00000000000b') then
+    raise exception 'FAIL 8: B shares partner metrics with C on a connection but C does not see it';
+  end if;
+  perform pg_temp.as_user('24330000-0000-4000-8000-0000000000a1');
+  if exists (select 1 from public.get_partner_metrics() where tenant_id = '24330000-0000-4000-8000-00000000000b') then
+    raise exception 'FAIL 8: A sees B''s partner metrics without B sharing them with A';
+  end if;
 end $$;
 
 reset role;

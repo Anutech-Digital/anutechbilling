@@ -1,6 +1,6 @@
 -- deploy-peek: to_regclass('public.tenant_connections') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.get_partner_metrics()') and prosrc like '%R-2433%')
 -- deploy-key: r2433tenantconnections
--- 20261103191141_r2433_tenant_connections.sql
+-- 20261103193313_r2433_tenant_connections.sql
 --
 -- R-2433 (goal G-NETWORK, slice N1, 3 Nov 2026): two businesses on ResellerOS connect by a
 -- request → accept between their owners, identified by VERIFIED GSTIN on both sides.
@@ -32,8 +32,9 @@
 --                                                               VERIFIED GSTIN
 --   network_has_scope(sharer, viewer, scope)                    internal (no grant) — the one
 --                                                               cross-company check
---   get_partner_metrics()       now lists a child only when the child shares partner_metrics
---                               on an accepted connection (and never a personal workspace).
+--   get_partner_metrics()       now lists a business only while IT shares partner_metrics with the
+--                               caller on an accepted connection (no parent link needed or enough;
+--                               never a personal workspace).
 --   Backfill: every existing parent link (neither side personal) becomes an accepted
 --   connection, origin 'parent_link': the child shares partner_metrics (owner decision —
 --   existing links keep it until the reseller switches it off in Settings → Network), the
@@ -91,6 +92,14 @@ create index if not exists tenant_connections_b_idx on public.tenant_connections
 alter table public.tenant_connections enable row level security;
 revoke all on public.tenant_connections from public, anon, authenticated;
 grant all on public.tenant_connections to service_role;
+/* R-450: Cloud SQL has no BYPASSRLS — the server (service_role) client needs its own policy. */
+drop policy if exists tenant_connections_service_role on public.tenant_connections;
+create policy tenant_connections_service_role on public.tenant_connections
+  for all to service_role using (true) with check (true);
+
+/* Request + suggestion lookups match a verified GSTIN across all companies. */
+create index if not exists tenants_verified_gstin_norm_idx
+  on public.tenants (upper(btrim(gstin))) where gstin_verified_at is not null;
 
 -- ── helpers ───────────────────────────────────────────────────────────────────────────
 create or replace function public.network_scope_list()
@@ -156,12 +165,20 @@ stable
 security definer
 set search_path to 'public'
 as $function$
-  /* R-2433 */
+  /* R-2433. A requested connection also needs both sides to STILL hold the verified GSTIN it
+     was made with — a company that changes or loses its GSTIN stops receiving at once.
+     (Backfilled parent links, origin parent_link, were made by the operator before GSTINs
+     were required; they keep working until either side revokes.) */
   select exists (
     select 1 from public.tenant_connections c
      where c.status = 'accepted'
        and ((c.a_tenant_id = p_sharer and c.b_tenant_id = p_viewer and p_scope = any (c.a_scopes))
          or (c.b_tenant_id = p_sharer and c.a_tenant_id = p_viewer and p_scope = any (c.b_scopes)))
+       and (c.origin = 'parent_link' or (
+             exists (select 1 from public.tenants t where t.id = c.a_tenant_id
+                        and t.gstin_verified_at is not null and upper(btrim(t.gstin)) = c.a_gstin)
+         and exists (select 1 from public.tenants t where t.id = c.b_tenant_id
+                        and t.gstin_verified_at is not null and upper(btrim(t.gstin)) = c.b_gstin)))
   );
 $function$;
 
@@ -215,6 +232,9 @@ begin
   end if;
   select upper(btrim(gstin)) into v_tgstin from public.tenants where id = v_target;
 
+  /* One request at a time per pair (two tabs, or A and B asking each other at once). */
+  perform pg_advisory_xact_lock(hashtextextended('r2433:' || least(v_t, v_target)::text || greatest(v_t, v_target)::text, 0));
+
   select * into v_open from public.tenant_connections c
    where least(c.a_tenant_id, c.b_tenant_id) = least(v_t, v_target)
      and greatest(c.a_tenant_id, c.b_tenant_id) = greatest(v_t, v_target)
@@ -225,18 +245,27 @@ begin
       raise exception 'You are already connected with this business.' using errcode = '23505';
     end if;
     if v_open.a_tenant_id = v_t then
-      return v_open.id;   -- asked again: same open request
+      /* asked again: same open request, with what the owner chose this time */
+      update public.tenant_connections
+         set a_scopes = v_scopes, related_party = coalesce(p_related_party, false), updated_at = now()
+       where id = v_open.id;
+      return v_open.id;
     end if;
     raise exception 'This business has already asked to connect with you — accept it under Requests received.'
       using errcode = '23505';
   end if;
 
-  insert into public.tenant_connections
-    (a_tenant_id, b_tenant_id, a_gstin, b_gstin, status, a_scopes, related_party, origin, requested_by)
-  values
-    (v_t, v_target, upper(btrim(v_me.gstin)), v_tgstin, 'requested', v_scopes, coalesce(p_related_party, false),
-     'request', auth.uid())
-  returning id into v_id;
+  begin
+    insert into public.tenant_connections
+      (a_tenant_id, b_tenant_id, a_gstin, b_gstin, status, a_scopes, related_party, origin, requested_by)
+    values
+      (v_t, v_target, upper(btrim(v_me.gstin)), v_tgstin, 'requested', v_scopes, coalesce(p_related_party, false),
+       'request', auth.uid())
+    returning id into v_id;
+  exception when unique_violation then
+    raise exception 'A request between your two businesses is already open — refresh Settings → Network.'
+      using errcode = '23505';
+  end;
   return v_id;
 end $function$;
 
@@ -429,8 +458,9 @@ CREATE OR REPLACE FUNCTION public.get_partner_metrics()
  SET search_path TO 'public'
 AS $function$
   /* R-1615: current_tenant_id() — no rows for a deactivated user / half-signed-in MFA session.
-     R-2433: a child shows only when IT shares partner_metrics with the caller on an accepted
-     connection (Settings → Network), and never a personal workspace. */
+     R-2433: a partner shows only when IT shares partner_metrics with the caller on an accepted
+     connection (Settings → Network) — the old operator-set parent link is no longer needed
+     nor enough — and never a personal workspace. */
   with caller as (
     select public.current_tenant_id() as tenant_id
   ),
@@ -440,7 +470,7 @@ AS $function$
   children as (
     select t.id, t.name, t.gstin
     from public.tenants t
-    where t.parent_tenant_id = (select tenant_id from caller)
+    where t.id <> (select tenant_id from caller)
       and t.workspace_kind is distinct from 'personal'
       and public.network_has_scope(t.id, (select tenant_id from caller), 'partner_metrics')
   )

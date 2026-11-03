@@ -2,7 +2,7 @@
  * R-2433 (G-NETWORK N1) — what one business shares with a connected business.
  *
  * The list must match public.network_scope_list() in
- * supabase/migrations/20261103191141_r2433_tenant_connections.sql (a test reads it).
+ * supabase/migrations/20261103193313_r2433_tenant_connections.sql (a test reads it).
  * Each side of a connection chooses its own scopes; revoke stops all of them.
  */
 

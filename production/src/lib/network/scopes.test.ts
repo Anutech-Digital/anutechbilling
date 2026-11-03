@@ -7,7 +7,7 @@ import {
 import { toConnection } from "./client";
 
 const MIGRATION = fs.readFileSync(
-  path.join(process.cwd(), "supabase", "migrations", "20261103191141_r2433_tenant_connections.sql"), "utf8");
+  path.join(process.cwd(), "supabase", "migrations", "20261103193313_r2433_tenant_connections.sql"), "utf8");
 
 describe("network scopes (R-2433)", () => {
   it("match the database's list exactly", () => {

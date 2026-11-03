@@ -113,7 +113,7 @@ export function NetworkTab() {
       title: c.status === "requested" ? `Withdraw the request to ${c.otherName}?` : `Disconnect from ${c.otherName}?`,
       body: c.status === "requested"
         ? "They will no longer see your request."
-        : "Nothing new is shared either way from now on. Documents already delivered stay as they are.",
+        : "Everything shared through this connection stops at once, both ways. Documents already delivered stay as they are.",
       confirmLabel: c.status === "requested" ? "Withdraw" : "Disconnect",
       danger: true,
     }))) return;
