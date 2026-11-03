@@ -102,8 +102,9 @@ export interface ZohoMatchCustomer {
  * R-2363 — where a Zoho customer is, from a Zoho contact (or invoice) record. Staging, 2 Nov: Ranz
  * International LLC (Zoho: gst_treatment "overseas", billing country U.A.E) was created from Find in
  * Zoho as India / unregistered. Overseas → the billing country ("" when Zoho has none — never India)
- * and its own state; otherwise India, the state from place of contact / supply, else the GSTIN, else
- * the billing state (same order as the bulk "Reconcile from Zoho" — zohoContactInfo). Nothing known
+ * and its own state; otherwise India, the state from place of contact, else the GSTIN, else an
+ * invoice's place of supply, else the billing state (the bulk "Reconcile from Zoho" — zohoContactInfo —
+ * reads the same contact fields in the same order). Nothing known
  * → no state, never a guess.
  */
 export function zohoCustomerPlace(
@@ -114,8 +115,9 @@ export function zohoCustomerPlace(
   if ((code ?? "").toLowerCase() === "overseas") {
     return { country: normalizeCountry(str(billing.country) ?? str(raw.country) ?? ""), gstTreatment: "overseas", state: str(billing.state) };
   }
-  const stateCode = parsePlaceOfSupply(str(raw.place_of_contact) ?? str(raw.place_of_supply))
-    ?? stateCodeFromGstin(gstin) ?? parsePlaceOfSupply(str(billing.state));
+  /* An invoice's place_of_supply is where ONE sale went (a branch), so it comes after the GSTIN. */
+  const stateCode = parsePlaceOfSupply(str(raw.place_of_contact)) ?? stateCodeFromGstin(gstin)
+    ?? parsePlaceOfSupply(str(raw.place_of_supply)) ?? parsePlaceOfSupply(str(billing.state));
   return { country: "India", gstTreatment: mapGstTreatment(code), state: stateCode ? GST_STATE_BY_CODE[stateCode] ?? null : null };
 }
 
@@ -330,8 +332,9 @@ export async function readZohoPaymentMatch(
     payment,
     customer: {
       zohoId: payment.customerZohoId, name: payment.customerName,
-      /* An overseas customer has no Indian GSTIN — whatever Zoho holds is not carried. */
-      gstin: place.gstTreatment === "overseas" ? null : upperGstin,
+      /* Kept even for an overseas customer: the app-customer match (mapZohoCustomer) uses it;
+         the Add-customer seed drops it for overseas (newCustomerSeedFromZoho). */
+      gstin: upperGstin,
       ...place,
     },
     invoices,

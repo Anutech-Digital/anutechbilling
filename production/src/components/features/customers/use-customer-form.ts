@@ -22,11 +22,11 @@ import { toast } from "sonner";
 import { NEEDS_INPUT_CLASS } from "@/lib/ai/test-trail";
 
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/queries/customers";
-import { validateGstin, gstStateFromGstin } from "@/lib/utils";
+import { validateGstin, gstStateFromGstin, GST_STATE_BY_CODE } from "@/lib/utils";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { getStatesForCountry } from "@/lib/gst/states-by-country";
 import { normalizeCountry } from "@/lib/gst/countries";
-import { stateRequiredMessage, STATE_NOT_KNOWN } from "@/lib/gst/gstin-state";
+import { stateRequiredMessage, stateCodeFromGstin, STATE_NOT_KNOWN } from "@/lib/gst/gstin-state";
 import {
   CUSTOMER_GST_TREATMENTS, suggestGstTreatment, nextGstTreatment, gstTreatmentProblem,
   gstTreatmentOption, panFromGstin, isValidPan, type CustomerGstTreatment,
@@ -224,7 +224,12 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
         group_id:      customer.group_id ?? "",
         domain:        customer.domain ?? "",
         gstin:         customer.gstin ?? "",
-        state:         normalizedState,
+        /* R-2363: an Indian customer saved with no state at all (no code, no valid GSTIN) opens as
+           "Not known yet" — what the record says — so editing its email never dead-ends on the
+           state; the invoice still waits for a real state. */
+        state:         !isExportSupply(normalizeCountry(customer.country) || "India")
+          && !normalizedState.trim() && !(customer.state_code ?? "").trim() && !stateCodeFromGstin(customer.gstin)
+          ? STATE_NOT_KNOWN : normalizedState,
         state_code:    customer.state_code ?? "",
         /* R-2180: an old short form ("USA") opens as its list name ("United States") — the
            picker shows it and the treatment rules read the same value. */
@@ -317,6 +322,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     // Export (non-India) customers have no GSTIN / Indian state code — never
     // persist a stale one if the user typed then switched country.
     const foreign = isExportSupply(data.country);
+    /* R-2363: "Not known yet" is ignored when a valid GSTIN proves the state — then that state is saved. */
+    const gstinCode = data.state === STATE_NOT_KNOWN && !foreign ? stateCodeFromGstin(data.gstin) : null;
     const stateNotKnown = data.state === STATE_NOT_KNOWN;
     // Combined display name from the split fields (falls back to the legacy
     // single "contact_name" input for anyone still using it).
@@ -388,8 +395,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       domain:        data.domain?.trim()        || null,
       gstin:         foreign ? null : (data.gstin?.trim()      || null),
       /* R-2363: "Not known yet" is saved as NO state (never a guess) — the invoice still waits. */
-      state:         stateNotKnown ? null : (data.state?.trim() || null),
-      state_code:    foreign || stateNotKnown ? null : (data.state_code?.trim() || null),
+      state:         stateNotKnown ? (gstinCode ? GST_STATE_BY_CODE[gstinCode] ?? null : null) : (data.state?.trim() || null),
+      state_code:    foreign ? null : stateNotKnown ? gstinCode : (data.state_code?.trim() || null),
       /* R-1736: always sent, so an edit never leaves an old treatment behind. */
       gst_treatment: data.gst_treatment
         ?? suggestGstTreatment({ country: data.country, gstin: foreign ? "" : data.gstin, customerType: type }),

@@ -12,9 +12,10 @@ import { describe, it, expect, vi, afterEach, beforeAll, beforeEach } from "vite
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 
 const created = vi.fn();
+const updated = vi.fn();
 vi.mock("@/lib/queries/customers", () => ({
   useCreateCustomer: () => ({ mutateAsync: async (p: unknown) => { created(p); return { id: "cust-new" }; }, isPending: false }),
-  useUpdateCustomer: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateCustomer: () => ({ mutateAsync: async (p: unknown) => { updated(p); }, isPending: false }),
 }));
 vi.mock("@/components/features/gstin/gstin-verify-card", () => ({ default: () => null }));
 vi.mock("./scan-card-panel", () => ({ ScanCardPanel: () => null }));
@@ -22,12 +23,13 @@ vi.mock("./scan-card-panel", () => ({ ScanCardPanel: () => null }));
 import { AddCustomerForm } from "./add-customer-form";
 import { STATE_NOT_KNOWN, missingInvoiceState, stateRequiredMessage } from "@/lib/gst/gstin-state";
 import { supplyStateMissing } from "@/lib/quotes/quote-assist";
+import type { Customer } from "@/lib/supabase/database.types";
 
 beforeAll(() => {
   globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
   Element.prototype.scrollIntoView ??= function () {};
 });
-beforeEach(() => created.mockReset());
+beforeEach(() => { created.mockReset(); updated.mockReset(); });
 afterEach(cleanup);
 
 function fillPathak() {
@@ -74,6 +76,29 @@ describe("R-2363 — State not known yet (advance-only customer)", () => {
     submit();
     await waitFor(() => expect(created).toHaveBeenCalledTimes(1));
     expect(created.mock.calls[0][0]).toMatchObject({ state: "Maharashtra", state_code: "27" });
+  });
+});
+
+describe("R-2363 — review fixes", () => {
+  it("'Not known yet' picked AFTER a valid GSTIN → the GSTIN's state is saved, not a blank", async () => {
+    render(<AddCustomerForm open onOpenChange={() => {}} />);
+    fillPathak();
+    fireEvent.change(document.getElementById("gstin")!, { target: { value: "27AAPFU0939F1ZV" } });
+    await waitFor(() => expect((document.getElementById("state") as HTMLSelectElement).value).toBe("Maharashtra"));
+    fireEvent.change(document.getElementById("state")!, { target: { value: STATE_NOT_KNOWN } });
+    submit();
+    await waitFor(() => expect(created).toHaveBeenCalledTimes(1));
+    expect(created.mock.calls[0][0]).toMatchObject({ state: "Maharashtra", state_code: "27" });
+  });
+
+  it("editing a customer saved with no state opens as 'Not known yet' — an email edit saves", async () => {
+    const pathak = { id: "c-pathak", name: "Pathak Fabrication", country: "India", state: null, state_code: null, gstin: null, customer_type: "business", gst_treatment: "unregistered_business", contact_phone: "9876543210" } as unknown as Customer;
+    render(<AddCustomerForm open onOpenChange={() => {}} customer={pathak} />);
+    await waitFor(() => expect((document.getElementById("state") as HTMLSelectElement).value).toBe(STATE_NOT_KNOWN));
+    fireEvent.change(document.getElementById("contact_email")!, { target: { value: "accounts@pathak.example" } });
+    submit();
+    await waitFor(() => expect(updated).toHaveBeenCalledTimes(1));
+    expect(updated.mock.calls[0][0]).toMatchObject({ patch: { state: null, state_code: null, contact_email: "accounts@pathak.example" } });
   });
 });
 
