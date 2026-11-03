@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   buildReminderContext, buildReminderTemplate, emailTarget, NO_EMAIL, NO_PHONE, reminderAllowedAmounts,
-  reminderNote, waMeUrl, whatsappTarget, type ReminderRaw,
+  reminderNote, waMeUrl, whatsappTarget, payLinkNotice, reminderLineChoices, type ReminderRaw,
 } from "./reminder-draft";
 import { draftReminder, NOTE_AI_BLOCKED, NOTE_AI_DOWN, NOTE_NO_KEY } from "./reminder-draft.server";
 
@@ -141,5 +141,62 @@ describe("draftReminder", () => {
     expect(args.user).toContain("Total pending: ₹72,500");
     expect(args.user).toContain("date passed, NOT paid");
     expect(args.system).toMatch(/never invent/);
+  });
+});
+
+describe("R-2412 — This invoice: one bill, its own pay link", () => {
+  it("only = one invoice → that bill alone, its amount, a UPI link for exactly that amount", () => {
+    const ctx = buildReminderContext(raw(), TODAY, { kind: "invoice", id: "INV-101" });
+    expect(ctx.lines.map((l) => l.id)).toEqual(["INV-101"]);
+    expect(ctx.amountDue).toBe(68000);
+    expect(ctx.payLink).toContain("am=68000");
+    expect(ctx.payLink).toContain("tn=Invoice+INV-101");
+    expect(ctx.payLinkMissing).toBeNull();
+    const t = buildReminderTemplate(ctx);
+    expect(t.message.split("\n")[0]).toContain("₹68,000 is pending");
+    expect(t.message).not.toContain("₹4,500");
+    expect(t.message).toContain("Pay by UPI (open on your phone): upi://pay?");
+  });
+
+  it("only = a subscription line → that line and its amount", () => {
+    const ctx = buildReminderContext(raw(), TODAY, { kind: "subscription", id: "S-1" });
+    expect(ctx.amountDue).toBe(4500);
+    expect(ctx.payLink).toContain("am=4500");
+  });
+
+  it("a bill that is no longer open → nothing owed (never another bill's money)", () => {
+    const ctx = buildReminderContext(raw(), TODAY, { kind: "invoice", id: "INV-102" });
+    expect(ctx.lines).toEqual([]);
+    expect(ctx.amountDue).toBe(0);
+    expect(ctx.payLink).toBeNull();
+  });
+
+  it("the picker lists every open bill, most overdue first", () => {
+    expect(reminderLineChoices(buildReminderContext(raw(), TODAY))).toEqual([
+      { kind: "invoice", id: "INV-101", label: "INV-101", amountDue: 68000, daysOverdue: 12 },
+      { kind: "subscription", id: "S-1", label: "Google Workspace · sharma.in", amountDue: 4500, daysOverdue: 2 },
+    ]);
+  });
+
+  it("no UPI ID → no link, and the notice says to add it in Settings (§24)", () => {
+    const ctx = buildReminderContext(raw({ upiVpa: null }), TODAY);
+    expect(ctx.payLinkMissing).toBe("no-upi");
+    const n = payLinkNotice(ctx);
+    expect(n?.reason).toBe("no-upi");
+    expect(n?.text).toMatch(/add your UPI ID in Settings/);
+    expect(n?.action?.label).toBe("Open Settings");
+  });
+
+  it("a bill in another currency → no UPI link (UPI is rupees only), with why", () => {
+    const usd = raw({ invoices: [{ id: "INV-201", amount: 500, net_payable: 500, paid_amount: 0, status: "overdue", invoice_date: "2026-09-20", due_date: "2026-10-05", quote_id: null, currency: "USD" }], subscriptions: [] });
+    const ctx = buildReminderContext(usd, TODAY);
+    expect(ctx.payLink).toBeNull();
+    expect(ctx.payLinkMissing).toBe("non-inr");
+    expect(payLinkNotice(ctx)?.text).toMatch(/only for INR/);
+    expect(buildReminderTemplate(ctx).message).not.toContain("upi://");
+  });
+
+  it("with a link there is no notice", () => {
+    expect(payLinkNotice(buildReminderContext(raw(), TODAY))).toBeNull();
   });
 });

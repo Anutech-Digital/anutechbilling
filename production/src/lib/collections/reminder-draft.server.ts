@@ -44,7 +44,7 @@ export async function loadReminderRaw(
   const [invoices, subscriptions, contact, tenant, promise] = await Promise.all([
     fetchAllRows<ReminderInvoiceRow>((from, to) => db
       .from("invoices")
-      .select("id, amount, net_payable, paid_amount, status, invoice_date, due_date, quote_id")
+      .select("id, amount, net_payable, paid_amount, status, invoice_date, due_date, quote_id, currency")
       .eq("customer_id", customerId)
       .in("status", ["pending", "overdue"]).is("written_off_at", null)
       .order("id", { ascending: true })

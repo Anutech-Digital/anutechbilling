@@ -82,8 +82,10 @@ export const GET = withRoute(
       qrNotice: statementQrNotice({ upiVpa: t?.upi_vpa, allInr: st.allInr, total: st.total }),
       hasBank: !!t?.remit_account_number?.trim(),
       subject: pendingDuesSubject(st, seller),
-      emailText: pendingDuesEmailText(st, { greetName, sellerName: seller }),
+      /* R-2412: the pay link (UPI for the total) rides in both messages, not only on the PDF. */
+      emailText: pendingDuesEmailText(st, { greetName, sellerName: seller, upiLink }),
       whatsappText: pendingDuesWhatsappText(st, { greetName, sellerName: seller, pdfUrl: pdfLink, upiLink }),
+      payLink: upiLink,
       whatsapp: wa.ok ? wa.to : null,
       whatsappBlocked: wa.ok ? null : wa.reason,
       email: em.ok ? em.to : null,

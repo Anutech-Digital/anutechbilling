@@ -24,6 +24,7 @@ import { dialable } from "@/lib/leads/call-queue";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { upiPayLink } from "@/lib/invoices/pay-link";
 import { daysBetweenISO } from "@/lib/dates/ist";
+import { UPI_SETTINGS_HREF } from "@/lib/pdf/quote-template";
 
 // ─── Raw rows the server reads (only the columns used) ───────────────────────
 
@@ -36,6 +37,8 @@ export interface ReminderInvoiceRow {
   invoice_date: string | null;
   due_date: string | null;
   quote_id: string | null;
+  /** R-2412: billing currency (books stay ₹). Anything but INR → no UPI pay link. */
+  currency?: string | null;
 }
 
 export interface ReminderSubscriptionRow {
@@ -100,11 +103,23 @@ export interface ReminderContext {
   daysOverdue: number;
   /** upi://pay for the whole balance, when the company has a UPI id on file. */
   payLink: string | null;
+  /** R-2412: why there is no pay link (null when there is one) — the dialog says it with the fix. */
+  payLinkMissing: "no-upi" | "non-inr" | null;
   lastPromise: { on: string; amount: number | null; broken: boolean } | null;
 }
 
-/** The context of one customer's reminder. Same balance rules as /collections (R-1516). */
-export function buildReminderContext(raw: ReminderRaw, today: string): ReminderContext {
+/** R-2412: "This invoice" — the one open bill the reminder is about. */
+export interface ReminderLineRef {
+  kind: "invoice" | "subscription";
+  id: string;
+}
+
+/**
+ * The context of one customer's reminder. Same balance rules as /collections (R-1516).
+ * R-2412: with `only`, the reminder is about that ONE open bill — its amount, its pay link. A
+ * bill that is no longer open gives an empty context (amountDue 0), never another bill's money.
+ */
+export function buildReminderContext(raw: ReminderRaw, today: string, only?: ReminderLineRef | null): ReminderContext {
   const linkFor = (quoteId: string | null): string | null => {
     if (!quoteId) return null;
     const token = raw.quoteTokens.get(quoteId);
@@ -113,10 +128,12 @@ export function buildReminderContext(raw: ReminderRaw, today: string): ReminderC
   const overdue = (date: string | null) => (date ? daysBetweenISO(date.slice(0, 10), today) : 0);
 
   const lines: ReminderLine[] = [];
+  const nonInr = new Set<string>();
   for (const inv of raw.invoices) {
     if (inv.status !== "pending" && inv.status !== "overdue") continue;
     const due = Math.round(invoiceAmountDue(inv));
     if (due <= 0) continue;
+    if ((inv.currency ?? "INR").trim().toUpperCase() !== "INR") nonInr.add(inv.id);
     const dueDate = (inv.due_date ?? inv.invoice_date)?.slice(0, 10) ?? null;
     lines.push({
       kind: "invoice", id: inv.id, label: inv.id, quoteId: inv.quote_id,
@@ -137,10 +154,22 @@ export function buildReminderContext(raw: ReminderRaw, today: string): ReminderC
     });
   }
   lines.sort((a, b) => b.daysOverdue - a.daysOverdue || b.amountDue - a.amountDue || a.id.localeCompare(b.id));
+  if (only) {
+    const keep = lines.filter((l) => l.kind === only.kind && l.id === only.id);
+    lines.splice(0, lines.length, ...keep);
+  }
 
   const amountDue = lines.reduce((s, l) => s + l.amountDue, 0);
   const daysOverdue = lines.length ? Math.max(...lines.map((l) => l.daysOverdue)) : 0;
   const promisedOn = raw.lastPromise?.promised_on?.slice(0, 10) ?? null;
+  /* UPI takes rupees only: a bill in another currency means no UPI link for the total. */
+  const anyNonInr = lines.some((l) => l.kind === "invoice" && nonInr.has(l.id));
+  const payLink = anyNonInr ? null : upiPayLink({
+    upiVpa: raw.upiVpa,
+    payeeName: raw.upiPayeeName ?? raw.sellerName,
+    amountDue,
+    invoiceId: lines.find((l) => l.kind === "invoice")?.id ?? raw.customerName,
+  });
 
   return {
     customerName: raw.customerName.trim() || "there",
@@ -149,12 +178,8 @@ export function buildReminderContext(raw: ReminderRaw, today: string): ReminderC
     lines,
     amountDue,
     daysOverdue,
-    payLink: upiPayLink({
-      upiVpa: raw.upiVpa,
-      payeeName: raw.upiPayeeName ?? raw.sellerName,
-      amountDue,
-      invoiceId: lines.find((l) => l.kind === "invoice")?.id ?? raw.customerName,
-    }),
+    payLink,
+    payLinkMissing: payLink ? null : anyNonInr ? "non-inr" : "no-upi",
     lastPromise: promisedOn
       ? {
           on: promisedOn,
@@ -163,6 +188,44 @@ export function buildReminderContext(raw: ReminderRaw, today: string): ReminderC
         }
       : null,
   };
+}
+
+export interface PayLinkNotice {
+  reason: "no-upi" | "non-inr";
+  text: string;
+  action?: { label: string; href: string };
+}
+
+/**
+ * R-2412 (§24): why the message carries no pay link, and the next step — or null when it does.
+ * Same wording family as the statement's QR notice (pending-dues statementQrNotice).
+ */
+export function payLinkNotice(ctx: Pick<ReminderContext, "payLink" | "payLinkMissing" | "amountDue">): PayLinkNotice | null {
+  if (ctx.payLink || !(ctx.amountDue > 0) || !ctx.payLinkMissing) return null;
+  if (ctx.payLinkMissing === "non-inr") {
+    return {
+      reason: "non-inr",
+      text: "No pay link in this message — UPI works only for INR and this bill is in another currency. Add your bank details to the message instead.",
+    };
+  }
+  return {
+    reason: "no-upi",
+    text: "No pay link in this message — add your UPI ID in Settings and the message will carry a UPI pay link for the amount.",
+    action: { label: "Open Settings", href: UPI_SETTINGS_HREF },
+  };
+}
+
+/** R-2412: the bills the person can pick for "This invoice" (what the picker shows). */
+export interface ReminderLineChoice {
+  kind: "invoice" | "subscription";
+  id: string;
+  label: string;
+  amountDue: number;
+  daysOverdue: number;
+}
+
+export function reminderLineChoices(ctx: Pick<ReminderContext, "lines">): ReminderLineChoice[] {
+  return ctx.lines.map((l) => ({ kind: l.kind, id: l.id, label: l.label, amountDue: l.amountDue, daysOverdue: l.daysOverdue }));
 }
 
 /** The only rupee figures a draft may name (money-guard). */
