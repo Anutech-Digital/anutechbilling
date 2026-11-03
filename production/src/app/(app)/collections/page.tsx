@@ -14,6 +14,11 @@
  * stage chip per row (Not contacted · Reminded · Promised · Broken · Disputed · Part-paid) under
  * the customer's name. Rules: lib/collections/priority.ts.
  *
+ * R-2410 — customers owing up to ₹500, or exactly the TDS they withheld, are not chased: they
+ * sit in a folded "Small leftovers (N · ₹X)" group under the list (./small-leftovers.tsx) where
+ * the owner / accountant books the TDS or writes the balance off. Rules:
+ * lib/collections/small-leftovers.ts.
+ *
  * Rules and reads live in lib/queries/collections.ts (tested in ./collections.test.ts):
  * the balance is the same invoiceAmountDue as Customer Aging, every read pages past 1000.
  */
@@ -46,13 +51,15 @@ import {
 } from "@/lib/queries/collections";
 import {
   AGE_LABEL, AGE_VIEWS, DEFAULT_AGE, SORT_KEYS, UNASSIGNED, WORKLIST_COLS,
-  buildWorklist, hasOverdueLine, ownerKey, ownerKeys, type AgeKey, type AgeView,
+  buildWorklist, hasOverdueLine, matchesSearch, ownerKey, ownerKeys, type AgeKey, type AgeView,
 } from "./worklist";
 import { AgeTileRow } from "./age-tiles";
 import { WorklistToolbar } from "./worklist-toolbar";
 import { RowActions, type RowDialog } from "./row-actions";
 import { AmountCell, CustomerName, NextText, OverdueBadge, OwedCell, PromiseText, StageChip, type CanOpen } from "./owed-cells";
 import { isTodayWork, todayCounts } from "@/lib/collections/priority";
+import { splitLeftovers } from "@/lib/collections/small-leftovers";
+import { SmallLeftovers } from "./small-leftovers";
 
 const VIEW_LABEL: Record<CollectionView, string> = {
   today: "Today",
@@ -80,8 +87,13 @@ export default function CollectionsPage() {
   const canOpen = React.useCallback((href: string) => canOpenRoute(role, href), [role]);
 
   const all = rows ?? [];
-  const viewRows = filterCollectionRows(all, view, me?.userId);
+  const viewAll = filterCollectionRows(all, view, me?.userId);
+  /* R-2410: balances up to ₹500 (or exactly the TDS) leave the tiles and the list for "Small
+     leftovers" — search and owner still narrow them. */
+  const { main: viewRows, leftovers: viewLeftovers } = splitLeftovers(viewAll);
   const list = buildWorklist(viewRows, { q, owner, age, sort });
+  const leftovers = viewLeftovers.filter((r) => matchesSearch(r, q) && (!owner || ownerKey(r) === owner));
+  const leftoverTotal = leftovers.reduce((s, r) => s + Math.round(r.amountDue), 0);
   const shown = list.shown;
   const ownerLabel = (key: string): string => (key === UNASSIGNED ? "Unassigned" : names?.get(key)?.label ?? "a colleague");
   const ownerName = (r: CollectionRow): string => ownerLabel(ownerKey(r));
@@ -109,7 +121,7 @@ export default function CollectionsPage() {
     [rows],
   );
   const todayCount = shown.filter(isTodayWork).length;
-  const today = todayCounts(all);
+  const today = todayCounts(splitLeftovers(all).main);
   const filtered = q.trim() !== "" || owner !== "" || age !== ageDefault;
   const resetFilters = () => { setQ(""); setOwner(""); setAge("all"); };
 
@@ -149,10 +161,10 @@ export default function CollectionsPage() {
         )}
       </div>
 
-      {!isLoading && !isError && viewRows.length > 0 && (
+      {!isLoading && !isError && viewAll.length > 0 && (
         <WorklistToolbar
           q={q} onQ={setQ}
-          owner={owner} onOwner={setOwner} owners={ownerKeys(viewRows)} ownerLabel={ownerLabel}
+          owner={owner} onOwner={setOwner} owners={ownerKeys(viewAll)} ownerLabel={ownerLabel}
           age={age} onAge={setAge}
           sort={sort} onSort={setSort}
         />
@@ -162,7 +174,7 @@ export default function CollectionsPage() {
         <div className="space-y-3">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
       ) : isError && !rows ? (
         <LoadError what="Payment follow-up list" onRetry={() => { void refetch(); }} />
-      ) : viewRows.length === 0 ? (
+      ) : viewAll.length === 0 ? (
         <Card className="py-2">
           <Empty view={view} anyRows={all.length > 0} onAll={() => setPicked("all")} canOpen={canOpen} />
         </Card>
@@ -245,6 +257,10 @@ export default function CollectionsPage() {
             </table>
           </Card>
         </>
+      )}
+
+      {!isLoading && !isError && leftovers.length > 0 && (
+        <SmallLeftovers rows={leftovers} total={leftoverTotal} role={role} canOpen={canOpen} />
       )}
 
       {showReport && !isLoading && !isError && (

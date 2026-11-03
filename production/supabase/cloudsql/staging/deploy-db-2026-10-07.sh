@@ -384,6 +384,7 @@ MIGS=(
   "r2397parkten|20261103031616_r2397_park_tenant_gate.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_sale_park_for_approval(uuid,uuid,jsonb,text)') and prosrc like '%R-2397 tenant gate%')"
   "r2393personalpropertysales|20261103073146_r2393_personal_property_sales.sql|resellersos_migration|(to_regclass('public.personal_property_sales') is not null and to_regclass('public.personal_property_sale_receipts') is not null and to_regprocedure('public.personal_property_sale_cancel(uuid,date,bigint,uuid,text)') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'personal_property_sale_receipts' and policyname = 'personal_property_sale_receipts_service_role'))"
   "r2416onlinefeepolicy|20261103112829_r2416_online_fee_policy.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'payments' and column_name = 'fee_bearer') and to_regprocedure('public.online_fee_exception_guard()') is not null"
+  "r2410writeoffsmallbalance|20261103123242_r2410_write_off_small_balance.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.write_off_small_invoice_balance(text,text)') and prosrc like '%R-2410%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
