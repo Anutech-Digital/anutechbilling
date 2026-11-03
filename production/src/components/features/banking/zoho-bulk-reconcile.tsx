@@ -91,8 +91,10 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const gst = useGstRegistration();
   /* R-2440: the company's LUT (Settings → Company) — an export receipt is booked at 0% only under one. */
   const { data: me } = useCurrentUser();
-  const lutNumber = me ? me.tenantLutNumber : undefined;
-  const lutValidUpto = me ? me.tenantLutValidUpto : undefined;
+  /* Not loaded yet → no plan (never "covered by default"); loaded with no LUT → export rows unticked. */
+  const meLoaded = me !== undefined;
+  const lutNumber = me?.tenantLutNumber ?? null;
+  const lutValidUpto = me?.tenantLutValidUpto ?? null;
   const createCustomer = useCreateCustomer();
   const setLinePayer = useSetBankLinePayer();
   const newSale = useNewSaleFromBankCredit();
@@ -124,14 +126,14 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   }, [open, accountId]);
 
   const ctx: PlanContext | null = React.useMemo(() => {
-    if (!customers || !subscriptions || !catalog) return null;
+    if (!customers || !subscriptions || !catalog || !meLoaded) return null;
     return {
       customers, subscriptions, catalog: catalog.filter((i) => i.is_active),
       payers: memory.payers, ownNames: memory.ownNames, noGst: Boolean(billOfSupplyStatus(gst.data?.saved ?? null)),
       today: istToday(),
-      ...(lutNumber !== undefined ? { lut: { number: lutNumber, validUpto: lutValidUpto } } : {}),
+      lut: { number: lutNumber, validUpto: lutValidUpto },
     };
-  }, [customers, subscriptions, catalog, memory.payers, memory.ownNames, gst.data, lutNumber, lutValidUpto]);
+  }, [customers, subscriptions, catalog, memory.payers, memory.ownNames, gst.data, meLoaded, lutNumber, lutValidUpto]);
 
   const plan: PlanRow[] = React.useMemo(() => {
     if (!ctx) return [];

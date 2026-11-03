@@ -298,7 +298,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const saleInvalid = saleInvalidOf(lines, preview.taxable);
   const payerUnanswered = payerMismatch && !payerAnswer;
   /* R-2440: Find in Zoho left prices in USD (no bank rate fitting Zoho's) — no Save until they are in ₹. */
-  const fxUnconverted = mode === "sale" || (mode === "split" && splitSale) ? zohoUnconvertedProblem(zohoFill, lines) : null;
+  const fxUnconverted = saleShown ? zohoUnconvertedProblem(zohoFill, lines) : null;
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
     && !approvalBlocked && !fxUnconverted
     && !(relink && saleBelowCost)   // R-2397: the server refuses a relink to a below-cost sale

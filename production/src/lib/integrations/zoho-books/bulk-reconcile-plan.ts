@@ -675,7 +675,7 @@ export function planRow(
     /* R-2440 (tax memo §1): 0% export only under an LUT for this line's FY — else unticked with the step. */
     const lutProblem = fx && ctx.lut !== undefined ? exportLutProblem(ctx.lut, line.txnDate) : null;
     if (lutProblem) saleProblems.push(lutProblem);
-    const lutNo = ctx.lut?.number?.trim();
+    const lutNo = lutProblem ? null : ctx.lut?.number?.trim();
     if (fx) notes.push(`Export receipt ${formatRemittance(remittance!)}: booked in ${fx.currency} at the bank's rate, ₹ = the bank credit; 0% GST (export of services, zero-rated under ${lutNo ? `LUT ${lutNo}` : "LUT — check your LUT in Settings"}).`);
   } else if (Math.abs(match.payment.amount - line.credit) > AMOUNT_SLACK) {
     zohoProblems.push(`Amount differs: Zoho payment ${rupees(match.payment.amount)}, bank line ${rupees(line.credit)}.`);

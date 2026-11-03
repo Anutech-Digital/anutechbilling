@@ -190,6 +190,7 @@ describe("R-2440: Reconcile from Zoho books an export receipt only under an LUT"
     const row = planRow(usdLine(), usd("Design Box", [zl()], 1024), null, { ...ctx, lut: { number: "AD070425000999X", validUpto: "2026-03-31" } });
     expect(row.ticked).toBe(false);
     expect(row.problems.join(" ")).toContain("No LUT for FY 2026-27");
+    expect(row.notes.join(" ")).not.toContain("AD070425000999X");   // a refused LUT is never named as covering the sale
   });
   it("this year's LUT → Ready, and the note names it", () => {
     const row = planRow(usdLine(), usd("Design Box", [zl()], 1024), null, { ...ctx, lut: { number: "AD070426000123X", validUpto: "2027-03-31" } });
