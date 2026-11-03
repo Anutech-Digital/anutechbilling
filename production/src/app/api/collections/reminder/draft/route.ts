@@ -16,6 +16,10 @@
  *     A bill that is no longer open → 409 (never another bill's money).
  *   • R-2413 bulk "Send reminder": `standard: true` drafts the plain template (no AI call), so
  *     ticking 20 customers does not make 20 AI calls; every amount still comes from the books.
+ *   • R-2415: the bill's ONE Razorpay pay link (card / UPI / net banking) goes into the message
+ *     next to the UPI link — made on the first Send reminder, the same link on every later one,
+ *     replaced when the amount changes (lib/payments/payment-link.server). `cardLink` says what it
+ *     asks for; `cardLinkNotice` says why there is none and the fix (§24). Razorpay sends nothing.
  */
 import { z } from "zod";
 import { withRoute, RouteError } from "@/lib/api/with-route";
@@ -26,6 +30,8 @@ import {
   buildReminderContext, buildReminderTemplate, emailTarget, payLinkNotice, reminderLineChoices, whatsappTarget,
 } from "@/lib/collections/reminder-draft";
 import { draftReminder, loadReminderRaw } from "@/lib/collections/reminder-draft.server";
+import { withCardPayLink } from "@/lib/payments/payment-link";
+import { getOrCreateInvoicePayLink } from "@/lib/payments/payment-link.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -75,13 +81,25 @@ export const POST = withRoute(
     const draft = input.standard
       ? { ...buildReminderTemplate(ctx), mode: "template" as const, note: null }
       : await draftReminder(ctx, await resolveGeminiConfig(supabase, tenantId));
+    /* R-2415: the Razorpay link for exactly this bill — reused while its amount is unchanged. */
+    const card = await getOrCreateInvoicePayLink({
+      tenantId,
+      customerId: input.customerId,
+      scope: "invoice",
+      lines: ctx.lines.map((l) => ({ kind: l.kind, id: l.id, amountDue: l.amountDue })),
+      sellerName: ctx.sellerName,
+      customerName: loaded.customer.customerName,
+      customerEmail: loaded.customer.email,
+      customerPhone: loaded.customer.phone,
+    });
+    const message = card.link ? withCardPayLink(draft.message, card.link.url) : draft.message;
     const wa = whatsappTarget(loaded.customer.phone);
     const em = emailTarget(loaded.customer.email);
     const oldest = ctx.lines[0];
 
     return {
       subject: draft.subject,
-      message: draft.message,
+      message,
       mode: draft.mode,
       note: draft.note,
       amountDue: ctx.amountDue,
@@ -89,6 +107,8 @@ export const POST = withRoute(
       lines: reminderLineChoices(all),
       payLink: ctx.payLink,
       payLinkNotice: payLinkNotice(ctx),
+      cardLink: card.link,
+      cardLinkNotice: card.notice,
       whatsapp: wa.ok ? wa.to : null,
       whatsappBlocked: wa.ok ? null : wa.reason,
       email: em.ok ? em.to : null,

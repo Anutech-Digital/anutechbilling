@@ -9,6 +9,8 @@
  *   - `order.paid`        — Razorpay considers the order complete
  *   - `payment.failed`    — note on the lead + a retry link to the SAME quote (R-079);
  *                           never a new charge
+ *   - `payment_link.paid` — R-2415: a Send-reminder pay link (invoice / statement) was paid —
+ *                           booked once on its bills (payment-link-paid.server.ts)
  *   - `refund.processed`  — R-045: a note on the lead + an owner notification saying what to
  *                           book (credit note first if invoiced). Once per refund id. Never
  *                           refunds, credit-notes or changes a payment's status by itself.
@@ -57,6 +59,7 @@ import { isProductionDeployment } from "@/lib/checkout/live-guards";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { gatewayFeeFromPayment } from "@/lib/razorpay/gateway-money";
 import { handleRefundProcessed } from "./refund-event.server";
+import { handlePaymentLinkPaid, isInvoiceLinkCapture } from "./payment-link-paid.server";
 import { bookGatewayFeeExpense } from "@/lib/razorpay/fee-expense.server";
 import { recordFeeBearer } from "@/lib/payments/online-fee.server";
 import {
@@ -247,9 +250,24 @@ export async function POST(request: NextRequest) {
     return handleRefundProcessed(admin, body, tenantParam, mayActOn);
   }
 
+  /* R-2415: a reminder pay link (invoice / statement) was paid — booked once on its bills. */
+  if (event === "payment_link.paid") {
+    return handlePaymentLinkPaid(admin, body, {
+      mayActOn,
+      eventId: request.headers.get("x-razorpay-event-id")?.trim() || null,
+      recordGatewayFee,
+    });
+  }
+
   // Only act on payment-success events — ignore authorized / etc.
   if (event !== "payment.captured" && event !== "order.paid") {
     return NextResponse.json({ received: true, ignored: event });
+  }
+
+  /* R-2415: the same money as a payment_link.paid above — that event books it; this one has no
+     quote to land on and must not be sent to review as "quote not found". */
+  if (await isInvoiceLinkCapture(admin, body.payload.payment?.entity, body.payload.order?.entity)) {
+    return NextResponse.json({ received: true, ignored: `${event} (reminder pay link — booked by payment_link.paid)` });
   }
 
   return settleCapturedPayment(admin, {
