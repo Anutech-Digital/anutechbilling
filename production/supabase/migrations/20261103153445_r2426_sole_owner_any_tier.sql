@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2426%')
 -- deploy-key: r2426soleownersanytier
--- 20261103150500_r2426_sole_owner_any_tier
+-- 20261103153445_r2426_sole_owner_any_tier
 --
 -- WHAT THIS CHANGES (R-2426, p0 — Pardeep 3 Nov 2026: "single owner ko ye power honi chahiye live me bhi")
 --   R-2383 (20261102132142) let a maker approve their own quote only when NOBODY else active in

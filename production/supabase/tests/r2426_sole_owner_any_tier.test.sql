@@ -3,7 +3,7 @@
 -- Why: staging 3 Nov, a one-owner company that still has a MANAGER login — R-2383 counted that
 -- manager as "another approver" on a manager-tier quote, so the owner saw "You cannot approve
 -- your own quote" with no way on. Pardeep: "single owner ko ye power honi chahiye live me bhi".
--- Migration 20261103150500_r2426_sole_owner_any_tier (tg_quote_approval_not_by_maker).
+-- Migration 20261103153445_r2426_sole_owner_any_tier (tg_quote_approval_not_by_maker).
 -- Self-asserting, ONE transaction, rolled back. Run on a local/test DB only.
 --
 -- Proves:

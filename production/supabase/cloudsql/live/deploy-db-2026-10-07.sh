@@ -389,6 +389,7 @@ MIGS=(
   "r2423partlinename|20261103141332_r2423_part_request_line_name.sql|resellersos_migration|to_regprocedure('public.part_request_line_name(text,text,integer,text,integer,integer)') is not null and to_regprocedure('public.part_request_parts_in_term(integer,text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%R-2423%')"
   "r2424placeholderbankref|20261103144041_r2424_placeholder_bank_ref.sql|resellersos_migration|to_regprocedure('public.bank_reference_is_real(text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.payment_ref_key(text,text)') and prosrc like '%bank_reference_is_real%')"
   "r2415invoicepaymentlinks|20261103151556_r2415_invoice_payment_links.sql|resellersos_migration|(to_regclass('public.invoice_payment_links') is not null and to_regprocedure('public.settle_invoice_payment_link(text,text,bigint,text)') is not null and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'invoice_payment_links' and policyname = 'invoice_payment_links_service_role'))"
+  "r2426soleownersanytier|20261103153445_r2426_sole_owner_any_tier.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2426%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
