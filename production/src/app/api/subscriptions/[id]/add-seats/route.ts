@@ -9,8 +9,10 @@
  *   2. subscription.seats incremented immediately + mrr recomputed
  *   3. Quote created for the pro-rata billing (sent, awaiting payment)
  *
- * Body: { additional_seats: 1..5000, idempotency_key: string, effective_date?: "YYYY-MM-DD" }
- * Returns: { quoteId, amount, proRataDays, effectiveDate, newSeats, newMrr }
+ * Body: { additional_seats: 1..5000, idempotency_key: string, effective_date?: "YYYY-MM-DD",
+ *         draft_purchase_order?: boolean }
+ * Returns: { quoteId, amount, proRataDays, effectiveDate, newSeats, newMrr, poId }
+ * R-2372: a draft PO is written only when draft_purchase_order is true.
  *
  * R-800: effective_date is when the seats were actually provisioned — default today, may be
  * backdated to the current term's start, never in the future. The pro-rata charge runs from
@@ -57,6 +59,9 @@ const bodySchema = z.object({
   /* R-2292: ₹/seat/year typed for THIS quote only — whole rupees above 0. Absent = the
      subscription's rate. The subscription's stored rate is never changed by it. */
   annual_rate_per_seat: z.number().int("The rate must be whole rupees").min(1, "The rate must be above ₹0").max(MAX_TYPED_SEAT_RATE).optional().nullable(),
+  /* R-2372: "Also draft a purchase order" ticked in Manage seats. Absent / false = no PO —
+     a seat change used to draft one silently (staging, 2 Nov). */
+  draft_purchase_order: z.boolean().optional(),
 });
 
 /**
@@ -219,6 +224,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     effectiveDateSetBy: me.full_name?.trim() || me.email || null,
     requestedBy: authData.user.id,
     annualPerSeatOverride: parsed.data.annual_rate_per_seat ?? null,
+    draftPurchaseOrder: parsed.data.draft_purchase_order === true,
   });
 
   if (!result.ok) {

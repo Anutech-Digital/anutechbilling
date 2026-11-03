@@ -17,8 +17,8 @@
  * subscription handling for it (migration 0052). Without that flag record_payment
  * step 8a would treat the annual pro-rata quote as a new sale and create a
  * DUPLICATE subscription (audit bug #3/#4). The existing sub is already updated
- * above; the pro-rata payment just records into the ledger. This flow creates
- * its own draft PO below.
+ * above; the pro-rata payment just records into the ledger. This flow drafts a
+ * PO below only when the operator asked for one (R-2372).
  *
  * Server-only (service-role client).
  */
@@ -217,6 +217,12 @@ export interface AddSeatsInput {
    * Absent / null = the subscription's rate, exactly as before.
    */
   annualPerSeatOverride?: number | null;
+  /**
+   * R-2372: draft a purchase order for the added seats — only when the operator ticked
+   * "Also draft a purchase order" in Manage seats. Absent / false = no PO. Staging, 2 Nov:
+   * a seat change silently drafted a PO nobody asked for.
+   */
+  draftPurchaseOrder?: boolean;
 }
 
 export interface AddSeatsResult {
@@ -228,7 +234,7 @@ export interface AddSeatsResult {
   effectiveDate: string;
   newSeats:     number;
   newMrr:       number;
-  /** Newly created draft Purchase Order for the additional seats (null if catalog/vendor info missing) */
+  /** Draft Purchase Order for the additional seats — null when not asked for (R-2372) or it could not be written */
   poId:         string | null;
 }
 
@@ -453,10 +459,10 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     return { ok: false, code: "sub_update_failed", message: subErr.message };
   }
 
-  // ── Auto-create draft Purchase Order for the additional seats ─────
+  // ── Draft Purchase Order for the additional seats — ONLY when asked (R-2372) ─────
   // term_months ≈ days remaining / 30 — gives pro-rata months for Google.
   let poId: string | null = null;
-  try {
+  if (input.draftPurchaseOrder === true) try {
     /* Uses the SAME resolved cost as the quote line above. It used to run its own
        lookup — `.ilike("name", plan).limit(1)` with no vendor filter, so a plan named
        just "Standard" could take the hosting row's ₹0 and write a ₹0 PO for a Google
