@@ -64,4 +64,4 @@ export function ownershipStep(o: GstinOwnership): OwnershipStep {
 }
 
 /** Can this company send / accept a connection now? (The server checks it again.) */
-export const mayConnect = (o: GstinOwnership | undefined) => Boolean(o && ownershipStep(o) === "owned");
+export const mayConnect = (o: GstinOwnership | null | undefined) => Boolean(o && ownershipStep(o) === "owned");

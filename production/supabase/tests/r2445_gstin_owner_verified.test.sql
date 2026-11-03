@@ -285,6 +285,9 @@ do $$ begin
   if public.network_has_scope('24450000-0000-4000-8000-00000000000a', '24450000-0000-4000-8000-00000000000b', 'invoices') then
     raise exception 'FAIL 5: B changed its GSTIN but still receives A''s invoices';
   end if;
+  if (select status from public.platform_gstin_claims('all') c where c.claim_id = current_setting('r2445.b')::uuid) <> 'lapsed' then
+    raise exception 'FAIL 5: the admin list still shows B as the approved owner after its GSTIN changed';
+  end if;
   -- back to the old GSTIN (re-verified, re-proved by the admin) for the next steps
   update public.tenants set gstin = '29AAACR2445B1Z5', gstin_verified_at = now(),
          gstin_owner_verified_at = now(), gstin_owner_verified_gstin = '29AAACR2445B1Z5',
@@ -310,6 +313,13 @@ do $$ begin
   if not exists (select 1 from public.gstin_ownership_claims where tenant_id = '24450000-0000-4000-8000-00000000000b'
                   and status = 'revoked' and decided_by = 'admin@example.test') then
     raise exception 'FAIL 6: revoke not recorded';
+  end if;
+  -- the approval itself turned 'revoked' (the Approved list shows only real owners)
+  if (select status from public.gstin_ownership_claims where id = current_setting('r2445.b')::uuid) <> 'revoked' then
+    raise exception 'FAIL 6: B''s approval still reads approved after the revoke';
+  end if;
+  if exists (select 1 from public.platform_gstin_claims('approved') c where c.tenant_id = '24450000-0000-4000-8000-00000000000b') then
+    raise exception 'FAIL 6: a revoked owner is listed under Approved';
   end if;
 end $$;
 

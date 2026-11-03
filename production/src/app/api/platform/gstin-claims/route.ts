@@ -79,8 +79,11 @@ export async function POST(request: Request) {
       });
   if (error) {
     /* The SQL guards phrase the next step themselves (e.g. "… revoke X first, then approve"). */
-    const known = error.code === "22023" || error.code === "P0002" || error.code === "23505";
+    const known = error.code === "22023" || error.code === "P0002";
     if (!known) console.error("[api/platform/gstin-claims] decide failed:", error.message);
+    if (error.code === "23505") {
+      return fail(409, "Someone else decided this GSTIN at the same moment — nothing was changed. Refresh the list and look again.");
+    }
     return fail(known ? 409 : 500, known ? error.message : "Nothing was changed — the server could not save the decision. Refresh and try again.");
   }
   return NextResponse.json({ ok: true, result: data });

@@ -107,10 +107,10 @@ export async function setMyScopes(id: string, scopes: NetworkScope[]): Promise<N
   return cleanScopes((await call("network_set_my_scopes", { p_id: id, p_scopes: scopes })) as string[] | null);
 }
 
-/** R-2445: my company's GSTIN ownership status (owner / manager / accountant). */
-export async function getMyGstinOwnership(): Promise<GstinOwnership> {
+/** R-2445: my company's GSTIN ownership status (owner / manager / accountant; null for other roles). */
+export async function getMyGstinOwnership(): Promise<GstinOwnership | null> {
   const rows = (await call("network_my_gstin_ownership")) as Row[] | null;
-  return toOwnership(rows?.[0]);
+  return rows?.[0] ? toOwnership(rows[0]) : null;
 }
 
 /** R-2445: ask ResellerOS to confirm we own our GSTIN (owner only). */

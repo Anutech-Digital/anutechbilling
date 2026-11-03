@@ -43,9 +43,12 @@
 --   R-2433's backfilled connections (origin parent_link, set by the operator) keep working —
 --   network_has_scope does not ask them for a GSTIN at all, as before. In addition, the two
 --   tenants of each such operator-set pair are marked owner-verified here (how 'parent_link',
---   by 'R-2445 migration: operator-set parent link'), only when their GSTIN is filled in and no
---   other non-personal company has the same GSTIN — the operator set that link by hand, which
---   is the same check an admin approval is. Nobody else is backfilled.
+--   by 'R-2445 migration: operator-set parent link'), only when their GSTIN is filled in AND
+--   registered with GSTN (gstin_verified_at) and no other non-personal company has the same
+--   GSTIN — the operator set that link by hand, which is the same check an admin approval is.
+--   Each gets an 'approved' claim row so the admin can Revoke it from the queue. Nobody else is
+--   backfilled. R-2433's own 'request' connections (accepted in the hour since it merged, if
+--   any) pause until both sides prove their GSTIN; the screen says so on each one.
 --
 -- Test: supabase/tests/r2445_gstin_owner_verified.test.sql (rolled back; red without this file).
 -- Idempotent: if not exists / create or replace / drop … if exists.
@@ -273,9 +276,12 @@ set search_path to 'public'
 as $function$
   /* R-2445 */
   select c.id, c.tenant_id, t.name::text, t.email::text, c.gstin,
-         coalesce(t.gstin_verification ->> 'legal_name', c.gstn_legal_name),
-         coalesce(t.gstin_verification ->> 'trade_name', c.gstn_trade_name),
-         c.status, c.note, c.requested_at,
+         /* the name GSTN gave for THIS claim's GSTIN (stored when asked) — the company may have
+            moved to another GSTIN since */
+         coalesce(c.gstn_legal_name, case when upper(btrim(coalesce(t.gstin, ''))) = c.gstin then t.gstin_verification ->> 'legal_name' end),
+         coalesce(c.gstn_trade_name, case when upper(btrim(coalesce(t.gstin, ''))) = c.gstin then t.gstin_verification ->> 'trade_name' end),
+         /* an approval whose company no longer holds the GSTIN (it changed its GSTIN) reads 'lapsed' */
+         case when c.status = 'approved' and h.id is distinct from c.tenant_id then 'lapsed' else c.status end, c.note, c.requested_at,
          (select u.email::text from public.users u where u.id = c.requested_by),
          (select count(*)::int from public.tenants o
            where upper(btrim(coalesce(o.gstin, ''))) = c.gstin and o.workspace_kind is distinct from 'personal'),
@@ -284,7 +290,8 @@ as $function$
     from public.gstin_ownership_claims c
     join public.tenants t on t.id = c.tenant_id
     left join public.tenants h on h.gstin_owner_verified_at is not null and h.gstin_owner_verified_gstin = c.gstin
-   where p_status is null or p_status = 'all' or c.status = p_status
+   where p_status is null or p_status = 'all'
+      or (c.status = p_status and (p_status <> 'approved' or h.id = c.tenant_id))
    order by case c.status when 'pending' then 0 else 1 end, c.requested_at desc
    limit 500;
 $function$;
@@ -307,16 +314,20 @@ begin
   if v_admin = '' then
     raise exception 'The deciding admin''s email is required (it is stored as who decided).' using errcode = '22023';
   end if;
-  select * into v_c from public.gstin_ownership_claims where id = p_claim for update;
+  /* One decision per GSTIN at a time (two admins, two tabs): the GSTIN lock is taken BEFORE any
+     claim row is locked — the other way round two decisions on one GSTIN deadlock (each holds
+     its own claim row and waits for the other's when rejecting the rest). */
+  select gstin into v_holder from public.gstin_ownership_claims where id = p_claim;
   if not found then
     raise exception 'Ownership claim not found — refresh the list.' using errcode = 'P0002';
   end if;
+  perform pg_advisory_xact_lock(hashtextextended('r2445:' || v_holder, 0));
+  v_holder := null;
+
+  select * into v_c from public.gstin_ownership_claims where id = p_claim for update;
   if v_c.status <> 'pending' then
     raise exception 'This claim is already % — refresh the list.', v_c.status using errcode = '22023';
   end if;
-
-  /* one decision per GSTIN at a time (two admins, two tabs) */
-  perform pg_advisory_xact_lock(hashtextextended('r2445:' || v_c.gstin, 0));
 
   if not coalesce(p_approve, false) then
     update public.gstin_ownership_claims
@@ -379,10 +390,23 @@ begin
   if not found or v_t.gstin_owner_verified_at is null then
     raise exception 'This company has no proved GSTIN to revoke — refresh the list.' using errcode = 'P0002';
   end if;
-  insert into public.gstin_ownership_claims (tenant_id, gstin, status, gstn_legal_name, gstn_trade_name,
-                                             decided_by, decided_at, decision_note)
-  values (v_t.id, v_t.gstin_owner_verified_gstin, 'revoked', v_t.gstin_verification ->> 'legal_name',
-          v_t.gstin_verification ->> 'trade_name', v_admin, now(), v_note);
+  perform pg_advisory_xact_lock(hashtextextended('r2445:' || v_t.gstin_owner_verified_gstin, 0));
+  /* The approval that made it the owner turns 'revoked' (so the Approved list shows only real
+     owners); who approved it stays in the note. An owner with no approval row (set by hand) gets
+     a 'revoked' row so the revoke is still on record. */
+  update public.gstin_ownership_claims
+     set status = 'revoked',
+         decision_note = left(v_note || coalesce(' (approved earlier by ' || decided_by
+                                       || coalesce(' on ' || to_char(decided_at at time zone 'Asia/Kolkata', 'DD Mon YYYY'), '')
+                                       || coalesce(': ' || decision_note, '') || ')', ''), 1000),
+         decided_by = v_admin, decided_at = now(), updated_at = now()
+   where tenant_id = v_t.id and gstin = v_t.gstin_owner_verified_gstin and status = 'approved';
+  if not found then
+    insert into public.gstin_ownership_claims (tenant_id, gstin, status, gstn_legal_name, gstn_trade_name,
+                                               decided_by, decided_at, decision_note)
+    values (v_t.id, v_t.gstin_owner_verified_gstin, 'revoked', v_t.gstin_verification ->> 'legal_name',
+            v_t.gstin_verification ->> 'trade_name', v_admin, now(), v_note);
+  end if;
   update public.tenants
      set gstin_owner_verified_at = null, gstin_owner_verified_gstin = null,
          gstin_owner_verified_how = null, gstin_owner_verified_by = null
@@ -652,17 +676,27 @@ with pair_tenants as (
     from public.tenants t
     join pair_tenants p on p.id = t.id
    where nullif(btrim(coalesce(t.gstin, '')), '') is not null
+     and t.gstin_verified_at is not null          -- registered with GSTN: an unchecked GSTIN is never locked to anyone
      and t.workspace_kind is distinct from 'personal'
      and t.gstin_owner_verified_at is null
      and not exists (select 1 from public.tenants o
                       where o.id <> t.id and o.workspace_kind is distinct from 'personal'
                         and upper(btrim(coalesce(o.gstin, ''))) = upper(btrim(t.gstin)))
+), marked as (
+  update public.tenants t
+     set gstin_owner_verified_at = now(), gstin_owner_verified_gstin = c.g,
+         gstin_owner_verified_how = 'parent_link', gstin_owner_verified_by = 'R-2445 migration: operator-set parent link'
+    from candidates c
+   where t.id = c.id
+  returning t.id, t.gstin_owner_verified_gstin as g, t.gstin_verification
 )
-update public.tenants t
-   set gstin_owner_verified_at = now(), gstin_owner_verified_gstin = c.g,
-       gstin_owner_verified_how = 'parent_link', gstin_owner_verified_by = 'R-2445 migration: operator-set parent link'
-  from candidates c
- where t.id = c.id;
+/* an 'approved' row per backfilled owner, so the platform admin sees it under Approved and can
+   Revoke it like any other */
+insert into public.gstin_ownership_claims (tenant_id, gstin, status, gstn_legal_name, gstn_trade_name,
+                                           decided_by, decided_at, decision_note)
+select m.id, m.g, 'approved', m.gstin_verification ->> 'legal_name', m.gstin_verification ->> 'trade_name',
+       'R-2445 migration', now(), 'Operator-set parent link (set by ResellerOS before ownership checks existed).'
+  from marked m;
 
 -- ── grants ────────────────────────────────────────────────────────────────────────────
 revoke all on function public.network_gstin_owned(uuid) from public, anon, authenticated;

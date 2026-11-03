@@ -155,6 +155,9 @@ export function NetworkTab() {
   const conns = useQuery({ queryKey: [...KEY, "connections"], queryFn: listConnections });
   const own = useQuery({ queryKey: [...KEY, "ownership"], queryFn: getMyGstinOwnership });
   const owned = mayConnect(own.data);
+  /* R-2445: say "prove first" only once the answer is in (not while loading, not for a role
+     that gets no ownership row). */
+  const notOwned = own.data != null && !owned;
   const sugg = useQuery({ queryKey: [...KEY, "suggestions"], queryFn: listSuggestions, enabled: isOwner && owned });
 
   const [gstin, setGstin] = React.useState("");
@@ -280,7 +283,7 @@ export function NetworkTab() {
                       they ask ResellerOS to confirm it in their Settings → Network.
                     </p>
                   )}
-                  {isOwner && !owned && (
+                  {isOwner && notOwned && (
                     <p className="mt-2 text-xs text-ink-2">Prove you own your GSTIN first (the box “Your GSTIN” above), then accept.</p>
                   )}
                   {isOwner && (
@@ -331,6 +334,11 @@ export function NetworkTab() {
                   )}
                 </div>
                 <p className="mt-1 text-xs text-ink-3">They share with you: {scopesSentence(c.theirScopes)}</p>
+                {c.origin === "request" && (notOwned || !c.otherOwnerVerified) && (
+                  <p className="mt-2 text-xs text-ink-2">
+                    Paused — nothing is shared either way until {notOwned ? "you prove you own your GSTIN (box “Your GSTIN” above)" : `${c.otherName} proves it owns its GSTIN`}.
+                  </p>
+                )}
                 <p className="mt-3 mb-2 text-xs font-medium text-ink-2">What you share with them</p>
                 <ul className="space-y-2">
                   {NETWORK_SCOPES.map((s) => (
@@ -375,7 +383,7 @@ export function NetworkTab() {
           <Card className="p-5 md:p-6">
             <h3 className="text-base font-semibold text-ink">Connect by GSTIN</h3>
             <p className="mt-1 text-sm text-ink-3">Both businesses must have proved they own their GSTIN. Their owner has to accept.</p>
-            {!owned && (
+            {notOwned && (
               <p className="mt-2 text-sm text-ink-2">You can send a request once ResellerOS has confirmed your GSTIN — see “Your GSTIN” above.</p>
             )}
             <div className="mt-4 max-w-sm">

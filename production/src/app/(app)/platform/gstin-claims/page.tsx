@@ -37,7 +37,8 @@ type Claim = {
   gstin: string;
   gstn_legal_name: string | null;
   gstn_trade_name: string | null;
-  status: "pending" | "approved" | "rejected" | "withdrawn" | "revoked";
+  /** lapsed = approved, but the company has since changed its GSTIN (it no longer holds it). */
+  status: "pending" | "approved" | "rejected" | "withdrawn" | "revoked" | "lapsed";
   note: string | null;
   requested_at: string;
   requested_by_email: string | null;
@@ -113,7 +114,7 @@ export default function PlatformGstinClaimsPage() {
     return (
       <EmptyState
         title="Platform admins only"
-        description="This page is for the ResellerOS team. Your company's own GSTIN status is in Settings → Network."
+        body="This page is for the ResellerOS team. Your company's own GSTIN status is in Settings → Network."
         action={<Link href="/settings?tab=network"><Button>Open Settings → Network</Button></Link>}
       />
     );
@@ -141,7 +142,7 @@ export default function PlatformGstinClaimsPage() {
       ) : rows.length === 0 ? (
         <EmptyState
           title={tab === "pending" ? "No claims waiting" : "No claims here"}
-          description="When a company presses “Prove you own this GSTIN” in Settings → Network, it shows up here."
+          body="When a company presses “Prove you own this GSTIN” in Settings → Network, it shows up here."
           action={<Button onClick={() => void q.refetch()}>Refresh</Button>}
         />
       ) : (
