@@ -128,7 +128,9 @@ export default function CollectionsPage() {
   const canBulk = mayBulkCollect(role);
   const cols = worklistCols(canBulk);
   const [selected, setSelected] = React.useState<ReadonlySet<string>>(new Set());
-  const [bulk, setBulk] = React.useState<"assign" | BulkSendMode | null>(null);
+  /* The rows are frozen when a bulk dialog opens: the list re-reads after each save, and a row
+     leaving the view must not change (or re-read) the run in progress. */
+  const [bulk, setBulk] = React.useState<{ kind: "assign" | BulkSendMode; rows: CollectionRow[] } | null>(null);
   const selectedRows = canBulk ? shown.filter((r) => selected.has(r.key)) : [];
   const allOn = shown.length > 0 && shown.every((r) => selected.has(r.key));
   const someOn = selectedRows.length > 0;
@@ -141,6 +143,8 @@ export default function CollectionsPage() {
     () => [...(names?.values() ?? [])].filter((u) => !u.inactive).sort((a, b) => a.label.localeCompare(b.label)),
     [names],
   );
+  const inactiveIds = React.useMemo(() => new Set([...(names?.values() ?? [])].filter((u) => u.inactive).map((u) => u.id)), [names]);
+  const openBulk = (kind: "assign" | BulkSendMode) => setBulk({ kind, rows: selectedRows });
   const owing = React.useMemo(
     /* R-2401: a renewal-only row owes nothing yet — the weekly report stays real dues.
        R-2408: "No follow-up for 7+ days" counts only customers with a late line. */
@@ -351,26 +355,29 @@ export default function CollectionsPage() {
 
       {canBulk && (
         <>
-          <BulkAssignDialog
-            open={bulk === "assign"}
-            onOpenChange={(o) => { if (!o) setBulk(null); }}
-            rows={selectedRows}
-            team={team}
-            onDone={(failedKeys) => setSelected(new Set(failedKeys))}
-          />
-          {(bulk === "reminder" || bulk === "statement") && (
+          {bulk?.kind === "assign" && (
+            <BulkAssignDialog
+              open
+              onOpenChange={(o) => { if (!o) setBulk(null); }}
+              rows={bulk.rows}
+              team={team}
+              inactiveIds={inactiveIds}
+              onDone={(failedKeys) => setSelected(new Set(failedKeys))}
+            />
+          )}
+          {(bulk?.kind === "reminder" || bulk?.kind === "statement") && (
             <BulkSendDialog
               open
               onOpenChange={(o) => { if (!o) setBulk(null); }}
-              mode={bulk}
-              rows={selectedRows}
-              onDone={() => setSelected(new Set())}
+              mode={bulk.kind}
+              rows={bulk.rows}
+              onDone={(failedKeys) => setSelected(new Set(failedKeys))}
             />
           )}
           <BulkActionBar count={selectedRows.length} noun="customer" onClear={() => setSelected(new Set())}>
-            <BulkBarButton icon="user" onClick={() => setBulk("assign")}>Assign owner</BulkBarButton>
-            <BulkBarButton icon="send" onClick={() => setBulk("reminder")}>Send reminder</BulkBarButton>
-            <BulkBarButton icon="file" onClick={() => setBulk("statement")}>Send statement</BulkBarButton>
+            <BulkBarButton icon="user" onClick={() => openBulk("assign")}>Assign owner</BulkBarButton>
+            <BulkBarButton icon="send" onClick={() => openBulk("reminder")}>Send reminder</BulkBarButton>
+            <BulkBarButton icon="file" onClick={() => openBulk("statement")}>Send statement</BulkBarButton>
           </BulkActionBar>
         </>
       )}

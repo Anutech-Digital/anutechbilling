@@ -93,6 +93,7 @@ export function assignChoices(
 }
 
 export const NO_MANAGER = "no account manager on this customer — pick a person instead";
+export const MANAGER_LEFT = "their account manager is no longer active — pick a person instead";
 
 /**
  * One follow-up (kind note) per ticked customer, given to the picked person or to the customer's
@@ -103,6 +104,8 @@ export function bulkAssignRequests<T extends Pick<CollectionRow, "key" | "custom
   pick: AssignPick,
   team: ReadonlyMap<string, string>,
   today: string,
+  /** People who left (inactive) — named as such instead of "no account manager". */
+  inactive: ReadonlySet<string> = new Set(),
 ): { requests: { row: T; name: string; body: FollowupRequest }[]; skipped: Skipped<T>[] } {
   const requests: { row: T; name: string; body: FollowupRequest }[] = [];
   const skipped: Skipped<T>[] = [];
@@ -111,7 +114,7 @@ export function bulkAssignRequests<T extends Pick<CollectionRow, "key" | "custom
     const to = pick.mode === "person"
       ? { id: pick.id, name: pick.name }
       : r.ownerId && team.has(r.ownerId) ? { id: r.ownerId, name: team.get(r.ownerId)! } : null;
-    if (!to) { skipped.push({ row: r, reason: NO_MANAGER }); continue; }
+    if (!to) { skipped.push({ row: r, reason: r.ownerId && inactive.has(r.ownerId) ? MANAGER_LEFT : NO_MANAGER }); continue; }
     const next = r.nextFollowUpOn && r.nextFollowUpOn >= today ? r.nextFollowUpOn : defaultNextFollowUp(today);
     requests.push({
       row: r,
@@ -137,27 +140,47 @@ export interface BulkReport {
 const failList = (failed: readonly { name: string; error: string }[]) =>
   failed.slice(0, 3).map((f) => `${f.name} — ${f.error}`).join("; ") + (failed.length > 3 ? `; and ${failed.length - 3} more` : "");
 
-/** After a bulk assign (§24: who failed and what to do). */
-export function bulkAssignReport(done: number, failed: readonly { name: string; error: string }[]): BulkReport {
-  if (failed.length === 0) return { tone: "success", title: `${done} customer${done === 1 ? "" : "s"} given an owner` };
+/**
+ * After a bulk assign (§24: who failed and what to do). Skipped rows (planned — the dialog said so
+ * before the press) are counted apart from failures; the failed ones stay ticked for another try.
+ */
+export function bulkAssignReport(
+  done: number,
+  failed: readonly { name: string; error: string }[],
+  skipped: readonly Skipped<unknown>[] = [],
+): BulkReport {
+  const skip = skipped.length > 0 ? ` · ${skipped.length} skipped (${skipSummary(skipped)})` : "";
+  if (failed.length === 0) return { tone: "success", title: `${done} customer${done === 1 ? "" : "s"} given an owner${skip}` };
   return {
     tone: done > 0 ? "warning" : "error",
-    title: done > 0 ? `${done} given an owner, ${failed.length} not saved` : "No owner saved",
-    description: `${failList(failed)}. Press Retry failed, or open the row's Follow-up.`,
+    title: done > 0 ? `${done} given an owner, ${failed.length} not saved${skip}` : `No owner saved${skip}`,
+    description: `${failList(failed)}. They stay ticked — press Assign owner again, or open the row's Follow-up.`,
   };
 }
 
 /** After a bulk email run. `already` = the server said that email had gone before (R-1544). */
 export function bulkSendReport(
   mode: BulkSendMode,
-  out: { sent: number; already: number; failed: readonly { name: string; error: string }[] },
+  out: {
+    sent: number;
+    already: number;
+    failed: readonly { name: string; error: string }[];
+    /** Emailed, but the follow-up was not logged (the route's `warning`) — log by hand, never re-send. */
+    unlogged?: readonly string[];
+  },
 ): BulkReport {
   const noun = (n: number) => `${mode === "statement" ? "statement" : "reminder"}${n === 1 ? "" : "s"}`;
   const head = `${out.sent} ${noun(out.sent)} emailed${out.already > 0 ? ` · ${out.already} had already gone (not sent again)` : ""}`;
-  if (out.failed.length === 0) return { tone: "success", title: head };
+  const unlogged = out.unlogged ?? [];
+  const logNote = unlogged.length > 0
+    ? `Emailed, but the follow-up was not logged for ${unlogged.slice(0, 3).join(", ")}${unlogged.length > 3 ? ` and ${unlogged.length - 3} more` : ""} — log it with Follow-up, do not send again.`
+    : "";
+  if (out.failed.length === 0) {
+    return unlogged.length > 0 ? { tone: "warning", title: head, description: logNote } : { tone: "success", title: head };
+  }
   return {
     tone: out.sent + out.already > 0 ? "warning" : "error",
     title: `${head} · ${out.failed.length} not sent`,
-    description: `${failList(out.failed)}. Press Send again for the ones not sent — the ones that went are not sent twice.`,
+    description: `${failList(out.failed)}. Press Send again for the ones not sent — the ones that went are not sent twice.${logNote ? ` ${logNote}` : ""}`,
   };
 }

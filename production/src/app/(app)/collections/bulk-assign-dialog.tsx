@@ -33,13 +33,15 @@ const pill = (on: boolean) =>
   }`;
 
 export function BulkAssignDialog({
-  open, onOpenChange, rows, team, onDone,
+  open, onOpenChange, rows, team, inactiveIds, onDone,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   rows: readonly CollectionRow[];
   /** Active people, sorted by name. */
   team: readonly UserName[];
+  /** People who left — a customer whose manager left is skipped with that reason. */
+  inactiveIds: ReadonlySet<string>;
   /** After a run: the keys that were NOT saved (the page keeps only those ticked). */
   onDone: (failedKeys: string[]) => void;
 }) {
@@ -49,19 +51,17 @@ export function BulkAssignDialog({
   const [mode, setMode] = React.useState<"managers" | "person">(choice.suggestManagers ? "managers" : "person");
   const [personId, setPersonId] = React.useState("");
   const [busy, setBusy] = React.useState(false);
-  React.useEffect(() => {
-    if (open) { setMode(choice.suggestManagers ? "managers" : "person"); setPersonId(""); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset once per opening
-  }, [open]);
+  /* The page mounts this dialog once per opening (rows frozen), so the state above starts fresh. */
 
   const person = team.find((u) => u.id === personId);
   const pick: AssignPick | null = mode === "managers" ? { mode: "managers" } : person ? { mode: "person", id: person.id, name: person.label } : null;
-  const plan = pick ? bulkAssignRequests(rows, pick, teamMap, istToday()) : null;
+  const plan = pick ? bulkAssignRequests(rows, pick, teamMap, istToday(), inactiveIds) : null;
 
   async function run() {
     if (!plan || busy || plan.requests.length === 0) return;
     setBusy(true);
-    const failed: { key: string; name: string; error: string }[] = plan.skipped.map((s) => ({ key: s.row.key, name: s.row.customerName, error: s.reason }));
+    /* Planned skips (said in the dialog before the press) are reported apart; only real failures stay ticked. */
+    const failed: { key: string; name: string; error: string }[] = [];
     let done = 0;
     for (const r of plan.requests) {
       try { await postFollowup(r.body); done += 1; }
@@ -70,7 +70,7 @@ export function BulkAssignDialog({
     setBusy(false);
     void qc.invalidateQueries({ queryKey: ["collections"] });
     void qc.invalidateQueries({ queryKey: ["payment-followups"] });
-    const m = bulkAssignReport(done, failed);
+    const m = bulkAssignReport(done, failed, plan.skipped);
     if (m.tone === "success") toast.success(m.title);
     else if (m.tone === "warning") toast.warning(m.title, { description: m.description, duration: 15_000 });
     else toast.error(m.title, { description: m.description, duration: 15_000 });

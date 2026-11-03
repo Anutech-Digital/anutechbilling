@@ -34,7 +34,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Icon } from "@/components/ui/icon";
 import { istToday } from "@/lib/dates/ist";
 import { rupee } from "@/lib/utils";
 import { defaultNextFollowUp, NEXT_REQUIRED } from "@/lib/collections/followup-rules";
@@ -103,15 +102,17 @@ async function readAll(rows: readonly CollectionRow[], mode: BulkSendMode) {
   return { recipients: out.filter(isRecipient), skipped: out.filter((x): x is Skipped<CollectionRow> => !isRecipient(x)) };
 }
 
+type SendOut = { alreadySent?: boolean; logged?: boolean; warning?: string };
+
 /** Send one email through the same route as the Send reminder dialog. */
 async function sendOne(r: BulkRecipient, mode: BulkSendMode, nextFollowUpOn: string) {
   const customerId = r.row.customerId!;
   if (mode === "statement") {
-    return postJson<{ alreadySent?: boolean }>(`${pendingDuesUrl(customerId)}/email`, {
+    return postJson<SendOut>(`${pendingDuesUrl(customerId)}/email`, {
       subject: r.subject, message: r.text, nextFollowUpOn, requestId: r.requestId,
     });
   }
-  return postJson<{ alreadySent?: boolean }>("/api/collections/reminder/email", {
+  return postJson<SendOut>("/api/collections/reminder/email", {
     customerId,
     subject: r.subject,
     message: r.text,
@@ -133,8 +134,8 @@ export function BulkSendDialog({
   mode: BulkSendMode;
   /** The ticked rows. */
   rows: readonly CollectionRow[];
-  /** Called after a run in which nothing failed (the page clears the ticks). */
-  onDone?: () => void;
+  /** After a run: the keys NOT sent — the page keeps only those ticked, so a second run never re-reads (and re-mails) the ones that went. */
+  onDone?: (failedKeys: string[]) => void;
 }) {
   const qc = useQueryClient();
   const { send: targets, skipped: ruleSkipped } = React.useMemo(() => bulkSendTargets(rows, mode), [rows, mode]);
@@ -173,10 +174,12 @@ export function BulkSendDialog({
     let sent = 0;
     let already = 0;
     const failed: { r: BulkRecipient; error: string }[] = [];
+    const unlogged: string[] = [];
     for (const r of recipients) {
       try {
         const out = await sendOne(r, mode, next);
         if (out.alreadySent) already += 1; else sent += 1;
+        if (!out.alreadySent && out.logged === false) unlogged.push(r.row.customerName);
       } catch (e) {
         failed.push({ r, error: e instanceof Error ? e.message : "not sent" });
       }
@@ -184,12 +187,12 @@ export function BulkSendDialog({
     setSending(false);
     void qc.invalidateQueries({ queryKey: ["collections"] });
     void qc.invalidateQueries({ queryKey: ["payment-followups"] });
-    const m = bulkSendReport(mode, { sent, already, failed: failed.map((f) => ({ name: f.r.row.customerName, error: f.error })) });
+    const m = bulkSendReport(mode, { sent, already, failed: failed.map((f) => ({ name: f.r.row.customerName, error: f.error })), unlogged });
     if (m.tone === "success") toast.success(m.title);
     else if (m.tone === "warning") toast.warning(m.title, { description: m.description, duration: 15_000 });
     else toast.error(m.title, { description: m.description, duration: 15_000 });
+    onDone?.(failed.map((f) => f.r.row.key));
     if (failed.length === 0) {
-      onDone?.();
       onOpenChange(false);
       return;
     }
@@ -206,7 +209,7 @@ export function BulkSendDialog({
           <DialogDescription>
             {mode === "statement"
               ? "Each customer gets their own statement by email — every open bill, the total and the statement PDF."
-              : "Each customer gets the standard reminder by email — their own bills, amount and pay link."}
+              : "Each customer gets the standard reminder by email about their most overdue bill — that bill's amount and pay link (the same as This invoice in Send reminder)."}
             {" "}Nothing is sent until you press Email.
           </DialogDescription>
         </DialogHeader>
@@ -229,7 +232,7 @@ export function BulkSendDialog({
                     <li key={r.row.key} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2">
                       <span className="min-w-0 flex-1 font-medium text-ink break-words">{r.row.customerName}</span>
                       <span className="text-xs text-ink-3 break-all">{r.email}</span>
-                      <span className="font-mono text-xs tabular-nums text-ink">{rupee(r.amount)}</span>
+                      <span className="font-mono text-xs tabular-nums text-ink" title={mode === "reminder" ? "Most overdue bill" : "Total due"}>{rupee(r.amount)}</span>
                       {failures.get(r.row.key) && <span className="basis-full text-xs text-rose">Not sent: {failures.get(r.row.key)}</span>}
                     </li>
                   ))}
@@ -279,7 +282,6 @@ export function BulkSendDialog({
             </Button>
           )}
         </DialogFooter>
-        {read.isError && <p role="alert" className="text-sm text-rose"><Icon name="alert" size={14} /> Could not read the bills — close and try again.</p>}
       </DialogContent>
     </Dialog>
   );

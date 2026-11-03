@@ -23,7 +23,7 @@ import { resolveGeminiConfig } from "@/lib/ai/gemini";
 import { trustedOrigin } from "@/lib/app-url";
 import { istToday } from "@/lib/dates/ist";
 import {
-  buildReminderContext, emailTarget, payLinkNotice, reminderLineChoices, whatsappTarget,
+  buildReminderContext, buildReminderTemplate, emailTarget, payLinkNotice, reminderLineChoices, whatsappTarget,
 } from "@/lib/collections/reminder-draft";
 import { draftReminder, loadReminderRaw } from "@/lib/collections/reminder-draft.server";
 
@@ -73,7 +73,7 @@ export const POST = withRoute(
 
     /* R-2413: a bulk send uses the standard wording — no AI call per customer. */
     const draft = input.standard
-      ? { ...(await draftReminder(ctx, { apiKey: null, model: "", tenantId })), note: null }
+      ? { ...buildReminderTemplate(ctx), mode: "template" as const, note: null }
       : await draftReminder(ctx, await resolveGeminiConfig(supabase, tenantId));
     const wa = whatsappTarget(loaded.customer.phone);
     const em = emailTarget(loaded.customer.email);

@@ -127,7 +127,7 @@ describe("R-2413 bulk Send reminder", () => {
       ["/api/collections/reminder/email", B, `INV-${B}`],
     ]);
     expect(sends().every((c) => typeof c.body?.requestId === "string" && /^\d{4}-\d{2}-\d{2}$/.test(String(c.body?.nextFollowUpOn)))).toBe(true);
-    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith([]));
     expect(st.toast.success).toHaveBeenCalledWith("2 reminders emailed");
   });
 
@@ -137,13 +137,26 @@ describe("R-2413 bulk Send reminder", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Email 2 customers" }));
     const again = await screen.findByRole("button", { name: "Send 1 again" });
     expect(screen.getByText(/Not sent: Email is not set up/)).toBeTruthy();
-    expect(onDone).not.toHaveBeenCalled();
+    /* Only the failed one stays ticked on the page — a new run never re-reads (re-mails) Sharma. */
+    expect(onDone).toHaveBeenLastCalledWith([B]);
     const firstId = sends()[1].body?.requestId;
     fireEvent.click(again);
     await waitFor(() => expect(sends()).toHaveLength(3));
     expect(sends()[2].body?.customerId).toBe(B);
     expect(sends()[2].body?.requestId).toBe(firstId);
-    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    await waitFor(() => expect(onDone).toHaveBeenLastCalledWith([]));
+  });
+
+  it("emailed but not logged → a warning to log it by hand (not a clean success)", async () => {
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => (url === "/api/collections/reminder/email"
+      ? new Response(JSON.stringify({ ok: true, sentTo: "x", logged: false, warning: "not logged" }), { status: 200 })
+      : real(url, init))));
+    renderDialog("reminder");
+    fireEvent.click(await screen.findByRole("button", { name: "Email 2 customers" }));
+    await waitFor(() => expect(st.toast.warning).toHaveBeenCalled());
+    expect(st.toast.warning.mock.calls[0][1].description).toMatch(/follow-up was not logged for Sharma Traders, Gupta & Sons — log it with Follow-up, do not send again/);
+    expect(st.toast.success).not.toHaveBeenCalled();
   });
 });
 

@@ -122,7 +122,21 @@ describe("R-2413 Assign owner", () => {
     expect(m.tone).toBe("warning");
     expect(m.title).toBe("1 given an owner, 1 not saved");
     expect(m.description).toMatch(/Customer b — no account manager/);
+    expect(m.description).toMatch(/They stay ticked — press Assign owner again/);
+    expect(m.description).not.toMatch(/Retry failed/);   // there is no such button on this page
     expect(bulkAssignReport(0, [{ name: "x", error: "403" }]).tone).toBe("error");
+  });
+
+  it("planned skips are not failures: success, with the skipped count and why", () => {
+    const m = bulkAssignReport(2, [], [{ row: b, reason: "no account manager on this customer — pick a person instead" }]);
+    expect(m.tone).toBe("success");
+    expect(m.title).toBe("2 customers given an owner · 1 skipped (1 no account manager on this customer — pick a person instead)");
+  });
+
+  it("a manager who left (inactive) is named as such, not as 'no account manager'", () => {
+    const left = row("f", { ownerId: "u-gone" });
+    const out = bulkAssignRequests([left], { mode: "managers" }, team, TODAY, new Set(["u-gone"]));
+    expect(out.skipped[0].reason).toBe("their account manager is no longer active — pick a person instead");
   });
 });
 
@@ -134,5 +148,12 @@ describe("R-2413 bulk send report", () => {
     expect(m.tone).toBe("warning");
     expect(m.description).toMatch(/Acme — Email is not set up/);
     expect(bulkSendReport("reminder", { sent: 0, already: 0, failed: [{ name: "A", error: "x" }] }).tone).toBe("error");
+  });
+
+  it("emailed but follow-up not logged → a warning that says log it, never send again", () => {
+    const m = bulkSendReport("reminder", { sent: 3, already: 0, failed: [], unlogged: ["Acme"] });
+    expect(m.tone).toBe("warning");
+    expect(m.title).toBe("3 reminders emailed");
+    expect(m.description).toBe("Emailed, but the follow-up was not logged for Acme — log it with Follow-up, do not send again.");
   });
 });
