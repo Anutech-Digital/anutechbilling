@@ -9,6 +9,7 @@ import { newFakeDb, fakeServerModule, signInAs, TENANT_A, type FakeDb } from "@/
 const h = vi.hoisted(() => ({ db: null as unknown as FakeDb }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: () => fakeServerModule(h.db).createClient(),
+  createAdminClientFor: () => fakeServerModule(h.db).createAdminClientFor(),
 }));
 vi.mock("@/lib/pdf/pdf-token", () => ({ pdfDownloadUrl: () => "http://localhost:3001/api/v1/documents/quote/Q-1/pdf?token=t" }));
 

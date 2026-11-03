@@ -43,7 +43,7 @@ import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import { rupee } from "@/lib/utils";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
-import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
+import { customerCopyBlock, supplyCopyBlock } from "@/lib/quotes/customer-copy-gate";
 import { buildCustomerQuoteHtml } from "@/lib/email/quote-template";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
@@ -175,7 +175,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
      Mark as sent and the PDF link ask) refuses it before anything is rendered or emailed, naming
      the fix ("Set the customer's state" → the customer page). Messages have no closing full stop:
      the client toast (quoteEmailErrorOutcome) adds ". Nothing was sent…". */
-  const supplyBlock = customerCopyBlock(quote, { customer, lead, seller: tenant, role: me.role });
+  const supplyBlock = supplyCopyBlock(quote, { customer, lead, seller: tenant, role: me.role });
   if (supplyBlock) {
     return NextResponse.json(
       { error: supplyBlock.message, ...(supplyBlock.action ? { nextStep: supplyBlock.action } : {}) },

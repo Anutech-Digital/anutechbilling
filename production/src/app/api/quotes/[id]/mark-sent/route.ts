@@ -23,9 +23,9 @@
  * Returns { quoteStatus, changed, leadMoved, leadReason }.
  */
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
-import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
+import { customerCopyBlock, supplyCopyBlock, supplyRuleApplies } from "@/lib/quotes/customer-copy-gate";
 import { loadCustomerCopyParties } from "@/lib/quotes/customer-copy-supply";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { logDbError } from "@/lib/errors/db-error";
@@ -75,12 +75,20 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
     return NextResponse.json(done);
   }
 
-  /* R-2448: the buyer and the company's state, read as the quote page reads them (the user's own
-     client, scoped to this workspace). */
-  const parties = await loadCustomerCopyParties(
-    supabase, { ...quote, tenant_id: me.tenant_id }, (me as { role?: string | null }).role,
-  );
-  const block = customerCopyBlock(quote as Parameters<typeof customerCopyBlock>[0], parties);
+  const gateQuote = quote as Parameters<typeof customerCopyBlock>[0];
+  let block = customerCopyBlock(gateQuote);
+  if (!block && supplyRuleApplies(gateQuote)) {
+    /* R-2448: the buyer and the company's state, read with the send route's (admin) client and
+       scoped to this workspace — a customer row the user's RLS hides must not read as "no state". */
+    try {
+      block = supplyCopyBlock(gateQuote, await loadCustomerCopyParties(
+        createAdminClientFor(authData.user.id), { ...quote, tenant_id: me.tenant_id }, (me as { role?: string | null }).role,
+      ));
+    } catch (err) {
+      logDbError("quotes/mark-sent place of supply", { message: err instanceof Error ? err.message : String(err) });
+      return NextResponse.json({ error: "Could not check the customer's state. Reopen the quote and try again." }, { status: 500 });
+    }
+  }
   if (block) {
     return NextResponse.json(
       block.kind === "approval"

@@ -11,11 +11,12 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { trustedOrigin } from "@/lib/app-url";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { pdfDownloadUrl } from "@/lib/pdf/pdf-token";
 import { parseQuoteTemplate } from "@/lib/pdf/quote-template";
-import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
+import { customerCopyBlock, supplyCopyBlock, supplyRuleApplies } from "@/lib/quotes/customer-copy-gate";
+import { logDbError } from "@/lib/errors/db-error";
 import { loadCustomerCopyParties } from "@/lib/quotes/customer-copy-supply";
 
 export const dynamic = "force-dynamic";
@@ -40,8 +41,19 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   if (!q) return NextResponse.json({ error: "Quote not found." }, { status: 404 });
   /* R-1669: a signed PDF link is a customer copy — none while approval is pending / refused.
      R-2448: nor while the place of supply is unknown (no state) — Send's message and fix link. */
-  const parties = await loadCustomerCopyParties(supabase, q, (me as { role?: string | null } | null)?.role);
-  const block = customerCopyBlock(q, parties);
+  let block = customerCopyBlock(q);
+  if (!block && supplyRuleApplies(q)) {
+    try {
+      /* The send route's (admin) client, scoped to the quote's workspace — a row the user's RLS
+         hides must not read as "no state". */
+      block = supplyCopyBlock(q, await loadCustomerCopyParties(
+        createAdminClientFor(user.id), q, (me as { role?: string | null } | null)?.role,
+      ));
+    } catch (err) {
+      logDbError("quotes/pdf-link place of supply", { message: err instanceof Error ? err.message : String(err) });
+      return NextResponse.json({ error: "Could not check the customer's state. Reopen the quote and try again." }, { status: 500 });
+    }
+  }
   if (block) {
     return NextResponse.json(
       { error: block.message, ...(block.action ? { nextStep: block.action } : {}) },

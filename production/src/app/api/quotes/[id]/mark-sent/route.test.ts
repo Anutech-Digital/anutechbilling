@@ -13,6 +13,7 @@ import { newFakeDb, fakeServerModule, signInAs, TENANT_A, TENANT_B, type FakeDb 
 const h = vi.hoisted(() => ({ db: null as unknown as FakeDb }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: () => fakeServerModule(h.db).createClient(),
+  createAdminClientFor: () => fakeServerModule(h.db).createAdminClientFor(),
 }));
 
 import { POST } from "./route";

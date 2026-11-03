@@ -9,6 +9,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { customerCopyBlock, type CustomerCopyQuote, type CustomerCopyParties } from "./customer-copy-gate";
+import { loadCustomerCopyParties } from "./customer-copy-supply";
 
 const atList = [{ id: "l1", name: "GW Standard", qty: 10, rate: 12960, list_rate: 12960, cost: 8640, commitment: "annual_yearly" }];
 const discounted = [{ id: "l1", name: "GW Standard", qty: 10, rate: 10627, list_rate: 12960, cost: 8640, commitment: "annual_yearly" }];
@@ -35,7 +36,7 @@ describe("customerCopyBlock — place of supply (R-2448)", () => {
     const b = customerCopyBlock(q(), noState);
     expect(b?.kind).toBe("customer_state");
     expect(b?.message).toBe(
-      "Pathak Fabrication has no state on record — the state decides CGST + SGST or IGST. Set the customer's state on the customer page, then send",
+      "Pathak Fabrication has no state on record — the state decides CGST + SGST or IGST. Set the customer's state on the customer page first",
     );
     expect(b?.action).toEqual({ label: "Set the customer's state", href: `/customers/${CUSTOMER}` });
   });
@@ -43,6 +44,8 @@ describe("customerCopyBlock — place of supply (R-2448)", () => {
   it("a sent quote is still blocked (resend / copy link / PDF) — the invoice would still be refused", () => {
     expect(customerCopyBlock(q({ status: "sent" }), noState)?.kind).toBe("customer_state");
     expect(customerCopyBlock(q({ status: "viewed" }), noState)?.kind).toBe("customer_state");
+    // Send allows a resend of an expired quote — it was refused for no state before (R-2442) and still is.
+    expect(customerCopyBlock(q({ status: "expired" }), noState)?.kind).toBe("customer_state");
   });
 
   it("accepted / invoiced quotes are not pulled back (the invoice keeps its frozen head)", () => {
@@ -88,5 +91,25 @@ describe("customerCopyBlock — place of supply (R-2448)", () => {
 
   it("without parties the gate is the approval rule alone (callers that do not load the buyer)", () => {
     expect(customerCopyBlock(q())).toBeNull();
+  });
+});
+
+describe("loadCustomerCopyParties (R-2448 review)", () => {
+  /* A client whose every read answers with `res` — enough to see the loader's error handling. */
+  const fakeDb = (res: { data: unknown; error: unknown }) => {
+    const chain: Record<string, unknown> = {};
+    for (const k of ["select", "eq"]) chain[k] = () => chain;
+    chain.maybeSingle = async () => res;
+    return { from: () => chain } as unknown as Parameters<typeof loadCustomerCopyParties>[0];
+  };
+
+  it("a failed read throws — never reported as 'no state'", async () => {
+    await expect(loadCustomerCopyParties(fakeDb({ data: null, error: { message: "boom" } }), { tenant_id: "t1", customer_id: "c1" }, "owner"))
+      .rejects.toThrow(/Could not read the customer/);
+  });
+
+  it("reads the rows it is given", async () => {
+    const p = await loadCustomerCopyParties(fakeDb({ data: { state_code: "07", gstin: null }, error: null }), { tenant_id: "t1" }, "sales");
+    expect(p).toEqual({ customer: null, lead: null, seller: { state_code: "07", gstin: null }, role: "sales" });
   });
 });

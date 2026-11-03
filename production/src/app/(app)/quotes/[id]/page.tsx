@@ -80,7 +80,7 @@ import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-vouch
 import { CustomerAdvanceView } from "@/components/features/quotes/customer-advance-view";
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
-import { copyLinkMarkingSent } from "@/components/features/quotes/failed-send-toast";
+import { copyLinkMarkingSent, STAY_UNTIL_DISMISSED } from "@/components/features/quotes/failed-send-toast";
 import { openWhatsAppMarkingSent, markSentBeforeShare } from "@/components/features/quotes/share-marking-sent";
 import { markQuoteSent } from "@/lib/quotes/mark-quote-sent";
 import { PayQrNotice } from "@/components/features/quotes/pay-qr-notice";
@@ -174,10 +174,10 @@ export default function QuoteDetailPage() {
   const { data: paymentHistory } = usePaymentsByQuote(params.id);
   /* R-1718: the timeline says "Sent to customer" only for an email that really went. */
   const { data: quoteSends } = useQuoteSends(params.id);
-  const { data: customer } = useCustomer(quote?.customer_id ?? undefined);
+  const { data: customer, isLoading: customerLoading } = useCustomer(quote?.customer_id ?? undefined);
   // Prospect quotes have no customer yet — fall back to the lead's phone so the
   // WhatsApp recipient still prefills (quotes usually go to that same contact).
-  const { data: lead } = useLead(quote?.lead_id ?? undefined);
+  const { data: lead, isLoading: leadLoading } = useLead(quote?.lead_id ?? undefined);
   const updateLeadStage = useUpdateLeadStage();
   const logActivity     = useLogLeadActivity();
   const recipientPhone = React.useMemo(() => {
@@ -193,7 +193,7 @@ export default function QuoteDetailPage() {
   /* R-1485: the buyer's GSTIN — the customer row's (a customer quote never borrows the lead's),
      else the lead's. Same value on the page, the preview and the downloaded PDF. */
   const buyerGstin = quoteBuyerGstin(quote?.customer_id ? (customer ?? { gstin: null }) : null, lead);
-  const { data: me } = useCurrentUser();
+  const { data: me, isLoading: meLoading } = useCurrentUser();
   /* R-718: recording a payment is owner / manager / accountant / billing — sales, support and
      delivery see the money state but no Record button (the database refuses them). */
   const mayRecordMoney = canRecordMoney(me?.role);
@@ -248,25 +248,31 @@ export default function QuoteDetailPage() {
      the quote waits for — or was refused — discount / margin approval. Preview stays open. */
   /* R-2448: and while the place of supply is unknown (no state on the customer / lead / prospect,
      or on the company) — the same gate the send, mark-sent and PDF-link routes ask. Judged only
-     once the buyer and the company have loaded, so a slow fetch never flashes "no state". */
-  const partiesLoaded = !!quote && !!me
-    && (!quote.customer_id || customer !== undefined)
-    && (!!quote.customer_id || !quote.lead_id || lead !== undefined);
-  const customerBlock = React.useMemo(() => (quote ? customerCopyBlock(quote, partiesLoaded ? {
+     once the buyer and the company have loaded, so a slow fetch never flashes "no state"; a
+     customer / lead row this user cannot read is left to the server (it reads it with the admin
+     client), never judged here as "no state". */
+  const partiesSettled = !!quote && !meLoading && !customerLoading && !leadLoading;
+  const buyerReadable = !quote ? false : quote.customer_id ? !!customer : quote.lead_id ? !!lead : true;
+  const customerBlock = React.useMemo(() => (quote ? customerCopyBlock(quote, partiesSettled && me && buyerReadable ? {
     customer: customer ?? null,
     lead: lead ?? null,
-    seller: { state_code: me?.tenantStateCode, gstin: me?.tenantGstin },
-    role: me?.role,
-  } : null) : null), [quote, partiesLoaded, customer, lead, me?.tenantStateCode, me?.tenantGstin, me?.role]);
+    seller: { state_code: me.tenantStateCode, gstin: me.tenantGstin },
+    role: me.role,
+  } : null) : null), [quote, partiesSettled, buyerReadable, customer, lead, me]);
   const customerBlockTitle = customerBlock?.kind === "approval" ? CUSTOMER_COPY_BLOCKED_TITLE : customerBlock?.message;
-  /** R-2448: a refusal that names its fix ("Set the customer's state") puts it on the toast — no "try again". */
+  /** R-2448: a 409 refusal is refused again on retry — its own words, its fix as the button when
+   *  it names one ("Set the customer's state"), and no "try again". */
   const refusalFix = (err: unknown) => {
-    const fix = err instanceof QuoteSendRefusedError ? err.nextStep : undefined;
-    return fix ? { action: { label: fix.label, onClick: () => router.push(fix.href as never) }, duration: 30000 } : null;
+    if (!(err instanceof QuoteSendRefusedError) || err.status !== 409) return null;
+    const fix = err.nextStep;
+    return fix
+      ? { action: { label: fix.label, onClick: () => router.push(fix.href as never) }, duration: STAY_UNTIL_DISMISSED }
+      : { duration: 20000 };
   };
   React.useEffect(() => {
     if (sendIntentHandled.current) return;
     if (!quote)                     return;            // wait for data
+    if (!partiesSettled)            return;            // R-2448: and for the state check
     if (customerBlock && (sendIntent === "whatsapp" || sendIntent === "email")) {
       sendIntentHandled.current = true;
       if (customerBlock.kind === "approval") toast.error("Needs approval first", { description: customerBlock.reason });
@@ -289,7 +295,7 @@ export default function QuoteDetailPage() {
       sendIntentHandled.current = true;
       router.replace(`/quotes/${quote.id}` as never);
     }
-  }, [sendIntent, quote, router, customerBlock]);
+  }, [sendIntent, quote, router, customerBlock, partiesSettled]);
 
   /* Approval state. Derived from the quote's own lines every render rather than read
      from a stored flag — the flag records a DECISION, the lines are the facts, and if
