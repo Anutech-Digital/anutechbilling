@@ -145,4 +145,13 @@ describe("reminder draft route", () => {
     expect(j.payLink).toBeNull();
     expect(j.payLinkNotice.text).toMatch(/UPI ID in Settings/);
   });
+
+  it("R-2413 bulk: standard: true → the plain template even with an AI key, no AI call, no 'no key' note", async () => {
+    st.apiKey = "k";
+    const j = await (await call({ customerId: CUST, standard: true })).json();
+    expect(j.mode).toBe("template");
+    expect(j.note).toBeNull();
+    expect(j.message.split("\n")[0]).toMatch(/₹68,000 is pending/);
+    expect(st.ai).not.toHaveBeenCalled();
+  });
 });
