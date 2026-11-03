@@ -369,4 +369,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2432partnermirrorv2", peek: "exists (select 1 from pg_proc where proname = 'tg_mirror_invoice_to_child_vendor_bill' and prosrc like '%R-2432%') and to_regprocedure('public.tg_partner_credit_note_to_child_bill()') is not null" },
   { key: "r2441approvalroleprefixedrefs", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2441%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_reference_is_real(text)') and prosrc like '%NEFT%')" },
   { key: "r2433tenantconnections", peek: "to_regclass('public.tenant_connections') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.get_partner_metrics()') and prosrc like '%R-2433%')" },
+  { key: "r2431navbadgesrenewalstabs", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.nav_badges(text[])') and prosrc like '%R-2431%')" },
 ];

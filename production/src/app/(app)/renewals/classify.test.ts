@@ -106,6 +106,6 @@ describe("R-1124 page wiring", () => {
     expect(page).not.toContain('title="Expired · in grace"');
   });
   it("bulk reminder passes the company grace", () => {
-    expect(page).toMatch(/bulkReminderTargets\(enriched, today, graceDays\)/);
+    expect(page).toMatch(/bulkReminderPlan\(enriched, today, graceDays\)/);   // R-2431: send + named skips
   });
 });

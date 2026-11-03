@@ -6,7 +6,7 @@ import { NAV_BADGE_VIEWS, shownBadge } from "./nav-badge-views";
 import { ENQUIRY_FOLDERS, PAGE_CHOICES } from "@/lib/navigation/drilldown";
 import { groupTasks, taskTabCounts } from "@/components/features/tasks/task-groups";
 import { TASK_OPEN_STATUSES } from "@/lib/queries/tasks";
-import { RENEWAL_EXCLUDED_STATUS, RENEWAL_URGENT_DAYS, daysUntilRenewal, isFlexNextPart, onRenewalsPage, renewalBucket } from "@/lib/renewals/buckets";
+import { RENEWAL_EXCLUDED_STATUS, RENEWAL_URGENT_DAYS, daysUntilRenewal, inRenewalsBadge, onRenewalsPage, renewalBucket } from "@/lib/renewals/buckets";
 import { chasedRenewal } from "@/app/(app)/renewals/classify";
 import { INVOICE_OWED_STATUSES, invoiceInFocus } from "@/lib/invoices/kpis";
 import { QUOTE_TO_INVOICE_PAYMENT_STATUS, quoteInFocus } from "@/lib/quotes/focus";
@@ -107,13 +107,14 @@ describe("R-1541: renewals — badge == /renewals?bucket=urgent", () => {
     { status: "cancelled", renewal_date: "2026-10-19" },  // cancelled — no
     { status: "active", renewal_date: null },             // no date — no
     { status: "active", renewal_date: "2026-10-20", auto_renew: false },  // R-2225: Won't renew — no
-    { status: "active", renewal_date: "2026-10-21", term_months: 1, billing_cycle: "monthly" },  // R-2232: flex part — no
+    { status: "active", renewal_date: "2026-10-21", term_months: 1, billing_cycle: "monthly" },  // R-2431: flex part — a renewal (R-2422) → urgent
   ];
-  it("the page's Urgent tab holds 3", () => {
+  it("the page's Urgent tab holds 4 (flex included since R-2431)", () => {
     const urgent = rows.filter(onRenewalsPage).filter(chasedRenewal)
-      .filter((r) => !isFlexNextPart(r, daysUntilRenewal(r.renewal_date!, today)))
       .filter((r) => renewalBucket(daysUntilRenewal(r.renewal_date!, today)) === "urgent");
-    expect(urgent.length).toBe(3);
+    expect(urgent.length).toBe(4);
+    /* the badge rule (inRenewalsBadge) picks the same rows */
+    expect(rows.filter((r) => inRenewalsBadge(r, daysUntilRenewal(r.renewal_date ?? "2099-01-01", today), false)).length).toBe(4);
   });
   it("SQL: not cancelled, has a date, within RENEWAL_URGENT_DAYS of the IST today", () => {
     const sql = countSql("renewals");
@@ -121,8 +122,9 @@ describe("R-1541: renewals — badge == /renewals?bucket=urgent", () => {
     expect(sql).toMatch(/s\.renewal_date is not null/);
     expect(sql, "R-2225: a non-renewing subscription is not counted").toMatch(/and s\.auto_renew and/);
     expect(sql).toContain(`s.renewal_date <= v_today + ${RENEWAL_URGENT_DAYS}`);
-    expect(sql, "R-2232: a flex part is not counted (isFlexNextPart)").toContain(
-      "and not (coalesce(s.term_months, 12) <= 1 and s.billing_cycle in ('monthly', 'quarterly', 'half_yearly') and s.renewal_date >= v_today)",
+    expect(sql, "R-2431: a flex part counts — no billing_cycle exclusion any more").not.toMatch(/billing_cycle/);
+    expect(sql, "R-2431 / R-2403: a past-date renewal whose renewal quote is paid is not Overdue, unless stopped").toContain(
+      "and not (s.renewal_date < v_today and s.renewal_state <> 'suspended' and exists (select 1 from public.quotes rq where rq.id = s.renewal_quote_id and rq.payment_status = 'received'))",
     );
     expect(SQL).toMatch(/v_today\s+date := \(now\(\) at time zone 'Asia\/Kolkata'\)::date/);
   });

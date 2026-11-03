@@ -30,7 +30,8 @@ export function ForecastPanel({
       <div className="bg-paper-2/40 border border-hairline rounded-lg p-3">
         <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Renewal forecast · next 6 months</p>
-          <p className="text-xs text-ink-3">Annual renewals {rupee(forecast.totalAmount, { compact: true })} ({forecast.totalCount}){forecast.flexCount > 0 ? <> · flex run-rate {rupee(forecast.flexMonthlyRunRate, { compact: true })}/mo ({forecast.flexCount}) — not in total</> : null}</p>
+          {/* R-2431: one total, in term amounts before GST (the tiles' amount without a quote); monthly (flex) parts are in it. */}
+          <p className="text-xs text-ink-3">Renewals {rupee(forecast.totalAmount, { compact: true })} + GST ({forecast.totalCount} due {forecast.totalCount === 1 ? "date" : "dates"}){forecast.flexCount > 0 ? <> · incl. {forecast.flexCount} monthly (flex) {forecast.flexCount === 1 ? "subscription" : "subscriptions"}, one part each month</> : null}</p>
         </div>
         <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2">
           {forecast.months.map((m) => (
