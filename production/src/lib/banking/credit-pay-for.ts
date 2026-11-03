@@ -31,7 +31,8 @@ import { ROUND_OFF_LIMIT } from "@/lib/banking/credit-pay-for-multi";
 import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
 import { rupee, formatDate } from "@/lib/utils";
 import { knownPayerCustomer, payerFromNarration, type KnownPayer } from "@/lib/banking/customer-payer";
-import type { BillingCycle, Item } from "@/lib/supabase/database.types";
+import type { BillingCycle, Item, QuoteLineItem } from "@/lib/supabase/database.types";
+import { linesBelowCost, NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
 
 /* ─── Open items (rows of bank_credit_open_items) ──────────────────────────────────────── */
 
@@ -750,6 +751,11 @@ export interface PayForResult {
   allocated?: number;
   round_off?: number;
   advance_receipt_voucher_no?: string | null;
+  /* R-2397: a new sale priced below cost — NOT booked. Its quote waits in Needs approval and the
+     bank line stays unmatched (bank_sale_park_for_approval). */
+  needs_approval?: boolean;
+  reconciled?: boolean;
+  reason?: string | null;
 }
 
 export interface ResultLine { text: string; href?: string; tone?: "ok" | "warn" }
@@ -764,8 +770,35 @@ export function advanceMessage(amount: number, customerName: string): string {
   return `${rupee(amount)} kept as advance for ${customerName} — it will be offered when you record their next payment`;
 }
 
+/* ─── R-2397: a below-cost new sale waits for the owner's approval (one rule everywhere) ─── */
+
+/** The server's sentence before a quote exists (public.bank_sale_below_cost_text(null)). */
+export const BANK_SALE_BELOW_COST_TEXT =
+  "This price is below cost, so the sale needs the owner's approval first. The bank line stays unmatched.";
+
+/** The drawer's sale lines as the server stores them, judged by R-2213's rule (linesBelowCost) —
+ *  the answer public.bank_sale_lines_below_cost gives, so the drawer says it before Save. */
+export function saleLinesBelowCost(lines: readonly SaleLine[]): boolean {
+  const asQuoteLines: QuoteLineItem[] = saleLinesPayload(lines).map((l) => ({
+    id: l.id, item_id: l.item_id ?? undefined, name: l.name, qty: l.qty, rate: l.rate, cost: l.cost,
+  }));
+  return linesBelowCost(asQuoteLines);
+}
+
+/** What the drawer says after a below-cost sale was sent for approval (nothing reconciled). */
+export function approvalWaitLines(r: PayForResult & { external_number?: string | null }): ResultLine[] {
+  const q = r.quote_id;
+  return [
+    { text: r.reason || BANK_SALE_BELOW_COST_TEXT, tone: "warn" },
+    ...(q ? [{ text: `Open quote ${q} (${NEEDS_APPROVAL_LABEL})`, href: `/quotes/${encodeURIComponent(q)}` }] : []),
+    /* R-2360's Zoho number has no invoice to sit on yet — the server noted it on the quote. */
+    ...(r.external_number ? [{ text: `Zoho invoice ${r.external_number} is noted on the quote — add it when this line is booked after approval.` }] : []),
+  ];
+}
+
 /** "Renewal of Google Workspace (15 seats) paid → subscription renewed to 24 Oct 2027", etc. */
 export function resultLines(r: PayForResult): ResultLine[] {
+  if (r.needs_approval) return approvalWaitLines(r);
   const out: ResultLine[] = [];
   /* R-2098: several items on one line — each part says what it did, then the rest. A split
      result has no subscriptions of its own (they are on its parts), so this comes first. */
