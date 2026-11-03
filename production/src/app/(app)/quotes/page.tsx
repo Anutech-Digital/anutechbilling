@@ -89,6 +89,10 @@ import { useQuoteOpenBalances, withOpenBalances } from "@/lib/quotes/open-balanc
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
 import { isSupportUpgradeQuote } from "@/lib/support/upgrade-quote";
+import { quoteKindFor, type QuoteKindQuote } from "@/lib/quotes/quote-kind";
+import { usePartFacts } from "@/lib/quotes/quote-kind-facts";
+import { withPartCosts } from "@/lib/quotes/part-cost";
+import { QuoteKindChip } from "@/components/features/quotes/quote-kind-stamp";
 
 /**
  * R-2222: a row's total with its period, in ITS billing currency (foreign quotes show $/€…;
@@ -123,8 +127,9 @@ function rowTotal(q: Parameters<typeof quoteRowTotalPeriods>[0] & { currency?: s
  * show that rather than a number. Returning 0 would be indistinguishable from a
  * break-even deal.
  */
-function estimateMarginForQuote(q: Quote): ReturnType<typeof computeMargin> & { known: boolean } {
-  const lines = Array.isArray(q.line_items) ? q.line_items : [];
+function estimateMarginForQuote(q: Quote, costedLines?: QuoteLineItem[]): ReturnType<typeof computeMargin> & { known: boolean } {
+  /* R-2423: a payment request's lines with the part's cost (part-cost.ts) when the row has them. */
+  const lines = costedLines ?? (Array.isArray(q.line_items) ? q.line_items : []);
   const taxable = q.subtotal
     ? q.subtotal - Math.round(q.subtotal * (q.discount_pct / 100))
     : (q.amount ?? 0);
@@ -362,6 +367,21 @@ export default function QuotesPage() {
     QUOTES_PAGE_SIZE,
     quotesPagingKey({ tab, focus, search, teamMode, onlyMyApprovals }),
   );
+  /* R-2423: each row's type chip — the same word as the quote page's stamp (quote-kind.ts). A
+     payment request's word comes from its part (renewal term or the sale's first term). */
+  const billingIdOf = (q: Quote) => (q as Quote & { subscription_billing_id?: string | null }).subscription_billing_id ?? null;
+  const { data: rowPartFacts } = usePartFacts(paged.shown.map(billingIdOf));
+  const kindChipOf = (q: Quote) => {
+    const bid = billingIdOf(q);
+    const stamp = quoteKindFor(q as Quote & QuoteKindQuote, bid ? rowPartFacts?.get(bid)?.facts ?? null : null);
+    /* A plain new sale — most quotes — carries no chip, as before. */
+    return stamp && !(stamp.kind === "new_sale" && !bid) ? stamp : null;
+  };
+  const costedLinesOf = (q: Quote): QuoteLineItem[] | undefined => {
+    const bid = billingIdOf(q);
+    if (!bid || !Array.isArray(q.line_items)) return undefined;
+    return withPartCosts(q.line_items, bid, (id) => rowPartFacts?.get(id)?.cost ?? null);
+  };
 
   const keys = useListKeys({
     count: paged.shown.length,   // only the rows on screen (R-105)
@@ -857,13 +877,7 @@ export default function QuotesPage() {
                             {/* R-811: from extension_months — "3-month extension", not "0yr". */}
                             {extensionTitle({ isExtension: q.is_extension, extensionMonths: q.extension_months }) ?? "Extension"}
                           </Badge>
-                        ) : q.is_renewal ? (
-                          <Badge kind="info" className="font-sans text-3xs">{isSupportUpgradeQuote(q) ? "Upgrade" : "Renewal"}</Badge>
-                        ) : q.is_add_seats ? (
-                          <Badge kind="info" className="font-sans text-3xs">Prorata</Badge>
-                        ) : q.is_one_off && !isCustomerAdvanceQuote(q) ? (
-                          <Badge kind="muted" className="font-sans text-3xs">Direct invoice</Badge>
-                        ) : null}
+                        ) : <QuoteKindChip stamp={kindChipOf(q)} />}
                       </div>
                       <p className="text-sm font-semibold text-ink mt-1 truncate">
                         {cleanDisplayName(partyOf(q))}
@@ -949,7 +963,7 @@ export default function QuotesPage() {
               </thead>
               <tbody>
                 {paged.shown.map((q, rowIndex) => {
-                  const margin = estimateMarginForQuote(q);
+                  const margin = estimateMarginForQuote(q, costedLinesOf(q));
                   const uStatus = unifiedStatus(q);
                   const dl = q.expires_date ? daysBetween(new Date(), q.expires_date) : null;
                   const expiringSoon = dl !== null && dl >= 0 && dl <= 7;
@@ -979,13 +993,7 @@ export default function QuotesPage() {
                             <Badge kind="warning" className="font-sans text-3xs">
                               {extensionBadgeLabel(q.extension_months)}
                             </Badge>
-                          ) : q.is_renewal ? (
-                            <Badge kind="info" className="font-sans text-3xs">{isSupportUpgradeQuote(q) ? "Upgrade" : "Renewal"}</Badge>
-                          ) : q.is_add_seats ? (
-                            <Badge kind="info" className="font-sans text-3xs">Prorata</Badge>
-                          ) : q.is_one_off && !isCustomerAdvanceQuote(q) ? (
-                            <Badge kind="muted" className="font-sans text-3xs">Direct invoice</Badge>
-                          ) : null}
+                          ) : <QuoteKindChip stamp={kindChipOf(q)} />}
                         </div>
                       </td>
                       {/* R-2264: Customer and Plan are one line each — the full text is

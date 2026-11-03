@@ -132,6 +132,11 @@ import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyBuilderLine, billOfSupplyStatus, quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
+import { quoteKindFor, quoteSubscriptionId, subscriptionForLine, type QuoteKindQuote } from "@/lib/quotes/quote-kind";
+import { usePartFacts } from "@/lib/quotes/quote-kind-facts";
+import { withPartCosts } from "@/lib/quotes/part-cost";
+import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
+import { QuoteKindStamp } from "@/components/features/quotes/quote-kind-stamp";
 
 // ============================================================
 // Status meta
@@ -320,6 +325,16 @@ export default function QuoteDetailPage() {
     .filter((s) => quote && s.quote_id === quote.id)
     .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""))[0];
   const { data: nextPartRequest = null } = useNextPartRequest(quote && !partRequest ? saleSub?.id : null);
+  /* R-2423: a payment request's part(s) and subscription — for the type stamp, the "For
+     subscription" line and the part's vendor cost (its lines are made with cost 0). */
+  const leadBillingId = partRequest ? ((quote as { subscription_billing_id?: string | null } | undefined)?.subscription_billing_id ?? null) : null;
+  const partBillingIds = React.useMemo(
+    () => (leadBillingId && quote
+      ? [leadBillingId, ...(Array.isArray(quote.line_items) ? quote.line_items : []).map((l) => (l as { billing_id?: string | null }).billing_id ?? null)]
+      : []),
+    [leadBillingId, quote],
+  );
+  const { data: partFacts } = usePartFacts(partBillingIds);
   /* R-2101: the parts' tax invoices (linked through subscription_billings) tick INVOICED. Not
      loaded / failed → null: the step falls back to quote.invoice_id alone (as before R-2101). */
   const { data: partInvoices = null, isLoading: partInvoicesLoading } = useQuotePartInvoices(
@@ -781,6 +796,16 @@ export default function QuoteDetailPage() {
       : PAYMENT_META[paymentBadge]
     : null;
   const items: QuoteLineItem[] = Array.isArray(quote.line_items) ? quote.line_items : [];
+  /* R-2423: WHAT this quote is (quote-kind.ts — stored facts only, no stamp when they do not say)
+     and which subscription it is for. */
+  const leadPart = leadBillingId ? partFacts?.get(leadBillingId) ?? null : null;
+  const kindStamp = quoteKindFor(quote as typeof quote & QuoteKindQuote, leadPart?.facts ?? null);
+  const forSubId = quoteSubscriptionId(
+    quote as typeof quote & QuoteKindQuote & { add_seats_subscription_id?: string | null },
+    allSubs ?? [], leadPart?.billing.subscription_id ?? null,
+  );
+  const forSub = leadPart?.sub ?? (allSubs ?? []).find((s) => s.id === forSubId) ?? null;
+  const forSubText = subscriptionForLine(forSub);
   /* R-542: an add-seats quote's line is a pro-rata charge for the days left in the current
      term — paid once. Its commitment is "annual_yearly" (the seats' term), which printed
      "₹851/yr" as if it recurred yearly. No per-period suffix on those lines. */
@@ -914,9 +939,14 @@ export default function QuoteDetailPage() {
      this page reported "100% est. margin" on a 17.5% deal. The lines are the facts
      and there is one of them per product, so they are what both this page and the
      approval matrix read — one source, and they cannot disagree. */
-  const lineCostTotal = items.reduce((s, l) => s + l.qty * l.cost, 0);
+  /* R-2423 (4): a payment request's lines carry cost 0 — its cost is the subscription's own
+     (subscriptionCogs) for the part's months (part-cost.ts). Display only; the saved lines stay. */
+  const marginItems = partRequest
+    ? withPartCosts(items, leadBillingId, (id) => partFacts?.get(id)?.cost ?? null)
+    : items;
+  const lineCostTotal = marginItems.reduce((s, l) => s + l.qty * l.cost, 0);
   /* R-388: shared rule — our own support plan at ₹0 is a known cost. */
-  const marginKnown   = !anyCostUnknown(items);
+  const marginKnown   = !anyCostUnknown(marginItems);
   const margin = computeMargin(lineCostTotal, taxable);
 
   const acceptUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/quote/${quote.id}/accept?t=${encodeURIComponent(quote.public_token)}`;
@@ -1094,9 +1124,13 @@ export default function QuoteDetailPage() {
             <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
               Revenue · {quote.is_extension ? "Extension Quote" : upgradeQuote ? "Upgrade Quote" : quote.is_renewal ? "Renewal Quote" : "Quote"}
             </p>
-            <h1 className="font-serif text-3xl md:text-4xl leading-tight">
-              {quote.id}
-            </h1>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="font-serif text-3xl md:text-4xl leading-tight">
+                {quote.id}
+              </h1>
+              {/* R-2423: the type stamp — RENEWAL · Part 1 of 12 · Nov 2026 (· PAID <date>, green). */}
+              <QuoteKindStamp stamp={kindStamp} />
+            </div>
             <p className="text-sm text-ink-3 mt-1 flex items-center gap-2 flex-wrap">
               <span>
                 For{" "}
@@ -1172,7 +1206,7 @@ export default function QuoteDetailPage() {
                   <span>·</span>
                   <Badge kind="warning">{extTitle ?? "Extension"}</Badge>
                 </>
-              ) : quote.is_renewal && (
+              ) : quote.is_renewal && !kindStamp && (
                 <>
                   <span>·</span>
                   <Badge kind="info">{upgradeQuote ? "Upgrade" : "Renewal"}</Badge>
@@ -1185,6 +1219,15 @@ export default function QuoteDetailPage() {
                 </>
               )}
             </p>
+            {/* R-2423 (2): which subscription this quote is for — opens it. */}
+            {forSub && forSubText && (
+              <p className="text-sm text-ink-3 mt-1" data-testid="quote-for-subscription">
+                For subscription:{" "}
+                <Link href={subscriptionOpenHref(forSub) as never} className="font-medium text-ink hover:text-amber-ink hover:underline">
+                  {forSubText}
+                </Link>
+              </p>
+            )}
           </div>
         </div>
 

@@ -42,7 +42,7 @@ interface ReqRow {
   id: string; tenant_id: string; customer_id: string | null; customer_name: string;
   amount: number | null; payment_amount: number | null; public_token: string | null;
   /** R-2092: a request for a quote's period names each subscription's part (billing_id). */
-  line_items: { name?: string; billing_id?: string }[] | null;
+  line_items: { name?: string; description?: string; billing_id?: string }[] | null;
   subscription_billing_id: string;
 }
 interface BillRow {
@@ -95,8 +95,11 @@ export async function chasePartRequests(
     const amountDue = (q.amount ?? 0) - (q.payment_amount ?? 0);
     /* R-2230: the request's own due date — the reminders, the email and the pause count from it. */
     const dueOn = b.due_on ?? b.bill_on;
-    /* The request's own wording, "Advance payment for Q2 · 28 Jan–27 Apr 2027" (its first line). */
-    const partLabel = q.line_items?.[0]?.name ?? `Advance payment for part ${b.period_index}`;
+    /* The request's own wording (its first line). R-2423: a one-line request names the product,
+       "Workspace · acme.in · 10 seats · 1 Nov–30 Nov 2026 (part 1 of 12)"; a group request (R-2092) covers
+       several products, so its mail keeps the short label the lines carry as description,
+       "Advance payment for Q2 · 28 Jan–27 Apr 2027" (older requests: that is their name). */
+    const partLabel = requestMailPart(q.line_items) ?? `Advance payment for part ${b.period_index}`;
     try {
       const step: RequestReminderStep | "new" | null = !b.request_reminder_step
         ? "new"
@@ -179,4 +182,18 @@ export async function requestSubscriptionIds(
     .select("subscription_id").in("id", parts).eq("tenant_id", q.tenant_id);
   if (error) throw new Error(error.message);
   return Array.from(new Set([ownSubscriptionId, ...((data as { subscription_id: string }[] | null) ?? []).map((r) => r.subscription_id)]));
+}
+
+/**
+ * R-2423 — the part the request mail names. A one-line request: its line ("Workspace · acme.in ·
+ * 10 seats · 1 Nov–30 Nov 2026 (part 1 of 12)", or an older "Advance payment for …"). A group
+ * request (several products): the short label its lines carry as description since R-2423
+ * ("Advance payment for Q2 · …"); an older group's name already is that label. Pure — tested.
+ */
+export function requestMailPart(lines: { name?: string; description?: string }[] | null | undefined): string | null {
+  const first = lines?.[0];
+  if (!first) return null;
+  const desc = first.description?.trim();
+  if ((lines?.length ?? 0) > 1 && desc && desc.startsWith("Advance payment for")) return desc;
+  return first.name?.trim() || null;
 }

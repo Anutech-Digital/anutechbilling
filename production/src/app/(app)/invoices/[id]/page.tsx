@@ -25,6 +25,9 @@ import { InvoiceDetail } from "../invoice-detail";
 import { OpeningInvoiceDetail } from "../opening-invoice-detail";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 import { invoiceIdFromParam } from "../invoice-href";
+import { quoteKindFor } from "@/lib/quotes/quote-kind";
+import { useInvoiceKindSource, usePartFacts } from "@/lib/quotes/quote-kind-facts";
+import { QuoteKindStamp } from "@/components/features/quotes/quote-kind-stamp";
 
 export default function InvoiceDetailPage() {
   const params = useParams<{ id: string }>();
@@ -44,6 +47,12 @@ export default function InvoiceDetailPage() {
       return data;
     },
   });
+
+  /* R-2423 (5): what this invoice was for — the same word as the quote's stamp (quote-kind.ts). */
+  const { data: kindSource } = useInvoiceKindSource(invoice?.id, invoice?.quote_id);
+  const partId = kindSource?.quote?.subscription_billing_id ?? null;
+  const { data: partFacts } = usePartFacts([partId]);
+  const kindStamp = quoteKindFor(kindSource?.quote ?? null, partId ? partFacts?.get(partId)?.facts ?? null : null);
 
   if (isLoading) {
     return (
@@ -91,5 +100,20 @@ export default function InvoiceDetailPage() {
 
   /* R-1739: an invoice imported from Zoho Books is an open balance, not our document. */
   if (isOpeningInvoice(invoice)) return <OpeningInvoiceDetail invoice={invoice} />;
-  return <InvoiceDetail invoice={invoice} />;
+  return (
+    <>
+      {kindStamp && (
+        <div className="max-w-3xl mx-auto w-full px-4 md:px-6 lg:px-8 pt-4 md:pt-6 lg:pt-8 -mb-2 md:-mb-4 lg:-mb-6 flex items-center gap-2 flex-wrap text-xs text-ink-3" data-testid="invoice-kind">
+          <span>Invoice for</span>
+          <QuoteKindStamp stamp={kindStamp} className="text-xs px-2 py-0.5" />
+          {kindSource?.quoteId && (
+            <Link href={`/quotes/${kindSource.quoteId}` as never} className="hover:text-amber-ink hover:underline">
+              from {kindSource.quoteId}
+            </Link>
+          )}
+        </div>
+      )}
+      <InvoiceDetail invoice={invoice} />
+    </>
+  );
 }
