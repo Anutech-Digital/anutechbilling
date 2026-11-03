@@ -31,7 +31,8 @@ export function FeeNetLine({ payment, className }: { payment: PaymentFeeFields; 
   );
 }
 
-const BOOKING_ROLES = new Set(["owner", "manager", "billing", "accountant"]);
+/** Roles that may book the fee and read the Online fee report (R-2418). */
+export const FEE_ROLES: ReadonlySet<string> = new Set(["owner", "manager", "billing", "accountant"]);
 
 export function BookGatewayFeesButton({
   payments,
@@ -43,7 +44,7 @@ export function BookGatewayFeesButton({
   const qc = useQueryClient();
   const [busy, setBusy] = React.useState(false);
   const hasFees = (payments ?? []).some((p) => (p.gateway_fee ?? 0) > 0);
-  if (!hasFees || !role || !BOOKING_ROLES.has(role)) return null;
+  if (!hasFees || !role || !FEE_ROLES.has(role)) return null;
 
   const run = async () => {
     setBusy(true);
