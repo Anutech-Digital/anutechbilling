@@ -33,6 +33,8 @@ vi.mock("@/lib/queries/personal-vault", () => ({
   useVerifyPin: () => m.other,
 }));
 vi.mock("@/lib/queries/personal-owe-hold", () => ({ usePersonalOweHold: () => q([]) }));
+// R-2393: the Overview also reads open property-sale advances.
+vi.mock("@/lib/queries/personal-property-sales", () => ({ usePersonalPropertySales: () => q({ sales: [], receipts: [] }) }));
 vi.mock("@/lib/queries/personal-loans", () => ({
   usePersonalLoans: () => state.loans,
   usePersonalLoanPayments: () => state.payments,

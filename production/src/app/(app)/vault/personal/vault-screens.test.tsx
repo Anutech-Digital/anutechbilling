@@ -61,6 +61,11 @@ vi.mock("@/lib/queries/personal-owe-hold", () => {
   };
 });
 
+// R-2393: Overview (sale advances owed) + Wealth (Sell) read property sales from their own module.
+vi.mock("@/lib/queries/personal-property-sales", () => ({
+  usePersonalPropertySales: () => ({ data: { sales: [], receipts: [] }, isLoading: false, error: null, refetch: () => {} }),
+}));
+
 // R-2388: the Overview also reads Loans (Net worth, next EMI) from its own module.
 vi.mock("@/lib/queries/personal-loans", () => ({
   usePersonalLoans: () => ({ data: [], isLoading: false, error: null, refetch: () => {} }),
