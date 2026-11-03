@@ -65,6 +65,7 @@ export const PERSONAL_TABLES: Readonly<Record<string, readonly Method[]>> = {
   personal_loan_payments: ALL,     // R-2388 (writes go through personal_loan_record_payment)
   personal_loan_balances: READ,    // R-2388 view: outstanding per loan
   personal_contacts: ALL,          // R-2392 People (personal contacts; owner-only RLS)
+  personal_account_balances: READ, // R-2394 view: computed balance per account (Banking, Overview)
   users: READ,
   tenants: READ,
   notifications: ["GET", "HEAD", "PATCH"],
@@ -81,6 +82,8 @@ export const PERSONAL_RPCS: readonly string[] = [
   "personal_file_support_ticket",  // R-2176 Help → Report a problem → support-desk ticket (auth.uid() only)
   "personal_loan_record_payment",  // R-2388 EMI / prepayment / repayment + its ledger entries (owner RLS)
   "personal_loan_undo_payment",    // R-2388
+  "personal_bank_reconcile",       // R-2394 match one statement line (owner RLS)
+  "personal_bank_unreconcile",     // R-2394 undo a match
 ];
 
 function refuse(what: string): GatewayRefusal {
