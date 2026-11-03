@@ -44,6 +44,9 @@ interface SettleResult {
   found?: boolean;
   recorded?: boolean;
   already_recorded?: boolean;
+  /** R-2439: on already_recorded — false when ANOTHER payment (paid_payment_id) paid the link. */
+  same_payment?: boolean;
+  paid_payment_id?: string | null;
   review?: boolean;
   why?: string | null;
   tenant_id?: string;
@@ -143,13 +146,13 @@ async function settle(admin: Admin, link: LinkRow, paid: Paid, deps: PaymentLink
   }
 
   const reviewPayment = { id: paid.paymentId, amount: paid.paidPaise, currency: paid.currency, email: paid.entity.email, contact: paid.entity.contact };
-  const review = (why: string) =>
+  const review = (why: string, nextStep?: string) =>
     flagPaymentForReview(admin, {
       tenantId: link.tenant_id, quoteId: null, leadId: null, payment: reviewPayment, orderId: paid.orderId,
       event: paid.event,
       title: "Razorpay pay-link payment needs a check",
       why: `it came through the reminder pay link but ${why}`,
-      nextStep: `Open Payment Follow-up → this customer. If the bill is still open, use Record payment with reference ${paid.paymentId}; if it was already paid, refund the customer from the Razorpay dashboard.`,
+      nextStep: nextStep ?? `Open Payment Follow-up → this customer. If the bill is still open, use Record payment with reference ${paid.paymentId}; if it was already paid, refund the customer from the Razorpay dashboard.`,
     });
 
   const linkId = link.razorpay_link_id ?? paid.linkId;
@@ -168,6 +171,16 @@ async function settle(admin: Admin, link: LinkRow, paid: Paid, deps: PaymentLink
   }
   const r = (data ?? {}) as SettleResult;
   if (!r.found) return NextResponse.json({ received: true, ignored: `${paid.event} (pay link not found)` });
+  /* R-2439: a DIFFERENT payment on a link another payment already paid (a late-authorised
+     payment on the same order, say) is real money nobody booked — tell the owner, never drop it.
+     Nothing is booked here: the owner refunds it or keeps it as an advance. */
+  if (r.already_recorded && r.same_payment === false) {
+    const first = r.paid_payment_id ? `Razorpay payment ${r.paid_payment_id}` : "another payment";
+    return review(
+      `the link was already paid by ${first} — this is a second payment for the same bills`,
+      `Nothing was booked for ${paid.paymentId}. Refund it from the Razorpay dashboard, or keep it as this customer's advance — record it as customer credit with reference ${paid.paymentId}.`,
+    );
+  }
   if (r.already_recorded) return NextResponse.json({ received: true, alreadyProcessed: true });
   if (r.review) return review(r.why ?? "it no longer matches the bill");
 
