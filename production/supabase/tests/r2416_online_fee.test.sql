@@ -1,6 +1,6 @@
 -- R-2416 (3 Nov 2026, p1): the online payment fee policy — who pays Razorpay's fee on a bill.
 -- Pardeep: the customer pays the fee by default, but for some customers / bills we absorb it.
--- Migration: 20261103112829_r2416_online_fee_policy.
+-- Migration: 20261103112829_r2416_online_fee_policy (columns + guard trigger online_fee_exception_guard).
 -- Self-asserting, ONE transaction, rolled back. Run on a local/test DB only.
 --
 -- Proves:
