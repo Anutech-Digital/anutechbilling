@@ -13,11 +13,14 @@
  * This card (R-2416) only decides and SHOWS it, and records who bore the fee on each captured
  * payment. No order or link amount changes yet — R-2417 charges it.
  *
- * Money (whole rupees, stated and tested in online-fee.test.ts):
- *   fee = rate % of the bill TOTAL (incl. GST), rounded half up to the rupee;
+ * Money (owner decision 3 Nov 2026, whole rupees, stated and tested in online-fee.test.ts):
+ *   The fee is GROSSED UP so Razorpay's rate on the fee itself (and on its GST) is covered too:
+ *     fee = r·B / (1 − r·1.18), r = the rate (default 2%), B = the bill total incl. GST,
+ *     rounded half up to the rupee  (≈ 2.05% of the bill at 2%);
  *   gst = 18% of that rounded fee, rounded half up to the rupee;
- *   total = fee + gst.
- * Worked in paise × basis points (integers) so 2.15% or ₹1,025 never meets a float edge.
+ *   total = fee + gst (the extra); payable = B + fee + gst (what the customer pays online).
+ *   Example: B ₹11,800 → fee ₹242 (241.70), GST ₹44 (43.56), total ₹286, payable ₹12,086.
+ * Worked in paise × basis points: fee = bp·paise / (1,000,000 − 118·bp).
  */
 import { rupee } from "@/lib/utils";
 
@@ -67,7 +70,10 @@ export interface OnlineFeeResult {
   /** The fee, whole rupees — what the customer pays when bearer = customer, else what it costs us. */
   fee: number;
   gst: number;
+  /** fee + gst — the extra on top of the bill. */
   total: number;
+  /** The bill + fee + gst — what the customer pays online when they bear the fee. */
+  payable: number;
   reason: OnlineFeeReason;
   /** The typed reason of a bill waiver / customer absorb; null otherwise. */
   note: string | null;
@@ -78,16 +84,23 @@ function cleanNote(v: string | null | undefined): string | null {
   return t ? t : null;
 }
 
-/** The fee on a bill, whole rupees (see the header for the rounding). */
-export function onlineFeeAmounts(billTotal: number, ratePct: number): { fee: number; gst: number; total: number } {
-  if (!Number.isFinite(billTotal) || billTotal <= 0 || !Number.isFinite(ratePct) || ratePct <= 0) {
-    return { fee: 0, gst: 0, total: 0 };
-  }
-  const paise = Math.round(billTotal * 100);
+/** The fee on a bill, whole rupees, grossed up (see the header for the formula and rounding). */
+export function onlineFeeAmounts(billTotal: number, ratePct: number): { fee: number; gst: number; total: number; payable: number } {
+  const bill = Number.isFinite(billTotal) && billTotal > 0 ? billTotal : 0;
+  if (bill === 0 || !Number.isFinite(ratePct) || ratePct <= 0) return { fee: 0, gst: 0, total: 0, payable: bill };
+  const paise = Math.round(bill * 100);
   const bp = Math.round(ratePct * 100); // 2% → 200 basis points
-  const fee = Math.round((paise * bp) / 1_000_000);
+  // r·B / (1 − 1.18·r) with r = bp/10000 and B = paise/100  →  bp·paise / (1,000,000 − 118·bp) rupees.
+  const fee = Math.round((bp * paise) / (1_000_000 - (100 + ONLINE_FEE_GST_PCT) * bp));
   const gst = Math.round((fee * ONLINE_FEE_GST_PCT) / 100);
-  return { fee, gst, total: fee + gst };
+  return { fee, gst, total: fee + gst, payable: bill + fee + gst };
+}
+
+/** The fee as a percent of the bill after the gross-up, 2 decimals (2% → 2.05). For the settings screen. */
+export function onlineFeeEffectivePct(ratePct: number): number {
+  if (!Number.isFinite(ratePct) || ratePct <= 0) return 0;
+  const r = ratePct / 100;
+  return Math.round((r / (1 - r * (1 + ONLINE_FEE_GST_PCT / 100))) * 10_000) / 100;
 }
 
 /** Who pays the online fee on this bill, and how much. Pure — the same answer on screen and on capture. */
@@ -114,7 +127,7 @@ export function onlineFeeLine(r: OnlineFeeResult, settings?: Pick<OnlineFeeSetti
   const why = r.note ? ` — ${r.note}` : "";
   switch (r.reason) {
     case "customer_pays":
-      return `Online fee: customer pays ${rupee(r.total)} (${rupee(r.fee)} + ${rupee(r.gst)} GST) if paid online. Bank transfer is free.`;
+      return `Online fee: customer pays ${rupee(r.total)} (${rupee(r.fee)} + ${rupee(r.gst)} GST) if paid online — ${rupee(r.payable)} in all. Bank transfer is free.`;
     case "bill_waived":
       return `Online fee: waived for this bill${why}`;
     case "customer_absorbs":
