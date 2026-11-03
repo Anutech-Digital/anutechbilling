@@ -13,6 +13,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { primaryContactsFor } from "@/lib/contacts/primary";
 import type { RenewalQuoteInfo } from "./queue";
+import type { RenewalFollowupRow } from "./followup";
 
 export interface RowContact {
   name: string | null;
@@ -87,6 +88,45 @@ export function useRenewalQuoteInfo(quoteIds: readonly (string | null)[]) {
           .range(from, to),
       );
       return new Map(rows.map((q) => [q.id, q]));
+    },
+  });
+}
+
+/**
+ * R-2404: the listed renewals' follow-ups (payment_followups with their subscription_id — Payment
+ * Follow-up's own rows, no second table) and each customer's owner (customers.account_manager_id).
+ * Read on the signed-in session: RLS keeps both to this company and to customers this person may
+ * see. Keyed under ["collections"], so saving a follow-up (useAddFollowup / postFollowup callers
+ * invalidating ["collections"]) refreshes the row at once.
+ */
+export function useRenewalFollowups(subscriptionIds: readonly string[], customerIds: readonly string[]) {
+  const subs = [...new Set(subscriptionIds.filter(Boolean))].sort();
+  const custs = [...new Set(customerIds.filter(Boolean))].sort();
+  return useQuery({
+    queryKey: ["collections", "renewal-followups", subs, custs],
+    enabled: subs.length > 0,
+    staleTime: 30_000,
+    queryFn: async (): Promise<{ rows: RenewalFollowupRow[]; ownerByCustomer: Map<string, string | null> }> => {
+      const supabase = createClient();
+      const rows = await fetchAllRowsIn<RenewalFollowupRow, string>(
+        subs,
+        (run, from, to) => supabase
+          .from("payment_followups")
+          .select("id, customer_id, subscription_id, kind, note, outcome, promised_amount, promised_on, next_follow_up_on, assigned_to, created_at")
+          .in("subscription_id", run)
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+      const owners = custs.length === 0 ? [] : await fetchAllRowsIn<{ id: string; account_manager_id: string | null }, string>(
+        custs,
+        (run, from, to) => supabase
+          .from("customers")
+          .select("id, account_manager_id")
+          .in("id", run)
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+      return { rows, ownerByCustomer: new Map(owners.map((c) => [c.id, c.account_manager_id])) };
     },
   });
 }

@@ -181,10 +181,11 @@ describe("R-2404 'Customer confirmed the renewal' — payment_followups.outcome"
     const form = followupFormSchema.parse({ kind: "call", nextFollowUpOn: "2026-11-06", link: links[0].value, confirmed: true });
     const req = toFollowupRequest(form, { customerId: CUST, links, canReassign: false });
     expect(req.outcome).toBe(RENEWAL_CONFIRMED);
+    expect(req.note).toBe("Customer confirmed the renewal.");   // shows in the renewal's history
     expect(buildFollowupInsert(followupRequestSchema.parse(req), "t1", null).outcome).toBe(RENEWAL_CONFIRMED);
     const general = toFollowupRequest(followupFormSchema.parse({ kind: "call", nextFollowUpOn: "2026-11-06", link: "", confirmed: true }), { customerId: CUST, links, canReassign: false });
     expect(general.outcome).toBeUndefined();
-    expect(buildFollowupInsert(followupRequestSchema.parse({ ...base }), "t1", null).outcome).toBeNull();
+    expect(buildFollowupInsert(followupRequestSchema.parse({ ...base }), "t1", null)).not.toHaveProperty("outcome");
   });
 });
 

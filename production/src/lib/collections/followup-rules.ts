@@ -42,6 +42,7 @@ export const FOLLOWUP_KIND_LABEL: Record<FollowupKind, string> = {
 export const RENEWAL_CONFIRMED = "renewal_confirmed" as const;
 export const FOLLOWUP_OUTCOMES = [RENEWAL_CONFIRMED] as const;
 export type FollowupOutcome = (typeof FOLLOWUP_OUTCOMES)[number];
+export const CONFIRMED_NOTE = "Customer confirmed the renewal.";
 export const CONFIRMED_NEEDS_RENEWAL =
   "\"Customer confirmed the renewal\" needs the renewal it is about — open the Follow-up from the renewal's row and save again.";
 
@@ -201,10 +202,13 @@ export function toFollowupRequest(
 ): FollowupRequest {
   const link = data.link ? ctx.links.find((l) => l.value === data.link) : undefined;
   const isPromise = data.kind === "promise";
+  /* R-2404: only with the renewal it is about (the API refuses it without one); the note says it,
+     so the history (the renewal's activity log) shows it too. */
+  const outcome = data.confirmed && link?.subscriptionId ? RENEWAL_CONFIRMED : undefined;
   return {
     customerId: ctx.customerId,
     kind: data.kind,
-    note: data.note,
+    note: outcome ? `${CONFIRMED_NOTE}${data.note ? ` ${data.note}` : ""}` : data.note,
     promisedAmount: isPromise ? data.promisedAmount : undefined,
     promisedOn: isPromise ? data.promisedOn : undefined,
     nextFollowUpOn: data.nextFollowUpOn,
@@ -212,8 +216,7 @@ export function toFollowupRequest(
     invoiceId: link?.invoiceId ?? undefined,
     quoteId: link?.quoteId ?? undefined,
     subscriptionId: link?.subscriptionId ?? undefined,
-    /* R-2404: only with the renewal it is about (the API refuses it without one). */
-    outcome: data.confirmed && link?.subscriptionId ? RENEWAL_CONFIRMED : undefined,
+    outcome,
   };
 }
 
@@ -232,7 +235,8 @@ export function buildFollowupInsert(req: FollowupRequest, tenantId: string, assi
     invoice_id: req.invoiceId ?? null,
     quote_id: req.quoteId ?? null,
     subscription_id: req.subscriptionId ?? null,
-    outcome: req.outcome ?? null,
+    /* R-2404: only when there is one — the other doors write no outcome, as before. */
+    ...(req.outcome ? { outcome: req.outcome } : {}),
   };
 }
 

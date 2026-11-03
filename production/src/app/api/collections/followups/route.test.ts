@@ -78,11 +78,19 @@ describe("reassign guard (server)", () => {
     expect(db.inserts).toEqual([]);
   });
 
-  it.each(["support", "delivery", "partner_agent"])("%s cannot open Payment Follow-up → 403 before any read", async (role) => {
+  /* R-2404: support opens Renewals, so it may log a renewal follow-up (RLS allowed it since R-1515). */
+  it.each(["delivery", "partner_agent"])("%s opens neither Payment Follow-up nor Renewals → 403 before any read", async (role) => {
     db.role = role;
     const res = await call(base);
     expect(res.status).toBe(403);
     expect(db.inserts).toEqual([]);
+  });
+
+  it("R-2404: support (opens Renewals) logs a renewal follow-up → saved to the customer's owner", async () => {
+    db.role = "support";
+    const res = await call(base);
+    expect(res.status).toBe(200);
+    expect(db.inserts[0].assigned_to).toBe(OWNER);
   });
 
   /* R-1528: a senior seller opens Payment Follow-up like a seller (nav: sales_senior sees what
