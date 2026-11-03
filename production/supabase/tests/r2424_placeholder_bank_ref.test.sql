@@ -68,7 +68,7 @@ grant execute on function pg_temp.r2424_as(text) to authenticated;
 do $$
 declare v_ref text;
 begin
-  foreach v_ref in array array['', '   ', '000000000000000', '0000-0000-0000', '000000', '111111111111', 'XXXXXXXX', 'NA', '-', '0', 'N/A', 'NIL', 'x x x x x x'] loop
+  foreach v_ref in array array['', '   ', '000000000000000', '0000-0000-0000', '000000', '111111111111', 'XXXXXXXX', 'NA', '-', '0', 'N/A', 'NIL', 'x x x x x x', 'NOT AVAILABLE', 'Not-Applicable', 'no reference', 'NOT PROVIDED'] loop
     if public.bank_reference_is_real(v_ref) then insert into r2424_fail values ('placeholder seen as real: ' || quote_literal(v_ref)); end if;
     if public.payment_ref_key('bank_transfer', v_ref) is not null then insert into r2424_fail values ('placeholder got a key: ' || quote_literal(v_ref)); end if;
   end loop;

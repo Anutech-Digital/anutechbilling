@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { bankReferenceKey, isRealBankReference } from "./bank-reference";
 
 /* R-2424 — the same cases as supabase/tests/r2424_placeholder_bank_ref.test.sql. */
-const PLACEHOLDERS = ["", "   ", "000000000000000", "0000-0000-0000", "000000", "111111111111", "XXXXXXXX", "NA", "-", "0", "N/A", "NIL", "x x x x x x"];
+const PLACEHOLDERS = ["", "   ", "000000000000000", "0000-0000-0000", "000000", "111111111111", "XXXXXXXX", "NA", "-", "0", "N/A", "NIL", "x x x x x x", "NOT AVAILABLE", "Not-Applicable", "no reference", "NOT PROVIDED"];
 const REAL = ["TESTUTR123456", "162440272175", "0000162440272175", "HDFCN52026051912345678", "  testutr 1234-56 ", "100000"];
 
 describe("R-2424 isRealBankReference", () => {

@@ -14,7 +14,8 @@
 -- ─── WHAT THIS DOES ─────────────────────────────────────────────────────────
 --   * bank_reference_is_real(ref): false when the reference, keeping only letters and digits,
 --     is under 6 characters or is one character repeated ("000000000000000", "111111",
---     "XXXXXXXX", "NA", "-"). The SAME rule as isRealBankReference() in
+--     "XXXXXXXX", "NA", "-") or a placeholder word ("NOT AVAILABLE", "NOT APPLICABLE",
+--     "NO REFERENCE", "NOT PROVIDED"). The SAME rule as isRealBankReference() in
 --     src/lib/payments/bank-reference.ts.
 --   * payment_ref_key(method, reference) — redefined from its only (and so latest) definition,
 --     20261019125620_r1676_payment_ref_once — now also returns NULL for a placeholder. Every
@@ -37,8 +38,10 @@ immutable
 parallel safe
 set search_path to 'public'
 as $$
-  /* R-2424: letters and digits only, upper-case; real = 6+ of them and not one repeated. */
-  select length(v) >= 6 and length(replace(v, left(v, 1), '')) > 0
+  /* R-2424: letters and digits only, upper-case; real = 6+ of them, not one repeated, not a placeholder word. */
+  select length(v) >= 6
+     and length(replace(v, left(v, 1), '')) > 0
+     and v <> all (array['NOTAVAILABLE', 'NOTAPPLICABLE', 'NOREFERENCE', 'NOTPROVIDED'])
     from (select upper(regexp_replace(coalesce(p_reference, ''), '[^A-Za-z0-9]', '', 'g')) as v) s
 $$;
 
@@ -57,8 +60,7 @@ set search_path to 'public'
 as $$
   select case
     when p_method in ('upi', 'bank_transfer')
-     and length(upper(regexp_replace(coalesce(p_reference, ''), '[[:space:]-]', '', 'g'))) >= 6
-     and public.bank_reference_is_real(p_reference)   -- R-2424: zeros / placeholders are not a UTR
+     and public.bank_reference_is_real(p_reference)   -- R-2424: 6+ letters/digits, not zeros / a placeholder
     then 'BANK:' || upper(regexp_replace(p_reference, '[[:space:]-]', '', 'g'))
   end
 $$;

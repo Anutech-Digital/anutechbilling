@@ -8,22 +8,26 @@
  * ₹2,88,982 credit refused because another customer's ₹68,676 receipt also had zeros).
  *
  * A reference is real when, after keeping only letters and digits, it is at least 6 characters
- * long and is not one character repeated ("000000000000000", "111111", "XXXXXXXX", "NA", "-").
+ * long, is not one character repeated ("000000000000000", "111111", "XXXXXXXX", "NA", "-") and is
+ * not a placeholder word ("NOT AVAILABLE", "NOT APPLICABLE", "NO REFERENCE", "NOT PROVIDED").
  * The database applies the SAME rule in public.bank_reference_is_real(text) (migration
  * 20261103144041_r2424_placeholder_bank_ref), which public.payment_ref_key uses — a placeholder
  * gets no key, so it never blocks and is never blocked. Keep the two in step:
  * bank-reference.test.ts and supabase/tests/r2424_placeholder_bank_ref.test.sql check the same cases.
  */
 
-/** Letters and digits only, upper-case — what the placeholder test looks at. */
+/** ASCII letters and digits only, upper-case — what the placeholder test looks at (as SQL). */
 function alnum(ref: string | null | undefined): string {
-  return (ref ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return (ref ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 }
 
-/** False for empty, under 6 letters/digits, or one character repeated (all zeros etc.). */
+/** Words banks and people type when there is no UTR (letters/digits only, upper-case). */
+const PLACEHOLDER_WORDS = new Set(["NOTAVAILABLE", "NOTAPPLICABLE", "NOREFERENCE", "NOTPROVIDED"]);
+
+/** False for empty, under 6 letters/digits, one character repeated (all zeros etc.) or a placeholder word. */
 export function isRealBankReference(ref: string | null | undefined): boolean {
   const v = alnum(ref);
-  if (v.length < 6) return false;
+  if (v.length < 6 || PLACEHOLDER_WORDS.has(v)) return false;
   return v.split("").some((ch) => ch !== v[0]);
 }
 
@@ -36,6 +40,6 @@ export function isRealBankReference(ref: string | null | undefined): boolean {
 export function bankReferenceKey(method: string | null | undefined, ref: string | null | undefined): string | null {
   if (method !== "upi" && method !== "bank_transfer") return null;
   if (!isRealBankReference(ref)) return null;
-  const key = (ref ?? "").replace(/[\s-]/g, "").toUpperCase();
-  return key.length >= 6 ? `BANK:${key}` : null;
+  /* ASCII whitespace + hyphen, as Postgres [[:space:]-]; a real reference keeps 6+ characters. */
+  return `BANK:${(ref ?? "").replace(/[ \t\n\r\f\v-]/g, "").toUpperCase()}`;
 }
