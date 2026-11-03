@@ -8,6 +8,9 @@
  *   • `pdfLink` is a 7-day signed link to the statement PDF (public route
  *     /api/v1/documents/statement/{id}/pdf — the same HMAC token model as invoice / quote PDFs),
  *     so the WhatsApp text can carry it. It shows the dues as they are WHEN OPENED.
+ *   • R-2415: ONE Razorpay pay link for the statement total (card / UPI / net banking), next to
+ *     the UPI link in both messages — reused while the open bills are unchanged, replaced when
+ *     they change (lib/payments/payment-link.server). `cardLinkNotice` says why there is none.
  */
 import { z } from "zod";
 import { withRoute, RouteError } from "@/lib/api/with-route";
@@ -21,6 +24,8 @@ import {
   pendingDuesWhatsappText, statementQrNotice, statementUpiUri, STATEMENT_LINK_TTL_DAYS,
 } from "@/lib/collections/pending-dues";
 import { loadPendingDuesRaw } from "@/lib/collections/pending-dues.server";
+import { withCardPayLink } from "@/lib/payments/payment-link";
+import { getOrCreateInvoicePayLink } from "@/lib/payments/payment-link.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -74,6 +79,21 @@ export const GET = withRoute(
       vpa: t?.upi_vpa, payeeName: t?.upi_payee_name ?? t?.name, customerName: st.customerName, total: st.total, allInr: st.allInr,
     });
 
+    /* R-2415: ONE Razorpay link for the statement total — the same link while the open bills
+       and amounts are unchanged; it rides in both messages next to the UPI link. */
+    const card = await getOrCreateInvoicePayLink({
+      tenantId,
+      customerId,
+      scope: "statement",
+      lines: st.lines.map((x) => ({ kind: x.kind, id: x.id, amountDue: x.amountDue })),
+      sellerName: seller,
+      customerName: st.customerName,
+      customerEmail: em.ok ? em.to : null,
+      customerPhone: wa.ok ? `+${wa.to}` : null,
+    });
+    const emailText = pendingDuesEmailText(st, { greetName, sellerName: seller, upiLink });
+    const whatsappText = pendingDuesWhatsappText(st, { greetName, sellerName: seller, pdfUrl: pdfLink, upiLink });
+
     return {
       customerName: st.customerName,
       asOn: st.asOn,
@@ -83,9 +103,11 @@ export const GET = withRoute(
       hasBank: !!t?.remit_account_number?.trim(),
       subject: pendingDuesSubject(st, seller),
       /* R-2412: the pay link (UPI for the total) rides in both messages, not only on the PDF. */
-      emailText: pendingDuesEmailText(st, { greetName, sellerName: seller, upiLink }),
-      whatsappText: pendingDuesWhatsappText(st, { greetName, sellerName: seller, pdfUrl: pdfLink, upiLink }),
+      emailText: card.link ? withCardPayLink(emailText, card.link.url) : emailText,
+      whatsappText: card.link ? withCardPayLink(whatsappText, card.link.url) : whatsappText,
       payLink: upiLink,
+      cardLink: card.link,
+      cardLinkNotice: card.notice,
       whatsapp: wa.ok ? wa.to : null,
       whatsappBlocked: wa.ok ? null : wa.reason,
       email: em.ok ? em.to : null,

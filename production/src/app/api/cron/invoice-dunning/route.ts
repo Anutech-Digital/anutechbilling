@@ -50,6 +50,7 @@ import type { CollectionHold } from "@/lib/collections/followup-rules";
 import { istToday } from "@/lib/dates/ist";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
+import { sweepStaleInvoicePayLinks } from "@/lib/payments/payment-link.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -139,6 +140,8 @@ interface DunningResult {
   overdue_pause?: OverdueSuspensionResult | { error: string };
   /** R-2070 (D4): support plans paused once their invoice is more than 7 days overdue. */
   support_pause?: SupportPauseResult | { error: string };
+  /** R-2415: reminder pay links cancelled because their bill was paid / closed another way. */
+  pay_links?: { checked: number; cancelled: number } | { error: string };
   /** R-530: the late-charges line could not be worked out — reminders went without it. */
   late_charges_error?: string;
   /**
@@ -543,6 +546,18 @@ ${reminderSummary(history, decision.step, outcome)}`,
   } catch (e) {
     result.support_pause = { error: errorMessage(e) };
     result.errors.push({ invoice_id: "-", message: `support pause: ${errorMessage(e)}` });
+  }
+
+  /* R-2415: a Send-reminder pay link whose bill was paid, closed or part-paid another way is
+     cancelled at Razorpay, so the customer cannot pay it twice. Messages nobody; a dry run
+     changes nothing. Its own try, like the passes above. */
+  if (!dryRun) {
+    try {
+      result.pay_links = await sweepStaleInvoicePayLinks({ admin: supabase, limit: 200, tenantAllowed: cronTenantAllowed });
+    } catch (e) {
+      result.pay_links = { error: errorMessage(e) };
+      result.errors.push({ invoice_id: "-", message: `pay links: ${errorMessage(e)}` });
+    }
   }
 
   return NextResponse.json(reportCron("invoice-dunning", result));

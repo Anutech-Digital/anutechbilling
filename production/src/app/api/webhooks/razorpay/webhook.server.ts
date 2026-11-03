@@ -9,6 +9,8 @@
  *   - `order.paid`        — Razorpay considers the order complete
  *   - `payment.failed`    — note on the lead + a retry link to the SAME quote (R-079);
  *                           never a new charge
+ *   - `payment_link.paid` — R-2415: a Send-reminder pay link (invoice / statement) was paid —
+ *                           booked once on its bills (payment-link-paid.server.ts)
  *   - `refund.processed`  — R-045: a note on the lead + an owner notification saying what to
  *                           book (credit note first if invoiced). Once per refund id. Never
  *                           refunds, credit-notes or changes a payment's status by itself.
@@ -57,6 +59,7 @@ import { isProductionDeployment } from "@/lib/checkout/live-guards";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { gatewayFeeFromPayment } from "@/lib/razorpay/gateway-money";
 import { handleRefundProcessed } from "./refund-event.server";
+import { handlePaymentLinkPaid, invoiceLinkRowForCapture, settleInvoiceLinkCapture } from "./payment-link-paid.server";
 import { bookGatewayFeeExpense } from "@/lib/razorpay/fee-expense.server";
 import { recordFeeBearer } from "@/lib/payments/online-fee.server";
 import {
@@ -247,9 +250,22 @@ export async function POST(request: NextRequest) {
     return handleRefundProcessed(admin, body, tenantParam, mayActOn);
   }
 
+  /* R-2415: a reminder pay link (invoice / statement) was paid — booked once on its bills. */
+  const linkDeps = { mayActOn, eventId: request.headers.get("x-razorpay-event-id")?.trim() || null, recordGatewayFee };
+  if (event === "payment_link.paid") {
+    return handlePaymentLinkPaid(admin, body, linkDeps);
+  }
+
   // Only act on payment-success events — ignore authorized / etc.
   if (event !== "payment.captured" && event !== "order.paid") {
     return NextResponse.json({ received: true, ignored: event });
+  }
+
+  /* R-2415: the capture of a reminder pay link — settled on its bills (once, whichever of this
+     and payment_link.paid comes first), never looked up as a quote. */
+  const payLink = await invoiceLinkRowForCapture(admin, body.payload.payment?.entity, body.payload.order?.entity);
+  if (payLink) {
+    return settleInvoiceLinkCapture(admin, payLink, event, body.payload.payment?.entity, linkDeps);
   }
 
   return settleCapturedPayment(admin, {
