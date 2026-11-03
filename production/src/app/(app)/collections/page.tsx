@@ -9,6 +9,11 @@
  * owner's "This week" report (R-1518) folds open under the list. Logic: ./worklist.ts; cells:
  * ./owed-cells.tsx; buttons: ./row-actions.tsx.
  *
+ * R-2409 — a "Today" view (follow-ups due + promises due today + broken promises, every age),
+ * "Today's work first" = broken promises, then today's work, each by ₹ due × days late, and ONE
+ * stage chip per row (Not contacted · Reminded · Promised · Broken · Disputed · Part-paid) under
+ * the customer's name. Rules: lib/collections/priority.ts.
+ *
  * Rules and reads live in lib/queries/collections.ts (tested in ./collections.test.ts):
  * the balance is the same invoiceAmountDue as Customer Aging, every read pages past 1000.
  */
@@ -46,9 +51,11 @@ import {
 import { AgeTileRow } from "./age-tiles";
 import { WorklistToolbar } from "./worklist-toolbar";
 import { RowActions, type RowDialog } from "./row-actions";
-import { AmountCell, CustomerName, NextText, OverdueBadge, OwedCell, PromiseText, type CanOpen } from "./owed-cells";
+import { AmountCell, CustomerName, NextText, OverdueBadge, OwedCell, PromiseText, StageChip, type CanOpen } from "./owed-cells";
+import { isTodayWork, todayCounts } from "@/lib/collections/priority";
 
 const VIEW_LABEL: Record<CollectionView, string> = {
+  today: "Today",
   mine: "Mere",
   all: "All",
   broken: "Broken promises",
@@ -61,7 +68,9 @@ export default function CollectionsPage() {
   const { data: names } = useUserNames();
   const [picked, setPicked] = useUrlChoice<(typeof URL_VIEWS)[number]>("view", URL_VIEWS, "");
   const view: CollectionView = picked || defaultCollectionView(me?.role);
-  const [age, setAge] = useUrlChoice<AgeView>("age", AGE_VIEWS, DEFAULT_AGE);
+  /* R-2409: Today's work is any age (a promise due today can be on a bill not late yet). */
+  const ageDefault: AgeView = view === "today" ? "all" : DEFAULT_AGE;
+  const [age, setAge] = useUrlChoice<AgeView>("age", AGE_VIEWS, ageDefault);
   const [sort, setSort] = useUrlChoice("sort", SORT_KEYS, "priority");
   const [q, setQ] = React.useState("");
   const [owner, setOwner] = React.useState("");
@@ -77,7 +86,7 @@ export default function CollectionsPage() {
   const ownerLabel = (key: string): string => (key === UNASSIGNED ? "Unassigned" : names?.get(key)?.label ?? "a colleague");
   const ownerName = (r: CollectionRow): string => ownerLabel(ownerKey(r));
   /* Pressing the pressed tile goes back to the default list (Overdue). */
-  const pickTile = (key: AgeKey) => setAge(age === key ? DEFAULT_AGE : key);
+  const pickTile = (key: AgeKey) => setAge(age === key ? ageDefault : key);
   const toggle = (key: string) => setExpanded((s) => {
     const n = new Set(s);
     if (n.has(key)) n.delete(key); else n.add(key);
@@ -99,8 +108,9 @@ export default function CollectionsPage() {
       .map((r) => ({ customerId: r.customerId!, customerName: r.customerName, amountDue: r.amountDue, overdue: hasOverdueLine(r) })),
     [rows],
   );
-  const todayCount = shown.filter((r) => r.followUpDue || r.promiseBroken).length;
-  const filtered = q.trim() !== "" || owner !== "" || age !== DEFAULT_AGE;
+  const todayCount = shown.filter(isTodayWork).length;
+  const today = todayCounts(all);
+  const filtered = q.trim() !== "" || owner !== "" || age !== ageDefault;
   const resetFilters = () => { setQ(""); setOwner(""); setAge("all"); };
 
   return (
@@ -125,13 +135,16 @@ export default function CollectionsPage() {
             }`}
           >
             {VIEW_LABEL[v]}
+            {v === "today" && today.total > 0 && <span className="ml-1 tabular-nums text-rose-600 font-semibold">{today.total}</span>}
           </button>
         ))}
         {!isLoading && !isError && shown.length > 0 && (
           <span className="text-sm text-ink-3 ml-auto tabular-nums">
             {AGE_LABEL[age]}: {shown.length} {shown.length === 1 ? "customer" : "customers"} · <b className="text-ink">{rupee(list.total)}</b> due
             {list.renewalTotal > 0 && <> · + {rupee(list.renewalTotal)} renewals</>}
-            {todayCount > 0 && <> · <span className="text-rose">{todayCount} to chase today</span></>}
+            {view === "today"
+              ? <> · {today.followUps} follow-ups due · {today.promisesToday} promised today · <span className={today.broken > 0 ? "text-rose" : undefined}>{today.broken} broken</span></>
+              : todayCount > 0 && <> · <span className="text-rose">{todayCount} to chase today</span></>}
           </span>
         )}
       </div>
@@ -181,7 +194,7 @@ export default function CollectionsPage() {
                   </div>
                   <div className="flex flex-wrap gap-1.5 mt-1.5">
                     <OverdueBadge days={r.daysOverdue} />
-                    {r.promiseBroken && <Badge kind="danger" dot>Promise broken</Badge>}
+                    <StageChip stage={r.stage} />
                     {r.followUpDue && <Badge kind="warning" dot>Follow up today</Badge>}
                   </div>
                   <div className="mt-2 text-sm"><OwedCell r={r} canOpen={canOpen} open={expanded.has(r.key)} onToggle={() => toggle(r.key)} /></div>
@@ -214,7 +227,10 @@ export default function CollectionsPage() {
                   <tr key={r.key} className="align-top hover:bg-paper-2/40">
                     <td className="px-3 py-2">
                       <div className="font-medium text-ink truncate" title={r.customerName}><CustomerName r={r} canOpen={canOpen} /></div>
-                      {r.lastNote && <div className="text-2xs text-ink-3 truncate" title={r.lastNote}>“{r.lastNote}”</div>}
+                      <div className="flex items-center gap-1.5 min-w-0 mt-0.5">
+                        <StageChip stage={r.stage} />
+                        {r.lastNote && <span className="text-2xs text-ink-3 truncate" title={r.lastNote}>“{r.lastNote}”</span>}
+                      </div>
                     </td>
                     <td className="px-3 py-2"><OwedCell r={r} canOpen={canOpen} open={expanded.has(r.key)} onToggle={() => toggle(r.key)} /></td>
                     <td className="px-3 py-2 text-right"><AmountCell r={r} className="font-mono font-semibold" /></td>
@@ -302,6 +318,9 @@ function Empty({ view, anyRows, onAll, canOpen }: { view: CollectionView; anyRow
   );
   if (view === "mine" && anyRows) {
     return <EmptyState icon="users" title="None of your customers owe money" body="Customers you own (or whose follow-up was handed to you) show here." action={showAll} />;
+  }
+  if (view === "today" && anyRows) {
+    return <EmptyState icon="check_circle" title="Nothing to chase today" body="No follow-up is due, no promise falls today and no promise is broken." action={showAll} />;
   }
   if (view === "broken" && anyRows) {
     return <EmptyState icon="check_circle" title="No broken promises" body="Every promise-to-pay date is still ahead, or the money came in." action={showAll} />;

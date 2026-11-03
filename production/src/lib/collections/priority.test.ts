@@ -7,7 +7,7 @@ import {
   comparePriority, contactSince, isTodayWork, priorityScore, priorityTier, rowStage, todayCounts, wasReminded,
   STAGES, STAGE_LABEL, type PriorityRow,
 } from "./priority";
-import { buildCollectionRows, type CollectionsInput, type CollectionFollowup } from "@/lib/queries/collections";
+import { buildCollectionRows, filterCollectionRows, type CollectionsInput, type CollectionFollowup } from "@/lib/queries/collections";
 
 const TODAY = "2026-11-03";
 
@@ -159,5 +159,11 @@ describe("R-2409 buildCollectionRows fills stage, score and order", () => {
     expect(order[0]).toBe("brk");
     expect(order.slice(1, 3)).toEqual(["nc", "prom"]);
     expect(order.slice(3)).toEqual(["part", "rem", "disp", "auto"]);
+  });
+
+  it("the Today view = follow-ups due + promises due today + broken promises, and its counts match", () => {
+    const todayRows = filterCollectionRows(rows, "today", null);
+    expect(todayRows.map((r) => r.customerId)).toEqual(["brk", "nc", "prom"]);
+    expect(todayCounts(rows)).toEqual({ total: 3, followUps: 1, promisesToday: 1, broken: 1 });
   });
 });

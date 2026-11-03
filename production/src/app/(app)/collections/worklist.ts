@@ -96,7 +96,10 @@ export const SORT_LABEL: Record<SortKey, string> = {
   amount: "Biggest amount",
 };
 
-/** "priority" keeps buildCollectionRows' order (follow-up due / broken promise first). */
+/**
+ * "priority" keeps buildCollectionRows' order — R-2409 comparePriority: broken promises, then
+ * follow-ups / promises due today, then the rest, each by ₹ due × days late.
+ */
 export function sortRows(rows: readonly CollectionRow[], sort: SortKey): CollectionRow[] {
   const out = [...rows];
   const name = (a: CollectionRow, b: CollectionRow) => a.customerName.localeCompare(b.customerName);

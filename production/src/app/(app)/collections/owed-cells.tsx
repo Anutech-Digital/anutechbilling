@@ -15,6 +15,7 @@ import { tdsShortfallLine } from "@/lib/accounting/tds-match";
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
 import type { CollectionRow, OwedItem, RenewalItem } from "@/lib/queries/collections";
 import { amountCell } from "./worklist";
+import { STAGE_HINT, STAGE_LABEL, STAGE_TONE, type CollectionStage } from "@/lib/collections/priority";
 
 export type CanOpen = (href: string) => boolean;
 
@@ -170,9 +171,17 @@ export function PromiseText({ r }: { r: CollectionRow }) {
     <span className={r.promiseBroken ? "text-rose font-medium" : "text-ink-2"} title={title}>
       {formatDate(r.promisedOn)}
       {r.promisedAmount != null && r.promisedAmount > 0 && <span className="block text-2xs tabular-nums">{rupee(r.promisedAmount)}</span>}
-      {r.promiseBroken && <span className="block text-2xs">Broken</span>}
       {r.promiseStatus === "kept" && <span className="block text-2xs text-ink-3">Kept — paid</span>}
     </span>
+  );
+}
+
+/** R-2409: the row's ONE stage (priority.ts rowStage) — small, so it sits beside the note. */
+export function StageChip({ stage }: { stage: CollectionStage }) {
+  return (
+    <Badge kind={STAGE_TONE[stage]} size="sm" className="shrink-0" title={STAGE_HINT[stage]}>
+      {STAGE_LABEL[stage]}
+    </Badge>
   );
 }
 

@@ -32,6 +32,7 @@ function row(key: string, p: Partial<CollectionRow> & { days?: number; due?: num
     amountDue: due, renewals: [], renewalAmount: 0, daysOverdue: days,
     promisedOn: null, promisedAmount: null, promiseStatus: null, promiseBroken: false,
     payments: [], nextFollowUpOn: null, followUpDue: false, lastNote: null, lastNoteOn: null,
+    hold: null, stage: "notContacted", priorityScore: 0,
     ...rest,
   };
 }
@@ -179,9 +180,11 @@ describe("R-2408 page wiring", () => {
 
   it("the table shows the worklist (filtered by tile / search / owner / sort), Overdue by default", () => {
     expect(page).toMatch(/buildWorklist\(viewRows, \{ q, owner, age, sort \}\)/);
-    expect(page).toMatch(/useUrlChoice<AgeView>\("age", AGE_VIEWS, DEFAULT_AGE\)/);
+    /* R-2409: Overdue by default; the Today view shows every age. */
+    expect(page).toMatch(/const ageDefault: AgeView = view === "today" \? "all" : DEFAULT_AGE;/);
+    expect(page).toMatch(/useUrlChoice<AgeView>\("age", AGE_VIEWS, ageDefault\)/);
     expect(page).toMatch(/<AgeTileRow tiles=\{list\.tiles\} active=\{age\} onPick=\{pickTile\} \/>/);
-    expect(page).toMatch(/age === key \? DEFAULT_AGE : key/);
+    expect(page).toMatch(/age === key \? ageDefault : key/);
   });
 
   it("rows carry one next-step button + ⋯ menu; the 4 stacked buttons are gone", () => {
