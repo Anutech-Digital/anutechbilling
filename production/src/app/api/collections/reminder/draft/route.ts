@@ -14,6 +14,8 @@
  *     the picker, else the most overdue one. Its amount and its UPI pay link only; `lines` lists
  *     every open bill for the picker, `payLinkNotice` says why there is no link and the fix (§24).
  *     A bill that is no longer open → 409 (never another bill's money).
+ *   • R-2413 bulk "Send reminder": `standard: true` drafts the plain template (no AI call), so
+ *     ticking 20 customers does not make 20 AI calls; every amount still comes from the books.
  */
 import { z } from "zod";
 import { withRoute, RouteError } from "@/lib/api/with-route";
@@ -35,6 +37,8 @@ const bodySchema = z.object({
     kind: z.enum(["invoice", "subscription"]),
     id: z.string().trim().min(1).max(200),
   }).strict().optional(),
+  /** R-2413 bulk Send reminder: the plain template (no AI call) — one standard wording for many customers. */
+  standard: z.boolean().optional(),
 }).strict("Only the customer may be sent — reload the page and try again.");
 
 export const POST = withRoute(
@@ -67,8 +71,10 @@ export const POST = withRoute(
       throw new RouteError(409, "That bill is paid or closed now — pick another bill in the list, or choose Full statement.");
     }
 
-    const gemini = await resolveGeminiConfig(supabase, tenantId);
-    const draft = await draftReminder(ctx, gemini);
+    /* R-2413: a bulk send uses the standard wording — no AI call per customer. */
+    const draft = input.standard
+      ? { ...(await draftReminder(ctx, { apiKey: null, model: "", tenantId })), note: null }
+      : await draftReminder(ctx, await resolveGeminiConfig(supabase, tenantId));
     const wa = whatsappTarget(loaded.customer.phone);
     const em = emailTarget(loaded.customer.email);
     const oldest = ctx.lines[0];

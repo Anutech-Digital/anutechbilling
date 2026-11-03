@@ -191,11 +191,15 @@ describe("R-2408 page wiring", () => {
     expect(page).not.toMatch(/<RemindButton|<DuesButton|<PayButton|<FollowupButton/);
     expect((page.match(/<RowActions\b/g) ?? []).length).toBe(2);   // table + phone card
     expect(actions).toMatch(/<DropdownMenuTrigger asChild>/);
-    for (const label of ["Follow-up", "Remind", "Send pending dues", "Record payment"]) expect(actions).toContain(label);
+    /* R-2413: "Remind" + "Send pending dues" became ONE "Send reminder" (R-2412's dialog). */
+    for (const label of ["Follow-up", "Send reminder", "Record payment"]) expect(actions).toContain(label);
+    expect(actions).not.toMatch(/\/> (Remind|Send pending dues)\s*</);
+    expect((actions.match(/<DropdownMenuItem\b/g) ?? []).length).toBe(3);   // Follow-up, Send reminder, Record payment
   });
 
-  it("the ⋯ menu still opens the existing dialogs (not new ones)", () => {
-    for (const d of ["<FollowupDialog", "<ReminderDialog", "<PendingDuesDialog", "<MultiInvoicePaymentDialog"]) expect(page).toContain(d);
+  it("the ⋯ menu opens the existing dialogs (not new ones) — one Send reminder dialog since R-2413", () => {
+    for (const d of ["<FollowupDialog", "<SendReminderDialog", "<MultiInvoicePaymentDialog"]) expect(page).toContain(d);
+    expect(page).not.toMatch(/<ReminderDialog|<PendingDuesDialog/);
   });
 
   it("every tile is a button that says whether it is pressed", () => {

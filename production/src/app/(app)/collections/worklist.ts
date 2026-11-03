@@ -174,14 +174,27 @@ export function amountCell(r: Pick<CollectionRow, "amountDue" | "renewalAmount">
  * minimum must fit inside it, the action column included.
  */
 export const WORKLIST_TABLE_BUDGET_PX = 944;
-export const WORKLIST_FLEX_MIN_PX = 140;
-export const WORKLIST_COLS: ReadonlyArray<{ key: "customer" | "owed" | "amount" | "late" | "promise" | "next" | "owner" | "action"; label: string; width: number | null; align: "left" | "right" }> = [
+/**
+ * R-2413: the tick-box column (32px: 12px left pad + 16px box + 4px) was paid for by Promise to
+ * pay 108→100, Next follow-up 96→88, Owner 96→88 (their longest content — "12 Nov 2026",
+ * "₹1,23,456", a truncated name with a title — is ≤ 76px of text) and the two flexible columns'
+ * floor 140→136. Before: 664 fixed + 2×140 = 944; after: 672 + 2×136 = 944.
+ */
+export const WORKLIST_FLEX_MIN_PX = 136;
+export type WorklistColKey = "select" | "customer" | "owed" | "amount" | "late" | "promise" | "next" | "owner" | "action";
+export const WORKLIST_COLS: ReadonlyArray<{ key: WorklistColKey; label: string; width: number | null; align: "left" | "right" }> = [
+  { key: "select", label: "", width: 32, align: "left" },
   { key: "customer", label: "Customer", width: null, align: "left" },
   { key: "owed", label: "What's owed", width: null, align: "left" },
   { key: "amount", label: "Amount due", width: 100, align: "right" },
   { key: "late", label: "Overdue", width: 88, align: "left" },
-  { key: "promise", label: "Promise to pay", width: 108, align: "left" },
-  { key: "next", label: "Next follow-up", width: 96, align: "left" },
-  { key: "owner", label: "Owner", width: 96, align: "left" },
+  { key: "promise", label: "Promise to pay", width: 100, align: "left" },
+  { key: "next", label: "Next follow-up", width: 88, align: "left" },
+  { key: "owner", label: "Owner", width: 88, align: "left" },
   { key: "action", label: "Action", width: 176, align: "left" },
 ];
+
+/** R-2413: the tick-box column only for people who may act on many rows (bulk-actions mayBulkCollect). */
+export function worklistCols(withSelect: boolean): typeof WORKLIST_COLS {
+  return withSelect ? WORKLIST_COLS : WORKLIST_COLS.filter((c) => c.key !== "select");
+}

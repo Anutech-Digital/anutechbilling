@@ -3,8 +3,9 @@
  * R-2408 — one next-step button per row + a ⋯ menu, instead of 4 stacked buttons (audit #1:
  * rows were ~110px tall). The button is "Record payment" when the promise falls today and the
  * person may record money, else "Follow-up" (worklist.ts nextAction). The menu opens the SAME
- * dialogs as before (Follow-up R-1517, Remind R-1518, Send pending dues R-1526, Record payment
- * R-1525) — the page owns which dialog is open.
+ * dialogs as before (Follow-up R-1517, Record payment R-1525) — the page owns which dialog is open.
+ * R-2413: the two items "Remind" + "Send pending dues" are ONE, "Send reminder" — R-2412's
+ * SendReminderDialog, where the person picks This invoice or Full statement.
  */
 import * as React from "react";
 
@@ -16,7 +17,7 @@ import {
 import type { CollectionRow } from "@/lib/queries/collections";
 import { nextAction } from "./worklist";
 
-export type RowDialog = "followup" | "remind" | "dues" | "pay";
+export type RowDialog = "followup" | "send" | "pay";
 
 export function RowActions({
   r, canPay, onOpen, className,
@@ -60,11 +61,8 @@ export function RowActions({
               <Icon name="phone" size={15} /> Follow-up
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={open("remind")}>
-            <Icon name="send" size={15} /> Remind
-          </DropdownMenuItem>
-          <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={open("dues")}>
-            <Icon name="file" size={15} /> Send pending dues
+          <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={open("send")}>
+            <Icon name="send" size={15} /> Send reminder
           </DropdownMenuItem>
           {canPay && next !== "pay" && r.amountDue > 0 && (
             <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={open("pay")}>
