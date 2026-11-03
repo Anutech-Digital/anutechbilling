@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc p where p.oid = to_regprocedure('public.settle_invoice_payment_link(text,text,bigint,text)') and p.prosrc like '%R-2439%')
 -- deploy-key: r2439settlepaymentlinkv2
--- 20261103163704_r2439_settle_payment_link_v2.sql
+-- 20261103190855_r2439_settle_payment_link_v2.sql
 --
 -- R-2439 (fixes from the independent money review of R-2415, 3 Nov 2026 — items 1 and 3).
 -- settle_invoice_payment_link v2, redefined from its LATEST body (20261103151556, the only one).
