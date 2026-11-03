@@ -34,6 +34,17 @@ export const FOLLOWUP_KIND_LABEL: Record<FollowupKind, string> = {
   promise: "Promise to pay",
 };
 
+/**
+ * R-2404: what a follow-up settled, stored in payment_followups.outcome (R-1515's free-text
+ * column, ≤500). The app writes one value: the customer confirmed the renewal — the Renewals
+ * page's decision status "Confirmed". It needs the subscription it is about.
+ */
+export const RENEWAL_CONFIRMED = "renewal_confirmed" as const;
+export const FOLLOWUP_OUTCOMES = [RENEWAL_CONFIRMED] as const;
+export type FollowupOutcome = (typeof FOLLOWUP_OUTCOMES)[number];
+export const CONFIRMED_NEEDS_RENEWAL =
+  "\"Customer confirmed the renewal\" needs the renewal it is about — open the Follow-up from the renewal's row and save again.";
+
 /** Who may give a follow-up to another person (R-1514: owner/accountant; manager too). */
 export const REASSIGN_ROLES = ["owner", "manager", "accountant"] as const;
 
@@ -114,12 +125,25 @@ function promiseRule(v: { kind: FollowupKind; promisedOn?: string }, ctx: z.Refi
   }
 }
 
+/** R-2404: "confirmed the renewal" is about one subscription. */
+function requestRule(
+  v: { kind: FollowupKind; promisedOn?: string; outcome?: FollowupOutcome; subscriptionId?: string },
+  ctx: z.RefinementCtx,
+) {
+  promiseRule(v, ctx);
+  if (v.outcome === RENEWAL_CONFIRMED && !v.subscriptionId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: CONFIRMED_NEEDS_RENEWAL });
+  }
+}
+
 /** The form. `link` = "" | "invoice:<id>" | "subscription:<id>" (see linkOptions). */
 export const followupFormSchema = z
   .object({
     ...fields,
     assignedTo: z.string().optional(),
     link: z.string().optional(),
+    /** R-2404: the renewal Follow-up's "Customer confirmed the renewal" tick. */
+    confirmed: z.boolean().optional(),
   })
   .superRefine(promiseRule);
 export type FollowupFormValues = z.input<typeof followupFormSchema>;
@@ -134,9 +158,13 @@ export const followupRequestSchema = z
     invoiceId: z.preprocess(blankToUndefined, z.string().max(200).optional()),
     quoteId: z.preprocess(blankToUndefined, z.string().max(200).optional()),
     subscriptionId: z.preprocess(blankToUndefined, z.string().uuid().optional()),
+    outcome: z.preprocess(
+      blankToUndefined,
+      z.enum(FOLLOWUP_OUTCOMES, { errorMap: () => ({ message: "That outcome is not one the app knows — reload the page and try again." }) }).optional(),
+    ),
   })
   .strict("Only the follow-up fields may be sent — reload the page and try again.")
-  .superRefine(promiseRule);
+  .superRefine(requestRule);
 export type FollowupRequest = z.output<typeof followupRequestSchema>;
 
 // ─── Links (what the follow-up is about) ─────────────────────────────────────
@@ -184,6 +212,8 @@ export function toFollowupRequest(
     invoiceId: link?.invoiceId ?? undefined,
     quoteId: link?.quoteId ?? undefined,
     subscriptionId: link?.subscriptionId ?? undefined,
+    /* R-2404: only with the renewal it is about (the API refuses it without one). */
+    outcome: data.confirmed && link?.subscriptionId ? RENEWAL_CONFIRMED : undefined,
   };
 }
 
@@ -202,6 +232,7 @@ export function buildFollowupInsert(req: FollowupRequest, tenantId: string, assi
     invoice_id: req.invoiceId ?? null,
     quote_id: req.quoteId ?? null,
     subscription_id: req.subscriptionId ?? null,
+    outcome: req.outcome ?? null,
   };
 }
 
@@ -220,6 +251,8 @@ export interface FollowupHistoryRow {
   invoice_id: string | null;
   quote_id: string | null;
   subscription_id: string | null;
+  /** R-2404: e.g. "renewal_confirmed". Optional — not every reader selects it. */
+  outcome?: string | null;
 }
 
 export interface FollowupHistoryEntry extends FollowupHistoryRow {

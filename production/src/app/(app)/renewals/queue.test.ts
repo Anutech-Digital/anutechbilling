@@ -96,7 +96,7 @@ describe("R-2403 renewed / paid rows leave Overdue", () => {
       row("unpaid", -2, { renewal_date: "2026-11-01", renewal_quote_id: "Q-U" }),
     ];
     const quotes = new Map([
-      ["Q-P", { id: "Q-P", amount: 1180, status: "accepted", payment_status: "paid" }],
+      ["Q-P", { id: "Q-P", amount: 1180, status: "accepted", payment_status: "received" }],
       ["Q-U", { id: "Q-U", amount: 1180, status: "sent", payment_status: "none" }],
     ]);
     const g = classifyRenewals(rows, () => false, TODAY, (r) => isPaidRenewalQuote(r.sub, quotes.get(r.sub.renewal_quote_id ?? "")));
