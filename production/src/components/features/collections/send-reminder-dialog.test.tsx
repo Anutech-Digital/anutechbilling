@@ -189,3 +189,42 @@ describe("Send reminder — one dialog", () => {
     expect(st.mutate.mock.calls[0][0]).toMatchObject({ customerId: CUST, kind: "whatsapp", invoiceId: "INV-105" });
   });
 });
+
+/* R-2415 — the bill's / statement's ONE Razorpay link, next to the UPI link. */
+describe("Send reminder — Razorpay card / net-banking link (R-2415)", () => {
+  const stubWith = (extra: (url: string) => Record<string, unknown>) =>
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+      const body = init?.body ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+      st.calls.push({ url, method: init?.method ?? "GET", body });
+      const base = url.endsWith("/reminder/draft") ? draftFor("INV-101") : url.endsWith("/pending-dues") ? preview() : { ok: true };
+      return { ok: true, status: 200, json: async () => ({ ...base, ...extra(url) }) } as unknown as Response;
+    }));
+
+  it("This invoice: says the link is in the message, for the bill amount, and marks a test key", async () => {
+    stubWith(() => ({ cardLink: { url: "https://rzp.io/i/abc", amount: 68000, billAmount: 68000, mode: "test" }, cardLinkNotice: null }));
+    wrap(<SendReminderDialog open onOpenChange={() => {}} customerId={CUST} customerName="Sharma Traders" />);
+    await box("₹68,000 is pending");
+    expect(screen.getByText(/Card \/ UPI \/ net-banking link in the message/).textContent).toContain("₹68,000");
+    expect(screen.getByText("Test mode — takes no real money")).toBeTruthy();
+    expect(sends()).toHaveLength(0);
+  });
+
+  it("Full statement: the link for the total", async () => {
+    stubWith((url) => (url.endsWith("/pending-dues")
+      ? { cardLink: { url: "https://rzp.io/i/all", amount: 73900, billAmount: 73900, mode: "live" }, cardLinkNotice: null }
+      : {}));
+    wrap(<SendReminderDialog open onOpenChange={() => {}} customerId={CUST} customerName="Sharma Traders" defaultScope="statement" />);
+    await waitFor(() => expect(screen.getByText(/Card \/ UPI \/ net-banking link in the message/).textContent).toContain("₹73,900"));
+    expect(screen.queryByText("Test mode — takes no real money")).toBeNull();
+  });
+
+  it("no Razorpay link → why, and the step to fix it (§24)", async () => {
+    stubWith(() => ({
+      cardLink: null,
+      cardLinkNotice: { reason: "not_configured", text: "No card / net-banking link — Razorpay is not connected.", action: { label: "Open Settings", href: "/settings?tab=integrations" } },
+    }));
+    wrap(<SendReminderDialog open onOpenChange={() => {}} customerId={CUST} customerName="Sharma Traders" />);
+    await waitFor(() => expect(screen.getByText(/Razorpay is not connected/)).toBeTruthy());
+    expect(screen.getByRole("link", { name: "Open Settings" }).getAttribute("href")).toBe("/settings?tab=integrations");
+  });
+});
