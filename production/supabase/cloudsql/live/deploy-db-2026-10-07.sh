@@ -398,6 +398,7 @@ MIGS=(
   "r2441approvalroleprefixedrefs|20261103194534_r2441_approval_role_and_prefixed_refs.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2441%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_reference_is_real(text)') and prosrc like '%NEFT%')"
   "r2433tenantconnections|20261103195606_r2433_tenant_connections.sql|resellersos_migration|to_regclass('public.tenant_connections') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.get_partner_metrics()') and prosrc like '%R-2433%')"
   "r2430placeholderrefbankline|20261103200938_r2430_placeholder_ref_bank_line.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2430%')"
+  "r2447quoteapprovalinsertmoneychange|20261103211958_r2447_quote_approval_insert_and_money_change.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2447%') and exists(select 1 from pg_trigger where tgname = 'trg_quote_insert_approval_guard' and tgrelid = to_regclass('public.quotes'))"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

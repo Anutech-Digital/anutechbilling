@@ -370,4 +370,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2441approvalroleprefixedrefs", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2441%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_reference_is_real(text)') and prosrc like '%NEFT%')" },
   { key: "r2433tenantconnections", peek: "to_regclass('public.tenant_connections') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.get_partner_metrics()') and prosrc like '%R-2433%')" },
   { key: "r2430placeholderrefbankline", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2430%')" },
+  { key: "r2447quoteapprovalinsertmoneychange", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2447%') and exists(select 1 from pg_trigger where tgname = 'trg_quote_insert_approval_guard' and tgrelid = to_regclass('public.quotes'))" },
 ];

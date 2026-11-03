@@ -218,6 +218,14 @@ export function isStale(record: ApprovalRecord, now: ApprovalRequirement): boole
      something the approver could not have seen. */
   if (wasM !== null && nowM === null) return true;
 
+  /* R-2447 (review F1): no signed number while the quote's own number needs sign-off by itself
+     (discount over the auto-approve limit, margin under the owner floor) — nobody signed that (a
+     direct update could null the signed numbers and then reprice). A healthy number that became
+     known after an "unknown" sign-off (cost filled in later) does not void it. Same rule in the
+     DB: tg_quote_approval_not_by_maker sends such a line edit back to pending. */
+  if (wasD === null && nowD !== null && nowD > AUTO_APPROVE_DISCOUNT_BPS) return true;
+  if (wasM === null && nowM !== null && nowM < OWNER_MARGIN_FLOOR_BPS) return true;
+
   return false;
 }
 
