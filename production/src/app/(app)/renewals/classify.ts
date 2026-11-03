@@ -63,6 +63,8 @@ export interface RenewalGroups<T> {
   nonRenewing: T[];
   /** R-2232: flex subscriptions whose next month is a billing part, not a renewal. */
   flexParts: T[];
+  /** R-2403: past the date but the renewal is paid (its renewal quote is paid) — not overdue. */
+  renewedPaid: T[];
   /** expired + due7 + stopped — the Urgent tab and the sidebar badge (R-1541). */
   urgentTab: T[];
   atRisk:   T[];
@@ -86,9 +88,11 @@ export function classifyRenewals<T extends ClassifyRow>(
   rows: readonly T[],
   isHighRisk: (row: T) => boolean,
   today: Date = new Date(),
+  /** R-2403: the renewal is paid (e.g. its renewal quote is paid) — such a row leaves Overdue. */
+  isPaid: (row: T) => boolean = () => false,
 ): RenewalGroups<T> {
   const g: RenewalGroups<T> = {
-    expired: [], due7: [], upcoming: [], future: [], stopped: [], nonRenewing: [], flexParts: [], urgentTab: [], atRisk: [], atRiskArr: 0,
+    expired: [], due7: [], upcoming: [], future: [], stopped: [], nonRenewing: [], flexParts: [], renewedPaid: [], urgentTab: [], atRisk: [], atRiskArr: 0,
   };
   for (const r of rows) {
     if (!chasedRenewal(r.sub)) {
@@ -97,6 +101,10 @@ export function classifyRenewals<T extends ClassifyRow>(
     }
     if (isFlexNextPart(r.sub, r.daysUntil)) {
       g.flexParts.push(r);
+      continue;
+    }
+    if (r.daysUntil < 0 && !isStopped(r.sub) && isPaid(r)) {
+      g.renewedPaid.push(r);
       continue;
     }
     if (r.daysUntil < 0) {

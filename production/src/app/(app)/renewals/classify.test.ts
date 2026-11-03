@@ -95,10 +95,13 @@ describe("R-1124 page wiring", () => {
     expect(page).not.toMatch(/const arrAtRisk/);
     expect(page.match(/groups\.atRiskArr/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
-  it("the Urgent tab shows an 'Expired · in grace' group apart from 'Next 7 days'", () => {
-    expect(page).toContain('title="Expired · in grace"');
-    expect(page).toContain("rows={shown(groups.expired)}");
-    expect(page).toContain("rows={shown(groups.due7)}");
+  /* R-2403 (changed expectation): the Urgent tab with its "Expired · in grace" group is now two
+     tabs — Overdue (expired + stopped) and ≤7 days — built by queueTabs from these groups, so a
+     lapsed row is still never listed under "next 7 days" (queue.test.ts proves the split). */
+  it("Overdue and ≤7 days are separate tabs built from the one classification", () => {
+    expect(page).toContain("const tabs     = queueTabs(groups);");
+    expect(page).toContain("rows={shown[bucketTab]}");
+    expect(page).not.toContain('title="Expired · in grace"');
   });
   it("bulk reminder passes the company grace", () => {
     expect(page).toMatch(/bulkReminderTargets\(enriched, today, graceDays\)/);

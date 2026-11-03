@@ -17,7 +17,7 @@
  * R-2232 is kept: the row's ONE action comes from renewalRowAction — once a renewal quote exists
  * nothing offers to create another one. Pure rules here (tested in renewal-actions-rules.test.ts).
  */
-import { renewalRowAction, type RowAction, type RowActionSub } from "@/app/(app)/renewals/row-action";
+import { renewalRowAction, isSettledRenewed, type RowAction, type RowActionSub } from "@/app/(app)/renewals/row-action";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { effectiveGraceDays } from "@/lib/renewals/cadence";
 import type { BillingCycle } from "@/lib/supabase/database.types";
@@ -82,7 +82,8 @@ export function renewalActionSet(
   }
 
   const graceOver = isGraceOver(sub, opts.daysUntil, opts.tenantGraceDays);
-  const ended = sub.status === "cancelled" || sub.renewal_state === "renewed" || sub.auto_renew === false;
+  /* R-2403: a stale 'renewed' (its date has passed, the new term unpaid) is not ended. */
+  const ended = sub.status === "cancelled" || isSettledRenewed(sub) || sub.auto_renew === false;
   let notRenewing: RenewalActionSet["notRenewing"] = null;
   if (opts.canEndSubscription && !ended) {
     notRenewing = opts.daysUntil < 0
