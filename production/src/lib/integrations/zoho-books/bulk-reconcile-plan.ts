@@ -358,7 +358,7 @@ export function planRow(
   }
   if (lines.length === 0) problems.push("The Zoho invoice has no product lines to book.");
   if (match.moreInvoices.length) problems.push(`The Zoho payment covers more invoices (${match.moreInvoices.join(", ")}) than are read here. Reconcile this line by hand.`);
-  if (unmatched.length) notes.push(`Not in the catalogue, booked with Zoho's name and price: ${unmatched.join(", ")}.`);
+  if (unmatched.length) notes.push(`Not in the catalogue, booked with Zoho's name and price: ${[...new Set(unmatched)].join(", ")}.`);
 
   /* 2b. A pro-rata add-on whose main line is a NEW subscription in this same bill (no sub yet). */
   for (const pl of lines) {
