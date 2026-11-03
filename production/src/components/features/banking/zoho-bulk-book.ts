@@ -29,6 +29,7 @@ import { mapGstTreatment } from "@/lib/integrations/zoho-books/import-plan";
 import { suggestGstTreatment, panFromGstin } from "@/lib/gst/customer-gst-treatment";
 import { describeError } from "@/lib/errors/toast-error";
 import { defaultContactName } from "@/components/features/customers/new-customer-contact";
+import { bankLinePaymentReference } from "@/lib/payments/bank-line-reference";
 import {
   newCustomerKey, rowsToBook, type DateFix, type PlanCustomer, type PlanRow, type SaleFx,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
@@ -137,7 +138,7 @@ export function openingPaymentArgs(i: OpeningPayInput, bankAccountId: string) {
     p_received_on: i.receivedOn,
     p_method: "bank_transfer",
     p_bank_account_id: bankAccountId,
-    p_reference: i.reference,
+    p_reference: bankLinePaymentReference(i.reference, i.transactionId),   // R-2430: a placeholder ref is not this line's UTR
     p_received: Math.round(i.received),
     p_allocations: [{
       invoice_id: i.invoiceId, amount: Math.round(i.received), tds_amount: tds,
