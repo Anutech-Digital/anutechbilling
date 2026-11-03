@@ -14,9 +14,8 @@
 --      activity_log 'quote.self_approved' "Self-approved by sole owner: <reason>".
 --      (A non-approver role in the company — sales — does not count as a second approver.)
 --   D. A manager who made the quote, with a reason → still refused (not an owner).
---   E. Owner with an active manager in the company, manager-tier (or no-tier) quote → refused
---      (a second approver exists). Owner-tier quote in the same company → the manager cannot
---      clear it, so the owner is the sole approver → allowed with a reason.
+--   E. Owner with an active manager in the company → since R-2426 (3 Nov) the manager does not
+--      count: the only owner clears manager-tier, no-tier and owner-tier quotes with a reason.
 --   F. Second active owner exists → owner maker refused even with a reason; once that owner is
 --      deactivated → allowed again.
 
@@ -89,7 +88,7 @@ begin
   exception when others then
     v_msg := sqlerrm;
     if v_msg like 'FAIL%' then raise; end if;
-    if v_msg not like 'You are the only approver of Q-R2383-A1 — write why this price is OK%' then
+    if v_msg not like 'You are the only owner of this company, so approving Q-R2383-A1 yourself needs a reason%' then
       raise exception 'FAIL A: wrong refusal: %', v_msg;
     end if;
   end;
@@ -107,7 +106,7 @@ begin
   exception when others then
     v_msg := sqlerrm;
     if v_msg like 'FAIL%' then raise; end if;
-    if v_msg not like 'You are the only approver of Q-R2383-A1%' then raise exception 'FAIL B: wrong refusal: %', v_msg; end if;
+    if v_msg not like 'You are the only owner of this company, so approving Q-R2383-A1%' then raise exception 'FAIL B: wrong refusal: %', v_msg; end if;
   end;
   raise notice 'PASS B: short reason refused';
 end $$;
@@ -155,25 +154,19 @@ begin
   raise notice 'PASS D: manager maker refused';
 end $$;
 
--- E1. owner's own MANAGER-tier (and no-tier) quote — the manager may approve it, so the owner is refused
+-- E1. owner's own MANAGER-tier (and no-tier) quote — R-2426 (3 Nov): a manager no longer counts
+--     as a second approver; the company's only owner may clear it with a reason.
 select pg_temp.r2383_login('aaaaaaaa-0000-0000-0000-000000238303');
 select pg_temp.r2383_quote('Q-R2383-B2', 'dddddddd-0000-0000-0000-000000238302', 'cccccccc-0000-0000-0000-000000238302', 'manager');
 select pg_temp.r2383_quote('Q-R2383-B3', 'dddddddd-0000-0000-0000-000000238302', 'cccccccc-0000-0000-0000-000000238302', null);
+update public.quotes set approval_status = 'approved', approved_at = now(),
+       approval_note = 'Owner says this is fine, long reason' where id in ('Q-R2383-B2', 'Q-R2383-B3');
 do $$
-declare v_msg text; v_id text;
 begin
-  foreach v_id in array array['Q-R2383-B2', 'Q-R2383-B3'] loop
-    begin
-      update public.quotes set approval_status = 'approved', approved_at = now(),
-             approval_note = 'Owner says this is fine, long reason' where id = v_id;
-      raise exception 'FAIL E1: owner self-approved % while a manager can approve it', v_id;
-    exception when others then
-      v_msg := sqlerrm;
-      if v_msg like 'FAIL%' then raise; end if;
-      if v_msg not like 'You cannot approve ' || v_id || ' — you made%' then raise exception 'FAIL E1: wrong refusal: %', v_msg; end if;
-    end;
-  end loop;
-  raise notice 'PASS E1: second approver (manager) exists → owner maker refused (manager tier / no tier)';
+  if (select count(*) from public.quotes where id in ('Q-R2383-B2', 'Q-R2383-B3') and approval_status::text = 'approved') <> 2 then
+    raise exception 'FAIL E1: the only owner could not clear a manager-tier / no-tier quote with a reason';
+  end if;
+  raise notice 'PASS E1: a manager in the company does not block the only owner (R-2426)';
 end $$;
 
 -- E2. owner's own OWNER-tier quote — the manager cannot clear it, so the owner is the sole approver
