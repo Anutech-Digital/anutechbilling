@@ -8,11 +8,13 @@
 - the card's own tests;
 - `npx vitest related <changed files> --run`;
 - the touched area's test folders;
-- the repo-wide guard/scan tests: every *ratchet*, *scan*, *wiring* and *guard* test file;
+- the repo-wide guard/scan tests: every *ratchet*, *scan*, *wiring* and *guard* test file, PLUS the CI-only guard list (R-2443 — most of its names match none of those words): from production/ `npx vitest run $(node scripts/ops/push-guard-suites.mjs --ci-only)`;
 - `npm run test:sql:local` ONLY if you added or changed SQL;
 - `worker-lock tsc`, eslint on the changed files, and `worker-lock check`.
 
 Do NOT run the full `npm run test` locally (about 40 minutes, and it crashes under load). GitHub CI runs it on every push, and `worker-lock push` still runs its guard files. After the push you wait for CI yourself (step 5b); if CI turns red, fixing that comes first.
+
+**Shorter push guard list (R-2443, 3 Nov 2026).** `worker-lock push` runs `PUSH_GUARD_SUITES` (production/scripts/ops/push-guard-suites.mjs): every *ratchet*, the migration/security scans and the cross-area scans that once turned CI red. Ten slow one-feature wiring/unit files are in `CI_ONLY_GUARD_SUITES` there: CI's `npm run test` still runs them on every push, and YOUR fast gate above must still run them (`npx vitest run $(node scripts/ops/push-guard-suites.mjs --ci-only)`) — the push no longer re-checks them. Budget 60 s: above it the push names its five files with the longest test time (fork/import time is not in vitest's report) — tell the manager; trim by measuring, never by deleting a guard. Fewer vitest forks was measured SLOWER, and `--no-isolate` breaks pdf-text.test.ts.
 
 **Review before push (R-2420, 3 Nov 2026) — after the fast gate, before `worker-lock push` (step 4b).** Run Skill "code-review" with args "high" on your diff — name the base: `git diff anutech/manager-pardeep...HEAD` (a worker branch has no upstream and `origin` is the old repo, so the skill's default base is wrong) — checked against the card and its spec in `docs/specs/` (if the card has a `goal`). Money / migration / auth / RLS cards also run Skill "security-review". Fix the real findings (then the fast gate again for what you changed); a finding you judge not real or out of scope stays listed. Write card field `review` {at (`date -u`), findings, fixed, left} — `left` says why each one was not fixed. Why: R-2402 passed its own tests yet its plan had 6 money mistakes found only on staging; R-2408's first commit would have undone R-2411.
 

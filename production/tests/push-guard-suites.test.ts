@@ -1,13 +1,30 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 // @ts-expect-error — plain .mjs ops script, no types
-import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites } from "../scripts/ops/push-guard-suites.mjs";
+import { PUSH_GUARD_SUITES, CI_ONLY_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites, slowestSuites } from "../scripts/ops/push-guard-suites.mjs";
 
 // R-385 (7 Oct 2026): `worker-lock.mjs push` runs these repo-scan / ratchet suites after the
 // rebase, because twice today a worker's push broke a scan test outside its own area.
 const root = path.resolve(__dirname, "..");
 const list: string[] = PUSH_GUARD_SUITES;
+
+/** Minimal glob → match for vitest exclude entries: `**` any depth (incl. none), `*` and `?` within a segment, `{a,b}`. */
+function globMatch(glob: string, file: string): boolean {
+  let re = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === "*" && glob[i + 1] === "*") { i++; if (glob[i + 1] === "/") { i++; re += "(?:.*/)?"; } else re += ".*"; }
+    else if (c === "*") re += "[^/]*";
+    else if (c === "?") re += "[^/]";
+    else if (c === "{") re += "(?:";
+    else if (c === "}") re += ")";
+    else if (c === ",") re += "|";
+    else re += c.replace(/[.+^$()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`).test(file);
+}
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -27,8 +44,78 @@ describe("push guard suites (R-385)", () => {
   it("has no duplicates and stays a short list (the push waits for it)", () => {
     expect(new Set(list).size).toBe(list.length);
     expect(list.length).toBeGreaterThan(10);
-    expect(list.length).toBeLessThanOrEqual(90); // R-1973: 74 → 84 with the src/site scans (~5 s)
-    expect(PUSH_GUARD_BUDGET_MS).toBe(90_000);
+    expect(list.length).toBeLessThanOrEqual(80); // R-1973: 74 → 84 with the src/site scans; R-2443: 89 → 80 (+nav-coverage)
+    expect(PUSH_GUARD_BUDGET_MS).toBe(60_000); // R-2443: 90 → 60 s
+  });
+
+  describe("R-2443: slow feature-wiring files run in CI only — never dropped", () => {
+    const ciOnly: string[] = CI_ONLY_GUARD_SUITES;
+
+    it("every CI-only file exists, is listed once, and is NOT run by the push", () => {
+      expect(ciOnly.length).toBeGreaterThan(0);
+      expect(ciOnly.filter((f) => !fs.existsSync(path.join(root, f)))).toEqual([]);
+      expect(new Set(ciOnly).size).toBe(ciOnly.length);
+      expect(ciOnly.filter((f) => list.includes(f))).toEqual([]);
+    });
+
+    it("no *ratchet* and none of the files that once turned CI red moved to CI-only", () => {
+      expect(ciOnly.filter((f) => /ratchet/.test(f))).toEqual([]);
+      for (const f of ["src/lib/app-url.test.ts", "src/lib/nav-coverage.test.ts", "src/site/page-metadata.test.ts", "src/app/(app)/quotes/invoice-link.test.ts", "tests/gen-deploy-db.test.ts"]) {
+        expect(list).toContain(f);
+      }
+    });
+
+    it("CI still runs every CI-only file: ci.yml runs `npm run test`, which is `vitest run` over src/ + tests/", () => {
+      const ci = fs.readFileSync(path.join(root, "..", ".github", "workflows", "ci.yml"), "utf8");
+      expect(ci).toMatch(/run: npm run test -- --shard=\$\{\{ matrix\.shard \}\}\/2/);
+      const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+      expect(pkg.scripts.test).toBe("vitest run");
+      const cfg = fs.readFileSync(path.join(root, "vitest.config.ts"), "utf8");
+      expect(cfg).toContain(`include: ["src/**/*.test.{ts,tsx}", "tests/**/*.test.{ts,tsx}"]`);
+      const exclude = /exclude:\s*\[([^\]]*)\]/.exec(cfg)?.[1] ?? "";
+      const excluded = [...exclude.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+      expect(excluded.length).toBeGreaterThan(0);
+      /* Entries are globs: read each the widest way (as given, as a folder, anywhere in the tree). */
+      const hits = (f: string) => excluded.filter((e) =>
+        [e, `${e}/**`, `**/${e}`, `**/${e}/**`].some((g) => globMatch(g, f)));
+      for (const f of ciOnly) {
+        expect(f).toMatch(/^(src|tests)\/.+\.test\.tsx?$/);
+        expect(hits(f)).toEqual([]);
+      }
+      expect(hits("tests/isolation/x.test.ts")).not.toEqual([]); // the matcher really sees an exclude
+      expect(globMatch("**/*.wiring.test.ts", "src/lib/leads/unbounded-reads.wiring.test.ts")).toBe(true);
+      expect(globMatch("src/site/**/*-priceable*", "src/site/cart-lines-priceable.test.ts")).toBe(true);
+      expect(globMatch("src/*.ts", "src/lib/x.ts")).toBe(false);
+    });
+  });
+
+  it("R-2443: `push-guard-suites.mjs --ci-only` prints the CI-only list for the fast gate", () => {
+    const out = execFileSync(process.execPath, [path.join(root, "scripts/ops/push-guard-suites.mjs"), "--ci-only"], { cwd: root, encoding: "utf8" });
+    expect(out.trim().split(/\r?\n/)).toEqual(CI_ONLY_GUARD_SUITES);
+    const quiet = execFileSync(process.execPath, [path.join(root, "scripts/ops/push-guard-suites.mjs")], { cwd: root, encoding: "utf8" });
+    expect(quiet).toBe("");
+  });
+
+  it("R-2443: names the slowest files of a vitest json report, slowest first", () => {
+    const json = { testResults: [
+      { name: "C:/Users/x/w/production/src/a.test.ts", startTime: 1000, endTime: 1500 },
+      { name: "C:/Users/x/w/production/src/b.test.ts", startTime: 1000, endTime: 41000 },
+      { name: "C:/Users/x/w/production/src/c.test.ts", startTime: 1000, endTime: 3000 },
+      { name: "C:/Users/x/w/production/src/d.test.ts" },
+    ] };
+    expect(slowestSuites(json, "c:\\Users\\x\\w\\production", 2)).toEqual([
+      { file: "src/b.test.ts", ms: 40000 },
+      { file: "src/c.test.ts", ms: 2000 },
+    ]);
+    expect(slowestSuites(json, "c:\\Users\\x\\w\\production").at(-1)).toEqual({ file: "src/d.test.ts", ms: 0 });
+    expect(slowestSuites({}, "/x")).toEqual([]);
+  });
+
+  it("R-2443: an over-budget push prints the slowest files", () => {
+    const src = fs.readFileSync(path.join(root, "scripts/ops/worker-lock.mjs"), "utf8");
+    const fn = src.slice(src.indexOf("export function runGuardSuites"), src.indexOf("async function pushWithTurn"));
+    expect(fn).toContain("slowestSuites(json, root, 5)");
+    expect(fn).toMatch(/if \(ms > PUSH_GUARD_BUDGET_MS\) \{[\s\S]*sabse dheemi/);
   });
 
   it("R-1817: the Gemini scans run on push, the slow retry-timer suite does not", () => {
