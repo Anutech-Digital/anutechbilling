@@ -69,6 +69,15 @@ vi.mock("@/components/providers/confirm-provider", () => ({
 
 const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(), message: vi.fn() }));
 vi.mock("sonner", () => ({ toast: toastMock }));
+// R-2392: the party box is now the PersonPicker (People); here it is a plain text box so these
+// tests keep typing a name (the picker has its own test: person-picker.test.tsx).
+vi.mock("@/components/features/vault/person-picker", async () => {
+  const R = await import("react");
+  return {
+    PersonPicker: ({ id, value, onChange }: { id?: string; value: { contactId: string | null; name: string }; onChange: (v: { contactId: string | null; name: string }) => void }) =>
+      R.createElement("input", { id, value: value.name, onChange: (e: React.ChangeEvent<HTMLInputElement>) => onChange({ contactId: null, name: e.target.value }) }),
+  };
+});
 
 // Radix Select does not open in jsdom — a native <select> keeps the options readable.
 vi.mock("@/components/ui/select", async () => {
