@@ -1,7 +1,7 @@
 -- R-2427 (3 Nov 2026, p1 money): export receipts — an inward remittance that pays an EXISTING
 -- foreign-currency invoice at another rate (forex gain / loss), and a short remittance where the
 -- remitting bank kept charges abroad (Bank Charges, not TDS). Migration
--- 20261103220000_r2427_export_receipt_fx (reconcile_bank_credit_fx_invoice, the 12-argument
+-- 20261103223644_r2427_export_receipt_fx (reconcile_bank_credit_fx_invoice, the 12-argument
 -- reconcile_bank_credit_new_sale_fx, tg_bank_fx_line_unmatched).
 -- Self-asserting, ONE transaction, rolled back. Local/test DB only.
 -- RED without the migration (A: reconcile_bank_credit_fx_invoice does not exist).
