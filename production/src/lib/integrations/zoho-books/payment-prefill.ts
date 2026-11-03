@@ -34,7 +34,7 @@ export interface ZohoPrefill {
   /** R-2440: Zoho billed in a foreign currency and no bank rate fitting Zoho's was found, so the
    *  prices were left in that currency — each line's key, name and foreign price. Save stays blocked
    *  (zohoUnconvertedProblem) until each is typed in ₹. Null = nothing left unconverted. */
-  unconverted: { currency: string; lines: Array<{ key: string; name: string; rate: number }> } | null;
+  unconverted: { currency: string; lines: Array<{ key?: string; name: string; rate: number }> } | null;
 }
 
 const SUFFIXES = /\b(private limited|pvt ltd|pvt limited|private ltd|limited|ltd|llp|opc)\b/g;
@@ -192,11 +192,11 @@ export function zohoPrefill(
  */
 export function zohoUnconvertedProblem(
   prefill: Pick<ZohoPrefill, "unconverted"> | null | undefined,
-  lines: ReadonlyArray<{ key: string; rate: number }>,
+  lines: ReadonlyArray<{ key?: string; name: string; rate: number }>,
 ): string | null {
   const u = prefill?.unconverted;
   if (!u) return null;
-  const still = u.lines.filter((o) => lines.some((l) => l.key === o.key && l.rate === o.rate));
+  const still = u.lines.filter((o) => lines.some((l) => (o.key ? l.key === o.key : l.name === o.name) && l.rate === o.rate));
   if (still.length === 0) return null;
   return `Prices are still in ${u.currency} as Zoho has them (${still.map((o) => o.name).join(", ")}) — type each price in ₹ before saving.`;
 }
