@@ -21,6 +21,7 @@ import {
 } from "./api";
 import { monthsOf, parseLineDescription, subsPeriodMonths } from "./import-plan";
 import { parseZohoDate } from "@/lib/import/zoho-opening-invoices";
+import { parseInwardRemittance, type InwardRemittance } from "@/lib/banking/inward-remittance";
 
 /** ₹ either side of the bank amount the fallback accepts (bank charges / round-off). */
 export const AMOUNT_TOLERANCE = 2;
@@ -46,6 +47,10 @@ export interface ZohoPaymentRow {
   customerName: string;
   /** R-2402: TDS the customer withheld on this payment (Zoho tax_amount_withheld); 0 / absent = none. */
   taxWithheld?: number;
+  /** R-2425: Zoho's currency_code ("USD", "INR"; the amount is in it); absent = Zoho gave none. */
+  currency?: string;
+  /** R-2425: Zoho's exchange_rate (INR per unit) for a foreign payment. */
+  exchangeRate?: number;
 }
 
 export interface ZohoMatchLine {
@@ -148,7 +153,34 @@ export function paymentFromZoho(row: Record<string, unknown>): ZohoPaymentRow | 
     customerZohoId: str(row.customer_id) ?? "",
     customerName: str(row.customer_name) ?? "",
     ...(num(row.tax_amount_withheld) ? { taxWithheld: num(row.tax_amount_withheld)! } : {}),
+    ...foreignOf(row),
   };
+}
+
+/** R-2425: the Zoho payment's currency (INR kept as "INR" — an overseas customer may be billed in
+ *  ₹) and, for a foreign one, its rate; {} when Zoho gives none. */
+function foreignOf(row: Record<string, unknown>): { currency?: string; exchangeRate?: number } {
+  const cur = (str(row.currency_code) ?? "").toUpperCase();
+  if (!/^[A-Z]{3}$/.test(cur)) return {};
+  if (cur === "INR") return { currency: "INR" };
+  const rate = num(row.exchange_rate);
+  return { currency: cur, ...(rate && rate > 0 ? { exchangeRate: rate } : {}) };
+}
+
+/**
+ * R-2425: is this Zoho payment the bank line's money? A ₹ payment: its amount within ±₹2 of the
+ * credit. A foreign one: only on an inward remittance in that currency ("INW … USD1024.0@93.6"),
+ * its amount within 2 units of the narration's foreign amount — never the rupee credit. Zoho gave
+ * no currency: either fits. `rem` = the line's remittance, parsed once by the caller.
+ */
+export function isLineMoney(
+  p: Pick<ZohoPaymentRow, "amount" | "currency">, line: Pick<BankCreditLine, "credit" | "description">,
+  rem: InwardRemittance | null = parseInwardRemittance(line.description),
+): boolean {
+  const inr = amountClose(p.amount, line.credit);
+  if (p.currency === "INR") return inr;
+  if (p.currency) return !!rem && p.currency === rem.currency && amountClose(p.amount, rem.amount);
+  return inr || (!!rem && amountClose(p.amount, rem.amount));
 }
 
 function addDays(iso: string, days: number): string {
@@ -171,12 +203,13 @@ export async function findZohoPayment(line: BankCreditLine, deps: ZohoReadDeps):
 > {
   const f = deps.fetch ?? fetch;
   const utrs = utrCandidates(line);
+  const rem = parseInwardRemittance(line.description);
   for (const utr of utrs) {
     const page = await listCustomerPaymentsPage(deps.orgId, deps.token, { referenceContains: utr }, f);
     const hits = page.rows.map(paymentFromZoho).filter((p): p is ZohoPaymentRow => !!p && referenceHasUtr(p.reference, utr));
     if (hits.length === 0) continue;
     if (hits.length === 1) return { kind: "one", by: "utr", payment: hits[0] };
-    const sameAmount = hits.filter((p) => amountClose(p.amount, line.credit));
+    const sameAmount = hits.filter((p) => isLineMoney(p, line, rem));
     if (sameAmount.length === 1) return { kind: "one", by: "utr", payment: sameAmount[0] };
     return { kind: "several", by: "utr", candidates: (sameAmount.length ? sameAmount : hits).slice(0, 10) };
   }
@@ -184,7 +217,7 @@ export async function findZohoPayment(line: BankCreditLine, deps: ZohoReadDeps):
   const to = addDays(line.txnDate, DATE_WINDOW_DAYS);
   const page = await listCustomerPaymentsPage(deps.orgId, deps.token, { dateStart: from, dateEnd: to }, f);
   const near = page.rows.map(paymentFromZoho)
-    .filter((p): p is ZohoPaymentRow => !!p && amountClose(p.amount, line.credit))
+    .filter((p): p is ZohoPaymentRow => !!p && isLineMoney(p, line, rem))
     .sort((a, b) => dayGap(a.date, line.txnDate) - dayGap(b.date, line.txnDate));
   if (near.length === 1) return { kind: "one", by: "amount_date", payment: near[0] };
   if (near.length > 1) return { kind: "several", by: "amount_date", candidates: near.slice(0, 10) };

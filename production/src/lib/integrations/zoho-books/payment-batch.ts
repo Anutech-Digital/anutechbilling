@@ -13,8 +13,9 @@
  * among several) is still settled by "Find in Zoho" on that line.
  */
 import { listCustomerPaymentsPage } from "./api";
+import { parseInwardRemittance } from "@/lib/banking/inward-remittance";
 import {
-  amountClose, DATE_WINDOW_DAYS, paymentFromZoho, referenceHasUtr, utrCandidates,
+  DATE_WINDOW_DAYS, isLineMoney, paymentFromZoho, referenceHasUtr, utrCandidates,
   type BankCreditLine, type ZohoPaymentRow, type ZohoReadDeps,
 } from "./payment-match";
 
@@ -66,7 +67,8 @@ export function lineHasZohoMatch(line: BankCreditLine, payments: readonly ZohoPa
     if (payments.some((p) => referenceHasUtr(p.reference, utr))) return true;
   }
   const d = day(line.txnDate);
-  return payments.some((p) => p.date !== null && amountClose(p.amount, line.credit)
+  const rem = parseInwardRemittance(line.description);
+  return payments.some((p) => p.date !== null && isLineMoney(p, line, rem)
     && Math.abs(day(p.date) - d) / 86_400_000 <= DATE_WINDOW_DAYS);
 }
 
@@ -84,17 +86,19 @@ export function findInPaymentList(line: BankCreditLine, payments: readonly ZohoP
   | { kind: "one"; by: "utr" | "amount_date"; payment: ZohoPaymentRow }
   | { kind: "several"; by: "utr" | "amount_date"; candidates: ZohoPaymentRow[] }
   | { kind: "none" } {
+  /* R-2425: an inward remittance is matched by its foreign amount (isLineMoney). */
+  const rem = parseInwardRemittance(line.description);
   for (const utr of utrCandidates(line)) {
     const hits = payments.filter((p) => referenceHasUtr(p.reference, utr));
     if (hits.length === 0) continue;
     if (hits.length === 1) return { kind: "one", by: "utr", payment: hits[0] };
-    const same = hits.filter((p) => amountClose(p.amount, line.credit));
+    const same = hits.filter((p) => isLineMoney(p, line, rem));
     if (same.length === 1) return { kind: "one", by: "utr", payment: same[0] };
     return { kind: "several", by: "utr", candidates: (same.length ? same : hits).slice(0, 10) };
   }
   const d = day(line.txnDate);
   const gap = (p: ZohoPaymentRow) => (p.date ? Math.abs(day(p.date) - d) / 86_400_000 : Infinity);
-  const nearBy = payments.filter((p) => amountClose(p.amount, line.credit) && gap(p) <= DATE_WINDOW_DAYS).sort((a, b) => gap(a) - gap(b));
+  const nearBy = payments.filter((p) => isLineMoney(p, line, rem) && gap(p) <= DATE_WINDOW_DAYS).sort((a, b) => gap(a) - gap(b));
   if (nearBy.length === 1) return { kind: "one", by: "amount_date", payment: nearBy[0] };
   if (nearBy.length > 1) return { kind: "several", by: "amount_date", candidates: nearBy.slice(0, 10) };
   return { kind: "none" };

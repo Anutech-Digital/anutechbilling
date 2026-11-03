@@ -22,7 +22,7 @@
  * is skipped (the RPC refuses a reconciled line too). The first error STOPS the run and is reported;
  * rows after it stay unbooked for the next press.
  */
-import type { NewSaleInput, PayItemInput } from "@/lib/queries/bank-credit-pay-for";
+import { newSaleArgs, type NewSaleInput, type PayItemInput } from "@/lib/queries/bank-credit-pay-for";
 import type { PayForResult } from "@/lib/banking/credit-pay-for";
 import type { LinePayerAnswer } from "@/lib/queries/customer-payers";
 import { mapGstTreatment } from "@/lib/integrations/zoho-books/import-plan";
@@ -30,7 +30,7 @@ import { suggestGstTreatment, panFromGstin } from "@/lib/gst/customer-gst-treatm
 import { describeError } from "@/lib/errors/toast-error";
 import { defaultContactName } from "@/components/features/customers/new-customer-contact";
 import {
-  newCustomerKey, rowsToBook, type DateFix, type PlanCustomer, type PlanRow,
+  newCustomerKey, rowsToBook, type DateFix, type PlanCustomer, type PlanRow, type SaleFx,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
 
 type NewCustomer = Extract<PlanCustomer, { kind: "new" }>;
@@ -82,6 +82,34 @@ export interface BookDeps {
   payItem: (i: PayItemInput) => Promise<PayForResult>;
   /** R-2419 (a): settle an opening invoice and match the line to that receipt (payOpeningInvoice). */
   payOpening: (i: OpeningPayInput) => Promise<OpeningPaid>;
+  /** R-2425: an export receipt — the sale in its currency at the bank's rate (reconcile_bank_credit_new_sale_fx). */
+  newSaleFx?: (i: NewSaleInput, fx: SaleFx) => Promise<PayForResult>;
+}
+
+/** R-2425: the reconcile_bank_credit_new_sale_fx arguments — exported so the test pins what reaches
+ *  the server. No TDS (a foreign customer deducts none); the Zoho number always sent (null = none). */
+export function newSaleFxArgs(i: NewSaleInput, fx: SaleFx) {
+  const a = newSaleArgs(i);
+  return {
+    p_txn_id: a.p_txn_id,
+    p_customer_id: a.p_customer_id,
+    p_lines: a.p_lines,
+    p_create_subscription: a.p_create_subscription,
+    p_sub_start: a.p_sub_start,
+    p_sub_renewal: a.p_sub_renewal,
+    p_billing_cycle: a.p_billing_cycle,
+    p_external_number: i.externalNumber?.trim() || null,
+    p_currency: fx.currency,
+    p_fx_rate: fx.rate,
+    p_foreign_amount: fx.foreignAmount,
+  };
+}
+
+/** R-2425: an export receipt goes through the foreign-currency sale; everything else as before. */
+function saleFor(book: NonNullable<PlanRow["book"]>, input: NewSaleInput, deps: BookDeps): Promise<PayForResult> {
+  if (!book.fx) return deps.newSale(input);
+  if (!deps.newSaleFx) throw new Error(`This line is an export receipt in ${book.fx.currency}, and this screen cannot book it in that currency. Reload the page and try again.`);
+  return deps.newSaleFx(input, book.fx);
 }
 
 /** R-2419 (a): one bank line settling one opening invoice imported from Zoho. */
@@ -171,6 +199,10 @@ export async function bookRows(
     const book = row.book!;
     const cust = row.customer!;
     try {
+      /* R-2425: an export receipt needs the foreign-currency sale — said BEFORE any customer or payer is saved. */
+      if (book.kind === "new_sale" && book.fx && !deps.newSaleFx) {
+        throw new Error(`This line is an export receipt in ${book.fx.currency}, and this screen cannot book it in that currency. Reload the page and try again.`);
+      }
       if (await deps.isReconciled(row.txnId)) {
         const r: BookedRow = {
           txnId: row.txnId, txnDate: row.txnDate, credit: row.credit, outcome: "skipped", customerName: cust.name, customerCreated: false,
@@ -219,11 +251,11 @@ export async function bookRows(
           tdsAmount: book.tdsAmount, tdsRatePct: book.tdsRatePct, tdsSection: book.tdsSection,
           createSubscription: book.item.createSubscription, subStart: book.item.subStart, subRenewal: null,
         })
-        : await deps.newSale({
+        : await saleFor(book, {
         transactionId: row.txnId, customerId, lines: book.lines, createSubscription: book.createSubscription,
         subStart: book.subStart, subRenewal: book.subRenewal, tdsAmount: book.tdsAmount, tdsRatePct: book.tdsRatePct,
         tdsSection: book.tdsSection, billingCycle: book.billingCycle, externalNumber: book.externalNumber,
-      });
+      }, deps);
       const todo = [
         ...row.seatDiffs.map((d) => `Seats: ${d.plan}${d.domain ? ` (${d.domain})` : ""} has ${d.appSeats} in the app, Zoho billed ${d.zohoSeats}.`),
         ...row.notes,
@@ -255,6 +287,7 @@ export async function bookRows(
         todo,
         text: res.already_recorded ? "Already recorded before — nothing booked again."
           : book.kind === "pay_item" ? `Paid open ${book.item?.invoiceId ? `invoice ${book.item.invoiceId}` : `quote ${book.item?.quoteId ?? res.quote_id}`} — line reconciled.`
+          : book.fx ? `Booked in ${book.fx.currency} at the bank's rate (₹${book.fx.rate}) and reconciled.`
           : "Booked and reconciled.",
       };
       done.push(r); onEach?.(r, i, queue.length);

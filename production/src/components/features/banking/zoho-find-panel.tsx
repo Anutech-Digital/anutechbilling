@@ -14,6 +14,7 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { rupee, formatDate } from "@/lib/utils";
+import { formatForeign } from "@/lib/currency";
 import type { FindZohoResult, ZohoPaymentMatch, ZohoPaymentRow } from "@/lib/integrations/zoho-books/payment-match";
 import { zohoPrefill, zohoSaleNumber, type AppCustomerLite, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
 
@@ -45,6 +46,10 @@ type State =
   | { kind: "several"; by: "utr" | "amount_date"; candidates: ZohoPaymentRow[] }
   | { kind: "match"; match: ZohoPaymentMatch; prefill: ZohoPrefill };
 
+/** R-2425: a Zoho figure in its own currency — USD payments are dollars, not rupees. */
+const zohoMoney = (n: number, currency?: string | null) =>
+  currency && currency !== "INR" ? formatForeign(n, currency, n % 1 ? 2 : 0) : rupee(n, { decimals: n % 1 ? 2 : 0 });
+
 const box = "rounded-md border border-hairline bg-paper p-2.5 space-y-1.5";
 
 export function ZohoFindPanel({ transactionId, txnDate, credit, customers, catalog, onPrefill, onNewCustomer }: Props) {
@@ -74,7 +79,7 @@ export function ZohoFindPanel({ transactionId, txnDate, credit, customers, catal
       }
       const r = body.result;
       if (r.kind === "match") {
-        const prefill = zohoPrefill(r.match, { customers, catalog, txnDate });
+        const prefill = zohoPrefill(r.match, { customers, catalog, txnDate, credit });
         setState({ kind: "match", match: r.match, prefill });
         onPrefill(prefill);
       } else {
@@ -127,7 +132,7 @@ export function ZohoFindPanel({ transactionId, txnDate, credit, customers, catal
             {state.candidates.map((c) => (
               <li key={c.zohoId} className="flex flex-wrap items-center gap-2 text-xs text-ink">
                 <span className="min-w-0 flex-1 break-words tabular-nums">
-                  #{c.number} · {formatDate(c.date)} · {rupee(c.amount)} · {c.customerName}{c.reference ? ` · Ref ${c.reference}` : ""}
+                  #{c.number} · {formatDate(c.date)} · {zohoMoney(c.amount, c.currency)} · {c.customerName}{c.reference ? ` · Ref ${c.reference}` : ""}
                 </span>
                 <Button size="sm" variant="default" onClick={() => { void run(c.zohoId); }}>Use this payment</Button>
               </li>
@@ -148,7 +153,7 @@ function MatchBox({ match, prefill, onNewCustomer }: { match: ZohoPaymentMatch; 
   return (
     <div role="status" aria-label="Zoho match" className={box}>
       <p className="text-xs text-ink-2 break-words tabular-nums">
-        <b>Zoho payment #{p.number}</b> · {formatDate(p.date)} · {rupee(p.amount)}{p.reference ? ` · Ref ${p.reference}` : ""}
+        <b>Zoho payment #{p.number}</b> · {formatDate(p.date)} · {zohoMoney(p.amount, p.currency)}{p.reference ? ` · Ref ${p.reference}` : ""}
         {" "}({match.by === "utr" ? "matched by UTR" : match.by === "amount_date" ? "matched by amount and date" : "picked by you"})
       </p>
       <p className="text-xs text-ink break-words">
@@ -173,7 +178,7 @@ function MatchBox({ match, prefill, onNewCustomer }: { match: ZohoPaymentMatch; 
         <ul className="text-xs text-ink-2 space-y-0.5">
           {lines.map((l, i) => (
             <li key={i} className="break-words tabular-nums">
-              {l.name} × {l.qty}{l.rate !== null ? ` @ ${rupee(l.rate, { decimals: l.rate % 1 ? 2 : 0 })}` : ""}
+              {l.name} × {l.qty}{l.rate !== null ? ` @ ${zohoMoney(l.rate, match.payment.currency)}` : ""}
               {l.start && l.end ? ` · ${formatDate(l.start)} – ${formatDate(l.end)}` : ""}
               {l.domain ? ` · ${l.domain}` : ""}
             </li>

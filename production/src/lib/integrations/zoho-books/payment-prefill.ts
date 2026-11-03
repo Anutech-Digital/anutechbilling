@@ -12,6 +12,7 @@
  *   term      1 month → Monthly flex; One-Time / no catalogue term → One-time; else Annual.
  *   dates     the earliest line start → renews the day after the latest line end.
  */
+import { rupee } from "@/lib/utils";
 import { defaultCycle, saleLineFromItem, type SaleCycle, type SaleLine } from "@/lib/banking/credit-pay-for";
 import type { ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
 
@@ -125,11 +126,26 @@ export function zohoSaleLine(zl: ZohoMatchLine, catalog: readonly CatalogLite[])
 
 export function zohoPrefill(
   match: ZohoPaymentMatch,
-  ctx: { customers: readonly AppCustomerLite[]; catalog: readonly CatalogLite[]; txnDate: string },
+  /** R-2425: `credit` = the bank line's ₹ — a Zoho payment in a foreign currency is filled in ₹ at
+   *  the rate the bank converted at (credit ÷ Zoho's foreign amount). */
+  ctx: { customers: readonly AppCustomerLite[]; catalog: readonly CatalogLite[]; txnDate: string; credit?: number },
 ): ZohoPrefill {
   const lines: SaleLine[] = [];
   const unmatched: string[] = [];
   const notes: string[] = [];
+  const code = match.payment.currency ?? null;
+  const cur = code && code !== "INR" ? code : null;
+  const implied = cur && ctx.credit && ctx.credit > 0 && match.payment.amount > 0 ? ctx.credit / match.payment.amount : null;
+  /* A rate more than 2% off Zoho's own means the bank received less (charges kept abroad) or a
+     different payment — never absorbed into the price silently. */
+  const zr = match.payment.exchangeRate ?? null;
+  const fxRate = implied && (!zr || Math.abs(implied - zr) / zr <= 0.02) ? implied : null;
+  if (cur && implied && !fxRate) {
+    notes.push(`Zoho billed in ${cur} at ${rupee(zr ?? 0, { decimals: 2 })} but the money received works out to ${rupee(implied, { decimals: 2 })} per ${cur} — the remitting bank may have kept charges. Prices are left in ${cur} as Zoho has them: set them in ₹ by hand, or use Reconcile from Zoho.`);
+  }
+  if (cur && fxRate) {
+    notes.push(`Zoho billed in ${cur}: prices are filled in ₹ at the bank's rate (${rupee(fxRate, { decimals: 4 })} per ${cur}), so the sale equals the money received. 0% GST — export of services under LUT. To book it in ${cur} on the invoice, use Reconcile from Zoho.`);
+  }
   const starts: string[] = [];
   const ends: string[] = [];
   for (const inv of match.invoices) {
@@ -138,7 +154,7 @@ export function zohoPrefill(
       if (!made) continue;
       const { cycle } = made;
       if (!made.inCatalog) unmatched.push(zl.name.trim());
-      lines.push(made.line);
+      lines.push(fxRate ? { ...made.line, rate: Math.round(made.line.rate * fxRate * 100) / 100 } : made.line);
       if (zl.start && zl.end) { starts.push(zl.start); ends.push(zl.end); }
       if (cycle === "annual_yearly" && zl.months !== null && zl.months !== 12) {
         notes.push(`${zl.name.trim()}: Zoho billed ${zl.months} month${zl.months === 1 ? "" : "s"} — check the price per year.`);

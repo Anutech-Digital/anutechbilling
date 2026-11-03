@@ -52,6 +52,10 @@ import { istToday } from "@/lib/dates/ist";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { parsePlaceOfSupply } from "@/lib/import/zoho-opening-invoices";
+import {
+  formatRemittance, parseInwardRemittance, remittanceFitsCredit, type InwardRemittance,
+} from "@/lib/banking/inward-remittance";
+import { formatForeign } from "@/lib/currency";
 import type { FindZohoResult, ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
 import { mapZohoCustomer, normCompanyName, zohoSaleLine, zohoSaleNumber } from "./payment-prefill";
 
@@ -254,7 +258,13 @@ export interface BookSpec {
   tdsRatePct: number | null;
   tdsSection: string | null;
   dateFixes: DateFix[];
+  /** R-2425: an export receipt — the sale is in this currency at the bank's rate (₹ = the bank
+   *  credit; reconcile_bank_credit_new_sale_fx). Null = an INR sale. */
+  fx: SaleFx | null;
 }
+
+/** R-2425: the foreign side of an export sale booked from an inward remittance. */
+export interface SaleFx { currency: string; rate: number; foreignAmount: number }
 
 export interface PlanRow {
   txnId: string;
@@ -269,9 +279,13 @@ export interface PlanRow {
     paymentNumber: string | null;
     by: ZohoPaymentMatch["by"] | null;
     amount: number | null;
+    /** R-2425: the Zoho payment's currency when it is not INR (amount is in it); null = INR. */
+    currency?: string | null;
     invoiceNumbers: string[];
     candidates: number;
   };
+  /** R-2425: the bank line's foreign inward remittance ("USD1024.0@93.6"); null = none. */
+  remittance?: InwardRemittance | null;
   customer: PlanCustomer | null;
   lines: PlanLine[];
   seatDiffs: SeatDiff[];
@@ -369,6 +383,7 @@ export function severalRow(line: BulkLine, candidates: number): PlanRow {
   return {
     txnId: line.id, txnDate: line.txnDate, credit: line.credit, description: line.description, kind: "several", summary: null,
     zoho: { paymentId: null, paymentNumber: null, by: null, amount: null, invoiceNumbers: [], candidates },
+    remittance: parseInwardRemittance(line.description),
     customer: null, lines: [], seatDiffs: [], saleTotal: null, tds: 0, payer: null,
     problems: [`Zoho has ${candidates} payments that could be this line — open the line's Reconcile and use Find in Zoho to pick one.`],
     notes: [], ticked: false, book: null,
@@ -490,6 +505,38 @@ export function planRow(
     if (!c.email && !c.phone) notes.push(`${c.name}: Zoho has no email or phone — the customer is created without one; add it later.`);
   }
 
+  /* 1b. R-2425: an export receipt — the bank narration carries the foreign amount and the bank's
+     rate ("INW … USD1024.0@93.6"); Zoho's payment and invoice lines are in that currency. The sale
+     is booked in it, each Zoho rate × the bank's rate, so the ₹ total is the bank credit. A
+     customer billed in ₹ in Zoho (currency INR, or no currency and the ₹ amount = the credit) who
+     pays by remittance stays an ordinary ₹ sale. */
+  const remittance = parseInwardRemittance(line.description);
+  const zohoCode = match.payment.currency ?? null;
+  const payCur = zohoCode && zohoCode !== "INR" ? zohoCode : null;
+  const zohoCur = payCur ?? (zohoCode || !remittance || Math.abs(match.payment.amount - line.credit) <= AMOUNT_SLACK ? null : remittance.currency);
+  const fxProblems: string[] = [];
+  let fx: SaleFx | null = null;
+  if (remittance && zohoCur) {
+    const z = (n: number) => formatForeign(n, zohoCur, Number.isInteger(n) ? 0 : 2);
+    if (zohoCur !== remittance.currency) {
+      fxProblems.push(`Currency differs: the bank received ${formatRemittance(remittance)}, the Zoho payment is ${z(match.payment.amount)}. Reconcile this line by hand.`);
+    } else if (!remittanceFitsCredit(remittance, line.credit)) {
+      fxProblems.push(`The bank narration says ${formatRemittance(remittance)}, which is not the ${rupee(line.credit)} credited. Reconcile this line by hand.`);
+    } else if (Math.abs(match.payment.amount - remittance.amount) > 0.005) {
+      const gap = Math.round(Math.abs(match.payment.amount - remittance.amount) * 100) / 100;
+      fxProblems.push(match.payment.amount > remittance.amount
+        ? `Short by ${z(gap)}: Zoho's payment is ${z(match.payment.amount)}, the bank received ${z(remittance.amount)} — the remitting bank probably kept it as charges. Reconcile this line by hand (bank charges on export receipts come in R-2427).`
+        : `Amount differs: Zoho's payment is ${z(match.payment.amount)}, the bank received ${z(remittance.amount)}. Reconcile this line by hand.`);
+    } else {
+      fx = { currency: remittance.currency, rate: remittance.rate, foreignAmount: remittance.amount };
+    }
+  }
+  /* Zoho's foreign rates in ₹ at the bank's rate (paise kept; the sale rounds its total once). */
+  const lineFx = remittance && zohoCur === remittance.currency ? remittance.rate : null;
+  if (!remittance && payCur) {
+    fxProblems.push(`The Zoho payment is in ${payCur} (${formatForeign(match.payment.amount, payCur)}), but the bank line has no foreign amount and rate in its narration. Reconcile this line by hand.`);
+  }
+
   /* 2. Lines and what each does to subscriptions. */
   const custForSubs = customer.kind === "existing" ? { id: customer.id, domain: appCust?.domain ?? null } : null;
   const lines: PlanLine[] = [];
@@ -498,8 +545,9 @@ export function planRow(
   const unmatched: string[] = [];
   for (const inv of match.invoices) {
     for (const zl of inv.lines) {
-      const made = zohoSaleLine(zl, ctx.catalog);
-      if (!made) continue;
+      const z = zohoSaleLine(zl, ctx.catalog);
+      if (!z) continue;
+      const made = lineFx ? { ...z, line: { ...z.line, rate: Math.round(z.line.rate * lineFx * 100) / 100 } } : z;
       const idx = lines.length;
       if (!made.inCatalog) unmatched.push(zl.name.trim());
       if (!(made.line.rate > 0)) saleProblems.push(`${zl.name.trim()}: Zoho gives no price for this line.`);
@@ -607,7 +655,22 @@ export function planRow(
   const preview = salePreview(bookLines, gstRate);
   const tds = Math.max(0, Math.round(match.payment.taxWithheld ?? 0));
   const money = line.credit + tds;
-  if (Math.abs(match.payment.amount - line.credit) > AMOUNT_SLACK) {
+  const foreignMoney = Boolean(zohoCur || (!remittance && payCur));
+  if (foreignMoney) {
+    /* R-2425: compared in the foreign currency above (fxProblems); the sale in ₹ against the credit. */
+    zohoProblems.push(...fxProblems);
+    if (lines.length && lineFx && Math.abs(preview.total - money) > AMOUNT_SLACK) {
+      saleProblems.push(`Amount differs: the Zoho bill at the bank's rate comes to ${rupees(preview.total)}, the bank line is ${rupees(money)}.`);
+    }
+    if (fx && !foreign) {
+      custProblems.push(`${customer.name} is in India in the app, but this money came from abroad in ${fx.currency}. Set the customer's country (export), or reconcile this line by hand.`);
+    }
+    if (fx && tds > 0) {
+      zohoProblems.push(`Zoho records TDS on a payment in ${fx.currency} — a foreign customer does not deduct Indian TDS. Check the payment in Zoho, or reconcile this line by hand.`);
+    }
+    if (fx && lines.some((l) => l.action === "new_sub")) notes.push(`The new subscription renews from the app in ₹ — before its renewal, set the renewal quote to ${fx.currency} (Quotes → Bill in currency).`);
+    if (fx) notes.push(`Export receipt ${formatRemittance(remittance!)}: booked in ${fx.currency} at the bank's rate, ₹ = the bank credit; 0% GST (export of services, zero-rated under LUT — check your LUT in Settings).`);
+  } else if (Math.abs(match.payment.amount - line.credit) > AMOUNT_SLACK) {
     zohoProblems.push(`Amount differs: Zoho payment ${rupees(match.payment.amount)}, bank line ${rupees(line.credit)}.`);
   } else if (lines.length && Math.abs(preview.total - money) > AMOUNT_SLACK) {
     saleProblems.push(`Amount differs: the sale comes to ${rupees(preview.total)}, the bank line${tds ? ` + TDS ${rupees(tds)}` : ""} is ${rupees(money)}.`);
@@ -722,6 +785,16 @@ export function planRow(
     }
   }
 
+  /* R-2425: an export receipt is booked only as a new sale in its currency. Paying an open quote /
+     invoice (or last year's) at the bank's rate would leave a forex difference — a later card. */
+  if (fx && kind !== "new_sale") {
+    pathProblems.push(`This export receipt matches ${kind === "opening" ? "last year's invoice" : "an open quote / invoice"} in the app — paying it at the bank's rate needs a forex gain / loss entry, which comes in a later card. Reconcile this line by hand.`);
+    noBook = true;
+  }
+  if (fx && lines.some((l) => l.cycle === "monthly")) {
+    saleProblems.push(`A monthly sale in ${fx.currency} is billed in parts — reconcile this line by hand.`);
+  }
+
   const problems = kind === "new_sale"
     ? [...custProblems, ...zohoProblems, ...saleProblems, ...pathProblems, ...doubleProblems, ...payerProblems]
     : kind === "pay_item"
@@ -744,14 +817,16 @@ export function planRow(
     tdsRatePct: tds > 0 ? rate : null,
     tdsSection: section,
     dateFixes: sale && createSubscription ? dateFixes : [],
+    fx: sale ? fx : null,
   };
 
   return {
     txnId: line.id, txnDate: line.txnDate, credit: line.credit, description: line.description, kind: "match", summary,
     zoho: {
       paymentId: match.payment.zohoId, paymentNumber: match.payment.number || null, by: match.by,
-      amount: match.payment.amount, invoiceNumbers, candidates: 1,
+      amount: match.payment.amount, currency: payCur, invoiceNumbers, candidates: 1,
     },
+    remittance,
     customer, lines, seatDiffs: sale ? seatDiffs : [], saleTotal: lines.length ? preview.total : null, tds, payer,
     problems, notes, ticked: problems.length === 0 && book !== null, book,
   };
